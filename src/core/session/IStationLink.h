@@ -256,6 +256,16 @@
 //   2026-10-08  J.J. Boyd / KG4VCF  Final review I3:
 //                                    requestRefreshRotorPorts. AI-assisted
 //                                    via Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 11:
+//                                    roundtableAvailable and the thirteen
+//                                    roundtable.* requests. AI-assisted via
+//                                    Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  bpf2GndOnTxUnavailableReason
+//                                    (radioHardwareVersion 14).
+//                                    AI-assisted: Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  dxOutputsUnavailableReason
+//                                    (radioHardwareVersion 14).
+//                                    AI-assisted: Claude Code.
 // =================================================================
 
 #include <QString>
@@ -551,6 +561,44 @@ public:
     virtual CommandOutcome requestRefreshRotorPorts()
     { return { false, rotorUnavailableReason() }; }
 
+    /// Roundtable plan Task 11 (stationRoundtableVersion 1, to a peer whose
+    /// hello declared roundtable 1): the Core's Roundtable connection. The
+    /// `roundtable` object says how it is; the roundtableRooms and
+    /// roundtableRoom:<id> streams carry the rooms; these send the
+    /// roundtable.* verbs. A post's answer arrives later
+    /// (RoundtableModel::postResult), as does the web sign-in link.
+    virtual bool roundtableAvailable() const { return false; }
+    static QString roundtableUnavailableReason()
+    { return QStringLiteral("This Core cannot share Roundtable with this app. Updating the Core may help."); }
+    virtual CommandOutcome requestRoundtablePost(const QString& /*roomId*/, const QString& /*text*/,
+                                                 const QString& /*clientId*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableDelete(const QString& /*messageId*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableName(const QString& /*turnId*/, const QString& /*name*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableReport(const QString& /*kind*/, const QString& /*target*/,
+                                                   const QString& /*reason*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableRead(const QString& /*roomId*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableUnread(const QString& /*roomId*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableSetHidden(bool)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableAnswerFirstRun(bool /*live*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableMute(const QString& /*callsign*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableUnmute(const QString& /*callsign*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableMarkMentionRead(qint64 /*upToMs*/)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableWebSignIn()
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableDeleteArchive(const QString& /*confirm*/)
+    { return { false, roundtableUnavailableReason() }; }
+
     /// R-R3-47 / R-R3-22 (remotePgxlControlVersion 3): the Core sends the
     /// Power Genius's own settings (name, hardware, network, Save & Reboot,
     /// Revert) to the amp as the local Advanced page does. Acceptance means
@@ -729,6 +777,14 @@ public:
     // Core applies to the receive audio it sends its radio.
     static QString hl2SwapAudioUnavailableReason()
     { return QStringLiteral("This Core cannot swap its radio's audio channels for this app. Updating the Core may help."); }
+    // radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx", which the
+    // Core applies to its radio at the next transmit.
+    static QString bpf2GndOnTxUnavailableReason()
+    { return QStringLiteral("This Core cannot change Gnd BPF2 on Tx for this app. Updating the Core may help."); }
+    // radioHardwareVersion 14: OC Outputs' Anvelina DX Outputs, which the
+    // Core applies to its radio at once.
+    static QString dxOutputsUnavailableReason()
+    { return QStringLiteral("This Core cannot switch the Anvelina DX outputs for this app. Updating the Core may help."); }
     // Verb "requestIoBoardI2c" (radioHardwareVersion 7): one I2C read or
     // write on the Core's radio. The answer (a read's bytes in `value`)
     // arrives as RadioModel::reportStationIoBoardResult.

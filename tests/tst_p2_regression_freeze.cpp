@@ -10,6 +10,23 @@
 // Saturn rows where p2SaturnBpf1Edges are empty (the default) MUST also
 // match — Saturn falls through to OrionMkII's Alex defaults when BPF1
 // isn't configured, so byte parity is preserved.
+//
+// CW transmit (R-CW-14, R-CW-16): the CW edge length is now 9, as Thetis
+// sends it (setup.cs:29327 [v2.10.3.15], CmdTx byte 17, network.c:1222).
+// Its CmdTx regions are bytes 0-7 and 57-59, so byte 17 is not frozen.
+// Since the connection fills its CW fields from the CW wire state once the
+// codec is chosen (R-CW-16, P2RadioConnection::syncCwComposeState), every
+// row's CmdTx carries the CW keyer defaults, as P1's banks 12-14 do: byte
+// 5 = 0x28 (iambic bit 3, mode B bit 5; CW enable off, no sidetone level)
+// and byte 7 = 0x02 (sidetone frequency 600 Hz, high byte); byte 6 (level)
+// stays 0. Only those two bytes of the 36 rows were changed in the JSON.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the edge length 9 note (R-CW-14). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, CmdTx bytes 5 and 7 carry the CW defaults in
+//               the baseline (R-CW-14, R-CW-16). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
 #include <QFile>

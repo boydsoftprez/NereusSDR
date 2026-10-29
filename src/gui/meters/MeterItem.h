@@ -7,9 +7,93 @@
 // Ported from Thetis sources:
 //   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/console.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/common.cs, original licence from Thetis source is included below
+//   Project Files/Source/Console/setup.designer.cs (update interval range
+//     and default): upstream source has no top-of-file GPL header, the
+//     setup.cs header below covers its partial class
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): setColourUserSet(),
+//                 colourUserSet() and userColourFields(): the colours the
+//                 user picked in an editor, so a pick equal to a default
+//                 stays as picked under the workspace look. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (I10): a needle applies its saved
+//                 attack ratio rising and decay ratio falling, and draws
+//                 with its saved stroke width; one saved without them
+//                 keeps 0.3 both ways and the 2 px pen. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setStageDisabled() / stageDisabled(): a TX stage that is
+//                 off (Thetis clsMeterItem.Disabled) dims the item whatever
+//                 its fade options; never for a foreign session's entry.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setUpdateIntervalMs() is virtual: the LED raises an
+//                 interval under 50 ms to 100 ms. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - readingBindingsBesideMmio(): the readings an item still
+//                 takes while data source variable 1 feeds it (a HISTORY
+//                 item's axis 1). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - acceptsUpdate() is virtual: the HISTORY item keeps the
+//                 update interval per axis. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - Magic eye and bezel size range (kMinMeterEyeScale,
+//                 kMaxMeterEyeScale, kDefaultMeterEyeScale). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Several data source (MMIO) variables per item: index 0 is
+//                 the existing pair, index 1 and up feed setSecondaryValue;
+//                 mmioVariableCount() ports Thetis MeterVariables.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / Fade on TX on every item: setTransmitting,
+//                 fade flags, fadeValue() and advanceFade() (Thetis fade(),
+//                 via ContentFade::nextValue), setForeignSession; a virtual
+//                 clearHistory() (Thetis clsMeterItem.ClearHistory).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - BAR building block: Segments and Solid styles, a peak hold
+//                 marker separate from the live marker, peak value colour,
+//                 ignore history, power limit, marker stroke width and the
+//                 clsBarItem new-item defaults (kBarItemThetisDefaults).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - NEEDLE building block: shadow and peak hold switches, a
+//                 peak hold colour, the history arc with ignore history
+//                 after clearHistory(), the power limit (normalise to
+//                 100 W) and the clsNeedleItem new-item defaults
+//                 (kNeedleThetisDefaults). Saved needles keep their look.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - VHF S9 rule per slice: setAboveS9Frequency() /
+//                 aboveS9Frequency(), a formatValue overload taking the
+//                 flag (S9 = -93 dBm at or above 30 MHz, kS9DbmBelowS9Frequency
+//                 / kS9DbmAboveS9Frequency from common.cs); BarItem, TextItem
+//                 and NeedleItem S-unit text and calibration use it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Per-item update interval: setUpdateIntervalMs(),
+//                 updateIntervalMs() (0 = every poll), acceptsUpdate();
+//                 new items take Thetis's 100 ms. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - New items take Thetis defaults: applyNewItemDefaults()
+//                 hook (no-op in the base), SolidColourItem override. Saved
+//                 items keep their look. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - TEXT, SCALE and IMAGE building blocks: TextItem font
+//                 family, italic, centring and the %value%, %valueWithType%
+//                 and %group% tokens; ImageItem dark mode and the -dark,
+//                 -small and -large variant lookup (variantPath); the
+//                 clsText, clsScaleItem and clsImage new-item defaults
+//                 (kTextThetisDefaults, kScaleThetisDefaults,
+//                 kImageThetisDefaults). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - handleKeyPress(): a key the meter forwards to the item
+//                 under the pointer (the VFO display's typed digits).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - handleMouseLeave() and reasonAt(): hover state cleared
+//                 when the pointer leaves the meter, and a tooltip reason
+//                 for a part of an item (the VFO display's split box).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - publishedReadings(): named values an item publishes for
+//                 data out and text overlay tokens (empty in the base).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -128,6 +212,97 @@ mw0lge@grange-lane.co.uk
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
+// --- From setup.cs ---
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2009  FlexRadio Systems
+// Copyright (C) 2010-2020  Doug Wigley
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: sales@flex-radio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    8900 Marybank Dr.
+//    Austin, TX 78750
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
+// --- From common.cs ---
+//=================================================================
+// common.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
+// Copyright (C) 2004-2012  FlexRadio Systems
+//
+// This program is free software; you can redistribute it and/or
+// modify it under the terms of the GNU General Public License
+// as published by the Free Software Foundation; either version 2
+// of the License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+//
+// You may contact us via email at: gpl@flexradio.com.
+// Paper mail may be sent to: 
+//    FlexRadio Systems
+//    4616 W. Howard Lane  Suite 1-150
+//    Austin, TX 78728
+//    USA
+//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
+//============================================================================================//
+// Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
+// ------------------------------------------------------------------------------------------ //
+// For any code originally written by Richard Samphire MW0LGE, or for any modifications       //
+// made by him, the copyright holder for those portions (Richard Samphire) reserves the       //
+// right to use, license, and distribute such code under different terms, including           //
+// closed-source and proprietary licences, in addition to the GNU General Public License      //
+// granted above. Nothing in this statement restricts any rights granted to recipients under  //
+// the GNU GPL. Code contributed by others (not Richard Samphire) remains licensed under      //
+// its original terms and is not affected by this dual-licensing statement in any way.        //
+// Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
+//============================================================================================//
+
 #include <QObject>
 #include <QSet>
 #include <QHash>
@@ -138,13 +313,17 @@ mw0lge@grange-lane.co.uk
 #include <QMap>
 #include <QPointF>
 #include <QString>
+#include <QStringList>
 #include <QUuid>
+#include <QVariant>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 class QPainter;
 class QMouseEvent;
 class QWheelEvent;
+class QKeyEvent;
 
 namespace NereusSDR {
 
@@ -188,6 +367,15 @@ inline bool isNoReadingBinding(int bindingId)
         || isSourceClampedPeakBinding(bindingId);
 }
 
+// Update interval (ms). Thetis sets one per item group
+// (igs.UpdateInterval = (int)nudMeterItemUpdateRate.Value, Thetis
+// setup.cs:25526 [v2.10.3.15]); NereusSDR keeps one per item.
+// From Thetis setup.designer.cs:55695-55699 [v2.10.3.15] (nudMeterItemUpdateRate.Value)
+constexpr int kDefaultUpdateIntervalMs = 100;
+// From Thetis setup.designer.cs:55685-55689 [v2.10.3.15] (nudMeterItemUpdateRate.Minimum)
+constexpr int kMinUpdateIntervalMs = 15;
+// From Thetis setup.designer.cs:55680-55684 [v2.10.3.15] (nudMeterItemUpdateRate.Maximum)
+constexpr int kMaxUpdateIntervalMs = 5000;
 
 class MeterItem : public QObject {
     Q_OBJECT
@@ -212,6 +400,25 @@ public:
     // Always a number: whether a value is no reading is the item's call
     // (isNoReading(), from its binding); noReadingText() is what it shows.
     static QString formatValue(float dBm, MeterUnit unit, bool decimal = true);
+    // The same, with S9 at -93 dBm when the item's slice is at or above the
+    // S9 frequency (AboveS9Frequency.h). dBm and uV are unaffected.
+    static QString formatValue(float dBm, MeterUnit unit, bool decimal, bool aboveS9);
+
+    // S9 level of the S-unit scale below and at or above the S9 frequency.
+    // From Thetis common.cs:881-887 [v2.10.3.15] (GetSMeterUnits)
+    static constexpr float kS9DbmBelowS9Frequency = -73.0f;
+    // From Thetis common.cs:881-887 [v2.10.3.15] (GetSMeterUnits: //MW0LGE_[2.9.0.7] fixed to 93)
+    static constexpr float kS9DbmAboveS9Frequency = -93.0f;
+    static constexpr float s9Dbm(bool aboveS9)
+    {
+        return aboveS9 ? kS9DbmAboveS9Frequency : kS9DbmBelowS9Frequency;
+    }
+
+    // Whether the item's slice is at or above the S9 frequency
+    // (isAboveS9Frequency, AboveS9Frequency.h). MainWindow sets it on every
+    // item from the slice each entry resolves to. Runtime only, not saved.
+    virtual void setAboveS9Frequency(bool above) { m_aboveS9Frequency = above; }
+    bool aboveS9Frequency() const               { return m_aboveS9Frequency; }
     // No reading in the requested unit: "--" for dBm and S, "-- µV" for uV.
     static QString noReadingText(MeterUnit unit);
 
@@ -238,6 +445,11 @@ public:
     virtual void setValue(double v) { m_value = v; }
     virtual QSet<int> readingBindings() const { return m_bindingId >= 0 ? QSet<int>{m_bindingId} : QSet<int>{}; }
     virtual void pushBindingValue(int binding, double value) { if (binding == m_bindingId) { setValue(value); } }
+    // The readings an item still takes from the radio while data source
+    // variable 1 (index 0) feeds its main reading: none by default. Thetis
+    // reads each HISTORY axis on its own (MeterManager.cs:18096-18165
+    // [v2.10.3.15]), so a HISTORY item's axis 1 keeps its reading.
+    virtual QSet<int> readingBindingsBesideMmio() const { return {}; }
     virtual bool takeStaticPresentationChange() { return false; }
     virtual bool advanceMeter(qint64 monotonicMs) { Q_UNUSED(monotonicMs); return false; }
     virtual void resetForTxTransition(bool inTx);
@@ -277,6 +489,78 @@ public:
     int  displayGroup() const { return m_displayGroup; }
     void setDisplayGroup(int g) { m_displayGroup = g; }
 
+    // Fade on RX / Fade on TX: the animated dim of Thetis fade()
+    // (MeterManager.cs:33153-33177 [v2.10.3.15], ContentFade::nextValue).
+    // MeterWidget draws a veil of the container background at alpha
+    // 255 - fadeValue() over the item; advanceFade() steps the value once
+    // per fadeIntervalMs(). Runtime state (transmitting, value, foreign
+    // session) is not saved; the two flags are saved in the entry context
+    // (ContentFade::kFadeOnRxKey / kFadeOnTxKey) when set explicitly.
+    // ButtonBoxItem and FadeCoverItem keep the flags in their records and
+    // override the accessors.
+    virtual void setTransmitting(bool tx) { m_transmitting = tx; }
+    bool transmitting() const { return m_transmitting; }
+    virtual void setFadeOnRx(bool on) { m_fadeOnRx = on; m_explicitFade = true; }
+    virtual void setFadeOnTx(bool on) { m_fadeOnTx = on; m_explicitFade = true; }
+    virtual bool fadeOnRx() const { return m_fadeOnRx; }
+    virtual bool fadeOnTx() const { return m_fadeOnTx; }
+    // True once a fade setter ran (the entry then saves both keys).
+    virtual bool hasExplicitFade() const { return m_explicitFade; }
+    // kDimmedLevel (48) .. 255; 255 is undimmed.
+    int fadeValue() const { return m_fadeValue; }
+    // An entry whose source names another session's radio: its fade stays
+    // in the receive state whatever this window transmits.
+    void setForeignSession(bool foreign) { m_foreignSession = foreign; }
+    bool foreignSession() const { return m_foreignSession; }
+    // A TX stage that is off (Thetis clsMeterItem.Disabled, set by
+    // DisableMeterType, MeterManager.cs:26773-26792 [v2.10.3.15]): the fade
+    // steps as if both fade flags were on, so the item dims to
+    // kDimmedLevel over 500 ms whatever its own fade options, and recovers
+    // when cleared. A foreign session's entry is not dimmed by this
+    // window's TX stages. Runtime state, not saved.
+    void setStageDisabled(bool disabled) { m_stageDisabled = disabled; }
+    bool stageDisabled() const { return m_stageDisabled; }
+    // The fade step interval: the item's update interval when set, else
+    // kDefaultUpdateIntervalMs, at most 500 ms.
+    int fadeIntervalMs() const;
+    // Steps the fade once for each fadeIntervalMs() since the last step.
+    // The first call, and a call while the fade is at rest, only take the
+    // time. Returns true when the value changed. MeterWidget::advanceMeters
+    // calls it for every item, beside advanceMeter().
+    bool advanceFade(qint64 monotonicMs);
+
+    // From Thetis MeterManager.cs:7072-7074 [v2.10.3.15] (clsMeterItem
+    // ClearHistory): no history in the base.
+    virtual void clearHistory() {}
+
+    // Colours the user picked in an editor, by ItemColourLook field name
+    // ("<Item>.<field>"). A picked colour is drawn as stored even when it
+    // equals a default the workspace look maps (ItemColourLook::effective
+    // asks the item, and the composite face holding it). Saved in the
+    // entry context (ItemColourLook::kUserColoursKey) only when not empty,
+    // so a record with no picks is unchanged; an item saved without the
+    // key has none.
+    void setColourUserSet(const QString& field, bool picked);
+    bool colourUserSet(const QString& field) const
+    {
+        return !m_userColours.isEmpty() && m_userColours.contains(field);
+    }
+    // Sorted, so a saved entry is stable.
+    QStringList userColourFields() const;
+    void setUserColourFields(const QStringList& fields);
+
+    // Per-item update interval in ms; 0 (the value of a saved item without
+    // one) takes every poll. MeterWidget::updateMeterValue asks
+    // acceptsUpdate() before delivering a reading: true when the interval
+    // has passed since the last accepted reading, which it then records.
+    // Negative values are stored as 0. Virtual so an item can adjust the
+    // value it keeps (LEDItem raises 1-49 ms to 100 ms).
+    virtual void setUpdateIntervalMs(int ms);
+    int updateIntervalMs() const { return m_updateIntervalMs; }
+    // Virtual so an item with more than one reading (HistoryGraphItem) can
+    // keep the interval per reading.
+    virtual bool acceptsUpdate(qint64 monotonicMs);
+
     // Phase 3G-6 block 5 — MMIO binding. Null guid + empty (or
     // "--DEFAULT--") variable name means "no MMIO binding, fall back
     // to the WDSP-backed bindingId()". Set by the per-item editor's
@@ -300,6 +584,25 @@ public:
 
     QString mmioSourceKey() const { return m_mmioGuid.toString(QUuid::WithoutBraces) + QChar(0) + m_mmioVariable; }
 
+    // Several variables per item (Thetis MeterVariables). Index 0 is the
+    // pair above; index 1 and up are delivered through setSecondaryValue
+    // and never replace the item's main reading. Indexes outside
+    // 0..kMaxMmioVariables-1 are ignored.
+    // From Thetis MeterManager.cs:22684-22738 [v2.10.3.15] — ANANMM reads 7.
+    static constexpr int kMaxMmioVariables = 7;
+    void    setMmioBinding(int index, const QUuid& guid, const QString& variableName);
+    QUuid   mmioGuid(int index) const;
+    QString mmioVariable(int index) const;
+    bool    hasMmioBinding(int index) const;
+    QString mmioSourceKey(int index) const;
+    // True when any index, 0 included, reads a data source.
+    bool    hasAnyMmioBinding() const;
+    // A data source reading for variable `index` (1 and up). A non-finite
+    // value means the source has no reading. No-op by default.
+    virtual void setSecondaryValue(int index, double value) { Q_UNUSED(index); Q_UNUSED(value); }
+    // How many variables a container item type reads (Thetis MeterVariables).
+    static int mmioVariableCount(const QString& typeId);
+
     virtual Layer renderLayer() const = 0;
     virtual void paint(QPainter& p, int widgetW, int widgetH) = 0;
     virtual void emitVertices(QVector<float>& verts, int widgetW, int widgetH) {
@@ -319,12 +622,40 @@ public:
     virtual QString serialize() const;
     virtual bool deserialize(const QString& data);
 
+    // New items only: ContainerContentRegistry::makeEntry calls this on the
+    // item it allocates, before taking its record. Overrides call the base
+    // first, then copy their k<Item>ThetisDefaults table onto the item.
+    // Constructors keep the older values, so a saved record (or one with
+    // fields missing) restores exactly as before. No-op in the base.
+    virtual void applyNewItemDefaults();
+
+    // Named values this item publishes for data out and text overlay
+    // tokens, keyed by lowercase Thetis reading name (see
+    // ThetisReadingNames.h), as Thetis copies clock and VFO display
+    // readings into all_readings (MeterManager.cs:31057-31099
+    // [v2.10.3.15]). Empty in the base.
+    virtual QHash<QString, QVariant> publishedReadings() const { return {}; }
+
     // --- Mouse interaction (Phase 3G-5) ---
     virtual bool hitTest(const QPointF& pos, int widgetW, int widgetH) const;
     virtual bool handleMousePress(QMouseEvent* event, int widgetW, int widgetH);
     virtual bool handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH);
     virtual bool handleMouseMove(QMouseEvent* event, int widgetW, int widgetH);
     virtual bool handleWheel(QWheelEvent* event, int widgetW, int widgetH);
+    // The pointer left the meter (MeterWidget::leaveEvent); true when the
+    // item drew something for it (a hover box) and must repaint.
+    virtual bool handleMouseLeave() { return false; }
+    // A key pressed while the pointer is over the item (MeterWidget sends
+    // it to the item it last saw under the pointer); false when the item
+    // does not handle it.
+    virtual bool handleKeyPress(QKeyEvent* event) { Q_UNUSED(event); return false; }
+    // A plain reason for a part of the item that cannot act (shown as the
+    // meter's tooltip, MeterWidget::unavailableReasonAt); empty for none.
+    virtual QString reasonAt(const QPointF& pos, int widgetW, int widgetH) const
+    {
+        Q_UNUSED(pos); Q_UNUSED(widgetW); Q_UNUSED(widgetH);
+        return {};
+    }
 
 public:
     // --- Stacked-row metadata (runtime only, not serialized) ---
@@ -407,6 +738,24 @@ protected:
     bool m_onlyWhenTx{false};
     int  m_displayGroup{0};
 
+    // Fade on RX / TX (see public accessors above).
+    bool   m_fadeOnRx{false};
+    bool   m_fadeOnTx{false};
+    bool   m_explicitFade{false};
+    bool   m_transmitting{false};
+    bool   m_foreignSession{false};
+    bool   m_stageDisabled{false};
+    // From Thetis MeterManager.cs:6778 [v2.10.3.15] (_fadeValue = 255)
+    int    m_fadeValue{255};
+    qint64 m_lastFadeStepMs{-1};
+
+    // Colours the user picked (see public accessors above).
+    QSet<QString> m_userColours;
+
+    // Update interval (see public accessors above); runtime only below.
+    int    m_updateIntervalMs{0};
+    qint64 m_lastAcceptedUpdateMs{-1};
+
     // MMIO identity is captured by ContainerContentRegistry (Task2);
     // the old pipe primitive record still has no MMIO fields.
     // When hasMmioBinding() is true, MeterPoller
@@ -414,6 +763,9 @@ protected:
     // instead of the WDSP-backed bindingId() path.
     QUuid   m_mmioGuid;
     QString m_mmioVariable;
+    // Variables 1 and up (slot i holds index i + 1); empty when none.
+    struct MmioVariableBinding { QUuid guid; QString variable; };
+    QVector<MmioVariableBinding> m_extraMmio;
 
     // Task 3.2 — unit-mode fan-out (S / dBm / µV).
     // Set by MultimeterPage → ContainerManager::forEachMeterItem broadcast.
@@ -421,6 +773,8 @@ protected:
     // m_showDecimal in their paint() text-format path.
     MeterUnit m_unitMode{MeterUnit::dBm};
     bool      m_showDecimal{true};
+    // VHF S9 rule (setAboveS9Frequency): S9 = -93 dBm at or above 30 MHz.
+    bool      m_aboveS9Frequency{false};
 };
 
 // ---------------------------------------------------------------------------
@@ -438,6 +792,7 @@ public:
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     QColor m_colour{0x0f, 0x0f, 0x1a};
@@ -446,6 +801,12 @@ private:
 // ---------------------------------------------------------------------------
 // ImageItem — Static image
 // ---------------------------------------------------------------------------
+// Image variants by size: renderImage picks "-small" at or below this
+// diagonal (px) and "-large" at or above the next.
+// From Thetis MeterManager.cs:40644-40647 [v2.10.3.15] (renderImage)
+constexpr double kImageSmallDiagonalPx = 450.0;
+constexpr double kImageLargeDiagonalPx = 1200.0;
+
 class ImageItem : public MeterItem {
     Q_OBJECT
 public:
@@ -455,29 +816,94 @@ public:
     void setImagePath(const QString& path);
     QString imagePath() const { return m_imagePath; }
 
+    // Thetis clsImage.DarkMode: prefer the "-dark" file when it exists.
+    void setDarkMode(bool on) { m_darkMode = on; }
+    bool darkMode() const { return m_darkMode; }
+
+    // The file renderImage draws for basePath: the "-dark" file when dark
+    // mode is on and it exists, then that name with "-small" (diagonal at or
+    // below kImageSmallDiagonalPx) or "-large" (at or above
+    // kImageLargeDiagonalPx) when that file exists. The suffix goes before
+    // the extension (meter.png -> meter-dark-small.png). Only stats local
+    // files next to the one the user chose; returns basePath otherwise.
+    static QString variantPath(const QString& basePath, bool darkMode, double diagonalPx);
+
     Layer renderLayer() const override { return Layer::Background; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     QImage   m_image;
     QString  m_imagePath;
+    bool     m_darkMode{false};
+    // The file m_image was last loaded from (runtime only).
+    QString  m_loadedPath;
+};
+
+// New IMAGE items (makeEntry) take the clsImage constructor's values.
+// From Thetis MeterManager.cs:16035-16046 [v2.10.3.15]
+struct ImageItemThetisDefaults {
+    bool darkMode;
+};
+inline constexpr ImageItemThetisDefaults kImageThetisDefaults{
+    false,                      // _darkMode = false
 };
 
 // ---------------------------------------------------------------------------
 // BarItem — Horizontal or vertical bar meter
 // ---------------------------------------------------------------------------
+// History duration range (ms).
+// From Thetis setup.designer.cs:55011-55015 [v2.10.3.15] (nudMeterItemHistoryDuration.Minimum)
+constexpr int kMinBarHistoryDurationMs = 50;
+// From Thetis setup.designer.cs:55006-55010 [v2.10.3.15] (nudMeterItemHistoryDuration.Maximum)
+constexpr int kMaxBarHistoryDurationMs = 30000;
+// Ignore history after a transition (ms).
+// From Thetis setup.designer.cs:55150-55154 [v2.10.3.15] (nudMeterItemIgnoreHistoryDuration.Minimum)
+constexpr int kMinBarIgnoreHistoryMs = 0;
+// From Thetis setup.designer.cs:55145-55149 [v2.10.3.15] (nudMeterItemIgnoreHistoryDuration.Maximum)
+constexpr int kMaxBarIgnoreHistoryMs = 4000;
+// From Thetis setup.designer.cs:55161-55165 [v2.10.3.15] (nudMeterItemIgnoreHistoryDuration.Value)
+constexpr int kDefaultBarIgnoreHistoryMs = 2000;
+// Magic eye and bezel size (1.0 = the full width).
+// From Thetis setup.designer.cs:55523-55527 [v2.10.3.15] (nudMeterItemEyeScale.Minimum)
+constexpr float kMinMeterEyeScale = 0.01f;
+// From Thetis setup.designer.cs:55518-55522 [v2.10.3.15] (nudMeterItemEyeScale.Maximum)
+constexpr float kMaxMeterEyeScale = 1.0f;
+// From Thetis setup.designer.cs:55533-55537 [v2.10.3.15] (nudMeterItemEyeScale.Value;
+// nudMeterItemEyeBezelScale :55450-55469 has the same range and value)
+constexpr float kDefaultMeterEyeScale = 1.0f;
+// Power limit of the scale (W).
+// From Thetis setup.designer.cs:55313-55317 [v2.10.3.15] (nudMeterItemsPowerLimit.Minimum, 1 with scale 1)
+constexpr double kMinBarPowerLimitW = 0.1;
+// From Thetis setup.designer.cs:55308-55312 [v2.10.3.15] (nudMeterItemsPowerLimit.Maximum)
+constexpr double kMaxBarPowerLimitW = 5000.0;
+// From Thetis setup.designer.cs:55323-55327 [v2.10.3.15] (nudMeterItemsPowerLimit.Value)
+constexpr double kDefaultBarPowerLimitW = 100.0;
+
 class BarItem : public MeterItem {
     Q_OBJECT
 public:
     enum class Orientation { Horizontal, Vertical };
-    // From Thetis clsBarItem.BarStyle (MeterManager.cs:19927-19934):
+    // From Thetis clsBarItem.BarStyle (MeterManager.cs:21247-21254 [v2.10.3.15]):
     //   None, Line, SolidFilled, GradientFilled, Segments.
-    // NereusSDR maps SolidFilled -> Filled for back-compat with pre-A4
-    // presets and adds Line. Edge is a NereusSDR extension (mapped from
-    // Thetis console.cs edge meters).
-    enum class BarStyle { Filled, Edge, Line };
+    // Filled is NereusSDR's original full-height bar; Edge is a NereusSDR
+    // extension (mapped from Thetis console.cs edge meters). Segments and
+    // Solid are renderHBar's Segments and SolidFilled
+    // (MeterManager.cs:37424-37673 [v2.10.3.15]). Appended so saved values
+    // keep their meaning.
+    enum class BarStyle { Filled, Edge, Line, Segments, Solid };
+
+    // Segments / Solid geometry for a bar w x h pixels.
+    // From Thetis MeterManager.cs:37458-37470 [v2.10.3.15] (renderHBar)
+    struct SegmentGeometry {
+        int   blockSize;
+        int   gapSize;
+        int   step;
+        float barHeight;
+    };
+    static SegmentGeometry segmentGeometry(float w, float h);
 
     explicit BarItem(QObject* parent = nullptr) : MeterItem(parent) {}
 
@@ -604,6 +1030,38 @@ public:
     void setPeakHoldDecayRatio(float r) { m_peakHoldDecayRatio = r; }
     float peakHoldDecayRatio() const { return m_peakHoldDecayRatio; }
 
+    // Peak hold marker, drawn at the peak independently of the live marker.
+    // From Thetis MeterManager.cs:21497-21501, 37600-37602 [v2.10.3.15]
+    // (PeakHold). Unset (records saved before the option existed, and
+    // bars built in code) follows showMarker(), which drew both markers.
+    void setPeakHold(bool on) { m_peakHold = on; }
+    bool peakHold() const { return m_peakHold.value_or(m_showMarker); }
+
+    // Peak value text colour (Thetis PeakValueColour,
+    // MeterManager.cs:21492-21496 [v2.10.3.15]); the same slot as
+    // peakFontColour().
+    void setPeakValueColour(const QColor& c) { setPeakFontColour(c); }
+    QColor peakValueColour() const { return peakFontColour(); }
+
+    // Marker line width (Thetis StrokeWidth). NereusSDR drew 2 px markers.
+    void setStrokeWidth(float w) { m_strokeWidth = w > 0.0f ? w : 1.0f; }
+    float strokeWidth() const { return m_strokeWidth; }
+
+    // After a transition the next IgnoreHistory ms of readings do not
+    // reach the history or the peak. From Thetis MeterManager.cs:21367-21378,
+    // 21422-21426, 21450-21457 [v2.10.3.15] (IgnoreHistoryDuration,
+    // ClearHistory). Clamped to kMinBarIgnoreHistoryMs..kMaxBarIgnoreHistoryMs.
+    void setIgnoreHistoryMs(int ms);
+    int ignoreHistoryMs() const { return m_ignoreHistoryMs; }
+    void clearHistory() override;
+    int ignoringReadings() const { return m_ignoringNext; }
+
+    // Power limit (W): a calibrated forward or reverse power bar reads
+    // value * 100 / limit. From Thetis MeterManager.cs:41053-41056,
+    // 28292 [v2.10.3.15]. Clamped to kMinBarPowerLimitW..kMaxBarPowerLimitW.
+    void setPowerLimit(double watts);
+    double powerLimit() const { return m_powerLimit; }
+
     // --- Phase A4: ScaleCalibration (non-linear value → X map) ---
     // From Thetis clsBarItem.ScaleCalibration (MeterManager.cs:20192,
     // 21547-21549 addSMeterBar, 21638-21640 AddADCMaxMag). When calibration
@@ -613,6 +1071,7 @@ public:
     // BarItem falls back to linear range mapping (pre-A4 behavior).
     void addScaleCalibration(double value, float normalizedX);
     void clearScaleCalibration() { m_scaleCalibration.clear(); }
+    QMap<double, float> scaleCalibration() const { return m_scaleCalibration; }
     int scaleCalibrationSize() const
     {
         return static_cast<int>(m_scaleCalibration.size());
@@ -624,6 +1083,11 @@ public:
     // and history polyline — the single source of truth for "where on
     // the bar does this value sit".
     float valueToNormalizedX(double value) const;
+    // The calibration's (or the linear range's) position for `value`, with
+    // none of valueToNormalizedX()'s reading adjustments (the S9 offset,
+    // the power limit): where a fixed scale point such as the red
+    // threshold sits.
+    float calibratedX(double value) const;
 
     // Override setValue() for exponential smoothing
     // From Thetis MeterManager.cs — attack/decay smoothing
@@ -648,9 +1112,11 @@ public:
     void emitVertices(QVector<float>& verts, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     void paintEdge(QPainter& p, int widgetW, int widgetH);
+    void paintSegmentsOrSolid(QPainter& p, const QRect& rect, float fracLive);
 
     Orientation m_orientation{Orientation::Horizontal};
     double      m_minVal{-140.0};
@@ -684,10 +1150,50 @@ private:
     QColor      m_markerColour{Qt::yellow};
     QColor      m_peakHoldMarkerColour{Qt::red};
     float       m_peakHoldDecayRatio{0.0f};        // 0 = hold forever
+    std::optional<bool> m_peakHold;                // unset = follows m_showMarker
+    float       m_strokeWidth{2.0f};               // NereusSDR's 2 px markers
+    int         m_ignoreHistoryMs{0};              // saved bars never ignored
+    int         m_ignoringNext{0};
+    double      m_powerLimit{kDefaultBarPowerLimitW};
     // Phase A4 — non-linear value→X calibration waypoints.
     // QMap keeps entries sorted by key (value) which is what the
     // interpolation in valueToNormalizedX() relies on.
     QMap<double, float> m_scaleCalibration;
+};
+
+// New BAR items (makeEntry) take the clsBarItem constructor's values.
+// From Thetis MeterManager.cs:21284-21302 [v2.10.3.15]
+struct BarItemThetisDefaults {
+    int                historyDurationMs;
+    int                ignoreHistoryMs;
+    bool               showHistory;
+    bool               showValue;
+    bool               showPeakValue;
+    BarItem::BarStyle  style;
+    QRgb               colour;
+    QRgb               colourHigh;
+    QRgb               markerColour;
+    QRgb               peakHoldMarkerColour;
+    QRgb               peakValueColour;
+    float              strokeWidth;
+    bool               peakHold;
+    bool               showMarker;
+};
+inline constexpr BarItemThetisDefaults kBarItemThetisDefaults{
+    2000,                       // _msHistoryDuration = 2000
+    2000,                       // _msIgnoreHistoryDuration = 2000
+    false,                      // _showHistory = false
+    true,                       // _showValue = true
+    true,                       // _showPeakValue = true
+    BarItem::BarStyle::Line,    // _style = BarStyle.Line
+    qRgb(0xff, 0x00, 0x00),     // _colour = Color.Red
+    qRgb(0xff, 0xa5, 0x00),     // _colourHigh = Color.Orange
+    qRgb(0xff, 0xff, 0x00),     // _markerColour = Color.Yellow
+    qRgb(0xff, 0x00, 0x00),     // _peakHoldMarkerColour = Color.Red
+    qRgb(0xff, 0x00, 0x00),     // _peakValueColour = Color.Red
+    3.0f,                       // _strokeWidth = 3f
+    false,                      // _peakHold = false
+    true,                       // _showMarker = true
 };
 
 // ---------------------------------------------------------------------------
@@ -781,6 +1287,7 @@ public:
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     Orientation m_orientation{Orientation::Horizontal};
@@ -806,6 +1313,21 @@ private:
     int         m_lowIncrement{2};
     int         m_highIncrement{20};
     float       m_centrePerc{-1.0f};  // -1 = auto from tick counts
+};
+
+// New SCALE items (makeEntry) take the clsScaleItem constructor's values.
+// From Thetis MeterManager.cs:16118-16140 [v2.10.3.15]
+struct ScaleItemThetisDefaults {
+    QRgb lowColour;
+    QRgb highColour;
+    QRgb titleColour;
+    int  fontSize;
+};
+inline constexpr ScaleItemThetisDefaults kScaleThetisDefaults{
+    qRgb(0xff, 0xff, 0xff),     // _lowColour = System.Drawing.Color.White
+    qRgb(0xff, 0x00, 0x00),     // _highColour = System.Drawing.Color.Red
+    qRgb(0xa9, 0xa9, 0xa9),     // _fontColourMeterType = System.Drawing.Color.DarkGray
+    20,                         // _fontSize = 20f
 };
 
 // Forward-declare the private render helper called from ScaleItem::paint.
@@ -843,14 +1365,45 @@ public:
     void setMinValidValue(double v) { m_minValidValue = v; }
     double minValidValue() const { return m_minValidValue; }
 
-    // The text paint() draws: the label, the idle text, the formatted
-    // value, or "--" with the unit when there is no reading (R-R3-13).
+    // Font family; empty draws the application font (records saved before
+    // the family was kept).
+    void setFontFamily(const QString& family) { m_fontFamily = family; }
+    QString fontFamily() const { return m_fontFamily; }
+
+    void setItalic(bool italic) { m_italic = italic; }
+    bool italic() const { return m_italic; }
+
+    // Thetis clsText.Centre: centred in the item, else drawn from its top
+    // left corner. Saved records without the field stay centred.
+    void setCentred(bool centred) { m_centred = centred; }
+    bool centred() const { return m_centred; }
+
+    // Text for the %group% token: the name of the container's display
+    // group (Thetis clsMeter.DisplayGroupText). Runtime only, not saved.
+    void setDisplayGroupText(const QString& text) { m_displayGroupText = text; }
+    QString displayGroupText() const { return m_displayGroupText; }
+
+    // Thetis clsText label tokens. %value% shows the reading to one
+    // decimal, %valueWithType% adds its unit, %group% (any case) the
+    // display group's name.
+    static QString valueToken()         { return QStringLiteral("%value%"); }
+    static QString valueWithTypeToken() { return QStringLiteral("%valueWithType%"); }
+    static QString groupToken()         { return QStringLiteral("%group%"); }
+
+    // The unit Thetis appends for %valueWithType% (ReadingUnits) for a
+    // MeterBinding id; empty when Thetis has none.
+    static QString readingUnits(int bindingId);
+
+    // The text paint() draws: a token's text, the label, the idle text, the
+    // formatted value, or "--" with the unit when there is no reading
+    // (R-R3-13).
     QString displayText() const;
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     QString serialize() const override;
     bool deserialize(const QString& data) override;
+    void applyNewItemDefaults() override;
 
 private:
     QString m_label;
@@ -862,6 +1415,29 @@ private:
     int     m_decimals{1};
     QString m_idleText;
     double  m_minValidValue{-139.0};  // below default -140 = always show
+    QString m_fontFamily;             // empty = application font
+    bool    m_italic{false};
+    bool    m_centred{true};          // NereusSDR always centred before
+    QString m_displayGroupText;       // runtime only
+};
+
+// New TEXT items (makeEntry) take the clsText constructor's values.
+// From Thetis MeterManager.cs:22259-22267 [v2.10.3.15]
+struct TextItemThetisDefaults {
+    const char* fontFamily;
+    bool        bold;
+    bool        italic;
+    QRgb        colour;
+    bool        centred;
+    int         fontSize;
+};
+inline constexpr TextItemThetisDefaults kTextThetisDefaults{
+    "Trebuchet MS",             // _fontFamily = "Trebuchet MS"
+    false,                      // _fontStyle = FontStyle.Regular
+    false,                      // _fontStyle = FontStyle.Regular
+    qRgb(0xff, 0xff, 0xff),     // _color = System.Drawing.Color.White
+    false,                      // _centred = false
+    9,                          // _fontSize = 9f
 };
 
 // ---------------------------------------------------------------------------
@@ -927,9 +1503,46 @@ public:
 
     void setHistoryEnabled(bool v) { m_historyEnabled = v; }
     bool historyEnabled() const { return m_historyEnabled; }
+    // Thetis ShowHistory: draw the history arc.
+    void setShowHistory(bool v) { m_historyEnabled = v; }
+    bool showHistory() const { return m_historyEnabled; }
 
-    void setHistoryDuration(int ms) { m_historyDuration = ms; }
+    // How long the history arc and the peak hold look back. Clamped to
+    // kMinBarHistoryDurationMs..kMaxBarHistoryDurationMs (the same setup
+    // control serves every item). From Thetis MeterManager.cs:22100-22108,
+    // 22018-22025 [v2.10.3.15]
+    void setHistoryDuration(int ms);
     int historyDuration() const { return m_historyDuration; }
+    void setHistoryDurationMs(int ms) { setHistoryDuration(ms); }
+    int historyDurationMs() const { return m_historyDuration; }
+
+    // After clearHistory() the next IgnoreHistory ms of readings move the
+    // needle but do not reach the history or the peak.
+    // From Thetis MeterManager.cs:22018-22029, 22131-22139 [v2.10.3.15]
+    // Clamped to kMinBarIgnoreHistoryMs..kMaxBarIgnoreHistoryMs.
+    void setIgnoreHistoryMs(int ms);
+    int ignoreHistoryMs() const { return m_ignoreHistoryMs; }
+    void clearHistory() override;
+    int ignoringReadings() const { return m_ignoringNext; }
+    int historySize() const { return static_cast<int>(m_history.size()); }
+    // MinHistory / MaxHistory: the live value with no history.
+    // From Thetis MeterManager.cs:22109-22130 [v2.10.3.15]
+    float minHistory() const;
+    float maxHistory() const;
+
+    // Thetis Shadow: the shadow under the needle. On for saved needles.
+    void setShadow(bool on) { m_shadow = on; }
+    bool shadow() const { return m_shadow; }
+
+    // Thetis PeakHold: a marker at the highest value in the history. A
+    // saved needle without the setting keeps NereusSDR's marker: on for
+    // the built-in S-meter arc, off for a calibrated face.
+    void setPeakHold(bool on) { m_peakHold = on; }
+    bool peakHold() const { return m_peakHold.value_or(m_scaleCalibration.isEmpty()); }
+    void setPeakHoldColour(const QColor& c) { m_peakHoldColour = c; }
+    QColor peakHoldColour() const { return m_peakHoldColour; }
+    // The value the peak hold marker shows.
+    float peakValue() const;
 
     void setHistoryColor(const QColor& c) { m_historyColor = c; }
     QColor historyColor() const { return m_historyColor; }
@@ -937,8 +1550,27 @@ public:
     void setNormaliseTo100W(bool v) { m_normaliseTo100W = v; }
     bool normaliseTo100W() const { return m_normaliseTo100W; }
 
-    void setMaxPower(float p) { m_maxPower = p; }
+    // Power limit (W): with normalise to 100 W on, a reading is drawn at
+    // value * 100 / limit. From Thetis MeterManager.cs:41053-41056
+    // [v2.10.3.15] (getPerc). Clamped to kMinBarPowerLimitW..
+    // kMaxBarPowerLimitW; below the minimum recovers to the default.
+    void setMaxPower(float p);
     float maxPower() const { return m_maxPower; }
+    void setPowerLimit(double watts) { setMaxPower(static_cast<float>(watts)); }
+    double powerLimit() const { return static_cast<double>(m_maxPower); }
+
+    // The value the face is positioned by for a reading: the VHF S9 rule
+    // for signal strength, else the power limit.
+    // From Thetis MeterManager.cs:41047-41057 [v2.10.3.15] (getPerc)
+    float scaleValue(float value) const;
+
+    // The needle tip for a value, in widget pixels, as paint() and
+    // emitVertices() draw it.
+    QPointF needleTipAt(float value, int widgetW, int widgetH) const;
+    QPointF needlePivot(int widgetW, int widgetH) const;
+
+    // New items (makeEntry) take the clsNeedleItem constructor's values.
+    void applyNewItemDefaults() override;
 
     void setNeedleColor(const QColor& c) { m_needleColor = c; }
     QColor needleColor() const { return m_needleColor; }
@@ -984,6 +1616,8 @@ public:
 private:
     // From AetherSDR SMeterWidget.cpp dbmToFraction()
     float dbmToFraction(float dbm) const;
+    // dbmToFraction of a reading, moved for the VHF S9 rule.
+    float arcFraction(float dbm) const;
     // From AetherSDR SMeterWidget.cpp sUnitsText()
     QString sUnitsText(float dbm) const;
 
@@ -994,6 +1628,33 @@ private:
     // Compute aspect-locked drawing rect (2:1 like AetherSDR 280x140),
     // centered within the item's pixel rect.
     QRect meterRect(int widgetW, int widgetH) const;
+
+    // Pivot and arc of the needle for one widget size, shared by paint()
+    // and emitVertices().
+    struct NeedleGeometry {
+        bool  calibrated{false};
+        float left{0.0f};
+        float top{0.0f};
+        float pw{0.0f};
+        float ph{0.0f};
+        float pivotX{0.0f};
+        float pivotY{0.0f};
+        float arcCx{0.0f};
+        float arcCy{0.0f};
+        float arcRadius{0.0f};
+    };
+    NeedleGeometry needleGeometry(int widgetW, int widgetH) const;
+    QPointF tipFor(const NeedleGeometry& g, float value) const;
+    // The history arc outline: the pivot, then tips from minHistory() to
+    // maxHistory(). Empty when there is nothing to draw.
+    QVector<QPointF> historyOutline(const NeedleGeometry& g) const;
+    // The peak marker triangle on the S-meter arc.
+    QVector<QPointF> arcPeakMarker(const NeedleGeometry& g, float value) const;
+    // The raw value range a calibrated face clamps the needle to.
+    float rawCalibrationMin() const;
+    float rawCalibrationMax() const;
+    float rawFromScale(float key) const;
+    int historyIntervalMs() const;
 
     QString m_sourceLabel{QStringLiteral("S-Meter")};
     float   m_smoothedDbm{kS0Dbm};
@@ -1011,7 +1672,9 @@ private:
     QPointF m_needleOffset{0.0, 0.0};     // Center offset for needle pivot
     QPointF m_radiusRatio{1.0, 1.0};      // Elliptical scaling
     float   m_lengthFactor{1.0f};         // Needle length multiplier
-    float   m_strokeWidth{1.5f};          // Needle line thickness
+    // Needle line thickness: the 2 px pen a needle has always drawn with,
+    // so one saved without a stroke width looks as it did.
+    float   m_strokeWidth{2.0f};
 
     // Direction
     NeedleDirection m_direction{NeedleDirection::Clockwise};
@@ -1020,6 +1683,15 @@ private:
     bool   m_historyEnabled{false};
     int    m_historyDuration{4000};  // ms
     QColor m_historyColor{Qt::transparent};
+    int    m_ignoreHistoryMs{0};     // saved needles never ignored
+    int    m_ignoringNext{0};
+    QVector<float> m_history;        // smoothed values, oldest first
+
+    // Shadow and peak hold. Saved needles: shadow on, NereusSDR's amber
+    // (#ffaa00) peak marker on the S-meter arc.
+    bool   m_shadow{true};
+    std::optional<bool> m_peakHold;  // unset = on for the arc, off calibrated
+    QColor m_peakHoldColour{0xff, 0xaa, 0x00};
 
     // Power normalisation
     bool  m_normaliseTo100W{false};
@@ -1031,6 +1703,36 @@ private:
     // Attack/decay smoothing ratios (defaults match S-meter behavior)
     float m_attackRatio{0.3f};   // kSmoothAlpha default
     float m_decayRatio{0.3f};    // kSmoothAlpha default
+};
+
+// New NEEDLE items (makeEntry) take the clsNeedleItem constructor's values.
+// From Thetis MeterManager.cs:21942-21973 [v2.10.3.15]; the history colour
+// from the clsMeterItem constructor, MeterManager.cs:6763 [v2.10.3.15].
+struct NeedleItemThetisDefaults {
+    bool  shadow;
+    bool  peakHold;
+    QRgb  peakHoldColour;
+    bool  showHistory;
+    int   historyDurationMs;
+    int   ignoreHistoryMs;
+    QRgb  colour;
+    float strokeWidth;
+    float attackRatio;
+    float decayRatio;
+    QRgb  historyColour;
+};
+inline constexpr NeedleItemThetisDefaults kNeedleThetisDefaults{
+    true,                           // _shadow = true
+    false,                          // _peakHold = false
+    qRgb(0xff, 0x00, 0x00),         // _peakHoldMarkerColour = Color.Red
+    false,                          // _showHistory = false
+    500,                            // _msHistoryDuration = 500
+    2000,                           // _msIgnoreHistoryDuration = 2000
+    qRgb(0xff, 0xff, 0xff),         // _colour = Color.White
+    3.0f,                           // _strokeWidth = 3f
+    0.8f,                           // AttackRatio = 0.8f
+    0.2f,                           // DecayRatio = 0.2f
+    qRgba(0xff, 0xff, 0xff, 128),   // _historyColour = FromArgb(128, 255, 255, 255)
 };
 
 } // namespace NereusSDR

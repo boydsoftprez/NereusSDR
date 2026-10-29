@@ -185,6 +185,18 @@
 //               once a second (so VoiceOver gets fresh cells back), and the
 //               proxy's flush is gated on accessibility being active.
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd (KG4VCF): Roundtable plan Task 12. The
+//               Roundtable tab after PSK Reporter (design 11.2), laid out
+//               like the FreeDV tab: the server group, Your station (Hide
+//               my station with the preview, the away choice, mention
+//               highlighting, callsign and grid overrides), the mute list,
+//               the archive with Delete my archive behind a confirm, and
+//               this computer's two choices. The Core's settings go
+//               through RoundtableModel. NereusSDR-original.
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-25  J.J. Boyd (KG4VCF): the Roundtable tab's quiet labels, the
+//               danger hover and the delete confirm take workspace roles
+//               (roleColourName). AI-assisted via Anthropic Claude Code.
 //   2026-10-22  J.J. Boyd (KG4VCF): right-click and drop-down menus are
 //               no longer built on the stack; ScopedChildWidget (ported
 //               from Longpath) frees each once, so a parent that dies
@@ -209,7 +221,9 @@
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/widgets/GuardedSlider.h"
+#include "core/roundtable/RoundtableWire.h"
 #include "models/BandFilterProxy.h"
+#include "models/RoundtableModel.h"
 #include "models/SpotBeamTurner.h"
 #include "models/SpotModel.h"
 #include "models/SpotTableModel.h"
@@ -225,6 +239,13 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDateTime>
+#include <QFrame>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QLocale>
+#include <QScrollArea>
+#include <QShowEvent>
+#include <QTimeZone>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -373,7 +394,8 @@ SpotHubDialog::SpotHubDialog(DxClusterClient* clusterClient,
                              SpotModel* spotModel,
                              SpotTableModel* spotTableModel,
                              DxccColorProvider* dxccProvider,
-                             QWidget* parent)
+                             QWidget* parent,
+                             RoundtableModel* roundtable)
     : QDialog(parent),
       m_clusterClient(clusterClient),
       m_rbnClient(rbnClient),
@@ -384,7 +406,8 @@ SpotHubDialog::SpotHubDialog(DxClusterClient* clusterClient,
       m_pskClient(pskClient),
       m_spotModel(spotModel),
       m_spotTableModel(spotTableModel),
-      m_dxccProvider(dxccProvider)
+      m_dxccProvider(dxccProvider),
+      m_roundtable(roundtable)
 {
     setWindowTitle("SpotHub");
     setMinimumSize(680, 560);
@@ -418,6 +441,12 @@ SpotHubDialog::SpotHubDialog(DxClusterClient* clusterClient,
     buildPotaTab(tabs);
     buildFreeDvTab(tabs);
     buildPskTab(tabs);
+    // Roundtable plan Task 12: Roundtable after PSK Reporter (design 11.2),
+    // where a RoundtableModel is given.
+    m_tabs = tabs;
+    if (m_roundtable) {
+        buildRoundtableTab(tabs);
+    }
     buildSpotListTab(tabs);
     buildDisplayTab(tabs);
 
@@ -3291,6 +3320,7 @@ void SpotHubDialog::setSourceHost(SpotSourceHost* host)
             : source == SpotSourceHost::kPota                 ? m_potaStatusLabel
             : source == SpotSourceHost::kPskReporter          ? m_pskStatusLabel
             : source == SpotSourceHost::kFreedvReporter       ? m_freedvStatusLabel
+            : source == SpotSourceHost::kRoundtable           ? m_rtStatusLabel
                                                               : nullptr;
         if (label != nullptr && !reason.isEmpty()) {
             label->setText(reason);
@@ -3379,6 +3409,11 @@ void SpotHubDialog::refreshStationSource(const QString& source)
 {
     if (source == SpotSourceHost::kFreedvReporter) {
         syncFreedvHidden();
+    }
+    if (source == SpotSourceHost::kRoundtable) {
+        // The Roundtable tab reads the model; the host adds why it is off.
+        refreshRoundtable();
+        return;
     }
     if (!stationRemote()) {
         return;
@@ -3649,5 +3684,820 @@ void SpotHubDialog::buildSpotListMenu(int viewRow, QMenu& menu)
         QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.qrz.com/db/") + call));
     });
 }
+
+// ---------------------------------------------------------------------------
+// Roundtable tab (Roundtable plan Task 12; design 11.2 Spot Hub tab and
+// docs/architecture/reporter-brainstorm/mockups/settings.html). NereusSDR-
+// original. Laid out like the FreeDV tab. Everything but the last group is
+// the Core's, written through RoundtableModel, so every device shows the
+// same; "This computer" is this computer's own.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// This computer's two choices (OperatorLocal in SettingsScope).
+constexpr const char* kRtEarlierTurnsKey = "Roundtable/EarlierTurnsShown";
+constexpr const char* kRtPanelOpensOnKey = "Roundtable/PanelOpensOn";
+constexpr const char* kRtPublicPage = "https://roundtable.nereussdr.com/";
+constexpr const char* kRtServerHost = "roundtable.nereussdr.com";
+
+constexpr const char* kRtHelpStyle = "QLabel { color: #8aa8c0; font-size: 12px; }";
+constexpr const char* kRtScopeStyle = "QLabel { color: #8aa8c0; font-size: 11px; }";
+constexpr const char* kRtNoticeStyle = "QLabel { color: #e6c200; font-size: 12px; }";
+QString rtDangerBtnStyle()
+{
+    return QStringLiteral(
+               "QPushButton { background: #3f2224; color: #f0dcdc; border: 1px solid #a86b6d;"
+               "  padding: 4px 12px; border-radius: 3px; }"
+               "QPushButton:hover { background: %1; }"
+               "QPushButton:disabled { background: #404060; color: #808080; }")
+        .arg(WorkspacePreview::roleColourName("#4d2a2c", "danger-bg"));
+}
+
+// The quiet Roundtable labels (server, archive, status).
+QString rtQuietLabelStyle(const QString& extra = QString())
+{
+    return QStringLiteral("QLabel { color: %1; %2}")
+        .arg(WorkspacePreview::roleColourName("#a0a8b0", "text-secondary"), extra);
+}
+constexpr const char* kRtPlainBtnStyle =
+    "QPushButton { background: #1a1a2e; color: #c8d8e8; border: 1px solid #203040;"
+    "  padding: 4px 12px; border-radius: 3px; }"
+    "QPushButton:hover { border-color: #c8d8e8; }"
+    "QPushButton:disabled { color: #808080; }";
+
+QString rtDot(const char* legacy, const char* role)
+{
+    return QStringLiteral("<span style='color:%1;'>&#9679;</span>&nbsp;")
+        .arg(WorkspacePreview::statusColourName(legacy, role));
+}
+
+// "7.185" for 7185000 Hz: the room's frequency as the board writes it.
+QString rtRoomMhz(qint64 hz)
+{
+    return QString::number(static_cast<double>(hz) / 1.0e6, 'f', 3);
+}
+
+int rtIndexOfData(const QComboBox* combo, const QString& value)
+{
+    const int index = combo->findData(value);
+    return index >= 0 ? index : 0;
+}
+
+} // namespace
+
+void SpotHubDialog::buildRoundtableTab(QTabWidget* tabs)
+{
+    m_rtPage = new QWidget;
+    m_rtPage->setObjectName(QStringLiteral("roundtableTab"));
+    auto* layout = new QVBoxLayout(m_rtPage);
+    layout->setSpacing(8);
+
+    // The FreeDV tab's identity row: Roundtable does not connect without a
+    // callsign (design 9.1), and says where to set one.
+    m_rtIdentityLabel = new QLabel;
+    m_rtIdentityLabel->setObjectName(QStringLiteral("roundtableIdentityLabel"));
+    m_rtIdentityLabel->setTextFormat(Qt::RichText);
+    m_rtIdentityLabel->setWordWrap(true);
+    layout->addWidget(m_rtIdentityLabel);
+
+    // ── Roundtable: the server, Auto-Start, the state, Start ──────────
+    auto* serverGroup = new QGroupBox(QStringLiteral("Roundtable"));
+    serverGroup->setObjectName(QStringLiteral("roundtableServerGroup"));
+    auto* serverLayout = new QVBoxLayout(serverGroup);
+    serverLayout->setSpacing(4);
+
+    auto* serverRow = new QHBoxLayout;
+    serverRow->addWidget(new QLabel(QStringLiteral("Server:")));
+    auto* serverLabel = new QLabel(QLatin1String(kRtServerHost));
+    serverLabel->setObjectName(QStringLiteral("roundtableServerLabel"));
+    serverLabel->setStyleSheet(rtQuietLabelStyle());
+    serverRow->addWidget(serverLabel);
+    serverRow->addStretch();
+    m_rtPublicPageBtn = new QPushButton(QStringLiteral("Open public page"));
+    m_rtPublicPageBtn->setObjectName(QStringLiteral("roundtablePublicPageBtn"));
+    m_rtPublicPageBtn->setStyleSheet(kRtPlainBtnStyle);
+    connect(m_rtPublicPageBtn, &QPushButton::clicked, this, [this] {
+        const QUrl url(QString::fromLatin1(kRtPublicPage));
+        if (m_rtUrlOpener) {
+            m_rtUrlOpener(url);
+        } else {
+            QDesktopServices::openUrl(url);
+        }
+    });
+    serverRow->addWidget(m_rtPublicPageBtn);
+    serverLayout->addLayout(serverRow);
+
+    auto* btnRow = new QHBoxLayout;
+    m_rtAutoStartBtn = new QPushButton;
+    m_rtAutoStartBtn->setObjectName(QStringLiteral("roundtableAutoStartBtn"));
+    m_rtAutoStartBtn->setCheckable(true);
+    m_rtAutoStartBtn->setStyleSheet(kAutoToggleStyle);
+    connect(m_rtAutoStartBtn, &QPushButton::toggled, this, [this](bool on) {
+        m_rtAutoStartBtn->setText(on ? QStringLiteral("Auto-Start: ON")
+                                     : QStringLiteral("Auto-Start: OFF"));
+        if (m_roundtable) {
+            m_roundtable->setStationSetting(QStringLiteral("AutoStart"),
+                                            on ? QStringLiteral("True") : QStringLiteral("False"));
+        }
+    });
+    btnRow->addWidget(m_rtAutoStartBtn);
+    btnRow->addStretch();
+    m_rtStatusLabel = new QLabel;
+    m_rtStatusLabel->setObjectName(QStringLiteral("roundtableStatusLabel"));
+    m_rtStatusLabel->setTextFormat(Qt::RichText);
+    m_rtStatusLabel->setWordWrap(true);
+    btnRow->addWidget(m_rtStatusLabel, 1);
+    btnRow->addStretch();
+    m_rtStartBtn = new QPushButton(QStringLiteral("Start"));
+    m_rtStartBtn->setObjectName(QStringLiteral("roundtableStartBtn"));
+    m_rtStartBtn->setFixedWidth(100);
+    m_rtStartBtn->setStyleSheet(kStartBtnStyle);
+    connect(m_rtStartBtn, &QPushButton::clicked, this, [this] {
+        if (m_roundtable && m_roundtable->linkState() != RoundtableModel::LinkState::Off) {
+            emit roundtableStopRequested();
+        } else {
+            emit roundtableStartRequested();
+        }
+    });
+    btnRow->addWidget(m_rtStartBtn);
+    serverLayout->addLayout(btnRow);
+
+    auto* serverScope = new QLabel(QStringLiteral(
+        "Runs on the Core with your radio, so readings keep going when no screen is open."));
+    serverScope->setObjectName(QStringLiteral("roundtableServerScope"));
+    serverScope->setWordWrap(true);
+    serverScope->setStyleSheet(kRtScopeStyle);
+    serverLayout->addWidget(serverScope);
+    layout->addWidget(serverGroup);
+
+    // ── Your station ──────────────────────────────────────────────────
+    auto* stationGroup = new QGroupBox(QStringLiteral("Your station"));
+    stationGroup->setObjectName(QStringLiteral("roundtableStationGroup"));
+    auto* stationLayout = new QVBoxLayout(stationGroup);
+    stationLayout->setSpacing(4);
+
+    m_rtHideChk = new QCheckBox(QStringLiteral("Hide my station from Roundtable"));
+    m_rtHideChk->setObjectName(QStringLiteral("roundtableHideChk"));
+    connect(m_rtHideChk, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_roundtable) {
+            m_rtStationNotice->hide();
+            m_roundtable->setHidden(on);
+        }
+        // The Core's answer comes back through linkChanged; until then the
+        // box shows what was asked.
+    });
+    stationLayout->addWidget(m_rtHideChk);
+    auto* hideHelp = new QLabel(QStringLiteral(
+        "While hidden, nothing about you leaves the Core: no callsign, no readings, no "
+        "messages. You can still read every room, but you can't post or name a turn, and "
+        "your archive records nothing."));
+    hideHelp->setObjectName(QStringLiteral("roundtableHideHelp"));
+    hideHelp->setWordWrap(true);
+    hideHelp->setStyleSheet(kRtHelpStyle);
+    hideHelp->setContentsMargins(22, 0, 0, 0);
+    stationLayout->addWidget(hideHelp);
+
+    auto* preview = new QFrame;
+    preview->setObjectName(QStringLiteral("roundtablePreview"));
+    preview->setStyleSheet(QStringLiteral(
+        "QFrame#roundtablePreview { background: #0a0a14; border: 1px solid #203040;"
+        "  border-radius: 3px; }"));
+    auto* previewLayout = new QVBoxLayout(preview);
+    previewLayout->setContentsMargins(8, 6, 8, 6);
+    previewLayout->setSpacing(3);
+    m_rtPreviewCaption = new QLabel;
+    m_rtPreviewCaption->setObjectName(QStringLiteral("roundtablePreviewCaption"));
+    m_rtPreviewCaption->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8aa8c0; font-size: 11px; font-weight: bold; letter-spacing: 1px; }"));
+    previewLayout->addWidget(m_rtPreviewCaption);
+    m_rtPreview = new QLabel;
+    m_rtPreview->setObjectName(QStringLiteral("roundtablePreviewText"));
+    m_rtPreview->setTextFormat(Qt::RichText);
+    m_rtPreview->setWordWrap(true);
+    m_rtPreview->setStyleSheet(QStringLiteral("QLabel { color: #c8d8e8; font-size: 12px; }"));
+    previewLayout->addWidget(m_rtPreview);
+    auto* previewIndent = new QHBoxLayout;
+    previewIndent->setContentsMargins(22, 0, 0, 0);
+    previewIndent->addWidget(preview);
+    stationLayout->addLayout(previewIndent);
+
+    m_rtStationNotice = new QLabel;
+    m_rtStationNotice->setObjectName(QStringLiteral("roundtableStationNotice"));
+    m_rtStationNotice->setWordWrap(true);
+    m_rtStationNotice->setStyleSheet(kRtNoticeStyle);
+    m_rtStationNotice->hide();
+    stationLayout->addWidget(m_rtStationNotice);
+
+    auto* awayRow = new QHBoxLayout;
+    awayRow->setContentsMargins(0, 6, 0, 0);
+    awayRow->addWidget(new QLabel(QStringLiteral("When nobody is at the radio:")));
+    m_rtAwayCombo = new QComboBox;
+    m_rtAwayCombo->setObjectName(QStringLiteral("roundtableAwayCombo"));
+    m_rtAwayCombo->addItem(QStringLiteral("Keep reporting, marked AWAY"), QStringLiteral("Report"));
+    m_rtAwayCombo->addItem(QStringLiteral("Stop reporting"), QStringLiteral("Stop"));
+    connect(m_rtAwayCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        if (m_roundtable) {
+            m_roundtable->setStationSetting(QStringLiteral("AwayChoice"),
+                                            m_rtAwayCombo->currentData().toString());
+        }
+    });
+    awayRow->addWidget(m_rtAwayCombo);
+    awayRow->addStretch();
+    stationLayout->addLayout(awayRow);
+
+    m_rtHighlightChk = new QCheckBox(QStringLiteral("Highlight messages that name my callsign"));
+    m_rtHighlightChk->setObjectName(QStringLiteral("roundtableHighlightChk"));
+    connect(m_rtHighlightChk, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_roundtable) {
+            m_roundtable->setStationSetting(QStringLiteral("HighlightMentions"),
+                                            on ? QStringLiteral("True") : QStringLiteral("False"));
+        }
+    });
+    stationLayout->addWidget(m_rtHighlightChk);
+    auto* highlightHelp = new QLabel(QStringLiteral(
+        "The Roundtable line on the VFO flag shows a count until you read them."));
+    highlightHelp->setWordWrap(true);
+    highlightHelp->setStyleSheet(kRtHelpStyle);
+    highlightHelp->setContentsMargins(22, 0, 0, 0);
+    stationLayout->addWidget(highlightHelp);
+
+    auto* overrideGrid = new QGridLayout;
+    overrideGrid->setContentsMargins(0, 6, 0, 0);
+    overrideGrid->setColumnStretch(1, 1);
+    overrideGrid->addWidget(new QLabel(QStringLiteral("Callsign on Roundtable:")), 0, 0);
+    m_rtCallEdit = new QLineEdit;
+    m_rtCallEdit->setObjectName(QStringLiteral("roundtableCallEdit"));
+    m_rtCallEdit->setStyleSheet(kLineEditStyle);
+    m_rtCallEdit->setMaxLength(12);
+    overrideGrid->addWidget(m_rtCallEdit, 0, 1);
+    overrideGrid->addWidget(new QLabel(QStringLiteral("Grid on Roundtable:")), 1, 0);
+    m_rtGridEdit = new QLineEdit;
+    m_rtGridEdit->setObjectName(QStringLiteral("roundtableGridEdit"));
+    m_rtGridEdit->setStyleSheet(kLineEditStyle);
+    m_rtGridEdit->setMaxLength(6);
+    overrideGrid->addWidget(m_rtGridEdit, 1, 1);
+    stationLayout->addLayout(overrideGrid);
+    connect(m_rtCallEdit, &QLineEdit::editingFinished, this,
+            [this] { applyRoundtableOverride(m_rtCallEdit, QStringLiteral("Callsign")); });
+    connect(m_rtGridEdit, &QLineEdit::editingFinished, this,
+            [this] { applyRoundtableOverride(m_rtGridEdit, QStringLiteral("GridSquare")); });
+    auto* overrideHelp = new QLabel(QStringLiteral(
+        "Leave empty to use the callsign and grid from the Settings tab."));
+    overrideHelp->setWordWrap(true);
+    overrideHelp->setStyleSheet(kRtHelpStyle);
+    stationLayout->addWidget(overrideHelp);
+
+    auto* stationScope = new QLabel(QStringLiteral("Set on the Core. Your phone shows the same."));
+    stationScope->setObjectName(QStringLiteral("roundtableStationScope"));
+    stationScope->setStyleSheet(kRtScopeStyle);
+    stationLayout->addWidget(stationScope);
+    layout->addWidget(stationGroup);
+
+    // ── Muted Stations ────────────────────────────────────────────────
+    auto* muteGroup = new QGroupBox(QStringLiteral("Muted Stations"));
+    muteGroup->setObjectName(QStringLiteral("roundtableMuteGroup"));
+    auto* muteLayout = new QVBoxLayout(muteGroup);
+    muteLayout->setSpacing(4);
+    auto* muteHelp = new QLabel(QStringLiteral(
+        "Their messages are hidden for you. Their readings still show."));
+    muteHelp->setWordWrap(true);
+    muteHelp->setStyleSheet(kRtHelpStyle);
+    muteLayout->addWidget(muteHelp);
+    m_rtMuteList = new QWidget;
+    m_rtMuteList->setObjectName(QStringLiteral("roundtableMuteList"));
+    m_rtMuteLayout = new QVBoxLayout(m_rtMuteList);
+    m_rtMuteLayout->setContentsMargins(0, 0, 0, 0);
+    m_rtMuteLayout->setSpacing(2);
+    muteLayout->addWidget(m_rtMuteList);
+    m_rtMuteNotice = new QLabel;
+    m_rtMuteNotice->setObjectName(QStringLiteral("roundtableMuteNotice"));
+    m_rtMuteNotice->setWordWrap(true);
+    m_rtMuteNotice->setStyleSheet(kRtNoticeStyle);
+    m_rtMuteNotice->hide();
+    muteLayout->addWidget(m_rtMuteNotice);
+    layout->addWidget(muteGroup);
+
+    // ── Your Archive ──────────────────────────────────────────────────
+    auto* archiveGroup = new QGroupBox(QStringLiteral("Your Archive"));
+    archiveGroup->setObjectName(QStringLiteral("roundtableArchiveGroup"));
+    auto* archiveLayout = new QVBoxLayout(archiveGroup);
+    archiveLayout->setSpacing(4);
+    auto* archiveText = new QLabel(QStringLiteral(
+        "Who heard you, session by session, private to you. Sessions and readings are kept "
+        "for good; message text for one year."));
+    archiveText->setWordWrap(true);
+    archiveText->setStyleSheet(rtQuietLabelStyle());
+    archiveLayout->addWidget(archiveText);
+    auto* archiveRow = new QHBoxLayout;
+    m_rtArchiveBtn = new QPushButton(QStringLiteral("Open Archive"));
+    m_rtArchiveBtn->setObjectName(QStringLiteral("roundtableArchiveBtn"));
+    m_rtArchiveBtn->setStyleSheet(kRtPlainBtnStyle);
+    connect(m_rtArchiveBtn, &QPushButton::clicked, this, [this] {
+        if (!m_roundtable) {
+            return;
+        }
+        m_rtWebLinkPending = true;
+        m_rtArchiveNotice->setText(QStringLiteral("Asking the Core for a sign-in link."));
+        m_rtArchiveNotice->setStyleSheet(kRtHelpStyle);
+        m_rtArchiveNotice->show();
+        m_roundtable->requestWebLink();
+    });
+    archiveRow->addWidget(m_rtArchiveBtn);
+    archiveRow->addStretch();
+    m_rtDeleteBtn = new QPushButton(QStringLiteral("Delete My Archive…"));
+    m_rtDeleteBtn->setObjectName(QStringLiteral("roundtableDeleteBtn"));
+    m_rtDeleteBtn->setStyleSheet(rtDangerBtnStyle());
+    connect(m_rtDeleteBtn, &QPushButton::clicked, this, [this] {
+        m_rtArchiveNotice->hide();
+        m_rtDeleteConfirm->show();
+    });
+    archiveRow->addWidget(m_rtDeleteBtn);
+    archiveLayout->addLayout(archiveRow);
+
+    m_rtDeleteConfirm = new QFrame;
+    m_rtDeleteConfirm->setObjectName(QStringLiteral("roundtableDeleteConfirm"));
+    m_rtDeleteConfirm->setStyleSheet(QStringLiteral(
+        "QFrame#roundtableDeleteConfirm { background: %1; border: 1px solid #a86b6d;"
+        "  border-radius: 3px; }"
+        "QFrame#roundtableDeleteConfirm QLabel { color: #f0dcdc; }")
+        .arg(WorkspacePreview::roleColourName("#1e1012", "badge-tx-bg")));
+    auto* confirmLayout = new QVBoxLayout(m_rtDeleteConfirm);
+    confirmLayout->setContentsMargins(10, 8, 10, 8);
+    auto* confirmText = new QLabel(QStringLiteral(
+        "<b>Delete your whole archive?</b> Every session and reading of you is removed from "
+        "the server, and your past messages show as \"Message removed\". This can't be "
+        "undone. Backup copies age out within 7 days. New sessions start recording again "
+        "unless you also hide your station."));
+    confirmText->setObjectName(QStringLiteral("roundtableDeleteConfirmText"));
+    confirmText->setTextFormat(Qt::RichText);
+    confirmText->setWordWrap(true);
+    confirmLayout->addWidget(confirmText);
+    auto* confirmRow = new QHBoxLayout;
+    auto* deleteAll = new QPushButton(QStringLiteral("Delete Everything"));
+    deleteAll->setObjectName(QStringLiteral("roundtableDeleteEverythingBtn"));
+    deleteAll->setStyleSheet(rtDangerBtnStyle());
+    connect(deleteAll, &QPushButton::clicked, this, [this] {
+        m_rtDeleteConfirm->hide();
+        if (!m_roundtable) {
+            return;
+        }
+        m_rtArchiveNotice->setText(QStringLiteral("Asked the server to delete your archive."));
+        m_rtArchiveNotice->setStyleSheet(kRtHelpStyle);
+        m_rtArchiveNotice->show();
+        m_roundtable->deleteArchive(QLatin1String(RoundtableWire::kDeleteArchiveWords));
+    });
+    confirmRow->addWidget(deleteAll);
+    auto* cancel = new QPushButton(QStringLiteral("Cancel"));
+    cancel->setObjectName(QStringLiteral("roundtableDeleteCancelBtn"));
+    cancel->setStyleSheet(kRtPlainBtnStyle);
+    connect(cancel, &QPushButton::clicked, m_rtDeleteConfirm, &QWidget::hide);
+    confirmRow->addWidget(cancel);
+    confirmRow->addStretch();
+    confirmLayout->addLayout(confirmRow);
+    m_rtDeleteConfirm->hide();
+    archiveLayout->addWidget(m_rtDeleteConfirm);
+
+    m_rtArchiveNotice = new QLabel;
+    m_rtArchiveNotice->setObjectName(QStringLiteral("roundtableArchiveNotice"));
+    m_rtArchiveNotice->setWordWrap(true);
+    m_rtArchiveNotice->hide();
+    archiveLayout->addWidget(m_rtArchiveNotice);
+    layout->addWidget(archiveGroup);
+
+    // ── This computer ─────────────────────────────────────────────────
+    auto* localGroup = new QGroupBox(QStringLiteral("This computer"));
+    localGroup->setObjectName(QStringLiteral("roundtableLocalGroup"));
+    auto* localLayout = new QGridLayout(localGroup);
+    localLayout->setColumnStretch(2, 1);
+    localLayout->addWidget(new QLabel(QStringLiteral("Earlier turns shown:")), 0, 0);
+    m_rtEarlierCombo = new QComboBox;
+    m_rtEarlierCombo->setObjectName(QStringLiteral("roundtableEarlierTurnsCombo"));
+    m_rtEarlierCombo->addItem(QStringLiteral("All from the last 30 minutes"), QStringLiteral("All"));
+    m_rtEarlierCombo->addItem(QStringLiteral("The last 20"), QStringLiteral("20"));
+    m_rtEarlierCombo->addItem(QStringLiteral("The last 10"), QStringLiteral("10"));
+    m_rtEarlierCombo->addItem(QStringLiteral("The last 5"), QStringLiteral("5"));
+    localLayout->addWidget(m_rtEarlierCombo, 0, 1);
+    localLayout->addWidget(new QLabel(QStringLiteral("The panel opens on:")), 1, 0);
+    m_rtOpensOnCombo = new QComboBox;
+    m_rtOpensOnCombo->setObjectName(QStringLiteral("roundtablePanelOpensOnCombo"));
+    m_rtOpensOnCombo->addItem(QStringLiteral("Readings"), QStringLiteral("Readings"));
+    m_rtOpensOnCombo->addItem(QStringLiteral("Messages"), QStringLiteral("Messages"));
+    localLayout->addWidget(m_rtOpensOnCombo, 1, 1);
+    auto* localScope = new QLabel(QStringLiteral("This computer only."));
+    localScope->setStyleSheet(kRtScopeStyle);
+    localLayout->addWidget(localScope, 2, 0, 1, 3);
+    {
+        auto& settings = AppSettings::instance();
+        m_rtEarlierCombo->setCurrentIndex(rtIndexOfData(
+            m_rtEarlierCombo,
+            settings.value(QLatin1String(kRtEarlierTurnsKey), QStringLiteral("All")).toString()));
+        m_rtOpensOnCombo->setCurrentIndex(rtIndexOfData(
+            m_rtOpensOnCombo,
+            settings.value(QLatin1String(kRtPanelOpensOnKey), QStringLiteral("Readings"))
+                .toString()));
+    }
+    connect(m_rtEarlierCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        auto& settings = AppSettings::instance();
+        settings.setValue(QLatin1String(kRtEarlierTurnsKey), m_rtEarlierCombo->currentData());
+        settings.save();
+    });
+    connect(m_rtOpensOnCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        auto& settings = AppSettings::instance();
+        settings.setValue(QLatin1String(kRtPanelOpensOnKey), m_rtOpensOnCombo->currentData());
+        settings.save();
+    });
+    layout->addWidget(localGroup);
+    layout->addStretch();
+
+    // The tab scrolls: it is taller than the dialog's other tabs.
+    auto* scroll = new QScrollArea;
+    scroll->setObjectName(QStringLiteral("roundtableScroll"));
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidget(m_rtPage);
+    tabs->addTab(scroll, QStringLiteral("Roundtable"));
+
+    connect(m_roundtable, &RoundtableModel::linkChanged, this, &SpotHubDialog::refreshRoundtable);
+    connect(m_roundtable, &RoundtableModel::firstRunChanged, this,
+            &SpotHubDialog::refreshRoundtable);
+    connect(m_roundtable, &RoundtableModel::roomsChanged, this, &SpotHubDialog::refreshRoundtable);
+    connect(m_roundtable, &RoundtableModel::sliceRoomsChanged, this,
+            &SpotHubDialog::refreshRoundtable);
+    connect(m_roundtable, &RoundtableModel::settingChanged, this, [this](const QString& key) {
+        if (key.isEmpty() || key.compare(QLatin1String("Roundtable/MuteList"),
+                                         Qt::CaseInsensitive) == 0) {
+            refreshRoundtableMutes();
+        }
+        refreshRoundtableSettings();
+        refreshRoundtable();
+    });
+    connect(m_roundtable, &RoundtableModel::actionRefused, this,
+            &SpotHubDialog::onRoundtableRefused);
+    connect(m_roundtable, &RoundtableModel::webLinkReady, this, [this](const QUrl& url) {
+        if (!m_rtWebLinkPending) {
+            return;
+        }
+        m_rtWebLinkPending = false;
+        m_rtArchiveNotice->hide();
+        if (m_rtUrlOpener) {
+            m_rtUrlOpener(url);
+        } else {
+            QDesktopServices::openUrl(url);
+        }
+    });
+    connect(tabs, &QTabWidget::currentChanged, this, [this, scroll](int index) {
+        if (m_tabs != nullptr && m_tabs->widget(index) == scroll) {
+            noteRoundtableOpened();
+        }
+    });
+
+    refreshRoundtableSettings();
+    refreshRoundtableMutes();
+    refreshRoundtable();
+    applyRoundtableAvailability();
+}
+
+void SpotHubDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+    if (m_tabs != nullptr && m_rtPage != nullptr
+        && m_tabs->currentWidget() != nullptr
+        && m_tabs->currentWidget()->isAncestorOf(m_rtPage)) {
+        noteRoundtableOpened();
+    }
+}
+
+void SpotHubDialog::noteRoundtableOpened()
+{
+    if (m_roundtable) {
+        emit roundtableOpened();
+    }
+}
+
+void SpotHubDialog::setRoundtableUrlOpener(std::function<bool(const QUrl&)> opener)
+{
+    m_rtUrlOpener = std::move(opener);
+}
+
+void SpotHubDialog::setStationRoundtableAvailable(bool available, const QString& reason)
+{
+    m_stationRoundtableAvailable = available;
+    m_stationRoundtableReason = reason;
+    applyRoundtableAvailability();
+    refreshRoundtable();
+}
+
+void SpotHubDialog::applyRoundtableAvailability()
+{
+    if (m_rtPage == nullptr) {
+        return;
+    }
+    const auto gate = [](QWidget* w, bool enabled, const QString& reason) {
+        if (w == nullptr) {
+            return;
+        }
+        if (!w->property("nereusBaseToolTip").isValid()) {
+            w->setProperty("nereusBaseToolTip", w->toolTip());
+        }
+        w->setEnabled(enabled);
+        w->setToolTip(enabled ? w->property("nereusBaseToolTip").toString() : reason);
+    };
+    // The Core's settings: a window needs the Core's settings, and a Core
+    // that runs Roundtable.
+    const bool settings = m_stationSettingsAvailable && m_stationRoundtableAvailable;
+    const QString settingsWhy = !m_stationRoundtableAvailable ? m_stationRoundtableReason
+                                                               : m_stationSettingsReason;
+    for (QWidget* w : std::initializer_list<QWidget*>{m_rtAutoStartBtn, m_rtAwayCombo,
+                                                      m_rtHighlightChk, m_rtCallEdit,
+                                                      m_rtGridEdit}) {
+        gate(w, settings, settingsWhy);
+    }
+    // The actions: a Roundtable to ask.
+    const bool actions = m_stationRoundtableAvailable && m_stationSourcesAvailable;
+    const QString actionsWhy = !m_stationRoundtableAvailable ? m_stationRoundtableReason
+                                                              : m_stationSourcesReason;
+    for (QWidget* w : std::initializer_list<QWidget*>{m_rtStartBtn, m_rtHideChk, m_rtArchiveBtn,
+                                                      m_rtDeleteBtn}) {
+        gate(w, actions, actionsWhy);
+    }
+    for (QPushButton* b : m_rtMuteList->findChildren<QPushButton*>()) {
+        gate(b, actions, actionsWhy);
+    }
+    if (!actions) {
+        m_rtDeleteConfirm->hide();
+    }
+}
+
+void SpotHubDialog::refreshRoundtableSettings()
+{
+    if (m_rtPage == nullptr || !m_roundtable) {
+        return;
+    }
+    const bool autoStart =
+        m_roundtable->stationSetting(QStringLiteral("AutoStart")) == QLatin1String("True");
+    {
+        const QSignalBlocker block(m_rtAutoStartBtn);
+        m_rtAutoStartBtn->setChecked(autoStart);
+        m_rtAutoStartBtn->setText(autoStart ? QStringLiteral("Auto-Start: ON")
+                                            : QStringLiteral("Auto-Start: OFF"));
+    }
+    {
+        const QSignalBlocker block(m_rtAwayCombo);
+        m_rtAwayCombo->setCurrentIndex(rtIndexOfData(
+            m_rtAwayCombo, m_roundtable->stationSetting(QStringLiteral("AwayChoice"))));
+    }
+    {
+        const QSignalBlocker block(m_rtHighlightChk);
+        m_rtHighlightChk->setChecked(
+            m_roundtable->stationSetting(QStringLiteral("HighlightMentions"))
+            != QLatin1String("False"));
+    }
+    // An edit being typed in keeps its text; the Core's value lands when
+    // the operator leaves it.
+    const auto syncEdit = [](QLineEdit* edit, const QString& value) {
+        if (edit->hasFocus() && edit->isModified()) {
+            return;
+        }
+        const QSignalBlocker block(edit);
+        edit->setText(value);
+        edit->setModified(false);
+    };
+    syncEdit(m_rtCallEdit, m_roundtable->stationSetting(QStringLiteral("Callsign")));
+    syncEdit(m_rtGridEdit, m_roundtable->stationSetting(QStringLiteral("GridSquare")));
+    m_rtCallEdit->setPlaceholderText(SpotSourceHost::roundtableCallsign().isEmpty()
+        ? QStringLiteral("Your callsign")
+        : QStringLiteral("Using %1").arg(SpotSourceHost::roundtableCallsign().toUpper()));
+    const QString grid = AppSettings::instance().value(QStringLiteral("User/GridSquare"))
+                             .toString().trimmed();
+    m_rtGridEdit->setPlaceholderText(grid.isEmpty() ? QStringLiteral("Your grid")
+                                                    : QStringLiteral("Using %1").arg(grid));
+}
+
+void SpotHubDialog::applyRoundtableOverride(QLineEdit* edit, const QString& name)
+{
+    if (!m_roundtable || !edit->isEnabled()) {
+        return;
+    }
+    const bool callsign = name == QLatin1String("Callsign");
+    QString value = edit->text().trimmed();
+    if (callsign) {
+        value = value.toUpper();
+    }
+    if (!value.isEmpty()) {
+        const bool valid = callsign ? RoundtableWire::isCallsign(value)
+                                    : RoundtableWire::isGrid(value);
+        if (!valid) {
+            m_rtStationNotice->setText(callsign
+                ? QStringLiteral("%1 is not a callsign. Roundtable keeps using %2.")
+                      .arg(value, m_roundtable->stationSetting(name).isEmpty()
+                                      ? QStringLiteral("the Settings tab's")
+                                      : m_roundtable->stationSetting(name))
+                : QStringLiteral("A grid is 4 or 6 characters, like EM73 or EM73xy."));
+            m_rtStationNotice->show();
+            return;
+        }
+    }
+    m_rtStationNotice->hide();
+    edit->setModified(false);
+    if (value == m_roundtable->stationSetting(name)) {
+        return;
+    }
+    m_roundtable->setStationSetting(name, value);
+}
+
+void SpotHubDialog::refreshRoundtableMutes()
+{
+    if (m_rtPage == nullptr || !m_roundtable) {
+        return;
+    }
+    // Drop the rows (out of the tree at once, deleted later).
+    for (QWidget* row : m_rtMuteList->findChildren<QWidget*>(QString(),
+                                                             Qt::FindDirectChildrenOnly)) {
+        m_rtMuteLayout->removeWidget(row);
+        row->hide();
+        row->setParent(nullptr);
+        row->deleteLater();
+    }
+    const QStringList muted = m_roundtable->muteList();
+    if (muted.isEmpty()) {
+        auto* empty = new QLabel(QStringLiteral("Nobody muted. Mute from any message's ⋯ menu."));
+        empty->setObjectName(QStringLiteral("roundtableMuteEmpty"));
+        empty->setStyleSheet(kRtHelpStyle);
+        m_rtMuteLayout->addWidget(empty);
+    }
+    for (const QString& call : muted) {
+        auto* row = new QWidget;
+        row->setObjectName(QStringLiteral("roundtableMuteRow"));
+        auto* rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(4, 2, 4, 2);
+        auto* label = new QLabel(call);
+        label->setObjectName(QStringLiteral("roundtableMuteCall"));
+        label->setStyleSheet(QStringLiteral(
+            "QLabel { color: #c8d8e8; font-family: Menlo, monospace; font-weight: bold; }"));
+        rowLayout->addWidget(label);
+        rowLayout->addStretch();
+        auto* unmute = new QPushButton(QStringLiteral("Unmute"));
+        unmute->setObjectName(QStringLiteral("roundtableUnmute_") + call);
+        unmute->setAccessibleName(QStringLiteral("Unmute %1").arg(call));
+        unmute->setStyleSheet(kRtPlainBtnStyle);
+        connect(unmute, &QPushButton::clicked, this, [this, call] {
+            if (m_roundtable) {
+                m_rtMuteNotice->hide();
+                m_roundtable->unmute(call);
+            }
+        });
+        rowLayout->addWidget(unmute);
+        m_rtMuteLayout->addWidget(row);
+    }
+    applyRoundtableAvailability();
+}
+
+void SpotHubDialog::refreshRoundtable()
+{
+    if (m_rtPage == nullptr || !m_roundtable) {
+        return;
+    }
+    using LinkState = RoundtableModel::LinkState;
+    const QString call = SpotSourceHost::roundtableCallsign().toUpper();
+    const LinkState link = m_roundtable->linkState();
+    const bool hidden = m_roundtable->hidden();
+
+    // The identity row.
+    if (call.isEmpty()) {
+        m_rtIdentityLabel->setText(QStringLiteral(
+            "<b style='color:%1;'>No identity set.</b> Go to the <b>Settings</b> tab and fill "
+            "in your callsign and grid square before starting Roundtable.")
+            .arg(WorkspacePreview::roleColourName("#e6c200", "warn")));
+        m_rtIdentityLabel->show();
+    } else {
+        m_rtIdentityLabel->hide();
+    }
+
+    // The hide box shows what the Core holds.
+    {
+        const QSignalBlocker block(m_rtHideChk);
+        m_rtHideChk->setChecked(hidden);
+    }
+
+    // The rooms this station is in, and everyone on.
+    const QJsonArray rooms = m_roundtable->rooms();
+    qint64 stations = 0;
+    QHash<QString, QJsonObject> byId;
+    for (const QJsonValue& value : rooms) {
+        const QJsonObject room = value.toObject();
+        stations += room.value(QStringLiteral("members")).toInteger();
+        byId.insert(room.value(QStringLiteral("id")).toString(), room);
+    }
+
+    // The state line (settings.html: dot, then the words).
+    QString status;
+    if (!m_stationRoundtableAvailable) {
+        status = rtDot("#808080", "text-tertiary") + m_stationRoundtableReason.toHtmlEscaped();
+    } else {
+        switch (link) {
+        case LinkState::Live:
+            status = rtDot("#4caf50", "ok")
+                + (stations > 0
+                       ? QStringLiteral("Connected as %1 · %2 stations on")
+                             .arg(call.toHtmlEscaped(), QLocale(QLocale::English).toString(stations))
+                       : QStringLiteral("Connected as %1").arg(call.toHtmlEscaped()));
+            break;
+        case LinkState::Connecting:
+            status = rtDot("#e6c200", "warn") + QStringLiteral("Connecting to Roundtable");
+            break;
+        case LinkState::Reconnecting:
+            status = rtDot("#e6c200", "warn") + QStringLiteral("Lost Roundtable; trying again");
+            break;
+        case LinkState::Offline: {
+            const qint64 since = m_roundtable->linkSince();
+            status = rtDot("#e6c200", "warn")
+                + (since > 0
+                       ? QStringLiteral("Can't reach the server, trying again (offline since %1 UTC)")
+                             .arg(QDateTime::fromMSecsSinceEpoch(since, QTimeZone::UTC)
+                                      .toString(QStringLiteral("HH:mm")))
+                       : QStringLiteral("Can't reach the server, trying again"));
+            break;
+        }
+        case LinkState::Hidden:
+            status = rtDot("#808890", "text-tertiary")
+                + (!m_roundtable->firstRunAnswered()
+                       ? QStringLiteral("Reading only, until someone chooses Go live")
+                   : hidden ? QStringLiteral("Reading only, your station is hidden")
+                            : QStringLiteral("Reading only while nobody is at the radio"));
+            break;
+        case LinkState::Off:
+        default: {
+            const QString why = m_sourceHost ? m_sourceHost->text(SpotSourceHost::kRoundtable)
+                                             : QString();
+            status = why.isEmpty() ? rtDot("#58585e", "text-tertiary") + QStringLiteral("Stopped")
+                                   : rtDot("#e6c200", "warn") + why.toHtmlEscaped();
+            break;
+        }
+        }
+    }
+    m_rtStatusLabel->setText(status);
+    m_rtStatusLabel->setStyleSheet(link == LinkState::Live ? QString(kStatusActiveStyle)
+                                                           : rtQuietLabelStyle(QStringLiteral("font-size: 12px; ")));
+    m_rtStartBtn->setText(link == LinkState::Off ? QStringLiteral("Start")
+                                                 : QStringLiteral("Stop"));
+
+    // The preview: how others see you in the room your first slice is in.
+    QJsonObject room;
+    for (int slice = 0; slice < 4 && room.isEmpty(); ++slice) {
+        const QString id = m_roundtable->sliceRoomId(slice);
+        if (!id.isEmpty()) {
+            room = byId.value(id);
+        }
+    }
+    const qint64 hz = room.value(QStringLiteral("hz")).toInteger();
+    m_rtPreviewCaption->setText(hz > 0
+        ? QStringLiteral("HOW OTHERS SEE YOU RIGHT NOW IN THE %1 ROOM").arg(rtRoomMhz(hz))
+        : QStringLiteral("HOW OTHERS SEE YOU RIGHT NOW"));
+    const qint64 members = room.value(QStringLiteral("members")).toInteger();
+    if (link != LinkState::Live) {
+        m_rtPreview->setText(room.isEmpty()
+            ? QStringLiteral("<i>You don't appear on Roundtable.</i>")
+            : QStringLiteral("<i>You don't appear. The room shows %1 stations without you.</i>")
+                  .arg(members));
+    } else if (room.isEmpty()) {
+        m_rtPreview->setText(QStringLiteral(
+            "<span style='color:%1; font-family:Menlo,monospace; font-weight:bold;'>%2</span>"
+            " is on Roundtable. No room on your frequency right now.")
+            .arg(WorkspacePreview::roleColourName("#00b4d8", "accent"), call.toHtmlEscaped()));
+    } else {
+        m_rtPreview->setText(QStringLiteral(
+            "<span style='color:%1; font-family:Menlo,monospace; font-weight:bold;'>%2</span>"
+            " is listed in this room with %3 other stations, with your readings of each talker.")
+            .arg(WorkspacePreview::roleColourName("#00b4d8", "accent"), call.toHtmlEscaped())
+            .arg(qMax<qint64>(0, members - 1)));
+    }
+}
+
+void SpotHubDialog::onRoundtableRefused(const QString& verb, const QString& reason)
+{
+    if (m_rtPage == nullptr) {
+        return;
+    }
+    QLabel* notice = nullptr;
+    if (verb == QLatin1String("setHidden")) {
+        notice = m_rtStationNotice;
+        refreshRoundtable();  // the box goes back to what the Core holds
+    } else if (verb == QLatin1String("unmute")) {
+        notice = m_rtMuteNotice;
+    } else if (verb == QLatin1String("webSignIn") || verb == QLatin1String("deleteArchive")) {
+        notice = m_rtArchiveNotice;
+        if (verb == QLatin1String("webSignIn")) {
+            m_rtWebLinkPending = false;
+        }
+    }
+    if (notice == nullptr || reason.isEmpty()) {
+        return;
+    }
+    notice->setText(reason);
+    notice->setStyleSheet(kRtNoticeStyle);
+    notice->show();
+}
+
 
 } // namespace NereusSDR

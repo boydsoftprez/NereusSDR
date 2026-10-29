@@ -1,0 +1,55 @@
+# The daily job (design 6.2 and 6.4): every message posted more than 365
+# days ago loses its text, the text kept for a lapsed Undo goes, and one
+# journal line gives the database's size and the free disk, with a warning
+# under 20% free. Started at 04:00 UTC by nereus-roundtable-daily.timer.
+#
+# Installed as /etc/systemd/system/nereus-roundtable-daily.service by
+# roundtable/deploy/setup-server.sh. It runs as the same transient account
+# name as nereus-roundtable.service, with the same state directory, so it
+# opens the server's own database (SQLite's locking keeps the two apart).
+# Read it with:
+#   journalctl -u nereus-roundtable-daily
+
+[Unit]
+Description=NereusSDR Roundtable daily retention and disk check
+After=nereus-roundtable.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -m nereus_roundtable --config /etc/nereus-roundtable/roundtable.conf --daily
+Environment=PYTHONPATH=/opt/nereus-roundtable
+Environment=PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/
+DynamicUser=yes
+User=nereus-roundtable
+Group=nereus-roundtable
+StateDirectory=nereus-roundtable
+StateDirectoryMode=0700
+MemoryMax=256M
+MemorySwapMax=0
+OOMScoreAdjust=500
+# It sends and receives nothing.
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=

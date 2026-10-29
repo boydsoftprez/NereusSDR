@@ -23,6 +23,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - A copy of this row in a container is told the outer
 //                 margins the applet's column gives the row (outerMargins);
 //                 the applet's own row is told none.
@@ -220,6 +223,14 @@ m_monitorVolumeValue->setStyleSheet(QStringLiteral(
 volRow->addWidget(m_monitorVolumeValue);
 
 vbox->addLayout(volRow);
+
+// The parts a container copy hides and orders (SectionParts).
+m_parts.add(QStringLiteral("mon"), QStringLiteral("MON button"), 0, {m_monBtn});
+m_parts.add(QStringLiteral("speakers"), QStringLiteral("Speakers button"), 0, {m_monSpeakersBtn});
+m_parts.add(QStringLiteral("phones"), QStringLiteral("Phones button"), 0, {m_monHeadphonesBtn});
+m_parts.add(QStringLiteral("notice"), QStringLiteral("Silent-monitor notice"), -1, {m_monOutputNotice});
+m_parts.add(QStringLiteral("volume"), QStringLiteral("Monitor volume"), -1,
+            {volLbl, m_monitorVolumeSlider, m_monitorVolumeValue});
 }
 
 // R-R3-45: the MON output pair shows the choice; clicking the checked one
@@ -247,7 +258,8 @@ void TxMonitorSection::updateMonitorOutputNotice()
     const bool headphones = m_monHeadphonesBtn && m_monHeadphonesBtn->isChecked();
     m_monOutputNotice->setText(m_headphonesEnabled ? VfoWidget::headphonesNotOpenedText()
                                                    : VfoWidget::headphonesMissingText());
-    m_monOutputNotice->setVisible(headphones && !m_headphonesAvailable);
+    // Through the parts, so a copy that hides the notice keeps it hidden.
+    m_parts.setDynamicVisible(QStringLiteral("notice"), headphones && !m_headphonesAvailable);
 }
 
 void TxMonitorSection::setHeadphonesAvailable(bool available)

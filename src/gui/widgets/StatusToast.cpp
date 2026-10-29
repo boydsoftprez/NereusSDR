@@ -12,6 +12,8 @@
 //              itself, which paints it (paintEvent), as a translucent
 //              window skips its style sheet background. J.J. Boyd
 //              (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 A timeout of kUntilClosed starts no countdown. J.J. Boyd
+//              (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 //
 // no-port-check: NereusSDR-original
@@ -91,7 +93,7 @@ StatusToast::StatusToast(const QString& message,
 
     m_dismissTimer.setSingleShot(true);
     connect(&m_dismissTimer, &QTimer::timeout, this, &QWidget::close);
-    m_dismissTimer.start(timeoutMs);
+    refresh(timeoutMs);
 }
 
 StatusToast::~StatusToast() = default;
@@ -106,6 +108,10 @@ void StatusToast::paintEvent(QPaintEvent* /*event*/)
 
 void StatusToast::refresh(int timeoutMs)
 {
+    if (timeoutMs <= kUntilClosed) {
+        m_dismissTimer.stop();
+        return;
+    }
     m_dismissTimer.start(timeoutMs);
 }
 

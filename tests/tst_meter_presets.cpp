@@ -60,6 +60,12 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/ItemGroup.h"
 #include "gui/meters/MeterItem.h"
 #include "gui/meters/MeterPoller.h"  // MeterBinding
+#include "gui/meters/presets/BarPresetItem.h"
+#include "gui/containers/ContainerContentRegistry.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <memory>
 
 using namespace NereusSDR;
 
@@ -89,6 +95,40 @@ private:
             if (qobject_cast<T*>(mi)) { ++n; }
         }
         return n;
+    }
+
+    // Bar preset paint helpers: a 434x72 face, primary (Mic peak) at 6 dB,
+    // average (Mic) at -12 dB unless told otherwise, one advance. Markers are
+    // sampled at their smoothed value, at y = 48, clear of the tick labels.
+    static constexpr int kBarW = 434;
+    static constexpr int kBarH = 72;
+    static int barX(const BarPresetItem& face, double value)
+    {
+        return qRound(18 + (kBarW - 36) * face.calibratedPosition(value));
+    }
+    static QImage renderBar(BarPresetItem& face, double primary = 6, bool average = true)
+    {
+        face.pushBindingValue(MeterBinding::TxMicPeak, primary);
+        if (average) { face.pushBindingValue(MeterBinding::TxMic, -12); }
+        face.advanceMeter(0);
+        QImage image(kBarW, kBarH, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        face.paint(painter, kBarW, kBarH);
+        return image;
+    }
+    static QString oldMicRecord(const QJsonObject& extra = {})
+    {
+        // A record saved before the colour-set keys existed.
+        QJsonObject record{{"kind", "BarPreset"}, {"flavor", "Mic"}, {"x", 0}, {"y", 0}, {"w", 1}, {"h", 1},
+                           {"bindingId", MeterBinding::TxMicPeak}, {"secondaryBindingId", MeterBinding::TxMic},
+                           {"minValue", -30}, {"maxValue", 12}, {"label", "MIC"}, {"barColor", "#ffffff00"},
+                           {"backdropColor", "#ff202020"}, {"titleColor", "#ffa9a9a9"}, {"historyColor", "#80ff0000"},
+                           {"showHistory", true}, {"peakHold", false}, {"showValue", true}, {"showPeakValue", true},
+                           {"style", "Line"}, {"units", "dB"}, {"updateIntervalMs", 100}, {"historyMs", 2000},
+                           {"ignoreHistoryMs", 2000}, {"rowHeight", 72}};
+        for (auto it = extra.begin(); it != extra.end(); ++it) { record[it.key()] = it.value(); }
+        return QString::fromUtf8(QJsonDocument(record).toJson(QJsonDocument::Compact));
     }
 
 private slots:
@@ -394,6 +434,162 @@ private slots:
                  qPrintable(QStringLiteral("failed to save ") + outPath));
 
         delete g;
+    }
+
+    // ---- Bar presets: Thetis colour set, sub indicator, new-item defaults ----
+
+    void barPreset_new_keys_round_trip()
+    {
+        BarPresetItem face;
+        face.configureAsMic();
+        const QJsonObject edits{{"lowColor", "#ff0000ff"}, {"highColor", "#ff00ff00"}, {"showMarker", false},
+                                {"peakHoldColor", "#ff112233"}, {"segLowColor", "#ff445566"},
+                                {"segHighColor", "#ff778899"}, {"peakValueColor", "#ffaabbcc"},
+                                {"subColor", "#ffddeeff"}, {"showSub", false}, {"showTitle", false},
+                                {"backdropColor", "#ff102030"}};
+        QVERIFY(face.applyConfiguration(edits));
+        const QJsonObject config = face.configuration();
+        for (auto it = edits.begin(); it != edits.end(); ++it) { QCOMPARE(config.value(it.key()), it.value()); }
+        BarPresetItem copy;
+        QVERIFY(copy.deserialize(face.serialize()));
+        QCOMPARE(copy.configuration(), config);
+        // Blank restores today's colour for the optional colours.
+        QVERIFY(face.applyConfiguration({{"peakHoldColor", ""}, {"segLowColor", ""}}));
+        QCOMPARE(face.configuration().value("peakHoldColor").toString(), QString());
+        QCOMPARE(face.configuration().value("segLowColor").toString(), QString());
+        // Invalid values are rejected and leave the face as it was.
+        const QString before = face.serialize();
+        for (const QJsonObject& invalid : {QJsonObject{{"lowColor", "nope"}}, QJsonObject{{"subColor", ""}},
+                                           QJsonObject{{"segHighColor", "nope"}}, QJsonObject{{"showSub", 1}},
+                                           QJsonObject{{"showTitle", "yes"}}, QJsonObject{{"peakValueColor", 3}}}) {
+            QVERIFY(!face.applyConfiguration(invalid));
+            QCOMPARE(face.serialize(), before);
+        }
+    }
+
+    void barPreset_old_record_paints_as_before()
+    {
+        BarPresetItem old;
+        QVERIFY(old.deserialize(oldMicRecord()));
+        const QJsonObject config = old.configuration();
+        QCOMPARE(config.value("lowColor").toString(), QStringLiteral("#ffffffff"));
+        QCOMPARE(config.value("highColor").toString(), QStringLiteral("#ffff0000"));
+        QCOMPARE(config.value("subColor").toString(), QStringLiteral("#ffa9a9a9"));
+        QCOMPARE(config.value("segLowColor").toString(), QString());
+        QCOMPARE(config.value("segHighColor").toString(), QString());
+        QCOMPARE(config.value("peakHoldColor").toString(), QString());
+        QCOMPARE(config.value("peakValueColor").toString(), QString());
+        QVERIFY(config.value("showMarker").toBool());
+        QVERIFY(config.value("showSub").toBool());
+        QVERIFY(config.value("showTitle").toBool());
+        const QImage image = renderBar(old);
+        // The average marker stays (169,169,169); the scale stays white then red.
+        QCOMPARE(image.pixelColor(barX(old, old.averageValue()), 48), QColor(169, 169, 169));
+        QCOMPARE(image.pixelColor(30, 57), QColor(Qt::white));
+        QCOMPARE(image.pixelColor(380, 57), QColor(Qt::red));
+        QCOMPARE(image.pixelColor(barX(old, old.primaryValue()), 48), QColor(Qt::yellow));
+        // The record with the keys at today's values paints the same pixels.
+        BarPresetItem explicitDefaults;
+        QVERIFY(explicitDefaults.deserialize(oldMicRecord(config)));
+        QCOMPARE(renderBar(explicitDefaults), image);
+        // Solid fill without the keys keeps white below the threshold and red above.
+        BarPresetItem solid;
+        QVERIFY(solid.deserialize(oldMicRecord({{"style", "Solid"}, {"showHistory", false}})));
+        const QImage filled = renderBar(solid, 12, false);
+        QCOMPARE(filled.pixelColor(60, 40), QColor(Qt::white));
+        QCOMPARE(filled.pixelColor(300, 40), QColor(Qt::red));
+    }
+
+    void barPreset_sub_indicator_colour_and_show()
+    {
+        BarPresetItem green;
+        QVERIFY(green.deserialize(oldMicRecord({{"showHistory", false}, {"subColor", "#ff00ff00"}})));
+        QCOMPARE(renderBar(green).pixelColor(barX(green, green.averageValue()), 48), QColor(Qt::green));
+        BarPresetItem hidden;
+        QVERIFY(hidden.deserialize(oldMicRecord({{"showHistory", false}, {"showSub", false}})));
+        QCOMPARE(renderBar(hidden).pixelColor(barX(hidden, hidden.averageValue()), 48), QColor(32, 32, 32));
+    }
+
+    void barPreset_colour_set_paints()
+    {
+        BarPresetItem scale;
+        QVERIFY(scale.deserialize(oldMicRecord({{"lowColor", "#ff0000ff"}, {"highColor", "#ff00ff00"}})));
+        const QImage scaled = renderBar(scale);
+        QCOMPARE(scaled.pixelColor(30, 57), QColor(Qt::blue));
+        QCOMPARE(scaled.pixelColor(380, 57), QColor(Qt::green));
+
+        BarPresetItem held;
+        QVERIFY(held.deserialize(oldMicRecord({{"showHistory", false}, {"showMarker", false}, {"peakHold", true}, {"ignoreHistoryMs", 0},
+                                                {"peakHoldColor", "#ff0000ff"}})));
+        QCOMPARE(renderBar(held).pixelColor(barX(held, held.peakValue()), 48), QColor(Qt::blue));
+
+        BarPresetItem noMarker;
+        QVERIFY(noMarker.deserialize(oldMicRecord({{"showHistory", false}, {"showMarker", false}})));
+        QCOMPARE(renderBar(noMarker).pixelColor(barX(noMarker, noMarker.primaryValue()), 48), QColor(32, 32, 32));
+
+        BarPresetItem segments;
+        QVERIFY(segments.deserialize(oldMicRecord({{"style", "Solid"}, {"showHistory", false},
+                                                    {"segLowColor", "#ff0000ff"}, {"segHighColor", "#ff00ff00"}})));
+        const QImage filled = renderBar(segments, 12, false);
+        QCOMPARE(filled.pixelColor(60, 40), QColor(Qt::blue));
+        QCOMPARE(filled.pixelColor(300, 40), QColor(Qt::green));
+
+        BarPresetItem plain;
+        QVERIFY(plain.deserialize(oldMicRecord()));
+        const QImage normal = renderBar(plain);
+        BarPresetItem peakValue;
+        QVERIFY(peakValue.deserialize(oldMicRecord({{"peakValueColor", "#ff00ff00"}})));
+        QVERIFY(renderBar(peakValue) != normal);
+        BarPresetItem untitled;
+        QVERIFY(untitled.deserialize(oldMicRecord({{"showTitle", false}})));
+        QVERIFY(renderBar(untitled) != normal);
+    }
+
+    void barPreset_new_items_take_thetis_defaults()
+    {
+        for (const BarPresetThetisDefaults& row : kBarPresetThetisDefaults) {
+            const QString flavor = QString::fromLatin1(row.flavor);
+            BarPresetItem face;
+            if (flavor == "Mic") { face.configureAsMic(); }
+            else if (flavor == "Alc") { face.configureAsAlc(); }
+            else if (flavor != "Custom") { QVERIFY(face.configureVariant(flavor)); }
+            const QString typeBefore = face.typeId();
+            face.applyNewItemDefaults();
+            QCOMPARE(face.typeId(), typeBefore);
+            const QJsonObject c = face.configuration();
+            const auto hex = [](QRgb rgba) { return QColor::fromRgba(rgba).name(QColor::HexArgb); };
+            QCOMPARE(c.value("barColor").toString(), hex(row.markerColour));
+            QCOMPARE(c.value("historyColor").toString(), hex(row.historyColour));
+            QCOMPARE(c.value("segLowColor").toString(), hex(row.segLowColour));
+            QCOMPARE(c.value("segHighColor").toString(), hex(row.segHighColour));
+            QCOMPARE(c.value("subColor").toString(), hex(row.subColour));
+            QCOMPARE(c.value("style").toString(), QString::fromLatin1(row.style));
+            QCOMPARE(c.value("peakHold").toBool(), row.peakHold);
+        }
+        // Every bar preset type has a row.
+        QCOMPARE(int(kBarPresetThetisDefaults.size()), BarPresetItem::variants().size() + 3);
+
+        ContainerContentRegistry registry;
+        const ContentEntry adcEntry = registry.makeEntry(QStringLiteral("meter.adc"));
+        QCOMPARE(adcEntry.typeId, QStringLiteral("meter.adc"));
+        std::unique_ptr<MeterItem> adcItem(registry.createMeterItem(adcEntry, nullptr));
+        auto* adc = qobject_cast<BarPresetItem*>(adcItem.get());
+        QVERIFY(adc);
+        QCOMPARE(adc->configuration().value("barColor").toString(), QStringLiteral("#ffffa500"));
+        QCOMPARE(adc->configuration().value("historyColor").toString(), QStringLiteral("#806495ed"));
+
+        const ContentEntry customEntry = registry.makeEntry(QStringLiteral("meter.customBar"));
+        QCOMPARE(customEntry.typeId, QStringLiteral("meter.customBar"));
+        std::unique_ptr<MeterItem> customItem(registry.createMeterItem(customEntry, nullptr));
+        auto* custom = qobject_cast<BarPresetItem*>(customItem.get());
+        QVERIFY(custom);
+        QCOMPARE(custom->typeId(), QStringLiteral("meter.customBar"));
+        const QJsonObject c = custom->configuration();
+        QCOMPARE(c.value("minValue").toDouble(), 0.0);
+        QCOMPARE(c.value("maxValue").toDouble(), 10.0);
+        QCOMPARE(c.value("redThreshold").toDouble(), 7.5);
+        QCOMPARE(c.value("units").toString(), QStringLiteral("?"));
+        QCOMPARE(c.value("label").toString(), QStringLiteral("Title"));
     }
 };
 

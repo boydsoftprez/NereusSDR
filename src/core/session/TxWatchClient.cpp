@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original direct auxiliary watch transport.
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04: Qt 6.4 WebSocket error-signal compatibility. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
 #include "core/session/TxWatchClient.h"
@@ -355,6 +357,11 @@ void TxWatchClient::attachRelay(DataChannelTransport* transport, quint64 generat
 
 bool TxWatchClient::sendKeepalive(quint64 sequence, quint32 epoch)
 {
+    return sendKeepalive(TxKeepalive{sequence, epoch, 0});
+}
+
+bool TxWatchClient::sendKeepalive(const TxKeepalive& value)
+{
     const QPointer<TxWatchClient> self(this);
     DataChannelTransport* relay = m_relay.data();
     QWebSocket* socket = m_socket.data();
@@ -364,7 +371,7 @@ bool TxWatchClient::sendKeepalive(quint64 sequence, quint32 epoch)
         finish(QStringLiteral("watch unavailable"));
         return false;
     }
-    const QByteArray frame = RemoteTxWatchdog::channelKeepalive(sequence, epoch);
+    const QByteArray frame = RemoteTxWatchdog::channelKeepalive(value);
     qint64 backlog = relay != nullptr ? relay->backlogBytes() : socket->bytesToWrite();
 #ifdef NEREUS_BUILD_TESTS
     if (m_testBacklogBytes >= 0) { backlog = m_testBacklogBytes; }

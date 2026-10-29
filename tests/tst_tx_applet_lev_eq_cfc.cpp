@@ -27,6 +27,11 @@
 //   6. CFC.click() flips TransmitModel::cfcEnabled.
 //   7. Model→UI: setCfcEnabled(true) checks CFC button.
 //   8. CFC right-click triggers requestOpenCfcDialog (single instance).
+//   CW (R-CW-42): LEV, EQ, CFC and TX BW grey in CW with the reason and
+//   come back as they were on leaving CW.
+//
+// 2026-10-26: CW transmit, the CW case. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 //
 // =================================================================
 
@@ -51,7 +56,9 @@
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxCfcDialog.h"
 #include "gui/applets/TxEqDialog.h"
+#include "gui/applets/TxFilterSection.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
@@ -93,6 +100,41 @@ private slots:
         // Post-bench cleanup: PROC button must NOT exist on TxApplet anymore.
         auto* proc = applet.findChild<QPushButton*>(QStringLiteral("TxProcButton"));
         QVERIFY(proc == nullptr);
+    }
+
+    // CW (R-CW-42): the microphone chain is not used, greyed with the reason.
+    void chainGreysInCwWithTheReasonAndComesBack()
+    {
+        RadioModel rm;
+        SliceModel* slice = rm.sliceById(rm.addSlice());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        TxApplet applet(&rm);
+        auto* filter = applet.findChild<TxFilterSection*>();
+        QVERIFY(filter);
+        QList<QWidget*> chain{applet.findChild<QPushButton*>(QStringLiteral("TxLevButton")),
+                              applet.findChild<QPushButton*>(QStringLiteral("TxEqButton")),
+                              applet.findChild<QPushButton*>(QStringLiteral("TxCfcButton")),
+                              filter->filterLowSpin(), filter->filterHighSpin()};
+        QList<bool> enabled;
+        QList<QString> tips;
+        for (QWidget* w : chain) {
+            QVERIFY(w);
+            enabled << w->isEnabled();
+            tips << w->toolTip();
+        }
+        slice->setDspMode(DSPMode::CWL);
+        for (QWidget* w : chain) {
+            QVERIFY2(!w->isEnabled(), qPrintable(w->objectName()));
+            QVERIFY(!w->isHidden());
+            QCOMPARE(w->toolTip(), QStringLiteral("Not used in CW: the radio makes the signal."));
+            QCOMPARE(w->accessibleDescription(), TxApplet::cwNotUsedReason());
+        }
+        slice->setDspMode(DSPMode::USB);
+        for (int i = 0; i < chain.size(); ++i) {
+            QCOMPARE(chain[i]->isEnabled(), enabled[i]);
+            QCOMPARE(chain[i]->toolTip(), tips[i]);
+        }
     }
 
     // ── 2. LEV.click() flips TransmitModel::txLevelerOn ─────────────────────

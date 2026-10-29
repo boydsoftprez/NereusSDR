@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 37 (R-IOS-13), with
 //               AI-assisted implementation via Anthropic Claude Code.
@@ -30,6 +32,15 @@
 //   2026-10-16: a stop from the cut guard reports the silence the guard
 //               judged when this clock reads less. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: two stages per watch, the
+//               hold after kLinkHoldMs and the cut after kLinkCutMs, each
+//               with its own late turn; a counted keepalive, the key's end,
+//               the cut and the link closing end a hold. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, fix wave A: a hold is cut
+//               once it has lasted more than kLinkHoldMaxMs, in the check,
+//               in reschedule() and for a keepalive heard past it. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -71,6 +82,33 @@ bool RemoteTxWatchdog::isWatching(const QByteArray& deviceId) const
     return m_devices.contains(deviceId);
 }
 
+bool RemoteTxWatchdog::isHeld(const QByteArray& deviceId) const
+{
+    const auto it = m_devices.constFind(deviceId);
+    return it != m_devices.cend() && it.value().held;
+}
+
+void RemoteTxWatchdog::setCwActive(const QByteArray& deviceId, bool active, quint32 cwEpoch)
+{
+    if (deviceId.isEmpty() || (active && cwEpoch == 0)) {
+        return;
+    }
+    auto it = m_devices.find(deviceId);
+    if (it == m_devices.end()) {
+        if (!active) {
+            return;
+        }
+        Watch watch;
+        watch.lastMs = now();
+        it = m_devices.insert(deviceId, watch);
+    }
+    it->cwActive = active;
+    it->cwEpoch = active ? cwEpoch : 0;
+    // update retains sequence/receipt/late-turn/hold origins for surviving
+    // sources. CW replacement/append never grants a fresh silence budget.
+    update(deviceId, false, false, 0, false, false);
+}
+
 void RemoteTxWatchdog::setKeyed(const QByteArray& deviceId, bool keyed, quint32 epoch)
 {
     update(deviceId, keyed, true, epoch, false, false);
@@ -97,16 +135,26 @@ void RemoteTxWatchdog::update(const QByteArray& deviceId, bool keyed, bool keyed
     if (voxChanged) {
         watch.voxArmed = voxArmed;
     }
-    if (!watch.keyed && !watch.voxArmed) {
+    // Hold then cut: only a key's RF is held, so a key that ended ends its
+    // hold (KeyEnded), with no stop, whether or not VOX armed still watches.
+    const bool holdEnds = watch.held && !watch.keyed && !watch.cwActive;
+    const qint64 holdLengthMs = holdEnds ? now() - watch.heldSinceMs : 0;
+    if (holdEnds) {
+        watch.held = false;
+    }
+    if (!watch.keyed && !watch.voxArmed && !watch.cwActive) {
         if (wasWatched) {
             m_devices.erase(it);
             qCDebug(lcDsp) << "Transmit watchdog: no longer watching" << deviceId.toHex().constData();
             reschedule();
+            if (holdEnds) {
+                notifyHoldEnded(deviceId, holdLengthMs, HoldEnd::KeyEnded);
+            }
         }
         return;
     }
     if (!wasWatched) {
-        // A fresh 400 ms, and sequences start again.
+        // A fresh start, and sequences start again.
         watch.lastMs = now();
         watch.lastSequence = 0;
         qCDebug(lcDsp) << "Transmit watchdog: watching" << deviceId
@@ -114,23 +162,40 @@ void RemoteTxWatchdog::update(const QByteArray& deviceId, bool keyed, bool keyed
     }
     m_devices.insert(deviceId, watch);
     reschedule();
+    if (holdEnds) {
+        notifyHoldEnded(deviceId, holdLengthMs, HoldEnd::KeyEnded);
+    }
 }
 
 bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, quint64 sequence, quint32 epoch,
                                  Path path, qint64 ageMs)
 {
+    return keepalive(deviceId, TxKeepalive{sequence, epoch, 0}, path, ageMs);
+}
+
+bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, const TxKeepalive& value,
+                                 Path path, qint64 ageMs)
+{
+    const quint64 sequence = value.sequence;
+    const quint32 epoch = value.epoch;
     Q_UNUSED(path);
     auto it = m_devices.find(deviceId);
     if (it == m_devices.end()) {
         // Nothing watched: a keepalive before the key, or after its end.
         return false;
     }
+    if (it->cwActive && (value.cwEpoch == 0 || value.cwEpoch != it->cwEpoch)) {
+        return false;
+    }
     Watch& watch = it.value();
     // TX mic thread: heard when it came off the network.
     const qint64 heard = now() - std::max<qint64>(0, ageMs);
     // Socket input can run before an overdue timer on a busy event loop.
-    // Once the watch expires, no arriving packet may renew it.
-    if (heard - watch.lastMs > kLinkLossDeadlineMs) {
+    // Once the watch expires (past the cut), no arriving packet may renew it.
+    // Fix wave A: the same for a hold past its bound; a keepalive heard
+    // after it cannot end the hold.
+    if (heard - watch.lastMs > kLinkCutMs
+        || (watch.held && heard - watch.heldSinceMs > kLinkHoldMaxMs)) {
         trip(deviceId, false);
         return false; // The stop callback may have destroyed this object.
     }
@@ -150,11 +215,28 @@ bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, quint64 sequence, q
     // into it) leaves the watch's start as it is.
     watch.lastMs = std::max(watch.lastMs, heard);
     // Fix round 2: back within its deadline, the device's overdue period
-    // (and the late check's one turn for it) is over.
-    if (now() - watch.lastMs <= kLinkLossDeadlineMs) {
+    // (and the late check's one turn for it) is over. Hold then cut: each
+    // stage's apart.
+    const qint64 silentMs = now() - watch.lastMs;
+    if (silentMs <= kLinkCutMs) {
         watch.lateTurnGiven = false;
     }
+    const bool fresh = silentMs <= kLinkHoldMs;
+    if (fresh) {
+        watch.lateHoldTurnGiven = false;
+    }
+    // Hold then cut: a keepalive that counted, and heard within the hold's
+    // 400 ms (not one that waited behind a stall longer than that), ends
+    // the hold. Only now, past the sequence and epoch checks above.
+    const bool holdEnds = watch.held && fresh;
+    const qint64 holdLengthMs = holdEnds ? now() - watch.heldSinceMs : 0;
+    if (holdEnds) {
+        watch.held = false;
+    }
     reschedule();
+    if (holdEnds && !notifyHoldEnded(deviceId, holdLengthMs, HoldEnd::Heard)) {
+        return true;
+    }
     emit keepaliveHeard(deviceId, gap);
     return true;
 }
@@ -188,20 +270,42 @@ void RemoteTxWatchdog::onTimer()
     // so nothing (another device's keepalives rescheduling the check on
     // every turn included) can put the judgement off again.
     // TX watch follow-up: this check is no longer pending once it runs.
+    // Hold then cut: the hold and the cut each get their own one turn; a
+    // check that finds the cut due gives (or has given) the cut's turn and
+    // judges the cut alone, as a cut ends any hold.
     const qint64 due = std::exchange(m_checkDueMs, -1);
     const bool late = due >= 0 && at - due > kLateCheckSlackMs;
     const bool canTurn = late && static_cast<bool>(m_hooks.startTimer);
     QList<QByteArray> quiet;
+    QList<QByteArray> toHold;
     for (auto it = m_devices.begin(); it != m_devices.end(); ++it) {
-        if (at - it.value().lastMs > kLinkLossDeadlineMs) {
-            if (canTurn && !it.value().lateTurnGiven) {
-                it.value().lateTurnGiven = true;   // judged at the next check
+        Watch& watch = it.value();
+        const qint64 silentMs = at - watch.lastMs;
+        if (silentMs > kLinkCutMs) {
+            if (canTurn && !watch.lateTurnGiven) {
+                watch.lateTurnGiven = true;        // judged at the next check
+                watch.lateHoldTurnGiven = true;    // the same turn serves both
             } else {
                 quiet.append(it.key());
+            }
+        } else if (watch.held && at - watch.heldSinceMs > kLinkHoldMaxMs) {
+            // Fix wave A: a hold past its bound is the cut, whatever the
+            // keepalives that counted without ending it did to lastMs.
+            if (canTurn && !watch.lateHoldMaxTurnGiven) {
+                watch.lateHoldMaxTurnGiven = true;   // judged at the next check
+            } else {
+                quiet.append(it.key());
+            }
+        } else if ((watch.keyed || watch.cwActive) && !watch.held && silentMs > kLinkHoldMs) {
+            if (canTurn && !watch.lateHoldTurnGiven) {
+                watch.lateHoldTurnGiven = true;    // judged at the next check
+            } else {
+                toHold.append(it.key());
             }
         }
     }
     const QPointer<RemoteTxWatchdog> self(this);
+    // The cuts first: the stop is the safer act.
     for (const QByteArray& deviceId : std::as_const(quiet)) {
         if (!self) {
             return;
@@ -211,9 +315,52 @@ void RemoteTxWatchdog::onTimer()
             trip(deviceId, false);
         }
     }
+    for (const QByteArray& deviceId : std::as_const(toHold)) {
+        if (!self) {
+            return;
+        }
+        startHold(deviceId, at);
+    }
     if (self) {
         reschedule();
     }
+}
+
+void RemoteTxWatchdog::startHold(const QByteArray& deviceId, qint64 at)
+{
+    auto it = m_devices.find(deviceId);
+    // A stop or a hold hook may already have ended the watch or its key.
+    if (it == m_devices.end() || (!it.value().keyed && !it.value().cwActive) || it.value().held) {
+        return;
+    }
+    it.value().held = true;
+    it.value().heldSinceMs = at;
+    it.value().lateHoldMaxTurnGiven = false;
+    const qint64 silentMs = at - it.value().lastMs;
+    qCInfo(lcDsp).noquote() << "Transmit watchdog: no keepalive for"
+                            << QStringLiteral("%1 ms").arg(silentMs) << "from"
+                            << QString::fromLatin1(deviceId.toHex()) << "- holding its RF silent";
+    const QPointer<RemoteTxWatchdog> self(this);
+    if (m_hooks.hold) {
+        m_hooks.hold(deviceId, true);
+    }
+    if (!self) {
+        return;
+    }
+    emit holdStarted(deviceId, silentMs);
+}
+
+bool RemoteTxWatchdog::notifyHoldEnded(const QByteArray& deviceId, qint64 lengthMs, HoldEnd how)
+{
+    const QPointer<RemoteTxWatchdog> self(this);
+    if (m_hooks.hold) {
+        m_hooks.hold(deviceId, false);
+    }
+    if (!self) {
+        return false;
+    }
+    emit holdEnded(deviceId, lengthMs, how);
+    return static_cast<bool>(self);
 }
 
 void RemoteTxWatchdog::trip(const QByteArray& deviceId, bool linkClosed, qint64 judgedSilentMs)
@@ -237,9 +384,17 @@ void RemoteTxWatchdog::trip(const QByteArray& deviceId, bool linkClosed, qint64 
         return;
     }
     emit tripped(deviceId, linkClosed, silentMs);
-    if (self) {
-        reschedule();
+    if (!self) {
+        return;
     }
+    // Hold then cut: a hold this stop ends is released only now, after the
+    // stop, so no real sample leaves between them.
+    if (watch.held
+        && !notifyHoldEnded(deviceId, now() - watch.heldSinceMs,
+                            linkClosed ? HoldEnd::LinkClosed : HoldEnd::Cut)) {
+        return;
+    }
+    reschedule();
 }
 
 void RemoteTxWatchdog::reschedule()
@@ -262,11 +417,24 @@ void RemoteTxWatchdog::reschedule()
     }
     qint64 earliest = std::numeric_limits<qint64>::max();
     for (auto it = m_devices.cbegin(); it != m_devices.cend(); ++it) {
-        // "More than 400 ms": the first millisecond past the deadline.
-        earliest = std::min(earliest, it.value().lastMs + kLinkLossDeadlineMs + 1);
+        // Hold then cut: each watch's earliest pending stage, the hold for
+        // a keyed watch not yet held, else the cut. "More than": the first
+        // millisecond past it.
+        // Fix wave A: a held watch is due at the earlier of its cut and its
+        // hold's bound.
+        const Watch& watch = it.value();
+        qint64 dueMs = 0;
+        if ((watch.keyed || watch.cwActive) && !watch.held) {
+            dueMs = watch.lastMs + kLinkHoldMs + 1;
+        } else {
+            dueMs = watch.lastMs + kLinkCutMs + 1;
+            if (watch.held) {
+                dueMs = std::min(dueMs, watch.heldSinceMs + kLinkHoldMaxMs + 1);
+            }
+        }
+        earliest = std::min(earliest, dueMs);
     }
-    const qint64 wait =
-        std::min<qint64>(std::max<qint64>(0, earliest - now()), kLinkLossDeadlineMs + 1);
+    const qint64 wait = std::max<qint64>(0, earliest - now());
     m_checkDueMs = now() + wait;
     if (m_hooks.startTimer) {
         m_hooks.startTimer(static_cast<int>(wait));
@@ -309,6 +477,43 @@ bool RemoteTxWatchdog::readChannelKeepalive(const QByteArray& message, quint64* 
     }
     if (epoch) {
         *epoch = e;
+    }
+    return true;
+}
+
+// Nereus CW v2 extension; the old kind 1 record remains unchanged.
+QByteArray RemoteTxWatchdog::channelKeepalive(const TxKeepalive& value)
+{
+    QByteArray message = channelKeepalive(value.sequence, value.epoch);
+    if (value.cwEpoch != 0) {
+        message[0] = char(2);
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            message.append(char((value.cwEpoch >> shift) & 0xffu));
+        }
+    }
+    return message;
+}
+
+bool RemoteTxWatchdog::readChannelKeepalive(const QByteArray& message, TxKeepalive* value)
+{
+    TxKeepalive decoded;
+    if (message.size() == 17 && quint8(message.at(0)) == 2) {
+        QByteArray legacy = message.left(kChannelKeepaliveBytes);
+        legacy[0] = char(kChannelKeepaliveKind);
+        if (!readChannelKeepalive(legacy, &decoded.sequence, &decoded.epoch)) {
+            return false;
+        }
+        for (int i = 13; i < 17; ++i) {
+            decoded.cwEpoch = (decoded.cwEpoch << 8) | quint8(message.at(i));
+        }
+        if (decoded.cwEpoch == 0) {
+            return false;
+        }
+    } else if (!readChannelKeepalive(message, &decoded.sequence, &decoded.epoch)) {
+        return false;
+    }
+    if (value != nullptr) {
+        *value = decoded;
     }
     return true;
 }

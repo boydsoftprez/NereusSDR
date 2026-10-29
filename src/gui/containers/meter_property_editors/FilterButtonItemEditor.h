@@ -1,6 +1,10 @@
 #pragma once
 #include "ButtonBoxItemEditor.h"
 
+#include <QVector>
+
+class QCheckBox;
+
 namespace NereusSDR {
 class FilterButtonItem;
 
@@ -12,6 +16,8 @@ public:
 
 private:
     void buildFilterSpecific();
+    // One row per button, in button order ("filterVisible_<index>").
+    QVector<QCheckBox*> m_visible;
 };
 
 } // namespace NereusSDR

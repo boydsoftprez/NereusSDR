@@ -5,11 +5,22 @@
 // implemented from the Thetis console.cs interface specification.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27: Propose unused isolated CW bridge RED bootstrap for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-15: The transmit cut latch: cutTransmit, clearTransmitCut and
 //               the default applyTransmitCut. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, the default setCwWireState, and
+//               publishRadioKeyStatus (all up when the link stops being
+//               connected). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave I1: clearTransmitCut runs
+//               onTransmitCutCleared. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 
 #include "RadioConnection.h"
+#include "core/safety/RemoteCwSafetyState.h"
 #include "P1RadioConnection.h"
 #include "P2RadioConnection.h"
 #include "LogCategories.h"
@@ -20,6 +31,7 @@ namespace NereusSDR {
 
 RadioConnection::RadioConnection(QObject* parent)
     : QObject(parent)
+    , m_remoteCwSafetyState(std::make_shared<RemoteCwSafetyState>())
 {
 }
 
@@ -54,10 +66,46 @@ void RadioConnection::cutTransmit()
                               Qt::QueuedConnection);
 }
 
+std::shared_ptr<RemoteCwSafetyState> RadioConnection::remoteCwSafetyState() const
+{
+    return m_remoteCwSafetyState;
+}
+
+bool RadioConnection::setRemoteCwHold(quint32 expectedEpoch, TxChannel::RfHold reason, bool held)
+{
+    const bool accepted = held ? m_remoteCwSafetyState->setHold(expectedEpoch, reason)
+                               : m_remoteCwSafetyState->clearHold(expectedEpoch, reason);
+    if (!accepted) { return false; }
+    QMetaObject::invokeMethod(this, [this]() { applyRemoteRfHold(); }, Qt::QueuedConnection);
+    return true;
+}
+
+void RadioConnection::finishRemoteCw(quint32 expectedEpoch)
+{
+    if (expectedEpoch == 0 || m_remoteCwSafetyState->snapshot().epoch != expectedEpoch) {
+        return;
+    }
+    m_remoteCwSafetyState->finish(expectedEpoch);
+    // Remote host intent is already low. Restore the retained local keyer
+    // state even when P2 has no following key edge or settings write.
+    QMetaObject::invokeMethod(this, [this]() { applyRemoteRfHold(); }, Qt::QueuedConnection);
+}
+
+bool RadioConnection::cwOutputSuppressed() const noexcept
+{
+    return transmitCut() || m_remoteCwSafetyState->suppressesCw();
+}
+
+void RadioConnection::applyRemoteRfHold()
+{
+    // Concrete connections prompt their existing control-bank paths.
+}
+
 void RadioConnection::clearTransmitCut()
 {
     if (m_transmitCut.exchange(false, std::memory_order_acq_rel)) {
         qCInfo(lcConnection) << "Transmit cut cleared; the next key is allowed";
+        onTransmitCutCleared();
     }
 }
 
@@ -66,6 +114,34 @@ void RadioConnection::applyTransmitCut()
     qCWarning(lcConnection) << "Transmit cut: MOX and the T/R relay off";
     setMox(false);
     setTrxRelay(false);
+}
+
+// ---------------------------------------------------------------------------
+// CW transmit (2026-10-26). NereusSDR-original.
+// ---------------------------------------------------------------------------
+void RadioConnection::setCwWireState(const CwWireState& s)
+{
+    CwWireState next = s;
+    applyCwWireClamps(next);
+    m_cwWire = next;
+}
+
+void RadioConnection::publishRadioKeyStatus(bool dot, bool dash, bool keyOut)
+{
+    const quint8 bits = static_cast<quint8>((dot ? 0x1 : 0) | (dash ? 0x2 : 0) | (keyOut ? 0x4 : 0));
+    if (bits == m_radioKeyStatusBits) {
+        return;
+    }
+    const bool physicalRising = (dot && (m_radioKeyStatusBits & 0x1) == 0)
+        || (dash && (m_radioKeyStatusBits & 0x2) == 0);
+    if (physicalRising) {
+        const quint32 observedEpoch = m_remoteCwSafetyState->snapshot().epoch;
+        if (m_remoteCwSafetyState->invalidatePhysicalPress(observedEpoch)) {
+            applyRemoteRfHold();
+        }
+    }
+    m_radioKeyStatusBits = bits;
+    emit radioKeyStatus(dot, dash, keyOut);
 }
 
 void RadioConnection::setState(ConnectionState newState)
@@ -94,6 +170,10 @@ void RadioConnection::setState(ConnectionState newState)
             m_publishedOcByte  = -1;
             m_publishedOcBand  = -1;
             m_publishedOcKeyed = -1;
+            // CW transmit (2026-10-26): no status comes now, so the radio's
+            // key reads up; a key still held reads down again on the first
+            // status after a reconnect.
+            publishRadioKeyStatus(false, false, false);
         }
         m_state.store(newState);
         emit connectionStateChanged(newState);

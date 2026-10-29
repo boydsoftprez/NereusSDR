@@ -48,6 +48,11 @@
 //                 window can hold them until their audio plays. NereusSDR-
 //                 original. J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-10-25 -- Roundtable fix wave: a clear stamps the slice after the
+//                 eight no-reading values, as a poll does, so a listener on
+//                 meterReadingNsChanged never reads the last real value
+//                 under the new stamp. NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -176,7 +181,9 @@ namespace {
 // Parity Task 15: the ADC and AGC readings with them.
 // RX meter stamps: a clear that changes a reading is stamped with the time
 // of this tick, so a remote window keeps it in order behind the readings
-// before it; one that changes nothing keeps the last stamp.
+// before it; one that changes nothing keeps the last stamp. The stamp goes
+// last, as poll() stamps last: a listener on meterReadingNsChanged (the
+// Roundtable meter push) reads the values when the stamp moves.
 void clearSliceReadings(SliceModel* slice)
 {
     const double kNone = SliceMeterPump::kNoReadingDbm;
@@ -185,9 +192,6 @@ void clearSliceReadings(SliceModel* slice)
         && slice->adcPeakDbfs() == kNone && slice->adcAverageDbfs() == kNone
         && slice->agcGainDb() == kNone && slice->agcPeakDb() == kNone
         && slice->agcAverageDb() == kNone;
-    if (!alreadyClear) {
-        slice->setMeterReadingNs(RxChannel::meterClockNs());
-    }
     slice->setSignalStrengthDbm(SliceMeterPump::kNoReadingDbm);
     slice->setSignalPeakDbm(SliceMeterPump::kNoReadingDbm);
     slice->setSignalAverageDbm(SliceMeterPump::kNoReadingDbm);
@@ -196,6 +200,9 @@ void clearSliceReadings(SliceModel* slice)
     slice->setAgcGainDb(SliceMeterPump::kNoReadingDbm);
     slice->setAgcPeakDb(SliceMeterPump::kNoReadingDbm);
     slice->setAgcAverageDb(SliceMeterPump::kNoReadingDbm);
+    if (!alreadyClear) {
+        slice->setMeterReadingNs(RxChannel::meterClockNs());
+    }
 }
 
 } // namespace

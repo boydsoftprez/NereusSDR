@@ -17,20 +17,7 @@ struct FrontEndSection: View {
 
     var body: some View {
         ModesChrome.section("Front end") {
-            ModesChrome.caption("Attenuator:")
-            ModesChrome.grid(columns: 3) {
-                ForEach(ModesTabModel.AttenuatorWay.allCases) { way in
-                    PanelButton(label: way.rawValue, lit: model.attenuatorWay == way, style: .blue,
-                                disabled: model.attenuatorWayReason != nil || model.attenuatorWay == nil) {
-                        model.selectAttenuatorWay(way)
-                    }
-                    .accessibilityHint(model.attenuatorWayReason ?? Self.wayHint(way))
-                    .accessibilityIdentifier("modesAtt" + way.rawValue)
-                }
-            }
-            if let reason = model.attenuatorWayReason {
-                ModesChrome.note("Attenuator: \(reason)")
-            }
+            FrontEndAttenuatorWays(model: model)
             // With no preamp choices the note alone names the row, so
             // "Preamp" is read once.
             if Self.preampCaptionShown(model) {
@@ -48,23 +35,7 @@ struct FrontEndSection: View {
             if let reason = model.preampReason {
                 ModesChrome.note(Self.preampNote(reason))
             }
-            HStack(spacing: 6) {
-                ModesChrome.label("Step att")
-                ModesChrome.arrow(left: true, accessibility: "Less attenuation", disabled: !attenuatorLive) {
-                    model.stepAttenuator(up: false)
-                }
-                ValueField(text: model.attenuationDb.map { "\(ValuePadModel.text($0)) dB" } ?? "",
-                           accessibility: "Step attenuator", disabled: !attenuatorLive, grow: true) {
-                    model.openAttenuatorPad()
-                }
-                .accessibilityIdentifier("modesStepAtt")
-                ModesChrome.arrow(left: false, accessibility: "More attenuation", disabled: !attenuatorLive) {
-                    model.stepAttenuator(up: true)
-                }
-            }
-            if let reason = model.attenuatorReason {
-                ModesChrome.note("Step att: \(reason)")
-            }
+            FrontEndStepAttenuator(model: model)
             // The second ADC's preamp and RX bypass, each only on a radio
             // that has it (the Core's catalogue says which).
             if model.rx1PreampPresent || model.bypassPresent {
@@ -144,10 +115,6 @@ struct FrontEndSection: View {
         }
     }
 
-    private var attenuatorLive: Bool {
-        model.attenuatorReason == nil && model.attenuationDb != nil && model.attenuatorRange != nil
-    }
-
     private func antennaGrid(_ antennas: [ModesTabModel.Antenna], reason: String?, style: PanelButton.Style,
                              prefix: String, select: @escaping (ModesTabModel.Antenna) -> Void) -> some View {
         ModesChrome.grid(columns: 3) {
@@ -159,5 +126,65 @@ struct FrontEndSection: View {
                 .accessibilityIdentifier(prefix + antenna.label)
             }
         }
+    }
+}
+
+/// ATT, S-ATT or A-ATT, with its reason under it while it cannot change:
+/// the Front end section's first row, and the band column's ATT menu
+/// (R-IOS-58), where S-ATT and A-ATT are the desktop menu's "Step
+/// attenuator" switched on.
+struct FrontEndAttenuatorWays: View {
+    @ObservedObject var model: ModesTabModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ModesChrome.caption("Attenuator:")
+            ModesChrome.grid(columns: 3) {
+                ForEach(ModesTabModel.AttenuatorWay.allCases) { way in
+                    PanelButton(label: way.rawValue, lit: model.attenuatorWay == way, style: .blue,
+                                disabled: model.attenuatorWayReason != nil || model.attenuatorWay == nil) {
+                        model.selectAttenuatorWay(way)
+                    }
+                    .accessibilityHint(model.attenuatorWayReason ?? FrontEndSection.wayHint(way))
+                    .accessibilityIdentifier("modesAtt" + way.rawValue)
+                }
+            }
+            if let reason = model.attenuatorWayReason {
+                ModesChrome.note("Attenuator: \(reason)")
+            }
+        }
+    }
+}
+
+/// The step attenuator's level, its arrows and the number pad its value
+/// opens, greyed with its reason under it while it cannot change: the
+/// Front end section's row, and the band column's ATT menu (R-IOS-58).
+struct FrontEndStepAttenuator: View {
+    @ObservedObject var model: ModesTabModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 6) {
+                ModesChrome.label("Step att")
+                ModesChrome.arrow(left: true, accessibility: "Less attenuation", disabled: !live) {
+                    model.stepAttenuator(up: false)
+                }
+                ValueField(text: model.attenuationDb.map { "\(ValuePadModel.text($0)) dB" } ?? "",
+                           accessibility: "Step attenuator", disabled: !live, grow: true) {
+                    model.openAttenuatorPad()
+                }
+                .accessibilityIdentifier("modesStepAtt")
+                ModesChrome.arrow(left: false, accessibility: "More attenuation", disabled: !live) {
+                    model.stepAttenuator(up: true)
+                }
+            }
+            if let reason = model.attenuatorReason {
+                ModesChrome.note("Step att: \(reason)")
+            }
+        }
+    }
+
+    private var live: Bool {
+        model.attenuatorReason == nil && model.attenuationDb != nil && model.attenuatorRange != nil
     }
 }

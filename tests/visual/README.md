@@ -479,6 +479,65 @@ python3 tests/visual/capture.py --out <dir> --scenes 'strip-fit-*' \
     --profiles 'mac-1512x869@2,laptop-1280x800@1'
 ```
 
+### Container item parity scenes
+
+The `container-parity-*` scenes show the container items and editors the
+container item parity work changed, on the two-band data with the
+workspace preview switch on. Each commits one or more containers beside
+the Main Panel the way the settings dialog does: new items come from
+`ContainerContentRegistry::makeEntry` (Thetis's defaults), saved-layout
+items from the record a layout saved before the change holds. Each scene
+writes the window (`<scene>`), each container as the window shows it
+(`<scene>--<part>`, plus `<part>-content` when the container scrolls) and
+the property editor Containers > Edit Container shows for an entry, at its
+full height (`<scene>--editor-*`). A disabled row's tooltip is painted
+under it in its own editor image; an open token picker or Units list is
+composited over the dialog (`--token-picker`, `--units`) and also written
+alone (`--popup`).
+
+- `container-parity-button-grids`: new mode, tune step, antenna, filter and
+  other button grids and their editors' Visible rows; the antenna XVTR and
+  Rx/Tx swap rows and the filter Var1 and Var2 rows with their reasons.
+- `container-parity-mode-grid`: a new mode grid, one from a saved layout
+  and a new Contest face; then SPEC and DRM ticked in the saved grid's
+  Visible modes and applied (`--grids-spec-drm`).
+- `container-parity-vfo-display` and `-roomy`: new VFO display faces on
+  slice A and on all slices at the default face height, each screen of the
+  slice A face opened by a click or long press (`--screen-*`), and the same
+  faces 240 px tall in a 300 px top strip.
+- `container-parity-clock`: new clocks with Large time and Centered, a
+  saved clock and a new clock face, all reading 14:32:10 local
+  (`ClockItem::setTimeSource`), and their editors.
+- `container-parity-overlay-led`: new and saved text overlays with slice
+  tokens typed into Text 1 (a new overlay starts empty, as Thetis's does)
+  and a new LED; the overlay editor (with its LED gate rows), its "%" token picker
+  open, and the LED editor before and after a condition with a mistake.
+- `container-parity-smeter-dial`: added S-meter dials with dark mode and
+  history off and on, fed a swinging level so history has a wedge; new and
+  saved-look tuning dials.
+- `container-parity-web-image`: a web image item reading a local PNG (no
+  network) on Pan 1, and pan 1 with that picture behind its spectrum, with
+  the pan's own background off (the picture at full strength) and on. The
+  words "Web image (preview picture)" are the picture's own caption.
+- `container-parity-artwork-options`: the ANAN face's Dark mode and the
+  magic eye's Built-in bezel, disabled with their reason.
+- `container-parity-signal-text`: new and saved signal text items and
+  faces fed -73 dBm, the editor and its Units list.
+- `container-parity-sections`: a TX and an RX section item as built and
+  with a part hidden and the order reversed, and the reordered one's editor.
+- `container-parity-user-colours`: new VFO display, clock, bar, LED, text
+  overlay and band button items beside twins holding a colour the user
+  picked: the workspace look draws the defaults in workspace colours and
+  leaves the picked colour as it is.
+- `container-parity-long-title`: "Signal max bin bar" and a short title
+  ("Signal": a one-entry container's header shows its entry's name) in
+  a 260 px left strip; the notes give the header and title widths.
+
+```
+python3 tests/visual/capture.py --out <dir> --scenes 'container-parity-*' \
+    --profiles 'mac-1512x869@2,laptop-1280x800@1'
+```
+
 ## Determinism
 
 The same scene at the same profile on the same machine and build gives

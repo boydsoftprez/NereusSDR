@@ -1,6 +1,12 @@
 #pragma once
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-10-26 - Final review fix wave (I5): withNewItemIdentity gives a
+//                 copied LED or web image a guid of its own. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - ContentGroup: the heading a descriptor is listed under in
+//                 the Available list; groupTitle names it. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-08 - Workspace preview only: ContentConfigNotifier, through
 //                 which a per-instance widget's own controls change its
 //                 entry's config. J.J. Boyd (KG4VCF), AI-assisted via
@@ -17,6 +23,13 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-20 - Integer and Color property kinds for Frequency (Custom).
 //                 Brian Sutton, AI-assisted via xAI Grok.
+//   2026-10-25 - Order property kind: the order of a TX section row's
+//                 parts. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - isAvailable / unavailableReason for an entry, judged on the
+//                 type its content resolves to (a BarPreset entry is the bar
+//                 its flavor names). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QObject>
 #include <QMetaType>
@@ -43,7 +56,11 @@ struct ContentPropertyChoice {
 // goes to the draft like every other property. A Reading is a choice of
 // reading binding and sits with the other bindings.
 struct ContentProperty {
-    enum class Kind { Reading, Choice, Toggle, Text, Integer, Color };
+    // Order: a reorderable list. Each choice is one item: its label, and
+    // as its value an object {"id": <item id>, "line": <shared line, or
+    // -1>}; items on one shared line move together. The value is the array
+    // of item ids, and the default (built) order is not written.
+    enum class Kind { Reading, Choice, Toggle, Text, Integer, Color, Order };
     QString key, label;
     Kind kind = Kind::Choice;
     QVector<ContentPropertyChoice> choices;
@@ -73,10 +90,14 @@ public:
 signals:
     void configEdited(const QJsonObject& config);
 };
+// The heading a type is listed under in Container Settings' Available
+// list, in the order the headings are shown.
+enum class ContentGroup { ReadyMadeMeters, BuildingBlocks, Buttons, Panels, PanelSections, LongpathInstruments };
 struct ContentDescriptor {
     QString typeId, title;
     bool singleton = false, available = false;
     QString unavailableReason;
+    ContentGroup group = ContentGroup::ReadyMadeMeters;
 };
 class ContainerContentRegistry : public QObject {
     Q_OBJECT
@@ -90,12 +111,18 @@ public:
     void setAvailable(const QString& typeId, bool available, const QString& reason = {});
     bool isAvailable(const QString& typeId) const;
     QString unavailableReason(const QString& typeId) const;
+    // As above, for an entry: judged on the type its content resolves to. A
+    // BarPreset entry is the bar its flavor names (AdcMax: meter.adcMax).
+    bool isAvailable(const ContentEntry& entry) const;
+    QString unavailableReason(const ContentEntry& entry) const;
     void parkSingleton(QWidget* widget);
     void returnBorrowedView(QWidget* widget);
     void setSingletonPlacements(const QHash<QString, QString>& placements);
     bool claimSingleton(const QString& typeId, const QString& entryId);
     quint64 generation() const { return m_generation; }
     static QString appletTypeForVisibilityId(const QString& id);
+    // The heading text for a group ("Ready-made meters", ...).
+    static QString groupTitle(ContentGroup group);
     QVector<ContentDescriptor> descriptors() const;
     ContentEntry makeEntry(const QString& typeId) const;
     QString validateEntry(const ContentEntry& entry) const;
@@ -106,6 +133,11 @@ public:
     // context (ContainerContentHost::effectiveContext) the live host uses.
     QWidget* createPreview(const ContentEntry& entry, QWidget* parent, const QJsonObject& context) const;
     ContentEntry captureMeterItem(const MeterItem& item, const ContentEntry& prior = {}) const;
+    // A copy of `entry` for a duplicate: an LED or a web image gets a new
+    // guid, so its 4-char ID is its own and gates and background chains on
+    // the original keep following the original. Other entries come back
+    // unchanged.
+    ContentEntry withNewItemIdentity(const ContentEntry& entry) const;
 
     // Per-instance QWidget content (workspace preview: the Longpath
     // instruments). Unlike attachSingleton, the host creates one widget per
@@ -120,6 +152,9 @@ public:
     using WidgetFactory = std::function<QWidget*(const ContentEntry& entry, QWidget* parent,
                                                  ContentRenderMode mode)>;
     // `properties`: the type's editable properties (workspace preview).
+    // The group comes from the typeId's prefix: "tx." and "rx." are panel
+    // sections, "longpath." Longpath instruments, "sMeter." ready-made
+    // meters; any other prefix keeps the descriptor's own group.
     void registerWidgetFactory(const QString& typeId, const ContentDescriptor& descriptor, WidgetFactory factory,
                                const QVector<ContentProperty>& properties = {});
     // The properties a widget type declared; empty for every other type.

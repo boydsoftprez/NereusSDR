@@ -1,0 +1,914 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NereusSDR Reporter</title>
+<style>
+:root {
+  --bg: #0a0a14;
+  --panel: #0f0f1b;
+  --hdr1: #3a4a5a;
+  --hdr2: #1a2a38;
+  --hdrtext: #e6edf3;
+  --btn: #141d2c;
+  --btn2: #111520;
+  --border: #2a3a4a;
+  --line: #19212e;
+  --text: #d7dee8;
+  --dim: #8393a6;
+  --faint: #56657a;
+  --accent: #00b4d8;
+  --rule: #3f9bb0;
+  --green: #00ff88;
+  --amber: #d8b800;
+  --red: #ff4444;
+  --sel: #122236;
+  --meterbg: #080c14;
+  --tick: #1c2636;
+  --mine: #0c1c26;
+}
+html[data-theme="light"] {
+  --bg: #e7ebf0;
+  --panel: #ffffff;
+  --hdr1: #d6dee7;
+  --hdr2: #b7c4d1;
+  --hdrtext: #121d29;
+  --btn: #f3f6f9;
+  --btn2: #e6ebf0;
+  --border: #aebbc8;
+  --line: #e2e7ed;
+  --text: #121d29;
+  --dim: #4b5c6e;
+  --faint: #7a8896;
+  --accent: #0075a0;
+  --rule: #2c7f93;
+  --green: #06834a;
+  --amber: #866a00;
+  --red: #c62828;
+  --sel: #e0f0f6;
+  --meterbg: #eef2f6;
+  --tick: #d2dae3;
+  --mine: #eef8fb;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 600 12px/1.35 -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  overflow: hidden;
+}
+.caps { text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; font-weight: 700; color: var(--dim); }
+
+/* ---------- top bar ---------- */
+.top {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 800; letter-spacing: 0.14em; font-size: 13px; color: var(--accent); white-space: nowrap; }
+.brand span { color: var(--dim); letter-spacing: 0.1em; font-weight: 700; margin-left: 6px; }
+.live { display: flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 0.1em; color: var(--green); }
+.live i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); display: block; }
+.chips { display: flex; gap: 3px; }
+.chip {
+  font: 700 10px/1 "SF Mono", Menlo, Consolas, monospace;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  background: var(--btn);
+  color: var(--dim);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+html[data-theme="dark"] .chip.on { color: #04121a; }
+.spacer { flex: 1; }
+.station {
+  font: 700 11px/1 "SF Mono", Menlo, Consolas, monospace;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 5px 8px;
+}
+.clock { font: 700 11px/1 "SF Mono", Menlo, Consolas, monospace; color: var(--dim); }
+.themebtn {
+  font: 700 10px/1 -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  background: var(--btn);
+  color: var(--text);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+/* ---------- three columns ---------- */
+.main {
+  height: calc(100% - 44px);
+  display: grid;
+  grid-template-columns: 286px minmax(0, 1fr) 336px;
+  gap: 6px;
+  padding: 6px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.ph {
+  height: 18px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  background: linear-gradient(var(--hdr1), var(--hdr2));
+  color: var(--hdrtext);
+  font-weight: 800;
+  font-size: 11px;
+}
+.grip { width: 6px; height: 10px; background-image: radial-gradient(circle, var(--hdrtext) 0.8px, transparent 1px); background-size: 3px 3px; opacity: 0.55; }
+.ph .badge { font: 700 9px/1 "SF Mono", Menlo, monospace; background: var(--accent); color: #fff; border-radius: 2px; padding: 2px 4px; }
+html[data-theme="dark"] .ph .badge { color: #04121a; }
+.ph .right { margin-left: auto; font-weight: 600; font-size: 10px; opacity: 0.8; }
+.pbody { flex: 1; overflow: auto; min-height: 0; }
+
+/* ---------- frequency list ---------- */
+.band { display: flex; justify-content: space-between; align-items: baseline; padding: 9px 10px 4px; }
+.band .bn { font: 800 11px/1 "SF Mono", Menlo, monospace; letter-spacing: 0.1em; color: var(--text); }
+.band .bc { font-size: 10px; color: var(--faint); }
+.fq {
+  padding: 6px 10px 6px 8px;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--line);
+}
+.fq[data-f] { cursor: pointer; }
+.fq[data-f]:not(.sel):hover { background: var(--btn2); }
+.fq.sel { background: var(--sel); border-left-color: var(--accent); }
+.fq .l1, .fq .l2 { display: flex; align-items: center; gap: 6px; }
+.fq .l2 { margin-top: 2px; font-size: 11px; color: var(--dim); font-weight: 600; }
+.fq .f { font: 700 13px/1.2 "SF Mono", Menlo, Consolas, monospace; color: var(--accent); }
+.fq .m { font: 700 10px/1 "SF Mono", Menlo, monospace; color: var(--dim); border: 1px solid var(--border); padding: 2px 3px; border-radius: 2px; }
+.fq .n { margin-left: auto; font: 700 11px/1 "SF Mono", Menlo, monospace; color: var(--dim); }
+.you { font: 800 9px/1 -apple-system, sans-serif; letter-spacing: 0.08em; color: var(--accent); border: 1px solid var(--accent); padding: 2px 3px; border-radius: 2px; }
+.txdot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); flex: none; }
+.fq .l2 b { color: var(--text); font-family: "SF Mono", Menlo, monospace; font-weight: 700; }
+.fq .unk { color: var(--amber); }
+.fq.dig .f { color: var(--dim); }
+.unread { margin-left: auto; font: 700 9px/1 "SF Mono", Menlo, monospace; background: var(--accent); color: #fff; border-radius: 7px; padding: 2px 5px; }
+html[data-theme="dark"] .unread { color: #04121a; }
+
+/* ---------- selected frequency ---------- */
+.head {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 16px;
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.fpanel { border-top: 2px solid var(--rule); padding-top: 6px; }
+.tags { display: flex; gap: 6px; align-items: center; margin-bottom: 5px; font: 700 11px/1 "SF Mono", Menlo, monospace; }
+.tags .t1 { color: var(--accent); }
+.tags .t2 { color: var(--dim); }
+.tags .box { margin-left: auto; border: 1px solid var(--border); background: var(--btn); color: var(--dim); padding: 2px 5px; border-radius: 2px; font-size: 10px; }
+.fbox {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--meterbg);
+  padding: 4px 12px;
+  text-align: right;
+  font: 600 30px/1.15 "SF Mono", Menlo, Consolas, monospace;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+.talker { display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.talker .row { display: flex; align-items: center; gap: 10px; }
+.txbadge { font: 800 11px/1 -apple-system, sans-serif; background: var(--red); color: #fff; padding: 4px 6px; border-radius: 3px; letter-spacing: 0.06em; }
+.talker .call { font: 700 24px/1 "SF Mono", Menlo, Consolas, monospace; color: var(--text); }
+.talker .grid { font: 700 12px/1 "SF Mono", Menlo, monospace; color: var(--dim); }
+.talker .meta { color: var(--dim); font-size: 11px; font-weight: 600; }
+.talker .meta b { color: var(--text); font-family: "SF Mono", Menlo, monospace; }
+
+.wallhead { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 14px 4px; }
+.wallhead .note { font-size: 10px; color: var(--faint); font-weight: 600; }
+
+.mrow {
+  display: grid;
+  grid-template-columns: 82px 40px 70px 50px minmax(0, 1fr) 56px 20px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  height: 28px;
+  border-bottom: 1px solid var(--line);
+}
+.mrow.scale { height: 16px; border-bottom: none; }
+.mrow.mine { background: var(--mine); }
+.mrow .c { font: 700 12px/1 "SF Mono", Menlo, monospace; color: var(--text); display: flex; align-items: center; gap: 5px; }
+.mrow .g, .mrow .d, .mrow .a { font: 600 11px/1 "SF Mono", Menlo, monospace; color: var(--dim); }
+.mrow .d { text-align: right; }
+.mrow .off { font: 600 11px/1 "SF Mono", Menlo, monospace; color: var(--dim); text-align: right; }
+.mrow .off.zero { color: var(--faint); }
+.mrow .lbl { font: 700 9px/1 -apple-system, sans-serif; letter-spacing: 0.08em; color: var(--faint); text-align: right; }
+.mrow .a { text-align: right; color: var(--faint); }
+.mrow .v { font: 700 12px/1 "SF Mono", Menlo, monospace; color: var(--text); text-align: right; white-space: nowrap; }
+.mrow .v.over { color: var(--red); }
+.meter { position: relative; height: 12px; background: var(--meterbg); border: 1px solid var(--border); border-radius: 2px; overflow: hidden; }
+.meter .fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); transition: width 0.25s linear; }
+.meter .over { position: absolute; top: 0; bottom: 0; background: var(--red); transition: width 0.25s linear; }
+.meter .ticks { position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; }
+.meter .ticks i { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--tick); }
+.scalebar { position: relative; height: 12px; font: 700 9px/12px "SF Mono", Menlo, monospace; color: var(--dim); }
+.scalebar span { position: absolute; transform: translateX(-50%); }
+.scalebar span.r { color: var(--red); }
+
+.foot {
+  margin: 12px 14px 14px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--amber);
+  background: var(--btn2);
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 600;
+}
+.foot b { color: var(--text); }
+
+.turns { margin-top: 2px; }
+.turn {
+  display: grid;
+  grid-template-columns: 168px 40px 66px minmax(0, 1fr) 76px 12px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  height: 34px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.turn.mine { background: var(--mine); }
+.turn .nm { font: 700 12px/1.1 "SF Mono", Menlo, monospace; color: var(--text); display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.turn .nm.unk { color: var(--amber); }
+.turn .by { font: 600 10px/1.2 -apple-system, "Segoe UI", sans-serif; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn .by b { font-family: "SF Mono", Menlo, monospace; color: var(--dim); font-weight: 700; }
+.turn .t, .turn .len { font: 600 11px/1 "SF Mono", Menlo, monospace; color: var(--dim); }
+.turn .len { text-align: right; }
+.turn .n { font: 600 11px/1 "SF Mono", Menlo, monospace; color: var(--dim); text-align: right; }
+.turn .go { color: var(--faint); text-align: right; font-weight: 800; }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 22px; }
+.bars i { display: block; width: 8px; background: var(--accent); border-radius: 1px 1px 0 0; }
+.bars i.o { background: var(--red); }
+.namebtn {
+  font: 800 9px/1 -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  background: transparent;
+  border-radius: 2px;
+  padding: 2px 4px;
+}
+
+/* ---------- unknown talker ---------- */
+.unkbadge { font: 800 12px/1 -apple-system, sans-serif; background: var(--amber); color: #fff; padding: 3px 7px; border-radius: 3px; }
+html[data-theme="dark"] .unkbadge { color: #1a1400; }
+.talker .call.unk { color: var(--amber); }
+.namebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 4px;
+}
+.namebar .caps { color: var(--amber); white-space: nowrap; }
+.pick {
+  font: 700 11px/1 "SF Mono", Menlo, Consolas, monospace;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--btn);
+  color: var(--text);
+  border-radius: 3px;
+}
+.nbox {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border: 1px solid var(--border);
+  background: var(--meterbg);
+  border-radius: 3px;
+  color: var(--faint);
+  font-weight: 500;
+  font-size: 12px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+}
+.namebar .btn { height: 26px; }
+.namehint { padding: 0 14px 10px; font-size: 10px; color: var(--faint); font-weight: 600; border-bottom: 1px solid var(--line); }
+.rd .unk { color: var(--amber); }
+.view[hidden], .mview[hidden] { display: none; }
+.mview { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+/* ---------- messages ---------- */
+.msgs { flex: 1; overflow: auto; min-height: 0; }
+.msg { padding: 8px 10px; border-bottom: 1px solid var(--line); border-left: 2px solid transparent; }
+.msg.mine { background: var(--mine); border-left-color: var(--accent); }
+.mh { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.mh .call { font: 700 12px/1 "SF Mono", Menlo, monospace; color: var(--accent); }
+.mh .gr { font: 600 10px/1 "SF Mono", Menlo, monospace; color: var(--faint); }
+.mh .time { margin-left: auto; font: 600 10px/1 "SF Mono", Menlo, monospace; color: var(--faint); }
+.rd {
+  display: inline-flex; align-items: center; gap: 4px;
+  font: 700 10px/1 "SF Mono", Menlo, monospace;
+  color: var(--dim);
+  border: 1px solid var(--border);
+  background: var(--btn2);
+  border-radius: 2px;
+  padding: 2px 4px;
+  margin-bottom: 4px;
+}
+.rd .mini { width: 26px; height: 5px; background: var(--meterbg); border: 1px solid var(--border); position: relative; }
+.rd .mini i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); }
+.rd.onair { color: var(--red); border-color: var(--red); }
+.mt { font-size: 13px; font-weight: 500; color: var(--text); line-height: 1.4; }
+.mt strong { font-weight: 800; }
+.mt .at { color: var(--accent); font-family: "SF Mono", Menlo, monospace; font-weight: 700; font-size: 12px; }
+.compose { flex: none; border-top: 1px solid var(--border); padding: 8px; }
+.compose .in { display: flex; gap: 6px; }
+.compose .box {
+  flex: 1; height: 30px; border: 1px solid var(--border); background: var(--meterbg); border-radius: 3px;
+  color: var(--faint); font-weight: 500; font-size: 12px; padding: 0 8px; display: flex; align-items: center;
+}
+.btn {
+  font: 800 11px/1 -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--border);
+  background: var(--btn);
+  color: var(--text);
+  padding: 0 12px;
+  border-radius: 3px;
+  height: 30px;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+html[data-theme="dark"] .btn.primary { color: #04121a; }
+.compose .hint { margin-top: 5px; font-size: 10px; color: var(--faint); font-weight: 600; }
+.compose .hint b { color: var(--dim); font-family: "SF Mono", Menlo, monospace; }
+.compose.off .box { color: var(--faint); background: var(--btn2); border-style: dashed; }
+.btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.compose.off .hint { color: var(--dim); }
+.meter.sum .fill { background: repeating-linear-gradient(135deg, var(--accent) 0 4px, transparent 4px 7px); }
+.meter.sum .over { background: repeating-linear-gradient(135deg, var(--red) 0 4px, transparent 4px 7px); }
+.bars.sum i { background: repeating-linear-gradient(135deg, var(--accent) 0 3px, transparent 3px 5px); }
+.bars.sum i.o { background: repeating-linear-gradient(135deg, var(--red) 0 3px, transparent 3px 5px); }
+.rd .mini.sum i { background: repeating-linear-gradient(135deg, var(--accent) 0 2px, transparent 2px 4px); }
+.talker .caps.dbl { color: var(--red); }
+.talker .call.sm { font-size: 20px; }
+.talker .plus { font: 700 16px/1 "SF Mono", Menlo, monospace; color: var(--faint); }
+.dblbadge { font: 800 9px/1 -apple-system, sans-serif; letter-spacing: 0.08em; color: var(--red); border: 1px solid var(--red); padding: 2px 3px; border-radius: 2px; }
+.tags .box.out { color: var(--amber); border-color: var(--amber); background: transparent; }
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">NEREUSSDR<span>REPORTER</span></div>
+  <div class="live"><i></i>LIVE</div>
+  <div class="chips">
+    <span class="chip on">ALL</span><span class="chip">160</span><span class="chip">80</span><span class="chip">40</span><span class="chip">30</span><span class="chip">20</span><span class="chip">17</span><span class="chip">15</span><span class="chip">12</span><span class="chip">10</span><span class="chip">6</span>
+  </div>
+  <div class="chips">
+    <span class="chip on">VOICE</span><span class="chip on">CW</span><span class="chip on">DIGITAL</span>
+  </div>
+  <div class="spacer"></div>
+  <span class="station">N0CALL · FN42</span>
+  <span class="clock">17:08:39 UTC</span>
+  <button class="themebtn" id="themebtn">LIGHT</button>
+</div>
+
+<div class="main">
+
+  <!-- ===== frequencies ===== -->
+  <section class="panel">
+    <div class="ph"><span class="grip"></span>Frequencies<span class="badge">10</span><span class="right">79 stations on air</span></div>
+    <div class="pbody">
+
+      <div class="band"><span class="bn">20M</span><span class="bc">5 frequencies · 29 stations</span></div>
+      <div class="fq" data-f="14212">
+        <div class="l1"><span class="f">14.212.000</span><span class="m">USB</span><span class="you">YOU · A</span><span class="n">9</span></div>
+        <div class="l2"><span class="txdot"></span><b>VK3XYZ</b> talking</div>
+      </div>
+      <div class="fq">
+        <div class="l1"><span class="f">14.240.000</span><span class="m">USB</span><span class="n">3</span></div>
+        <div class="l2">quiet 6 min</div>
+      </div>
+      <div class="fq">
+        <div class="l1"><span class="f">14.258.000</span><span class="m">USB</span><span class="n">4</span></div>
+        <div class="l2"><span class="unk">unknown talker</span></div>
+      </div>
+      <div class="fq">
+        <div class="l1"><span class="f">14.040.000</span><span class="m">CW</span><span class="n">2</span></div>
+        <div class="l2"><span class="txdot"></span><b>W6ABC</b> sending</div>
+      </div>
+      <div class="fq dig">
+        <div class="l1"><span class="f">14.074.000</span><span class="m">FT8</span><span class="n">11</span></div>
+        <div class="l2">digital · no talker readings</div>
+      </div>
+
+      <div class="band"><span class="bn">40M</span><span class="bc">3 frequencies · 29 stations</span></div>
+      <div class="fq" data-f="7188">
+        <div class="l1"><span class="f">7.188.000</span><span class="m">LSB</span><span class="n">9</span></div>
+        <div class="l2"><span class="txdot"></span><b>K4ABC</b> talking<span class="unread">4</span></div>
+      </div>
+      <div class="fq">
+        <div class="l1"><span class="f">7.030.000</span><span class="m">CW</span><span class="n">2</span></div>
+        <div class="l2">quiet 11 min</div>
+      </div>
+      <div class="fq dig">
+        <div class="l1"><span class="f">7.074.000</span><span class="m">FT8</span><span class="n">18</span></div>
+        <div class="l2">digital · no talker readings</div>
+      </div>
+
+      <div class="band"><span class="bn">80M</span><span class="bc">1 frequency · 11 stations</span></div>
+      <div class="fq" data-f="3916">
+        <div class="l1"><span class="f">3.916.000</span><span class="m">LSB</span><span class="you">YOU · B</span><span class="n">11</span></div>
+        <div class="l2"><span class="unk">unknown talker</span><span class="unread">2</span></div>
+      </div>
+
+      <div class="band"><span class="bn">15M</span><span class="bc">1 frequency · 7 stations</span></div>
+      <div class="fq" data-f="21300">
+        <div class="l1"><span class="f">21.300.000</span><span class="m">USB</span><span class="n">7</span></div>
+        <div class="l2"><span class="txdot"></span><b>K7ABC</b>+<b>W0ABC</b><span class="dblbadge">DOUBLED</span><span class="unread">1</span></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===== selected frequency ===== -->
+  <section class="panel">
+    <div class="ph"><span class="grip"></span>Frequency<span class="right" id="fqinfo"></span></div>
+    <div class="pbody">
+
+      <!-- 14.212: the talker runs NereusSDR -->
+      <div class="view" id="v14212">
+        <div class="head">
+          <div class="fpanel">
+            <div class="tags"><span class="t1">20M</span><span class="t2">USB</span><span class="t2">· 9 STATIONS</span><span class="box">YOU ARE HERE · A</span></div>
+            <div class="fbox">14.212.000</div>
+          </div>
+          <div class="talker">
+            <div class="caps">Talking now</div>
+            <div class="row"><span class="txbadge">TX</span><span class="call">VK3XYZ</span><span class="grid">QF22</span></div>
+            <div class="meta">keyed <b class="clk" data-s="42">0:42</b> · before that <b>N0CALL</b>, 2 min ago</div>
+          </div>
+        </div>
+        <div class="wallhead">
+          <span class="caps">How each station hears VK3XYZ</span>
+          <span class="note">nearest to the talker first</span>
+        </div>
+        <div class="mrow scale"><span></span><span></span><span class="lbl">DISTANCE</span><span class="lbl">TUNED</span><div class="scalebar"></div><span></span><span></span></div>
+        <div id="wall14212"></div>
+        <div class="wallhead">
+          <span class="caps">Earlier turns on this frequency</span>
+          <span class="note">click a turn to see its readings</span>
+        </div>
+        <div class="turns" id="turns14212"></div>
+        <div class="foot"><b>Each bar is that station's own S-meter, as read.</b> Radios are not calibrated against each other, so S7 here and S7 on another radio may not be the same signal. VK3XYZ runs NereusSDR, so the server knows for certain whose signal this is.</div>
+      </div>
+
+      <!-- 21.300: two NereusSDR stations transmitting at once -->
+      <div class="view" id="v21300" hidden>
+        <div class="head">
+          <div class="fpanel">
+            <div class="tags"><span class="t1">15M</span><span class="t2">USB</span><span class="t2">· 7 STATIONS</span><span class="box out">NOT TUNED HERE</span></div>
+            <div class="fbox">21.300.000</div>
+          </div>
+          <div class="talker">
+            <div class="caps dbl">Two stations transmitting at once</div>
+            <div class="row"><span class="txbadge">TX</span><span class="call sm">K7ABC</span><span class="plus">+</span><span class="txbadge">TX</span><span class="call sm">W0ABC</span></div>
+            <div class="meta">doubled for <b class="clk" data-s="4">0:04</b> · each meter reads both signals added together</div>
+          </div>
+        </div>
+        <div class="wallhead">
+          <span class="caps">How each station hears both signals together</span>
+          <span class="note">by callsign · credited to neither station</span>
+        </div>
+        <div class="mrow scale"><span></span><span></span><span class="lbl">DISTANCE</span><span class="lbl">TUNED</span><div class="scalebar"></div><span></span><span></span></div>
+        <div id="wall21300"></div>
+        <div class="wallhead">
+          <span class="caps">Earlier turns on this frequency</span>
+          <span class="note">click a turn to see its readings</span>
+        </div>
+        <div class="turns" id="turns21300"></div>
+        <div class="foot"><b>Two stations are transmitting at once,</b> so every meter reads both signals added together. These readings belong to neither station and are kept out of both stations' turns. With two talkers there is no single distance, so stations are listed by callsign.</div>
+      </div>
+
+      <!-- 7.188: you are not tuned here, so you can read but not post -->
+      <div class="view" id="v7188" hidden>
+        <div class="head">
+          <div class="fpanel">
+            <div class="tags"><span class="t1">40M</span><span class="t2">LSB</span><span class="t2">· 9 STATIONS</span><span class="box out">NOT TUNED HERE</span></div>
+            <div class="fbox">7.188.000</div>
+          </div>
+          <div class="talker">
+            <div class="caps">Talking now</div>
+            <div class="row"><span class="txbadge">TX</span><span class="call">K4ABC</span><span class="grid">EM73</span></div>
+            <div class="meta">keyed <b class="clk" data-s="74">1:14</b> · before that <b>W9ABC</b>, 1 min ago</div>
+          </div>
+        </div>
+        <div class="wallhead">
+          <span class="caps">How each station hears K4ABC</span>
+          <span class="note">nearest to the talker first</span>
+        </div>
+        <div class="mrow scale"><span></span><span></span><span class="lbl">DISTANCE</span><span class="lbl">TUNED</span><div class="scalebar"></div><span></span><span></span></div>
+        <div id="wall7188"></div>
+        <div class="wallhead">
+          <span class="caps">Earlier turns on this frequency</span>
+          <span class="note">click a turn to see its readings</span>
+        </div>
+        <div class="turns" id="turns7188"></div>
+        <div class="foot"><b>Each bar is that station's own S-meter, as read.</b> Radios are not calibrated against each other, so S7 here and S7 on another radio may not be the same signal. K4ABC runs NereusSDR, so the server knows for certain whose signal this is.</div>
+      </div>
+
+      <!-- 3.916: the talker does not run NereusSDR -->
+      <div class="view" id="v3916" hidden>
+        <div class="head">
+          <div class="fpanel">
+            <div class="tags"><span class="t1">80M</span><span class="t2">LSB</span><span class="t2">· 11 STATIONS</span><span class="box">YOU ARE HERE · B</span></div>
+            <div class="fbox">3.916.000</div>
+          </div>
+          <div class="talker">
+            <div class="caps">Talking now</div>
+            <div class="row"><span class="unkbadge">?</span><span class="call unk">Unknown</span><span class="grid">not on NereusSDR</span></div>
+            <div class="meta">on air <b class="clk" data-s="18">0:18</b> · nobody has named this turn yet</div>
+          </div>
+        </div>
+        <div class="namebar">
+          <span class="caps">Name this turn</span>
+          <button class="pick">W4NET</button><button class="pick">KC3ABC</button><button class="pick">KC3ABD</button>
+          <div class="nbox">or type the callsign you heard</div>
+          <button class="btn">NAME</button>
+        </div>
+        <div class="namehint">Only stations tuned here can name a turn. Each name shows who gave it. The next turn starts unnamed.</div>
+        <div class="wallhead">
+          <span class="caps">How each station hears the unknown talker</span>
+          <span class="note">by callsign · talker's location unknown</span>
+        </div>
+        <div class="mrow scale"><span></span><span></span><span class="lbl">DISTANCE</span><span class="lbl">TUNED</span><div class="scalebar"></div><span></span><span></span></div>
+        <div id="wall3916"></div>
+        <div class="wallhead">
+          <span class="caps">Earlier turns on this frequency</span>
+          <span class="note">click a turn to see its readings</span>
+        </div>
+        <div class="turns" id="turns3916"></div>
+        <div class="foot"><b>The talker isn't on NereusSDR,</b> so the server doesn't know who it is or where they are. Each bar is still that station's own meter, as read. Names come from listeners one turn at a time and always show who gave them. With no location for the talker there is no distance, so stations are listed by callsign.</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===== messages ===== -->
+  <section class="panel">
+    <div class="ph"><span class="grip"></span>Messages<span class="right" id="msginfo"></span></div>
+
+    <div class="mview" id="m14212">
+      <div class="msgs">
+        <div class="msg">
+          <div class="mh"><span class="call">JA1ABC</span><span class="gr">PM95</span><span class="time">16:58</span></div>
+          <div class="rd"><span class="mini"><i style="width:55%"></i></span>hearing N0CALL · S7</div>
+          <div class="mt">N0CALL you're in here fine. Go ahead with VK3XYZ when he stands by.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">G0ABC</span><span class="gr">IO91</span><span class="time">17:01</span></div>
+          <div class="rd"><span class="mini"><i style="width:32%"></i></span>hearing VK3XYZ · S4</div>
+          <div class="mt">Short path fading here. Will try <strong>long path</strong> at 1730.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">K5ABC</span><span class="gr">EM12</span><span class="time">17:03</span></div>
+          <div class="rd"><span class="mini"><i style="width:47%"></i></span>hearing VK3XYZ · S8</div>
+          <div class="mt"><span class="at">@VK3XYZ</span> I'm next after N0CALL if you have time.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">VK3XYZ</span><span class="gr">QF22</span><span class="time">17:05</span></div>
+          <div class="rd onair">transmitting</div>
+          <div class="mt">Thanks all. Working the list: <strong>N0CALL, K5ABC, W6ABC</strong>.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">ZL2ABC</span><span class="gr">RE78</span><span class="time">17:07</span></div>
+          <div class="rd"><span class="mini"><i style="width:40%"></i></span>hearing VK3XYZ · S6</div>
+          <div class="mt">Too close for good skip, coming in off the back of the beam.</div>
+        </div>
+        <div class="msg mine">
+          <div class="mh"><span class="call">N0CALL</span><span class="gr">FN42</span><span class="time">17:08</span></div>
+          <div class="rd"><span class="mini"><i style="width:47%"></i></span>hearing VK3XYZ · S8</div>
+          <div class="mt">Copied the list, standing by.</div>
+        </div>
+      </div>
+      <div class="compose">
+        <div class="in"><div class="box">Message 14.212.000</div><button class="btn primary">SEND</button></div>
+        <div class="hint">Sent with your reading: <b>hearing VK3XYZ · S8</b></div>
+      </div>
+    </div>
+
+    <div class="mview" id="m7188" hidden>
+      <div class="msgs">
+        <div class="msg">
+          <div class="mh"><span class="call">W9ABC</span><span class="gr">EN61</span><span class="time">17:01</span></div>
+          <div class="rd"><span class="mini"><i style="width:52%"></i></span>hearing K4ABC · S9</div>
+          <div class="mt">Good signal into Chicago, K4ABC.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">N3ABC</span><span class="gr">FM29</span><span class="time">17:04</span></div>
+          <div class="rd"><span class="mini"><i style="width:40%"></i></span>hearing W9ABC · S7</div>
+          <div class="mt">W9ABC, some fading here but readable.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">K0ABC</span><span class="gr">EM48</span><span class="time">17:05</span></div>
+          <div class="rd"><span class="mini"><i style="width:34%"></i></span>hearing K4ABC · S6</div>
+          <div class="mt">Skip is long here, you're <strong>weak but solid</strong>.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">K4ABC</span><span class="gr">EM73</span><span class="time">17:07</span></div>
+          <div class="rd onair">transmitting</div>
+          <div class="mt">Thanks all. Fifteen more minutes, then I'm off.</div>
+        </div>
+      </div>
+      <div class="compose off">
+        <div class="in"><div class="box">Tune a slice to 7.188.000 to post here</div><button class="btn primary" disabled>SEND</button></div>
+        <div class="hint">Only stations tuned to this frequency can post. You can read everything.</div>
+      </div>
+    </div>
+
+    <div class="mview" id="m21300" hidden>
+      <div class="msgs">
+        <div class="msg">
+          <div class="mh"><span class="call">N6ABC</span><span class="gr">DM04</span><span class="time">17:06</span></div>
+          <div class="rd"><span class="mini"><i style="width:44%"></i></span>hearing W0ABC · S7</div>
+          <div class="mt">W0ABC, good copy in Los Angeles.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">VE7ABC</span><span class="gr">CN89</span><span class="time">17:07</span></div>
+          <div class="rd"><span class="mini"><i style="width:56%"></i></span>hearing K7ABC · S9 +4</div>
+          <div class="mt">K7ABC loud here. Going back to you after W0ABC.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">KH6ABC</span><span class="gr">BL01</span><span class="time">17:08</span></div>
+          <div class="rd"><span class="mini sum"><i style="width:58%"></i></span>hearing K7ABC + W0ABC · S9 +6</div>
+          <div class="mt">You two just doubled. <strong>K7ABC</strong> go first, then W0ABC.</div>
+        </div>
+      </div>
+      <div class="compose off">
+        <div class="in"><div class="box">Tune a slice to 21.300.000 to post here</div><button class="btn primary" disabled>SEND</button></div>
+        <div class="hint">Only stations tuned to this frequency can post. You can read everything.</div>
+      </div>
+    </div>
+
+    <div class="mview" id="m3916" hidden>
+      <div class="msgs">
+        <div class="msg">
+          <div class="mh"><span class="call">W3ABC</span><span class="gr">FM19</span><span class="time">17:03</span></div>
+          <div class="rd"><span class="mini"><i style="width:62%"></i></span>hearing <span class="unk">unknown</span> · S9 +10</div>
+          <div class="mt">That was KC3ABC checking in. Named it.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">N2ABC</span><span class="gr">FN20</span><span class="time">17:04</span></div>
+          <div class="rd"><span class="mini"><i style="width:45%"></i></span>hearing <span class="unk">unknown</span> · S7</div>
+          <div class="mt">I copied <strong>KC3ABD</strong>, not ABC. Added mine too.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">K4QRS</span><span class="gr">FM05</span><span class="time">17:05</span></div>
+          <div class="rd"><span class="mini"><i style="width:50%"></i></span>hearing N2XYZ · S8</div>
+          <div class="mt">N2XYZ, you're solid in North Carolina today.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">N2XYZ</span><span class="gr">FN21</span><span class="time">17:05</span></div>
+          <div class="rd onair">transmitting</div>
+          <div class="mt">Thanks, 100 W into a low dipole.</div>
+        </div>
+        <div class="msg">
+          <div class="mh"><span class="call">KD4ABC</span><span class="gr">FM17</span><span class="time">17:06</span></div>
+          <div class="rd"><span class="mini"><i style="width:58%"></i></span>hearing W4NET · S9 +5</div>
+          <div class="mt">Net control today is <strong>W4NET</strong>.</div>
+        </div>
+        <div class="msg mine">
+          <div class="mh"><span class="call">N0CALL</span><span class="gr">FN42</span><span class="time">17:08</span></div>
+          <div class="rd"><span class="mini"><i style="width:50%"></i></span>hearing <span class="unk">unknown</span> · S8</div>
+          <div class="mt">Listening on slice B, will check in after this one.</div>
+        </div>
+      </div>
+      <div class="compose">
+        <div class="in"><div class="box">Message 3.916.000</div><button class="btn primary">SEND</button></div>
+        <div class="hint">Sent with your reading: <b>hearing unknown · S8</b></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+// Meter scale: linear in dB, matching the app's frequency-panel bar.
+const LO = -127, HI = -23, S9 = -73;
+const pct = db => Math.max(0, Math.min(100, (db - LO) / (HI - LO) * 100));
+const sText = db => {
+  if (db >= S9) { return "S9 +" + Math.round(db - S9); }
+  return "S" + Math.max(0, 9 + Math.round((db - S9) / 6));
+};
+const scale = [["S1", -121], ["3", -109], ["5", -97], ["7", -85], ["9", -73], ["+20", -53], ["+40", -33]];
+document.querySelectorAll(".scalebar").forEach(el => {
+  el.innerHTML = scale.map(([l, db]) => `<span class="${db > S9 ? "r" : ""}" style="left:${pct(db)}%">${l}</span>`).join("");
+});
+const ticks = scale.map(([, db]) => `<i style="left:${pct(db)}%"></i>`).join("");
+
+const freqs = {
+  "14212": {
+    info: "9 stations · 8 reading the talker",
+    msg: "14.212.000 USB",
+    wall: [
+      { c: "ZL2ABC", g: "RE78", d: 2599, db: -91, o: 0 },
+      { c: "VK6ABC", g: "OF78", d: 2816, db: -97, o: 100 },
+      { c: "JA1ABC", g: "PM95", d: 8141, db: -58, o: 0 },
+      { c: "W6ABC",  g: "CM87", d: 12578, db: -68, o: -200 },
+      { c: "K5ABC",  g: "EM12", d: 14442, db: -79, o: 0 },
+      { c: "DL1ABC", g: "JO62", d: 15981, db: -91, o: 300 },
+      { c: "N0CALL", g: "FN42", d: 16923, db: -80, o: 0, mine: true },
+      { c: "G0ABC",  g: "IO91", d: 16941, db: -103, o: -150 },
+    ],
+    turns: [
+      { c: "N0CALL", known: true, mine: true, t: "17:05", len: "1:12", r: [-88, -96, -84, -70, -64, -59, -82, -77] },
+      { c: "K5ABC",  known: true, t: "17:02", len: "0:48", r: [-94, -99, -79, -66, -61, -86, -80, -90] },
+      { c: "VK3XYZ", known: true, t: "17:00", len: "1:30", r: [-92, -96, -60, -69, -80, -92, -79, -104] },
+      { c: "JA1ABC", known: true, t: "16:58", len: "0:35", r: [-90, -101, -112, -84, -75, -88, -86] },
+    ],
+  },
+  "21300": {
+    info: "7 stations · 5 reading two talkers",
+    msg: "21.300.000 USB",
+    sum: true,
+    wall: [
+      { c: "K1XYZ",  g: "FN42", db: -91, o: 0 },
+      { c: "KH6ABC", g: "BL01", db: -67, o: 0 },
+      { c: "N6ABC",  g: "DM04", db: -71, o: -200 },
+      { c: "VE7ABC", g: "CN89", db: -64, o: 0 },
+      { c: "XE1ABC", g: "EK09", db: -84, o: 100 },
+    ],
+    turns: [
+      { c: "W0ABC", known: true, t: "17:07", len: "0:48", r: [-95, -76, -82, -79, -90, -88] },
+      { both: ["K7ABC", "W0ABC"], t: "17:06", len: "0:03", r: [-90, -66, -70, -63, -83] },
+      { c: "K7ABC", known: true, t: "17:05", len: "1:02", r: [-97, -70, -75, -66, -86, -91] },
+    ],
+  },
+  "7188": {
+    info: "9 stations · 8 reading the talker",
+    msg: "7.188.000 LSB",
+    wall: [
+      { c: "KB4ABC", g: "EM84", d: 215, db: -53, o: 0 },
+      { c: "N5ABC",  g: "EM40", d: 657, db: -79, o: 0 },
+      { c: "WA4ABC", g: "FM07", d: 702, db: -73, o: 300 },
+      { c: "K0ABC",  g: "EM48", d: 775, db: -91, o: 0 },
+      { c: "W9ABC",  g: "EN61", d: 907, db: -72, o: -100 },
+      { c: "K8ABC",  g: "EN82", d: 1016, db: -68, o: 0 },
+      { c: "N3ABC",  g: "FM29", d: 1114, db: -85, o: 0 },
+      { c: "W2ABC",  g: "FN30", d: 1318, db: -97, o: 200 },
+    ],
+    turns: [
+      { c: "W9ABC", known: true, t: "17:06", len: "1:05", r: [-72, -60, -84, -70, -64, -80, -77, -88] },
+      { c: "N3ABC", known: true, t: "17:04", len: "0:40", r: [-90, -76, -82, -71, -85, -79, -74, -66] },
+      { names: [["KG4ABC", ["KB4ABC"]]], t: "17:02", len: "0:20", r: [-66, -88, -80, -97, -82, -90, -94, -101] },
+      { c: "K4ABC", known: true, t: "17:00", len: "2:10", r: [-55, -80, -74, -90, -71, -69, -86, -98] },
+    ],
+  },
+  "3916": {
+    info: "11 stations · 11 reading the talker",
+    msg: "3.916.000 LSB",
+    wall: [
+      { c: "K1ABC",  g: "FN44", db: -84, o: 0 },
+      { c: "K4QRS",  g: "FM05", db: -66, o: -500 },
+      { c: "KA2ABC", g: "FN13", db: -77, o: 0 },
+      { c: "KD4ABC", g: "FM17", db: -61, o: 0 },
+      { c: "N0CALL", g: "FN42", db: -79, o: 0, mine: true },
+      { c: "N2ABC",  g: "FN20", db: -70, o: 200 },
+      { c: "N2XYZ",  g: "FN21", db: -68, o: 0 },
+      { c: "N4XYZ",  g: "EM95", db: -74, o: 0 },
+      { c: "W1ABC",  g: "FN31", db: -82, o: -100 },
+      { c: "W3ABC",  g: "FM19", db: -57, o: 0 },
+      { c: "W8ABC",  g: "EN91", db: -88, o: 400 },
+    ],
+    turns: [
+      { names: [], t: "17:07", len: "0:41", r: [-82, -65, -76, -60, -78, -71, -69, -73, -80, -58, -87] },
+      { names: [["W4NET", ["KD4ABC", "W3ABC"]]], t: "17:06", len: "0:22", r: [-80, -62, -74, -55, -76, -67, -66, -71, -79, -54, -85] },
+      { c: "N2XYZ", known: true, t: "17:05", len: "0:34", r: [-79, -79, -70, -72, -64, -58, -81, -69, -66, -83] },
+      { names: [["W4NET", ["KD4ABC"]]], t: "17:04", len: "0:51", r: [-81, -63, -75, -57, -77, -69, -67, -72, -80, -55, -86] },
+      { names: [["KC3ABC", ["W3ABC"]], ["KC3ABD", ["N2ABC"]]], t: "17:03", len: "0:15", r: [-95, -82, -90, -71, -88, -79, -80, -86, -92, -63, -99] },
+    ],
+  },
+};
+
+// How far each station's dial sits from the room's frequency.
+const offText = hz => hz === 0 ? "on" : (hz > 0 ? "+" : "−") + Math.abs(hz) + " Hz";
+
+function renderWall(key) {
+  const f = freqs[key];
+  f.wall.forEach(s => { s.off = 0; });
+  document.getElementById("wall" + key).innerHTML = f.wall.map((s, i) => `
+    <div class="mrow${s.mine ? " mine" : ""}">
+      <span class="c">${s.c}${s.mine ? '<span class="you">YOU</span>' : ""}</span>
+      <span class="g">${s.g}</span>
+      <span class="d">${s.d ? s.d.toLocaleString("en-US") + " km" : "—"}</span>
+      <span class="off${s.o ? "" : " zero"}">${offText(s.o)}</span>
+      <div class="meter${f.sum ? " sum" : ""}"><div class="fill" id="f${key}_${i}"></div><div class="over" id="o${key}_${i}"></div><div class="ticks">${ticks}</div></div>
+      <span class="v" id="v${key}_${i}"></span>
+      <span class="a">${[1, 1, 2, 1, 3, 1, 1, 2, 1, 2, 1][i]}s</span>
+    </div>`).join("");
+}
+
+function whoCell(t) {
+  if (t.both) {
+    return `<div><div class="nm">${t.both.join(" + ")}</div><div class="by">doubled · kept out of both turns</div></div>`;
+  }
+  if (t.known) {
+    return `<div><div class="nm">${t.c}${t.mine ? '<span class="you">YOU</span>' : ""}</div><div class="by">on NereusSDR</div></div>`;
+  }
+  if (t.names.length === 0) {
+    return `<div><div class="nm unk">unknown <button class="namebtn">NAME</button></div><div class="by">nobody has named it</div></div>`;
+  }
+  const nm = t.names.map(([n]) => n).join(" / ");
+  const by = t.names.map(([, who]) => who.map(w => `<b>${w}</b>`).join(", ")).join(" / ");
+  return `<div><div class="nm">${nm}</div><div class="by">named by ${by}</div></div>`;
+}
+
+// Small bars span S3 (-109) to S9 +30 (-43) so strong-band turns still show differences.
+const barH = db => Math.max(2, Math.min(22, Math.round((db + 109) / 66 * 22)));
+function renderTurns(key) {
+  document.getElementById("turns" + key).innerHTML = freqs[key].turns.map(t => `
+    <div class="turn${t.mine ? " mine" : ""}">
+      ${whoCell(t)}
+      <span class="t">${t.t}</span>
+      <span class="len">${t.len} long</span>
+      <span class="bars${t.both ? " sum" : ""}">${t.r.map(db => `<i class="${db >= S9 ? "o" : ""}" style="height:${barH(db)}px"></i>`).join("")}</span>
+      <span class="n">${t.r.length} readings</span>
+      <span class="go">›</span>
+    </div>`).join("");
+}
+
+function draw() {
+  Object.keys(freqs).forEach(key => {
+    freqs[key].wall.forEach((s, i) => {
+      const cur = s.db + s.off;
+      const p = pct(cur), p9 = pct(S9);
+      document.getElementById(`f${key}_${i}`).style.width = Math.min(p, p9) + "%";
+      const o = document.getElementById(`o${key}_${i}`);
+      o.style.left = p9 + "%";
+      o.style.width = Math.max(0, p - p9) + "%";
+      const v = document.getElementById(`v${key}_${i}`);
+      v.textContent = sText(cur);
+      v.classList.toggle("over", cur >= S9);
+    });
+  });
+}
+
+Object.keys(freqs).forEach(key => { renderWall(key); renderTurns(key); });
+draw();
+setInterval(() => {
+  Object.values(freqs).forEach(f => f.wall.forEach(s => {
+    s.off += (Math.random() - 0.5) * 2.4;
+    s.off *= 0.8;
+  }));
+  draw();
+}, 300);
+
+setInterval(() => {
+  document.querySelectorAll(".clk").forEach(el => {
+    const s = Number(el.dataset.s) + 1;
+    el.dataset.s = s;
+    el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  });
+}, 1000);
+
+// Selecting a frequency in the list.
+function select(key) {
+  document.querySelectorAll(".fq[data-f]").forEach(el => el.classList.toggle("sel", el.dataset.f === key));
+  // Opening a frequency reads its messages, so its unread count goes.
+  document.querySelectorAll(`.fq[data-f="${key}"] .unread`).forEach(el => el.remove());
+  document.querySelectorAll(".view").forEach(el => { el.hidden = el.id !== "v" + key; });
+  document.querySelectorAll(".mview").forEach(el => { el.hidden = el.id !== "m" + key; });
+  document.getElementById("fqinfo").textContent = freqs[key].info;
+  document.getElementById("msginfo").textContent = freqs[key].msg;
+}
+document.querySelectorAll(".fq[data-f]").forEach(el => el.addEventListener("click", () => select(el.dataset.f)));
+
+// Theme: ?theme=light, or the button. Frequency: ?f=3916.
+const root = document.documentElement;
+const btn = document.getElementById("themebtn");
+function setTheme(t) {
+  root.setAttribute("data-theme", t);
+  btn.textContent = t === "dark" ? "LIGHT" : "DARK";
+}
+const params = new URLSearchParams(location.search);
+setTheme(params.get("theme") === "light" ? "light" : "dark");
+btn.addEventListener("click", () => setTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark"));
+select(freqs[params.get("f")] ? params.get("f") : "14212");
+</script>
+</body>
+</html>

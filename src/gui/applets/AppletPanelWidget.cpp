@@ -16,6 +16,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - The container's Pop Out is the pop-out container for every
+//                applet again: setArrangeController no longer installs the
+//                pop-out override, which sent Roundtable's to its own window
+//                (no pop-out container to move or snap). Its own window
+//                stays on its own control (JJ, PR 657). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - floatApplet shows an applet's own pop-out window
+//                (AppletWidget::createFloatingWindow) before any
+//                AppletFloatingWindow, in both modes; dockApplet,
+//                isAppletFloating, removeApplet and setAppletVisible know it
+//                (Roundtable plan Task 13). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
+//   2026-10-24 - Managed workspace: the container menu's Pop Out opens an
+//                applet's own window (ContainerArrangeController's pop-out
+//                override); an own window's Floating key is kept in both
+//                modes and reopens it at launch; the applet can find its
+//                panel (kPanelProperty) once a container hosts it
+//                (Roundtable plan Task 13). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-02 — Atomic container arrangement and reserved chrome by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -214,7 +233,13 @@ void AppletPanelWidget::addApplet(AppletWidget* applet)
     if (!applet) { return; }
     if (m_applets.contains(applet)) { return; }  // already present
     m_applets.append(applet);
-    if (m_managedWorkspace) { applet->setParent(this); applet->hide(); return; }
+    applet->setProperty(kPanelProperty, QVariant::fromValue(QPointer<QObject>(this)));
+    if (m_managedWorkspace) {
+        applet->setParent(this);
+        applet->hide();
+        restoreOwnWindow(applet);
+        return;
+    }
 
     applet->setParent(this);
     applet->show();
@@ -239,6 +264,7 @@ void AppletPanelWidget::insertApplet(int index, AppletWidget* applet)
     const int appletCount = m_stackLayout->count() - 1;
     const int at = (index < 0 || index > appletCount) ? appletCount : index;
     m_applets.insert(std::min(at, static_cast<int>(m_applets.size())), applet);
+    applet->setProperty(kPanelProperty, QVariant::fromValue(QPointer<QObject>(this)));
     applet->setParent(this);
     applet->show();
     QWidget* wrapped = wrapWithTitleBar(applet, applet->appletTitle(),
@@ -285,12 +311,50 @@ void AppletPanelWidget::restoreFloatState(AppletWidget* applet)
     });
 }
 
+void AppletPanelWidget::restoreOwnWindow(AppletWidget* applet)
+{
+    // Managed workspace: an applet's own window that was open at quit
+    // opens again at launch, at its saved size and screen. Other applets
+    // float through the workspace document instead.
+    if (!applet || !applet->canFloat()) { return; }
+    const bool wasFloating = AppSettings::instance()
+        .value(floatKey(applet), QStringLiteral("False")).toString() == QLatin1String("True");
+    if (!wasFloating) { return; }
+    // Deferred, as restoreFloatState, until the main window is up.
+    QTimer::singleShot(0, this, [this, applet]() {
+        if (m_applets.contains(applet)) { floatOwnWindow(applet); }
+    });
+}
+
 void AppletPanelWidget::setArrangeController(ContainerArrangeController *controller)
 {
+    // The container's Pop Out gives every applet a pop-out container, one
+    // with a window of its own too; that window opens from the applet's own
+    // control (floatApplet).
     m_arrange = controller;
+}
+
+bool AppletPanelWidget::floatOwnWindow(AppletWidget* applet)
+{
+    QWidget* own = applet ? applet->createFloatingWindow() : nullptr;
+    if (!own) { return false; }
+    if (!m_ownWindows.contains(applet)) {
+        m_ownWindows.insert(applet, own);
+        m_ownDocked.insert(applet, connect(applet, &AppletWidget::floatingWindowDocked, this,
+                                           [this, applet]() { forgetOwnWindow(applet); }));
+    }
+    // Kept in both modes: the window opens again at the next launch.
+    AppSettings::instance().setValue(floatKey(applet), QStringLiteral("True"));
+    own->show();
+    own->raise();
+    own->activateWindow();
+    return true;
 }
 bool AppletPanelWidget::isAppletFloating(AppletWidget* applet) const
 {
+    if (applet && m_ownWindows.contains(applet)) {
+        return true;
+    }
     if (m_arrange && applet) {
         for (const auto &c : m_arrange->workspaceSnapshot().containers) {
             for (const auto &e : c.contents) {
@@ -306,6 +370,11 @@ bool AppletPanelWidget::isAppletFloating(AppletWidget* applet) const
 
 void AppletPanelWidget::floatApplet(AppletWidget* applet)
 {
+    // An applet with a window of its own pops out into it, in either mode;
+    // it stays where it is in the panel or its container.
+    if (applet && (m_managedWorkspace || m_applets.contains(applet)) && floatOwnWindow(applet)) {
+        return;
+    }
     if (m_managedWorkspace) {
         if (m_arrange && applet) {
             for (const auto &c : m_arrange->workspaceSnapshot().containers) {
@@ -348,8 +417,22 @@ void AppletPanelWidget::floatApplet(AppletWidget* applet)
     win->raise();
 }
 
+void AppletPanelWidget::forgetOwnWindow(AppletWidget* applet)
+{
+    disconnect(m_ownDocked.take(applet));
+    if (m_ownWindows.remove(applet) > 0) {
+        AppSettings::instance().setValue(floatKey(applet), QStringLiteral("False"));
+    }
+}
+
 void AppletPanelWidget::dockApplet(AppletWidget* applet)
 {
+    if (applet && m_ownWindows.contains(applet)) {
+        // The applet docks its own window and says so (forgetOwnWindow).
+        applet->dockFloatingWindow();
+        forgetOwnWindow(applet);
+        return;
+    }
     if (m_managedWorkspace) {
         if (m_arrange && applet) {
             for (const auto &c : m_arrange->workspaceSnapshot().containers) {
@@ -385,7 +468,7 @@ void AppletPanelWidget::removeApplet(AppletWidget* applet)
 {
     if (!applet) { return; }
     if (!m_applets.contains(applet)) { return; }
-    if (m_floating.contains(applet)) {
+    if (m_floating.contains(applet) || m_ownWindows.contains(applet)) {
         dockApplet(applet);
     }
     m_wantVisible.remove(applet);
@@ -399,6 +482,7 @@ void AppletPanelWidget::removeApplet(AppletWidget* applet)
         wrapper->deleteLater();
         m_wrappers.remove(applet);
     }
+    applet->setProperty(kPanelProperty, QVariant());
     m_applets.removeOne(applet);
 }
 
@@ -408,6 +492,12 @@ void AppletPanelWidget::setAppletVisible(AppletWidget* applet, bool visible)
     QWidget* wrapper = m_wrappers.value(applet, nullptr);
     if (!wrapper) { return; }  // applet not in this panel
     m_wantVisible[applet] = visible;
+    if (QWidget* own = m_ownWindows.value(applet)) {
+        // Hiding an applet popped out into its own window hides the window.
+        own->setVisible(visible);
+        wrapper->setVisible(visible);
+        return;
+    }
     if (AppletFloatingWindow* win = m_floating.value(applet, nullptr)) {
         // Hiding a floating applet hides its window; showing brings it back.
         win->setVisible(visible);

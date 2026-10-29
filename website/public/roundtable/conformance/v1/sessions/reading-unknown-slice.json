@@ -1,0 +1,109 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "hello",
+        "v": 1,
+        "software": "$string:software",
+        "softwareVersion": "$string:softwareVersion",
+        "spki": "$key:a:spki",
+        "sig": "$hello:a:challenge:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "welcome",
+        "station": "$key:a:id",
+        "kind": "core",
+        "callsign": null,
+        "grid": null,
+        "time": 1800000000000,
+        "limits": {
+          "readingsPerSecond": 2,
+          "presencePerSecond": 1,
+          "messagesPerMinute": 6,
+          "messagesPerHour": 60,
+          "messageCodePoints": 500,
+          "messageLines": 10,
+          "namesPerMinute": 10,
+          "reportsPerHour": 10,
+          "slices": 4,
+          "reads": 4
+        },
+        "mentions": []
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "rooms",
+        "gen": 1,
+        "rooms": []
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "presence",
+        "callsign": "K4ABC",
+        "grid": "EM73",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "from": "station",
+      "role": "scripted",
+      "message": {
+        "type": "reading",
+        "slice": 3,
+        "dbm": -91.5,
+        "t": 1800000001000,
+        "present": true
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "error",
+        "code": "unknown-slice",
+        "reason": "That reading is for a slice this station has not listed.",
+        "about": "reading",
+        "retryAfterMs": 0
+      }
+    }
+  ]
+}

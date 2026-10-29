@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25 - Created for the desktop remote window's transmit
 //                (R-IOS-13, R-R3-42). J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
@@ -61,6 +63,11 @@
 //               not only while one waits: the TCI server and the remote
 //               window's rigctld share this one program key. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48): the cw.* verbs and
+//               cwRefused. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-25: keepaliveTick sends the session copy even after the "tx"
+//               channel accepts the same sequence. J.J. Boyd (KG4VCF),
+//               AI-assisted via Grok.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -185,7 +192,7 @@ quint32 RemoteTransmitClient::keepaliveEpoch() const
 void RemoteTransmitClient::refreshKeepalive()
 {
     const bool wanted = m_available
-        && (micKeyDown() || holdsTransmit() || m_tuneAsked || m_twoToneAsked || m_voxArmed);
+        && (micKeyDown() || holdsTransmit() || m_tuneAsked || m_twoToneAsked || m_voxArmed || m_cwPending || m_cwEpoch != 0);
     if (wanted == m_keepaliveTimer.isActive()) {
         return;
     }
@@ -207,6 +214,7 @@ void RemoteTransmitClient::keepaliveTick()
     }
     const quint64 sequence = ++m_keepaliveSequence;
     const quint32 epoch = keepaliveEpoch();
+    const TxKeepalive value{sequence, epoch, m_cwEpoch};
     // A command ID does not prove the off was queued: the transport can
     // silently drop it. Until each off's own accepted Core result, neither
     // heartbeat path may keep an old key alive. Continue one sequence.
@@ -215,9 +223,10 @@ void RemoteTransmitClient::keepaliveTick()
     }
     const QPointer<RemoteTransmitClient> self(this);
     const quint64 sessionGeneration = m_sessionGeneration;
-    if (m_auxiliaryKeepalive) {
+    if (m_auxiliaryCwKeepalive || m_auxiliaryKeepalive) {
         const KeepaliveSender auxiliary = m_auxiliaryKeepalive;
-        const bool sent = auxiliary(sequence, epoch);
+        const bool sent = m_auxiliaryCwKeepalive ? m_auxiliaryCwKeepalive(value)
+            : auxiliary(sequence, epoch);
         if (!self || m_sessionGeneration != sessionGeneration) { return; }
         if (sent) { ++m_auxiliaryKeepalives; }
     }
@@ -226,23 +235,28 @@ void RemoteTransmitClient::keepaliveTick()
     if (m_releaseDispatches != 0 || m_pendingReleases != 0 || m_releaseFailureSticky) {
         return;
     }
-    if (m_channelKeepalive) {
+    if (m_channelCwKeepalive || m_channelKeepalive) {
         const KeepaliveSender channel = m_channelKeepalive;
-        const bool sent = channel(sequence, epoch);
+        const bool sent = m_channelCwKeepalive ? m_channelCwKeepalive(value)
+            : channel(sequence, epoch);
         if (!self || m_sessionGeneration != sessionGeneration) { return; }
         if (sent) {
             ++m_channelKeepalives;
-            return;
         }
     }
-    // A channel callback can issue an off before declining the send.
-    // Recheck its new fence before attempting another path in this tick.
+    // The channel is unordered and never retransmitted. A send it accepts
+    // can still vanish on a relay, and four lost copies is the Core's
+    // quiet link: VOX off, and a live transmission cut. The session carries
+    // this same sequence either way. The Core counts a sequence once.
+    // A channel callback can issue an off before it returns. Recheck that
+    // fence before the session copy.
     if (m_releaseDispatches != 0 || m_pendingReleases != 0 || m_releaseFailureSticky) {
         return;
     }
-    if (m_sessionKeepalive) {
+    if (m_sessionCwKeepalive || m_sessionKeepalive) {
         const KeepaliveSender session = m_sessionKeepalive;
-        const bool sent = session(sequence, epoch);
+        const bool sent = m_sessionCwKeepalive ? m_sessionCwKeepalive(value)
+            : session(sequence, epoch);
         if (!self || m_sessionGeneration != sessionGeneration) { return; }
         if (sent) { ++m_sessionKeepalives; }
     }
@@ -269,6 +283,12 @@ void RemoteTransmitClient::setAvailable(bool available)
 void RemoteTransmitClient::retireSession()
 {
     m_available = false;
+    m_cwAvailable = false;
+    m_cwReleaseAvailable = false;
+    m_cwRetiredEpoch = 0;
+    m_cwEpoch = 0;
+    m_cwPending = false;
+    ++m_cwGeneration;
     // The Core unkeys a device whose link drops and never keys it
     // again by itself; nothing here survives.
     // Task 37: a new link starts its keepalives from 1.
@@ -308,7 +328,7 @@ quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpd
         --m_releaseDispatches;
     }
     if (id != 0) {
-        m_pending.insert(id, Pending{kind, verb, releaseIntent});
+        m_pending.insert(id, Pending{kind, verb, releaseIntent, m_cwGeneration});
         if (releaseIntent) {
             ++m_pendingReleases;
         }
@@ -322,6 +342,70 @@ quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpd
             emit refused(QString::fromLatin1(kReleaseFailedReason), QString(), QString());
         }
     }
+    return id;
+}
+
+// CW transmit (R-CW-48): the Core's CWX sender for this window. The Core
+// answers every copy alike and acts once; a refusal is cwRefused.
+void RemoteTransmitClient::setRemoteCwActivity(quint32 epoch, bool active)
+{
+    if (active) {
+        if (epoch == 0 || epoch <= m_cwRetiredEpoch || (!m_cwPending && m_cwEpoch == 0)) { return; }
+        if (m_cwEpoch != 0 && epoch < m_cwEpoch) { return; }
+        m_cwEpoch = epoch;
+        m_cwPending = false;
+    } else {
+        m_cwRetiredEpoch = std::max(m_cwRetiredEpoch, epoch);
+        if (m_cwEpoch != epoch) { return; }
+        m_cwEpoch = 0;
+        m_cwPending = false;
+        ++m_cwGeneration;
+    }
+    refreshKeepalive();
+}
+
+quint32 RemoteTransmitClient::sendCwText(const QString& text)
+{
+    if (!cwAvailable()) { return 0; }
+    ++m_cwGeneration;
+    m_cwPending = true;
+    refreshKeepalive();
+    const quint32 id = send("cw.send", {utf8Argument("text", text)}, Kind::Cw);
+    if (id == 0) { m_cwPending = false; refreshKeepalive(); }
+    return id;
+}
+
+quint32 RemoteTransmitClient::sendCwMemory(int number)
+{
+    if (!cwAvailable()) { return 0; }
+    ++m_cwGeneration;
+    m_cwPending = true;
+    refreshKeepalive();
+    const quint32 id = send("cw.memory", {int64Argument("number", number)}, Kind::Cw);
+    if (id == 0) { m_cwPending = false; refreshKeepalive(); }
+    return id;
+}
+
+quint32 RemoteTransmitClient::stopCw()
+{
+    ++m_cwGeneration;
+    m_cwEpoch = 0;
+    m_cwPending = false;
+    refreshKeepalive();
+    return m_available && m_cwReleaseAvailable ? send("cw.stop", {}, Kind::Cw) : 0;
+}
+
+quint32 RemoteTransmitClient::setCwKey(bool down)
+{
+    if (!down) {
+        ++m_cwGeneration; m_cwEpoch = 0; m_cwPending = false; refreshKeepalive();
+        return m_available && m_cwReleaseAvailable
+            ? send("cw.key", {boolArgument("down", false)}, Kind::Cw) : 0;
+    }
+    if (!cwAvailable()) { return 0; }
+    ++m_cwGeneration; m_cwPending = true; refreshKeepalive();
+    const quint32 id = send("cw.key", {boolArgument("down", true)}, Kind::Cw);
+    if (id == 0) { m_cwPending = false; refreshKeepalive(); }
     return id;
 }
 
@@ -643,6 +727,32 @@ void RemoteTransmitClient::commandFinished(quint32 commandId, const QByteArray& 
                                        << (accepted ? "accepted" : "refused:") << reason;
 
     switch (kind) {
+    case Kind::Cw:
+        if (command.cwGeneration != m_cwGeneration) { return; }
+        if (accepted && m_cwPending) {
+            quint32 epoch = 0;
+            bool active = false;
+            for (const MirrorUpdate& value : values) {
+                if (value.name == "cwEpoch" && value.kind == MirrorWireKind::Int64) {
+                    const qint64 wire = value.value.toLongLong();
+                    if (wire > 0 && wire <= std::numeric_limits<quint32>::max()) { epoch = quint32(wire); }
+                } else if (value.name == "cwActive" && value.kind == MirrorWireKind::Bool) {
+                    active = value.value.toBool();
+                }
+            }
+            if (epoch != 0 && active && epoch > m_cwRetiredEpoch) {
+                setRemoteCwActivity(epoch, true); keepaliveTick();
+            } else {
+                m_cwPending = false;
+                refreshKeepalive();
+            }
+        }
+        if (!accepted) {
+            m_cwPending = false;
+            refreshKeepalive();
+            emit cwRefused(shown, code, fix);
+        }
+        return;
     case Kind::MicSource: {
         m_micSourcePending = false;
         const bool valid = values.size() == 1 && values.first().ordinal == 0

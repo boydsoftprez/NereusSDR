@@ -267,7 +267,7 @@ struct Toolbar: View {
     }
 
     private var panButton: some View {
-        sheetButton(.pan, title: "Pan \(MainScreenModel.panNumber)", item: .pan)
+        sheetButton(.pan, title: main.toolbarPan.title, item: .pan)
     }
 
     private var displayButton: some View {

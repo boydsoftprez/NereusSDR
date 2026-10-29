@@ -14,6 +14,23 @@
 // its floor drops to 55 and the noise-reduction table's labels, units and
 // items are checked here instead. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-10-26: the words for a refused container change (ContainerWorkspace-
+// Notices.h) are swept with the reworded windows. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
+// 2026-10-25 (Roundtable fix wave): RoundtableWire's "a station id" check
+// label is in notShown, and the rule no longer sets that phrase aside for
+// every string. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, CW keys now, so "CW transmit is not available on
+// this Core" is no longer shown by BandPlanGuard or TxApplet. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the CWX applet and the CWX refusal words read in
+// user words. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the CW page, the DSP > CW transmit groups and the
+// TX applet in CW are swept (Task 12). J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
+// 2026-10-27: CW transmit final fix wave F4: the QSK protocol reason is
+// plain now, so its exemption is gone. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 #include <QtTest/QtTest>
 
@@ -32,6 +49,7 @@
 #include <QLabel>
 #include <QRegularExpression>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QTreeWidget>
 #include <QUuid>
 
@@ -48,13 +66,20 @@
 #include "gui/RemoteAudioStatus.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/UnbuiltFeatures.h"
+#include "core/CwxSender.h"
+#include "gui/applets/CwxApplet.h"
+#include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/TxApplet.h"
+#include "gui/applets/TxFilterSection.h"
+#include "gui/applets/TxMonitorSection.h"
 #include "gui/containers/MmioEndpointsDialog.h"
 #include "gui/containers/MmioVariablePickerPopup.h"
 #include "gui/setup/CatNetworkSetupPages.h"
+#include "gui/setup/DspSetupPages.h"
 #include "gui/setup/FourO3APage.h"
 #include "gui/widgets/NnrControls.h"
 #include "models/Band.h"
+#include "models/CwKeyerController.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -447,11 +472,14 @@ QList<QPair<QString, QString>> allSetupDescriptionText()
 // product's term list is not applied here: the desktop's own words for its
 // DSP, TCI and audio settings are checked by the slots that own them. Three
 // phrases name Thetis as a product the operator knows, not as a source.
+// One is a text token the operator types into a meter text item's label,
+// spelled as the item reads it (Thetis clsText, case-sensitive), so the
+// tooltip must show it as written; it is set aside as the whole token.
 QString desktopInternalNameIn(const QString& text)
 {
     static const QStringList productPhrases{
         QStringLiteral("a skin made for Thetis"), QStringLiteral("to Thetis defaults"),
-        QStringLiteral("Thetis PTY")};
+        QStringLiteral("Thetis PTY"), QStringLiteral("%valueWithType%")};
     QString rest = text;
     for (const QString& phrase : productPhrases) {
         rest.replace(phrase, QStringLiteral(" "));
@@ -817,6 +845,90 @@ private slots:
         }
     }
 
+    // CW transmit (R-CW-41, R-CW-42, R-CW-43): the CW page, the DSP > CW
+    // transmit groups and the TX applet in CW read in user words, with no
+    // em dash and no "yet", in their tooltips and accessible text too.
+    void cwScreensAreInUserWords()
+    {
+        static const QRegularExpression yet(QStringLiteral("\\byet\\b"),
+                                            QRegularExpression::CaseInsensitiveOption);
+        const auto check = [](const QWidget& root, int floor) {
+            QStringList shown = shownText(root);
+            QList<const QWidget*> widgets{&root};
+            for (const QWidget* child : root.findChildren<const QWidget*>()) {
+                widgets.append(child);
+            }
+            for (const QWidget* w : widgets) {
+                shown << w->accessibleName() << w->accessibleDescription();
+            }
+            shown.removeAll(QString());
+            QVERIFY2(shown.size() >= floor, qPrintable(QString::number(shown.size())));
+            for (const QString& text : shown) {
+                if (text.trimmed().isEmpty()) { continue; }
+                QVERIFY2(OperatorWording::isPlain(text), qPrintable(text));
+                QVERIFY2(!text.contains(QChar(0x2014)), qPrintable(text));
+                QVERIFY2(!yet.match(text).hasMatch(), qPrintable(text));
+            }
+        };
+        RadioModel model;
+        SliceModel* slice = model.sliceById(model.addSlice());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::CWU);
+
+        PhoneCwApplet applet(&model);
+        const QWidget* cwPage = applet.findChild<QWidget*>(QStringLiteral("cwSpeedSlider"));
+        while (cwPage && !qobject_cast<QStackedWidget*>(cwPage->parentWidget())) {
+            cwPage = cwPage->parentWidget();
+        }
+        QVERIFY(cwPage);
+        check(*cwPage, 30);
+        applet.setCwSettingsPermitted(false);
+        check(*cwPage, 30);
+
+        CwSetupPage setup(&model);
+        for (const char* group : {"cwKeyerGroup", "cwBreakInGroup", "cwSidetoneGroup",
+                                  "cwSerialGroup", "cwOptionsGroup"}) {
+            const auto* box = setup.findChild<QGroupBox*>(QLatin1String(group));
+            QVERIFY2(box, group);
+            check(*box, 3);
+        }
+        setup.setHasSidetoneGenerator(false);
+        check(*setup.findChild<QGroupBox*>(QStringLiteral("cwSidetoneGroup")), 3);
+
+        // The TX applet in CW: the controls the CW layer greys, and MON.
+        // (The applet's older readouts are outside this task.)
+        TxApplet tx(&model);
+        QVERIFY(tx.cwLayerActiveForTest());
+        const auto* filter = tx.findChild<TxFilterSection*>();
+        const auto* mon = tx.findChild<TxMonitorSection*>();
+        QVERIFY(filter && mon && tx.voxButton());
+        check(*mon, 2);
+        for (const QWidget* w : {static_cast<const QWidget*>(tx.voxButton()),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxLevButton"))),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxEqButton"))),
+                                 static_cast<const QWidget*>(
+                                     tx.findChild<QWidget*>(QStringLiteral("TxCfcButton"))),
+                                 static_cast<const QWidget*>(filter->filterLowSpin()),
+                                 static_cast<const QWidget*>(filter->filterHighSpin()),
+                                 static_cast<const QWidget*>(tx.moxButton())}) {
+            QVERIFY(w);
+            check(*w, 1);
+        }
+
+        // The CWX applet (R-CW-44), with its send and settings greyed by
+        // the remote window's reasons too.
+        CwxApplet cwx(&model);
+        check(cwx, 12);
+        cwx.setSendPermitted(false, QStringLiteral("Sending CW from a remote window needs a newer Core."));
+        cwx.setCwxSettingsPermitted(false);
+        check(cwx, 12);
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxNotCwText)));
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxNothingToSendText)));
+        QVERIFY(OperatorWording::isPlain(QString::fromLatin1(kCwxMemoryEmptyText).arg(5)));
+    }
+
     // Lane B carry (R-R3-40, R-R3-08, R-R3-37): the NNR step-back wording
     // from the DSP overload batch and the Core-busy pan wording read in user
     // words, and a Core reason about NNR passes OperatorReasonText unchanged.
@@ -888,6 +1000,7 @@ private slots:
             {"src/gui/widgets/NnrControls.cpp", 55},
             {"src/gui/setup/FourO3APage.cpp", 30},
             {"src/gui/PsForm.cpp", 80},
+            {"src/gui/containers/ContainerWorkspaceNotices.h", 6},
         };
         for (const auto& entry : files) {
             const QString source = joinedSource(sourcePath(entry.file));
@@ -1117,13 +1230,13 @@ private slots:
              {"coming in Phase", "RX/TX band mismatch", "TX-allowed range",
               "Mode not supported for TX",
               "Transmit is on a different band from receive"},
-             {"CW transmit is not available on this Core", "FM transmit is not available on this Core",
+             {"FM transmit is not available on this Core",
               "DRM transmit is not available on this Core",
               "Transmit would be on %1 while another slice you have open is on %2, and Setup "
               "is set to prevent transmitting on a different band."}},
             {"src/gui/applets/TxApplet.cpp", true,
              {"coming in Phase"},
-             {"CW transmit is not available on this Core", "FM transmit is not available on this Core",
+             {"FM transmit is not available on this Core",
               "DRM transmit is not available on this Core"}},
             {"src/gui/MainWindow.cpp", false,
              {"Phase 3F closeout:", "AntennaSwitchToast surface",
@@ -1166,7 +1279,8 @@ private slots:
              {"Audio pan: left/right stereo balance (\u2212100 = full left, 0 = center, "
               "+100 = full right)",
               "Mute the receive audio",
-              "Binaural audio: I and Q play in separate ears, for a stereo image in headphones",
+              "Binaural audio: I and Q play in separate ears, for a stereo image in headphones. "
+              "While noise reduction, SNB or the auto-notch is on, both ears hear the same audio.",
               "RX Bypass on TX: routes the receive path through the bypass relay while "
               "transmitting.",
               "NNR: neural noise reduction. Left-click activates, right-click adjusts settings"}},
@@ -1553,6 +1667,9 @@ private slots:
             {"src/gui/setup/PgxlAdvancedPage.cpp", {"Slice Binding:"}, {"Follows slice:"}},
             {"src/gui/setup/AudioAdvancedPage.cpp", {}, {}},
         };
+        // Item settings keys written as code (the container paste keeps
+        // these from the target, ContainerSettingsDialog.cpp), never shown.
+        static const QStringList configurationKeys{QStringLiteral("bindingId")};
         for (const auto& site : sites) {
             const QStringList literals = userVisibleLiterals(sourcePath(site.file));
             QVERIFY2(literals.size() >= 5, site.file);
@@ -1573,6 +1690,11 @@ private slots:
                                     + QLatin1Char(']')));
             }
             for (const QString& text : literals) {
+                // A settings key the paste code names is not user text; it
+                // is set aside as the whole literal, never by the word.
+                if (configurationKeys.contains(text)) {
+                    continue;
+                }
                 QVERIFY2(!tciAndMmioJargon().match(text).hasMatch(),
                          qPrintable(QStringLiteral("%1: %2").arg(QLatin1String(site.file), text)));
             }
@@ -1656,6 +1778,10 @@ private slots:
             // kept for the operator's checkpoint.
             {"src/gui/PsForm.cpp",
              "Remember whether automatic calibration should resume when the station is ready."},
+            // A wire check's label (RoundtableWire's pattern check): it names
+            // what a malformed field should have been, for the log, and is
+            // never shown.
+            {"src/core/roundtable/RoundtableWire.cpp", "a station id"},
         };
         static const QRegularExpression placeholder(QStringLiteral("%[0-9]"));
         static const QRegularExpression stationWord(QStringLiteral("\\bstations?\\b"),
@@ -1718,6 +1844,9 @@ private slots:
                      .contains(QLatin1String("\"Remote Station\"")));
 
         // The rule catches the old words and keeps the ham sense.
+        // "a station id" is not a ham-sense phrase everywhere.
+        QVERIFY(!OperatorWording::coreCalledStationIn(
+                     QStringLiteral("Enter a station id to continue.")).isEmpty());
         QVERIFY(!OperatorWording::coreCalledStationIn(
                      QStringLiteral("Transmit controls are unavailable until the station "
                                     "confirms transmit permission.")).isEmpty());
@@ -1907,12 +2036,14 @@ private slots:
                                      "Persisted as PGXL_TxInterlockGraceMs.",
                                      "Default gray, mirroring Thetis m_bDX2_Gray.",
                                      "Full implementation in Task 2.5.",
-                                     "Thetis PTY uses CATParser.cs."}) {
+                                     "Thetis PTY uses CATParser.cs.",
+                                     "Reads valueWithType from the item."}) {
             QVERIFY2(!desktopInternalNameIn(QLatin1String(internal)).isEmpty(), internal);
         }
         for (const char* plain : {"Import a skin made for Thetis", "Enable Thetis PTY for CAT1.",
                                   "Reset all OC matrix pin assignments and pin actions to Thetis defaults",
-                                  "Default 6 dB/s.", "RX-only antenna", "Buffer Size (IQcomp)"}) {
+                                  "Default 6 dB/s.", "RX-only antenna", "Buffer Size (IQcomp)",
+                                  "%valueWithType% shows the reading with its unit"}) {
             QVERIFY2(desktopInternalNameIn(QLatin1String(plain)).isEmpty(), plain);
         }
         for (const char* cite : {"From Thetis Display.cs:4407 [v2.10.3.13]",

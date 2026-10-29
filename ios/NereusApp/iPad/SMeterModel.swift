@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the analog S-meter's model: the Core's readings, the menu's choices kept on this device, the needle's swing
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, Max Bin reads the passband from its origin, as the
+//             desktop's peak in the passband does (R-CW-24). J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -21,13 +24,14 @@ final class SMeterModel: ObservableObject {
     /// The Core's scales, from its catalogue.
     @Published private(set) var meters: StationCatalog.Meters?
 
-    private let slices: BandSlicesModel
-    private let band: BandModel
-    private let subscriber: BandSubscriber
+    private var slices: BandSlicesModel
+    private var band: BandModel
+    private var subscriber: BandSubscriber
     private let transmit: TransmitModel
     private let store: SMeterSettingsStore
     private let clock: () -> Double
     private var watches: Set<AnyCancellable> = []
+    private var sliceWatches: Set<AnyCancellable> = []
     private var frames: Timer?
     private var lastFrame: Double?
     private var visible = 0
@@ -47,9 +51,27 @@ final class SMeterModel: ObservableObject {
             self?.meters = catalog?.meters
             self?.queueRefresh()
         }.store(in: &watches)
-        slices.$entries.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
-        slices.$activeSliceId.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
+        watch(slices)
         transmit.objectWillChange.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
+        refresh()
+    }
+
+    private func watch(_ slices: BandSlicesModel) {
+        sliceWatches = []
+        slices.$entries.sink { [weak self] _ in self?.queueRefresh() }.store(in: &sliceWatches)
+        slices.$activeSliceId.sink { [weak self] _ in self?.queueRefresh() }.store(in: &sliceWatches)
+    }
+
+    /// The meter reads the active slice of another pan from now on: on the
+    /// iPad, the pan last touched (R-IOS-59), its band and its subscription.
+    func follow(slices: BandSlicesModel, band: BandModel, subscriber: BandSubscriber) {
+        guard slices !== self.slices || band !== self.band || subscriber !== self.subscriber else {
+            return
+        }
+        self.slices = slices
+        self.band = band
+        self.subscriber = subscriber
+        watch(slices)
         refresh()
     }
 
@@ -268,8 +290,8 @@ final class SMeterModel: ObservableObject {
         let slice = active.slice
         let value = SMeterMaxBin.measure(trace: frame.traceDbm, centerHz: coverage.centerHz,
                                          spanHz: coverage.spanHz,
-                                         lowHz: slice.frequencyHz + slice.filterLowHz,
-                                         highHz: slice.frequencyHz + slice.filterHighHz)
+                                         lowHz: slice.passbandOriginHz + slice.filterLowHz,
+                                         highHz: slice.passbandOriginHz + slice.filterHighHz)
         return (value != nil, value)
     }
 

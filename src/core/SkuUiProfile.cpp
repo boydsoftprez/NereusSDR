@@ -16,6 +16,9 @@
 //   2026-10-13 - Anvelina Ext2 uses the approved RX BYPASS on TX label.
 //                 J.J. Boyd (KG4VCF), with AI-assisted implementation
 //                 via OpenAI Codex.
+//   2026-10-26 - hasBpf2GndOnTx: "Gnd BPF2 on Tx" on the models Thetis
+//                 shows chkBPF2Gnd (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                 Code).
 // =================================================================
 
 //=================================================================
@@ -237,6 +240,22 @@ SkuUiProfile skuUiProfileFor(HPSDRModel sku)
         // Sentinel values — same pattern as HardwareProfile.cpp:197-199.
         break;
     }
+
+    // "Gnd BPF2 on Tx" (chkBPF2Gnd) is shown on these models only; every
+    // other model hides it.
+    //   From Thetis setup.cs:6190-6208, 6229 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) setup.cs:6316-6334, 6355 [@567a7ec]
+    //     if (HardwareSpecific.Model == HPSDRModel.ANAN8000D ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN7000D ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN_G2 ||
+    //         HardwareSpecific.Model == HPSDRModel.ANAN_G2_1K ||
+    //         HardwareSpecific.Model == HPSDRModel.ANVELINAPRO3 ||
+    //         HardwareSpecific.Model == HPSDRModel.REDPITAYA) //DH1KLM
+    //     { ... chkBPF2Gnd.Visible = true; ... }
+    //     else { ... chkBPF2Gnd.Visible = false; ... }
+    p.hasBpf2GndOnTx = sku == HPSDRModel::ANAN8000D || sku == HPSDRModel::ANAN7000D
+        || sku == HPSDRModel::ANAN_G2 || sku == HPSDRModel::ANAN_G2_1K
+        || sku == HPSDRModel::ANVELINAPRO3 || sku == HPSDRModel::REDPITAYA;
 
     return p;
 }

@@ -5,6 +5,11 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-24: the app declares setupDescription 30 (General's Filters page).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-24: the app declares roundtable 1. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the app declares remoteCw 1 and cwSettings 1
+//   (R-CW-50). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-28: CW v2 lease, heartbeat and retirement integration.
+//   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 /// The `features` object of the app's `hello` (link document section 6.1):
 /// what the Core must know about this app before it sends capabilities.
@@ -230,6 +235,24 @@
 /// on, and a media `start` may ask for it; a connection that did not ask
 /// gets NSDC v1 as before.
 ///
+/// `roundtable` 1: the app shows the Core's Roundtable, the chat rooms of
+/// the stations heard on each frequency. The Core then sends
+/// `stationRoundtableVersion`, the `roundtable` object, the
+/// `roundtableRooms` and `roundtableRoom:<id>` record streams, takes the
+/// `roundtable.*` verbs, and sends its `Roundtable/` settings and the spot
+/// sources' `roundtableState` and `roundtableText`; a Core that sends none
+/// leaves Roundtable unavailable.
+/// `remoteCw` 2: the app sends CW through the Core's CWX sender (CWX on
+/// Tools: `cw.send`, `cw.memory` and `cw.stop`). The Core then sends
+/// `remoteCwVersion` 2 beside `remoteTx`, and takes those verbs from this
+/// app. CW liveness carries cwEpoch on the shared heartbeat. A v1 Core
+/// keeps Stop available and leaves CW start greyed with its reason.
+///
+/// `cwSettings` 1: the app reads and changes the CW settings on `transmit`
+/// (the keyer speed, break-in and its delay, the sidetone, the CWX
+/// memories). The Core then sends them at `transmitSettingsVersion` 16; a
+/// Core that sends none leaves the CW controls greyed with the update note.
+///
 /// The PA readings need no declaration: the Core sends its telemetry to
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
@@ -247,5 +270,6 @@ public enum LinkFeatures {
                                             "audioQuality": 1, "stationCat": 1,
                                             "radioSpeaker": 1, "coreSpeaker": 1,
                                             "spectrumPicture": 1, "firmwareBeta": 1,
-                                            "tuneDriveSource": 1, "displayCodec": 2]
+                                            "tuneDriveSource": 1, "displayCodec": 2,
+                                            "roundtable": 1, "remoteCw": 2, "cwSettings": 1]
 }

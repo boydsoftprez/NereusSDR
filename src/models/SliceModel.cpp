@@ -196,6 +196,22 @@
 //                them on F5 1.0k. The F1-F10 presets stay as Thetis has
 //                them. By J.J. Boyd (KG4VCF), with AI-assisted
 //                transformation via Claude Code.
+//   2026-10-26 - CW transmit, the three CW pitch reads use
+//                stationCwPitchHz() (200..2250 Hz, 10 Hz step, R-CW-02) in
+//                place of their own 100..2000 clamps; the stale Longpath
+//                CW pitch entry below is marked (R-CW-52). J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, cwShiftHz (the CW receive shift, R-CW-23),
+//                shiftCwFilterForPitch and recenterStoredCwFilters (CW
+//                filters follow the pitch, R-CW-28); the Longpath entry's
+//                correction now names them. J.J. Boyd (KG4VCF), AI-assisted
+//                via Claude Code.
+//   2026-10-26: CW transmit, a pitch change recenters each CW filter on the
+//                new pitch keeping its width, as Thetis does (console.cs:
+//                18237-18239, 18255-18257), in place of moving it by the
+//                change: recenterCwFilterOnPitch replaces
+//                shiftCwFilterForPitch (R-CW-28, D8). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 //=================================================================
@@ -324,6 +340,11 @@
 //                 followCwPitch, recentreStoredCwFilters, clampCwPitch;
 //                 CW pitch range 200..2250 (udCWPitch/udDSPCWPitch), one
 //                 read site instead of four.
+//                 [Correction 2026-10-26, R-CW-52: NereusSDR trunk never
+//                 carried this Longpath code; the entry describes Longpath
+//                 only. Trunk's pitch reads use stationCwPitchHz(), its own
+//                 code, below, and its pitch follow is cwShiftHz,
+//                 recenterCwFilterOnPitch and recenterStoredCwFilters.]
 //   2026-09-28 -- Filter preset table Thetis-faithful, by Martin Fischer
 //                 (OE5SOS), AI-assisted via Anthropic Claude, from Thetis
 //                 v2.10.3.15-5-g852bf0e console.cs InitFilterPresets:
@@ -340,6 +361,7 @@
 #include "Band.h"
 #include "core/AppSettings.h"
 #include "core/ControlRanges.h"
+#include "core/CwTypes.h"
 #include "core/DiversityPattern.h"
 #include "core/LogCategories.h"
 #include "core/RadeChannel.h"
@@ -351,6 +373,7 @@
 #include "models/RadioModel.h"
 
 #include <QFile>
+#include <QRegularExpression>
 #include <QScopedValueRollback>
 #include <QSignalBlocker>
 #include <QStandardPaths>
@@ -2837,6 +2860,107 @@ void slideCwPresetAtImageLimit(DSPMode mode, int& low, int& high)
 
 } // namespace
 
+// R-CW-23: the CW receive shift. Thetis moves the receiver by the pitch,
+// From Thetis console.cs:31826-31838 [v2.10.3.15]:
+//   CWL: rx_freq += (double)cw_pitch * 0.0000010;
+//   CWU: rx_freq -= (double)cw_pitch * 0.0000010;
+// so with the radio's keyer the carrier is the dial and a signal on it is
+// heard at the pitch. NereusSDR applies the same term through the WDSP
+// shift (RadioModel::composedShiftHz) rather than the DDC.
+double SliceModel::cwShiftHz() const
+{
+    if (m_dspMode == DSPMode::CWU) {
+        return -static_cast<double>(stationCwPitchHz());
+    }
+    if (m_dspMode == DSPMode::CWL) {
+        return static_cast<double>(stationCwPitchHz());
+    }
+    return 0.0;
+}
+
+// R-CW-28 (D8): a CW filter follows a pitch change by being recentered on
+// the new pitch keeping its width, then slid off the image limit
+// (slideCwPresetAtImageLimit above).
+// Porting from Thetis console.cs:18237-18239, 18255-18257 [v2.10.3.15] — the
+// CWPitch setter's loop body, original C# logic:
+//   CWL:  int bw = high - low;
+//         low = -cw_pitch - bw / 2;
+//         high = -cw_pitch + bw / 2;
+//   CWU:  bw = high - low;
+//         low = cw_pitch - bw / 2;
+//         high = cw_pitch + bw / 2;
+void SliceModel::recenterCwFilterOnPitch(int& low, int& high, DSPMode mode, int pitchHz)
+{
+    if (mode != DSPMode::CWU && mode != DSPMode::CWL) {
+        return;
+    }
+    const int bw = high - low;
+    if (mode == DSPMode::CWL) {
+        // Adjust CWL filters  [original inline comment from console.cs:18232]
+        low = -pitchHz - bw / 2;
+        high = -pitchHz + bw / 2;
+    } else {
+        // Adjust CWU filters  [original inline comment from console.cs:18250]
+        low = pitchHz - bw / 2;
+        high = pitchHz + bw / 2;
+    }
+    slideCwPresetAtImageLimit(mode, low, high);
+}
+
+void SliceModel::recenterStoredCwFilters(int oldPitchHz, int newPitchHz)
+{
+    if (oldPitchHz == newPitchHz) {
+        return;
+    }
+    // Slice<N>/Band<b>/Mode<CWU|CWL>/FilterLow (bandModePrefix) and the
+    // legacy Slice<N>/Band<b>/FilterLow, whose mode is that band's DspMode
+    // (captureBandSettings writes both).
+    static const QRegularExpression kModeKey(
+        QStringLiteral("^(Slice\\d+/Band[^/]+/Mode(CWL|CWU)/)FilterLow$"));
+    static const QRegularExpression kBandKey(
+        QStringLiteral("^(Slice\\d+/Band[^/]+/)FilterLow$"));
+
+    auto& s = AppSettings::instance();
+    const QStringList keys = s.allKeys();
+    for (const QString& lowKey : keys) {
+        QString prefix;
+        DSPMode mode = DSPMode::CWU;
+        if (const QRegularExpressionMatch m = kModeKey.match(lowKey); m.hasMatch()) {
+            prefix = m.captured(1);
+            mode = modeFromName(m.captured(2));
+        } else if (const QRegularExpressionMatch b = kBandKey.match(lowKey); b.hasMatch()) {
+            prefix = b.captured(1);
+            const QString modeKey = prefix + QStringLiteral("DspMode");
+            if (!s.contains(modeKey)) {
+                continue;
+            }
+            bool modeOk = false;
+            const int raw = s.value(modeKey).toInt(&modeOk);
+            if (!modeOk || (raw != static_cast<int>(DSPMode::CWL)
+                            && raw != static_cast<int>(DSPMode::CWU))) {
+                continue;
+            }
+            mode = static_cast<DSPMode>(raw);
+        } else {
+            continue;
+        }
+        const QString highKey = prefix + QStringLiteral("FilterHigh");
+        if (!s.contains(highKey)) {
+            continue;
+        }
+        bool lowOk = false;
+        bool highOk = false;
+        int low = s.value(lowKey).toInt(&lowOk);
+        int high = s.value(highKey).toInt(&highOk);
+        if (!lowOk || !highOk) {
+            continue;
+        }
+        recenterCwFilterOnPitch(low, high, mode, newPitchHz);
+        s.setValue(lowKey, low);
+        s.setValue(highKey, high);
+    }
+}
+
 // Porting from Thetis console.cs:5188-5582 [v2.10.3.15] — InitFilterPresets, F5 per mode.
 //
 // Filter low/high are in Hz relative to the carrier frequency.
@@ -2855,15 +2979,11 @@ std::pair<int, int> SliceModel::defaultFilterForMode(DSPMode mode)
     // read path needs to be in place now so the filter center moves with
     // the setting once that UI ships.  Thetis's CW pitch range is 200..2250 Hz
     // (setup.designer.cs:38264-38273 udDSPCWPitch, console.Designer.cs:1378-1388
-    // udCWPitch [v2.10.3.15]); the clamp below still uses 100..2000 and is a
-    // later change.
+    // udCWPitch [v2.10.3.15]); stationCwPitchHz() clamps to it and rounds to
+    // the 10 Hz step (R-CW-02, 2026-10-26).
     //
     // From Thetis display.cs:1029 [v2.10.3.15] — cw_pitch default 600.
-    auto& s = AppSettings::instance();
-    int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
-    if (cwPitch < 100)  { cwPitch = 100;  }
-    if (cwPitch > 2000) { cwPitch = 2000; }
-    const int kCwPitch = cwPitch;
+    const int kCwPitch = stationCwPitchHz();
     // From Thetis console.cs:14658 [v2.10.3.15]
     static constexpr int kDiguOffset = 1500;
     // From Thetis console.cs:14693 [v2.10.3.15]
@@ -2984,11 +3104,7 @@ QList<std::pair<int, int>> SliceModel::presetsForMode(DSPMode mode)
     // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
     // AppSettings — see defaultFilterForMode() above for the full
     // rationale.  Default 600 Hz from Thetis display.cs:1029 [v2.10.3.15].
-    auto& s = AppSettings::instance();
-    int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
-    if (cwPitch < 100)  { cwPitch = 100;  }
-    if (cwPitch > 2000) { cwPitch = 2000; }
-    const int kCwPitch = cwPitch;
+    const int kCwPitch = stationCwPitchHz();
     // From Thetis console.cs:14658 [v2.10.3.15]
     static constexpr int kDiguOffset = 1500;
     // From Thetis console.cs:14693 [v2.10.3.15]
@@ -3116,11 +3232,7 @@ QList<std::pair<int, int>> SliceModel::commonPresetsForMode(DSPMode mode)
         // Phase 3J-1 closeout Item 6 (2026-05-12): read CW pitch from
         // AppSettings.  See defaultFilterForMode() for the full rationale.
         // From Thetis display.cs:1029 [v2.10.3.15] — default 600.
-        auto& s = AppSettings::instance();
-        int cwPitch = s.value(QStringLiteral("CWPitch"), 600).toInt();
-        if (cwPitch < 100)  { cwPitch = 100;  }
-        if (cwPitch > 2000) { cwPitch = 2000; }
-        const int kCwPitch = cwPitch;
+        const int kCwPitch = stationCwPitchHz();
         const int sign = (mode == DSPMode::CWL) ? -1 : 1;
         return { {sign*(kCwPitch-50),  sign*(kCwPitch+50)},
                  {sign*(kCwPitch-100), sign*(kCwPitch+100)},

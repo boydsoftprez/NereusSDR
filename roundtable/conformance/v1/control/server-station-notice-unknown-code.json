@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "notice",
+    "code": "maintenance",
+    "text": "Roundtable restarts at 04:30 UTC.",
+    "until": null
+  },
+  "decodes": true
+}

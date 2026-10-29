@@ -1,0 +1,12 @@
+{
+  "from": "server",
+  "to": "live",
+  "wire": {
+    "type": "roomsDelta",
+    "gen": 5.5,
+    "add": [],
+    "change": [],
+    "remove": []
+  },
+  "decodes": false
+}

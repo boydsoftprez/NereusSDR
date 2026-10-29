@@ -10,10 +10,10 @@
 //   1. tuneRefused emitted when radio not connected.
 //   2. USB mode → no DSP swap, tone freq = +cw_pitch (+600 Hz).
 //   3. LSB mode → no DSP swap, tone freq = -cw_pitch (-600 Hz).
-//   4. CWL mode → swap to LSB, tone freq = -cw_pitch (-600 Hz).
-//   5. CWU mode → swap to USB, tone freq = +cw_pitch (+600 Hz).
-//   6. CWL TUN-on → TUN-off restores CWL.
-//   7. CWU TUN-on → TUN-off restores CWU.
+//   4. CWL mode → the TX channel runs LSB, the slice stays CWL (D6).
+//   5. CWU mode → the TX channel runs USB, the slice stays CWU (D6).
+//   6. CWL TUN-on → TUN-off puts the TX channel back in CWL.
+//   7. CWU TUN-on → TUN-off puts the TX channel back in CWU.
 //   8. Non-CW (USB) TUN-on → TUN-off: DSP mode unchanged.
 //   9. TUN-on pushes tunePowerForBand to connection.
 //  10. TUN-off restores saved power to connection.
@@ -55,6 +55,18 @@
 //      TUN off through its own TUN-off path first (tone, mode and power
 //      back, TUN no longer counted on), then keys, as Thetis
 //      chk2TONE_CheckedChanged does (console.cs:44805-44813 [v2.10.3.15]).
+//  32. CW transmit (R-CW-30, D7): the tune tone is plus or minus the CW pitch
+//      in every mode, its NCO compensation keeps the carrier on dial plus
+//      XIT, and a pitch change during TUNE waits for the next TUNE.
+//  33. CW transmit (R-CW-18, D6): TUNE in CW starts the TX channel and turns
+//      the radio's keyer off while it runs; TUN-off turns it back on.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, TUNE in CW changes only the TX channel's mode
+//               (tests 4 to 7, 28, 29), the tune tone follows the pitch
+//               latched at TUN-on (32), TUNE in CW starts the TX channel
+//               with the keyer off (33). J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 
 #include <QtTest/QtTest>
 #include <QObject>
@@ -62,8 +74,14 @@
 #include <QCoreApplication>
 #include <QScopeGuard>
 
+#include <atomic>
+
 #include "core/AppSettings.h"
+#include "core/CwTypes.h"
 #include "core/MoxController.h"
+#include "core/RadioDiscovery.h"
+#include "core/WdspEngine.h"
+#include "models/CwKeyerController.h"
 #include "core/PaProfileManager.h"
 #include "core/RadioConnection.h"
 #include "core/TxChannel.h"
@@ -415,6 +433,144 @@ private slots:
         QCOMPARE(tx.power(), tx.powerForBand(Band::Band40m));
     }
 
+    // ── 32. R-CW-30, D7: the tune tone follows the CW pitch, latched ───────
+    void tuneToneFollowsTheLatchedPitch_data()
+    {
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<qint64>("toneHz");
+        QTest::newRow("USB") << int(DSPMode::USB) << qint64(700);
+        QTest::newRow("DIGU") << int(DSPMode::DIGU) << qint64(700);
+        QTest::newRow("AM") << int(DSPMode::AM) << qint64(700);
+        QTest::newRow("FM") << int(DSPMode::FM) << qint64(700);
+        QTest::newRow("CWU") << int(DSPMode::CWU) << qint64(700);
+        QTest::newRow("LSB") << int(DSPMode::LSB) << qint64(-700);
+        QTest::newRow("DIGL") << int(DSPMode::DIGL) << qint64(-700);
+        QTest::newRow("CWL") << int(DSPMode::CWL) << qint64(-700);
+    }
+
+    void tuneToneFollowsTheLatchedPitch()
+    {
+        QFETCH(int, mode);
+        QFETCH(qint64, toneHz);
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        const auto detach = qScopeGuard([&model]() {
+            model.injectConnectionForTest(nullptr);
+        });
+        SliceModel* slice = model.activeSlice();
+        QVERIFY(slice);
+        model.setCwPitchHz(700);
+        QCOMPARE(model.cwPitchHz(), 700);
+        slice->setDspMode(static_cast<DSPMode>(mode));
+        slice->setFrequency(14'074'000);
+        slice->setXitHz(50);
+        slice->setXitEnabled(true);
+        model.wireSliceSignalsForTest();
+        pump();
+
+        model.setTune(true);
+        pump();
+        QVERIFY(model.isTune());
+        QCOMPARE(model.tuneToneHzForTest(), static_cast<double>(toneHz));
+        // The carrier lands on the dial plus XIT: the NCO is offset by the tone.
+        QVERIFY(!conn->txFreqLog.isEmpty());
+        QCOMPARE(conn->txFreqLog.last(), quint64(14'074'050 - toneHz));
+
+        // A pitch change during TUNE moves neither the tone nor its NCO
+        // compensation until the next TUNE.
+        model.setCwPitchHz(800);
+        pump();
+        QCOMPARE(model.cwPitchHz(), 800);
+        QCOMPARE(model.tuneToneHzForTest(), static_cast<double>(toneHz));
+        slice->setFrequency(14'074'100);
+        pump();
+        QCOMPARE(conn->txFreqLog.last(), quint64(14'074'150 - toneHz));
+
+        model.setTune(false);
+        pump();
+        QVERIFY(!model.isTune());
+        QCOMPARE(conn->txFreqLog.last(), quint64(14'074'150));
+
+        // The next TUNE takes the new pitch.
+        const qint64 nextToneHz = toneHz > 0 ? 800 : -800;
+        model.setTune(true);
+        pump();
+        QCOMPARE(model.tuneToneHzForTest(), static_cast<double>(nextToneHz));
+        QCOMPARE(conn->txFreqLog.last(), quint64(14'074'150 - nextToneHz));
+        model.setTune(false);
+        pump();
+    }
+
+    // ── 33. R-CW-18, D6: TUNE in CW starts the TX channel, keyer off ───────
+    // The Task 5 skip (no TX channel for a key in CW) is for MOX keying; TUNE
+    // runs the TX channel in USB for its tone, with the radio's keyer off
+    // (Thetis CWFWKeyer = false, console.cs:30117 [v2.10.3.15]).
+    void tuneInCwStartsTheTxChannelWithTheKeyerOff()
+    {
+        AppSettings::instance().clear();
+        RadioModel model;
+        MockConnection conn;
+        TxChannel tx{WdspEngine::kTxChannelId};
+        std::atomic<int> rfOpens{0};
+        model.setCapsForTest(/*hasAlex=*/false);
+        model.injectConnectionForTest(&conn);
+        model.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        model.setTuneOffSettleMsForTest(0);
+        model.injectTxChannelForTest(&tx);
+        model.wireTxChannelKeyingForTest();
+        tx.setRfGateObserverForTest([&rfOpens](bool open) {
+            if (open) {
+                ++rfOpens;
+            }
+        });
+        const auto detach = qScopeGuard([&model, &tx]() {
+            tx.setRfGateObserverForTest({});
+            model.injectTxChannelForTest(nullptr);
+            model.injectConnectionForTest(nullptr);
+        });
+        SliceModel* slice = model.sliceById(model.addSlice());
+        QVERIFY(slice);
+        slice->setFrequency(14'050'000.0);
+        slice->setDspMode(DSPMode::CWU);
+        RadioInfo info;
+        info.protocol = ProtocolVersion::Protocol2;
+        info.boardType = HPSDRHW::Saturn;
+        info.firmwareVersion = 10;
+        info.macAddress = QStringLiteral("00:1c:c0:a2:13:dd");
+        model.setLastRadioInfoForTest(info);
+        model.wireCwKeyerConnectionForTest();
+        pump();
+        CwKeyerController* keyer = model.cwKeyerController();
+        MoxController* mox = model.moxController();
+        QVERIFY(keyer);
+        QVERIFY2(keyer->keyerAllowed(), qPrintable(keyer->refusal().text));
+        QVERIFY(keyer->wireState().enable);
+        QVERIFY(mox->isCwModeActive());
+
+        model.setTune(true);
+        pump();
+        QVERIFY(mox->isMox());
+        QVERIFY(!mox->isCwKeying());
+        QTRY_VERIFY_WITH_TIMEOUT(rfOpens.load() >= 1, 2000);
+        QVERIFY(tx.isRunning());
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QVERIFY(!keyer->keyerAllowed());
+        QVERIFY(!keyer->wireState().enable);
+        QVERIFY(!mox->isCwModeActive());
+
+        model.setTune(false);
+        QTRY_COMPARE_WITH_TIMEOUT(mox->state(), MoxState::Rx, 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(!model.tuneOffPendingForTest(), 2000);
+        pump();
+        QVERIFY(!model.tuneTxModeSwapped());
+        QVERIFY(keyer->keyerAllowed());
+        QVERIFY(keyer->wireState().enable);
+        QVERIFY(mox->isCwModeActive());
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
+    }
+
     void initTestCase() { clearSettings(); }
     void init()          { clearSettings(); }
     void cleanup()       { clearSettings(); }
@@ -499,10 +655,13 @@ private slots:
         model.injectConnectionForTest(nullptr);
     }
 
-    // ── 4. CWL mode: swap to LSB on TUN-on ───────────────────────────────────
-    // Cite: console.cs:30043-30053 [v2.10.3.13]:
-    //   case DSPMode.CWL: ... Audio.TXDSPMode = DSPMode.LSB; break;
-    void cwlSwapsToLsb()
+    // ── 4. CWL mode: the TX channel runs LSB on TUN-on (D6) ────────────────
+    // From Thetis console.cs:30107-30121 [v2.10.3.15]:
+    //   case DSPMode.CWL: ... Audio.TXDSPMode = DSPMode.LSB;
+    //   radio.GetDSPTX(0).CurrentDSPMode = DSPMode.LSB;
+    // Only the TX channel's mode changes; the slice stays CWL with its
+    // shift and filter.
+    void cwlTuneRunsTheTxChannelInLsb()
     {
         RadioModel model;
         MockConnection* conn = nullptr;
@@ -512,72 +671,38 @@ private slots:
         auto* slice = model.activeSlice();
         QVERIFY(slice != nullptr);
         slice->setDspMode(DSPMode::CWL);
+        pump();
+        const int low = slice->filterLow();
+        const int high = slice->filterHigh();
+        const double shift = slice->cwShiftHz();
+        QSignalSpy modeSpy(slice, &SliceModel::dspModeChanged);
+        QSignalSpy filterSpy(slice, &SliceModel::filterChanged);
+        QSignalSpy txMode(&model, &RadioModel::txModeAndBandpassPushed);
 
         model.setTune(true);
         pump();
 
-        QCOMPARE(slice->dspMode(), DSPMode::LSB);
-
-        model.setTune(false);
-        pump();
-
-        model.injectConnectionForTest(nullptr);
-    }
-
-    // ── 5. CWU mode: swap to USB on TUN-on ───────────────────────────────────
-    // Cite: console.cs:30054-30064 [v2.10.3.13]:
-    //   case DSPMode.CWU: ... Audio.TXDSPMode = DSPMode.USB; break;
-    void cwuSwapsToUsb()
-    {
-        RadioModel model;
-        MockConnection* conn = nullptr;
-        setupModel(model, conn);
-        std::unique_ptr<MockConnection> connOwner(conn);
-
-        auto* slice = model.activeSlice();
-        QVERIFY(slice != nullptr);
-        slice->setDspMode(DSPMode::CWU);
-
-        model.setTune(true);
-        pump();
-
-        QCOMPARE(slice->dspMode(), DSPMode::USB);
-
-        model.setTune(false);
-        pump();
-
-        model.injectConnectionForTest(nullptr);
-    }
-
-    // ── 6. CWL TUN-on → TUN-off: restores CWL ────────────────────────────────
-    // Cite: console.cs:30112-30122 [v2.10.3.13]:
-    //   case DSPMode.CWL: case DSPMode.CWU: radio.GetDSPTX(0).CurrentDSPMode = old_dsp_mode;
-    void cwlRestoresOnTunOff()
-    {
-        RadioModel model;
-        MockConnection* conn = nullptr;
-        setupModel(model, conn);
-        std::unique_ptr<MockConnection> connOwner(conn);
-
-        auto* slice = model.activeSlice();
-        QVERIFY(slice != nullptr);
-        slice->setDspMode(DSPMode::CWL);
-
-        model.setTune(true);
-        pump();
-        // After TUN-on: swapped to LSB.
-        QCOMPARE(slice->dspMode(), DSPMode::LSB);
-
-        model.setTune(false);
-        pump();
-        // After TUN-off: restored to CWL.
         QCOMPARE(slice->dspMode(), DSPMode::CWL);
+        QCOMPARE(modeSpy.count(), 0);
+        QCOMPARE(filterSpy.count(), 0);
+        QCOMPARE(slice->filterLow(), low);
+        QCOMPARE(slice->filterHigh(), high);
+        QCOMPARE(slice->cwShiftHz(), shift);
+        QVERIFY(model.tuneTxModeSwapped());
+        QVERIFY(!txMode.isEmpty());
+        QCOMPARE(txMode.last().at(0).value<DSPMode>(), DSPMode::LSB);
+
+        model.setTune(false);
+        pump();
 
         model.injectConnectionForTest(nullptr);
     }
 
-    // ── 7. CWU TUN-on → TUN-off: restores CWU ────────────────────────────────
-    void cwuRestoresOnTunOff()
+    // ── 5. CWU mode: the TX channel runs USB on TUN-on (D6) ────────────────
+    // From Thetis console.cs:30107-30121 [v2.10.3.15]:
+    //   case DSPMode.CWU: ... Audio.TXDSPMode = DSPMode.USB;
+    //   radio.GetDSPTX(0).CurrentDSPMode = DSPMode.USB;
+    void cwuTuneRunsTheTxChannelInUsb()
     {
         RadioModel model;
         MockConnection* conn = nullptr;
@@ -587,14 +712,93 @@ private slots:
         auto* slice = model.activeSlice();
         QVERIFY(slice != nullptr);
         slice->setDspMode(DSPMode::CWU);
+        pump();
+        const int low = slice->filterLow();
+        const int high = slice->filterHigh();
+        const double shift = slice->cwShiftHz();
+        QSignalSpy modeSpy(slice, &SliceModel::dspModeChanged);
+        QSignalSpy filterSpy(slice, &SliceModel::filterChanged);
+        QSignalSpy txMode(&model, &RadioModel::txModeAndBandpassPushed);
 
         model.setTune(true);
         pump();
-        QCOMPARE(slice->dspMode(), DSPMode::USB);
+
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QCOMPARE(modeSpy.count(), 0);
+        QCOMPARE(filterSpy.count(), 0);
+        QCOMPARE(slice->filterLow(), low);
+        QCOMPARE(slice->filterHigh(), high);
+        QCOMPARE(slice->cwShiftHz(), shift);
+        QVERIFY(model.tuneTxModeSwapped());
+        QVERIFY(!txMode.isEmpty());
+        QCOMPARE(txMode.last().at(0).value<DSPMode>(), DSPMode::USB);
 
         model.setTune(false);
         pump();
+
+        model.injectConnectionForTest(nullptr);
+    }
+
+    // ── 6. CWL TUN-on → TUN-off: the TX channel back in CWL ────────────────
+    // From Thetis console.cs:30164-30172 [v2.10.3.15]:
+    //   case DSPMode.CWL: case DSPMode.CWU: radio.GetDSPTX(0).CurrentDSPMode = old_dsp_mode;
+    void cwlTuneOffPutsTheTxChannelBackInCwl()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn);
+        std::unique_ptr<MockConnection> connOwner(conn);
+
+        auto* slice = model.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::CWL);
+        pump();
+        QSignalSpy modeSpy(slice, &SliceModel::dspModeChanged);
+        QSignalSpy txMode(&model, &RadioModel::txModeAndBandpassPushed);
+
+        model.setTune(true);
+        pump();
+        QVERIFY(!txMode.isEmpty());
+        QCOMPARE(txMode.last().at(0).value<DSPMode>(), DSPMode::LSB);
+
+        model.setTune(false);
+        pump();
+        QVERIFY(!model.tuneOffPendingForTest());
+        QVERIFY(!model.tuneTxModeSwapped());
+        QCOMPARE(txMode.last().at(0).value<DSPMode>(), DSPMode::CWL);
+        QCOMPARE(slice->dspMode(), DSPMode::CWL);
+        QCOMPARE(modeSpy.count(), 0);
+
+        model.injectConnectionForTest(nullptr);
+    }
+
+    // ── 7. CWU TUN-on → TUN-off: the TX channel back in CWU ────────────────
+    void cwuTuneOffPutsTheTxChannelBackInCwu()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn);
+        std::unique_ptr<MockConnection> connOwner(conn);
+
+        auto* slice = model.activeSlice();
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::CWU);
+        pump();
+        QSignalSpy modeSpy(slice, &SliceModel::dspModeChanged);
+        QSignalSpy txMode(&model, &RadioModel::txModeAndBandpassPushed);
+
+        model.setTune(true);
+        pump();
+        QVERIFY(!txMode.isEmpty());
+        QCOMPARE(txMode.last().at(0).value<DSPMode>(), DSPMode::USB);
+
+        model.setTune(false);
+        pump();
+        QVERIFY(!model.tuneOffPendingForTest());
+        QVERIFY(!model.tuneTxModeSwapped());
+        QCOMPARE(txMode.last().at(0).value<DSPMode>(), DSPMode::CWU);
         QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QCOMPARE(modeSpy.count(), 0);
 
         model.injectConnectionForTest(nullptr);
     }
@@ -1305,7 +1509,8 @@ private slots:
         pump();
         QVERIFY(model.moxController()->isMox());
         QVERIFY(model.isTune());
-        QCOMPARE(slice->dspMode(), DSPMode::USB);
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QVERIFY(model.tuneTxModeSwapped());
 
         // Unkey restores the mode the operator was really in.
         model.setTune(false);
@@ -1374,7 +1579,8 @@ private slots:
         QVERIFY(model.moxController()->isMox());
         QVERIFY(model.moxController()->isManualMox());
         QVERIFY(model.isTune());
-        QCOMPARE(slice->dspMode(), DSPMode::USB);
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QVERIFY(model.tuneTxModeSwapped());
 
         QSignalSpy manual(model.moxController(), &MoxController::manualMoxChanged);
         model.disconnectFromRadio();
@@ -1797,10 +2003,12 @@ private slots:
         });
         QVERIFY(slice != nullptr);
         MoxController* mox = model.moxController();
-        // TUN from CW: keys in the switched SSB mode (band plan allows it).
-        mox->setMoxCheck([slice]() {
-            const bool cw = slice->dspMode() == DSPMode::CWU
-                         || slice->dspMode() == DSPMode::CWL;
+        // TUN from CW: keys with the TX channel in the switched SSB mode
+        // (band plan allows it); a key with the TX channel in CW is refused.
+        mox->setMoxCheck([slice, &model]() {
+            const bool cw = (slice->dspMode() == DSPMode::CWU
+                             || slice->dspMode() == DSPMode::CWL)
+                         && !model.tuneTxModeSwapped();
             return safety::BandPlanGuard::MoxCheckResult{!cw,
                 cw ? QStringLiteral("CW transmit is not available") : QString()};
         });
@@ -1808,15 +2016,17 @@ private slots:
         model.setTune(true);
         pump();
         QVERIFY(mox->isMox());
-        QCOMPARE(slice->dspMode(), DSPMode::USB);
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QVERIFY(model.tuneTxModeSwapped());
         model.setTune(false);
         QVERIFY(model.tuneOffPendingForTest());
 
-        // Inside the window the slice still reads USB; the key must not ride
-        // on it with the tone up.
+        // Inside the window the TX channel still runs USB; the key must not
+        // ride on it with the tone up.
         model.setMoxFromButton(true);
         pump();
         QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QVERIFY(!model.tuneTxModeSwapped());
         QVERIFY2(!mox->isMox(), "the MOX button keyed in the TUN-off window from CW");
         QVERIFY(!model.tuneOffPendingForTest());
         QVERIFY(!model.isTune());
@@ -1842,13 +2052,15 @@ private slots:
         model.transmitModel().setVoxEnabled(true);
         mox->setVoxEnabled(true);   // RadioModel wires this at connect
 
-        model.setTune(true);        // CWU -> USB for the tune: VOX runs
+        model.setTune(true);        // the TX channel CWU -> USB for the tune: VOX runs
         pump();
-        QCOMPARE(slice->dspMode(), DSPMode::USB);
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
+        QVERIFY(model.tuneTxModeSwapped());
         mox->onVoxActive(true);     // the operator speaks during TUN
         model.setTune(false);
         pump();
-        QCOMPARE(slice->dspMode(), DSPMode::CWU);   // DEXP stops pushing
+        QVERIFY(!model.tuneTxModeSwapped());   // DEXP stops pushing
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);
         QVERIFY(!mox->isMox());
 
         slice->setDspMode(DSPMode::USB);
@@ -1952,7 +2164,8 @@ private slots:
         QVERIFY(mox->isMox());
         QVERIFY(model.isTune());
         QVERIFY(model.transmitModel().isTune());
-        QCOMPARE(slice->dspMode(), DSPMode::USB);   // TUN's CW-to-SSB swap
+        QCOMPARE(slice->dspMode(), DSPMode::CWU);   // the slice stays CW (D6)
+        QVERIFY(model.tuneTxModeSwapped());          // TUN's CW-to-SSB TX swap
 
         bool tuneOnWhenKeyed = true;
         QObject::connect(twoTone, &TwoToneController::twoToneActiveChanged, &model,

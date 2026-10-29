@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "notice",
+    "code": "blocked",
+    "text": 5,
+    "until": null
+  },
+  "decodes": false
+}

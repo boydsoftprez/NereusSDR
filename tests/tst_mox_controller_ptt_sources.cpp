@@ -26,11 +26,19 @@
 // radio.
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the serial PTT line through the source API
+//               keys only in Semi; QSK keys from no source (PollPTT,
+//               console.cs:25470, 25473 and 25519-25524 [v2.10.3.15]).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// =================================================================
+
 // no-port-check: NereusSDR-original test file, no upstream Thetis port.
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 
+#include "core/CwTypes.h"
 #include "core/MoxController.h"
 #include "core/PttMode.h"
 #include "core/TxInterlockPolicy.h"
@@ -892,6 +900,56 @@ private slots:
         drain();
         QVERIFY(!core.mox());
         QVERIFY(!mox->isManualKey());
+    }
+
+    // ── CW transmit (R-CW-19, R-CW-20): the serial PTT line ─────────────────
+    //
+    // From Thetis console.cs:25473 [v2.10.3.15]: cw_ptt is the serial PTT
+    // line in Semi only:
+    //   bool cw_ptt = CWInput.KeyerPTT && _current_breakin_mode == BreakIn.Semi; // CW serial PTT  //[2.10.3.9]MW0LGE only want to do this on semi breakin
+    // In QSK the pass keys nothing (console.cs:25470).
+    void cwSerialPtt_keysOnlyInSemi_data()
+    {
+        QTest::addColumn<int>("breakIn");
+        QTest::addColumn<bool>("keys");
+        QTest::newRow("off") << static_cast<int>(CwBreakInMode::Off) << false;
+        QTest::newRow("semi") << static_cast<int>(CwBreakInMode::Semi) << true;
+        QTest::newRow("qsk") << static_cast<int>(CwBreakInMode::Qsk) << false;
+    }
+
+    void cwSerialPtt_keysOnlyInSemi()
+    {
+        QFETCH(int, breakIn);
+        QFETCH(bool, keys);
+        MoxController ctrl;
+        makeSync(ctrl);
+        ctrl.onModeChanged(DSPMode::CWU);
+        ctrl.setCwModeActive(true);
+        ctrl.setCwBreakInMode(static_cast<CwBreakInMode>(breakIn));
+        ctrl.onCwPtt(true);
+        drain();
+        QCOMPARE(ctrl.isMox(), keys);
+        QCOMPARE(ctrl.pttMode(), keys ? PttMode::Cw : PttMode::None);
+        ctrl.onCwPtt(false);
+        drain();
+        QVERIFY(!ctrl.isMox());
+        QCOMPARE(ctrl.state(), MoxState::Rx);
+    }
+
+    void cwSerialPtt_outsideCw_keysNothing()
+    {
+        MoxController ctrl;
+        makeSync(ctrl);
+        ctrl.onModeChanged(DSPMode::USB);
+        ctrl.setCwBreakInMode(CwBreakInMode::Semi);
+        ctrl.onCwPtt(true);
+        drain();
+        QVERIFY(!ctrl.isMox());
+        QVERIFY(ctrl.anyPttSourceHeld());
+        QSignalSpy released(&ctrl, &MoxController::pttSourcesReleased);
+        ctrl.onCwPtt(false);
+        QVERIFY(!ctrl.anyPttSourceHeld());
+        QVERIFY(released.count() >= 1);
     }
 };
 

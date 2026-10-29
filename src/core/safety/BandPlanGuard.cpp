@@ -24,6 +24,9 @@
 //   2026-04-25 — Ported to C++20/Qt6 for NereusSDR by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via
 //                Anthropic Claude Code.
+//   2026-10-26: CW transmit, isModeAllowedForTx allows CWL and CWU; the
+//                check uses the carrier alone for CW. J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
 // =================================================================
 
 // --- From console.cs ---
@@ -903,6 +906,11 @@ bool BandPlanGuard::isModeAllowedForTx(DSPMode mode) const noexcept
         case DSPMode::AM:
         case DSPMode::SAM:
         case DSPMode::DSB:
+        // CW transmit (R-CW-05): CWL and CWU may key. The band-plan check
+        // uses the carrier alone for them (isValidTxPassband, as Thetis
+        // CheckValidTXFreq, console.cs:6778-6813 [v2.10.3.15]).
+        case DSPMode::CWL:
+        case DSPMode::CWU:
             return true;
         default:
             return false;
@@ -920,13 +928,9 @@ BandPlanGuard::checkMoxAllowed(Region region, std::int64_t freqHz,
     if (!isModeAllowedForTx(mode)) {
         QString reason;
         switch (mode) {
-            // R-R3-17 / R-R3-21: user words. CW transmit is planned work
-            // (Phase 3M-2); FM transmit waits on pre-emphasis (Phase 3M-3b).
-            // DRM has its own sentence, so a DRM refusal names DRM.
-            case DSPMode::CWL:
-            case DSPMode::CWU:
-                reason = QStringLiteral("CW transmit is not available on this Core");
-                break;
+            // R-R3-17 / R-R3-21: user words. FM transmit waits on
+            // pre-emphasis (Phase 3M-3b). DRM has its own sentence, so a DRM
+            // refusal names DRM. CW transmits (R-CW-05).
             case DSPMode::FM:
                 reason = QStringLiteral("FM transmit is not available on this Core");
                 break;

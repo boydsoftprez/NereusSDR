@@ -26,6 +26,18 @@
 // Modified 2026-10-09 by J.J. Boyd (KG4VCF): per-frame RX lines and
 // unchanged S-frames log at debug, not info, so the Core's journal keeps
 // hours instead of minutes; AI-assisted via Anthropic Claude Code.
+// 2026-10-26: CW transmit, interlockedAmpChanged when hasInterlockedAmp
+// changes (D16). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-10-26: CW transmit fix wave 2 (I2): the 30 ms TRANSMITTING settle
+// is a member timer that an un-key and stop() cancel. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F8: the 5 ms TRANSMIT_A step is a
+// member timer too, cancelled by an un-key and stop(). J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
+// 2026-10-27: CW transmit final fix wave F12: an un-key clears every
+// amplifier's acknowledgement, so a re-key waits for a fresh one; one sent
+// after the un-key (a TGXL Tune press) is still kept. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 #include "SmartSdrApiListener.h"
 
@@ -59,6 +71,23 @@ SmartSdrApiListener::SmartSdrApiListener(QObject* parent)
     m_interlockRepeat.setInterval(kInterlockRepeatMs);
     connect(&m_interlockRepeat, &QTimer::timeout,
             this, &SmartSdrApiListener::onInterlockRepeat);
+
+    // C4 settle before TRANSMITTING (see broadcastTransmitting).
+    m_transmittingSettle.setSingleShot(true);
+    m_transmittingSettle.setTimerType(Qt::PreciseTimer);
+    m_transmittingSettle.setInterval(kTransmittingSettleMs);
+    connect(&m_transmittingSettle, &QTimer::timeout, this, [this]() {
+        const QString source = m_transmittingSource;
+        m_transmittingSource.clear();
+        broadcastTransmitting(source);
+    });
+
+    // C6 TRANSMIT_A step after TRANSMITTING (see broadcastTransmitting).
+    m_transmitASettle.setSingleShot(true);
+    m_transmitASettle.setTimerType(Qt::PreciseTimer);
+    m_transmitASettle.setInterval(kTransmitASettleMs);
+    connect(&m_transmitASettle, &QTimer::timeout,
+            this, &SmartSdrApiListener::broadcastTransmitA);
 }
 
 void SmartSdrApiListener::armInterlockRepeat(const QByteArray& frame)
@@ -194,6 +223,11 @@ void SmartSdrApiListener::stop()
     // interlock state after the operator toggled 4O3A off in Setup.
     m_periodicTimer.stop();
     m_pttAckTimeout.stop();
+    m_transmittingSettle.stop();
+    m_transmittingSource.clear();
+    // F8: nor a TRANSMIT_A still to go.
+    m_transmitASettle.stop();
+    m_transmitAHandles.clear();
     cancelInterlockRepeat();
     closeServers();
 
@@ -220,6 +254,7 @@ void SmartSdrApiListener::stop()
     m_lastTuneInitiator.clear();
     m_lastListenError.clear();
     emit statusChanged();
+    noteInterlockedAmp();
 }
 
 bool SmartSdrApiListener::isListening() const
@@ -337,6 +372,8 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // ack arriving within that window of engage is considered valid
         // for this cycle. Acks older than 500 ms are stale (from a
         // previous cycle) and get wiped.
+        // Final fix wave F12: the un-key clears every acknowledgement, so
+        // only one sent after the last un-key can be kept here.
         static constexpr qint64 kPreAckWindowMs = 500;
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         bool anyInterlockedAmp = false;
@@ -450,6 +487,24 @@ void SmartSdrApiListener::setInterlockTransmitting(bool transmitting,
         // initiator name is the one recorded for the in-flight TX (TUNE
         // path) or the first PGXL-class amp's name (MIC/MOX path).
         m_pttAckTimeout.stop();
+        // CW transmit fix wave 2 (I2): a TRANSMITTING still settling is
+        // for this key, which has ended: it is not sent, and its grant
+        // cannot land in the next key.
+        m_transmittingSettle.stop();
+        m_transmittingSource.clear();
+        // Final fix wave F8: likewise the TRANSMIT_A step still to go, so
+        // no amplifier hears TRANSMIT_A after the idle sequence.
+        m_transmitASettle.stop();
+        m_transmitAHandles.clear();
+        // Final fix wave F12: the acknowledgements were for the key that
+        // has ended. A re-key inside the 500 ms pre-ack window below waits
+        // for each amplifier's fresh `interlock ready`. An acknowledgement
+        // that arrives after this un-key (the TGXL hardware Tune press,
+        // sent before our PTT_REQUESTED) is still kept by that window.
+        for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+            it->ackReady = false;
+            it->ackReceivedMs = 0;
+        }
         // G-20: the un-key is a state change; the keyed state is not
         // repeated after it.
         cancelInterlockRepeat();
@@ -493,9 +548,11 @@ void SmartSdrApiListener::advanceToTransmittingIfReady()
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: 30 ms settle
     // before TRANSMITTING + RF-flow gate release so TGXL relays have
     // time to switch to TRANSMIT position before PGXL sees carrier.
-    QTimer::singleShot(30, this, [this, source]() {
-        broadcastTransmitting(source);
-    });
+    // CW transmit fix wave 2 (I2): the settle is a member timer, so an
+    // un-key inside it cancels it (no TRANSMITTING, no grant for a key
+    // that has ended).
+    m_transmittingSource = source;
+    m_transmittingSettle.start();
 }
 
 void SmartSdrApiListener::broadcastTransmitting(const QString& source)
@@ -542,20 +599,28 @@ void SmartSdrApiListener::broadcastTransmitting(const QString& source)
             keyedHandles << it->ampHandle;
         }
     }
-    QTimer::singleShot(5, this, [this, keyedHandles]() {
-        for (const QString& h : keyedHandles) {
-            const QString body = QStringLiteral("amplifier 0x%1 state=TRANSMIT_A").arg(h);
-            const QByteArray frame =
-                QStringLiteral("S0|%1\n").arg(body).toUtf8();
-            for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
-                QTcpSocket* sock = jt.key();
-                if (sock && sock->isOpen()) { sock->write(frame); }
-            }
-            qCInfo(lcSmartSdr) << "TX S0|amplifier 0x" << h << "state=TRANSMIT_A";
-        }
-    });
+    // Final fix wave F8: a member timer the un-key and stop() cancel (was
+    // an uncancelled QTimer::singleShot(5, ...)).
+    m_transmitAHandles = keyedHandles;
+    m_transmitASettle.start();
 
     emit interlockGranted(source);
+}
+
+void SmartSdrApiListener::broadcastTransmitA()
+{
+    const QStringList keyedHandles = m_transmitAHandles;
+    m_transmitAHandles.clear();
+    for (const QString& h : keyedHandles) {
+        const QString body = QStringLiteral("amplifier 0x%1 state=TRANSMIT_A").arg(h);
+        const QByteArray frame =
+            QStringLiteral("S0|%1\n").arg(body).toUtf8();
+        for (auto jt = m_clients.cbegin(); jt != m_clients.cend(); ++jt) {
+            QTcpSocket* sock = jt.key();
+            if (sock && sock->isOpen()) { sock->write(frame); }
+        }
+        qCInfo(lcSmartSdr) << "TX S0|amplifier 0x" << h << "state=TRANSMIT_A";
+    }
 }
 
 void SmartSdrApiListener::broadcastUnkeySequence(const QString& initiatorName)
@@ -721,9 +786,11 @@ void SmartSdrApiListener::onPttAckTimeout()
     cancelInterlockRepeat();
     const QString source = m_pttPendingSource;
     m_pttPendingSource.clear();
-    QTimer::singleShot(30, this, [this, source]() {
-        broadcastTransmitting(source);
-    });
+    // CW transmit fix wave 2 (I2): the settle is a member timer, so an
+    // un-key inside it cancels it (no TRANSMITTING, no grant for a key
+    // that has ended).
+    m_transmittingSource = source;
+    m_transmittingSettle.start();
 }
 
 void SmartSdrApiListener::onNewConnection()
@@ -865,6 +932,17 @@ void SmartSdrApiListener::onClientDisconnected()
                         << "buffered:" << m_clients.value(sock).readBuffer.size();
     m_clients.remove(sock);
     sock->deleteLater();
+    noteInterlockedAmp();
+}
+
+void SmartSdrApiListener::noteInterlockedAmp()
+{
+    const bool interlocked = hasInterlockedAmp();
+    if (interlocked == m_lastInterlockedAmp) {
+        return;
+    }
+    m_lastInterlockedAmp = interlocked;
+    emit interlockedAmpChanged(interlocked);
 }
 
 void SmartSdrApiListener::onPeriodicTick()
@@ -1047,6 +1125,7 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
             qCInfo(lcSmartSdr) << "interlock create -> id=" << it->interlockId
                                << "name=" << it->interlockName
                                << "for client" << sock->peerAddress().toString();
+            noteInterlockedAmp();
         }
         // Wiki returns the id as ASCII decimal in the R-frame body.
         body = QString::number(it->interlockId);
@@ -1130,6 +1209,7 @@ void SmartSdrApiListener::dispatchLine(QTcpSocket* sock, const QString& line)
                     QTimer::singleShot(0, this,
                         &SmartSdrApiListener::advanceToTransmittingIfReady);
                 }
+                noteInterlockedAmp();
             }
         }
         // No body needed.

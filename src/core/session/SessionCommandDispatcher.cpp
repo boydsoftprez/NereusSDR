@@ -6,6 +6,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send {text},
+//                                    cw.memory {number}, cw.stop {} and
+//                                    cw.key {down} (remoteCwVersion 1),
+//                                    read here and answered by the Core's
+//                                    TransmitAccess::cw. AI-assisted via
+//                                    Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  setAlexRxAntennaForRadio takes an
 //                                    RX-only value 0..5 (Thetis's checkbox
 //                                    sum). AI-assisted via Anthropic Claude
@@ -331,6 +339,10 @@
 //                                    tx.twoTonePreset asks for the Core's
 //                                    coalesced settings save. AI-assisted
 //                                    via Anthropic Claude Code.
+//   2026-10-24  J.J. Boyd / KG4VCF  Roundtable plan Task 11: the thirteen
+//                                    roundtable.* verbs, read here and
+//                                    answered by the station server.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/SessionCommandDispatcher.h"
@@ -679,6 +691,14 @@ bool findBoolArgument(const QList<MirrorUpdate>& arguments, const QByteArray& na
 //   station.forgetRadio    stationRadiosVersion 1 (requestStationRadio)
 //   freedv.setMessage, freedv.sendQsy, freedv.setHidden
 //                          stationFreedvVersion 1 (requestFreedv)
+//   roundtable.post, roundtable.delete, roundtable.name, roundtable.report,
+//   roundtable.read, roundtable.unread, roundtable.setHidden,
+//   roundtable.answerFirstRun, roundtable.mute, roundtable.unmute,
+//   roundtable.markMentionRead, roundtable.webSignIn,
+//   roundtable.deleteArchive
+//                          stationRoundtableVersion 1, to a peer whose hello
+//                          declared roundtable (requestRoundtable*;
+//                          StationServer answers them)
 //   nnr.*                  nnrControlAvailable(); nnr.tryAgain adds
 //                          kNnrLimitSessionProtocolMinor
 //   nnr.applyModelSelection dspAssetVersion 1 (requestApplyNnrModels)
@@ -929,6 +949,34 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          kRadioIdentitySessionProtocolMinor},
         {"refreshRotorPorts", {}, "remoteRotorControlVersion", 1,
          kRadioIdentitySessionProtocolMinor},
+        // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+        // Roundtable connection. Ids travel as their decimal text.
+        {"roundtable.post", {arg("roomId", kUtf8), arg("text", kUtf8), arg("clientId", kUtf8)},
+         "stationRoundtableVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.delete", {arg("messageId", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.name", {arg("turnId", kUtf8), arg("name", kUtf8)},
+         "stationRoundtableVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.report", {arg("kind", kUtf8), arg("target", kUtf8), arg("reason", kUtf8)},
+         "stationRoundtableVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.read", {arg("roomId", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.unread", {arg("roomId", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.setHidden", {arg("hidden", kBool)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.answerFirstRun", {arg("live", kBool)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.mute", {arg("callsign", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.unmute", {arg("callsign", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.markMentionRead", {arg("upToMs", kInt)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.webSignIn", {}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"roundtable.deleteArchive", {arg("confirm", kUtf8)}, "stationRoundtableVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
         // The Core's radio hardware (R-R3-46).
         {"requestIoBoardProbe", {}, "radioHardwareVersion", 2,
          kRadioIdentitySessionProtocolMinor},
@@ -963,7 +1011,7 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // iPhone app plan Task 37 (R-IOS-13): the transmit watchdog's
         // keepalive, every 100 ms while the device is keyed or has VOX
         // armed. Sent once each (a lost one is overtaken by the next).
-        {"tx.keepalive", {arg("sequence", kInt), arg("epoch", kInt)}, "remoteTxVersion", 1,
+        {"tx.keepalive", {arg("sequence", kInt), arg("epoch", kInt), optionalArg("cwEpoch", kInt)}, "remoteTxVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // iPhone app plan Task 77 (R-IOS-02, R-IOS-03; rulings 8.4, 8.6,
         // 8.7): take transmit without keying; and the Tuner Genius
@@ -972,6 +1020,16 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          {{"holderEpoch", MirrorWireKind::Int64, true}, {"shownKeyed", MirrorWireKind::Bool, true}},
          "remoteTxVersion", 2, kRadioIdentitySessionProtocolMinor},
         {"tx.tunerTune", {arg("on", kBool)}, "remoteTxVersion", 2,
+         kRadioIdentitySessionProtocolMinor},
+        // CW transmit (R-CW-49): CW from the device that holds transmit,
+        // sent by the Core's CWX sender behind its keying gate. cw.key holds
+        // the hand key; the Core releases it 3 s after its last press.
+        {"cw.send", {arg("text", kUtf8)}, "remoteCwVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"cw.memory", {arg("number", kInt)}, "remoteCwVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"cw.stop", {}, "remoteCwVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"cw.key", {arg("down", kBool)}, "remoteCwVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         {"setAlexTxAntenna", {arg("band", kInt), arg("antenna", kInt)},
          "radioHardwareVersion", 6, kRadioIdentitySessionProtocolMinor},
@@ -1517,6 +1575,11 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         handleTxTake(invoke);
         return;
     }
+    if (invoke.commandVerb == "cw.send" || invoke.commandVerb == "cw.memory"
+        || invoke.commandVerb == "cw.stop" || invoke.commandVerb == "cw.key") {
+        handleCw(invoke);
+        return;
+    }
 
     if (invoke.commandVerb.startsWith("notch.")) {
         handleNotchAction(invoke);
@@ -1703,6 +1766,19 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
     } else if (invoke.commandVerb == "freedv.setMessage" || invoke.commandVerb == "freedv.sendQsy"
                || invoke.commandVerb == "freedv.setHidden") {
         handleFreedv(invoke);
+    } else if (invoke.commandVerb == "roundtable.post" || invoke.commandVerb == "roundtable.delete"
+               || invoke.commandVerb == "roundtable.name"
+               || invoke.commandVerb == "roundtable.report"
+               || invoke.commandVerb == "roundtable.read"
+               || invoke.commandVerb == "roundtable.unread"
+               || invoke.commandVerb == "roundtable.setHidden"
+               || invoke.commandVerb == "roundtable.answerFirstRun"
+               || invoke.commandVerb == "roundtable.mute"
+               || invoke.commandVerb == "roundtable.unmute"
+               || invoke.commandVerb == "roundtable.markMentionRead"
+               || invoke.commandVerb == "roundtable.webSignIn"
+               || invoke.commandVerb == "roundtable.deleteArchive") {
+        handleRoundtable(invoke);
     } else if (invoke.commandVerb == "support.collect"
                || invoke.commandVerb == "support.setLogCategories") {
         handleSupport(invoke);
@@ -1962,6 +2038,51 @@ void SessionCommandDispatcher::handleTxKeying(const SessionMessage& invoke)
     });
 }
 
+void SessionCommandDispatcher::handleCw(const SessionMessage& invoke)
+{
+    // CW transmit (R-CW-49): the rules are the Core's (TransmitAccess::cw);
+    // this reads the arguments.
+    CwRequest request;
+    bool readable = false;
+    if (invoke.commandVerb == "cw.send") {
+        request.kind = CwRequest::Kind::Send;
+        readable = hasExactlyArguments(invoke.arguments, {"text"})
+            && findUtf8Argument(invoke.arguments, "text", &request.text);
+    } else if (invoke.commandVerb == "cw.memory") {
+        request.kind = CwRequest::Kind::Memory;
+        QVariant raw;
+        bool converted = false;
+        readable = hasExactlyArguments(invoke.arguments, {"number"})
+            && hasWireKind(invoke.arguments, "number", MirrorWireKind::Int64)
+            && findArgument(invoke.arguments, "number", &raw);
+        const qlonglong number = readable ? raw.toLongLong(&converted) : 0;
+        readable = readable && converted && number >= std::numeric_limits<int>::min()
+            && number <= std::numeric_limits<int>::max();
+        request.number = readable ? static_cast<int>(number) : 0;
+    } else if (invoke.commandVerb == "cw.stop") {
+        request.kind = CwRequest::Kind::Stop;
+        readable = hasExactlyArguments(invoke.arguments, {});
+    } else {
+        request.kind = CwRequest::Kind::Key;
+        QVariant down;
+        readable = hasExactlyArguments(invoke.arguments, {"down"})
+            && findArgument(invoke.arguments, "down", &down) && down.typeId() == QMetaType::Bool;
+        request.down = readable && down.toBool();
+    }
+    if (!readable) {
+        emitResult(invoke.commandVerb, invoke.commandId, false,
+                   QStringLiteral("The Core could not read this request."), {});
+        return;
+    }
+    if (!m_transmitAccess.cw) {
+        // No Core transmit rules behind this dispatcher: nothing keys.
+        emitRefusal(invoke.commandVerb, invoke.commandId, TxRefusals::stationReceiveOnly());
+        return;
+    }
+    const QString owner = m_sessionOwner;
+    emitResultAs(owner, m_transmitAccess.cw(invoke, owner, m_requester, request));
+}
+
 void SessionCommandDispatcher::handleTxTake(const SessionMessage& invoke)
 {
     // iPhone app plan Task 77 (R-IOS-02, R-IOS-03; rulings 8.4, 8.6,
@@ -2017,7 +2138,16 @@ void SessionCommandDispatcher::handleTxKeepalive(const SessionMessage& invoke)
     QVariant rawEpoch;
     bool sequenceOk = false;
     bool epochOk = false;
-    bool readable = hasExactlyArguments(invoke.arguments, {"sequence", "epoch"})
+    QVariant rawCwEpoch;
+    const bool hasCwEpoch = findArgument(invoke.arguments, "cwEpoch", &rawCwEpoch);
+    bool cwEpochOk = !hasCwEpoch;
+    const qlonglong cwEpoch = hasCwEpoch ? rawCwEpoch.toLongLong(&cwEpochOk) : 0;
+    bool readable = (hasCwEpoch
+        ? hasExactlyArguments(invoke.arguments, {"sequence", "epoch", "cwEpoch"})
+        : hasExactlyArguments(invoke.arguments, {"sequence", "epoch"}))
+        && (!hasCwEpoch || hasWireKind(invoke.arguments, "cwEpoch", MirrorWireKind::Int64))
+        && cwEpochOk && cwEpoch >= 0
+        && cwEpoch <= static_cast<qlonglong>(std::numeric_limits<quint32>::max())
         && hasWireKind(invoke.arguments, "sequence", MirrorWireKind::Int64)
         && hasWireKind(invoke.arguments, "epoch", MirrorWireKind::Int64)
         && findArgument(invoke.arguments, "sequence", &rawSequence)
@@ -2031,12 +2161,16 @@ void SessionCommandDispatcher::handleTxKeepalive(const SessionMessage& invoke)
                    QStringLiteral("The Core could not read this request."), {});
         return;
     }
-    if (!m_transmitAccess.keepalive) {
+    if (!m_transmitAccess.keepalive && !m_transmitAccess.keepaliveV2) {
         emitRefusal(invoke.commandVerb, invoke.commandId, TxRefusals::stationReceiveOnly());
         return;
     }
-    m_transmitAccess.keepalive(m_requester, static_cast<quint64>(sequence),
-                               static_cast<quint32>(epoch));
+    if (m_transmitAccess.keepaliveV2) {
+        m_transmitAccess.keepaliveV2(m_requester,
+            {static_cast<quint64>(sequence), static_cast<quint32>(epoch), static_cast<quint32>(cwEpoch)});
+    } else if (cwEpoch == 0) {
+        m_transmitAccess.keepalive(m_requester, static_cast<quint64>(sequence), static_cast<quint32>(epoch));
+    }
     // Answered accepted whether or not it counted (a keepalive while
     // nothing is watched, a copy, an older epoch): it changes nothing then.
     emitResult(invoke.commandVerb, invoke.commandId, true, QString(), {});
@@ -4965,6 +5099,67 @@ void SessionCommandDispatcher::handleFreedv(const SessionMessage& invoke)
         accepted = host->setFreedvHidden(on.toBool(), &reason);
     }
     emitResult(invoke.commandVerb, invoke.commandId, accepted, reason, {});
+}
+
+// Roundtable plan Task 11 (stationRoundtableVersion 1): each roundtable.*
+// verb's arguments, of the kinds its row lists, and nothing else; then the
+// station server answers it for the asking connection.
+void SessionCommandDispatcher::handleRoundtable(const SessionMessage& invoke)
+{
+    const QByteArray& verb = invoke.commandVerb;
+    const auto texts = [&invoke](std::initializer_list<QByteArray> names) {
+        if (!hasExactlyArguments(invoke.arguments, names)) {
+            return false;
+        }
+        QString value;
+        for (const QByteArray& name : names) {
+            if (!findUtf8Argument(invoke.arguments, name, &value)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    bool readable = false;
+    bool flag = false;
+    if (verb == "roundtable.post") {
+        readable = texts({"roomId", "text", "clientId"});
+    } else if (verb == "roundtable.delete") {
+        readable = texts({"messageId"});
+    } else if (verb == "roundtable.name") {
+        readable = texts({"turnId", "name"});
+    } else if (verb == "roundtable.report") {
+        readable = texts({"kind", "target", "reason"});
+    } else if (verb == "roundtable.read" || verb == "roundtable.unread") {
+        readable = texts({"roomId"});
+    } else if (verb == "roundtable.mute" || verb == "roundtable.unmute") {
+        readable = texts({"callsign"});
+    } else if (verb == "roundtable.deleteArchive") {
+        readable = texts({"confirm"});
+    } else if (verb == "roundtable.setHidden") {
+        readable = hasExactlyArguments(invoke.arguments, {"hidden"})
+            && findBoolArgument(invoke.arguments, "hidden", &flag);
+    } else if (verb == "roundtable.answerFirstRun") {
+        readable = hasExactlyArguments(invoke.arguments, {"live"})
+            && findBoolArgument(invoke.arguments, "live", &flag);
+    } else if (verb == "roundtable.markMentionRead") {
+        QVariant raw;
+        readable = hasExactlyArguments(invoke.arguments, {"upToMs"})
+            && hasWireKind(invoke.arguments, "upToMs", MirrorWireKind::Int64)
+            && findArgument(invoke.arguments, "upToMs", &raw)
+            && raw.typeId() == QMetaType::LongLong;
+    } else if (verb == "roundtable.webSignIn") {
+        readable = invoke.arguments.isEmpty();
+    }
+    if (!readable) {
+        emitResult(verb, invoke.commandId, false,
+                   QStringLiteral("The Core could not read this request."), {});
+        return;
+    }
+    if (m_roundtableAccess && m_roundtableAccess(invoke)) {
+        return;
+    }
+    emitResult(verb, invoke.commandId, false,
+               QStringLiteral("This Core does not run Roundtable."), {});
 }
 
 // R-R3-46 (parity Task 14, radioHardwareVersion 7): Pin Control on HL2

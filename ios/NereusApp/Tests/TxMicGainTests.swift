@@ -1,5 +1,9 @@
 // NereusSDR for iOS: Mic Gain in the TX panel under the mic level meter, against a fake Core, with pictures
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-25: Roundtable plan Task 19, the column's scroll to Mic Gain
+// measured again after it moves (the S-Meter now scrolls with the column).
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -596,12 +600,20 @@ struct TxMicGainTests {
         }
         let all = Self.scrollViews(in: window).map { "\($0.bounds.size) in \($0.contentSize)" }
         let scroll = try #require(scrolls.first, "no scrolling panel \(panelWidth) wide among \(all)")
-        let row = try #require(SetupTypedEntryTests.element("txMicGain", in: window))
         let frame = scroll.convert(scroll.bounds, to: nil)
-        let furthest = max(scroll.contentSize.height - scroll.bounds.height, 0)
-        let target = min(max(scroll.contentOffset.y + row.accessibilityFrame.minY - (frame.minY + lead), 0), furthest)
-        scroll.setContentOffset(CGPoint(x: 0, y: target), animated: false)
-        await ShotWait.laidOut(window)
+        // A lazy stack places rows it has not laid out yet by estimate, so
+        // one move can land off: measure again where it landed and correct.
+        for _ in 0..<3 {
+            let row = try #require(SetupTypedEntryTests.element("txMicGain", in: window))
+            let furthest = max(scroll.contentSize.height - scroll.bounds.height, 0)
+            let target = min(max(scroll.contentOffset.y + row.accessibilityFrame.minY - (frame.minY + lead), 0),
+                             furthest)
+            if abs(target - scroll.contentOffset.y) < 1 {
+                break
+            }
+            scroll.setContentOffset(CGPoint(x: 0, y: target), animated: false)
+            await ShotWait.laidOut(window)
+        }
         let moved = try #require(SetupTypedEntryTests.element("txMicGain", in: window))
         #expect(frame.contains(moved.accessibilityFrame), "Mic Gain at \(moved.accessibilityFrame), panel \(frame)")
     }

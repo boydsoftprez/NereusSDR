@@ -1,0 +1,42 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "scripted",
+      "message": {
+        "type": "presence",
+        "callsign": "K4ABC",
+        "grid": "EM73",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "expectClosed": "station",
+      "code": 4002
+    }
+  ]
+}

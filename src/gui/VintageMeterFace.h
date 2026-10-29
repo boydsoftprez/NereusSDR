@@ -23,6 +23,9 @@
 // Modification history (NereusSDR):
 //   2026-09-18 — Created for the vintage S-Meter face (Lee, AI-assisted
 //                 via Anthropic Claude Code).
+//   2026-10-26 — paintPointer() can leave the shadow out (a dial copy's
+//                 Shadow setting).  J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -101,9 +104,10 @@ public:
                             const VintageFaceTheme& t, const VintageScale& scale,
                             const QString& title, const QString& legend);
 
-    // Lance pointer with its shadow, at scale fraction `frac`.
+    // Lance pointer with its shadow (unless `shadow` is false), at scale
+    // fraction `frac`.
     static void paintPointer(QPainter& p, const Geometry& g, const VintageFaceTheme& t,
-                             float frac);
+                             float frac, bool shadow = true);
 
     // Pivot cap and brass screw; drawn over the pointer.
     static void paintHub(QPainter& p, const Geometry& g, const VintageFaceTheme& t);

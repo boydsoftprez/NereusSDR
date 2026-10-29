@@ -1,5 +1,7 @@
 // NereusSDR for iOS: one pan's band as the screens see it: the Core's display events in, what to draw out
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   carry the accepted waterfall frame divider for capture-row continuity.
 
 import Combine
 import Foundation
@@ -7,6 +9,16 @@ import CoreGraphics
 import NereusBand
 import NereusMedia
 import NereusModels
+import QuartzCore
+
+/// What drives a band's waterfall lines in on the row clock: the band's
+/// view, which reads the clock on every frame of the screen while lines flow
+/// (``BandModel/advanceLines(at:frameSeconds:)``).
+@MainActor
+protocol BandLineDriver: AnyObject {
+    /// The view is on screen and its display link can put lines in.
+    var drivesLines: Bool { get }
+}
 
 /// One pan's band (R-IOS-11): it takes the Core's display events for the
 /// pan's endpoint and holds what ``BandView`` draws: the latest frame and
@@ -22,6 +34,8 @@ final class BandModel: ObservableObject {
     var endpointId: UInt32? {
         didSet {
             if endpointId != oldValue {
+                if oldValue != nil { freezeWaterfall() }
+                flushLines()
                 lastBinGrant = nil
                 gridTracker.retireClarityFloor()
                 state.forgetWaterfallLevels()
@@ -75,6 +89,35 @@ final class BandModel: ObservableObject {
         }
     }
 
+    // MARK: The scale the Core keeps for each band
+
+    /// The Core's dB Max and dB Min for the band shown on the pan
+    /// (`DisplayGridMax_<band>` / `DisplayGridMin_<band>`), set by
+    /// ``CoreBandScale`` on a Core that shares the scale; nil otherwise, when
+    /// the pan's own Top and Bottom are drawn. It is never saved.
+    @Published var sharedScale: BandDisplaySettings.BandScale? {
+        didSet {
+            guard sharedScale != oldValue else { return }
+            // A scale set elsewhere: the tracking starts again from it.
+            gridTracker.reset()
+            applyToState()
+            changed()
+        }
+    }
+
+    /// ``settings`` with the Core's scale for the band in place of the
+    /// pan's own Top and Bottom when the Core shares it. For drawing only;
+    /// never kept.
+    var scaledSettings: BandDisplaySettings {
+        guard let shared = sharedScale else {
+            return settings
+        }
+        var scaled = settings
+        scaled.scaleTopDbm = shared.topDbm
+        scaled.scaleBottomDbm = shared.bottomDbm
+        return scaled
+    }
+
     // MARK: The split while another slice's band shows
 
     /// While the band shows another slice's band upright, the least share of
@@ -110,7 +153,7 @@ final class BandModel: ObservableObject {
     /// split held at the jumped view's floor. For drawing and placing only;
     /// never kept.
     var shownSettings: BandDisplaySettings {
-        Self.raised(settings, floor: jumpedShareFloor)
+        Self.raised(scaledSettings, floor: jumpedShareFloor)
     }
 
     /// `settings` with the split at least at `floor`, within the split's limits.
@@ -244,20 +287,104 @@ final class BandModel: ObservableObject {
 
     /// How far the stack has glided toward the next line: the time since
     /// the newest row over the line period, 0 while held still.
+    /// While the lines go in by the row clock, the glide is the clock's
+    /// (``BandState/pacedStackGlide``), not the time since the newest row.
     func stackGlide(at now: Double) -> Double {
         guard !state.waterfallHeld, let newest = state.stack.newestTime else {
             return 0
         }
+        if let paced = state.pacedStackGlide {
+            return paced
+        }
         return StackedTrace.glide(since: now - newest, rowPeriod: secondsPerLine,
                                   divider: state.effectiveStackRowDivider)
     }
+
+    // MARK: The row clock (the desktop's remote pans' steady rows)
+
+    /// The band's view while it can put lines in by the row clock; nil
+    /// while no view drives the band (lines then go in as they come).
+    weak var lineDriver: BandLineDriver? {
+        didSet { notePacing() }
+    }
+    /// Now on the steady clock the display link keeps, in seconds; the
+    /// tests set their own.
+    var lineClock: () -> Double = { CACurrentMediaTime() }
+    #if DEBUG
+    /// The phone's timing trace of each line, when asked for
+    /// (``WaterfallLineTrace``); nil otherwise.
+    let lineTrace = WaterfallLineTrace.fromEnvironment()
+    #endif
+
+    /// Lines wait for the row clock now.
+    var pacingLines: Bool { state.pacingLines }
+
+    /// Lines are flowing: some wait, or the last is still gliding in.
+    var linesFlowing: Bool {
+        state.pacingLines && (state.linesWaiting > 0 || (state.rowClock.anchored && !state.rowClock.starved))
+    }
+
+    /// The driver's state changed: lines go in by the clock only while a
+    /// view on screen drives them.
+    func notePacing() {
+        let paces = lineDriver?.drivesLines ?? false
+        guard paces != state.pacesLines else {
+            return
+        }
+        if !paces {
+            flushLines()
+        }
+        state.pacesLines = paces
+    }
+
+    /// The row clock read on the screen frame at `now` (steady seconds) of
+    /// `frameSeconds` length: the lines it says go in. Returns how many.
+    @discardableResult
+    func advanceLines(at now: Double, frameSeconds: Double) -> Int {
+        notePacing()
+        let lines = state.history.linesAppended
+        let put = state.advanceLines(at: now, frameSeconds: frameSeconds)
+        if put > 0 {
+            keepLookingBack(since: lines)
+            moveMarks()
+            redraw()
+        }
+        noteTrace()
+        return put
+    }
+
+    /// Every line waiting for the clock goes in now, as each would have
+    /// gone in when it came: before a key edge, a hold, a new endpoint or
+    /// a mark, so they all keep their place.
+    private func flushLines() {
+        guard state.linesWaiting > 0 else {
+            return
+        }
+        let lines = state.history.linesAppended
+        state.flushLines(at: lineClock())
+        keepLookingBack(since: lines)
+        moveMarks()
+        noteTrace()
+        redraw()
+    }
+
+    /// Hands the lines put in to the timing trace, when it runs.
+    private func noteTrace() {
+        #if DEBUG
+        if let lineTrace {
+            lineTrace.note(state.takePutLines(), clock: state.rowClock, lock: state.frameLock,
+                           waiting: state.linesWaiting)
+        }
+        #endif
+    }
+
     /// The grid's minimum following the noise floor (``GridFloorTracker``):
     /// what it sets is drawn, never kept.
     private(set) var gridTracker = GridFloorTracker()
 
     /// Runs the tracking rule now; a change is drawn.
     private func trackGrid() {
-        if gridTracker.run(settings, transmitting: transmitOverlay, at: clock()) {
+        if gridTracker.run(scaledSettings, transmitting: transmitOverlay, at: clock()) {
             changed()
         }
     }
@@ -335,7 +462,14 @@ final class BandModel: ObservableObject {
         }
     }
     /// The display is suspended for want of room: the frozen band shows paused.
-    @Published var paused = false
+    @Published var paused = false {
+        didSet {
+            if paused { freezeWaterfall() }
+            else if !state.waterfallHeld { frozenWaterfallTop = nil }
+        }
+    }
+    private var frozenWaterfallTop: Double?
+    private var lastWaterfallTop: Double?
     /// The endpoint width to ask for: the view's width in pixels.
     @Published private(set) var requestedPixels = 1
     /// The endpoint context's centre and span: what the Core's frames cover.
@@ -369,6 +503,7 @@ final class BandModel: ObservableObject {
     struct AwayMark: Equatable {
         let text: String
         var linesSince: Int
+        var pending = true
     }
 
     /// The marks still on the waterfall, kept apart from the band so that
@@ -431,11 +566,44 @@ final class BandModel: ObservableObject {
         guard currentDrawByView[key.viewID] == key else { return }
         presentedDraws[key] = max(presentedDraws[key] ?? 0, revision)
     }
+
+    /// What the band's view cost the main thread, summed since the view
+    /// was made, in seconds: for the tests that time a drag while the band
+    /// draws.
+    struct DrawCost: Equatable {
+        /// Display link frames, and their whole time on the main thread.
+        var linkFrames = 0
+        var linkSeconds = 0.0
+        /// The row clock's work on those frames: the lines it put in.
+        var advanceSeconds = 0.0
+        /// Draws, and how many the display link made.
+        var draws = 0
+        var linkDraws = 0
+        /// The display link's draws' time, inside ``linkSeconds``.
+        var linkDrawSeconds = 0.0
+        /// Draws left for a later frame because no drawable was free.
+        var skipped = 0
+        /// Waiting for the view's drawable.
+        var drawableWaitSeconds = 0.0
+        /// Preparing the band's state for a draw, and building its overlays.
+        var prepareSeconds = 0.0
+        var overlaysSeconds = 0.0
+        /// The renderer waiting for a frame in flight, and encoding.
+        var frameWaitSeconds = 0.0
+        var encodeSeconds = 0.0
+        /// Every draw's whole time on the main thread.
+        var drawSeconds = 0.0
+    }
+
+    var drawCost = DrawCost()
     #endif
 
     init(settings: BandDisplaySettings = .desktopDefaults) {
         self.settings = settings
         applyToState()
+        #if DEBUG
+        state.tracesLines = lineTrace != nil
+        #endif
     }
 
     /// Effective RX/TX drawing numbers in this current endpoint's context.
@@ -456,13 +624,20 @@ final class BandModel: ObservableObject {
 
     /// The settings the band's state follows between frames.
     private func applyToState() {
+        if keyed && settings.waterfallStopOnTx && !state.waterfallHeld {
+            freezeWaterfall()
+            // The lines from before the hold go in before it.
+            flushLines()
+        }
         let drawn = drawnSettings
         state.levelAdjustment = transmitOverlay ? .none : drawn.waterfallAdjustment
         state.levelAdjustment.clarityFloorDbm = gridTracker.clarityFloorDbm.map(Float.init)
         // Manual/Scale and TX use local values, never a stale prior Core pair.
         state.phoneSetsLevels = drawn.waterfallLevelMode == .scale
             || drawn.waterfallLevelMode == .manual || transmitOverlay
-        state.waterfallHeld = keyed && settings.waterfallStopOnTx
+        let held = keyed && settings.waterfallStopOnTx
+        if state.waterfallHeld && !held && !paused { frozenWaterfallTop = nil }
+        state.waterfallHeld = held
         state.peakHoldDelayMs = settings.peakHold ? settings.peakHoldDelayMs : nil
         // The rows are kept while 3D is chosen on a Core that offers it.
         state.waterfallBlanking = settings.waterfallBlanking
@@ -472,9 +647,16 @@ final class BandModel: ObservableObject {
         state.stacksRows = settings.spectrumView == .stacked && stackOffered
     }
 
-    /// Marks the stretch the band was not sent, at the waterfall's newest
-    /// line: every line after it arrives above the mark.
+    /// Marks an explicit missing stretch. The notice waits for the first
+    /// resumed waterfall observation, then follows its capture coordinate.
     func markAway(_ text: String) {
+        // A frame still waiting for extras belongs before the interruption.
+        let lines = state.history.linesAppended
+        state.commit(manualLevels: drawnSettings.phoneLevels, at: lineClock())
+        keepLookingBack(since: lines)
+        moveMarks()
+        flushLines()
+        state.noteInterruption()
         markedLines = state.history.linesAppended
         away.marks.insert(AwayMark(text: text, linesSince: 0), at: 0)
         changed()
@@ -486,22 +668,54 @@ final class BandModel: ObservableObject {
     private func moveMarks() {
         let lines = state.history.linesAppended
         defer { markedLines = lines }
-        guard !awayMarks.isEmpty, lines > markedLines else {
-            return
-        }
-        let added = Int(min(lines - markedLines, UInt64(state.history.capacity)))
+        guard !awayMarks.isEmpty else { return }
+        let added = lines >= markedLines ? lines - markedLines : 0
         var moved = away.marks
-        for index in moved.indices {
-            moved[index].linesSince += added
+        moved.removeAll { mark in
+            if mark.pending {
+                guard added > 0 else { return false }
+                // The first resumed row must still exist. Never reanchor a
+                // notice to a different retained row after a large batch.
+                return added > UInt64(state.history.count)
+            }
+            return mark.linesSince >= state.history.count
+                || added >= UInt64(state.history.count - mark.linesSince)
         }
-        moved.removeAll { $0.linesSince > state.history.capacity }
-        away.marks = moved
+        for index in moved.indices {
+            if moved[index].pending, added > 0 {
+                moved[index].linesSince = Int(added - 1)
+                moved[index].pending = false
+            } else if !moved[index].pending {
+                moved[index].linesSince += Int(added)
+            }
+        }
+        if moved != away.marks { away.marks = moved }
+
+    }
+
+    /// Shared by the real strip and its model checks. Pending notices stay
+    /// at the held picture's top until an actual waterfall row binds them.
+    func awayMarkY(_ mark: AwayMark, scale: CGFloat) -> CGFloat {
+        if mark.pending { return 0 }
+        if let axis = waterfallTimeAxis,
+           let y = axis.yPoints(age: mark.linesSince, history: state.history) {
+            return CGFloat(y)
+        }
+        return CGFloat(mark.linesSince - lookBackLines) / max(scale, 1)
     }
 
     /// Looks back `lines` lines at the waterfall (0 goes back to live),
     /// within what it holds less one screen.
     func lookBack(lines: Int, visibleLines: Int) {
-        let most = max(0, state.history.count - visibleLines)
+        let most: Int
+        if state.history.hasPresentationTimeline,
+           let oldest = state.history.presentationTime(age: state.history.count - 1),
+           let newest = state.history.presentationTime(age: 0) {
+            let axis = WaterfallTimeAxis(topTime: newest, periodMs: settings.waterfallPeriodMs)
+            most = axis.nearestAge(at: min(newest, oldest + visibleWaterfallSeconds), history: state.history) ?? 0
+        } else {
+            most = max(0, state.history.count - visibleLines)
+        }
         let next = min(max(0, lines), most)
         if next != lookBackLines {
             lookBackLines = next
@@ -522,7 +736,60 @@ final class BandModel: ObservableObject {
     }
 
     /// When the waterfall's top line arrived (the newest while live).
-    var topLineTime: Double? { state.history.time(age: lookBackLines) }
+    var topLineTime: Double? {
+        let age = waterfallTimeAxis.flatMap { $0.age(at: $0.topTime, history: state.history) } ?? lookBackLines
+        return state.history.time(age: age)
+    }
+
+    /// Requested milliseconds per logical point, separately from the Core's actual RF row period.
+    var waterfallTimeAxis: WaterfallTimeAxis? {
+        let history = state.history
+        guard history.hasPresentationTimeline else { return nil }
+        let top: Double?
+        if lookBackLines > 0 { top = history.presentationTime(age: lookBackLines) }
+        else if let frozenWaterfallTop { top = frozenWaterfallTop }
+        else {
+            let phase = state.pacingLines && state.rowClock.anchored ? state.rowClock.progress : 1
+            let proposed = WaterfallTimeAxis.liveTop(history: history, progress: phase)
+            if let proposed {
+                let next = max(lastWaterfallTop ?? proposed, proposed)
+                lastWaterfallTop = next
+                top = next
+            } else { top = nil }
+        }
+        return top.map { WaterfallTimeAxis(topTime: $0, periodMs: settings.waterfallPeriodMs) }
+    }
+
+    private func freezeWaterfall() {
+        if frozenWaterfallTop == nil { frozenWaterfallTop = waterfallTimeAxis?.topTime }
+    }
+
+    var lookBackElapsedSeconds: Double {
+        guard state.history.hasPresentationTimeline, let newest = state.history.presentationTime(age: 0),
+              let anchor = state.history.presentationTime(age: lookBackLines) else {
+            return Double(lookBackLines) * secondsPerLine
+        }
+        return max(0, newest - anchor)
+    }
+
+    private var visibleWaterfallSeconds = 0.0
+    var mostLookBackSeconds: Double {
+        guard state.history.hasPresentationTimeline, let newest = state.history.presentationTime(age: 0),
+              let oldest = state.history.presentationTime(age: state.history.count - 1) else {
+            return Double(max(0, state.history.count - visibleLines)) * secondsPerLine
+        }
+        return max(0, newest - oldest - visibleWaterfallSeconds)
+    }
+
+    func lookBack(seconds: Double) {
+        guard state.history.hasPresentationTimeline, let newest = state.history.presentationTime(age: 0) else {
+            lookBack(lines: Int((seconds / secondsPerLine).rounded()), visibleLines: visibleLines)
+            return
+        }
+        let target = newest - min(max(seconds, 0), mostLookBackSeconds)
+        let axis = WaterfallTimeAxis(topTime: newest, periodMs: settings.waterfallPeriodMs)
+        lookBack(lines: axis.nearestAge(at: target, history: state.history) ?? 0, visibleLines: visibleLines)
+    }
 
     private func countFrame() {
         let now = clock()
@@ -561,6 +828,15 @@ final class BandModel: ObservableObject {
             wideSpanFactorNow = context.spanHz > 0 ? max(1, context.wideSpanHz / context.spanHz) : 1
             contextFps = context.fps
             contextFramesPerLine = context.framesPerLine
+            // The row clock runs at the Core's line period, and only once it has said.
+            let linePeriod = context.fps > 0 && context.framesPerLine > 0
+                ? Double(context.framesPerLine) / Double(context.fps) : 0
+            if linePeriod == 0 {
+                // The waiting lines go in here, where looking back follows
+                // them, before the clock stops.
+                flushLines()
+            }
+            state.linePeriodSeconds = linePeriod
             sourceCentreHz = context.sourceCentreHz
             sourceRateHz = context.sampleRateHz
             // The bin width the Core's engine runs at, when it says its FFT size.
@@ -581,6 +857,8 @@ final class BandModel: ObservableObject {
             }
             changed()
         case .mediaState(.closed), .mediaState(.failed):
+            freezeWaterfall()
+            flushLines()
             state.discardPending()
             if binWidthHz != nil {
                 binWidthHz = nil
@@ -608,16 +886,22 @@ final class BandModel: ObservableObject {
                 // none: never drawn, so the band holds its last picture.
                 return
             }
+            if !paused && !state.waterfallHeld { frozenWaterfallTop = nil }
+            notePacing()
             let lines = state.history.linesAppended
-            state.receive(frame: frame, manualLevels: drawnSettings.phoneLevels)
+            state.receive(frame: frame, manualLevels: drawnSettings.phoneLevels, at: lineClock())
             keepLookingBack(since: lines)
             moveMarks()
+            noteTrace()
             countFrame()
             trackGrid()
             noteEffectiveReadouts()
             stackFrameCount &+= 1
-            if drawsStack, !pacer.draws(frame: stackFrameCount) {
-                // Half rate: this frame is kept but not drawn.
+            if drawsStack, !pacer.draws(frame: stackFrameCount), state.linesWaiting == 0 {
+                // Half rate: this frame is kept but not drawn. A line
+                // waiting for the row clock still asks, since only that
+                // wakes a resting display link: the link's cadence keeps
+                // the half rate.
                 return
             }
             redraw()
@@ -640,9 +924,10 @@ final class BandModel: ObservableObject {
                 trackGrid()
             }
             let lines = state.history.linesAppended
-            state.receive(extras: extras, manualLevels: drawnSettings.phoneLevels)
+            state.receive(extras: extras, manualLevels: drawnSettings.phoneLevels, at: lineClock())
             keepLookingBack(since: lines)
             moveMarks()
+            noteTrace()
             if let levels = state.history.heldLevels {
                 let coarse = [levels.lowDbm, levels.highDbm].map { (Double($0) / 5).rounded() * 5 }
                 if coarse != coarseCoreLevels {
@@ -715,6 +1000,7 @@ final class BandModel: ObservableObject {
                                     markers: markers, frameCoverage: state.frameCoverage)
         overlays.peakHold = state.peakHold
         overlays.lookBackLines = lookBackLines
+        overlays.waterfallTimeAxis = waterfallTimeAxis
         if drawsStack {
             overlays.stacked = StackedTraceOverlay(noiseFloorDbm: stackFloorDbm, glide: stackGlide(at: clock()),
                                                    availableSpanFactor: wideSpanFactorNow)
@@ -766,10 +1052,15 @@ final class BandModel: ObservableObject {
     func prepareToDraw(size: CGSize, scale: CGFloat) -> BandState {
         let layout = BandLayout(size: size, scale: scale, settings: shownSettings)
         state.resizeWaterfall(lines: Self.waterfallCapacity(size: size, scale: scale, settings: shownSettings))
-        visibleLines = layout.waterfallLines
+        visibleWaterfallSeconds = Double(layout.waterfallPoints) * Double(settings.waterfallPeriodMs) / 1000
+        if let axis = waterfallTimeAxis,
+           let bottom = axis.nearestAge(at: axis.topTime - visibleWaterfallSeconds, history: state.history) {
+            visibleLines = max(1, bottom - lookBackLines + 1)
+        } else { visibleLines = layout.waterfallLines }
         state.noteVisibleWaterfall(layout)
-        state.commit(manualLevels: drawnSettings.phoneLevels)
+        state.commit(manualLevels: drawnSettings.phoneLevels, at: lineClock())
         moveMarks()
+        noteTrace()
         let pixels = BandGeometry.requestedPixels(forWidthPixels: Double(size.width))
         if pixels != requestedPixels {
             requestedPixels = pixels
@@ -800,7 +1091,7 @@ final class BandModel: ObservableObject {
     /// keyed on it their transmit overlay.
     var drawnSettings: BandDisplaySettings {
         // The keyed overlay follows no floor; otherwise the tracked grid shows.
-        transmitOverlay ? settings.keyedOverlay : gridTracker.applied(to: settings)
+        transmitOverlay ? settings.keyedOverlay : gridTracker.applied(to: scaledSettings)
     }
 
     /// Display duplex is on and the Core takes it (`txDisplayVersion` 3):
@@ -855,6 +1146,7 @@ final class BandModel: ObservableObject {
             transmitGenerations.removeAll()
         }
         // The transmit display, or the receiver back: nothing blends across.
+        flushLines()
         state.resetSmoothing()
         applyToState()
     }
@@ -879,6 +1171,7 @@ final class BandModel: ObservableObject {
                 receiveView = nil
                 transmitGenerations.removeAll()
             }
+            flushLines()
             state.resetSmoothing()
         } else if keyedView, transmit.carrierHz != old.carrierHz, old.carrierHz > 0, let current = requestedView {
             // XIT or the frequency moved while keyed: the view follows the carrier.
@@ -899,13 +1192,18 @@ final class BandModel: ObservableObject {
         } else {
             requestedView = TransmitDisplay.firstView(carrierHz: transmit.carrierHz, spanHz: settings.txViewSpanHz)
         }
+        flushLines()
         state.resetSmoothing()
         changed()
     }
 
     /// Starts over: a new session or a new endpoint.
     func reset() {
+        frozenWaterfallTop = nil
+        lastWaterfallTop = nil
         state.clear()
+        away.marks.removeAll()
+        markedLines = 0
         stackFloorDbm = nil
         contextRevisions.removeAll()
         contextOrder.removeAll()

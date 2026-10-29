@@ -1,6 +1,81 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-26: Roundtable: only the server whose settings RoundtableState
+//               reads hands it back on teardown, and the state's signals no
+//               longer reach the server being destroyed. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-10-25: Roundtable: a server going away hands the model's
+//               RoundtableState back to the application's settings, so a
+//               model that outlives the server's settings no longer crashes
+//               on teardown. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-25: Roundtable fix wave: each web sign-in link answers the
+//               oldest waiting request only, and a request that will get
+//               no link (RoundtableClient::webLinkFailed) is answered at
+//               once. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion 1, the
+//               read-only `roundtable` object, the roundtableRooms and
+//               roundtableRoom:<id> streams and the thirteen roundtable.*
+//               verbs, only for a peer that declared roundtable 1; Roundtable
+//               kept out of the spotConsole streams. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11 fix round: the Core's own
+//               Roundtable answers refused from a peer's settings remove;
+//               no Roundtable/ setting to a peer without Roundtable;
+//               SpotSourceHost's roundtableState and roundtableText fitted
+//               per peer; a post keyed by its connection and a Core
+//               clientId. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-26: radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx"
+//               (alex/master/bpf2GndOnTx) from a window, a transmit
+//               hardware key taken on and off the air like the Alex tab's
+//               high-pass switches. J.J. Boyd (KG4VCF), AI-assisted: Claude
+//               Code. Version 14 also names OC Outputs' Anvelina DX
+//               Outputs ("ocDx" reload).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26: The keying gate notes the tuner's own TUNE (noteTunerLoan)
+//               and the cycle's end gives transmit back (returnTunerLoan).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: PR 670 fix wave: every cycle's end rechecks the tuner's
+//               loan; a real station key (requestAccepted) drops it, a
+//               gate question does not (JJ, "Option 1 the station keeps
+//               transmit"). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B: a microphone
+//               line that ends while its device is keyed is no audio, never
+//               audio returning: the Mic hold stays (or is set at 250 ms,
+//               by the mode) and the Core cuts 10 s after the last packet
+//               of any line for the key, on its own timer, unless a watched
+//               line delivers first (remoteMicLineEnded,
+//               remoteMicAudioArrived, judgeEndedMicLine). The hold start
+//               logs the measured silence; a hold released by TUNE or
+//               two-tone starting, or by a new key, says so; the policy
+//               counts a hold only while it set the Mic bit. The same
+//               device signing in again ends a watched key as the
+//               watchdog's closed-link stop. Round 2: every watchdog stop of
+//               a keyed device, and a dropped link's, is Stop All TX before
+//               its VOX goes off (a VOX key included); a line ending after
+//               MOX is off is a normal unkey, not a mid-key end; a change of
+//               transmit mode while keyed and starved judges the hold again.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, Task 5: the watchdog's hold
+//               hook and the starvation's holdRf set the TX channel's Link
+//               and Mic bits for the keyer; holdStarted and holdEnded, and
+//               the microphone's, reach txState (setRfHold) and the control
+//               log; a held key that ends keeps its Link bit until MOX
+//               reaches receive; TUNE or two-tone starting releases a
+//               microphone hold; remoteMicNoAudio is the 10 s cut. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut, fix wave A: the destructor
+//               disarms the cut guard while the model's cut line is still
+//               set, so a guard hold is released on the TX channel rather
+//               than left set. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the cut guard also holds
+//               RF through the model's cut line (TransmitCutLine::hold)
+//               before it cuts. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-24: The settings snapshot carries LimitFiltersToSidebands'
 //               effective value (RadioModel's default, False) when the Core
 //               never stored it, so a headless Core's phone row is live.
@@ -227,6 +302,21 @@
 //   2026-10-16: the cut guard's measured silence goes to tripQuiet, so
 //               its stop never reports 400 ms for a longer silence. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: CW transmit, transmitSettingsVersion 16 (the CW settings
+//               on `transmit`, R-CW-03), and a window's CWPitch write
+//               reaches the Core's RadioModel::cwPitchHz (R-CW-02). J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-48, R-CW-49): cw.send,
+//               cw.memory, cw.stop and cw.key through the Core's CWX sender
+//               for the device that holds transmit, remoteCwVersion 1 to a
+//               peer that declared remoteCw 1, the CW settings only to a
+//               peer that declared cwSettings 1, and a device's CWX ending
+//               with its link. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//               Code.
+//   2026-10-27: CW transmit final fix wave F2: transmit's read-only
+//               cwQskUnavailableReason only to a peer that declared
+//               cwSettings 1. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//               Code.
 // =================================================================
 // src/core/session/StationServer.cpp  (NereusSDR)
 // =================================================================
@@ -1090,6 +1180,7 @@
 #include "core/session/RxOnlyLinkFit.h"
 
 #include "core/TxSliceArbiter.h"
+#include "core/CwxSender.h"
 #include "core/Hl2OptionsModel.h"
 #include "core/session/DataChannelTransport.h"
 #include "core/session/RelayLeg.h"
@@ -1195,6 +1286,9 @@
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
 #include "models/RotorModel.h"
+#include "models/RoundtableModel.h"
+#include "core/roundtable/RoundtableClient.h"
+#include "core/roundtable/RoundtableState.h"
 #include "models/TunerModel.h"
 #include "core/setup/SetupDescriptionService.h"
 #include "core/PaCalProfile.h"
@@ -1436,6 +1530,39 @@ bool isStationCatMessage(const SessionMessage& message)
     return message.objectKey == kStationCatKey
         || (message.kind == SessionMessageKind::Schema
             && message.className == "StationCatModel");
+}
+
+// Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+// Roundtable connection, read-only, only for a peer at
+// kRadioIdentitySessionProtocolMinor whose hello declared roundtable 1, on
+// a Core that runs Roundtable. Its rooms are the roundtableRooms and
+// roundtableRoom:<id> streams, under the same gate.
+constexpr const char* kRoundtableKey = "roundtable";
+// How often the room streams are swept, and how long one no slice is in
+// and no device reads is kept (design 10.3).
+constexpr int kRoundtableSweepMs = 60 * 1000;
+constexpr qint64 kRoundtableKeepMs = 10 * 60 * 1000;
+// How long a post or a web sign-in waits for Roundtable's answer.
+constexpr int kRoundtableAnswerMs = 30 * 1000;
+
+bool isRoundtableMessage(const SessionMessage& message)
+{
+    return message.objectKey == kRoundtableKey
+        || (message.kind == SessionMessageKind::Schema
+            && message.className == "RoundtableState");
+}
+
+// The Core's Roundtable/ settings, sent only to a peer that gets Roundtable,
+// so an older peer's snapshot and settings relay stay as they were.
+bool isRoundtableSettingsKey(const QString& key)
+{
+    return key.startsWith(QLatin1String("Roundtable/"), Qt::CaseInsensitive);
+}
+
+bool isRoundtableStream(const QString& stream)
+{
+    return stream == QLatin1String(RoundtableModel::kRoomsStream)
+        || stream.startsWith(QLatin1String(RoundtableModel::kRoomStreamPrefix));
 }
 
 // R-IOS-25 / R-R3-49 (parity Task 19, recordStreamVersion 1): the Core's
@@ -1700,6 +1827,45 @@ constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
     {"RadioModel", "radio", false, "coreSpeakerDetails", "coreSpeaker"},
     // The CFC dialog's band editor (transmitSettingsVersion 15).
     {"TransmitModel", "transmit", false, "cfcProfile", "cfcProfile"},
+    // The Spot Hub's Roundtable row (stationRoundtableVersion 1), only to a
+    // peer that gets Roundtable (StationServer::peerGetsRoundtable).
+    {"SpotSourceHost", "spotSources", false, "roundtableState", "roundtable"},
+    {"SpotSourceHost", "spotSources", false, "roundtableText", "roundtable"},
+    // CW transmit (R-CW-03, R-CW-48): the CW settings (transmitSettingsVersion
+    // 16), so an older app's transmit schema, snapshot and deltas keep their
+    // bytes.
+    {"TransmitModel", "transmit", false, "cwKeyerSpeed", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwKeyerMode", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwKeyerWeight", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwReversePaddles", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwStrictSpacing", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwBreakInMode", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwBreakInDelayMs", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwKeyDownDelayMs", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwKeyUpDelayMs", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSidetone", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwRadioSidetone", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwComputerSidetone", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwAutoModeSwitch", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwAutoModeReturn", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwAutoModeReturnMs", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSerialPort", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSerialPaddles", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSerialKeyLine", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwSerialPttLine", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxSpeed", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxRepeat", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxRepeatDelayS", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory1", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory2", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory3", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory4", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory5", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory6", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory7", "cwSettings"},
+    {"TransmitModel", "transmit", false, "cwxMemory8", "cwSettings"},
+    // CW transmit final fix wave F2: why QSK is not offered (read-only).
+    {"TransmitModel", "transmit", false, "cwQskUnavailableReason", "cwSettings"},
 };
 
 // Phone wire batch: record fields that go only to a peer at
@@ -1901,6 +2067,23 @@ constexpr const char* kTuneDriveSourceFeature = "tuneDriveSource";
 constexpr const char* kTuneDriveSourceWriteReason =
     "Update this app to change TUNE's drive source on this Core.";
 
+// CW transmit (R-CW-48): why a write of transmit's CW settings is refused
+// from a peer that did not declare cwSettings 1. Such a peer is never sent
+// them, so only a misbehaving one gets here.
+constexpr const char* kCwSettingsFeature = "cwSettings";
+constexpr const char* kCwSettingsWriteReason =
+    "Update this app to change the CW settings on this Core.";
+
+bool isCwSettingsProperty(const QByteArray& name)
+{
+    for (const PeerOnlyProperty& entry : kPeerOnlyProperties) {
+        if (name == entry.property && qstrcmp(entry.feature, kCwSettingsFeature) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool isCoreSpeakerProperty(const QByteArray& name)
 {
     return name == "coreSpeakerVolume" || name == "coreSpeakerMuted"
@@ -1985,7 +2168,8 @@ bool isTransmitDspOptionsKey(const QString& key)
 //   hardware/<mac>/powerByBand/..., tunePowerByBand/...   (TransmitModel)
 //   any .../oc/extPa/...                the external PA group (OcOutputsHfTab)
 //   any .../oc/allowHotSwitching        OC lines switching while transmitting
-//   any .../alex/master/{hpfBypassOnTx,hpfBypassOnPs,disable6mLnaOnTx}
+//   any .../alex/master/{hpfBypassOnTx,hpfBypassOnPs,disable6mLnaOnTx,
+//                        bpf2GndOnTx}
 //   any .../alex/lpf/...                the Alex TX low-pass table
 //                                       (AntennaAlexAlex1Tab, its own keys and
 //                                       the Hardware page's copies)
@@ -2009,7 +2193,8 @@ bool isTransmitHardwareKey(const QString& rawKey)
         if (here == QLatin1String("alex") && next == QLatin1String("master") && i + 2 < parts.size()) {
             const QString& field = parts[i + 2];
             if (field == QLatin1String("hpfbypassontx") || field == QLatin1String("hpfbypassonps")
-                || field == QLatin1String("disable6mlnaontx")) {
+                || field == QLatin1String("disable6mlnaontx")
+                || field == QLatin1String("bpf2gndontx")) {
                 return true;
             }
         }
@@ -2340,6 +2525,30 @@ bool isAlexHpfTransmitSwitchKey(const QString& rawKey)
     return false;
 }
 
+// radioHardwareVersion 14: Antenna Control's "Gnd BPF2 on Tx", under any
+// .../alex/master/bpf2GndOnTx (alexKeys::kBpf2GndOnTx). The Core applies it
+// with the high-pass switches (RadioModel::applyAlexHpfSwitchSettings); the
+// radio takes it at the next TX edge. A receive-only Core takes it from a
+// peer offered version 14, on the air too: Thetis's handler stores it with
+// no MOX check.
+// From Thetis setup.cs:18214-18218 [v2.10.3.15]
+// From Thetis-Enhanced (EU2AV) setup.cs:18373-18377 [@567a7ec]
+//   private void chkBPF2Gnd_CheckedChanged(object sender, EventArgs e)
+//   { if (initializing) return; console.BPF2Gnd = chkBPF2Gnd.Checked; }
+bool isAlexBpf2GndKey(const QString& rawKey)
+{
+    const QStringList parts = rawKey.toLower().split(QLatin1Char('/'));
+    if (parts.isEmpty() || parts[0] != QLatin1String("hardware")) {
+        return false;
+    }
+    for (int i = 1; i + 2 < parts.size(); ++i) {
+        if (parts[i] == QLatin1String("alex") && parts[i + 1] == QLatin1String("master")) {
+            return parts[i + 2] == QLatin1String("bpf2gndontx");
+        }
+    }
+    return false;
+}
+
 // R-R3-46 / R-R3-49 (radioHardwareVersion 10): the Alex-1 Filters tab's
 // low-pass rows, under any .../alex/lpf/. The Core stores them for its
 // connection's next selection (RadioModel::applyAlexHpfSwitchSettings), as
@@ -2639,6 +2848,15 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 controlLogKeepalive(deviceId, ControlLog::KeepaliveChannel::TxWatch, 0, watched);
             }
         }, this);
+    m_txWatchServer->setKeepaliveV2(
+        [this](SessionTransport* primary) {
+            return peerDeclares(primary, QByteArrayLiteral("remoteCw"), 2);
+        },
+        [this](const QByteArray& device, const TxKeepalive& value) {
+            if (m_txWatchdog && m_txWatchdog->keepalive(device, value, RemoteTxWatchdog::Path::Auxiliary)) {
+                noteCwKeepalive(device, value, 0);
+            }
+        });
     // iPhone app Task 71 (R-IOS-02): who holds a place, and the mirrored
     // `connectedDevices` object that shows it.
     m_deviceSessions = std::make_unique<DeviceSessionRegistry>();
@@ -2726,7 +2944,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         && m_radioModel->moxController() != nullptr) {
         MoxController* mox = m_radioModel->moxController();
         // Rulings 8.8 and 8.13: every key, local or remote, asks here first.
-        mox->setKeyingGate([this](PttMode source, const KeyerIdentity& keyer) -> KeyingAnswer {
+        const auto answerKey = [this](PttMode source, const KeyerIdentity& keyer) -> KeyingAnswer {
             if (!keyer.isStation()) {
                 // A remote key: the session's own gate first (remote_transmit,
                 // its hello, its pairing, its snapshot).
@@ -2795,6 +3013,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // that device's, on unheld transmit too: it becomes the
                 // holder as its own key would, and VOX stays armed.
                 request.deviceId = m_radioModel->remoteVoxDevice();
+            }
+            // CW transmit (R-CW-49): the radio's CW key while the Core's CWX
+            // sender runs for the device that holds transmit (its cw.send,
+            // cw.memory or cw.key) is that device's key, as VOX is above.
+            if (keyer.isStation() && source == PttMode::Cw && m_radioModel
+                && m_transmitHolder->state() == TransmitHolder::State::Held) {
+                if (const auto holder = m_transmitHolder->holder();
+                    holder && m_radioModel->cwxActiveFor(holder->deviceId)) {
+                    request.deviceId = holder->deviceId;
+                }
             }
             // iPhone app plan Task 77 (rulings 8.8, 8.9; D52 as D58 amended
             // it): a press of the radio's own PTT (its mic or a footswitch)
@@ -2910,6 +3138,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                 ? TxRefusals::radioOnAir()
                                 : TxRefusals::noTransmitSlice()};
                 }
+                // TGXL tune lane (JJ, 2026-10-26): where the tuner's TUNE
+                // moved the flag, so it goes back when the cycle ends.
+                if (keyer.tunerPress && m_tunerLoan) {
+                    m_tunerLoan->flagMovedTo = moveTo;
+                }
             }
             // Fix wave 2, Important 2: a take whose key never starts (a
             // TUNE or two-tone refused after the gate) is released.
@@ -2918,7 +3151,43 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 watchUnstartedTake(m_transmitHolder->epoch());
             }
             return answer;
+        };
+        mox->setKeyingGate([this, answerKey](PttMode source,
+                                             const KeyerIdentity& keyer) -> KeyingAnswer {
+            // TGXL tune lane (JJ, 2026-10-26): the tuner's own front-panel
+            // TUNE borrows transmit and the flag for its cycle, and gives
+            // them back when the cycle ends (returnTunerLoan).
+            if (keyer.isStation() && keyer.tunerPress) {
+                noteTunerLoan();
+            }
+            return answerKey(source, keyer);
         });
+        // TGXL tune lane (JJ, 2026-10-26, "Option 1 the station keeps
+        // transmit"). Fix wave (PR 670, I2): a real key at the station
+        // during the tune (its MOX, two-tone; anything but the tuner's own
+        // press) is the station's own: what the tune took stays. Seen where
+        // the key is accepted, not at the gate: during the carrier a station
+        // key never asks the gate, and a gate question that keys nothing
+        // (TCI's program refusal check) is not a key.
+        connect(mox, &MoxController::requestAccepted, this,
+                [this](const KeyerIdentity& requester, quint64, bool requestedOn) {
+                    if (m_tunerLoan && requestedOn && requester.isStation()
+                        && !requester.tunerPress) {
+                        dropTunerLoanForStationKey();
+                    }
+                });
+        // A PTT pressed during the tune keys nothing while TUN is up; one
+        // held when the tune ends is read there (returnTunerLoan).
+        // TGXL tune lane: a tuner cycle has ended. Fix wave (PR 670, I1):
+        // every cycle's end, a device's included, rechecks the loan; the
+        // first end after the press is its own cycle's.
+        connect(m_radioModel, &RadioModel::tgxlAutotuneEnded, this,
+                [this](const QByteArray&, const QString&) {
+                    if (m_tunerLoan) {
+                        m_tunerLoan->cycleEnded = true;
+                        returnTunerLoan();
+                    }
+                });
         // iPhone app plan Task 77 fix wave, I1 (ruling 8.9): the radio's
         // PTT press asks the gate while another device holds transmit,
         // whatever that device's key (TUNE, two-tone, a tuner autotune,
@@ -2934,9 +3203,13 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 const auto holder = m_transmitHolder->holder();
                 // Task 35 (ruling 8.4): a VOX key is the holder's.
                 const KeyerIdentity& keyer = mox->currentKeyer();
+                // CW transmit (R-CW-49): so is the radio's CW key while the
+                // CWX sender runs for the holder.
                 const bool holdersKey = holder
                     && (keyer.deviceId == holder->deviceId
-                        || (keyer.isStation() && keyer.source == PttMode::Vox));
+                        || (keyer.isStation() && keyer.source == PttMode::Vox)
+                        || (keyer.isStation() && keyer.source == PttMode::Cw && m_radioModel
+                            && m_radioModel->cwxActiveFor(holder->deviceId)));
                 if (holdersKey && mox->isMox()) {
                     m_transmitHolder->setKeyed(true);
                 }
@@ -2984,6 +3257,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             }
             return TxRefusals::otherDeviceHolds(holder->name).text;
         });
+        // CW transmit (R-CW-49): the CWX sender's holder rule, for the
+        // device a request is for (empty: the station's own window).
+        m_radioModel->setCwxHolderRefusal([this](const QByteArray& device) {
+            const std::optional<TransmitHolder::Holder> holder = m_transmitHolder->holder();
+            if (!holder) {
+                // A remote device sends CW only while it holds transmit, so
+                // its CWX ends when it lets transmit go.
+                return device.isEmpty() ? QString() : TxRefusals::notHolder().text;
+            }
+            const QByteArray asking = device.isEmpty()
+                ? QByteArray(KeyerIdentity::kStationDeviceId) : device;
+            if (holder->deviceId == asking) {
+                return QString();
+            }
+            return TxRefusals::otherDeviceHolds(holder->name).text;
+        });
         connect(m_transmitHolder.get(), &TransmitHolder::changed, m_radioModel,
                 &RadioModel::reportTransmitHolderChanged);
         connect(m_remoteKeying.get(), &RemoteKeying::pendingKeyEnded, m_radioModel,
@@ -3018,9 +3307,9 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         // the transmit watchdog. It watches a device while keyedBy names it
         // or while it has VOX armed, on the Core's clock (the session
         // registry's, so the conformance player's virtual time moves it)
-        // and one child timer. Its stop turns off the VOX that device armed
-        // first, so VOX cannot key again after it, then stops transmitting
-        // when the key on the air is that device's.
+        // and one child timer. Its stop stops transmitting when the key on
+        // the air is that device's, then turns off the VOX that device
+        // armed, so VOX cannot key again after it.
         m_txWatchdog = std::make_unique<RemoteTxWatchdog>();
         m_txWatchdogTimer = new QTimer(this);
         m_txWatchdogTimer->setSingleShot(true);
@@ -3036,15 +3325,33 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             hooks.startTimer = [this](int ms) { m_txWatchdogTimer->start(ms); };
             hooks.stopTimer = [this]() { m_txWatchdogTimer->stop(); };
             hooks.stop = [this](const QByteArray& deviceId, const QString& message) {
-                disarmVoxArmedBy(deviceId, "its link went quiet");
+                // Fix wave B, round 2: Stop All TX first, whatever keyed it
+                // (a VOX key included), then the VOX off. Turning VOX off
+                // first would release a VOX key through the operator's
+                // normal unkey, which waits for the send ring's drain
+                // (G-05), and the stop below would then find nothing keyed.
                 if (m_radioModel && m_radioModel->keyedBy().deviceId == deviceId) {
                     // Task 39: the window and the phone are told why, in the
                     // words the Core stopped with, before the stop runs.
                     recordTransmitStop(TransmitState::kStopLinkLost, message);
                     m_radioModel->stopAllTx(message);
                 }
+                if (m_radioModel && m_radioModel->remoteCwActivity().deviceId == deviceId) {
+                    const quint32 epoch = m_radioModel->remoteCwActivity().epoch;
+                    m_radioModel->transmitCutLine()->cut(epoch);
+                    m_radioModel->cancelRemoteCw(epoch);
+                    m_radioModel->catchUpTransmitCut(message);
+                }
+                disarmVoxArmedBy(deviceId, m_watchdogVoxOffWhy != nullptr
+                                               ? m_watchdogVoxOffWhy
+                                               : "its link went quiet");
             };
             hooks.deviceName = [this](const QByteArray& id) { return deviceNameForStop(id); };
+            // Remote transmit hold then cut: a quiet link's RF is held
+            // silent while the key stays on.
+            hooks.hold = [this](const QByteArray& deviceId, bool held) {
+                onWatchdogHold(deviceId, held);
+            };
             m_txWatchdog->setHooks(std::move(hooks));
         }
         // Control logging lane: a watchdog stop, beside the keepalives and
@@ -3060,10 +3367,35 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     m_controlLog.watchdogStopped(deviceId, transport, info, linkClosed,
                                                  silentMs);
                 });
+        // Remote transmit hold then cut: the watchdog's holds, published on
+        // txState and logged, each with how it ended.
+        connect(m_txWatchdog.get(), &RemoteTxWatchdog::holdStarted, this,
+                &StationServer::onWatchdogHoldStarted);
+        connect(m_txWatchdog.get(), &RemoteTxWatchdog::holdEnded, this,
+                [this](const QByteArray& deviceId, qint64 lengthMs, RemoteTxWatchdog::HoldEnd how) {
+                    QString words;
+                    switch (how) {
+                    case RemoteTxWatchdog::HoldEnd::Heard:
+                        words = QStringLiteral("keepalives returned");
+                        break;
+                    case RemoteTxWatchdog::HoldEnd::Cut:
+                        words = QStringLiteral("cut");
+                        break;
+                    case RemoteTxWatchdog::HoldEnd::KeyEnded:
+                        words = QStringLiteral("the key ended");
+                        break;
+                    case RemoteTxWatchdog::HoldEnd::LinkClosed:
+                        words = QStringLiteral("link closed");
+                        break;
+                    }
+                    onWatchdogHoldEnded(deviceId, lengthMs,
+                                        how == RemoteTxWatchdog::HoldEnd::KeyEnded, words);
+                });
         // Remote transmit cut off the main thread (2026-10-15): the guard
-        // judges the same 400 ms from the "tx" channel's messages at their
-        // receipt, on a thread of its own, so a held main thread still cuts
-        // a keyed remote device's transmit. Its cut, on its thread, only
+        // judges the watchdog's hold and cut deadlines from the "tx"
+        // channel's messages at their receipt, on a thread of its own, so a
+        // held main thread still holds, then cuts, a keyed remote device's
+        // transmit. Its cut, on its thread, only
         // cuts the model's line and posts the rest here
         // (onTransmitCutOffMain); it never waits on this thread.
         m_txCutTarget = std::make_shared<TxCutTarget>();
@@ -3076,10 +3408,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         {
             const std::shared_ptr<TxCutTarget> target = m_txCutTarget;
             m_txCutGuard = std::make_shared<RemoteTxCutGuard>(
-                [target](quint64 mediaEpoch, quint64 armSerial, qint64 silentMs) {
+                [target](quint64 mediaEpoch, quint64 armSerial, quint32 cwEpoch, qint64 silentMs) {
                     const std::lock_guard<std::mutex> lock(target->mutex);
                     if (target->line) {
-                        target->line->cut();
+                        if (cwEpoch != 0) { target->line->cut(cwEpoch); }
+                        else { target->line->cut(); }
                     }
                     StationServer* const server = target->server;
                     if (server != nullptr) {
@@ -3087,15 +3420,43 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                         // when this object goes is dropped with it.
                         QMetaObject::invokeMethod(
                             server,
-                            [server, mediaEpoch, armSerial, silentMs]() {
+                            [server, mediaEpoch, armSerial, cwEpoch, silentMs]() {
+                                if (cwEpoch != 0) {
+                                    if (!server->m_radioModel || !server->m_txCutGuard
+                                        || server->m_txCutGuard->armSerial() != armSerial
+                                        || server->m_radioModel->remoteCwActivity().epoch != cwEpoch) { return; }
+                                    const auto activity = server->m_radioModel->remoteCwActivity();
+                                    if (server->m_txWatchdog) {
+                                        server->m_txWatchdog->tripQuiet(activity.deviceId, silentMs);
+                                    }
+                                    server->m_radioModel->cancelRemoteCw(cwEpoch);
+                                    server->m_radioModel->catchUpTransmitCut(
+                                        RemoteTxWatchdog::stopMessage(server->deviceNameForStop(activity.deviceId)));
+                                    return;
+                                }
                                 server->onTransmitCutOffMain(mediaEpoch, armSerial, silentMs);
                             },
                             Qt::QueuedConnection);
+                    }
+                },
+                // Remote transmit hold then cut (2026-10-26): past the hold
+                // deadline the guard holds RF silent through the same line
+                // (the TX channel's Guard bit only) and releases it on a
+                // receipt, a disarm, a new arm or after its cut.
+                [target](quint64, quint32 cwEpoch, bool held) {
+                    const std::lock_guard<std::mutex> lock(target->mutex);
+                    if (target->line) {
+                        if (cwEpoch != 0) { target->line->hold(cwEpoch, held); }
+                        else { target->line->hold(held); }
                     }
                 });
         }
         connect(m_radioModel, &RadioModel::keyedByChanged, this,
                 &StationServer::followKeyedForWatchdog);
+        connect(m_radioModel, &RadioModel::remoteCwActivityChanged, this,
+                &StationServer::followKeyedForWatchdog);
+        connect(m_radioModel, &RadioModel::remoteCwRecoveryRequested, this,
+                &StationServer::recoverRemoteCw);
 
         // Task 37 (remote design section 12.3): a keyed device's microphone
         // line starving on a live link, per transmit mode.
@@ -3125,8 +3486,39 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
             };
             hooks.deviceName = [this](const QByteArray& id) { return deviceNameForStop(id); };
+            // Remote transmit hold then cut: a starved line in a carrier
+            // mode holds the keyer's RF silent while the key stays on.
+            hooks.holdRf = [this](bool held) { onStarvationHold(held); };
             m_starvation.setHooks(std::move(hooks));
         }
+        // Fix wave B: a keyed device's microphone line that ended is judged
+        // on the Core's clock by a child timer, as the watchdog's is (the
+        // conformance runner's virtual clock drives both).
+        m_endedMicLineTimer = new QTimer(this);
+        m_endedMicLineTimer->setSingleShot(true);
+        m_endedMicLineTimer->setTimerType(Qt::PreciseTimer);
+        connect(m_endedMicLineTimer, &QTimer::timeout, this, &StationServer::judgeEndedMicLine);
+        // Remote transmit hold then cut: MOX reaching receive clears every
+        // hold bit (RadioModel); a hold still published ends with it.
+        connect(m_radioModel, &RadioModel::remoteRfHoldChanged, this, [this](bool held) {
+            if (!held) {
+                onRemoteRfHoldsCleared();
+            }
+        });
+        // TUNE and two-tone use no microphone, so they are never held by it:
+        // a microphone hold on when either starts is released.
+        connect(&m_radioModel->transmitModel(), &TransmitModel::tuneChanged, this,
+                [this](bool on) {
+                    if (on) {
+                        releaseMicHoldForMicrophoneUnused();
+                    }
+                });
+        connect(&m_radioModel->transmitModel(), &TransmitModel::twoToneActiveChanged, this,
+                [this](bool on) {
+                    if (on) {
+                        releaseMicHoldForMicrophoneUnused();
+                    }
+                });
 
         // Task 37 (carried from the desktop's transmit): the device whose
         // write turned VOX on is watched while VOX stays on, and VOX goes
@@ -3158,6 +3550,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     m_transmitState->setClock([this]() { return m_deviceSessions->now(); });
     if (m_radioModel && m_radioModel->role() == RadioModel::Role::Local) {
         m_transmitState->bind(m_radioModel);
+        connect(m_radioModel, &RadioModel::remoteCwActivityChanged, this, [this]() {
+            const auto activity = m_radioModel->remoteCwActivity();
+            if (activity.epoch != 0) {
+                m_transmitState->setRemoteCwActivity(activity.deviceId, activity.epoch, true);
+            } else {
+                m_transmitState->setRemoteCwActivity(
+                    QByteArray::fromHex(m_transmitState->remoteCwDeviceId().toLatin1()),
+                    quint32(m_transmitState->remoteCwEpoch()), false);
+            }
+        });
     }
     // iPhone app plan Task 25 (R-IOS-18): the `vax` object, over the Core's
     // own audio engine, saving a device's writes where its applet does.
@@ -3344,6 +3746,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     setUpCoreLogStream();
     // R-IOS-13 / R-R3-49: and the AM Mod Monitor's two streams.
     setUpModMonitorStreams();
+    // Roundtable plan Task 11: and Roundtable's rooms.
+    setUpRoundtable();
 
     connect(m_devicesFacade.get(), &StationDevicesFacade::tokenRetired, this, [this]() {
         endAuthenticatedPeers([](const Peer& peer) { return peer.signedInWithToken; },
@@ -3476,6 +3880,17 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     });
     // Parity Task 19 (R-IOS-25): a subscription belongs to the connection
     // that asked, so the Core answers it (and sends the backlog) itself.
+    // Roundtable plan Task 11: the roundtable.* verbs belong to the
+    // connection that sent them (its room reads, its answers to come).
+    m_dispatcher->setRoundtableAccess([this](const SessionMessage& invoke) {
+        if (m_dispatchingTransport == nullptr || !m_roundtableOn) {
+            return false;
+        }
+        m_invokeFrame->resultSent = true;
+        m_invokeFrame->terminalResultSent = true;
+        handleRoundtableCommand(m_dispatchingTransport, invoke);
+        return true;
+    });
     m_dispatcher->setRecordAccess([this](const SessionMessage& invoke) {
         if (m_dispatchingTransport == nullptr) {
             return false;
@@ -3715,6 +4130,12 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // settings of one preset move the revision once.
                 if (isCatalogSettingsKey(key)) {
                     m_catalog->scheduleRefresh();
+                    // R-CW-02: a window's CW pitch reaches the Core's own
+                    // cwPitchHz (an equal value emits nothing).
+                    if (m_radioModel
+                        && key.compare(QLatin1String("CWPitch"), Qt::CaseInsensitive) == 0) {
+                        m_radioModel->notifyStationCwPitchMaybeChanged();
+                    }
                 }
             });
     connect(m_settingsServer, &SettingsProxyServer::outboundValueRemoved, this,
@@ -3724,6 +4145,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
                 if (isCatalogSettingsKey(key)) {
                     m_catalog->scheduleRefresh();
+                    // R-CW-02: a removed CW pitch reads the default.
+                    if (m_radioModel
+                        && key.compare(QLatin1String("CWPitch"), Qt::CaseInsensitive) == 0) {
+                        m_radioModel->notifyStationCwPitchMaybeChanged();
+                    }
                 }
             });
     connect(m_settingsServer, &SettingsProxyServer::outboundValueRemoved, this,
@@ -4202,6 +4628,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                     waitUs.value_or(0) / 1000, watched);
             }
         };
+        access.keepaliveV2 = [this](const QByteArray& requester, const TxKeepalive& value) {
+            if (m_txWatchdog && (value.cwEpoch == 0 || deviceHasCwV2(requester))) {
+                // Control logging lane: logged after, as it was watched,
+                // with its wait since the control link received it.
+                const bool watched = m_txWatchdog->isWatching(requester);
+                const std::optional<qint64> waitUs = m_dispatchingTransport != nullptr
+                    ? m_dispatchingTransport->deliveringMessageWaitUs()
+                    : std::nullopt;
+                if (m_txWatchdog->keepalive(requester, value,
+                                            RemoteTxWatchdog::Path::Session)) {
+                    noteCwKeepalive(requester, value, 0);
+                }
+                controlLogKeepalive(requester, ControlLog::KeepaliveChannel::Control,
+                                    waitUs.value_or(0) / 1000, watched);
+            }
+        };
         // Task 77 (ruling 7.7): the transmitter's own settings are the
         // holder's while transmit is held.
         // On the air, ruling 7.4's words come first. A receive-only Core
@@ -4238,6 +4680,103 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
             takeTransmit(m_dispatchingTransport, invoke, holderEpoch, shownKeyed,
                          std::move(reply));
         };
+        // CW transmit (R-CW-48, R-CW-49): cw.send, cw.memory, cw.stop and
+        // cw.key, through the Core's CWX sender and its keying gate. Each
+        // copy of a request (the window sends three under one id) gets the
+        // first answer, and the sender acts once.
+        access.cw = [this](const SessionMessage& invoke, const QString& owner,
+                           const QByteArray& requester,
+                           const SessionCommandDispatcher::CwRequest& request) {
+            using Kind = SessionCommandDispatcher::CwRequest::Kind;
+            const QByteArray encoded = SessionMessages::encode(invoke);
+            const auto cache = m_cwReplies.value(owner);
+            const auto prior = cache.constFind(invoke.commandId);
+            if (prior != cache.cend()) {
+                return prior->first == encoded ? prior->second
+                    : SessionMessages::commandResult(invoke.commandVerb, invoke.commandId, false,
+                        QStringLiteral("The Core could not read this request."), {});
+            }
+            const auto peer = m_peers.constFind(m_dispatchingTransport);
+            const bool ready = peer != m_peers.cend() && peer->authenticated
+                && peer->snapshotComplete && peer->sessionDeviceId == requester
+                && sessionOwner(peer->sessionId) == owner && !requester.isEmpty()
+                && m_radioModel && m_radioModel->cwxSender() != nullptr && m_transmitHolder;
+            if (!ready) {
+                return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId,
+                                                       false, TxRefusals::notReady().text, {});
+            }
+            const bool engages = request.kind == Kind::Send || request.kind == Kind::Memory
+                || (request.kind == Kind::Key && request.down);
+            TxRefusal refusal;
+            if (engages) {
+                // The session's own gate first, then the holder's: sending
+                // CW is the holder's, as tx.setTxSlice is, and with transmit
+                // unheld the device is asked to take it first.
+                const TxDecision decision = txDecisionFor(m_dispatchingTransport);
+                if (!decision.permitted) {
+                    refusal = decision.refusal;
+                } else if (!m_transmitHolder->isHeldBy(requester)) {
+                    refusal = m_transmitHolder->keyRefusalFor(requester);
+                    if (refusal.isEmpty()) {
+                        refusal = TxRefusals::notHolder();
+                    }
+                }
+                if (refusal.isEmpty()) {
+                    const auto start = [&request](CwxSender& sender, quint32 epoch,
+                                                  const std::function<bool()>& admit) {
+                        switch (request.kind) {
+                        case Kind::Send:
+                            return sender.sendRemoteText(epoch, request.text, admit);
+                        case Kind::Memory:
+                            return sender.sendRemoteMemory(epoch, request.number, admit);
+                        case Kind::Key:
+                            return sender.holdRemoteKey(epoch, admit);
+                        case Kind::Stop:
+                            break;
+                        }
+                        return false;
+                    };
+                    refusal = m_radioModel->requestRemoteCwxFor(
+                        requester, request.kind != Kind::Send, start);
+                }
+            } else {
+                // A release (cw.stop, cw.key up) is always taken: it ends
+                // only what the sender runs for this device, so it never
+                // touches another device's CW or the station's own.
+                if (m_radioModel->cwxSendingFor() == requester) {
+                    if (request.kind == Kind::Stop) {
+                        m_radioModel->stopCwxFor(requester);
+                    } else {
+                        m_radioModel->cwxSender()->setKeyHeld(false);
+                    }
+                }
+            }
+            QList<MirrorUpdate> values;
+            if (refusal.isEmpty() && engages) {
+                const auto activity = m_radioModel->remoteCwActivity();
+                values.append({0, "cwEpoch", MirrorWireKind::Int64, qint64(activity.epoch)});
+                values.append({1, "cwActive", MirrorWireKind::Bool, activity.epoch != 0});
+            }
+            if (!refusal.isEmpty()) {
+                values.append({0, "refusalCode", MirrorWireKind::Utf8, QString::fromUtf8(refusal.code)});
+                values.append({0, "refusalFix", MirrorWireKind::Utf8, QString::fromUtf8(refusal.fix)});
+            }
+            const auto result = SessionMessages::commandResult(invoke.commandVerb, invoke.commandId,
+                                                                refusal.isEmpty(), refusal.text, {},
+                                                                values);
+            auto& replies = m_cwReplies[owner];
+            while (replies.size() >= kRememberedCwCommands) {
+                auto oldest = replies.begin();
+                for (auto at = replies.begin(); at != replies.end(); ++at) {
+                    if (at.key() < oldest.key()) {
+                        oldest = at;
+                    }
+                }
+                replies.erase(oldest);
+            }
+            replies.insert(invoke.commandId, {encoded, result});
+            return result;
+        };
         m_dispatcher->setTransmitAccess(std::move(access));
     }
     if (radioModel) {
@@ -4255,6 +4794,10 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     &ConnectedDevicesFacade::refresh, Qt::UniqueConnection);
             connect(slice, &SliceModel::dspModeChanged, m_connectedDevices.get(),
                     &ConnectedDevicesFacade::refresh, Qt::UniqueConnection);
+            // Fix wave B, round 2: the transmit mode decides a starved
+            // line's hold; a change while keyed judges it again.
+            connect(slice, &SliceModel::dspModeChanged, this,
+                    &StationServer::onTransmitModeChanged, Qt::UniqueConnection);
         };
         for (SliceModel* slice : radioModel->slices()) {
             followSlice(slice);
@@ -4381,6 +4924,13 @@ StationServer::~StationServer()
     // reaches may go first. The cut lets go of this object and the line,
     // then the guard stops and joins its thread. A receipt hook still
     // holding the guard for a moment finds nothing to cut.
+    // Remote transmit hold then cut, fix wave A: a hold the guard has on
+    // the TX channel (its Guard bit) is released first, through the line
+    // while the line is still set; the guard's own destructor below would
+    // find no line and leave the bit set.
+    if (m_txCutGuard) {
+        m_txCutGuard->disarm();
+    }
     if (m_txCutTarget) {
         const std::lock_guard<std::mutex> lock(m_txCutTarget->mutex);
         m_txCutTarget->server = nullptr;
@@ -4404,6 +4954,21 @@ StationServer::~StationServer()
     const bool canonical = m_radioModel && m_radioModel->m_diversityStationServer == this;
     if (canonical) { m_radioModel->m_diversityStationServer.clear(); }
 
+    // Roundtable plan Task 11: setUpRoundtable() pointed the model's
+    // RoundtableState at this server's settings, and the model may outlive
+    // both; it goes back to the application's settings, as RadioModel binds
+    // it, so its destructor never reaches settings that are gone. Only the
+    // server whose settings the state reads does this: a later server has
+    // bound it to its own, and keeps it. The state's signals stop reaching
+    // this half-gone server first, since the rebind reloads and emits.
+    if (m_roundtableOn && m_radioModel && m_radioModel->roundtableState() != nullptr) {
+        RoundtableState* state = m_radioModel->roundtableState();
+        disconnect(state, nullptr, this, nullptr);
+        if (state->readsSettings(&m_settings)) {
+            state->bindClient(m_radioModel->roundtableClient(), &AppSettings::instance());
+        }
+    }
+
     // iPhone app plan Task 34: the keying gate asks this object; the model
     // may outlive it.
     if (canonical && m_radioModel && m_radioModel->moxController() != nullptr
@@ -4413,6 +4978,7 @@ StationServer::~StationServer()
         // Task 77 fix round 2: the amplifier's pending-key probe asks it too.
         m_radioModel->setAmpKeyPendingProbe({});
         m_radioModel->setOtherDeviceHoldsRefusal({});
+        m_radioModel->setCwxHolderRefusal({});
     }
     // Parity Task 32: MON back on the Core's own outputs, as without a
     // station server.
@@ -5345,12 +5911,11 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
         // iPhone app plan Task 37 (R-IOS-13; remote design section 12.1, spec
         // section 4.6 item 1): the session of a device that is keyed, or has
         // VOX armed, ended (a drop, leaving, a replacement or a revocation).
-        // The VOX it armed goes off first, then its key stops at once (the
-        // emergency stop, not the normal unkey), before the holder's own
-        // rules below run.
+        // Its key stops at once (the emergency stop, not the normal unkey),
+        // then the VOX it armed goes off, before the holder's own rules
+        // below run. Fix wave B, round 2: the stop comes first, so a VOX
+        // key is Stop All TX too, never VOX's own release.
         if (!sessionDevice.isEmpty() && m_txWatchdog) {
-            disarmVoxArmedBy(sessionDevice, "its connection ended");
-            if (!self) { return; }
             // Merge of Tasks 37 and 39: a session that ended (rather than went
             // quiet) is told to the window and the phone as a lost link, in
             // txState's own words; recorded before the stop, so the watchdog's
@@ -5362,13 +5927,17 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
                 if (!self) { return; }
             }
             if (m_txWatchdog->isWatching(sessionDevice)) {
+                m_watchdogVoxOffWhy = "its connection ended";
                 m_txWatchdog->linkClosed(sessionDevice);
                 if (!self) { return; }
+                m_watchdogVoxOffWhy = nullptr;
             } else if (m_radioModel && m_radioModel->keyedBy().deviceId == sessionDevice) {
                 m_radioModel->stopAllTx(
                     RemoteTxWatchdog::stopMessage(deviceNameForStop(sessionDevice)));
                 if (!self) { return; }
             }
+            disarmVoxArmedBy(sessionDevice, "its connection ended");
+            if (!self) { return; }
         }
         it = m_peers.find(transport);
         if (it == m_peers.end()) {
@@ -5447,6 +6016,15 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
         Q_UNUSED(name);
         stream->unsubscribe(transport);
     }
+    // Roundtable plan Task 11: its rooms are no longer read, and its
+    // answers still to come go nowhere.
+    for (const QString& roomId : m_roundtableReaders.keys()) {
+        dropRoundtableReader(transport, roomId);
+    }
+    for (auto pending = m_roundtablePending.begin(); pending != m_roundtablePending.end();) {
+        pending = pending->transport == transport ? m_roundtablePending.erase(pending)
+                                                  : std::next(pending);
+    }
     // Parity Task 33: a gone viewer of the CFC display may end the reads.
     updateCfcCompressionPolling();
     updateVaxLevelsPolling();
@@ -5463,6 +6041,7 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
     }
     if (!owner.isEmpty()) {
         m_micSourceReplies.remove(owner);
+        m_cwReplies.remove(owner);
         if (m_radioModel) { m_radioModel->forgetRemoteMicSession(owner); }
         m_dispatcher->endSessionOwner(owner);
         if (!self) { return; }
@@ -5516,6 +6095,11 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
             m_radioModel->cancelTgxlAutotuneFor(
                 sessionDevice,
                 RadioModel::tunerTuneEndedReason(RadioModel::TunerTuneEnd::LinkLost));
+            if (!self) { return; }
+            // CW transmit (R-CW-49): CWX text or a held Key the device asked
+            // for ends with its session, at once rather than at the Key's
+            // 3 s watchdog.
+            m_radioModel->stopCwxFor(sessionDevice);
             if (!self) { return; }
         }
         if (leaving || sessionDevice.startsWith("token:")) {
@@ -5824,6 +6408,14 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                 false, QStringLiteral("The Core could not read this request."), {}));
             break;
         }
+        // CW transmit (R-CW-49): a cw.* command id is held the same way.
+        if (const auto cache = m_cwReplies.value(sessionOwner(it->sessionId));
+            cache.contains(message.commandId)
+            && cache.value(message.commandId).first != SessionMessages::encode(message)) {
+            send(transport, SessionMessages::commandResult(message.commandVerb, message.commandId,
+                false, QStringLiteral("The Core could not read this request."), {}));
+            break;
+        }
         if (message.commandVerb.startsWith("station.settingsExport.")) {
             handleSettingsExport(transport, message, wire);
             break;
@@ -5980,6 +6572,16 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                 it->agreedMinor < kRadioIdentitySessionProtocolMinor
                     ? QStringLiteral("Update this app to set up CAT on this Core.")
                     : QStringLiteral("This Core cannot set up its CAT from here."), {}));
+            break;
+        }
+        // Roundtable plan Task 11: the roundtable.* verbs, for a peer that
+        // declared roundtable on a Core that runs it.
+        if (message.commandVerb.startsWith("roundtable.") && !peerGetsRoundtable(transport)) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                stationRoundtableVersion() >= 1
+                    ? QStringLiteral("Update this app to use Roundtable on this Core.")
+                    : QStringLiteral("This Core cannot share Roundtable with this app."), {}));
             break;
         }
         // Parity Task 23: the station TCI server's options and apps came
@@ -6226,6 +6828,39 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                 message.commandVerb, message.commandId, false,
                 TxRefusals::appCannotTransmit().text, {}));
             break;
+        }
+        if (message.commandVerb == "tx.keepalive"
+            && !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 2)) {
+            bool unnegotiated = false;
+            for (const MirrorUpdate& argument : message.arguments) {
+                if (argument.name == "cwEpoch" && argument.value.toLongLong() != 0) {
+                    unnegotiated = true;
+                }
+            }
+            if (unnegotiated) {
+                send(transport, SessionMessages::commandResult(message.commandVerb,
+                    message.commandId, false, QStringLiteral("The Core could not read this request."), {}));
+                break;
+            }
+        }
+        // CW transmit (R-CW-48): the cw.* verbs came with remoteCwVersion 1,
+        // for a peer at minor 11 whose hello declared remoteTx and remoteCw.
+        {
+        bool cwStarts = message.commandVerb == "cw.send" || message.commandVerb == "cw.memory";
+        if (message.commandVerb == "cw.key") {
+            for (const MirrorUpdate& argument : message.arguments) {
+                if (argument.name == "down" && argument.value.toBool()) { cwStarts = true; }
+            }
+        }
+        if (cwStarts
+            && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
+                || !peerDeclares(transport, QByteArrayLiteral("remoteTx"), 1)
+                || !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 2))) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                QStringLiteral("Update this app to send CW through this Core."), {}));
+            break;
+        }
         }
         // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA profile verbs, to a
         // peer that declared paProfiles, gated as the desktop's own PA
@@ -6800,13 +7435,35 @@ void StationServer::admit(SessionTransport* transport, const QString& name,
             const QString stopText =
                 noteHolderStopped(device.deviceId, TransmitState::kStopLinkLost);
             if (!self) { return; }
+            // Remote transmit hold then cut, fix wave B: the older link is
+            // closed for the replacement, so a key it holds is the
+            // watchdog's closed-link stop, as a dropped link's is (its hold
+            // ends as "link closed"; the reason recorded above stays). The
+            // watch must be ended this way before the stop clears keyedBy,
+            // or the watch ends as the key's own end.
+            // Round 2: the watchdog's stop is Stop All TX for any key of the
+            // device's, a VOX key included, and turns its VOX off after.
+            bool watchdogStopped = false;
+            if (m_txWatchdog && m_txWatchdog->isWatching(device.deviceId)) {
+                watchdogStopped =
+                    m_radioModel && m_radioModel->keyedBy().deviceId == device.deviceId;
+                m_watchdogVoxOffWhy = "the device connected again";
+                m_txWatchdog->linkClosed(device.deviceId);
+                if (!self) { return; }
+                m_watchdogVoxOffWhy = nullptr;
+            }
             // Unkey drain review (G-05): that stop is the Core's, so it is
             // Stop All TX, as a dropped link's is. The fence's own unkey (the
             // unkey gate's normal unkey) is the operator's, and would hold
             // the hardware keyed for the queued transmit audio, up to the
             // send ring's length.
-            if (!stopText.isEmpty() && m_radioModel) {
+            if (!watchdogStopped && !stopText.isEmpty() && m_radioModel) {
                 m_radioModel->stopAllTx(stopText);
+                if (!self) { return; }
+            }
+            if (m_radioModel) {
+                // CW transmit (R-CW-49): the older session's CWX ends too.
+                m_radioModel->stopCwxFor(device.deviceId);
                 if (!self) { return; }
             }
             m_transmitHolder->holderDropped(device.deviceId,
@@ -7880,6 +8537,9 @@ void StationServer::buildMirror()
     // Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
     // rotor. Sent only to a peer at minor 11 on a Core that owns one.
     m_mirror->watch(QByteArray(kRotorKey), m_radioModel->rotorModel());
+    // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+    // Roundtable connection. Sent only to a peer that declared roundtable.
+    m_mirror->watch(QByteArray(kRoundtableKey), m_radioModel->roundtableState());
     // iPhone app Task 13 (deviceAdminVersion 1): the Core's paired devices.
     // Sent only to a device at minor 11 that declares deviceAuth.
     m_mirror->watch(QByteArray(kDevicesKey), m_devicesFacade.get());
@@ -7990,7 +8650,13 @@ bool StationServer::sendCapabilitiesAndSettingsSnapshot(SessionTransport* transp
     }
     QList<MirrorUpdate> entries;
     entries.reserve(snapshot.size());
+    const bool roundtableSettings = peerGetsRoundtable(transport);
     for (auto it = snapshot.cbegin(); it != snapshot.cend(); ++it) {
+        // Roundtable plan Task 11: the Roundtable/ keys only to a peer
+        // that gets Roundtable.
+        if (!roundtableSettings && isRoundtableSettingsKey(it.key())) {
+            continue;
+        }
         entries.append(
             MirrorUpdate{0, it.key().toUtf8(), MirrorWireKind::Utf8, QVariant(it.value())});
     }
@@ -8215,6 +8881,9 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
     } else if (message.objectKey == kRotorKey) {
         // Rotor control plan Task 4b: changed only through the rotor verbs.
         stepAttRefusal = RotorLink::RotorModel::readOnlyReason();
+    } else if (message.objectKey == kRoundtableKey) {
+        // Roundtable plan Task 11: changed only through the roundtable.* verbs.
+        stepAttRefusal = RoundtableState::readOnlyReason();
     }
     // TX rulings (JJ, 2026-09-30): the attenuator and preamp act on the
     // slice the writer is shown. On a slice it only listens to, which
@@ -8392,6 +9061,11 @@ QList<SessionPropertyResult> StationServer::applyPropertyWrite(
         if (radioWrite && isRadioSpeakerProperty(update.name)
             && !peerGetsFeatureProperties(transport, QByteArrayLiteral("radioSpeaker"))) {
             refusals.insert(update.name, QString::fromLatin1(kRadioSpeakerWriteReason));
+            continue;
+        }
+        if (transmitObjectWrite && isCwSettingsProperty(update.name)
+            && !peerGetsFeatureProperties(transport, QByteArray(kCwSettingsFeature))) {
+            refusals.insert(update.name, QString::fromLatin1(kCwSettingsWriteReason));
             continue;
         }
         if (radioWrite && isCoreSpeakerProperty(update.name) && !peerGetsCoreSpeaker(transport)) {
@@ -8939,7 +9613,7 @@ void StationServer::handleSettingsRemove(SessionTransport* transport, const Sess
         const bool plainReason = nr3Path || isModelOwnedNotchSettingsKey(key)
             || isModelOwnedStepAttenuatorSettingsKey(key)
             || isModelOwnedAlexAntennaSettingsKey(key)
-            || isCoreOwnedIdentitySettingsKey(key);
+            || isCoreOwnedIdentitySettingsKey(key) || isCoreOwnedRoundtableSettingsKey(key);
         // iPhone app Task 71: to the session that asked (the only one
         // before).
         send(transport, SessionMessages::settingsReject(key, value.isValid(), value.toString(),
@@ -9623,6 +10297,12 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
         return;
     }
     logControlResult(transport, message);
+    // Roundtable plan Task 11: nor its Roundtable/ settings.
+    if (message.kind == SessionMessageKind::SettingsValue
+        && isRoundtableSettingsKey(QString::fromUtf8(message.objectKey))
+        && !peerGetsRoundtable(transport)) {
+        return;
+    }
     switch (message.kind) {
     case SessionMessageKind::Schema:
     case SessionMessageKind::ObjectCreate:
@@ -9677,6 +10357,11 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
         // CAT setup from a connected desktop: nor the Core's CAT to a peer
         // that did not declare stationCat.
         if (isStationCatMessage(message) && !peerGetsStationCat(transport)) {
+            return;
+        }
+        // Roundtable plan Task 11: nor the Core's Roundtable to a peer that
+        // did not declare roundtable.
+        if (isRoundtableMessage(message) && !peerGetsRoundtable(transport)) {
             return;
         }
         // R-R3-47 / R-R3-22: nor the accessory records to an older app, or
@@ -10120,12 +10805,19 @@ bool StationServer::fitPeerOnlyProperties(SessionTransport* transport,
             }
         }
     }
+    if (isTxStateMessage(message) && !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 2)) {
+        const auto cwTuple = [](const QByteArray& name) {
+            return name == "remoteCwDeviceId" || name == "remoteCwEpoch" || name == "remoteCwActive";
+        };
+        message.fields.removeIf([&](const SessionSchemaField& field) { return cwTuple(field.name); });
+        message.updates.removeIf([&](const MirrorUpdate& update) { return cwTuple(update.name); });
+    }
     for (const PeerOnlyProperty& entry : kPeerOnlyProperties) {
         const QByteArray feature(entry.feature);
-        const bool peerGetsIt = entry.deviceKeyOnly
-            ? peerGetsCoreAddresses(transport)
-            : feature == "coreSpeaker" ? peerGetsCoreSpeaker(transport)
-                                       : peerGetsFeatureProperties(transport, feature);
+        const bool peerGetsIt = entry.deviceKeyOnly ? peerGetsCoreAddresses(transport)
+            : feature == "coreSpeaker"                  ? peerGetsCoreSpeaker(transport)
+            : feature == "roundtable"                   ? peerGetsRoundtable(transport)
+                                                        : peerGetsFeatureProperties(transport, feature);
         if (!peerOnlyPropertyApplies(entry, message) || peerGetsIt) {
             continue;
         }
@@ -10185,6 +10877,16 @@ bool StationServer::peerGetsStationCat(SessionTransport* transport) const
     return peer != m_peers.cend() && stationCatVersion() >= 1
         && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
         && peerDeclares(transport, QByteArrayLiteral("stationCat"), 1);
+}
+
+// ── The Core's Roundtable (Roundtable plan Task 11) ─────────────────────
+
+bool StationServer::peerGetsRoundtable(SessionTransport* transport) const
+{
+    const auto peer = m_peers.constFind(transport);
+    return peer != m_peers.cend() && stationRoundtableVersion() >= 1
+        && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(transport, QByteArrayLiteral("roundtable"), 1);
 }
 
 bool StationServer::fitStationTciSettingsToPeer(SessionTransport* transport,
@@ -10513,31 +11215,62 @@ void StationServer::followKeyedForWatchdog()
         m_txWatchdog->setKeyed(keyedBy.deviceId, true,
                                keyedBy.trigger == QByteArrayLiteral("vox") ? 0 : keyedBy.epoch);
     }
-    // Remote transmit cut off the main thread: the guard is armed for the
-    // remote key on the air, with that device's media session (0 without
-    // one: then it never judges), and armed afresh for each new key; no
-    // remote key disarms it. A media replacement mid-key keeps the
-    // session's epoch (DaemonMediaController::handleReplace hands the
-    // replacement peer m_epoch), so the guard keeps hearing it. A media
-    // session that starts after the key re-arms nothing until the key
-    // changes: the guard then never judges this key (epoch 0) or judges
-    // the older session's, which fails safe (a cut, never a missed cut);
-    // the watchdog still watches the key.
+    const auto activity = m_radioModel->remoteCwActivity();
+    if (!m_watchedCwDevice.isEmpty() && m_watchedCwDevice != activity.deviceId) {
+        m_txWatchdog->setCwActive(m_watchedCwDevice, false, 0);
+    }
+    m_watchedCwDevice = activity.epoch != 0 ? activity.deviceId : QByteArray();
+    if (activity.epoch != 0) {
+        m_txWatchdog->setCwActive(activity.deviceId, true, activity.epoch);
+    }
+    const QByteArray guardedDevice = activity.epoch != 0 ? activity.deviceId
+        : remoteKey ? keyedBy.deviceId : QByteArray();
     if (m_txCutGuard) {
-        if (remoteKey) {
-            const quint64 mediaEpoch = mediaEpochOfDevice(keyedBy.deviceId);
-            if (keyedBy.deviceId != m_txCutGuardDevice || keyedBy.epoch != m_txCutGuardKeyEpoch
-                || mediaEpoch != m_txCutGuardMediaEpoch) {
-                m_txCutGuardDevice = keyedBy.deviceId;
-                m_txCutGuardKeyEpoch = keyedBy.epoch;
+        if (!guardedDevice.isEmpty()) {
+            const quint64 mediaEpoch = mediaEpochOfDevice(guardedDevice);
+            const quint32 keyEpoch = remoteKey ? keyedBy.epoch : 0;
+            if (guardedDevice != m_txCutGuardDevice || keyEpoch != m_txCutGuardKeyEpoch
+                || mediaEpoch != m_txCutGuardMediaEpoch || activity.epoch != m_txCutGuardCwEpoch) {
+                if (guardedDevice != m_txCutGuardDevice) { m_txCutGuard->disarm(); }
+                m_txCutGuardDevice = guardedDevice;
+                m_txCutGuardKeyEpoch = keyEpoch;
                 m_txCutGuardMediaEpoch = mediaEpoch;
-                m_txCutGuard->arm(mediaEpoch);
+                m_txCutGuardCwEpoch = activity.epoch;
+                m_txCutGuard->arm(mediaEpoch, keyEpoch, activity.epoch);
             }
         } else if (!m_txCutGuardDevice.isEmpty()) {
             m_txCutGuardDevice.clear();
             m_txCutGuardKeyEpoch = 0;
+            m_txCutGuardCwEpoch = 0;
             m_txCutGuardMediaEpoch = 0;
             m_txCutGuard->disarm();
+        }
+    }
+    // Remote transmit hold then cut: a hold kept past its key's end (until
+    // MOX reaches receive) is let go when a new key comes first, so the new
+    // key is never held for the old one's silence.
+    // Fix wave B: an ended microphone line waits only for its own key.
+    if (!m_endedMicLine.deviceId.isEmpty()
+        && (keyedBy.deviceId != m_endedMicLine.deviceId
+            || keyedBy.epoch != m_endedMicLine.keyEpoch)) {
+        dropEndedMicLine();
+    }
+    if (keyedBy.deviceId != m_starvedMicLine.deviceId
+        || keyedBy.epoch != m_starvedMicLine.keyEpoch) {
+        m_starvedMicLine = {};
+    }
+    if (!keyedBy.isEmpty()) {
+        if (!m_linkRfBitDevice.isEmpty() && !m_linkRfHold.on
+            && (keyedBy.deviceId != m_linkRfBitDevice || keyedBy.epoch != m_linkRfBitEpoch)) {
+            clearLinkRfBit();
+        }
+        if (m_micRfHold.on
+            && (keyedBy.deviceId != m_micRfHold.deviceId || keyedBy.epoch != m_micRfHold.keyEpoch)) {
+            m_micRfHoldEnding = QStringLiteral("a new key");
+            m_starvation.releaseHold();
+            endMicRfHold(m_micRfHoldEnding);
+            m_micRfHoldEnding.clear();
+            m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, false);
         }
     }
 }
@@ -10556,6 +11289,33 @@ quint64 StationServer::mediaEpochOfDevice(const QByteArray& deviceId) const
     return newest;
 }
 
+bool StationServer::deviceHasCwV2(const QByteArray& deviceId) const
+{
+    for (auto peer = m_peers.cbegin(); peer != m_peers.cend(); ++peer) {
+        if (peer->authenticated && peer->sessionDeviceId == deviceId
+            && peerDeclares(peer.key(), QByteArrayLiteral("remoteCw"), 2)) { return true; }
+    }
+    return false;
+}
+
+void StationServer::noteCwKeepalive(const QByteArray& deviceId, const TxKeepalive& value, qint64 ageUs)
+{
+    if (m_txCutGuard && deviceId == m_txCutGuardDevice) {
+        m_txCutGuard->heardKeepaliveOnMain(value, RemoteTxCutGuard::Clock::now()
+            - std::chrono::microseconds(std::max<qint64>(0, ageUs)));
+    }
+}
+
+void StationServer::recoverRemoteCw(quint32 epoch)
+{
+    if (!m_radioModel || !m_txWatchdog || !m_txCutGuard || m_txCutGuard->isHolding()) { return; }
+    const auto activity = m_radioModel->remoteCwActivity();
+    if (activity.epoch != epoch || !deviceHasCwV2(activity.deviceId)
+        || !m_transmitHolder || !m_transmitHolder->isHeldBy(activity.deviceId)
+        || !m_txWatchdog->isWatching(activity.deviceId) || m_txWatchdog->isHeld(activity.deviceId)) { return; }
+    m_radioModel->resumeRemoteCw(epoch);
+}
+
 void StationServer::noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs)
 {
     if (!m_txCutGuard || deviceId.isEmpty() || deviceId != m_txCutGuardDevice) {
@@ -10565,7 +11325,7 @@ void StationServer::noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 
                               - std::chrono::microseconds(std::max<qint64>(0, ageUs)));
 }
 
-std::function<void(std::chrono::steady_clock::time_point)>
+std::function<void(const QByteArray&, std::chrono::steady_clock::time_point)>
 StationServer::txChannelReceiptHook(quint64 mediaEpoch) const
 {
     if (!m_txCutGuard) {
@@ -10574,10 +11334,19 @@ StationServer::txChannelReceiptHook(quint64 mediaEpoch) const
     const std::weak_ptr<RemoteTxCutGuard> weak = m_txCutGuard;
     const std::shared_ptr<std::atomic<std::chrono::steady_clock::rep>> stamp =
         m_lastTxChannelReceipt;
-    return [weak, stamp, mediaEpoch](std::chrono::steady_clock::time_point receivedAt) {
+    const QByteArray device = mediaSessionDevice(mediaEpoch);
+    const bool cwV2 = deviceHasCwV2(device);
+    return [weak, stamp, mediaEpoch, cwV2](const QByteArray& message,
+                                         std::chrono::steady_clock::time_point receivedAt) {
         stamp->store(receivedAt.time_since_epoch().count(), std::memory_order_relaxed);
         if (const std::shared_ptr<RemoteTxCutGuard> guard = weak.lock()) {
-            guard->heardOffMain(mediaEpoch, receivedAt);
+            TxKeepalive value;
+            if (RemoteTxWatchdog::readChannelKeepalive(message, &value)
+                && (value.cwEpoch == 0 || cwV2)) {
+                guard->heardKeepaliveOffMain(mediaEpoch, value, receivedAt);
+            } else {
+                guard->heardOffMain(mediaEpoch, receivedAt); // legacy no-CW arms only
+            }
         }
     };
 }
@@ -10688,33 +11457,414 @@ QString StationServer::deviceNameForStop(const QByteArray& deviceId) const
 void StationServer::txChannelMessage(quint64 mediaEpoch, const QByteArray& message,
                                      qint64 heldUs)
 {
-    quint64 sequence = 0;
-    quint32 epoch = 0;
-    if (!m_txWatchdog || !RemoteTxWatchdog::readChannelKeepalive(message, &sequence, &epoch)) {
+    TxKeepalive value;
+    if (!m_txWatchdog || !RemoteTxWatchdog::readChannelKeepalive(message, &value)) {
         return;
     }
     const QByteArray deviceId = mediaSessionDevice(mediaEpoch);
-    if (deviceId.isEmpty()) {
+    if (deviceId.isEmpty() || (value.cwEpoch != 0 && !deviceHasCwV2(deviceId))) {
         return;
     }
     // Control logging lane: logged after, as it was watched.
     const bool watched = m_txWatchdog->isWatching(deviceId);
-    if (m_txWatchdog->keepalive(deviceId, sequence, epoch, RemoteTxWatchdog::Path::TxChannel,
+    if (m_txWatchdog->keepalive(deviceId, value, RemoteTxWatchdog::Path::TxChannel,
                                 std::max<qint64>(0, heldUs) / 1000)) {
-        noteKeepaliveForCutGuard(deviceId, std::max<qint64>(0, heldUs));
+        noteCwKeepalive(deviceId, value, std::max<qint64>(0, heldUs));
     }
     controlLogKeepalive(deviceId, ControlLog::KeepaliveChannel::MediaTx,
                         std::max<qint64>(0, heldUs) / 1000, watched);
 }
 
-void StationServer::remoteMicStarved(const QByteArray& deviceId, bool starved)
+void StationServer::remoteMicStarved(const QByteArray& deviceId, bool starved, qint64 quietMs)
 {
     if (!m_radioModel || m_radioModel->keyedBy().deviceId != deviceId) {
         // Only a key that is this device's is its line's to stop.
         return;
     }
     if (m_radioModel->remoteRadioMicKeyActive(deviceId)) { return; }
+    if (!starved && m_endedMicLine.deviceId == deviceId) {
+        // Fix wave B: a packet on a line for the key: an ended line's wait
+        // is over.
+        dropEndedMicLine();
+    }
+    // Round 2: a starved line for this key, so a change of transmit mode
+    // can judge it again; audio clears it.
+    if (starved) {
+        const qint64 quiet = quietMs >= 0 ? quietMs : qint64(RemoteMicConfig::kStarvationMs);
+        m_starvedMicLine = {deviceId, m_radioModel->keyedBy().epoch,
+                            m_deviceSessions->now() - quiet};
+    } else {
+        m_starvedMicLine = {};
+    }
+    m_micStarvedQuietMs = starved ? quietMs : -1;
     m_starvation.onStarved(deviceId, starved);
+    m_micStarvedQuietMs = -1;
+}
+
+void StationServer::onTransmitModeChanged()
+{
+    // Fix wave B, round 2: a line starved (live, or ended and judged) in a
+    // mode that keeps keyed, now in a Hold mode, is held at once, not left
+    // a bare carrier until the cut. The other way (a hold on, now a mode
+    // that keeps keyed) releases nothing: the hold is the policy's until
+    // audio returns or the cut.
+    if (!m_radioModel || m_starvation.isHolding()) {
+        return;
+    }
+    const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+    const MoxController* const mox = m_radioModel->moxController();
+    if (keyedBy.isEmpty() || mox == nullptr || !mox->isMox()
+        || !m_radioModel->isTransmitting()) {
+        return;
+    }
+    qint64 lastPacketMs = -1;
+    if (m_starvedMicLine.deviceId == keyedBy.deviceId
+        && m_starvedMicLine.keyEpoch == keyedBy.epoch) {
+        lastPacketMs = m_starvedMicLine.lastPacketMs;
+    }
+    if (m_endedMicLine.deviceId == keyedBy.deviceId && m_endedMicLine.keyEpoch == keyedBy.epoch
+        && m_endedMicLine.starvationJudged) {
+        lastPacketMs = lastPacketMs < 0 ? m_endedMicLine.lastPacketMs
+                                        : std::min(lastPacketMs, m_endedMicLine.lastPacketMs);
+    }
+    if (lastPacketMs < 0 || m_radioModel->remoteRadioMicKeyActive(keyedBy.deviceId)
+        || keyStopped(keyedBy.epoch)) {
+        return;
+    }
+    m_micStarvedQuietMs = std::max<qint64>(0, m_deviceSessions->now() - lastPacketMs);
+    m_starvation.onStarved(keyedBy.deviceId, true);
+    m_micStarvedQuietMs = -1;
+}
+
+void StationServer::remoteMicLineEnded(const QByteArray& deviceId, qint64 quietMs,
+                                       bool wasStarved)
+{
+    if (!m_radioModel || deviceId.isEmpty() || m_endedMicLineTimer == nullptr) {
+        return;
+    }
+    const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+    if (keyedBy.deviceId != deviceId || !m_radioModel->isTransmitting()) {
+        // Not this device's key on the air: the watch ended with its key.
+        return;
+    }
+    const MoxController* const mox = m_radioModel->moxController();
+    if (mox == nullptr || !mox->isMox()) {
+        // Round 2: MOX is already off, so this is the key's own end (a
+        // normal unkey ends the watch before keyedBy clears), not a line
+        // lost mid-key.
+        return;
+    }
+    if (m_radioModel->remoteRadioMicKeyActive(deviceId)) {
+        return;
+    }
+    if (keyStopped(keyedBy.epoch)) {
+        // The key is already being stopped (a stop's walk to receive ends
+        // the watch while keyedBy still names it): nothing more to cut.
+        return;
+    }
+    const qint64 lastPacketMs = m_deviceSessions->now() - std::max<qint64>(0, quietMs);
+    if (m_endedMicLine.deviceId == deviceId && m_endedMicLine.keyEpoch == keyedBy.epoch) {
+        // Another line for the same key ended with no packet in between:
+        // the deadline runs from the earliest last packet, never later.
+        m_endedMicLine.lastPacketMs = std::min(m_endedMicLine.lastPacketMs, lastPacketMs);
+    } else {
+        m_endedMicLine = {deviceId, keyedBy.epoch, lastPacketMs, false};
+    }
+    qCInfo(lcStation).noquote()
+        << QStringLiteral("Microphone line from %1 ended while keyed, %2 ms after its last "
+                          "packet (%3); no audio until a new line delivers")
+               .arg(QString::fromLatin1(deviceId.toHex()))
+               .arg(m_deviceSessions->now() - m_endedMicLine.lastPacketMs)
+               .arg(wasStarved ? QStringLiteral("starved") : QStringLiteral("not starved"));
+    judgeEndedMicLine();
+}
+
+void StationServer::remoteMicAudioArrived(const QByteArray& deviceId)
+{
+    if (m_endedMicLine.deviceId.isEmpty() || m_endedMicLine.deviceId != deviceId) {
+        return;
+    }
+    dropEndedMicLine();
+    m_starvedMicLine = {};
+    if (!m_radioModel || m_radioModel->keyedBy().deviceId != deviceId) {
+        return;
+    }
+    qCInfo(lcStation).noquote()
+        << QStringLiteral("Microphone audio from %1 arrived on a new line; its cut is cancelled")
+               .arg(QString::fromLatin1(deviceId.toHex()));
+    // Audio returned: a hold is released, as on any line's packet.
+    m_starvation.onStarved(deviceId, false);
+}
+
+void StationServer::judgeEndedMicLine()
+{
+    if (m_endedMicLineTimer != nullptr) {
+        m_endedMicLineTimer->stop();
+    }
+    if (m_endedMicLine.deviceId.isEmpty() || !m_radioModel) {
+        return;
+    }
+    const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+    if (keyedBy.deviceId != m_endedMicLine.deviceId || keyedBy.epoch != m_endedMicLine.keyEpoch
+        || !m_radioModel->isTransmitting() || keyStopped(keyedBy.epoch)) {
+        // Its key ended, or another stop already ends it.
+        dropEndedMicLine();
+        return;
+    }
+    const QByteArray deviceId = m_endedMicLine.deviceId;
+    const qint64 quiet = m_deviceSessions->now() - m_endedMicLine.lastPacketMs;
+    if (!m_endedMicLine.starvationJudged && quiet >= RemoteMicConfig::kStarvationMs) {
+        // As starved: the mode decides (a Hold mode holds), and a hold on
+        // stays.
+        m_endedMicLine.starvationJudged = true;
+        if (!m_starvation.isHolding()) {
+            m_micStarvedQuietMs = quiet;
+            m_starvation.onStarved(deviceId, true);
+            m_micStarvedQuietMs = -1;
+        }
+    }
+    if (quiet >= RemoteMicConfig::kNoAudioCutMs) {
+        // No audio packets for 10 s from any line for the key: the cut.
+        dropEndedMicLine();
+        remoteMicNoAudio(deviceId);
+        return;
+    }
+    const qint64 due = (m_endedMicLine.starvationJudged ? RemoteMicConfig::kNoAudioCutMs
+                                                        : RemoteMicConfig::kStarvationMs)
+        - quiet;
+    // Checked at least every kStarvationMs, on the Core's clock.
+    m_endedMicLineTimer->start(
+        static_cast<int>(std::clamp<qint64>(due, 1, RemoteMicConfig::kStarvationMs)));
+}
+
+bool StationServer::keyStopped(quint32 keyEpoch) const
+{
+    return m_transmitState != nullptr && m_transmitState->stopSerial() > 0
+        && m_transmitState->stopEpoch() == static_cast<qint64>(keyEpoch);
+}
+
+void StationServer::dropEndedMicLine()
+{
+    m_endedMicLine = {};
+    if (m_endedMicLineTimer != nullptr) {
+        m_endedMicLineTimer->stop();
+    }
+}
+
+void StationServer::remoteMicNoAudio(const QByteArray& deviceId)
+{
+    if (!m_radioModel || m_radioModel->keyedBy().deviceId != deviceId) {
+        // Only a key that is this device's is its line's to stop.
+        return;
+    }
+    if (m_radioModel->remoteRadioMicKeyActive(deviceId)) {
+        return;
+    }
+    if (m_endedMicLine.deviceId == deviceId) {
+        dropEndedMicLine();
+    }
+    m_starvedMicLine = {};
+    // The cut: its stop first, then the hold's release, which ends as cut.
+    m_micRfHoldEnding = QStringLiteral("cut");
+    m_starvation.onNoAudio(deviceId);
+    m_micRfHoldEnding.clear();
+}
+
+// ── Remote transmit hold then cut: the keyer's holds ─────────────────────
+
+void StationServer::onWatchdogHold(const QByteArray& deviceId, bool held)
+{
+    if (!held || !m_radioModel) {
+        // The release is onWatchdogHoldEnded's: it knows how the hold ended.
+        return;
+    }
+    const auto activity = m_radioModel->remoteCwActivity();
+    if (activity.deviceId == deviceId && activity.epoch != 0) {
+        m_radioModel->pauseRemoteCw(activity.epoch);
+        m_linkRfBitDevice = deviceId;
+        m_linkRfBitEpoch = activity.epoch;
+        return;
+    }
+    const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+    if (keyedBy.deviceId != deviceId || !m_radioModel->isTransmitting()) {
+        // Not the key on the air: nothing of its to hold.
+        return;
+    }
+    m_linkRfBitDevice = deviceId;
+    m_linkRfBitEpoch = keyedBy.epoch;
+    m_radioModel->setRemoteRfHold(TxChannel::RfHold::Link, true);
+}
+
+void StationServer::onWatchdogHoldStarted(const QByteArray& deviceId, qint64 silentMs)
+{
+    if (m_linkRfBitDevice != deviceId || m_linkRfHold.on) {
+        // The hook held nothing (not the keyer's), so nothing is published.
+        return;
+    }
+    m_linkRfHold = {true, deviceId, m_linkRfBitEpoch, m_deviceSessions->now()};
+    ++m_rfHoldGeneration;
+    m_controlLog.transmitHoldStarted(deviceId, QString::fromLatin1(TransmitState::kHoldLink),
+                                     silentMs);
+    publishRfHold();
+}
+
+void StationServer::onWatchdogHoldEnded(const QByteArray& deviceId, qint64 lengthMs,
+                                        bool keyEnded, const QString& how)
+{
+    // Review A: a held key that ended keeps its Link bit until MOX reaches
+    // receive (RadioModel clears every bit there), so its unkey drain sends
+    // no real samples. Any other end (keepalives returned, the cut after its
+    // stop, the link closed after its stop) lets it go now.
+    const bool published = m_linkRfHold.on && m_linkRfHold.deviceId == deviceId;
+    if (published) {
+        m_linkRfHold = {};
+    }
+    if (!keyEnded) {
+        // A guard-only QSK hold or MOX ending can leave no published Link
+        // metadata. The actual matching CW lifetime still needs recovery
+        // after the main watchdog accepts the receipt.
+        const auto activity = m_radioModel ? m_radioModel->remoteCwActivity()
+            : RadioModel::RemoteCwActivity{};
+        if (activity.deviceId == deviceId && activity.epoch != 0) {
+            recoverRemoteCw(activity.epoch);
+        }
+        if (m_linkRfBitDevice == deviceId) { clearLinkRfBit(); }
+    }
+    if (!published) {
+        return;
+    }
+    // Fix wave A: a cut by the hold's bound reports, in its stop line, the
+    // silence since the last counted keepalive; this line has the hold's
+    // own length.
+    m_controlLog.transmitHoldEnded(deviceId, lengthMs, how);
+    publishRfHold();
+}
+
+void StationServer::onStarvationHold(bool held)
+{
+    if (!m_radioModel) {
+        return;
+    }
+    if (held) {
+        const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+        if (keyedBy.isEmpty() || keyedBy.deviceId == QByteArray(KeyerIdentity::kStationDeviceId)
+            || !m_radioModel->isTransmitting()) {
+            // Fix wave B: declined, so the policy counts no hold.
+            m_starvation.forgetHold();
+            return;
+        }
+        m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, true);
+        if (!m_micRfHold.on) {
+            m_micRfHold = {true, keyedBy.deviceId, keyedBy.epoch, m_deviceSessions->now()};
+            ++m_rfHoldGeneration;
+            // The silence the line measured when it starved (at least
+            // kStarvationMs).
+            m_controlLog.transmitHoldStarted(keyedBy.deviceId,
+                                             QString::fromLatin1(TransmitState::kHoldMic),
+                                             m_micStarvedQuietMs >= 0
+                                                 ? m_micStarvedQuietMs
+                                                 : qint64(RemoteMicConfig::kStarvationMs));
+            publishRfHold();
+        }
+        return;
+    }
+    endMicRfHold(m_micRfHoldEnding.isEmpty() ? QStringLiteral("audio returned")
+                                             : m_micRfHoldEnding);
+    m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, false);
+}
+
+void StationServer::holdMicWithoutPublishingForTest()
+{
+    m_starvation.countHoldForTest();
+    if (m_radioModel) {
+        m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, true);
+    }
+}
+
+void StationServer::onRemoteRfHoldsCleared()
+{
+    // Every bit is clear now, the Link bit's key with them.
+    m_linkRfBitDevice.clear();
+    m_linkRfBitEpoch = 0;
+    if (!m_micRfHold.on) {
+        // Fix wave B: the Mic bit is gone; the policy counts no hold. A
+        // published one is released below, one turn later, so a cut's own
+        // end is the one logged.
+        m_starvation.forgetHold();
+    }
+    if (!m_linkRfHold.on && !m_micRfHold.on) {
+        return;
+    }
+    // One turn later: a cut's stop can reach receive before its own end
+    // (holdEnded Cut, the 10 s cut's release) is told, and that end is
+    // the one to log.
+    const quint64 generation = m_rfHoldGeneration;
+    QTimer::singleShot(0, this, [this, generation]() {
+        if (generation != m_rfHoldGeneration) {
+            return;
+        }
+        if (m_linkRfHold.on) {
+            const RfHoldState was = std::exchange(m_linkRfHold, RfHoldState{});
+            m_controlLog.transmitHoldEnded(was.deviceId, m_deviceSessions->now() - was.sinceMs,
+                                           QStringLiteral("the key ended"));
+        }
+        if (m_micRfHold.on) {
+            m_micRfHoldEnding = QStringLiteral("the key ended");
+            m_starvation.releaseHold();
+            endMicRfHold(m_micRfHoldEnding);
+            m_micRfHoldEnding.clear();
+        }
+        publishRfHold();
+    });
+}
+
+void StationServer::releaseMicHoldForMicrophoneUnused()
+{
+    if (!m_starvation.isHolding() && !m_micRfHold.on) {
+        return;
+    }
+    m_micRfHoldEnding = QStringLiteral("TUNE or two-tone started");
+    // holdRf(false): the published hold ends and the Mic bit goes.
+    m_starvation.releaseHold();
+    if (m_micRfHold.on) {
+        endMicRfHold(m_micRfHoldEnding);
+        if (m_radioModel) {
+            m_radioModel->setRemoteRfHold(TxChannel::RfHold::Mic, false);
+        }
+    }
+    m_micRfHoldEnding.clear();
+}
+
+void StationServer::clearLinkRfBit()
+{
+    m_linkRfBitDevice.clear();
+    m_linkRfBitEpoch = 0;
+    if (m_radioModel) {
+        m_radioModel->setRemoteRfHold(TxChannel::RfHold::Link, false);
+    }
+}
+
+void StationServer::endMicRfHold(const QString& how)
+{
+    if (!m_micRfHold.on) {
+        return;
+    }
+    const RfHoldState was = std::exchange(m_micRfHold, RfHoldState{});
+    m_controlLog.transmitHoldEnded(was.deviceId, m_deviceSessions->now() - was.sinceMs, how);
+    publishRfHold();
+}
+
+void StationServer::publishRfHold()
+{
+    if (m_transmitState == nullptr) {
+        return;
+    }
+    // Both at once read "link": the link is the bigger trouble.
+    const bool held = m_linkRfHold.on || m_micRfHold.on;
+    const char* reason = m_linkRfHold.on ? TransmitState::kHoldLink
+        : m_micRfHold.on                 ? TransmitState::kHoldMic
+                                         : "";
+    m_transmitState->setRfHold(held, QString::fromLatin1(reason));
 }
 
 void StationServer::onTransmitHolderChanged()
@@ -12406,6 +13556,14 @@ bool StationServer::receiveOnlyRefusesKey(SessionTransport* transport,
             || peer->agreedMinor < kRadioIdentitySessionProtocolMinor
             || radioHardwareVersion() < 7;
     }
+    // radioHardwareVersion 14: "Gnd BPF2 on Tx" (isAlexBpf2GndKey),
+    // likewise on and off the air.
+    if (isAlexBpf2GndKey(key)) {
+        const auto peer = m_peers.constFind(transport);
+        return peer == m_peers.cend()
+            || peer->agreedMinor < kRadioIdentitySessionProtocolMinor
+            || radioHardwareVersion() < 14;
+    }
     // radioHardwareVersion 10: the Alex-1 low-pass rows (isAlexLpfRowKey),
     // likewise on and off the air.
     if (isAlexLpfRowKey(key)) {
@@ -13516,7 +14674,16 @@ int StationServer::transmitSettingsVersion() const
     // every band's frequency, compression, post-EQ gain and Q, the range,
     // the pre-compression and the post-EQ gain at once against the
     // revision the app last saw, as the peer's own cfcParaEqData write.
-    return m_radioModel.isNull() ? 0 : kTransmitSettingsCfcProfileVersion;
+    // 16: the CW settings on `transmit` (R-CW-01, R-CW-03): cwKeyerSpeed,
+    // cwKeyerMode, cwKeyerWeight, cwReversePaddles, cwStrictSpacing,
+    // cwBreakInMode, cwBreakInDelayMs, cwKeyDownDelayMs, cwKeyUpDelayMs,
+    // cwSidetone, cwRadioSidetone, cwComputerSidetone, cwAutoModeSwitch,
+    // cwAutoModeReturn, cwAutoModeReturnMs, cwSerialPort, cwSerialPaddles,
+    // cwSerialKeyLine, cwSerialPttLine, cwxSpeed, cwxRepeat,
+    // cwxRepeatDelayS and cwxMemory1 to cwxMemory8, under the gates of the
+    // other transmit settings, each refused out of range with its words
+    // (TransmitModel::settingRangeRefusal). None keys the radio.
+    return m_radioModel.isNull() ? 0 : kTransmitSettingsCwVersion;
 }
 
 bool StationServer::takesTransmitSettingsOnAir(SessionTransport* transport) const
@@ -13688,7 +14855,21 @@ int StationServer::radioHardwareVersion() const
     // mi0bot's chkSwapAudioChannels_CheckedChanged has no MOX check
     // (setup.cs:38065 [@c26a8a4]). A Core below 13 stores it without
     // effect, so a window keeps the box closed.
-    return m_radioModel->ioBoardFacade()->isBound() ? 13 : 2;
+    //
+    // 14 (Anvelina filter/OC plan): Antenna Control's "Gnd BPF2 on Tx"
+    // (hardware/<mac>/alex/master/bpf2GndOnTx) reaches this Core's radio
+    // through the "alex" reload (RadioModel::applyAlexHpfSwitchSettings ->
+    // RadioConnection::setBpf2GndOnTx), on and off the air, as Thetis's
+    // chkBPF2Gnd_CheckedChanged has no MOX check (setup.cs:18214-18218
+    // [v2.10.3.15]); the radio takes it at the next TX edge. A Core below
+    // 14 stores it without effect, so a window keeps the box closed.
+    // 14 also carries OC Outputs' Anvelina DX Outputs
+    // (hardware/<mac>/oc/dx/outN/{enabled,label}), which reach this Core's
+    // radio through the "ocDx" reload (RadioModel's AnvelinaDxOutputs ->
+    // RadioConnection::setOcExtrasByte, P2 byte 1397) at once, keyed or
+    // not. A Core below 14 reloads only the OC matrix for an oc/ key, so a
+    // window keeps the DX group closed.
+    return m_radioModel->ioBoardFacade()->isBound() ? 14 : 2;
 }
 
 QString StationServer::radioAntennaRowRefusal(SessionTransport* transport,
@@ -13942,6 +15123,10 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // that declared stationCat 1 (after radeReasonVersion and before
             // coreBuildInfo on the wire).
             caps.stationCatVersion = peerGetsStationCat(transport) ? 1 : 0;
+            // Roundtable plan Task 11: the Core's Roundtable, for a peer
+            // that declared roundtable 1 (after displayCodecVersion and
+            // before coreBuildInfo on the wire).
+            caps.stationRoundtableVersion = peerGetsRoundtable(transport) ? 1 : 0;
             // Radio speaker (R-SPK-14): radio's RADIO level, mute,
             // amplifier choice and reports, for a peer that declared
             // radioSpeaker 1 (after stationCatVersion and before
@@ -14062,6 +15247,13 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
                 caps.txStateVersion = txStateVersion();
                 // Parity Task 33: the transmit readings, right after it.
                 caps.txReadingsVersion = txReadingsVersion();
+                // CW transmit (R-CW-48): the cw.* verbs, for a peer that
+                // declared remoteCw 1, right after the readings.
+                if (peerDeclares(transport, QByteArrayLiteral("remoteCw"), 1)) {
+                    caps.remoteCwEntry = true;
+                    caps.remoteCwVersion = peerDeclares(transport, QByteArrayLiteral("remoteCw"), 2)
+                        ? remoteCwVersion() : 1;
+                }
             }
             const HardwareProfile& profile = m_radioModel->hardwareProfile();
             caps.hpsdrModel = profile.caps != nullptr ? profile.model : HPSDRModel::FIRST;
@@ -14198,6 +15390,11 @@ void StationServer::setUpRecordStreams()
     RecordStream* spotStream = spots.get();
     m_recordStreams.emplace(spotStream->name(), std::move(spots));
     for (const QString& source : SpotSourceHost::stationSources()) {
+        // Roundtable plan Task 11: Roundtable keeps no console here; its
+        // rooms are its own streams, for a peer that declared roundtable.
+        if (source == SpotSourceHost::kRoundtable) {
+            continue;
+        }
         const QString name = SpotSourceHost::consoleStream(source);
         m_recordStreams.emplace(name, std::make_unique<RecordStream>(name, kSpotConsoleCapacity));
     }
@@ -14402,6 +15599,14 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
         answer(false, QStringLiteral("This Core cannot set up its CAT from here."));
         return;
     }
+    // Roundtable plan Task 11: Roundtable's rooms only to a peer that
+    // declared roundtable, worded as its verbs' refusal.
+    if (isRoundtableStream(streamName) && !peerGetsRoundtable(transport)) {
+        answer(false, stationRoundtableVersion() >= 1
+                          ? QStringLiteral("Update this app to use Roundtable on this Core.")
+                          : QStringLiteral("This Core cannot share Roundtable with this app."));
+        return;
+    }
     const auto it = m_recordStreams.find(streamName);
     if (it == m_recordStreams.end()) {
         answer(false, QStringLiteral("The Core does not keep that list."));
@@ -14439,6 +15644,356 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
     if (coreLog && m_coreLogTimer != nullptr && !m_coreLogTimer->isActive()) {
         m_coreLogTimer->start();
     }
+}
+
+// ── Roundtable plan Task 11 (stationRoundtableVersion 1) ─────────────────
+
+void StationServer::setUpRoundtable()
+{
+    if (m_radioModel.isNull() || m_radioModel->role() == RadioModel::Role::Remote
+        || m_radioModel->roundtableClient() == nullptr || m_recordFlushTimer == nullptr) {
+        return;
+    }
+    RoundtableClient* client = m_radioModel->roundtableClient();
+    RoundtableState* state = m_radioModel->roundtableState();
+    RoundtableModel* model = m_radioModel->roundtableModel();
+    // The Core's Roundtable answers live in the settings its windows write
+    // through (FirstRunAnswer, Hidden, MuteList, MentionsSeenMs).
+    state->bindClient(client, &m_settings);
+    m_roundtableOn = true;
+    m_roundtableClock.start();
+
+    const QString rooms = QString::fromLatin1(RoundtableModel::kRoomsStream);
+    m_recordStreams.emplace(rooms, std::make_unique<RecordStream>(
+                                       rooms, RoundtableModel::kRoomsCapacity));
+    syncRoundtableStream(rooms, RoundtableModel::roomsRecords(model->rooms()));
+    const QPointer<RoundtableModel> view(model);
+    connect(model, &RoundtableModel::roomsChanged, this, [this, view]() {
+        if (view) {
+            syncRoundtableStream(QString::fromLatin1(RoundtableModel::kRoomsStream),
+                                 RoundtableModel::roomsRecords(view->rooms()));
+        }
+    });
+    connect(model, &RoundtableModel::roomChanged, this, [this, view](const QString& roomId) {
+        const QString name = RoundtableModel::roomStreamName(roomId);
+        if (view && m_recordStreams.find(name) != m_recordStreams.end()) {
+            syncRoundtableStream(name, RoundtableModel::roomRecords(view->room(roomId)));
+        }
+    });
+    // A room one of the Core's slices is in has its stream.
+    connect(state, &RoundtableState::stateChanged, this,
+            &StationServer::ensureRoundtableSliceRooms);
+    ensureRoundtableSliceRooms();
+
+    // The answers that come later.
+    connect(client, &RoundtableClient::postResult, this,
+            [this](const QString& clientId, bool ok, const QString& messageIdOrReason) {
+        answerRoundtablePending(
+            QStringLiteral("post:") + clientId, ok, ok ? QString() : messageIdOrReason,
+            ok ? QList<MirrorUpdate>{MirrorUpdate{0, "messageId", MirrorWireKind::Utf8,
+                                                  QVariant(messageIdOrReason)}}
+               : QList<MirrorUpdate>{});
+    });
+    // The web sign-ins waiting, oldest first ("weblink:<n>" by n): each
+    // link the server sends answers one request, in the order they were
+    // asked, since every link is good once.
+    const auto webLinkKeys = [this]() {
+        QList<QPair<quint64, QString>> waiting;
+        for (auto it = m_roundtablePending.cbegin(); it != m_roundtablePending.cend(); ++it) {
+            if (it.key().startsWith(QLatin1String("weblink:"))) {
+                waiting.append({it.key().mid(8).toULongLong(), it.key()});
+            }
+        }
+        std::sort(waiting.begin(), waiting.end());
+        QStringList keys;
+        for (const auto& entry : std::as_const(waiting)) {
+            keys.append(entry.second);
+        }
+        return keys;
+    };
+    connect(client, &RoundtableClient::webLinkReady, this, [this, webLinkKeys](const QUrl& url) {
+        const QStringList keys = webLinkKeys();
+        if (!keys.isEmpty()) {
+            answerRoundtablePending(keys.first(), true, QString(),
+                                    {MirrorUpdate{0, "link", MirrorWireKind::Utf8,
+                                                  QVariant(url.toString())}});
+        }
+    });
+    connect(client, &RoundtableClient::webLinkFailed, this,
+            [this, webLinkKeys](const QString& reason) {
+        const QStringList keys = webLinkKeys();
+        if (!keys.isEmpty()) {
+            answerRoundtablePending(keys.first(), false, reason, {});
+        }
+    });
+    connect(client, &RoundtableClient::errorReceived, this,
+            [this, webLinkKeys](const QString& code, const QString& reason) {
+        // The archive's own failures: no key to sign in with, or the
+        // server out of reach.
+        if (code != QLatin1String("no-key") && code != QLatin1String("unreachable")) {
+            return;
+        }
+        for (const QString& key : webLinkKeys()) {
+            answerRoundtablePending(key, false, reason, {});
+        }
+    });
+
+    m_roundtableSweepTimer = new QTimer(this);
+    m_roundtableSweepTimer->setInterval(kRoundtableSweepMs);
+    connect(m_roundtableSweepTimer, &QTimer::timeout, this, [this]() { sweepRoundtableStreams(); });
+    m_roundtableSweepTimer->start();
+}
+
+void StationServer::syncRoundtableStream(const QString& stream,
+                                         const QHash<QString, QJsonObject>& records)
+{
+    const auto it = m_recordStreams.find(stream);
+    if (it == m_recordStreams.end()) {
+        return;
+    }
+    QHash<QString, QJsonObject>& held = m_roundtableRecords[stream];
+    bool changed = false;
+    for (auto record = held.begin(); record != held.end();) {
+        if (!records.contains(record.key())) {
+            it->second->remove(record.key());
+            record = held.erase(record);
+            changed = true;
+        } else {
+            ++record;
+        }
+    }
+    // In id order, so every Core sends one room's records alike.
+    QStringList ids = records.keys();
+    std::sort(ids.begin(), ids.end());
+    for (const QString& id : ids) {
+        const QJsonObject fields = records.value(id);
+        const auto was = held.constFind(id);
+        if (was != held.cend() && was.value() == fields) {
+            continue;
+        }
+        it->second->upsert(id, fields);
+        held.insert(id, fields);
+        changed = true;
+    }
+    if (changed) {
+        scheduleRecordFlush();
+    }
+}
+
+RecordStream* StationServer::ensureRoundtableRoomStream(const QString& roomId)
+{
+    const QString name = RoundtableModel::roomStreamName(roomId);
+    m_roundtableNeededMs.insert(roomId, m_roundtableClock.elapsed());
+    const auto it = m_recordStreams.find(name);
+    if (it != m_recordStreams.end()) {
+        return it->second.get();
+    }
+    auto stream = std::make_unique<RecordStream>(name, RoundtableModel::kRoomCapacity);
+    RecordStream* created = stream.get();
+    m_recordStreams.emplace(name, std::move(stream));
+    if (RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr) {
+        syncRoundtableStream(name, RoundtableModel::roomRecords(model->room(roomId)));
+    }
+    return created;
+}
+
+void StationServer::ensureRoundtableSliceRooms()
+{
+    if (!m_roundtableOn || m_radioModel.isNull()) {
+        return;
+    }
+    const QJsonObject slices = m_radioModel->roundtableState()->sliceRoomsObject();
+    for (auto it = slices.constBegin(); it != slices.constEnd(); ++it) {
+        const QString roomId = it.value().toString();
+        if (!roomId.isEmpty()) {
+            ensureRoundtableRoomStream(roomId);
+        }
+    }
+}
+
+void StationServer::sweepRoundtableStreams(qint64 msLater)
+{
+    if (!m_roundtableOn || m_radioModel.isNull()) {
+        return;
+    }
+    const qint64 now = m_roundtableClock.elapsed() + msLater;
+    QSet<QString> needed;
+    const QJsonObject slices = m_radioModel->roundtableState()->sliceRoomsObject();
+    for (auto it = slices.constBegin(); it != slices.constEnd(); ++it) {
+        if (!it.value().toString().isEmpty()) {
+            needed.insert(it.value().toString());
+        }
+    }
+    for (auto it = m_roundtableReaders.cbegin(); it != m_roundtableReaders.cend(); ++it) {
+        if (!it.value().isEmpty()) {
+            needed.insert(it.key());
+        }
+    }
+    QStringList gone;
+    for (const auto& [name, stream] : m_recordStreams) {
+        Q_UNUSED(stream);
+        const QString roomId = RoundtableModel::roomIdOfStream(name);
+        if (roomId.isEmpty()) {
+            continue;
+        }
+        if (needed.contains(roomId)) {
+            m_roundtableNeededMs.insert(roomId, now);
+        } else if (now - m_roundtableNeededMs.value(roomId, 0) >= kRoundtableKeepMs) {
+            gone.append(name);
+        }
+    }
+    for (const QString& name : std::as_const(gone)) {
+        m_recordStreams.erase(name);
+        m_roundtableRecords.remove(name);
+        m_roundtableNeededMs.remove(RoundtableModel::roomIdOfStream(name));
+    }
+}
+
+void StationServer::dropRoundtableReader(SessionTransport* transport, const QString& roomId)
+{
+    const auto it = m_roundtableReaders.find(roomId);
+    if (it == m_roundtableReaders.end() || !it->remove(transport)) {
+        return;
+    }
+    m_roundtableNeededMs.insert(roomId, m_roundtableClock.elapsed());
+    if (it->isEmpty()) {
+        m_roundtableReaders.erase(it);
+        // The last device reading it stopped: so does the Core.
+        if (!m_radioModel.isNull()) {
+            m_radioModel->roundtableState()->unreadRoom(roomId);
+        }
+    }
+}
+
+void StationServer::answerRoundtablePending(const QString& key, bool accepted,
+                                            const QString& reason,
+                                            const QList<MirrorUpdate>& values)
+{
+    const auto it = m_roundtablePending.find(key);
+    if (it == m_roundtablePending.end()) {
+        return;
+    }
+    const RoundtablePending pending = it.value();
+    m_roundtablePending.erase(it);
+    if (m_peers.contains(pending.transport)) {
+        send(pending.transport, SessionMessages::commandResult(
+                                    pending.verb, pending.commandId, accepted, reason, {}, values));
+    }
+}
+
+void StationServer::handleRoundtableCommand(SessionTransport* transport,
+                                            const SessionMessage& message)
+{
+    const QByteArray& verb = message.commandVerb;
+    const auto answer = [this, transport, &message](bool accepted, const QString& reason,
+                                                    const QList<MirrorUpdate>& values) {
+        send(transport, SessionMessages::commandResult(message.commandVerb, message.commandId,
+                                                       accepted, reason, {}, values));
+    };
+    // The dispatcher has read the arguments' names and kinds.
+    const auto value = [&message](const char* name) {
+        for (const MirrorUpdate& argument : message.arguments) {
+            if (argument.name == name) {
+                return argument.value;
+            }
+        }
+        return QVariant();
+    };
+    const auto text = [&value](const char* name) { return value(name).toString(); };
+    RoundtableState* state = m_radioModel->roundtableState();
+    // A later answer: kept by `key` until Roundtable answers, or for 30 s.
+    const auto awaitAnswer = [this, transport, &message](const QString& key) {
+        m_roundtablePending.insert(key, RoundtablePending{transport, message.commandVerb,
+                                                          message.commandId, QString()});
+        const quint32 commandId = message.commandId;
+        QTimer::singleShot(kRoundtableAnswerMs, this, [this, key, transport, commandId]() {
+            const auto it = m_roundtablePending.constFind(key);
+            if (it != m_roundtablePending.cend() && it->transport == transport
+                && it->commandId == commandId) {
+                answerRoundtablePending(key, false,
+                                        QStringLiteral("Roundtable did not answer. Try again "
+                                                       "shortly."), {});
+            }
+        });
+    };
+    QString reason;
+    if (verb == "roundtable.post") {
+        const QString clientId = text("clientId");
+        if (!RoundtableState::isClientId(clientId)) {
+            answer(false, RoundtableState::unreadableReason(), {});
+            return;
+        }
+        // One post of a clientId waits at a time on each connection.
+        for (auto it = m_roundtablePending.cbegin(); it != m_roundtablePending.cend(); ++it) {
+            if (it.key().startsWith(QLatin1String("post:")) && it->transport == transport
+                && it->clientId == clientId) {
+                answer(false, RoundtableState::unreadableReason(), {});
+                return;
+            }
+        }
+        // Roundtable hears a clientId of the Core's own for each post, so
+        // two connections that use the same clientId never answer each
+        // other's post.
+        const QString wireId = QStringLiteral("link-%1").arg(++m_roundtablePostSerial);
+        const QString key = QStringLiteral("post:") + wireId;
+        awaitAnswer(key);
+        m_roundtablePending[key].clientId = clientId;
+        // Refused here, or by the client at once, the answer goes now.
+        if (!state->post(text("roomId"), text("text"), wireId, &reason)) {
+            answerRoundtablePending(key, false, reason, {});
+        }
+        return;
+    }
+    if (verb == "roundtable.webSignIn") {
+        const QString key = QStringLiteral("weblink:%1").arg(++m_roundtableWebLinkSerial);
+        awaitAnswer(key);
+        if (!state->requestWebLink(&reason)) {
+            answerRoundtablePending(key, false, reason, {});
+        }
+        return;
+    }
+    if (verb == "roundtable.read") {
+        const QString roomId = text("roomId");
+        if (!state->readRoom(roomId, &reason)) {
+            answer(false, reason, {});
+            return;
+        }
+        // The stream is there before the answer that names it.
+        ensureRoundtableRoomStream(roomId);
+        m_roundtableReaders[roomId].insert(transport);
+        answer(true, QString(),
+               {MirrorUpdate{0, "stream", MirrorWireKind::Utf8,
+                             QVariant(RoundtableModel::roomStreamName(roomId))}});
+        return;
+    }
+    if (verb == "roundtable.unread") {
+        dropRoundtableReader(transport, text("roomId"));
+        answer(true, QString(), {});
+        return;
+    }
+    bool accepted = false;
+    if (verb == "roundtable.delete") {
+        accepted = state->deleteMessage(text("messageId"), &reason);
+    } else if (verb == "roundtable.name") {
+        accepted = state->nameTurn(text("turnId"), text("name"), &reason);
+    } else if (verb == "roundtable.report") {
+        accepted = state->report(text("kind"), text("target"), text("reason"), &reason);
+    } else if (verb == "roundtable.setHidden") {
+        accepted = state->setOperatorHidden(value("hidden").toBool(), &reason);
+    } else if (verb == "roundtable.answerFirstRun") {
+        accepted = state->answerFirstRun(value("live").toBool(), &reason);
+    } else if (verb == "roundtable.mute") {
+        accepted = state->mute(text("callsign"), &reason);
+    } else if (verb == "roundtable.unmute") {
+        accepted = state->unmute(text("callsign"), &reason);
+    } else if (verb == "roundtable.markMentionRead") {
+        accepted = state->markMentionRead(value("upToMs").toLongLong(), &reason);
+    } else if (verb == "roundtable.deleteArchive") {
+        accepted = state->deleteArchive(text("confirm"), &reason);
+    } else {
+        reason = QStringLiteral("The Core does not know this request. Updating the Core may help.");
+    }
+    answer(accepted, accepted ? QString() : reason, {});
 }
 
 // ── Parity Task 22 (R-R3-49): the Core's log ─────────────────────────────

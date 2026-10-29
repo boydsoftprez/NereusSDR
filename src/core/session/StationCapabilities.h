@@ -59,6 +59,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25: merge of main: stationRoundtableVersion moves after main's
+//               displayCodecVersion. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion, after
+//               rxMeterStampsVersion, sent only when it is not 0. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 negotiation: displayCodecVersion, after
 //               rxMeterStampsVersion and before coreBuildInfo. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -253,6 +259,12 @@
 //   2026-10-22 - radioAntennaRowsVersion 2 (kRadioAntennaRowsVersion):
 //                RX-only antennas 0..5, Thetis's checkbox sum. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - CW transmit, kTransmitSettingsCwVersion (16): the CW
+//                settings on `transmit` (R-CW-03). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, remoteCwVersion (R-CW-49): the cw.* verbs,
+//               last in the remoteTx block for a peer that declared
+//               remoteCw 1. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -289,6 +301,14 @@ inline constexpr int kTransmitSettingsDifferentBandVersion = 14;
 /// at once against the revision the app last saw. Against an older Core a
 /// window keeps writing the CFC properties one by one.
 inline constexpr int kTransmitSettingsCfcProfileVersion = 15;
+
+/// From this transmitSettingsVersion the Core's `transmit` object carries the
+/// CW settings (R-CW-01, R-CW-03): the keyer, break-in, delays, sidetones,
+/// mode switch, serial key and CWX settings and the eight CWX memories,
+/// mirrored both ways and each refused out of range with its words. Against
+/// an older Core a window shows its CW controls disabled with the update
+/// reason.
+inline constexpr int kTransmitSettingsCwVersion = 16;
 
 /// The newest radioAntennaRowsVersion. 1: the one-band Alex edits bound to
 /// the connected radio's MAC. 2: and `rxOnlyAntennas` entries 0..5, Thetis's
@@ -655,6 +675,13 @@ struct StationCapabilities {
     /// Core whose RemoteDisplayCodecV2 setting is on; absent reads as 0: an
     /// older Core, or one that sends version 1 frames only.
     int displayCodecVersion = 0;
+    /// Roundtable plan Task 11: 1 means the Core mirrors its Roundtable
+    /// connection as the read-only `roundtable` object, sends the
+    /// `roundtableRooms` and `roundtableRoom:<room id>` record streams and
+    /// takes the roundtable.* verbs. Sent after displayCodecVersion and
+    /// before coreBuildInfo, only to a peer whose hello declared `roundtable`
+    /// 1; 0 otherwise.
+    int stationRoundtableVersion {0};
     /// CAT setup from a connected desktop: 1 means the Core sends its CAT
     /// as the read-only `stationCat` object and the `catLog` record stream,
     /// and takes setStationCatChannel, setStationCatGlobal,
@@ -854,6 +881,18 @@ struct StationCapabilities {
     /// compressionPeakDb, eqPeakDb, levelerPeakDb, cfcPeakDb), read with
     /// the other meters.
     int txReadingsVersion = 0;
+    /// CW transmit (R-CW-49): 1 means the Core takes cw.send {text},
+    /// cw.memory {number}, cw.stop {} and cw.key {down} from the device
+    /// that holds transmit, runs them on its CWX sender behind its keying
+    /// gate, and answers a refusal as a transmit refusal (link section
+    /// 18.3). A held cw.key is released 3 s after its last press, at once
+    /// when the link drops, and by every transmit cut. Sent after
+    /// remoteTxVersion, last in its block, and only to a peer whose hello
+    /// declared remoteCw 1 as well (remoteCwEntry); any other peer is sent
+    /// no entry and reads 0, and a window then shows its CWX sending
+    /// controls disabled with the update reason.
+    bool remoteCwEntry = false;
+    int remoteCwVersion = 0;
 
     /// Whether the DAEMON currently holds a live radio connection. A
     /// client that authenticated against a daemon whose radio is powered

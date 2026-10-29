@@ -1,0 +1,332 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {
+    "stations": [
+      {
+        "name": "A",
+        "callsign": "K4ABC",
+        "grid": "EM73"
+      },
+      {
+        "name": "B",
+        "callsign": "KG4VCF",
+        "grid": "EM73tu"
+      },
+      {
+        "name": "C",
+        "callsign": "W4XYZ",
+        "grid": "FM18"
+      },
+      {
+        "name": "D",
+        "callsign": "N4QQQ",
+        "grid": "EM84"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14074000,
+            "mode": "DIGU",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14074500,
+            "mode": "DIGU",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "C",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14075000,
+            "mode": "DIGU",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "D",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14073500,
+            "mode": "DIGU",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14074000,
+            "mode": "DIGU",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "C",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14074500,
+            "mode": "DIGU",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": null,
+          "readings": {
+            "C": 1
+          }
+        },
+        {
+          "kind": "talking",
+          "talker": "B",
+          "startMs": 12000,
+          "endMs": null
+        }
+      ]
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "C",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "reading": {
+        "station": "D",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14074000,
+            "mode": "DIGU",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "C",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 2000
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 14000,
+          "readings": {
+            "C": 1
+          }
+        },
+        {
+          "kind": "talking",
+          "talker": "B",
+          "startMs": 12000,
+          "endMs": null,
+          "readings": {
+            "C": 1
+          }
+        }
+      ]
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14074500,
+            "mode": "DIGU",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 3000
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "D",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "D",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 14000,
+          "readings": {
+            "C": 1
+          }
+        },
+        {
+          "kind": "talking",
+          "talker": "B",
+          "startMs": 12000,
+          "endMs": 18000,
+          "readings": {
+            "C": 1
+          }
+        },
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 22000,
+          "endMs": null,
+          "readings": {
+            "D": 2
+          }
+        }
+      ]
+    },
+    {
+      "advanceMs": 3000
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 14000
+        },
+        {
+          "kind": "talking",
+          "talker": "B",
+          "startMs": 12000,
+          "endMs": 18000
+        },
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 22000,
+          "endMs": 23000,
+          "readings": {
+            "D": 2
+          }
+        }
+      ]
+    }
+  ]
+}

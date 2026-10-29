@@ -1,8 +1,21 @@
+// Modification history (NereusSDR):
+//   2026-10-26 - Colour swatches show the colour drawn and say when it
+//                 follows the workspace look (ItemColourLook::paintSwatch).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - "Follow the Multimeter setting": changing Capacity gives
+//                 the graph its own length, which the Multimeter history
+//                 duration then leaves alone; turning the choice back on
+//                 returns the graph to that setting. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+
 #include "HistoryGraphItemEditor.h"
+#include "gui/meters/ItemColourLook.h"
 #include "../../meters/HistoryGraphItem.h"
 #include "../../meters/MeterPoller.h"
+#include "../../setup/MultimeterPage.h"
 
 #include <QCheckBox>
+#include <QDoubleSpinBox>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QComboBox>
@@ -22,17 +35,16 @@ void HistoryGraphItemEditor::setItem(MeterItem* item)
     HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(item);
     if (!x) { return; }
 
-    auto applyColor = [](QPushButton* btn, const QColor& c) {
-        btn->setStyleSheet(
-            QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                .arg(c.name(QColor::HexArgb)));
+    auto applyColor = [](QPushButton* btn, const QString& field, const QColor& c) {
+        ItemColourLook::paintSwatch(btn, field, c);
     };
 
     beginProgrammaticUpdate();
 
     m_spinCapacity->setValue(x->capacity());
-    applyColor(m_btnLineColor0, x->lineColor0());
-    applyColor(m_btnLineColor1, x->lineColor1());
+    m_chkFollowMultimeter->setChecked(!x->hasOwnLength());
+    applyColor(m_btnLineColor0, QStringLiteral("History.lineColor0"), x->lineColor0());
+    applyColor(m_btnLineColor1, QStringLiteral("History.lineColor1"), x->lineColor1());
     m_chkShowGrid->setChecked(x->showGrid());
     m_chkAutoScale0->setChecked(x->autoScale0());
     m_chkAutoScale1->setChecked(x->autoScale1());
@@ -42,7 +54,26 @@ void HistoryGraphItemEditor::setItem(MeterItem* item)
     const int idx = m_comboBinding1->findData(x->bindingId1());
     m_comboBinding1->setCurrentIndex(idx >= 0 ? idx : 0);
 
+    m_spinVerticalRatio->setValue(x->verticalRatio());
+    applyColor(m_btnBackColour, QStringLiteral("History.backColour"), x->backColour());
+    applyColor(m_btnLinesColour, QStringLiteral("History.linesColour"), x->linesColour());
+    applyColor(m_btnTimeColour, QStringLiteral("History.timeColour"), x->timeColour());
+    m_spinMin0->setValue(x->manualMin(0));
+    m_spinMax0->setValue(x->manualMax(0));
+    m_spinMin1->setValue(x->manualMin(1));
+    m_spinMax1->setValue(x->manualMax(1));
+    syncManualRangeEnabled();
+
     endProgrammaticUpdate();
+}
+
+// The manual range applies while an axis does not auto scale.
+void HistoryGraphItemEditor::syncManualRangeEnabled()
+{
+    m_spinMin0->setEnabled(!m_chkAutoScale0->isChecked());
+    m_spinMax0->setEnabled(!m_chkAutoScale0->isChecked());
+    m_spinMin1->setEnabled(!m_chkAutoScale1->isChecked());
+    m_spinMax1->setEnabled(!m_chkAutoScale1->isChecked());
 }
 
 void HistoryGraphItemEditor::buildTypeSpecific()
@@ -55,6 +86,32 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
         if (!x) { return; }
         x->setCapacity(v);
+        // The operator chose this graph's length; the Multimeter history
+        // duration no longer changes it.
+        x->setHasOwnLength(true);
+        beginProgrammaticUpdate();
+        m_chkFollowMultimeter->setChecked(false);
+        endProgrammaticUpdate();
+        notifyChanged();
+    });
+
+    m_chkFollowMultimeter = makeCheckRow(QStringLiteral("Follow the Multimeter setting"));
+    m_chkFollowMultimeter->setObjectName(QStringLiteral("followMultimeterLength"));
+    m_chkFollowMultimeter->setToolTip(QStringLiteral(
+        "When on, this graph's length follows the history duration in the "
+        "Multimeter settings. Changing Capacity gives the graph its own "
+        "length and turns this off."));
+    connect(m_chkFollowMultimeter, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate()) { return; }
+        HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
+        if (!x) { return; }
+        x->setHasOwnLength(!on);
+        if (on) {
+            x->followGlobalDurationMs(MultimeterPage::persistedHistoryDurationMs());
+            beginProgrammaticUpdate();
+            m_spinCapacity->setValue(x->capacity());
+            endProgrammaticUpdate();
+        }
         notifyChanged();
     });
 
@@ -66,10 +123,9 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->lineColor0(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("History.lineColor0"));
             x->setLineColor0(chosen);
-            m_btnLineColor0->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnLineColor0, QStringLiteral("History.lineColor0"), chosen);
             notifyChanged();
         }
     });
@@ -82,10 +138,9 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         if (!x) { return; }
         const QColor chosen = QColorDialog::getColor(x->lineColor1(), this);
         if (chosen.isValid()) {
+            markColourPicked(QStringLiteral("History.lineColor1"));
             x->setLineColor1(chosen);
-            m_btnLineColor1->setStyleSheet(
-                QStringLiteral("QPushButton { background: %1; border: 1px solid #205070; }")
-                    .arg(chosen.name(QColor::HexArgb)));
+            ItemColourLook::paintSwatch(m_btnLineColor1, QStringLiteral("History.lineColor1"), chosen);
             notifyChanged();
         }
     });
@@ -107,6 +162,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
         if (!x) { return; }
         x->setAutoScale0(on);
+        syncManualRangeEnabled();
         notifyChanged();
     });
 
@@ -116,6 +172,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
         if (!x) { return; }
         x->setAutoScale1(on);
+        syncManualRangeEnabled();
         notifyChanged();
     });
 
@@ -141,28 +198,7 @@ void HistoryGraphItemEditor::buildTypeSpecific()
     addHeader(QStringLiteral("Axis 1 Reading"));
 
     m_comboBinding1 = new QComboBox(this);
-    struct B { int id; const char* label; };
-    static const B kBindings[] = {
-        {MeterBinding::SignalPeak,      "RX: Signal Peak"},
-        {MeterBinding::SignalAvg,       "RX: Signal Avg"},
-        {MeterBinding::AdcPeak,         "RX: ADC Peak"},
-        {MeterBinding::AdcAvg,          "RX: ADC Avg"},
-        {MeterBinding::AgcGain,         "RX: AGC Gain"},
-        {MeterBinding::AgcPeak,         "RX: AGC Peak"},
-        {MeterBinding::AgcAvg,          "RX: AGC Avg"},
-        {MeterBinding::TxPower,         "TX: Forward Power"},
-        {MeterBinding::TxReversePower,  "TX: Reverse Power"},
-        {MeterBinding::TxSwr,           "TX: SWR"},
-        {MeterBinding::TxMic,           "TX: Mic"},
-        {MeterBinding::TxAlc,           "TX: ALC"},
-        {MeterBinding::HwVolts,         "HW: Volts"},
-        {MeterBinding::HwAmps,          "HW: Amps"},
-        {MeterBinding::HwTemperature,   "HW: Temperature"},
-    };
-    m_comboBinding1->addItem(QStringLiteral("(none)"), -1);
-    for (const auto& b : kBindings) {
-        m_comboBinding1->addItem(QString::fromLatin1(b.label), b.id);
-    }
+    populateReadingCombo(m_comboBinding1);
     addRow(QStringLiteral("Axis 1 shows"), m_comboBinding1);
     connect(m_comboBinding1, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
         if (isProgrammaticUpdate()) { return; }
@@ -171,6 +207,83 @@ void HistoryGraphItemEditor::buildTypeSpecific()
         x->setBindingId1(m_comboBinding1->currentData().toInt());
         notifyChanged();
     });
+
+    // Manual range, used while an axis does not auto scale.
+    // Ranges and step: the kHistoryAxis constants (HistoryGraphItem.h).
+    addHeader(QStringLiteral("Scale range"));
+    struct RangeRow { QDoubleSpinBox** spin; const char* label; int axis; bool isMax; };
+    const RangeRow rangeRows[] = {
+        {&m_spinMin0, "Axis 0 minimum", 0, false},
+        {&m_spinMax0, "Axis 0 maximum", 0, true},
+        {&m_spinMin1, "Axis 1 minimum", 1, false},
+        {&m_spinMax1, "Axis 1 maximum", 1, true},
+    };
+    for (const RangeRow& row : rangeRows) {
+        QDoubleSpinBox* spin = row.isMax
+            ? makeDoubleRow(QString::fromLatin1(row.label), kMinHistoryAxisMax, kMaxHistoryAxisMax, kHistoryAxisStep, 1)
+            : makeDoubleRow(QString::fromLatin1(row.label), kMinHistoryAxisMin, kMaxHistoryAxisMin, kHistoryAxisStep, 1);
+        *row.spin = spin;
+        const int axis = row.axis;
+        const bool isMax = row.isMax;
+        connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this, axis, isMax](double v) {
+            if (isProgrammaticUpdate()) { return; }
+            HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
+            if (!x) { return; }
+            if (isMax) {
+                x->setManualMax(axis, static_cast<float>(v));
+            } else {
+                x->setManualMin(axis, static_cast<float>(v));
+            }
+            notifyChanged();
+        });
+    }
+
+    // Look
+    addHeader(QStringLiteral("Graph look"));
+    // Range and step: the kHistoryVerticalRatio constants (HistoryGraphItem.h).
+    m_spinVerticalRatio = makeDoubleRow(QStringLiteral("Height to width"),
+                                        kMinHistoryVerticalRatio, kMaxHistoryVerticalRatio,
+                                        kHistoryVerticalRatioStep, 3);
+    connect(m_spinVerticalRatio, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+        if (isProgrammaticUpdate()) { return; }
+        HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
+        if (!x) { return; }
+        x->setVerticalRatio(static_cast<float>(v));
+        notifyChanged();
+    });
+
+    struct ColourRow {
+        QPushButton** button;
+        const char* label;
+        const char* field;
+        QColor (HistoryGraphItem::*get)() const;
+        void (HistoryGraphItem::*set)(const QColor&);
+    };
+    const ColourRow colourRows[] = {
+        {&m_btnBackColour, "Background color", "History.backColour", &HistoryGraphItem::backColour, &HistoryGraphItem::setBackColour},
+        {&m_btnLinesColour, "Grid line color", "History.linesColour", &HistoryGraphItem::linesColour, &HistoryGraphItem::setLinesColour},
+        {&m_btnTimeColour, "Label color", "History.timeColour", &HistoryGraphItem::timeColour, &HistoryGraphItem::setTimeColour},
+    };
+    for (const ColourRow& row : colourRows) {
+        auto* button = new QPushButton(this);
+        button->setFixedSize(40, 18);
+        *row.button = button;
+        const auto get = row.get;
+        const auto set = row.set;
+        const QString field = QString::fromLatin1(row.field);
+        connect(button, &QPushButton::clicked, this, [this, button, field, get, set]() {
+            HistoryGraphItem* x = qobject_cast<HistoryGraphItem*>(m_item);
+            if (!x) { return; }
+            const QColor chosen = QColorDialog::getColor((x->*get)(), this);
+            if (chosen.isValid()) {
+                markColourPicked(field);
+                (x->*set)(chosen);
+                ItemColourLook::paintSwatch(button, field, chosen);
+                notifyChanged();
+            }
+        });
+        addRow(QString::fromLatin1(row.label), button);
+    }
 }
 
 } // namespace NereusSDR

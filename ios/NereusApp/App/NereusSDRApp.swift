@@ -1,8 +1,12 @@
 // NereusSDR for iOS: the app's entry point
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the hold PTT let go when the scene
+// is not active. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusLink
+import os
 import SwiftUI
 import UIKit
 
@@ -55,8 +59,11 @@ struct NereusSDRApp: App {
     init() {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
+        Self.logLaunch(arguments: arguments, environment: ProcessInfo.processInfo.environment)
         let diversityFixture = UITestDiversityFixture.isEnabled(arguments)
-        let model = diversityFixture ? UITestDiversityFixture.makeApp(arguments: arguments) : AppModel.live()
+        // The keyed band fixture keys with no microphone, so nothing asks iOS for one.
+        let model = diversityFixture ? UITestDiversityFixture.makeApp(arguments: arguments)
+            : UITestBand.keyed(arguments) ? AppModel(sessionSources: .system()) : AppModel.live()
         #else
         let model = AppModel.live()
         #endif
@@ -84,7 +91,11 @@ struct NereusSDRApp: App {
         // The UI tests hand it the Core's question over whatever screen shows.
         UITestQuestion.listen(model.devices, arguments: ProcessInfo.processInfo.arguments)
         #endif
+        #if DEBUG
+        let activity = LiveActivityController(host: UITestBand.liveActivityHost(arguments: arguments))
+        #else
         let activity = LiveActivityController(host: SystemLiveActivityHost())
+        #endif
         activity.observe(app: model, flow: flow)
         // The card's and the island's buttons reach the app through here.
         ActivityAction.handler = { [weak activity] action in
@@ -121,6 +132,24 @@ struct NereusSDRApp: App {
     }
 
     #if DEBUG
+    private static let launchLogger = Logger(subsystem: "NereusSDR", category: "launch")
+
+    /// Says which process this is, at the very start of App.init: a UI test
+    /// that asked for the band and found Welcome was drawn by a process that
+    /// had no `-NereusShowBand`, either one launched without the test's
+    /// arguments (a warm launch) or one iOS prewarmed, which runs App.init
+    /// before it is launched (the PR 653 re-review e, I1). Read with
+    /// `xcrun simctl spawn <udid> log show --last 10m --predicate
+    /// 'subsystem == "NereusSDR" AND category == "launch"'`.
+    static func logLaunch(arguments: [String], environment: [String: String]) {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let showBand = arguments.contains(ConnectionFlow.showBandArgument)
+        let prewarm = environment["ActivePrewarm"] ?? "unset"
+        let given = arguments.dropFirst().joined(separator: " ")
+        launchLogger.notice(
+            "App.init pid \(pid, privacy: .public) showBand \(showBand, privacy: .public) ActivePrewarm \(prewarm, privacy: .public) arguments \(given, privacy: .public)")
+    }
+
     /// Selects UI-test fixtures before the live flow can access this phone's key.
     static func launchFlow(app: AppModel, kind: DeviceKeyAuthenticator.Kind, arguments: [String],
                            live: () -> ConnectionFlow) -> ConnectionFlow {
@@ -208,6 +237,8 @@ struct NereusSDRApp: App {
             // Locked or in another app is the background; a passing
             // Control Center or app switcher is not.
             model.longSession.sceneChanged(inForeground: phase != .background)
+            // A held PTT lets go when the scene loses focus or leaves the screen.
+            model.main.transmit.sceneChanged(active: phase == .active)
         }
     }
 

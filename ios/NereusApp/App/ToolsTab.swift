@@ -1,5 +1,11 @@
 // NereusSDR for iOS: the Tools tab and the pages it opens, in the desktop's order from the Core's tool list
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-25: Roundtable plan Task 18, Roundtable's page and room page, and
+// the swipes' ways onto Roundtable and Spot Hub. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
+// 2026-10-26: CW transmit, the cwx tool opens the CWX page (R-CW-50).
+//             J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import SwiftUI
 
@@ -10,6 +16,15 @@ final class ToolsRouter: ObservableObject {
     @Published private(set) var txEqualizerRequest: UInt64 = 0
     /// Opens the TX Equalizer page, as Setup's Speech Processor buttons do.
     func openTxEqualizer() { txEqualizerRequest &+= 1 }
+    @Published private(set) var roundtableRequest: UInt64 = 0
+    /// Opens Roundtable's page, all frequencies (a swipe mapped to it).
+    func openRoundtable() { roundtableRequest &+= 1 }
+    @Published private(set) var spotHubRequest: UInt64 = 0
+    /// Opens Spot Hub's page (a swipe mapped to it).
+    func openSpotHub() { spotHubRequest &+= 1 }
+    @Published private(set) var listRequest: UInt64 = 0
+    /// Shows the Tools list itself, every page closed (a swipe mapped to Tools).
+    func openList() { listRequest &+= 1 }
 }
 
 /// The Tools tab (spec section 5.2 items 3 to 5, R-IOS-18, D41, D42): the
@@ -18,7 +33,7 @@ final class ToolsRouter: ObservableObject {
 /// catalogue while the tab is open. Spot Hub opens its page and the pages
 /// under it, each with its way back (R-IOS-25, D32); FreeDV Reporter opens
 /// its station list (R-IOS-26), and Spot Hub's FreeDV row opens the Core's
-/// reporter connection. TX Equalizer, PureSignal, Diversity, TCI Server,
+/// reporter connection. TX Equalizer, PureSignal, Diversity, CWX, TCI Server,
 /// VAX Audio and Support Bundle open their own pages. CAT Control opens its
 /// page and the pages under it (a channel, CAT Options, CAT PTT, Test and
 /// log), all sharing one model while any of them is open. An older Core's
@@ -31,6 +46,8 @@ struct ToolsTab: View {
     @ObservedObject private var performance: ConnectionPerformanceModel
     /// The rotor, for its row's heading and its page (shared with the Radio tab's accessories).
     @ObservedObject private var rotor: RotorModel
+    /// Roundtable, for its row's state.
+    @ObservedObject private var roundtable: RoundtableModel
     @ObservedObject var router: ToolsRouter
     @StateObject private var list: ToolListModel
     var isActive: Bool
@@ -48,12 +65,16 @@ struct ToolsTab: View {
         case txEqualizer
         case pureSignal
         case diversity
+        case cwx
         case catControl
         case catControlPage(CatControlModel.Route)
         case tciServer
         case vaxAudio
         case supportBundle
         case rotor
+        case roundtable
+        /// One room read from Roundtable's page, with its title (`7.236.400 LSB`).
+        case roundtableRoom(id: String, title: String)
 
         var title: String {
             switch self {
@@ -64,12 +85,15 @@ struct ToolsTab: View {
             case .txEqualizer: return "TX Equalizer"
             case .pureSignal: return "PureSignal"
             case .diversity: return "Diversity"
+            case .cwx: return "CWX"
             case .catControl: return "CAT Control"
             case .catControlPage(let page): return page.title
             case .tciServer: return "TCI Server"
             case .vaxAudio: return "VAX Audio"
             case .supportBundle: return "Support Bundle"
             case .rotor: return "Rotor"
+            case .roundtable: return "Roundtable"
+            case .roundtableRoom(_, let title): return title
             }
         }
 
@@ -81,12 +105,14 @@ struct ToolsTab: View {
             case .txEqualizer: self = .txEqualizer
             case .pureSignal: self = .pureSignal
             case .diversity: self = .diversity
+            case .cwx: self = .cwx
             case .catControl: self = .catControl
             case .tciServer: self = .tciServer
             case .vaxAudio: self = .vaxAudio
             case .performance: self = .performance
             case .supportBundle: self = .supportBundle
             case .rotor: self = .rotor
+            case .roundtable: self = .roundtable
             }
         }
 
@@ -107,6 +133,7 @@ struct ToolsTab: View {
         freedv = app.freedv
         performance = app.connectionPerformance
         rotor = app.main.rotor
+        roundtable = app.roundtable
         self.router = router
         _list = StateObject(wrappedValue: ToolListModel(mirror: app.mirror, catalogFeed: app.main.catalogFeed))
         self.isActive = isActive
@@ -145,6 +172,10 @@ struct ToolsTab: View {
                     onResetSessionStats: { performance.resetSessionStats() })
                     .onAppear { if isActive { performance.open(attempt: flow.attempt) } }
                     .onDisappear { performance.close() }
+            } else if case .roundtableRoom(let id, _)? = route.last {
+                RoundtableToolsRoomPage(roundtable: app.roundtable, slices: app.main.slices,
+                                        transmit: app.main.transmit, roomId: id,
+                                        stationCallsign: app.freedv.callsign)
             } else if route.last == .freedvReporter {
                 // The list scrolls under its filters, with your status below it.
                 FreeDVReporterPage(freedv: freedv)
@@ -163,6 +194,15 @@ struct ToolsTab: View {
         .background(ChromeColours.page.ignoresSafeArea(edges: [.top, .horizontal]))
         .onChange(of: router.txEqualizerRequest) { _, _ in
             route = [.txEqualizer]
+        }
+        .onChange(of: router.roundtableRequest) { _, _ in
+            route = [.roundtable]
+        }
+        .onChange(of: router.spotHubRequest) { _, _ in
+            route = [.spotHub]
+        }
+        .onChange(of: router.listRequest) { _, _ in
+            route = []
         }
         .onChange(of: router.performanceRequest) { _, _ in
             route = [.performance]
@@ -200,7 +240,7 @@ struct ToolsTab: View {
                     OlderCoreNotice(core: older)
                 }
                 SpotHubPage.Card {
-                    ForEach(Array(list.entries.enumerated()), id: \.element.id) { index, entry in
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                         if index > 0 {
                             SpotHubPage.Line()
                         }
@@ -222,6 +262,13 @@ struct ToolsTab: View {
             }
         case .spotHub?:
             SpotHubPage(spots: spots) { route.append(.spotHubPage($0)) }
+        case .roundtable?:
+            RoundtableToolsPage(roundtable: app.roundtable, slices: app.main.slices,
+                                stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare) { room in
+                // A row reads the room; no slice moves.
+                open(.roundtableRoom(id: room.id, title: RoundtableText.headerFrequency(room.hz) + " "
+                                         + RoundtableText.modeLabel(room.family)))
+            }
         case .spotHubPage(.list)?:
             SpotListPage(spots: spots)
         case .spotHubPage(.display)?:
@@ -232,14 +279,14 @@ struct ToolsTab: View {
             SpotSourcePage(spots: spots, source: source)
         case .spotHubPage(.identity)?:
             SpotIdentityPage(spots: spots)
-        case .performance?, .freedvReporter?, .txEqualizer?, .pureSignal?, .diversity?, .catControl?,
-             .catControlPage?, .tciServer?, .vaxAudio?, .supportBundle?, .rotor?:
+        case .performance?, .freedvReporter?, .txEqualizer?, .pureSignal?, .diversity?, .cwx, .catControl?,
+             .catControlPage?, .tciServer?, .vaxAudio?, .supportBundle?, .rotor?, .roundtableRoom?:
             EmptyView()
         }
     }
 
     /// The pages of the Core's tools, each with its own scrolling and number pad.
-    private static let stationPages: Set<Page> = [.txEqualizer, .pureSignal, .diversity, .tciServer, .vaxAudio,
+    private static let stationPages: Set<Page> = [.txEqualizer, .pureSignal, .diversity, .cwx, .tciServer, .vaxAudio,
                                                   .supportBundle, .rotor]
 
     @ViewBuilder
@@ -256,6 +303,10 @@ struct ToolsTab: View {
         case .diversity:
             ToolScreen(model: app.diversity) {
                 DiversityPage(model: $0)
+            }
+        case .cwx:
+            ToolScreen(model: CwxModel(mirror: app.mirror, commands: app.commands, lease: app.main.transmit.remoteCwLease)) {
+                CwxPage(model: $0, take: app.main.take)
             }
         case .tciServer:
             ToolScreen(model: TciServerModel(mirror: app.mirror, commands: app.commands, records: app.records),
@@ -277,6 +328,11 @@ struct ToolsTab: View {
         default:
             EmptyView()
         }
+    }
+
+    /// The list, with Roundtable's row after FreeDV Reporter.
+    private var entries: [StationToolList.Entry] {
+        StationToolList.withRoundtable(list.entries, reason: roundtable.coreReason)
     }
 
     /// One tool on the list: its line, where it runs, and why it is greyed.
@@ -327,8 +383,8 @@ struct ToolsTab: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(ChromeColours.accentText)
                 .accessibilityIdentifier("freedv.website")
-        case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .catControl,
-             .catControlPage, .tciServer, .vaxAudio, .supportBundle, .rotor:
+        case .spotHub, .spotHubPage(.display), .performance, .txEqualizer, .pureSignal, .diversity, .cwx, .catControl,
+             .catControlPage, .tciServer, .vaxAudio, .supportBundle, .rotor, .roundtable, .roundtableRoom:
             LinkChip(link: link, core: core)
         }
     }

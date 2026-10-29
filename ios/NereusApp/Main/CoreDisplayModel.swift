@@ -107,6 +107,9 @@ final class CoreDisplayModel: ObservableObject {
     @Published private(set) var revision = 0
     /// The Core's words for the last setting it refused.
     @Published private(set) var note: String?
+    /// The Core's words for each key whose latest write it refused, kept
+    /// until a write of that key is accepted (``refusalReason(_:)``).
+    @Published private(set) var refusals: [String: String] = [:]
 
     // Injectable observation only; it never participates in admission or planning.
     var binDiagnostic: (DisplayBinDiagnostic) -> Void = DisplayBinDiagnostic.log
@@ -129,6 +132,11 @@ final class CoreDisplayModel: ObservableObject {
     /// The Hz/bin target a Sizing choice writes once the Core has taken the
     /// choice, shown from the tap until that write is answered.
     private var pendingTarget: (text: String, edit: UInt64)?
+    /// The newest write of each key, whose answer sets or clears that key's refusal.
+    private var latestEdits: [String: UInt64] = [:]
+    /// Keys written for another model (``writeSetting(_:_:)``): their
+    /// answers show under that model's rows, never in ``note``.
+    private var writtenForOthers: Set<String> = []
     private let outcomeOwner = ControlOutcomeOwner()
     private var watches: Set<AnyCancellable> = []
     private static let logger = Logger(subsystem: "NereusSDR", category: "display.core")
@@ -206,6 +214,28 @@ final class CoreDisplayModel: ObservableObject {
     }
 
     func isUnconfirmed(_ key: String) -> Bool { queued[key] == nil && settingsProxy.isUnconfirmed(key) }
+
+    /// The Core's words for the latest refused write of `key`; nil once a
+    /// write of that key is accepted, and before any is refused.
+    func refusalReason(_ key: String) -> String? { refusals[key] }
+
+    /// A write of `key` is on its way or waiting its turn, so the Core has
+    /// not answered it yet.
+    func isAwaitingAnswer(_ key: String) -> Bool { writing.contains(key) || queued[key] != nil }
+
+    /// A Core setting as shown now: a value waiting its turn behind an
+    /// unanswered write, else the settings proxy's; nil when the Core has none.
+    func shownSetting(_ key: String) -> String? { setting(key) }
+
+    /// Writes one of the Core's station settings that its description does
+    /// not draw as a control here (the per-band grid, DC3), one write at a
+    /// time with its latest value, as a control's are. Its refusal shows
+    /// in ``refusalReason(_:)``, not ``note``. False when nothing could be sent.
+    @discardableResult
+    func writeSetting(_ key: String, _ text: String) -> Bool {
+        writtenForOthers.insert(key)
+        return write(key, text) != nil
+    }
 
     // MARK: Values
 
@@ -476,6 +506,29 @@ final class CoreDisplayModel: ObservableObject {
         set(size, to: option.value)
     }
 
+    /// The Display pill's line under FFT Size: bin width and time per
+    /// transform at the running size, in the desktop pill's words, the time
+    /// in milliseconds to one place as the board writes it ("21.3 ms"),
+    /// where the desktop's "0.02 s" would hide it; nil before a running size.
+    // From src/gui/DisplayFftReadout.h:57-68 (displayFftReadoutText: "%1 Hz per bin · %2 s per transform at %3 kHz")
+    var fftReadoutText: String? {
+        guard let bin = runningBinWidthHz, bin.isFinite, bin > 0 else {
+            return nil
+        }
+        let rate = subscriber.plannedSampleRateHz ?? runningFftSize.map { bin * Double($0) }
+        guard let rate, rate > 0 else {
+            return nil
+        }
+        return Self.fftReadoutText(binWidthHz: bin, sampleRateHz: rate)
+    }
+
+    /// The readout's words for a bin width and a sample rate: one transform
+    /// lasts 1 / bin width.
+    static func fftReadoutText(binWidthHz bin: Double, sampleRateHz rate: Double) -> String {
+        String(format: "%.2f Hz per bin \u{00B7} %.1f ms per transform at %@ kHz", bin, 1000 / bin,
+               String(format: "%g", rate / 1000))
+    }
+
     /// The bin width readout's label: the Core's, or the phone's own.
     var binWidthLabel: String { description?.binWidth.label ?? Self.binWidthFallbackLabel }
 
@@ -502,7 +555,10 @@ final class CoreDisplayModel: ObservableObject {
     /// edit, or nil when nothing could be sent.
     @discardableResult
     private func write(_ key: String, _ text: String, then: String? = nil) -> UInt64? {
-        let edit = outcomeOwner.begin()
+        // A key written for another model has its own slot, so its writes
+        // never retire the answer a control's write is waiting on.
+        let edit = outcomeOwner.begin(writtenForOthers.contains(key) ? key : "note")
+        latestEdits[key] = edit
         guard let snapshot = settingsProxy.currentSnapshotIdentity else {
             recordBinWrite(key, text, edit: edit, stage: .writeOutcome, outcome: .notSent)
             return nil
@@ -536,12 +592,12 @@ final class CoreDisplayModel: ObservableObject {
             let outcome = await proxy.writeBound(key, text, expectedSnapshotIdentity: snapshot,
                                                  authority: CommandSendPermit(), onLateOutcome: { [weak self] outcome in
                 self?.recordBinWrite(key, text, edit: edit, stage: .writeOutcome, outcome: DisplayBinDiagnostic.outcome(outcome))
-                self?.receive(outcome, edit: edit)
+                self?.receive(outcome, edit: edit, key: key)
             })
             guard let self else { return }
             self.writing.remove(key)
             self.recordBinWrite(key, text, edit: edit, stage: .writeOutcome, outcome: DisplayBinDiagnostic.outcome(outcome))
-            self.receive(outcome, edit: edit)
+            self.receive(outcome, edit: edit, key: key)
             if let then, self.pendingTarget?.edit == edit {
                 // The Core took the choice: its target follows, and stays
                 // shown until that write is answered.
@@ -558,7 +614,7 @@ final class CoreDisplayModel: ObservableObject {
                 if outcome == .linkLost && !proxy.isCurrent(next.snapshot) {
                     // The newest old-session touch retires with that session.
                     self.recordBinWrite(key, next.text, edit: next.edit, stage: .writeOutcome, outcome: .linkLost)
-                    self.receive(.linkLost, edit: next.edit)
+                    self.receive(.linkLost, edit: next.edit, key: key)
                     self.dropPending(next.edit)
                 } else if proxy.isCurrent(next.snapshot), next.text != proxy.value(key) || next.then != nil {
                     self.startWrite(key, next.text, edit: next.edit, snapshot: next.snapshot, then: next.then)
@@ -604,8 +660,19 @@ final class CoreDisplayModel: ObservableObject {
         }
     }
 
-    private func receive(_ outcome: SettingsWriteOutcome, edit: UInt64) {
-        guard outcomeOwner.isCurrent(edit), !outcome.propertyOutcome.heldForQuestion else { return }
+    private func receive(_ outcome: SettingsWriteOutcome, edit: UInt64, key: String) {
+        guard !outcome.propertyOutcome.heldForQuestion else { return }
+        if latestEdits[key] == edit {
+            switch outcome {
+            case .rejected(let reason):
+                refusals[key] = reason.isEmpty ? Self.refusedText : reason
+            case .accepted:
+                refusals[key] = nil
+            case .notConfirmed, .linkLost, .notSent, .keptOnThisDevice:
+                break
+            }
+        }
+        guard outcomeOwner.isCurrent(edit), !writtenForOthers.contains(key) else { return }
         switch outcome {
         case .rejected(let reason): note = reason.isEmpty ? Self.refusedText : reason
         case .notConfirmed:

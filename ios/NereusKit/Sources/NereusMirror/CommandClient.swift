@@ -104,6 +104,17 @@ public actor CommandClient {
         }
     }
 
+    /// Whether ``handle(_:)`` acts on `message`: only a `command.result`
+    /// does. A feed that hands this client only some of the Core's messages
+    /// (the app's own lane for it) asks this, so it never leaves out one
+    /// this client reads. Keep it in step with ``receive(_:)``.
+    public static func reads(_ message: LinkMessage) -> Bool {
+        if case .commandResult = message {
+            return true
+        }
+        return false
+    }
+
     /// One message from the Core; only `command.result` matters here.
     public func receive(_ message: LinkMessage) {
         guard case .commandResult(let wire) = message else {

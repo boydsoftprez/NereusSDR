@@ -28,6 +28,8 @@ protected:
 
 private:
     void buildTypeSpecific() override;
+    // Follows the item's columnRange() after a change to the item.
+    void refreshColumnRange();
 
     // Grid configuration
     QSpinBox*       m_spinColumns{nullptr};

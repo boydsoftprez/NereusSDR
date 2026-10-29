@@ -5,7 +5,7 @@
 // NereusSDR-original test. No Thetis port at this layer.
 //
 // Verifies the 6 QTimer chains added in Phase 3M-1a Task B.3:
-//   - Default timer intervals match Thetis [v2.10.3.13] constants.
+//   - Default timer intervals match Thetis [v2.10.3.15] constants.
 //   - RX→TX walk: Rx → RxToTxRfDelay → Tx (rfDelay timer).
 //   - TX→RX walk: Tx → TxToRxInFlight → TxToRxFlush → Rx
 //     (keyUpDelayTimer → pttOutDelayTimer).
@@ -23,11 +23,18 @@
 //      the timers actually fire after real elapsed time.
 // =================================================================
 
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the CW walk's wall-clock cadence (no rf_delay,
+//               ptt_out_delay kept) and the delay cites at v2.10.3.15.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// =================================================================
+
 // no-port-check: NereusSDR-original test file.
 
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QTimer>
 
 #include "core/MoxController.h"
@@ -45,44 +52,44 @@ private slots:
     // §1 — Default constant values
     //
     // Verify the kXxxMs constants match the Thetis field declarations:
-    //   console.cs:19659-19698 [v2.10.3.13] — mox_delay=10, space_mox_delay=0,
+    //   console.cs:19690-19729 [v2.10.3.15] — mox_delay=10, space_mox_delay=0,
     //     key_up_delay=10, rf_delay=30, ptt_out_delay=20
-    //   console.cs:18494      [v2.10.3.13] — break_in_delay=300
+    //   console.cs:18523      [v2.10.3.15] — break_in_delay=300
     // ════════════════════════════════════════════════════════════════════════
 
     void constants_rfDelay_is30()
     {
-        // From Thetis console.cs:19687 — private int rf_delay = 30 [v2.10.3.13]
+        // From Thetis console.cs:19718 — private int rf_delay = 30 [v2.10.3.15]
         QCOMPARE(MoxController::kRfDelayMs, 30);
     }
 
     void constants_moxDelay_is10()
     {
-        // From Thetis console.cs:19659 — private int mox_delay = 10 [v2.10.3.13]
+        // From Thetis console.cs:19690 — private int mox_delay = 10 [v2.10.3.15]
         QCOMPARE(MoxController::kMoxDelayMs, 10);
     }
 
     void constants_spaceDelay_is0()
     {
-        // From Thetis console.cs:19669 — private int space_mox_delay = 0 [v2.10.3.13]
+        // From Thetis console.cs:19700 — private int space_mox_delay = 0 [v2.10.3.15]
         QCOMPARE(MoxController::kSpaceDelayMs, 0);
     }
 
     void constants_keyUpDelay_is10()
     {
-        // From Thetis console.cs:19677 — private int key_up_delay = 10 [v2.10.3.13]
+        // From Thetis console.cs:19708 — private int key_up_delay = 10 [v2.10.3.15]
         QCOMPARE(MoxController::kKeyUpDelayMs, 10);
     }
 
     void constants_pttOutDelay_is20()
     {
-        // From Thetis console.cs:19694 — private int ptt_out_delay = 20 [v2.10.3.13]
+        // From Thetis console.cs:19725 — private int ptt_out_delay = 20 [v2.10.3.15]
         QCOMPARE(MoxController::kPttOutDelayMs, 20);
     }
 
     void constants_breakInDelay_is300()
     {
-        // From Thetis console.cs:18494 — private double break_in_delay = 300 [v2.10.3.13]
+        // From Thetis console.cs:18523 — private double break_in_delay = 300 [v2.10.3.15]
         // 3M-2 CW QSK; not started in 3M-1a.
         QCOMPARE(MoxController::kBreakInDelayMs, 300);
     }
@@ -456,6 +463,37 @@ private slots:
         // emitted — only the final TX→RX moxStateChanged(false).
         QCOMPARE(spy.count(), 1);
         QCOMPARE(spy.at(0).at(0).toBool(), false);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // §9 — CW transmit (R-CW-18): the CW walk on the wall clock.
+    //
+    // From Thetis chkMOX_CheckedChanged2, console.cs:29640-29649 and
+    // 29653-29680 [v2.10.3.15]: in CW the transmitter is not turned on, so
+    // there is no rf_delay; on the way back the key-up delay is skipped
+    // (cw_fw_keyer) and so is mox_delay, and ptt_out_delay stays.
+    // ════════════════════════════════════════════════════════════════════════
+
+    void cwWalk_wallClock_noRfDelay_pttOutDelayKept()
+    {
+        MoxController ctrl;
+        // rf 200, MOX 200, key-up 200 would show; ptt_out 60 must.
+        ctrl.setTimerIntervals(200, 200, 0, 200, 60, 0);
+        ctrl.setCwModeActive(true);
+
+        QElapsedTimer clock;
+        clock.start();
+        ctrl.setMox(true);
+        QCOMPARE(ctrl.state(), MoxState::Tx);
+        QVERIFY(ctrl.isMox());
+
+        clock.restart();
+        ctrl.setMox(false);
+        QCOMPARE(ctrl.state(), MoxState::TxToRxFlush);
+        QTRY_COMPARE_WITH_TIMEOUT(ctrl.state(), MoxState::Rx, 2000);
+        const qint64 elapsed = clock.elapsed();
+        QVERIFY2(elapsed >= 55, qPrintable(QString::number(elapsed)));
+        QVERIFY2(elapsed < 200, qPrintable(QString::number(elapsed)));
     }
 };
 

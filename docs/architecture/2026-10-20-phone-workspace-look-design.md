@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-20 to 2026-10-21
 **Author:** J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
-**Status:** Decided. The licence item in section 11 was settled by JJ on 2026-10-21. Every ruling below was made by JJ on 2026-10-20 and 2026-10-21 against the mockups listed here. The smaller calls in section 13 were shown on the mockups and are listed for veto.
+**Status:** Implemented, merged to main in PR 603 (2026-10-23). Decided. The licence item in section 11 was settled by JJ on 2026-10-21. Every ruling below was made by JJ on 2026-10-20 and 2026-10-21 against the mockups listed here. The smaller calls in section 13 were shown on the mockups and are listed for veto.
 **Base:** `origin/main` at `9a20b6b0c` (the phone app at 2026.10.1, PR 590). Every `file:line` below is on that tree.
 **Applies to:** the iPhone and iPad app under `ios/` and its Live Activity. The desktop does not change.
 **Mockups (approved):**

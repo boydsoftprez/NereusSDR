@@ -353,7 +353,7 @@
             "kind": "i64",
             "name": "transmitSettingsVersion",
             "ordinal": 0,
-            "value": 15
+            "value": 16
           },
           {
             "kind": "i64",

@@ -1,5 +1,67 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I5): a Signal history face saves
+//                 trace 2 under trace2Channel and keeps "channels" at one
+//                 entry (savedConfiguration), so v2026.10.1 still loads it;
+//                 a record from this branch's earlier heads (trace 2 inside
+//                 "channels") still loads. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Clock face: a new (thetisFormat) face sizes its title,
+//                 time and date lines as Thetis's renderClock does (1, 1.9
+//                 and 0.9 of the font size). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - Fix wave R1: darkFaceArtAvailable, for the editor.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Final review fix wave (M2): trace 2's veil shows why it has
+//                 no reading instead of "--". J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Contest face: its mode grid shows the ten modes it showed
+//                 before the twelve-mode grid (SPEC and DRM hidden), so the
+//                 face keeps its two rows of mode buttons. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - VFO display face: displayMode (Source slice, All slices,
+//                 Slice A and on), vfoLayout, vfoShowBandText and the
+//                 clsVfoDisplay colour keys (title, small digits, band text,
+//                 split back, split, digit highlight, RX, TX, lock, sync,
+//                 background); a key an edit or record carries wins over its
+//                 "vfo" record, a face saved without them looks the same;
+//                 new VFO display faces take kVfoPresetThetisDefaults.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Clock: thetisFormat draws Thetis's strings (12 hour h:mm:ss
+//                 with am / pm apart, ddd d MMM yyyy, titles local / utc);
+//                 new clock faces take kClockPresetThetisDefaults, a saved
+//                 clock without the key keeps yyyy-MM-dd and its earlier time
+//                 format. The clock reads ClockItem's time source.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Signal history: trace 2 (a second channel) reads its own
+//                 source (trace2Context, a slice per trace) or data source
+//                 variable 2, keeps its own samples and draws its own line,
+//                 readout and unavailable veil; a saved one-trace face loads
+//                 padded with trace 2 off; new faces take the Thetis trace
+//                 colors. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Signal text options: show type (the PK / AVG / FFT glyph)
+//                 and type color, the uV and dBm sub lines and their color,
+//                 and the peak value color; new faces take
+//                 kSignalTextThetisDefaults. Saved faces keep their look.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Magic eye options: eye size, bezel size and bezel image
+//                 (a bundled resource or a file the user picked), the
+//                 history fields; new eyes take kMagicEyeThetisDefaults.
+//                 Saved eyes keep their look. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - ANAN, Cross and Power/SWR per-item options: power limit,
+//                 power scale color, peak hold and peak value colors, other
+//                 needles color, shadow and ANAN dark mode, with Thetis
+//                 new-item defaults; MMIO variables 2+ drive the matching
+//                 ANAN / Cross needle. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - Fade on RX / TX: the 25% legacy fade applies only to a
+//                 composite without the entry fade keys. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -128,6 +190,7 @@ mw0lge@grange-lane.co.uk
 
 #include "gui/styles/WorkspacePreview.h"
 #include "CompositePresetItem.h"
+#include "gui/meters/ItemColourLook.h"
 #include "AnanFaceRenderer.h"
 #include "../ResponsiveText.h"
 #include "gui/meters/MeterPoller.h"
@@ -136,6 +199,8 @@ mw0lge@grange-lane.co.uk
 #include "gui/meters/ModeButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/meters/ClockItem.h"
+#include "gui/meters/MagicEyeItem.h"
+#include "gui/meters/SignalTextItem.h"
 #include <QPainter>
 #include <QGuiApplication>
 #include <QPainterPath>
@@ -245,6 +310,41 @@ AnanFaceGeometry ananGeometry(const QRectF& outer,int fontSize,bool showReadout,
     return {skin,window,skin,QRectF(outer.left(),outer.bottom()-readoutHeight,outer.width(),readoutHeight),
         QRectF(outer.right()-qMin(outer.width()*.48,190*outer.width()/720),outer.top(),qMin(outer.width()*.48,186*outer.width()/720),header),scale,readoutFont,columns,nameHeight,valueHeight,peakHeight};
 }
+// Thetis draws the time at FontSize * 1.9f and am / pm at FontSize * 0.8f.
+// From Thetis MeterManager.cs:40523,40525 [v2.10.3.15]
+constexpr float kClockTimeFontScale=1.9f;
+constexpr float kClockAmPmFontScale=0.8f;
+// The title draws at FontSize and the date at FontSize * 0.9f.
+// From Thetis MeterManager.cs:40515-40516,40533 [v2.10.3.15]
+constexpr float kClockTitleFontScale=1.0f;
+constexpr float kClockDateFontScale=0.9f;
+// The am / pm share of the time line (NereusSDR layout; Thetis offsets it
+// w * 0.228f from the time's start, MeterManager.cs:40525 [v2.10.3.15]).
+constexpr double kClockAmPmShare=0.22;
+// The VFO display face's colour keys beyond vfoFrequencyColor,
+// vfoModeColor, vfoFilterColor and vfoBandColor. Thetis sets the same
+// colours on a VFO display group from MeterManager.cs:28052-28070 and the
+// background from :28095 [v2.10.3.15].
+struct VfoColourKey {
+    const char* key;
+    void (VfoDisplayItem::*set)(const QColor&);
+    QColor (VfoDisplayItem::*get)() const;
+};
+constexpr VfoColourKey kVfoColourKeys[]{
+    {"vfoTitleColor",&VfoDisplayItem::setTitleColour,&VfoDisplayItem::titleColour},                         // vfo.TypeColour = igs.TitleColor
+    {"vfoSmallDigitsColor",&VfoDisplayItem::setFrequencySmallColour,&VfoDisplayItem::frequencySmallColour}, // vfo.FrequencyColourSmall
+    {"vfoBandTextColor",&VfoDisplayItem::setBandTextColour,&VfoDisplayItem::bandTextColour},                // vfo.BandTextColour
+    {"vfoSplitBackColor",&VfoDisplayItem::setSplitBackColour,&VfoDisplayItem::splitBackColour},             // vfo.SplitBackColour = igs.LowColor
+    {"vfoSplitColor",&VfoDisplayItem::setSplitColour,&VfoDisplayItem::splitColour},                         // vfo.SplitColour = igs.HighColor
+    {"vfoDigitHighlightColor",&VfoDisplayItem::setDigitHighlightColour,&VfoDisplayItem::digitHighlightColour}, // vfo.DigitHighlightColour = igs.PowerScaleColour
+    {"vfoRxColor",&VfoDisplayItem::setRxColour,&VfoDisplayItem::rxColour},                                  // vfo.RxColour = igs.PeakValueColour
+    {"vfoTxColor",&VfoDisplayItem::setTxColour,&VfoDisplayItem::txColour},                                  // vfo.TxColour = igs.PeakHoldMarkerColor
+    {"vfoLockColor",&VfoDisplayItem::setLockColour,&VfoDisplayItem::lockColour},                            // vfo.LockColour
+    {"vfoSyncColor",&VfoDisplayItem::setSyncColour,&VfoDisplayItem::syncColour},                            // vfo.SyncColour
+    {"vfoBackgroundColor",&VfoDisplayItem::setBackgroundColour,&VfoDisplayItem::backgroundColour},          // solidColor.Colour = igs.Colour
+};
+// The largest display mode a face takes: the last fixed slice.
+constexpr int kMaxVfoDisplayMode=VfoDisplayItem::kFixedSliceModeBase+VfoDisplayItem::kMaxSliceCount-1;
 QColor onDarkGlass(QColor requested) {
     // Contrast adaptation changes display only: alpha and stored color survive.
     if(requested.lightnessF()<.38) { return QColor(224,231,237,requested.alpha()); }
@@ -261,6 +361,20 @@ void CompositePresetItem::initialise() {
               {"showPeakValue",true},{"fontSize",18},{"faceHeight",m_face==Face::PowerSwr ? 144 : m_face==Face::Anan ? 300 : m_face==Face::Cross ? 260 : m_face==Face::Contest ? 280 : m_face==Face::Eye ? 180 : 120},
               {"fadeRx",false},{"fadeTx",false},{"displayGroup",1},{"clockMode","Both"},{"showDate",true},{"show24Hour",true},
               {"historyCapacity",300},{"historyMs",60000},{"autoScale",true},{"minValue",-140},{"maxValue",0},{"units","dBm"}};
+    // Per-item options. These starting values paint as the faces did before
+    // the options existed: power limit 0 follows the shared power scale, a
+    // blank color keeps the face's own ink. New items take the Thetis
+    // tables (applyNewItemDefaults).
+    if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross) { m_config["powerLimitW"]=0.0; m_config["peakHoldColor"]=QString(); }
+    if(m_face==Face::PowerSwr || m_face==Face::Anan) { m_config["peakValueColor"]=QString(); }
+    if(m_face==Face::Anan || m_face==Face::Cross) { m_config["powerScaleColor"]=QString(); m_config["subNeedleColor"]=QString(); m_config["shadow"]=true; }
+    if(m_face==Face::Anan) { m_config["darkMode"]=false; }
+    // Eye and bezel size 1 and no bezel: the eye as it painted before.
+    if(m_face==Face::Eye) { m_config["eyeScale"]=1.0; m_config["bezelScale"]=1.0; m_config["bezelImage"]=QString(); }
+    // Signal text: no type glyph, no sub line, a blank peak value color
+    // (the face's low color): the text as it painted before.
+    if(m_face==Face::SignalText) { m_config["showType"]=false; m_config["typeColor"]="#ff808080"; m_config["showSubMarker"]=false; m_config["subMarkerColor"]="#ff808080"; m_config["peakValueColor"]=QString(); }
+    m_faceArtBase=QStringLiteral(":/meters/anan-approved-clean.jpg");
     const auto add=[&](QString name,int binding,QString units,QMap<double,QPointF> calibration,QJsonObject c) {
         c["bindingId"]=binding; c["name"]=name; c["units"]=units; m_channels.append({name,units,binding,calibration,{},c});
     };
@@ -305,15 +419,26 @@ void CompositePresetItem::initialise() {
         const bool eye=m_face==Face::Eye;
         add("Signal",MeterBinding::SignalAvg,"dBm",eye ? QMap<double,QPointF>{{-127,{0,0}},{-73,{.85,0}},{-13,{1,0}}} : QMap<double,QPointF>{{-133,{0,0}},{-73,{.5,0}},{-13,{.99,0}}},channelConfig(eye?.2:.8,eye?.05:.2,4000,!eye,eye?QColor(Qt::green):QColor(Qt::yellow),QColor(255,0,0,128)));
         if(m_face==Face::SignalText) { m_config["fontSize"]=56; }
+        // Trace 2: the same reading on its own source, off until it has one
+        // (no trace2Context). Red sets it apart from trace 1's yellow.
+        if(m_face==Face::History) { add("Trace 2",MeterBinding::SignalAvg,"dBm",{{-133,{0,0}},{-73,{.5,0}},{-13,{.99,0}}},channelConfig(.8,.2,4000,true,QColor(Qt::red),QColor(255,0,0,128))); }
     }
     if(m_face==Face::Vfo || m_face==Face::Contest) {
         m_vfo=new VfoDisplayItem(this); m_vfo->setModeLabel({}); m_vfo->setBandLabel({}); m_vfo->setFilterLabel({}); m_vfo->setFrequency(0); m_vfo->setUnavailableText("No live slice reading");
     }
     if(m_face==Face::Contest) {
         m_bands=new BandButtonItem(this); m_bands->setColumns(5); m_modes=new ModeButtonItem(this); m_modes->setColumns(5);
+        // The face lays out two rows of five mode buttons (layoutChildren).
+        // The mode grid's SPEC and DRM stay hidden here, so the face keeps
+        // the ten modes it showed before the twelve-mode grid.
+        m_modes->setVisibleBits(m_modes->visibleBits() & ~((1u<<int(DSPMode::SPEC))|(1u<<int(DSPMode::DRM))));
         m_bands->setAllButtonsAvailable(false,"No live slice is attached"); m_modes->setAllButtonsAvailable(false,"No live slice is attached");
     }
     if(m_face==Face::Clock || m_face==Face::Contest) { m_clock=new ClockItem(this,false); }
+    // Off: yyyy-MM-dd and the earlier time format, as the clock painted
+    // before the option existed. New clock faces take
+    // kClockPresetThetisDefaults (applyNewItemDefaults).
+    if(m_clock) { m_config["thetisFormat"]=false; }
     setBindingId(m_channels.isEmpty() ? -1 : m_channels.first().binding); configureDynamics();
 }
 QString CompositePresetItem::typeId() const {
@@ -322,11 +447,13 @@ QString CompositePresetItem::typeId() const {
 void CompositePresetItem::configureDynamics() {
     for(Channel& channel:m_channels) { const QJsonObject& c=channel.config; channel.dynamics.configure(c["attack"].toDouble(),c["decay"].toDouble(),c["updateIntervalMs"].toInt(),c["historyMs"].toInt(),c["ignoreHistoryMs"].toInt()); channel.dynamics.reset(channel.calibration.firstKey()-(m_aboveS9 && isReceiveSignalBinding(channel.binding)?20:0)); }
     m_samples.clear(); m_lastFrame=-1; m_lastHistorySample=-1;
+    m_samples2.clear(); m_lastHistorySample2=-1;
 }
-QSet<int> CompositePresetItem::readingBindings() const { QSet<int> result; for(int i=0;i<m_channels.size();++i) { const int id=i==0 ? bindingId() : m_channels[i].binding; if(id>=0) { result.insert(id); } } return result; }
+QSet<int> CompositePresetItem::readingBindings() const { QSet<int> result; for(int i=0;i<m_channels.size();++i) { if(readsOwnSource(i)) { continue; } const int id=i==0 ? bindingId() : m_channels[i].binding; if(id>=0) { result.insert(id); } } return result; }
 void CompositePresetItem::pushBindingValue(int binding,double reading) {
     const bool available=bindingSupport(binding)!=BindingSupport::Unsupported && bindingUnavailableReason(binding).isEmpty() && std::isfinite(reading) && (hasMmioBinding() || !isNoMeterReading(reading));
     for(int i=0;i<m_channels.size();++i) {
+        if(channelFromMmio(i) || readsOwnSource(i)) { continue; }
         if(binding==(i==0?bindingId():m_channels[i].binding)) {
             const bool hadReading=m_channels[i].dynamics.hasReading();
             m_channels[i].dynamics.push(reading,available);
@@ -339,6 +466,7 @@ void CompositePresetItem::setBindingUnavailable(int binding,const QString& reaso
     MeterItem::setBindingUnavailable(binding,reason);
     if(!reason.isEmpty()) {
         for(int i=0;i<m_channels.size();++i) {
+            if(channelFromMmio(i) || readsOwnSource(i)) { continue; }
             if(binding==(i==0?bindingId():m_channels[i].binding)) {
                 const bool hadReading=m_channels[i].dynamics.hasReading();
                 m_channels[i].dynamics.push(0,false);
@@ -351,6 +479,7 @@ void CompositePresetItem::setBindingSupport(int binding,BindingSupport support) 
     if(bindingSupport(binding)==support) { return; }
     MeterItem::setBindingSupport(binding,support);
     for(int i=0;i<m_channels.size();++i) {
+        if(readsOwnSource(i)) { continue; }
         if(binding==(i==0?bindingId():m_channels[i].binding)) { m_channels[i].dynamics.push(0,false); }
     }
     markPresentationDirty(true);
@@ -360,13 +489,20 @@ bool CompositePresetItem::advanceMeter(qint64 now) {
     // A restarted presentation clock cannot retain samples from its future.
     // Channel dynamics keep their independent sampling/reset policy.
     if(m_face==Face::History && m_lastFrame>=0 && now<m_lastFrame) {
-        changed=!m_samples.isEmpty(); m_samples.clear(); m_lastHistorySample=-1;
+        changed=!m_samples.isEmpty() || !m_samples2.isEmpty(); m_samples.clear(); m_lastHistorySample=-1;
+        m_samples2.clear(); m_lastHistorySample2=-1;
     }
     const auto oldSize=m_samples.size(); m_samples.removeIf([&](const Sample& sample) { return now-sample.time>=m_config["historyMs"].toInt(); }); changed=(m_samples.size()!=oldSize) || changed;
+    const auto oldSize2=m_samples2.size(); m_samples2.removeIf([&](const Sample& sample) { return now-sample.time>=m_config["historyMs"].toInt(); }); changed=(m_samples2.size()!=oldSize2) || changed;
     for(Channel& channel:m_channels) { changed=channel.dynamics.advance(now) || changed; }
     if(m_face==Face::History && !m_channels.isEmpty() && m_channels[0].dynamics.hasReading() && (m_lastHistorySample<0 || now-m_lastHistorySample>=m_channels[0].config["updateIntervalMs"].toInt())) {
         m_samples.append({now,m_channels[0].dynamics.value()}); m_lastHistorySample=now; const int duration=m_config["historyMs"].toInt(); m_samples.removeIf([&](const Sample& s) { return now-s.time>=duration; });
         const int extra=m_samples.size()-m_config["historyCapacity"].toInt(); if(extra>0) { m_samples.remove(0,extra); } changed=true;
+    }
+    // Trace 2 samples its own reading on its own clock.
+    if(m_face==Face::History && trace2Shown() && m_channels[1].dynamics.hasReading() && (m_lastHistorySample2<0 || now-m_lastHistorySample2>=m_channels[1].config["updateIntervalMs"].toInt())) {
+        m_samples2.append({now,m_channels[1].dynamics.value()}); m_lastHistorySample2=now;
+        const int extra=m_samples2.size()-m_config["historyCapacity"].toInt(); if(extra>0) { m_samples2.remove(0,extra); } changed=true;
     }
     const bool clock=m_clock && (m_lastFrame<0 || now/250!=m_lastFrame/250); m_lastFrame=now; const bool dirty=m_presentationDirty; m_presentationDirty=false; return changed || clock || dirty;
 }
@@ -378,6 +514,7 @@ void CompositePresetItem::resetRxSource()
     for (int i = 0; i < m_channels.size(); ++i) {
         const int binding = i == 0 ? bindingId() : m_channels[i].binding;
         if (binding < MeterBinding::SignalPeak || binding > MeterBinding::PbSnr) { continue; }
+        if (channelFromMmio(i) || readsOwnSource(i)) { continue; }
         Channel& channel = m_channels[i];
         channel.dynamics.reset(channel.calibration.firstKey() - (m_aboveS9 && isReceiveSignalBinding(binding) ? 20 : 0));
         if (i == 0) {
@@ -388,6 +525,173 @@ void CompositePresetItem::resetRxSource()
         changed = true;
     }
     if (changed) { markPresentationDirty(m_face == Face::Anan); }
+}
+int CompositePresetItem::mmioChannel(int index) const {
+    // ANAN: MMIOVariableIndex 0..6 on Signal, Volts, Amps, Power, SWR,
+    // Compression and ALC group, our channels 0..6.
+    // From Thetis MeterManager.cs:23799,23842,23870,23939,24002,24034,24066 [v2.10.3.15]
+    // Thetis's ApplySettingsForMeterGroup leaves them unapplied for ANANMM:
+    //TODO ananmm not done yet [original inline comment from MeterManager.cs:27906]
+    // Cross: variable 0 is Forward (PWR), 1 is Reflected (REVERSE_PWR).
+    // From Thetis MeterManager.cs:22656,24152,24222,27906-27918 [v2.10.3.15]
+    // Signal history: variable 2 is the right axis, trace 2.
+    // From Thetis MeterManager.cs:22670,26952-26955,18132-18163 [v2.10.3.15]
+    if(index<0 || index>=m_channels.size()) { return -1; }
+    if(m_face==Face::Anan || m_face==Face::Cross) { return index; }
+    if(m_face==Face::History && index==1) { return 1; }
+    return -1;
+}
+void CompositePresetItem::setSecondaryValue(int index,double value) {
+    const int i=mmioChannel(index);
+    if(i<1) { return; }
+    const int binding=m_channels[i].binding;
+    const bool hadReading=m_channels[i].dynamics.hasReading();
+    m_channels[i].dynamics.push(value,std::isfinite(value));
+    if(m_face==Face::Anan && bindingSupport(binding)!=BindingSupport::Supported && hadReading!=m_channels[i].dynamics.hasReading()) { markPresentationDirty(true); }
+}
+bool CompositePresetItem::trace2Shown() const {
+    return m_face==Face::History && m_channels.size()>1 && (m_config.value(QStringLiteral("trace2Context")).isObject() || channelFromMmio(1));
+}
+QJsonObject CompositePresetItem::trace2SourceContext(const QJsonObject& entryContext) const {
+    if(!trace2Shown() || !m_config.value(QStringLiteral("trace2Context")).isObject()) { return {}; }
+    QJsonObject context=trace2Context();
+    // A trace that names no radio session reads the entry's.
+    const QString session=entryContext.value(QStringLiteral("sessionId")).toString();
+    if(!context.contains(QStringLiteral("sessionId")) && !session.isEmpty()) { context[QStringLiteral("sessionId")]=session; }
+    return context;
+}
+void CompositePresetItem::pushTrace2Value(double reading) {
+    if(!trace2Shown() || trace2FromDataSource()) { return; }
+    const bool available=m_trace2Unavailable.isEmpty() && std::isfinite(reading) && !isNoMeterReading(reading);
+    m_channels[1].dynamics.push(reading,available);
+}
+void CompositePresetItem::resetTrace2() {
+    if(m_face!=Face::History || m_channels.size()<2) { return; }
+    Channel& channel=m_channels[1];
+    channel.dynamics.reset(channel.calibration.firstKey()-(m_aboveS9 && isReceiveSignalBinding(channel.binding)?20:0));
+    m_samples2.clear(); m_lastHistorySample2=-1; markPresentationDirty();
+}
+void CompositePresetItem::setTrace2Unavailable(const QString& reason) {
+    if(m_face!=Face::History || m_channels.size()<2 || m_trace2Unavailable==reason) { return; }
+    m_trace2Unavailable=reason;
+    if(!reason.isEmpty() && !trace2FromDataSource()) { m_channels[1].dynamics.push(0,false); }
+    markPresentationDirty(true);
+}
+bool CompositePresetItem::darkFaceArtAvailable() const {
+    return !m_faceArtBase.isEmpty() && ImageItem::variantPath(m_faceArtBase,true,0.0)!=ImageItem::variantPath(m_faceArtBase,false,0.0);
+}
+QString CompositePresetItem::trace2ReadoutText() const {
+    if(!m_trace2Unavailable.isEmpty()) { return m_trace2Unavailable; }
+    if(m_channels.size()<2 || !m_channels[1].dynamics.hasReading()) { return QStringLiteral("--"); }
+    return QString::number(m_channels[1].dynamics.value(),'f',1)+QLatin1Char(' ')+m_config["units"].toString();
+}
+QRectF CompositePresetItem::trace2ReadoutRect(int width,int height) const {
+    // Bottom right, beside the "Recent" line: paintHistory's arithmetic.
+    const QRectF outer=pixelRect(width,height);
+    const double scale=objectTextScale(outer,{260,120});
+    const QRectF r=outer.adjusted(44*scale,28*scale,-14*scale,-22*scale);
+    return {outer.left()+outer.width()*.66,r.bottom()+3*scale,outer.width()*.34-4*scale,18*scale};
+}
+bool CompositePresetItem::primaryNeedle(int channel) const {
+    // From Thetis MeterManager.cs:23793,23933,24148 [v2.10.3.15] — ni.Primary:
+    // ANAN Signal and Power, Cross Forward. The others take SubMarkerColour
+    // (MeterManager.cs:27987 [v2.10.3.15]).
+    if(m_face==Face::Anan) { return channel==0 || channel==3; }
+    return channel==0;
+}
+QColor CompositePresetItem::optionalColor(const char* key,const QColor& fallback) const {
+    const QString value=m_config.value(QLatin1String(key)).toString();
+    return value.isEmpty()?fallback:lookColor(m_config,key);
+}
+QColor CompositePresetItem::lookColor(const QJsonObject& config,const char* key) const {
+    // Faces name their keys "<kind>.<key>", channels "<kind>.<channel>.<key>".
+    QString field=m_kind+QLatin1Char('.');
+    if(&config!=&m_config) { field+=config.value(QLatin1String("name")).toString()+QLatin1Char('.'); }
+    return ItemColourLook::effective(field+QLatin1String(key),color(config,key),this);
+}
+QString CompositePresetItem::faceArtPath(double diagonalPx) const {
+    // From Thetis MeterManager.cs:27997 [v2.10.3.15] — the primary image takes
+    // the group's DarkMode; renderImage picks the -dark file when present.
+    return ImageItem::variantPath(m_faceArtBase,m_config.value(QStringLiteral("darkMode")).toBool(false),diagonalPx);
+}
+void CompositePresetItem::applyNewItemDefaults() {
+    MeterItem::applyNewItemDefaults();
+    if(m_face==Face::Clock) {
+        // New clock faces draw Thetis's time and date strings
+        // (kClockPresetThetisDefaults, CompositePresetItem.h).
+        const ClockPresetThetisDefaults& d=kClockPresetThetisDefaults;
+        if(!applyConfiguration({{"thetisFormat",d.thetisFormat},{"show24Hour",d.show24Hour}})) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
+    if(m_face==Face::Vfo) {
+        // New VFO display faces take the VFO display item's Thetis values
+        // (kVfoPresetThetisDefaults, CompositePresetItem.h). The Contest
+        // face's VFO keeps its look.
+        const VfoPresetThetisDefaults& d=kVfoPresetThetisDefaults; const VfoDisplayThetisDefaults& v=d.display;
+        const auto hex=[](QRgb rgb) { return QColor::fromRgb(rgb).name(QColor::HexArgb); };
+        const QJsonObject edit{{"displayMode",d.displayMode},{"vfoLayout",int(v.layout)},{"vfoShowBandText",v.showBandText},
+            {"vfoFrequencyColor",hex(v.frequencyColour)},{"vfoModeColor",hex(v.modeColour)},{"vfoFilterColor",hex(v.filterColour)},{"vfoBandColor",hex(v.bandColour)},
+            {"vfoTitleColor",hex(v.titleColour)},{"vfoSmallDigitsColor",hex(v.frequencySmallColour)},{"vfoBandTextColor",hex(v.bandTextColour)},
+            {"vfoSplitBackColor",hex(v.splitBackColour)},{"vfoSplitColor",hex(v.splitColour)},{"vfoDigitHighlightColor",hex(v.digitHighlightColour)},
+            {"vfoRxColor",hex(v.rxColour)},{"vfoTxColor",hex(v.txColour)},{"vfoLockColor",hex(v.lockColour)},{"vfoSyncColor",hex(v.syncColour)},
+            {"vfoBackgroundColor",hex(v.backColour)}};
+        if(!applyConfiguration(edit)) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
+    if(m_face==Face::Eye) {
+        // New magic eyes take Thetis's AddMagicEye / clsMagicEyeItem values
+        // (kMagicEyeThetisDefaults, MagicEyeItem.h). Thetis's "eye-bezel"
+        // art is not bundled, so a new eye starts with no bezel.
+        const MagicEyeItemThetisDefaults& d=kMagicEyeThetisDefaults;
+        QJsonArray channels=configuration()["channels"].toArray();
+        QJsonObject signal=channels.first().toObject();
+        signal["attack"]=double(d.attackRatio); signal["decay"]=double(d.decayRatio);
+        signal["color"]=QColor::fromRgb(d.colour).name(QColor::HexArgb);
+        signal["bindingId"]=d.bindingId; signal["showHistory"]=d.showHistory;
+        signal["historyMs"]=d.historyDurationMs; signal["ignoreHistoryMs"]=d.ignoreHistoryMs;
+        signal["historyColor"]=QColor::fromRgba(d.historyColour).name(QColor::HexArgb);
+        channels[0]=signal;
+        const QJsonObject edit{{"eyeScale",double(d.eyeScale)},{"bezelScale",double(d.bezelScale)},{"bezelImage",QString()},{"channels",channels}};
+        if(!applyConfiguration(edit)) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
+    if(m_face==Face::SignalText) {
+        // New signal text faces take Thetis's AddSMeterBarText and
+        // clsSignalText values (kSignalTextThetisDefaults, SignalTextItem.h).
+        const SignalTextItemThetisDefaults& d=kSignalTextThetisDefaults;
+        QJsonArray channels=configuration()["channels"].toArray();
+        QJsonObject signal=channels.first().toObject();
+        signal["attack"]=double(d.attackRatio); signal["decay"]=double(d.decayRatio);
+        signal["color"]=QColor::fromRgb(d.fontColour).name(QColor::HexArgb);
+        signal["bindingId"]=d.bindingId; signal["showHistory"]=d.showHistory; signal["peakHold"]=d.peakHold;
+        signal["historyMs"]=d.historyDurationMs; signal["ignoreHistoryMs"]=d.ignoreHistoryMs;
+        channels[0]=signal;
+        const auto name=[](QRgb rgb) { return QColor::fromRgb(rgb).name(QColor::HexArgb); };
+        const QJsonObject edit{{"backdropColor",name(d.backgroundColour)},{"fontSize",int(d.fontSize)},{"showReadout",d.showValue},
+            {"showPeakValue",d.showPeakValue},{"peakValueColor",name(d.peakValueColour)},{"showSubMarker",d.showSubMarker},
+            {"subMarkerColor",name(d.subMarkerColour)},{"showType",d.showType},{"typeColor",name(d.typeColour)},{"channels",channels}};
+        if(!applyConfiguration(edit)) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
+    if(m_face==Face::History) {
+        // New signal history faces take Thetis's trace colors: axis 0 Red,
+        // axis 1 Yellow. Trace 2 starts off, as Thetis's _show_scale_1.
+        // From Thetis MeterManager.cs:17530-17531 [v2.10.3.15]
+        QJsonArray channels=configuration()["channels"].toArray();
+        QJsonObject first=channels[0].toObject(); first["color"]=QColor(Qt::red).name(QColor::HexArgb); channels[0]=first;
+        QJsonObject second=channels[1].toObject(); second["color"]=QColor(Qt::yellow).name(QColor::HexArgb); channels[1]=second;
+        if(!applyConfiguration({{"channels",channels}})) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
+        return;
+    }
+    const CompositeFaceThetisDefaults* defaults=m_face==Face::Anan?&kAnanThetisDefaults:m_face==Face::Cross?&kCrossThetisDefaults:m_face==Face::PowerSwr?&kPowerSwrThetisDefaults:nullptr;
+    if(!defaults) { return; }
+    const auto name=[](QRgb rgb) { return rgb==0?QString():QColor::fromRgba(rgb).name(QColor::HexArgb); };
+    QJsonObject edit;
+    const QJsonObject values{{"powerLimitW",defaults->powerLimitW},{"powerScaleColor",name(defaults->powerScaleColour)},
+        {"peakHoldColor",name(defaults->peakHoldColour)},{"peakValueColor",name(defaults->peakValueColour)},
+        {"subNeedleColor",name(defaults->subNeedleColour)},{"shadow",defaults->shadow},{"darkMode",defaults->darkMode}};
+    for(auto it=values.begin();it!=values.end();++it) { if(m_config.contains(it.key())) { edit[it.key()]=it.value(); } }
+    if(!applyConfiguration(edit)) { qCWarning(lcMeter)<<"Composite new-item defaults rejected"<<typeId(); }
 }
 void CompositePresetItem::setPowerScale(int watts) {
     if(watts>0 && (watts!=m_powerScale || m_displayPowerTop>0.0)) {
@@ -409,6 +713,11 @@ bool CompositePresetItem::hasLegalMarker(int i) const {
 }
 double CompositePresetItem::powerBasisForChannel(int i) const {
     const Channel& channel=m_channels[i];
+    // Per-item power limit: value *= 100 / MaxPower on the needles Thetis
+    // gives it (ANAN Power, Cross Forward and Reflected, the PWR bar).
+    // From Thetis MeterManager.cs:27960,27985,28292 [v2.10.3.15]
+    const double limit=m_config.value(QStringLiteral("powerLimitW")).toDouble(0.0);
+    if(limit>0.0 && channel.config["normalisePower"].toBool()) { return limit; }
     if(m_displayPowerTop>0.0 && (i==0?bindingId():channel.binding)==MeterBinding::TxPower
         && channel.calibration.lastKey()>0.0) {
         // Preserve every relative curve point; its existing endpoint maps
@@ -430,9 +739,11 @@ int CompositePresetItem::preferredFaceHeight() const {
         // the imported face height or the user's chosen font.
         QFont font; font.setPixelSize(WorkspacePreview::readableTextPixelSize(m_config["fontSize"].toInt()));
         QFont peakFont; peakFont.setPixelSize(WorkspacePreview::readableTextPixelSize(14));
+        QFont subFont; subFont.setPixelSize(WorkspacePreview::readableTextPixelSize(signalSubLinePixels()));
         const int lines=int(m_config["showTitle"].toBool())+int(m_config["showReadout"].toBool());
         height=qMax(height,lines*QFontMetrics(font).height()+
-            (m_config["showPeakValue"].toBool()?QFontMetrics(peakFont).height():0)+12);
+            (m_config["showPeakValue"].toBool()?QFontMetrics(peakFont).height():0)+
+            (m_config.value("showSubMarker").toBool()?QFontMetrics(subFont).height():0)+12);
     }
     return height;
 }
@@ -524,6 +835,11 @@ QRectF CompositePresetItem::ananNeedleRect(int width,int height) const {
 QRectF CompositePresetItem::ananGroupControlRect(int width,int height) const {
     return ananGeometry(pixelRect(width,height),m_config["fontSize"].toInt(),m_config["showReadout"].toBool(),m_config["showPeakValue"].toBool(),ananReadoutCount(),ananReadoutCellWidth(pixelRect(width,height).width())).selector;
 }
+int CompositePresetItem::signalSubLinePixels() const {
+    // From Thetis MeterManager.cs:40596 [v2.10.3.15] — st.FontSize * 0.55f
+    constexpr double kSubLineRatio=0.55;
+    return qMax(1,int(std::lround(m_config["fontSize"].toInt()*kSubLineRatio)));
+}
 QString CompositePresetItem::signalReadout(double value) const { return formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); }
 QString CompositePresetItem::formatSignalReading(double value,MeterUnit unit,bool aboveS9,bool decimal) {
     if(unit==MeterUnit::dBm) { return QString::number(value,'f',decimal?1:0)+" dBm"; }
@@ -546,6 +862,8 @@ QStringList CompositePresetItem::editableChannelFields(int channel) const {
     if(channel<0 || channel>=m_channels.size()) { return {}; }
     QStringList fields{"bindingId","attack","decay","updateIntervalMs","ignoreHistoryMs","color"};
     if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross || m_face==Face::SignalText) { fields.append({"historyMs","showHistory","peakHold","historyColor"}); }
+    // Thetis applies the history fields to the eye (MeterManager.cs:27838-27840 [v2.10.3.15]).
+    if(m_face==Face::Eye) { fields.append({"historyMs","showHistory","historyColor"}); }
     if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross) { fields.append({"name","units","visible"}); }
     if(m_face==Face::Anan || m_face==Face::Cross) { fields.append({"shadow","offsetX","offsetY","radiusX","radiusY","lengthFactor","strokeWidth","onlyWhenRx","onlyWhenTx","displayGroup"}); }
     return fields;
@@ -555,12 +873,19 @@ QStringList CompositePresetItem::editableFields() const {
     if(m_face!=Face::Vfo) { fields.append({"backdropColor","showTitle","fontSize"}); }
     if(m_face!=Face::Vfo && m_face!=Face::Contest && m_face!=Face::Clock) { fields.append({"titleColor","lowColor","showReadout","channels"}); }
     if(m_face==Face::SignalText || m_face==Face::Eye || m_face==Face::History) { fields.append("title"); }
+    if(m_face==Face::SignalText) { fields.append({"showType","typeColor","showSubMarker","subMarkerColor","peakValueColor"}); }
     if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross || m_face==Face::SignalText) { fields.append("showPeakValue"); }
     if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross) { fields.append("highColor"); }
     if(m_face==Face::Anan) { fields.append("displayGroup"); }
-    if(m_face==Face::History) { fields.append({"historyCapacity","historyMs","minValue","maxValue","autoScale","units"}); }
-    if(m_clock) { fields.append({"clockMode","showDate","show24Hour","clockTimeColor","clockDateColor","clockTitleColor"}); }
-    if(m_vfo) { fields.append({"vfo","vfoFrequencyColor","vfoModeColor","vfoFilterColor","vfoBandColor"}); }
+    if(m_face==Face::PowerSwr || m_face==Face::Anan || m_face==Face::Cross) { fields.append({"powerLimitW","peakHoldColor"}); }
+    if(m_face==Face::PowerSwr || m_face==Face::Anan) { fields.append("peakValueColor"); }
+    if(m_face==Face::Anan || m_face==Face::Cross) { fields.append({"powerScaleColor","subNeedleColor","shadow"}); }
+    if(m_face==Face::Anan) { fields.append("darkMode"); }
+    if(m_face==Face::Eye) { fields.append({"eyeScale","bezelScale","bezelImage"}); }
+    if(m_face==Face::History) { fields.append({"historyCapacity","historyMs","minValue","maxValue","autoScale","units","trace2Context"}); }
+    if(m_clock) { fields.append({"clockMode","showDate","show24Hour","thetisFormat","clockTimeColor","clockDateColor","clockTitleColor"}); }
+    if(m_vfo) { fields.append({"vfo","displayMode","vfoLayout","vfoShowBandText","vfoTitleColor","vfoFrequencyColor","vfoSmallDigitsColor","vfoModeColor","vfoFilterColor","vfoBandColor","vfoBandTextColor",
+        "vfoSplitBackColor","vfoSplitColor","vfoDigitHighlightColor","vfoRxColor","vfoTxColor","vfoLockColor","vfoSyncColor","vfoBackgroundColor"}); }
     if(m_bands) { fields.append({"bands","modes"}); }
     if(!m_channels.isEmpty()) { fields.append("bindingId"); }
     return fields;
@@ -568,17 +893,45 @@ QStringList CompositePresetItem::editableFields() const {
 QJsonObject CompositePresetItem::configuration() const {
     QJsonObject c=m_config;
     const QStringList fields=editableFields();
-    const QStringList known{"title","showTitle","titleColor","backdropColor","lowColor","highColor","showReadout","showPeakValue","fontSize","displayGroup","clockMode","showDate","show24Hour","historyCapacity","historyMs","autoScale","minValue","maxValue","units"};
+    const QStringList known{"title","showTitle","titleColor","backdropColor","lowColor","highColor","showReadout","showPeakValue","fontSize","displayGroup","clockMode","showDate","show24Hour","historyCapacity","historyMs","autoScale","minValue","maxValue","units",
+        "powerLimitW","peakHoldColor","peakValueColor","powerScaleColor","subNeedleColor","shadow","darkMode","eyeScale","bezelScale","bezelImage",
+        "showType","typeColor","showSubMarker","subMarkerColor","trace2Context","thetisFormat"};
     for(const QString& key:known) { if(!fields.contains(key)) { c.remove(key); } }
     if(m_vfo) { c["vfo"]=m_vfo->serialize(); c["vfoFrequencyColor"]=m_vfo->frequencyColour().name(QColor::HexArgb); c["vfoModeColor"]=m_vfo->modeColour().name(QColor::HexArgb); c["vfoFilterColor"]=m_vfo->filterColour().name(QColor::HexArgb); c["vfoBandColor"]=m_vfo->bandColour().name(QColor::HexArgb); }
+    if(m_vfo) {
+        c["displayMode"]=m_vfo->displayModeValue(); c["vfoLayout"]=int(m_vfo->layout()); c["vfoShowBandText"]=m_vfo->showBandText();
+        for(const VfoColourKey& k:kVfoColourKeys) { c[QLatin1String(k.key)]=(m_vfo->*k.get)().name(QColor::HexArgb); }
+    }
     if(m_bands) { c["bands"]=m_bands->serialize(); c["modes"]=m_modes->serialize(); }
     if(m_clock) { c["clockTimeColor"]=m_clock->timeColour().name(QColor::HexArgb); c["clockDateColor"]=m_clock->dateColour().name(QColor::HexArgb); c["clockTitleColor"]=m_clock->typeTitleColour().name(QColor::HexArgb); }
     c["x"]=x(); c["y"]=y(); c["w"]=itemWidth(); c["h"]=itemHeight(); c["bindingId"]=bindingId();
     QJsonArray channels; for(int i=0;i<m_channels.size();++i) { QJsonObject channel=m_channels[i].config; if(i==0) { channel["bindingId"]=bindingId(); } channels.append(channel); } c["channels"]=channels; return c;
 }
-QString CompositePresetItem::serialize() const { return QString::fromUtf8(QJsonDocument(configuration()).toJson(QJsonDocument::Compact)); }
+QJsonObject CompositePresetItem::savedConfiguration() const {
+    QJsonObject c=configuration();
+    // v2026.10.1 takes a Signal history record only with its one channel
+    // (it rejects any other count), so trace 2 is saved beside it.
+    if(m_face==Face::History) {
+        QJsonArray channels=c.value(QStringLiteral("channels")).toArray();
+        if(channels.size()==2) { c.insert(QStringLiteral("trace2Channel"),channels.takeAt(1)); c.insert(QStringLiteral("channels"),channels); }
+    }
+    return c;
+}
+QString CompositePresetItem::serialize() const { return QString::fromUtf8(QJsonDocument(savedConfiguration()).toJson(QJsonDocument::Compact)); }
 bool CompositePresetItem::deserialize(const QString& data) { const QJsonDocument json=QJsonDocument::fromJson(data.toUtf8()); return json.isObject() && json.object()["kind"]==m_kind && json.object()["schema"]==1 && applyConfiguration(json.object()); }
-bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
+bool CompositePresetItem::applyConfiguration(const QJsonObject& requested) {
+    // A saved Signal history face carries trace 2 as trace2Channel beside
+    // its one channel (savedConfiguration); it applies as the second
+    // channel. The key itself is never kept.
+    QJsonObject edit=requested;
+    if(edit.contains(QStringLiteral("trace2Channel"))) {
+        const QJsonArray channels=edit.value(QStringLiteral("channels")).toArray();
+        if(m_face==Face::History && m_channels.size()==2 && channels.size()==1) {
+            if(!edit.value(QStringLiteral("trace2Channel")).isObject()) { return false; }
+            QJsonArray both=channels; both.append(edit.value(QStringLiteral("trace2Channel"))); edit.insert(QStringLiteral("channels"),both);
+        }
+        edit.remove(QStringLiteral("trace2Channel"));
+    }
     QJsonObject next=m_config; const QJsonObject current=configuration(); for(auto i=current.begin();i!=current.end();++i) { next[i.key()]=i.value(); } for(auto i=edit.begin();i!=edit.end();++i) { next[i.key()]=i.value(); }
     if(edit.contains("channels") && !edit.contains("bindingId") && !edit["channels"].toArray().isEmpty()) { next["bindingId"]=edit["channels"].toArray().first().toObject()["bindingId"]; }
     const QStringList editable=editableFields();
@@ -590,7 +943,46 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
     if(next["fontSize"].toInt()<8 || next["faceHeight"].toInt()<minimumConfiguredFaceHeight() || next["historyMs"].toInt()<100 || next["historyCapacity"].toInt()<2) { return false; }
     for(const QString& key:{QStringLiteral("backdropColor"),QStringLiteral("titleColor"),QStringLiteral("lowColor"),QStringLiteral("highColor")}) { if(!next[key].isString() || !QColor(next[key].toString()).isValid()) { return false; } }
     for(const QString& key:{QStringLiteral("showTitle"),QStringLiteral("showReadout"),QStringLiteral("showPeakValue"),QStringLiteral("fadeRx"),QStringLiteral("fadeTx"),QStringLiteral("autoScale"),QStringLiteral("showDate"),QStringLiteral("show24Hour")}) { if(!next[key].isBool()) { return false; } }
+    // Per-item options, validated only where the face has them.
+    if(next.contains("powerLimitW")) {
+        const QJsonValue limit=next["powerLimitW"];
+        // 0 follows the radio's rating; otherwise the Setup range.
+        if(!limit.isDouble() || !std::isfinite(limit.toDouble()) || (limit.toDouble()!=0.0 && (limit.toDouble()<kMinBarPowerLimitW || limit.toDouble()>kMaxBarPowerLimitW))) { return false; }
+    }
+    for(const QString& key:{QStringLiteral("peakHoldColor"),QStringLiteral("peakValueColor"),QStringLiteral("powerScaleColor"),QStringLiteral("subNeedleColor")}) {
+        if(next.contains(key) && (!next[key].isString() || (!next[key].toString().isEmpty() && !QColor(next[key].toString()).isValid()))) { return false; }
+    }
+    for(const QString& key:{QStringLiteral("shadow"),QStringLiteral("darkMode"),QStringLiteral("showType"),QStringLiteral("showSubMarker"),QStringLiteral("thetisFormat")}) { if(next.contains(key) && !next[key].isBool()) { return false; } }
+    for(const QString& key:{QStringLiteral("typeColor"),QStringLiteral("subMarkerColor")}) {
+        if(next.contains(key) && (!next[key].isString() || !QColor(next[key].toString()).isValid())) { return false; }
+    }
+    for(const QString& key:{QStringLiteral("eyeScale"),QStringLiteral("bezelScale")}) {
+        if(next.contains(key) && (!next[key].isDouble() || !(next[key].toDouble()>=MagicEyeItem::kMinEyeScale && next[key].toDouble()<=MagicEyeItem::kMaxEyeScale))) { return false; }
+    }
+    // A bezel is a bundled resource or a local file; never a URL to fetch.
+    if(next.contains("bezelImage") && (!next["bezelImage"].isString() || next["bezelImage"].toString().contains(QStringLiteral("://")))) { return false; }
     if(!next["title"].isString() || !next["units"].isString() || !QStringList{"Both","UTC","Local"}.contains(next["clockMode"].toString())) { return false; }
+    // Signal history saved before trace 2 carries one channel: it loads
+    // padded with trace 2's own channel and trace 2 off, so it looks the same.
+    if(m_face==Face::History && m_channels.size()==2 && next["channels"].toArray().size()==1) {
+        QJsonArray padded=next["channels"].toArray(); padded.append(m_channels[1].config); next["channels"]=padded;
+        if(!edit.contains("trace2Context")) { next.remove("trace2Context"); }
+    }
+    // Trace 2's source: null (or absent) turns it off; otherwise a slice
+    // (sliceId, or the older 1-based rxSource) or Follow selected RX, and
+    // optionally a radio session.
+    if(next.contains("trace2Context") && next["trace2Context"].isNull()) { next.remove("trace2Context"); }
+    if(next.contains("trace2Context")) {
+        if(m_face!=Face::History || !next["trace2Context"].isObject()) { return false; }
+        const QJsonObject source=next["trace2Context"].toObject();
+        const bool follow=source.contains("rxSourceMode");
+        if(follow && source["rxSourceMode"]!=QStringLiteral("followSelectedRx")) { return false; }
+        for(const QString& key:{QStringLiteral("sliceId"),QStringLiteral("rxSource")}) {
+            if(source.contains(key) && (!source[key].isDouble() || source[key].toDouble()!=std::floor(source[key].toDouble()) || source[key].toDouble()<(key==QStringLiteral("rxSource")?1:0) || source[key].toDouble()>1000000)) { return false; }
+        }
+        if(!follow && !source.contains("sliceId") && !source.contains("rxSource")) { return false; }
+        if(source.contains("sessionId") && !source["sessionId"].isString()) { return false; }
+    }
     const QJsonArray channels=next["channels"].toArray(); if(channels.size()!=m_channels.size()) { return false; }
     QVector<QJsonObject> checked;
     for(int i=0;i<channels.size();++i) {
@@ -609,11 +1001,34 @@ bool CompositePresetItem::applyConfiguration(const QJsonObject& edit) {
         if(next.contains(key)) { const QString raw=next[key].toString(); if(child==m_vfo) { VfoDisplayItem probe; if(!probe.deserialize(raw)) { return false; } } else if(child==m_bands) { BandButtonItem probe; if(!probe.deserialize(raw)) { return false; } } else if(child==m_modes) { ModeButtonItem probe; if(!probe.deserialize(raw)) { return false; } } else { ClockItem probe(nullptr,false); if(!probe.deserialize(raw)) { return false; } } }
     }
     for(const QString& key:{QStringLiteral("clockTimeColor"),QStringLiteral("clockDateColor"),QStringLiteral("clockTitleColor"),QStringLiteral("vfoFrequencyColor"),QStringLiteral("vfoModeColor"),QStringLiteral("vfoFilterColor"),QStringLiteral("vfoBandColor")}) { if(next.contains(key) && !QColor(next[key].toString()).isValid()) { return false; } }
+    if(m_vfo) {
+        for(const VfoColourKey& k:kVfoColourKeys) { const QLatin1String key(k.key); if(next.contains(key) && (!next[key].isString() || !QColor(next[key].toString()).isValid())) { return false; } }
+        if(next.contains("vfoShowBandText") && !next["vfoShowBandText"].isBool()) { return false; }
+        // A saved 1 (the earlier VFO B) is taken and becomes Slice B.
+        if(next.contains("displayMode")) { const double v=next["displayMode"].toDouble(-1.5); if(!next["displayMode"].isDouble() || v!=std::floor(v) || v<0 || v>kMaxVfoDisplayMode) { return false; } }
+        if(next.contains("vfoLayout")) { const QJsonValue v=next["vfoLayout"]; if(!v.isDouble() || (v.toDouble()!=int(VfoDisplayItem::Layout::Compact) && v.toDouble()!=int(VfoDisplayItem::Layout::Thetis))) { return false; } }
+    }
+    // Other needles color: an edit of the face option recolors every
+    // non-primary needle, as Thetis sets ni.Colour = igs.SubMarkerColour
+    // (MeterManager.cs:27987 [v2.10.3.15]). A saved record carries its
+    // channels, so restoring never overwrites a needle's own color.
+    if(!edit.contains("channels") && edit.contains("subNeedleColor") && !edit["subNeedleColor"].toString().isEmpty()) {
+        for(int i=0;i<checked.size();++i) { if(!primaryNeedle(i)) { checked[i]["color"]=QColor(edit["subNeedleColor"].toString()).name(QColor::HexArgb); } }
+    }
     m_config=next; setRect(next["x"].toDouble(),next["y"].toDouble(),next["w"].toDouble(),next["h"].toDouble()); setBindingId(next["bindingId"].toInt());
     for(int i=0;i<checked.size();++i) { m_channels[i].config=checked[i]; if(i==0) { m_channels[i].config["bindingId"]=bindingId(); } m_channels[i].binding=i==0?bindingId():checked[i]["bindingId"].toInt(); m_channels[i].name=checked[i]["name"].toString(); m_channels[i].units=checked[i]["units"].toString(); }
     for(MeterItem* child:internalItems()) { const QString key=child==m_vfo?"vfo":child==m_bands?"bands":child==m_modes?"modes":"clock"; if(next.contains(key)) { child->deserialize(next[key].toString()); } }
 
     if(m_vfo) { m_vfo->setFrequencyColour(QColor(next["vfoFrequencyColor"].toString())); m_vfo->setModeColour(QColor(next["vfoModeColor"].toString())); m_vfo->setFilterColour(QColor(next["vfoFilterColor"].toString())); m_vfo->setBandColour(QColor(next["vfoBandColor"].toString())); }
+    if(m_vfo) {
+        // A key the edit (or a saved record) carries wins over its "vfo"
+        // record; a face saved before the keys keeps what its "vfo" record
+        // gives it, so it looks the same.
+        for(const VfoColourKey& k:kVfoColourKeys) { const QLatin1String key(k.key); if(edit.contains(key)) { (m_vfo->*k.set)(QColor(edit[key].toString())); } }
+        if(edit.contains("vfoShowBandText")) { m_vfo->setShowBandText(edit["vfoShowBandText"].toBool()); }
+        if(edit.contains("displayMode")) { m_vfo->setDisplayModeValue(edit["displayMode"].toInt()); }
+        if(edit.contains("vfoLayout")) { m_vfo->setLayout(static_cast<VfoDisplayItem::Layout>(edit["vfoLayout"].toInt())); }
+    }
     if(m_clock) { m_clock->setTimeColour(QColor(next["clockTimeColor"].toString())); m_clock->setDateColour(QColor(next["clockDateColor"].toString())); m_clock->setTypeTitleColour(QColor(next["clockTitleColor"].toString())); m_clock->setShow24Hour(next["show24Hour"].toBool()); m_clock->setShowType(next["showTitle"].toBool()); }
     configureDynamics(); markPresentationDirty(true); return true;
 }
@@ -623,12 +1038,12 @@ void CompositePresetItem::paintBar(QPainter& p,const QRectF& r,int index) {
     const double scale=objectTextScale(r,{260,72}),size=m_config["fontSize"].toInt()*scale;
     const double left=r.left()+18*scale,right=r.right()-18*scale,top=r.top()+28*scale,base=r.bottom()-14*scale;
     const auto pos=[&](double value) { return left+(right-left)*calibratedPoint(index,value).x(); };
-    p.setPen(color(m_config,"titleColor")); if(m_config["showTitle"].toBool()) {
+    p.setPen(lookColor(m_config,"titleColor")); if(m_config["showTitle"].toBool()) {
         const double start=m_config["showReadout"].toBool()?.32:0,end=m_config["showPeakValue"].toBool()?.68:1;
         drawObjectText(p,QRectF(left+(right-left)*start,r.top()+2*scale,(right-left)*(end-start),22*scale),channel.name,size);
     }
-    if(c["showHistory"].toBool() && channel.dynamics.hasReading()) { p.fillRect(QRectF(pos(channel.dynamics.minHistory()),top,pos(channel.dynamics.maxHistory())-pos(channel.dynamics.minHistory()),base-top),color(c,"historyColor")); }
-    p.setPen(QPen(color(m_config,"lowColor"),2)); p.drawLine(QPointF(left,base),QPointF(right,base));
+    if(c["showHistory"].toBool() && channel.dynamics.hasReading()) { p.fillRect(QRectF(pos(channel.dynamics.minHistory()),top,pos(channel.dynamics.maxHistory())-pos(channel.dynamics.minHistory()),base-top),lookColor(c,"historyColor")); }
+    p.setPen(QPen(lookColor(m_config,"lowColor"),2)); p.drawLine(QPointF(left,base),QPointF(right,base));
     struct TickLabel { QRectF box; QRectF ink; QString value; QFont font; };
     QVector<TickLabel> workspaceLabels;
     for(auto it=channel.calibration.begin();it!=channel.calibration.end();++it) {
@@ -689,16 +1104,16 @@ void CompositePresetItem::paintBar(QPainter& p,const QRectF& r,int index) {
         }
     }
     if(hasLegalMarker(index)) {
-        p.setPen(QPen(color(m_config,"highColor"),2));
+        p.setPen(QPen(lookColor(m_config,"highColor"),2));
         p.drawLine(QPointF(pos(legalMarkerW()),base),QPointF(pos(legalMarkerW()),base-10*scale));
     }
     if(channel.dynamics.hasReading()) {
-        if(c["peakHold"].toBool()) { p.setPen(QPen(color(m_config,"highColor"),3)); p.drawLine(QPointF(pos(channel.dynamics.maxHistory()),top),QPointF(pos(channel.dynamics.maxHistory()),base)); }
-        p.setPen(QPen(color(c,"color"),3)); p.drawLine(QPointF(pos(channel.dynamics.value()),top),QPointF(pos(channel.dynamics.value()),base));
+        if(c["peakHold"].toBool()) { p.setPen(QPen(optionalColor("peakHoldColor",lookColor(m_config,"highColor")),3)); p.drawLine(QPointF(pos(channel.dynamics.maxHistory()),top),QPointF(pos(channel.dynamics.maxHistory()),base)); }
+        p.setPen(QPen(lookColor(c,"color"),3)); p.drawLine(QPointF(pos(channel.dynamics.value()),top),QPointF(pos(channel.dynamics.value()),base));
     }
     const auto reading=[&](double value) { return QString::number(value,'f',1)+(channel.units.isEmpty()?QString():" "+channel.units); };
-    p.setPen(hasLegalMarker(index) && channel.dynamics.value()>=legalMarkerW()?color(m_config,"highColor"):color(c,"color")); if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(left,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.value()):"--",size,Qt::AlignLeft|Qt::AlignVCenter); }
-    p.setPen(color(m_config,"highColor")); if(m_config["showPeakValue"].toBool()) { drawObjectText(p,QRectF(left+(right-left)*.68+2*scale,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.maxHistory()):"--",size,Qt::AlignRight|Qt::AlignVCenter); }
+    p.setPen(hasLegalMarker(index) && channel.dynamics.value()>=legalMarkerW()?lookColor(m_config,"highColor"):lookColor(c,"color")); if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(left,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.value()):"--",size,Qt::AlignLeft|Qt::AlignVCenter); }
+    p.setPen(optionalColor("peakValueColor",lookColor(m_config,"highColor"))); if(m_config["showPeakValue"].toBool()) { drawObjectText(p,QRectF(left+(right-left)*.68+2*scale,r.top()+2*scale,(right-left)*.32-2*scale,22*scale),channel.dynamics.hasReading()?reading(channel.dynamics.maxHistory()):"--",size,Qt::AlignRight|Qt::AlignVCenter); }
 }
 void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool background) {
     if(m_face==Face::Anan) { paintAnan(p,outer,background); return; }
@@ -708,7 +1123,7 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
     const QRectF r(outer.center().x()-width/2,outer.top()+25*scale,width,width*aspect);
     QFont font=WorkspacePreview::readableFont(p.font(), p.device());
     if(background) {
-        p.setPen(color(m_config,"titleColor")); if(m_config["showTitle"].toBool()) { drawObjectText(p,QRectF(outer.left()+4*scale,outer.top()+2*scale,outer.width()-8*scale,22*scale),m_config["title"].toString(),size); }
+        p.setPen(lookColor(m_config,"titleColor")); if(m_config["showTitle"].toBool()) { drawObjectText(p,QRectF(outer.left()+4*scale,outer.top()+2*scale,outer.width()-8*scale,22*scale),m_config["title"].toString(),size); }
     }
     QPainterPath marks;
     if(background) {
@@ -737,15 +1152,17 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
             if(hasLegalMarker(i)) {
                 const QPointF tip=needleTip(i,legalMarkerW(),r);
                 const QPointF direction=(tip-pivot)/qMax(.001,std::hypot(tip.x()-pivot.x(),tip.y()-pivot.y()));
-                p.setPen(QPen(color(m_config,"highColor"),1.5));
+                p.setPen(QPen(lookColor(m_config,"highColor"),1.5));
                 p.drawLine(tip,tip-direction*(7*scale));
             }
+            // From Thetis MeterManager.cs:28016 [v2.10.3.15] — power scale ink.
+            const QColor scaleInk=c["normalisePower"].toBool()?optionalColor("powerScaleColor",lookColor(m_config,"lowColor")):lookColor(m_config,"lowColor");
             QPainterPath arc; int n=0;
             for(auto it=channel.calibration.begin();it!=channel.calibration.end();++it,++n) {
                 const double raw=c["normalisePower"].toBool()?it.key()*powerBasisForChannel(i)/100.0:it.key()-(m_aboveS9 && (channel.binding==MeterBinding::SignalPeak || channel.binding==MeterBinding::SignalAvg)?20:0);
                 const QPointF tip=needleTip(i,raw,r); if(n==0) { arc.moveTo(tip); } else { arc.lineTo(tip); }
                 const QPointF direction=(tip-pivot)/std::hypot(tip.x()-pivot.x(),tip.y()-pivot.y());
-                p.setPen(QPen(color(m_config,"lowColor"),1.5)); p.drawLine(tip,tip-direction*(7*scale));
+                p.setPen(QPen(scaleInk,1.5)); p.drawLine(tip,tip-direction*(7*scale));
                 // Sparse labels keep all supported minimum sizes readable.
                 if(n==0 || n==channel.calibration.size()-1 || (channel.calibration.size()>3 && (i==0 && m_face==Face::Anan ? it.key()==-73 : c["normalisePower"].toBool() ? it.key()==50 : n==channel.calibration.size()/2))) {
                     const QPointF label=tip+direction*((m_face==Face::Anan && i==4 ? -20 : 13)*scale);
@@ -775,7 +1192,8 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
                     p.setFont(finalFont);p.drawText(box,Qt::AlignCenter,value);
                 }
             }
-            p.setPen(QPen(color(m_config,"lowColor"),1.5)); p.drawPath(arc);
+            p.setPen(QPen(scaleInk,1.5)); p.drawPath(arc);
+            p.setPen(QPen(lookColor(m_config,"lowColor"),1.5));
             const double y=outer.bottom()-44*scale-(m_face==Face::Anan && i==1 ? 16*scale : 0)
                 + (WorkspacePreview::enabled() ? 2*scale : 0);
             if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(outer.left()+outer.width()*i/m_channels.size()+4*scale,y,outer.width()/m_channels.size()-8*scale,18*scale),channel.name+" ("+channel.units+")",size); }
@@ -787,28 +1205,28 @@ void CompositePresetItem::paintNeedles(QPainter& p,const QRectF& outer,bool back
         // adds the closing line
         if(c["showHistory"].toBool()) {
             QPainterPath fan; fan.moveTo(pivot); const double minimum=channel.dynamics.minHistory(),maximum=channel.dynamics.maxHistory();
-            for(int step=0;step<=30;++step) { fan.lineTo(needleTip(i,minimum+(maximum-minimum)*step/30,r)); } fan.closeSubpath(); p.fillPath(fan,color(c,"historyColor"));
+            for(int step=0;step<=30;++step) { fan.lineTo(needleTip(i,minimum+(maximum-minimum)*step/30,r)); } fan.closeSubpath(); p.fillPath(fan,lookColor(c,"historyColor"));
         }
         const auto draw=[&](double value,QColor needle) {
             const QPointF tip=needleTip(i,value,r);
             // From Thetis MeterManager.cs:40912-40928 [v2.10.3.15] — source needle shadow.
             //shadow?
-            if(c["shadow"].toBool()) { const double shift=stroke*1.5*((tip.x()-r.center().x())/(r.width()/2)); for(int n=0;n<8;++n) { p.setPen(QPen(QColor(0,0,0,12),stroke*3*(1-n/7.0))); p.drawLine(pivot+QPointF(shift,stroke*1.5),tip+QPointF(shift,stroke*1.5)); } }
+            if(c["shadow"].toBool() && faceShadow()) { const double shift=stroke*1.5*((tip.x()-r.center().x())/(r.width()/2)); for(int n=0;n<8;++n) { p.setPen(QPen(QColor(0,0,0,12),stroke*3*(1-n/7.0))); p.drawLine(pivot+QPointF(shift,stroke*1.5),tip+QPointF(shift,stroke*1.5)); } }
             p.setPen(QPen(needle,stroke)); p.drawLine(pivot,tip);
         };
-        if(c["peakHold"].toBool()) { draw(channel.dynamics.maxHistory(),color(m_config,"highColor")); } draw(channel.dynamics.value(),color(c,"color"));
+        if(c["peakHold"].toBool()) { draw(channel.dynamics.maxHistory(),optionalColor("peakHoldColor",lookColor(m_config,"highColor"))); } draw(channel.dynamics.value(),lookColor(c,"color"));
         p.restore();
     }
     if(!background && m_config["showReadout"].toBool()) {
         QStringList readings;
         for(int i=0;i<m_channels.size();++i) { if(channelVisible(i)) { const auto& c=m_channels[i]; readings.append(c.name+": "+(c.dynamics.hasReading()?QString::number(c.dynamics.value(),'f',1)+" "+c.units:QStringLiteral("--"))+(m_config["showPeakValue"].toBool()&&c.dynamics.hasReading()?QStringLiteral(" [%1]").arg(c.dynamics.maxHistory(),0,'f',1):QString())); } }
         p.setFont(font);
-        p.fillRect(QRectF(outer.left(),outer.bottom()-26*scale,outer.width(),26*scale),color(m_config,"backdropColor")); p.setPen(color(m_config,"lowColor"));
+        p.fillRect(QRectF(outer.left(),outer.bottom()-26*scale,outer.width(),26*scale),lookColor(m_config,"backdropColor")); p.setPen(lookColor(m_config,"lowColor"));
         for(int i=0;i<readings.size();++i) {
             drawObjectText(p,QRectF(outer.left()+outer.width()*i/readings.size()+4*scale,outer.bottom()-26*scale,outer.width()/readings.size()-8*scale,24*scale),readings[i],size*14/18);
         }
     }
-    if(background && m_face==Face::Anan && m_tx) { p.setPen(color(m_config,"lowColor")); p.drawText(QRectF(outer.right()-100,outer.top()+2,96,22),Qt::AlignCenter,QStringList{"","Power/SWR","Compression","ALC group","Amps"}.value(m_config["displayGroup"].toInt())+" ▾"); }
+    if(background && m_face==Face::Anan && m_tx) { p.setPen(lookColor(m_config,"lowColor")); p.drawText(QRectF(outer.right()-100,outer.top()+2,96,22),Qt::AlignCenter,QStringList{"","Power/SWR","Compression","ALC group","Amps"}.value(m_config["displayGroup"].toInt())+" ▾"); }
 }
 void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool background) {
     using namespace AnanFace;
@@ -817,7 +1235,10 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
     if(skin.isEmpty()) { return; }
     const double scale=geometry.scale,fontRatio=m_config["fontSize"].toDouble()/18;
     QPainterPath glass; glass.addRoundedRect(geometry.window,44*scale,44*scale);
-    static const QImage art(QStringLiteral(":/meters/anan-approved-clean.jpg"));
+    static const QImage defaultArt(QStringLiteral(":/meters/anan-approved-clean.jpg"));
+    const QString artPath=faceArtPath(std::hypot(skin.width(),skin.height()));
+    if(artPath!=QStringLiteral(":/meters/anan-approved-clean.jpg") && artPath!=m_faceArtLoaded) { m_faceArtImage.load(artPath); m_faceArtLoaded=artPath; }
+    const QImage& art=artPath==QStringLiteral(":/meters/anan-approved-clean.jpg")?defaultArt:m_faceArtImage;
     static const QImage hubs(QStringLiteral(":/meters/anan-approved-hubs.jpg"));
     const auto text=[&](const QRectF& box,const QString& value,double size,QColor ink,Qt::Alignment alignment=Qt::AlignCenter,int minimumPixels=1) {
         QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setBold(true); font.setItalic(false); font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1,qRound(size))));
@@ -845,7 +1266,10 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
         gradient.setColorAt(.68,QColor("#e3e9ec")); gradient.setColorAt(1,QColor("#b1bdc4"));
         return QBrush(gradient);
     };
+    const QString powerScaleInk=m_config.value(QStringLiteral("powerScaleColor")).toString();
     const auto markInk=[&](int i,double key) {
+        // From Thetis MeterManager.cs:28016 [v2.10.3.15] — power scale ink.
+        if(i==3 && !powerScaleInk.isEmpty()) { return onDarkGlass(QColor(powerScaleInk)); }
         if(i==0 && key>-73) { return color(m_config,"highColor")==QColor("#ffff4444")?QColor("#ff1429"):color(m_config,"highColor"); }
         if(i==6 && key<0) { return QColor("#1bb9f4"); }
         return color(m_config,"lowColor")==QColor("#ff203040")?QColor("#e5eef3"):onDarkGlass(color(m_config,"lowColor"));
@@ -1047,6 +1471,7 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
                     QLinearGradient metal(box.topLeft(),box.bottomLeft());
                     metal.setColorAt(0,Qt::white); metal.setColorAt(.42,QColor("#eff3f5")); metal.setColorAt(1,QColor("#bcc5cc"));
                     const QBrush ink=i==0 && key>-73?QBrush(markInk(i,key)):i==6 && key<0?QBrush(QColor("#2bc2ff")):
+                        i==3 && !powerScaleInk.isEmpty()?QBrush(markInk(i,key)):
                         color(m_config,"lowColor")==QColor("#ff203040")?QBrush(metal):QBrush(onDarkGlass(color(m_config,"lowColor")));
                     p.fillPath(inkPath,ink);
                 }
@@ -1079,9 +1504,9 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
                 const QPointF direction=delta/length,normal(-direction.y(),direction.x());
                 const double width=(i==0 || i==3?10:7)*scale*config["strokeWidth"].toDouble()/2.5;
                 QPainterPath needle; needle.moveTo(pivot+normal*width); needle.lineTo(tip); needle.lineTo(pivot-normal*width); needle.lineTo(pivot-direction*22*scale); needle.closeSubpath();
-                if(config["shadow"].toBool()) { QPainterPath shadow=needle; shadow.translate(scale,scale); p.fillPath(shadow,QColor(0,0,0,150)); }
+                if(config["shadow"].toBool() && faceShadow()) { QPainterPath shadow=needle; shadow.translate(scale,scale); p.fillPath(shadow,QColor(0,0,0,150)); }
                 QLinearGradient red(pivot,tip); red.setColorAt(0,QColor("#91001a")); red.setColorAt(.38,QColor("#ff5361")); red.setColorAt(.6,QColor("#ff182f")); red.setColorAt(1,QColor("#ba1028"));
-                const QBrush ink=peak?QBrush(onDarkGlass(color(m_config,"highColor"))):color(config,"color")!=defaultInk?QBrush(onDarkGlass(color(config,"color"))):i==0 || i==3?QBrush(red):silver(QRectF(pivot,tip).normalized());
+                const QBrush ink=peak?QBrush(onDarkGlass(optionalColor("peakHoldColor",color(m_config,"highColor")))):color(config,"color")!=defaultInk?QBrush(onDarkGlass(color(config,"color"))):i==0 || i==3?QBrush(red):silver(QRectF(pivot,tip).normalized());
                 p.fillPath(needle,ink);
                 p.setPen(QPen(i==0 || i==3?QColor("#ffc0bd"):QColor(Qt::white),qMax(.55,2.4*scale)));
                 p.drawLine(pivot,tip-direction*12*scale);
@@ -1126,7 +1551,7 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
             text(QRectF(box.left()+3,top,width-6,geometry.nameHeight),channel.name,qMax(11.0,geometry.readoutFont*.75),onDarkGlass(color(m_config,"titleColor")),Qt::AlignCenter,11);
             text(QRectF(box.left()+3,top+geometry.nameHeight,width-6,geometry.valueHeight),value,geometry.readoutFont,onDarkGlass(color(channel.config,"color")),Qt::AlignCenter,12);
             if(m_config["showPeakValue"].toBool()) {
-                text(QRectF(box.left()+3,top+geometry.nameHeight+geometry.valueHeight,width-6,geometry.peakHeight),available?QStringLiteral("Peak %1").arg(channel.dynamics.maxHistory(),0,'f',1):QStringLiteral("Peak --"),qMax(11.0,geometry.readoutFont*.7),onDarkGlass(color(m_config,"lowColor")),Qt::AlignCenter,11);
+                text(QRectF(box.left()+3,top+geometry.nameHeight+geometry.valueHeight,width-6,geometry.peakHeight),available?QStringLiteral("Peak %1").arg(channel.dynamics.maxHistory(),0,'f',1):QStringLiteral("Peak --"),qMax(11.0,geometry.readoutFont*.7),onDarkGlass(optionalColor("peakValueColor",color(m_config,"lowColor"))),Qt::AlignCenter,11);
             }
             ++cell;
         }
@@ -1134,8 +1559,12 @@ void CompositePresetItem::paintAnan(QPainter& p,const QRectF& outer,bool backgro
 }
 void CompositePresetItem::paintEye(QPainter& p,const QRectF& outer) {
     const double scale=objectTextScale(outer,{260,180});
-    const QRectF r=outer.adjusted(outer.width()*.22,28*scale,-outer.width()*.22,-24*scale); const auto& channel=m_channels.first();
-    const QColor bright=color(channel.config,"color"),closed(int(bright.red()*.35),int(bright.green()*.35),int(bright.blue()*.35)),dim(int(bright.red()*.75),int(bright.green()*.75),int(bright.blue()*.75));
+    const QRectF box=outer.adjusted(outer.width()*.22,28*scale,-outer.width()*.22,-24*scale); const auto& channel=m_channels.first();
+    // Eye and bezel each sized by their scale, centred in the eye box; 1 fills it.
+    // From Thetis MeterManager.cs:27807-27880 [v2.10.3.15] (EyeScale, EyeBezelScale)
+    const auto centred=[&box](double s) { return s>=1.0?box:QRectF(box.center().x()-box.width()*s/2,box.center().y()-box.height()*s/2,box.width()*s,box.height()*s); };
+    const QRectF r=centred(m_config.value(QStringLiteral("eyeScale")).toDouble(1.0));
+    const QColor bright=lookColor(channel.config,"color"),closed(int(bright.red()*.35),int(bright.green()*.35),int(bright.blue()*.35)),dim(int(bright.red()*.75),int(bright.green()*.75),int(bright.blue()*.75));
     // From Thetis MeterManager.cs:37249-37368 [v2.10.3.15] — closed ellipse and bright above-S9 overlap.
     // scale percX for overlap hard coded for now
     const double fraction=channel.dynamics.hasReading()?calibratedPoint(0,channel.dynamics.value()).x()/.85:0;
@@ -1151,18 +1580,40 @@ void CompositePresetItem::paintEye(QPainter& p,const QRectF& outer) {
     // adds the closing line
     QPainterPath slit; slit.moveTo(r.center()+QPointF(0,r.height()*.03)); slit.lineTo(r.center()+QPointF(r.width()*.4,0)); slit.lineTo(r.center()-QPointF(0,r.height()*.03)); slit.lineTo(r.center()-QPointF(r.width()*.4,0)); slit.closeSubpath(); p.fillPath(slit,closed);
     p.setBrush(QColor(32,32,32)); p.setPen(Qt::NoPen); p.drawEllipse(r.center(),r.width()/6,r.width()/6);
-    if(m_config["showReadout"].toBool()) { p.setPen(color(m_config,"lowColor")); drawObjectText(p,QRectF(outer.left(),outer.bottom()-22*scale,outer.width(),20*scale),channel.dynamics.hasReading()?signalReadout(channel.dynamics.value()):QStringLiteral("--"),m_config["fontSize"].toInt()*scale*12/18); }
+    // The bezel image sits over the eye (Thetis img.ZOrder 3 over me.ZOrder 2,
+    // MeterManager.cs:23583, 23601 [v2.10.3.15]).
+    const QString bezel=m_config.value(QStringLiteral("bezelImage")).toString();
+    if(bezel!=m_bezelLoaded) { m_bezelLoaded=bezel; m_bezelImage=bezel.isEmpty()?QImage():QImage(bezel); }
+    if(!m_bezelImage.isNull()) { p.drawImage(centred(m_config.value(QStringLiteral("bezelScale")).toDouble(1.0)),m_bezelImage); }
+    if(m_config["showReadout"].toBool()) { p.setPen(lookColor(m_config,"lowColor")); drawObjectText(p,QRectF(outer.left(),outer.bottom()-22*scale,outer.width(),20*scale),channel.dynamics.hasReading()?signalReadout(channel.dynamics.value()):QStringLiteral("--"),m_config["fontSize"].toInt()*scale*12/18); }
 }
 void CompositePresetItem::paintHistory(QPainter& p,const QRectF& outer) {
     const double scale=objectTextScale(outer,{260,120}),size=m_config["fontSize"].toInt()*scale*11/18;
     const QRectF r=outer.adjusted(44*scale,28*scale,-14*scale,-22*scale); double low=m_config["minValue"].toDouble(),high=m_config["maxValue"].toDouble();
-    if(m_config["autoScale"].toBool() && !m_samples.isEmpty()) { low=m_samples.first().value; high=low; for(const Sample& s:m_samples) { low=qMin(low,s.value); high=qMax(high,s.value); } low-=3; high+=3; }
-    p.setPen(color(m_config,"lowColor"));
+    // Both traces share the scale, so two slices compare on one axis.
+    const bool second=trace2Shown();
+    QVector<Sample> scaled=m_samples; if(second && m_trace2Unavailable.isEmpty()) { scaled+=m_samples2; }
+    if(m_config["autoScale"].toBool() && !scaled.isEmpty()) { low=scaled.first().value; high=low; for(const Sample& s:scaled) { low=qMin(low,s.value); high=qMax(high,s.value); } low-=3; high+=3; }
+    p.setPen(lookColor(m_config,"lowColor"));
     for(int n=0;n<=4;++n) { const double y=r.bottom()-r.height()*n/4; p.drawLine(QPointF(r.left(),y),QPointF(r.right(),y)); drawObjectText(p,QRectF(outer.left(),y-8*scale,40*scale,16*scale),QString::number(low+(high-low)*n/4,'f',0),size,Qt::AlignRight|Qt::AlignVCenter); }
-    drawObjectText(p,QRectF(r.left(),r.bottom()+3*scale,r.width(),18*scale),QStringLiteral("Recent %1 s · %2").arg(m_config["historyMs"].toInt()/1000).arg(m_config["units"].toString()),size);
-    QPainterPath path; bool first=true; const qint64 latest=m_samples.isEmpty()?0:m_samples.last().time;
-    for(const Sample& s:m_samples) { QPointF point(r.right()-(latest-s.time)*r.width()/m_config["historyMs"].toDouble(),r.bottom()-qBound(0.0,(s.value-low)/(high-low),1.0)*r.height()); if(first) { path.moveTo(point); first=false; } else { path.lineTo(point); } }
-    p.setPen(QPen(color(m_channels.first().config,"color"),2)); p.drawPath(path);
+    const QRectF trace2Cell(outer.left()+outer.width()*.66,r.bottom()+3*scale,outer.width()*.34-4*scale,18*scale);
+    drawObjectText(p,QRectF(r.left(),r.bottom()+3*scale,second?trace2Cell.left()-r.left()-4*scale:r.width(),18*scale),QStringLiteral("Recent %1 s · %2").arg(m_config["historyMs"].toInt()/1000).arg(m_config["units"].toString()),size);
+    const qint64 latest=qMax(m_samples.isEmpty()?qint64(0):m_samples.last().time,second && !m_samples2.isEmpty()?m_samples2.last().time:qint64(0));
+    const auto drawTrace=[&](const QVector<Sample>& samples,const QColor& ink) {
+        QPainterPath path; bool first=true;
+        for(const Sample& s:samples) { QPointF point(r.right()-(latest-s.time)*r.width()/m_config["historyMs"].toDouble(),r.bottom()-qBound(0.0,(s.value-low)/(high-low),1.0)*r.height()); if(first) { path.moveTo(point); first=false; } else { path.lineTo(point); } }
+        p.setPen(QPen(ink,2)); p.drawPath(path);
+    };
+    if(second && m_trace2Unavailable.isEmpty()) { drawTrace(m_samples2,lookColor(m_channels[1].config,"color")); }
+    drawTrace(m_samples,lookColor(m_channels.first().config,"color"));
+    if(second) {
+        // Trace 2's readout; with no reading here it takes the unavailable
+        // veil (MeterWidget's) alone, and trace 1 keeps drawing.
+        const Channel& trace=m_channels[1];
+        if(!m_trace2Unavailable.isEmpty()) { p.fillRect(trace2Cell,QColor(0x0f,0x0f,0x1a,170)); }
+        p.setPen(lookColor(trace.config,"color"));
+        if(m_config["showReadout"].toBool() || !m_trace2Unavailable.isEmpty()) { drawObjectText(p,trace2Cell,trace2ReadoutText(),size,Qt::AlignRight|Qt::AlignVCenter); }
+    }
     if(m_config["showReadout"].toBool()) { drawObjectText(p,QRectF(outer.left()+outer.width()*.66,outer.top()+2*scale,outer.width()*.34-4*scale,22*scale),m_channels.first().dynamics.hasReading()?QString::number(m_channels.first().dynamics.value(),'f',1)+" "+m_config["units"].toString():QStringLiteral("--"),size,Qt::AlignRight|Qt::AlignVCenter); }
 }
 void CompositePresetItem::layoutChildren(int width,int height) {
@@ -1178,7 +1629,10 @@ void CompositePresetItem::layoutChildren(int width,int height) {
 void CompositePresetItem::paint(QPainter& p,int width,int height) { paintForLayer(p,width,height,Layer::Background); paintForLayer(p,width,height,Layer::OverlayDynamic); }
 void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) {
     const QRectF r=pixelRect(width,height); p.save(); p.setClipRect(r); p.setRenderHint(QPainter::Antialiasing,true);
-    if((m_tx && m_config["fadeTx"].toBool()) || (!m_tx && m_config["fadeRx"].toBool())) { p.setOpacity(.25); }
+    // Legacy fade: a composite saved with fadeRx / fadeTx and no entry fade
+    // keys keeps the instant 25% opacity; with the keys (hasExplicitFade)
+    // MeterWidget draws the animated veil instead.
+    if(!hasExplicitFade() && ((m_tx && m_config["fadeTx"].toBool()) || (!m_tx && m_config["fadeRx"].toBool()))) { p.setOpacity(.25); }
     QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setPixelSize(WorkspacePreview::readableTextPixelSize(m_config["fontSize"].toInt())); p.setFont(font);
     const double textScale=m_face==Face::Anan?1:objectTextScale(r,{m_face==Face::Cross || m_face==Face::Contest?360.:260.,
         m_face==Face::PowerSwr?144.:m_face==Face::Cross?260.:m_face==Face::Contest?280.:m_face==Face::Eye?180.:120.});
@@ -1188,15 +1642,18 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
     const double titleWeight=m_config["showTitle"].toBool()?m_config["fontSize"].toInt():0;
     const double mainWeight=m_config["showReadout"].toBool()?m_config["fontSize"].toInt():0;
     const double peakWeight=m_config["showPeakValue"].toBool()?14:0;
-    const double totalWeight=qMax(1.0,titleWeight+mainWeight+peakWeight);
+    const bool signalSub=signal && m_config.value("showSubMarker").toBool();
+    const double subWeight=signalSub?signalSubLinePixels():0;
+    const double totalWeight=qMax(1.0,titleWeight+mainWeight+peakWeight+subWeight);
     const double signalTitleHeight=contentHeight*titleWeight/totalWeight;
     const double signalPeakHeight=contentHeight*peakWeight/totalWeight;
+    const double signalSubHeight=contentHeight*subWeight/totalWeight;
     if(layer==Layer::Background) {
-        const QColor backdrop=color(m_config,"backdropColor");
+        const QColor backdrop=lookColor(m_config,"backdropColor");
         p.fillRect(r,m_face==Face::Anan && backdrop==QColor("#fff1eee2")?QColor(8,14,20):backdrop);
         if(m_face==Face::Anan || m_face==Face::Cross) { paintNeedles(p,r,true); }
         else if(m_config["showTitle"].toBool() && !m_vfo && !m_clock && m_face!=Face::PowerSwr) {
-            p.setPen(color(m_config,"titleColor"));
+            p.setPen(lookColor(m_config,"titleColor"));
             const QRectF title=signal ? QRectF(r.left()+4*textScale,r.top()+2*textScale,r.width()-8*textScale,signalTitleHeight) :
                 QRectF(r.left()+4*textScale,r.top()+2*textScale,(m_face==Face::History && m_config["showReadout"].toBool()?r.width()*.66:r.width())-8*textScale,22*textScale);
             drawObjectText(p,title,m_config["title"].toString(),textSize);
@@ -1208,13 +1665,43 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
         if(m_face==Face::History) { paintHistory(p,r); }
         if(m_face==Face::SignalText) {
             const Channel& c=m_channels.first();
-            const QRectF main(r.left()+8*textScale,r.top()+2*textScale+signalTitleHeight,r.width()-16*textScale,contentHeight-signalTitleHeight-signalPeakHeight);
-            p.setPen(color(c.config,"color"));
+            // Thetis ShowType: the PK / AVG / FFT glyph, top right.
+            // From Thetis MeterManager.cs:40550-40578 [v2.10.3.15] — FontSize * 0.32
+            if(m_config.value("showType").toBool()) {
+                SignalTextItem::paintReadingTypeGlyph(p,r,bindingId(),lookColor(m_config,"typeColor"),font.family(),textSize*.32);
+            }
+            const QRectF main(r.left()+8*textScale,r.top()+2*textScale+signalTitleHeight,r.width()-16*textScale,contentHeight-signalTitleHeight-signalPeakHeight-signalSubHeight);
+            p.setPen(lookColor(c.config,"color"));
             if(m_config["showReadout"].toBool()) { drawObjectText(p,main,c.dynamics.hasReading()?signalReadout(c.dynamics.value()):"--",textSize); }
-            p.setPen(color(m_config,"lowColor"));
-            if(m_config["showPeakValue"].toBool()) { drawObjectText(p,QRectF(r.left()+8*textScale,r.bottom()-10*textScale-signalPeakHeight,r.width()-16*textScale,signalPeakHeight),"Peak "+(c.dynamics.hasReading()?signalReadout(c.dynamics.maxHistory()):QStringLiteral("--")),14*textScale); }
-            if(c.config["showHistory"].toBool() && c.dynamics.hasReading()) { const double a=calibratedPoint(0,c.dynamics.minHistory()).x(),b=calibratedPoint(0,c.dynamics.maxHistory()).x(); p.fillRect(QRectF(r.left()+r.width()*a,r.bottom()-3*textScale,r.width()*(b-a),3*textScale),color(c.config,"historyColor")); }
-            if(c.config["peakHold"].toBool() && c.dynamics.hasReading()) { const double x=r.left()+r.width()*calibratedPoint(0,c.dynamics.maxHistory()).x(); p.setPen(QPen(color(c.config,"color"),2)); p.drawLine(QPointF(x,r.bottom()-8*textScale),QPointF(x,r.bottom())); }
+            // Thetis ShowSubMarker: the dBm (left) and uV (right) of the
+            // reading under it, in the sub color, and beside the peak in
+            // the peak color. From Thetis MeterManager.cs:40592-40601,40617-40626 [v2.10.3.15]
+            const auto subTexts=[](double dbm,bool has) {
+                return has?QPair<QString,QString>(QString::number(dbm,'f',1)+QStringLiteral(" dBm"),QString::number(std::pow(10.0,(dbm+107.0)/20.0),'f',2)+QStringLiteral(" µV"))
+                          :QPair<QString,QString>(QStringLiteral("-- dBm"),QStringLiteral("-- µV"));
+            };
+            if(signalSub) {
+                const QRectF sub(r.left()+8*textScale,main.bottom(),r.width()-16*textScale,signalSubHeight);
+                const auto texts=subTexts(c.dynamics.value(),c.dynamics.hasReading());
+                p.setPen(lookColor(m_config,"subMarkerColor"));
+                drawObjectText(p,QRectF(sub.left(),sub.top(),sub.width()/2,sub.height()),texts.first,signalSubLinePixels()*textScale,Qt::AlignLeft|Qt::AlignVCenter);
+                drawObjectText(p,QRectF(sub.center().x(),sub.top(),sub.width()/2,sub.height()),texts.second,signalSubLinePixels()*textScale,Qt::AlignRight|Qt::AlignVCenter);
+            }
+            p.setPen(optionalColor("peakValueColor",lookColor(m_config,"lowColor")));
+            if(m_config["showPeakValue"].toBool()) {
+                const QRectF peak(r.left()+8*textScale,r.bottom()-10*textScale-signalPeakHeight,r.width()-16*textScale,signalPeakHeight);
+                const QString peakText="Peak "+(c.dynamics.hasReading()?signalReadout(c.dynamics.maxHistory()):QStringLiteral("--"));
+                if(!signalSub) { drawObjectText(p,peak,peakText,14*textScale); }
+                else {
+                    const double third=peak.width()/3;
+                    const auto texts=subTexts(c.dynamics.maxHistory(),c.dynamics.hasReading());
+                    drawObjectText(p,QRectF(peak.left(),peak.top(),third,peak.height()),texts.first,14*textScale,Qt::AlignLeft|Qt::AlignVCenter);
+                    drawObjectText(p,QRectF(peak.left()+third,peak.top(),third,peak.height()),peakText,14*textScale);
+                    drawObjectText(p,QRectF(peak.left()+2*third,peak.top(),third,peak.height()),texts.second,14*textScale,Qt::AlignRight|Qt::AlignVCenter);
+                }
+            }
+            if(c.config["showHistory"].toBool() && c.dynamics.hasReading()) { const double a=calibratedPoint(0,c.dynamics.minHistory()).x(),b=calibratedPoint(0,c.dynamics.maxHistory()).x(); p.fillRect(QRectF(r.left()+r.width()*a,r.bottom()-3*textScale,r.width()*(b-a),3*textScale),lookColor(c.config,"historyColor")); }
+            if(c.config["peakHold"].toBool() && c.dynamics.hasReading()) { const double x=r.left()+r.width()*calibratedPoint(0,c.dynamics.maxHistory()).x(); p.setPen(QPen(lookColor(c.config,"color"),2)); p.drawLine(QPointF(x,r.bottom()-8*textScale),QPointF(x,r.bottom())); }
         }
         const TransientChildLayout childLayout(internalItems(),m_bands,m_modes);
         layoutChildren(width,height);
@@ -1226,19 +1713,45 @@ void CompositePresetItem::paintForLayer(QPainter& p,int width,int height,Layer l
             const float clockLeft=m_clock->x()*width,clockTop=m_clock->y()*height;
             const float clockWidth=m_clock->itemWidth()*width,clockHeight=m_clock->itemHeight()*height;
             const QRectF clock(static_cast<qreal>(clockLeft),static_cast<qreal>(clockTop),
-                               static_cast<qreal>(clockWidth),static_cast<qreal>(clockHeight)); const QString mode=m_config["clockMode"].toString(); const QDateTime utc=QDateTime::currentDateTimeUtc(); p.setPen(m_clock->timeColour());
+                               static_cast<qreal>(clockWidth),static_cast<qreal>(clockHeight)); const QString mode=m_config["clockMode"].toString();
+            // ClockItem's time source (tests fix it); unset, the current time.
+            const QDateTime local=m_clock->currentLocalTime(); const QDateTime utc=local.toUTC(); p.setPen(m_clock->timeColour());
+            const bool thetis=m_config.value("thetisFormat").toBool(false);
             const auto display=[&](QDateTime time,QString title,QRectF rect) {
-                const QString fmt=m_config["show24Hour"].toBool()?"HH:mm:ss":"hh:mm:ss AP";
+                const bool show24=m_config["show24Hour"].toBool();
+                const QString fmt=show24?"HH:mm:ss":"hh:mm:ss AP";
                 const bool titleOn=m_config["showTitle"].toBool(),dateOn=m_config["showDate"].toBool();
-                const int lines=1+int(titleOn)+int(dateOn); const double lineHeight=rect.height()/lines;
+                // Thetis's proportions on a new (thetisFormat) face: the title
+                // at FontSize, the time at 1.9x and the date at 0.9x, each line
+                // as tall as its share (MeterManager.cs:40515-40533
+                // [v2.10.3.15]). A saved face keeps equal lines and sizes.
+                const double titleScale=thetis?kClockTitleFontScale:1.0,timeScale=thetis?kClockTimeFontScale:1.0,dateScale=thetis?kClockDateFontScale:1.0;
+                const double weights=(titleOn?titleScale:0.0)+timeScale+(dateOn?dateScale:0.0);
+                const auto lineHeight=[&](double scale) { return rect.height()*scale/weights; };
                 // Child clock roles use the owning face scale, then measured fitting.
                 // Contest already assigns a compact child rectangle; do not multiply twice.
                 double top=rect.top();
-                if(titleOn) { p.setPen(m_clock->typeTitleColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),title,textSize); top+=lineHeight; }
-                p.setPen(m_clock->timeColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),time.toString(fmt),textSize); top+=lineHeight;
-                if(dateOn) { p.setPen(m_clock->dateColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight),time.toString("yyyy-MM-dd"),textSize); }
+                if(titleOn) { p.setPen(m_clock->typeTitleColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight(titleScale)),title,textSize*titleScale); top+=lineHeight(titleScale); }
+                p.setPen(m_clock->timeColour());
+                const QRectF timeBox(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight(timeScale));
+                if(thetis && !show24) {
+                    // 12 hour: h:mm:ss, then am / pm apart in a smaller font.
+                    // From Thetis MeterManager.cs:40491-40495,40521-40525 [v2.10.3.15]
+                    //time [original inline comment from MeterManager.cs:40521]
+                    const double amPmWidth=timeBox.width()*kClockAmPmShare;
+                    drawObjectText(p,timeBox.adjusted(0,0,-amPmWidth,0),ClockItem::thetisTime(time,false),textSize*timeScale,Qt::AlignRight|Qt::AlignVCenter);
+                    drawObjectText(p,QRectF(timeBox.right()-amPmWidth,timeBox.top(),amPmWidth,timeBox.height()),ClockItem::thetisAmPm(time),textSize*kClockAmPmFontScale,Qt::AlignLeft|Qt::AlignVCenter);
+                } else {
+                    drawObjectText(p,timeBox,thetis?ClockItem::thetisTime(time,show24):time.toString(fmt),textSize*timeScale);
+                }
+                top+=lineHeight(timeScale);
+                //date [original inline comment from MeterManager.cs:40532]
+                if(dateOn) { p.setPen(m_clock->dateColour()); drawObjectText(p,QRectF(rect.left()+2*textScale,top,rect.width()-4*textScale,lineHeight(dateScale)),thetis?ClockItem::thetisDate(time):time.toString("yyyy-MM-dd"),textSize*dateScale); }
             };
-            if(mode=="Both") { display(utc.toLocalTime(),"Local",QRectF(clock.left(),clock.top(),clock.width()/2,clock.height())); display(utc,"UTC",QRectF(clock.center().x(),clock.top(),clock.width()/2,clock.height())); } else { display(mode=="UTC"?utc:utc.toLocalTime(),mode,clock); }
+            // Thetis titles the halves "local" and "utc".
+            // From Thetis MeterManager.cs:40515-40516 [v2.10.3.15]
+            const QString localTitle=thetis?QStringLiteral("local"):QStringLiteral("Local"),utcTitle=thetis?QStringLiteral("utc"):QStringLiteral("UTC");
+            if(mode=="Both") { display(local,localTitle,QRectF(clock.left(),clock.top(),clock.width()/2,clock.height())); display(utc,utcTitle,QRectF(clock.center().x(),clock.top(),clock.width()/2,clock.height())); } else { display(mode=="UTC"?utc:local,mode=="UTC"?utcTitle:localTitle,clock); }
         }
     }
     p.restore();

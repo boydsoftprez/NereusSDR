@@ -23,6 +23,9 @@
 //   2026-04-21 — Original implementation for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted authoring via Anthropic
 //                 Claude Code.
+//   2026-10-26: CW transmit, the radio's dot and dash status
+//               (radioKeyStatus, R-CW-17). J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -235,6 +238,59 @@ private slots:
 
         conn.parseEp6FrameForTest(pkt);
 
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // ── CW transmit (R-CW-17): dot and dash from C0 ───────────────────────
+    // dash (C0 >> 1) & 1, dot (C0 >> 2) & 1 (deskhpsdr old_protocol.c:
+    // 1666-1667 [@f3d857c]; Thetis's left shifts always read 0). PTT alone
+    // is not a key; I2C response subframes are skipped; keyOut is always
+    // false on P1; the signal fires only on a change.
+    void radioKeyStatusFromC0_data()
+    {
+        QTest::addColumn<int>("c0");
+        QTest::addColumn<bool>("dot");
+        QTest::addColumn<bool>("dash");
+        QTest::newRow("dash 0x02") << 0x02 << false << true;
+        QTest::newRow("dot 0x04")  << 0x04 << true  << false;
+        QTest::newRow("both 0x06") << 0x06 << true  << true;
+    }
+    void radioKeyStatusFromC0()
+    {
+        QFETCH(int, c0);
+        QFETCH(bool, dot);
+        QFETCH(bool, dash);
+        P1RadioConnection conn;
+        conn.init();
+        QSignalSpy spy(&conn, &RadioConnection::radioKeyStatus);
+        quint8 sub[5] = {quint8(c0), 0, 0, 0, 0};
+        conn.parseEp6FrameForTest(makeEp6Frame(sub, sub));
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toBool(), dot);
+        QCOMPARE(spy.at(0).at(1).toBool(), dash);
+        QCOMPARE(spy.at(0).at(2).toBool(), false);
+
+        // The same bits again: no signal. Released: one signal, all up.
+        conn.parseEp6FrameForTest(makeEp6Frame(sub, sub));
+        QCOMPARE(spy.count(), 1);
+        quint8 idle[5] = {0, 0, 0, 0, 0};
+        conn.parseEp6FrameForTest(makeEp6Frame(idle, idle));
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(1).at(0).toBool(), false);
+        QCOMPARE(spy.at(1).at(1).toBool(), false);
+    }
+
+    void radioKeyStatusPttAloneAndI2cIgnored()
+    {
+        P1RadioConnection conn;
+        conn.init();
+        QSignalSpy spy(&conn, &RadioConnection::radioKeyStatus);
+        quint8 ptt[5] = {0x01, 0, 0, 0, 0};
+        conn.parseEp6FrameForTest(makeEp6Frame(ptt, ptt));
+        QCOMPARE(spy.count(), 0);
+        // An I2C response with the dot and dash bit positions set.
+        quint8 i2c[5] = {0x86, 0, 0, 0, 0};
+        conn.parseEp6FrameForTest(makeEp6Frame(i2c, i2c));
         QCOMPARE(spy.count(), 0);
     }
 };

@@ -4039,7 +4039,7 @@ void SpectrumOverlayPanel::buildPillWaterfallPage()
 
     static constexpr int kRateMinMs = 10;
     static constexpr int kRateMaxMs = 500;
-    static constexpr int kRateStepMs = 10;
+    static constexpr int kRateStepMs = 1;
     addPillSlider(page, QStringLiteral("DisplayWfUpdatePeriodMs"), QStringLiteral("Rate:"),
                   kRateMinMs, kRateMaxMs, kRateStepMs,
                   QStringLiteral("How often the waterfall adds a row. Lower is faster."),

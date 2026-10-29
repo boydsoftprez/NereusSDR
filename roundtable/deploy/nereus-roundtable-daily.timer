@@ -1,0 +1,14 @@
+# Every day at 04:00 UTC, for nereus-roundtable-daily.service (design 6.2
+# and 6.4). Installed as /etc/systemd/system/nereus-roundtable-daily.timer
+# by roundtable/deploy/setup-server.sh. Persistent: a run missed while the
+# server was off happens at the next boot.
+
+[Unit]
+Description=NereusSDR Roundtable daily retention and disk check, 04:00 UTC
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

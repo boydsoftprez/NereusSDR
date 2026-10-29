@@ -19,6 +19,8 @@ import os
 /// filter there). Add a slice here asks for a slice on this pan
 /// (`addSliceOnPan`); Add a notch asks the Core to place one at the active
 /// slice (`notch.addAtSlice`), so the phone computes no notch itself (D4).
+/// The band menu's "Add notch here" asks for one at the frequency under the
+/// finger, at the desktop's width (`notch.add`, ``addNotch(atHz:)``).
 /// The extended view is this phone's own setting for the pan, sent in the
 /// pan's display subscription.
 ///
@@ -51,6 +53,13 @@ final class PanSheetModel: ObservableObject {
     static let notchControlCapability = "notchControlVersion"
     /// `notch.addAtSlice` came with `notchControlVersion` 2.
     static let notchAtSliceVersion: Int64 = 2
+    /// The band menu's notch at a frequency, which the Core takes from `notchControlVersion` 1.
+    // From src/core/session/SessionCommandDispatcher.cpp:1094-1095 (notch.add {sliceId, centreHz, widthHz}, notchControlVersion 1)
+    static let addNotchAtVerb = "notch.add"
+    static let notchAtFrequencyVersion: Int64 = 1
+    /// The width the desktop's "Add notch here" places.
+    // From src/models/NotchModel.h:213 (kDefaultNotchWidthHz 200.0)
+    static let notchAtFrequencyWidthHz = 200.0
     static let commandTimeout: Duration = .seconds(5)
     static let noSliceReason = "Add a slice to use this control."
 
@@ -60,7 +69,15 @@ final class PanSheetModel: ObservableObject {
     /// Core's first-pan key when no owned slice has supplied one.
     @Published private(set) var panKey = "pan-0"
     @Published private(set) var canAddNotch = false
+    /// The band menu's "Add notch here" can ask the Core (``addNotch(atHz:)``).
+    @Published private(set) var canAddNotchAtFrequency = false
     @Published private(set) var canAddSlice = false
+    /// The slices the radio runs, as the Core's `effectiveMaxSlices` says;
+    /// nil while it says nothing.
+    @Published private(set) var sliceLimit: Int?
+    /// Every slice on the Core, this device's and the others', fills the
+    /// radio's slices: the band column's +RX greys (spec DC10).
+    @Published private(set) var sliceLimitReached = false
     @Published private(set) var extendedViewOn = false
     @Published private(set) var extendedViewAvailable = false
     /// The Core's words for the last request it refused; cleared by the next one it takes.
@@ -125,6 +142,25 @@ final class PanSheetModel: ObservableObject {
 
     var addSliceUnavailableReason: String { "Wait for the Core to connect." }
 
+    /// Why the band column's +RX cannot add a slice now, or nil when it can:
+    /// the link first, then the radio's slice limit in the spec's words,
+    /// naming the radio as the Core reports it (``MainScreenModel/radioName``).
+    func addSliceOnPanReason(radio: String?) -> String? {
+        if !canAddSlice {
+            return addSliceUnavailableReason
+        }
+        if sliceLimitReached, let limit = sliceLimit {
+            return Self.sliceLimitReason(radio: radio, limit: limit)
+        }
+        return nil
+    }
+
+    /// "The <radio> runs <n> slices." (spec sections 6.2 and 9), the
+    /// number a word as the board writes it (``RadioWords``).
+    static func sliceLimitReason(radio: String?, limit: Int) -> String {
+        RadioWords.sliceLimit(radio: radio, limit: limit)
+    }
+
     // MARK: Asking the Core
 
     /// A band button: the Core opens the band on the active slice. The lit
@@ -148,12 +184,33 @@ final class PanSheetModel: ObservableObject {
         invoke(Self.addSliceVerb, [CommandArgument(name: "panId", value: .text(panKey))])
     }
 
+    /// The band column's +RX: a slice on `pan`, named by its Core key
+    /// (``PanIdentity/corePanKey``), while the radio has a slice free.
+    func addSlice(on pan: PanIdentity) {
+        guard canAddSlice, !sliceLimitReached else {
+            return
+        }
+        invoke(Self.addSliceVerb, [CommandArgument(name: "panId", value: .text(pan.corePanKey))])
+    }
+
     /// Add a notch at the active slice, where the Core places it.
     func addNotch() {
         guard canAddNotch, let sliceId = slices.activeSliceId else {
             return
         }
         invoke(Self.addNotchVerb, [CommandArgument(name: "sliceId", value: .int(Int64(sliceId)))])
+    }
+
+    /// Add notch here: a notch on the active slice at `hz`, the absolute
+    /// frequency under the finger, the desktop's width wide, as the desktop's
+    /// band menu adds one (SpectrumWidget's notchAddRequested).
+    func addNotch(atHz hz: Double) {
+        guard canAddNotchAtFrequency, hz.isFinite, hz > 0, let sliceId = slices.activeSliceId else {
+            return
+        }
+        invoke(Self.addNotchAtVerb, [CommandArgument(name: "sliceId", value: .int(Int64(sliceId))),
+                                     CommandArgument(name: "centreHz", value: .double(hz)),
+                                     CommandArgument(name: "widthHz", value: .double(Self.notchAtFrequencyWidthHz))])
     }
 
     /// The extended view's On and Off, kept for this pan on this phone.
@@ -241,7 +298,14 @@ final class PanSheetModel: ObservableObject {
         }
         set(\.canAddNotch, store.isSnapshotComplete && slices.activeSliceId != nil &&
             store.capabilityVersion(Self.notchControlCapability) >= Self.notchAtSliceVersion)
+        set(\.canAddNotchAtFrequency, store.isSnapshotComplete && slices.activeSliceId != nil &&
+            store.capabilityVersion(Self.notchControlCapability) >= Self.notchAtFrequencyVersion)
         set(\.canAddSlice, commands != nil && store.isSnapshotComplete)
+        let limit = PanLimits.sliceCount(capabilities: store.capabilities)
+        set(\.sliceLimit, limit)
+        set(\.sliceLimitReached, store.isSnapshotComplete && limit.map {
+            store.objects(ofClass: BandSlicesModel.sliceClass).count >= $0
+        } ?? false)
         let wideband = gates.wideband
         set(\.extendedViewAvailable, wideband)
         set(\.extendedViewOn, wideband && band.settings.extendedView)

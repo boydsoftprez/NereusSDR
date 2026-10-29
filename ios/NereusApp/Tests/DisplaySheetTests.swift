@@ -671,8 +671,8 @@ struct DisplaySheetTests {
         #expect(rig.main.band.settings == before)
     }
 
-    @Test("each band keeps its own scale: the active slice moving to another band brings that band's back")
-    func perBandScale() async throws {
+    @Test("on a Core below version 29 the phone keeps one scale: a new band leaves it, and nothing goes to the Core's grid")
+    func olderCoreKeepsThePhonesOwnScale() async throws {
         let rig = try Rig()
         await quiet()
         let display = rig.main.display
@@ -684,15 +684,24 @@ struct DisplaySheetTests {
         slice(band: 3)
         #expect(await settle { rig.main.band.settings.scaleBand == "3" })
         display.setTop(-60)
+        #expect(display.top == -60)
+        #expect(await settle { display.scaleNote == CoreBandScale.olderCoreText })
+        #expect(CoreBandScale.olderCoreText == "Needs a newer Core to share the scale")
+        #expect(!display.scaleGreyed && !display.scaleUnconfirmed)
         slice(band: 7)
         #expect(await settle { rig.main.band.settings.scaleBand == "7" })
-        #expect(display.top == -40)
-        #expect(rig.main.band.settings.scaleBottomDbm == -140)
-        display.setTop(-70)
-        slice(band: 3)
-        #expect(await settle { display.top == -60 })
+        #expect(display.top == -60)
+        #expect(rig.main.band.settings.scaleBottomDbm == -160)
+        display.nudgeTop(up: false)
+        #expect(display.top == -70)
         let again = try Rig(suite: rig.suite)
-        #expect(again.main.band.settings.bandScales["7"]?.topDbm == -70)
+        #expect(again.main.band.settings.scaleTopDbm == -70)
+        await quiet()
+        #expect(rig.main.band.sharedScale == nil)
+        #expect(!rig.recorded.settingsSent.contains {
+            if case .settingsWrite(let write) = $0 { return write.key.hasPrefix("DisplayGrid") }
+            return false
+        })
     }
 
     @Test("Calibration offset is never sent to the Core, however it was kept")

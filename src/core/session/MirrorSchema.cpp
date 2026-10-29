@@ -68,6 +68,13 @@
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel mirrored (`rotor`,
 //                 read-only). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: RoundtableState mirrored
+//                 (`roundtable`, read-only). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11 fix round: SpotSourceHost's
+//                 roundtableState and roundtableText mirrored again, fitted
+//                 per peer by StationServer. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorSchema.h"
@@ -167,6 +174,9 @@ const char* const kMirroredClasses[] = {
     // Rotor control plan Task 4b (remoteRotorControlVersion 1): the Core's
     // antenna rotor, read-only; the rotor commands change it.
     "NereusSDR::RotorLink::RotorModel",
+    // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+    // Roundtable connection, read-only; the roundtable.* verbs change it.
+    "NereusSDR::RoundtableState",
 };
 
 // Per-property exclusions, as (class, property).

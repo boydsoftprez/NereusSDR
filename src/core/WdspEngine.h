@@ -75,10 +75,20 @@
 //   2026-10-10 : J.J. Boyd (KG4VCF): test-only friendship for the test of
 //                 a receive channel's first DSP > Options apply. AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26: CW transmit, test-only friendship for the CW pitch follow
+//                 test (R-CW-23, R-CW-28). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Claude Code.
 //   2026-10-22 : MaxBin hold fix (Thetis #2681) by J.J. Boyd (KG4VCF):
 //                 maxBinHoldNextDbm declared, ported from Longpath PR 215
 //                 (src/core/WdspEngine.h:631-654 [@383f058]), with
 //                 AI-assisted transformation via Claude Code.
+//   2026-10-25 : Issue #650 by J.J. Boyd (KG4VCF): test-only friendship
+//                 for the audio panel test, which reads the panel's copy
+//                 flag back from real RX channels. AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 : Remote transmit hold then cut by J.J. Boyd (KG4VCF):
+//                 test-only friendship for the RF hold test's live transmit
+//                 channel. AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  cmaster.cs
@@ -193,6 +203,9 @@ class TestRadioModelMoxHardwareFlip;
 // dereferences rxa[channel].ndb.p before it compares (nbp.c:477-479), so
 // the kTestChannel = 99 never-opened-channel hatch is unavailable here.
 class TestNotchTuneFrequency;
+// CW transmit (R-CW-23, R-CW-28): the CW pitch follow test opens real RX
+// channels for the same reason, to read the shift and APF pushes back.
+class TstCwPitchFollow;
 // TNF Task 2: the notch-wrapper test opens one real RX channel so the
 // RXANBP* entry points have an rxa[].ndb to dereference.
 class TestRxChannelNotchWrappers;
@@ -221,12 +234,17 @@ class TestDspControlReceive;
 class TestDspControlTransmit;
 // Task 33: the stop-transmit test opens real TX and RX channels on lanes.
 class TestStopTransmitNow;
+// Remote transmit hold then cut: the RF hold test opens a real TX channel.
+class TestTxRfHold;
 // Several-devices fix wave 2: the confirm-step test drives a Protocol 1
 // rate change, which needs an initialized engine with RX channels.
 class TstConfirmStep;
 // AGC Fixed Gain seed: the test opens real RX channels and reads the fixed
 // gain WDSP applies back from rxa[].agc.
 class TestRxChannelAgcFixedSeed;
+// Issue #650: the audio panel test opens real RX channels and reads the
+// panel's copy flag back from rxa[].panel.
+class TestRxChannelAudioPanel;
 // Task 27: the transmit analyzer skirt test opens a real TX channel.
 class TestTxAnalyzerSkirt;
 // R-IOS-13: the transmit path's DSP latency test.
@@ -1137,6 +1155,8 @@ private:
     // TNF Task 1: same friendship for the notch tune-frequency test, which
     // needs really opened RX channels rather than an unopened slot.
     friend class ::TestNotchTuneFrequency;
+    // CW transmit: same friendship for the CW pitch follow test.
+    friend class ::TstCwPitchFollow;
     // TNF Task 2: same friendship for the notch-wrapper test, which primes
     // m_initialized so createRxChannel opens a real WDSP channel with a real
     // notch database.
@@ -1160,6 +1180,8 @@ private:
     friend class ::TestDspControlTransmit;
     // Task 33: same friendship for the stop-transmit test.
     friend class ::TestStopTransmitNow;
+    // Remote transmit hold then cut: same friendship for the RF hold test.
+    friend class ::TestTxRfHold;
     // Several-devices fix wave 2: same friendship for the confirm-step
     // test's Protocol 1 rate change (the synchronous init would open the
     // PureSignal feedback channel too, which the test does not need).
@@ -1176,6 +1198,8 @@ private:
     friend class ::TstTxChannelVoxListening;
     // AGC Fixed Gain seed: same friendship, real RX channels.
     friend class ::TestRxChannelAgcFixedSeed;
+    // Issue #650: same friendship, real RX channels, for the panel test.
+    friend class ::TestRxChannelAudioPanel;
     // Squelch persistence: the squelch seed test opens real RX channels.
     friend class ::TestSliceSquelchChannelSeed;
     // Same friendship for the first DSP > Options apply test.

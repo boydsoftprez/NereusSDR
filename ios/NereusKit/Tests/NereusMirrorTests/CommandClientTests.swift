@@ -80,6 +80,17 @@ import Testing
         [LinkMessage.PropertyEntry(name: "phase", value: .utf8(text))]
     }
 
+    /// The app's command lane carries only what `reads` names: a
+    /// `command.result`, never a reading or a property's answer.
+    @Test func readsOnlyCommandResults() {
+        #expect(CommandClient.reads(Self.result("radio.thing", 7)))
+        #expect(!CommandClient.reads(.delta(LinkMessage.Delta(key: "slice:0", properties: []))))
+        #expect(!CommandClient.reads(.propertyResult(LinkMessage.PropertyResult(key: "slice:0", writeId: 1,
+                                                                               results: []))))
+        #expect(!CommandClient.reads(.snapshotComplete))
+        #expect(!CommandClient.reads(.mediaControl(LinkMessage.MediaControl(payload: [:]))))
+    }
+
     @Test func argumentsTravelInOrderAndResultsPairById() async throws {
         let client = await client()
         let arguments = [

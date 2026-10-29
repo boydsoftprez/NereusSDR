@@ -1,4 +1,5 @@
 #pragma once
+#include "core/safety/TxKeepalive.h"
 // =================================================================
 // src/core/session/StationServer.h  (NereusSDR)
 // =================================================================
@@ -181,6 +182,37 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion(),
+//               peerGetsRoundtable(), the `roundtable` object, the
+//               roundtableRooms and roundtableRoom:<id> streams and the
+//               roundtable.* verbs. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11 fix round: a pending post keeps
+//               its connection's clientId. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-26: TunerLoan: the tuner's own front-panel TUNE gives transmit
+//               and the flag back when its cycle ends. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-10-26: PR 670 fix wave: TunerLoan tied to its own cycle (serial,
+//               cycleEnded), tunerLoanTakeStands, dropTunerLoanForStationKey,
+//               hasTunerLoanForTest, and the test hold and recheck
+//               (setTunerLoanHeldForTest, recheckTunerLoanForTest).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B:
+//               remoteMicLineEnded and remoteMicAudioArrived (a microphone
+//               line that ends mid-key keeps its hold and is cut 10 s after
+//               its last packet on the server's own timer), remoteMicStarved
+//               takes the measured silence, micHoldCountedForTest. Round 2:
+//               onTransmitModeChanged and the starved line it judges,
+//               m_watchdogVoxOffWhy, holdMicWithoutPublishingForTest. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: remoteMicNoAudio (the 10 s
+//               no-audio cut), and the keyer's link and microphone holds as
+//               the Core sets, publishes and logs them (m_linkRfHold,
+//               m_micRfHold, the hooks and handlers). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-23: m_placementAwaitingRadio: devices admitted to a Core inside
 //               a desktop window before its radio connects. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -580,6 +612,11 @@
 //   2026-10-15: re-review wording: onTransmitCutOffMain doc says why a
 //               queued call is enough. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-49): remoteCwVersion 1 for a
+//               peer that declared remoteTx and remoteCw; the cw.* verbs'
+//               answers remembered per session (their copies); the CW
+//               settings on `transmit` only to a peer that declared
+//               cwSettings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1054,6 +1091,25 @@ public:
     /// as not paired. This counts such a session as paired for that gate,
     /// so a window test can take transmit. Set before the window connects.
     void setTokenSessionsMayTransmitForTest(bool may) { m_tokenSessionsMayTransmitForTest = may; }
+    /// TGXL tune lane (PR 670 fix wave): a tuner's TUNE loan is still
+    /// waiting to give transmit back.
+    bool hasTunerLoanForTest() const { return m_tunerLoan.has_value(); }
+    /// While held, the give-back does nothing and schedules no recheck, so
+    /// a test can start another cycle at a point it chooses and then run
+    /// the recheck itself (recheckTunerLoanForTest). A recheck timer armed
+    /// before the hold finds it held and stops.
+    void setTunerLoanHeldForTest(bool held) { m_tunerLoanHeldForTest = held; }
+    /// Lets the give-back go and runs its recheck now, synchronously.
+    void recheckTunerLoanForTest()
+    {
+        m_tunerLoanHeldForTest = false;
+        returnTunerLoan();
+    }
+    /// The last recheck waited on another tuner cycle in progress.
+    bool tunerLoanWaitedOnAnotherCycleForTest() const
+    {
+        return m_tunerLoan.has_value() && m_tunerLoan->waitedOnAnotherCycle;
+    }
     /// Deterministic export expiry; caller drives cleanup after advancing time.
     void setSettingsExportClockForTest(std::function<qint64()> clock)
     { m_settingsExportNowForTest = std::move(clock); }
@@ -1133,6 +1189,11 @@ public:
     // commands): a peer at minor 11 that declared stationCat 1, on a Core
     // that runs CAT.
     bool peerGetsStationCat(SessionTransport* transport) const;
+    // Roundtable plan Task 11: whether `transport` gets the Core's
+    // Roundtable (the `roundtable` object, the roundtableRooms and
+    // roundtableRoom:<id> streams and the roundtable.* verbs): a peer at
+    // minor 11 that declared roundtable 1, on a Core that runs Roundtable.
+    bool peerGetsRoundtable(SessionTransport* transport) const;
     /// ...and every other peer gets today's `stationTci`: those settings
     /// taken out of its schema, snapshot and deltas (a delta of only them is
     /// not sent: false).
@@ -1458,6 +1519,13 @@ public:
     int stationTciVersion() const;
     // CAT setup from a connected desktop: 1 on a Core that runs CAT.
     int stationCatVersion() const;
+    // Roundtable plan Task 11: 1 on a Core that runs Roundtable (its own
+    // radio model's RoundtableClient) and keeps its streams.
+    int stationRoundtableVersion() const { return m_roundtableOn ? 1 : 0; }
+    /// Roundtable plan Task 11: the room streams' sweep as if `msLater`
+    /// had passed (a stream no slice is in and no device read for 10
+    /// minutes goes).
+    void sweepRoundtableStreamsForTest(qint64 msLater) { sweepRoundtableStreams(msLater); }
     // R-R3-47 / R-R3-22: accessoryDataVersion. 2 on a Core that owns its
     // accessories (the `accessoryData` object and the setTxInterlockPolicy,
     // setPgxlPowerCap and clearAccessoryFaults verbs; from 2 the RF-Kit's
@@ -1582,6 +1650,10 @@ public:
     /// taking transmit, the transmitter's settings held by the holder, and
     /// `tx.tunerTune`, the Tuner Genius autotune.
     int remoteTxVersion() const { return 2; }
+    /// CW transmit (R-CW-49): 1: cw.send, cw.memory, cw.stop and cw.key
+    /// from the device that holds transmit, on the Core's CWX sender, for a
+    /// peer at minor 11 whose hello declared remoteTx 1 and remoteCw 1.
+    int remoteCwVersion() const { return m_radioModel.isNull() ? 0 : 2; }
     /// Task 35: keying from a remote device; null without a Local model.
     RemoteKeying* remoteKeying() const { return m_remoteKeying.get(); }
     /// Task 37 (R-IOS-13; remote design section 12.1): the transmit
@@ -1599,7 +1671,7 @@ public:
     /// session `mediaEpoch` calls on its transport's own thread for each
     /// "tx" channel message, at its receipt. It holds the guard weakly and
     /// does nothing once the guard is gone. Empty without a guard.
-    std::function<void(std::chrono::steady_clock::time_point)>
+    std::function<void(const QByteArray&, std::chrono::steady_clock::time_point)>
     txChannelReceiptHook(quint64 mediaEpoch) const;
     /// Remote transmit cut off the main thread (main thread): the guard cut
     /// transmit for media session `mediaEpoch` under arm `armSerial` after
@@ -1624,8 +1696,43 @@ public:
     void txChannelMessage(quint64 epoch, const QByteArray& message, qint64 heldUs = 0);
     /// Task 37 (remote design section 12.3): `deviceId`'s microphone line
     /// starved (true) or carries audio again (false) while it is keyed on
-    /// it; the per-mode action (StarvationPolicy) follows.
-    void remoteMicStarved(const QByteArray& deviceId, bool starved);
+    /// it; the per-mode action (StarvationPolicy) follows. Fix wave B:
+    /// `quietMs` is the silence the line measured when it starved (a
+    /// negative value reads as RemoteMicConfig::kStarvationMs); audio again
+    /// also ends the wait on a line that ended mid-key.
+    void remoteMicStarved(const QByteArray& deviceId, bool starved, qint64 quietMs = -1);
+    /// Fix wave B: `deviceId`'s watched microphone line ended (stopped,
+    /// torn down, replaced or no longer watched) `quietMs` after its last
+    /// packet, starved or not. While the device is still keyed that is no
+    /// audio, never audio returning: a microphone hold stays on (and is
+    /// set, by the mode, once the line has been quiet kStarvationMs), and
+    /// the Core cuts kNoAudioCutMs after the last packet of any line for
+    /// that key, on its own timer, unless a watched line for the device
+    /// delivers a packet first. A later line ending never moves that
+    /// deadline later.
+    void remoteMicLineEnded(const QByteArray& deviceId, qint64 quietMs, bool wasStarved);
+    /// Fix wave B: a watched microphone line of `deviceId` delivered its
+    /// first packet: a line that ended mid-key has been replaced by one
+    /// that carries audio, so its hold is released and its cut cancelled.
+    void remoteMicAudioArrived(const QByteArray& deviceId);
+    /// Test only: whether the starvation policy counts a microphone hold
+    /// (fix wave B: true only while it set the Mic bit).
+    bool micHoldCountedForTest() const { return m_starvation.isHolding(); }
+    /// Test only (round 2): the policy counts a microphone hold and the
+    /// model's Mic bit is set, with no hold published, so a test can see
+    /// MOX reaching receive make the policy forget it.
+    void holdMicWithoutPublishingForTest();
+    /// Test only: whether a microphone line that ended mid-key is waiting
+    /// for audio or its cut.
+    bool endedMicLinePendingForTest() const { return !m_endedMicLine.deviceId.isEmpty(); }
+    /// Test only: judges an ended microphone line now, on the Core's clock,
+    /// as its timer does.
+    void judgeEndedMicLineForTest() { judgeEndedMicLine(); }
+    /// Remote transmit hold then cut: `deviceId`'s microphone line has had
+    /// no audio packets for RemoteMicConfig::kNoAudioCutMs while it is
+    /// keyed on it: the Core stops transmitting (StarvationPolicy::onNoAudio,
+    /// micStarved), in every mode.
+    void remoteMicNoAudio(const QByteArray& deviceId);
     /// Task 37: the device whose accepted write turned VOX on, while VOX is
     /// on; empty when VOX is off or was turned on at the Core itself.
     QByteArray voxArmedBy() const { return m_voxArmedBy; }
@@ -1916,6 +2023,17 @@ private:
     // connection's cfcParaEqData write.
     void handleCfcProfileCommand(SessionTransport* transport, const SessionMessage& message);
     void handleRecordsCommand(SessionTransport* transport, const SessionMessage& message);
+    // Roundtable plan Task 11: the streams, kept from the Core's
+    // RoundtableModel, and the verbs, answered for the asking connection.
+    void setUpRoundtable();
+    void handleRoundtableCommand(SessionTransport* transport, const SessionMessage& message);
+    void syncRoundtableStream(const QString& stream, const QHash<QString, QJsonObject>& records);
+    RecordStream* ensureRoundtableRoomStream(const QString& roomId);
+    void ensureRoundtableSliceRooms();
+    void sweepRoundtableStreams(qint64 msLater = 0);
+    void dropRoundtableReader(SessionTransport* transport, const QString& roomId);
+    void answerRoundtablePending(const QString& key, bool accepted, const QString& reason,
+                                 const QList<MirrorUpdate>& values);
     void scheduleRecordFlush();
     void flushRecordStreams();
     // Parity Task 33: the CFC display read every 50 ms while it is wanted.
@@ -2273,6 +2391,9 @@ private:
     // counted for `deviceId`, `ageUs` after its receipt, also moves the
     // guard's last-heard when the guard is armed for that device.
     void noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs);
+    void noteCwKeepalive(const QByteArray& deviceId, const TxKeepalive& value, qint64 ageUs);
+    bool deviceHasCwV2(const QByteArray& deviceId) const;
+    void recoverRemoteCw(quint32 epoch);
     // Remote transmit cut off the main thread, one turn after the cut's
     // post: while that arm is current and its device still keyed and
     // watched, the watchdog trips it (its stop and its record, once); a key
@@ -2294,6 +2415,41 @@ private:
     /// to stop transmitting (the watchdog's linkLost, the starvation's
     /// micStarved), in the words it stops with. Called before StopAllTx.
     void recordTransmitStop(const char* stopReason, const QString& text);
+    // Remote transmit hold then cut: the watchdog's hold hook. On, it holds
+    // the TX channel's Link bit while `deviceId` is keyedBy and the radio
+    // transmits. Off does nothing here: holdEnded, which says how the hold
+    // ended, lets the bit go (onWatchdogHoldEnded).
+    void onWatchdogHold(const QByteArray& deviceId, bool held);
+    void onWatchdogHoldStarted(const QByteArray& deviceId, qint64 silentMs);
+    // A hold that ended because its key ended keeps the Link bit until MOX
+    // reaches receive (RadioModel clears every bit then), so the unkey's
+    // drain sends no real samples; any other end lets it go at once.
+    // `how` is the log's words for RemoteTxWatchdog::HoldEnd.
+    void onWatchdogHoldEnded(const QByteArray& deviceId, qint64 lengthMs, bool keyEnded,
+                             const QString& how);
+    // The starvation's holdRf hook: the Mic bit, for the keyer.
+    void onStarvationHold(bool held);
+    // Fix wave B: a microphone line that ended mid-key, judged on the
+    // server's clock: the hold at kStarvationMs after its last packet, the
+    // cut at kNoAudioCutMs.
+    void judgeEndedMicLine();
+    void dropEndedMicLine();
+    // Fix wave B: a stop was already recorded for the key `keyEpoch`.
+    bool keyStopped(quint32 keyEpoch) const;
+    // Fix wave B, round 2: a slice's mode changed; a starved line for the
+    // key on the air is judged again in the transmit mode now.
+    void onTransmitModeChanged();
+    // Every bit is clear (MOX reached receive, or the last one let go): a
+    // hold still published ends as "the key ended", one event-loop turn
+    // later, so a cut's own end (its stop runs first) is told first.
+    void onRemoteRfHoldsCleared();
+    // TUNE or two-tone started (they use no microphone): a microphone hold
+    // is released.
+    void releaseMicHoldForMicrophoneUnused();
+    void clearLinkRfBit();
+    void endMicRfHold(const QString& how);
+    // The keyer's holds on `txState` (rfHeld, rfHeldReason).
+    void publishRfHold();
     /// Ruling 7.4 (D60): the on-air refusal for a change from `requester`,
     /// or empty (nobody on the air, or the holder's own change).
     TxRefusal onAirRefusal(const QByteArray& requester) const;
@@ -2502,6 +2658,53 @@ private:
     /// away (holderDropped, its 180 s running); gone (it left, or a token
     /// window): released. A taker with a live session is left as it is.
     void settleTakerWithoutSession(const QByteArray& taker);
+    /// TGXL tune lane (JJ, 2026-10-26): the tuner's own front-panel TUNE
+    /// takes transmit as the radio's PTT does (ruling 8.9), but only for
+    /// its cycle. What it found (the holder, the holder epoch, the flag's
+    /// slice) is noted at its first key; when the cycle ends, transmit
+    /// goes back to that holder (or is let go, when nobody held it) and
+    /// the flag back to its slice, unless something else changed them
+    /// meanwhile (another take, a real key at the station).
+    struct TunerLoan {
+        /// Who held transmit when the press came; nullopt: nobody.
+        std::optional<TransmitHolder::Holder> holder;
+        quint64 epoch = 0;
+        int flagSlice = -1;
+        /// Where the tune moved the flag (ruling 8.11 on a hosting
+        /// desktop); -1 when it did not move it.
+        int flagMovedTo = -1;
+        /// Fix wave (PR 670, I1): this loan's number, so a recheck left
+        /// from an earlier loan never acts on a later one.
+        quint64 serial = 0;
+        /// The tuner cycle this loan was taken for has ended. Any cycle
+        /// running after that is another one (a device's tx.tunerTune, or
+        /// a later press, which starts its own loan).
+        bool cycleEnded = false;
+        /// Rechecks while the radio walks back to receive (or another
+        /// cycle runs), and whether one is due.
+        int waits = 0;
+        bool rechecking = false;
+        /// The last recheck waited on another tuner cycle (the words of
+        /// the expiry).
+        bool waitedOnAnotherCycle = false;
+    };
+    void noteTunerLoan();
+    /// Gives back what the tuner's cycle took, once its cycle has ended,
+    /// no other cycle runs, MOX reads off and no transfer runs (rechecked
+    /// every kUnstartedTakeRecheckMs, up to kTunerLoanWaitMs).
+    void returnTunerLoan();
+    void restoreTunerLoanFlag(const TunerLoan& loan, const QByteArray& holder);
+    /// The tune's own take is the only change of holder since the press:
+    /// the station holds by the radio's PTT, one epoch on.
+    bool tunerLoanTakeStands(const TunerLoan& loan) const;
+    /// Fix wave (PR 670, I2): a real key at the station during the tune
+    /// (its MOX, its PTT, two-tone, VOX; anything but the tuner's own
+    /// press) keeps transmit with the station when the tune ends.
+    void dropTunerLoanForStationKey();
+    static constexpr int kTunerLoanWaitMs = 5000;
+    std::optional<TunerLoan> m_tunerLoan;
+    quint64 m_tunerLoanSerial = 0;
+    bool m_tunerLoanHeldForTest = false;
     /// Fix wave M6: a tx.take and its copies (the same command id on the
     /// same session): the first is run; a copy while it runs is answered by
     /// its one result, and a later copy gets the same answer. Never a second
@@ -2809,6 +3012,28 @@ private:
     quint64 m_consoleLineId = 0;
     // CAT setup from a connected desktop: the `catLog` records' ids.
     quint64 m_catLogLineId = 0;
+    // Roundtable plan Task 11: whether this Core shares Roundtable; each
+    // stream's records as last sent (to send only what changed); the
+    // connections reading each room; when each room stream was last
+    // needed (a slice in the room, or a reader), on m_roundtableClock; the
+    // sweep; and the answers that come later (a post, by "post:link-<n>",
+    // the clientId Roundtable hears, keeping the connection's own; a web
+    // sign-in, by "weblink:<n>").
+    struct RoundtablePending {
+        SessionTransport* transport = nullptr;
+        QByteArray verb;
+        quint32 commandId = 0;
+        QString clientId;
+    };
+    bool m_roundtableOn = false;
+    QHash<QString, QHash<QString, QJsonObject>> m_roundtableRecords;
+    QHash<QString, QSet<SessionTransport*>> m_roundtableReaders;
+    QHash<QString, qint64> m_roundtableNeededMs;
+    QElapsedTimer m_roundtableClock;
+    QTimer* m_roundtableSweepTimer = nullptr;
+    QHash<QString, RoundtablePending> m_roundtablePending;
+    quint64 m_roundtableWebLinkSerial = 0;
+    quint64 m_roundtablePostSerial = 0;
     QTimer* m_recordFlushTimer = nullptr;
     // Parity Task 22: the log sink's last line put in `coreLog`, the pull
     // that runs while it has a subscriber, the newest telemetry this Core
@@ -2841,6 +3066,10 @@ private:
     // it is owed once its result has been sent (a self-revoke, or a token
     // session retiring the token).
     QHash<QString, QHash<quint32, QPair<QByteArray, SessionMessage>>> m_micSourceReplies;
+    // CW transmit (R-CW-49): each session's cw.* answers by command id, so
+    // the copies of one command are answered alike and the Core acts once.
+    QHash<QString, QHash<quint32, QPair<QByteArray, SessionMessage>>> m_cwReplies;
+    static constexpr int kRememberedCwCommands = 32;
     QPointer<SessionTransport> m_dispatchingTransport;
     InvokeFrame* m_invokeFrame = nullptr;
     QByteArray m_certSha256;
@@ -2970,6 +3199,32 @@ private:
     // follows now, and the device that armed VOX.
     std::unique_ptr<RemoteTxWatchdog> m_txWatchdog;
     QTimer* m_txWatchdogTimer = nullptr;
+    // Fix wave B: a keyed device's microphone line that ended with no
+    // audio returning, and the key it was for. lastPacketMs is on the
+    // Core's clock (m_deviceSessions->now()), the earliest of every line
+    // that ended for the key; empty deviceId: none.
+    struct EndedMicLine {
+        QByteArray deviceId;
+        quint32 keyEpoch = 0;
+        qint64 lastPacketMs = 0;
+        bool starvationJudged = false;
+    };
+    EndedMicLine m_endedMicLine;
+    QTimer* m_endedMicLineTimer = nullptr;
+    // Fix wave B: the silence the next microphone hold's start line logs.
+    qint64 m_micStarvedQuietMs = -1;
+    // Fix wave B, round 2: the keyed device's live line that starved, for
+    // its key, and its last packet on the Core's clock; empty deviceId:
+    // none (audio returned, or the key changed).
+    struct StarvedMicLine {
+        QByteArray deviceId;
+        quint32 keyEpoch = 0;
+        qint64 lastPacketMs = 0;
+    };
+    StarvedMicLine m_starvedMicLine;
+    // Fix wave B, round 2: why the watchdog's stop turns VOX off, while a
+    // closed connection's stop runs; nullptr: the link went quiet.
+    const char* m_watchdogVoxOffWhy = nullptr;
     // Remote transmit cut off the main thread (2026-10-15): what the
     // guard's cut reaches (the model's cut line and this object, cleared
     // under its mutex before this object goes), the guard, the key it is
@@ -2980,11 +3235,35 @@ private:
     std::shared_ptr<RemoteTxCutGuard> m_txCutGuard;
     QByteArray m_txCutGuardDevice;
     quint32 m_txCutGuardKeyEpoch = 0;
+    quint32 m_txCutGuardCwEpoch = 0;
+    QByteArray m_watchedCwDevice;
     quint64 m_txCutGuardMediaEpoch = 0;
     std::shared_ptr<std::atomic<std::chrono::steady_clock::rep>> m_lastTxChannelReceipt =
         std::make_shared<std::atomic<std::chrono::steady_clock::rep>>(0);
     StarvationPolicy m_starvation;
     QByteArray m_watchedKeyedDevice;
+    // Remote transmit hold then cut: a hold of the keyer's RF as the Core
+    // publishes and logs it (link, from the watchdog; mic, from the
+    // starvation), with the key it was for and when it began.
+    struct RfHoldState {
+        bool on = false;
+        QByteArray deviceId;
+        quint32 keyEpoch = 0;
+        qint64 sinceMs = 0;
+    };
+    RfHoldState m_linkRfHold;
+    RfHoldState m_micRfHold;
+    // The key the TX channel's Link bit is set for. It can outlast the
+    // published hold: a key that ended keeps it until MOX reaches receive,
+    // or a new key comes first.
+    QByteArray m_linkRfBitDevice;
+    quint32 m_linkRfBitEpoch = 0;
+    // How the next microphone hold release ends, when not "audio
+    // returned" (the 10 s cut, TUNE or two-tone starting, a new key).
+    QString m_micRfHoldEnding;
+    // Advances with each hold that starts, so a deferred end never ends a
+    // newer one.
+    quint64 m_rfHoldGeneration = 0;
     QByteArray m_voxArmedBy;
     // iPhone app plan Task 39: the `txState` object. Qt-parented to this, so
     // its meter timer is one of the server's timers (the conformance

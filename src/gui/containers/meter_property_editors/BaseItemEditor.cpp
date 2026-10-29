@@ -7,6 +7,43 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I6): markColourPicked() records a
+//                 colour dialog pick on the item; setItem() names the item
+//                 the editor's swatches are painted for. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A wrapped row label is as tall as its lines painted
+//                 centred, which can take one pixel row more than QLabel's
+//                 own measure (Courier New on Linux). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - A row label given a fixed or minimum width answers its
+//                 height for that width. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Row labels that wrap get rows as tall as their lines at
+//                 the width they are given (FormRowLabel), so a long label
+//                 no longer spills over the next row. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix wave R1: options with no bundled artwork stay visible,
+//                 disabled, with the reason. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - The Reading list offers the six TX stage peak readings
+//                 (Mic, EQ, Leveler, ALC, Compressor, CFC). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setUpdateIntervalRange(): a type editor can set the
+//                 update interval row's range (the LED takes 50-10000).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - populateReadingCombo(): the Reading row's list, shared
+//                 with the history graph's axis 1 row. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - "Fade on RX" and "Fade on TX" rows beside "Only when
+//                 RX / TX" (hidden for a fade cover and a button grid, whose
+//                 editors carry their own). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-26 - The "Limit update rate" and "Update interval (ms)" labels
+//                 wrap, so a narrow Properties pane is no wider than before.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - "Limit update rate" check box and "Update interval (ms)"
+//                 spin box (15-5000) for the per-item update interval.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
@@ -63,6 +100,9 @@ mw0lge@grange-lane.co.uk
 #include "gui/UnbuiltFeatures.h"
 
 #include "../../meters/MeterItem.h"
+#include "../../meters/ItemColourLook.h"
+#include "../../meters/ButtonBoxItem.h"
+#include "../../meters/FadeCoverItem.h"
 #include "../../meters/MeterPoller.h"
 #include "../MmioVariablePickerPopup.h"
 
@@ -75,6 +115,7 @@ mw0lge@grange-lane.co.uk
 #include <QComboBox>
 #include <QPushButton>
 #include <QLabel>
+#include <QTextDocument>
 #include <QFrame>
 
 namespace NereusSDR {
@@ -111,6 +152,43 @@ constexpr const char* kLabelStyle =
 constexpr const char* kHeaderStyle =
     "QLabel { color: #8aa8c0; font-weight: bold; font-size: 11px;"
     "  background: #1a2a38; padding: 2px 4px; }";
+
+// A row label. QFormLayout gives a label the narrower of the label column
+// and its own size hint, but sizes the row from the label's height at the
+// full column width. A wrapped label whose hint is narrower than the column
+// then needs more lines than its row has, and its words spill over the
+// next row. This label answers for the width it will be given.
+//
+// QLabel measures its lines with vertical centring turned off, but paints
+// them centred in its rows. When the lines' height is fractional, centring
+// can put them across one more pixel row than that measure, and the last
+// row of the text is cut by a pixel. So the height is also measured from
+// the wrapped text as it is painted: with the label's own alignment, at the
+// width inside its margins, plus those margins.
+class FormRowLabel final : public QLabel {
+public:
+    FormRowLabel(const QString& text, QWidget* parent) : QLabel(text, parent) {}
+    int heightForWidth(int width) const override
+    {
+        const int given = qMin(qMin(width, maximumWidth()), qMax(sizeHint().width(), minimumWidth()));
+        const int measured = QLabel::heightForWidth(given);
+        const bool richText = textFormat() == Qt::RichText
+            || (textFormat() == Qt::AutoText && Qt::mightBeRichText(text()));
+        if (!wordWrap() || text().isEmpty() || richText) { return measured; }
+        const QMargins edges = contentsMargins();
+        const int inside = given - edges.left() - edges.right() - 2 * margin();
+        if (inside <= 0) { return measured; }
+        // Tall enough for any label's lines; centring in it leaves the
+        // same fraction of a pixel above the text as the row will.
+        constexpr int kMeasureHeight = 10000;
+        const int painted = fontMetrics()
+                                .boundingRect(QRect(0, 0, inside, kMeasureHeight),
+                                              int(alignment()) | Qt::TextWordWrap, text())
+                                .height()
+            + edges.top() + edges.bottom() + 2 * margin();
+        return qMax(measured, painted);
+    }
+};
 
 // Phase 3G-6 block 4b: minimum widths so fields don't shrink-wrap
 // to their default size.
@@ -204,7 +282,27 @@ void BaseItemEditor::buildBaseForm()
 
     m_chkOnlyRx = makeCheckRow(QStringLiteral("Only when RX"));
     m_chkOnlyTx = makeCheckRow(QStringLiteral("Only when TX"));
+    m_chkFadeRx = makeCheckRow(QStringLiteral("Fade on RX"));
+    m_chkFadeRx->setObjectName(QStringLiteral("fadeOnRx"));
+    m_chkFadeTx = makeCheckRow(QStringLiteral("Fade on TX"));
+    m_chkFadeTx->setObjectName(QStringLiteral("fadeOnTx"));
     m_spinDisplayGroup = makeIntRow(QStringLiteral("Display group"), 0, 15);
+
+    // Per-item update interval. Unchecked: the item takes every reading.
+    m_chkLimitUpdate = makeCheckRow(QStringLiteral("Limit update rate"));
+    m_chkLimitUpdate->setObjectName(QStringLiteral("limitUpdateRate"));
+    m_spinUpdateInterval = makeIntRow(QStringLiteral("Update interval (ms)"),
+                                      kMinUpdateIntervalMs, kMaxUpdateIntervalMs);
+    m_spinUpdateInterval->setObjectName(QStringLiteral("updateIntervalMs"));
+    // The two longest base labels wrap rather than widen the label column,
+    // so a narrow Properties pane keeps the width it had before these rows.
+    for (QWidget* field : {static_cast<QWidget*>(m_chkLimitUpdate), static_cast<QWidget*>(m_spinUpdateInterval)}) {
+        if (auto* label = qobject_cast<QLabel*>(m_form->labelForField(field))) { label->setWordWrap(true); }
+    }
+    m_spinUpdateInterval->setValue(kDefaultUpdateIntervalMs);
+    m_spinUpdateInterval->setEnabled(false);
+    m_spinUpdateInterval->setToolTip(QStringLiteral(
+        "How often this item takes a new reading."));
 
     // Wire base spin/check changes to the item.
     connect(m_spinX, qOverload<double>(&QDoubleSpinBox::valueChanged),
@@ -251,10 +349,36 @@ void BaseItemEditor::buildBaseForm()
         m_item->setOnlyWhenTx(on);
         notifyChanged();
     });
+    // Setting either row sets both flags on the item, so the entry saves
+    // both (MeterItem::hasExplicitFade).
+    connect(m_chkFadeRx, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        m_item->setFadeOnTx(m_item->fadeOnTx());
+        m_item->setFadeOnRx(on);
+        notifyChanged();
+    });
+    connect(m_chkFadeTx, &QCheckBox::toggled, this, [this](bool on) {
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        m_item->setFadeOnRx(m_item->fadeOnRx());
+        m_item->setFadeOnTx(on);
+        notifyChanged();
+    });
     connect(m_spinDisplayGroup, qOverload<int>(&QSpinBox::valueChanged),
             this, [this](int v) {
         if (isProgrammaticUpdate() || !m_item) { return; }
         m_item->setDisplayGroup(v);
+        notifyChanged();
+    });
+    connect(m_chkLimitUpdate, &QCheckBox::toggled, this, [this](bool on) {
+        m_spinUpdateInterval->setEnabled(on);
+        if (isProgrammaticUpdate() || !m_item) { return; }
+        m_item->setUpdateIntervalMs(on ? m_spinUpdateInterval->value() : 0);
+        notifyChanged();
+    });
+    connect(m_spinUpdateInterval, qOverload<int>(&QSpinBox::valueChanged),
+            this, [this](int v) {
+        if (isProgrammaticUpdate() || !m_item || !m_chkLimitUpdate->isChecked()) { return; }
+        m_item->setUpdateIntervalMs(v);
         notifyChanged();
     });
 }
@@ -269,6 +393,16 @@ void BaseItemEditor::setGeometryEditable(bool editable)
 }
 
 void BaseItemEditor::populateBindingCombo()
+{
+    populateReadingCombo(m_comboBinding);
+}
+
+QString BaseItemEditor::noArtworkReason()
+{
+    return QStringLiteral("No artwork is available for this option");
+}
+
+void BaseItemEditor::populateReadingCombo(QComboBox* combo)
 {
     struct B { int id; const char* label; };
     // Order mirrors MeterPoller.h. Block 5 adds MMIO variables at
@@ -296,25 +430,33 @@ void BaseItemEditor::populateBindingCombo()
         {MeterBinding::TxAlcGroup,   "TX: ALC Group"},
         {MeterBinding::TxCfc,        "TX: CFC"},
         {MeterBinding::TxCfcGain,    "TX: CFC Gain"},
+        {MeterBinding::TxMicPeak,    "TX: Mic Peak"},
+        {MeterBinding::TxEqPeak,     "TX: EQ Peak"},
+        {MeterBinding::TxLevelerPeak,"TX: Leveler Peak"},
+        {MeterBinding::TxAlcPeak,    "TX: ALC Peak"},
+        {MeterBinding::TxCompPeak,   "TX: Compressor Peak"},
+        {MeterBinding::TxCfcPeak,    "TX: CFC Peak"},
         {MeterBinding::HwVolts,      "HW: Volts"},
         {MeterBinding::HwAmps,       "HW: Amps"},
         {MeterBinding::HwTemperature,"HW: Temperature"},
         {MeterBinding::RotatorAz,    "Rotator: Azimuth"},
         {MeterBinding::RotatorEle,   "Rotator: Elevation"},
     };
-    m_comboBinding->addItem(QStringLiteral("(none)"), -1);
+    combo->addItem(QStringLiteral("(none)"), -1);
     for (const auto& b : kBindings) {
         if (b.id == MeterBinding::PbSnr
             && !UnbuiltFeatures::isBuilt(UnbuiltFeature::PbSnr)) {
             continue;
         }
-        m_comboBinding->addItem(QString::fromLatin1(b.label), b.id);
+        combo->addItem(QString::fromLatin1(b.label), b.id);
     }
 }
 
 void BaseItemEditor::setItem(MeterItem* item)
 {
     m_item = item;
+    // The swatches below this editor ask this item which colours are picked.
+    setProperty(ItemColourLook::kSwatchSurfaceProperty, QVariant::fromValue<QObject*>(item));
     setEnabled(item != nullptr);
     if (!item) { return; }
     loadBaseFields();
@@ -332,7 +474,26 @@ void BaseItemEditor::loadBaseFields()
     m_comboBinding->setCurrentIndex(idx >= 0 ? idx : 0);
     m_chkOnlyRx->setChecked(m_item->onlyWhenRx());
     m_chkOnlyTx->setChecked(m_item->onlyWhenTx());
+    m_chkFadeRx->setChecked(m_item->fadeOnRx());
+    m_chkFadeTx->setChecked(m_item->fadeOnTx());
+    // A fade cover and a button grid keep the flags in their record; their
+    // editors show their own rows.
+    const bool recordFade = qobject_cast<FadeCoverItem*>(m_item) != nullptr
+        || qobject_cast<ButtonBoxItem*>(m_item) != nullptr;
+    m_form->setRowVisible(m_chkFadeRx, !recordFade);
+    m_form->setRowVisible(m_chkFadeTx, !recordFade);
     m_spinDisplayGroup->setValue(m_item->displayGroup());
+    const int interval = m_item->updateIntervalMs();
+    m_spinUpdateInterval->setValue(interval > 0 ? interval : kDefaultUpdateIntervalMs);
+    m_chkLimitUpdate->setChecked(interval > 0);
+    m_spinUpdateInterval->setEnabled(interval > 0);
+    endProgrammaticUpdate();
+}
+
+void BaseItemEditor::setUpdateIntervalRange(int minMs, int maxMs)
+{
+    beginProgrammaticUpdate();
+    m_spinUpdateInterval->setRange(minMs, maxMs);
     endProgrammaticUpdate();
 }
 
@@ -370,7 +531,7 @@ QCheckBox* BaseItemEditor::makeCheckRow(const QString& label)
 
 void BaseItemEditor::addRow(const QString& label, QWidget* widget)
 {
-    auto* lbl = new QLabel(label, this);
+    auto* lbl = new FormRowLabel(label, this);
     lbl->setStyleSheet(kLabelStyle);
     m_form->addRow(lbl, widget);
 }
@@ -380,6 +541,13 @@ void BaseItemEditor::addHeader(const QString& text)
     auto* hdr = new QLabel(text, this);
     hdr->setStyleSheet(kHeaderStyle);
     m_form->addRow(hdr);
+}
+
+void BaseItemEditor::markColourPicked(const QString& field)
+{
+    if (m_item != nullptr) {
+        m_item->setColourUserSet(field, true);
+    }
 }
 
 void BaseItemEditor::notifyChanged()

@@ -38,11 +38,11 @@ struct BandAwayMarks: View {
     /// A stretch the band was not sent, across the waterfall where it fell
     /// (spec section 5.5 item 12, picture 16): a strip the band's width,
     /// dashed above and below, with its words in the middle, as the board
-    /// draws it. One waterfall line is one pixel row.
+    /// draws it. A timed row follows the same logical-point axis as the waterfall.
     @ViewBuilder
     private func awayMark(_ mark: BandModel.AwayMark, layout: BandLayout) -> some View {
         let waterfall = layout.waterfall
-        let rows = CGFloat(mark.linesSince - band.lookBackLines) / max(displayScale, 1)
+        let rows = band.awayMarkY(mark, scale: displayScale)
         if rows >= 0, rows <= waterfall.height {
             Text(mark.text)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))

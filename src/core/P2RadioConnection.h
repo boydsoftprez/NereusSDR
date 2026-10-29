@@ -40,6 +40,16 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - m_bpf2GndKeyed: "Gnd BPF2 on Tx" taken at the TX edge
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - onOcExtrasChanged: the Anvelina DX open collector byte
+//                sends the high-priority packet on a change (J.J. Boyd
+//                KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - The OC byte applies the TX pin actions: TUNE and two-tone
+//                reach maskFor through setOcTxModes (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-22 - kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are
 //                 public, so a test reads the product's watchdogs instead of
 //                 copying them. J.J. Boyd (KG4VCF), AI-assisted via
@@ -136,6 +146,17 @@
 //                Longpath src/core/P2RadioConnection.h:449 [@383f058] (PR 62).
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
+//   2026-10-26 - CW transmit, CwState::edgeLength 9 (Thetis setup.cs:29327
+//                [v2.10.3.15]). J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                Code.
+//   2026-10-26 - CW transmit, m_cw and m_tx[0] from the wire state and the
+//                key line, CmdTx and high priority sent at once, QSK TX
+//                attenuation, the cut's CW zeroing, and the radio's dot,
+//                dash and key-out status. J.J. Boyd (KG4VCF), AI-assisted
+//                via Claude Code.
+//   2026-10-26 - CW transmit early fix wave I1: onTransmitCutCleared
+//                sends CmdTx and high priority with the restored CW
+//                state. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 /*
@@ -379,6 +400,9 @@ public slots:
     void setPreamp(bool enabled) override;
     void setTxDrive(int level) override;
     void setMox(bool enabled) override;
+    // CW transmit (R-CW-16): assigns m_cw from the clamped state and sends
+    // CmdTx at once on a change (also on the first call).
+    void setCwWireState(const NereusSDR::CwWireState& s) override;
     void setAntennaRouting(AntennaRouting routing) override;
     void setAlexRxBpf(AlexRxBpf bpf) override;
     // Level Cal: the Alex receive attenuator (Thetis SetAlexAtten).
@@ -553,6 +577,13 @@ private slots:
     void onEstablishedSilenceTimeout();
 
 private:
+    // RadioConnection::setOcTxModes: a change sends the high-priority
+    // packet when the OC byte it carries changed.
+    void onOcTxModesChanged() override { pushBandOutputsIfChanged(); }
+    // RadioConnection::setOcExtrasByte: a change sends the high-priority
+    // packet, which carries byte 1397.
+    void onOcExtrasChanged() override;
+
     int telemetryUdpBasePort() const override { return m_baseOutboundPort; }
 
     // --- Phase 3P-B: per-board codec chosen at connectToRadio() time ---
@@ -694,6 +725,10 @@ private:
     quint64 m_connectionGeneration{0};
     bool m_linkLossLatched{false};
 
+    // "Gnd BPF2 on Tx" (RadioConnection::m_bpf2GndOnTx) as setMox(true)
+    // took it, for the key in progress (buildCodecContext).
+    bool m_bpf2GndKeyed{false};
+
     // Connect watchdog budget — 2 s matches P1.
     // (kConnectTimeoutMs and kEstablishedSilenceTimeoutMs are public, in the
     // public section after txSampleRate().)
@@ -758,6 +793,38 @@ private:
     // the window before the cut's own setMox(false) runs carries no PTT bit.
     // Atomic reads only, so the TX I/Q send thread may call it too.
     bool wireMox() const noexcept { return m_mox.load() && !transmitCut(); }
+
+    // The transmit cut (2026-10-15) and CW (2026-10-26): the default unkey,
+    // then CmdTx and high priority at once, so the radio's keyer, break-in
+    // and key bits are off on the wire with MOX.
+    void applyTransmitCut() override;
+    void applyRemoteRfHold() override;
+    // Early fix wave I1: the cut cleared. CmdTx and high priority go out at
+    // once with the CW enable, break-in and key bits the cut held at 0;
+    // the wire state did not change, so setCwWireState sends nothing, and
+    // no heartbeat resends CmdTx while receiving.
+    void onTransmitCutCleared() override;
+
+    // CW transmit (2026-10-26): the key line changed. Queued on this
+    // object's thread by the key line's callback, once per burst: clears
+    // the pending flag, assigns m_tx[0].cwx/dot/dash from the latest bits
+    // and sends high priority.
+    void onCwKeyLineChanged();
+    // CW transmit (2026-10-26): m_cw and m_tx[0] key bits from m_cwWire
+    // and the key line on the codec path; their pre-CW values on the
+    // legacy path (legacy flag or no codec chosen), which sends no CW.
+    void syncCwComposeState();
+
+    // The key line's callback state. It outlives this object if a writer
+    // holds the key line; the destructor clears target, so a change after
+    // it posts nothing. pending: a send is queued and not yet run.
+    struct CwKeyPost {
+        std::atomic<P2RadioConnection*> target{nullptr};
+        std::atomic<bool> pending{false};
+    };
+    std::shared_ptr<CwKeyPost> m_cwKeyPost{std::make_shared<CwKeyPost>()};
+    // m_cw has been assigned from m_cwWire at least once.
+    bool m_cwWireAssigned{false};
 
     // --- PureSignal DDC pair (Phase 3M-4 bench-fix 2026-05-23) ───────────
     //
@@ -1084,10 +1151,18 @@ private:
         int keyerWeight{0};
         int hangDelay{0};
         int rfDelay{0};
-        int edgeLength{7};           // From create_rnet:1454
+        // Upstream comment preserved verbatim (setup.cs:29326): // for DL1YCF CW Edge
+        int edgeLength{9};           // From Thetis setup.cs:29327 [v2.10.3.15] (create_rnet:1454 seeds 7)
         unsigned char modeControl{0};
     };
     CwState m_cw;
+    // CW transmit (2026-10-26). CmdTx byte 5 bits the transmit cut clears:
+    // bit 1 CW enable, bit 7 break-in (Thetis network.h:157, 163
+    // [v2.10.3.15]).
+    static constexpr unsigned char kCwCutModeBits = 0x82;
+    // CmdTx bytes 57-59 in QSK (R-CW-16): the full 31 dB, as Thetis sets
+    // ATT on TX to 31 on entering QSK (console.cs:13016-13029 [v2.10.3.15]).
+    static constexpr int kCwQskTxAttenuationDb = 31;
 
     // --- Mic state (from Thetis _radionet._mic, network.h:169-189) ---
     // mic_control bit-field (from Thetis network.c:1227-1233):

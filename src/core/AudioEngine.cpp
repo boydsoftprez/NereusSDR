@@ -390,6 +390,10 @@
 //               the Mac's standing helper) and leaves it running when it
 //               goes.  J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-10-26: CW transmit, the computer sidetone (R-CW-39, D15):
+//               produceCwSidetone fills the transmit monitor slot from
+//               drainMixes while it runs. J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
 // =================================================================
 
 #include "AudioEngine.h"
@@ -558,6 +562,12 @@ AudioEngine::AudioEngine(QObject* parent)
     m_everySliceScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     m_avMixScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     m_vaxScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
+    // CW transmit (R-CW-39): the computer sidetone renders at the mix
+    // rate. From Thetis cmaster.c:235-250 [v2.10.3.15]: the raised-cosine
+    // edge of 0.005 s that create_sidetone is given.
+    m_cwSidetoneScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
+    m_cwSidetone.setEdge(CwSidetone::kRaisedCosineEdge, CwSidetone::kDefaultEdgeSeconds);
+    m_cwSidetone.configure(kMasterMixSampleRateHz, kMixScratchMinFrames);
     for (int k = 0; k < kMaxOwnerMixes; ++k) {
         m_ownerSpeakersScratch[static_cast<size_t>(k)].assign(
             static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
@@ -4612,6 +4622,9 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
     std::vector<float>& everySum = m_everySliceScratch;
     const bool speakersPlayEvery =
         m_speakersPlayEverySlice.load(std::memory_order_acquire);
+    // CW transmit (R-CW-39, D15): the computer sidetone into the monitor
+    // slot, the frames this drain will take, just before it sums.
+    produceCwSidetone(drainFrames);
     const int mixed = m_masterMix.tryDrain(
         mix.data(), hpMix.data(), drainFrames,
         m_localOutputSliceMask.load(std::memory_order_acquire), owners.data(), ownerCount,
@@ -4661,6 +4674,9 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
         emit antiVoxBlockReady(avMix.data(), avFrames);
     }
 
+    if (mixed > 0) {
+        m_cwSidetoneQueued = std::max(0, m_cwSidetoneQueued - mixed);
+    }
     if (mixed <= 0) {
         return;
     }
@@ -5421,6 +5437,34 @@ void AudioEngine::txMonitorBlockReady(const float* samples, int frames)
     }
 }
 
+// CW transmit (R-CW-39, D15): DSP thread, from drainMixes. Thetis runs
+// xsidetone on the transmitter's output block and mixes its sidetone
+// buffer as the monitor (cmaster.c:391-395 [v2.10.3.15]); here it fills the
+// monitor slot instead, so it follows MON's level and output, and reaches a
+// remote owner's mix as MON does. With several slices every slice's call
+// drains (only the last one's sums), so only the frames the slot does not
+// already hold are rendered: one block per period, never ahead of it. D15:
+// it keeps running in QSK (Thetis silences it there because the radio
+// mixes its own sidetone in; NereusSDR's operator may not be at the radio).
+void AudioEngine::produceCwSidetone(int frames)
+{
+    const int want = std::min(frames, static_cast<int>(m_cwSidetoneScratch.size() / 2))
+        - m_cwSidetoneQueued;
+    if (want <= 0) {
+        return;
+    }
+    if (!m_cwSidetone.render(m_cwSidetoneScratch.data(), want)) {
+        m_cwSidetoneQueued = 0;
+        return;
+    }
+    const bool toHeadphones = m_txMonitorToHeadphones.load(std::memory_order_acquire);
+    // The slot's gain is MON's level (setTxMonitorVolume), applied in the
+    // mix as it is for MON's own audio.
+    m_masterMix.accumulate(kTxMonitorSlotId, m_cwSidetoneScratch.data(), want,
+                           /*muted*/ false, toHeadphones);
+    m_cwSidetoneQueued += want;
+}
+
 // DSP thread. The other half of txMonitorBlockReady: everything the
 // transmit thread has queued goes into the monitor's mixer slot, so this
 // drain mixes it. Called at the top of drainMixes, the only place the
@@ -5603,6 +5647,7 @@ void AudioEngine::ensureMixScratchFrames(int frames)
     m_everySliceScratch.assign(floats, 0.0f);
     m_avMixScratch.assign(floats, 0.0f);
     m_vaxScratch.assign(floats, 0.0f);
+    m_cwSidetoneScratch.assign(floats, 0.0f);
     for (int k = 0; k < kMaxOwnerMixes; ++k) {
         m_ownerSpeakersScratch[static_cast<size_t>(k)].assign(floats, 0.0f);
         m_ownerHeadphonesScratch[static_cast<size_t>(k)].assign(floats, 0.0f);

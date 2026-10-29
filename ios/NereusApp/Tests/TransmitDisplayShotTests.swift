@@ -1,5 +1,8 @@
 // NereusSDR for iOS: pictures of the transmit panadapter while keyed, high SWR, DUP and Setup's transmit display
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-27: Remote transmit hold then cut: the TX pill reading "Held" in
+//   amber, in light and dark. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -110,6 +113,71 @@ struct TransmitDisplayShotTests {
         }
     }
 
+    @Test("the TX pill held reads Held in amber, light and dark")
+    func heldPillShots() async throws {
+        let (model, station) = try await connected()
+        let transmit = model.main.transmit
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state.isKeyed })
+        await station.deliver(TransmitScreenTests.txStateDelta([.init(ordinal: 0, name: "keyed", value: .bool(true))]
+            + TransmitScreenTests.hold(held: true, reason: "link", serial: 0, lastMs: 0)))
+        #expect(await settle { transmit.holdShown })
+        for scheme in [ColorScheme.light, ColorScheme.dark] {
+            // Centred below the window's safe area, on the title bar's colour.
+            let root = ZStack {
+                ChromeColours.bar.ignoresSafeArea()
+                TxPill(transmit: transmit)
+            }
+            .preferredColorScheme(scheme)
+            let image = try await render(root, name: "tx-pill-held-\(scheme == .light ? "light" : "dark")",
+                                         size: CGSize(width: 240, height: 200))
+            let colours = Self.colourCounts(image)
+            // The amber text (#D8A55F) and none of the red pill's text (#C25A5C).
+            #expect(colours.amber > 20, "\(scheme): \(colours)")
+            #expect(colours.red == 0, "\(scheme): \(colours)")
+        }
+        transmit.tapPtt()
+        #expect(await settle { transmit.ptt.state == .idle })
+        await model.disconnect()
+    }
+
+    /// Pixels near the amber text and near the red pill's text.
+    static func colourCounts(_ image: UIImage) -> (amber: Int, red: Int) {
+        guard let cgImage = image.cgImage else {
+            return (0, 0)
+        }
+        let width = cgImage.width
+        let height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+                                          bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                return false
+            }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else {
+            return (0, 0)
+        }
+        func near(_ index: Int, _ red: Int, _ green: Int, _ blue: Int) -> Bool {
+            abs(Int(pixels[index]) - red) <= 24 && abs(Int(pixels[index + 1]) - green) <= 24
+                && abs(Int(pixels[index + 2]) - blue) <= 24
+        }
+        var amber = 0
+        var red = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            if near(index, 0xD8, 0xA5, 0x5F) {
+                amber += 1
+            } else if near(index, 0xC2, 0x5A, 0x5C) {
+                red += 1
+            }
+        }
+        return (amber, red)
+    }
+
     // MARK: Inside
 
     /// The app connected to a fake Core that lets it transmit and sends its
@@ -199,8 +267,9 @@ struct TransmitDisplayShotTests {
         try await render(root, name: name, size: size, sideways: sideways, band: model.main.band, feed: feed)
     }
 
+    @discardableResult
     private func render(_ view: some View, name: String, size: CGSize, sideways: Bool = false,
-                        band: BandModel? = nil, feed: () -> Void = {}) async throws {
+                        band: BandModel? = nil, feed: () -> Void = {}) async throws -> UIImage {
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(origin: CGPoint(x: 0, y: sideways ? 120 : 0), size: size)
@@ -235,6 +304,7 @@ struct TransmitDisplayShotTests {
             try data.write(to: url)
             print("Wrote \(url.path)")
         }
+        return image
     }
 }
 

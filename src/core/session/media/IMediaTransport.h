@@ -10,6 +10,8 @@
 // already-encoded display, audio, transmit-keepalive, and raw I/Q payloads.
 //
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25: iPhone app plan Task 37 (R-IOS-13): the "tx" data channel
 //               (StartOptions::txChannel, sendTx, txReceived) for the
 //               transmit keepalive. J.J. Boyd (KG4VCF), AI-assisted via
@@ -480,7 +482,7 @@ public:
     /// is held. A cancelled or severed transport never calls it. The hook
     /// must be safe on that thread, must not block, and must not call back
     /// into the transport.
-    using TxReceiptHook = std::function<void(std::chrono::steady_clock::time_point receivedAt)>;
+    using TxReceiptHook = std::function<void(const QByteArray& message, std::chrono::steady_clock::time_point receivedAt)>;
     /// Installs `hook` (empty: none) for this start and every later one.
     /// After it returns, the hook it replaced is never called again. False
     /// when this transport cannot call one off the owner's thread. Owner's

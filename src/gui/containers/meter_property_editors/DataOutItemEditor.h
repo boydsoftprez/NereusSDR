@@ -3,6 +3,7 @@
 
 class QComboBox;
 class QLineEdit;
+class QSpinBox;
 
 namespace NereusSDR {
 class DataOutItem;
@@ -20,6 +21,8 @@ private:
     QComboBox* m_comboTransport{nullptr};
     QLineEdit* m_editGuid{nullptr};
     QLineEdit* m_editVariable{nullptr};
+    QLineEdit* m_editFourChar{nullptr};
+    QSpinBox*  m_spinSendInterval{nullptr};
 };
 
 } // namespace NereusSDR

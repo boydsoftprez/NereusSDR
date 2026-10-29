@@ -20,11 +20,64 @@
 //                restoreSavedState is false and when the Core manages
 //                the receive layout. NereusSDR-original. J.J. Boyd
 //                (KG4VCF), AI-assisted via xAI Grok.
+//   2026-10-25 - stream bindings reach the DSP worker inside the geometry
+//                barrier: republishStreamBindings stages them
+//                (m_stagedStreamBindings) and applyStreamDspGeometry
+//                delivers them, after the quiesce when out of step, as a
+//                receive-lane job when in step. J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
+//   2026-10-25 - applyStreamDspGeometry doc: the barrier quiesces the
+//                external-diversity feed too; deliverStagedStreamBindingsInStep
+//                is private. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - applyStreamDspGeometry keeps the external-diversity fork
+//                connected and parks the worker for the re-rate
+//                (parkDspWorkerOnItsThread), so the fork's two legs stay
+//                paired. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - AnvelinaDxOutputs: the Anvelina DX open collector outputs,
+//                loaded per MAC beside the OC matrix, handed to the
+//                connection and applied on a Core at once ("ocDx" reload)
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
+//   2026-10-26 - pushOcTxModes: TUNE and two-tone reach the connection for
+//                the OC transmit pin actions (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
+//   2026-10-26 - wireOcTxModes and m_ocTuneHold: TUNE's OC flag falls after
+//                MOX off is queued (J.J. Boyd KG4VCF, AI-assisted: Claude
+//                Code).
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27 - F3: constructor-only CWX sender injection for controlled
+//                test time, with normal model wiring. J.J. Boyd (KG4VCF),
+//                AI-assisted via OpenAI Codex.
+//   2026-10-26 - CW transmit, remote CW (R-CW-49): requestCwxFor,
+//                stopCwxFor, cwxSendingFor, cwxActiveFor and
+//                setCwxHolderRefusal, so the Core's CWX sender runs a
+//                remote device's request with that device's holder rule.
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit, the serial key reader (R-CW-04, R-CW-36) and
+//                the auto mode switch (R-CW-37): cwSerialKeyInput,
+//                cwSerialKeyRefusal and their test seams. J.J. Boyd
+//                (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - Remote transmit hold then cut: setRemoteRfHold,
+//                isRemoteRfHeld and remoteRfHoldChanged hold the TX
+//                channel's RF silent for a reason while the key stays up;
+//                MOX's return to receive clears every reason.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-10-26 - governNnrLoadForTest: the first call takes the governor
 //                from the load sampler's tick for the model's life;
 //                dspLoadTickForTest runs one tick of that timer.
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: roundtableState() (the link's
+//                `roundtable` object) and roundtableModel() (what the
+//                Roundtable screens bind to), in every placement.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 10 (R-RT-12): roundtableClient(), the
+//                Core's Roundtable connection on a model that runs its own
+//                radio, fed its slices, meters, keying, key and at radio
+//                here and started by SpotSourceHost. NereusSDR-original.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - limitFiltersToSidebands: Setup's "Limit filter edges to
 //                sidebands" (Thetis console.cs:7516-7521 [v2.10.3.15]), the
 //                Core's setting LimitFiltersToSidebands, applied to every
@@ -751,6 +804,63 @@
 //                option c, a gap within four windows of the last one let
 //                through. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Claude Code.
+//   2026-10-26 - CW transmit, the CW pitch as a property: cwPitchHz,
+//                setCwPitchHz, cwPitchChanged and
+//                notifyStationCwPitchMaybeChanged over the station key
+//                CWPitch (R-CW-02); the stale Longpath entry below is
+//                marked (R-CW-52). J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
+//   2026-10-26 - CW transmit, the CW keyer controller: cwKeyerController,
+//                bandPlanCheckForTxSlice (the MOX pre-check's band-plan
+//                half), bandPlanRegionChanged, extendedTransmitChanged and
+//                preventTxOnDifferentBandChanged, the wire state pushed to
+//                the connection, and the TX time-out on QSK key-out
+//                (R-CW-05 to R-CW-07, R-CW-10). J.J. Boyd (KG4VCF),
+//                AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit, MOX in CW, break-in and QSK: syncCwKeying,
+//                the QSK side effects with their saved values, the QSK
+//                memory across leaving CW, the break-in fallback notice
+//                and the QSK time-out once per hold (R-CW-09, R-CW-10,
+//                R-CW-18 to R-CW-22). J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
+//   2026-10-26 - CW transmit early fix wave: a stop latches the keyer
+//                whenever the radio reports a key down or a QSK sending
+//                stretch is under way (C1), the transmit cut's catch-up
+//                waits for the key to be released before clearing (C1),
+//                the QSK time-out spans one sending stretch (I4), and the
+//                QSK restore keys are written once the radio is known
+//                (M7). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the CW receive shift in composedShiftHz, the
+//                pitch change follow (applyCwPitchChange: filters, shift,
+//                APF) and kApfCwPitchHz replaced by cwPitchHz (R-CW-23,
+//                R-CW-27, R-CW-28). J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
+//   2026-10-26: CW transmit, the cwPitchHz comment says a pitch change
+//                recenters the CW filters keeping their width (R-CW-28).
+//                J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, TUNE in CW: tuneTxModeSwapped, the latched
+//                tune pitch and the TX channel's TUNE mode (R-CW-30, D6),
+//                tuneToneHzForTest. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
+//   2026-10-27: CW transmit, the CWX sender (R-CW-31 to R-CW-33): owned
+//                here, on the current connection's key line, its request
+//                gate and its aborts. J.J. Boyd (KG4VCF), AI-assisted via
+//                Claude Code.
+//   2026-10-27: CW transmit, CAT and TCI CW commands: the CWX applet host
+//                (setCwxAppletHost) CAT ZZKO reports and toggles, absent on
+//                a headless Core (R-CW-34). J.J. Boyd (KG4VCF), AI-assisted
+//                via Claude Code.
+//   2026-10-26: CW transmit, the computer sidetone's wiring
+//                (wireComputerSidetone, computeComputerSidetoneRun,
+//                R-CW-39). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - transmitStopHeld() and transmitStopBegan(), so a CAT TX
+//                held during the walk back to receive is dropped by any
+//                stop and never keys after one. J.J. Boyd (KG4VCF), with
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-10-26 - stopAllTxRequested(), emitted by every stopAllTx, so a
+//                Stop All TX that finds nothing to stop still drops a held
+//                CAT TX. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -823,9 +933,14 @@
 //                 GPLv3).
 //   2026-09-27 -- cwPitch()/setCwPitch()/cwPitchChanged(int) (Martin
 //                 Fischer, OE5SOS, AI-assisted via Anthropic Claude).
+//                 [Correction 2026-10-26, R-CW-52: NereusSDR trunk never
+//                 carried this Longpath code; the entry describes Longpath
+//                 only. Trunk's cwPitchHz()/setCwPitchHz()/cwPitchChanged
+//                 are its own (R-CW-02).]
 // =================================================================
 
 #include "core/MoxController.h"
+#include "core/CwTypes.h"
 #include "core/NereusCoreExport.h"
 #include "core/ConnectionState.h"
 #include "core/audio/CaptureSupervisor.h"
@@ -846,6 +961,7 @@
 #include "core/session/StationCapabilities.h"
 #include "core/spectrum/ISpectrumSink.h"
 #include "core/TxInterlockPolicy.h"
+#include "core/TxChannel.h"  // TxChannel::RfHold (setRemoteRfHold)
 #include "core/TuneMemoryStore.h"
 #include "models/RotorCommandSink.h"
 #include "models/TunerModel.h"
@@ -860,6 +976,7 @@
 #include "TransmitModel.h"
 #include "core/Hl2OptionsModel.h"
 #include "core/OcMatrix.h"
+#include "core/AnvelinaDxOutputs.h"
 #include "core/IoBoardHl2.h"
 #include "core/HermesLiteBandwidthMonitor.h"
 #include "core/RadioStatus.h"
@@ -871,6 +988,7 @@
 #include "core/CalibrationController.h"
 #include "core/RadioDiscovery.h"
 #include "core/RadioConnection.h"
+#include "core/codec/CwWireState.h"   // CW transmit: the pushed wire state
 #include "core/HardwareProfile.h"
 #include "core/codec/CodecContext.h"  // SliceConfig (Phase 3F Sub-Epic B Task 16)
 #include "core/DdcAssignment.h"       // DdcAssignment (Phase 3F Sub-Epic B Task 16)
@@ -882,6 +1000,7 @@
 #include "core/safety/BandPlanGuard.h"
 #include "core/safety/TxTimeOutTimer.h"
 #include "core/safety/TransmitCutLine.h"
+#include "core/safety/TxRefusal.h"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -924,6 +1043,8 @@ namespace NereusSDR { class VoltsAmpsLog; }
 namespace NereusSDR {
 
 class AppSettings;
+class RoundtableClient;
+class StationIdentity;
 class StationServer;
 class StationSliceOwnershipPolicy;
 class SessionTransport;
@@ -950,6 +1071,9 @@ class WidebandFftEngine;
 // 3M-1a G.1: forward declarations for TX-side components.
 class CatService;
 class MoxController;
+class CwKeyerController;   // CW transmit (R-CW-05)
+class CwxSender;           // CW transmit (R-CW-31)
+class CwSerialKeyInput;    // CW transmit (R-CW-36)
 struct KeyerIdentity;
 class TxChannel;
 // Phase 3F Sub-Epic J Task 11: forward decl for rxChannelForSlice()'s
@@ -1041,6 +1165,8 @@ class StationPgxlController;
 class StationRfKitController;
 class StationRotorController;
 namespace RotorLink { class RotorModel; }
+class RoundtableState;
+class RoundtableModel;
 class StationTciController;
 class StationTciModel;
 class StationCatController;
@@ -1202,11 +1328,27 @@ class NEREUS_CORE_EXPORT RadioModel : public QObject, public RotorCommandSink {
 
 
 public:
-    // The CW pitch the APF centre is offset from: APF freq = CWPitch +
-    // tuneOffset. From Thetis setup.cs:17071 [v2.10.3.13]; CW pitch default
-    // 600 Hz from Thetis console.cs. Setup > DSP > CW's APF Center Freq
-    // uses the same value (R-R3-21).
-    static constexpr int kApfCwPitchHz = 600;
+    // R-CW-02: the station CW pitch (AppSettings "CWPitch", Station scope),
+    // 200..2250 Hz in 10 Hz steps (stationCwPitchHz). The value this model
+    // last read or set; cwPitchChanged follows it. The APF centre is this
+    // plus the slice's APF tune offset (R-CW-27, From Thetis setup.cs:17112
+    // [v2.10.3.15]); Setup > DSP > CW's APF Center Freq uses it too.
+    //
+    // A change (R-CW-28, D7, D8) recenters the CW filters on the new pitch
+    // keeping their width (presets, the operator's overridden slots, the stored per-band
+    // CW filters and each CW slice's current filter; on a local radio or
+    // the Core only, a remote window follows the Core's), then re-pushes
+    // every CW slice's receive shift and every slice's APF centre. It never
+    // moves a dial or the carrier.
+    int cwPitchHz() const { return m_cwPitchHz; }
+    // Clamps and rounds (clampCwPitchHz), saves CWPitch and emits
+    // cwPitchChanged once when the value changes; an equal value does
+    // nothing.
+    void setCwPitchHz(int hz);
+    // Re-reads CWPitch and emits cwPitchChanged when it moved: on a remote
+    // window when the Core's key arrives (reportStationSettingChanged, a
+    // refused write), on a Core when a window's write of it lands.
+    void notifyStationCwPitchMaybeChanged();
 
     // Remote-daemon R2 Task 4: which side of the wire this model's DSP
     // lives on. Local (default; unchanged behavior) owns a
@@ -1227,6 +1369,10 @@ public:
     // DaemonApp.cpp, every test) keeps resolving to the constructor above
     // and keeps defaulting to Role::Local without any change on its end.
     RadioModel(Role role, QObject* parent = nullptr);
+    // F3 test seam: supply an idle sender constructed with its Clock/Sleeper.
+    // Ownership transfers before normal CW wiring, which still runs once.
+    // The parent argument is required so (Role, nullptr) stays unambiguous.
+    RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObject* parent);
     ~RadioModel() override;
 
     // Remote-daemon R2 Task 4.
@@ -1901,6 +2047,13 @@ public:
     const OcMatrix& ocMatrix()        const { return m_ocMatrix; }
     OcMatrix&       ocMatrixMutable()       { return m_ocMatrix; }
 
+    // The Anvelina PRO3 DX open collector outputs (DX OUT 7..10), their own
+    // state beside the OC matrix. Loaded per MAC at connect time; the
+    // connection sends wireByte() on an ANVELINAPRO3 (P2 byte 1397, P1
+    // bank 17).
+    const AnvelinaDxOutputs& anvelinaDxOutputs() const { return m_anvelinaDxOutputs; }
+    AnvelinaDxOutputs&       anvelinaDxOutputsMutable() { return m_anvelinaDxOutputs; }
+
     // HL2 I/O board model — single instance; non-null on any HL2 connection.
     // Pushed into P1RadioConnection::setIoBoard() at connect time so the
     // codec layer can dequeue I2C transactions.  Phase 3P-E Task 2.
@@ -2558,6 +2711,9 @@ public:
     /// seed ({stream 0: [slice 0]}). Anything on a non-zero stream then
     /// demodulated nothing until the operator happened to retune it. Called
     /// from wireConnectionSignals once the worker exists.
+    ///
+    /// 2026-10-25: ends with applyStreamDspGeometry, which is what delivers
+    /// the bindings it stages.
     void republishAllStreamBindings();
 
     /// Drop every slice's stream binding and idle the whole pool.
@@ -2847,6 +3003,93 @@ public:
     /// Slice control plan Task 7: whether a slice is bound for transmit.
     /// With none (a Core with no slice) every key is refused.
     bool hasTransmitSlice() const;
+
+    /// CW transmit (R-CW-05 to R-CW-07): the keyer gate and the CW wire
+    /// state this model pushes to the connection. Never null.
+    CwKeyerController* cwKeyerController() const { return m_cwKeyerController.get(); }
+    /// CW transmit (R-CW-31 to R-CW-33): the CWX sender, on the current
+    /// connection's key line. Its requests pass the CWX request gate: the
+    /// transmit slice in CW, no other device holding transmit, then the
+    /// keyer gate. Leaving CW, the keyer gate turning false, another device
+    /// taking transmit, every stop, a transmit cut's catch-up and the
+    /// connection going away abort it. Never null.
+    CwxSender* cwxSender() const { return m_cwxSender.get(); }
+    /// CW transmit (R-CW-49): a remote device's CWX request on a Core
+    /// (cw.send, cw.memory, cw.key), run by the CWX sender with `device`
+    /// as the one the holder rule is asked for (setCwxHolderRefusal):
+    /// `request` makes the sender's call and returns its result. Empty
+    /// when it was taken; otherwise the transmit refusal: the keyer gate's
+    /// own, otherDeviceHolds for the holder rule's words, notReady for the
+    /// sender's other words (not CW, nothing to send, an empty memory).
+    struct RemoteCwActivity { QByteArray deviceId; quint32 epoch{0}; };
+    RemoteCwActivity remoteCwActivity() const { return m_remoteCwActivity; }
+    bool remoteCwActivityMatches(const QByteArray& device, quint32 epoch) const;
+    bool pauseRemoteCw(quint32 epoch);
+    bool resumeRemoteCw(quint32 epoch);
+    void cancelRemoteCw(quint32 epoch);
+    TxRefusal requestRemoteCwxFor(const QByteArray& device, bool replacement,
+        const std::function<bool(CwxSender&, quint32, const std::function<bool()>&)>& request);
+    TxRefusal requestCwxFor(const QByteArray& device,
+                            const std::function<bool(CwxSender& sender)>& request);
+    /// A device's session ended (its link dropped, it left): what the
+    /// sender runs for it stops at once, the Key released.
+    void stopCwxFor(const QByteArray& device);
+    /// The device whose request the sender took last: empty for the
+    /// station's own (this window's applet, CAT, TCI, the serial key).
+    QByteArray cwxSendingFor() const;
+    /// The sender is sending, or holding the Key, for `device` now.
+    bool cwxActiveFor(const QByteArray& device) const;
+    /// The holder rule for a CWX request (R-CW-33, R-CW-49): the words
+    /// when transmit is held by someone other than `device` (empty: the
+    /// station's own), empty when it may send. The Core's session server
+    /// installs it; unset, the station's own requests read
+    /// otherDeviceHoldsRefusal() and a device's read empty.
+    using CwxHolderRefusalFn = std::function<QString(const QByteArray& device)>;
+    void setCwxHolderRefusal(CwxHolderRefusalFn probe) { m_cwxHolderRefusal = std::move(probe); }
+    QString cwxHolderRefusal(const QByteArray& device) const;
+    /// CW transmit (R-CW-04, R-CW-36): the serial key reader on
+    /// TransmitModel::cwSerialPort, reading while a connection is up and
+    /// the port is named and not CAT's. Never null.
+    CwSerialKeyInput* cwSerialKeyInput() const { return m_cwSerialKey.get(); }
+    /// Why the serial key port is not read (CAT has it, it would not
+    /// open, it stopped working); empty while it is read or none is named.
+    QString cwSerialKeyRefusal() const { return m_cwSerialKeyRefusal; }
+    /// A reader on a line source the test drives, wired as production's.
+    void replaceCwSerialKeyInputForTest(std::unique_ptr<CwSerialKeyInput> input);
+    /// R-CW-37: the mode the auto mode switch returns the slice to.
+    std::optional<DSPMode> cwAutoModeReturnModeForTest() const { return m_cwOldAutoMode; }
+    /// CW transmit (R-CW-34): the window that shows the CWX applet, for CAT
+    /// ZZKO. The GUI registers whether the applet is shown and how to show
+    /// or hide it; a headless Core registers nothing and ZZKO answers ?;.
+    /// Passing empty functions removes the host.
+    void setCwxAppletHost(std::function<bool()> isShown, std::function<void(bool)> setShown)
+    {
+        m_cwxAppletShown = std::move(isShown);
+        m_cwxAppletSetShown = std::move(setShown);
+    }
+    bool hasCwxAppletHost() const { return m_cwxAppletShown && m_cwxAppletSetShown; }
+    bool cwxAppletShown() const { return m_cwxAppletShown ? m_cwxAppletShown() : false; }
+    void setCwxAppletShown(bool shown) { if (m_cwxAppletSetShown) { m_cwxAppletSetShown(shown); } }
+    /// CW transmit: the band-plan half of the MOX pre-check for the
+    /// transmit slice's carrier (region, extended, US 60 m, prevent TX on
+    /// a different band and the band edges), shared by the MOX pre-check
+    /// and the CW keyer gate. `ignoreFilter` is Thetis's bIgnoreFilter.
+    safety::BandPlanGuard::MoxCheckResult bandPlanCheckForTxSlice(bool ignoreFilter) const;
+    /// CW transmit: the keyer's connection wiring (key status in, the wire
+    /// state out) for a test that injects a connection.
+    void wireCwKeyerConnectionForTest() { wireCwKeyerConnection(); }
+    /// CW transmit (R-CW-10): whether the radio's QSK key-out is running
+    /// the TX time-out now.
+    bool cwQskKeyOutTimingForTest() const { return m_cwQskKeyOutTiming; }
+    /// CW transmit (R-CW-21): whether the QSK changes are applied to the
+    /// transmit slice's receiver now.
+    bool cwQskSideEffectsAppliedForTest() const { return m_cwQskApplied; }
+    /// CW transmit fix wave 2: the QSK gap ends only when the test calls
+    /// endCwQskGapForTest (no wall-clock timer), so time-out tests do not
+    /// depend on QTimer timing under load.
+    void setCwQskGapManualForTest(bool manual) { m_cwQskGapManualForTest = manual; }
+    void endCwQskGapForTest() { endCwQskGap(); }
+    bool cwQskGapPendingForTest() const { return m_cwQskGapPending; }
 
     /// NOTE: still a LIST POSITION, unlike sliceById / removeSlice above.
     /// This API remains positional for internal list navigation only.
@@ -3248,6 +3491,8 @@ public:
         emit spectrumWidgetChanged(w);
     }
 signals:
+    void remoteCwActivityChanged();
+    void remoteCwRecoveryRequested(quint32 epoch);
     void clarityEnabledChanged(bool enabled);
     // 3D Stacked-Trace Spectrum Plan Task 22: lets a surface that follows
     // the active panadapter (DisplayApplet) rebind when MainWindow
@@ -3741,9 +3986,18 @@ public:
     quint64 txFrequencyForSlice(const SliceModel* slice) const;
 
     /// The radio NCO and TX analyzer's baseband origin. During Tune this
-    /// subtracts the existing signed tone from dial+XIT, so the tone lands
-    /// on txFrequencyForSlice(). Other transmit modes keep dial+XIT.
+    /// subtracts the signed tune tone (plus or minus the CW pitch latched
+    /// at TUN-on, R-CW-30) from dial+XIT, so the tone lands on
+    /// txFrequencyForSlice(). Other transmit modes keep dial+XIT.
     quint64 txNcoFrequencyForSlice(const SliceModel* slice) const;
+
+    /// D6 (R-CW-30): TUNE started from CWL or CWU runs the TX channel in LSB
+    /// or USB while the slice stays in CW. True from that switch until the
+    /// TUN-off completion puts the TX channel's mode back. While it holds,
+    /// the radio's keyer is off and MoxController does not treat the TX
+    /// channel as CW (Thetis CWFWKeyer = false with the TX DSP mode
+    /// switched, console.cs:30107-30121 [v2.10.3.15]).
+    bool tuneTxModeSwapped() const noexcept { return m_tuneTxDspMode.has_value(); }
 
     // Phase 3F Sub-Epic D Task 13: NereusSDR-original FFT fan-out router.
     // Wires receiverId -> N pans so a single DDC FFT pipeline can feed
@@ -3822,6 +4076,17 @@ public:
     PskReporterClient*    pskReporter()         const { return m_pskReporter.get(); }
     // Parity Task 19 (R-IOS-25): the spot sources' starts and stops.
     SpotSourceHost*       spotSourceHost()      const { return m_spotSourceHost.get(); }
+    // Roundtable plan Task 10 (R-RT-12): the Core's Roundtable connection
+    // on a model that runs its own radio (a Core, an Everything desktop);
+    // null in a remote window.
+    RoundtableClient*     roundtableClient()    const { return m_roundtable.get(); }
+    // Roundtable plan Task 11: the `roundtable` object (bound to the
+    // client on a model that runs its own radio, the Core's values in a
+    // remote window) and the model the Roundtable screens bind to (fed by
+    // the client here, by StationClient in a remote window). Non-null from
+    // construction; Qt children.
+    RoundtableState*      roundtableState()     const { return m_roundtableState; }
+    RoundtableModel*      roundtableModel()     const { return m_roundtableModel; }
 
     /// Parity Task 19 (R-IOS-25): a remote window applies the Core's
     /// `spots` stream (the Core's cluster, RBN, POTA and PSK Reporter
@@ -3851,7 +4116,8 @@ public:
     /// Fix wave (M3): the Core is changing its radio (nereusd's DaemonApp).
     /// Keying is refused until the change ends, so nothing keyed is torn
     /// down by it.
-    void setStationRadioChangeUnderway(bool underway) { m_stationRadioChangeUnderway = underway; }
+    /// CW transmit: the CW keyer gate re-evaluates on a change.
+    void setStationRadioChangeUnderway(bool underway);
     /// Fix wave (M2): the Core's waiting reason (see the property).
     QString stationRadioWaiting() const { return m_stationRadioWaiting; }
     void setStationRadioWaiting(const QString& reason);
@@ -5001,7 +5267,8 @@ public:
     // a remote window, beside scheduleRemoteDspOptionsApply. Keys under
     // hardware/<connected MAC>/ that a live controller holds in memory
     // queue that controller's reload: oc/ (the OC pin matrix the codec
-    // reads each frame), hl2IoBoard/n2adrFilter (the HL2 N2ADR filter
+    // reads each frame), oc/dx/ (the Anvelina DX outputs, applied at once,
+    // keyed or not), hl2IoBoard/n2adrFilter (the HL2 N2ADR filter
     // board's pins in that matrix), cal/ (the frequency calibration the P2
     // codec reads each command) and hl2/ (the HL2 options). After
     // kHardwareApplyCoalesceMs the queued reloads run once, so the Core's
@@ -5032,7 +5299,7 @@ public:
     void applyHpfBypassOnTxSetting() { applyAlexHpfSwitchSettings(); }
 
     // Test-only: observe each reload the coalesced hardware apply makes,
-    // by name ("oc", "n2adr", "cal", "hl2").
+    // by name ("oc", "ocDx", "n2adr", "cal", "hl2").
     void setHardwareApplyObserverForTest(std::function<void(const QString&)> observer)
     {
         m_hardwareApplyObserverForTest = std::move(observer);
@@ -5167,6 +5434,10 @@ public:
     void injectConnectionForTest(RadioConnection* conn) {
         m_connection = conn;
         syncTransmitCutTargets();
+        // CW transmit: the CWX sender leaves the old connection's key line.
+        syncCwxKeyLine();
+        // CW transmit (R-CW-36): so does the serial key reader.
+        syncCwSerialKey();
         setConnectionState(conn != nullptr ? ConnectionState::Connected
                                             : ConnectionState::Disconnected);
     }
@@ -5326,6 +5597,9 @@ public:
         m_tgxlSettleFiredObserverForTest = std::move(observer);
     }
     bool tuneOffPendingForTest()          const noexcept { return m_pendingTuneOff; }
+    // R-CW-30: the signed tune tone frequency in Hz the TUN-on set (0 when
+    // TUNE is off), as handed to TxChannel::setTuneTone.
+    double tuneToneHzForTest() const noexcept;
 
     // 3M-1b I.3: inject HPSDRHW board type to select the per-family Radio Mic
     // group box in AudioTxInputPage without a live radio connection.
@@ -5746,6 +6020,10 @@ public slots:
     // unkey then finishes on the lanes. It never waits for a RADE
     // end-of-over tail. `reason` goes to the log only.
     void stopTransmitNow(const QString& reason);
+    // stopTransmitNow's hold: true from a stop until the next key begins
+    // (MoxController::txAboutToBegin), so through a stop's whole walk back
+    // to receive.
+    bool transmitStopHeld() const noexcept { return m_transmitStopHold; }
 
     // stopAllTx: ported from Thetis console.cs StopAllTx
     // (console.cs:45324-45342 [v2.10.3.15]). When MOX, manual MOX, TUNE or
@@ -5769,6 +6047,15 @@ public slots:
     void catchUpTransmitCut(const QString& stopText);
 
 public:
+    // Remote transmit hold then cut (2026-10-26), main thread. Holds the TX
+    // channel's RF silent for `reason` (TxChannel::setRfHold) while MOX,
+    // the relay and the stream stay keyed. remoteRfHoldChanged(true) fires
+    // when the first reason is set, (false) when the last clears; MOX's
+    // return to receive clears every reason. Nothing else (the TX time-out,
+    // the keying walk) sees a hold.
+    void setRemoteRfHold(TxChannel::RfHold reason, bool on);
+    bool isRemoteRfHeld() const { return m_remoteRfHoldMask != 0u; }
+
     // ── iPhone app plan Task 38 (R-IOS-04, D29): the transmit time-out ──
     //
     // TxTimeOutTimer (Thetis TimeOutTimerManager) on a model with its own
@@ -6345,6 +6632,20 @@ signals:
     // the operator (MainWindow shows it for 10 s, as Thetis's
     // infoBar.Warning(msg, false, 10000)).
     void transmitStopped(QString message);
+    // stopTransmitNow ran (Stop All TX, the time-out, the unkey gate's
+    // emergency stop): emitted at the stop, before stopAllTx drops MOX,
+    // TUNE and two-tone and long before transmitStopped. A CAT TX held for
+    // the end of the walk back to receive is dropped here.
+    void transmitStopBegan();
+    // stopAllTx was called, whether or not anything was keyed or releasing:
+    // emitted first, before its early return. A Stop All TX in the last
+    // phase of a walk back to receive (TxToRxFlush) or at Rx before a held
+    // CAT TX's replay stops nothing, so it emits no transmitStopBegan; a
+    // CAT TX held for the end of that walk is dropped here.
+    void stopAllTxRequested();
+    // Remote transmit hold then cut: the hold mask went from no reason to
+    // some (true) or back (false).
+    void remoteRfHoldChanged(bool held);
     // iPhone app plan Task 38: the Core stopped a transmission for a
     // reason of its own (lastTransmitStopReason()); emitted after
     // transmitStopped.
@@ -6466,15 +6767,25 @@ signals:
                                  bool shownOnPage);
     /// Remote window: a Core station setting changed (empty: a snapshot).
     void stationSettingChanged(const QString& key);
+    /// R-CW-02: the station CW pitch changed (cwPitchHz).
+    void cwPitchChanged(int hz);
     /// "Limit filter edges to sidebands" changed on this model's slices.
     void limitFiltersToSidebandsChanged(bool on);
     /// A setting the transmit gate reads (ExtendedTransmit) changed on
     /// this model's own settings: a local window's edit, or a device's
     /// edit the Core took. A remote window hears stationSettingChanged.
     void transmitGateSettingChanged(const QString& key);
+    // CW transmit (R-CW-06): BandPlanRegion, ExtendedTransmit and
+    // PreventTxOnDifferentBandToRx were written (reportTransmitGateSettingChanged,
+    // from every writer: Setup and a device's change on the Core).
+    void bandPlanRegionChanged();
+    void extendedTransmitChanged();
+    void preventTxOnDifferentBandChanged();
     /// Scoped review (addendum G-42): who holds transmit on this Core
     /// changed (otherDeviceHoldsRefusal may read differently).
     void transmitHolderChanged();
+    /// CW transmit (R-CW-04): cwSerialKeyRefusal changed.
+    void cwSerialKeyRefusalChanged(const QString& words);
     /// R-R3-22 fix wave: see reportStationCommandFinished. The one
     /// per-command result signal: the amp applets' pending requests and
     /// the TCI switch's request wait both match their own id here (an
@@ -7111,7 +7422,8 @@ private:
 
     // The total WDSP shift for a slice: the allocator's offset from its
     // hosting stream's centre, plus RIT, plus the per-mode DIG click-tune
-    // offset. Five sites push the shift (bindSliceToStream,
+    // offset, plus the CW receive shift in CWU and CWL (R-CW-23,
+    // SliceModel::cwShiftHz). Five sites push the shift (bindSliceToStream,
     // activateSliceChannel, reshiftSlicesOnStream,
     // commitStreamSampleRateChange and the RIT/DIG lambda in
     // wireSliceSignals) and they used to disagree about which terms belonged
@@ -7128,6 +7440,10 @@ private:
     /// The ONLY writer of the notch RF origin. Writes tunefreq and shift
     /// together from one centre; WDSP sums them (nbp.c:192).
     void pushNotchOrigin(SliceModel* slice, RxChannel* ch, double streamCentreHz);
+    // R-CW-28: what a CW pitch change from oldHz to newHz does, run by
+    // setCwPitchHz and notifyStationCwPitchMaybeChanged before they emit
+    // cwPitchChanged. See cwPitchHz().
+    void applyCwPitchChange(int oldHz, int newHz);
 
     /// Coalesces notch edits during a drag. RXANBPEditNotch runs a full
     /// UpdateNBPFilters (an FFT per partition at nc=4096, plus a bpsnba
@@ -7237,6 +7553,21 @@ private:
     // R-SPK-15: the CW or Tune flag, sent to the connection on a change.
     bool computeSidetoneExpected() const;
     void refreshSidetoneExpected();
+    // The OC transmit pin actions' TUNE and two-tone inputs
+    // (RadioConnection::setOcTxModes), queued to the connection's thread as
+    // setMox is. TUNE is isTune() or m_ocTuneHold.
+    void pushOcTxModes();
+    // Constructor wiring for pushOcTxModes and m_ocTuneHold.
+    void wireOcTxModes();
+    // R-CW-39: the computer sidetone (AudioEngine::setCwSidetoneRun) runs
+    // while the transmit slice is in CW with cwSidetone and
+    // cwComputerSidetone on, never on a remote window; its pitch is the CW
+    // pitch and the CWX sender's key keys it.
+    void wireComputerSidetone();
+    void refreshComputerSidetone();
+public:
+    bool computeComputerSidetoneRun() const;
+private:
     // Remote role: the link says the Core offers the radio speaker
     // (IStationLink::radioSpeakerAvailable).
     bool stationOffersRadioSpeaker() const;
@@ -7629,8 +7960,15 @@ public:
     /// connected.
     void syncReceiverToStream(int streamIndex, bool live);
 
-    /// Push the current slice set for `streamIndex` to RxDspWorker and emit
-    /// streamBindingsChanged. Called after every bind / unbind.
+    /// Stage the current slice set for `streamIndex` for RxDspWorker and emit
+    /// streamBindingsChanged at once. Called after every bind / unbind.
+    ///
+    /// 2026-10-25: it no longer posts to the worker. The binding is staged
+    /// (m_stagedStreamBindings, only while a worker exists, defect F1) and
+    /// applyStreamDspGeometry delivers it, so every caller reaches
+    /// applyStreamDspGeometry before it returns to the event loop.
+    /// 2026-10-26: a zero-delay check warns and delivers if one ever does
+    /// not.
     void republishStreamBindings(int streamIndex);
     bool streamCtunPinned(int streamIndex) const;
     void setStreamCtunPinned(int streamIndex, bool pinned);
@@ -7690,10 +8028,40 @@ public:
     /// accumulator. Rather than order the two writes (the safe order inverts
     /// between widening and narrowing), this quiesces the I/Q feed for the
     /// duration exactly as setSampleRateLive steps 2 and 10 do, so no drain
-    /// can observe a half-applied geometry at all.
+    /// can observe a half-applied geometry at all. 2026-10-26: the
+    /// external-diversity fork (hardwareIqDataStamped, which hands its mixed
+    /// chunk to every slice on the target's stream) stays connected: the
+    /// worker pairs its two legs by position, so a disconnect between the
+    /// legs of one packet would leave them apart. The worker is parked
+    /// instead (parkDspWorkerOnItsThread), by the same event that applies the
+    /// drain sizes and the bindings, for the whole re-rate; a diversity batch
+    /// queued before that event runs on the old geometry, one after it on the
+    /// new.
     ///
     /// Cheap and side-effect-free when nothing is out of step, which is every
     /// call on a single-rate radio.
+    ///
+    /// 2026-10-25: the stream's channel set is the third part of the same
+    /// geometry. Thetis never lets the loop that runs fexchange0 see a
+    /// stream's channels, drain size and channel input geometry apart:
+    /// xcmaster holds pcm->update[stream] around the receive block
+    /// (ChannelMaster/cmaster.c:340-404 [v2.10.3.15]) and SetXcmInrate takes
+    /// the same lock (cmaster.c:457-507 [v2.10.3.15]) while it sets the drain
+    /// size and every sub-receiver's input rate and size. RxDspWorker's
+    /// m_streamSlices is the NereusSDR form of that channel set, so this is
+    /// also what delivers the bindings republishStreamBindings staged:
+    ///   * out of step, inside the barrier, after the quiesce, in the event
+    ///     that parks the worker, beside the drain sizes, so the first batch
+    ///     after the release sees the new binding, the new drain size and
+    ///     the channel's new wdspInputSize() together (without a lane, the
+    ///     same, after the blocking resetAccumulator);
+    ///   * in step, as one receive-lane job, so it lands after any barrier
+    ///     already queued (without a lane, queued to the worker at once);
+    ///   * while a live rate change runs, staged until finishSampleRateChange
+    ///     calls this again; abandonSampleRateChange and releaseStreamBindings
+    ///     drop them.
+    /// PR 630's input-size guard in RxChannel::processIq stays as the safety
+    /// net if this ordering is ever broken.
     void applyStreamDspGeometry();
 
     /// Re-run the codec after a MOX, effective PureSignal, or diversity
@@ -7753,6 +8121,10 @@ public:
     }
 
 private:
+    // 2026-10-25: applyStreamDspGeometry's in-step delivery of the staged
+    // bindings (see its declaration).
+    void deliverStagedStreamBindingsInStep();
+
     /// Remote-daemon R2 Task 11. Emits BOTH activeSliceChanged(index) (the
     /// existing positional signal, unchanged) and activeSliceIdChanged(id)
     /// (new), resolving `index` against m_slices to find the id. `index`
@@ -7964,6 +8336,11 @@ private:
     // True when `worker` is the running DSP worker and its thread is not
     // the caller's.
     bool dspWorkerThreadRunning(RxDspWorker* worker) const;
+    // 2026-10-26: parks `worker` on its own thread, after running
+    // `beforePark` there, and returns the function that releases it. The
+    // caller checks that the worker's thread runs and is not its own.
+    static std::function<void()> parkDspWorkerOnItsThread(
+        RxDspWorker* worker, std::function<void()> beforePark);
     // Connects a new RX channel's lane signals (NNR diagnostics and late
     // refusals, DSP-options timing) to the slice that owns it.
     void wireRxChannelLaneSignals(int channelId);
@@ -8072,6 +8449,10 @@ private:
     // the same instance. MAC and load() are called on connect.
     // Phase 3P-D Task 3.
     OcMatrix      m_ocMatrix;
+
+    // The Anvelina DX open collector outputs, beside the OC matrix (the
+    // DX OUT 7..10 UI and the connection read the same instance).
+    AnvelinaDxOutputs m_anvelinaDxOutputs;
 
     // HL2 Options model — 9 HL2-specific behavior knobs.  Owned here
     // so the Hl2OptionsTab and (eventually) the P1 codec wire-format
@@ -8244,6 +8625,10 @@ private:
     // parent this) and the last reason the Core stopped a transmission.
     TxTimeOutTimer* m_txTimeOut{nullptr};
     TransmitStopReason m_lastTransmitStopReason;
+    // Remote transmit hold then cut: the RfHold reasons set through
+    // setRemoteRfHold (main thread); cleared when MOX returns to receive.
+    quint32 m_remoteRfHoldMask{0};
+    void clearRemoteRfHolds();
     quint32 m_keyingEpoch{0};
     // iPhone app plan Task 36: the remote microphone ring (Local only; it
     // outlives the transmit pump, which holds a plain pointer to it) and
@@ -8303,6 +8688,12 @@ private:
     // never leaves its connect rate is recognised as already in step and
     // applyStreamDspGeometry stays a no-op. Main thread only.
     QHash<int, int> m_streamInSizePushed;
+
+    // 2026-10-25: each stream's slice set as republishStreamBindings last
+    // recorded it, not yet delivered to RxDspWorker. applyStreamDspGeometry
+    // delivers and clears it (see its declaration); a later republish of the
+    // same stream replaces its entry. Main thread only.
+    QMap<int, QVector<int>> m_stagedStreamBindings;
 
     // Phase 3F Sub-Epic I Task 7b: the codec's last per-stream DDC choice,
     // indexed by stream. -1 = that stream is idle, so an emptied stream
@@ -8428,6 +8819,8 @@ private:
     // Remote-daemon R2 Task 4: set once at construction (see the Role
     // constructor overload above), never mutated afterward.
     Role m_role{Role::Local};
+    // R-CW-02: cwPitchHz(), read from CWPitch in the constructor.
+    int m_cwPitchHz{kCwPitchDefaultHz};
     bool m_receiveOnlyStationPolicy{false};
 
     // R-R3-36: PC microphone session demand (see setPcCaptureAllowed).
@@ -8733,6 +9126,14 @@ private:
     // Stable slice identity paired with m_savedTxDspMode. Listening focus
     // may move while the asynchronous TUN-off sequence is settling.
     int m_savedTxDspSliceId{-1};
+    // R-CW-30 (D7): the CW pitch the tune tone and its NCO compensation
+    // use, latched at TUN-on, so a pitch change during TUNE moves neither
+    // until the next TUNE.
+    int m_tunePitchHz{kCwPitchDefaultHz};
+    // D6: the TX channel's mode while TUNE from CW runs it in LSB or USB
+    // (the slice stays in CW); empty otherwise. pushTxModeAndBandpass sends
+    // it in place of the saved slice's mode.
+    std::optional<DSPMode> m_tuneTxDspMode;
     //
     // m_savedPowerPct: power slider value (0-100) before the tune-power push.
     //   Cite: Thetis console.cs:30033 [v2.10.3.13] — PreviousPWR = ptbPWR.Value.
@@ -8983,6 +9384,9 @@ private:
     // it up after Tune ends until the radio has unkeyed.
     bool m_sidetoneExpected{false};
     bool m_tuneSidetoneHold{false};
+    // The OC pin actions' TUNE flag, held from TUNE's end until MOX off is
+    // queued (wireOcTxModes).
+    bool m_ocTuneHold{false};
     // Remote role: the Core's reports as it last sent them.
     int  m_stationRadioSpeakerAvailability{0};
     bool m_stationSpeakerAmplifierAvailable{false};
@@ -9139,6 +9543,21 @@ private:
     // above (all but FreeDV Reporter), locally and on the Core; the
     // mirrored `spotSources` object.
     std::unique_ptr<SpotSourceHost>       m_spotSourceHost;
+    // Roundtable plan Task 10 (R-RT-12): the Roundtable connection (Role::
+    // Local only), started and followed by m_spotSourceHost; the key it
+    // signs in with when no station server holds one (an Everything
+    // desktop with Remote Access off), loaded from the settings profile
+    // directory only when a station connection first needs it; and whether
+    // this model is the Core's (restoreStationSpotSources), where someone
+    // is at the radio while a device session is live.
+    std::unique_ptr<RoundtableClient>     m_roundtable;
+    std::unique_ptr<StationIdentity>      m_roundtableIdentity;
+    bool                                  m_roundtableOnCore = false;
+    void wireRoundtable();
+    void pushRoundtableSlices();
+    void pushRoundtableMeter();
+    void updateRoundtableAtRadio();
+    const StationIdentity* roundtableIdentity();
     // Parity Task 19: in a remote window, the Core's spot ids (the `spots`
     // stream's record ids) and the SpotModel index each is shown under,
     // beside this window's own WSJT-X and SpotCollector spots.
@@ -9256,6 +9675,9 @@ private:
     StationRotorController* m_stationRotor{nullptr};
     // Rotor control plan Task 4b: see rotorModel(); Qt child.
     RotorLink::RotorModel*  m_rotorModel{nullptr};
+    // Roundtable plan Task 11: see roundtableState(), roundtableModel().
+    RoundtableState*        m_roundtableState{nullptr};
+    RoundtableModel*        m_roundtableModel{nullptr};
     // Rotor control plan Task 6: see lastRotorCommandId().
     quint32 m_lastRotorCommandId{0};
     // Final review I3: the open rotor setup views, and (on a remote Core)
@@ -9663,6 +10085,115 @@ private:
     QMetaObject::Connection m_accessoryBandConnection;
     void rebindAccessorySlice();
     void publishAccessoryBand();
+
+    // ── CW transmit (R-CW-05 to R-CW-07, R-CW-10) ──────────────────────────
+    // The keyer's connection wiring: key status in, the wire state pushed
+    // once now (wireConnectionSignals, and the test seam above).
+    void wireCwKeyerConnection();
+    // Sends `state` to the connection when it differs from the last one
+    // sent to it (queued onto the connection's thread).
+    void pushCwWireState(const CwWireState& state);
+    // The radio's key status (RadioConnection::radioKeyStatus).
+    void onCwRadioKeyStatus(bool dot, bool dash, bool keyOut);
+    // R-CW-10: in QSK the TX time-out counts while the radio reports
+    // key-out, as it counts MOX (MOX never goes on in QSK).
+    void updateCwQskTimeOut();
+    std::optional<CwWireState> m_lastPushedCwWire;
+    bool m_cwQskKeyOutTiming{false};
+    // The QSK time-out fired for the stretch now: it stays quiet until the
+    // stretch ends (one time-out per stretch).
+    bool m_cwQskTimeOutSpent{false};
+    // Early fix wave I4 and C1: a QSK sending stretch, from the first
+    // key-out until key-out has been up longer than the break-in delay
+    // setting (m_cwQskGapTimer). NereusSDR's own rule.
+    bool m_cwQskStretch{false};
+    QTimer* m_cwQskGapTimer{nullptr};
+    // A gap is running (the timer, or the test's manual trigger).
+    bool m_cwQskGapPending{false};
+    bool m_cwQskGapManualForTest{false};
+    void startCwQskGap(int gapMs);
+    void stopCwQskGap();
+    void endCwQskGap();
+    // Early fix wave C1: the transmit cut's catch-up found the radio still
+    // reporting a key down in CW; the cut is cleared once it is released.
+    bool m_cwCutClearPending{false};
+    // Whether the radio reports a key down in CW now, or a QSK stretch is
+    // under way: the radio may be on the air with MOX off.
+    bool cwRadioMayBeKeyed() const;
+
+    // ── CW transmit: MOX in CW, break-in and QSK (R-CW-18 to R-CW-22) ──────
+    // The keyer controller's state to MoxController (CW mode, the effective
+    // break-in mode), the CW memory of QSK across leaving CW, the QSK side
+    // effects and the break-in fallback notice. Runs on every keyer state
+    // change.
+    void syncCwKeying();
+    void refreshCwKeyingForTuneMode();
+    DSPMode txChannelModeFor(const SliceModel* slice) const;
+    // R-CW-21: QSK's changes to the transmit slice's receiver, and their
+    // undoing (also at load, when a restart finds QSK no longer on).
+    void applyCwQskSideEffects(bool qsk);
+    void restoreCwQskSavedValues(SliceModel* slice);
+    // hardware/<mac>/tx/, empty with no radio known.
+    QString cwQskSettingsPrefix() const;
+    bool m_cwSyncing{false};
+    bool m_cwTxSliceInCw{false};
+    // Thetis qsk_in_CW: QSK was selected when the slice left CW.
+    bool m_cwQskInCw{false};
+    bool m_cwQskApplied{false};
+    QPointer<SliceModel> m_cwQskSlice;
+    int m_cwQskSavedAgcMode{0};
+    int m_cwQskSavedHangThreshold{0};
+    // The break-in mode last in effect while in CW, and the mode selected
+    // then (a fallback notice is given once, on the change).
+    std::optional<CwBreakInMode> m_cwLastEffective;
+    int m_cwLastSelected{-1};
+    // ── CW transmit: the CWX sender (R-CW-31 to R-CW-33) ───────────────────
+    // Made after the keyer controller; its settings, gate and aborts.
+    void wireCwxSender();
+    // The sender on the current connection's key line (or none), the HL2
+    // flag from the radio. Early review M8: a key-line writer lets go of a
+    // connection's line before that connection goes away.
+    void syncCwxKeyLine();
+    // Reset first in the destructor, before the keyer controller.
+    std::unique_ptr<CwxSender> m_cwxSender;
+    // CW transmit (R-CW-49): the device a request is asked for while
+    // requestCwxFor runs (empty: the station's own), the one whose request
+    // the sender took last, and the Core's holder rule.
+    RemoteCwActivity m_remoteCwActivity;
+    quint32 m_nextRemoteCwEpoch{0};
+    QByteArray m_cwxRequestDevice;
+    QByteArray m_cwxSendingFor;
+    CwxHolderRefusalFn m_cwxHolderRefusal;
+    // ── CW transmit: the serial key reader (R-CW-04, R-CW-36) ─────────────
+    // Made after the CWX sender (its straight key keys through it); its
+    // settings, the keyer gate and the PTT line. `input` null: the
+    // platform's own line source.
+    void wireCwSerialKey(std::unique_ptr<CwSerialKeyInput> input);
+    // Reads the port while a connection is up and the port is named and
+    // not CAT's; otherwise stops and lets go of the key line (early review
+    // M8). Restarts on a setting change.
+    void syncCwSerialKey();
+    // R-CW-04: the words when CAT or the CAT PTT input uses `port`.
+    QString cwSerialPortConflict(const QString& port) const;
+    void setCwSerialKeyRefusal(const QString& words);
+    // Reset before the CWX sender in the destructor.
+    std::unique_ptr<CwSerialKeyInput> m_cwSerialKey;
+    QString m_cwSerialKeyRefusal;
+    QString m_cwSerialRunningConfig;   // the port and lines being read
+    // ── CW transmit: the auto mode switch (R-CW-37) ─────────────────────────
+    // A dot or dash (the radio's status or the serial paddles): Thetis
+    // update_for_auto_mode_return and cwAutoModeTick.
+    void noteCwKeyActivity();
+    void cwAutoModeTick();
+    QTimer* m_cwAutoModeTimer{nullptr};
+    std::optional<DSPMode> m_cwOldAutoMode;    // Thetis _old_cw_auto_mode (FIRST: none)
+    int m_cwAutoModeSliceId{-1};               // Thetis _cw_auto_mode_tx_on_rx2
+    bool m_cwRadioPaddleDown{false};           // the radio reports a dot or dash down
+    std::function<bool()> m_cwxAppletShown;          // R-CW-34 ZZKO
+    std::function<void(bool)> m_cwxAppletSetShown;
+    // Declared last so it goes first: nothing it is connected to signals
+    // it while this model's other members are destroyed.
+    std::unique_ptr<CwKeyerController> m_cwKeyerController;
 };
 
 } // namespace NereusSDR

@@ -9,6 +9,20 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - PR 677 review fix wave (I1, I2, settings M7): paste keeps
+//                 what Thetis keeps and the target's reading and layer;
+//                 the clipboard carries picked colours, fade and update
+//                 interval. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - selectDraftWebImage: Show next in the live editor searches
+//                 every draft container. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-26 - canPasteSettings, pasteItemSettings and pasteTypeId:
+//                 copied settings paste between compatible bar meters
+//                 (Thetis setup.cs canPasteSettings). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - m_noControlsCheck. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-02 — Effective contextual draft properties and portable settings by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Draft-only edits and inert cached previews by J.J. Boyd
@@ -16,6 +30,10 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - applyDraftFromButton(): OK and Apply say why in a
+//                 message box when a new or duplicated container in the
+//                 draft cannot be saved. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -64,6 +82,7 @@ mw0lge@grange-lane.co.uk
 #include <QVector>
 #include <QPointer>
 #include <QSet>
+#include <QStringList>
 #include <memory>
 #include "ContainerDocument.h"
 
@@ -112,6 +131,9 @@ public:
     ContainerEditSession* editSession() const { return m_editSession.get(); }
     CommitResult applyDraft();
     void selectDraftContainer(const QString& id);
+    // Show next: selects the draft web image whose 4-char ID is fourChar,
+    // in the current container first, then in any other. False if none.
+    bool selectDraftWebImage(const QString& fourChar);
     void refreshDraftView();
     void reject() override;
     bool importPortableContainer(const QByteArray& bytes);
@@ -130,6 +152,25 @@ public:
     // tst_container_persistence suite can exercise it without
     // instantiating the dialog.
     static float nextStackYPos(const QVector<MeterItem*>& items);
+
+    // Copy / Paste settings. Settings paste onto an item of the same type,
+    // or between the bar meters that share one settings record (every bar
+    // flavor except the custom bar); every other type pastes only onto
+    // its own type.
+    static bool canPasteSettings(const QString& fromTypeId, const QString& toTypeId);
+    // Pastes settings copied (serialize()) from an item of fromTypeId onto
+    // target. The target keeps its reading, layer and units, and what
+    // Thetis keeps per type (a button grid's buttons, a bar's sub marker
+    // when the source has none); a paste between two bar types also keeps
+    // its title and scale. The target's picked colours become
+    // copiedUserColours (the source's MeterItem::userColourFields()).
+    // Returns false, leaving the target unchanged, when the types are not
+    // compatible.
+    static bool pasteItemSettings(const QString& copiedSerialized, const QString& fromTypeId, MeterItem& target,
+                                  const QStringList& copiedUserColours = {});
+    // The type a copy or paste names: the bar and composite faces' typeId,
+    // otherwise the serialized record's type tag.
+    static QString pasteTypeId(const MeterItem& item);
 
 private slots:
     void onItemSelectionChanged();
@@ -173,6 +214,9 @@ private:
     void populateItemList();
     void updatePreview();
     void applyToContainer();
+    // OK and Apply with a draft: applyDraft(), and when that is refused and
+    // the draft adds a container (New, Duplicate), a message box says why.
+    CommitResult applyDraftFromButton();
 
     // Find the MeterWidget inside the container's content hierarchy.
     // Handles both direct MeterWidget content and MeterWidget nested
@@ -222,14 +266,27 @@ private:
     void onContainerDropdownChanged(int index);
 
     // Block 7 commit 2: in-memory copy/paste clipboard, keyed by
-    // type tag (the prefix of the serialized form). Paste is only
-    // enabled when the clipboard type matches the currently-
-    // selected item's type — Thetis behavior.
+    // pasteTypeId. Paste is only enabled when canPasteSettings allows
+    // the clipboard type onto the currently-selected item's type —
+    // Thetis behavior.
     QString m_clipboardSerialized;
     QString m_clipboardTypeTag;
+    // Kept beside the record (the entry context holds them): the source's
+    // picked colours, its fade when set, and its update interval.
+    QStringList m_clipboardUserColours;
+    bool m_clipboardHasFade{false};
+    bool m_clipboardFadeRx{false};
+    bool m_clipboardFadeTx{false};
+    int m_clipboardUpdateIntervalMs{0};
+    void copyClipboardExtras(const MeterItem& item);
+    void pasteClipboardExtras(MeterItem& item) const;
     void onCopyItemSettings();
     void onPasteItemSettings();
     void updateCopyPasteButtonState();
+    // Workspace draft: the selected object (false when none) and, when it
+    // is a meter item, a copy of it built from its record.
+    bool selectedDraftEntry(ContentEntry& entry) const;
+    std::unique_ptr<MeterItem> draftMeterItem(const ContentEntry& entry) const;
     QPushButton* m_btnCopySettings{nullptr};
     QPushButton* m_btnPasteSettings{nullptr};
 
@@ -277,6 +334,7 @@ private:
     QCheckBox*   m_minimisesCheck{nullptr};
     QCheckBox*   m_autoHeightCheck{nullptr};
     QCheckBox*   m_hidesWhenRxNotUsedCheck{nullptr};
+    QCheckBox*   m_noControlsCheck{nullptr};
     QCheckBox*   m_highlightCheck{nullptr};
     QPushButton* m_btnDuplicate{nullptr};
     QPushButton* m_btnDelete{nullptr};

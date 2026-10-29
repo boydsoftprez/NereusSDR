@@ -9,6 +9,22 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Clicks, wheel, keys and screens by slice: the hit box
+//                 table, digit stepping and typed digits, the long press
+//                 (band stack, filter menu, tune step screen), the BAND,
+//                 MODE, FILTER and TUNE_STEP screens with their 5 s close,
+//                 and one request signal per action, each naming its
+//                 slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - Display modes by slice letter (Source slice, All slices,
+//                 Slice A and on; a saved VFO B loads as Slice B), per-slice
+//                 state (VfoSliceState), the clsVfoDisplay colours, band
+//                 text, background and a Thetis layout for new items,
+//                 kVfoDisplayThetisDefaults, sliceX_* published readings and
+//                 the import map fromThetisDisplayMode. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setTransmitting overrides MeterItem's (Fade on RX / TX).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -58,32 +74,142 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "BandGroups.h"
+#include "core/WdspTypes.h"
+#include "models/Band.h"
 #include <QColor>
+#include <QElapsedTimer>
+#include <QHash>
+#include <QPointF>
+#include <QRectF>
+#include <QStringList>
+#include <QTimer>
+#include <QVector>
+class QKeyEvent;
 class QMouseEvent;
 class QWheelEvent;
 
 namespace NereusSDR {
+
+// What a VFO display shows for one slice. MainWindow::refreshContainerMeter
+// fills one per slice the item shows (setSliceState). `transmitting` marks
+// the slice transmit comes off (the TX box and the TX marker light on it
+// while the item is transmitting); `active` is the radio's active slice;
+// `open` is false for a slice that is not open.
+struct VfoSliceState {
+    int index{0};
+    qint64 frequencyHz{0};
+    QString mode;
+    QString filter;
+    QString band;
+    QString bandText;
+    int stepHz{0};
+    bool locked{false};
+    bool transmitting{false};
+    bool active{false};
+    bool open{false};
+    // The slice mode's filter preset names, F1 first, and the one the
+    // filter is on (-1 for none); the FILTER screen shows them.
+    QStringList filterNames;
+    int filterIndex{-1};
+};
+
+// The tune step screen's 16 buttons to kTuneStepList indices (some steps
+// are left out of the grid).
+// From Thetis MeterManager.cs:14809-14877 [v2.10.3.15] (setTuneStep):
+// index to TuneStep index map, as some have been ignored in the grid representation, see renderer
+inline constexpr int kVfoStepButtonToIndex[16] = {0,2,3,4,5,6,7,8,11,12,14,15,17,18,20,21};
+
 // VFO frequency display with mouse wheel digit tuning.
 // Ported from Thetis clsVfoDisplay (MeterManager.cs:12881+).
 class VfoDisplayItem : public MeterItem {
     Q_OBJECT
 public:
-    enum class DisplayMode { VfoA, VfoB, VfoBoth };
+    // Saved integers are kept: 0 was VFO A, 1 VFO B, 2 Both.
+    //   SourceSlice  (0): the slice the entry's Source follows.
+    //   LegacySliceB (1): load only; loads (and re-saves) as fixed Slice B.
+    //   AllSlices    (2): Slice A through the last open slice; a saved
+    //                     Both loads as this.
+    //   3 + index:        a fixed slice (fixedSliceMode()).
+    enum class DisplayMode : int { SourceSlice = 0, LegacySliceB = 1, AllSlices = 2 };
+    static constexpr int kFixedSliceModeBase = 3;
+    // The most slices any board opens (BoardCapabilities maxSlices, 5 on
+    // the 2-ADC boards); the editor offers Slice A through this many.
+    static constexpr int kMaxSliceCount = 5;
+    // From Thetis MeterManager.cs:39888 [v2.10.3.15]: a slice that is not
+    // the active one draws at alpha 24 in All slices mode.
+    static constexpr int kInactiveSliceAlpha = 24;
+
+    // How the display is laid out. Compact (0, the constructor's and every
+    // older record's) is the NereusSDR frequency row over mode, filter and
+    // band; Thetis (1, new items) is renderVfoDisplay's layout
+    // (MeterManager.cs:39857-40457 [v2.10.3.15]).
+    enum class Layout : int { Compact = 0, Thetis = 1 };
+
+    // From Thetis MeterManager.cs:14626 [v2.10.3.15] (MouseDownLong):
+    // (DateTime.UtcNow - _mouse_down_time).TotalMilliseconds >= 1000
+    static constexpr int kLongPressMs = 1000;
+    // From Thetis MeterManager.cs:15282-15300 [v2.10.3.15] (VFOARenderState):
+    // a screen goes back to the VFO once (now - change time).Seconds > 5.
+    static constexpr int kScreenTimeoutSeconds = 5;
+
+    // What a slice's column shows: the VFO, or one of the screens.
+    // From Thetis MeterManager.cs:14203-14210 [v2.10.3.15] (renderState).
+    enum class Screen { Vfo = 0, Band, Mode, Filter, TuneStep };
 
     explicit VfoDisplayItem(QObject* parent = nullptr);
+
+    // Fixed slice mode for Slice A + sliceIndex.
+    static int fixedSliceMode(int sliceIndex) { return kFixedSliceModeBase + sliceIndex; }
+    // The slice index a fixed slice mode shows, or -1.
+    static int fixedSliceIndex(int mode);
+    // Thetis VFODisplayMode to ours: BOTH=0 -> All slices, A=1 -> Slice A,
+    // B=2 -> Slice B; out of range reads as BOTH. Used only by a Thetis
+    // item import. From Thetis MeterManager.cs:14247-14252, :28072-28073
+    // [v2.10.3.15].
+    static int fromThetisDisplayMode(int thetisMode);
+    // A saved or set mode as the item keeps it: 1 becomes Slice B, an
+    // unknown value Source slice.
+    static int normalizedDisplayMode(int mode);
+    // Plain reasons for the controls NereusSDR does not have.
+    static QString splitUnavailableReason();
+    static QString syncUnavailableReason();
 
     void setFrequency(int64_t hz) { m_frequencyHz = hz; }
     int64_t frequency() const { return m_frequencyHz; }
     void setFrequencyB(int64_t hz) { m_frequencyBHz = hz; }
     int64_t frequencyB() const { return m_frequencyBHz; }
 
-    void setDisplayMode(DisplayMode mode) { m_displayMode = mode; }
-    DisplayMode displayMode() const { return m_displayMode; }
+    void setDisplayMode(DisplayMode mode) { setDisplayModeValue(static_cast<int>(mode)); }
+    void setDisplayModeValue(int mode) { m_displayMode = normalizedDisplayMode(mode); }
+    DisplayMode displayMode() const { return static_cast<DisplayMode>(m_displayMode); }
+    int displayModeValue() const { return m_displayMode; }
+
+    void setLayout(Layout layout) { m_layout = layout; }
+    Layout layout() const { return m_layout; }
+
+    // Per-slice state (runtime, not saved). With none set the item shows
+    // its single-slice values (setFrequency and the labels) as one open
+    // slice; once any is set, a slice without one is not open.
+    void setSliceState(int sliceIndex, const VfoSliceState& state);
+    void clearSliceStates() { m_sliceStates.clear(); }
+    VfoSliceState sliceState(int sliceIndex) const;
+    // The slice the entry's Source resolves to; -1 when none.
+    void setSourceSliceIndex(int sliceIndex) { m_sourceSliceIndex = sliceIndex; }
+    int sourceSliceIndex() const { return m_sourceSliceIndex; }
+    // The slices the item shows, left to right.
+    QVector<int> displayedSlices() const;
+    // Everything the item draws from runtime state, for change detection.
+    QString presentationKey() const;
+    // The screen a slice's column shows (Screen::Vfo when none is open).
+    Screen screenFor(int sliceIndex) const;
+    // The band group the BAND screen of a slice shows.
+    BandGroup screenBandGroup(int sliceIndex) const;
 
     void setModeLabel(const QString& label) { m_modeLabel = label; }
     void setFilterLabel(const QString& label) { m_filterLabel = label; }
     void setBandLabel(const QString& label) { m_bandLabel = label; }
-    void setTransmitting(bool tx) { m_transmitting = tx; }
+    void setTransmitting(bool tx) override { MeterItem::setTransmitting(tx); m_transmitting = tx; }
     bool isTransmitting() const noexcept { return m_transmitting; }
     void setSplit(bool split) { m_split = split; }
     // R-R3-49 / R-R3-21 (fix wave M2): plain words shown instead of the
@@ -104,33 +230,150 @@ public:
     QColor rxColour() const { return m_rxColour; }
     void setTxColour(const QColor& c) { m_txColour = c; }
     QColor txColour() const { return m_txColour; }
+    void setFrequencySmallColour(const QColor& c) { m_freqSmallColour = c; }
+    QColor frequencySmallColour() const { return m_freqSmallColour; }
+    void setTitleColour(const QColor& c) { m_titleColour = c; }
+    QColor titleColour() const { return m_titleColour; }
+    void setSplitBackColour(const QColor& c) { m_splitBackColour = c; }
+    QColor splitBackColour() const { return m_splitBackColour; }
+    void setSplitColour(const QColor& c) { m_splitColour = c; }
+    QColor splitColour() const { return m_splitColour; }
+    void setDigitHighlightColour(const QColor& c) { m_digitHighlight = c; }
+    QColor digitHighlightColour() const { return m_digitHighlight; }
+    void setBandTextColour(const QColor& c) { m_bandTextColour = c; }
+    QColor bandTextColour() const { return m_bandTextColour; }
+    void setLockColour(const QColor& c) { m_lockColour = c; }
+    QColor lockColour() const { return m_lockColour; }
+    void setSyncColour(const QColor& c) { m_syncColour = c; }
+    QColor syncColour() const { return m_syncColour; }
+    void setBackgroundColour(const QColor& c) { m_backColour = c; }
+    QColor backgroundColour() const { return m_backColour; }
+    void setShowBandText(bool on) { m_showBandText = on; }
+    bool showBandText() const { return m_showBandText; }
+
+    // New items (makeEntry) take kVfoDisplayThetisDefaults.
+    void applyNewItemDefaults() override;
+
+    // sliceA_freq, sliceA_mode, sliceA_filter, sliceA_band and sliceA_step,
+    // and the same for each slice letter shown, as Thetis publishes vfoa_*
+    // (MeterManager.cs:31101-31120 [v2.10.3.15]).
+    QHash<QString, QVariant> publishedReadings() const override;
+
+    // The reason shown over the split box and the sync icon; empty
+    // elsewhere.
+    QString reasonAt(const QPointF& pos, int widgetW, int widgetH) const override;
 
     Layer renderLayer() const override { return Layer::OverlayDynamic; }
     void paint(QPainter& p, int widgetW, int widgetH) override;
     bool handleWheel(QWheelEvent* event, int widgetW, int widgetH) override;
     bool handleMousePress(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseRelease(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseMove(QMouseEvent* event, int widgetW, int widgetH) override;
+    bool handleMouseLeave() override;
+    bool handleKeyPress(QKeyEvent* event) override;
 
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
 signals:
-    void frequencyChangeRequested(int64_t deltaHz);
+    // Each request names the slice (VfoSliceState::index, the slice id) of
+    // the column it came from. The item refuses a frequency, band or mode
+    // change on a locked slice itself.
+    void frequencyChangeRequested(int slice, qint64 deltaHz);
+    void frequencySetRequested(int slice, qint64 hz);
+    void bandRequested(int slice, NereusSDR::Band band);
+    void modeRequested(int slice, NereusSDR::DSPMode mode);
+    void filterRequested(int slice, int presetIndex);
+    void tuneStepRequested(int slice, int stepHz);
+    // Moves transmit to the slice (Thetis setTX sets the TX VFO; it never
+    // keys).
+    void txRequested(int slice);
+    void lockToggleRequested(int slice);
     void bandStackRequested(int bandIndex);
     void filterContextRequested(int filterIndex);
+    // A screen opened or closed outside a mouse event (the long press, the
+    // 5 s close).
+    void repaintRequested();
 
 private:
+    // A Thetis layout region under a point (renderVfoDisplay's mouse boxes,
+    // MeterManager.cs:39926-40182 [v2.10.3.15]).
+    enum class Region { None, Digit, Mode, Filter, Band, Split, Tx, Lock, Sync, ScreenCell };
+    struct Hit {
+        Region region{Region::None};
+        int column{-1};
+        int sliceIndex{-1};
+        QRectF box;
+        int64_t step{0};
+        // Digit: true for the kHz digits (their long press opens the tune
+        // step screen). ScreenCell: the cell's button index.
+        bool khz{false};
+        int cell{-1};
+    };
+    struct ScreenState {
+        Screen screen{Screen::Vfo};
+        BandGroup group{BandGroup::Hf};
+        QElapsedTimer changed;
+    };
+    struct Press {
+        bool active{false};
+        bool longFired{false};
+        Qt::MouseButton button{Qt::NoButton};
+        Region region{Region::None};
+        int sliceIndex{-1};
+    };
+
     int64_t digitWeightAt(float xFraction) const;
     QString formatFrequency(int64_t hz) const;
+    VfoSliceState stateFor(int sliceIndex) const;
+    // A slice the wheel, clicks and keys may act on: any open slice shown.
+    bool interactive(const VfoSliceState& state) const;
+    // The column of the container's own slice (or the item's own values):
+    // the band stack and filter menu long presses open only there, as
+    // Thetis's open only for the meter's receiver.
+    bool isSourceColumn(int sliceIndex) const;
+    QRect columnRect(const QRect& rect, int column, int count) const;
+    Hit thetisHitAt(const QPointF& pos, int widgetW, int widgetH) const;
+    // A typed digit put in place of the digit `step` weighs.
+    static qint64 replacedDigit(qint64 hz, qint64 step, int digit);
+    static int screenColumns(Screen screen);
+    void openScreen(int sliceIndex, Screen screen);
+    void closeScreen(int sliceIndex);
+    void touchScreen(int sliceIndex);
+    void armScreenTimer();
+    void closeExpiredScreens();
+    void onLongPress();
+    void clickScreenCell(int sliceIndex, int cell);
+    void clickVfoRegion(const Hit& hit, Qt::MouseButton button);
+    void paintScreen(QPainter& p, const QRect& col, const VfoSliceState& s, const Hit& hover);
+    void paintCompactColumn(QPainter& p, const QRect& rect, const VfoSliceState& s);
+    void paintThetisColumn(QPainter& p, const QRect& rect, const VfoSliceState& s,
+                           int count, int alpha, const Hit& hover);
 
     int64_t m_frequencyHz{14074000};
     int64_t m_frequencyBHz{14074000};
-    DisplayMode m_displayMode{DisplayMode::VfoA};
+    int m_displayMode{static_cast<int>(DisplayMode::SourceSlice)};
+    Layout m_layout{Layout::Compact};
     QString m_modeLabel{QStringLiteral("USB")};
     QString m_filterLabel{QStringLiteral("2.7k")};
     QString m_bandLabel{QStringLiteral("20m")};
     bool m_transmitting{false};
     bool m_split{false};
     QString m_unavailableText;
+    QHash<int, VfoSliceState> m_sliceStates;
+    int m_sourceSliceIndex{-1};
+    QPointF m_hoverPos;
+    bool m_hovering{false};
+    // The digit last under the pointer, for a typed digit.
+    int m_keySlice{-1};
+    qint64 m_keyStep{0};
+    QHash<int, ScreenState> m_screens;
+    Press m_press;
+    QTimer m_longPressTimer;
+    QTimer m_screenTimer;
+    QPointF m_pressPos;
+    int m_widgetW{0};
+    int m_widgetH{0};
 
     // Colors from Thetis clsVfoDisplay defaults
     QColor m_freqColour{0xff, 0xa5, 0x00};     // Orange
@@ -141,5 +384,58 @@ private:
     QColor m_txColour{0xff, 0x00, 0x00};        // Red
     QColor m_splitColour{0xff, 0xa5, 0x00};
     QColor m_digitHighlight{0x80, 0x80, 0x80};
+    // Older records load these (fields 14 and on are new); the values are
+    // the clsVfoDisplay ones, and the background is the NereusSDR fill.
+    QColor m_freqSmallColour{0xff, 0xa5, 0x00};    // Orange
+    QColor m_titleColour{0x80, 0x80, 0x80};        // Gray
+    QColor m_splitBackColour{0x40, 0x40, 0x40};
+    QColor m_bandTextColour{0x32, 0xcd, 0x32};     // LimeGreen
+    QColor m_lockColour{0x32, 0xcd, 0x32};         // LimeGreen
+    QColor m_syncColour{0x32, 0xcd, 0x32};         // LimeGreen
+    QColor m_backColour{0x0a, 0x0a, 0x18};
+    bool m_showBandText{false};
+};
+
+// New VFO items (makeEntry) take Thetis's VFO display: the clsVfoDisplay
+// constructor (MeterManager.cs:14309-14347 [v2.10.3.15]) and AddVFODisplay's
+// background (MeterManager.cs:25768 [v2.10.3.15]). Thetis starts on
+// VFO_BOTH (:14341); a new NereusSDR item starts on Source slice.
+struct VfoDisplayThetisDefaults {
+    QRgb frequencyColour;
+    QRgb frequencySmallColour;
+    QRgb modeColour;
+    QRgb filterColour;
+    QRgb titleColour;
+    QRgb splitBackColour;
+    QRgb splitColour;
+    QRgb rxColour;
+    QRgb txColour;
+    QRgb bandColour;
+    QRgb digitHighlightColour;
+    QRgb bandTextColour;
+    QRgb lockColour;
+    QRgb syncColour;
+    QRgb backColour;
+    bool showBandText;
+    VfoDisplayItem::Layout layout;
+};
+inline constexpr VfoDisplayThetisDefaults kVfoDisplayThetisDefaults{
+    qRgb(255, 165, 0),              // _frequencyColour = Color.Orange (:14313)
+    qRgb(255, 165, 0),              // _frequencyColourSmall = Color.Orange (:14314)
+    qRgb(128, 128, 128),            // _modeColour = Color.Gray (:14315)
+    qRgb(128, 128, 128),            // _filterColour = Color.Gray (:14320)
+    qRgb(128, 128, 128),            // _typeColor = Color.Gray (:14312)
+    qRgb(64, 64, 64),               // _splitBackColour = Color.FromArgb(64, 64, 64) (:14316)
+    qRgb(255, 165, 0),              // _splitColour = Color.Orange (:14317)
+    qRgb(50, 205, 50),              // _rxColour = Color.LimeGreen (:14318)
+    qRgb(255, 0, 0),                // _txColour = Color.Red (:14319)
+    qRgb(255, 255, 255),            // _bandColour = Color.White (:14321)
+    qRgb(128, 128, 128),            // _digitHighlightColour = Color.FromArgb(128, 128, 128) (:14322)
+    qRgb(50, 205, 50),              // _band_text_colour = Color.LimeGreen (:14344)
+    qRgb(50, 205, 50),              // _lock_colour = Color.LimeGreen (:14346)
+    qRgb(50, 205, 50),              // _sync_colour = Color.LimeGreen (:14347)
+    qRgb(32, 32, 32),               // sc.Colour = Color.FromArgb(32, 32, 32) (:25768)
+    false,                          // _band_text = false (:14343)
+    VfoDisplayItem::Layout::Thetis, // renderVfoDisplay (:39857-40457)
 };
 } // namespace NereusSDR

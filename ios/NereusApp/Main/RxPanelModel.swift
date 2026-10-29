@@ -201,11 +201,13 @@ final class RxPanelModel: ObservableObject {
     @Published private(set) var olderCore: Set<String> = []
 
     private let store: MirrorStore
-    /// The band's slices: the panel follows the active one.
-    let slices: BandSlicesModel
+    /// The band's slices: the panel follows the active one. On the iPad
+    /// with more than one pan it follows the pan last touched (``follow(_:)``).
+    private(set) var slices: BandSlicesModel
     private let catalogFeed: CatalogFeed
     private let commands: CommandClient?
     private var watches: Set<AnyCancellable> = []
+    private var activeWatch: AnyCancellable?
     private var sliceWatch: AnyCancellable?
     private var assetsWatch: AnyCancellable?
     private var watchedKey: String?
@@ -221,13 +223,25 @@ final class RxPanelModel: ObservableObject {
         self.slices = slices
         self.catalogFeed = catalogFeed
         self.commands = commands
-        slices.$activeSliceId.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
+        activeWatch = slices.$activeSliceId.sink { [weak self] _ in self?.queueRebuild() }
         store.$unconfirmedWrites.sink { [weak self] _ in
             Task { @MainActor in self?.confirmationRevision &+= 1 }
         }.store(in: &watches)
         store.$objectKeys.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
         catalogFeed.$catalog.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
         store.$capabilities.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
+        rebuild()
+    }
+
+    /// The panel follows `slices`' active slice from now on: the iPad's pan
+    /// last touched, so a change here reaches that pan's slice and never
+    /// another pan's (R-IOS-59, DC9).
+    func follow(_ slices: BandSlicesModel) {
+        guard slices !== self.slices else {
+            return
+        }
+        self.slices = slices
+        activeWatch = slices.$activeSliceId.sink { [weak self] _ in self?.queueRebuild() }
         rebuild()
     }
 

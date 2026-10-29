@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - Every slice's grid has the 12 buttons Thetis gives RX1
+//                 (kFilterCount public, with the Var buttons' indices).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -64,6 +67,14 @@ class FilterButtonItem : public ButtonBoxItem {
     Q_OBJECT
 
 public:
+    // From Thetis MeterManager.cs:7718-7727 [v2.10.3.15]: RX1's grid has
+    // Buttons = 12 and RX2's Buttons = 9. Every NereusSDR slice has all 12
+    // (F1-F10, Var1, Var2), so a grid on Slice B shows what Slice A's does.
+    static constexpr int kFilterCount = 12;
+    // Var1 and Var2 (Thetis Filter.VAR1 / VAR2) come after F1-F10.
+    static constexpr int kVar1Button = 10;
+    static constexpr int kVar2Button = 11;
+
     explicit FilterButtonItem(QObject* parent = nullptr);
 
     void setActiveFilter(int index);
@@ -79,6 +90,9 @@ public:
     QString serialize() const override;
     bool deserialize(const QString& data) override;
 
+    // The column counts this grid offers (Thetis setup.cs).
+    std::pair<int, int> columnRange() const override;
+
 signals:
     void filterClicked(int filterIndex);
     // From Thetis PopupFilterContextMenu (MeterManager.cs:7917)
@@ -87,7 +101,6 @@ signals:
 private:
     void onButtonClicked(int index, Qt::MouseButton button);
     int m_activeFilter{-1};
-    static constexpr int kFilterCount = 12;
 };
 
 } // namespace NereusSDR

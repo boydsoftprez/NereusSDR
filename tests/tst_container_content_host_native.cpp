@@ -2,6 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The VFO display's frequency request names its slice
+//                 (Task 36). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-03 — Individual control creation, scope and lifecycle regression by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
@@ -169,10 +172,10 @@ private slots:
         a->setFrequency(14'074'000); b->setFrequency(7'074'000); b->setDspMode(DSPMode::USB);
         auto* face=qobject_cast<CompositePresetItem*>(host->entryRows()[3].item.data()); auto* absent=qobject_cast<CompositePresetItem*>(host->entryRows()[4].item.data()); QVERIFY(face && absent);
         QTRY_COMPARE(face->vfoDisplay()->frequency(),int64_t(b->frequency())); QVERIFY(!absent->vfoDisplay()->unavailableText().isEmpty());
-        const double aBefore=a->frequency(), bBefore=b->frequency(); face->vfoDisplay()->frequencyChangeRequested(100);
+        const double aBefore=a->frequency(), bBefore=b->frequency(); face->vfoDisplay()->frequencyChangeRequested(1,100);
         QCOMPARE(a->frequency(),aBefore); QCOMPARE(b->frequency(),bBefore+100);
         face->modeButtons()->modeClicked(0); QCOMPARE(b->dspMode(),DSPMode::LSB); QCOMPARE(a->dspMode(),DSPMode::USB);
-        absent->vfoDisplay()->frequencyChangeRequested(100); QCOMPARE(a->frequency(),aBefore); QCOMPARE(b->frequency(),bBefore+100);
+        absent->vfoDisplay()->frequencyChangeRequested(2,100); QCOMPARE(a->frequency(),aBefore); QCOMPARE(b->frequency(),bBefore+100);
         capture(host->meterSurfaces()[2],"slice-b-contest");
         QSignalSpy aTuning(a,&SliceModel::frequencyChanged), bTuning(b,&SliceModel::frequencyChanged), aMode(a,&SliceModel::dspModeChanged), bMode(b,&SliceModel::dspModeChanged);
         for (int move=0;move<3;++move) {
@@ -193,7 +196,7 @@ private slots:
         QCOMPARE(manager->commitWorkspace(d,d.revision).status,CommitStatus::Saved);
         host=manager->contentHost(id); face=qobject_cast<CompositePresetItem*>(host->entryRows()[1].item.data()); QVERIFY(face);
         QVERIFY(!face->vfoDisplay()->unavailableText().isEmpty()); const double finalA=a->frequency(),finalB=b->frequency();
-        face->vfoDisplay()->frequencyChangeRequested(100); face->modeButtons()->modeClicked(1); QCOMPARE(a->frequency(),finalA); QCOMPARE(b->frequency(),finalB); QCOMPARE(b->dspMode(),DSPMode::LSB);
+        face->vfoDisplay()->frequencyChangeRequested(1,100); face->modeButtons()->modeClicked(1); QCOMPARE(a->frequency(),finalA); QCOMPARE(b->frequency(),finalB); QCOMPARE(b->dspMode(),DSPMode::LSB);
         model->setConnectionStateForTest(ConnectionState::Disconnected); const int count=cadence.count(); QTRY_VERIFY_WITH_TIMEOUT(cadence.count()>count+2,1000);
         // Final shutdown destroys borrowed applets once, and every synchronous target disappears.
         // The non-owning GUI adapters must also clear when the model outlives its window.

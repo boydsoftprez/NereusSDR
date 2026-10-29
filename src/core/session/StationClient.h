@@ -208,6 +208,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: CW transmit, remote CW (R-CW-48): remoteCwAvailable.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: declares
 //                                    rxMeterStamps 1 and holds a slice's
 //                                    stamped RX meter readings until their
@@ -495,6 +497,10 @@
 //   2026-10-15: pathPairUnknown(), a rank of ServiceRelayed that only
 //               means the ICE pair is not known yet; setPathRankForTest().
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: Roundtable plan Task 11: the roundtable feature, the
+//               `roundtable` object, the room streams and the thirteen
+//               Roundtable requests. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1116,6 +1122,8 @@ public:
     bool accessoryDataAvailable() const override;
     // Rotor control plan Task 4b: see IStationLink.
     bool rotorControlAvailable() const override;
+    // Roundtable plan Task 11: see IStationLink.
+    bool roundtableAvailable() const override;
     // R-R3-47 / R-R3-22: see IStationLink.
     bool pgxlDeviceSettingsAvailable() const override;
     bool tgxlDeviceSettingsAvailable() const override;
@@ -1478,6 +1486,22 @@ public:
     CommandOutcome requestDisconnectRotor() override;
     CommandOutcome requestRefreshRotorPorts() override;
     CommandOutcome requestRotorPresets(const QString& presets) override;
+    // Roundtable plan Task 11 (stationRoundtableVersion 1): see IStationLink.
+    CommandOutcome requestRoundtablePost(const QString& roomId, const QString& text,
+                                         const QString& clientId) override;
+    CommandOutcome requestRoundtableDelete(const QString& messageId) override;
+    CommandOutcome requestRoundtableName(const QString& turnId, const QString& name) override;
+    CommandOutcome requestRoundtableReport(const QString& kind, const QString& target,
+                                           const QString& reason) override;
+    CommandOutcome requestRoundtableRead(const QString& roomId) override;
+    CommandOutcome requestRoundtableUnread(const QString& roomId) override;
+    CommandOutcome requestRoundtableSetHidden(bool hidden) override;
+    CommandOutcome requestRoundtableAnswerFirstRun(bool live) override;
+    CommandOutcome requestRoundtableMute(const QString& callsign) override;
+    CommandOutcome requestRoundtableUnmute(const QString& callsign) override;
+    CommandOutcome requestRoundtableMarkMentionRead(qint64 upToMs) override;
+    CommandOutcome requestRoundtableWebSignIn() override;
+    CommandOutcome requestRoundtableDeleteArchive(const QString& confirm) override;
     CommandOutcome requestPgxlName(const QString& name) override;
     CommandOutcome requestPgxlHardware(const QString& setting, const QString& value) override;
     CommandOutcome requestPgxlNetwork(bool dhcp, const QString& address,
@@ -1693,6 +1717,9 @@ public:
     /// the Core told this window remoteTxVersion 1 or later.
     RemoteTransmitClient* remoteTransmit() override { return m_remoteTransmit; }
     bool remoteTransmitAvailable() const;
+    /// CW transmit (R-CW-48): the cw.* verbs, while remote transmit is
+    /// available and the Core told this window remoteCwVersion 1.
+    bool remoteCwAvailable() const;
     bool remoteMicSourceAvailable() const override;
     CommandOutcome requestMicSource(MicSource desired, std::function<void()> accepted = {}) override;
 
@@ -2270,6 +2297,26 @@ private:
         QString spotSource;
     };
     QHash<quint32, PendingCommand> m_pendingCommands;
+    /// Roundtable plan Task 11: the roundtable.* commands in flight, by
+    /// command id: the verb after the dot, and a post's own id or a read's
+    /// room.
+    struct RoundtableCommand {
+        QString verb;
+        QString clientId;
+        QString roomId;
+    };
+    QHash<quint32, RoundtableCommand> m_roundtableCommands;
+    /// The room streams this window follows: its slices' rooms and the
+    /// room it reads.
+    QSet<QString> m_roundtableStreams;
+    QString m_roundtableReadStream;
+    CommandOutcome sendRoundtableCommand(const QByteArray& verb,
+                                         const QList<MirrorUpdate>& arguments,
+                                         const QString& clientId = QString(),
+                                         const QString& roomId = QString());
+    void followRoundtableStream(const QString& stream, bool follow);
+    void syncRoundtableStreams();
+    bool handleRoundtableResult(const SessionMessage& message);
     /// Take-over fix wave (M-3): notice.takeBack commands for controlTaken
     /// notices, by command id, to their notice ids.
     QHash<quint32, qint64> m_controlTakeBacks;

@@ -78,6 +78,32 @@ import Testing
         #expect((floorRow - 1...floorRow + 1).contains { image.isTrace(40, $0) })
     }
 
+    @Test func aFrameInFlightKeepsItsTimeProjection() throws {
+        let first = try Offscreen(width: Self.width, height: Self.height)
+        let second = try Offscreen(width: Self.width, height: Self.height)
+        let renderer = try BandRenderer(device: first.device)
+        var settings = Self.plain()
+        settings.waterfallPeriodMs = 10
+        let greys = try BandFixtures.palette(id: 7, [(0, "#000000"), (1, "#FFFFFF")])
+        var overlays = Self.overlays(settings, palette: greys)
+        var history = WaterfallHistory(capacity: 32)
+        let levels = WaterfallHistory.Levels(lowDbm: -100, highDbm: 0)
+        history.append(line: Self.flat(100, -100), levels: levels, time: 1000)
+        history.append(line: Self.flat(100, 0), levels: levels, time: 1000.1)
+        let gate = try #require(first.device.makeSharedEvent())
+        renderer.commandBufferMade = { $0.encodeWaitForEvent(gate, value: 1) }
+        let held = try #require(renderer.draw(frame: nil, history: history, extras: nil, overlays: overlays, into: first.texture))
+        renderer.commandBufferMade = nil
+        overlays.lookBackLines = 1
+        let next = try #require(renderer.draw(frame: nil, history: history, extras: nil, overlays: overlays, into: second.texture))
+        gate.signaledValue = 1
+        held.waitUntilCompleted()
+        next.waitUntilCompleted()
+        let top = Int(Self.layout(settings).waterfall.minY)
+        #expect(try first.read().grey(200, top + 2).isNear(255))
+        #expect(try second.read().grey(200, top + 2).isNear(0))
+    }
+
     /// Rows of trace colour in column `x` of `image` within the spectrum.
     static func traceRows(_ image: Image, x: Int, height: Int) -> Int {
         (0..<height).filter { image.isTrace(x, $0) }.count
@@ -171,7 +197,30 @@ import Testing
 
     // MARK: The waterfall
 
-    @Test func theWaterfallScrollsOneLinePerFrameEachColouredAgainstItsLevels() throws {
+    @Test("10 ms scales actual row times in logical points, including Retina")
+    func waterfallTimeScaleUsesLogicalPoints() throws {
+        for scale in [1.0, 3.0] {
+            let target = try Offscreen(width: Self.width, height: Self.height)
+            let renderer = try BandRenderer(device: target.device)
+            var settings = Self.plain()
+            settings.waterfallPeriodMs = 10
+            let greys = try BandFixtures.palette(id: 7, [(0, "#000000"), (1, "#FFFFFF")])
+            var history = WaterfallHistory(capacity: 32)
+            let levels = WaterfallHistory.Levels(lowDbm: -100, highDbm: 0)
+            history.append(line: Self.flat(100, -100), levels: levels, time: 1000)
+            history.append(line: Self.flat(100, 0), levels: levels, time: 1000.1)
+            let overlays = Self.overlays(settings, palette: greys, scale: scale)
+            let image = try target.render(renderer, frame: nil, history: history, extras: nil, overlays: overlays)
+            let top = Int(Self.layout(settings, scale: scale).waterfall.minY)
+            // The samples are 100 ms apart: ten logical points, independent of backing scale.
+            #expect(image.grey(200, top + Int(2 * scale)).isNear(255))
+            #expect(image.grey(200, top + Int(8 * scale)).isNear(0))
+            #expect(history.count == 2 && history.linesAppended == 2)
+            #expect(history.time(age: 1) == 1000)
+        }
+    }
+
+    @Test func eachTimedWaterfallRowKeepsItsOwnLevels() throws {
         let target = try Offscreen(width: Self.width, height: Self.height)
         let renderer = try BandRenderer(device: target.device)
         let settings = Self.plain()
@@ -182,8 +231,9 @@ import Testing
         let manual = settings.manualLevels
 
         let first = BandFixtures.frame(trace: Self.flat(100, -50), sequence: 1)
-        state.receive(frame: first, manualLevels: manual)
-        state.receive(extras: BandFixtures.extras(for: first, levels: (-100, 0)), manualLevels: manual)
+        state.clock = { 1000 }
+        state.receive(frame: first, manualLevels: manual, at: 1000)
+        state.receive(extras: BandFixtures.extras(for: first, levels: (-100, 0)), manualLevels: manual, at: 1000)
         var image = try target.render(renderer, frame: state.frame, history: state.history,
                                       extras: state.frameExtras, overlays: overlays)
         let top = Int(layout.waterfall.minY)
@@ -191,8 +241,9 @@ import Testing
         #expect(image.grey(200, top + 1).isNear(Self.backgroundGrey, tolerance: 2))
 
         let second = BandFixtures.frame(trace: Self.flat(100, -50), sequence: 2)
-        state.receive(frame: second, manualLevels: manual)
-        state.receive(extras: BandFixtures.extras(for: second, levels: (-50, 0)), manualLevels: manual)
+        state.clock = { 1000.03 }
+        state.receive(frame: second, manualLevels: manual, at: 1000.03)
+        state.receive(extras: BandFixtures.extras(for: second, levels: (-50, 0)), manualLevels: manual, at: 1000.03)
         image = try target.render(renderer, frame: state.frame, history: state.history, extras: state.frameExtras,
                                   overlays: overlays)
         #expect(image.grey(200, top).isNear(0))

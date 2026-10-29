@@ -23,6 +23,9 @@
 //   2026-09-30  J.J. Boyd / KG4VCF  Fix wave GUI-I7: every greyed arming
 //                                    and two-tone control says why.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, transmitSettingsVersion
+//                                    16 (the CW settings on `transmit`).
+//                                    AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -260,8 +263,8 @@ void TstRemotePureSignalArming::coreOffersArmingAtVersionSeven()
     QVERIFY(s.connect());
     // 8 since parity Task 13; 7 is within it.
     // 14 since the Core owns Prevent transmitting on a different band, 15
-    // since a remote window edits the CFC bands.
-    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 15);
+    // since a remote window edits the CFC bands, 16 since the CW settings.
+    QCOMPARE(s.server->buildCapabilities().transmitSettingsVersion, 16);
     QVERIFY(s.client->transmitSettingsAvailable(7));
     QVERIFY(s.client->pureSignalArmingOffered());
     PureSignalSessionFacade* facade = s.window.pureSignalFacade();

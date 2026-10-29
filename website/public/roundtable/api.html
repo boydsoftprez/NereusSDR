@@ -1,0 +1,2683 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roundtable protocol version 1 | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/roundtable/api.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual<br>NereusSDR 2026.10.1</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/upgrading-to-2026.10.1.html">Upgrading to NereusSDR 2026.10.1</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="roundtable-protocol-version-1">Roundtable protocol version 1</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#1-what-it-does-and-does-not-do">1. What it does and does not do</a></li><li><a href="#2-transport">2. Transport</a></li><li><a href="#3-roles-and-the-life-of-a-connection">3. Roles and the life of a connection</a></li><li><a href="#4-identity-values">4. Identity values</a></li><li><a href="#5-messages">5. Messages</a></li><li><a href="#6-rooms-turns-and-readings">6. Rooms, turns and readings</a></li><li><a href="#7-flows">7. Flows</a></li><li><a href="#8-errors">8. Errors</a></li><li><a href="#9-limits-storage-and-logs">9. Limits, storage and logs</a></li><li><a href="#10-read-api">10. Read API</a></li><li><a href="#11-conformance">11. Conformance</a></li><li><a href="#12-versions-and-changing-the-protocol">12. Versions and changing the protocol</a></li></ol></details>
+<p>This is the written specification of Roundtable: the service at
+<code>roundtable.nereussdr.com</code> that groups stations into rooms by frequency,
+shows each station's own S-meter reading of whoever is talking, works out
+turns, and carries short messages about each frequency. It is R-RT-1 of the
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/architecture/2026-10-23-roundtable-design.md">Roundtable design</a>, written out from that
+design's sections 7, 8, 9 and 13 and its settled calls (section 18).</p>
+<p>Four parties use it:</p>
+<ul>
+<li><strong>The server</strong>, <code>roundtable/server/</code> in this repository (<code>nereus-roundtable</code>).</li>
+<li><strong>A station</strong>: a NereusSDR Core, which signs in with its station identity
+key, or any other program, which signs in with a website key (section 4.2).
+Both speak exactly the same protocol (design D22 to D24).</li>
+<li><strong>A live reader</strong>: anyone, with no sign-in, reading rooms as they change
+(section 5.5). The public page, a hidden Core and a Core whose first-run
+question is unanswered (design D25) are live readers.</li>
+<li><strong>A read API client</strong>: anyone, over plain HTTPS <code>GET</code> (section 10).</li>
+</ul>
+<p>The conformance suite in <code>roundtable/conformance/v1/</code> holds the server, a
+Core and other software to this document (section 11). Where the server's
+code and this document disagree, this document is the authority and the code
+is the bug. Where this document and the design disagree, the design wins and
+this document is the bug, to be fixed in the same change.</p>
+<p>Section numbers are stable. Later revisions add sections; they never
+renumber.</p>
+<h2 id="1-what-it-does-and-does-not-do">1. What it does and does not do</h2>
+<p>Roundtable does six things:</p>
+<ol>
+<li><strong>Sign-in.</strong> A station proves it holds its key and is then known by its
+Roundtable station id (section 4).</li>
+<li><strong>Rooms.</strong> From each station's slices it places the station in a room: one
+mode family and one center frequency (section 6.3).</li>
+<li><strong>Turns.</strong> From who is keyed and who hears a signal it works out turns on
+its own clock: talking, unknown, doubled and quiet (section 6.6).</li>
+<li><strong>Readings.</strong> It stores and shows every member's raw S-meter reading of
+the room's signal, beside the callsign of the station that took it, never
+averaged or ranked (section 6.8).</li>
+<li><strong>Messages and names.</strong> Members post short messages about the room and
+name turns whose talker was unknown (sections 6.9, 6.10).</li>
+<li><strong>Reading.</strong> It sends the band list and rooms to stations and live readers
+as they change, and answers the read API (sections 6.11, 10).</li>
+</ol>
+<p>It never publishes a station id, an address, an archive or a mute list
+(design 12.1). The archive, the review list, the key page and web sign-in are
+web pages (design 11.6, 11.7, 7.3, 7.4); only the parts of them a station
+reaches over this protocol (<code>weblink</code>, <code>deleteArchive</code>) are specified here.
+There is no lobby, no chat that is not tied to a frequency, no averaging and
+no &quot;best signal&quot;.</p>
+<h2 id="2-transport">2. Transport</h2>
+<h3 id="21-paths">2.1 Paths</h3>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Who</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wss://roundtable.nereussdr.com/v1/station</code></td>
+<td>stations</td>
+<td>the station protocol (sections 5.3, 5.4)</td>
+</tr>
+<tr>
+<td><code>wss://roundtable.nereussdr.com/v1/live</code></td>
+<td>anyone</td>
+<td>read-only rooms (section 5.5)</td>
+</tr>
+<tr>
+<td><code>https://roundtable.nereussdr.com/v1/api/...</code></td>
+<td>anyone</td>
+<td>the read API (section 10)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>TLS on TCP 443. Caddy terminates TLS and forwards by path to the server on
+loopback: the WebSocket listener on port 8720 (<code>/v1/station</code>, <code>/v1/live</code>)
+and the HTTP listener on port 8721 (<code>/v1/api/...</code> and the web pages). The
+server never listens on a public address.</li>
+<li>The opening handshake is RFC 6455's over HTTP/1.1: <code>GET</code> with
+<code>Upgrade: websocket</code> (in any case), <code>Connection: Upgrade</code>,
+<code>Sec-WebSocket-Key</code> and <code>Sec-WebSocket-Version: 13</code>. WebSockets over
+HTTP/2 (RFC 8441) are not offered; a client whose stack would use HTTP/2
+keeps this connection to HTTP/1.1. A request to a WebSocket path that is
+not an upgrade gets <code>426</code>. Any other path on port 8720 gets <code>404</code>.</li>
+<li>A self-hosted server has its own host name. Everything here that names
+<code>roundtable.nereussdr.com</code> means the server's configured host name.</li>
+</ul>
+<h3 id="22-frames-and-sizes">2.2 Frames and sizes</h3>
+<ul>
+<li>Each message is one WebSocket text frame holding one JSON object, encoded
+compactly, with a string <code>type</code> naming its kind (section 5.1). A binary
+frame is a protocol error.</li>
+<li>The server caps each inbound message at 16384 bytes at the WebSocket
+layer, before anything is decoded. A longer one closes the connection
+with close code 1009. No message a conformant station or live reader sends
+comes near it: the longest is a <code>post</code> of 4000 bytes of text (section
+5.2), at most 24000 bytes if every byte were escaped, which a sender does
+not do; a sender writes non-ASCII text as UTF-8, not as escapes, so a
+<code>post</code> is at most about 4100 bytes.</li>
+<li>The server never sends a message longer than 1048576 bytes (1 MiB), and a
+station or live reader accepts any message from the server up to that
+size. The largest it sends is a <code>rooms</code> list with every live room or a
+<code>room</code> view with 50 messages.</li>
+<li>The server encodes compactly, writes non-ASCII characters as UTF-8, and
+writes keys in the order this document lists them. Receivers must not
+depend on key order.</li>
+</ul>
+<h3 id="23-heartbeat">2.3 Heartbeat</h3>
+<ul>
+<li>The server sends a WebSocket ping every 20 s. A station or live reader
+answers pings as any WebSocket stack does and need not send its own.</li>
+<li>The server closes a connection from which no frame of any kind (a message,
+a pong or a ping) has arrived for 45 s, with close code 1000 and no
+message.</li>
+<li>A station or live reader that has received no frame of any kind (pings
+included) for 45 s treats the connection as lost, closes it and
+reconnects. A Core reconnects with backoff of 1, 2, 5, 10 and 30 s, then
+every 30 s (design 10.1).</li>
+</ul>
+<h3 id="24-closing">2.4 Closing</h3>
+<p>The server closes with these codes. The reason a peer acts on is the close
+code, or the <code>error</code> message sent just before the close when there is one;
+the close frame's reason text is always empty.</p>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Meaning</th>
+<th><code>error</code> first</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1000</td>
+<td>the heartbeat timed out (2.3), or the server closed a connection it no longer serves</td>
+<td>no</td>
+</tr>
+<tr>
+<td>1001</td>
+<td>the server is shutting down</td>
+<td>no</td>
+</tr>
+<tr>
+<td>1009</td>
+<td>a message over the 16384-byte cap (2.2)</td>
+<td>no</td>
+</tr>
+<tr>
+<td>1013</td>
+<td>too many connections from this network, or in all (section 9.1)</td>
+<td>yes, <code>rate</code></td>
+</tr>
+<tr>
+<td>4001</td>
+<td>sign-in refused: a key that is not canonical, a signature that does not verify, an unknown website key, or an unsupported version</td>
+<td>yes: <code>bad-sign-in</code>, or <code>version</code></td>
+</tr>
+<tr>
+<td>4002</td>
+<td>protocol error (section 5.1)</td>
+<td>no</td>
+</tr>
+<tr>
+<td>4003</td>
+<td>replaced: the same station signed in on a newer connection</td>
+<td>no</td>
+</tr>
+<tr>
+<td>4004</td>
+<td>key revoked: the website key this station signed in with is revoked, at sign-in or while connected</td>
+<td>no</td>
+</tr>
+<tr>
+<td>4005</td>
+<td>sign-in timed out: no <code>hello</code> within 10 s of the connection opening</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p>A station that gets 4001, 4003 or 4004 does not reconnect in a loop: 4003
+means another connection of the same station is live; 4001 and 4004 need the
+operator (the <code>error</code> before 4001 says whether the key or the version is at
+fault). A Core shows the reason on its connection line and stops retrying
+until its key, its software or its settings change. 4005 is not the
+operator's to fix: a Core reconnects after it with its normal backoff
+(2.3), as after 1000, 1001 and 1013.</p>
+<h2 id="3-roles-and-the-life-of-a-connection">3. Roles and the life of a connection</h2>
+<h3 id="31-station">3.1 Station</h3>
+<pre><code>server  -&gt; station:  challenge
+station -&gt; server:   hello
+server  -&gt; station:  welcome
+server  -&gt; station:  rooms
+station -&gt; server:   presence, reading, post, ... (section 5.3)
+server  -&gt; station:  roomsDelta, room, delta, posted, ... (section 5.4)
+</code></pre>
+<ul>
+<li>The server sends <code>challenge</code> at once on every <code>/v1/station</code> connection it
+accepts. A connection over a connection cap (9.1) gets <code>error</code> <code>rate</code> in
+place of <code>challenge</code>, then close 1013.</li>
+<li>The station's first message must be <code>hello</code>. Anything else first is a
+protocol error (4002). No <code>hello</code> within 10 s of the connection opening
+closes it with 4005.</li>
+<li>After <code>welcome</code> and <code>rooms</code> the station may send any station kind except
+<code>hello</code> (a second <code>hello</code> is a protocol error).</li>
+<li>A station that never sends <code>presence</code> is never shown anywhere. That is how
+a hidden Core, or a Core whose first-run question is unanswered, reaches
+the archive: it signs in, sends <code>weblink</code> or <code>deleteArchive</code> only, and
+closes (design 7.4, 10.2, D25).</li>
+<li>One station id has at most one connection. A newer connection that signs
+in as the same station replaces the older, which is closed with 4003; the
+older connection's rows leave their rooms as when a connection closes
+(section 6.4) and the newer one starts with no presence.</li>
+</ul>
+<h3 id="32-live-reader">3.2 Live reader</h3>
+<ul>
+<li><code>/v1/live</code> needs no sign-in and the server sends nothing until asked. A
+live reader sends <code>watchBand</code> for the band list and <code>watch</code> for up to 4
+rooms (section 5.5), and receives the same <code>rooms</code>, <code>roomsDelta</code>, <code>room</code>
+and <code>delta</code> kinds as a station, with no row marked as its own.</li>
+<li>A hidden Core reads Roundtable this way (design 10.2), and so does a Core
+whose first-run question nobody has answered yet: until someone taps Go
+live it opens only <code>/v1/live</code> and sends nothing about the station, however
+long it runs unattended (design D25).</li>
+<li>A live connection never carries a station id, a key or anything a station
+sends; it cannot post, name or report. A station kind on <code>/v1/live</code> is a
+protocol error (4002), and so is a live kind on <code>/v1/station</code>.</li>
+</ul>
+<h3 id="33-read-api-client">3.3 Read API client</h3>
+<p>Plain HTTPS <code>GET</code>, no sign-in, JSON answers (section 10). Archives are never
+in the read API (design D11).</p>
+<h3 id="34-browser">3.4 Browser</h3>
+<p>The public page is static HTML and script from the same site, and is a live
+reader plus a read API client. The archive and the review list open in a
+browser signed in with a session cookie, from a one-time link a station asks
+for with <code>weblink</code> (section 7.9) or from the key page. Those pages are the
+web's, outside this protocol.</p>
+<h2 id="4-identity-values">4. Identity values</h2>
+<h3 id="41-station-keys-signatures-and-the-roundtable-id">4.1 Station keys, signatures and the Roundtable id</h3>
+<p>Keys and signatures are the station link's (link section 3.4) and the
+rendezvous's (rendezvous section 4.1), with no change:</p>
+<ul>
+<li>A <strong>public key</strong> (<code>spki</code>) is strict base64url (no padding, only
+<code>A-Z a-z 0-9 - _</code>, the unused low bits of the last character zero, a
+length that is not 1 mod 4) of a canonical 91-byte P-256
+SubjectPublicKeyInfo DER with its point uncompressed: 122 characters.
+Canonical means it loads as a P-256 key and encodes back to the same 91
+bytes.</li>
+<li>A <strong>signature</strong> (<code>sig</code>) is ECDSA P-256 over SHA-256, raw <code>r || s</code>, 64
+bytes, strict base64url: 86 characters. Not DER. <code>r</code> and <code>s</code> are each 32
+bytes big-endian and each from 1 to n - 1, n the order of the P-256 group.
+A high-s signature is valid.</li>
+</ul>
+<p>A Core signs in with its <strong>station identity key</strong>, the same P-256 key the
+station link and the rendezvous use (<code>station-identity.pem</code>). Its
+<strong>Roundtable id</strong> is:</p>
+<pre><code>id = base32(SHA-256(&quot;NereusSDR roundtable id v1\n&quot; || SPKI DER))[0..26]
+</code></pre>
+<ul>
+<li>The prefix is the 26 ASCII bytes <code>NereusSDR roundtable id v1</code> followed by
+one line feed (0x0A): 27 bytes.</li>
+<li><code>base32</code> is RFC 4648 base32 with the standard alphabet, lowercased, with no
+padding. The id is its first 26 characters, so it matches <code>[a-z2-7]{26}</code>.</li>
+<li>The prefix differs from the rendezvous id's (<code>NereusSDR rendezvous id v1\n</code>), so the two services never share an id for one key and their
+records cannot be joined (design C20). <code>crypto/roundtable-id.json</code> gives
+both ids for each test key.</li>
+</ul>
+<h3 id="42-website-keys-and-key-ids">4.2 Website keys and key ids</h3>
+<p>Other software signs in with a <strong>website key</strong> from the key page
+(<code>roundtable.nereussdr.com/key</code>, design 7.3):</p>
+<ul>
+<li>
+<p>A website key is 32 random bytes from the operating system's generator,
+strict base64url without padding: 43 characters. It is shown once.</p>
+</li>
+<li>
+<p>Its station id, the <strong>key id</strong>, is:</p>
+<pre><code>id = base32(SHA-256(&quot;NereusSDR roundtable key v1\n&quot; || key))[0..26]
+</code></pre>
+<p>where <code>key</code> is the 32 raw bytes, not the text, and the prefix is the 27
+ASCII bytes <code>NereusSDR roundtable key v1</code> followed by one line feed: 28
+bytes. <code>base32</code> and the 26 characters are as in 4.1.</p>
+</li>
+<li>
+<p>The server stores only SHA-256 of the 32 raw key bytes (no prefix), never
+the key. On <code>hello</code> it hashes the key it is given and looks the hash up.</p>
+</li>
+<li>
+<p>One key is one station. A key station's callsign and grid are set on the
+key page; a callsign in its <code>presence</code> is ignored (section 5.3.2).</p>
+</li>
+<li>
+<p>History moves to a new key only by the old key, on the key page, while
+the old key is still held: &quot;Move my history to a new key&quot; revokes the old
+key and moves its sessions, turns, readings, names and messages to the new
+key's station id in one step (design 7.3, C6, D26). Nothing in this
+protocol moves history, and nobody moves history for someone else.</p>
+</li>
+<li>
+<p>A revoked key's connection is closed with 4004 at once, and a <code>hello</code> with
+it is refused with 4004.</p>
+</li>
+</ul>
+<p><code>crypto/key-id.json</code> gives keys, their digests, ids and stored hashes, and
+key texts that must be refused.</p>
+<h3 id="43-the-sign-in-transcript">4.3 The sign-in transcript</h3>
+<p>On connect the server sends <code>challenge</code> with <code>nonce</code>: 32 bytes from the
+operating system's generator, new for every connection. A station signing in
+with its station key signs:</p>
+<pre><code>&quot;NereusSDR roundtable hello v1\n&quot; || host || &quot;\n&quot; || nonce
+</code></pre>
+<ul>
+<li>The prefix is the 29 ASCII bytes <code>NereusSDR roundtable hello v1</code> followed
+by one line feed: 30 bytes.</li>
+<li><code>host</code> is the ASCII bytes of the host name the station connected to, as it
+appears in the URL, lowercase, with no port and no trailing dot:
+<code>roundtable.nereussdr.com</code>, 24 bytes. A Core configured with a self-hosted
+server signs that server's name.</li>
+<li>Then one line feed, then <code>nonce</code> as its <strong>32 raw bytes</strong>, not its text.
+For <code>roundtable.nereussdr.com</code> the transcript is 30 + 24 + 1 + 32 = 87
+bytes.</li>
+<li>The server verifies the signature over the transcript built with its own
+configured host name and the nonce it sent on this connection. A
+signature over the rendezvous's registration transcript, or over another
+host name, never verifies: the prefix keeps signatures from being replayed
+between the two services, and the host name stops another server passing a
+challenge through to a real one.</li>
+</ul>
+<p>A station signing in with a website key sends the key instead and signs
+nothing; the TLS connection carries it.</p>
+<p><code>crypto/hello-signature.json</code> gives a fixed key, a host, a nonce, the
+transcript bytes and valid and invalid signatures.</p>
+<h3 id="44-row-refs-and-other-ids">4.4 Row refs and other ids</h3>
+<ul>
+<li><strong>Row ref</strong> (<code>ref</code>): when a station's row enters a room opening, the server
+gives it a random 8-character ref from the alphabet <code>a-z 2-7</code> (40 bits). It
+is kept while that opening lives and while the row stays; a row that
+leaves and comes back gets a new ref. Refs differ in every room and every
+opening, so they never link a station across rooms (design 7.1). Reports
+on a station name a room and a ref.</li>
+<li><strong>Turn id</strong>, <strong>message id</strong> and <strong>opening id</strong>: whole numbers from 1, chosen
+by the server, unique across the server and increasing with time.</li>
+<li><strong>Room id</strong>: <code>&lt;family&gt;-&lt;center Hz&gt;</code>, for example <code>usb-14212000</code> (section
+6.3). It is reused when a room reopens on the same center; each opening
+has its own opening id.</li>
+<li>Station ids never appear in anything public: the live connection, the read
+API and the public page carry callsigns and row refs (design 12.1). A
+station sees its own id in <code>welcome</code>.</li>
+</ul>
+<h3 id="45-callsigns-and-grids">4.5 Callsigns and grids</h3>
+<ul>
+<li>A <strong>callsign</strong> is 3 to 16 characters of <code>A-Z a-z 0-9 /</code>, holding at least
+one letter and one digit, not starting or ending with <code>/</code> and with no
+<code>//</code>. The server stores and sends it upper case. Prefixes and suffixes
+(<code>VE3/</code>, <code>/P</code>, <code>/M</code>) are part of the callsign shown.</li>
+<li>The <strong>base callsign</strong> is the longest of the callsign's <code>/</code>-separated parts,
+the first of them on a tie: <code>W4XYZ</code> for <code>VE3/W4XYZ/P</code>. Mentions, Mute and
+&quot;names used on this frequency&quot; match on the base callsign (design 7.1).</li>
+<li>A <strong>grid</strong> is a Maidenhead locator of 4 or 6 characters: a field of two
+letters <code>A</code> to <code>R</code>, a square of two digits, and optionally a subsquare of
+two letters <code>A</code> to <code>X</code>, in any case. The server stores and sends it with
+the field upper case and the subsquare lower case (<code>EM73tu</code>).</li>
+<li>A Core's callsign comes from <code>Roundtable/Callsign</code>, then <code>User/Callsign</code>,
+then the Core's <code>StationCallsign</code>; its grid from <code>Roundtable/GridSquare</code>,
+then <code>User/GridSquare</code> (design 7.1).</li>
+<li><strong>What a Core sends.</strong> A malformed callsign or grid in <code>presence</code> is a
+protocol error (5.1), so a Core checks both against these rules before it
+connects and never sends one the server would refuse:
+<ul>
+<li>A Core with no callsign, or with a callsign that is not a callsign by
+the rule above (a hyphen, a space, too long), does not connect, and its
+source text on the Spot Hub says why, naming the setting to fix.</li>
+<li>A grid of 8 characters (an extended locator such as <code>EM73tu42</code>) is cut
+to its first 6. A grid that is then not a grid by the rule above (2
+characters, 10, letters out of range, empty) is sent as <code>null</code>, and the
+Core still connects.</li>
+</ul>
+</li>
+</ul>
+<h2 id="5-messages">5. Messages</h2>
+<h3 id="51-the-envelope">5.1 The envelope</h3>
+<p>Each message is a JSON object with a string <code>type</code>. Keys are case
+sensitive. For every message the server receives:</p>
+<ul>
+<li>Every key its kind lists must be present, with the field kind section 5.2
+gives, or the message is a protocol error. A key listed as conditional
+(<code>report</code>'s) must be present exactly when its condition holds.</li>
+<li>A key its kind does not list is ignored, at any depth (inside a slice
+object too).</li>
+<li>These are protocol errors: a kind the server does not know, a kind of the
+other path (a live kind on <code>/v1/station</code>, a station kind on <code>/v1/live</code>), a
+server kind, a binary frame, JSON that does not parse, a top level that is
+not an object, a missing or non-string <code>type</code>, a key that appears twice in
+one object (listed or not), <code>NaN</code> or <code>Infinity</code>, and a string in a listed
+key holding a lone surrogate.</li>
+<li>A whole number is a JSON number written without a fraction or an
+exponent. <code>true</code> and <code>false</code> are not numbers; <code>7.0</code> and <code>&quot;7&quot;</code> are not whole
+numbers. A number (<code>dbm</code>) may have a fraction but no exponent.</li>
+<li>A protocol error closes the connection with 4002 and no <code>error</code> message.</li>
+</ul>
+<p>A string's length is counted in bytes of its UTF-8 encoding unless a field
+kind says code points.</p>
+<p><strong>At a station or live reader.</strong> A station or live reader decodes what the
+server sends by the same tables with the same tolerance: a key it does not
+know, in a kind or object it knows, is ignored; a kind it does not know, a
+code it does not know in <code>error</code>, <code>posted</code> or <code>notice</code>, and a message it
+cannot decode are logged and ignored (an unknown code is treated as the
+generic form of its message). The server relies on this to add keys and
+kinds later (section 12).</p>
+<h3 id="52-field-kinds">5.2 Field kinds</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>version</code></td>
+<td>a whole number from 1 to 65535</td>
+</tr>
+<tr>
+<td><code>sid</code></td>
+<td>a station id: exactly 26 characters of <code>a-z</code> and <code>2-7</code> (4.1, 4.2)</td>
+</tr>
+<tr>
+<td><code>spki</code></td>
+<td>strict base64url of exactly 91 bytes, 122 characters (4.1); whether it is a canonical P-256 key is checked after decoding</td>
+</tr>
+<tr>
+<td><code>sig</code></td>
+<td>strict base64url of exactly 64 bytes, 86 characters</td>
+</tr>
+<tr>
+<td><code>nonce</code></td>
+<td>strict base64url of exactly 32 bytes, 43 characters</td>
+</tr>
+<tr>
+<td><code>websiteKey</code></td>
+<td>strict base64url of exactly 32 bytes, 43 characters (4.2)</td>
+</tr>
+<tr>
+<td><code>software</code></td>
+<td>a string of 1 to 64 bytes with no control character: the program's name, for example <code>NereusSDR</code></td>
+</tr>
+<tr>
+<td><code>softwareVersion</code></td>
+<td>a string of 1 to 32 bytes with no control character, for example <code>26.10.3</code></td>
+</tr>
+<tr>
+<td><code>callsign</code></td>
+<td>a callsign (4.5)</td>
+</tr>
+<tr>
+<td><code>grid</code></td>
+<td>a grid (4.5)</td>
+</tr>
+<tr>
+<td><code>bool</code></td>
+<td><code>true</code> or <code>false</code></td>
+</tr>
+<tr>
+<td><code>sliceId</code></td>
+<td>a whole number from 0 to 255: the station's own id for one slice</td>
+</tr>
+<tr>
+<td><code>hz</code></td>
+<td>a whole number from 1 to 99999999999: a frequency in Hz</td>
+</tr>
+<tr>
+<td><code>filterHz</code></td>
+<td>a whole number from 1 to 1000000: a filter width in Hz</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>one of <code>LSB</code> <code>USB</code> <code>DIGL</code> <code>DIGU</code> <code>AM</code> <code>SAM</code> <code>FM</code> <code>CWL</code> <code>CWU</code> <code>FDVL</code> <code>FDVU</code>, upper case (6.1)</td>
+</tr>
+<tr>
+<td><code>family</code></td>
+<td>one of <code>lsb</code> <code>usb</code> <code>digl</code> <code>digu</code> <code>am</code> <code>fm</code> <code>cw</code> <code>fdvl</code> <code>fdvu</code> (6.1)</td>
+</tr>
+<tr>
+<td><code>band</code></td>
+<td>one of the band names of section 6.2, or <code>other</code></td>
+</tr>
+<tr>
+<td><code>roomId</code></td>
+<td><code>&lt;family&gt;-&lt;center Hz&gt;</code>: a family, a hyphen, and a whole number from 1 to 99999999999 written in decimal with no leading zero</td>
+</tr>
+<tr>
+<td><code>dbm</code></td>
+<td>a JSON number from -160 to 94 inclusive, fraction allowed: an S-meter reading in dBm</td>
+</tr>
+<tr>
+<td><code>unixMs</code></td>
+<td>a whole number from 0 to 9007199254740991: Unix epoch milliseconds</td>
+</tr>
+<tr>
+<td><code>id</code></td>
+<td>a whole number from 1 to 9007199254740991: a turn, message or opening id</td>
+</tr>
+<tr>
+<td><code>gen</code></td>
+<td>a whole number from 1 to 9007199254740991: a generation (6.11)</td>
+</tr>
+<tr>
+<td><code>count</code></td>
+<td>a whole number from 0 to 9007199254740991</td>
+</tr>
+<tr>
+<td><code>nth</code></td>
+<td>a whole number from 1 to 65535: which station of one callsign in one room, in joining order (6.8)</td>
+</tr>
+<tr>
+<td><code>km</code></td>
+<td>a whole number from 0 to 20038, or <code>null</code></td>
+</tr>
+<tr>
+<td><code>offsetHz</code></td>
+<td>a whole number from -1000000 to 1000000</td>
+</tr>
+<tr>
+<td><code>rowRef</code></td>
+<td>exactly 8 characters of <code>a-z</code> and <code>2-7</code> (4.4)</td>
+</tr>
+<tr>
+<td><code>text</code></td>
+<td>a string of 1 to 4000 bytes: a message as sent (6.10)</td>
+</tr>
+<tr>
+<td><code>clientId</code></td>
+<td>a string of 1 to 64 bytes of printable ASCII (0x21 to 0x7E): the sender's own id for one <code>post</code></td>
+</tr>
+<tr>
+<td><code>reason</code></td>
+<td>a string of 1 to 1024 bytes: plain words a screen may show as sent</td>
+</tr>
+<tr>
+<td><code>code</code></td>
+<td>1 to 32 characters of <code>a-z</code> and <code>-</code>: an error, refusal or notice code</td>
+</tr>
+<tr>
+<td><code>about</code></td>
+<td>1 to 32 ASCII letters, the <code>type</code> of the message an <code>error</code> answers, or <code>null</code></td>
+</tr>
+<tr>
+<td><code>retry</code></td>
+<td>a whole number from 0 to 2147483647: milliseconds to wait; 0 means no advice</td>
+</tr>
+<tr>
+<td><code>weblinkUrl</code></td>
+<td>a string of 1 to 512 bytes of printable ASCII starting <code>https://</code></td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td>one of <code>talking</code> <code>unknown</code> <code>doubled</code> <code>quiet</code></td>
+</tr>
+<tr>
+<td><code>turnKind</code></td>
+<td>one of <code>talking</code> <code>unknown</code> <code>doubled</code></td>
+</tr>
+<tr>
+<td><code>messageState</code></td>
+<td>one of <code>shown</code> <code>removed</code> <code>deleted</code> <code>expired</code></td>
+</tr>
+<tr>
+<td><code>reportReason</code></td>
+<td>per <code>report</code> target (5.3.7)</td>
+</tr>
+</tbody>
+</table>
+<p>Where a kind is written &quot;or <code>null</code>&quot; the key is present with <code>null</code>. Arrays
+hold only the kind named.</p>
+<p><strong>Objects.</strong> The server's messages carry these objects. Each lists its keys;
+an object missing one is a message a receiver cannot decode.</p>
+<table>
+<thead>
+<tr>
+<th>Object</th>
+<th>Keys</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>slice (from a station)</td>
+<td><code>id</code> (<code>sliceId</code>), <code>hz</code> (<code>hz</code>), <code>mode</code> (<code>mode</code>), <code>filterHz</code> (<code>filterHz</code>), <code>keyed</code> (<code>bool</code>)</td>
+</tr>
+<tr>
+<td>summary</td>
+<td><code>id</code> (<code>roomId</code>), <code>band</code> (<code>band</code>), <code>family</code> (<code>family</code>), <code>hz</code> (<code>hz</code>, the center), <code>state</code> (<code>state</code>), <code>talkers</code> (array of <code>callsign</code>), <code>members</code> (<code>count</code>), <code>messages</code> (<code>count</code>), <code>last</code> (<code>unixMs</code>), <code>folded</code> (<code>bool</code>), <code>start</code> (<code>unixMs</code> or <code>null</code>), <code>heard</code> (<code>count</code>), <code>readings</code> (array of <code>dbm</code>, at most 12), <code>lastMessage</code> (last message or <code>null</code>), <code>ended</code> (<code>unixMs</code> or <code>null</code>)</td>
+</tr>
+<tr>
+<td>last message</td>
+<td><code>callsign</code> (<code>callsign</code>), <code>nth</code> (<code>nth</code>), <code>t</code> (<code>unixMs</code>), <code>state</code> (<code>messageState</code>), <code>text</code> (the first 80 code points of the message's <code>text</code> when <code>state</code> is <code>shown</code>, otherwise <code>null</code>)</td>
+</tr>
+<tr>
+<td>member</td>
+<td><code>ref</code> (<code>rowRef</code>), <code>callsign</code> (<code>callsign</code>), <code>nth</code> (<code>nth</code>), <code>grid</code> (<code>grid</code> or <code>null</code>), <code>km</code> (<code>km</code>), <code>offsetHz</code> (<code>offsetHz</code>), <code>joining</code> (<code>bool</code>), <code>away</code> (<code>bool</code>), <code>keyed</code> (<code>bool</code>), <code>software</code> (<code>software</code>), <code>softwareVersion</code> (<code>softwareVersion</code>), <code>reading</code> (reading or <code>null</code>), <code>you</code> (<code>bool</code>)</td>
+</tr>
+<tr>
+<td>reading</td>
+<td><code>dbm</code> (<code>dbm</code>), <code>t</code> (<code>unixMs</code>), <code>present</code> (<code>bool</code>), <code>turn</code> (<code>id</code> or <code>null</code>)</td>
+</tr>
+<tr>
+<td>turn</td>
+<td><code>id</code> (<code>id</code>), <code>kind</code> (<code>turnKind</code>), <code>talkers</code> (array of talker), <code>start</code> (<code>unixMs</code>), <code>end</code> (<code>unixMs</code> or <code>null</code>), <code>ending</code> (<code>bool</code>), <code>names</code> (array of name count), <code>heard</code> (<code>count</code>), <code>mine</code> (<code>callsign</code> or <code>null</code>)</td>
+</tr>
+<tr>
+<td>talker</td>
+<td><code>ref</code> (<code>rowRef</code> or <code>null</code>), <code>callsign</code> (<code>callsign</code>), <code>nth</code> (<code>nth</code>)</td>
+</tr>
+<tr>
+<td>name count</td>
+<td><code>name</code> (<code>callsign</code>), <code>count</code> (<code>count</code>, at least 1)</td>
+</tr>
+<tr>
+<td>message</td>
+<td><code>id</code> (<code>id</code>), <code>ref</code> (<code>rowRef</code> or <code>null</code>), <code>callsign</code> (<code>callsign</code>), <code>nth</code> (<code>nth</code>), <code>t</code> (<code>unixMs</code>), <code>state</code> (<code>messageState</code>), <code>text</code> (<code>text</code> when <code>state</code> is <code>shown</code>, otherwise <code>null</code>), <code>dbm</code> (<code>dbm</code> or <code>null</code>)</td>
+</tr>
+<tr>
+<td>mention</td>
+<td><code>room</code> (<code>roomId</code>), <code>message</code> (message)</td>
+</tr>
+<tr>
+<td>limits</td>
+<td><code>readingsPerSecond</code>, <code>presencePerSecond</code>, <code>messagesPerMinute</code>, <code>messagesPerHour</code>, <code>messageCodePoints</code>, <code>messageLines</code>, <code>namesPerMinute</code>, <code>reportsPerHour</code>, <code>slices</code>, <code>reads</code>, each a <code>count</code> (section 9.1)</td>
+</tr>
+</tbody>
+</table>
+<p>What each value means is section 6.</p>
+<h3 id="53-station-to-server">5.3 Station to server</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Keys</th>
+<th>Section</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hello</code></td>
+<td><code>v</code> (<code>version</code>), <code>software</code> (<code>software</code>), <code>softwareVersion</code> (<code>softwareVersion</code>), and either <code>spki</code> (<code>spki</code>) with <code>sig</code> (<code>sig</code>), or <code>key</code> (<code>websiteKey</code>)</td>
+<td>5.3.1</td>
+</tr>
+<tr>
+<td><code>presence</code></td>
+<td><code>callsign</code> (<code>callsign</code> or <code>null</code>), <code>grid</code> (<code>grid</code> or <code>null</code>), <code>atRadio</code> (<code>bool</code>), <code>slices</code> (array of 0 to 4 slice objects)</td>
+<td>5.3.2</td>
+</tr>
+<tr>
+<td><code>reading</code></td>
+<td><code>slice</code> (<code>sliceId</code>), <code>dbm</code> (<code>dbm</code>), <code>t</code> (<code>unixMs</code>), <code>present</code> (<code>bool</code>)</td>
+<td>5.3.3</td>
+</tr>
+<tr>
+<td><code>post</code></td>
+<td><code>room</code> (<code>roomId</code>), <code>text</code> (<code>text</code>), <code>clientId</code> (<code>clientId</code>)</td>
+<td>5.3.4</td>
+</tr>
+<tr>
+<td><code>delete</code></td>
+<td><code>msg</code> (<code>id</code>)</td>
+<td>5.3.5</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td><code>turn</code> (<code>id</code>), <code>name</code> (<code>callsign</code>)</td>
+<td>5.3.6</td>
+</tr>
+<tr>
+<td><code>report</code></td>
+<td><code>target</code> (<code>message</code>, <code>turn</code> or <code>station</code>), <code>reason</code> (<code>reportReason</code>), and by target <code>msg</code> (<code>id</code>), <code>turn</code> (<code>id</code>), or <code>room</code> (<code>roomId</code>) with <code>ref</code> (<code>rowRef</code>)</td>
+<td>5.3.7</td>
+</tr>
+<tr>
+<td><code>read</code></td>
+<td><code>room</code> (<code>roomId</code>)</td>
+<td>5.3.8</td>
+</tr>
+<tr>
+<td><code>unread</code></td>
+<td><code>room</code> (<code>roomId</code>)</td>
+<td>5.3.9</td>
+</tr>
+<tr>
+<td><code>resync</code></td>
+<td><code>room</code> (<code>roomId</code> or <code>null</code>)</td>
+<td>5.3.10</td>
+</tr>
+<tr>
+<td><code>mentionsSeen</code></td>
+<td><code>t</code> (<code>unixMs</code>)</td>
+<td>5.3.11</td>
+</tr>
+<tr>
+<td><code>weblink</code></td>
+<td>none</td>
+<td>5.3.12</td>
+</tr>
+<tr>
+<td><code>deleteArchive</code></td>
+<td><code>confirm</code> (a string of 1 to 64 bytes)</td>
+<td>5.3.13</td>
+</tr>
+<tr>
+<td><code>hidden</code></td>
+<td>none</td>
+<td>5.3.14</td>
+</tr>
+</tbody>
+</table>
+<p>Every request the server refuses is answered with <code>error</code> (5.4.11) naming
+its <code>type</code> in <code>about</code>, or for <code>post</code> with <code>posted</code> (5.4.7); the connection
+stays. A request the server accepts is answered only where a section below
+says so; otherwise its effect shows in the views (section 6.11).</p>
+<p>After <code>hidden</code> (5.3.14) every station kind except <code>weblink</code> and
+<code>deleteArchive</code> is refused with <code>error</code> <code>hidden</code>.</p>
+<h4>5.3.1 hello</h4>
+<pre><code>{&quot;type&quot;:&quot;hello&quot;,&quot;v&quot;:1,&quot;software&quot;:&quot;NereusSDR&quot;,&quot;softwareVersion&quot;:&quot;26.10.3&quot;,&quot;spki&quot;:&quot;&lt;spki&gt;&quot;,&quot;sig&quot;:&quot;&lt;sig&gt;&quot;}
+{&quot;type&quot;:&quot;hello&quot;,&quot;v&quot;:1,&quot;software&quot;:&quot;Example Logger&quot;,&quot;softwareVersion&quot;:&quot;3.1&quot;,&quot;key&quot;:&quot;&lt;websiteKey&gt;&quot;}
+</code></pre>
+<ul>
+<li><code>v</code> is the protocol version the station speaks, 1 here. Any other value is
+answered with <code>error</code> <code>version</code> and the close 4001.</li>
+<li><code>software</code> and <code>softwareVersion</code> name the program; they are public on the
+station's rows while it is present in a room (design 12.1).</li>
+<li>With <code>spki</code> and <code>sig</code>: the server checks the key is a canonical P-256 key,
+derives the Roundtable id (4.1), and verifies <code>sig</code> over the transcript of
+4.3. A key that is not canonical, or a signature that does not verify, is
+answered with <code>error</code> <code>bad-sign-in</code> and the close 4001.</li>
+<li>With <code>key</code>: the server looks up its hash (4.2). An unknown key is answered
+with <code>error</code> <code>bad-sign-in</code> and the close 4001; a revoked key closes with
+4004.</li>
+<li><code>spki</code> and <code>key</code> together, neither, or <code>spki</code> without <code>sig</code>, is a protocol
+error.</li>
+<li>On success the server answers <code>welcome</code> and then <code>rooms</code>. A newer
+connection for the same station id replaces an older one (3.1).</li>
+</ul>
+<h4>5.3.2 presence</h4>
+<pre><code>{&quot;type&quot;:&quot;presence&quot;,&quot;callsign&quot;:&quot;KG4VCF&quot;,&quot;grid&quot;:&quot;EM73&quot;,&quot;atRadio&quot;:true,&quot;slices&quot;:[{&quot;id&quot;:0,&quot;hz&quot;:14212000,&quot;mode&quot;:&quot;USB&quot;,&quot;filterHz&quot;:2700,&quot;keyed&quot;:false}]}
+</code></pre>
+<ul>
+<li>Sent on every change, coalesced to at most one a second, and every 10 s
+while nothing changes (design 8.3). Each <code>presence</code> replaces the last
+whole: a slice not listed has left.</li>
+<li><code>slices</code>: up to 4, ids unique within the array (a repeated id is a
+protocol error). A Core lists its active slice first (6.4) and leaves out
+slices in a mode with no family (6.1). <code>hz</code> is the frequency an operator
+would quote on the air for that mode (6.1). <code>keyed</code> is true while that
+slice is transmitting.</li>
+<li><code>callsign</code>: a Core sends its callsign (4.5); <code>null</code> from a Core is refused
+with <code>error</code> <code>not-allowed</code> and the presence is not applied. A key station
+may send a callsign or <code>null</code>; either is ignored and the key page's
+callsign is used.</li>
+<li><code>grid</code>: the station's grid, or <code>null</code> for none. For a key station <code>null</code>
+means the key page's grid. A Core sends only what 4.5 allows.</li>
+<li><code>atRadio</code>: whether anyone is at the radio (design D14, 10.1). False marks
+the station AWAY (6.4).</li>
+<li>Refused: over the presence limit (<code>error</code> <code>rate</code>, with <code>retryAfterMs</code>; a
+Core then sends its current presence again after that time).</li>
+</ul>
+<h4>5.3.3 reading</h4>
+<pre><code>{&quot;type&quot;:&quot;reading&quot;,&quot;slice&quot;:0,&quot;dbm&quot;:-91.5,&quot;t&quot;:1800000000123,&quot;present&quot;:true}
+</code></pre>
+<ul>
+<li>One slice's S-meter reading: <code>dbm</code> as the station's own meter shows it
+(a Core sends <code>signalStrengthDbm</code>, design C24), <code>t</code> the Unix time in ms
+when it was taken, <code>present</code> the station's signal-present decision (6.5).</li>
+<li>Checked in this order. A reading for a slice not in the station's latest
+<code>presence</code> (or before any <code>presence</code>) is refused with <code>error</code>
+<code>unknown-slice</code>. A reading for a slice whose latest <code>presence</code> says keyed
+is refused with <code>error</code> <code>slice-keyed</code>. A reading from a slice that is
+joining (6.4), or from a slice that is not the station's counted slice in
+its room, is dropped silently. A reading over the limit is dropped, with
+at most one <code>error</code> <code>rate</code> a minute per station.</li>
+<li>Otherwise it is accepted silently and shows in the room (6.7, 6.11).</li>
+</ul>
+<h4>5.3.4 post</h4>
+<pre><code>{&quot;type&quot;:&quot;post&quot;,&quot;room&quot;:&quot;usb-14212000&quot;,&quot;text&quot;:&quot;Good copy here, **S7** in Boston.&quot;,&quot;clientId&quot;:&quot;m-1800000003000-1&quot;}
+</code></pre>
+<ul>
+<li>A message to a room in which the station's counted slice is a member.</li>
+<li>Always answered with <code>posted</code> (5.4.7) carrying the same <code>clientId</code>.
+Refusals, checked in this order: <code>hidden</code>; <code>not-member</code> (the station is not
+a member of a live room with this id, whether or not the room exists);
+<code>away</code>; <code>blocked</code>; <code>rate</code>; <code>too-long</code> (over 500 code points or 10 lines
+after cleaning, 6.10); <code>not-allowed</code> (nothing left after cleaning);
+<code>server</code> (the database cannot save it, design 13).</li>
+<li>On success the message shows in the room (a <code>delta</code> to every viewer, the
+sender included) and as <code>mention</code> to every station it names (6.10).</li>
+</ul>
+<h4>5.3.5 delete</h4>
+<pre><code>{&quot;type&quot;:&quot;delete&quot;,&quot;msg&quot;:981}
+</code></pre>
+<ul>
+<li>Deletes one of the station's own messages: its text goes, &quot;Deleted by
+sender&quot; shows in its place (<code>state</code> <code>deleted</code>). Refused: <code>not-found</code> (no
+such message), <code>not-allowed</code> (another station's message). Deleting a
+message already deleted does nothing. A member need not still be in the
+room.</li>
+</ul>
+<h4>5.3.6 name</h4>
+<pre><code>{&quot;type&quot;:&quot;name&quot;,&quot;turn&quot;:4407,&quot;name&quot;:&quot;W4XYZ&quot;}
+</code></pre>
+<ul>
+<li>Names an unknown turn (6.9). A station has one name per turn; a second
+<code>name</code> replaces its first.</li>
+<li>Refusals, checked in this order: <code>hidden</code>; <code>not-found</code> (no such turn);
+<code>bad-turn</code> (a talking or doubled turn, or more than 24 hours after the turn
+ended); <code>not-member</code> (not now a member of a live room with the turn's room
+id); <code>away</code>; <code>blocked</code>; <code>not-allowed</code> (the station was not a member of
+that room at any time during the turn); <code>rate</code>.</li>
+<li>On success the turn's <code>names</code> change in the room's views.</li>
+</ul>
+<h4>5.3.7 report</h4>
+<pre><code>{&quot;type&quot;:&quot;report&quot;,&quot;target&quot;:&quot;message&quot;,&quot;msg&quot;:975,&quot;reason&quot;:&quot;spam&quot;}
+{&quot;type&quot;:&quot;report&quot;,&quot;target&quot;:&quot;turn&quot;,&quot;turn&quot;:4407,&quot;reason&quot;:&quot;wrongName&quot;}
+{&quot;type&quot;:&quot;report&quot;,&quot;target&quot;:&quot;station&quot;,&quot;room&quot;:&quot;usb-14212000&quot;,&quot;ref&quot;:&quot;k3m7q2xa&quot;,&quot;reason&quot;:&quot;falseReadings&quot;}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>target</code></th>
+<th>Keys it adds</th>
+<th><code>reason</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>message</code></td>
+<td><code>msg</code> (<code>id</code>)</td>
+<td><code>spam</code>, <code>abuse</code>, <code>offTopic</code>, <code>other</code> or <code>null</code></td>
+</tr>
+<tr>
+<td><code>turn</code></td>
+<td><code>turn</code> (<code>id</code>)</td>
+<td><code>wrongName</code> or <code>null</code></td>
+</tr>
+<tr>
+<td><code>station</code></td>
+<td><code>room</code> (<code>roomId</code>), <code>ref</code> (<code>rowRef</code>)</td>
+<td><code>falseReadings</code> or <code>null</code></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>Puts the item on the review list (design 11.7, 12.2). There is no free
+text. Any signed-in station may report. The reported station is never told
+who reported; reports never hide anything by count (design D16).</li>
+<li>Refused: <code>not-found</code> (no such message or turn, or no such row in that
+live room), <code>rate</code>. A second report of one item by one station is
+accepted and counts once. A <code>reason</code> not in its target's row, or a target's
+key missing, is a protocol error.</li>
+<li>Answered by nothing on success. When a helper closes the report the
+reporter gets <code>notice</code> <code>report-closed</code>.</li>
+</ul>
+<h4>5.3.8 read</h4>
+<pre><code>{&quot;type&quot;:&quot;read&quot;,&quot;room&quot;:&quot;lsb-7188000&quot;}
+</code></pre>
+<ul>
+<li>Starts reading another room without tuning to it (design U1): the server
+answers with a full <code>room</code> view (5.4.5) and then its <code>delta</code>s. A station
+reads at most 4 rooms besides those its slices are in.</li>
+<li>Refused: <code>not-found</code> (no live room with that id), <code>not-allowed</code> (already
+reading 4). Reading a room already read, or one the station is in, sends
+its full view again.</li>
+</ul>
+<h4>5.3.9 unread</h4>
+<pre><code>{&quot;type&quot;:&quot;unread&quot;,&quot;room&quot;:&quot;lsb-7188000&quot;}
+</code></pre>
+<p>Stops reading a room. Answered by nothing, never refused; a room the station
+is in stays in its view.</p>
+<h4>5.3.10 resync</h4>
+<pre><code>{&quot;type&quot;:&quot;resync&quot;,&quot;room&quot;:null}
+{&quot;type&quot;:&quot;resync&quot;,&quot;room&quot;:&quot;usb-14212000&quot;}
+</code></pre>
+<ul>
+<li>After a gap in generations (6.11): <code>room</code> <code>null</code> asks for a full <code>rooms</code>,
+a room id for a full <code>room</code> view of a room in the station's view. Each
+starts its generation again at 1.</li>
+<li>Refused: <code>not-found</code> (the room is not in the station's view).</li>
+</ul>
+<h4>5.3.11 mentionsSeen</h4>
+<pre><code>{&quot;type&quot;:&quot;mentionsSeen&quot;,&quot;t&quot;:1800000003000}
+</code></pre>
+<p>Every mention of the station in a message posted at or before <code>t</code> is seen;
+the next <code>welcome</code> lists only later ones. Answered by nothing. Read on one
+device is read on all, because the Core sends this for all of them (design
+U6).</p>
+<h4>5.3.12 weblink</h4>
+<pre><code>{&quot;type&quot;:&quot;weblink&quot;}
+</code></pre>
+<p>Asks for a one-time web sign-in link (design 7.4). Answered with
+<code>weblinkOk</code> (5.4.10). Allowed with no <code>presence</code> and after <code>hidden</code>.</p>
+<h4>5.3.13 deleteArchive</h4>
+<pre><code>{&quot;type&quot;:&quot;deleteArchive&quot;,&quot;confirm&quot;:&quot;delete my archive&quot;}
+</code></pre>
+<ul>
+<li>Deletes the station's archive (design 13, C9): its sessions, its talking
+turns and the readings others made of them, and the text of its messages.
+Its readings of other talkers stay, under the callsign stored with them.</li>
+<li><code>confirm</code> must be exactly <code>delete my archive</code>; any other string is refused
+with <code>error</code> <code>not-allowed</code>. The station's software asks the operator to
+confirm first, saying it cannot be undone and that backups age out within
+7 days.</li>
+<li>Answered with <code>notice</code> <code>archive-deleted</code> once done. Allowed with no
+<code>presence</code> and after <code>hidden</code>.</li>
+</ul>
+<h4>5.3.14 hidden</h4>
+<pre><code>{&quot;type&quot;:&quot;hidden&quot;}
+</code></pre>
+<ul>
+<li>The last thing a station sends on going hidden (design 10.2). The server
+ends the station's presence at once: its rows leave every room (a <code>delta</code>
+to every other viewer), its open talking turn ends at that moment with no
+3-second wait, and its joining slices are dropped.</li>
+<li>From then on the server sends that connection nothing but answers
+(<code>error</code>, <code>weblinkOk</code>, <code>notice</code>), and refuses every station kind except
+<code>weblink</code> and <code>deleteArchive</code> with <code>error</code> <code>hidden</code>. The station closes the
+connection and reads as a live reader.</li>
+</ul>
+<h3 id="54-server-to-station">5.4 Server to station</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Keys</th>
+<th>Section</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>challenge</code></td>
+<td><code>nonce</code> (<code>nonce</code>)</td>
+<td>5.4.1</td>
+</tr>
+<tr>
+<td><code>welcome</code></td>
+<td><code>station</code> (<code>sid</code>), <code>kind</code> (<code>core</code> or <code>key</code>), <code>callsign</code> (<code>callsign</code> or <code>null</code>), <code>grid</code> (<code>grid</code> or <code>null</code>), <code>time</code> (<code>unixMs</code>), <code>limits</code> (limits), <code>mentions</code> (array of mention)</td>
+<td>5.4.2</td>
+</tr>
+<tr>
+<td><code>rooms</code></td>
+<td><code>gen</code> (<code>gen</code>), <code>rooms</code> (array of summary)</td>
+<td>5.4.3</td>
+</tr>
+<tr>
+<td><code>roomsDelta</code></td>
+<td><code>gen</code> (<code>gen</code>), <code>add</code> (array of summary), <code>change</code> (array of summary), <code>remove</code> (array of <code>roomId</code>)</td>
+<td>5.4.4</td>
+</tr>
+<tr>
+<td><code>room</code></td>
+<td><code>gen</code> (<code>gen</code>), <code>id</code> (<code>roomId</code>), <code>opening</code> (<code>id</code>), <code>band</code> (<code>band</code>), <code>family</code> (<code>family</code>), <code>hz</code> (<code>hz</code>), <code>members</code> (array of member), <code>now</code> (array of turn), <code>earlier</code> (array of turn), <code>messages</code> (array of message)</td>
+<td>5.4.5</td>
+</tr>
+<tr>
+<td><code>delta</code></td>
+<td><code>room</code> (<code>roomId</code>), <code>gen</code> (<code>gen</code>), <code>members</code> (array of member), <code>left</code> (array of <code>rowRef</code>), <code>turns</code> (array of turn), <code>messages</code> (array of message), <code>closed</code> (<code>bool</code>)</td>
+<td>5.4.6</td>
+</tr>
+<tr>
+<td><code>posted</code></td>
+<td><code>clientId</code> (<code>clientId</code>), <code>ok</code> (<code>bool</code>), <code>msg</code> (<code>id</code> or <code>null</code>), <code>code</code> (<code>code</code> or <code>null</code>), <code>reason</code> (<code>reason</code> or <code>null</code>)</td>
+<td>5.4.7</td>
+</tr>
+<tr>
+<td><code>mention</code></td>
+<td><code>room</code> (<code>roomId</code>), <code>message</code> (message)</td>
+<td>5.4.8</td>
+</tr>
+<tr>
+<td><code>notice</code></td>
+<td><code>code</code> (<code>code</code>), <code>text</code> (<code>reason</code>), <code>until</code> (<code>unixMs</code> or <code>null</code>)</td>
+<td>5.4.9</td>
+</tr>
+<tr>
+<td><code>weblinkOk</code></td>
+<td><code>url</code> (<code>weblinkUrl</code>), <code>expires</code> (<code>unixMs</code>)</td>
+<td>5.4.10</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td><code>code</code> (<code>code</code>), <code>reason</code> (<code>reason</code>), <code>about</code> (<code>about</code>), <code>retryAfterMs</code> (<code>retry</code>)</td>
+<td>5.4.11</td>
+</tr>
+</tbody>
+</table>
+<h4>5.4.1 challenge</h4>
+<pre><code>{&quot;type&quot;:&quot;challenge&quot;,&quot;nonce&quot;:&quot;&lt;nonce&gt;&quot;}
+</code></pre>
+<p>First on every <code>/v1/station</code> connection the server accepts; a connection
+over a cap gets <code>error</code> <code>rate</code> instead, then close 1013 (3.1, 9.1). The
+nonce is signed in <code>hello</code> (4.3); a key station ignores it.</p>
+<h4>5.4.2 welcome</h4>
+<pre><code>{&quot;type&quot;:&quot;welcome&quot;,&quot;station&quot;:&quot;&lt;sid&gt;&quot;,&quot;kind&quot;:&quot;core&quot;,&quot;callsign&quot;:null,&quot;grid&quot;:null,&quot;time&quot;:1800000000000,&quot;limits&quot;:{&quot;readingsPerSecond&quot;:2,&quot;presencePerSecond&quot;:1,&quot;messagesPerMinute&quot;:6,&quot;messagesPerHour&quot;:60,&quot;messageCodePoints&quot;:500,&quot;messageLines&quot;:10,&quot;namesPerMinute&quot;:10,&quot;reportsPerHour&quot;:10,&quot;slices&quot;:4,&quot;reads&quot;:4},&quot;mentions&quot;:[]}
+</code></pre>
+<ul>
+<li><code>station</code>: the station's own id. <code>kind</code>: <code>core</code> for a station key, <code>key</code>
+for a website key. <code>callsign</code> and <code>grid</code>: the key page's, for a key
+station; <code>null</code> for a Core, which sends its own.</li>
+<li><code>time</code>: the server's clock, Unix ms. A station may use it to see its own
+clock's offset; turns never depend on station clocks (6.6).</li>
+<li><code>limits</code>: the limits in force (9.1). A receiver ignores limit keys it does
+not know.</li>
+<li><code>mentions</code>: messages naming the station posted after its last
+<code>mentionsSeen</code>, oldest first, at most the newest 50 (6.10).</li>
+</ul>
+<h4>5.4.3 rooms</h4>
+<pre><code>{&quot;type&quot;:&quot;rooms&quot;,&quot;gen&quot;:1,&quot;rooms&quot;:[{&quot;id&quot;:&quot;usb-14212000&quot;,&quot;band&quot;:&quot;20m&quot;,&quot;family&quot;:&quot;usb&quot;,&quot;hz&quot;:14212000,&quot;state&quot;:&quot;talking&quot;,&quot;talkers&quot;:[&quot;K4ABC&quot;],&quot;members&quot;:2,&quot;messages&quot;:2,&quot;last&quot;:1800000004000,&quot;folded&quot;:false,&quot;start&quot;:1800000001000,&quot;heard&quot;:1,&quot;readings&quot;:[-81.5],&quot;lastMessage&quot;:{&quot;callsign&quot;:&quot;W4XYZ&quot;,&quot;nth&quot;:1,&quot;t&quot;:1800000003000,&quot;state&quot;:&quot;shown&quot;,&quot;text&quot;:&quot;Good copy, 57 here&quot;},&quot;ended&quot;:null}]}
+</code></pre>
+<p>The band list, full: every live room (to a live reader, every live room of
+its watched band), in ascending order of center frequency, with <code>gen</code> 1.
+Sent after <code>welcome</code>, after <code>watchBand</code>, and in answer to <code>resync</code> with
+<code>room</code> <code>null</code>. What each summary key means is section 6.11.</p>
+<h4>5.4.4 roomsDelta</h4>
+<pre><code>{&quot;type&quot;:&quot;roomsDelta&quot;,&quot;gen&quot;:2,&quot;add&quot;:[...],&quot;change&quot;:[...],&quot;remove&quot;:[&quot;lsb-7188000&quot;]}
+</code></pre>
+<p>Changes to the band list since the last <code>rooms</code> or <code>roomsDelta</code>, with
+<code>gen</code> one more than the last: rooms that opened (<code>add</code>), rooms whose summary
+changed (<code>change</code>, the whole new summary), rooms that closed (<code>remove</code>). Sent
+at most every 2 s, cut from one band list the server builds each 2 s for
+every connection (6.11). A room appears in at most one of
+the three arrays. Changes collected for one <code>roomsDelta</code> are merged against
+the band list the connection last received: a room that opened and closed
+since then is in none of the arrays; a room that closed and opened again on
+the same id is in <code>change</code> with its new summary; a room that opened and then
+changed is in <code>add</code> with its latest summary; a room that changed and then
+closed is in <code>remove</code> only.</p>
+<h4>5.4.5 room</h4>
+<pre><code>{&quot;type&quot;:&quot;room&quot;,&quot;gen&quot;:1,&quot;id&quot;:&quot;usb-14212000&quot;,&quot;opening&quot;:17,&quot;band&quot;:&quot;20m&quot;,&quot;family&quot;:&quot;usb&quot;,&quot;hz&quot;:14212000,&quot;members&quot;:[...],&quot;now&quot;:[...],&quot;earlier&quot;:[...],&quot;messages&quot;:[...]}
+</code></pre>
+<p>A full view of one room, with <code>gen</code> 1. <code>members</code>: every row, members and
+joining, in joining order. <code>now</code>: the open turns (at most one, except in
+digital families, 6.6). <code>earlier</code>: turns that ended in the last 30 minutes,
+newest first. <code>messages</code>: the last 50 messages of the room id (any opening),
+oldest first; older ones come from the read API (10.4). Sent when the
+station's slice enters a live room, when a room it is in opens, in answer to
+<code>read</code>, and in answer to <code>resync</code> for that room.</p>
+<h4>5.4.6 delta</h4>
+<pre><code>{&quot;type&quot;:&quot;delta&quot;,&quot;room&quot;:&quot;usb-14212000&quot;,&quot;gen&quot;:2,&quot;members&quot;:[...],&quot;left&quot;:[&quot;w2c6tz7e&quot;],&quot;turns&quot;:[...],&quot;messages&quot;:[],&quot;closed&quot;:false}
+</code></pre>
+<p>One change to one room in a connection's view, with <code>gen</code> one more than the
+last for that room. <code>members</code>, <code>turns</code> and <code>messages</code> are whole objects that
+replace the receiver's object with the same <code>ref</code> or <code>id</code>, or are added when
+it has none. <code>left</code> lists refs whose rows left. <code>closed</code> true means the room
+closed (6.3); it is the last <code>delta</code> for that room. A turn that leaves the
+30-minute <code>earlier</code> window is not announced; receivers drop it themselves.</p>
+<h4>5.4.7 posted</h4>
+<pre><code>{&quot;type&quot;:&quot;posted&quot;,&quot;clientId&quot;:&quot;m-1800000003000-1&quot;,&quot;ok&quot;:true,&quot;msg&quot;:981,&quot;code&quot;:null,&quot;reason&quot;:null}
+{&quot;type&quot;:&quot;posted&quot;,&quot;clientId&quot;:&quot;c2&quot;,&quot;ok&quot;:false,&quot;msg&quot;:null,&quot;code&quot;:&quot;too-long&quot;,&quot;reason&quot;:&quot;A message can be up to 500 characters and 10 lines.&quot;}
+</code></pre>
+<p>The answer to every <code>post</code>, before the <code>delta</code> the message causes. With
+<code>ok</code> true, <code>msg</code> is the new message's id and <code>code</code> and <code>reason</code> are <code>null</code>;
+with <code>ok</code> false, <code>msg</code> is <code>null</code> and <code>code</code> and <code>reason</code> say why (section 8).
+A refused post's text stays in the sender's box with the reason under it
+(design 13).</p>
+<h4>5.4.8 mention</h4>
+<pre><code>{&quot;type&quot;:&quot;mention&quot;,&quot;room&quot;:&quot;usb-14212000&quot;,&quot;message&quot;:{&quot;id&quot;:990,&quot;ref&quot;:&quot;w2c6tz7e&quot;,&quot;callsign&quot;:&quot;W4XYZ&quot;,&quot;nth&quot;:1,&quot;t&quot;:1800000003000,&quot;state&quot;:&quot;shown&quot;,&quot;text&quot;:&quot;KG4VCF are you copying K4ABC?&quot;,&quot;dbm&quot;:-91.5}}
+</code></pre>
+<p>A message naming the station's base callsign (6.10), sent as it is posted,
+whether or not the station has that room in view.</p>
+<h4>5.4.9 notice</h4>
+<pre><code>{&quot;type&quot;:&quot;notice&quot;,&quot;code&quot;:&quot;blocked&quot;,&quot;text&quot;:&quot;A Roundtable helper has blocked this station from posting and naming turns.&quot;,&quot;until&quot;:1800086400000}
+</code></pre>
+<p>Plain operator text from the server. <code>until</code> is when it stops applying, or
+<code>null</code>. Codes in section 8.4.</p>
+<h4>5.4.10 weblinkOk</h4>
+<pre><code>{&quot;type&quot;:&quot;weblinkOk&quot;,&quot;url&quot;:&quot;https://roundtable.nereussdr.com/signin?t=&lt;43 characters&gt;&quot;,&quot;expires&quot;:1800000300000}
+</code></pre>
+<p>The one-time sign-in link: <code>https://&lt;host&gt;/signin?t=</code> and a token of 32
+random bytes, strict base64url (43 characters). It works once, until
+<code>expires</code>, 5 minutes after it was made (design C27). Opening it swaps the
+token for a session cookie (<code>Secure</code>, <code>HttpOnly</code>, <code>SameSite=Strict</code>, 30
+days) and redirects, so the token leaves the address bar (design 7.4).</p>
+<h4>5.4.11 error</h4>
+<pre><code>{&quot;type&quot;:&quot;error&quot;,&quot;code&quot;:&quot;not-found&quot;,&quot;reason&quot;:&quot;That room, turn or message is not here.&quot;,&quot;about&quot;:&quot;read&quot;,&quot;retryAfterMs&quot;:0}
+</code></pre>
+<p>A refused request, with <code>about</code> the <code>type</code> of the message refused (<code>null</code>
+when the error answers no message, as for the connection caps). <code>retryAfterMs</code>
+is set for <code>rate</code> (at least 1) and is otherwise 0. Section 8.</p>
+<h3 id="55-live">5.5 Live</h3>
+<table>
+<thead>
+<tr>
+<th>From</th>
+<th>Kind</th>
+<th>Keys</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>live reader</td>
+<td><code>watchBand</code></td>
+<td><code>band</code> (<code>band</code> or <code>all</code>)</td>
+<td><code>rooms</code> for that band (or all), then its <code>roomsDelta</code>s; a new <code>watchBand</code> replaces the old</td>
+</tr>
+<tr>
+<td>live reader</td>
+<td><code>watch</code></td>
+<td><code>room</code> (<code>roomId</code>)</td>
+<td><code>room</code>, then its <code>delta</code>s; at most 4 at once (<code>error</code> <code>not-allowed</code> beyond), <code>error</code> <code>not-found</code> for no live room</td>
+</tr>
+<tr>
+<td>live reader</td>
+<td><code>unwatch</code></td>
+<td><code>room</code> (<code>roomId</code>)</td>
+<td>nothing</td>
+</tr>
+<tr>
+<td>live reader</td>
+<td><code>resync</code></td>
+<td><code>room</code> (<code>roomId</code> or <code>null</code>)</td>
+<td><code>rooms</code> (for the watched band) or <code>room</code>, generation 1; <code>error</code> <code>not-found</code> when not watched</td>
+</tr>
+<tr>
+<td>server</td>
+<td><code>rooms</code>, <code>roomsDelta</code>, <code>room</code>, <code>delta</code>, <code>error</code></td>
+<td>as 5.4</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<pre><code>{&quot;type&quot;:&quot;watchBand&quot;,&quot;band&quot;:&quot;20m&quot;}
+{&quot;type&quot;:&quot;watch&quot;,&quot;room&quot;:&quot;usb-14212000&quot;}
+</code></pre>
+<p>A live reader's views are a station's with every <code>you</code> false and every
+<code>mine</code> <code>null</code>. The band list's summaries carry what a room's row shows
+(6.11), so a page fills its rows from <code>rooms</code> and <code>roomsDelta</code> alone.
+Unknown kinds and station kinds close the connection with 4002.</p>
+<h2 id="6-rooms-turns-and-readings">6. Rooms, turns and readings</h2>
+<h3 id="61-modes-and-families">6.1 Modes and families</h3>
+<table>
+<thead>
+<tr>
+<th>Mode sent</th>
+<th>Family</th>
+<th>Width (either side of center)</th>
+<th>The frequency sent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LSB</code></td>
+<td><code>lsb</code></td>
+<td>1500 Hz</td>
+<td>the suppressed carrier (the VFO)</td>
+</tr>
+<tr>
+<td><code>USB</code></td>
+<td><code>usb</code></td>
+<td>1500 Hz</td>
+<td>the suppressed carrier (the VFO)</td>
+</tr>
+<tr>
+<td><code>DIGL</code></td>
+<td><code>digl</code></td>
+<td>1500 Hz</td>
+<td>the suppressed carrier (the VFO)</td>
+</tr>
+<tr>
+<td><code>DIGU</code></td>
+<td><code>digu</code></td>
+<td>1500 Hz</td>
+<td>the suppressed carrier (the VFO)</td>
+</tr>
+<tr>
+<td><code>AM</code>, <code>SAM</code></td>
+<td><code>am</code></td>
+<td>3000 Hz</td>
+<td>the carrier</td>
+</tr>
+<tr>
+<td><code>FM</code></td>
+<td><code>fm</code></td>
+<td>6000 Hz</td>
+<td>the carrier</td>
+</tr>
+<tr>
+<td><code>CWL</code>, <code>CWU</code></td>
+<td><code>cw</code></td>
+<td>300 Hz</td>
+<td>the signal (NereusSDR's VFO on CW)</td>
+</tr>
+<tr>
+<td><code>FDVL</code> (FreeDV or RADE, lower sideband)</td>
+<td><code>fdvl</code></td>
+<td>1500 Hz</td>
+<td>the suppressed carrier (the VFO)</td>
+</tr>
+<tr>
+<td><code>FDVU</code> (FreeDV or RADE, upper sideband)</td>
+<td><code>fdvu</code></td>
+<td>1500 Hz</td>
+<td>the suppressed carrier (the VFO)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>These are design C1 and C25. Opposite sidebands never share a room: an LSB
+and a USB receiver on one dial frequency hear different signals.</li>
+<li><code>digl</code> and <code>digu</code> are the <strong>digital families</strong> (6.6).</li>
+<li>A slice in any other mode (DSB, SPEC, DRM and the like) has no family and
+is left out of <code>presence</code>.</li>
+<li>The frequency sent is the one an operator would quote on the air. Other
+software sends the same for its mode.</li>
+</ul>
+<h3 id="62-bands">6.2 Bands</h3>
+<p>A room's band is the band holding its center frequency, edges included:</p>
+<table>
+<thead>
+<tr>
+<th>Band</th>
+<th>From Hz</th>
+<th>To Hz</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>2200m</code></td>
+<td>135700</td>
+<td>137800</td>
+</tr>
+<tr>
+<td><code>630m</code></td>
+<td>472000</td>
+<td>479000</td>
+</tr>
+<tr>
+<td><code>160m</code></td>
+<td>1800000</td>
+<td>2000000</td>
+</tr>
+<tr>
+<td><code>80m</code></td>
+<td>3500000</td>
+<td>4000000</td>
+</tr>
+<tr>
+<td><code>60m</code></td>
+<td>5250000</td>
+<td>5450000</td>
+</tr>
+<tr>
+<td><code>40m</code></td>
+<td>7000000</td>
+<td>7300000</td>
+</tr>
+<tr>
+<td><code>30m</code></td>
+<td>10100000</td>
+<td>10150000</td>
+</tr>
+<tr>
+<td><code>20m</code></td>
+<td>14000000</td>
+<td>14350000</td>
+</tr>
+<tr>
+<td><code>17m</code></td>
+<td>18068000</td>
+<td>18168000</td>
+</tr>
+<tr>
+<td><code>15m</code></td>
+<td>21000000</td>
+<td>21450000</td>
+</tr>
+<tr>
+<td><code>12m</code></td>
+<td>24890000</td>
+<td>24990000</td>
+</tr>
+<tr>
+<td><code>10m</code></td>
+<td>28000000</td>
+<td>29700000</td>
+</tr>
+<tr>
+<td><code>6m</code></td>
+<td>50000000</td>
+<td>54000000</td>
+</tr>
+<tr>
+<td><code>4m</code></td>
+<td>70000000</td>
+<td>71000000</td>
+</tr>
+<tr>
+<td><code>2m</code></td>
+<td>144000000</td>
+<td>148000000</td>
+</tr>
+<tr>
+<td><code>1.25m</code></td>
+<td>222000000</td>
+<td>225000000</td>
+</tr>
+<tr>
+<td><code>70cm</code></td>
+<td>420000000</td>
+<td>450000000</td>
+</tr>
+<tr>
+<td><code>33cm</code></td>
+<td>902000000</td>
+<td>928000000</td>
+</tr>
+<tr>
+<td><code>23cm</code></td>
+<td>1240000000</td>
+<td>1300000000</td>
+</tr>
+</tbody>
+</table>
+<p>Every other frequency is band <code>other</code>. The table is the union of the IARU
+regions' allocations, so a room never depends on where its stations are.</p>
+<h3 id="63-rooms">6.3 Rooms</h3>
+<ul>
+<li>A <strong>room</strong> is one family and one center frequency (design D8). Its id is
+<code>&lt;family&gt;-&lt;center Hz&gt;</code> (<code>usb-14212000</code>); its link is
+<code>roundtable.nereussdr.com/r/&lt;family&gt;/&lt;center Hz&gt;</code>.</li>
+<li><strong>Placing a slice.</strong> A slice of a family is placed in the room, live or
+candidate (below), of its family whose center is nearest its frequency, if
+the distance is at most the family's width (6.1); between two equally
+near, the lower center. If there is none, it forms a new candidate room
+centered on its own frequency. A slice stays in its room while its family
+is unchanged and its frequency stays within the room's width of the
+center; otherwise it leaves and is placed again.</li>
+<li><strong>Candidate rooms.</strong> A room is a candidate until one of its slices becomes
+a member (6.4). A candidate is not listed, has no view and no id in use,
+and vanishes when its last slice leaves. So a station tuning across a band
+makes no rooms. The server sends nothing about a candidate, so a slice in
+one has no room id yet: a Core shows it as joining with room id <code>null</code>.
+When a slice in a candidate becomes a member (after 10 s, or at once on
+keying, 6.4) the room <strong>opens</strong>: it gets a new opening id and is listed,
+and the station gets its view.</li>
+<li>The center is fixed while the room lives. It never moves when its first
+station leaves (design 8.1).</li>
+<li>A room <strong>lives</strong> while it has members, and <strong>closes</strong> 10 minutes after its
+last member left with none since (design C18). A room with no members is
+still live, listed and joinable during those 10 minutes. On closing it
+gets <code>delta</code> <code>closed</code> true to its viewers and <code>roomsDelta</code> <code>remove</code>; any
+slices still joining it stay, in a candidate on the same center.</li>
+<li>A room that opens on a center whose id was used before reuses the id with
+a new opening id (design C28). Turns and messages belong to the opening;
+views, links and the read API use the room id, and naming (6.9) counts all
+openings of one id as one room.</li>
+<li><strong>Restart.</strong> On a server restart, rooms active in the last 10 minutes are
+reloaded from the database with their ids and centers, as live rooms with
+no members; stations rejoin them (design 13). A reloaded room's close timer
+starts at the restart: one no member rejoins closes 10 minutes after it.</li>
+<li><strong>Folded.</strong> A room whose members are all AWAY, which has been open at
+least 2 hours and in which no turn started in the last 2 hours, is listed
+folded with the quiet rooms (summary <code>folded</code> true, design C18).</li>
+</ul>
+<h3 id="64-joining-and-leaving">6.4 Joining and leaving</h3>
+<ul>
+<li>A slice that enters a live room or a candidate is <strong>joining</strong>. It becomes
+a <strong>member</strong> once it has stayed in that room for 10 s, or at once when its
+<code>presence</code> says keyed there (design C2). Until then its row shows
+&quot;joining&quot;, it is not counted in <code>members</code>, and the station cannot post or
+name there; its readings are dropped silently.</li>
+<li>A station's slice <strong>leaves</strong> when it moves out of the room (6.3), when a
+<code>presence</code> no longer lists it, when the station's connection closes, when
+the station sends <code>hidden</code>, or when nothing (no message; pongs do not
+count) has come from the station for 30 s (design C18). The connection
+itself stays open in the last case, and the next <code>presence</code> places the
+slices again, joining.</li>
+<li><strong>One station, one row</strong> (design D6, C26). If two of a station's slices are
+in one room, the one listed first in its <code>presence</code> is its <strong>counted
+slice</strong> there; the other has no row, and its readings are dropped
+silently.</li>
+<li><strong>AWAY.</strong> A station whose last <code>presence</code> had <code>atRadio</code> false is AWAY: its
+rows show it, and it cannot post or name (design D14). It is still a
+member, its readings still count, and its keying still opens turns.</li>
+<li><strong>Not counted.</strong> A station a helper stopped counting (design 11.7) is
+treated by the turn rules as absent: its readings, presence and keyed
+state do not show live and credit no turn, and are stored marked. The
+station is told by <code>notice</code> <code>not-counted</code>.</li>
+</ul>
+<h3 id="65-what-a-station-sends">6.5 What a station sends</h3>
+<p>These are normative for a Core and are what other software should do.</p>
+<ul>
+<li><strong>Presence</strong>: as 5.3.2, on change, and every 10 s while nothing changes.
+The limit's window is half-open (9.1), so a Core spaces its presence
+messages at least 1100 ms apart, which keeps clock jitter from tripping
+it.</li>
+<li><strong>Callsign and grid</strong>: only values the server accepts, as 4.5 says: no
+connection without a valid callsign, an 8-character grid cut to 6, any
+other grid that is not 4 or 6 characters sent as <code>null</code>.</li>
+<li><strong>Readings</strong>: once a second for each slice that is a member and not keyed.
+A Core sends the slice's <code>signalStrengthDbm</code>, only when its
+<code>meterReadingNs</code> has advanced since the last one sent, and never while the
+slice is keyed. <code>t</code> is the Unix time in ms from the Core's wall clock at
+the moment of reading (design 8.3, R-RT-6).</li>
+<li><strong>Signal present</strong> (design C3): <code>present</code> is true when the reading is at
+least 10 dB above the station's own floor for that slice. The floor is the
+10th percentile of the last 60 s of readings taken while <code>present</code> was
+false; while <code>present</code> is true the floor holds. After tuning to a new
+frequency <code>present</code> stays false for the first 10 s while a floor forms.
+The station decides, because only it knows its own noise.</li>
+</ul>
+<h3 id="66-turns">6.6 Turns</h3>
+<p>The server works out turns per room from presence and readings, on its own
+clock. A reading's <code>t</code> is used only for its age (6.8).</p>
+<p><strong>Keyed members.</strong> A member is keyed while its counted slice's latest
+<code>presence</code> says keyed, except a slice reported keyed for 10 unbroken
+minutes: from then it is treated as unkeyed until a <code>presence</code> reports it
+unkeyed, and it can then key again (design C21). The server logs such a long
+key.</p>
+<p><strong>Signal present.</strong> A member reports signal present when a reading with
+<code>present</code> true arrives from it. <code>L</code> is the arrival time of the room's latest
+such reading.</p>
+<p><strong>In every family except the digital ones:</strong></p>
+<ul>
+<li><strong>Talking.</strong> When a member keys and no other member is keyed, a talking
+turn opens credited to it. An open unknown turn ends at that moment.</li>
+<li><strong>Ending.</strong> When the talker unkeys, its turn shows <code>ending</code> true. If the
+same talker keys again within 3 s of unkeying (before 3000 ms have
+passed), the turn continues and <code>ending</code> goes back to false. Otherwise the
+turn ends, with its end at the moment it unkeyed (design C4).</li>
+<li><strong>Doubled.</strong> When a member keys while another member is keyed (or while
+the talking turn of another is ending), the open talking turn ends at that
+moment (if it was ending, at the moment its talker unkeyed) and, if two or
+more members are now keyed, a doubled turn opens listing them in keying
+order. A member keying during a doubled turn is added to it. When only one
+member is left keyed the doubled turn ends at that moment and a talking
+turn for that member opens at the same moment. If none is left keyed, the
+doubled turn ends at that moment (design D10).</li>
+<li><strong>Unknown.</strong> When a reading with <code>present</code> true arrives from a member while
+no member is keyed and no turn is open, an unknown turn opens with no
+talker at that reading's arrival. Present readings while a talking turn is
+ending open nothing.</li>
+<li><strong>Quiet.</strong> An open unknown turn ends when no member is keyed and no
+present reading has arrived for 3 s (at <code>L</code> + 3000 ms); its end is <code>L</code>.</li>
+<li><strong>A talker leaving.</strong> When a talker's row leaves the room for any reason
+(its connection closes or is replaced, 30 s with nothing from the station,
+its slice moves out of the room or is no longer listed, <code>hidden</code>), it is
+no longer keyed there, at that moment, with no 3-second wait: a talking
+turn of its that is open and not ending ends at that moment; one already
+ending ends at once with its end at the unkey, as it would have. In a
+doubled turn the talker's leaving counts as its unkeying, and the doubled
+rules above apply at that moment. A station that comes back (a reconnect,
+or its slice tuned back) joins again as a new row, and keying then opens a
+new turn; it never continues the old one.</li>
+<li>A room whose last member leaves ends its open turn at that moment, with no
+wait. Open turns end at a server restart.</li>
+</ul>
+<p><strong>In the digital families (<code>digl</code>, <code>digu</code>)</strong> there are no doubles (design
+C19):</p>
+<ul>
+<li>Each keyed member has its own talking turn, opening when it keys, ending as
+above (with the same 3-second continuation, and at once when its talker
+leaves), whoever else is keyed.</li>
+<li>An unknown turn opens and ends as above, only while no member is keyed and
+no talking turn is open.</li>
+</ul>
+<p><strong>Moments.</strong> At one moment, timers due at or before it fire first, in the
+order they fall due, then the messages read at that moment, in the order
+read. So a talker keying again exactly 3000 ms after unkeying starts a new
+turn, and a slice that entered a room exactly 10 s before a moment is a
+member before any message read at that moment is applied.</p>
+<h3 id="67-readings-and-turns">6.7 Readings and turns</h3>
+<ul>
+<li>A reading accepted from a member is stored with the turn it belongs to at
+its arrival:
+<ul>
+<li>in other families, the one open turn (talking, ending, doubled or
+unknown);</li>
+<li>in digital families, the turn of the only keyed member; with two or more
+members keyed, no turn; with none keyed, the one open turn if there is
+exactly one (ending or unknown), otherwise none.</li>
+</ul>
+</li>
+<li>A turn that ends at an earlier moment than some of its readings (the
+3-second rules) drops those readings: a reading belongs to a turn only
+when it arrived from its start to its end. So readings taken while a
+talker's turn was ending stay with it only if the turn continued.</li>
+<li>Readings stored with a doubled turn are never shown as either talker's
+reading and never enter either talker's archive (design D10). Readings
+stored with no turn are kept for the station's own record only.</li>
+<li>A reading stamped more than 5 s from the server's clock is taken as
+stamped at its arrival (design 13). A reading's age on every screen is the
+viewer's now less <code>t</code>; past 20 s it greys (design U4).</li>
+<li>Storage: one byte a second per station per turn (dBm + 160 in 1 dB steps,
+so -160 to +94 dBm; 255 is no reading that second) and one signal-present
+bit a second, flushed every 30 s and at the turn's end (design 6.3, C11).</li>
+</ul>
+<h3 id="68-what-each-row-shows">6.8 What each row shows</h3>
+<ul>
+<li><code>callsign</code> with <code>nth</code>: two stations with one callsign in one room show as
+<code>W4XYZ</code> and <code>W4XYZ (2)</code> in joining order (design 7.1); <code>nth</code> is that
+number and a screen adds &quot; (2)&quot; when it is over 1. A row keeps its <code>nth</code>
+for as long as it stays; rows are never renumbered, so when the first
+<code>W4XYZ</code> leaves, <code>W4XYZ (2)</code> stays <code>(2)</code>, and a row joining later takes the
+lowest number no present row with that callsign holds.</li>
+<li><code>km</code>: the great-circle distance from the row's grid to the talker's grid,
+when the room has exactly one talking turn open (ending included), both
+grids are known, and the row is not the talker's; otherwise <code>null</code>. Each
+grid stands for the center of its square (4 characters: 2 degrees of
+longitude by 1 of latitude) or subsquare (6 characters: 5 by 2.5 minutes).
+The distance is the haversine formula on a sphere of radius 6371 km,
+rounded to the nearest whole km.</li>
+<li><code>offsetHz</code>: the row's counted slice frequency less the room's center,
+rounded to the nearest 10 Hz, halves away from zero.</li>
+<li><code>reading</code>: the latest reading accepted from the row's counted slice since
+it entered the room, with <code>turn</code> the turn it is stored with (or <code>null</code>).
+A screen converts <code>dbm</code> to S-units on the app's scale (S9 = -73 dBm, 6 dB
+per S-unit, then S9 plus dB; design 8.5).</li>
+<li>Readings are listed nearest first; rows with no distance follow in
+callsign order. Never by strength (design D3). The server sends rows in
+joining order; ordering for display is the screen's.</li>
+<li><code>away</code>, <code>joining</code>, <code>keyed</code>, <code>software</code>, <code>softwareVersion</code> as sent.
+<code>you</code> is true on the station's own row in views sent to it.</li>
+<li>A turn's <code>heard</code> (it feeds the talker's &quot;9 hear you&quot; line) counts the stations
+whose latest reading stored with that turn (6.7) has <code>present</code> true,
+whether or not their rows are still in the room. A station counts once
+whatever its number of readings. A doubled turn's <code>heard</code> is always 0,
+since its readings are never shown as either talker's (6.7).</li>
+</ul>
+<h3 id="69-naming-turns">6.9 Naming turns</h3>
+<ul>
+<li>A station may name an unknown turn while it is a member of that room (any
+opening of the room id), during the turn or within 24 hours after it ends,
+if it was also a member of that room at some time during the turn (design
+C5). An AWAY or blocked station cannot.</li>
+<li>Every name given is kept. A turn's <code>names</code> lists each distinct name with
+how many stations gave it, most first, then by name; there is no winner
+(design U9). <code>mine</code> is the name the receiving station gave, or <code>null</code>.</li>
+<li>A talking or doubled turn cannot be named. Hiding does not stop others
+naming a turn with a hidden station's callsign (design D21).</li>
+<li>Names never move a turn into any station's archive (design C5).</li>
+<li>Screens offer the names used on that frequency in the last 24 hours (by
+base callsign) or a typed one.</li>
+</ul>
+<h3 id="610-messages-and-mentions">6.10 Messages and mentions</h3>
+<ul>
+<li><strong>Cleaning</strong> (design 12.4), in this order: CR LF and lone CR become LF;
+every other control character (Unicode category Cc) is removed; these
+invisible and direction-changing format characters are removed: U+061C
+(Arabic letter mark), U+200B (zero width space), U+200E and U+200F
+(direction marks), U+202A to U+202E (direction embeddings and overrides),
+U+2060 (word joiner), U+2066 to U+2069 (direction isolates) and U+FEFF
+(byte order mark); Unicode NFC, after the removals, so the stored text is
+NFC; leading and trailing white space is removed. U+200C and U+200D (zero width non-joiner
+and joiner) stay, since emoji sequences and some scripts need them. Then
+the text must be 1 to 500 code points and at most 10 lines (9 LFs); more is
+<code>too-long</code>, nothing is <code>not-allowed</code>. The server stores the cleaned text
+and screens clean it again when shown.</li>
+<li><strong>Formatting</strong>, the only markup: <code>**bold**</code>, <code>*italic*</code>, and links: a run
+starting <code>http://</code> or <code>https://</code> up to the next white space or the next
+format character (Unicode category Cf, such as a U+200D left after
+cleaning) is a link, shown with its full address. Everything else is plain text. Screens escape
+all text (design C13).</li>
+<li>A message carries <code>dbm</code>: the sender's latest reading in that room, if it is
+stored with a turn open when the message was posted; otherwise <code>null</code>
+(design D4).</li>
+<li><code>state</code>: <code>shown</code>; <code>removed</code> by a helper (&quot;Message removed&quot;); <code>deleted</code> by
+its sender (&quot;Deleted by sender&quot;); <code>expired</code> once its text is cleared a year
+after posting (&quot;Message removed after a year&quot;, design 6.4). <code>text</code> is
+<code>null</code> unless <code>shown</code>.</li>
+<li><code>ref</code> is the sender's row ref when the message was posted in the current
+opening and that row is still in the room; otherwise <code>null</code>.</li>
+<li><strong>Mentions.</strong> A message mentions a station when one of its words, the runs
+of <code>A-Z a-z 0-9 /</code> in its text with an optional leading <code>@</code>, has the same
+base callsign (4.5) as the station's current callsign, ignoring case. The
+server sends <code>mention</code> to every connected station it mentions except the
+sender, and keeps it for the next <code>welcome</code> (5.4.2).</li>
+</ul>
+<h3 id="611-views-and-generations">6.11 Views and generations</h3>
+<ul>
+<li><strong>What a connection views.</strong> A station views every live room one of its
+slices is in (joining or member) and every room it reads. A live reader
+views the band list of its watched band and the rooms it watches. A
+connection receives <code>room</code> when a room enters its view and <code>delta</code> for
+every change after; a room leaves a station's view without a message when
+the station's own row's ref appears in <code>left</code> (the station left it) and it
+does not read it, or when <code>closed</code> is true.</li>
+<li><strong>Summary keys.</strong> <code>state</code> is <code>talking</code> when a talking turn is open
+(ending included; in digital families, one or more), <code>doubled</code> or <code>unknown</code>
+when such a turn is open, otherwise <code>quiet</code>. <code>talkers</code>: the open turns'
+talkers' callsigns (none for unknown). <code>members</code>: members, not joining.
+<code>messages</code>: messages posted in the current opening. <code>last</code>: the latest of
+the room's opening, a row entering or leaving, a reading, a turn opening or
+ending, a message. <code>folded</code>: 6.3. <code>start</code>: the start of the first open
+turn (the order of the room view's <code>now</code>), <code>null</code> when none is open.
+<code>heard</code>: that turn's <code>heard</code>, 0 when none is open. <code>readings</code>: for that
+turn, the <code>dbm</code> of each member's latest reading stored with it (6.7), the
+turn's talkers left out, nearest first and rows with no <code>km</code> after them in
+callsign order (6.8), at most 12; empty when no turn is open.
+<code>lastMessage</code>: the room id's newest message in any opening (the room
+view's newest), <code>null</code> when it has none; its <code>text</code> is the first 80 code
+points of the message's <code>text</code>. <code>ended</code>: the end of the newest turn that
+ended in the current opening since the server started, <code>null</code> when none
+has (a quiet row's &quot;quiet N min&quot; counts from it, otherwise from <code>last</code>).
+A change to any of these is a summary change and goes in the room's
+<code>change</code> entry.</li>
+<li><strong>Generations.</strong> Each connection has one generation for its band list and
+one for each room in its view. A full <code>rooms</code> or <code>room</code> starts its
+generation at 1; each <code>roomsDelta</code> or <code>delta</code> carries the next. The server
+never skips one while it serves the connection normally; it may drop
+changes to a connection whose outbound queue is full (9.1), and the next
+one it sends then shows a gap. A receiver that sees a gap sends <code>resync</code>
+(design 9.3).</li>
+<li><strong>Pacing.</strong> A room's <code>delta</code> is sent at once, one for each message or timer
+that changes the room. Band-list changes are collected for the server, not
+per connection: when no band-list tick has run in the last 2000 ms, a tick
+runs at once; otherwise one runs 2000 ms after the previous tick (design
+C27). A tick builds the band list once and sends every connection that
+views a band list one <code>roomsDelta</code> cut from it (its watched band, or all)
+with the changes since what the connection last received; a connection
+with no change gets none. A connection that received <code>rooms</code> after the
+previous tick and less than 2000 ms ago gets its changes at the next
+tick, which then runs 2000 ms later even with nothing new; so its first
+<code>roomsDelta</code> comes at most 4000 ms after its <code>rooms</code>.</li>
+<li><strong>Order.</strong> For one message or timer, a connection receives, in this order:
+the answer to its own request (<code>posted</code>, <code>error</code>, <code>weblinkOk</code>, <code>notice</code>),
+then a <code>roomsDelta</code> if one is due, then any <code>room</code> views, then <code>delta</code>s,
+then <code>mention</code>.</li>
+</ul>
+<h2 id="7-flows">7. Flows</h2>
+<h3 id="71-sign-in-with-a-station-key">7.1 Sign-in with a station key</h3>
+<pre><code>server  -&gt; station:  {&quot;type&quot;:&quot;challenge&quot;,&quot;nonce&quot;:&lt;nonce&gt;}
+station -&gt; server:   {&quot;type&quot;:&quot;hello&quot;,&quot;v&quot;:1,&quot;software&quot;:&quot;NereusSDR&quot;,&quot;softwareVersion&quot;:&quot;26.10.3&quot;,&quot;spki&quot;:&lt;spki&gt;,&quot;sig&quot;:&lt;sig over 4.3&gt;}
+server  -&gt; station:  {&quot;type&quot;:&quot;welcome&quot;,&quot;station&quot;:&lt;id of spki&gt;,&quot;kind&quot;:&quot;core&quot;,...}
+server  -&gt; station:  {&quot;type&quot;:&quot;rooms&quot;,&quot;gen&quot;:1,&quot;rooms&quot;:[...]}
+</code></pre>
+<p>A rendezvous-prefixed signature, a signature naming another host, another
+nonce or a flipped bit is answered with <code>error</code> <code>bad-sign-in</code> and closes the
+connection with 4001 (R-RT-2). No <code>hello</code> within 10 s closes it with 4005.</p>
+<h3 id="72-sign-in-with-a-website-key">7.2 Sign-in with a website key</h3>
+<pre><code>server  -&gt; station:  {&quot;type&quot;:&quot;challenge&quot;,&quot;nonce&quot;:&lt;nonce&gt;}
+station -&gt; server:   {&quot;type&quot;:&quot;hello&quot;,&quot;v&quot;:1,&quot;software&quot;:&quot;Example Logger&quot;,&quot;softwareVersion&quot;:&quot;3.1&quot;,&quot;key&quot;:&lt;websiteKey&gt;}
+server  -&gt; station:  {&quot;type&quot;:&quot;welcome&quot;,&quot;station&quot;:&lt;key id&gt;,&quot;kind&quot;:&quot;key&quot;,&quot;callsign&quot;:&quot;W4XYZ&quot;,&quot;grid&quot;:&quot;EM73&quot;,...}
+server  -&gt; station:  {&quot;type&quot;:&quot;rooms&quot;,&quot;gen&quot;:1,&quot;rooms&quot;:[...]}
+</code></pre>
+<p>An unknown key is answered with <code>error</code> <code>bad-sign-in</code> and closes with 4001;
+a revoked key closes with 4004.</p>
+<h3 id="73-joining-a-room">7.3 Joining a room</h3>
+<pre><code>station -&gt; server:   presence (slice 0 on 14.212 USB)           t = 0     joining a candidate
+station -&gt; server:   reading                                     t = 1 s   dropped silently
+server  -&gt; station:  roomsDelta add usb-14212000                 t = 10 s  member; the room opens
+server  -&gt; station:  room usb-14212000, gen 1
+station -&gt; server:   reading, once a second                                each shows as a delta
+station -&gt; server:   presence, every 10 s and on change
+</code></pre>
+<p>A station joining a room that is already live gets its <code>room</code> view at once,
+its own row <code>joining</code> true, and a <code>delta</code> when it becomes a member.</p>
+<h3 id="74-a-talking-turn">7.4 A talking turn</h3>
+<pre><code>A -&gt; server:  presence, slice keyed           turn opens: talking, A
+B -&gt; server:  reading                         stored with A's turn; B's row shows it, with km to A
+A -&gt; server:  presence, slice unkeyed         ending true
+                3 s pass                      the turn ends at A's unkey
+</code></pre>
+<p>Each step is a <code>delta</code> to every viewer: the turn object in <code>turns</code>, the
+changed rows in <code>members</code>.</p>
+<h3 id="75-an-unknown-turn-and-naming-it">7.5 An unknown turn and naming it</h3>
+<pre><code>B -&gt; server:  reading, present true           unknown turn opens (no talker)
+C -&gt; server:  reading, present true           stored with it
+                3 s with no present reading   the turn ends at the last present reading
+B -&gt; server:  name, turn, &quot;W4XYZ&quot;             names: W4XYZ by 1
+C -&gt; server:  name, turn, &quot;W4XYZ&quot;             names: W4XYZ by 2
+</code></pre>
+<h3 id="76-a-double">7.6 A double</h3>
+<pre><code>A keyed                 talking A
+B keys                  talking A ends; doubled A, B opens
+C's readings            stored with the doubled turn, shown under it, never as A's or B's
+A unkeys                doubled ends; talking B opens at the same moment
+</code></pre>
+<p>In <code>digl</code> and <code>digu</code> there is no double: A's and B's turns run side by side,
+and readings while both are keyed belong to neither (6.6, 6.7).</p>
+<h3 id="77-resync">7.7 Resync</h3>
+<pre><code>server  -&gt; station:  roomsDelta gen 3    (the station last saw gen 1)
+station -&gt; server:   {&quot;type&quot;:&quot;resync&quot;,&quot;room&quot;:null}
+server  -&gt; station:  {&quot;type&quot;:&quot;rooms&quot;,&quot;gen&quot;:1,&quot;rooms&quot;:[...]}
+</code></pre>
+<p>The same with a room id for a room's view.</p>
+<h3 id="78-going-hidden">7.8 Going hidden</h3>
+<pre><code>station -&gt; server:  {&quot;type&quot;:&quot;hidden&quot;}         rows leave at once (delta left to everyone else)
+station:            closes the station connection
+station -&gt; server:  opens /v1/live, watchBand all, watch the rooms it shows
+</code></pre>
+<p>A Core that starts hidden opens only <code>/v1/live</code>, and so does a Core whose
+first-run question is unanswered (design D25). For the archive while hidden
+or unanswered it opens a brief station connection: <code>hello</code>, then <code>weblink</code>
+or <code>deleteArchive</code>, never <code>presence</code>, then closes (design 10.2).</p>
+<h3 id="79-web-sign-in-link">7.9 Web sign-in link</h3>
+<pre><code>station -&gt; server:  {&quot;type&quot;:&quot;weblink&quot;}
+server  -&gt; station: {&quot;type&quot;:&quot;weblinkOk&quot;,&quot;url&quot;:&quot;https://roundtable.nereussdr.com/signin?t=&lt;token&gt;&quot;,&quot;expires&quot;:&lt;now + 5 min&gt;}
+browser -&gt; web:     GET /signin?t=&lt;token&gt;   once; sets the session cookie and redirects
+</code></pre>
+<h3 id="710-deleting-the-archive">7.10 Deleting the archive</h3>
+<pre><code>station -&gt; server:  {&quot;type&quot;:&quot;deleteArchive&quot;,&quot;confirm&quot;:&quot;delete my archive&quot;}
+server  -&gt; station: {&quot;type&quot;:&quot;notice&quot;,&quot;code&quot;:&quot;archive-deleted&quot;,&quot;text&quot;:&quot;Your Roundtable archive has been deleted. Backups age out within 7 days.&quot;,&quot;until&quot;:null}
+</code></pre>
+<h2 id="8-errors">8. Errors</h2>
+<h3 id="81-where-errors-go">8.1 Where errors go</h3>
+<ul>
+<li>A refused station or live request gets <code>error</code> (5.4.11), or <code>posted</code> with
+<code>ok</code> false for <code>post</code> (5.4.7); the connection stays.</li>
+<li>A protocol error (5.1) closes with 4002 and no message. A refused sign-in
+gets <code>error</code> <code>bad-sign-in</code> (a bad key, signature or website key) or
+<code>version</code> (a version the server does not speak), then closes with 4001.
+A revoked website key closes with 4004 and no message; no <code>hello</code> in time
+closes with 4005 and no message. A connection over a cap gets <code>error</code>
+<code>rate</code> with <code>about</code> <code>null</code> in place of <code>challenge</code>, then close 1013.</li>
+<li><code>reason</code> is the exact text below, which a screen may show as sent. No
+reason names a source, a file or a code.</li>
+</ul>
+<h3 id="82-codes-and-reasons">8.2 Codes and reasons</h3>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Reason</th>
+<th>Cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>not-member</code></td>
+<td>&quot;Tune to this frequency and stay for 10 seconds before you post or name a turn.&quot;</td>
+<td><code>post</code>, <code>name</code> from a station that is not a member of the room (6.4)</td>
+</tr>
+<tr>
+<td><code>away</code></td>
+<td>&quot;Nobody is at the radio, so this station can't post or name turns.&quot;</td>
+<td><code>post</code>, <code>name</code> from an AWAY station</td>
+</tr>
+<tr>
+<td><code>hidden</code></td>
+<td>&quot;This station is hidden, so nothing more is taken from it.&quot;</td>
+<td>any kind but <code>weblink</code> and <code>deleteArchive</code> after <code>hidden</code></td>
+</tr>
+<tr>
+<td><code>blocked</code></td>
+<td>&quot;This station has been blocked from posting and naming turns.&quot;</td>
+<td><code>post</code>, <code>name</code> from a station a helper blocked</td>
+</tr>
+<tr>
+<td><code>rate</code></td>
+<td>&quot;Too many at once. Try again in a moment.&quot;</td>
+<td>over a per-station limit (9.1); <code>retryAfterMs</code> until allowed</td>
+</tr>
+<tr>
+<td><code>rate</code></td>
+<td>&quot;Too many connections from this network. Try again shortly.&quot;</td>
+<td>the per-address-group connection caps; <code>retryAfterMs</code> 5000, then close 1013</td>
+</tr>
+<tr>
+<td><code>rate</code></td>
+<td>&quot;Roundtable is busy. Try again shortly.&quot;</td>
+<td>the total live-socket cap; <code>retryAfterMs</code> 5000, then close 1013</td>
+</tr>
+<tr>
+<td><code>too-long</code></td>
+<td>&quot;A message can be up to 500 characters and 10 lines.&quot;</td>
+<td><code>post</code> over 500 code points or 10 lines after cleaning</td>
+</tr>
+<tr>
+<td><code>unknown-slice</code></td>
+<td>&quot;That reading is for a slice this station has not listed.&quot;</td>
+<td><code>reading</code> for a slice not in the latest <code>presence</code></td>
+</tr>
+<tr>
+<td><code>slice-keyed</code></td>
+<td>&quot;A slice can't send readings while it is transmitting.&quot;</td>
+<td><code>reading</code> for a slice whose <code>presence</code> says keyed</td>
+</tr>
+<tr>
+<td><code>bad-turn</code></td>
+<td>&quot;Only a turn with an unknown talker can be named, up to 24 hours after it ends.&quot;</td>
+<td><code>name</code> on a talking or doubled turn, or too late</td>
+</tr>
+<tr>
+<td><code>not-allowed</code></td>
+<td>&quot;You can name a turn only if you were on this frequency during it.&quot;</td>
+<td><code>name</code> from a member who was not a member during the turn</td>
+</tr>
+<tr>
+<td><code>not-allowed</code></td>
+<td>&quot;You can delete only your own messages.&quot;</td>
+<td><code>delete</code> of another station's message</td>
+</tr>
+<tr>
+<td><code>not-allowed</code></td>
+<td>&quot;You can read up to 4 other frequencies at once.&quot;</td>
+<td>a fifth <code>read</code></td>
+</tr>
+<tr>
+<td><code>not-allowed</code></td>
+<td>&quot;You can watch up to 4 frequencies at once.&quot;</td>
+<td>a fifth <code>watch</code></td>
+</tr>
+<tr>
+<td><code>not-allowed</code></td>
+<td>&quot;To delete your archive, confirm with the exact words asked for.&quot;</td>
+<td><code>deleteArchive</code> with other words</td>
+</tr>
+<tr>
+<td><code>not-allowed</code></td>
+<td>&quot;This station needs a callsign before it can send its presence.&quot;</td>
+<td><code>presence</code> with <code>callsign</code> <code>null</code> from a Core</td>
+</tr>
+<tr>
+<td><code>not-allowed</code></td>
+<td>&quot;There is nothing to send.&quot;</td>
+<td><code>post</code> with nothing left after cleaning</td>
+</tr>
+<tr>
+<td><code>not-found</code></td>
+<td>&quot;That room, turn or message is not here.&quot;</td>
+<td><code>read</code>, <code>watch</code>, <code>resync</code>, <code>delete</code>, <code>name</code>, <code>report</code> naming nothing the server holds or the connection views</td>
+</tr>
+<tr>
+<td><code>version</code></td>
+<td>&quot;This version of the Roundtable protocol is not supported. Updating the software may help.&quot;</td>
+<td><code>hello</code> with <code>v</code> other than 1; then close 4001</td>
+</tr>
+<tr>
+<td><code>bad-sign-in</code></td>
+<td>&quot;Roundtable did not accept this station's key or signature.&quot;</td>
+<td><code>hello</code> with a key that is not canonical, a signature that does not verify or an unknown website key; then close 4001</td>
+</tr>
+<tr>
+<td><code>server</code></td>
+<td>&quot;Roundtable can't save messages right now.&quot;</td>
+<td><code>post</code> while the database cannot save (design 13)</td>
+</tr>
+</tbody>
+</table>
+<p>A receiver treats a code it does not know as a refusal it cannot act on
+further, and shows the reason.</p>
+<h3 id="83-close-codes">8.3 Close codes</h3>
+<p>Section 2.4.</p>
+<h3 id="84-notices">8.4 Notices</h3>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Text</th>
+<th><code>until</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>blocked</code></td>
+<td>&quot;A Roundtable helper has blocked this station from posting and naming turns.&quot;</td>
+<td>when it ends, or <code>null</code> for good</td>
+</tr>
+<tr>
+<td><code>not-counted</code></td>
+<td>&quot;A Roundtable helper has stopped counting this station's readings and keyed state.&quot;</td>
+<td>when it ends, or <code>null</code> for good</td>
+</tr>
+<tr>
+<td><code>report-closed</code></td>
+<td>&quot;A report you made has been looked at.&quot;</td>
+<td><code>null</code></td>
+</tr>
+<tr>
+<td><code>version-ending</code></td>
+<td>&quot;This version of Roundtable stops working on the date shown. Updating the software keeps it working.&quot;</td>
+<td>the date it stops (section 12)</td>
+</tr>
+<tr>
+<td><code>archive-deleted</code></td>
+<td>&quot;Your Roundtable archive has been deleted. Backups age out within 7 days.&quot;</td>
+<td><code>null</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="9-limits-storage-and-logs">9. Limits, storage and logs</h2>
+<h3 id="91-limits">9.1 Limits</h3>
+<p>Per station unless stated; the station's limits are sent in <code>welcome</code>
+(design 9.5, C7). Every value is configurable; these are the defaults.</p>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Limit</th>
+<th><code>limits</code> key</th>
+<th>Over it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Readings</td>
+<td>2 a second per slice</td>
+<td><code>readingsPerSecond</code></td>
+<td>dropped; at most one <code>error</code> <code>rate</code> a minute</td>
+</tr>
+<tr>
+<td>Presence</td>
+<td>1 a second</td>
+<td><code>presencePerSecond</code></td>
+<td>refused, <code>error</code> <code>rate</code></td>
+</tr>
+<tr>
+<td>Messages</td>
+<td>6 a minute and 60 an hour</td>
+<td><code>messagesPerMinute</code>, <code>messagesPerHour</code></td>
+<td>refused, <code>posted</code> <code>rate</code></td>
+</tr>
+<tr>
+<td>Message length</td>
+<td>500 Unicode code points and 10 lines</td>
+<td><code>messageCodePoints</code>, <code>messageLines</code></td>
+<td>refused, <code>posted</code> <code>too-long</code></td>
+</tr>
+<tr>
+<td>Names</td>
+<td>10 a minute</td>
+<td><code>namesPerMinute</code></td>
+<td>refused, <code>error</code> <code>rate</code></td>
+</tr>
+<tr>
+<td>Reports</td>
+<td>10 an hour</td>
+<td><code>reportsPerHour</code></td>
+<td>refused, <code>error</code> <code>rate</code></td>
+</tr>
+<tr>
+<td>Slices in rooms</td>
+<td>4</td>
+<td><code>slices</code></td>
+<td>a fifth slice in <code>presence</code> is a protocol error</td>
+</tr>
+<tr>
+<td>Rooms read</td>
+<td>4 besides the station's own</td>
+<td><code>reads</code></td>
+<td>refused, <code>error</code> <code>not-allowed</code></td>
+</tr>
+<tr>
+<td>Station connections</td>
+<td>1 per station id (a new one replaces the old); 8 per address group</td>
+<td></td>
+<td><code>error</code> <code>rate</code>, close 1013</td>
+</tr>
+<tr>
+<td>Website keys issued</td>
+<td>3 a day per address group</td>
+<td></td>
+<td>the key page says so</td>
+</tr>
+<tr>
+<td>Read API</td>
+<td>60 requests a minute per address group</td>
+<td></td>
+<td><code>429</code> (10.6)</td>
+</tr>
+<tr>
+<td>Live sockets</td>
+<td>4 per address group; 500 in all</td>
+<td></td>
+<td><code>error</code> <code>rate</code>, close 1013</td>
+</tr>
+<tr>
+<td>Rooms watched per live socket</td>
+<td>4</td>
+<td></td>
+<td>refused, <code>error</code> <code>not-allowed</code></td>
+</tr>
+<tr>
+<td>Inbound message</td>
+<td>16384 bytes</td>
+<td></td>
+<td>close 1009</td>
+</tr>
+<tr>
+<td>Outbound queue per connection</td>
+<td>1024 messages or 4194304 bytes (4 MiB)</td>
+<td></td>
+<td>room <code>delta</code>s and band-list changes are dropped (a gap, 6.11), except a <code>delta</code> with <code>closed</code> true and a room's removal from the band list, which are always queued; past twice that the connection is closed with 1000</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Windows.</strong> A limit of N a second, a minute, an hour or a day counts in
+a sliding window of that length on the server's clock: a request is
+refused when N were accepted in the window, with <code>retryAfterMs</code> until the
+oldest leaves it. A refused request is not counted. The window is
+half-open: a request at time T counts those accepted after T less the
+window's length, so with 1 a second a presence exactly 1000 ms after the
+last is accepted and one at 999 ms is refused. Senders leave a margin (a
+Core spaces presence at least 1100 ms apart, 6.5).</li>
+<li><strong>Address groups.</strong> One IPv4 address (an IPv4-mapped IPv6 address counts as
+its IPv4 address), or one IPv6 /64 (design 9.5). Connections are counted
+at connect, before sign-in.</li>
+<li><strong>The client address</strong> is the peer's, or, when the peer is loopback (Caddy),
+the last address in <code>X-Forwarded-For</code>, which the Roundtable Caddy site
+sets. Addresses stay in memory only, never in a file or a log (design
+9.5, 12.3).</li>
+</ul>
+<h3 id="92-timers">9.2 Timers</h3>
+<table>
+<thead>
+<tr>
+<th>Timer</th>
+<th>Value</th>
+<th>Section</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hello</code> after connect</td>
+<td>10 s, else close 4005</td>
+<td>3.1</td>
+</tr>
+<tr>
+<td>Ping interval; silence before close</td>
+<td>20 s; 45 s</td>
+<td>2.3</td>
+</tr>
+<tr>
+<td>Presence repeat (station side)</td>
+<td>10 s</td>
+<td>6.5</td>
+</tr>
+<tr>
+<td>A station silent, its rows leave</td>
+<td>30 s</td>
+<td>6.4</td>
+</tr>
+<tr>
+<td>Join dwell</td>
+<td>10 s</td>
+<td>6.4</td>
+</tr>
+<tr>
+<td>Same-talker continuation; quiet</td>
+<td>3 s; 3 s</td>
+<td>6.6</td>
+</tr>
+<tr>
+<td>Long key</td>
+<td>10 minutes</td>
+<td>6.6</td>
+</tr>
+<tr>
+<td>Reading skew</td>
+<td>5 s</td>
+<td>6.7</td>
+</tr>
+<tr>
+<td>Earlier turns in a view</td>
+<td>30 minutes</td>
+<td>5.4.5</td>
+</tr>
+<tr>
+<td>Messages in a view</td>
+<td>50</td>
+<td>5.4.5</td>
+</tr>
+<tr>
+<td>Naming after a turn ends</td>
+<td>24 hours</td>
+<td>6.9</td>
+</tr>
+<tr>
+<td>Room closes after its last member</td>
+<td>10 minutes</td>
+<td>6.3</td>
+</tr>
+<tr>
+<td>All-AWAY rooms fold after</td>
+<td>2 hours</td>
+<td>6.3</td>
+</tr>
+<tr>
+<td><code>roomsDelta</code> pacing</td>
+<td>2 s</td>
+<td>6.11</td>
+</tr>
+<tr>
+<td>Web sign-in link</td>
+<td>5 minutes, once</td>
+<td>5.4.10</td>
+</tr>
+<tr>
+<td>Archive session gap (design C18)</td>
+<td>10 minutes</td>
+<td>design 4</td>
+</tr>
+<tr>
+<td>Message text cleared</td>
+<td>365 days, daily at 04:00 UTC</td>
+<td>9.3</td>
+</tr>
+</tbody>
+</table>
+<h3 id="93-storage">9.3 Storage</h3>
+<ul>
+<li>Live rooms are held in memory; history is written to one SQLite file in
+WAL mode (design 6.3): stations (id, kind, callsign, grid, first and last
+seen, posting block, not counted), keys (the key hash, never the key; no
+address), rooms and openings, turns, turn readings (6.7), turn names,
+messages, reports and the review log, helpers, and archive sessions.</li>
+<li>A turn's reading tracks are flushed every 30 s and at its end, so a
+restart loses at most 30 s of one open turn.</li>
+<li>No address is ever stored. The key-issuance count per address group is
+held in memory only, for 24 hours (a restart resets it).</li>
+<li>A daily job at 04:00 UTC clears the text of every message older than 365
+days (<code>state</code> <code>expired</code>); the row, its sender, time and reading stay.
+Readings, turns, names and sessions are never deleted, except by
+<code>deleteArchive</code> (design 6.4).</li>
+</ul>
+<h3 id="94-logs">9.4 Logs</h3>
+<p>Logs go to standard error only; under systemd that is the journal. A log
+line may name an event (signed in, replaced, revoked, a room opened or
+closed, a long key, an error code, a database error) with a room id and at
+most the first 6 characters of a station id. It never holds an address, a
+whole station id, a callsign, message text, a website key or its hash, a
+nonce, a signature, a public key or a sign-in token. The websockets
+library's own log records, which can carry addresses, are switched off
+(design 12.3).</p>
+<h2 id="10-read-api">10. Read API</h2>
+<h3 id="101-general">10.1 General</h3>
+<ul>
+<li><code>GET</code> (and <code>HEAD</code>) only, over HTTPS, no sign-in. Any other method gets
+<code>405</code>. Answers are compact JSON, <code>Content-Type: application/json; charset=utf-8</code>, <code>Cache-Control: no-store</code>, and
+<code>Access-Control-Allow-Origin: *</code> so other software's pages may read it.</li>
+<li>Objects are those of section 5.2, as a live reader receives them (<code>you</code>
+false, <code>mine</code> <code>null</code>). Every answer has <code>time</code>, the server's clock in
+Unix ms.</li>
+<li>Archives, station ids and addresses are never in it (design D11, 12.1).</li>
+<li>60 requests a minute per address group (9.1).</li>
+</ul>
+<h3 id="102-rooms">10.2 Rooms</h3>
+<p><code>GET /v1/api/rooms</code> and <code>GET /v1/api/rooms?band=&lt;band&gt;</code></p>
+<pre><code>{&quot;time&quot;:1800000004000,&quot;rooms&quot;:[&lt;summary&gt;, ...]}
+</code></pre>
+<p>Every live room, or those of one band (<code>band</code> as 6.2, or <code>other</code>), in
+ascending order of center frequency. An unknown band is <code>400</code>.</p>
+<h3 id="103-one-room">10.3 One room</h3>
+<p><code>GET /v1/api/room/&lt;family&gt;/&lt;center Hz&gt;</code></p>
+<pre><code>{&quot;time&quot;:1800000004000,&quot;live&quot;:true,&quot;closed&quot;:null,&quot;room&quot;:{&quot;id&quot;:&quot;usb-14212000&quot;,&quot;opening&quot;:17,&quot;band&quot;:&quot;20m&quot;,&quot;family&quot;:&quot;usb&quot;,&quot;hz&quot;:14212000,&quot;members&quot;:[...],&quot;now&quot;:[...],&quot;earlier&quot;:[...],&quot;messages&quot;:[...]}}
+</code></pre>
+<ul>
+<li>The live room's view, as <code>room</code> (5.4.5) without <code>type</code> and <code>gen</code>.</li>
+<li>A room id that is not live answers its most recent closed opening, quiet:
+<code>live</code> false, <code>closed</code> the Unix ms it closed, <code>members</code> and <code>now</code> empty,
+<code>earlier</code> its turns of the 30 minutes before it closed, <code>messages</code> the last
+50 of the room id. A room id that has existed never answers &quot;not found&quot;
+(design 8.1).</li>
+<li>A room id that has never existed is <code>404</code>; a family or frequency that is
+not a valid room id is <code>400</code>.</li>
+</ul>
+<h3 id="104-older-messages">10.4 Older messages</h3>
+<p><code>GET /v1/api/room/&lt;family&gt;/&lt;center Hz&gt;/messages?before=&lt;id&gt;&amp;limit=&lt;n&gt;</code></p>
+<pre><code>{&quot;time&quot;:1800000004000,&quot;messages&quot;:[&lt;message&gt;, ...]}
+</code></pre>
+<ul>
+<li>Messages of every opening of the room id, newest first, with ids less
+than <code>before</code> (all when <code>before</code> is absent), at most <code>limit</code> (1 to 50,
+default 50). <code>before</code> and <code>limit</code> are whole numbers in decimal; anything
+else is <code>400</code>. A room id that has never existed is <code>404</code>.</li>
+</ul>
+<h3 id="105-a-callsign">10.5 A callsign</h3>
+<p><code>GET /v1/api/callsign/&lt;callsign&gt;</code></p>
+<pre><code>{&quot;time&quot;:1800000004000,&quot;callsign&quot;:&quot;W4XYZ&quot;,&quot;rows&quot;:[{&quot;callsign&quot;:&quot;W4XYZ/P&quot;,&quot;room&quot;:&quot;usb-14212000&quot;,&quot;ref&quot;:&quot;w2c6tz7e&quot;},{&quot;callsign&quot;:&quot;W4XYZ&quot;,&quot;room&quot;:&quot;lsb-7188000&quot;,&quot;ref&quot;:&quot;q7h2m4ka&quot;}]}
+</code></pre>
+<ul>
+<li>The live rows whose callsign has the same base callsign as the one asked
+for (4.5): one flat entry per row in a live room, members and joining,
+each with the row's <code>callsign</code>, its <code>room</code> and its <code>ref</code>. Rows are ordered
+by room id, then ref. Nothing says which rows belong to one station, so
+the answer never links refs across rooms (design 7.1, 9.4).</li>
+<li><code>callsign</code> is the asked-for callsign as the server normalizes it. A
+string that is not a callsign is <code>400</code>.</li>
+<li>A path segment cannot hold <code>/</code>, so a callsign with a prefix or suffix is
+sent with each <code>/</code> written as <code>%2F</code> (<code>/v1/api/callsign/VE3%2FW4XYZ</code>). Since
+rows are matched on the base callsign, asking for the base callsign alone
+(<code>/v1/api/callsign/W4XYZ</code>) gives the same answer, and clients may do that
+instead. An unencoded <code>/</code> in the path is <code>404</code>.</li>
+</ul>
+<h3 id="106-errors">10.6 Errors</h3>
+<p><code>{&quot;error&quot;:&lt;code&gt;,&quot;reason&quot;:&lt;reason&gt;}</code> with the status:</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th><code>error</code></th>
+<th><code>reason</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td><code>bad-request</code></td>
+<td>&quot;That request could not be read.&quot;</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>not-found</code></td>
+<td>&quot;That room, turn or message is not here.&quot;</td>
+</tr>
+<tr>
+<td>405</td>
+<td><code>not-allowed</code></td>
+<td>&quot;Only GET and HEAD are supported.&quot;</td>
+</tr>
+<tr>
+<td>429</td>
+<td><code>rate</code></td>
+<td>&quot;Too many at once. Try again in a moment.&quot; (with <code>Retry-After</code> in whole seconds, at least 1)</td>
+</tr>
+<tr>
+<td>503</td>
+<td><code>server</code></td>
+<td>&quot;Roundtable can't answer right now.&quot;</td>
+</tr>
+</tbody>
+</table>
+<h2 id="11-conformance">11. Conformance</h2>
+<p><code>roundtable/conformance/v1/</code> is the machine-readable half of this document.
+It follows the rendezvous suite (rendezvous section 10) wherever that fits.
+Runners: the server's (<code>roundtable/tests/</code>), the Core's (<code>RoundtableClient</code>
+tests) and other software's own. The fixtures are published with the API
+page (design 9.7) so other software can test against them.</p>
+<h3 id="111-the-files">11.1 The files</h3>
+<ul>
+<li><code>manifest.json</code>: <code>{&quot;roundtableVersions&quot;:[1],&quot;fixtures&quot;:[{&quot;id&quot;,&quot;file&quot;,&quot;kind&quot;}]}</code>,
+<code>kind</code> one of <code>crypto</code>, <code>control</code>, <code>session</code> and <code>turns</code>. Every file under
+<code>crypto/</code>, <code>control/</code>, <code>sessions/</code> and <code>turns/</code> is listed once; ids are
+unique.</li>
+<li><code>crypto/*.json</code>: derivation and signature vectors (11.2).</li>
+<li><code>control/*.json</code>: one message each (11.3).</li>
+<li><code>sessions/*.json</code>: one scripted exchange each (11.4).</li>
+<li><code>turns/*.json</code>: one scripted room each, checked against the turn rules
+(11.5).</li>
+</ul>
+<p><code>crypto/</code> holds two fixed test P-256 keys, each with its private scalar
+(<code>privateKeyHex</code>, 32 bytes big-endian) so a runner can sign with it in its
+own tests. They were generated only to produce these vectors and are used by
+nothing else: no Core, station, server or website key holds them, and they
+protect nothing. Every key that signs during a session fixture is made at
+run time.</p>
+<h3 id="112-crypto-vectors">11.2 Crypto vectors</h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Holds</th>
+<th>A runner checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>base64url.json</code></td>
+<td>the rendezvous suite's strict base64url cases</td>
+<td>its decoder accepts exactly the valid texts, to those bytes</td>
+</tr>
+<tr>
+<td><code>p256-spki.json</code></td>
+<td>the rendezvous suite's SPKI cases</td>
+<td>its key check accepts exactly the canonical key</td>
+</tr>
+<tr>
+<td><code>roundtable-id.json</code></td>
+<td><code>prefixHex</code>, <code>rendezvousPrefixHex</code>, and per key: <code>privateKeyHex</code>, <code>publicKey</code>, <code>spkiHex</code>, <code>digestHex</code>, <code>id</code>, <code>rendezvousDigestHex</code>, <code>rendezvousId</code></td>
+<td>SHA-256 of the prefix and the key's DER is <code>digestHex</code> and the Roundtable id is <code>id</code> (4.1); the rendezvous id is <code>rendezvousId</code> and differs from <code>id</code></td>
+</tr>
+<tr>
+<td><code>key-id.json</code></td>
+<td><code>prefixHex</code> and <code>cases</code>: <code>{&quot;key&quot;,&quot;keyHex&quot;,&quot;digestHex&quot;,&quot;id&quot;,&quot;keyHashHex&quot;,&quot;valid&quot;:true}</code> or <code>{&quot;key&quot;,&quot;valid&quot;:false,&quot;why&quot;}</code></td>
+<td>each valid key decodes to <code>keyHex</code>, its key id is <code>id</code> (4.2) and its stored hash is <code>keyHashHex</code>; each invalid key text is refused</td>
+</tr>
+<tr>
+<td><code>hello-signature.json</code></td>
+<td><code>key</code> and <code>otherKey</code> (<code>fixed</code>, <code>privateKeyHex</code>, <code>publicKey</code>, and <code>id</code> for <code>key</code>), <code>host</code>, <code>nonce</code>, <code>transcriptHex</code>, and <code>cases</code>: <code>{&quot;name&quot;,&quot;publicKey&quot;,&quot;signature&quot;,&quot;valid&quot;,&quot;why&quot;}</code></td>
+<td>the transcript of <code>host</code> and <code>nonce</code> is <code>transcriptHex</code> (4.3); a case is valid exactly when its key is canonical and its signature, strict base64url of 64 raw bytes, verifies over the transcript: <code>signed</code> and its high-s twin are; the rendezvous registration transcript, the right host and nonce under a rendezvous prefix, another host, the host with a port, no host, another nonce, the nonce's text, a flipped bit, another key, a key claimed for another's signature, DER, padding, 63 bytes, <code>r</code> of 0, <code>r</code> of n and <code>s</code> of n are not</td>
+</tr>
+</tbody>
+</table>
+<h3 id="113-control-fixtures">11.3 Control fixtures</h3>
+<p><code>{&quot;from&quot;:&quot;station&quot;|&quot;live&quot;|&quot;server&quot;,&quot;to&quot;:&quot;station&quot;|&quot;live&quot;,&quot;wire&quot;:{&lt;the message&gt;},&quot;decodes&quot;:true|false}</code>.
+<code>to</code> is present only when <code>from</code> is <code>&quot;server&quot;</code>. A fixture whose message
+cannot be written as a JSON value (a duplicate key, <code>NaN</code>, a top level that
+is not an object) gives it as text in <code>wireText</code> instead of <code>wire</code>.</p>
+<ul>
+<li>The receiving end decodes <code>wire</code> (or <code>wireText</code>). When <code>decodes</code> is true it
+encodes the result again and compares it with <code>wire</code> as JSON values, key
+order ignored, on the keys the kind and its objects list only.</li>
+<li>The server's runner decodes every fixture with the server's decoder for
+that direction, and also sends each refusal from a station or live reader
+to the running server, which must close the connection with 4002 (from a
+station, after signing in). A station's runner decodes the fixtures <code>to</code>
+<code>&quot;station&quot;</code> and encodes those <code>from</code> <code>&quot;station&quot;</code>; a live reader's does the
+same for <code>&quot;live&quot;</code>.</li>
+<li><code>decodes</code> false on a message from the server means the receiver logs and
+ignores it (5.1), and carries on.</li>
+</ul>
+<p>The fixtures cover every kind in each direction it travels, each with at
+least one accepted and one refused message: the 14 station kinds, the 11
+server kinds to a station, the 4 live kinds and the 5 server kinds to a live
+reader; messages carrying keys and limits no kind lists, which decode;
+unknown codes in <code>error</code>, <code>posted</code> and <code>notice</code>, which decode; and unknown
+kinds, kinds of the other path, a server kind sent by a station, a <code>type</code>
+that is a number or missing, duplicate keys, <code>NaN</code> and a top level that is
+an array, which are refused.</p>
+<p>The 16384-byte inbound cap is enforced before decoding and a lone surrogate
+cannot be written portably in a JSON file, so the server's runner checks
+those against the running server itself.</p>
+<h3 id="114-session-fixtures">11.4 Session fixtures</h3>
+<p><code>{&quot;runs&quot;:[&lt;runners&gt;],&quot;setup&quot;:{...},&quot;steps&quot;:[&lt;steps&gt;]}</code>. No other key is
+allowed.</p>
+<p><strong>Runners.</strong> <code>&quot;service&quot;</code> (the server's runner, which plays every
+connection against the real server built from <code>setup</code>) and <code>&quot;core&quot;</code> (the
+Core's runner, which plays the server towards its Core on the connection
+named <code>station</code>). A fixture that runs <code>core</code> only holds server messages the
+real server would not send in that order (a skipped generation).</p>
+<p><strong>Connections.</strong> A step names a connection: <code>station</code>, <code>station2</code>, ... on
+<code>/v1/station</code>; <code>live</code>, <code>live2</code>, ... on <code>/v1/live</code>. A core runner plays only
+<code>station</code>.</p>
+<p><strong>Steps.</strong> One of:</p>
+<ul>
+<li><code>{&quot;connect&quot;:&quot;&lt;conn&gt;&quot;}</code> or <code>{&quot;connect&quot;:&quot;&lt;conn&gt;&quot;,&quot;address&quot;:&quot;&lt;ip&gt;&quot;}</code>: the
+connection opens; the server's runner sends <code>address</code> (default
+<code>192.0.2.1</code>) as <code>X-Forwarded-For</code>.</li>
+<li><code>{&quot;from&quot;:&quot;server&quot;,&quot;to&quot;:&quot;&lt;conn&gt;&quot;,&quot;message&quot;:{...}}</code>: the server sends this
+to that connection. The server's runner matches it against the next
+message the connection received; a core runner sends it, filled, when
+<code>to</code> is <code>station</code>.</li>
+<li><code>{&quot;from&quot;:&quot;&lt;conn&gt;&quot;,&quot;role&quot;:&quot;behaviour&quot;|&quot;scripted&quot;,&quot;message&quot;:{...}}</code>: the
+connection sends this. A behaviour message is one the station under test
+must produce (a core runner drives its Core to it and matches what it
+sends); a scripted one is a message a conformant Core would not send then,
+which a core runner skips. The server's runner sends both, filled.</li>
+<li><code>{&quot;advanceMs&quot;:N}</code>: time moves N ms. The server's runner waits until the
+server has read everything sent so far, then moves the server's clock,
+firing its timers in order (6.6, &quot;Moments&quot;).</li>
+<li><code>{&quot;disconnect&quot;:&quot;&lt;conn&gt;&quot;}</code>: that end closes its connection.</li>
+<li><code>{&quot;expectClosed&quot;:&quot;&lt;conn&gt;&quot;,&quot;code&quot;:&lt;close code&gt;}</code>: the server has closed the
+connection with that code, with no message between the last one listed
+and the close.</li>
+<li><code>{&quot;expectSilent&quot;:&quot;&lt;conn&gt;&quot;}</code>: nothing more has arrived at that connection
+(the server's runner waits until the server has read everything and
+emptied its queues). A core runner checks instead that its Core sends
+nothing within 1 s of real time.</li>
+</ul>
+<p><strong><code>setup</code></strong>, absent keys taking these defaults:</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>host</code></td>
+<td><code>&quot;roundtable.conformance.invalid&quot;</code>: the server's host name, signed in <code>hello</code></td>
+</tr>
+<tr>
+<td><code>wallClock</code></td>
+<td>1800000000000: the Unix ms when the fixture starts; it moves only with <code>advanceMs</code></td>
+</tr>
+<tr>
+<td><code>keys</code></td>
+<td><code>[]</code>: website keys issued before the fixture, each <code>{&quot;name&quot;,&quot;callsign&quot;,&quot;grid&quot;,&quot;revoked&quot;}</code> (<code>revoked</code> default false); the runner makes each key at run time</td>
+</tr>
+<tr>
+<td><code>limits</code></td>
+<td><code>{}</code>: overrides of the <code>limits</code> values of 9.1</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Placeholders.</strong> As the rendezvous suite's (rendezvous section 10.4), from
+link section 16.1: <code>&quot;$any&quot;</code>, <code>&quot;$string&quot;</code>, <code>&quot;$string:&lt;name&gt;&quot;</code>, <code>&quot;$int&quot;</code>,
+<code>&quot;$int:&lt;name&gt;&quot;</code>, <code>&quot;$capture:&lt;name&gt;&quot;</code> and <code>&quot;$ref:&lt;name&gt;&quot;</code> (equal to the value
+recorded under <code>&lt;name&gt;</code>). Roundtable's own:</p>
+<table>
+<thead>
+<tr>
+<th>Placeholder</th>
+<th>Fill</th>
+<th>Match</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&quot;$b64:&lt;n&gt;:&lt;name&gt;&quot;</code></td>
+<td><code>&lt;n&gt;</code> random bytes, base64url; recorded</td>
+<td>strict base64url of exactly <code>&lt;n&gt;</code> bytes; recorded</td>
+</tr>
+<tr>
+<td><code>&quot;$key:&lt;k&gt;:spki&quot;</code>, <code>&quot;$key:&lt;k&gt;:id&quot;</code></td>
+<td>the base64url SPKI, or the Roundtable id, of station key <code>&lt;k&gt;</code> (made at run time)</td>
+<td>equal to that value</td>
+</tr>
+<tr>
+<td><code>&quot;$hello:&lt;k&gt;:&lt;nonce&gt;:&lt;case&gt;&quot;</code></td>
+<td>a signature by station key <code>&lt;k&gt;</code> over the transcript of 4.3 with <code>setup</code> <code>host</code> and the nonce recorded as <code>&lt;nonce&gt;</code>; <code>&lt;case&gt;</code> is <code>signed</code>, <code>otherNonce</code> (a random nonce), <code>otherHost</code> (<code>roundtable.example.invalid</code>), <code>rendezvousPrefix</code> (the rendezvous registration transcript of the nonce) or <code>flippedBit</code> (the last bit of <code>s</code> flipped)</td>
+<td>for <code>signed</code>, a signature that verifies so</td>
+</tr>
+<tr>
+<td><code>&quot;$websiteKey:&lt;w&gt;&quot;</code>, <code>&quot;$websiteKey:&lt;w&gt;:id&quot;</code></td>
+<td>the key <code>&lt;w&gt;</code> of <code>setup</code> <code>keys</code>, or its key id</td>
+<td>equal to that value</td>
+</tr>
+<tr>
+<td><code>&quot;$rowRef:&lt;name&gt;&quot;</code></td>
+<td></td>
+<td>exactly 8 characters of <code>a-z 2-7</code>; recorded</td>
+</tr>
+<tr>
+<td><code>&quot;$weblink:&lt;name&gt;&quot;</code></td>
+<td></td>
+<td><code>https://</code> and <code>setup</code> <code>host</code>, then <code>/signin?t=</code> and strict base64url of 32 bytes; recorded</td>
+</tr>
+</tbody>
+</table>
+<p>A core runner's station key is its Core's: at the behaviour <code>hello</code>,
+<code>&quot;$key:&lt;k&gt;:spki&quot;</code> records <code>&lt;k&gt;</code> as the key the Core sent, and
+<code>&quot;$hello:&lt;k&gt;:&lt;nonce&gt;:signed&quot;</code> checks the Core's signature verifies.</p>
+<p><strong>The fixtures.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Fixture</th>
+<th>Runs</th>
+<th>What it holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>signin-spki</code></td>
+<td>service, core</td>
+<td>challenge, <code>hello</code> with a station key, <code>welcome</code>, <code>rooms</code></td>
+</tr>
+<tr>
+<td><code>signin-key</code></td>
+<td>service</td>
+<td>sign-in with a website key: <code>welcome</code> <code>kind</code> <code>key</code> with the key page's callsign and grid</td>
+</tr>
+<tr>
+<td><code>signin-key-revoked</code></td>
+<td>service</td>
+<td>a revoked key: close 4004</td>
+</tr>
+<tr>
+<td><code>signin-key-unknown</code></td>
+<td>service</td>
+<td>a key never issued: <code>error</code> <code>bad-sign-in</code>, close 4001</td>
+</tr>
+<tr>
+<td><code>signin-rendezvous-prefix</code>, <code>signin-other-host</code>, <code>signin-other-nonce</code>, <code>signin-flipped-bit</code></td>
+<td>service</td>
+<td>each bad signature: <code>error</code> <code>bad-sign-in</code>, close 4001</td>
+</tr>
+<tr>
+<td><code>signin-version</code></td>
+<td>service</td>
+<td><code>v</code> 2: <code>error</code> <code>version</code>, close 4001</td>
+</tr>
+<tr>
+<td><code>signin-timeout</code></td>
+<td>service</td>
+<td>nothing at 9999 ms; close 4005 at 10000 ms</td>
+</tr>
+<tr>
+<td><code>connection-cap</code></td>
+<td>service</td>
+<td>8 station connections from one address each get <code>challenge</code>; the 9th gets <code>error</code> <code>rate</code> (<code>about</code> <code>null</code>, <code>retryAfterMs</code> 5000) and close 1013; another address still gets <code>challenge</code></td>
+</tr>
+<tr>
+<td><code>signin-presence-first</code></td>
+<td>service</td>
+<td><code>presence</code> before <code>hello</code>: close 4002</td>
+</tr>
+<tr>
+<td><code>signin-replaced</code></td>
+<td>service</td>
+<td>the same key on a second connection: <code>welcome</code> there, close 4003 on the first</td>
+</tr>
+<tr>
+<td><code>unknown-kind-closes</code></td>
+<td>service</td>
+<td>an unknown kind after sign-in: close 4002</td>
+</tr>
+<tr>
+<td><code>reading-while-joining-dropped</code></td>
+<td>service</td>
+<td>a reading from a joining slice: dropped, nothing sent</td>
+</tr>
+<tr>
+<td><code>reading-unknown-slice</code></td>
+<td>service</td>
+<td><code>error</code> <code>unknown-slice</code></td>
+</tr>
+<tr>
+<td><code>reading-keyed-slice</code></td>
+<td>service</td>
+<td>the room opens at 10 s; keying opens a talking turn (a <code>delta</code>); a reading from the keyed slice: <code>error</code> <code>slice-keyed</code></td>
+</tr>
+<tr>
+<td><code>post-not-member</code></td>
+<td>service</td>
+<td>a post from a joining station: <code>posted</code> <code>not-member</code></td>
+</tr>
+<tr>
+<td><code>post-away</code></td>
+<td>service</td>
+<td>an AWAY member's post: <code>posted</code> <code>away</code></td>
+</tr>
+<tr>
+<td><code>post-cleaned</code></td>
+<td>service</td>
+<td>a post with a zero width space, a direction override inside a link, CR LF, a control character and a kept zero width joiner: stored and sent cleaned (6.10)</td>
+</tr>
+<tr>
+<td><code>post-accepted</code></td>
+<td>service</td>
+<td><code>posted</code> ok, the message <code>delta</code>, and the band-list change, with the room's new <code>lastMessage</code>, held to the next 2 s tick</td>
+</tr>
+<tr>
+<td><code>hidden-ends-presence</code></td>
+<td>service</td>
+<td><code>hidden</code>: the row leaves a live reader's view at once; nothing more to the station; then <code>presence</code> gets <code>error</code> <code>hidden</code></td>
+</tr>
+<tr>
+<td><code>resync</code></td>
+<td>service</td>
+<td><code>resync</code> answers a full <code>rooms</code> with <code>gen</code> 1; a room not in view is <code>not-found</code></td>
+</tr>
+<tr>
+<td><code>resync-after-gap</code></td>
+<td>core</td>
+<td>a skipped generation: the Core sends <code>resync</code> and takes the full list</td>
+</tr>
+<tr>
+<td><code>read-room</code></td>
+<td>service</td>
+<td>a second station reads a room it is not in, unreads it, and reads one that is not live (<code>not-found</code>)</td>
+</tr>
+<tr>
+<td><code>weblink</code></td>
+<td>service, core</td>
+<td><code>weblinkOk</code> with a link expiring in 5 minutes</td>
+</tr>
+<tr>
+<td><code>delete-archive</code></td>
+<td>service</td>
+<td>other words: <code>not-allowed</code>; the exact words: <code>notice</code> <code>archive-deleted</code></td>
+</tr>
+<tr>
+<td><code>live-watch-not-found</code></td>
+<td>service</td>
+<td>a live reader's band list, a watch of no live room (<code>not-found</code>), a station kind on live (close 4002)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="115-turn-fixtures">11.5 Turn fixtures</h3>
+<p><code>{&quot;runs&quot;:[&quot;service&quot;],&quot;setup&quot;:{&quot;stations&quot;:[...]},&quot;steps&quot;:[...]}</code>. No other key
+is allowed. They hold the rules of 6.4, 6.6 and 6.7 (R-RT-4, R-RT-5).</p>
+<ul>
+<li><code>setup</code> holds <code>stations</code>, each <code>{&quot;name&quot;,&quot;callsign&quot;,&quot;grid&quot;}</code> (<code>name</code> an
+upper-case letter), and may hold <code>host</code> and <code>wallClock</code> as 11.4. The
+runner signs each station in with a key it makes, at time 0, and sends
+nothing else for it but the steps.</li>
+<li>Steps, one key each:
+<ul>
+<li><code>{&quot;presence&quot;:{&quot;station&quot;:&quot;A&quot;,&quot;atRadio&quot;:true,&quot;slices&quot;:[&lt;slice objects&gt;]}}</code>:
+station A sends <code>presence</code> with its <code>setup</code> callsign and grid, these
+slices and <code>atRadio</code> (default true).</li>
+<li><code>{&quot;reading&quot;:{&quot;station&quot;:&quot;B&quot;,&quot;slice&quot;:0,&quot;dbm&quot;:-91.5,&quot;present&quot;:true}}</code>:
+station B sends <code>reading</code>, <code>t</code> the current wall clock.</li>
+<li><code>{&quot;advanceMs&quot;:N}</code>: as 11.4.</li>
+<li><code>{&quot;expectMembers&quot;:{&quot;A&quot;:&quot;member&quot;,&quot;B&quot;:&quot;joining&quot;,&quot;C&quot;:&quot;absent&quot;}}</code>: each named
+station's counted slice is a member of a live room, joining one (live or
+candidate), or in none.</li>
+<li><code>{&quot;expectTurns&quot;:[&lt;turn&gt;, ...]}</code>: every turn the server holds for the
+fixture's rooms, open and ended, in order of start, then of talker name.
+Each turn is <code>{&quot;kind&quot;:&quot;talking&quot;,&quot;talker&quot;:&quot;A&quot;,&quot;startMs&quot;:10000,&quot;endMs&quot;:null}</code>,
+<code>{&quot;kind&quot;:&quot;unknown&quot;,&quot;talker&quot;:null,...}</code> or
+<code>{&quot;kind&quot;:&quot;doubled&quot;,&quot;talkers&quot;:[&quot;A&quot;,&quot;B&quot;],...}</code>, with <code>startMs</code> and <code>endMs</code>
+in ms from the fixture's start (<code>endMs</code> <code>null</code> while open), and
+optionally <code>ending</code> (6.6) and <code>readings</code>, a map from station name to the
+number of readings stored with the turn (6.7; a station not in the map
+has none). An optional key absent is not checked.</li>
+</ul>
+</li>
+<li>The server's runner reads turns and membership from the server's own
+state through a test hook, not from the wire.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Fixture</th>
+<th>What it holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>talking</code></td>
+<td>a talking turn, its readings (present or not), <code>ending</code> on unkey, and its end 3 s later at the unkey</td>
+</tr>
+<tr>
+<td><code>unknown-then-talking</code></td>
+<td>an unknown turn ended by a member keying; the talking turn starts at that moment</td>
+</tr>
+<tr>
+<td><code>quiet-after-3s</code></td>
+<td>an unknown turn open at 2999 ms after the last present reading and ended at 3000 ms, its end at that reading; a present-false reading after it dropped; a second unknown turn</td>
+</tr>
+<tr>
+<td><code>same-talker-continues</code></td>
+<td>a rekey at 2999 ms continues the turn, keeping the readings taken while ending; a rekey at 3000 ms starts a new turn</td>
+</tr>
+<tr>
+<td><code>waiting-reading-dropped</code></td>
+<td>a reading while ending dropped when the turn ends; it opens no unknown turn; the next present reading does</td>
+</tr>
+<tr>
+<td><code>doubled</code></td>
+<td>talking A, then doubled A and B with readings kept out of both, then talking B</td>
+</tr>
+<tr>
+<td><code>long-key</code></td>
+<td>a key held 10 minutes treated as unkeyed, ending at 10 minutes; still-keyed presence opens nothing; unkey and key again opens a new turn</td>
+</tr>
+<tr>
+<td><code>digital</code></td>
+<td>in <code>digu</code>, two keyed members each with their own turn, readings while both are keyed in neither, readings with one keyed in its turn, and an unknown turn after</td>
+</tr>
+<tr>
+<td><code>join-dwell</code></td>
+<td>joining until 10 s, readings while joining dropped, keying during the dwell making a member at once</td>
+</tr>
+<tr>
+<td><code>two-slices-one-room</code></td>
+<td>a station's second slice in one room: its readings dropped</td>
+</tr>
+<tr>
+<td><code>talker-leaves</code></td>
+<td>a keyed talker's slice no longer listed ends its turn at that moment; coming back and keying opens a new turn; 30 s of silence from a keyed talker ends its turn when its row leaves</td>
+</tr>
+<tr>
+<td><code>key-in-candidate</code></td>
+<td>keying in a candidate room makes the slice a member at once, opening the room and a talking turn; readings while joining dropped</td>
+</tr>
+</tbody>
+</table>
+<h3 id="116-running-the-servers-runner">11.6 Running the server's runner</h3>
+<pre><code>python3 -m pytest roundtable/tests -q -p no:cacheprovider
+</code></pre>
+<p>The authoritative run is Ubuntu 24.04's Python 3.12 with apt
+<code>python3-websockets</code> and <code>python3-cryptography</code>, which is also what CI
+installs; it also runs on macOS's Python 3.9 with websockets 15.
+<code>roundtable/server/nereus_roundtable/transport.py</code> isolates the websockets
+differences, as the rendezvous's does.</p>
+<h2 id="12-versions-and-changing-the-protocol">12. Versions and changing the protocol</h2>
+<ul>
+<li><strong>This is version 1</strong>, on the <code>/v1/</code> paths, <code>hello</code> <code>v</code> 1. A later version
+adds new paths (<code>/v2/...</code>); <code>/v1/</code> keeps working for at least six months
+after its successor ships (design C8). The dates are on the API page, and
+stations still on the older version get <code>notice</code> <code>version-ending</code> with the
+date in <code>until</code>.</li>
+<li><strong>The document, the fixtures and the server change together</strong>, in the same
+change, and the server's runner passes. A change to a kind a Core uses
+reaches the Core's runner before it ships.</li>
+<li><strong>Version 1 adds, never changes.</strong> The server may add keys to its
+messages and objects, new kinds, new codes and new limit keys, relying on
+receivers ignoring what they do not know (5.1); the extra-key control
+fixtures hold every runner to that. It never changes or removes a key, a
+kind, a value's meaning, a code or a reason text version 1 defines.</li>
+<li><strong>A station sends only what version 1 lists</strong> to a version 1 server; the
+server closes on a kind it does not know.</li>
+<li><strong>Nothing sensitive stored or logged</strong> (9.3, 9.4) is part of the wire's
+contract, not an implementation detail.</li>
+<li>The API page, <code>nereussdr.com/roundtable/api.html</code>, is generated from this
+document by <code>docs/manual/build_preview.py</code>, and publishes
+<code>roundtable/conformance/v1/</code> beside it (design 9.7, R-RT-25).</li>
+</ul>
+<div class="page-next"></div></main></div></body></html>

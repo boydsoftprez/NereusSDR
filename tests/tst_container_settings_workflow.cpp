@@ -2,9 +2,19 @@
 // Modification history (NereusSDR):
 //   2026-10-26 — Skip the GPU frame cases where QRhi is unavailable by
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - Fix wave I3: Show next in the live editor finds the named
+//                 web image in any draft container. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - A control shortcut is checked by Thetis button number.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 #include <QtTest>
 #include <QPainter>
+#include "gui/meters/OtherButtonCatalog.h"
 #include "gui/meters/OtherButtonItem.h"
+#include "gui/meters/ButtonBoxItem.h"
+#include "gui/meters/AntennaButtonItem.h"
+#include "gui/meters/ModeButtonItem.h"
+#include "gui/meters/TuneStepButtonItem.h"
 #include "gui/containers/meter_property_editors/OtherButtonItemEditor.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerControlCatalog.h"
@@ -45,6 +55,8 @@
 #include "gui/meters/MeterPoller.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/presets/CompositePresetItem.h"
+#include "gui/meters/WebImageItem.h"
+#include "gui/containers/meter_property_editors/WebImageItemEditor.h"
 #include "NativeWindowFrames.h"
 using namespace NereusSDR;
 class TstContainerSettingsWorkflow:public QObject {
@@ -109,7 +121,8 @@ private slots:
         const auto copy=registry.makeEntry("control."+action.first);QVERIFY(copy.id!=entry.id);
         std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr));
         auto* other=qobject_cast<OtherButtonItem*>(item.get());QVERIFY(other);
-        QCOMPARE(other->visibleBits(),uint32_t(1u<<int(action.second)));QCOMPARE(other->columns(),1);
+        QVERIFY(other->isButtonShown(action.second));QCOMPARE(other->shownButtonCount(),1);
+        QCOMPARE(other->visibleBits(),uint32_t(1u<<OtherButtonCatalog::buttonIdToLegacy(action.second)));QCOMPARE(other->columns(),1);
         QSignalSpy command(other,&OtherButtonItem::otherButtonClicked);
         const auto captured=registry.captureMeterItem(*other);QCOMPARE(captured.id,entry.id);QCOMPARE(captured.typeId,QString("OTHERBTNS"));
         QCOMPARE(command.count(),0);QVERIFY(registry.validateEntry(captured).isEmpty());
@@ -257,7 +270,8 @@ private slots:
     preview.setDocument(document);preview.resize(420,240);preview.show();QCoreApplication::processEvents();
     QCOMPARE(preview.entryBoundary(document.contents[0].id).height(),44);
     QCOMPARE(preview.entryBoundary(document.contents[1].id).height(),44);
-    QCOMPARE(preview.entryBoundary(document.contents[2].id).height(),132);
+    // A new other-buttons grid has Thetis's 3 columns: its shown buttons take 5 rows of 44.
+    QCOMPARE(preview.entryBoundary(document.contents[2].id).height(),220);
  }
  void initTestCase() {AppSettings::setProfileOverride(QStringLiteral("task10-settings-%1").arg(QCoreApplication::applicationPid()));AppSettings::instance().clear();}
  void cleanupTestCase() {QFile::remove(AppSettings::instance().filePath());}
@@ -365,6 +379,74 @@ private slots:
     auto* adapter=editor.findChild<BaseItemEditor*>();QVERIFY(adapter);auto* bar=qobject_cast<BarItem*>(adapter->item());bar->setBarColor(Qt::green);adapter->propertyChanged();QCOMPARE(edited.context["mmioGuid"].toString(),id);QCOMPARE(edited.context["mmioVariable"].toString(),QString("alpha"));
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);WorkspaceDocument d;ContainerDocument c;c.id="A";d.mainContainerId=c.id;c.contents={edited};d.containers={c};QCOMPARE(store.commit(d,0).status,CommitStatus::Saved);ContainerWorkspaceStore reload(settings);const auto restored=reload.load().document.containers[0].contents[0];std::unique_ptr<MeterItem> item(registry.createMeterItem(restored,nullptr,ContentRenderMode::Preview));QVERIFY(item);QCOMPARE(item->mmioGuid(),QUuid(id));QCOMPARE(item->mmioVariable(),QString("alpha"));QCOMPARE(qobject_cast<BarItem*>(item.get())->barColor(),QColor(Qt::green));
  }
+ void buttonGridColumnRangesAndNewGridColumns() {
+    ContainerContentRegistry registry;
+    const auto grid=[&](const ContentEntry& entry) {return std::unique_ptr<MeterItem>(registry.createMeterItem(entry,nullptr,ContentRenderMode::Preview));};
+    // Fixed ranges (Thetis setup.cs); a Nereus band grid takes the band range.
+    const QVector<QPair<QString,int>> fixed={{"BANDBTNS",15},{"NEREUSBAND",15},{"MODEBTNS",12},{"FILTERBTNS",12}};
+    for(const auto& type:fixed) {
+        const auto item=grid(registry.makeEntry(type.first));auto* box=qobject_cast<ButtonBoxItem*>(item.get());QVERIFY2(box,qPrintable(type.first));
+        QCOMPARE(box->columns(),3);QCOMPARE(box->columnRange(),std::make_pair(1,type.second));
+    }
+    // Ranges that follow the checked buttons, at least one column.
+    for(const QString type:{QStringLiteral("ANTENNABTNS"),QStringLiteral("TUNESTEPBTNS"),QStringLiteral("OTHERBTNS")}) {
+        const auto item=grid(registry.makeEntry(type));auto* box=qobject_cast<ButtonBoxItem*>(item.get());QVERIFY2(box,qPrintable(type));
+        QCOMPARE(box->columns(),3);QCOMPARE(box->columnRange().first,1);QVERIFY(box->columnRange().second>=1);
+    }
+    AntennaButtonItem antenna;QCOMPARE(antenna.columnRange(),std::make_pair(1,10));antenna.setVisibleBits(0b111);QCOMPARE(antenna.columnRange(),std::make_pair(1,3));antenna.setVisibleBits(0);QCOMPARE(antenna.columnRange(),std::make_pair(1,1));
+    TuneStepButtonItem steps;steps.setVisibleBits(0b11);QCOMPARE(steps.columnRange(),std::make_pair(1,2));
+    OtherButtonItem other;other.setOnlyVisible(OtherButtonItem::ButtonId::Mox);QCOMPARE(other.columnRange(),std::make_pair(1,1));
+    // A saved grid keeps its count, even one outside the range.
+    for(const int saved:{5,20}) {
+        auto entry=registry.makeEntry("MODEBTNS");entry.config["legacyRecord"]=QString("MODEBTNS|0|0|1|1|0|0|%1|0|1023").arg(saved);
+        const auto item=grid(entry);QCOMPARE(qobject_cast<ButtonBoxItem*>(item.get())->columns(),saved);
+    }
+ }
+ void buttonGridEditorClampsColumns() {
+    ModeButtonItem mode;mode.setColumns(5);
+    std::unique_ptr<QWidget> editor(ContainerSettingsDialog::buildTypeSpecificEditor(&mode,nullptr));QVERIFY(editor);
+    auto* spin=editor->findChild<QSpinBox*>("buttonBoxColumns");QVERIFY(spin);
+    QCOMPARE(spin->minimum(),1);QCOMPARE(spin->maximum(),12);QCOMPARE(spin->value(),5);
+    spin->setValue(20);QCOMPARE(spin->value(),12);QCOMPARE(mode.columns(),12);
+    // Hiding antenna buttons lowers the range and a count above it.
+    AntennaButtonItem antenna;antenna.setColumns(5);
+    std::unique_ptr<QWidget> antennaEditor(ContainerSettingsDialog::buildTypeSpecificEditor(&antenna,nullptr));QVERIFY(antennaEditor);
+    auto* antennaSpin=antennaEditor->findChild<QSpinBox*>("buttonBoxColumns");QVERIFY(antennaSpin);QCOMPARE(antennaSpin->maximum(),10);
+    auto* base=qobject_cast<BaseItemEditor*>(antennaEditor.get());QVERIFY(base);QSignalSpy changed(base,&BaseItemEditor::propertyChanged);
+    antenna.setVisibleBits(0b111);emit base->propertyChanged();
+    QCOMPARE(antennaSpin->maximum(),3);QCOMPARE(antennaSpin->value(),3);QCOMPARE(antenna.columns(),3);QCOMPARE(changed.count(),2);
+ }
+ void draftCopyPasteItemSettings() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument c;c.id="A";c.layout=ContentLayout::VerticalStack;
+    auto source=registry.makeEntry("MODEBTNS");source.config["legacyRecord"]=QString("MODEBTNS|0.1|0.2|0.5|0.3|0|0|5|0|1023|0.01|0.02|4|0.75|0|0");
+    auto target=registry.makeEntry("MODEBTNS");target.name="Second modes";
+    c.contents={source,target,registry.makeEntry("BANDBTNS"),registry.makeEntry("DISCORDBTNS")};d.containers={c};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);const auto saved=store.snapshot();
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);auto* list=dialog.findChild<QListWidget*>("containerDraftContents");QVERIFY(list);
+    QPushButton* copy=nullptr;QPushButton* paste=nullptr;
+    for(auto* button:dialog.findChildren<QPushButton*>()) {if(button->text()=="Copy settings") {copy=button;} if(button->text()=="Paste settings") {paste=button;}}
+    // Disabled, never hidden: each says why it cannot act.
+    QVERIFY(copy);QVERIFY(paste);QVERIFY(!copy->isHidden());QVERIFY(!paste->isHidden());
+    list->setCurrentRow(3);QVERIFY(!copy->isEnabled());QVERIFY(!copy->toolTip().isEmpty());QVERIFY(!paste->isEnabled());QVERIFY(!paste->toolTip().isEmpty());
+    list->setCurrentRow(0);QVERIFY(copy->isEnabled());QVERIFY(!paste->isEnabled());QVERIFY(!paste->toolTip().isEmpty());
+    copy->click();QVERIFY(paste->isEnabled());
+    list->setCurrentRow(2);QVERIFY(!paste->isEnabled());QVERIFY(!paste->toolTip().isEmpty());
+    list->setCurrentRow(1);QVERIFY(paste->isEnabled());QVERIFY(paste->toolTip().isEmpty());
+    const auto before=dialog.editSession()->draft().containers[0].contents[1];
+    std::unique_ptr<MeterItem> beforeItem(registry.createMeterItem(before,nullptr,ContentRenderMode::Preview));QVERIFY(beforeItem);
+    paste->click();QCOMPARE(list->currentRow(),1);
+    const auto after=dialog.editSession()->draft().containers[0].contents[1];
+    QCOMPARE(after.id,before.id);QCOMPARE(after.name,before.name);QCOMPARE(after.canvasRect,before.canvasRect);
+    std::unique_ptr<MeterItem> pasted(registry.createMeterItem(after,nullptr,ContentRenderMode::Preview));auto* box=qobject_cast<ButtonBoxItem*>(pasted.get());QVERIFY(box);
+    QCOMPARE(box->columns(),5);QCOMPARE(box->cornerRadius(),4.0f);QCOMPARE(box->heightRatio(),0.75f);
+    // The object keeps its place.
+    QCOMPARE(box->x(),beforeItem->x());QCOMPARE(box->y(),beforeItem->y());QCOMPARE(box->itemWidth(),beforeItem->itemWidth());QCOMPARE(box->itemHeight(),beforeItem->itemHeight());
+    // Draft only until Apply.
+    QCOMPARE(store.snapshot(),saved);QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+    ContainerWorkspaceStore reloaded(settings);QVERIFY(reloaded.load().ok);
+    std::unique_ptr<MeterItem> applied(registry.createMeterItem(reloaded.snapshot().containers[0].contents[1],nullptr,ContentRenderMode::Preview));QCOMPARE(qobject_cast<ButtonBoxItem*>(applied.get())->columns(),5);
+ }
  void duplicateInvalidLegacyEntryLeavesDraftUnchanged() {
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
     QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
@@ -415,28 +497,98 @@ private slots:
     for(auto* button:singletonDialog.findChildren<QPushButton*>()) {if(button->text()=="Duplicate") {button->click();break;}}
     QCOMPARE(singletonDialog.editSession()->draft(),unchanged);QCOMPARE(registry.singletonView("applet:rx"),static_cast<QWidget*>(&singleton));
  }
- void unsupportedContainerOptionsKeepRawValues_data() {
+ void containerOptionsKeepRawValuesUntilChanged_data() {
     QTest::addColumn<QJsonValue>("minimises");QTest::addColumn<QJsonValue>("unused");
     QTest::newRow("booleans")<<QJsonValue(true)<<QJsonValue(false);
     QTest::newRow("raw")<<QJsonValue("legacy preference")<<QJsonValue(QJsonObject{{"unknown",19}});
  }
- void unsupportedContainerOptionsKeepRawValues() {
+ // Minimizes and Hide when slice not open are available; a saved value is
+ // kept as it is until its checkbox changes.
+ void containerOptionsKeepRawValuesUntilChanged() {
     QFETCH(QJsonValue,minimises);QFETCH(QJsonValue,unused);
     QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
     QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
     WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a,b;a.id="A";b.id="B";a.config={{"containerMinimises",minimises},{"hidesWhenRxNotUsed",unused}};d.containers={a,b};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
     ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);const auto original=dialog.editSession()->draft();
-    int found=0;for(auto* check:dialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when RX unused") {++found;QVERIFY(!check->isEnabled());QVERIFY(!check->toolTip().isEmpty());check->click();}}
-    QCOMPARE(found,2);dialog.selectDraftContainer("B");dialog.selectDraftContainer("A");QCOMPARE(dialog.editSession()->draft(),original);
+    QList<QCheckBox*> checks;for(auto* check:dialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when slice not open") {QVERIFY(check->isEnabled());QVERIFY(!check->toolTip().isEmpty());checks.append(check);}}
+    QCOMPARE(checks.size(),2);dialog.selectDraftContainer("B");dialog.selectDraftContainer("A");QCOMPARE(dialog.editSession()->draft(),original);
     QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);ContainerWorkspaceStore reload(settings);QCOMPARE(reload.load().document.containers[0].config,a.config);
     const auto portable=ContainerDocumentCodec::importContainer(ContainerDocumentCodec::exportContainer(store.snapshot().containers[0]));QVERIFY(portable.ok);QCOMPARE(portable.document.containers[0].config,a.config);
+    for(auto* check:checks) {check->click();}
+    QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);const auto changed=store.snapshot().containers[0].config;
+    QCOMPARE(changed.value("containerMinimises"),QJsonValue(!minimises.toBool()));QCOMPARE(changed.value("hidesWhenRxNotUsed"),QJsonValue(!unused.toBool()));
+    QCOMPARE(manager.container("A")->containerMinimises(),!minimises.toBool());QCOMPARE(manager.container("A")->containerHidesWhenRxNotUsed(),!unused.toBool());
     ContainerWidget legacy;legacy.setContainerMinimises(true);legacy.setContainerHidesWhenRxNotUsed(true);ContainerSettingsDialog legacyDialog(&legacy);
-    for(auto* check:legacyDialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when RX unused") {QVERIFY(!check->isEnabled());check->click();}}
-    QPushButton* apply=nullptr;for(auto* button:legacyDialog.findChildren<QPushButton*>()) {if(button->text()=="Apply") {apply=button;break;}}QVERIFY(apply);apply->click();QVERIFY(legacy.containerMinimises());QVERIFY(legacy.containerHidesWhenRxNotUsed());
+    for(auto* check:legacyDialog.findChildren<QCheckBox*>()) {if(check->text()=="Minimizes" || check->text()=="Hide when slice not open") {QVERIFY(check->isEnabled());check->click();}}
+    QPushButton* apply=nullptr;for(auto* button:legacyDialog.findChildren<QPushButton*>()) {if(button->text()=="Apply") {apply=button;break;}}QVERIFY(apply);apply->click();QVERIFY(!legacy.containerMinimises());QVERIFY(!legacy.containerHidesWhenRxNotUsed());
  }
+ // The Slice combo offers Active slice, saved as rxSourceMode
+ // followSelectedRx as the header source menu saves it; a slice choice
+ // clears it again.
+ void activeSliceChoiceSavesFollowSelectedRx() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a;a.id="A";a.config={{"sliceId",2}};d.containers={a};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+    {
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* source=dialog.findChild<QComboBox*>("containerRxSource");QVERIFY(source);
+        QCOMPARE(source->currentData().toInt(),3);
+        const int active=source->findText("Active slice");QVERIFY(active>=0);QCOMPARE(source->itemData(active).toInt(),ContainerWidget::kActiveSliceSource);
+        source->setCurrentIndex(active);QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers[0].config.value("rxSourceMode").toString(),QStringLiteral("followSelectedRx"));
+        QCOMPARE(store.snapshot().containers[0].config.value("sliceId").toInt(),2);
+    }
+    {
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* source=dialog.findChild<QComboBox*>("containerRxSource");QVERIFY(source);
+        QCOMPARE(source->currentData().toInt(),ContainerWidget::kActiveSliceSource);
+        // Untouched, Apply keeps it.
+        QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers[0].config.value("rxSourceMode").toString(),QStringLiteral("followSelectedRx"));
+        source->setCurrentIndex(source->findData(2));QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        const auto config=store.snapshot().containers[0].config;
+        QVERIFY(!config.contains("rxSourceMode"));QCOMPARE(config.value("sliceId").toInt(),1);
+    }
+    {
+        // Picking the same slice it had before following clears the mode.
+        auto followed=store.snapshot();followed.containers[0].config["rxSourceMode"]="followSelectedRx";
+        QCOMPARE(manager.commitWorkspace(followed,followed.revision).status,CommitStatus::Saved);
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* source=dialog.findChild<QComboBox*>("containerRxSource");
+        source->setCurrentIndex(source->findData(2));QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QVERIFY(!store.snapshot().containers[0].config.contains("rxSourceMode"));
+    }
+    ContainerWidget legacy;ContainerSettingsDialog legacyDialog(&legacy);
+    auto* legacySource=legacyDialog.findChild<QComboBox*>("containerRxSource");QVERIFY(legacySource);QCOMPARE(legacySource->findText("Active slice"),-1);
+ }
+ // No controls round-trips through the draft, the store and the widget.
+ void noControlsRoundTrips() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a;a.id="A";d.containers={a};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+    {
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* check=dialog.findChild<QCheckBox*>("containerNoControls");QVERIFY(check);QCOMPARE(check->text(),QStringLiteral("No controls"));QVERIFY(!check->isChecked());
+        check->click();QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers[0].config.value("noControls"),QJsonValue(true));QVERIFY(manager.container("A")->noControls());
+    }
+    ContainerWorkspaceStore reload(settings);QCOMPARE(reload.load().document.containers[0].config.value("noControls"),QJsonValue(true));
+    {
+        ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);
+        auto* check=dialog.findChild<QCheckBox*>("containerNoControls");QVERIFY(check->isChecked());
+        check->click();QCOMPARE(dialog.applyDraft().status,CommitStatus::Saved);
+        QCOMPARE(store.snapshot().containers[0].config.value("noControls"),QJsonValue(false));QVERIFY(!manager.container("A")->noControls());
+    }
+    ContainerWidget legacy;ContainerSettingsDialog legacyDialog(&legacy);
+    auto* check=legacyDialog.findChild<QCheckBox*>("containerNoControls");QVERIFY(check);check->click();
+    QPushButton* apply=nullptr;for(auto* button:legacyDialog.findChildren<QPushButton*>()) {if(button->text()=="Apply") {apply=button;break;}}QVERIFY(apply);apply->click();QVERIFY(legacy.noControls());
+ }
+ // Fix wave R2: the Units row offers Follow global (a new item's choice)
+ // and each unit.
  void legacySignalUnitsUseGlobalPreferences() {
     ContainerContentRegistry registry;ContentPropertyEditor editor(registry);editor.setEntry(registry.makeEntry("SIGNALTEXT"));
-    auto* units=editor.findChild<QComboBox*>("signalGlobalUnits");QVERIFY(units);QVERIFY(!units->isEnabled());QVERIFY(units->toolTip().contains("global multimeter"));
+    auto* units=editor.findChild<QComboBox*>("signalUnits");QVERIFY(units);QVERIFY(units->isEnabled());QVERIFY(units->toolTip().contains("global multimeter"));
+    QCOMPARE(units->itemText(0),QString("Follow global"));QCOMPARE(units->currentIndex(),0);
  }
  void retainedReturnOrderAndLockedAtomicFailure() {
     WorkspaceDocument d;d.mainContainerId="main";ContainerDocument main,home,shell;main.id="main";home.id="home";shell.id="shell";ContentEntry before,after,returned,unknown;before.id="before";after.id="after";returned.id="returned";unknown.id="unknown";before.typeId=after.typeId=returned.typeId="TEXT";unknown.typeId="future";unknown.config["raw"]="opaque";returned.returnLocation=ReturnLocation{"home","before","after",{}};unknown.returnLocation=ReturnLocation{"missing",{},{},{}};home.contents={before,after};shell.contents={returned,unknown};d.containers={main,home,shell};
@@ -487,6 +639,39 @@ private slots:
     QPushButton* remove=nullptr;for(auto* button:dialog.findChildren<QPushButton*>()) {if(button->text()=="Remove / return contents") {remove=button;break;}}QVERIFY(remove);remove->click();QCOMPARE(dialog.editSession()->draft(),beforeFailed);
  }
 
+ // Fix wave I3: Show next in the live editor (ContentPropertyEditor's web
+ // image editor) selects the named web image, in this container first, then
+ // in another draft container (Thetis btnWebImage_goto_next_Click).
+ void showNextInTheLiveEditorFindsTheNamedWebImage() {
+    QTemporaryDir dir;AppSettings settings(dir.filePath("settings"));ContainerWorkspaceStore store(settings);ContainerContentRegistry registry;MeterPoller poller;
+    QWidget root;QSplitter splitter(&root);ContainerManager manager(&root,&splitter);manager.setWorkspaceAdapter(&store,&registry);manager.setPreviewPoller(&poller);
+    const auto webImage=[&registry](const QString& name) {
+        auto entry=registry.makeEntry("WEBIMAGE");entry.name=name;
+        std::unique_ptr<MeterItem> item(registry.createMeterItem(entry,nullptr,ContentRenderMode::Preview));
+        auto* web=qobject_cast<WebImageItem*>(item.get());web->setGuid(QUuid::createUuid());
+        const QString id=web->fourChar();return std::make_pair(registry.captureMeterItem(*web,entry),id);
+    };
+    const auto [first,firstId]=webImage("First");const auto [second,secondId]=webImage("Second");const auto [other,otherId]=webImage("Other");
+    QVERIFY(firstId!=secondId && secondId!=otherId && firstId!=otherId);
+    WorkspaceDocument d;d.mainContainerId="A";ContainerDocument a,b;a.id="A";a.name="Images";a.layout=ContentLayout::VerticalStack;b.id="B";b.name="More images";b.layout=ContentLayout::VerticalStack;
+    a.contents={first,second};b.contents={other};d.containers={a,b};QCOMPARE(manager.commitWorkspace(d,0).status,CommitStatus::Saved);
+    ContainerSettingsDialog dialog(manager.container("A"),nullptr,&manager);auto* list=dialog.findChild<QListWidget*>("containerDraftContents");QCOMPARE(list->count(),2);
+    const auto showNext=[&dialog](const QString& id) {
+        auto* editor=dialog.findChild<ContentPropertyEditor*>();QVERIFY(editor);
+        auto* web=editor->findChild<WebImageItemEditor*>();QVERIFY(web);emit web->showNextRequested(id);
+    };
+    // In this container.
+    list->setCurrentRow(0);showNext(secondId);QTRY_COMPARE(list->currentRow(),1);
+    // In another container: the dialog switches to it.
+    showNext(otherId);
+    auto* selection=dialog.findChild<QComboBox*>("containerDraftSelection");
+    QTRY_COMPARE(selection->currentData().toString(),QString("B"));QTRY_COMPARE(list->currentRow(),0);QCOMPARE(list->item(0)->text(),QString("Other"));
+    // And back again.
+    showNext(firstId);QTRY_COMPARE(selection->currentData().toString(),QString("A"));QTRY_COMPARE(list->currentRow(),0);
+    // An ID no draft holds changes nothing.
+    QVERIFY(!dialog.selectDraftWebImage(QStringLiteral("ZZZZ")));QCOMPARE(list->currentRow(),0);
+    dialog.reject();
+ }
 };
 QTEST_MAIN(TstContainerSettingsWorkflow)
 #include "tst_container_settings_workflow.moc"

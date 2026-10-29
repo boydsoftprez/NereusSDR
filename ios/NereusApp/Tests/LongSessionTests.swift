@@ -453,6 +453,51 @@ struct LongSessionTests {
                                            timeZone: utc) == "In another app 19:42 to 20:15 \u{00B7} sound only")
     }
 
+    @Test("a 65-second sound-only return anchors its notice to the first resumed capture")
+    func returnedMarkUsesResumedCapture() throws {
+        let rig = try Self.rig()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        let band = rig.app.main.band
+        rig.session.sessionStarted(owner: 1)
+        rig.session.connectionChanged(.connected)
+        band.endpointId = 1
+        band.settings.waterfallPeriodMs = 10
+        _ = band.prepareToDraw(size: CGSize(width: 300, height: 600), scale: 1)
+        var now = 1000.0
+        band.lineClock = { now }
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        func receive(_ stamp: UInt64, sequence: UInt32, advance: Bool = true) {
+            band.receive(.displayFrame(DisplayFrame(endpointId: 1, contextGeneration: 1,
+                encoderSequence: sequence, producerTimestamp: stamp, isKeyframe: sequence == 1,
+                waterfallAdvance: advance, minDbm: -160, maxDbm: 0,
+                traceDbm: [-80], waterfallDbm: [-90], wideDbm: [])))
+            _ = band.prepareToDraw(size: CGSize(width: 300, height: 600), scale: 1)
+        }
+        receive(1_000_000_000, sequence: 1)
+        rig.session.sceneChanged(inForeground: false)
+        rig.clock.now = Self.start.addingTimeInterval(65)
+        now += 65
+        rig.session.sceneChanged(inForeground: true)
+        #expect(band.awayMarks.count == 1)
+        #expect(band.awayMarks.first?.pending == true)
+        #expect(band.awayMarkY(try #require(band.awayMarks.first), scale: 3) == 0)
+        receive(65_999_000_000, sequence: 2, advance: false)
+        #expect(band.awayMarks.first?.pending == true)
+        receive(66_000_000_000, sequence: 3)
+        let mark = try #require(band.awayMarks.first)
+        let axis = try #require(band.waterfallTimeAxis)
+        #expect(mark.linesSince == 0)
+        #expect(abs(try #require(axis.yPoints(age: mark.linesSince, history: band.state.history))) < 5)
+        now += 1.0 / 30
+        receive(66_033_333_333, sequence: 4)
+        #expect(band.awayMarks.first?.linesSince == 1)
+        let moved = try #require(band.awayMarks.first)
+        #expect(abs(band.awayMarkY(moved, scale: 3) - 3.3333333) < 0.0001)
+        #expect(axis.age(at: 1032.5, history: band.state.history) == nil)
+        band.reset()
+        #expect(band.awayMarks.isEmpty)
+    }
+
     @Test("sound-only marks belong to the connected listening intent, never no session or an older owner")
     func soundOnlyOwner() throws {
         let rig = try Self.rig()
@@ -490,7 +535,7 @@ struct LongSessionTests {
         #expect(band.awayMarks.first?.linesSince == 0)
         BandFlagShotTests.feed(band, width: 64, lines: 5)
         _ = band.prepareToDraw(size: CGSize(width: 300, height: 600), scale: 1)
-        #expect(band.awayMarks.first?.linesSince == 5)
+        #expect(band.awayMarks.first?.linesSince == 4)
         BandFlagShotTests.feed(band, width: 64, lines: band.state.history.capacity + 1)
         _ = band.prepareToDraw(size: CGSize(width: 300, height: 600), scale: 1)
         #expect(band.awayMarks.isEmpty)

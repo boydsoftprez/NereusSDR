@@ -94,7 +94,7 @@ struct ThreeDViewTests {
         rig.main.changeDisplay { $0.enterBand("27") }
         #expect(display.floorBand == "2m")
         #expect(PhoneSetupKeys(main: rig.main).perBandName == "2m")
-        #expect(SetupDescription.bandName(13) == "XVTR" && SetupDescription.bandName(14) == nil)
+        #expect(SetupDescription.bandName(13) == "XVTR" && SetupDescription.bandName(14) == "120m")
     }
 
     // MARK: The arrows (recommendation 2)

@@ -11,6 +11,75 @@
 // transmit scene refuses to run if one exists).
 //
 // Modification history (NereusSDR):
+//   2026-10-26 - container-parity-* round 4: the token picker opens where
+//                 its tool button opens it, below the button or above it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - container-parity-* round 3: a container's -content image
+//                 is the whole scrolled body; tooltips sit where Qt places
+//                 them for a pointer on the control; the signal text Units
+//                 list is moved from the stale mapToGlobal origin to the
+//                 window-geometry one; the VFO screens note their two lit
+//                 cells. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-26 - container-parity-* round 2: the text overlays carry
+//                 token text (a new item starts empty, as Thetis's does),
+//                 the short-title container's entry is named "Signal",
+//                 the token picker opens where Qt places it (no forced
+//                 move off the screen), and the web image notes say the
+//                 picture's caption is its own. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - container-parity-* scenes: the items and editors the
+//                 container item parity branch changed (button grid
+//                 editors, mode grid, VFO display and its screens, clock,
+//                 text overlay and LED, S-meter and tuning dials, web image
+//                 pan background, artwork options, signal text, TX and RX
+//                 sections, a long container title). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The add-content scenes find the first Longpath row by
+//                 typeId and the dial by "S-Meter dial" (picker names under
+//                 headings). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-25 - The roundtable-tags check paints the CPU tags over the
+//                 pan's own frame with its tags off, not over black, so a
+//                 dimmed (translucent) border is compared on the backdrop
+//                 the GPU frame blends it onto. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - The roundtable-tags-hidden and roundtable-flag-hidden
+//                 scenes: you are hidden, the tags and flag line dimmed,
+//                 "Hidden" in place of Roundtable. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - roundtable-panel-twenty: slice A in 14.212 USB, the
+//                 header's 10-character frequency at 340, 298 and 260 px.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - Every roundtable-* scene runs with the workspace look on
+//                 (Scene::workspacePreview), the app's default. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 15: every roundtable-panel-* scene
+//                 and roundtable-keyed also at the applet column's widths
+//                 (--column, 298 px, the column at 1512x869; --min, its
+//                 260 px minimum), and roundtable-docked: the panel in a
+//                 real MainWindow's applet column, checked for anything past
+//                 its viewport. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 14: the roundtable-flag-live,
+//                 -mention, -keyed, -offline and -connecting scenes, each
+//                 checking slice A's Roundtable line, its text and fit.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 14: the roundtable-tags,
+//                 roundtable-tags-crowded, roundtable-tags-offline and
+//                 roundtable-tags-connecting scenes, with the CPU painter's
+//                 tags against the GPU frame's; poseRoundtableRoomOn poses
+//                 room 7.185 on any model. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 13: the roundtable-panel-*,
+//                 roundtable-window-{narrow,medium,wide} and roundtable-keyed
+//                 scenes. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-10-24 - Roundtable plan Task 12: the roundtable-spothub,
+//                 roundtable-firstrun and roundtable-firstrun-hidden scenes;
+//                 dialog-spot-hub closes the first-run sheet its Roundtable
+//                 tab opens. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -222,6 +291,13 @@
 //                 Panel's entries above the TX applet hidden, so the whole
 //                 applet shows. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - CW transmit: cw-digital shows the real CWX applet and its
+//                 CW page with no "not built" plate; cw-transmit--semi,
+//                 --qsk-unavailable, --refused and --hl2 (and their
+//                 classic- pairs) pose the CW page, CWX and the TX applet
+//                 in CW as the approved mockup's right strip does;
+//                 dialog-setup-cw--scrolled steps DSP > CW.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -229,9 +305,27 @@
 #include "gui/instruments/NeedleInstrument.h"
 #include "gui/meters/ItemGroup.h"
 #include "gui/meters/presets/CompositePresetItem.h"
+#include "gui/applets/SectionParts.h"
+#include "gui/containers/ContentPropertyEditor.h"
+#include "gui/meters/AntennaButtonItem.h"
+#include "gui/meters/ClockItem.h"
+#include "gui/meters/DialItem.h"
+#include "gui/meters/FilterButtonItem.h"
+#include "gui/meters/SignalTextItem.h"
+#include "gui/meters/TextOverlayItem.h"
+#include "gui/meters/VfoDisplayItem.h"
+#include "gui/meters/WebImageItem.h"
+#include "gui/meters/presets/SignalTextPresetItem.h"
+#include "gui/meters/LEDItem.h"
+#include "gui/meters/NereusBandButtonItem.h"
+#include <QLinearGradient>
+#include <QTemporaryDir>
+#include <QToolButton>
+#include <QUrl>
 #include "PreviewScenes.h"
 
 #include <QAction>
+#include <QTextEdit>
 #include <QApplication>
 #include <QColorDialog>
 #include <QDateTime>
@@ -252,6 +346,7 @@
 #include <QHoverEvent>
 #include <QLabel>
 #include <QFontInfo>
+#include <QAbstractButton>
 #include <QFontMetrics>
 #include <QGroupBox>
 #include <QMenu>
@@ -276,6 +371,8 @@
 #include <QComboBox>
 #include <QVBoxLayout>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QJsonDocument>
 #include <QListWidget>
 #include <QSet>
@@ -294,6 +391,7 @@
 #include <cmath>
 #include <memory>
 #include <optional>
+#include <tuple>
 
 #include "ControlsSheet.h"
 #include "PreviewData.h"
@@ -354,10 +452,13 @@
 #include "gui/TitleBar.h"
 #include "gui/UnbuiltFeatures.h"
 #include "gui/applets/CwxApplet.h"
+#include "core/CwTypes.h"
+#include "models/CwKeyerController.h"
 #include "gui/applets/DigitalApplet.h"
 #include "gui/applets/DvkApplet.h"
 #include "gui/applets/EqApplet.h"
 #include "gui/applets/PhoneCwApplet.h"
+#include "gui/applets/RoundtableApplet.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/AmpApplet.h"
 #include "gui/applets/Rf2ksApplet.h"
@@ -377,6 +478,7 @@
 #include "gui/containers/FloatingContainer.h"
 #include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/meter_property_editors/TextOverlayItemEditor.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/containers/EdgeDockStrip.h"
 #include "gui/containers/WorkspaceHeader.h"
@@ -406,6 +508,11 @@
 #include "core/StationTciController.h"
 #include "models/StationTciModel.h"
 #include "fakes/FakeStationLink.h"
+#include "core/roundtable/RoundtableState.h"
+#include "gui/roundtable/RoundtableFirstRunDialog.h"
+#include "gui/roundtable/RoundtablePanel.h"
+#include "gui/roundtable/RoundtableWindow.h"
+#include "models/RoundtableModel.h"
 #include "gui/applets/RxApplet.h"
 #include "gui/widgets/AntennaSwitchToast.h"
 #include "gui/widgets/RxDashboard.h"
@@ -3058,7 +3165,6 @@ constexpr int kFullStripStableSteps = 6;
 // are commented out in MainWindow.cpp). Each is plain UI over NyiOverlay
 // markers with no model, network or device access, so the preview builds
 // them standalone as container content, tagged exists-not-wired.
-constexpr auto kPreviewCwxType = "preview.cwx";
 constexpr auto kPreviewDvkType = "preview.dvk";
 constexpr auto kPreviewDigitalType = "preview.digital";
 constexpr auto kPreviewEqType = "preview.eq";
@@ -3113,8 +3219,6 @@ bool registerPreviewApplets(SceneContext& ctx)
                 return w;
             });
     };
-    add(kPreviewCwxType, QStringLiteral("CWX (not wired)"),
-        [](RadioModel* m, QWidget* p) -> QWidget* { return new CwxApplet(m, p); });
     add(kPreviewDvkType, QStringLiteral("DVK (not wired)"),
         [](RadioModel* m, QWidget* p) -> QWidget* { return new DvkApplet(m, p); });
     add(kPreviewDigitalType, QStringLiteral("Digital (not wired)"),
@@ -3122,8 +3226,9 @@ bool registerPreviewApplets(SceneContext& ctx)
     add(kPreviewEqType, QStringLiteral("EQ (not wired)"),
         [](RadioModel* m, QWidget* p) -> QWidget* { return new EqApplet(m, p); });
     ctx.notes.append(QStringLiteral(
-        "CwxApplet, DvkApplet, DigitalApplet and EqApplet: constructed standalone through preview "
-        "widget factories (MainWindow leaves them commented out); exists-not-wired"));
+        "DvkApplet, DigitalApplet and EqApplet: constructed standalone through preview "
+        "widget factories (MainWindow leaves them commented out); exists-not-wired. "
+        "The CWX applet is MainWindow's own (applet:cwx)"));
     return true;
 }
 
@@ -3357,11 +3462,11 @@ void sceneCwDigital(SceneContext& ctx)
         }
         if (!commitScene(c, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
                 placeMain(d, DockEdge::Left);
-                takeFromMain(d, {QStringLiteral("applet:PHCW")});
+                takeFromMain(d, {QStringLiteral("applet:PHCW"), QStringLiteral("applet:cwx")});
                 d.containers.append(makeSceneContainer(
                     m, QStringLiteral("CW and Digital"), DockEdge::Right, ContentLayout::VerticalStack,
                     {{QStringLiteral("applet:PHCW"), {}},
-                     {QString::fromLatin1(kPreviewCwxType), {}},
+                     {QStringLiteral("applet:cwx"), {}},
                      {QString::fromLatin1(kPreviewDvkType), {}},
                      {QString::fromLatin1(kPreviewDigitalType), {}}}));
             })) {
@@ -3378,39 +3483,6 @@ void sceneCwDigital(SceneContext& ctx)
         // The Phone page's mic profile list reads MicProfileManager, as the
         // TX applet's profile selector does in tx-processing.
         txProfileSeed = seedTxProfiles(c);
-    }, [](SceneContext& c) {
-        // The CW page is not built in this build: showPage(1) falls back to
-        // the Phone page, so a plate says so above the applet's first row,
-        // in the applet's own layout, where it covers no control.
-        if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)) {
-            return;
-        }
-        auto* phcw = c.window->findChild<PhoneCwApplet*>();
-        auto* root = qobject_cast<QBoxLayout*>(phcw->layout());
-        if (root == nullptr) {
-            c.failure = QStringLiteral("the Phone / CW applet has no box layout for the plate");
-            return;
-        }
-        QLabel* plate = addNotImplementedPlate(c, phcw, QStringLiteral("Phone / CW, CW page"),
-                                               QStringLiteral("CW page: not built yet in NereusSDR"),
-                                               QStringLiteral("the Phone / CW applet's CW page is gated by "
-                                                              "UnbuiltFeature::Cwx; showPage(1) shows the "
-                                                              "Phone page"),
-                                               false);
-        auto* holder = new QWidget(phcw);
-        auto* box = new QVBoxLayout(holder);
-        box->setContentsMargins(kPlateGapPx, kPlateGapPx, kPlateGapPx, kPlateGapPx);
-        plate->setParent(holder);
-        plate->setMinimumWidth(0);
-        plate->setMaximumWidth(QWIDGETSIZE_MAX);
-        box->addWidget(plate);
-        root->insertWidget(0, holder);
-        plate->show();
-        holder->show();
-        pump(kFinalSettleMs);
-        c.notes.append(QStringLiteral("Phone / CW CW page: not built (UnbuiltFeature::Cwx); the applet shows "
-                                      "its Phone page and a not-implemented plate sits above its first row, "
-                                      "in its own layout"));
     });
     if (!ctx.failure.isEmpty()) {
         return;
@@ -3725,7 +3797,15 @@ void sceneEditAddContent(SceneContext& ctx)
 {
     sceneEditDialog(ctx, QStringLiteral("edit-add-content"), [](SceneContext& c, ContainerSettingsDialog* d) {
         auto* available = d->findChild<QListWidget*>(QStringLiteral("containerAvailableContents"));
-        QListWidgetItem* longpath = rowContaining(available, QStringLiteral("(Longpath)"));
+        // The first Longpath instrument, by typeId: the list names them
+        // under the "Longpath instruments" heading, not with a suffix.
+        QListWidgetItem* longpath = nullptr;
+        for (int i = 0; available != nullptr && i < available->count(); ++i) {
+            if (available->item(i)->data(Qt::UserRole).toString().startsWith(QLatin1String("longpath."))) {
+                longpath = available->item(i);
+                break;
+            }
+        }
         if (longpath == nullptr) {
             c.failure = QStringLiteral("no Longpath entry in the Available list");
             return;
@@ -4153,7 +4233,7 @@ void sceneDialAddContent(SceneContext& ctx)
     auto listRect = std::make_shared<QRect>();
     sceneEditDialog(ctx, name, [listRect](SceneContext& c, ContainerSettingsDialog* d) {
         auto* available = d->findChild<QListWidget*>(QStringLiteral("containerAvailableContents"));
-        QListWidgetItem* dial = rowContaining(available, QStringLiteral("S-Meter dial (additional)"));
+        QListWidgetItem* dial = rowContaining(available, QStringLiteral("S-Meter dial"));
         if (dial == nullptr) {
             c.failure = QStringLiteral("no S-Meter dial row in the Available list");
             return;
@@ -4537,6 +4617,147 @@ RadioInfo sampleRadio(const QString& name, const QString& mac, const QString& ip
     return info;
 }
 
+// ---- CW transmit (R-CW-44) ------------------------------------------------
+//
+// cw-transmit--<pose>: one pan, slice A 14.030 CWU 400..900 (pose c), and
+// the approved mockup's right strip, Phone / CW on its CW page above CWX
+// and the TX applet. classic-cw-transmit--<pose> is the same state with the
+// workspace look off: the classic panel, CWX shown through Tools > CWX.
+// Nothing connects or keys: the radio is posed with
+// RadioModel::setLastRadioInfoForTest (and setBoardForTest for the HL2),
+// which is what CwKeyerController reads for QSK.
+enum class CwTransmitPose { Semi, QskUnavailable, Refused, Hl2 };
+
+QString cwTransmitPoseName(CwTransmitPose pose)
+{
+    switch (pose) {
+    case CwTransmitPose::Semi: return QStringLiteral("semi");
+    case CwTransmitPose::QskUnavailable: return QStringLiteral("qsk-unavailable");
+    case CwTransmitPose::Refused: return QStringLiteral("refused");
+    case CwTransmitPose::Hl2: return QStringLiteral("hl2");
+    }
+    return QString();
+}
+
+void sceneCwTransmit(SceneContext& ctx, CwTransmitPose pose, bool look)
+{
+    ctx.provenance = provProposed();
+    const QString name = (look ? QString() : QStringLiteral("classic-"))
+        + QStringLiteral("cw-transmit--") + cwTransmitPoseName(pose);
+    PanPose a = fourRxPoses().at(2);
+    a.panId = panIdAt(0);
+    a.spectrum.panId = a.panId;
+    if (pose == CwTransmitPose::Refused) {
+        // Just above the top of 20 m: out of band, so the keyer refuses.
+        a.sliceHz = 14'352'000.0;
+    }
+    runWindowScene(ctx, {a}, 0, [pose, look](SceneContext& c) {
+        if (look) {
+            if (!registerPreviewApplets(c)) {
+                return;
+            }
+            if (!commitScene(c, HeaderMode::Shown, [](WorkspaceDocument& d, ContainerManager* m) {
+                    placeMain(d, DockEdge::Left);
+                    takeFromMain(d, {QStringLiteral("applet:PHCW"), QStringLiteral("applet:cwx"),
+                                     QStringLiteral("applet:TX")});
+                    ContainerDocument strip = makeSceneContainer(
+                        m, QStringLiteral("CW"), DockEdge::Right, ContentLayout::VerticalStack,
+                        {{QStringLiteral("applet:PHCW"), {}},
+                         {QStringLiteral("applet:cwx"), {}},
+                         {QStringLiteral("applet:TX"), {}}});
+                    for (ContentEntry& e : strip.contents) {
+                        e.visible = true;
+                    }
+                    d.containers.append(strip);
+                })) {
+                return;
+            }
+        } else {
+            auto* show = c.window->findChild<QAction*>(QStringLiteral("cwxAction"));
+            if (show == nullptr || !show->isEnabled()) {
+                c.failure = QStringLiteral("no usable Tools > CWX action");
+                return;
+            }
+            show->trigger();
+        }
+        RadioInfo info = pose == CwTransmitPose::QskUnavailable
+            ? sampleRadio(QStringLiteral("Hermes"), QStringLiteral("00:1C:C0:4E:21:0B"),
+                          QStringLiteral("192.168.1.21"), HPSDRHW::Hermes, ProtocolVersion::Protocol1, 32)
+            : pose == CwTransmitPose::Hl2
+            ? sampleRadio(QStringLiteral("Hermes Lite 2"), QStringLiteral("00:1C:C0:4E:21:0C"),
+                          QStringLiteral("192.168.1.22"), HPSDRHW::HermesLite, ProtocolVersion::Protocol1, 73)
+            : sampleRadio(QStringLiteral("ANAN-7000DLE"), QStringLiteral("00:1C:C0:4E:21:0D"),
+                          QStringLiteral("192.168.1.23"), HPSDRHW::OrionMKII, ProtocolVersion::Protocol2, 22);
+        if (pose == CwTransmitPose::Hl2) {
+            c.model->setBoardForTest(HPSDRHW::HermesLite);
+        }
+        c.model->setLastRadioInfoForTest(info);
+        // QSK asked for where the radio cannot do it, so the page says why;
+        // Semi otherwise. Set twice so the keyer re-reads the posed radio.
+        const bool askQsk = pose == CwTransmitPose::QskUnavailable || pose == CwTransmitPose::Hl2;
+        TransmitModel& tx = c.model->transmitModel();
+        tx.setCwBreakInMode(static_cast<int>(CwBreakInMode::Off));
+        tx.setCwBreakInMode(static_cast<int>(askQsk ? CwBreakInMode::Qsk : CwBreakInMode::Semi));
+        auto* phcw = c.window->findChild<PhoneCwApplet*>();
+        auto* cwx = c.window->findChild<CwxApplet*>();
+        if (phcw == nullptr || cwx == nullptr) {
+            c.failure = QStringLiteral("no PhoneCwApplet or CwxApplet");
+            return;
+        }
+        phcw->showPage(1);
+        if (auto* text = cwx->findChild<QTextEdit*>(QStringLiteral("cwxText"))) {
+            text->setPlainText(QStringLiteral("CQ CQ DE KG4VCF KG4VCF K"));
+        }
+        CwKeyerController* keyer = c.model->cwKeyerController();
+        c.notes.append(QStringLiteral("%1; radio posed as %2 (RadioModel::setLastRadioInfoForTest%3); "
+                                      "break-in asked %4; keyer %5%6")
+                           .arg(look ? QStringLiteral("right strip Phone / CW (CW page), CWX, TX")
+                                     : QStringLiteral("classic panel, CWX shown through Tools > CWX"),
+                                info.name,
+                                pose == CwTransmitPose::Hl2 ? QStringLiteral(" and setBoardForTest") : QString(),
+                                askQsk ? QStringLiteral("QSK") : QStringLiteral("Semi"),
+                                keyer && keyer->keyerAllowed() ? QStringLiteral("allowed")
+                                                               : QStringLiteral("refused"),
+                                keyer && !keyer->keyerAllowed()
+                                    ? QStringLiteral(": ") + keyer->refusal().text : QString()));
+    });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    if (auto* vox = ctx.window->findChild<QPushButton*>(QStringLiteral("TxVoxButton"))) {
+        ctx.notes.append(QStringLiteral("TX applet VOX %1: \"%2\"")
+                             .arg(vox->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("disabled"),
+                                  vox->toolTip()));
+    }
+    noteStrips(ctx);
+    captureWindow(ctx, name);
+    if (look) {
+        captureStripsFull(ctx, name);
+    } else {
+        // The classic panel scrolls, so its three applets are grabbed whole
+        // as details of their own as well.
+        const QList<QPair<QString, QWidget*>> applets{
+            {QStringLiteral("phone-cw"), ctx.window->findChild<PhoneCwApplet*>()},
+            {QStringLiteral("cwx"), ctx.window->findChild<CwxApplet*>()},
+            {QStringLiteral("tx"), ctx.window->findChild<TxApplet*>()}};
+        for (const auto& [stem, widget] : applets) {
+            if (widget == nullptr) {
+                continue;
+            }
+            CapturedImage img;
+            img.name = name + QStringLiteral("--") + stem;
+            img.kind = QStringLiteral("detail");
+            img.image = grabWidget(widget);
+            img.logicalSize = widget->size();
+            img.dpr = img.image.devicePixelRatio();
+            img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(widget->metaObject()->className());
+            attachRegions(img, widget);
+            ctx.images.append(img);
+        }
+    }
+    annotateSlices(ctx);
+}
+
 QList<ConnectionTargetRow> sampleConnectionRows()
 {
     // The row shapes and words GuiConnectionController::refresh builds
@@ -4750,6 +4971,11 @@ void appendInventoryDialogScenes(QVector<Scene>& scenes)
         for (int i = 0; i < tabs->count() && ctx.failure.isEmpty(); ++i) {
             tabs->setCurrentIndex(i);
             pump(kTabSettleMs);
+            // Roundtable plan Task 12: the Roundtable tab asks the first-run
+            // question in its own window (the roundtable-firstrun scenes).
+            for (auto* sheet : hub->findChildren<RoundtableFirstRunDialog*>()) {
+                sheet->close();
+            }
             captureDialog(ctx, hub, QStringLiteral("dialog-spot-hub--") + slug(tabs->tabText(i)));
         }
         ctx.notes.append(QStringLiteral("%1 tabs; no spot client is started (auto-start settings are "
@@ -6507,6 +6733,903 @@ void recordMenuNotShown(SceneContext& ctx)
     }
 }
 
+// Roundtable plan Task 12 (design 11.2; mockups settings.html and the
+// board's first-run section). A window's Roundtable posed from the Core's
+// `roundtable` object (RoundtableState::applyStationValue) over a fake
+// station link, with one band list; nothing connects anywhere.
+struct PosedRoundtable {
+    Test::FakeStationLink link;
+    RoundtableState state;
+    RoundtableModel model;
+    QHash<QString, QVariant> saved;
+
+    PosedRoundtable()
+    {
+        // The station's identity and mute list, put back afterwards.
+        auto& settings = AppSettings::instance();
+        const QList<std::pair<QString, QString>> posed{
+            {QStringLiteral("User/Callsign"), QStringLiteral("KG4VCF")},
+            {QStringLiteral("User/GridSquare"), QStringLiteral("EM73tu")},
+            {QStringLiteral("Roundtable/MuteList"), QStringLiteral("N9JNK,KD9QRT,W2LOUD")}};
+        for (const auto& [key, value] : posed) {
+            saved.insert(key, settings.value(key));
+            settings.setValue(key, value);
+        }
+        model.attachStation(&link, &state);
+    }
+
+    ~PosedRoundtable()
+    {
+        model.detach();
+        auto& settings = AppSettings::instance();
+        for (auto it = saved.cbegin(); it != saved.cend(); ++it) {
+            if (it.value().isValid()) {
+                settings.setValue(it.key(), it.value());
+            } else {
+                settings.remove(it.key());
+            }
+        }
+    }
+
+    void live(bool hidden)
+    {
+        state.applyStationValue("firstRunAnswered", true);
+        state.applyStationValue("hidden", hidden);
+        state.applyStationValue("linkState", static_cast<int>(hidden
+            ? RoundtableModel::LinkState::Hidden : RoundtableModel::LinkState::Live));
+        state.applyStationValue("sliceRooms", QStringLiteral("{\"0\":\"lsb-7185000\"}"));
+        QJsonArray rooms;
+        const auto room = [](const QString& id, const QString& band, qint64 hz, int members) {
+            return QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("band"), band},
+                               {QStringLiteral("hz"), hz}, {QStringLiteral("members"), members}};
+        };
+        rooms.append(room(QStringLiteral("lsb-7185000"), QStringLiteral("40m"), 7185000,
+                          hidden ? 8 : 9));
+        rooms.append(room(QStringLiteral("usb-14212000"), QStringLiteral("20m"), 14212000, 412));
+        rooms.append(room(QStringLiteral("digu-14074000"), QStringLiteral("20m"), 14074000, 863));
+        model.applyRooms(QJsonObject{{QStringLiteral("rooms"), rooms}});
+    }
+};
+
+// Roundtable plan Task 13 (design 11.1, 11.2; mockup placement.html): one
+// room on 40 m posed on a fixed clock, as the panel and the window show it.
+constexpr qint64 kRoundtableNow = 1'800'000'000'000LL;
+const QString kRoundtableRoom = QStringLiteral("lsb-7185000");
+
+QJsonObject roundtableReading(double dbm, qint64 ageMs)
+{
+    return QJsonObject{{QStringLiteral("dbm"), dbm}, {QStringLiteral("t"), kRoundtableNow - ageMs},
+                       {QStringLiteral("present"), true}};
+}
+
+QJsonObject roundtableMember(const QString& ref, const QString& callsign, const QString& grid,
+                             double km, const QJsonValue& reading, bool you = false,
+                             bool away = false)
+{
+    QJsonObject m{{QStringLiteral("ref"), ref},      {QStringLiteral("callsign"), callsign},
+                  {QStringLiteral("nth"), 1},        {QStringLiteral("grid"), grid},
+                  {QStringLiteral("offsetHz"), 0},   {QStringLiteral("away"), away},
+                  {QStringLiteral("keyed"), false},  {QStringLiteral("you"), you},
+                  {QStringLiteral("reading"), reading}};
+    if (km >= 0) {
+        m.insert(QStringLiteral("km"), km);
+    }
+    return m;
+}
+
+QJsonObject roundtableTalker(const QString& ref, const QString& callsign)
+{
+    return QJsonObject{{QStringLiteral("ref"), ref}, {QStringLiteral("callsign"), callsign},
+                       {QStringLiteral("nth"), 1}};
+}
+
+QJsonObject roundtableTurn(qint64 id, const QString& kind, const QJsonArray& talkers, qint64 agoStart,
+                           const QJsonValue& agoEnd, bool mine = false)
+{
+    const QJsonValue end = agoEnd.isDouble() ? QJsonValue(kRoundtableNow - agoEnd.toInteger())
+                                             : QJsonValue(QJsonValue::Null);
+    return QJsonObject{{QStringLiteral("id"), id},
+                       {QStringLiteral("kind"), kind},
+                       {QStringLiteral("talkers"), talkers},
+                       {QStringLiteral("start"), kRoundtableNow - agoStart},
+                       {QStringLiteral("end"), end},
+                       {QStringLiteral("names"), QJsonArray{}},
+                       {QStringLiteral("mine"), mine}};
+}
+
+QJsonObject roundtableMessage(qint64 id, const QString& ref, const QString& callsign, qint64 agoMs,
+                              const QString& text)
+{
+    return QJsonObject{{QStringLiteral("id"), id},       {QStringLiteral("ref"), ref},
+                       {QStringLiteral("callsign"), callsign}, {QStringLiteral("nth"), 1},
+                       {QStringLiteral("t"), kRoundtableNow - agoMs},
+                       {QStringLiteral("state"), QStringLiteral("shown")},
+                       {QStringLiteral("text"), text}};
+}
+
+// The room list with what is on each frequency, for the window's list.
+void poseRoundtableRooms(RoundtableModel& model)
+{
+    const auto room = [](const QString& id, const QString& band, qint64 hz, int members,
+                         const QString& state, const QStringList& talkers, qint64 agoLast) {
+        return QJsonObject{{QStringLiteral("id"), id},
+                           {QStringLiteral("band"), band},
+                           {QStringLiteral("hz"), hz},
+                           {QStringLiteral("members"), members},
+                           {QStringLiteral("state"), state},
+                           {QStringLiteral("talkers"), QJsonArray::fromStringList(talkers)},
+                           {QStringLiteral("last"), kRoundtableNow - agoLast}};
+    };
+    QJsonArray rooms{
+        room(QStringLiteral("lsb-3873000"), QStringLiteral("80m"), 3873000, 6, QStringLiteral("quiet"), {}, 540000),
+        room(kRoundtableRoom, QStringLiteral("40m"), 7185000, 6, QStringLiteral("talking"),
+             {QStringLiteral("W1TLK")}, 0),
+        room(QStringLiteral("lsb-7200000"), QStringLiteral("40m"), 7200000, 4, QStringLiteral("unknown"), {}, 0),
+        room(QStringLiteral("lsb-7249000"), QStringLiteral("40m"), 7249000, 3, QStringLiteral("doubled"),
+             {QStringLiteral("K4QQ"), QStringLiteral("N4RRR")}, 0),
+        room(QStringLiteral("usb-14212000"), QStringLiteral("20m"), 14212000, 12, QStringLiteral("talking"),
+             {QStringLiteral("VE3XYZ")}, 0),
+        room(QStringLiteral("usb-14313000"), QStringLiteral("20m"), 14313000, 5, QStringLiteral("quiet"), {}, 180000),
+        room(QStringLiteral("cw-14040000"), QStringLiteral("20m"), 14040000, 2, QStringLiteral("talking"),
+             {QStringLiteral("DL1ABC")}, 0)};
+    model.applyRooms(QJsonObject{{QStringLiteral("rooms"), rooms}});
+}
+
+QJsonArray roundtableMembers()
+{
+    return QJsonArray{
+        // Your own reading of the talker: the box's hint carries it.
+        roundtableMember(QStringLiteral("me"), QStringLiteral("KG4VCF"), QStringLiteral("EM73"), -1,
+                         roundtableReading(-73, 600), true),
+        roundtableMember(QStringLiteral("t"), QStringLiteral("W1TLK"), QStringLiteral("FN42"), 1290,
+                         roundtableReading(-71, 800)),
+        roundtableMember(QStringLiteral("a"), QStringLiteral("W4ABC"), QStringLiteral("EM85"), 210,
+                         roundtableReading(-64, 1500)),
+        roundtableMember(QStringLiteral("b"), QStringLiteral("N3XYZ"), QStringLiteral("FM19"), 880,
+                         roundtableReading(-88, 2500)),
+        roundtableMember(QStringLiteral("c"), QStringLiteral("K9AWY"), QStringLiteral("EN52"), 940,
+                         roundtableReading(-93, 1200), false, true),
+        roundtableMember(QStringLiteral("d"), QStringLiteral("VE3OLD"), QStringLiteral("FN03"), 1210,
+                         roundtableReading(-97, 46000))};
+}
+
+// `keyed`: you are talking (the TX line and the readings of you). The band
+// list and room 7.185 go to `model`, which may be another model on rt's
+// state (the window's own, for the panadapter scenes).
+void poseRoundtableRoomOn(RoundtableModel& model, bool keyed);
+
+void poseRoundtableRoom(PosedRoundtable& rt, bool keyed)
+{
+    rt.live(false);
+    poseRoundtableRoomOn(rt.model, keyed);
+}
+
+void poseRoundtableRoomOn(RoundtableModel& model, bool keyed)
+{
+    poseRoundtableRooms(model);
+    const QJsonArray now = keyed
+        ? QJsonArray{roundtableTurn(40, QStringLiteral("talking"),
+                                    QJsonArray{roundtableTalker(QStringLiteral("me"), QStringLiteral("KG4VCF"))},
+                                    65000, QJsonValue::Null, true)}
+        : QJsonArray{roundtableTurn(30, QStringLiteral("talking"),
+                                    QJsonArray{roundtableTalker(QStringLiteral("t"), QStringLiteral("W1TLK"))},
+                                    42000, QJsonValue::Null)};
+    const QJsonArray earlier{
+        roundtableTurn(22, QStringLiteral("unknown"), QJsonArray{}, 300000, 240000),
+        roundtableTurn(21, QStringLiteral("talking"),
+                       QJsonArray{roundtableTalker(QStringLiteral("a"), QStringLiteral("W4ABC"))}, 520000, 330000),
+        roundtableTurn(20, QStringLiteral("talking"),
+                       QJsonArray{roundtableTalker(QStringLiteral("me"), QStringLiteral("KG4VCF"))}, 760000, 540000,
+                       true)};
+    const QJsonArray messages{
+        roundtableMessage(1, QStringLiteral("a"), QStringLiteral("W4ABC"), 600000,
+                          QStringLiteral("Good evening all, 40 is in fine shape tonight.")),
+        roundtableMessage(2, QStringLiteral("j"), QStringLiteral("N9JNK"), 420000, QStringLiteral("ignore me")),
+        roundtableMessage(3, QStringLiteral("b"), QStringLiteral("N3XYZ"), 300000,
+                          QStringLiteral("Who was that on at the top of the hour? Strong but no ID.")),
+        roundtableMessage(4, QStringLiteral("t"), QStringLiteral("W1TLK"), 120000,
+                          QStringLiteral("KG4VCF you are S9 here in Boston, nice audio.")),
+        roundtableMessage(5, QStringLiteral("a"), QStringLiteral("W4ABC"), 30000,
+                          QStringLiteral("Net check-ins at 0100Z, same frequency."))};
+    model.applyRoom(QJsonObject{{QStringLiteral("type"), QStringLiteral("room")},
+                                   {QStringLiteral("id"), kRoundtableRoom},
+                                   {QStringLiteral("members"), roundtableMembers()},
+                                   {QStringLiteral("now"), now},
+                                   {QStringLiteral("earlier"), earlier},
+                                   {QStringLiteral("messages"), messages}});
+}
+
+// Runs `scene` on the fixed clock, then puts the clock and the window's
+// saved geometry back.
+void onRoundtableClock(const std::function<void()>& scene)
+{
+    auto& settings = AppSettings::instance();
+    const QString key = QString::fromLatin1(RoundtableWindow::kGeometryKey);
+    const QVariant geometry = settings.value(key);
+    RoundtableModel::setClockForTest([] { return kRoundtableNow; });
+    scene();
+    RoundtableModel::setClockForTest({});
+    if (geometry.isValid()) {
+        settings.setValue(key, geometry);
+    } else {
+        settings.remove(key);
+    }
+}
+
+// Roundtable plan Task 14 (design 11.2 Panadapter tags and VFO flag line;
+// mockups placement.html and board.html). The window's own Roundtable
+// model, moved onto a posed state over a link that offers Roundtable, so
+// MainWindow's wiring draws the tags on every pan and the flag lines; put
+// back on the window's own client and state afterwards.
+class RoundtableSceneLink final : public IStationLink {
+public:
+    CommandOutcome requestAddSlice(const QString&) override { return {}; }
+    CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
+    CommandOutcome requestRemoveSlice(int) override { return {}; }
+    CommandOutcome requestActiveSlice(int) override { return {}; }
+    CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
+    bool roundtableAvailable() const override { return true; }
+};
+
+struct WindowRoundtable {
+    PosedRoundtable rt;
+    RoundtableSceneLink link;
+    RadioModel* radio = nullptr;
+    RoundtableModel* model = nullptr;
+
+    explicit WindowRoundtable(RadioModel* r) : radio(r), model(r != nullptr ? r->roundtableModel() : nullptr)
+    {
+        if (model != nullptr) {
+            model->detach();
+            model->attachStation(&link, &rt.state);
+        }
+    }
+
+    ~WindowRoundtable()
+    {
+        if (model != nullptr) {
+            model->detach();
+            model->attachLocal(radio->roundtableClient(), radio->roundtableState());
+        }
+    }
+
+    // Live, in room 7.185 (`keyed`: you are talking there).
+    void live(bool keyed)
+    {
+        rt.live(false);
+        if (model != nullptr) {
+            poseRoundtableRoomOn(*model, keyed);
+        }
+    }
+
+    // Rooms crowded below 7.185: five 50 Hz apart (one of them names you,
+    // so it stays out of the fold) and a pair that fold together.
+    void crowd()
+    {
+        if (model == nullptr) {
+            return;
+        }
+        QJsonArray rooms = model->rooms();
+        const auto room = [](qint64 hz, const QString& state, const QStringList& talkers, int members) {
+            return QJsonObject{{QStringLiteral("id"), QStringLiteral("lsb-%1").arg(hz)},
+                               {QStringLiteral("band"), QStringLiteral("40m")},
+                               {QStringLiteral("hz"), hz},
+                               {QStringLiteral("members"), members},
+                               {QStringLiteral("state"), state},
+                               {QStringLiteral("talkers"), QJsonArray::fromStringList(talkers)},
+                               {QStringLiteral("last"), kRoundtableNow}};
+        };
+        rooms.append(room(7170000, QStringLiteral("talking"), {QStringLiteral("K4ABC")}, 9));
+        rooms.append(room(7170050, QStringLiteral("unknown"), {}, 4));
+        rooms.append(room(7170100, QStringLiteral("talking"), {QStringLiteral("N3XYZ")}, 5));
+        rooms.append(room(7170150, QStringLiteral("doubled"), {QStringLiteral("W2AB"), QStringLiteral("K2CD")}, 3));
+        rooms.append(room(7170200, QStringLiteral("quiet"), {}, 2));
+        rooms.append(room(7176000, QStringLiteral("talking"), {QStringLiteral("VE3QRP")}, 7));
+        rooms.append(room(7176050, QStringLiteral("quiet"), {}, 2));
+        model->applyRooms(QJsonObject{{QStringLiteral("rooms"), rooms}});
+        rt.state.applyStationValue("mentionCounts", QStringLiteral("{\"lsb-7170100\":2}"));
+    }
+
+    void setLink(RoundtableModel::LinkState state, qint64 since)
+    {
+        rt.state.applyStationValue("linkSince", since);
+        rt.state.applyStationValue("linkState", static_cast<int>(state));
+    }
+};
+
+// Pan 1's tags: whether each sits clear of the flags and the band plan,
+// and the CPU painter's tags against the GPU frame's, border by border.
+void checkRoundtableTags(SceneContext& ctx, const QString& name)
+{
+    SpectrumWidget* s = panOne(ctx);
+    if (s == nullptr) {
+        ctx.failure = QStringLiteral("%1: no pan 1").arg(name);
+        return;
+    }
+    // The CPU tags are painted over the pan's own frame with the tags
+    // taken off, so both paths blend onto the same backdrop: a dimmed
+    // (translucent) border shows the spectrum through it, which a black
+    // backdrop would not.
+    const QList<RoundtableTag> shownTags = s->roundtableTags();
+    const RoundtableTagDisplay shown = s->roundtableTagDisplay();
+    s->setRoundtableTags(shownTags, RoundtableTagDisplay::Hidden);
+    const QImage under = grabWidget(s);
+    s->setRoundtableTags(shownTags, shown);
+    const QImage gpu = grabWidget(s);
+    const qreal dpr = gpu.devicePixelRatio();
+    const QList<SpectrumWidget::RoundtableTagHit> drawn = s->roundtableTagHitsForTest();
+    QImage cpu = under.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    cpu.setDevicePixelRatio(dpr);
+    {
+        QPainter painter(&cpu);
+        s->drawRoundtableTagsForTest(painter, s->roundtableTagSpectrumRectForTest());
+    }
+    const QList<SpectrumWidget::RoundtableTagHit> painted = s->roundtableTagHitsForTest();
+
+    const QRect spec = s->roundtableTagSpectrumRectForTest();
+    const int bandTop = spec.bottom() + 1 - s->bandPlanStripHeightForTest();
+    QRegion flags = s->receiverFlagRegion();
+    // The pan's toolbar down its left side counts as a flag here.
+    if (auto* toolbar = s->findChild<SpectrumOverlayPanel*>(QString(), Qt::FindDirectChildrenOnly);
+        toolbar != nullptr && toolbar->isVisible()) {
+        flags += toolbar->geometry();
+    }
+    QJsonArray tags;
+    bool clear = true;
+    bool same = drawn.size() == painted.size();
+    for (qsizetype i = 0; i < painted.size(); ++i) {
+        const auto& hit = painted.at(i);
+        const QPoint edge(static_cast<int>(std::lround(hit.rect.center().x() * dpr)),
+                          static_cast<int>(std::floor(hit.rect.top() * dpr)));
+        const QString cpuColor = QColor(cpu.pixel(edge)).name();
+        const QString gpuColor = QColor(gpu.pixel(edge)).name();
+        const bool underFlag = flags.intersects(hit.rect);
+        const bool onBandPlan = hit.rect.bottom() >= bandTop;
+        clear = clear && !underFlag && !onBandPlan;
+        same = same && i < drawn.size() && drawn.at(i).rect == hit.rect && cpuColor == gpuColor;
+        tags.append(QJsonObject{{QStringLiteral("rooms"), QJsonArray::fromStringList(hit.roomIds)},
+                                {QStringLiteral("folded"), hit.folded},
+                                {QStringLiteral("x"), hit.rect.x()},
+                                {QStringLiteral("y"), hit.rect.y()},
+                                {QStringLiteral("w"), hit.rect.width()},
+                                {QStringLiteral("h"), hit.rect.height()},
+                                {QStringLiteral("under_flag"), underFlag},
+                                {QStringLiteral("on_band_plan"), onBandPlan},
+                                {QStringLiteral("cpu_border"), cpuColor},
+                                {QStringLiteral("gpu_border"), gpuColor}});
+    }
+    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-tags")},
+                                  {QStringLiteral("scene"), name},
+                                  {QStringLiteral("tags"), tags},
+                                  {QStringLiteral("clear_of_flags_and_band_plan"), clear},
+                                  {QStringLiteral("cpu_matches_gpu"), same}});
+    ctx.notes.append(QStringLiteral("%1: pan 1 drew %2 Roundtable tag(s); clear of the flags and band plan: %3; "
+                                    "CPU tags match the GPU frame's: %4")
+                         .arg(name).arg(painted.size())
+                         .arg(clear ? QStringLiteral("yes") : QStringLiteral("no"))
+                         .arg(same ? QStringLiteral("yes") : QStringLiteral("no")));
+    if (!same || !clear) {
+        ctx.failure = QStringLiteral("%1: the tags are under a flag or the band plan, or the CPU tags "
+                                     "differ from the GPU frame's: %2")
+                          .arg(name, QString::fromUtf8(QJsonDocument(tags).toJson(QJsonDocument::Compact)));
+    }
+
+    // The pan as the GPU path drew it, and the CPU painter's tags alone.
+    for (const auto& [suffix, image] : {std::pair<QString, QImage>{QStringLiteral("--gpu-pan"), gpu},
+                                        std::pair<QString, QImage>{QStringLiteral("--cpu-tags"), cpu}}) {
+        CapturedImage img;
+        img.name = name + suffix;
+        img.kind = QStringLiteral("detail");
+        img.image = image;
+        img.logicalSize = s->size();
+        img.dpr = dpr;
+        ctx.images.append(img);
+    }
+}
+
+// Slice A's flag on pan 1: its Roundtable line shows `text` with @N for
+// `mentions`, at the flag's foot, the text unelided at the flag's width.
+void checkRoundtableFlag(SceneContext& ctx, const QString& name, const QString& text, int mentions)
+{
+    SpectrumWidget* s = panOne(ctx);
+    VfoWidget* flag = s != nullptr ? s->vfoWidget(0) : nullptr;
+    QAbstractButton* button = flag != nullptr ? flag->roundtableLineButtonForTest() : nullptr;
+    if (button == nullptr) {
+        ctx.failure = QStringLiteral("%1: no slice A flag on pan 1").arg(name);
+        return;
+    }
+    const RoundtableFlagLine line = flag->roundtableLine();
+    // The line's own font and pads (VfoWidget.cpp RoundtableLineButton).
+    QFont font;
+    font.setPixelSize(11);
+    font.setWeight(QFont::DemiBold);
+    QFont badge = font;
+    badge.setWeight(QFont::ExtraBold);
+    const int endW = line.mentions > 0
+        ? std::max(15, QFontMetrics(badge).horizontalAdvance(QStringLiteral("@%1").arg(line.mentions)) + 8)
+        : QFontMetrics(font).horizontalAdvance(QStringLiteral("\u203a"));
+    const int room = button->width() - (5 + 9 + 5) - 5 - endW - 5;
+    const int needed = QFontMetrics(font).horizontalAdvance(line.text);
+    const bool fits = needed <= room;
+    const bool atFoot = button->isVisible() && button->geometry().bottom() < flag->height()
+        && button->geometry().right() < flag->width();
+    const bool right = line.visible && line.text == text && line.mentions == mentions;
+    ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-flag-line")},
+                                  {QStringLiteral("scene"), name},
+                                  {QStringLiteral("text"), line.text},
+                                  {QStringLiteral("glyph"), line.glyph},
+                                  {QStringLiteral("mentions"), line.mentions},
+                                  {QStringLiteral("text_width"), needed},
+                                  {QStringLiteral("text_room"), room},
+                                  {QStringLiteral("fits"), fits},
+                                  {QStringLiteral("at_flag_foot"), atFoot},
+                                  {QStringLiteral("as_expected"), right}});
+    ctx.notes.append(QStringLiteral("%1: slice A's flag line reads \"%2\"%3; text %4 px of %5 px")
+                         .arg(name, line.text,
+                              line.mentions > 0 ? QStringLiteral(" with @%1").arg(line.mentions) : QString())
+                         .arg(needed).arg(room));
+    if (!right || !fits || !atFoot) {
+        ctx.failure = QStringLiteral("%1: slice A's flag line is \"%2\" @%3 (expected \"%4\" @%5), fits %6, "
+                                     "at the foot %7")
+                          .arg(name, line.text).arg(line.mentions).arg(text).arg(mentions)
+                          .arg(fits).arg(atFoot);
+    }
+    CapturedImage img;
+    img.name = name + QStringLiteral("--flag");
+    img.kind = QStringLiteral("detail");
+    img.image = grabWidget(flag);
+    img.logicalSize = flag->size();
+    img.dpr = img.image.devicePixelRatio();
+    ctx.images.append(img);
+}
+
+// Roundtable plan Task 15: the panel at the applet column's widths too:
+// --column at 298 px (the column at 1512x869, a 280 px viewport inside the
+// applet frame) and --min at the column's 260 px minimum.
+void captureRoundtableColumnWidths(SceneContext& ctx, QWidget* panel, const QString& name)
+{
+    const QSize designed = panel->size();
+    const QList<std::pair<int, QString>> widths{{298, QStringLiteral("--column")},
+                                                {260, QStringLiteral("--min")}};
+    for (const auto& [width, suffix] : widths) {
+        panel->resize(width, designed.height());
+        pump(kTabSettleMs);
+        captureDialog(ctx, panel, name + suffix);
+    }
+    panel->resize(designed);
+    pump(kTabSettleMs);
+}
+
+// Roundtable plan Task 15: the visible widgets under `content` that run
+// past `viewport` px, for a docked panel's check.
+QStringList roundtableOverruns(QWidget* content, int viewport)
+{
+    QStringList out;
+    if (content->width() > viewport) {
+        out.append(QStringLiteral("content %1").arg(content->width()));
+    }
+    for (QWidget* w : content->findChildren<QWidget*>()) {
+        if (!w->isVisibleTo(content)) {
+            continue;
+        }
+        const int right = w->mapTo(content, QPoint(w->width(), 0)).x();
+        if (right > viewport) {
+            out.append(QStringLiteral("%1 %2 ends at %3")
+                           .arg(QString::fromLatin1(w->metaObject()->className()), w->objectName())
+                           .arg(right));
+        }
+    }
+    return out;
+}
+
+void appendRoundtableScenes(QVector<Scene>& scenes)
+{
+    // Every Roundtable scene shows the workspace look, the app's default:
+    // the scenes are marked after they are added (the loop at the end).
+    const qsizetype first = scenes.size();
+    // The panel in the right column, 340 px wide: in a room, reading
+    // another, on a frequency with nobody, and reconnecting.
+    const auto panelScene = [&scenes](const QString& name, const std::function<void(PosedRoundtable&, RoundtablePanel&)>& pose,
+                                      const QString& note) {
+        scenes.append({name, QStringLiteral("2v"), true, [name, pose, note](SceneContext& ctx) {
+            prepareForDialog(ctx);
+            onRoundtableClock([&] {
+                PosedRoundtable rt;
+                poseRoundtableRoom(rt, false);
+                RoundtablePanel panel(&rt.model);
+                panel.setWindowTitle(QStringLiteral("Roundtable"));
+                panel.resize(340, 900);
+                panel.followSlice(0);
+                panel.setSliceFrequency(7185000);
+                pose(rt, panel);
+                panel.show();
+                pump(kTabSettleMs);
+                captureDialog(ctx, &panel, name);
+                captureRoundtableColumnWidths(ctx, &panel, name);
+                panel.close();
+            });
+            ctx.notes.append(note);
+        }});
+    };
+    panelScene(QStringLiteral("roundtable-panel-room"), [](PosedRoundtable&, RoundtablePanel&) {},
+               QStringLiteral("slice A in 7.185 LSB with W1TLK talking, five readings (one away, one "
+                              "stale), three earlier turns and a muted message"));
+    panelScene(QStringLiteral("roundtable-panel-reading"),
+               [](PosedRoundtable& rt, RoundtablePanel& panel) {
+                   rt.model.applyRoom(QJsonObject{
+                       {QStringLiteral("type"), QStringLiteral("room")},
+                       {QStringLiteral("id"), QStringLiteral("usb-14212000")},
+                       {QStringLiteral("members"), roundtableMembers()},
+                       {QStringLiteral("now"), QJsonArray{roundtableTurn(
+                            50, QStringLiteral("talking"),
+                            QJsonArray{roundtableTalker(QStringLiteral("b"), QStringLiteral("N3XYZ"))}, 15000,
+                            QJsonValue::Null)}},
+                       {QStringLiteral("earlier"), QJsonArray{}},
+                       {QStringLiteral("messages"),
+                        QJsonArray{roundtableMessage(9, QStringLiteral("b"), QStringLiteral("N3XYZ"), 90000,
+                                                     QStringLiteral("Anyone up for a contact on 20?"))}}});
+                   panel.readRoom(QStringLiteral("usb-14212000"));
+               },
+               QStringLiteral("slice A in 7.185 LSB, reading 14.212 USB with the read bar"));
+    panelScene(QStringLiteral("roundtable-panel-twenty"),
+               [](PosedRoundtable& rt, RoundtablePanel& panel) {
+                   rt.state.applyStationValue("sliceRooms", QStringLiteral("{\"0\":\"usb-14212000\"}"));
+                   rt.model.applyRoom(QJsonObject{
+                       {QStringLiteral("type"), QStringLiteral("room")},
+                       {QStringLiteral("id"), QStringLiteral("usb-14212000")},
+                       {QStringLiteral("members"), roundtableMembers()},
+                       {QStringLiteral("now"), QJsonArray{roundtableTurn(
+                            50, QStringLiteral("talking"),
+                            QJsonArray{roundtableTalker(QStringLiteral("b"), QStringLiteral("N3XYZ"))}, 15000,
+                            QJsonValue::Null)}},
+                       {QStringLiteral("earlier"), QJsonArray{}},
+                       {QStringLiteral("messages"),
+                        QJsonArray{roundtableMessage(9, QStringLiteral("b"), QStringLiteral("N3XYZ"), 90000,
+                                                     QStringLiteral("Anyone up for a contact on 20?"))}}});
+                   panel.setSliceFrequency(14212000);
+                   panel.followSlice(0);
+               },
+               QStringLiteral("slice A in 14.212 USB, a 10-character frequency in the header"));
+    panelScene(QStringLiteral("roundtable-panel-empty"),
+               [](PosedRoundtable& rt, RoundtablePanel& panel) {
+                   rt.state.applyStationValue("sliceRooms", QStringLiteral("{}"));
+                   panel.setSliceFrequency(7200500);
+               },
+               QStringLiteral("slice A on a frequency with nobody on Roundtable"));
+    panelScene(QStringLiteral("roundtable-panel-reconnecting"),
+               [](PosedRoundtable& rt, RoundtablePanel&) {
+                   rt.state.applyStationValue("linkSince", kRoundtableNow - 8000);
+                   rt.state.applyStationValue(
+                       "linkState", static_cast<int>(RoundtableModel::LinkState::Reconnecting));
+               },
+               QStringLiteral("the room while Roundtable reconnects"));
+    panelScene(QStringLiteral("roundtable-panel-hidden"),
+               [](PosedRoundtable& rt, RoundtablePanel&) {
+                   rt.state.applyStationValue("hidden", true);
+                   rt.state.applyStationValue("linkSince", kRoundtableNow - 60000);
+                   rt.state.applyStationValue("linkState",
+                                              static_cast<int>(RoundtableModel::LinkState::Hidden));
+               },
+               QStringLiteral("the room while your station is hidden: you see everything, nothing is sent"));
+
+    // You are transmitting: the TX line and the readings of you.
+    scenes.append({QStringLiteral("roundtable-keyed"), QStringLiteral("2v"), true, [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        onRoundtableClock([&] {
+            PosedRoundtable rt;
+            poseRoundtableRoom(rt, true);
+            RoundtablePanel panel(&rt.model);
+            panel.setWindowTitle(QStringLiteral("Roundtable"));
+            panel.resize(340, 900);
+            panel.followSlice(0);
+            panel.setSliceFrequency(7185000);
+            panel.show();
+            pump(kTabSettleMs);
+            captureDialog(ctx, &panel, QStringLiteral("roundtable-keyed"));
+            captureRoundtableColumnWidths(ctx, &panel, QStringLiteral("roundtable-keyed"));
+            panel.close();
+        });
+        ctx.notes.append(QStringLiteral("KG4VCF transmitting for 1:05 in 7.185 LSB"));
+    }});
+
+    // The pop-out window at the mockup's three sizes: one column, two, and
+    // three.
+    const QList<std::tuple<QString, QSize, QString>> windows{
+        {QStringLiteral("roundtable-window-narrow"), QSize(420, 620), QStringLiteral("one column")},
+        {QStringLiteral("roundtable-window-medium"), QSize(820, 600), QStringLiteral("two columns")},
+        {QStringLiteral("roundtable-window-wide"), QSize(RoundtableWindow::kWideWidth, RoundtableWindow::kWideHeight),
+         QStringLiteral("three columns, the Wide preset")}};
+    for (const auto& [name, size, shape] : windows) {
+        scenes.append({name, QStringLiteral("2v"), true, [name, size, shape](SceneContext& ctx) {
+            prepareForDialog(ctx);
+            onRoundtableClock([&] {
+                PosedRoundtable rt;
+                poseRoundtableRoom(rt, false);
+                RoundtableWindow window(&rt.model, ctx.window);
+                auto* panel = new RoundtablePanel(&rt.model);
+                panel->followSlice(0);
+                panel->setSliceFrequency(7185000);
+                window.takePanel(panel);
+                window.resize(size);
+                window.show();
+                pump(kTabSettleMs);
+                captureDialog(ctx, &window, name);
+                window.hide();
+            });
+            ctx.notes.append(QStringLiteral("the Roundtable window at %1 x %2, %3")
+                                 .arg(size.width())
+                                 .arg(size.height())
+                                 .arg(shape));
+        }});
+    }
+
+    // The Spot Hub's Roundtable tab: live, then hidden, then the delete
+    // confirm; each the dialog as it opens and the whole tab.
+    scenes.append({QStringLiteral("roundtable-spothub"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        PosedRoundtable rt;
+        rt.live(false);
+        SpotHubDialog hub(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+                          ctx.model->spotTableModel(), nullptr, ctx.window, &rt.model);
+        auto* tabs = hub.findChild<QTabWidget*>();
+        auto* page = hub.findChild<QWidget*>(QStringLiteral("roundtableTab"));
+        if (tabs == nullptr || page == nullptr) {
+            ctx.failure = QStringLiteral("Spot Hub opened without its Roundtable tab");
+            return;
+        }
+        for (int i = 0; i < tabs->count(); ++i) {
+            if (tabs->tabText(i) == QLatin1String("Roundtable")) {
+                tabs->setCurrentIndex(i);
+            }
+        }
+        hub.show();
+        pump(kTabSettleMs);
+        captureDialog(ctx, &hub, QStringLiteral("roundtable-spothub"));
+        captureDialog(ctx, page, QStringLiteral("roundtable-spothub--whole-tab"));
+
+        rt.live(true);
+        pump(kTabSettleMs);
+        captureDialog(ctx, page, QStringLiteral("roundtable-spothub--hidden"));
+
+        rt.live(false);
+        if (auto* del = hub.findChild<QPushButton*>(QStringLiteral("roundtableDeleteBtn"))) {
+            del->click();
+        }
+        pump(kTabSettleMs);
+        captureDialog(ctx, page, QStringLiteral("roundtable-spothub--delete"));
+        hub.close();
+        ctx.notes.append(QStringLiteral("a window's Roundtable posed live on 7.185 MHz with three "
+                                        "muted stations; the tab is captured whole as well"));
+    }});
+
+    // The first-run sheet, asking (switch off: Go live is the main button),
+    // and the one-time note after another device answered.
+    scenes.append({QStringLiteral("roundtable-firstrun"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        PosedRoundtable rt;
+        AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
+        {
+            RoundtableFirstRunDialog sheet(&rt.model, ctx.window);
+            sheet.show();
+            captureDialog(ctx, &sheet, QStringLiteral("roundtable-firstrun"));
+            sheet.close();
+        }
+        rt.live(false);
+        AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
+        RoundtableFirstRunDialog note(&rt.model, ctx.window);
+        note.show();
+        captureDialog(ctx, &note, QStringLiteral("roundtable-firstrun--note"));
+        note.close();
+        AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
+    }});
+
+    // The switch on: Stay hidden becomes the main button.
+    scenes.append({QStringLiteral("roundtable-firstrun-hidden"), QStringLiteral("2v"), true,
+                   [](SceneContext& ctx) {
+        prepareForDialog(ctx);
+        PosedRoundtable rt;
+        RoundtableFirstRunDialog sheet(&rt.model, ctx.window);
+        sheet.setHideSwitch(true);
+        sheet.show();
+        captureDialog(ctx, &sheet, QStringLiteral("roundtable-firstrun-hidden"));
+        sheet.close();
+        AppSettings::instance().remove(QString::fromLatin1(RoundtableFirstRunDialog::kSeenKey));
+    }});
+    // Roundtable plan Task 14: the tags along pan 1's foot and slice A's
+    // flag line, live; crowded (folds, one +N list open); offline (the
+    // tags greyed as last known); connecting (no tags).
+    const auto tagScene = [&scenes](const QString& name,
+                                    const std::function<void(WindowRoundtable&)>& pose,
+                                    const std::function<void(SceneContext&, WindowRoundtable&)>& after = {}) {
+        scenes.append({name, QStringLiteral("2v"), false, [name, pose, after](SceneContext& ctx) {
+            onRoundtableClock([&] {
+                WindowRoundtable rt(ctx.model);
+                if (rt.model == nullptr) {
+                    ctx.failure = QStringLiteral("the window has no Roundtable model");
+                    return;
+                }
+                runWindowScene(ctx, twoBandPoses(), 0, [&rt, &pose](SceneContext&) {
+                    pose(rt);
+                });
+                if (!ctx.failure.isEmpty()) {
+                    return;
+                }
+                pump(kFinalSettleMs);
+                captureWindow(ctx, name);
+                checkRoundtableTags(ctx, name);
+                if (after) {
+                    after(ctx, rt);
+                }
+            });
+        }});
+    };
+    tagScene(QStringLiteral("roundtable-tags"), [](WindowRoundtable& rt) { rt.live(false); });
+    tagScene(QStringLiteral("roundtable-tags-crowded"),
+             [](WindowRoundtable& rt) {
+                 rt.live(false);
+                 rt.crowd();
+             },
+             [](SceneContext& ctx, WindowRoundtable&) {
+                 SpectrumWidget* s = panOne(ctx);
+                 const SpectrumWidget::RoundtableTagHit* fold = nullptr;
+                 for (const auto& hit : s->roundtableTagHitsForTest()) {
+                     if (fold == nullptr && hit.folded && hit.roomIds.size() > 2) {
+                         fold = &hit;
+                     }
+                 }
+                 if (fold == nullptr) {
+                     ctx.failure = QStringLiteral("no +N fold on pan 1");
+                     return;
+                 }
+                 QMenu menu(s);
+                 s->buildRoundtableFoldMenu(fold->roomIds, menu);
+                 menu.popup(globalAt(s, QPoint(fold->rect.left(), fold->rect.bottom() + 2)));
+                 captureDialog(ctx, &menu, QStringLiteral("roundtable-tags-crowded--fold-list"));
+                 menu.close();
+             });
+    tagScene(QStringLiteral("roundtable-tags-offline"), [](WindowRoundtable& rt) {
+        rt.live(false);
+        rt.setLink(RoundtableModel::LinkState::Offline, kRoundtableNow - 25 * 60 * 1000);
+    });
+    tagScene(QStringLiteral("roundtable-tags-connecting"), [](WindowRoundtable& rt) {
+        rt.live(false);
+        rt.setLink(RoundtableModel::LinkState::Connecting, kRoundtableNow - 4000);
+    });
+    // You are hidden: every room as when live, the marking dimmed.
+    tagScene(QStringLiteral("roundtable-tags-hidden"), [](WindowRoundtable& rt) {
+        rt.live(false);
+        rt.rt.state.applyStationValue("hidden", true);
+        rt.setLink(RoundtableModel::LinkState::Hidden, kRoundtableNow);
+    });
+
+    // Slice A's flag line: live in room 7.185 (six there, W1TLK talking),
+    // two messages naming you, you transmitting there, offline and
+    // connecting. Slice B, on 20 m, is in no room.
+    const QString dot = QStringLiteral(" \u00b7 ");
+    const auto flagScene = [&scenes](const QString& name, const std::function<void(WindowRoundtable&)>& pose,
+                                     const QString& text, int mentions) {
+        scenes.append({name, QStringLiteral("2v"), false, [name, pose, text, mentions](SceneContext& ctx) {
+            onRoundtableClock([&] {
+                WindowRoundtable rt(ctx.model);
+                if (rt.model == nullptr) {
+                    ctx.failure = QStringLiteral("the window has no Roundtable model");
+                    return;
+                }
+                runWindowScene(ctx, twoBandPoses(), 0, [&rt, &pose](SceneContext&) {
+                    pose(rt);
+                });
+                if (!ctx.failure.isEmpty()) {
+                    return;
+                }
+                pump(kFinalSettleMs);
+                captureWindow(ctx, name);
+                checkRoundtableFlag(ctx, name, text, mentions);
+            });
+        }});
+    };
+    const QString room = QStringLiteral("Roundtable") + dot + QStringLiteral("%1") + dot + QStringLiteral("W1TLK");
+    flagScene(QStringLiteral("roundtable-flag-live"), [](WindowRoundtable& rt) { rt.live(false); },
+              room.arg(6), 0);
+    flagScene(QStringLiteral("roundtable-flag-mention"),
+              [](WindowRoundtable& rt) {
+                  rt.live(false);
+                  rt.rt.state.applyStationValue("mentionCounts",
+                                                QStringLiteral("{\"%1\":2}").arg(kRoundtableRoom));
+              },
+              room.arg(6), 2);
+    flagScene(QStringLiteral("roundtable-flag-keyed"), [](WindowRoundtable& rt) { rt.live(true); },
+              QStringLiteral("Roundtable") + dot + QStringLiteral("5 hear you"), 0);
+    flagScene(QStringLiteral("roundtable-flag-offline"),
+              [](WindowRoundtable& rt) {
+                  rt.live(false);
+                  rt.setLink(RoundtableModel::LinkState::Offline, kRoundtableNow - 25 * 60 * 1000);
+              },
+              QStringLiteral("Roundtable") + dot + QStringLiteral("Offline"), 0);
+    flagScene(QStringLiteral("roundtable-flag-connecting"),
+              [](WindowRoundtable& rt) {
+                  rt.live(false);
+                  rt.setLink(RoundtableModel::LinkState::Connecting, kRoundtableNow - 4000);
+              },
+              QStringLiteral("Roundtable") + dot + QStringLiteral("Connecting"), 0);
+    flagScene(QStringLiteral("roundtable-flag-hidden"),
+              [](WindowRoundtable& rt) {
+                  rt.live(false);
+                  rt.rt.state.applyStationValue("hidden", true);
+                  rt.setLink(RoundtableModel::LinkState::Hidden, kRoundtableNow);
+              },
+              QStringLiteral("Hidden") + dot + QStringLiteral("6") + dot + QStringLiteral("W1TLK"), 0);
+
+    // Roundtable plan Task 15: the panel docked in a real MainWindow's
+    // applet column, live in room 7.185 with W1TLK talking: the window, the
+    // applet alone (--applet), and a check that nothing in the panel runs
+    // past its viewport.
+    scenes.append({QStringLiteral("roundtable-docked"), QStringLiteral("2v"), false, [](SceneContext& ctx) {
+        onRoundtableClock([&] {
+            WindowRoundtable rt(ctx.model);
+            if (rt.model == nullptr) {
+                ctx.failure = QStringLiteral("the window has no Roundtable model");
+                return;
+            }
+            runWindowScene(ctx, twoBandPoses(), 0, [&rt](SceneContext&) { rt.live(false); });
+            if (!ctx.failure.isEmpty()) {
+                return;
+            }
+            auto* applet = ctx.window->findChild<RoundtableApplet*>();
+            if (applet == nullptr || applet->panel() == nullptr) {
+                ctx.failure = QStringLiteral("roundtable-docked: no Roundtable applet in the window");
+                return;
+            }
+            applet->panel()->followSlice(0);
+            applet->panel()->setSliceFrequency(7185000);
+            // The applet column scrolls: bring the applet into view.
+            for (QWidget* up = applet->parentWidget(); up != nullptr; up = up->parentWidget()) {
+                if (auto* area = qobject_cast<QScrollArea*>(up)) {
+                    area->ensureWidgetVisible(applet, 0, 0);
+                    break;
+                }
+            }
+            pump(kFinalSettleMs);
+            captureWindow(ctx, QStringLiteral("roundtable-docked"));
+            CapturedImage img;
+            img.name = QStringLiteral("roundtable-docked--applet");
+            img.kind = QStringLiteral("detail");
+            img.image = grabWidget(applet);
+            img.logicalSize = applet->size();
+            img.dpr = img.image.devicePixelRatio();
+            ctx.images.append(img);
+            auto* scroll = applet->panel()->findChild<QScrollArea*>(QStringLiteral("roundtableScroll"));
+            auto* content = applet->panel()->findChild<QWidget*>(QStringLiteral("roundtableContent"));
+            const int viewport = scroll != nullptr ? scroll->viewport()->width() : 0;
+            const QStringList overruns = content != nullptr ? roundtableOverruns(content, viewport)
+                                                            : QStringList{QStringLiteral("no content")};
+            ctx.checks.append(QJsonObject{{QStringLiteral("check"), QStringLiteral("roundtable-docked")},
+                                          {QStringLiteral("applet_width"), applet->width()},
+                                          {QStringLiteral("panel_width"), applet->panel()->width()},
+                                          {QStringLiteral("viewport_width"), viewport},
+                                          {QStringLiteral("overruns"), QJsonArray::fromStringList(overruns)},
+                                          {QStringLiteral("fits"), overruns.isEmpty()}});
+            ctx.notes.append(QStringLiteral("roundtable-docked: the applet %1 px wide, the panel %2 px, "
+                                            "its viewport %3 px; %4")
+                                 .arg(applet->width())
+                                 .arg(applet->panel()->width())
+                                 .arg(viewport)
+                                 .arg(overruns.isEmpty() ? QStringLiteral("nothing past the viewport")
+                                                         : overruns.join(QStringLiteral("; "))));
+            if (!overruns.isEmpty()) {
+                ctx.failure = QStringLiteral("roundtable-docked: past the %1 px viewport: %2")
+                                  .arg(viewport)
+                                  .arg(overruns.join(QStringLiteral("; ")));
+            }
+        });
+    }});
+
+    for (qsizetype i = first; i < scenes.size(); ++i) {
+        scenes[i].workspacePreview = true;
+    }
+}
+
 void appendMenuScenes(QVector<Scene>& scenes)
 {
     auto add = [&scenes](const QString& name, const std::function<void(SceneContext&)>& run, bool previewOnly = false) {
@@ -7698,6 +8821,1433 @@ void poseConnected(SceneContext& c, bool txOnly)
 
 } // namespace
 
+// ---- container item parity (PR 677, workspace preview) ---------------------
+//
+// The container-parity-* scenes show the items and editors the container
+// item parity branch changed, built through the real paths: the containers
+// are committed to the workspace as the settings dialog commits them, the
+// items come from ContainerContentRegistry::makeEntry (a new item, with
+// Thetis's defaults) or from a record a saved layout holds, and the editors
+// are the ones Containers > Edit Container shows for the selected entry.
+// Readings reach the items through the same seams the other scenes use
+// (MeterWidget::updateMeterValue, MeterPoller::readingUpdated); nothing
+// connects, keys or fetches from the network.
+
+namespace {
+
+// The strip widths these scenes give their containers.
+constexpr int kParitySideStripPx = 420;
+constexpr int kParityNarrowStripPx = 260;
+constexpr int kParityTopStripPx = 230;
+constexpr int kParityRoomyTopStripPx = 300;
+// A Detailed VFO display face with room for its three columns.
+constexpr int kParityRoomyFaceHeightPx = 240;
+// The VFO display's long press (VfoDisplayItem::kLongPressMs) plus a margin.
+constexpr int kParityLongPressMs = 1300;
+// A VFO display screen closes once more than five whole seconds pass.
+constexpr int kParityScreenCloseMaxMs = 9000;
+// The signal level fed to readings (slice A's posed level).
+constexpr double kParitySignalDbm = -73.0;
+// Fed readings: how many, and the pause between them.
+constexpr int kParityFeedCount = 12;
+constexpr int kParityFeedGapMs = 40;
+// The history wedge feed: levels swing this far either side of the level.
+constexpr int kParityHistorySteps = 40;
+constexpr double kParityHistorySwingDb = 12.0;
+// The fixed local time every clock shows.
+QDateTime parityClockTime()
+{
+    return QDateTime(QDate(2026, 10, 7), QTime(14, 32, 10));
+}
+
+// One item of a parity container.
+struct ParityItem {
+    QString typeId;
+    // The entry name: the editor's list row and the entry header.
+    QString name;
+    // A saved record (the item's look before this branch); empty for a
+    // new item, which makeEntry gives Thetis's defaults.
+    QString legacyRecord;
+    // Keys merged into the entry config; a "properties" object is merged
+    // into the face's own properties, key by key.
+    QJsonObject config;
+    // true: "properties" replaces the face's properties (a saved face).
+    bool replaceProperties{false};
+};
+
+struct ParityBox {
+    QString name;
+    DockEdge edge{DockEdge::Left};
+    QVector<ParityItem> items;
+    // The slice the container follows (1 = slice A).
+    int rx{1};
+};
+
+// What the commit built: container ids and, per container, entry ids.
+struct ParityBuilt {
+    QStringList containers;
+    QVector<QStringList> entries;
+};
+
+ContainerDocument parityContainer(ContainerManager* manager, const ParityBox& box)
+{
+    QVector<EdgeEntry> entries;
+    for (const ParityItem& item : box.items) {
+        entries.append({item.typeId, {}, item.legacyRecord, rxSource(box.rx), {}});
+    }
+    ContainerDocument d = onSlice(makeSceneContainer(manager, box.name, box.edge,
+                                                     ContentLayout::VerticalStack, entries), box.rx);
+    for (int i = 0; i < box.items.size() && i < d.contents.size(); ++i) {
+        const ParityItem& item = box.items.at(i);
+        ContentEntry& entry = d.contents[i];
+        if (!item.name.isEmpty()) {
+            entry.name = item.name;
+        }
+        for (auto it = item.config.constBegin(); it != item.config.constEnd(); ++it) {
+            if (it.key() == QLatin1String("properties") && !item.replaceProperties) {
+                QJsonObject merged = entry.config.value(it.key()).toObject();
+                const QJsonObject change = it.value().toObject();
+                for (auto c = change.constBegin(); c != change.constEnd(); ++c) {
+                    merged.insert(c.key(), c.value());
+                }
+                entry.config.insert(it.key(), merged);
+            } else {
+                entry.config.insert(it.key(), it.value());
+            }
+        }
+    }
+    return d;
+}
+
+// The two-band window with `boxes` committed beside the Main Panel (right),
+// every header shown; `afterFeed` runs once the spectra are fed.
+bool runParityWindow(SceneContext& ctx, const QVector<ParityBox>& boxes, const QMap<DockEdge, int>& thickness,
+                     ParityBuilt& built, const std::function<void(SceneContext&)>& afterFeed = {})
+{
+    ctx.provenance = provProposed();
+    runWindowScene(ctx, twoBandPoses(), 0, [&boxes, &thickness, &built](SceneContext& c) {
+        commitScene(c, HeaderMode::Shown, [&boxes, &thickness, &built](WorkspaceDocument& d, ContainerManager* m) {
+            placeMain(d, DockEdge::Right);
+            for (const ParityBox& box : boxes) {
+                const ContainerDocument container = parityContainer(m, box);
+                built.containers.append(container.id);
+                QStringList ids;
+                for (const ContentEntry& entry : container.contents) {
+                    ids.append(entry.id);
+                }
+                built.entries.append(ids);
+                d.containers.append(container);
+            }
+            for (auto it = thickness.constBegin(); it != thickness.constEnd(); ++it) {
+                d.arrangement.strips[it.key()].thickness = it.value();
+            }
+        });
+    }, [&afterFeed](SceneContext& c) {
+        if (afterFeed) {
+            afterFeed(c);
+        }
+        pump(kFinalSettleMs);
+    });
+    if (!ctx.failure.isEmpty()) {
+        return false;
+    }
+    noteStrips(ctx);
+    return true;
+}
+
+ContainerManager* parityManager(SceneContext& ctx)
+{
+    return ctx.window->findChild<ContainerManager*>();
+}
+
+// Every item of a type in one container, with the meter surface it is on.
+template <typename T>
+QVector<QPair<MeterWidget*, T*>> parityItems(SceneContext& ctx, const QString& containerId)
+{
+    QVector<QPair<MeterWidget*, T*>> out;
+    ContainerContentHost* host = parityManager(ctx)->contentHost(containerId);
+    if (host == nullptr) {
+        return out;
+    }
+    for (MeterWidget* meter : host->meterSurfaces()) {
+        for (MeterItem* item : meter->items()) {
+            if (auto* t = qobject_cast<T*>(item)) {
+                out.append({meter, t});
+            }
+        }
+    }
+    return out;
+}
+
+CapturedImage parityGrab(QWidget* widget, const QString& name, const QString& kind)
+{
+    CapturedImage img;
+    img.name = name;
+    img.kind = kind;
+    img.image = grabWidget(widget);
+    img.logicalSize = widget->size();
+    img.dpr = img.image.devicePixelRatio();
+    img.extra[QStringLiteral("widget_class")] = QString::fromLatin1(widget->metaObject()->className());
+    img.extra[QStringLiteral("visible_text_fonts")] = visibleTextFonts(widget);
+    img.geometry = widgetGeometry(widget);
+    attachRegions(img, widget);
+    return img;
+}
+
+// The whole window, without the standard crops: where the containers sit.
+void captureParityWindow(SceneContext& ctx, const QString& name)
+{
+    for (const QJsonValue& v : stopTimersUnder(ctx.window)) {
+        ctx.stoppedTimers.append(v);
+    }
+    CapturedImage img = parityGrab(ctx.window, name, QStringLiteral("window"));
+    img.extra[QStringLiteral("applet_fit")] = measureAppletFit(ctx.window);
+    ctx.images.append(img);
+}
+
+// One container as the window shows it (`name`), and, when its content
+// scrolls, the whole content (`name`-content).
+void captureParityContainer(SceneContext& ctx, const QString& name, const QString& containerId)
+{
+    ContainerManager* manager = parityManager(ctx);
+    ContainerWidget* container = manager->container(containerId);
+    ContainerContentHost* host = manager->contentHost(containerId);
+    if (container == nullptr || host == nullptr || !container->isVisible()) {
+        ctx.failure = QStringLiteral("%1: container %2 is not shown").arg(name, containerId);
+        return;
+    }
+    pump(kFinalSettleMs);
+    CapturedImage img = parityGrab(container, name, QStringLiteral("container"));
+    const int minimumWidth = qMax(container->minimumWidth(), container->minimumSizeHint().width());
+    img.extra[QStringLiteral("container_minimum_width")] = minimumWidth;
+    QJsonArray rows;
+    const ContainerDocument doc = host->captureDocument();
+    for (const ContentEntry& entry : doc.contents) {
+        const QRect r = host->entryBoundary(entry.id);
+        rows.append(QJsonObject{{QStringLiteral("entry"), entry.id},
+                                {QStringLiteral("type"), entry.typeId},
+                                {QStringLiteral("name"), entry.name},
+                                {QStringLiteral("rect_in_content"), rectJson(r)}});
+    }
+    img.extra[QStringLiteral("entries")] = rows;
+    ctx.images.append(img);
+    QString scroll;
+    auto* area = container->contentHolder()->findChild<QScrollArea*>();
+    const bool scrolls = area != nullptr && area->verticalScrollBar()->isVisible();
+    if (scrolls && area->widget() != nullptr) {
+        // The scrolled body, all of it (the host is only the view's height).
+        QWidget* body = area->widget();
+        ctx.images.append(parityGrab(body, name + QStringLiteral("-content"), QStringLiteral("container-content")));
+        scroll = QStringLiteral(", content scrolls (%1 px in a %2 px view); %3-content shows all of it")
+                     .arg(body->height()).arg(area->viewport()->height()).arg(name);
+    }
+    ctx.notes.append(QStringLiteral("%1: container \"%2\" %3x%4, minimum width %5%6")
+                         .arg(name, container->notes().isEmpty() ? containerId : container->notes())
+                         .arg(container->width()).arg(container->height()).arg(minimumWidth).arg(scroll));
+}
+
+// Containers > Edit Container on `containerId`, shown (not exec()'d) and
+// sized to the window as a user would, over the window's middle.
+ContainerSettingsDialog* openParityDialog(SceneContext& ctx, const QString& containerId)
+{
+    ContainerManager* manager = parityManager(ctx);
+    ContainerWidget* container = manager->container(containerId);
+    if (container == nullptr) {
+        ctx.failure = QStringLiteral("no container %1 for the settings dialog").arg(containerId);
+        return nullptr;
+    }
+    auto* dialog = new ContainerSettingsDialog(container, ctx.window, manager);
+    dialog->selectDraftContainer(containerId);
+    dialog->show();
+    pump(kDialogSettleMs);
+    const QSize fit = dialog->size().boundedTo(ctx.window->size() - QSize(kDialogInsetPx, kDialogInsetPx))
+                          .expandedTo(dialog->minimumSizeHint());
+    dialog->resize(fit);
+    pump(kFinalSettleMs);
+    dialog->move(ctx.window->mapToGlobal(ctx.window->rect().center()) - dialog->rect().center());
+    pump(kFinalSettleMs);
+    return dialog;
+}
+
+void closeParityDialog(ContainerSettingsDialog* dialog)
+{
+    if (dialog != nullptr) {
+        dialog->reject();
+        dialog->deleteLater();
+    }
+}
+
+// Selects the entry in the dialog's contents list and returns the editor
+// it shows.
+ContentPropertyEditor* selectParityEntry(SceneContext& ctx, ContainerSettingsDialog* dialog, const QString& entryId)
+{
+    auto* contents = dialog->findChild<QListWidget*>(QStringLiteral("containerDraftContents"));
+    QListWidgetItem* row = nullptr;
+    for (int i = 0; contents != nullptr && i < contents->count(); ++i) {
+        if (contents->item(i)->data(Qt::UserRole).toString() == entryId) {
+            row = contents->item(i);
+        }
+    }
+    if (row == nullptr) {
+        ctx.failure = QStringLiteral("no row for entry %1 in the settings dialog").arg(entryId);
+        return nullptr;
+    }
+    contents->setCurrentItem(row);
+    pump(kFinalSettleMs);
+    for (ContentPropertyEditor* editor : dialog->findChildren<ContentPropertyEditor*>()) {
+        if (editor->isVisible()) {
+            return editor;
+        }
+    }
+    ctx.failure = QStringLiteral("no property editor shown for entry %1").arg(entryId);
+    return nullptr;
+}
+
+// The scroll area the editor sits in, scrolled so `w` is in view.
+void scrollParityEditorTo(QWidget* editor, QWidget* w)
+{
+    for (QWidget* p = editor->parentWidget(); p != nullptr; p = p->parentWidget()) {
+        if (auto* area = qobject_cast<QScrollArea*>(p)) {
+            area->ensureWidgetVisible(w, 0, 40);
+            pump(kFinalSettleMs);
+            return;
+        }
+    }
+}
+
+// The editor at its full height (not clipped to the dialog's scroll area).
+CapturedImage parityEditorImage(SceneContext& ctx, ContentPropertyEditor* editor, const QString& name,
+                                const QString& entryName)
+{
+    for (const QJsonValue& v : stopTimersUnder(editor)) {
+        ctx.stoppedTimers.append(v);
+    }
+    CapturedImage img = parityGrab(editor, name, QStringLiteral("editor"));
+    QStringList labels;
+    for (QLabel* l : editor->findChildren<QLabel*>()) {
+        if (l->isVisibleTo(editor) && !l->text().isEmpty()) {
+            labels.append(l->text() + (l->isEnabled() ? QString() : QStringLiteral(" (disabled)")));
+        }
+    }
+    img.extra[QStringLiteral("entry")] = entryName;
+    img.extra[QStringLiteral("labels")] = QJsonArray::fromStringList(labels);
+    ctx.notes.append(QStringLiteral("%1: the property editor of \"%2\" at its full height, %3x%4")
+                         .arg(name, entryName).arg(editor->width()).arg(editor->height()));
+    return img;
+}
+
+void captureParityEditor(SceneContext& ctx, ContentPropertyEditor* editor, const QString& name,
+                         const QString& entryName)
+{
+    ctx.images.append(parityEditorImage(ctx, editor, name, entryName));
+}
+
+// A tooltip as the pointer resting on `anchor` raises it, where Qt
+// places it.
+QWidget* showParityTip(QWidget* editor, QWidget* anchor, const QString& text)
+{
+    QToolTip::hideText();
+    // The dialog's properties pane scrolls the control into view first, as
+    // a user hovering it sees it: a row below the screen would make Qt
+    // place the tip far above it.
+    for (QWidget* w = anchor->parentWidget(); w != nullptr && w != editor->window(); w = w->parentWidget()) {
+        if (auto* area = qobject_cast<QScrollArea*>(w)) {
+            area->ensureWidgetVisible(anchor);
+            break;
+        }
+    }
+    pump(kFinalSettleMs);
+    // The pointer rests on the control; QToolTip places the tip from that
+    // point itself (below the pointer by the cursor's height), so it is not
+    // moved after. Window-geometry positions (globalOf), as the composite
+    // uses.
+    const QPoint pointer = globalOf(anchor) + anchor->rect().center();
+    QToolTip::showText(pointer, text, anchor);
+    pump(kFinalSettleMs);
+    return visibleToolTip();
+}
+
+// The editor with each disabled control's tooltip painted under it, one
+// image per control.
+void captureParityEditorTips(SceneContext& ctx, ContentPropertyEditor* editor, const QString& name,
+                             const QString& entryName, const QStringList& objectNames)
+{
+    for (const QString& objectName : objectNames) {
+        auto* anchor = editor->findChild<QWidget*>(objectName);
+        if (anchor == nullptr) {
+            ctx.failure = QStringLiteral("%1: no control %2 in the editor").arg(name, objectName);
+            return;
+        }
+        const QString text = anchor->toolTip();
+        QWidget* tip = showParityTip(editor, anchor, text);
+        CapturedImage img = parityEditorImage(ctx, editor, name + QStringLiteral("-") + slug(objectName),
+                                              entryName);
+        if (tip == nullptr) {
+            ctx.notes.append(QStringLiteral("%1: the tooltip of %2 did not show; its text is \"%3\"")
+                                 .arg(img.name, objectName, text));
+        } else {
+            paintOver(img, editor, tip);
+        }
+        img.extra[QStringLiteral("tooltip_of")] = objectName;
+        img.extra[QStringLiteral("tooltip_text")] = text;
+        img.extra[QStringLiteral("control_enabled")] = anchor->isEnabled();
+        const QPoint pointer = offsetIn(editor, anchor) + anchor->rect().center();
+        ctx.notes.append(QStringLiteral("%1: %2 is %3, tooltip \"%4\" where Qt placed it for a pointer at %5,%6: %7")
+                             .arg(img.name, objectName,
+                                  anchor->isEnabled() ? QStringLiteral("enabled") : QStringLiteral("disabled"), text)
+                             .arg(pointer.x()).arg(pointer.y())
+                             .arg(tip != nullptr ? QStringLiteral("%1,%2").arg(offsetIn(editor, tip).x()).arg(offsetIn(editor, tip).y())
+                                                 : QStringLiteral("not shown")));
+        ctx.images.append(img);
+        QToolTip::hideText();
+        pump(kFinalSettleMs);
+    }
+}
+
+// Pushes `value` to `bindings` on every meter surface of a container, as
+// the poller's updates would arrive.
+void feedParityReadings(SceneContext& ctx, const QString& containerId, const QList<int>& bindings, double value)
+{
+    ContainerContentHost* host = parityManager(ctx)->contentHost(containerId);
+    if (host == nullptr) {
+        return;
+    }
+    for (int i = 0; i < kParityFeedCount; ++i) {
+        for (MeterWidget* meter : host->meterSurfaces()) {
+            for (int binding : bindings) {
+                meter->updateMeterValue(binding, value);
+            }
+        }
+        pump(kParityFeedGapMs);
+    }
+    QJsonArray ids;
+    for (int binding : bindings) {
+        ids.append(binding);
+    }
+    ctx.fedReadings.append(QJsonObject{{QStringLiteral("container"), containerId},
+                                       {QStringLiteral("bindings"), ids},
+                                       {QStringLiteral("value"), value},
+                                       {QStringLiteral("count"), kParityFeedCount},
+                                       {QStringLiteral("seam"), QStringLiteral("MeterWidget::updateMeterValue")}});
+}
+
+// Every clock in a container (building blocks and clock faces) reads the
+// fixed time.
+void fixParityClocks(SceneContext& ctx, const QString& containerId)
+{
+    QList<ClockItem*> clocks;
+    for (const auto& [meter, clock] : parityItems<ClockItem>(ctx, containerId)) {
+        clocks.append(clock);
+    }
+    for (const auto& [meter, face] : parityItems<CompositePresetItem>(ctx, containerId)) {
+        if (face->clockDisplay() != nullptr) {
+            clocks.append(face->clockDisplay());
+        }
+    }
+    for (ClockItem* clock : clocks) {
+        clock->setTimeSource([] { return parityClockTime(); });
+    }
+    ContainerContentHost* host = parityManager(ctx)->contentHost(containerId);
+    for (MeterWidget* meter : host != nullptr ? host->meterSurfaces() : QVector<MeterWidget*>{}) {
+        for (MeterItem* item : meter->items()) {
+            meter->invalidatePresentation(item);
+        }
+        meter->update();
+    }
+    pump(kFinalSettleMs);
+    ctx.frozen.append(QJsonObject{{QStringLiteral("item"), QStringLiteral("clocks in %1").arg(containerId)},
+                                  {QStringLiteral("value"), QStringLiteral("local time 2026-10-07 14:32:10 "
+                                                                           "(ClockItem::setTimeSource)")},
+                                  {QStringLiteral("count"), int(clocks.size())}});
+}
+
+// A record of `Item` as constructed, before any new-item default: the
+// look a layout saved before this branch loads with.
+template <typename Item>
+QString savedRecord()
+{
+    Item item;
+    return item.serialize();
+}
+
+// ---- 1 and 11: button grid editors -----------------------------------------
+
+void sceneParityButtonGrids(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-button-grids");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Mode buttons"), DockEdge::Left, {{QStringLiteral("MODEBTNS")}}},
+        {QStringLiteral("Tune step buttons"), DockEdge::Left, {{QStringLiteral("TUNESTEPBTNS")}}},
+        {QStringLiteral("Antenna buttons"), DockEdge::Left, {{QStringLiteral("ANTENNABTNS")}}},
+        {QStringLiteral("Filter buttons"), DockEdge::Left, {{QStringLiteral("FILTERBTNS")}}},
+        {QStringLiteral("Other buttons"), DockEdge::Left, {{QStringLiteral("OTHERBTNS")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    const QStringList keys = {QStringLiteral("modes"), QStringLiteral("steps"), QStringLiteral("antennas"),
+                              QStringLiteral("filters"), QStringLiteral("other")};
+    for (int i = 0; i < keys.size(); ++i) {
+        captureParityContainer(ctx, name + QStringLiteral("--") + keys.at(i), built.containers.at(i));
+    }
+    for (int i = 0; i < keys.size() && ctx.failure.isEmpty(); ++i) {
+        ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.at(i));
+        ContentPropertyEditor* editor = dialog != nullptr
+            ? selectParityEntry(ctx, dialog, built.entries.at(i).value(0)) : nullptr;
+        if (editor != nullptr) {
+            if (i == 0) {
+                captureDialog(ctx, dialog, name + QStringLiteral("--dialog"));
+            }
+            const QString image = name + QStringLiteral("--editor-") + keys.at(i);
+            captureParityEditor(ctx, editor, image, boxes.at(i).name);
+            if (keys.at(i) == QLatin1String("antennas")) {
+                // XVTR input and Rx/Tx swap (AntennaButtonItem::kXvtrButton,
+                // kRxTxButton) wait for features that are not built.
+                captureParityEditorTips(ctx, editor, image, boxes.at(i).name,
+                                        {QStringLiteral("antennaVisible_%1").arg(AntennaButtonItem::kXvtrButton),
+                                         QStringLiteral("antennaVisible_%1").arg(AntennaButtonItem::kRxTxButton)});
+            } else if (keys.at(i) == QLatin1String("filters")) {
+                captureParityEditorTips(ctx, editor, image, boxes.at(i).name,
+                                        {QStringLiteral("filterVisible_%1").arg(FilterButtonItem::kVar1Button),
+                                         QStringLiteral("filterVisible_%1").arg(FilterButtonItem::kVar2Button)});
+            }
+        }
+        closeParityDialog(dialog);
+        pump(kFinalSettleMs);
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 2: mode grid ------------------------------------------------------------
+
+// A mode grid saved before the twelve-mode order: the old ten buttons, all
+// shown, no order marker (ModeButtonItem::deserialize remaps it and starts
+// SPEC and DRM hidden).
+QString savedModeGridRecord()
+{
+    ModeButtonItem item;
+    QStringList parts = item.serialize().split(QLatin1Char('|')).mid(0, 9);
+    parts.append(QString::number((1u << 10) - 1u));
+    return parts.join(QLatin1Char('|'));
+}
+
+void sceneParityModeGrid(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-mode-grid");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Modes"), DockEdge::Left,
+         {{QStringLiteral("MODEBTNS"), QStringLiteral("Mode buttons (new)")},
+          {QStringLiteral("MODEBTNS"), QStringLiteral("Mode buttons (saved layout)"), savedModeGridRecord()},
+          {QStringLiteral("meter.contest"), QStringLiteral("Contest controls (new)")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    fixParityClocks(ctx, id);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--grids"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    const QString savedEntry = built.entries.value(0).value(1);
+    ContentPropertyEditor* editor = dialog != nullptr ? selectParityEntry(ctx, dialog, savedEntry) : nullptr;
+    if (editor == nullptr) {
+        closeParityDialog(dialog);
+        return;
+    }
+    captureParityEditor(ctx, editor, name + QStringLiteral("--editor-saved"), QStringLiteral("Mode buttons (saved layout)"));
+    // Tick SPEC and DRM in Visible modes, then Apply, as a user would.
+    QStringList ticked;
+    for (int i = 0; i < ModeButtonItem::kModeCount; ++i) {
+        const QString label = ModeButtonItem::modeLabel(i);
+        if (label != QLatin1String("SPEC") && label != QLatin1String("DRM")) {
+            continue;
+        }
+        auto* check = editor->findChild<QCheckBox*>(QStringLiteral("modeVisible_%1").arg(i));
+        if (check == nullptr) {
+            ctx.failure = QStringLiteral("no Visible modes row for %1").arg(label);
+            closeParityDialog(dialog);
+            return;
+        }
+        ctx.notes.append(QStringLiteral("saved grid before the tick: %1 %2").arg(label,
+            check->isChecked() ? QStringLiteral("ticked") : QStringLiteral("not ticked")));
+        check->setChecked(true);
+        ticked.append(label);
+        pump(kFinalSettleMs);
+    }
+    const CommitResult applied = dialog->applyDraft();
+    pump(kSettleMs);
+    ctx.notes.append(QStringLiteral("ticked %1 on the saved grid and pressed Apply: %2")
+                         .arg(ticked.join(QStringLiteral(" and ")),
+                              applied.status == CommitStatus::Saved ? QStringLiteral("saved")
+                                                                    : QStringLiteral("not saved")));
+    if (applied.status != CommitStatus::Saved) {
+        ctx.failure = QStringLiteral("Apply did not save the ticked modes");
+        closeParityDialog(dialog);
+        return;
+    }
+    editor = selectParityEntry(ctx, dialog, savedEntry);
+    if (editor != nullptr) {
+        captureParityEditor(ctx, editor, name + QStringLiteral("--editor-saved-spec-drm"),
+                            QStringLiteral("Mode buttons (saved layout)"));
+    }
+    closeParityDialog(dialog);
+    pump(kSettleMs);
+    fixParityClocks(ctx, id);
+    captureParityContainer(ctx, name + QStringLiteral("--grids-spec-drm"), id);
+    ctx.notes.append(QStringLiteral("the Contest face's grid has no Visible modes row (its properties leave "
+                                    "out \"modes\"); it shows its ten modes"));
+    annotateSlices(ctx);
+}
+
+// ---- 3: VFO display ------------------------------------------------------------
+
+// Sends a press and release (or a held press) to `meter` at `pos`.
+void parityClick(MeterWidget* meter, const QPointF& pos, int holdMs = 0)
+{
+    QMouseEvent press(QEvent::MouseButtonPress, pos, meter->mapToGlobal(pos), Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QCoreApplication::sendEvent(meter, &press);
+    pump(holdMs > 0 ? holdMs : 20);
+    QMouseEvent release(QEvent::MouseButtonRelease, pos, meter->mapToGlobal(pos), Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QCoreApplication::sendEvent(meter, &release);
+    pump(kFinalSettleMs);
+}
+
+// A point of the Detailed layout of a one-column VFO display face, from
+// the Thetis fractions renderVfoDisplay's boxes use (x of the width times
+// kVfoSingleXMulti 2.07, y of the height).
+QPointF parityVfoPoint(MeterWidget* meter, MeterItem* face, double fx, double fy)
+{
+    const QRectF r(face->x() * meter->width(), face->y() * meter->height(),
+                   face->itemWidth() * meter->width(), face->itemHeight() * meter->height());
+    return QPointF(r.left() + r.width() * 2.07 * fx, r.top() + r.height() * fy);
+}
+
+void waitParityScreenClosed(VfoDisplayItem* vfo, int slice)
+{
+    QElapsedTimer t;
+    t.start();
+    while (vfo->screenFor(slice) != VfoDisplayItem::Screen::Vfo && t.elapsed() < kParityScreenCloseMaxMs) {
+        pump(200);
+    }
+}
+
+void sceneParityVfoDisplay(SceneContext& ctx, bool roomy)
+{
+    const QString name = roomy ? QStringLiteral("container-parity-vfo-display-roomy")
+                               : QStringLiteral("container-parity-vfo-display");
+    QJsonObject all{{QStringLiteral("properties"),
+                     QJsonObject{{QStringLiteral("displayMode"), int(VfoDisplayItem::DisplayMode::AllSlices)}}}};
+    QJsonObject source;
+    if (roomy) {
+        QJsonObject p = all.value(QStringLiteral("properties")).toObject();
+        p.insert(QStringLiteral("faceHeight"), kParityRoomyFaceHeightPx);
+        all.insert(QStringLiteral("properties"), p);
+        source.insert(QStringLiteral("properties"), QJsonObject{{QStringLiteral("faceHeight"), kParityRoomyFaceHeightPx}});
+    }
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("VFO display, slice A"), DockEdge::Top,
+         {{QStringLiteral("meter.vfoDisplay"), QStringLiteral("VFO display (new)"), {}, source}}},
+        {QStringLiteral("VFO display, all slices"), DockEdge::Top,
+         {{QStringLiteral("meter.vfoDisplay"), QStringLiteral("VFO display, all slices"), {}, all}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Top, roomy ? kParityRoomyTopStripPx : kParityTopStripPx}}, built)) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--slice-a"), built.containers.value(0));
+    captureParityContainer(ctx, name + QStringLiteral("--all-slices"), built.containers.value(1));
+    for (const auto& [meter, face] : parityItems<CompositePresetItem>(ctx, built.containers.value(0))) {
+        ctx.notes.append(QStringLiteral("slice A face: %1x%2 px on its meter, layout %3, face height %4")
+                             .arg(int(face->itemWidth() * meter->width())).arg(int(face->itemHeight() * meter->height()))
+                             .arg(face->vfoDisplay() != nullptr && face->vfoDisplay()->layout() == VfoDisplayItem::Layout::Thetis
+                                      ? QStringLiteral("Detailed") : QStringLiteral("Compact"))
+                             .arg(face->configuration().value(QStringLiteral("faceHeight")).toInt()));
+    }
+    if (roomy) {
+        annotateSlices(ctx);
+        return;
+    }
+    // The editor of the new face.
+    if (ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.value(0))) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(0))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor"), QStringLiteral("VFO display (new)"));
+        }
+        closeParityDialog(dialog);
+        pump(kFinalSettleMs);
+    }
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    // Each screen of the slice A face, opened as a click (a long press for
+    // the tune step) opens it; each closes on its own after five seconds.
+    const auto faces = parityItems<CompositePresetItem>(ctx, built.containers.value(0));
+    if (faces.isEmpty() || faces.first().second->vfoDisplay() == nullptr) {
+        ctx.failure = QStringLiteral("no VFO display face in the slice A container");
+        return;
+    }
+    MeterWidget* meter = faces.first().first;
+    CompositePresetItem* face = faces.first().second;
+    VfoDisplayItem* vfo = face->vfoDisplay();
+    struct ScreenShot {
+        QString key;
+        VfoDisplayItem::Screen screen;
+        double fx;
+        double fy;
+        int holdMs;
+    };
+    // From Thetis MeterManager.cs renderVfoDisplay boxes (kVfoHitBoxes):
+    // mode 0.008-0.078, filter 0.250-0.332, band 0.333-0.480 across, all
+    // 0.555-0.900 down; the kHz digits 0.346-0.416 at 0.30.
+    const QVector<ScreenShot> shots = {
+        {QStringLiteral("band"), VfoDisplayItem::Screen::Band, 0.40, 0.70, 0},
+        {QStringLiteral("mode"), VfoDisplayItem::Screen::Mode, 0.04, 0.70, 0},
+        {QStringLiteral("filter"), VfoDisplayItem::Screen::Filter, 0.29, 0.70, 0},
+        {QStringLiteral("tune-step"), VfoDisplayItem::Screen::TuneStep, 0.346 + (0.416 - 0.346) / 3.0 * 2.5, 0.30,
+         kParityLongPressMs},
+    };
+    const int sliceA = 0;
+    for (const ScreenShot& shot : shots) {
+        waitParityScreenClosed(vfo, sliceA);
+        parityClick(meter, parityVfoPoint(meter, face, shot.fx, shot.fy), shot.holdMs);
+        meter->update();
+        pump(kFinalSettleMs);
+        if (vfo->screenFor(sliceA) != shot.screen) {
+            ctx.notes.append(QStringLiteral("the %1 screen did not open from a %2 at %3,%4 of the face")
+                                 .arg(shot.key, shot.holdMs > 0 ? QStringLiteral("long press") : QStringLiteral("click"))
+                                 .arg(shot.fx).arg(shot.fy));
+            ctx.failure = QStringLiteral("the VFO display's %1 screen did not open").arg(shot.key);
+            return;
+        }
+        captureParityContainer(ctx, name + QStringLiteral("--screen-") + shot.key, built.containers.value(0));
+        ctx.notes.append(QStringLiteral("%1--screen-%2: two cells lit, as Thetis lights them: the slice's current "
+                                        "choice and the cell under the pointer, which rests where it clicked "
+                                        "(%3,%4 of the face)")
+                             .arg(name, shot.key).arg(shot.fx).arg(shot.fy));
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 4: clock ----------------------------------------------------------------
+
+QString centeredClockRecord()
+{
+    ClockItem item(nullptr, false);
+    item.applyNewItemDefaults();
+    item.setLayout(ClockItem::Layout::NereusSDR);
+    return item.serialize();
+}
+
+void sceneParityClock(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-clock");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Clocks"), DockEdge::Left,
+         {{QStringLiteral("CLOCK"), QStringLiteral("Clock (new, Large time)")},
+          {QStringLiteral("CLOCK"), QStringLiteral("Clock (new, Centered)"), centeredClockRecord()},
+          {QStringLiteral("CLOCK"), QStringLiteral("Clock (saved layout)"), savedRecord<ClockItem>()},
+          {QStringLiteral("meter.clock"), QStringLiteral("Clock face (new)")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    fixParityClocks(ctx, id);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--clocks"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    if (dialog == nullptr) {
+        return;
+    }
+    const QStringList names = {QStringLiteral("Clock (new, Large time)"), QStringLiteral("Clock (new, Centered)"),
+                               QStringLiteral("Clock (saved layout)"), QStringLiteral("Clock face (new)")};
+    const QStringList keys = {QStringLiteral("large-time"), QStringLiteral("centered"), QStringLiteral("saved"),
+                              QStringLiteral("face")};
+    for (int i = 0; i < keys.size() && ctx.failure.isEmpty(); ++i) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(i))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor-") + keys.at(i), names.at(i));
+        }
+    }
+    closeParityDialog(dialog);
+    annotateSlices(ctx);
+}
+
+// ---- 5 and 10: text overlay and LED -------------------------------------------
+
+// The text a user typed into Text 1, so the overlay has something to show:
+// a new text overlay starts with no text, as Thetis's does (clsTextOverlay,
+// MeterManager.cs:20144 [v2.10.3.15]: _text_1 = ""), and draws only its
+// back panel. The slice tokens read the posed slices.
+constexpr char kParityOverlayNewText[] = "%sliceA_freq% %sliceA_mode%";
+constexpr char kParityOverlaySavedText[] = "Slice A %sliceA_band% %sliceA_filter%";
+
+// A text overlay record with Text 1 typed in: a new item (Thetis's
+// defaults) or one as a saved layout holds it.
+QString parityOverlayRecord(bool newItem, const QString& text)
+{
+    TextOverlayItem item;
+    if (newItem) {
+        item.applyNewItemDefaults();
+    }
+    item.setText1(text);
+    return item.serialize();
+}
+
+void sceneParityOverlayLed(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-overlay-led");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Overlay and LED"), DockEdge::Left,
+         {{QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (new)"),
+           parityOverlayRecord(true, QString::fromLatin1(kParityOverlayNewText))},
+          {QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (saved layout)"),
+           parityOverlayRecord(false, QString::fromLatin1(kParityOverlaySavedText))},
+          {QStringLiteral("LED"), QStringLiteral("LED (new)")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    fixParityClocks(ctx, id);
+    ctx.notes.append(QStringLiteral("text overlays: Text 1 typed in, new \"%1\", saved layout \"%2\"; "
+                                    "the LED has no condition, so it shows its false look (Thetis "
+                                    "_false_colour 192,192,192, a flat square)")
+                         .arg(QString::fromLatin1(kParityOverlayNewText), QString::fromLatin1(kParityOverlaySavedText)));
+    for (const auto& [meter, overlay] : parityItems<TextOverlayItem>(ctx, id)) {
+        ctx.notes.append(QStringLiteral("text overlay \"%1\" shows \"%2\"").arg(overlay->text1(), overlay->resolvedText1()));
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--items"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    if (dialog == nullptr) {
+        return;
+    }
+    // The text overlay's editor, then its "%" token picker open.
+    if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(0))) {
+        captureParityEditor(ctx, editor, name + QStringLiteral("--editor-overlay"), QStringLiteral("Text overlay (new)"));
+        auto* picker = editor->findChild<QToolButton*>(QStringLiteral("overlayTokenPicker1"));
+        QMenu* menu = picker != nullptr ? picker->menu() : nullptr;
+        if (menu == nullptr) {
+            ctx.failure = QStringLiteral("no \"%\" token picker on the text overlay editor");
+        } else {
+            scrollParityEditorTo(editor, picker);
+            // The menu InstantPopup opens, shown with popup() so the grab
+            // needs no nested loop. The menu puts itself at its button as
+            // it shows (below it, or above it when below has no room); it
+            // is not moved after.
+            menu->popup(globalOf(picker) + QPoint(0, picker->height()));
+            pump(kFinalSettleMs);
+            // The menu places itself from mapToGlobal(), which for this
+            // never-shown (WA_DontShowOnScreen) window keeps a stale origin;
+            // the composite uses window geometry (globalOf). Move it by the
+            // difference, to where it sits on a shown window.
+            const QPoint stale = picker->mapToGlobal(QPoint(0, 0));
+            const QPoint actual = globalOf(picker);
+            if (stale != actual) {
+                menu->move(menu->pos() + (actual - stale));
+                pump(kFinalSettleMs);
+                ctx.notes.append(QStringLiteral("token picker: button at %1,%2 by mapToGlobal but %3,%4 by window "
+                                                "geometry; the menu is moved by %5,%6")
+                                     .arg(stale.x()).arg(stale.y()).arg(actual.x()).arg(actual.y())
+                                     .arg(actual.x() - stale.x()).arg(actual.y() - stale.y()));
+            }
+            appendPopupImages(ctx, name + QStringLiteral("--token-picker"), dialog, {menu}, menu);
+            const QRect screen = picker->screen() != nullptr ? picker->screen()->geometry() : QRect();
+            const QRect placed = menu->geometry();
+            const bool fitsBelow = placed.top() >= actual.y() + picker->height();
+            ctx.notes.append(QStringLiteral("token picker: %1 tokens, menu %2x%3 at %4,%5 (%6 the button, "
+                                            "at most %7 rows); screen %8x%9, menu inside the screen: %10")
+                                 .arg(menu->actions().size()).arg(placed.width()).arg(placed.height())
+                                 .arg(placed.x()).arg(placed.y())
+                                 .arg(fitsBelow ? QStringLiteral("below") : QStringLiteral("above"))
+                                 .arg(TextOverlayItemEditor::kTokenMenuMaxRows)
+                                 .arg(screen.width()).arg(screen.height())
+                                 .arg(screen.contains(placed) ? QStringLiteral("yes") : QStringLiteral("no")));
+            menu->close();
+            pump(kFinalSettleMs);
+        }
+    }
+    // The LED's editor, then with a condition it cannot work out.
+    if (ctx.failure.isEmpty()) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(2))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor-led"), QStringLiteral("LED (new)"));
+            auto* condition = editor->findChild<QLineEdit*>(QStringLiteral("ledCondition"));
+            if (condition == nullptr) {
+                ctx.failure = QStringLiteral("no Condition row on the LED editor");
+            } else {
+                const QString bad = QStringLiteral("%swr% >= (2");
+                condition->setText(bad);
+                emit condition->textEdited(bad);
+                pump(kFinalSettleMs);
+                captureParityEditor(ctx, editor, name + QStringLiteral("--editor-led-bad-condition"),
+                                    QStringLiteral("LED (new)"));
+                ctx.notes.append(QStringLiteral("LED condition typed: \"%1\"").arg(bad));
+            }
+        }
+    }
+    closeParityDialog(dialog);
+    annotateSlices(ctx);
+}
+
+// ---- 6: S-meter dial (and the tuning dial's saved look) ---------------------------
+
+// Feeds every added S-meter dial a swinging level, so a dial that keeps
+// history has a wedge to draw, then the slice's level.
+void feedParityDials(SceneContext& ctx)
+{
+    auto* poller = ctx.window->findChild<MeterPoller*>();
+    if (poller == nullptr) {
+        ctx.failure = QStringLiteral("no MeterPoller");
+        return;
+    }
+    const QList<SMeterWidget*> dials = dialCopies(ctx);
+    for (int step = 0; step < kParityHistorySteps; ++step) {
+        const double swing = kParityHistorySwingDb * std::sin(step * 0.6);
+        for (SMeterWidget* dial : dials) {
+            const QJsonObject context = dial->property("containerSourceContext").toJsonObject();
+            emit poller->readingUpdated(context, MeterBinding::SignalPeak, kParitySignalDbm + swing);
+        }
+        pump(kParityFeedGapMs);
+    }
+    for (SMeterWidget* dial : dials) {
+        const QJsonObject context = dial->property("containerSourceContext").toJsonObject();
+        emit poller->readingUpdated(context, MeterBinding::SignalPeak, kParitySignalDbm);
+    }
+    ctx.fedReadings.append(QJsonObject{
+        {QStringLiteral("instrument"), QStringLiteral("SMeterWidget (added copies)")},
+        {QStringLiteral("binding"), QStringLiteral("RX: Signal Peak")},
+        {QStringLiteral("values_dbm"), QStringLiteral("%1 readings swinging %2 dB about %3, then %3")
+                                           .arg(kParityHistorySteps).arg(kParityHistorySwingDb).arg(kParitySignalDbm)},
+        {QStringLiteral("seam"), consumerSeam(poller)}});
+}
+
+QString savedTuningDialRecord()
+{
+    DialItem item;
+    item.applyNewItemDefaults();
+    item.setThetisLook(false);
+    return item.serialize();
+}
+
+void sceneParitySMeterDial(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-smeter-dial");
+    const QString dial = QString::fromLatin1(SMeterDialContent::kDialType);
+    const QString dark = QString::fromLatin1(SMeterDialContent::kDarkModeKey);
+    const QString history = QString::fromLatin1(SMeterDialContent::kShowHistoryKey);
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Dial"), DockEdge::Top, {{dial, QStringLiteral("S-meter dial (new)")}}},
+        {QStringLiteral("Dial, dark mode"), DockEdge::Top,
+         {{dial, QStringLiteral("S-meter dial, dark mode"), {}, QJsonObject{{dark, true}}}}},
+        {QStringLiteral("Dial, history"), DockEdge::Top,
+         {{dial, QStringLiteral("S-meter dial, history"), {}, QJsonObject{{history, true}}}}},
+        {QStringLiteral("Dial, dark and history"), DockEdge::Top,
+         {{dial, QStringLiteral("S-meter dial, dark mode and history"), {}, QJsonObject{{dark, true}, {history, true}}}}},
+        {QStringLiteral("Tuning dials"), DockEdge::Left,
+         {{QStringLiteral("DIAL"), QStringLiteral("Tuning dial (new)")},
+          {QStringLiteral("DIAL"), QStringLiteral("Tuning dial (saved look)"), savedTuningDialRecord()}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Top, kParityTopStripPx}, {DockEdge::Left, kParitySideStripPx}},
+                         built, [](SceneContext& c) { feedParityDials(c); })) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    const QStringList keys = {QStringLiteral("default"), QStringLiteral("dark"), QStringLiteral("history"),
+                              QStringLiteral("dark-history"), QStringLiteral("tuning-dials")};
+    for (int i = 0; i < keys.size(); ++i) {
+        captureParityContainer(ctx, name + QStringLiteral("--") + keys.at(i), built.containers.value(i));
+    }
+    noteDials(ctx);
+    ctx.notes.append(QStringLiteral("an S-meter dial has no new-item default: a new copy and a saved copy "
+                                    "both draw with dark mode and history off (absent keys)"));
+    if (ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.value(3))) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(3).value(0))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor"),
+                                QStringLiteral("S-meter dial, dark mode and history"));
+        }
+        closeParityDialog(dialog);
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 7: web image background ----------------------------------------------------
+
+// A fixed picture for the web image item: bands of colour with a grid and
+// a caption, so it is plain where it is drawn.
+QImage parityWebPicture()
+{
+    QImage img(640, 360, QImage::Format_ARGB32);
+    QPainter p(&img);
+    QLinearGradient sky(0, 0, 0, img.height());
+    sky.setColorAt(0.0, QColor(0x1c, 0x3f, 0x6e));
+    sky.setColorAt(0.6, QColor(0x5a, 0x86, 0xb8));
+    sky.setColorAt(1.0, QColor(0xd9, 0x9a, 0x4e));
+    p.fillRect(img.rect(), sky);
+    p.setPen(QPen(QColor(255, 255, 255, 60), 1));
+    for (int x = 0; x < img.width(); x += 40) {
+        p.drawLine(x, 0, x, img.height());
+    }
+    for (int y = 0; y < img.height(); y += 40) {
+        p.drawLine(0, y, img.width(), y);
+    }
+    QFont f = p.font();
+    f.setPixelSize(28);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(QColor(255, 255, 255, 200));
+    p.drawText(img.rect(), Qt::AlignCenter, QStringLiteral("Web image (preview picture)"));
+    return img;
+}
+
+void sceneParityWebImage(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-web-image");
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("web-image.png"));
+    if (!dir.isValid() || !parityWebPicture().save(path, "PNG")) {
+        ctx.failure = QStringLiteral("could not write the web image picture");
+        return;
+    }
+    const QString url = QUrl::fromLocalFile(path).toString();
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Web image"), DockEdge::Left, {{QStringLiteral("WEBIMAGE"), QStringLiteral("Web image (new)")}}},
+    };
+    // The item reads a local file (no network): WebImageItem::setUrl loads a
+    // file URL at once, and a live item on Pan 1 hands its picture to that
+    // pan's spectrum (WebImageBackgrounds, MainWindow).
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built, [&built, &url](SceneContext& c) {
+            for (const auto& [meter, web] : parityItems<WebImageItem>(c, built.containers.value(0))) {
+                web->setUrl(url);
+                web->setTargetPan(0);
+                meter->update();
+                c.notes.append(QStringLiteral("web image: url a local PNG (no network), Pan 1; image %1, "
+                                              "shows background %2")
+                                   .arg(web->currentImage().isNull() ? QStringLiteral("none") : QStringLiteral("loaded"))
+                                   .arg(web->showsBackground() ? QStringLiteral("yes") : QStringLiteral("no")));
+            }
+            pump(kSettleMs);
+        })) {
+        return;
+    }
+    SpectrumWidget* pan = spectrumFor(ctx.window, panIdAt(0));
+    if (pan == nullptr) {
+        ctx.failure = QStringLiteral("no pan 1 spectrum");
+        return;
+    }
+    if (!pan->hasBackgroundImageOverride()) {
+        ctx.failure = QStringLiteral("pan 1 has no web image background");
+        return;
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--item"), built.containers.value(0));
+    QWidget* applet = appletFor(ctx.window, panIdAt(0));
+    QWidget* panWidget = applet != nullptr ? applet : pan;
+    ctx.notes.append(QStringLiteral("pan 1 background: own background %1, opacity %2%; with it off the "
+                                    "web image is drawn at full strength (Thetis shows it undimmed), and the words over "
+                                    "the trace are the preview picture's own caption")
+                         .arg(pan->backgroundEnabled() ? QStringLiteral("on") : QStringLiteral("off"))
+                         .arg(pan->backgroundOpacity()));
+    ctx.images.append(parityGrab(panWidget, name + QStringLiteral("--pan"), QStringLiteral("pan")));
+    // The pan's own background setting on: its opacity applies.
+    const bool wasOn = pan->backgroundEnabled();
+    pan->setBackgroundEnabled(true);
+    pump(kSettleMs);
+    ctx.notes.append(QStringLiteral("then the pan's own background on (opacity %1%)").arg(pan->backgroundOpacity()));
+    ctx.images.append(parityGrab(panWidget, name + QStringLiteral("--pan-background-on"), QStringLiteral("pan")));
+    pan->setBackgroundEnabled(wasOn);
+    pump(kSettleMs);
+    if (ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.value(0))) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(0))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor"), QStringLiteral("Web image (new)"));
+        }
+        closeParityDialog(dialog);
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 8: ANAN dark face and magic eye bezel -------------------------------------
+
+void sceneParityArtworkOptions(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-artwork-options");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Faces"), DockEdge::Left,
+         {{QStringLiteral("meter.ananMulti"), QStringLiteral("ANAN multi meter (new)")},
+          {QStringLiteral("meter.magicEye"), QStringLiteral("Magic eye face (new)")},
+          {QStringLiteral("MAGICEYE"), QStringLiteral("Magic eye (new)")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--faces"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    if (dialog == nullptr) {
+        return;
+    }
+    const QStringList names = {QStringLiteral("ANAN multi meter (new)"), QStringLiteral("Magic eye face (new)"),
+                               QStringLiteral("Magic eye (new)")};
+    const QStringList keys = {QStringLiteral("anan"), QStringLiteral("eye-face"), QStringLiteral("eye")};
+    const QStringList controls = {QStringLiteral("darkMode"), QStringLiteral("builtInBezel"),
+                                  QStringLiteral("builtInBezel")};
+    for (int i = 0; i < keys.size() && ctx.failure.isEmpty(); ++i) {
+        ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(i));
+        if (editor == nullptr) {
+            break;
+        }
+        const QString image = name + QStringLiteral("--editor-") + keys.at(i);
+        captureParityEditor(ctx, editor, image, names.at(i));
+        captureParityEditorTips(ctx, editor, image, names.at(i), {controls.at(i)});
+    }
+    closeParityDialog(dialog);
+    annotateSlices(ctx);
+}
+
+// ---- 9: signal text ----------------------------------------------------------
+
+QString savedSignalFaceRecord(QJsonObject& properties)
+{
+    SignalTextPresetItem face;
+    properties = face.configuration();
+    return face.serialize();
+}
+
+void sceneParitySignalText(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-signal-text");
+    QJsonObject savedFaceProperties;
+    const QString savedFace = savedSignalFaceRecord(savedFaceProperties);
+    ParityItem savedFaceItem{QStringLiteral("meter.signalText"), QStringLiteral("Signal text face (saved layout)"),
+                             savedFace, QJsonObject{{QStringLiteral("properties"), savedFaceProperties}}, true};
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Signal text"), DockEdge::Left,
+         {{QStringLiteral("SIGNALTEXT"), QStringLiteral("Signal text (new)")},
+          {QStringLiteral("SIGNALTEXT"), QStringLiteral("Signal text (saved layout)"), savedRecord<SignalTextItem>()},
+          {QStringLiteral("meter.signalText"), QStringLiteral("Signal text face (new)")},
+          savedFaceItem}},
+    };
+    const QList<int> bindings = {MeterBinding::SignalPeak, MeterBinding::SignalAvg, MeterBinding::SignalMaxBin};
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built,
+                         [&built, &bindings](SceneContext& c) {
+            feedParityReadings(c, built.containers.value(0), bindings, kParitySignalDbm);
+        })) {
+        return;
+    }
+    const QString id = built.containers.value(0);
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--items"), id);
+    ContainerSettingsDialog* dialog = openParityDialog(ctx, id);
+    if (dialog == nullptr) {
+        return;
+    }
+    if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(0))) {
+        captureParityEditor(ctx, editor, name + QStringLiteral("--editor"), QStringLiteral("Signal text (new)"));
+        auto* units = editor->findChild<QComboBox*>(QStringLiteral("signalUnits"));
+        if (units == nullptr) {
+            ctx.failure = QStringLiteral("no Units row on the signal text editor");
+        } else {
+            QStringList items;
+            for (int i = 0; i < units->count(); ++i) {
+                items.append(units->itemText(i));
+            }
+            ctx.notes.append(QStringLiteral("Units (signalUnits): current \"%1\", items [%2]")
+                                 .arg(units->currentText(), items.join(QStringLiteral(", "))));
+            scrollParityEditorTo(editor, units);
+            const QSet<QWidget*> before = visiblePopups();
+            units->showPopup();
+            pump(kFinalSettleMs);
+            QWidget* popup = newPopup(before);
+            // QComboBox places its list from mapToGlobal(), which for this
+            // never-shown (WA_DontShowOnScreen) window keeps a stale origin;
+            // the composite uses window geometry (globalOf). Move the list by
+            // the difference, to where Qt puts it on a shown window.
+            if (popup != nullptr) {
+                const QPoint stale = units->mapToGlobal(QPoint(0, 0));
+                const QPoint actual = globalOf(units);
+                const QPoint qtPlaced = popup->pos();
+                popup->move(qtPlaced + (actual - stale));
+                pump(kFinalSettleMs);
+                ctx.notes.append(QStringLiteral("Units list: combo at %1,%2 by mapToGlobal but %3,%4 by window "
+                                                "geometry; Qt put the list at %5,%6, moved by %7,%8 to %9,%10 "
+                                                "(combo %11 px tall, list top %12 px from the combo's top)")
+                                     .arg(stale.x()).arg(stale.y()).arg(actual.x()).arg(actual.y())
+                                     .arg(qtPlaced.x()).arg(qtPlaced.y())
+                                     .arg(actual.x() - stale.x()).arg(actual.y() - stale.y())
+                                     .arg(popup->pos().x()).arg(popup->pos().y())
+                                     .arg(units->height()).arg(popup->pos().y() - actual.y()));
+            }
+            appendPopupImages(ctx, name + QStringLiteral("--units"), dialog, {popup}, popup);
+            if (popup == nullptr) {
+                ctx.notes.append(QStringLiteral("the Units list did not open offscreen; see the editor image"));
+            }
+            units->hidePopup();
+            pump(kFinalSettleMs);
+        }
+    }
+    if (ctx.failure.isEmpty()) {
+        if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(0).value(2))) {
+            captureParityEditor(ctx, editor, name + QStringLiteral("--editor-face"),
+                                QStringLiteral("Signal text face (new)"));
+        }
+    }
+    closeParityDialog(dialog);
+    annotateSlices(ctx);
+}
+
+// ---- 12: TX and RX section items -------------------------------------------------
+
+// A section type with at least three parts, its built order and its
+// hide keys, from the properties it declares.
+struct ParitySection {
+    QString typeId;
+    QStringList order;
+    QStringList labels;
+};
+
+ParitySection paritySection(ContainerContentRegistry* registry, const QStringList& candidates)
+{
+    for (const QString& typeId : candidates) {
+        for (const ContentProperty& p : registry->declaredProperties(typeId)) {
+            if (p.kind != ContentProperty::Kind::Order || p.choices.size() < 3) {
+                continue;
+            }
+            ParitySection s;
+            s.typeId = typeId;
+            for (const ContentPropertyChoice& choice : p.choices) {
+                s.order.append(choice.value.toObject().value(QStringLiteral("id")).toString());
+                s.labels.append(choice.label);
+            }
+            return s;
+        }
+    }
+    return {};
+}
+
+// The section with its second part hidden and its parts in reverse order
+// (SectionParts::effectiveOrder keeps a shared line together).
+QJsonObject paritySectionEdit(const ParitySection& s)
+{
+    QStringList reversed = s.order;
+    std::reverse(reversed.begin(), reversed.end());
+    return QJsonObject{{SectionParts::hideKey(s.order.value(1)), true},
+                       {SectionParts::orderKey(), QJsonArray::fromStringList(reversed)}};
+}
+
+void sceneParitySections(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-sections");
+    ContainerContentRegistry* registry = parityManager(ctx) != nullptr ? parityManager(ctx)->contentRegistry() : nullptr;
+    if (registry == nullptr) {
+        ctx.failure = QStringLiteral("no content registry: the workspace preview switch is off");
+        return;
+    }
+    const ParitySection tx = paritySection(registry, {QStringLiteral("tx.power"), QStringLiteral("tx.processing"),
+                                                      QStringLiteral("tx.chain"), QStringLiteral("tx.keying"),
+                                                      QStringLiteral("tx.monitor"), QStringLiteral("tx.vox"),
+                                                      QStringLiteral("tx.filter")});
+    const ParitySection rx = paritySection(registry, {QStringLiteral("rx.agc"), QStringLiteral("rx.filter"),
+                                                      QStringLiteral("rx.mode"), QStringLiteral("rx.antennas"),
+                                                      QStringLiteral("rx.attenuator"), QStringLiteral("rx.squelch"),
+                                                      QStringLiteral("rx.rit"), QStringLiteral("rx.xit"),
+                                                      QStringLiteral("rx.step"), QStringLiteral("rx.pan")});
+    if (tx.typeId.isEmpty() || rx.typeId.isEmpty()) {
+        ctx.failure = QStringLiteral("no TX or RX section type with three or more parts");
+        return;
+    }
+    ctx.notes.append(QStringLiteral("TX section %1, parts [%2]; second part hidden, order reversed")
+                         .arg(tx.typeId, tx.labels.join(QStringLiteral(", "))));
+    ctx.notes.append(QStringLiteral("RX section %1, parts [%2]; second part hidden, order reversed")
+                         .arg(rx.typeId, rx.labels.join(QStringLiteral(", "))));
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("TX section"), DockEdge::Left,
+         {{tx.typeId, QStringLiteral("TX section (as built)")},
+          {tx.typeId, QStringLiteral("TX section (hidden and reordered)"), {}, paritySectionEdit(tx)}}},
+        {QStringLiteral("RX section"), DockEdge::Left,
+         {{rx.typeId, QStringLiteral("RX section (as built)")},
+          {rx.typeId, QStringLiteral("RX section (hidden and reordered)"), {}, paritySectionEdit(rx)}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--tx"), built.containers.value(0));
+    captureParityContainer(ctx, name + QStringLiteral("--rx"), built.containers.value(1));
+    const QStringList keys = {QStringLiteral("tx"), QStringLiteral("rx")};
+    for (int i = 0; i < keys.size() && ctx.failure.isEmpty(); ++i) {
+        if (ContainerSettingsDialog* dialog = openParityDialog(ctx, built.containers.value(i))) {
+            if (ContentPropertyEditor* editor = selectParityEntry(ctx, dialog, built.entries.value(i).value(1))) {
+                captureParityEditor(ctx, editor, name + QStringLiteral("--editor-") + keys.at(i),
+                                    boxes.at(i).items.at(1).name);
+            }
+            closeParityDialog(dialog);
+            pump(kFinalSettleMs);
+        }
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 13: container header with a long default name -----------------------------------
+
+void sceneParityLongTitle(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-long-title");
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("Signal max bin bar"), DockEdge::Left, {{QStringLiteral("meter.signalMaxBin")}}},
+        // A one-entry container's header shows its entry's name
+        // (ContainerManager::applyWorkspaceHeader), so the entry is named.
+        {QStringLiteral("Signal"), DockEdge::Left, {{QStringLiteral("meter.signalMaxBin"), QStringLiteral("Signal")}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParityNarrowStripPx}}, built,
+                         [&built](SceneContext& c) {
+            for (const QString& id : built.containers) {
+                feedParityReadings(c, id, {MeterBinding::SignalMaxBin}, kParitySignalDbm);
+            }
+        })) {
+        return;
+    }
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--long"), built.containers.value(0));
+    captureParityContainer(ctx, name + QStringLiteral("--short"), built.containers.value(1));
+    if (auto* area = ctx.window->findChild<EdgeDockArea*>()) {
+        EdgeDockStrip* strip = area->strip(DockEdge::Left);
+        ctx.notes.append(QStringLiteral("left strip asked for %1 px, is %2 px wide (minimum %3)")
+                             .arg(kParityNarrowStripPx).arg(strip->width())
+                             .arg(qMax(strip->minimumWidth(), strip->minimumSizeHint().width())));
+    }
+    ContainerManager* manager = parityManager(ctx);
+    for (const QString& id : built.containers) {
+        ContainerWidget* container = manager->container(id);
+        WorkspaceGroupHeader* header = container != nullptr ? container->workspaceHeader() : nullptr;
+        if (header == nullptr) {
+            continue;
+        }
+        QLabel* title = nullptr;
+        for (QLabel* l : header->findChildren<QLabel*>()) {
+            if (l->isVisible() && !l->text().isEmpty()) {
+                title = l;
+            }
+        }
+        ctx.notes.append(QStringLiteral("header of \"%1\": %2 px wide, title label %3 px wide showing \"%4\" "
+                                        "(full text needs %5 px)")
+                             .arg(header->title()).arg(header->width())
+                             .arg(title != nullptr ? title->width() : -1)
+                             .arg(title != nullptr ? title->text() : QString())
+                             .arg(title != nullptr ? title->fontMetrics().horizontalAdvance(header->title()) : -1));
+    }
+    annotateSlices(ctx);
+}
+
+// ---- 14: the workspace look keeps a user's colour ------------------------------
+
+// The colour "the user picked" in this scene: a blue no workspace role uses,
+// so it shows as picked beside the new item's workspace colours.
+QColor parityUserColour()
+{
+    return QColor(0x3a, 0x8f, 0xd8);
+}
+
+// A new item (Thetis's defaults) with the user's colour set by `pick`.
+template <typename Item, typename Pick>
+QString parityUserColourRecord(Pick pick)
+{
+    Item item;
+    item.applyNewItemDefaults();
+    pick(item);
+    return item.serialize();
+}
+
+void sceneParityUserColours(SceneContext& ctx)
+{
+    const QString name = QStringLiteral("container-parity-user-colours");
+    const QColor user = parityUserColour();
+    ParityBuilt built;
+    const QVector<ParityBox> boxes = {
+        {QStringLiteral("VFO and clock colors"), DockEdge::Left,
+         {{QStringLiteral("VFO"), QStringLiteral("VFO display (new)")},
+          {QStringLiteral("VFO"), QStringLiteral("VFO display (picked frequency color)"),
+           parityUserColourRecord<VfoDisplayItem>([&user](VfoDisplayItem& i) { i.setFrequencyColour(user); })},
+          {QStringLiteral("CLOCK"), QStringLiteral("Clock (new)")},
+          {QStringLiteral("CLOCK"), QStringLiteral("Clock (picked time color)"),
+           parityUserColourRecord<ClockItem>([&user](ClockItem& i) { i.setTimeColour(user); })}}},
+        {QStringLiteral("Bar, LED, text and button colors"), DockEdge::Left,
+         {{QStringLiteral("BAR"), QStringLiteral("Bar (new)")},
+          {QStringLiteral("BAR"), QStringLiteral("Bar (picked colors)"),
+           parityUserColourRecord<BarItem>([&user](BarItem& i) {
+               i.setBarColor(user);
+               i.setFontColour(user);
+               i.setMarkerColour(user);
+           })},
+          {QStringLiteral("LED"), QStringLiteral("LED (new)")},
+          {QStringLiteral("LED"), QStringLiteral("LED (picked colors)"),
+           parityUserColourRecord<LEDItem>([&user](LEDItem& i) {
+               i.setTrueColour(user);
+               i.setFalseColour(user);
+           })},
+          {QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (new)"),
+           parityOverlayRecord(true, QString::fromLatin1(kParityOverlayNewText))},
+          {QStringLiteral("TEXTOVERLAY"), QStringLiteral("Text overlay (picked text color)"),
+           parityUserColourRecord<TextOverlayItem>([&user](TextOverlayItem& i) {
+               i.setText1(QString::fromLatin1(kParityOverlayNewText));
+               i.setTextColour1(user);
+           })},
+          {QStringLiteral("NEREUSBAND"), QStringLiteral("Band buttons (new)")},
+          {QStringLiteral("NEREUSBAND"), QStringLiteral("Band buttons (picked text color)"),
+           parityUserColourRecord<NereusBandButtonItem>([&user](NereusBandButtonItem& i) {
+               i.setButtonTextColor(user);
+           })}}},
+    };
+    if (!runParityWindow(ctx, boxes, {{DockEdge::Left, kParitySideStripPx}}, built)) {
+        return;
+    }
+    fixParityClocks(ctx, built.containers.value(0));
+    ctx.notes.append(QStringLiteral("each \"picked\" item holds %1 where its new twin holds the default; "
+                                    "the workspace look draws the default in the workspace colour and "
+                                    "the picked colour as it is")
+                         .arg(user.name()));
+    captureParityWindow(ctx, name);
+    captureParityContainer(ctx, name + QStringLiteral("--vfo-clock"), built.containers.value(0));
+    captureParityContainer(ctx, name + QStringLiteral("--bar-led-text-buttons"), built.containers.value(1));
+    annotateSlices(ctx);
+}
+
+// The container-parity-* scenes (workspace preview switch on).
+void appendContainerParityScenes(QVector<Scene>& scenes)
+{
+    const auto add = [&scenes](const QString& name, const std::function<void(SceneContext&)>& run) {
+        scenes.append({name, QStringLiteral("2v"), false, run, true});
+    };
+    add(QStringLiteral("container-parity-button-grids"), sceneParityButtonGrids);
+    add(QStringLiteral("container-parity-mode-grid"), sceneParityModeGrid);
+    add(QStringLiteral("container-parity-vfo-display"), [](SceneContext& ctx) { sceneParityVfoDisplay(ctx, false); });
+    add(QStringLiteral("container-parity-vfo-display-roomy"),
+        [](SceneContext& ctx) { sceneParityVfoDisplay(ctx, true); });
+    add(QStringLiteral("container-parity-clock"), sceneParityClock);
+    add(QStringLiteral("container-parity-overlay-led"), sceneParityOverlayLed);
+    add(QStringLiteral("container-parity-smeter-dial"), sceneParitySMeterDial);
+    add(QStringLiteral("container-parity-web-image"), sceneParityWebImage);
+    add(QStringLiteral("container-parity-artwork-options"), sceneParityArtworkOptions);
+    add(QStringLiteral("container-parity-signal-text"), sceneParitySignalText);
+    add(QStringLiteral("container-parity-sections"), sceneParitySections);
+    add(QStringLiteral("container-parity-user-colours"), sceneParityUserColours);
+    add(QStringLiteral("container-parity-long-title"), sceneParityLongTitle);
+}
+
+} // namespace
+
 QVector<Scene> fixedScenes()
 {
     QVector<Scene> scenes;
@@ -8337,6 +10887,14 @@ QVector<Scene> fixedScenes()
                    [](SceneContext& ctx) { sceneCleanSpectrum(ctx); }, true});
     scenes.append({QStringLiteral("cw-digital"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneCwDigital(ctx); }, true});
+    for (CwTransmitPose pose : {CwTransmitPose::Semi, CwTransmitPose::QskUnavailable,
+                                CwTransmitPose::Refused, CwTransmitPose::Hl2}) {
+        const QString stem = QStringLiteral("cw-transmit--") + cwTransmitPoseName(pose);
+        scenes.append({stem, QStringLiteral("1"), false,
+                       [pose](SceneContext& ctx) { sceneCwTransmit(ctx, pose, true); }, true});
+        scenes.append({QStringLiteral("classic-") + stem, QStringLiteral("1"), false,
+                       [pose](SceneContext& ctx) { sceneCwTransmit(ctx, pose, false); }, false});
+    }
     scenes.append({QStringLiteral("tx-processing"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneTxProcessing(ctx); }, true});
     scenes.append({QStringLiteral("edit-add-content"), QStringLiteral("2v"), false,
@@ -8581,7 +11139,9 @@ QVector<Scene> fixedScenes()
         QMetaObject::invokeMethod(ctx.window, "openDiversityDialog", Qt::DirectConnection);
         captureDialog(ctx, visibleTopLevel<DiversityDialog>(), QStringLiteral("dialog-diversity"));
     }});
+    appendContainerParityScenes(scenes);
     appendInventoryDialogScenes(scenes);
+    appendRoundtableScenes(scenes);
     appendMenuScenes(scenes);
     return scenes;
 }
@@ -8648,11 +11208,16 @@ namespace {
 // first tab). `path` names the tab from the outside in: a tab inside a tab
 // is {outer, inner}. The board is the identity the model is posed as (a
 // model value; nothing connects): the HL2 tabs show only for a board with
-// the HL2 I/O board (HardwarePage::onCurrentRadioChanged).
+// the HL2 I/O board (HardwarePage::onCurrentRadioChanged). A model other
+// than FIRST poses that exact model on the board (the Anvelina PRO III is
+// board OrionMKII, model ANVELINAPRO3, and its DX Outputs follow the
+// model), and `suffix` ends the scene's name.
 struct SetupTabSpec {
     QString page;   // the page scene's stem: dialog-setup-<page>
     QStringList path;
     HPSDRHW board{HPSDRHW::Saturn};
+    HPSDRModel model{HPSDRModel::FIRST};
+    QString suffix;
 };
 
 QVector<SetupTabSpec> setupTabSpecs()
@@ -8666,6 +11231,8 @@ QVector<SetupTabSpec> setupTabSpecs()
     const QString oc = QStringLiteral("OC Outputs");
     const QString hl2Oc = QStringLiteral("Hermes Lite Control");
     const HPSDRHW hl2 = HPSDRHW::HermesLite;
+    const HPSDRHW anvelina = HPSDRHW::OrionMKII;
+    const QString anvelinaSuffix = QStringLiteral("--anvelina");
     return {
         // CoresSetupPage.cpp:157-159 (a QTabBar over a QStackedWidget).
         {cores, {QStringLiteral("Addresses")}},
@@ -8682,6 +11249,10 @@ QVector<SetupTabSpec> setupTabSpecs()
         {hardware, {hl2Oc, QStringLiteral("SWL")}, hl2},
         {hardware, {QStringLiteral("HL2 Options")}, hl2},
         {hardware, {QStringLiteral("HL2 I/O")}, hl2},
+        // The Anvelina PRO III: OC Outputs' DX Outputs group
+        // (OcOutputsTab::buildDxGroup) and Antenna / ALEX on that radio.
+        {hardware, {oc}, anvelina, HPSDRModel::ANVELINAPRO3, anvelinaSuffix},
+        {hardware, {alex}, anvelina, HPSDRModel::ANVELINAPRO3, anvelinaSuffix},
         // DspSetupPages.cpp:995-1722 (NR1 is the first tab).
         {nr, {QStringLiteral("NR2")}},
         {nr, {QStringLiteral("NR3")}},
@@ -8742,6 +11313,8 @@ QVector<SetupScrollSpec> setupScrollSpecs()
         {hardware, {hl2Oc}, hl2},
         {hardware, {QStringLiteral("HL2 I/O")}, hl2},
         {QStringLiteral("nr-anf"), {QStringLiteral("NNR")}},
+        // CW transmit: DSP > CW's five groups run past the dialog.
+        {QStringLiteral("cw"), {}},
     };
 }
 
@@ -8832,9 +11405,16 @@ QString setupTabStem(const QStringList& path)
 }
 
 // The test radios the connection panel scene shows (sampleRadio), one per
-// posed board.
-RadioInfo posedRadio(HPSDRHW board)
+// posed board, and an Anvelina PRO III for that posed model.
+RadioInfo posedRadio(HPSDRHW board, HPSDRModel model = HPSDRModel::FIRST)
 {
+    if (model == HPSDRModel::ANVELINAPRO3) {
+        RadioInfo info = sampleRadio(QStringLiteral("Anvelina PRO III"), QStringLiteral("00:1C:C0:A3:5E:17"),
+                                     QStringLiteral("192.168.1.66"), HPSDRHW::OrionMKII,
+                                     ProtocolVersion::Protocol2, 27);
+        info.modelOverride = HPSDRModel::ANVELINAPRO3;
+        return info;
+    }
     if (board == HPSDRHW::HermesLite) {
         return sampleRadio(QStringLiteral("Hermes Lite 2"), QStringLiteral("00:1C:C0:7B:90:3C"),
                            QStringLiteral("192.168.1.31"), HPSDRHW::HermesLite,
@@ -9014,10 +11594,13 @@ SetupDialog* openSetupPageScene(SceneContext& ctx, int index)
 // connect tells it (HardwarePage::onCurrentRadioChanged), so its tab strip
 // is the board's.
 SetupDialog* openSetupTabScene(SceneContext& ctx, int index, const QString& page, const QStringList& path,
-                               HPSDRHW board)
+                               HPSDRHW board, HPSDRModel model = HPSDRModel::FIRST)
 {
     if (board != HPSDRHW::Saturn) {
         ctx.model->setBoardForTest(board);
+    }
+    if (model != HPSDRModel::FIRST) {
+        ctx.model->setHpsdrModelForTest(model);
     }
     SetupDialog* d = openSetupPageScene(ctx, index);
     if (d == nullptr) {
@@ -9029,15 +11612,17 @@ SetupDialog* openSetupTabScene(SceneContext& ctx, int index, const QString& page
             ctx.failure = QStringLiteral("no HardwarePage");
             return nullptr;
         }
-        const RadioInfo radio = posedRadio(board);
+        const RadioInfo radio = posedRadio(board, model);
         hardware->onCurrentRadioChanged(radio);
         pump(kFinalSettleMs);
+        const QString posedAs = model == HPSDRModel::ANVELINAPRO3
+            ? QStringLiteral("OrionMKII, model ANVELINAPRO3 (RadioModel::setHpsdrModelForTest)")
+            : board == HPSDRHW::HermesLite ? QStringLiteral("Hermes Lite 2")
+                                           : QStringLiteral("Saturn (ANAN-G2)");
         ctx.notes.append(QStringLiteral("board posed as %1 (RadioModel::setBoardForTest); Hardware Config "
                                         "told the radio %2 through HardwarePage::onCurrentRadioChanged; "
                                         "nothing connects")
-                             .arg(board == HPSDRHW::HermesLite ? QStringLiteral("Hermes Lite 2")
-                                                               : QStringLiteral("Saturn (ANAN-G2)"),
-                                  radio.name));
+                             .arg(posedAs, radio.name));
     }
     if (!selectSetupTabs(ctx, d, path)) {
         return nullptr;
@@ -9258,10 +11843,10 @@ QVector<Scene> setupPageScenes(MainWindow* window)
             continue;
         }
         const SetupLeaf leaf = leafByStem.value(spec.page);
-        const QString name = QStringLiteral("dialog-setup-") + spec.page + setupTabStem(spec.path);
+        const QString name = QStringLiteral("dialog-setup-") + spec.page + setupTabStem(spec.path) + spec.suffix;
         const QString title = where(leaf, spec.path);
         scenes.append({name, QStringLiteral("2v"), true, [name, leaf, spec, title](SceneContext& ctx) {
-            SetupDialog* d = openSetupTabScene(ctx, leaf.index, leaf.label, spec.path, spec.board);
+            SetupDialog* d = openSetupTabScene(ctx, leaf.index, leaf.label, spec.path, spec.board, spec.model);
             if (d == nullptr) {
                 return;
             }

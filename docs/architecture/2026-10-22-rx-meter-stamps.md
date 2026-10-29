@@ -2,7 +2,8 @@
 
 Status: approved by JJ on 2026-10-22 ("your recommendation approved, this
 should likely cover all rx meters, like anything that could drift"). The
-minor calls are listed at the end for him to veto.
+minor calls are listed at the end for him to veto. Implemented, merged to
+main in PR 601 (2026-10-22).
 
 ## The problem
 

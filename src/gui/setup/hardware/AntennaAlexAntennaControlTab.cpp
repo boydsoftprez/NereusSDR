@@ -51,6 +51,10 @@
 //                band to none (processRxOnlyCheckBox, ported from
 //                setup.cs ProcessAlexAntCheckBox). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - "Gnd BPF2 on Tx" (chkBPF2Gnd) after Ext 2 on TX, shown on
+//                the models Thetis shows it, saved per MAC and applied by
+//                the radio at the next transmit (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 // =================================================================
 
 // --- From setup.designer.cs ---
@@ -173,6 +177,7 @@
 
 #include "core/accessories/AlexController.h"
 #include "core/accessories/AlexAntennaFacade.h"
+#include "core/AlexSettingsKeys.h"
 #include "core/AppSettings.h"
 #include "core/SkuUiProfile.h"
 #include "core/HardwareProfile.h"
@@ -738,11 +743,30 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     m_chkRxOutOnTx     = new QCheckBox(tr("RX Bypass on TX"), frame);
     m_chkExt1OutOnTx   = new QCheckBox(tr("Ext 1 on TX"), frame);
     m_chkExt2OutOnTx   = new QCheckBox(tr("Ext 2 on TX"), frame);
+    // From Thetis setup.designer.cs:5733-5745 [v2.10.3.15]
+    // From Thetis-Enhanced (EU2AV) setup.designer.cs:5734-5746 [@567a7ec]
+    //   this.chkBPF2Gnd.Text = "Gnd BPF2 on Tx";
+    //   this.toolTip1.SetToolTip(this.chkBPF2Gnd, "Ground BPF2 input on Tx");
+    //   this.chkBPF2Gnd.Visible = false;   (applySkuProfile shows it)
+    // The designer has no Checked line; Setup's constructor ticks the box
+    // in defaultAlexSettings() (the control list ends with chkBPF2Gnd):
+    //   From Thetis setup.cs:403, 33171-33187 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) setup.cs:432, 33736-33752 [@567a7ec]
+    //     defaultAlexSettings();
+    //     ... chkForceATTwhenOutPowerChanges, chkBPF2Gnd };
+    //     foreach (Control control in controls)
+    //         if (control is CheckBox) ((CheckBox)control).Checked = true;
+    // So the box starts ticked until a radio's saved value replaces it.
+    m_chkBpf2GndOnTx   = new QCheckBox(tr("Gnd BPF2 on Tx"), frame);
+    m_chkBpf2GndOnTx->setChecked(true);
     m_chkRxOutOverride = new QCheckBox(tr("Disable RX Bypass relay"), frame);
     m_chkUseTxAntForRx = new QCheckBox(tr("Use TX antenna for RX"), frame);
     m_chkRxOutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.rxOutOnTx");
     m_chkExt1OutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.ext1OutOnTx");
     m_chkExt2OutOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.ext2OutOnTx");
+    m_chkBpf2GndOnTx->setObjectName(QStringLiteral("alexBpf2GndOnTx"));
+    m_chkBpf2GndOnTx->setProperty("nereusSetupId", "hardware.antennaAlex.bpf2GndOnTx");
+    m_chkBpf2GndOnTx->setToolTip(tr("Ground BPF2 input on Tx"));
     m_chkRxOutOverride->setProperty("nereusSetupId", "hardware.antennaAlex.rxOutOverride");
     m_chkUseTxAntForRx->setProperty("nereusSetupId", "hardware.antennaAlex.useTxAntennaForRx");
 
@@ -764,11 +788,36 @@ void AntennaAlexAntennaControlTab::buildTxBypassStrip(QVBoxLayout* outerLayout)
     row->addWidget(m_chkRxOutOnTx);
     row->addWidget(m_chkExt1OutOnTx);
     row->addWidget(m_chkExt2OutOnTx);
+    row->addWidget(m_chkBpf2GndOnTx);
     row->addWidget(m_chkRxOutOverride);
     row->addWidget(m_chkUseTxAntForRx);
     row->addStretch();
 
     outerLayout->addWidget(frame);
+
+    // "Gnd BPF2 on Tx" is a saved radio setting, not an AlexController
+    // flag: the box saves it and the model hands it to the connection, as
+    // Thetis's handler hands it to the console.
+    //   From Thetis setup.cs:18214-18218 [v2.10.3.15]
+    //   From Thetis-Enhanced (EU2AV) setup.cs:18373-18377 [@567a7ec]
+    //     private void chkBPF2Gnd_CheckedChanged(object sender, EventArgs e)
+    //     {
+    //         if (initializing) return;
+    //         console.BPF2Gnd = chkBPF2Gnd.Checked;
+    //     }
+    // In a remote window the save goes to the Core, which applies it there
+    // (RadioModel::scheduleRemoteHardwareApply); the window's own model has
+    // no radio and does nothing.
+    connect(m_chkBpf2GndOnTx, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_bpf2GndMac.isEmpty()) {
+            return;
+        }
+        AppSettings::instance().setHardwareValue(
+            m_bpf2GndMac, QString::fromLatin1(alexKeys::kBpf2GndOnTx),
+            on ? QStringLiteral("True") : QStringLiteral("False"));
+        AppSettings::instance().save();
+        m_model->applyAlexHpfSwitchSettings();
+    });
 
     if (m_remoteAlex) {
         // R-R3-46: in a remote window "Use TX antenna for RX" goes to the
@@ -937,6 +986,7 @@ void AntennaAlexAntennaControlTab::applySkuProfile()
     if (m_chkExt1OutOnTx)   { m_chkExt1OutOnTx->setVisible(profile.hasExt1OutOnTx); }
     if (m_chkExt2OutOnTx)   { m_chkExt2OutOnTx->setVisible(profile.hasExt2OutOnTx); }
     if (m_chkRxOutOverride) { m_chkRxOutOverride->setVisible(profile.hasRxBypassUi); }
+    if (m_chkBpf2GndOnTx)   { m_chkBpf2GndOnTx->setVisible(profile.hasBpf2GndOnTx); }
     // useTxAntForRx is always visible — it's a NereusSDR-native control that
     // maps to Thetis Alex.cs:66 TRxAnt (no per-SKU visibility override in Thetis).
 
@@ -1025,6 +1075,25 @@ void AntennaAlexAntennaControlTab::syncTxRelaysFromSource()
     show(m_chkExt1OutOnTx, ext1OutOnTxNow());
     show(m_chkExt2OutOnTx, ext2OutOnTxNow());
     show(m_chkRxOutOverride, rxOutOverrideNow());
+}
+
+void AntennaAlexAntennaControlTab::restoreBpf2GndOnTx(const QString& macAddress)
+{
+    m_bpf2GndMac = macAddress;
+    // Default ticked, as Thetis's defaultAlexSettings() (setup.cs:403,
+    // 33171-33187 [v2.10.3.15]).
+    const bool on = macAddress.isEmpty()
+        || AppSettings::instance()
+                   .hardwareValue(macAddress, QString::fromLatin1(alexKeys::kBpf2GndOnTx),
+                                  QStringLiteral("True"))
+                   .toString() == QStringLiteral("True");
+    QSignalBlocker b(m_chkBpf2GndOnTx);
+    m_chkBpf2GndOnTx->setChecked(on);
+}
+
+void AntennaAlexAntennaControlTab::setBpf2GndOnTxAvailable(bool available, const QString& reason)
+{
+    HardwareTransmitGate::apply(m_chkBpf2GndOnTx, available, reason);
 }
 
 void AntennaAlexAntennaControlTab::applyTransmitEditAvailability()

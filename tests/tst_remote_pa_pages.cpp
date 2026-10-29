@@ -33,6 +33,9 @@
 //                                    alike in both windows, and its history
 //                                    records a release with its source.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-10-26  J.J. Boyd / KG4VCF  CW transmit, transmitSettingsVersion
+//                                    16 (the CW settings on `transmit`).
+//                                    AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -324,8 +327,8 @@ void TstRemotePaPages::paKeysAreOnTheOffAirListAtVersion6()
     // (Hardware Config's OC transmit pins and transmit calibration); 6 is
     // within it.
     // 14 since the Core owns Prevent transmitting on a different band, 15
-    // since a remote window edits the CFC bands.
-    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 15);
+    // since a remote window edits the CFC bands, 16 since the CW settings.
+    QCOMPARE(s.client->capabilities().transmitSettingsVersion, 16);
     QVERIFY(s.client->transmitSettingsAvailable(6));
 }
 

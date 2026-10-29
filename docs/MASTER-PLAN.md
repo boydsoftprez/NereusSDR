@@ -16,6 +16,17 @@ phone and the Core speaker need a 2026.10.1 Core; older peers still connect.
 See the [changelog](../CHANGELOG.md) and the
 [2026.10.1 upgrade note](guides/upgrading-to-2026.10.1.md).
 
+## Next release: 2026.10.2 (in progress)
+
+Work merged to main since 2026.10.1 is listed in the `[Unreleased]` section of
+the [changelog](../CHANGELOG.md). The larger pieces so far: the remote display
+codec v2 (waterfall rows that stand alone), remote RX meters held to their
+audio, receiver grab and flag drag tuning, TUNE following only the Setup drive
+source, SWR protection that lowers the drive, the TX applet rows as container
+items, and the workspace look on the iPhone and iPad. The new display format
+and the meter timing need a 2026.10.2 Core and window; older peers still
+connect.
+
 ## Previous release: 2026.10.0
 
 The first CalVer release brings together the work since 0.5.2.

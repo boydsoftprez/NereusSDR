@@ -1,0 +1,32 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "advanceMs": 9999
+    },
+    {
+      "expectSilent": "station"
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "expectClosed": "station",
+      "code": 4005
+    }
+  ]
+}

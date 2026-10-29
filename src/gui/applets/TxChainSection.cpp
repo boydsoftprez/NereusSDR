@@ -23,6 +23,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - The row's parts (SectionParts), which a container copy
+//                 hides and orders from its entry config. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-20 - A copy of this row in a container is told the outer
 //                 margins the applet's column gives the row (outerMargins);
 //                 the applet's own row is told none.
@@ -208,6 +211,12 @@ void TxChainSection::buildUI(int rowSpacing)
 
         vbox->addLayout(row);
     }
+
+    // The parts a container copy hides and orders (SectionParts).
+    m_parts.add(QStringLiteral("lev"), QStringLiteral("LEV button"), 0, {m_levBtn});
+    m_parts.add(QStringLiteral("eq"), QStringLiteral("EQ button"), 0, {m_eqBtn});
+    m_parts.add(QStringLiteral("cfc"), QStringLiteral("CFC button"), 0, {m_cfcBtn});
+    m_parts.add(QStringLiteral("profile"), QStringLiteral("TX profile"), -1, {m_profileCombo});
 }
 
 } // namespace NereusSDR

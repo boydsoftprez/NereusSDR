@@ -12,6 +12,9 @@
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-25 — MMIO outbound (container item parity):
+//                 endpointByFourChar and enqueueOutbound. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -97,6 +100,16 @@ public:
     // Registry access — safe to call from any thread.
     QList<MmioEndpoint*> endpoints() const;
     MmioEndpoint* endpoint(const QUuid& guid) const;
+
+    // The endpoint whose Thetis 4-character ID is id, or nullptr.
+    // From Thetis MeterManager.cs:43194-43202 [v2.10.3.15] — GuidfromFourChar.
+    MmioEndpoint* endpointByFourChar(const QString& id) const;
+
+    // Queue a message on the endpoint's outbound queue and ask its
+    // worker to send. Does nothing for an unknown guid or an endpoint
+    // whose direction is In. Safe to call from any thread.
+    // From Thetis MeterManager.cs:43186-43193 [v2.10.3.15] — SendDataMMIO.
+    void enqueueOutbound(const QUuid& guid, const QString& message);
 
     // Add / update / remove an endpoint. The engine takes ownership
     // of the passed MmioEndpoint and persists the updated registry

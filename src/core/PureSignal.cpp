@@ -12,6 +12,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 — connectAttOnTxPsActive: the PS-A -> StepAttenuatorController
+//                 setPsActive wire (console.cs:29612-29616 [v2.10.3.15]),
+//                 shared by RadioModel and the tests. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - Add braces to the Auto-cal resume condition. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
 //                 with causal TX status and cancellation drain. J.J. Boyd
 //                 (KG4VCF), with OpenAI Codex assistance.
@@ -238,6 +244,27 @@ bool PureSignal::isAutoCalEnabled() const noexcept
     return m_settings && m_settings->autoCalEnabled();
 }
 
+void PureSignal::connectAttOnTxPsActive(PureSignal* ps,
+                                        StepAttenuatorController* stepAtt)
+{
+    // The key-down force-31 dB gate follows PS-A.
+    // From Thetis console.cs:29612-29616 [v2.10.3.15]:
+    //   //MW0LGE [2.9.0.7] added option to always apply 31 att from setup form when not in ps
+    //   if ((!chkFWCATUBypass.Checked && _forceATTwhenPSAoff) || ... ) txAtt = 31;
+    // chkFWCATUBypass is the PS-A button; its handler drives AutoCalEnabled
+    // (console.cs:43782-43787 [v2.10.3.15]).  See RadioModel's call site for
+    // why PSEnabled is the wrong signal here.
+    if (!ps || !stepAtt) {
+        return;
+    }
+    QObject::connect(ps, &PureSignal::autoCalEnabledChanged,
+                     stepAtt, &StepAttenuatorController::setPsActive,
+                     Qt::UniqueConnection);
+    // autoCalEnabledChanged fires only on a change, and the preference may
+    // already be on, so sync the controller from the current PS-A state.
+    stepAtt->setPsActive(ps->isAutoCalEnabled());
+}
+
 bool PureSignal::autoAttenuate() const noexcept
 {
     return m_settings && m_settings->autoAttenuate();
@@ -293,6 +320,14 @@ void PureSignal::bindSettingsSignals()
         if (!m_operationalSettingsApplied || !m_tx
             || m_settingsHydrationDepth > 0) return;
         if (!run || canActuate()) m_tx->setPSRunCal(run ? 1 : 0);
+        // Auto-cal turned on while processing was paused was refused by
+        // startAutomaticCalibration(); start it now the pause is lifted.
+        // Thetis has no such pause: AutoCalEnabled always reaches
+        // PSEnabled=true and PSRunCal=true (PSForm.cs:235-251, 272-289,
+        // 644-649 [v2.10.3.15]).
+        if (run && !m_autoON) {
+            resumeAutomaticCalibrationPreference();
+        }
     });
     connect(m_settings, &PureSignalSettings::autoAttenuateChanged,
             this, &PureSignal::autoAttenuateChanged);
@@ -575,8 +610,11 @@ void PureSignal::setPsEnabledWithFanOut(bool on)
     // fan-out itself — it calls UpdateDDCs / SetPureSignal / SendHighPriority
     // / setPSRunCal.  In NereusSDR the calcc-side setPSRunCal is already
     // wired inline at each cmd-state case (see pollTimerTick); the radio /
-    // DDC / step-attenuator side moves to subscribers of psEnabledChanged
-    // (RadioModel::wireConnectionSignals).
+    // DDC side moves to subscribers of psEnabledChanged
+    // (RadioModel::wireConnectionSignals).  The step attenuator's
+    // ATT-on-TX gate is not part of this setter: it follows the PS-A state
+    // (autoCalEnabledChanged), as console.cs:29612-29616 [v2.10.3.15]
+    // tests chkFWCATUBypass.Checked.
     if (on == m_psEnabled) {
         return;
     }
@@ -1596,7 +1634,7 @@ void PureSignal::processNewInfo(const int newInfo[16], std::uint64_t controlSeri
         // Codex Fix C — PSForm.cs:646 [v2.10.3.13]:
         //   if (!PSEnabled) PSEnabled = true;
         // Fans out the radio/DDC ON state to subscribers of psEnabledChanged
-        // (UpdateDDCs / SetPureSignal / setPuresignalRun / setPsActive).
+        // (UpdateDDCs / SetPureSignal / setPuresignalRun).
         setPsEnabledWithFanOut(true);
         m_cmdState = CommandState::AutoCalibrate;
         break;

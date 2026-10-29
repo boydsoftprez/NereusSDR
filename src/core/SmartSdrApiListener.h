@@ -28,6 +28,19 @@
 //   2026-10-01 - Round 4: tune=0 only on a change; a new client's or a
 //                 sub's idle tune=0 push is not emitted. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - CW transmit, interlockedAmpChanged: hasInterlockedAmp
+//                 changed (D16, the CW keyer gate). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
+//   2026-10-26 - CW transmit fix wave 2 (I2): m_transmittingSettle, the
+//                 30 ms TRANSMITTING settle the un-key cancels. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F8: m_transmitASettle, the
+//                 5 ms TRANSMIT_A step the un-key and stop() cancel, and
+//                 test probes for both settles. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F12: ackReady is reset on
+//                 un-key too. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                 Code.
 // =================================================================
 
 #pragma once
@@ -73,6 +86,11 @@ namespace NereusSDR {
 class NEREUS_CORE_EXPORT SmartSdrApiListener : public QObject {
     Q_OBJECT
 public:
+    // Final fix wave F3 and F8: whether the TRANSMITTING settle and the
+    // TRANSMIT_A step are pending, so a test proves it un-keys inside them.
+    bool transmittingSettleActiveForTest() const { return m_transmittingSettle.isActive(); }
+    bool transmitAPendingForTest() const { return m_transmitASettle.isActive(); }
+
     explicit SmartSdrApiListener(QObject* parent = nullptr);
 
     // Production entry point: binds to AnyIPv4:4992 (a desktop window), or,
@@ -226,6 +244,9 @@ signals:
     // RadioModel wires these to the appropriate MOX / UI rollback paths.
     void interlockGranted(const QString& source);
     void interlockBlocked(const QString& reason);
+    // CW transmit (2026-10-26, D16): hasInterlockedAmp() changed (an amp's
+    // interlock was created, enabled, disabled or went with its client).
+    void interlockedAmpChanged(bool interlocked);
 
     // 2026-05-20 pcap-driven (flex-tgxl-direct-CONTROL.pcapng @T+172.201):
     // When TGXL (or any amp) wants to coordinate with another amp in the
@@ -303,7 +324,7 @@ private:
         //   6. us -> all:    S0|interlock state=READY reason=AMP:X (on TX release)
         int     interlockId{0};      // 0 = no interlock registered yet
         QString interlockName;       // e.g. "PG-XL", "TG" (from create name=)
-        bool    ackReady{false};     // set by C|interlock ready <id>; reset on engage
+        bool    ackReady{false};     // set by C|interlock ready <id>; reset on engage and un-key (F12)
         // Timestamp when ackReady was most recently set true. Used by
         // setInterlockTransmitting to decide whether to honor a "pre-ack"
         // (an `interlock ready N` that arrived BEFORE our PTT_REQUESTED
@@ -393,8 +414,30 @@ private:
     QTimer     m_interlockRepeat;
     QByteArray m_interlockRepeatFrame;
     void armInterlockRepeat(const QByteArray& frame);
+    // CW transmit: emits interlockedAmpChanged when hasInterlockedAmp()
+    // differs from the last value it reported.
+    void noteInterlockedAmp();
+    bool m_lastInterlockedAmp{false};
     void cancelInterlockRepeat();
     void onInterlockRepeat();
+
+    // CW transmit fix wave 2 (I2): the C4 30 ms settle before
+    // TRANSMITTING, a member timer so the un-key (setInterlockTransmitting
+    // false) and stop() cancel it. Before, an uncancelled single-shot sent
+    // TRANSMITTING and interlockGranted after the idle sequence of a key
+    // released inside the settle.
+    static constexpr int kTransmittingSettleMs = 30;
+    QTimer  m_transmittingSettle;
+    QString m_transmittingSource;
+
+    // Final fix wave F8: the C6 TRANSMIT_A step, ~5 ms after TRANSMITTING
+    // (pcap T+167.734 -> T+167.740), a member timer for the same reason:
+    // an un-key within 5 ms of TRANSMITTING sent TRANSMIT_A after the idle
+    // sequence.
+    static constexpr int kTransmitASettleMs = 5;
+    QTimer      m_transmitASettle;
+    QStringList m_transmitAHandles;
+    void broadcastTransmitA();
 
     // 2026-05-21 4o3a-lan-ptt-pcap-divergence.md §8 C4: actual emission
     // of the canonical TRANSMITTING S-frame + RF-flow gate release.

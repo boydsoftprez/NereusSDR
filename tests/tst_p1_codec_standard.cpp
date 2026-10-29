@@ -1,18 +1,30 @@
 // no-port-check: test file — exercises P1CodecStandard (which is the port);
 // the networkproto1.c cites in test-row comments reference the expected
 // byte values only, not a direct code port in this file.
+//
+// Modification history (NereusSDR):
+//   2026-10-26: CW transmit, the CW bank 12-14 cases (R-CW-11). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 #include <QtTest/QtTest>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <array>
 #include "core/codec/P1CodecStandard.h"
+#include "P1CodecCwCases.h"
 
 using namespace NereusSDR;
 
 class TestP1CodecStandard : public QObject {
     Q_OBJECT
 private slots:
+    // CW transmit (R-CW-11): banks 12-14 carry the radio keyer's settings.
+    // From Thetis networkproto1.c:618-646 [v2.10.3.15]
+    void cwBanks_carryTheKeyerSettings() {
+        P1CodecStandard codec;
+        P1CwCases::runAll(codec);
+    }
+
     void maxBank_is_16() {
         P1CodecStandard codec;
         QCOMPARE(codec.maxBank(), 16);
@@ -73,12 +85,14 @@ private slots:
             << QByteArray(R"({"rxStepAttn":[31,0,0]})");
 
         // Bank 12 — ADC1 ATT during RX (no MOX), value 7
+        // C3 / C4 carry the default CW keyer: speed 25 iambic B (0x80), weight 50
+        // (networkproto1.c:621-628 [v2.10.3.15], CodecContext::cw defaults).
         // Source: networkproto1.c:606-616 [@501e3f5]
         // Upstream inline attribution preserved verbatim (networkproto1.c:612):
         //   if (HPSDRModel == HPSDRModel_REDPITAYA) //[2.10.3.9]DH1KLM  //model needed as board type (prn->discovery.BoardType) is an OrionII
         QTest::newRow("bank12_rx_adc1_att_7dB")
             << 12 << false
-            << 0x16 << ((7 & 0xFF) | 0x20) << ((0 & 0x1F) | 0x20) << 0x00 << 0x00
+            << 0x16 << ((7 & 0xFF) | 0x20) << ((0 & 0x1F) | 0x20) << (25 | 0x80) << 50
             << QByteArray(R"({"rxStepAttn":[0,7,0]})");
 
         // Bank 12 — ADC1 forced to 31 dB during MOX (Standard codec — non-RedPitaya)
@@ -87,7 +101,7 @@ private slots:
         //   if (HPSDRModel == HPSDRModel_REDPITAYA) //[2.10.3.9]DH1KLM  //model needed as board type (prn->discovery.BoardType) is an OrionII
         QTest::newRow("bank12_mox_adc1_forced_31dB")
             << 12 << true
-            << 0x17 << (0x1F | 0x20) << (0x00 | 0x20) << 0x00 << 0x00
+            << 0x17 << (0x1F | 0x20) << (0x00 | 0x20) << (25 | 0x80) << 50
             << QByteArray(R"({"rxStepAttn":[0,12,0]})");  // 12 ignored under MOX
 
         // Bank 10 — Alex HPF/LPF passthrough, relay disengaged (default trxRelay=false → bit 7 = 1)

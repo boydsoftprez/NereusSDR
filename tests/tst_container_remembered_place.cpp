@@ -1,5 +1,14 @@
 // no-port-check: NereusSDR-original offscreen regressions for the place the operator gave a container.
 // Modification history (NereusSDR):
+//   2026-10-27 - Reloading a blocked store restores the saved placement
+//                 even without a manager error. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-26 - Right after a good reload ends a state that refused every
+//                 save (the saved layout changed underneath), the geometry
+//                 capture runs again with no other commit first: a header
+//                 anchor change is saved by the next resize, and a drag is
+//                 saved. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-11 - A layout saved with no pane size is shown for the pane as
 //                 it settles after the window's first layout. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -14,6 +23,8 @@
 #include <QJsonArray>
 #include <QLoggingCategory>
 #include <QMouseEvent>
+#include <QPushButton>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QVBoxLayout>
 #include <memory>
@@ -309,6 +320,87 @@ private slots:
         // Still never saved without an operator move.
         QCOMPARE(ContainerDocumentCodec::encode(store.snapshot()), before);
         QVERIFY(!storedPane(store, QStringLiteral("a")).has_value());
+    }
+
+    void changesAfterAReloadAreSavedAtOnce()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("reload.settings")));
+        ContainerWorkspaceStore store(settings);
+        Rig rig(store);
+        QVERIFY(rig.show());
+        QCOMPARE(rig.manager->commitWorkspace(workspace({freeContainer(QStringLiteral("a"), kFirstRect)}), 0).status,
+                 CommitStatus::Saved);
+        QVERIFY(rig.settleCapture());
+        // Another writer replaces the saved layout: every save is refused.
+        WorkspaceDocument external = store.snapshot();
+        external.revision += 5;
+        settings.setValue(QStringLiteral("ContainerWorkspace"),
+                          QString::fromUtf8(ContainerDocumentCodec::encode(external)));
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
+            QStringLiteral("^Container workspace commit refused: Conflict - Workspace changed; reload before editing$")));
+        WorkspaceDocument edit = store.snapshot();
+        edit.containers[0].name = QStringLiteral("renamed while stuck");
+        QCOMPARE(rig.manager->commitWorkspace(edit, edit.revision).status, CommitStatus::Conflict);
+        QVERIFY(!rig.manager->storageError().isEmpty());
+        // A good reload ends it; what changes next saves with no commit between.
+        QVERIFY(store.load().ok);
+        ContainerWidget* a = rig.manager->container(QStringLiteral("a"));
+        QVERIFY(a);
+        QPushButton* axis = nullptr;
+        for (QPushButton* button : a->findChildren<QPushButton*>()) {
+            if (button->toolTip().startsWith(QStringLiteral("Axis lock"))) {
+                axis = button;
+            }
+        }
+        QVERIFY(axis);
+        axis->click();
+        const AxisLock anchor = a->axisLock();
+        QVERIFY(anchor != AxisLock::Left);
+        // The container is resized by the app, not dragged: the capture that
+        // follows saves the header's anchor.
+        a->resize(a->size() + QSize(0, 1));
+        QVERIFY(rig.settleCapture());
+        QTRY_COMPARE_WITH_TIMEOUT(store.snapshot().containers[0].anchor, anchor, kSaveTimeoutMs);
+        auto* bar = rig.manager->container(QStringLiteral("a"))->findChild<QWidget*>(QStringLiteral("containerTitleBar"));
+        QVERIFY(bar);
+        dragBy(bar, QPoint(40, 30));
+        QCOMPARE(rig.shown(QStringLiteral("a")), kFirstRect.translated(40, 30));
+        QVERIFY(rig.settleCapture());
+        QTRY_COMPARE_WITH_TIMEOUT(storedGeometry(store, QStringLiteral("a")), kFirstRect.translated(40, 30),
+                                  kSaveTimeoutMs);
+    }
+
+    void aStoreOnlyBlockedReloadRestoresSavedPlacement()
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("store-only-reload.settings")));
+        ContainerWorkspaceStore store(settings);
+        Rig rig(store);
+        QVERIFY(rig.show());
+        QCOMPARE(rig.manager->commitWorkspace(workspace({freeContainer(QStringLiteral("a"), kFirstRect)}), 0).status,
+                 CommitStatus::Saved);
+        QVERIFY(rig.settleCapture());
+        const WorkspaceDocument before = store.snapshot();
+        WorkspaceDocument external = before;
+        external.revision += 5;
+        external.containers[0].geometry = kSecondRect;
+        settings.setValue(QStringLiteral("ContainerWorkspace"),
+                          QString::fromUtf8(ContainerDocumentCodec::encode(external)));
+        QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
+            QStringLiteral("^Container workspace commit refused: Conflict - Workspace changed; reload before editing$")));
+        // This caller bypasses the manager, so only the store is blocked.
+        QCOMPARE(store.commit(before, before.revision).status, CommitStatus::Conflict);
+        QVERIFY(!store.blockedReason().isEmpty());
+        QVERIFY(rig.manager->storageError().isEmpty());
+        QCOMPARE(rig.shown(QStringLiteral("a")), kFirstRect);
+
+        QVERIFY(store.load().ok);
+        QVERIFY(store.blockedReason().isEmpty());
+        QVERIFY(rig.manager->storageError().isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(rig.shown(QStringLiteral("a")), kSecondRect, kSaveTimeoutMs);
     }
 
     void operatorDragIsSaved()

@@ -1,0 +1,7 @@
+{
+  "from": "live",
+  "wire": {
+    "type": "resync"
+  },
+  "decodes": false
+}

@@ -24,6 +24,10 @@
 //   2026-10-09 paintEvent draws the toast's own style sheet frame and
 //              severity bar. J.J. Boyd (KG4VCF), AI-assisted via
 //              Anthropic Claude Code.
+//   2026-10-26 kUntilClosed: a toast with no timeout stays up until its
+//              owner closes it (or the operator clicks it), for a notice
+//              whose condition lasts. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude Code.
 // =================================================================
 //
 // no-port-check: NereusSDR-original
@@ -57,6 +61,10 @@ enum class ToastSeverity : int {
 class StatusToast : public QWidget {
     Q_OBJECT
 public:
+    /// A timeout of this (or less) starts no countdown: the toast stays up
+    /// until its owner closes it or the operator clicks it.
+    static constexpr int kUntilClosed = 0;
+
     StatusToast(const QString& message,
                 ToastSeverity severity,
                 int timeoutMs,
@@ -69,8 +77,11 @@ public:
     QString message() const { return m_message; }
 
     /// Restart the dismiss countdown. Called when an identical message
-    /// arrives while this toast is still up.
+    /// arrives while this toast is still up. kUntilClosed stops it.
     void refresh(int timeoutMs);
+
+    /// True while no countdown runs (shown with kUntilClosed).
+    bool staysUntilClosed() const { return !m_dismissTimer.isActive(); }
 
 protected:
     void mousePressEvent(QMouseEvent* event) override;

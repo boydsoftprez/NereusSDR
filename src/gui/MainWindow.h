@@ -9,6 +9,39 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26: wireDialRequests(): a dial's tuning, step, slice select and
+//               lock act on the slice they name, through vfoRequestSlice()
+//               (now any meter item). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
+//               display's clicks, wheel and keys act on the slice they
+//               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-10-26: updateContainerWorkspaceNotice() and the notice it keeps
+//               up while every container change is refused. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: the Roundtable line on every flag:
+//               openRoundtableForSlice (Roundtable plan Task 14).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: the Roundtable tags on every pan: wirePanRoundtableTags,
+//               refreshRoundtableTags and onRoundtableRoomClicked
+//               (Roundtable plan Task 14). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-24: m_roundtableApplet (Roundtable plan Task 13). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24: openRoundtableFirstRunIfNeeded and m_roundtableFirstRun
+//               (Roundtable plan Task 12). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-10-26: CW transmit, remote CW (R-CW-49): bindRemoteCwx(), the
+//               remote window's CWX applet on the Core's CWX sender. J.J.
+//               Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, the CWX applet's status label, showCwxApplet()
+//               and cwxRemoteSendReason(). J.J. Boyd (KG4VCF), AI-assisted
+//               via Claude Code.
+//   2026-10-27: Remote transmit hold then cut: m_txHeld and
+//               refreshTxStatusBadge(), so the TX badge reads "Held" while
+//               the Core holds a remote key's RF. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: sliceAccessChanged(), so container instruments follow a
 //               remote window's slice access. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -192,6 +225,9 @@
 //                m_remoteRigctl, refreshRigctlRemoteTransmit,
 //                applyRemoteRigctldSettings. AI-assisted via Anthropic
 //                Claude Code.
+//   2026-10-26 - Final review fix wave (M6): voxLineReason, one VOX
+//                 line reason for the container button and the applets.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -288,7 +324,10 @@ namespace NereusSDR {
 enum class ToastSeverity : int;
 
 class RadioModel;
+class TxHeldIndicator;
 class MeterItem;
+class VfoDisplayItem;
+class DialItem;
 class ContainerButtonDispatcher;
 class ConnectionPanel;
 class SupportDialog;
@@ -339,6 +378,7 @@ class RemoteMediaController;
 class SpotHubDialog;
 class SpotBeamTurner;
 class FreeDVReporterDialog;
+class RoundtableFirstRunDialog;
 
 class RxDashboard;
 class StationBlock;
@@ -697,6 +737,10 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
+    /// Roundtable plan Task 14 (design 11.2): a pan's Roundtable tag, or a
+    /// row of its fold list, tunes the active slice to that room. A slot so
+    /// wirePanRoundtableTags can re-arm with Qt::UniqueConnection.
+    void onRoundtableRoomClicked(const QString& roomId);
     /// Phase 3F: repaint every pan's status overlay from the slice that pan
     /// is showing (its own activeSliceIndex), with the ADC chain resolved
     /// through RadioModel::sliceChainIndex so the CH tag agrees with the WIDE
@@ -796,6 +840,16 @@ private slots:
     /// The handlers below are SLOTS, not lambdas, so Qt::UniqueConnection is
     /// actually honoured on the re-arm.
     void wirePanNotchHandlers();
+
+    /// Roundtable plan Task 14: connect every pan's roundtableRoomClicked
+    /// (re-armed from PanadapterStack::countChanged, as the notch handlers).
+    void wirePanRoundtableTags();
+    /// Every pan's Roundtable tags from the Roundtable model, at most once
+    /// per event-loop pass however many of its signals arrive.
+    void scheduleRoundtableRefresh();
+    void refreshRoundtableTags();
+    // A flag's Roundtable line: activate its slice and show the panel.
+    void openRoundtableForSlice(int sliceId);
 
     /// TNF inbound handlers. Each mutates the single global NotchModel; the
     /// frequencies arrive already resolved in the emitting pan's own
@@ -1048,6 +1102,10 @@ private slots:
     // both dialogs are single-instance for the lifetime of MainWindow.
     void openSpotHub();
     void openFreeDVReporter();
+    /// Roundtable plan Task 12: the first-run question ("Roundtable is
+    /// public") or the one-time note, when RoundtableFirstRunDialog says
+    /// this computer should show it. Not modal; one at a time.
+    void openRoundtableFirstRunIfNeeded();
     /// Rotor control plan Task 8: the window's one SpotBeamTurner (made on
     /// first use), behind every pan's spot menu, the Spot Hub and
     /// auto-turn. Its refusals are toasted.
@@ -1148,6 +1206,14 @@ private slots:
     void refreshContainerFrequency(SliceModel* slice);
     void watchContainerItems(QWidget* content);
     void onContainerItemAdded(MeterItem* item);
+    // Task 36: a live VFO display's requests act on the slice each names.
+    void wireVfoDisplayRequests(VfoDisplayItem* vfo);
+    // Task 37: a live dial's tuning, step, slice select and lock requests.
+    void wireDialRequests(DialItem* dial);
+    // The slice a VFO display's (or dial's) request may act on, or null
+    // after saying why (an unsupported source, another radio's entry, a
+    // slice that is not open or that this window only listens to).
+    SliceModel* vfoRequestSlice(const MeterItem* item, int sliceId);
     void reconcileMiniDisplays();
     void presentMiniFrame(int sliceId, const QVector<float>& traceDbm,
                           const QVector<float>& waterfallDbm, double centreHz,
@@ -1596,6 +1662,11 @@ private:
     // while another device holds transmit, why VOX may not be armed here
     // (that device has the transmitter); empty when it may.
     QString desktopVoxHolderReason() const;
+    // Why VOX may not be armed from this window's microphone line: no line
+    // to the Core, the Core's microphone source unsettled or the radio's
+    // microphone, or another device holding transmit; empty when it may.
+    // The TX applet, Setup and the container's VOX button all use it.
+    QString voxLineReason() const;
     // The TX applet's VOX button and every Setup's Enable VOX follow it.
     void applyDesktopVoxHolderGate();
     void requestDesktopTransmit(bool tune, bool on);
@@ -1691,6 +1762,7 @@ private:
     QPointer<SpotHubDialog>        m_spotHubDialog;
     SpotBeamTurner*                m_spotBeamTurner{nullptr};  // Qt child; rotor plan Task 8
     QPointer<FreeDVReporterDialog> m_freeDVReporterDialog;
+    QPointer<RoundtableFirstRunDialog> m_roundtableFirstRun;  // Roundtable plan Task 12
 
     // Status bar widgets (double-height AetherSDR design, 46px)
     //
@@ -2058,6 +2130,11 @@ private:
     QPointer<class StatusToast> m_txInhibitToast;
     StatusBadge* m_paStatusBadge{nullptr};
     StatusBadge* m_txStatusBadge{nullptr};
+    // Remote transmit hold then cut: what the TX badge shows while the
+    // Core holds a remote key's RF ("Held"), and MOX otherwise. Painted
+    // by refreshTxStatusBadge(); a child of this window.
+    TxHeldIndicator* m_txHeld{nullptr};
+    void refreshTxStatusBadge();
     // Task 78: who holds transmit when it is another device (or the
     // radio), beside the TX badge in the safety group. Hidden otherwise.
     StatusBadge* m_txHolderChip{nullptr};
@@ -2229,11 +2306,20 @@ private:
     class ModMonitorApplet* m_modMonApplet{nullptr};   // AM Mod Monitor
     class DiversityApplet*  m_diversityApplet{nullptr};
     class CwxApplet*        m_cwxApplet{nullptr};
+    QLabel*                 m_statusCwxLabel{nullptr};
+    // CW transmit (R-CW-44): Tools > CWX, the status-bar label and ZZKO.
+    void showCwxApplet(bool shown);
+    static QString cwxRemoteSendReason();
+    // CW transmit (R-CW-49): a remote window's CWX applet sends through the
+    // Core (cw.send, cw.memory, cw.stop, cw.key) and shows its refusals.
+    void bindRemoteCwx();
     class DvkApplet*        m_dvkApplet{nullptr};
     class CatApplet*        m_catApplet{nullptr};
     QPointer<class CatLogWindow> m_catLogWindow;
     class TunerApplet*      m_tunerApplet{nullptr};
     class RotorApplet*      m_rotorApplet{nullptr};
+    class RoundtableApplet* m_roundtableApplet{nullptr};  // Roundtable plan Task 13
+    bool m_roundtableRefreshPending{false};               // Roundtable plan Task 14
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};
@@ -2298,9 +2384,18 @@ private:
     /// moment the streams come back instead of aging out.
     QPointer<class StatusToast> m_suspendToast;
 
+    /// The container layout notice that stays up while every change is
+    /// refused; see updateContainerWorkspaceNotice().
+    QPointer<class StatusToast> m_containerWorkspaceNotice;
+
     /// Re-stack live toasts bottom-right, newest nearest the bar.
     /// Called on show, on close, and on move/resize.
     void restackToasts();
+
+    /// Shows, rewords or takes down the notice that stays up while the
+    /// container layout refuses every change (ContainerWorkspaceStore::
+    /// blockedReason), so it goes the moment the layout is read again.
+    void updateContainerWorkspaceNotice();
 
     // Spectrum overlay panels. Parity Task 18: the pan-0-only target the
     // display-settings and Clarity wiring used is gone; each strip is wired

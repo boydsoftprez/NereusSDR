@@ -203,4 +203,112 @@ import Testing
         #expect(!allocator.awaitingBudget)
         #expect(allocator.lastRefusal == nil)
     }
+
+    // MARK: Every pan of one device on one budget (R-IOS-59, spec 6.3)
+
+    @Test @MainActor func twoPansShareOneBudgetBothFramedNeitherPastItsShare() throws {
+        let budget: UInt64 = 100_000
+        let shared = SharedDisplayAllocator(budget: Self.samples(budget))
+        var told = 0
+        shared.observe(pan: "1") { told += 1 }
+        shared.observe(pan: "2") { told += 1 }
+        // Each subscriber offers its own wish; each asks for 60,000 samples a second.
+        shared.update(intent: Self.pan("1", active: true), forPan: "1")
+        shared.update(intent: Self.pan("2", active: true), forPan: "2")
+        #expect(shared.lastProblem == nil)
+        #expect(shared.intents.map(\.panId) == ["1", "2"])
+        // With none chosen, the first pan is the active one, and only it.
+        #expect(shared.intents.map(\.active) == [true, false])
+        let one = try #require(shared.quality(forPan: "1"))
+        let two = try #require(shared.quality(forPan: "2"))
+        for quality in [one, two] {
+            #expect(!quality.suspended && quality.fps > 0 && quality.pixels > 0)
+        }
+        #expect(one.pixels == 1000 && one.fps == 30 && !one.reduced)
+        #expect(two.reduced)
+        let total = one.charge.spectrumSampleUnitsPerSecond + two.charge.spectrumSampleUnitsPerSecond
+        #expect(total == shared.allocation.total.spectrumSampleUnitsPerSecond)
+        #expect(total <= budget)
+        #expect(told > 0)
+
+        // The operator touches Pan 2: it is kept whole, Pan 1 gives way.
+        told = 0
+        shared.activePanId = "2"
+        #expect(told == 2)
+        #expect(shared.intents.map(\.active) == [false, true])
+        #expect(shared.quality(forPan: "2")?.reduced == false)
+        #expect(shared.quality(forPan: "1")?.reduced == true)
+        #expect(shared.allocation.total.spectrumSampleUnitsPerSecond <= budget)
+
+        // The same wish again moves nothing and tells nobody.
+        told = 0
+        shared.update(intent: Self.pan("1"), forPan: "1")
+        #expect(told == 0)
+    }
+
+    /// A pan's subscriber, as the shared allocator keys its claim.
+    private final class Claimant {}
+
+    @Test @MainActor func aPansIncreaseGoesOnlyIntoTheHeadroomTheOthersLeave() throws {
+        let shared = SharedDisplayAllocator(budget: Self.samples(100_000))
+        let first = Claimant(), second = Claimant(), third = Claimant()
+        #expect(shared.headroom(for: ObjectIdentifier(second))?.spectrumSampleUnitsPerSecond == 100_000)
+        shared.claim(.init(applicationBytesPerSecond: 70_000, spectrumSampleUnitsPerSecond: 60_000,
+                           messagesPerSecond: 30), by: ObjectIdentifier(first))
+        let left = try #require(shared.headroom(for: ObjectIdentifier(second)))
+        #expect(left.spectrumSampleUnitsPerSecond == 40_000)
+        #expect(left.applicationBytesPerSecond == Self.plenty - 70_000)
+        // A subscriber's own claim is its own headroom, not the others'.
+        #expect(shared.headroom(for: ObjectIdentifier(first))?.spectrumSampleUnitsPerSecond == 100_000)
+        // A claim past the budget leaves nothing, never a wrapped number.
+        shared.claim(.init(spectrumSampleUnitsPerSecond: 200_000), by: ObjectIdentifier(third))
+        #expect(shared.headroom(for: ObjectIdentifier(second))?.spectrumSampleUnitsPerSecond == 0)
+        // Without a budget there is no headroom to keep to.
+        #expect(SharedDisplayAllocator().headroom(for: ObjectIdentifier(first)) == nil)
+    }
+
+    @Test @MainActor func aClosedPansWishGoesAndItsClaimStandsUntilItsSubscriberHoldsNothing() {
+        let shared = SharedDisplayAllocator(budget: Self.samples(65_120))
+        let first = Claimant(), second = Claimant()
+        shared.update(intents: [Self.pan("2"), Self.pan("1")])
+        #expect(shared.allocation.pans.map(\.panId) == ["1", "2"])
+        #expect(shared.quality(forPan: "2")?.fps == 10)
+        shared.claim(.init(spectrumSampleUnitsPerSecond: 5_120), by: ObjectIdentifier(second))
+        shared.remove(pan: "2")
+        #expect(shared.allocation.pans.map(\.panId) == ["1"])
+        #expect(shared.quality(forPan: "1")?.reduced == false)
+        // The closed pan's endpoint is still held until the Core lets it go.
+        #expect(shared.headroom(for: ObjectIdentifier(first))?.spectrumSampleUnitsPerSecond == 60_000)
+        shared.claim(.init(), by: ObjectIdentifier(second))
+        #expect(shared.headroom(for: ObjectIdentifier(first))?.spectrumSampleUnitsPerSecond == 65_120)
+        // An active pan with no wish leaves the first pan active.
+        shared.activePanId = "2"
+        #expect(shared.intents.map(\.active) == [true])
+    }
+
+    @Test @MainActor func aRetiringPansEmptyClaimLeavesTheReopenedPansClaimInPlace() {
+        let shared = SharedDisplayAllocator(budget: Self.samples(100_000))
+        let first = Claimant(), retiring = Claimant(), reopened = Claimant()
+        // Pan 2 closed, its subscriber still letting its endpoint go, and Pan 2 opened again.
+        shared.claim(.init(spectrumSampleUnitsPerSecond: 30_000), by: ObjectIdentifier(retiring))
+        shared.remove(pan: "2")
+        shared.update(intent: Self.pan("2"), forPan: "2")
+        shared.claim(.init(spectrumSampleUnitsPerSecond: 50_000), by: ObjectIdentifier(reopened))
+        #expect(shared.headroom(for: ObjectIdentifier(first))?.spectrumSampleUnitsPerSecond == 20_000)
+        // The Core let the old endpoint go: only the retiring subscriber's claim goes.
+        shared.claim(.init(), by: ObjectIdentifier(retiring))
+        #expect(shared.headroom(for: ObjectIdentifier(first))?.spectrumSampleUnitsPerSecond == 50_000)
+        #expect(shared.quality(forPan: "2") != nil)
+    }
+
+    @Test @MainActor func everyPansEndpointIdsComeFromOneRisingCounterUntilTheConnectionEnds() {
+        let shared = SharedDisplayAllocator()
+        // Pan 1, then Pan 2, then Pan 1 again after a release: always higher.
+        #expect(shared.takeEndpointId() == 1)
+        #expect(shared.takeEndpointId() == 2)
+        #expect(shared.takeEndpointId() == 3)
+        // A new media connection starts again from 1.
+        shared.restartEndpointIds()
+        #expect(shared.takeEndpointId() == 1)
+    }
 }

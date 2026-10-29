@@ -39,7 +39,7 @@ extension DisplayOnThisPhonePage {
                 .disabled(!extras)
             }
             SetupNumberRow(title: "Update period", value: Double(settings.waterfallPeriodMs),
-                           range: Self.range(BandDisplaySettings.waterfallPeriodRange), step: 10, unit: "ms",
+                           range: Self.range(BandDisplaySettings.waterfallPeriodRange), step: 1, unit: "ms",
                            id: "waterfallPeriod") { value in change { $0.waterfallPeriodMs = Int(value) } }
             SetupNumberRow(title: "Opacity", value: Double(settings.waterfallOpacityPercent),
                            range: Self.range(BandDisplaySettings.waterfallOpacityRange), step: 5, unit: "%",
@@ -53,6 +53,8 @@ extension DisplayOnThisPhonePage {
                 .accessibilityIdentifier("copyScaleToLevels")
             Button("Copy High and Low to the scale") { copyLevelsToScale() }
                 .buttonStyle(SetupButtonStyle())
+                .disabled(bandScale.greyed)
+                .accessibilityHint(bandScale.greyed ? CoreBandScale.notConnectedText : "")
                 .accessibilityIdentifier("copyLevelsToScale")
             Picker("Look back up to", selection: binding(\.rewindSeconds)) {
                 ForEach(BandDisplaySettings.rewindChoices, id: \.self) { Text(Self.minutesText($0)).tag($0) }
@@ -133,8 +135,8 @@ extension DisplayOnThisPhonePage {
     }
 
     func copyScaleToLevels() {
-        let top = settings.scaleTopDbm
-        let bottom = settings.scaleBottomDbm
+        let top = scaleTop
+        let bottom = scaleBottom
         change {
             $0.waterfallHighDbm = top
             $0.waterfallLowDbm = bottom
@@ -144,10 +146,7 @@ extension DisplayOnThisPhonePage {
     func copyLevelsToScale() {
         let high = settings.waterfallHighDbm
         let low = min(settings.waterfallLowDbm, high - 1)
-        change {
-            $0.scaleTopDbm = high
-            $0.scaleBottomDbm = low
-        }
+        writeScale(top: high, bottom: low)
     }
 
     // MARK: Spectrum

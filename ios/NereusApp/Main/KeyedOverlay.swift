@@ -1,5 +1,8 @@
 // NereusSDR for iOS: what transmit puts over the waterfall: the keyed gauges, and the Core's refusals and stops
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-24: Roundtable plan Task 17, the gauges' foot told to the band,
+// so the Roundtable sheet drops below them. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -27,13 +30,43 @@ struct KeyedOverlay: View {
     /// The spectrum's share of the band, the pan's split.
     var spectrumShare: CGFloat = BandLayout.spectrumShare
     let sideways: Bool
+    /// What the band column has out on the band (the column, and its open
+    /// pill or menu), in the band's points: the gauges keep right of what
+    /// reaches their height (R-IOS-58, spec DC8).
+    var avoid: [CGRect] = []
+    /// Where the PTT sits when the column moved it (``BandColumnLayout``):
+    /// the gauges go above it when there is no room beside the column.
+    var movedPtt: CGRect?
+    /// The moved PTT is held where transmitting began (``PttLatch``): the
+    /// gauges go beside it, narrowed to fit if they must.
+    var heldPtt = false
+    /// The phone's rounded edges sideways, which narrowed gauges keep inside.
+    var leadingInset: CGFloat = 0
+    var trailingInset: CGFloat = 0
+    /// The tuning dial on the band (off with no tuning), whose knob or
+    /// thumbwheel and zoom the gauges beside a held PTT keep clear of.
+    var dialKind: DialKind = .off
+    /// Told where the keyed gauges end on the band while keyed, and nil
+    /// once unkeyed: the Roundtable sheet drops below them (spec 11.3, U3).
+    var gaugesFoot: ((CGFloat?) -> Void)?
 
     static let gaugesWidth: CGFloat = 330
+    /// The narrowest the gauges go beside a held PTT: four tabs of 44 points
+    /// 4 apart, inside the panel's 8 point sides, so every target keeps 44
+    /// points (the manager's ruling, 2026-10-25, for JJ's veto).
+    static let gaugesNarrowest: CGFloat = 4 * 44 + 3 * 4 + 2 * 8
+    /// The reasons under the gauges, which scroll: their usual height, and
+    /// the least they keep (about a line) when the gauges are cut to fit
+    /// over a PTT. Only the reasons give way, so every tab and gauge keeps
+    /// its 44 point target (the controller's ruling for JJ's veto).
+    static func reasonsHeight(sideways: Bool) -> CGFloat { sideways ? 40 : 64 }
+    static let reasonsLeast: CGFloat = 18
 
     @State private var editingSlot: Int?
     @State private var panelHeight: CGFloat = 0
     @State private var suppressTapUntil: TimeInterval = 0
     @Environment(\.dynamicTypeSize) private var textSize
+    @Environment(\.uprightBandWidth) private var uprightWidth
 
     private var availability: KeyedMeterAvailability {
         KeyedMeterReadings.availability(transmit: transmit, accessories: accessories)
@@ -46,10 +79,26 @@ struct KeyedOverlay: View {
             let usualTop = layout.waterfall.minY + (sideways ? 14 : 8)
             let height = panelHeight > 0 ? panelHeight : sideways ? 104 : 154
             let bottom = sideways ? proxy.size.height : PttButton.frame(bandSize: proxy.size, leadingInset: 0).minY - 8
-            let top = transmit.ptt.transmitting ? min(usualTop, max(0, bottom - height)) : usualTop
+            let keyedTop = transmit.ptt.transmitting ? min(usualTop, max(0, bottom - height)) : usualTop
+            // What the reasons can give up for the gauges to fit over a PTT.
+            let reasonsFull = transmit.ptt.transmitting && !reasons.isEmpty ? Self.reasonsHeight(sideways: sideways) : 0
+            let place = BandColumnLayout.keyedPlace(top: keyedTop, height: height, bandWidth: proxy.size.width,
+                                                    needed: Self.gaugesWidth, avoid: avoid, ptt: movedPtt,
+                                                    held: heldPtt, narrowest: Self.gaugesNarrowest,
+                                                    leadingInset: leadingInset, trailingInset: trailingInset,
+                                                    bandControls: DialLayer.controlFrames(
+                                                        kind: dialKind, waterfall: layout.waterfall,
+                                                        sideways: sideways, trailingInset: trailingInset,
+                                                        uprightWidth: uprightWidth),
+                                                    minHeight: height - max(0, reasonsFull - Self.reasonsLeast))
+            // How much shorter the panel is drawn than its own height. The
+            // height measured below is put back to the panel's own, so the
+            // cut never feeds the place it came from.
+            let cut = place.shortened.map { height - $0 } ?? 0
+            let top = place.top
             VStack(spacing: 8) {
                 if transmit.ptt.transmitting {
-                    gauges
+                    gauges(reasonsHeight: reasonsFull - cut)
                         .frame(maxWidth: Self.gaugesWidth)
                         .overlay(alignment: .top) {
                             if let slot = editingSlot {
@@ -61,17 +110,22 @@ struct KeyedOverlay: View {
                 TxNoticeCard(transmit: transmit, take: take)
                     .frame(maxWidth: sideways ? 546 : .infinity)
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 + cut }
             .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: place.alignLeading ? .leading : .center)
+            .padding(.leading, place.leading)
+            .padding(.trailing, place.trailing)
             .offset(y: top)
+            .onChange(of: transmit.ptt.transmitting ? top + height : -1, initial: true) { _, foot in
+                gaugesFoot?(foot < 0 ? nil : foot)
+            }
         }
         .onChange(of: transmit.ptt.transmitting) { _, keyed in if !keyed { editingSlot = nil } }
         .onChange(of: keyedMeters.settings.page) { _, _ in editingSlot = nil }
         .onChange(of: availability) { _, _ in editingSlot = nil }
     }
 
-    private var gauges: some View {
+    private func gauges(reasonsHeight: CGFloat) -> some View {
         VStack(spacing: 4) {
             HStack(spacing: 4) {
                 ForEach(availability.visiblePages) { target in
@@ -114,7 +168,7 @@ struct KeyedOverlay: View {
                         }
                     }
                 }
-                .frame(height: sideways ? 40 : 64)
+                .frame(height: reasonsHeight)
                 .accessibilityIdentifier("keyedMeterReasons")
             }
         }

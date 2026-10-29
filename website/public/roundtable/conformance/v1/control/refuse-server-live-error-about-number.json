@@ -1,0 +1,12 @@
+{
+  "from": "server",
+  "to": "live",
+  "wire": {
+    "type": "error",
+    "code": "not-found",
+    "reason": "That room, turn or message is not here.",
+    "about": 7,
+    "retryAfterMs": 0
+  },
+  "decodes": false
+}

@@ -1,6 +1,10 @@
 #pragma once
 #include "ButtonBoxItemEditor.h"
 
+#include <QVector>
+
+class QCheckBox;
+
 namespace NereusSDR {
 class AntennaButtonItem;
 
@@ -12,6 +16,8 @@ public:
 
 private:
     void buildAntennaSpecific();
+    // One row per button, in button order ("antennaVisible_<index>").
+    QVector<QCheckBox*> m_visible;
 };
 
 } // namespace NereusSDR

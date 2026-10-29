@@ -9,9 +9,23 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - clearItemHistory() reaches added S-meter dials. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - setTransmitting reaches widget content fade overlays;
+//                 clearItemHistory() for a band change. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-10-25 - onSliceOpenChanged and onMainWindowStateChanged: Hide when
+//                 slice not open and Minimizes, for every slice. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - setTransmitting also reaches the items that change on
 //                 transmit. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-10-26 - A good reload that ends a state refusing every save
+//                 clears storageError(), so moves and resizes save again
+//                 at once; RefusalShownByCaller lets a caller that shows a
+//                 refusal in its own message box keep workspaceError (and
+//                 its toast) quiet. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-16 - bringAppletOnScreen, hiddenByOwnFlags, keepWindowReachable
 //                 and keepWindowsReachable: a floating window is shown where
 //                 its header can be reached, and Containers > Hidden lists
@@ -157,6 +171,7 @@ mw0lge@grange-lane.co.uk
 #include <QPointer>
 #include <QTimer>
 #include <QSet>
+#include <QScopedValueRollback>
 #include "ContainerDocument.h"
 #include "gui/NereusGuiExport.h"
 
@@ -208,9 +223,26 @@ public:
     void reconcileWorkspace(const WorkspaceDocument& document);
     CommitResult commitWorkspace(const WorkspaceDocument& document, quint64 expectedRevision);
     // Shows or hides containers by Show on RX / TX, and hands the state to
-    // every container meter's fade covers, VFO displays and button grids
-    // (MeterWidget::setItemTxState); meters announced later take it too.
+    // every container meter's items (MeterWidget::setItemTxState: Fade on
+    // RX / TX, fade covers, VFO displays and button grids) and to each
+    // widget content's fade overlay (ContentFade); meters announced later
+    // take it too.
     void setTransmitting(bool transmitting);
+    // Every container meter's item history is cleared (Thetis ZeroOut on a
+    // band change, MeterManager.cs:4405-4462 [v2.10.3.15]), and each added
+    // S-meter dial's history and peak hold (SMeterWidget::clearHistory).
+    void clearItemHistory();
+    // Hide when slice not open: slice `sliceIndex` (its id, 0 for Slice A,
+    // as RadioModel::sliceAdded and sliceRemoved carry it) was opened or
+    // closed. A container with the option set is hidden while its slice is
+    // not open, and a container on Active slice while no slice is open.
+    // Until the first call nothing is hidden for this reason. Thetis asks
+    // this only of RX2 (MeterManager.cs:2783-2805 [v2.10.3.15]).
+    void onSliceOpenChanged(int sliceIndex, bool open);
+    // Minimizes: the main window was minimized or restored. Every floating
+    // container hears it (FloatingContainer::onMainWindowStateChanged) with
+    // whether its own slice is open.
+    void onMainWindowStateChanged(Qt::WindowStates state);
     void setPreviewPoller(MeterPoller* poller);
     MeterPoller* previewPoller() const;
     ContainerArrangeController* arrangeController() const { return m_arrange; }
@@ -227,6 +259,17 @@ public:
     // True while any header drag or grip resize is in progress.
     bool containerDragActive() const;
     QString storageError() const { return m_storageError; }
+    // While one is alive, a refused commitWorkspace is still logged and kept
+    // in storageError(), but workspaceError is not emitted: the caller shows
+    // the refusal itself (the New Container message box), so no toast
+    // repeats it.
+    class RefusalShownByCaller {
+    public:
+        explicit RefusalShownByCaller(ContainerManager& manager)
+            : m_rollback(manager.m_refusalShownByCaller, true) {}
+    private:
+        QScopedValueRollback<bool> m_rollback;
+    };
     bool isReconciling() const { return m_reconciling; }
     // Workspace profiles: while suppressed, no geometry is captured into
     // the workspace (a profile apply settles its layout first). Turning it
@@ -504,7 +547,16 @@ private:
     std::function<bool(int)> m_sliceAvailable;
     bool m_reconciling = false;
     bool m_transmitting = false;
+    // Hide when slice not open: the open slice ids, once any is reported.
+    QSet<int> m_openSlices;
+    bool m_sliceOpenKnown = false;
+    bool m_mainWindowMinimized = false;
     bool effectiveVisible(const ContainerDocument& document) const;
+    // effectiveVisible before the Hide when slice not open rule.
+    bool visibleBesidesSlice(const ContainerDocument& document) const;
+    // Whether the container's slice is open: its fixed slice, or for
+    // Active slice any slice. True until slices are reported.
+    bool containerSliceOpen(const ContainerDocument& document) const;
     // True when the container's own flags take it off the screen: hidden,
     // disabled, hidden by a macro, or hidden on receive (on transmit while
     // transmitting). Containers > Hidden lists exactly these.
@@ -590,6 +642,7 @@ private:
     // Floating windows shown away from their remembered place.
     QSet<QString> m_displaced;
     QString m_storageError;
+    bool m_refusalShownByCaller = false;
     QTimer m_geometryCommit;
     bool m_edgeHintsPending = false;
     QSet<QString> m_pendingGeometry;

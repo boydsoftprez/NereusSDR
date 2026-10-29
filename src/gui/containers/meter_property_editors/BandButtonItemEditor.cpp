@@ -16,7 +16,10 @@ void BandButtonItemEditor::setItem(MeterItem* item)
     BandButtonItem* b = qobject_cast<BandButtonItem*>(item);
     if (!b) { return; }
     // BandButtonItem adds no extra settable properties beyond ButtonBoxItem.
-    // activeBand is runtime state set by the radio, not user-configured here.
+    // activeBand is runtime state set by the radio, not user-configured here,
+    // and so is each slice's band group (GEN, HF or VHF, BandGroups.h): the
+    // grid's jump buttons and the slice's band choose it, as in Thetis,
+    // whose options have no group setting either.
 }
 
 void BandButtonItemEditor::buildBandSpecific()

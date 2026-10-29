@@ -43,6 +43,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26  CW transmit, CWX built: its surfaces show in both windows
+//               and Tools > CWX is usable (R-CW-46). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
+//   2026-10-26  CW transmit, the DSP > CW group entries (break-in,
+//               sidetone, key input, options). J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-03  J.J. Boyd / KG4VCF. Assert lossless inert unavailable records.
 //                                    AI-assisted via OpenAI Codex.
 //   2026-09-24  J.J. Boyd / KG4VCF  R3 unfinished controls, Task 1.
@@ -468,7 +474,11 @@ public:
     }
     BandButtonItem* bandButtons()
     {
-        if (!m_bandButtons) { m_bandButtons = std::make_unique<BandButtonItem>(); }
+        if (!m_bandButtons) {
+            m_bandButtons = std::make_unique<BandButtonItem>();
+            // XVTR is in the VHF band group.
+            m_bandButtons->setGroup(m_bandButtons->shownSlice(), BandGroup::Vhf);
+        }
         return m_bandButtons.get();
     }
     // The pan's filter policy dialog for chain 0, on the window's model.
@@ -605,7 +615,7 @@ QMap<F, QList<Surface>> surfaces()
     map[F::Equalizer] = {menu(QStringLiteral("&Equalizer..."))};
     map[F::Transverters] = {
         boxButton(QStringLiteral("antenna XVTR"), antennas, 5),
-        boxButton(QStringLiteral("band XVTR"), bands, uiIndexFromBand(Band::XVTR)),
+        boxButton(QStringLiteral("band XVTR"), bands, bandGroupPosition(BandGroup::Vhf, Band::XVTR)),
         menu(QStringLiteral("Trans&verters…")), menu(QStringLiteral("&VHF")),
         onPage(QStringLiteral("Hardware Config"), QStringLiteral("XVTR tab"), tab(QStringLiteral("XVTR"))),
         onPage(QStringLiteral("Hardware Config"), QStringLiteral("OC VHF tab"), tab(QStringLiteral("VHF")))};
@@ -616,7 +626,10 @@ QMap<F, QList<Surface>> surfaces()
         applet(QStringLiteral("Phone/CW CW tab"), phoneButton(QStringLiteral("CW"))),
         applet(QStringLiteral("Phone/CW CW page"), phonePage(1)),
         onPage(QStringLiteral("CW"), QStringLiteral("keyer group"), named(QStringLiteral("cwKeyerGroup"))),
-        onPage(QStringLiteral("CW"), QStringLiteral("timing group"), named(QStringLiteral("cwTimingGroup")))};
+        onPage(QStringLiteral("CW"), QStringLiteral("break-in group"), named(QStringLiteral("cwBreakInGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("sidetone group"), named(QStringLiteral("cwSidetoneGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("key input group"), named(QStringLiteral("cwSerialGroup"))),
+        onPage(QStringLiteral("CW"), QStringLiteral("options group"), named(QStringLiteral("cwOptionsGroup")))};
     map[F::Memories] = {menu(QStringLiteral("&Memory Manager...")),
                         spot(QStringLiteral("displayMemoriesToggle"))};
     map[F::Cat] = {menu(QStringLiteral("&CAT Control...")), setupPage(QStringLiteral("Serial Ports")),
@@ -650,14 +663,16 @@ QMap<F, QList<Surface>> surfaces()
     // front a feature of their own.
     map[F::MacroButtons] = {
         Surface{QStringLiteral("container macro buttons"), Host::Container, [](Hosts& h) {
-                    // Macro buttons follow the 34 core buttons; none is saved
-                    // visible by default, so "not hidden until built" is the
-                    // surface here.
+                    // The macro buttons (Thetis numbers 352-382); none is
+                    // saved visible by default, so "not hidden until built"
+                    // is the surface here.
                     OtherButtonItem* item = h.otherButtons();
-                    for (int i = 34; i < item->buttonCount(); ++i) {
-                        if (item->button(i).hiddenUntilBuilt) { return false; }
+                    for (int i = 0; i < OtherButtonItem::kMacroCount; ++i) {
+                        const int index = item->indexOf(static_cast<OtherButtonItem::ButtonId>(
+                            int(OtherButtonItem::ButtonId::Macro0) + i));
+                        if (index < 0 || item->button(index).hiddenUntilBuilt) { return false; }
                     }
-                    return item->buttonCount() > 34;
+                    return true;
                 }}};
     map[F::DisplayAveraging] = {functionButton(QStringLiteral("AVG"), B::Avg)};
     map[F::TwoReceiverLayout] = {
@@ -808,18 +823,6 @@ QMap<F, QList<Surface>> surfaces()
                                 }
                                 return false;
                             }}};
-    map[F::ContainerClickBox] = {
-        Surface{QStringLiteral("container Click Box render"), Host::Container,
-                [](Hosts& h) {
-                    for (const MeterItem* item : h.containerMeter()->items()) {
-                        if (qobject_cast<const ClickBoxItem*>(item)) {
-                            return h.containerMeter()->shouldRender(item);
-                        }
-                    }
-                    return false;
-                }},
-        Surface{QStringLiteral("container Click Box Add"), Host::Container,
-                [](Hosts& h) { return actionShown(h.containerDialog(), QStringLiteral("Click Box")); }}};
     map[F::AudioBitDepth] = {onPage(QStringLiteral("Microphone"), QStringLiteral("bit depth"),
                                    text(QStringLiteral("Bit depth:")))};
     map[F::AudioAutoMatch] = {onPage(QStringLiteral("Microphone"), QStringLiteral("auto match"),
@@ -904,27 +907,37 @@ private slots:
             QVERIFY2(!keys.contains(entry.key), qPrintable(entry.key));
             keys.insert(entry.key);
             QCOMPARE(UnbuiltFeatures::key(entry.feature), entry.key);
-            QCOMPARE(UnbuiltFeatures::isBuilt(entry.feature), entry.feature == F::Cat);
+            QCOMPARE(UnbuiltFeatures::isBuilt(entry.feature),
+                     entry.feature == F::Cat || entry.feature == F::Cwx);
             QVERIFY2(map.contains(entry.feature) && !map.value(entry.feature).isEmpty(),
                      qPrintable(QStringLiteral("%1 has no surface checks").arg(entry.key)));
         }
         QCOMPARE(map.size(), list.size());
     }
 
-    void builtFilterDisplayIsVisibleInLocalAndRemoteContainers()
+    // The click box is built too (container item parity Task 47): checked
+    // in the same windows, which are slow to build.
+    void builtFilterDisplayAndClickBoxAreVisibleInLocalAndRemoteContainers()
     {
         QVERIFY(UnbuiltFeatures::isBuilt(F::ContainerFilterDisplay));
+        QVERIFY(UnbuiltFeatures::isBuilt(F::ContainerClickBox));
         GuiSessionCoordinator sessions;
         for (bool remote : {false, true}) {
             Hosts hosts(sessions, remote);
             bool renders = false;
+            bool clickBoxRenders = false;
             for (const MeterItem* item : hosts.containerMeter()->items()) {
                 if (qobject_cast<const FilterDisplayItem*>(item)) {
                     renders = hosts.containerMeter()->shouldRender(item);
                 }
+                if (qobject_cast<const ClickBoxItem*>(item)) {
+                    clickBoxRenders = hosts.containerMeter()->shouldRender(item);
+                }
             }
             QVERIFY(renders);
+            QVERIFY(clickBoxRenders);
             QVERIFY(actionShown(hosts.containerDialog(), QStringLiteral("Filter Display")));
+            QVERIFY(actionShown(hosts.containerDialog(), QStringLiteral("Click Box")));
         }
     }
 
@@ -982,6 +995,31 @@ private slots:
             QCOMPARE(hosts.window()->radioModel()->ownsLocalDsp(), !remote);
             QCOMPARE(shownSurfaces(map.value(F::Cat),hosts).size(),map.value(F::Cat).size());
             QAction* catAction=hosts.window()->findChild<QAction*>("catControlAction"); QVERIFY(catAction); QVERIFY(catAction->isEnabled());
+            // CW transmit (R-CW-46): CWX is built; every one of its surfaces
+            // shows and Tools > CWX is usable, in both windows.
+            {
+                // A remote window with no Core settings yet shows the Setup
+                // CW page as the disabled stand-in with its reason (R-R3-21),
+                // so its groups are checked in the local window only.
+                QWidget* cwPage = hosts.page(QStringLiteral("CW"));
+                QVERIFY(cwPage != nullptr);
+                const bool cwPageStandIn
+                    = cwPage->objectName() == QLatin1String("setupStationPlaceholder");
+                QCOMPARE(cwPageStandIn, remote);
+                const QStringList cwxShown = shownSurfaces(map.value(F::Cwx), hosts);
+                QStringList cwxMissing;
+                for (const Surface& surface : map.value(F::Cwx)) {
+                    if (cwPageStandIn && surface.host == Host::Setup) { continue; }
+                    if (!cwxShown.contains(surface.name)) { cwxMissing << surface.name; }
+                }
+                QVERIFY2(cwxMissing.isEmpty(),
+                         qPrintable((remote ? QStringLiteral("remote, not shown: ")
+                                            : QStringLiteral("local, not shown: "))
+                                    + cwxMissing.join(QStringLiteral("; "))));
+            }
+            QAction* cwxAction = hosts.window()->findChild<QAction*>(QStringLiteral("cwxAction"));
+            QVERIFY(cwxAction);
+            QVERIFY(cwxAction->isEnabled());
             QStringList shown;
             for (const UnbuiltFeatures::Entry& entry : UnbuiltFeatures::all()) {
                 if (UnbuiltFeatures::isBuilt(entry.feature)) { continue; }
@@ -1031,7 +1069,9 @@ private slots:
 
             QStringList others;
             for (auto it = map.constBegin(); it != map.constEnd(); ++it) {
-                if (it.key() == entry.feature || it.key() == F::Cat) { continue; }
+                if (it.key() == entry.feature || it.key() == F::Cat || it.key() == F::Cwx) {
+                    continue;
+                }
                 for (const QString& s : shownSurfaces(it.value(), hosts, &used)) {
                     others << UnbuiltFeatures::key(it.key()) + QStringLiteral(": ") + s;
                 }

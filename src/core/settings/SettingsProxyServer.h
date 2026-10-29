@@ -331,7 +331,8 @@ public:
     static SharedFamily sharedFamilyOf(const QString& key);
     /// R-R3-46 (parity Task 14): hardware/.../alex/master/{hpfBypassOnTx,
     /// hpfBypassOnPs,disable6mLnaOnTx}, the Alex tab's three transmit
-    /// high-pass switches (case-blind).
+    /// high-pass switches, and (radioHardwareVersion 14) bpf2GndOnTx,
+    /// Antenna Control's "Gnd BPF2 on Tx" (case-blind).
     static bool isAlexHpfTransmitSwitchKey(const QString& key);
 
 signals:

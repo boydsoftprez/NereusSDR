@@ -1,5 +1,8 @@
 // NereusSDR for iOS: what the phone sends the Core on its media connection: the microphone line and the transmit keepalive
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-28: CW v2 lease, heartbeat and retirement integration.
+//   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import Foundation
 
@@ -22,6 +25,8 @@ public final class MediaUplink: @unchecked Sendable {
     /// bytes) and the epoch (4 bytes), both big-endian: 13 bytes.
     public static let keepaliveKind: UInt8 = 1
     public static let keepaliveBytes = 13
+    public static let cwKeepaliveKind: UInt8 = 2
+    public static let cwKeepaliveBytes = 17
     /// The lossless microphone's 192-frame packets leave this far apart:
     /// the 4 ms of audio each carries, not five at once per 20 ms frame.
     public static let l16PacketSpacingNs: UInt64 = 4_000_000
@@ -250,16 +255,34 @@ public final class MediaUplink: @unchecked Sendable {
     /// Sends one transmit keepalive on the "tx" data channel. False when the
     /// channel is not open, so the keepalive goes on the session instead.
     public func sendKeepalive(sequence: Int64, epoch: Int64) -> Bool {
+        sendKeepaliveMessage(Self.keepaliveMessage(sequence: sequence, epoch: epoch))
+    }
+
+    public func sendKeepalive(sequence: Int64, epoch: Int64, cwEpoch: Int64) -> Bool {
+        sendKeepaliveMessage(Self.keepaliveMessage(sequence: sequence, epoch: epoch, cwEpoch: cwEpoch))
+    }
+
+    private func sendKeepaliveMessage(_ message: Data) -> Bool {
         let peer = lock.withLock { self.peer }
-        guard let peer, peer.txChannelReady else {
-            return false
-        }
+        guard let peer, peer.txChannelReady else { return false }
         do {
-            try peer.sendTx(Self.keepaliveMessage(sequence: sequence, epoch: epoch))
+            try peer.sendTx(message)
             return true
         } catch {
             return false
         }
+    }
+
+    /// Kind2 appends BE32 CW epoch to the unchanged sequence/key layout.
+    public static func keepaliveMessage(sequence: Int64, epoch: Int64, cwEpoch: Int64) -> Data {
+        var bytes = keepaliveMessage(sequence: sequence, epoch: epoch)
+        guard cwEpoch != 0 else { return bytes }
+        bytes[0] = cwKeepaliveKind
+        let narrowEpoch = UInt32(truncatingIfNeeded: cwEpoch)
+        for shift in stride(from: 24, through: 0, by: -8) {
+            bytes.append(UInt8((narrowEpoch >> UInt32(shift)) & 0xff))
+        }
+        return bytes
     }
 
     /// The keepalive as the "tx" channel carries it.

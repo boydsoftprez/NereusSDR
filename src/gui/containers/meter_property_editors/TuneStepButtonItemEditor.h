@@ -1,6 +1,10 @@
 #pragma once
 #include "ButtonBoxItemEditor.h"
 
+#include <QVector>
+
+class QCheckBox;
+
 namespace NereusSDR {
 class TuneStepButtonItem;
 
@@ -12,6 +16,8 @@ public:
 
 private:
     void buildTuneStepSpecific();
+    // One row per step button, in kTuneStepList order ("stepVisible_<index>").
+    QVector<QCheckBox*> m_visible;
 };
 
 } // namespace NereusSDR

@@ -7,9 +7,19 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Colours at their defaults follow the workspace look when
+//                 drawn (ItemColourLook.h); saved colours are unchanged.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
+//   2026-10-26 - RX/TX colour mode ported from Thetis renderSpacer
+//                 (MeterManager.cs:36544-36576 [v2.10.3.15]) with the
+//                 transmit-flip fade (ContentFade::nextValue); "padding sets
+//                 height" (MeterManager.cs:27627); both appended to the
+//                 record. Corrected the paint comment: the gradient is a
+//                 NereusSDR look, not Thetis RX/TX. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -53,6 +63,8 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "SpacerItem.h"
+#include "ItemColourLook.h"
+#include "gui/containers/ContentFade.h"
 
 // From Thetis MeterManager.cs:16116 — clsSpacerItem / renderSpacer (line 35010)
 
@@ -68,27 +80,136 @@ SpacerItem::SpacerItem(QObject* parent)
 {
 }
 
+void SpacerItem::applyNewItemDefaults()
+{
+    MeterItem::applyNewItemDefaults();
+    const SpacerItemThetisDefaults& d = kSpacerThetisDefaults;
+    m_rxTxColourMode    = d.rxTxColourMode;
+    m_paddingSetsHeight = d.paddingSetsHeight;
+    m_colour1           = QColor::fromRgb(d.colour1);
+    m_colour2           = QColor::fromRgb(d.colour2);
+    m_padding           = d.padding;
+}
+
+// From Thetis MeterManager.cs:27627 [v2.10.3.15]:
+//   spacer.Size = new SizeF(ig.Size.Width, spacer.Padding);
+// The height is the padding as a ratio of the width.
+QRect SpacerItem::spacerRect(int widgetW, int widgetH) const
+{
+    QRect rect = pixelRect(widgetW, widgetH);
+    if (m_paddingSetsHeight) {
+        rect.setHeight(qRound(static_cast<double>(rect.width()) * static_cast<double>(m_padding)));
+    }
+    return rect;
+}
+
+// From Thetis MeterManager.cs:36553 [v2.10.3.15]
+bool SpacerItem::coverFadeActive() const
+{
+    const bool tx = effectiveTransmitting();
+    return (fadeOnRx() && !tx) || (fadeOnTx() && tx);
+}
+
+// From Thetis MeterManager.cs:36553-36560 [v2.10.3.15]
+bool SpacerItem::checkFlip()
+{
+    if (coverFadeActive() || m_colour1 == m_colour2) {
+        return false;
+    }
+    const bool tx = effectiveTransmitting();
+    if (tx == m_moxFadeToggle) {
+        return false;
+    }
+    m_flipFadeValue = ContentFade::kDimmedLevel;
+    m_moxFadeToggle = tx;
+    // The ramp counts from the next advanceMeter call.
+    m_lastFlipStepMs = -1;
+    m_flipRepaintPending = true;
+    return true;
+}
+
+void SpacerItem::setTransmitting(bool tx)
+{
+    MeterItem::setTransmitting(tx);
+    if (m_rxTxColourMode) {
+        checkFlip();
+    }
+}
+
+// From Thetis MeterManager.cs:36561-36571 [v2.10.3.15]: the flip fade
+// climbs from 48 to 255 in half a second (ContentFade::nextValue with no
+// fade flag set takes the same step). Thetis steps once per frame at the
+// container's quickest interval; NereusSDR steps on the item's interval.
+bool SpacerItem::advanceMeter(qint64 monotonicMs)
+{
+    if (!m_rxTxColourMode) {
+        return false;
+    }
+    checkFlip();
+    bool changed = m_flipRepaintPending;
+    m_flipRepaintPending = false;
+    if (coverFadeActive() || m_colour1 == m_colour2
+        || m_flipFadeValue >= ContentFade::kUndimmedLevel
+        || m_lastFlipStepMs < 0 || monotonicMs < m_lastFlipStepMs) {
+        m_lastFlipStepMs = monotonicMs;
+        return changed;
+    }
+    const int interval = fadeIntervalMs();
+    while (monotonicMs - m_lastFlipStepMs >= interval
+           && m_flipFadeValue < ContentFade::kUndimmedLevel) {
+        m_flipFadeValue = ContentFade::nextValue(m_flipFadeValue, false, false,
+                                                 effectiveTransmitting(), interval);
+        m_lastFlipStepMs += interval;
+        changed = true;
+    }
+    return changed;
+}
+
+// From Thetis MeterManager.cs:36575 [v2.10.3.15]:
+//   getDXBrushForColour(m.MOX ? spacer.Colour2 : spacer.Colour1, mi.FadeValue)
+// getDXBrushForColour (:32306-32314) replaces the colour's alpha with the
+// fade value, except for a transparent colour. While the fade on RX / TX
+// veil is active, MeterWidget's veil dims the item, so the colour shows
+// at full alpha here.
+QColor SpacerItem::rxTxColour() const
+{
+    QColor c = effectiveTransmitting() ? ItemColourLook::effective("Spacer.colour2", m_colour2, this) : ItemColourLook::effective("Spacer.colour1", m_colour1, this);
+    if (c.alpha() == 0) {
+        return c;
+    }
+    const bool flipFade = !coverFadeActive() && m_colour1 != m_colour2;
+    c.setAlpha(flipFade ? m_flipFadeValue : ContentFade::kUndimmedLevel);
+    return c;
+}
+
 // ---------------------------------------------------------------------------
 // paint()
-// From Thetis MeterManager.cs:35010 — renderSpacer()
+// RX/TX colour mode: from Thetis MeterManager.cs:36544-36576 [v2.10.3.15],
+// renderSpacer(): colour 1 (RX) while receiving, colour 2 (TX) while
+// transmitting, fading in from 48 over half a second on each MOX flip.
 // Upstream inline attribution preserved verbatim:
 //   :35007  //[2.10.3.5]MW0LGE note these are reverse RGB, we normally expect BGRA #289
-// Thetis renders colour1 (RX) or colour2 (TX) depending on MOX state,
-// with a half-second cross-fade when MOX toggles.
-// NereusSDR simplifies: if colours differ, show vertical linear gradient
-// (colour1 top, colour2 bottom); otherwise solid fill with colour1.
-// The padding field is preserved for serialization parity with Thetis
-// (Thetis uses it for spacing in automatic layout, not for rendering).
+// Gradient (RX/TX colour mode off): a NereusSDR look, not a Thetis one. If
+// the colours differ, a vertical linear gradient (colour 1 top, colour 2
+// bottom); otherwise a solid fill with colour 1. Records saved before the
+// RX/TX colour mode existed keep it.
+// Padding sets height: the spacer is width x padding tall (Thetis
+// MeterManager.cs:27627); off, the spacer fills its rectangle and padding
+// is kept only in the record.
 // ---------------------------------------------------------------------------
 void SpacerItem::paint(QPainter& p, int widgetW, int widgetH)
 {
-    const QRect rect = pixelRect(widgetW, widgetH);
+    const QRect rect = spacerRect(widgetW, widgetH);
+    if (m_rxTxColourMode) {
+        p.fillRect(rect, rxTxColour());
+        return;
+    }
     if (m_colour1 == m_colour2) {
-        p.fillRect(rect, m_colour1);
+        p.fillRect(rect, ItemColourLook::effective("Spacer.colour1", m_colour1, this));
     } else {
         QLinearGradient grad(rect.topLeft(), rect.bottomLeft());
-        grad.setColorAt(0.0, m_colour1);
-        grad.setColorAt(1.0, m_colour2);
+        grad.setColorAt(0.0, ItemColourLook::effective("Spacer.colour1", m_colour1, this));
+        grad.setColorAt(1.0, ItemColourLook::effective("Spacer.colour2", m_colour2, this));
         p.fillRect(rect, grad);
     }
 }
@@ -96,6 +217,7 @@ void SpacerItem::paint(QPainter& p, int widgetW, int widgetH)
 // ---------------------------------------------------------------------------
 // serialize()
 // Format: SPACER|x|y|w|h|bindingId|zOrder|padding|colour1|colour2
+//         |rxTxColourMode|paddingSetsHeight   (appended, 0 or 1)
 // ---------------------------------------------------------------------------
 
 // Local helper mirroring the static baseFields() in MeterItem.cpp
@@ -122,17 +244,21 @@ static bool spacerParseBaseFields(MeterItem& item, const QStringList& parts)
 
 QString SpacerItem::serialize() const
 {
-    return QStringLiteral("SPACER|%1|%2|%3|%4")
+    return QStringLiteral("SPACER|%1|%2|%3|%4|%5|%6")
         .arg(spacerBaseFields(*this))
         .arg(static_cast<double>(m_padding))
         .arg(m_colour1.name(QColor::HexArgb))
-        .arg(m_colour2.name(QColor::HexArgb));
+        .arg(m_colour2.name(QColor::HexArgb))
+        .arg(m_rxTxColourMode ? 1 : 0)
+        .arg(m_paddingSetsHeight ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
 // deserialize()
 // Expected: SPACER|x|y|w|h|bindingId|zOrder|padding|colour1|colour2
 //           [0]    [1-6]             [7]     [8]     [9]
+//           |rxTxColourMode|paddingSetsHeight
+//            [10]          [11]            absent = 0 (gradient, fill)
 // ---------------------------------------------------------------------------
 bool SpacerItem::deserialize(const QString& data)
 {
@@ -163,6 +289,8 @@ bool SpacerItem::deserialize(const QString& data)
     m_padding = padding;
     m_colour1 = colour1;
     m_colour2 = colour2;
+    m_rxTxColourMode    = parts.size() > 10 && parts[10] == QLatin1String("1");
+    m_paddingSetsHeight = parts.size() > 11 && parts[11] == QLatin1String("1");
     return true;
 }
 

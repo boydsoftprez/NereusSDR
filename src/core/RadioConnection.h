@@ -7,6 +7,18 @@
 // reproduced in this header.
 //
 // Modification history (NereusSDR):
+//   2026-10-26: "Gnd BPF2 on Tx" (setBpf2GndOnTx, bpf2GndOnTx). J.J. Boyd
+//               (KG4VCF), AI-assisted: Claude Code.
+//   2026-10-26: The Anvelina DX open collector byte (setOcExtrasByte,
+//               ocExtrasByte, onOcExtrasChanged). J.J. Boyd (KG4VCF),
+//               AI-assisted: Claude Code.
+//   2026-10-26: The OC transmit pin actions' TUNE and two-tone inputs
+//               (setOcTxModes, ocTune, ocTwoTone). J.J. Boyd (KG4VCF),
+//               AI-assisted: Claude Code.
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27: Propose unused isolated CW bridge RED bootstrap for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-04: Carry the same longest wake interval's worker/acquire split.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-01: TX diagnostics lane: TxSendStats places a key's padded
@@ -62,9 +74,18 @@
 //               holds it still instead of racing the wall clock.
 //               NereusSDR-original. J.J. Boyd (KG4VCF), with AI-assisted
 //               implementation via Claude Code.
+//   2026-10-26: CW transmit, setCwWireState, cwKeyLine and the
+//               radioKeyStatus signal (R-CW-12, R-CW-16, R-CW-17).
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit early fix wave I1: onTransmitCutCleared, a
+//               hook clearTransmitCut runs when it clears the latch.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #include "core/NereusCoreExport.h"
 #include "ConnectionState.h"
+#include "CwKeyLine.h"
+#include "core/TxChannel.h"
+#include "codec/CwWireState.h"
 #include "RadioDiscovery.h"
 #include "HardwareProfile.h"
 #include "RadioLinkStats.h"
@@ -86,6 +107,8 @@
 #include <optional>
 
 namespace NereusSDR {
+
+class RemoteCwSafetyState;
 
 // Structured failure taxonomy for the initial connect attempt — design §4.1.
 // Emitted by connectFailed() when connectToRadio() cannot reach Connected state.
@@ -629,6 +652,15 @@ public slots:
     virtual void setHpfBypassOnTx(bool on) { m_hpfBypassOnTx = on; }
     bool hpfBypassOnTx() const noexcept { return m_hpfBypassOnTx; }
 
+    /// "Gnd BPF2 on Tx" (Setup > Hardware Config > Antenna / ALEX, Thetis
+    /// chkBPF2Gnd, console.cs BPF2Gnd). Stored only: the P2 connection
+    /// takes it at the next TX edge (P2RadioConnection::setMox) and grounds
+    /// the BPF2 input (Alex1 bit 8) for that key. Default true, as
+    /// Thetis's defaultAlexSettings() ticks chkBPF2Gnd (setup.cs:403,
+    /// 33171-33187 [v2.10.3.15]).
+    void setBpf2GndOnTx(bool on) { m_bpf2GndOnTx = on; }
+    bool bpf2GndOnTx() const noexcept { return m_bpf2GndOnTx; }
+
     /// The Alex tab's high-pass switches as the high-pass word applies them
     /// (codec::alex::applyAlex1HpfSwitches). Plan Task 14 fix wave.
     codec::alex::Alex1HpfSwitches alexHpfSwitches() const noexcept {
@@ -700,6 +732,44 @@ public slots:
     bool radioSpeakerMuted() const noexcept { return m_radioSpeakerMuted; }
     virtual void setSidetoneExpected(bool expected) { m_sidetoneExpected = expected; }
     bool sidetoneExpected() const noexcept { return m_sidetoneExpected; }
+
+    /// The OC transmit pin actions (Setup > OC Outputs "TX Pin Action
+    /// mapping") read the live TUNE and two-tone state, Thetis's _tuning
+    /// and SetupForm.TestIMD, beside MOX (OcMatrix::maskFor). RadioModel
+    /// hands them over on this object's thread, as it does setMox; safe to
+    /// call before the connection runs.
+    ///
+    /// Thetis sets _tuning before it keys and clears it after MOX is off
+    /// (console.cs:30059, 30157, 30173 [v2.10.3.15]; Thetis-Enhanced (EU2AV)
+    /// console.cs:30129, 30227, 30243 [@567a7ec]). RadioModel reproduces
+    /// that order (RadioModel::pushOcTxModes: TUNE's flag rises before the
+    /// key is queued and falls after MOX off is queued), so this object
+    /// only stores the pair and puts a changed byte on the wire.
+    void setOcTxModes(bool tune, bool twoTone)
+    {
+        const bool changed = tune != m_ocTune.load() || twoTone != m_ocTwoTone.load();
+        m_ocTune.store(tune);
+        m_ocTwoTone.store(twoTone);
+        if (changed) {
+            onOcTxModesChanged();
+        }
+    }
+    bool ocTune() const noexcept { return m_ocTune.load(); }
+    bool ocTwoTone() const noexcept { return m_ocTwoTone.load(); }
+
+    /// The Anvelina PRO3 DX open collector outputs as their wire byte
+    /// (AnvelinaDxOutputs::wireByte), which the codecs put in Protocol 2
+    /// high-priority byte 1397 and Protocol 1 bank 17 on an ANVELINAPRO3.
+    /// RadioModel hands it over on this object's thread; safe to call
+    /// before the connection runs. A change calls onOcExtrasChanged.
+    // Same role as Thetis SetOCExtraBits, netInterface.c:409-418 [v2.10.3.15]
+    void setOcExtrasByte(quint8 bits)
+    {
+        if (m_ocExtrasByte.exchange(bits) != bits) {
+            onOcExtrasChanged();
+        }
+    }
+    quint8 ocExtrasByte() const noexcept { return m_ocExtrasByte.load(); }
 
     /// The Alex tab's receive filter rows (Setup > Hardware > Alex-1 and
     /// Alex-2 Filters): each row's edges and per-row bypass for the
@@ -999,6 +1069,11 @@ public:
     // the wire reads it as unkeyed. setMox(false) never clears it.
     void cutTransmit();
     bool transmitCut() const noexcept { return m_transmitCut.load(std::memory_order_acquire); }
+    // Immutable connection-owned value; state flags are NOT RF-output proof.
+    std::shared_ptr<RemoteCwSafetyState> remoteCwSafetyState() const;
+    bool setRemoteCwHold(quint32 expectedEpoch, TxChannel::RfHold reason, bool held);
+    bool cwOutputSuppressed() const noexcept;
+    void finishRemoteCw(quint32 expectedEpoch);
 
 public slots:
     // This object's thread; queued from the main thread's catch-up
@@ -1006,7 +1081,32 @@ public slots:
     // posted.
     void clearTransmitCut();
 
+    // --- CW transmit (2026-10-26) ---
+    // The radio keyer's settings and gate (R-CW-07, R-CW-11, R-CW-16).
+    // Called queued on the connection thread. The state is clamped
+    // (applyCwWireClamps) and stored. P1 puts bank 13 on the next frame
+    // when the enable changes; P2 sends CmdTx at once on a change. While
+    // the transmit is cut, CW enable, break-in and the key bits read 0
+    // wherever the codec context is built. The default only stores it.
+    virtual void setCwWireState(const NereusSDR::CwWireState& s);
+
+public:
+    // The host's key bits (CWX, dot, dash, HL2 CWX PTT). Created with the
+    // connection, never null; any thread may write it. The connection
+    // reads it on its send threads (P1) or sends high priority on a
+    // change (P2). A writer must stop before the connection is destroyed.
+    std::shared_ptr<CwKeyLine> cwKeyLine() const { return m_cwKeyLine; }
+    // The stored wire state (this object's thread).
+    const CwWireState& cwWireState() const noexcept { return m_cwWire; }
+
 protected:
+    // Called when the applied TUNE / two-tone pair changed, to put the new
+    // OC byte on the wire. The base does nothing.
+    virtual void onOcTxModesChanged() {}
+    // Called when the DX open collector byte changed (setOcExtrasByte), to
+    // put it on the wire. Protocol 1 carries bank 17 in its frame rotation,
+    // so the base does nothing.
+    virtual void onOcExtrasChanged() {}
     // NereusSDR-original (2026-10-24): the iqSequenceGap throttle's clock,
     // in ms: the test clock when one is set, the wall clock otherwise.
     qint64 iqSequenceGapClockMs() const
@@ -1020,6 +1120,23 @@ protected:
     // frame and drops queued TX I/Q; P2 sends its high-priority packet at
     // once and keeps re-sending MOX off for its grace window.
     virtual void applyTransmitCut();
+    // Queued onto connection thread; overrides must read CURRENT effective
+    // state. P1/P2 wire composition is deliberately NOT implemented here.
+    virtual void applyRemoteRfHold();
+    // This object's thread, from clearTransmitCut when it cleared a set
+    // latch (early fix wave I1). The default does nothing: P1 sends the
+    // restored state on its next frames. P2 sends CmdTx and high priority,
+    // which nothing else resends while receiving.
+    virtual void onTransmitCutCleared() {}
+
+    // CW transmit (2026-10-26): emits radioKeyStatus when the three bits
+    // differ from the last ones published. This object's thread.
+    void publishRadioKeyStatus(bool dot, bool dash, bool keyOut);
+
+    // CW transmit (2026-10-26): the stored wire state (setCwWireState) and
+    // the host key line (cwKeyLine).
+    CwWireState m_cwWire;
+    std::shared_ptr<CwKeyLine> m_cwKeyLine{std::make_shared<CwKeyLine>()};
 
 signals:
     // --- Telemetry ---
@@ -1221,6 +1338,18 @@ signals:
     //   (ReadBufp points to raw[4] in NereusSDR — after 4-byte seq prefix.)
     void micPttFromRadio(bool pressed);
 
+    // CW transmit (R-CW-17): the radio's dot, dash and key-out status,
+    // emitted on change, on this object's thread. P1 reports keyOut false
+    // (it has no key-out bit). P1 reads dash (C0 >> 1) & 1 and dot
+    // (C0 >> 2) & 1 of each ordinary status subframe (deskHPSDR
+    // old_protocol.c:1666-1667 [@f3d857c]; Thetis networkproto1.c:329-331
+    // [v2.10.3.15] shifts left and always reads 0). P2 reads status byte 4
+    // bit 1 dot, bit 2 dash, bit 7 key-out (gateware CC_encoder.v:14, 135
+    // [@8e86a61]; Thetis network.c:686-693 [v2.10.3.15] stores dot and dash
+    // swapped against console.cs:25634, 25644). A connection that stops
+    // being connected publishes all three up.
+    void radioKeyStatus(bool dot, bool dash, bool keyOut);
+
     // The radio's user digital inputs (Thetis prn->user_dig_in), emitted
     // when the value changes and on the first status that carries it.
     // Task 13: TxInhibitMonitor reads the TX inhibit input from these bits
@@ -1322,6 +1451,16 @@ private:
     std::atomic<float> m_lastUserAdc0Volts{-1.0f};
     // The transmit cut latch (cutTransmit / clearTransmitCut).
     std::atomic<bool> m_transmitCut{false};
+    // setOcTxModes: the TUNE and two-tone flags the OC byte reads (atomic,
+    // read by whichever thread composes the frame).
+    std::atomic<bool> m_ocTune{false};
+    std::atomic<bool> m_ocTwoTone{false};
+    // setOcExtrasByte: the DX open collector byte (atomic, read by whichever
+    // thread composes the frame).
+    std::atomic<quint8> m_ocExtrasByte{0};
+    const std::shared_ptr<RemoteCwSafetyState> m_remoteCwSafetyState;
+    // publishRadioKeyStatus's last bits: dot 0x1, dash 0x2, keyOut 0x4.
+    quint8 m_radioKeyStatusBits{0};
 
 protected:
     // Radio codec (2026-09-30): the consumer side of pushRadioAudio, on one
@@ -1536,6 +1675,11 @@ protected:
     // "HPF Bypass on TX" (setHpfBypassOnTx). Written and read on the
     // connection thread.
     bool m_hpfBypassOnTx{false};
+
+    // "Gnd BPF2 on Tx" (setBpf2GndOnTx). Written and read on the connection
+    // thread. True until RadioModel applies the saved value, so a
+    // connection that never got it still matches Thetis's ticked default.
+    bool m_bpf2GndOnTx{true};
 
     // "HPF Bypass" (setAlexHpfBypass). Written and read on the connection
     // thread.

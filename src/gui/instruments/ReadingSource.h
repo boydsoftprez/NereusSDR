@@ -82,6 +82,9 @@
 // Modification history (NereusSDR):
 //   2026-10-07 - Ported in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - The known-gap note on the VHF S9 shift says the shift is
+//                 now applied by the needle and bar factories. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -206,6 +209,12 @@ QList<const ReadingDescriptor*> readingsWithScale();
 //    -93 dBm statt -73 dBm. Diese Umschaltung haben WIR NICHT, und die
 //    geloeschte analoge Anzeige hatte sie auch nicht. Bekannte Luecke,
 //    hier vermerkt, damit sie nicht ein drittes Mal gesucht wird.
+//
+//    NereusSDR: the shift is now applied. A Longpath needle or bar raises
+//    Signal Peak and Signal Avg by 20 dB when its entry's slice is at or
+//    above 30 MHz (LongpathContent meterFactory, aboveS9Adjusted in
+//    AboveS9Frequency.h), so S9 reads at -93 dBm there; this scale and
+//    kS9Dbm stay as they are.
 constexpr double kS0Dbm   = -127.0;   ///< MeterManager.cs:22870 (Kommentar)
 constexpr double kS9Dbm   =  -73.0;   ///< MeterManager.cs:22871
 constexpr double kSMaxDbm =  -13.0;   ///< MeterManager.cs:22872

@@ -44,11 +44,15 @@ struct ConnectionPerformanceView: View {
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // The page's identifier is on its content, a plain container, not on the scroll view:
+                // once a test has walked a hosted scroll view's accessibility tree before its first
+                // layout, SwiftUI's platform scroll views report no identifier for the rest of the process.
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("connectionPerformance.page")
             }
         }
         .background(ChromeColours.page.ignoresSafeArea())
         .foregroundStyle(ChromeColours.text)
-        .accessibilityIdentifier("connectionPerformance.page")
     }
 
     private var selectors: some View {

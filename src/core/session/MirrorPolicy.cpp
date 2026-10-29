@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-27: Add approved remote CW hold/activity integration for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-22 - RX meter stamps: SliceModel meterReadingNs Outbound, gated
 //                 on rxMeterStamps (rxMeterStampsVersion 1). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -226,11 +228,22 @@
 //                 Code.
 //   2026-10-08 - Rotor control plan Task 4b: RotorModel, all Outbound.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-24 - Roundtable plan Task 11: RoundtableState, all Outbound;
+//                 SpotSourceHost's roundtableState and roundtableText.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10 - TransmitState's six peak readings (micPeakDb .. cfcPeakDb)
 //                 Outbound (txReadingsVersion 4). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - SliceAccess receiverHolderDeviceId Outbound. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - CW transmit, the 30 CW settings on TransmitModel
+//                 Bidirectional (R-CW-03, transmitSettingsVersion 16).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F2: cwQskUnavailableReason
+//                 Outbound. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26 - Remote transmit hold then cut: TransmitState rfHeld,
+//                 rfHeldReason, rfHoldSerial and rfLastHoldMs Outbound.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/MirrorPolicy.h"
@@ -508,7 +521,7 @@ const MirrorPolicy::Entry kEntries[] = {
     // rxMeterStamps (StationServer::fitPeerOnlyProperties).
     { "SliceModel", "meterReadingNs", MirrorDirection::Outbound },
 
-    // ---- TransmitModel (87 entries) ----
+    // ---- TransmitModel (117 entries) ----
     // iPhone app plan Task 35 (R-IOS-13): MOX and TUNE travel from the
     // Core only. A remote device keys with the transmit verbs (tx.key,
     // tx.tune), which pass the Core's gates; a property write never keys
@@ -632,6 +645,44 @@ const MirrorPolicy::Entry kEntries[] = {
     // to a peer that declared cfcProfile (StationServer::fitPeerOnlyProperties).
     // An app changes it with cfc.setProfile.
     { "TransmitModel", "cfcProfile", MirrorDirection::Outbound },
+    // CW transmit (R-CW-01, R-CW-03, transmitSettingsVersion 16): the CW
+    // settings, both ways under the other transmit settings' gates. None
+    // keys the radio; a value out of range is refused with its words
+    // (TransmitModel::settingRangeRefusal).
+    { "TransmitModel", "cwKeyerSpeed", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwKeyerMode", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwKeyerWeight", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwReversePaddles", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwStrictSpacing", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwBreakInMode", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwBreakInDelayMs", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwKeyDownDelayMs", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwKeyUpDelayMs", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSidetone", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwRadioSidetone", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwComputerSidetone", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwAutoModeSwitch", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwAutoModeReturn", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwAutoModeReturnMs", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSerialPort", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSerialPaddles", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSerialKeyLine", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwSerialPttLine", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxSpeed", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxRepeat", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxRepeatDelayS", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory1", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory2", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory3", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory4", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory5", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory6", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory7", MirrorDirection::Bidirectional },
+    { "TransmitModel", "cwxMemory8", MirrorDirection::Bidirectional },
+    // CW transmit final fix wave F2: why QSK is not offered, the Core's
+    // alone (its keyer controller sets it); only to a peer that declared
+    // cwSettings 1 (StationServer kPeerOnlyProperties).
+    { "TransmitModel", "cwQskUnavailableReason", MirrorDirection::Outbound },
 
     // ---- TunerModel (21 entries) ----
     { "TunerModel", "relayC1", MirrorDirection::Outbound },
@@ -1017,6 +1068,15 @@ const MirrorPolicy::Entry kEntries[] = {
     { "RotorModel", "presets", MirrorDirection::Outbound },
     { "RotorModel", "fault", MirrorDirection::Outbound },
 
+    // Roundtable plan Task 11 (stationRoundtableVersion 1): the Core's
+    // Roundtable connection, read-only; the roundtable.* verbs change it.
+    { "RoundtableState", "linkState", MirrorDirection::Outbound },
+    { "RoundtableState", "linkSince", MirrorDirection::Outbound },
+    { "RoundtableState", "firstRunAnswered", MirrorDirection::Outbound },
+    { "RoundtableState", "hidden", MirrorDirection::Outbound },
+    { "RoundtableState", "mentionCounts", MirrorDirection::Outbound },
+    { "RoundtableState", "sliceRooms", MirrorDirection::Outbound },
+
     // iPhone app Task 13 (R-IOS-08, deviceAdminVersion 1): the Core's paired
     // devices, label, claim, token and key backup, read-only. A device
     // changes them only through devices.revoke, station.rename,
@@ -1067,6 +1127,10 @@ const MirrorPolicy::Entry kEntries[] = {
     { "SpotSourceHost", "freedvReporterHidden", MirrorDirection::Outbound },
     { "SpotSourceHost", "pskReporterState", MirrorDirection::Outbound },
     { "SpotSourceHost", "pskReporterText", MirrorDirection::Outbound },
+    // Roundtable plan Task 11: the Spot Hub's Roundtable row, only to a
+    // peer that declared roundtable 1 (StationServer kPeerOnlyProperties).
+    { "SpotSourceHost", "roundtableState", MirrorDirection::Outbound },
+    { "SpotSourceHost", "roundtableText", MirrorDirection::Outbound },
 
     // iPhone app Task 71 (R-IOS-02, sessionHolderVersion 1): who is on the
     // Core, read-only. It changes only as devices come, go, go away and act.
@@ -1171,6 +1235,14 @@ const MirrorPolicy::Entry kEntries[] = {
     { "TransmitState", "eqPeakDb", MirrorDirection::Outbound },
     { "TransmitState", "levelerPeakDb", MirrorDirection::Outbound },
     { "TransmitState", "cfcPeakDb", MirrorDirection::Outbound },
+    // Remote transmit hold then cut: the keyer's RF hold.
+    { "TransmitState", "rfHeld", MirrorDirection::Outbound },
+    { "TransmitState", "rfHeldReason", MirrorDirection::Outbound },
+    { "TransmitState", "rfHoldSerial", MirrorDirection::Outbound },
+    { "TransmitState", "rfLastHoldMs", MirrorDirection::Outbound },
+    { "TransmitState", "remoteCwDeviceId", MirrorDirection::Outbound },
+    { "TransmitState", "remoteCwEpoch", MirrorDirection::Outbound },
+    { "TransmitState", "remoteCwActive", MirrorDirection::Outbound },
 
     // Normal PS3 configuration is distinct from operational arming/actions.
     { "PureSignalSettings", "autoCalEnabled", MirrorDirection::Bidirectional },

@@ -12,7 +12,7 @@ final class RemoveCoreUITests: XCTestCase {
     func testVisibleRemoveConfirmsThenDeletesOnlySelectedRow() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-NereusShotCores"]
-        app.launch()
+        app.launchFresh()
 
         let actions = app.buttons["coreActions-KG4VCF/shack"]
         XCTAssertTrue(actions.waitForExistence(timeout: 30))

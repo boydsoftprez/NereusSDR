@@ -1,5 +1,8 @@
 // NereusSDR for iOS: everything the main screen shows, fed from the app's model and the Core's media events
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, the station pitch reaches the slice models, so a CW
+//             passband is drawn at its origin (R-CW-24). J.J. Boyd (KG4VCF),
+//             AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -8,6 +11,7 @@ import NereusLink
 import NereusMedia
 import NereusMirror
 import NereusModels
+import UIKit
 
 /// The main screen's models (R-IOS-11): the Core's catalogue, the band and
 /// its slices, the display subscription the band sends, and the RX panel.
@@ -23,11 +27,13 @@ final class MainScreenModel: ObservableObject {
     let band: BandModel
     let slices: BandSlicesModel
     let subscriber: BandSubscriber
+    /// The iPad's pans: Pan 1 is this band; the others open below it.
+    let panStack: PanStackModel
     let rx: RxPanelModel
     /// Setup edits either the focused supportedPan1 or the device master.
     /// Rendering/subscription always uses the same effective liveBandModel.
-    enum DisplayEditScope: Hashable { case pan, all }
-    @Published var displayEditScope: DisplayEditScope = .pan
+    enum DisplayEditScope: Hashable { case all; case pan(PanIdentity) }
+    @Published var displayEditScope: DisplayEditScope = .pan(.first)
     /// Accepted HTML445/1108: All edits an independently chosen kept band;
     /// Pan1 always edits its actual band. Choosing here never retunes a slice.
     @Published var displayBandChoice: String? = nil
@@ -35,22 +41,72 @@ final class MainScreenModel: ObservableObject {
         displayEditScope == .all ? displayBandChoice ?? band.settings.scaleBand : band.settings.scaleBand
     }
     var displayEditingSettings: BandDisplaySettings {
-        guard displayEditScope == .all else { return band.settings }
-        var settings = displaySettings.masterSettings(forPan: BandSubscriber.panId)
-        settings.enterBand(displayEditingBand)
-        return settings
+        switch displayEditScope {
+        case .pan(let pan) where pan == .first:
+            return band.settings
+        case .pan(let pan) where panStack.open.contains(pan):
+            // An open pan below Pan 1: its own band's values (its pill).
+            return panStack.band(for: pan).band.settings
+        case .pan(let pan):
+            // A pan not open now: its kept values, on Pan 1's band, as
+            // the desktop's strip edits a closed pan (spec section 7.3).
+            var settings = displaySettings.settings(forPan: pan.storeKey)
+            settings.enterBand(band.settings.scaleBand)
+            return settings
+        case .all:
+            var settings = displaySettings.masterSettings(forPan: BandSubscriber.panId)
+            settings.enterBand(displayEditingBand)
+            return settings
+        }
+    }
+    /// The display store's key for a pan: Pan 1's is the band's own.
+    private static func displayStoreKey(_ pan: PanIdentity) -> String {
+        pan == .first ? BandSubscriber.panId : pan.storeKey
     }
     func ownDisplayFields(among fields: Set<String>) -> Set<String> {
-        displaySettings.ownFields(forPan: BandSubscriber.panId, among: fields)
+        ownDisplayFields(among: fields, pan: .first)
+    }
+    /// The fields among `fields` that `pan` keeps its own value for.
+    func ownDisplayFields(among fields: Set<String>, pan: PanIdentity) -> Set<String> {
+        displaySettings.ownFields(forPan: Self.displayStoreKey(pan), among: fields)
+    }
+    /// Every field `pan` keeps its own value for, on any page: what the
+    /// pill's Reset this pan clears (spec section 5.3, DC4).
+    func ownDisplayFields(for pan: PanIdentity) -> Set<String> {
+        ownDisplayFields(among: BandDisplaySettingsStore.pictureFields, pan: pan)
+    }
+    /// `pan` follows Setup again in `field`, the tap on a row's amber dot.
+    /// A waterfall levels mode field takes the other three with it, as the
+    /// store keeps the mode as one choice.
+    func clearOwnDisplayField(_ field: String, pan: PanIdentity) {
+        resetDisplayPicture(fields: [field], pan: pan)
+    }
+    /// Reset this pan: every own field of `pan` goes and it follows Setup in
+    /// every row. Its zoom (`rxViewSpanHz`), its band and the band's scale
+    /// are not picture fields, so they stay where they are.
+    func resetDisplay(pan: PanIdentity) {
+        displaySettings.reset(pan: Self.displayStoreKey(pan))
+        reloadDisplaySettings()
     }
     func resetDisplayPicture(fields: Set<String>) {
-        guard displayEditScope == .pan else { return }
-        displaySettings.resetPicture(forPan: BandSubscriber.panId, fields: fields)
+        guard displayEditScope == .pan(.first) else { return }
+        resetDisplayPicture(fields: fields, pan: .first)
+    }
+    /// `pan` follows All pans again in `fields` (the strip's Reset this pan).
+    func resetDisplayPicture(fields: Set<String>, pan: PanIdentity) {
+        displaySettings.resetPicture(forPan: Self.displayStoreKey(pan), fields: fields)
         reloadDisplaySettings()
     }
     func copyOwnDisplayPictureToMaster(fields: Set<String>) -> Bool {
-        guard displayEditScope == .pan, !ownDisplayFields(among: fields).isEmpty else { return false }
-        displaySettings.copyOwnPictureToMaster(forPan: BandSubscriber.panId, fields: fields)
+        guard displayEditScope == .pan(.first) else { return false }
+        return copyOwnDisplayPictureToMaster(fields: fields, pan: .first)
+    }
+    /// `pan`'s own values in `fields` become All pans' (the strip's Use
+    /// Pan N's on all pans); false when it has none there.
+    @discardableResult
+    func copyOwnDisplayPictureToMaster(fields: Set<String>, pan: PanIdentity) -> Bool {
+        guard !ownDisplayFields(among: fields, pan: pan).isEmpty else { return false }
+        displaySettings.copyOwnPictureToMaster(forPan: Self.displayStoreKey(pan), fields: fields)
         reloadDisplaySettings()
         return true
     }
@@ -58,7 +114,7 @@ final class MainScreenModel: ObservableObject {
         changeDisplay(selectedFields: fields, change)
     }
     func displayEffectiveValue(_ readout: SetupDescription.EffectiveReadout) -> Double? {
-        guard displayEditScope == .pan else { return nil }
+        guard displayEditScope == .pan(.first) else { return nil }
         switch readout {
         case .waterfallLow: return band.effectiveWaterfallLevels.map { Double($0.lowDbm) }
         case .waterfallHigh: return band.effectiveWaterfallLevels.map { Double($0.highDbm) }
@@ -73,6 +129,8 @@ final class MainScreenModel: ObservableObject {
     let display: DisplaySheetModel
     /// The Core's display settings, as its catalogue describes them.
     let coreDisplay: CoreDisplayModel
+    /// Each band's dB Max and dB Min, as the Core keeps them for every device.
+    let bandScale: CoreBandScale
     /// The flags' step menu and number pad.
     let tuning: BandTuningModel
     /// What the flags' buttons open and run: the antenna and more menus
@@ -87,6 +145,9 @@ final class MainScreenModel: ObservableObject {
     /// The TX panel's AM Mod Monitor (D102); the app sets it once its
     /// record streams exist, and a screen test may leave it out.
     var modMonitor: ModMonitorModel?
+    /// The Display pill's rows and their dispatcher; the app sets and
+    /// holds it, and a screen test may leave it out.
+    weak var displayPillSource: DisplayPillSource?
     /// The Core's transmitter as the band follows it: keyed on one of its
     /// slices, the carrier, high SWR (Task 54f).
     let transmitDisplay: TransmitDisplayModel
@@ -127,11 +188,25 @@ final class MainScreenModel: ObservableObject {
     /// Why the Core has no radio, in its own words (`radio`'s
     /// `stationRadioWaiting`, link 7.1); nil while it has one or says nothing.
     @Published private(set) var radioWaiting: String?
-    /// The active slice's letter, `A`, and its colour from the catalogue.
+    /// The active slice's letter, `A`, and its colour from the catalogue:
+    /// on the iPad, the active slice of the pan last touched.
     @Published private(set) var sliceLetter: String?
     @Published private(set) var sliceColour: String?
+    /// The pan the toolbar acts on: the iPad's pan last touched, so its Pan
+    /// button names it, its slice letter is that pan's active slice and
+    /// its Display opens that pan's pill (R-IOS-59, DC9). Pan 1 on a phone.
+    @Published private(set) var toolbarPan: PanIdentity = .first
 
     private let mirror: MirrorStore
+    private let settingsProxy: SettingsProxyClient
+    private let commands: CommandClient?
+    /// The open pans' controls below Pan 1, made as each is first shown.
+    private var otherControls: [PanIdentity: PanControls] = [:]
+    /// Pan 1's controls: the main screen's own models.
+    private var firstControls: PanControls?
+    /// The followed pan's slices, for the toolbar's letter.
+    private var followWatches: Set<AnyCancellable> = []
+    private var followedSlices: BandSlicesModel?
     private let displaySettings: BandDisplaySettingsStore
     /// The view of the phone's own band while it shows another slice's,
     /// put back by Back to your band.
@@ -159,6 +234,8 @@ final class MainScreenModel: ObservableObject {
          captureTakeSender: CommandClient.CaptureSender? = nil,
          platform: TransmitModel.Platform = TransmitModel.Platform()) {
         self.mirror = mirror
+        settingsProxy = settings
+        self.commands = commands
         self.keyedMeters = keyedMeters
         self.devices = devices
         foreign = ForeignSlicesModel(store: mirror)
@@ -171,8 +248,13 @@ final class MainScreenModel: ObservableObject {
         devices?.tookControlBack = { [weak slices] sliceId, revision in
             slices?.tookControl(sliceId, revision: revision)
         }
+        let shared = SharedDisplayAllocator()
         subscriber = BandSubscriber(band: band, slices: slices, mirror: mirror, settings: settings,
-                                    operations: operations, deadline: deadline)
+                                    operations: operations, deadline: deadline, pan: .first, shared: shared)
+        panStack = PanStackModel(first: PanBand(pan: .first, band: band, slices: slices, subscriber: subscriber),
+                                 mirror: mirror, settings: settings, commands: commands, operations: operations,
+                                 displaySettings: displaySettings, shared: shared, deadline: deadline,
+                                 catalogFeed: catalogFeed, allowsMorePans: UIDevice.current.userInterfaceIdiom == .pad)
         transmitDisplay = TransmitDisplayModel(band: band, slices: slices, mirror: mirror)
         coreTxDisplay = CoreTxDisplaySettings(settings: settings, mirror: mirror)
         rx = RxPanelModel(store: mirror, slices: slices, catalogFeed: catalogFeed, commands: commands)
@@ -203,20 +285,24 @@ final class MainScreenModel: ObservableObject {
             saved.sideways = band.settings.sideways
             band.settings = saved
         }
-        // A weak local owner is filled only after initialization. The existing
-        // sheet/Core/pan callbacks then share this same scope/store transaction,
-        // without another subscriber, live pan registry or strong ownership cycle.
+        // A weak local owner is filled only after initialization. Pan 1's own
+        // sheet, Core and pan models write Pan 1, whatever pan Setup's strip
+        // or a pill has chosen, as every other pan's models write their own
+        // (``controls(for:)``); without another subscriber, live pan registry
+        // or strong ownership cycle.
         weak var displayOwner: MainScreenModel?
         let change: (_ change: (inout BandDisplaySettings) -> Void) -> Void = { change in
-            displayOwner?.changeDisplay(change)
+            displayOwner?.changeDisplay(pan: .first, change)
         }
         pan = PanSheetModel(store: mirror, slices: slices, catalogFeed: catalogFeed, commands: commands, band: band,
                             changeDisplay: change)
         sliceList.pan = pan
-        display = DisplaySheetModel(band: band, slices: slices, subscriber: subscriber, store: mirror,
-                                    catalogFeed: catalogFeed, settingsProxy: settings, changeDisplay: change)
         coreDisplay = CoreDisplayModel(band: band, slices: slices, subscriber: subscriber, catalogFeed: catalogFeed,
                                        settingsProxy: settings, changeDisplay: change)
+        bandScale = CoreBandScale(band: band, mirror: mirror, settingsProxy: settings, coreDisplay: coreDisplay)
+        display = DisplaySheetModel(band: band, slices: slices, subscriber: subscriber, store: mirror,
+                                    catalogFeed: catalogFeed, settingsProxy: settings, bandScale: bandScale,
+                                    changeDisplay: change)
         catalogFeed.$catalog.sink { [weak self] catalog in
             guard let self else {
                 return
@@ -226,6 +312,13 @@ final class MainScreenModel: ObservableObject {
             self.foreign.catalog = catalog
             self.queueRefresh()
         }.store(in: &watches)
+        // The station pitch (the Core's CWPitch): CW passbands are drawn from
+        // the dial plus the CW shift (R-CW-24, D5).
+        settings.$values.map { BandSlice.cwPitchHz(setting: $0[BandSlice.cwPitchKey]) }.removeDuplicates()
+            .sink { [weak self] pitch in
+                self?.slices.cwPitchHz = pitch
+                self?.foreign.cwPitchHz = pitch
+            }.store(in: &watches)
         sMeter.$state.map(\.settings.readout).removeDuplicates().sink { [weak self] readout in
             self?.meterReadout = readout
         }.store(in: &watches)
@@ -240,7 +333,11 @@ final class MainScreenModel: ObservableObject {
         slices.$activeSliceId.sink { [weak self] _ in self?.queueRefresh() }.store(in: &watches)
         // Stop on TX: the band knows while this phone transmits.
         transmit.$transmittingHere.sink { [weak self] keyed in
-            self?.band.keyed = keyed
+            guard let self else { return }
+            self.band.keyed = keyed
+            for pan in self.panStack.open where pan != .first {
+                self.panStack.band(for: pan).band.keyed = keyed
+            }
         }.store(in: &watches)
         // Another slice's band: the band remembers its own view and gets it back.
         slices.$showingAnotherBand.removeDuplicates().dropFirst().sink { [weak self] away in
@@ -304,7 +401,120 @@ final class MainScreenModel: ObservableObject {
             return take.inFlight || take.questionUp
         }
         displayOwner = self
-        display.focusPan = { [weak self] in self?.displayEditScope = .pan }
+        display.focusPan = { [weak self] in self?.displayEditScope = .pan(.first) }
+        // The RX panel, Modes, transmit's Match RX, the S-meter and the
+        // toolbar follow the pan last touched (R-IOS-59, DC9). Both publish
+        // before they store; the pan's band is already in place by then.
+        panStack.$lastTouched.sink { [weak self] pan in
+            self?.follow(pan)
+        }.store(in: &watches)
+        // Diversity arrives when its sheet first appears: it acts on the pan last touched from then on.
+        flagControls.$diversity.compactMap { $0 }.sink { [weak self] diversity in
+            guard let self else { return }
+            let pan = self.panStack.open.contains(self.panStack.lastTouched) ? self.panStack.lastTouched : .first
+            diversity.follow(self.panStack.band(for: pan).slices)
+        }.store(in: &watches)
+        panStack.$open.sink { [weak self] open in
+            guard let self else { return }
+            self.otherControls = self.otherControls.filter { pan, controls in
+                open.contains(pan) && controls.band.band === self.panStack.band(for: pan).band
+            }
+            for pan in open where pan != .first {
+                let band = self.panStack.band(for: pan).band
+                band.keyed = self.transmit.transmittingHere
+                band.stackOffered = self.band.stackOffered
+            }
+            self.follow(open.contains(self.panStack.lastTouched) ? self.panStack.lastTouched : .first)
+            self.queueRefresh()
+        }.store(in: &watches)
+    }
+
+    // MARK: The pans
+
+    /// `pan`'s controls: Pan 1's are the main screen's own models; an open
+    /// pan below it has its own, made the first time it is asked for and
+    /// kept while it stays open. A pan not open gets Pan 1's.
+    func controls(for pan: PanIdentity) -> PanControls {
+        let shown = panStack.band(for: pan)
+        guard shown.pan != .first else {
+            if let firstControls {
+                return firstControls
+            }
+            let made = PanControls(band: shown, tuning: tuning, flagControls: flagControls, sheet: self.pan,
+                                   display: display, bandScale: bandScale)
+            firstControls = made
+            return made
+        }
+        if let kept = otherControls[shown.pan], kept.band.band === shown.band {
+            return kept
+        }
+        let key = shown.pan
+        let change: (_ change: (inout BandDisplaySettings) -> Void) -> Void = { [weak self] change in
+            self?.changeDisplay(pan: key, change)
+        }
+        let tuning = BandTuningModel(slices: shown.slices)
+        // The dial's haptics as Setup, Navigation sets them, as on Pan 1.
+        let haptics = self.tuning.dialHaptics
+        tuning.setDialHaptics(ticksOnDetents: haptics.ticksOnDetents, bumpsOnKilohertz: haptics.bumpsOnKilohertz)
+        let flags = FlagControls(slices: shown.slices, modes: modes, tuning: tuning, store: mirror)
+        // Diversity from the pan's flags: the one Diversity context, as Pan 1's flags have it.
+        flags.diversity = flagControls.diversity
+        let sheet = PanSheetModel(store: mirror, slices: shown.slices, catalogFeed: catalogFeed, commands: commands,
+                                  band: shown.band, changeDisplay: change)
+        let scale = CoreBandScale(band: shown.band, mirror: mirror, settingsProxy: settingsProxy,
+                                  coreDisplay: coreDisplay)
+        let display = DisplaySheetModel(band: shown.band, slices: shown.slices, subscriber: shown.subscriber,
+                                        store: mirror, catalogFeed: catalogFeed, settingsProxy: settingsProxy,
+                                        bandScale: scale, changeDisplay: change)
+        display.focusPan = { [weak self] in self?.displayEditScope = .pan(key) }
+        let made = PanControls(band: shown, tuning: tuning, flagControls: flags, sheet: sheet, display: display,
+                               bandScale: scale)
+        otherControls[key] = made
+        return made
+    }
+
+    /// Which of the dial's haptics play, as Setup, Navigation sets them:
+    /// on every open pan's dial, and on a pan opened later.
+    func setDialHaptics(ticksOnDetents: Bool, bumpsOnKilohertz: Bool) {
+        tuning.setDialHaptics(ticksOnDetents: ticksOnDetents, bumpsOnKilohertz: bumpsOnKilohertz)
+        for controls in otherControls.values {
+            controls.tuning.setDialHaptics(ticksOnDetents: ticksOnDetents, bumpsOnKilohertz: bumpsOnKilohertz)
+        }
+    }
+
+    /// The panel, Modes, Match RX, the S-meter, Diversity and the toolbar
+    /// act on `pan`'s active slice from now on.
+    private func follow(_ pan: PanIdentity) {
+        let shown = panStack.band(for: pan)
+        rx.follow(shown.slices)
+        modes.follow(shown.slices)
+        flagControls.diversity?.follow(shown.slices)
+        sMeter.follow(slices: shown.slices, band: shown.band, subscriber: shown.subscriber)
+        transmit.receiveSlices = shown.pan == .first ? nil : shown.slices
+        if toolbarPan != shown.pan {
+            toolbarPan = shown.pan
+        }
+        if followedSlices !== shown.slices {
+            followedSlices = shown.slices
+            followWatches = []
+            if shown.slices !== slices {
+                shown.slices.$entries.sink { [weak self] _ in self?.queueRefresh() }.store(in: &followWatches)
+                shown.slices.$activeSliceId.sink { [weak self] _ in self?.queueRefresh() }.store(in: &followWatches)
+            }
+        }
+        queueRefresh()
+    }
+
+    /// The radio's name: the catalogue's product label, else the radio
+    /// object's model; nil while neither says.
+    static func radioName(catalog: StationCatalog?, radio: MirrorObject?) -> String? {
+        if let label = catalog?.board.productLabel {
+            return label
+        }
+        if case .text(let model)? = radio?["model"], !model.isEmpty {
+            return model
+        }
+        return nil
     }
 
     /// The notice kind for a tuner tune that ended without keying.
@@ -328,7 +538,11 @@ final class MainScreenModel: ObservableObject {
         transmit.monitorEvent(event)
         band.receive(event)
         subscriber.receive(event)
+        panStack.receive(event)
         display.receive(event)
+        for controls in otherControls.values {
+            controls.display.receive(event)
+        }
         sMeter.refresh()
     }
 
@@ -342,7 +556,32 @@ final class MainScreenModel: ObservableObject {
         var saved = displaySettings.settings(forPan: BandSubscriber.panId)
         saved.sideways = band.settings.sideways // Current orientation is runtime-only.
         band.settings = saved
+        // Every other open pan takes the store's values too: a shared row
+        // changed on one pan shows on every pan (DC2, DC9).
+        for pan in panStack.open where pan != .first {
+            let other = panStack.band(for: pan).band
+            var kept = displaySettings.settings(forPan: pan.storeKey)
+            kept.sideways = other.settings.sideways
+            if other.settings != kept {
+                other.settings = kept
+            }
+        }
         objectWillChange.send()
+    }
+
+    /// Changes `pan`'s display settings, whatever pan Setup's strip or the
+    /// pill has chosen: the band follows its slice's band number this way,
+    /// and an open pan's own Display pill and Pan sheet write through it.
+    func changeDisplay(pan: PanIdentity, _ change: (inout BandDisplaySettings) -> Void) {
+        let before = pan == .first || !panStack.open.contains(pan) ? band.settings
+            : panStack.band(for: pan).band.settings
+        let key = panStack.open.contains(pan) ? pan : .first
+        var edited = before
+        change(&edited)
+        if edited != before {
+            displaySettings.setSettings(edited, forPan: Self.displayStoreKey(key))
+        }
+        reloadDisplaySettings()
     }
 
     private func changeDisplay(selectedFields: Set<String>?, _ change: (inout BandDisplaySettings) -> Void) {
@@ -355,8 +594,7 @@ final class MainScreenModel: ObservableObject {
             // the real active band before saving so no runtime band/frame/VFO
             // changes, and editing a picture field never materializes a new
             // band's untouched defaults.
-            if selected.isDisjoint(with: ["scaleTopDbm", "scaleBottomDbm", "threeDFloorDb", "bandScales", "threeDFloors"]) {
-                edited.bandScales = band.settings.bandScales
+            if selected.isDisjoint(with: ["scaleTopDbm", "scaleBottomDbm", "threeDFloorDb", "threeDFloors"]) {
                 edited.threeDFloors = band.settings.threeDFloors
             }
             edited.enterBand(band.settings.scaleBand)
@@ -365,8 +603,8 @@ final class MainScreenModel: ObservableObject {
             // even when a selected value already equals the master.
             displaySettings.setSettings(edited, forPan: BandSubscriber.panId, includingPicture: false)
             displaySettings.setMasterSettings(edited, fields: selected)
-        } else if edited != before {
-            displaySettings.setSettings(edited, forPan: BandSubscriber.panId)
+        } else if edited != before, case .pan(let pan) = displayEditScope {
+            displaySettings.setSettings(edited, forPan: Self.displayStoreKey(pan))
         }
         // Refresh the accepted snapshot, including a newer master/shared field
         // a stale local save was correctly forbidden from overwriting.
@@ -493,18 +731,17 @@ final class MainScreenModel: ObservableObject {
         if radioWaiting != waiting {
             radioWaiting = waiting
         }
-        var radio = catalogFeed.catalog?.board.productLabel
-        if radio == nil, case .text(let model)? = radioObject?["model"], !model.isEmpty {
-            radio = model
-        }
+        let radio = Self.radioName(catalog: catalogFeed.catalog, radio: radioObject)
         if radioName != radio {
             radioName = radio
         }
-        let letter = slices.activeSliceId.map(BandSlice.letter(forIndex:))
+        // The toolbar's slice: the pan last touched's active slice.
+        let followed = panStack.band(for: toolbarPan).slices
+        let letter = followed.activeSliceId.map(BandSlice.letter(forIndex:))
         if sliceLetter != letter {
             sliceLetter = letter
         }
-        let colour = slices.active?.slice.colour
+        let colour = followed.active?.slice.colour
         if sliceColour != colour {
             sliceColour = colour
         }
@@ -512,10 +749,22 @@ final class MainScreenModel: ObservableObject {
         if band.stackOffered != offered {
             band.stackOffered = offered
         }
-        // Each band keeps its own dBm scale, as the desktop's per-band grid:
-        // the active slice's band, by the Core's number.
+        // The band the pan is on, by the Core's number: the Core's scale for
+        // it (CoreBandScale) and its 3D Floor follow it.
         if let bandNumber = slices.active?.band {
-            changeDisplay { $0.enterBand(String(bandNumber)) }
+            // Pan 1's band goes to Pan 1, whatever pan Setup's strip or a pill
+            // has chosen: on All pans too, whose edit keeps the band it had.
+            changeDisplay(pan: .first) { $0.enterBand(String(bandNumber)) }
+        }
+        // Each other open pan follows its own slice's band the same way.
+        for pan in panStack.open where pan != .first {
+            let shown = panStack.band(for: pan)
+            if shown.band.stackOffered != offered {
+                shown.band.stackOffered = offered
+            }
+            if let bandNumber = shown.slices.active?.band, shown.band.settings.scaleBand != String(bandNumber) {
+                changeDisplay(pan: pan) { $0.enterBand(String(bandNumber)) }
+            }
         }
     }
 }

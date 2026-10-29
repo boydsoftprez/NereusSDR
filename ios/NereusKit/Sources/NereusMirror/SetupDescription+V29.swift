@@ -98,7 +98,9 @@ extension SetupDescription {
         }
         let range: Range?
         if let minimum = number(raw["min"]), let maximum = number(raw["max"]), let step = number(raw["step"]) {
-            range = Range(minimum: minimum, maximum: maximum, step: step)
+            // Keep the exact historical V29 wire step (10) for older phones, but let this phone edit Rate by 1 ms.
+            let localStep = exact && category == "display" && id == "display.waterfallDefaults.updatePeriod" ? 1 : step
+            range = Range(minimum: minimum, maximum: maximum, step: localStep)
         } else { range = nil }
         let gate: Gate?
         if let value = raw["gate"] as? [String: Any] {

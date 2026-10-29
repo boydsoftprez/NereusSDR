@@ -109,7 +109,7 @@ enum class UnbuiltFeature {
     GanymedeTrip,     // Status PA badge: Andromeda/Ganymede CAT trip input is not ported
     PbSnr,            // Multimeter PBSNR binding has no producer
     ContainerFilterDisplay, // Feed implemented; gate awaits loaded FFT startup acceptance
-    ContainerClickBox, // Container click box has no host action routing
+    ContainerClickBox, // Built: click box group and unit actions (container item parity Task 47)
     AudioBitDepth,    // Audio Devices bit-depth hint is not consumed by an audio backend
     AudioAutoMatch,   // Audio Devices default sample-rate lookup is not ported
     AudioMonitorTxInput, // Audio Devices microphone monitor routing is not ported

@@ -86,14 +86,39 @@ the way `ISpectrumSink` did.
 
 ## Thread Architecture
 
+Every thread that exists today. The ones that keep time for the radio (the
+connection, DSP, transmit and key threads) are placed and raised through
+`ThreadPlacement` (`src/core/platform/ThreadPlacement.h`).
+
 | Thread | Components |
 |--------|-----------|
 | **Main** | GUI rendering, RadioModel, all sub-models, user input |
-| **Connection** | RadioConnection (UDP I/O, protocol framing) |
-| **Audio** | AudioEngine + WdspEngine (I/Q processing, DSP, audio output) |
-| **Spectrum** | FFT computation, waterfall data generation |
+| **Connection** (`ConnectionThread`) | RadioConnection (UDP I/O, protocol framing) |
+| **DSP** (`DspThread`) | RxDspWorker: I/Q into WDSP, receive audio out |
+| **WDSP channel workers** | WDSP's own per-channel threads |
+| **Transmit pump** (`TxWorkerThread`) | Mic and VAX audio into the TX channel |
+| **TX I/Q sender** | P1 EP2 sender / P2 TX I/Q sender, paced to the radio |
+| **CWX sender** (`NereusCwxSender`) | CwxSender: CWX text, memories and the Key on the host key line, Thetis element timing |
+| **CW serial key input** (`NereusCwSerialKey`) | CwSerialKeyInput: paddles, a straight key and a PTT line on a serial port's DSR and CTS, waiting for an edge (Linux TIOCMIWAIT, Windows WaitCommEvent, macOS a 1 ms poll) |
+| **Spectrum** | FFT computation (FftEnginePool workers), waterfall data generation |
+| **Wideband FFT** (`WidebandFftThread`) | The Core's wideband display FFT (nereusd) |
+| **Waterfall ticker** (`WaterfallTickerThread`) | GUI waterfall row pacing |
+| **RADE decoder** | RadeRx: FreeDV RADE receive |
+| **DSP control lanes** | Receive and transmit DSP setting changes off the main thread |
+| **Remote TX cut guard** | RemoteTxCutGuard: cuts transmit when a remote link goes quiet |
+| **Audio device catalogue** | AudioDeviceCatalog: device lists and system device notices |
+| **Capture supervisor** | CaptureSupervisor and the `nereus-audio-capture` helper process (PC mic) |
+| **Audio engine device threads** | Windows audio, ALSA, PipeWire and PulseAudio device callbacks |
+| **Remote audio** | MicUplinkCollector, RemoteVaxFeeder, RemoteAudioReceiver, NereusMicRx |
+| **Core send threads** | DaemonAudioSendThread, DaemonDisplaySendThread (nereusd) |
+| **Log writer** | LogSink file writer |
+| **MMIO worker** | MmioWorker: Saturn register access |
+| **FFTW wisdom** (`WisdomThread`) | First-launch wisdom generation |
+| **One-shot workers** | `QThread::create` jobs (file and network work that must not block the main thread) |
 
-Cross-thread communication uses auto-queued signals exclusively.
+Cross-thread communication uses auto-queued signals exclusively. The one exception is the key line
+(`CwKeyLine`): its bits are atomics a
+writer thread sets and the connection reads per frame.
 
 ## Audio engines and device lists
 

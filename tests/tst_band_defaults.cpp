@@ -86,6 +86,44 @@ private slots:
             QCOMPARE(s.mode, e.mode);
         }
     }
+
+    // Container item parity Task 35 fix round 1 (2026-10-26): the SWL
+    // bands, the band grid's GEN group, seed from the first entry of each
+    // band in Thetis AddBandStackSWL (clsBandStackManager.cs:2246-2303
+    // [v2.10.3.15]), all SAM, and land in their own band.
+    void swl_seeds_match_thetis_and_land_in_their_band() {
+        struct Expected { Band band; double hz; };
+        const Expected table[] = {
+            { Band::Band120m,  2400000.0 },   // :2246
+            { Band::Band90m,   3300000.0 },   // :2250
+            { Band::Band61m,   4700000.0 },   // :2254
+            { Band::Band49m,   5600000.0 },   // :2258
+            { Band::Band41m,   7310000.0 },   // :2266
+            { Band::Band31m,   9100000.0 },   // :2271
+            { Band::Band25m,  11700000.0 },   // :2279
+            { Band::Band22m,  13600000.0 },   // :2283
+            { Band::Band19m,  15200000.0 },   // :2287
+            { Band::Band16m,  17500000.0 },   // :2291
+            { Band::Band14m,  18900000.0 },   // :2295
+            { Band::Band13m,  21500000.0 },   // :2299
+            { Band::Band11m,  25700000.0 },   // :2303
+        };
+        for (const Expected& e : table) {
+            const BandSeed s = BandDefaults::seedFor(e.band);
+            QVERIFY(s.valid);
+            QCOMPARE(s.band, e.band);
+            QCOMPARE(s.frequencyHz, e.hz);
+            QCOMPARE(s.mode, DSPMode::SAM);
+            QCOMPARE(BandDefaults::bandGridBandFromFrequency(s.frequencyHz), e.band);
+            // bandFromFrequency itself never names an SWL band.
+            QCOMPARE(bandFromFrequency(s.frequencyHz), Band::GEN);
+        }
+        // Ham bands and WWV come first; outside every range is GEN.
+        QCOMPARE(BandDefaults::bandGridBandFromFrequency(14100000.0), Band::Band20m);
+        QCOMPARE(BandDefaults::bandGridBandFromFrequency(10000000.0), Band::WWV);
+        QCOMPARE(BandDefaults::bandGridBandFromFrequency(1000000.0), Band::GEN);
+        QCOMPARE(BandDefaults::bandGridBandFromFrequency(30000000.0), Band::GEN);
+    }
 };
 
 QTEST_MAIN(TestBandDefaults)

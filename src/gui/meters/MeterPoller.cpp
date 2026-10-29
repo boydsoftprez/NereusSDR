@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Every data source (MMIO) variable an item reads is polled
+//                 and replayed; index 1 and up reach the item's secondary
+//                 values. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-12 - Shared accessory display readings and independent legal
 //                 marker / display scale by J.J. Boyd (KG4VCF),
 //                 AI-assisted via OpenAI Codex.
@@ -641,7 +645,7 @@ void MeterPoller::addTarget(MeterWidget* widget)
             [this] { m_waveformTimer.start(); });
     m_waveformTimer.start();
     connect(widget, &MeterWidget::itemAdded, this, [this, widget](MeterItem* item) {
-        if (item && item->hasMmioBinding()) { replayMmioReading(widget, item); }
+        if (item && item->hasAnyMmioBinding()) { replayMmioReading(widget, item); }
         if (qobject_cast<WaveformMeterItem*>(item)) {
             m_waveformTimer.start();
         }
@@ -839,15 +843,19 @@ void MeterPoller::rescalePowerMeters(int watts)
 }
 MeterPoller::MmioReading MeterPoller::mmioReading(const MeterItem* item) const
 {
+    return mmioReading(item->mmioGuid(), item->mmioVariable());
+}
+MeterPoller::MmioReading MeterPoller::mmioReading(const QUuid& guid, const QString& variable) const
+{
     MmioEndpoint* endpoint = nullptr;
 #ifdef NEREUS_BUILD_TESTS
-    if (m_mmioEndpointLookup) { endpoint = m_mmioEndpointLookup(item->mmioGuid()); }
+    if (m_mmioEndpointLookup) { endpoint = m_mmioEndpointLookup(guid); }
     else
 #endif
-    { endpoint = ExternalVariableEngine::instance().endpoint(item->mmioGuid()); }
+    { endpoint = ExternalVariableEngine::instance().endpoint(guid); }
     if (!endpoint) { return {kNoMeterReadingDbm, tr("External meter source is unavailable."),MeterItem::BindingSupport::Unknown}; }
     bool ok = false;
-    const double value = endpoint->valueForName(item->mmioVariable()).toDouble(&ok);
+    const double value = endpoint->valueForName(variable).toDouble(&ok);
     if (!ok || !std::isfinite(value)) { return {kNoMeterReadingDbm, tr("External meter variable has no numeric reading."),MeterItem::BindingSupport::Supported}; }
     return {value, {},MeterItem::BindingSupport::Supported};
 }
@@ -856,8 +864,15 @@ void MeterPoller::replayMmioReading(MeterWidget* widget, MeterItem* item) const
     // Existing endpoint cache only: no endpoint factory, transport or timer.
     // Validate at reconstruction so removal/new non-numeric data between
     // shared ticks cannot revive a stale same-identity sample.
-    const MmioReading reading = mmioReading(item);
-    widget->updateMmioValue(item, reading.value, reading.reason,reading.support);
+    if (item->hasMmioBinding()) {
+        const MmioReading reading = mmioReading(item);
+        widget->updateMmioValue(item, reading.value, reading.reason,reading.support);
+    }
+    for (int index = 1; index < MeterItem::kMaxMmioVariables; ++index) {
+        if (!item->hasMmioBinding(index)) { continue; }
+        const MmioReading reading = mmioReading(item->mmioGuid(index), item->mmioVariable(index));
+        widget->updateMmioValue(item, index, reading.value, reading.reason, reading.support);
+    }
 }
 void MeterPoller::replayReadings(MeterWidget* widget, const QJsonObject& context) const
 {
@@ -897,7 +912,7 @@ void MeterPoller::copyCachedReadings(MeterWidget* widget, const QJsonObject& con
         widget->setBindingUnavailable(b,globalAvailability(context,b));
         if (!m_globalReadings.contains(b)) { widget->updateMeterValue(b, kNoMeterReadingDbm); }
     }
-    for (MeterItem* item : widget->items()) { if (item->hasMmioBinding()) { replayMmioReading(widget, item); } }
+    for (MeterItem* item : widget->items()) { if (item->hasAnyMmioBinding()) { replayMmioReading(widget, item); } }
 }
 void MeterPoller::publishContextReading(const QJsonObject& context, int binding, double value)
 {
@@ -1146,16 +1161,21 @@ void MeterPoller::poll()
         MeterWidget* target = guarded.data();
         if (!target) { continue; }
         for (MeterItem* item : target->items()) {
-            if (!item || !item->hasMmioBinding()) { continue; }
-            const QString key = item->mmioSourceKey();
-            if (!sampled.contains(key)) {
-                sampled.insert(key);
-                const MmioReading reading = mmioReading(item);
-                m_mmioReadings[key] = reading;
-                emit mmioReadingUpdated(item->mmioGuid(), item->mmioVariable(), reading.value, reading.reason);
+            if (!item || !item->hasAnyMmioBinding()) { continue; }
+            // Each variable the item reads (Thetis MeterVariables); index 0
+            // is the item's main reading.
+            for (int index = 0; index < MeterItem::kMaxMmioVariables; ++index) {
+                if (!item->hasMmioBinding(index)) { continue; }
+                const QString key = item->mmioSourceKey(index);
+                if (!sampled.contains(key)) {
+                    sampled.insert(key);
+                    const MmioReading reading = mmioReading(item->mmioGuid(index), item->mmioVariable(index));
+                    m_mmioReadings[key] = reading;
+                    emit mmioReadingUpdated(item->mmioGuid(index), item->mmioVariable(index), reading.value, reading.reason);
+                }
+                const MmioReading reading = m_mmioReadings.value(key);
+                target->updateMmioValue(item, index, reading.value, reading.reason,reading.support);
             }
-            const MmioReading reading = m_mmioReadings.value(key);
-            target->updateMmioValue(item, reading.value, reading.reason,reading.support);
         }
     }
 

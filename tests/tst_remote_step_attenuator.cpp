@@ -222,7 +222,7 @@ private slots:
         // and its I/O board and per-band antenna verb (3) came with it; the
         // attenuator is offered from 1. 4 added the filter policy verb
         // (R-R3-46 / R-R3-21).
-        QCOMPARE(s->client->capabilities().radioHardwareVersion, 13);
+        QCOMPARE(s->client->capabilities().radioHardwareVersion, 14);
         StepAttenuatorFacade* remote = s->remote();
         QVERIFY(!remote->isBound());
         QTRY_COMPARE(remote->maxDb(), 61);

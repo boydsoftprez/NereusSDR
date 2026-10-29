@@ -125,6 +125,8 @@ final class DisplaySheetModel: ObservableObject {
     private let catalogFeed: CatalogFeed
     private let changeDisplay: (_ change: (inout BandDisplaySettings) -> Void) -> Void
     private let settingsProxy: SettingsProxyClient
+    /// Each band's dB Max and dB Min on a Core that keeps them.
+    private let bandScale: CoreBandScale
     /// This phone's band plan writes the Core has not answered. While any
     /// is waiting, the band keeps the plan the Core last confirmed, so the
     /// tick moves with the Core's echo, not with the tap.
@@ -139,9 +141,10 @@ final class DisplaySheetModel: ObservableObject {
     static let planRefusedText = "The Core did not change the band plan."
 
     init(band: BandModel, slices: BandSlicesModel, subscriber: BandSubscriber, store: MirrorStore,
-         catalogFeed: CatalogFeed, settingsProxy: SettingsProxyClient,
+         catalogFeed: CatalogFeed, settingsProxy: SettingsProxyClient, bandScale: CoreBandScale,
          changeDisplay: @escaping (_ change: (inout BandDisplaySettings) -> Void) -> Void) {
         self.band = band
+        self.bandScale = bandScale
         self.slices = slices
         self.subscriber = subscriber
         self.store = store
@@ -150,6 +153,7 @@ final class DisplaySheetModel: ObservableObject {
         self.changeDisplay = changeDisplay
         band.stationPlanName = settingsProxy.value(Self.bandPlanKey)
         band.$settings.sink { [weak self] _ in self?.changed() }.store(in: &watches)
+        bandScale.$revision.sink { [weak self] _ in self?.changed() }.store(in: &watches)
         band.$transmit.sink { [weak self] _ in self?.changed() }.store(in: &watches)
         band.$showsTransmit.sink { [weak self] _ in self?.changed() }.store(in: &watches)
         band.$stackOffered.sink { [weak self] _ in self?.changed() }.store(in: &watches)
@@ -387,9 +391,10 @@ final class DisplaySheetModel: ObservableObject {
     // MARK: The scale while keyed (Task 54f)
 
     /// The scale Top, Range, the scale's arrows and a drag on it move: the
-    /// pan's own, or while the Core's radio is keyed on the band its
-    /// transmit grid, as the desktop's scale moves its transmit grid while
-    /// keyed. Kept on this phone either way.
+    /// band's, which a Core that shares it keeps for every device
+    /// (``CoreBandScale``) and an older Core leaves on this phone, or while
+    /// the Core's radio is keyed on the band its transmit grid, kept on this
+    /// phone, as the desktop's scale moves its transmit grid while keyed.
     private var scaleSettings: BandDisplaySettings { band.drawnSettings }
 
     /// The scale moved now is the transmit grid.
@@ -415,6 +420,10 @@ final class DisplaySheetModel: ObservableObject {
                 $0.txGridTopDbm = top
                 $0.txGridRangeDb = range
             }
+        } else if bandScale.setShown(maxDbm: top, minDbm: bottom) {
+            // The Core keeps the band's scale: written there, or, while the
+            // link is lost, left as it is.
+            return
         } else {
             changeDisplay {
                 $0.scaleTopDbm = top
@@ -494,10 +503,10 @@ final class DisplaySheetModel: ObservableObject {
 
     /// Look back: the seconds the waterfall is looked back from its newest
     /// line, 0 while live, up to what it holds less one screen.
-    var lookBackSeconds: Double { Double(band.lookBackLines) * band.secondsPerLine }
+    var lookBackSeconds: Double { band.lookBackElapsedSeconds }
 
     var lookBackRange: StationCatalog.Range {
-        let most = Double(max(0, band.state.history.count - band.visibleLines)) * band.secondsPerLine
+        let most = band.mostLookBackSeconds
         return StationCatalog.Range(min: 0, max: max(most.rounded(.down), 0), step: 1)
     }
 
@@ -505,7 +514,7 @@ final class DisplaySheetModel: ObservableObject {
         guard seconds.isFinite else {
             return
         }
-        band.lookBack(lines: Int((max(0, seconds) / band.secondsPerLine).rounded()), visibleLines: band.visibleLines)
+        band.lookBack(seconds: max(0, seconds))
         changed()
     }
 
@@ -531,11 +540,24 @@ final class DisplaySheetModel: ObservableObject {
     /// desktop's do; the bottom stays where it is.
     static let arrowStepDb = 10.0
 
-    /// The scale's ▲ can raise the top: it is under 0 dBm.
-    var canRaiseTop: Bool { top < topLimits.max }
+    /// The scale's ▲ can raise the top: it is under 0 dBm, and the scale
+    /// is not greyed.
+    var canRaiseTop: Bool { !scaleGreyed && top < topLimits.max }
 
-    /// The scale's ▼ can lower the top: it is more than 1 dB over the bottom.
-    var canLowerTop: Bool { top - scaleSettings.scaleBottomDbm > smallestRange }
+    /// The scale's ▼ can lower the top: it is more than 1 dB over the
+    /// bottom, and the scale is not greyed.
+    var canLowerTop: Bool { !scaleGreyed && top - scaleSettings.scaleBottomDbm > smallestRange }
+
+    /// Top and Range are greyed: the Core keeps the band's scale and the
+    /// link is lost. Never while keyed, when they move the transmit grid.
+    var scaleGreyed: Bool { !keyedScale && bandScale.greyed }
+
+    /// The band's scale as shown waits for the Core's answer.
+    var scaleUnconfirmed: Bool { !keyedScale && bandScale.shownUnconfirmed }
+
+    /// The line under Top and Range: why they are greyed, the Core's
+    /// refusal, or on an older Core that the scale stays on this phone.
+    var scaleNote: String? { keyedScale ? nil : bandScale.shownNote }
 
     /// The scale's ▲ (`up`) or ▼: the top 10 dB higher or lower, the bottom
     /// kept, within 0 dBm and 1 dB over the bottom.

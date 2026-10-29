@@ -543,6 +543,37 @@ private final class PhoneKeys: SetupPhoneKeys {
                 == .notSent(SetupControlDispatcher.notConnectedReason))
         #expect(rig.route.sent.isEmpty)
     }
+    @Test func theDisplayPillKeepsThePhonesRowsWorkingWhileTheCoreIsAway() async {
+        let rig = Rig()
+        rig.dispatcher.phoneRowsWorkOffline = true
+        rig.dispatcher.offlineReason = "Not connected"
+        await rig.connect(session: 1)
+        let toggle = rig.control("toggle")
+        let grid = rig.control("grid")
+        let edge = rig.control("edge")
+        await rig.event(.stateChanged(.waitingToRetry(seconds: 1)))
+        // The phone's own row stays editable with its kept value.
+        #expect(rig.dispatcher.state(of: grid, in: "general")
+                == .init(value: .text("#FFFFFF28"), editable: true, reason: nil))
+        #expect(await rig.dispatcher.edit(grid, in: "general", to: .text("#00FF0080")) == .applied)
+        #expect(rig.phone.values["DisplayGridColor"] == .text("#00FF0080"))
+        // A phone key this phone does not keep is still not on this phone.
+        #expect(rig.dispatcher.state(of: edge, in: "general").reason == SetupControlDispatcher.notOnThisPhoneReason)
+        // The Core's row says it is not connected, and sends nothing.
+        #expect(rig.dispatcher.state(of: toggle, in: "general")
+                == .init(value: .bool(false), editable: false, reason: "Not connected"))
+        #expect(await rig.dispatcher.edit(toggle, in: "general", to: .bool(true)) == .notSent("Not connected"))
+        // An edit admitted while away is retired when the Core comes back.
+        guard case .success(let held) = rig.dispatcher.admit(grid, in: "general") else {
+            Issue.record("not admitted"); return
+        }
+        await rig.connect(session: 2)
+        #expect(held.isRevoked)
+        #expect(await rig.dispatcher.perform(held, value: .text("#0000FF80")) == .notSent(SetupControlDispatcher.changedFirstReason))
+        #expect(rig.phone.values["DisplayGridColor"] == .text("#00FF0080"))
+        #expect(rig.route.sent.isEmpty)
+    }
+
     @Test("Setup's admitted property and settings operations deliver their late refusal to their owner", arguments: ["slope", "count"])
     func lateOwnedRefusal(id: String) async throws {
         let clock = ManualLinkClock()

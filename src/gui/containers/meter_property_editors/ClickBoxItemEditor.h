@@ -1,12 +1,13 @@
 #pragma once
 #include "BaseItemEditor.h"
 
+class QCheckBox;
+class QComboBox;
+class QSpinBox;
+
 namespace NereusSDR {
 class ClickBoxItem;
 
-// ClickBoxItem is an invisible hit-target with no configurable visual
-// properties — it has only the common MeterItem fields (position, binding,
-// z-order). This editor therefore adds no type-specific rows.
 class ClickBoxItemEditor : public BaseItemEditor {
     Q_OBJECT
 public:
@@ -15,6 +16,14 @@ public:
 
 private:
     void buildTypeSpecific() override;
+    void applyButtonMask();
+    void updateGoToGroupEnabled();
+
+    QCheckBox* m_chkLeft{nullptr};
+    QCheckBox* m_chkRight{nullptr};
+    QCheckBox* m_chkMiddle{nullptr};
+    QComboBox* m_comboAction{nullptr};
+    QSpinBox*  m_spinGoToGroup{nullptr};
 };
 
 } // namespace NereusSDR

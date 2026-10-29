@@ -13,6 +13,9 @@
 //                Claude Code. Lifted from P1RadioConnection::composeCcForBank
 //                which previously held the inline ramdor port; now
 //                delegates here.
+//   2026-10-26: CW transmit, bank12CwKeyer (banks 12-14 carry the CW
+//               keyer, networkproto1.c:618-646 [v2.10.3.15]). J.J. Boyd
+//               (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 //
 // === Verbatim Thetis ChannelMaster/networkproto1.c header (lines 1-45) ===
@@ -83,6 +86,11 @@ protected:
     void bank10(const CodecContext& ctx, quint8 out[5]) const;
     void bank11(const CodecContext& ctx, quint8 out[5]) const;
     virtual void bank12(const CodecContext& ctx, quint8 out[5]) const;  // RedPitaya overrides
+
+    // Bank 12's CW keyer half (C2 bit 6, C3, C4) from ctx.cw, ORed over the
+    // attenuator bytes bank12 already wrote. RedPitaya's bank12 calls it too.
+    // From Thetis networkproto1.c:618-628 [v2.10.3.15]
+    static void bank12CwKeyer(const CodecContext& ctx, quint8 out[5]);
 
     // Phase 3M-4 Task 5: per-branch helpers reusable from subclasses
     // (AnvelinaPro3 = G2-class, RedPitaya overrides directly).  Each

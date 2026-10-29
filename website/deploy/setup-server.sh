@@ -26,7 +26,9 @@
 #      holding exactly the given key line.
 #   4. Create the web root /var/www/nereussdr, owned by nereusweb, with a
 #      placeholder index.html when it has none.
-#   5. Validate the Caddyfile with caddy validate, and only when that passes
+#   5. Make /etc/caddy/sites/, the folder of other sites' files that the
+#      Caddyfile imports (the Roundtable server's, for one). Validate the
+#      Caddyfile with caddy validate, and only when that passes
 #      install it as /etc/caddy/Caddyfile, keeping a timestamped backup of
 #      the previous one. A Caddyfile that fails validation is never
 #      installed and the script exits non-zero.
@@ -48,6 +50,8 @@ readonly DEPLOY_USER="nereusweb"
 readonly DEPLOY_HOME="/home/nereusweb"
 readonly WEB_ROOT="/var/www/nereussdr"
 readonly CADDYFILE_DEST="/etc/caddy/Caddyfile"
+# Other sites' files, pulled in by the Caddyfile's import line.
+readonly CADDY_SITES_DIR="/etc/caddy/sites"
 
 # The official Caddy apt repository, as given in the Caddy install docs
 # (https://caddyserver.com/docs/install, "Debian, Ubuntu, Raspbian").
@@ -302,6 +306,14 @@ esac
 log "5/7 Caddyfile"
 
 mkdir -p "$(dirname "$CADDYFILE_DEST")"
+# The Caddyfile imports every file here; the folder must exist before the
+# validation below. Its files belong to the setup scripts that install them
+# (roundtable/deploy/setup-server.sh), and this script leaves them alone.
+if [[ -L "$CADDY_SITES_DIR" ]]; then
+    die "${CADDY_SITES_DIR} is a symlink; refusing to follow it as root"
+fi
+install -d -m 0755 -o root -g root "$CADDY_SITES_DIR"
+note "${CADDY_SITES_DIR} present"
 staged="$(mktemp "$(dirname "$CADDYFILE_DEST")/.Caddyfile.new.XXXXXX")"
 tmp_paths+=("$staged")
 cp -- "$caddyfile_src" "$staged"

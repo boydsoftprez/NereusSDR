@@ -24,6 +24,7 @@ private:
     QPushButton*    m_btnColour1{nullptr};
     QPushButton*    m_btnColour2{nullptr};
     QDoubleSpinBox* m_spinAlpha{nullptr};
+    QCheckBox*      m_chkUseBackground{nullptr};
 };
 
 } // namespace NereusSDR

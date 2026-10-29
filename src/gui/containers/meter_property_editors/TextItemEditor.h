@@ -6,6 +6,7 @@ class QSpinBox;
 class QDoubleSpinBox;
 class QCheckBox;
 class QPushButton;
+class QComboBox;
 
 namespace NereusSDR {
 
@@ -28,6 +29,9 @@ private:
     QSpinBox*       m_spinDecimals{nullptr};
     QLineEdit*      m_editIdleText{nullptr};
     QDoubleSpinBox* m_spinMinValid{nullptr};
+    QComboBox*      m_comboFontFamily{nullptr};
+    QCheckBox*      m_chkItalic{nullptr};
+    QCheckBox*      m_chkCentred{nullptr};
 };
 
 } // namespace NereusSDR

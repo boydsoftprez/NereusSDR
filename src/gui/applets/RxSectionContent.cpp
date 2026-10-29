@@ -8,6 +8,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-26 - Every job but Mode hides and orders its parts from the
+//                 entry config (SectionParts) and declares a toggle per
+//                 part and the order; RX Filter's two hide toggles keep
+//                 their keys and labels. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-24 - A preview (ContentRenderMode::Preview) of a job is inert,
 //                 as the TX rows are; the color defaults come from
 //                 NereusButtonFace.h. J.J. Boyd (KG4VCF), AI-assisted via
@@ -22,8 +27,12 @@
 #include "RxSectionContent.h"
 
 #include "RxApplet.h"
+#include "RxControlSections.h"
+#include "SectionParts.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/meters/NereusButtonFace.h"
+
+#include <algorithm>
 
 namespace NereusSDR {
 
@@ -95,6 +104,35 @@ bool isPreview(ContentRenderMode mode)
     return mode != ContentRenderMode::Live;
 }
 
+// The properties a job type declares: the ones it declared before (which
+// keep their keys, labels and positions), then a toggle per part and the
+// Order list, from a bare section that is gone on return.
+template <typename Section>
+QVector<ContentProperty> partProperties(QVector<ContentProperty> existing = {})
+{
+    const Section probe;
+    for (const ContentProperty& property : SectionParts::properties(probe.parts())) {
+        const bool known = std::any_of(existing.cbegin(), existing.cend(),
+            [&property](const ContentProperty& p) { return p.key == property.key; });
+        if (!known) {
+            existing.append(property);
+        }
+    }
+    return existing;
+}
+
+// A copy of a job with its entry's parts hidden and ordered.  The factory
+// reads only the entry's config, never its context: the copy follows the
+// RX panel.
+template <typename Section>
+QWidget* withParts(QWidget* copy, const ContentEntry& entry)
+{
+    if (auto* section = qobject_cast<Section*>(copy)) {
+        section->parts().apply(entry.config);
+    }
+    return copy;
+}
+
 } // namespace
 
 void registerRxSectionContent(ContainerContentRegistry& registry, RxApplet* rxApplet)
@@ -106,9 +144,10 @@ void registerRxSectionContent(ContainerContentRegistry& registry, RxApplet* rxAp
     registry.registerWidgetFactory(
         QLatin1String(kAntennas),
         {QLatin1String(kAntennas), QStringLiteral("RX Antennas"), false, true, {}},
-        [rxApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return rxApplet->createAntennasSection(parent, isPreview(mode));
-        });
+        [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts<RxAntennasSection>(rxApplet->createAntennasSection(parent, isPreview(mode)), entry);
+        },
+        partProperties<RxAntennasSection>());
     registry.registerWidgetFactory(
         QLatin1String(kMode),
         {QLatin1String(kMode), QStringLiteral("RX Mode"), false, true, {}},
@@ -118,52 +157,60 @@ void registerRxSectionContent(ContainerContentRegistry& registry, RxApplet* rxAp
     registry.registerWidgetFactory(
         QLatin1String(kStep),
         {QLatin1String(kStep), QStringLiteral("RX Step"), false, true, {}},
-        [rxApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return rxApplet->createStepSection(parent, isPreview(mode));
-        });
+        [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts<RxStepSection>(rxApplet->createStepSection(parent, isPreview(mode)), entry);
+        },
+        partProperties<RxStepSection>());
     registry.registerWidgetFactory(
         QLatin1String(kFilter),
         {QLatin1String(kFilter), QStringLiteral("RX Filter"), false, true, {}},
         [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            // createFilterSection applies the whole config, the parts with it.
             return rxApplet->createFilterSection(parent, entry.config, isPreview(mode));
         },
-        filterProperties());
+        partProperties<RxFilterSection>(filterProperties()));
     registry.registerWidgetFactory(
         QLatin1String(kPan),
         {QLatin1String(kPan), QStringLiteral("RX Pan"), false, true, {}},
-        [rxApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return rxApplet->createPanSection(parent, isPreview(mode));
-        });
+        [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts<RxPanSection>(rxApplet->createPanSection(parent, isPreview(mode)), entry);
+        },
+        partProperties<RxPanSection>());
     registry.registerWidgetFactory(
         QLatin1String(kSquelch),
         {QLatin1String(kSquelch), QStringLiteral("RX Squelch"), false, true, {}},
-        [rxApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return rxApplet->createSquelchSection(parent, isPreview(mode));
-        });
+        [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts<RxSquelchSection>(rxApplet->createSquelchSection(parent, isPreview(mode)), entry);
+        },
+        partProperties<RxSquelchSection>());
     registry.registerWidgetFactory(
         QLatin1String(kAttenuator),
         {QLatin1String(kAttenuator), QStringLiteral("RX Attenuator"), false, true, {}},
-        [rxApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return rxApplet->createAttenuatorSection(parent, isPreview(mode));
-        });
+        [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts<RxAttenuatorSection>(rxApplet->createAttenuatorSection(parent, isPreview(mode)), entry);
+        },
+        partProperties<RxAttenuatorSection>());
     registry.registerWidgetFactory(
         QLatin1String(kAgc),
         {QLatin1String(kAgc), QStringLiteral("RX AGC"), false, true, {}},
-        [rxApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return rxApplet->createAgcSection(parent, isPreview(mode));
-        });
+        [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts<RxAgcSection>(rxApplet->createAgcSection(parent, isPreview(mode)), entry);
+        },
+        partProperties<RxAgcSection>());
     registry.registerWidgetFactory(
         QLatin1String(kRit),
         {QLatin1String(kRit), QStringLiteral("RX RIT"), false, true, {}},
-        [rxApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return rxApplet->createRitSection(parent, isPreview(mode));
-        });
+        [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts<RxRitSection>(rxApplet->createRitSection(parent, isPreview(mode)), entry);
+        },
+        partProperties<RxRitSection>());
     registry.registerWidgetFactory(
         QLatin1String(kXit),
         {QLatin1String(kXit), QStringLiteral("RX XIT"), false, true, {}},
-        [rxApplet](const ContentEntry&, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return rxApplet->createXitSection(parent, isPreview(mode));
-        });
+        [rxApplet](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+            return withParts<RxXitSection>(rxApplet->createXitSection(parent, isPreview(mode)), entry);
+        },
+        partProperties<RxXitSection>());
 }
 
 } // namespace NereusSDR

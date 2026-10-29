@@ -1,5 +1,7 @@
 // NereusSDR for iOS: another device's slices on this band: dashed, hollow and out of reach
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-26: CW transmit, another device's CW passband drawn at its origin
+//             (R-CW-24, D5). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import CoreGraphics
 
@@ -36,10 +38,13 @@ public enum ForeignSliceMarkers {
         public var txSlice: Bool
         /// Its owner is away (its link dropped), or the slice is held for it.
         public var away: Bool
+        /// The CW receive shift its passband is drawn from, as
+        /// ``BandSlice/passbandOffsetHz``; 0 outside CW.
+        public var passbandOffsetHz: Double
 
         public init(id: Int, frequencyHz: Double, filterLowHz: Double, filterHighHz: Double, colour: String,
                     ownerName: String, ownerShortName: String, ownerKind: String = "", txSlice: Bool = false,
-                    away: Bool = false) {
+                    away: Bool = false, passbandOffsetHz: Double = 0) {
             self.id = id
             self.frequencyHz = frequencyHz
             self.filterLowHz = filterLowHz
@@ -50,14 +55,16 @@ public enum ForeignSliceMarkers {
             self.ownerKind = ownerKind
             self.txSlice = txSlice
             self.away = away
+            self.passbandOffsetHz = passbandOffsetHz
         }
 
         public var letter: String { BandSlice.letter(forIndex: id) }
 
-        /// The passband's low and high frequencies, low first.
+        /// The passband's low and high frequencies, low first, from its
+        /// origin (the dial plus the CW shift).
         public var passbandHz: ClosedRange<Double> {
-            let a = frequencyHz + filterLowHz
-            let b = frequencyHz + filterHighHz
+            let a = frequencyHz + passbandOffsetHz + filterLowHz
+            let b = frequencyHz + passbandOffsetHz + filterHighHz
             return min(a, b)...max(a, b)
         }
 

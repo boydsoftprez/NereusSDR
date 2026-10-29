@@ -1066,6 +1066,9 @@ set(CORE_SOURCES
     src/core/TciBinaryFrame.cpp
     src/core/TciServer.cpp
     src/core/codec/AlexFilterMap.cpp
+    # CW transmit (R-CW-11, R-CW-13): the CW wire state and its helpers.
+    src/core/codec/CwWireState.cpp
+    src/core/codec/CwWireState.h
     src/core/codec/P1CodecStandard.cpp
     src/core/codec/P1CodecAnvelinaPro3.cpp
     src/core/codec/P1CodecRedPitaya.cpp
@@ -1126,6 +1129,21 @@ set(CORE_SOURCES
     src/core/MicProfileManager.cpp
     src/core/ParaEqEnvelope.cpp
     src/core/CfcProfile.cpp
+    # CW transmit (R-CW-01, R-CW-02): the CW value types and the pitch accessor.
+    src/core/CwTypes.cpp
+    src/core/CwTypes.h
+    # CW transmit (R-CW-12, R-CW-15, R-CW-16): the host key line.
+    src/core/CwKeyLine.cpp
+    src/core/CwKeyLine.h
+    # CW transmit (R-CW-15, R-CW-31 to R-CW-33): the CWX sender.
+    src/core/CwxSender.cpp
+    src/core/CwxSender.h
+    # CW transmit (R-CW-04, R-CW-36): the serial key reader.
+    src/core/CwSerialKeyInput.cpp
+    src/core/CwSerialKeyInput.h
+    # CW transmit (R-CW-39): the computer sidetone (ChannelMaster sidetone.c).
+    src/core/CwSidetone.cpp
+    src/core/CwSidetone.h
     src/core/CfcEditProfile.cpp
     src/core/ParaEqCurve.cpp
     src/core/ParaEqCurve.h
@@ -1156,6 +1174,7 @@ set(CORE_SOURCES
     src/core/PaTelemetryScaling.cpp
     src/core/PaTempUnit.cpp
     src/core/OcMatrix.cpp
+    src/core/AnvelinaDxOutputs.cpp
     src/core/RadioStatus.cpp
     src/core/SettingsHygiene.cpp
     src/core/Hl2OptionsModel.cpp
@@ -1223,6 +1242,7 @@ set(CORE_SOURCES
     src/core/audio/TxMicSource.cpp
     src/core/audio/VirtualCableDetector.cpp
     src/core/safety/BandPlanGuard.cpp
+    src/core/safety/CwKeyerGate.cpp
     src/core/safety/SwrProtectionController.cpp
     src/core/safety/TxInhibitMonitor.cpp
     src/core/safety/TxRefusal.cpp
@@ -1232,6 +1252,7 @@ set(CORE_SOURCES
     src/core/safety/TransmitHolder.cpp
     src/core/safety/RemoteTxWatchdog.cpp
     src/core/safety/RemoteTxCutGuard.cpp
+    src/core/safety/RemoteCwSafetyState.cpp
     src/core/safety/TransmitCutLine.cpp
     src/core/safety/StarvationPolicy.cpp
     src/core/safety/safety_constants.cpp
@@ -1242,6 +1263,13 @@ set(CORE_SOURCES
     src/core/FreeDVReporterClient.cpp
     src/core/FreeDVRadeReporterBridge.cpp
     src/core/PskReporterClient.cpp
+    # Roundtable plan Task 10 (R-RT-1, R-RT-6, R-RT-12 to R-RT-14): the
+    # Core's Roundtable wire, signal floor and connection.
+    src/core/roundtable/RoundtableWire.cpp
+    src/core/roundtable/RoundtableSignalFloor.cpp
+    src/core/roundtable/RoundtableClient.cpp
+    # Roundtable plan Task 11: the link's `roundtable` object.
+    src/core/roundtable/RoundtableState.cpp
     # Parity Task 19 (R-IOS-25): starts and stops the spot sources, locally
     # and on the Core, and is the mirrored `spotSources` object.
     src/core/SpotSourceHost.cpp
@@ -1281,6 +1309,7 @@ set(CORE_SOURCES
     src/models/RfKitModel.cpp
     src/models/StationTciModel.cpp
     src/models/RotorModel.cpp
+    src/models/RoundtableModel.cpp
     src/models/SpotBeamTurner.cpp
     src/models/StationCatModel.cpp
     # Phase 3P-II Phase 4 (Advanced UI + helpers)
@@ -1727,6 +1756,7 @@ endif()
 
 set(MODEL_SOURCES
     src/models/RadioModel.cpp
+    src/models/CwKeyerController.cpp
     src/models/RxDspWorker.cpp
     src/models/ReceiverDspLoadSampler.cpp
     src/models/Band.cpp
@@ -1753,6 +1783,8 @@ set(GUI_SOURCES
     src/gui/GuiApplication.cpp
     src/gui/GuiApplication.h
     src/gui/MainWindow.cpp
+    src/gui/TxHeldIndicator.cpp
+    src/gui/TxHeldIndicator.h
     src/gui/SessionEndSave.cpp
     src/gui/SessionEndSave.h
     src/gui/DesktopStationController.cpp
@@ -1978,6 +2010,14 @@ set(GUI_SOURCES
     src/gui/DssRenderer.cpp
     src/gui/SpotHubDialog.cpp
     src/gui/SpotHubDialog.h
+    src/gui/roundtable/RoundtableFirstRunDialog.cpp
+    src/gui/roundtable/RoundtableFirstRunDialog.h
+    src/gui/roundtable/RoundtablePanel.cpp
+    src/gui/roundtable/RoundtablePanel.h
+    src/gui/roundtable/RoundtableTagLayout.cpp
+    src/gui/roundtable/RoundtableTagLayout.h
+    src/gui/roundtable/RoundtableWindow.cpp
+    src/gui/roundtable/RoundtableWindow.h
     src/gui/QtCocoaAccessibleTableCache.cpp
     src/gui/QtCocoaAccessibleTableCache.h
     src/gui/FreeDVReporterDialog.cpp
@@ -1991,8 +2031,12 @@ set(GUI_SOURCES
     src/gui/containers/ContainerDocument.cpp
     src/gui/containers/ContainerDocumentCodec.h
     src/gui/containers/ContainerDocumentCodec.cpp
+    src/gui/containers/ContentEntryMigration.h
+    src/gui/containers/ContentEntryMigration.cpp
     src/gui/containers/ContainerContentRegistry.h
     src/gui/containers/ContainerContentRegistry.cpp
+    src/gui/containers/ContentFade.h
+    src/gui/containers/ContentFade.cpp
     src/gui/containers/ContainerArrangeController.h
     src/gui/containers/ContainerArrangeController.cpp
     src/gui/containers/ArrangeHoldFilter.h
@@ -2032,6 +2076,8 @@ set(GUI_SOURCES
     src/core/mmio/ITransportWorker.cpp
     src/core/mmio/MmioEndpoint.cpp
     src/core/mmio/ExternalVariableEngine.cpp
+    src/core/LedConditionExpression.cpp
+    src/core/mmio/FourChar.cpp
     src/core/mmio/FormatParser.cpp
     src/core/mmio/UdpEndpointWorker.cpp
     src/core/mmio/TcpListenerEndpointWorker.cpp
@@ -2098,6 +2144,7 @@ set(GUI_SOURCES
     src/gui/meters/MeterDynamics.cpp
     src/gui/meters/MeterDynamics.h
     src/gui/meters/MeterItem.cpp
+    src/gui/meters/ThetisReadingNames.cpp
     src/gui/meters/ItemGroup.cpp
     src/gui/meters/WaveformMeterItem.cpp
     src/gui/meters/MeterPoller.cpp
@@ -2120,12 +2167,17 @@ set(GUI_SOURCES
     src/gui/meters/FilterButtonItem.cpp
     src/gui/meters/AntennaButtonItem.cpp
     src/gui/meters/TuneStepButtonItem.cpp
+    src/gui/meters/OtherButtonCatalog.cpp
     src/gui/meters/OtherButtonItem.cpp
+    src/gui/meters/OverlayTokens.cpp
+    src/gui/meters/LedResultRegistry.cpp
+    src/gui/meters/BandGroups.cpp
     src/gui/meters/VoiceRecordPlayItem.cpp
     src/gui/meters/VfoDisplayItem.cpp
     src/gui/meters/ClockItem.cpp
     src/gui/meters/ClickBoxItem.cpp
     src/gui/meters/DataOutItem.cpp
+    src/gui/meters/ItemColourLook.cpp
     src/gui/AntennaPopupBuilder.cpp
     src/gui/HGauge.cpp
     src/gui/ColorSwatchButton.cpp
@@ -2210,6 +2262,7 @@ set(GUI_SOURCES
     src/gui/applets/TxChainSection.cpp
     src/gui/applets/TxKeyingSection.cpp
     src/gui/applets/TxMonitorSection.cpp
+    src/gui/applets/SectionParts.cpp
     src/gui/applets/TxSectionContent.cpp
     src/gui/applets/TxPowerSection.cpp
     src/gui/applets/TxVoxSection.cpp
@@ -2233,6 +2286,7 @@ set(GUI_SOURCES
     src/gui/applets/AccessoryReadouts.cpp
     src/gui/applets/TunerApplet.cpp
     src/gui/applets/RotorApplet.cpp
+    src/gui/applets/RoundtableApplet.cpp
     src/gui/applets/AmpApplet.cpp
     src/gui/applets/Rf2ksApplet.cpp
     src/gui/applets/TciApplet.cpp

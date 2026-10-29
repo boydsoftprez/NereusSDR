@@ -19,6 +19,9 @@
 //   7. aRemoteWindowReadsAndWritesTheCoresPresets / aLocalWindowIsUnchanged:
 //      with "filters/" in Station scope, the settings proxy carries the
 //      presets to and from the Core; without it they stay local.
+//   8. followCwPitch (CW transmit R-CW-28): a pitch change recenters the
+//      overridden CW slots on the new pitch keeping their width; defaults
+//      follow CWPitch.
 //
 // Isolation: uses AppSettings::clear() in initTestCase/init/cleanup so that
 // filter overrides written here cannot bleed into other tests.
@@ -30,6 +33,13 @@
 //   2026-09-24 - iPhone app Task 19 (R-IOS-06, D40): the presets follow the
 //                 Core in a remote window. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-26: CW transmit, followCwPitch moves the overridden CW slots
+//                 keeping their width, the defaults follow CWPitch, voice
+//                 slots stay, and the CWPitch key refreshes the CW presets
+//                 (R-CW-28). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-10-26: CW transmit, followCwPitch recenters the overridden CW slots
+//                 on the new pitch keeping their width (300..700 at 700 is
+//                 500..900). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -233,6 +243,60 @@ private slots:
         spy.clear();
         store.followStationSetting(QString());
         QCOMPARE(spy.count(), 16);
+    }
+
+    // ── 8. CW presets follow the pitch (CW transmit R-CW-28, D8) ────────────
+    void followCwPitchRecentersOverriddenCwSlotsKeepingWidth()
+    {
+        FilterPresetStore store;
+        store.setPreset(DSPMode::CWU, 2, FilterPreset{QStringLiteral("Mine"), 300, 700});
+        store.setPreset(DSPMode::CWL, 1, FilterPreset{QStringLiteral("Low"), -700, -300});
+        store.setPreset(DSPMode::USB, 2, FilterPreset{QStringLiteral("Voice"), 300, 700});
+        const QList<FilterPreset> usbBefore = store.presetsForMode(DSPMode::USB);
+        QCOMPARE(store.presetsForMode(DSPMode::CWU).at(4).low, 400);
+        QCOMPARE(store.presetsForMode(DSPMode::CWU).at(4).high, 800);
+
+        QSignalSpy spy(&store, &FilterPresetStore::presetsChanged);
+        AppSettings::instance().setValue(QStringLiteral("CWPitch"), QStringLiteral("700"));
+        store.followCwPitch(600, 700);
+
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(0).at(0).value<DSPMode>(), DSPMode::CWL);
+        QCOMPARE(spy.at(1).at(0).value<DSPMode>(), DSPMode::CWU);
+        const QList<FilterPreset> cwu = store.presetsForMode(DSPMode::CWU);
+        QCOMPARE(cwu.at(2).name, QStringLiteral("Mine"));
+        QCOMPARE(cwu.at(2).low, 500);   // recentered on 700, width 400
+        QCOMPARE(cwu.at(2).high, 900);
+        QCOMPARE(cwu.at(4).low, 500);   // a default slot, built from CWPitch
+        QCOMPARE(cwu.at(4).high, 900);
+        const QList<FilterPreset> cwl = store.presetsForMode(DSPMode::CWL);
+        QCOMPARE(cwl.at(1).low, -900);
+        QCOMPARE(cwl.at(1).high, -500);
+
+        // Voice presets are untouched.
+        const QList<FilterPreset> usbAfter = store.presetsForMode(DSPMode::USB);
+        QCOMPARE(usbAfter.size(), usbBefore.size());
+        for (int i = 0; i < usbAfter.size(); ++i) {
+            QCOMPARE(usbAfter.at(i).name, usbBefore.at(i).name);
+            QCOMPARE(usbAfter.at(i).low, usbBefore.at(i).low);
+            QCOMPARE(usbAfter.at(i).high, usbBefore.at(i).high);
+        }
+
+        // An unchanged pitch does nothing.
+        spy.clear();
+        store.followCwPitch(700, 700);
+        QCOMPARE(spy.count(), 0);
+        QCOMPARE(store.presetsForMode(DSPMode::CWU).at(2).low, 500);
+    }
+
+    void theCwPitchKeyRefreshesTheCwPresets()
+    {
+        FilterPresetStore store;
+        QSignalSpy spy(&store, &FilterPresetStore::presetsChanged);
+        store.followStationSetting(QStringLiteral("CWPitch"));
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(0).at(0).value<DSPMode>(), DSPMode::CWL);
+        QCOMPARE(spy.at(1).at(0).value<DSPMode>(), DSPMode::CWU);
     }
 
     // ── 7. The presets are the Core's in a remote window (D40) ──────────────

@@ -51,6 +51,8 @@
 // 2026-10-09: native audio plan Task 21 (R-AUD-25, R-AUD-27): radio's six
 // Core speaker properties. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 // Claude Code.
+// 2026-10-24: Roundtable plan Task 11: RoundtableState joins it. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -93,6 +95,7 @@
 #include "core/session/StationVaxFacade.h"
 #include "core/session/TransmitStateFacade.h"
 #include "core/session/PaProfilesFacade.h"
+#include "core/roundtable/RoundtableState.h"
 
 using namespace NereusSDR;
 
@@ -990,7 +993,9 @@ private:
                  // R-R3-49 / R-IOS-18: the Core's PA Gain profiles, read-only.
                  &PaProfilesFacade::staticMetaObject,
                  // Rotor control plan Task 4b: the Core's rotor, read-only.
-                 &RotorLink::RotorModel::staticMetaObject };
+                 &RotorLink::RotorModel::staticMetaObject,
+                 // Roundtable plan Task 11: the Core's Roundtable connection.
+                 &RoundtableState::staticMetaObject };
     }
 };
 

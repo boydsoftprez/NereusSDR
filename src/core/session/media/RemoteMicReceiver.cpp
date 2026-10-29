@@ -48,6 +48,18 @@
 //               and the arrivals around them). Measurement only; nothing
 //               the buffer does changes. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-26: Remote transmit hold then cut: the no-audio check,
+//               scheduled from the same last packet and starvation
+//               generation as the starvation check; noAudio once per quiet
+//               period. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-10-27: Remote transmit hold then cut, fix wave B: a watch that
+//               ends (setWatching(false), stop()) never reads as audio
+//               returning: it emits watchEnded with the silence so far, not
+//               starved(false); starved(true) carries the measured silence;
+//               audioArrived marks a watch's first packet. Round 2: the
+//               default scheduler's timers are precise. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/media/RemoteMicReceiver.h"
@@ -963,8 +975,21 @@ RemoteMicReceiver::RemoteMicReceiver(RemoteMicFeed* feed, QObject* parent, Clock
         m_clock = steadyMs;
     }
     if (!m_scheduler) {
+        // Fix wave B, round 2: precise, as the server's own deadline is: a
+        // coarse timer may fire 5% late, half a second on the 10 s cut. A
+        // child timer, so the receiver's end stops it; it leaves its parent
+        // before the check runs, so a check that ends the receiver never
+        // deletes the timer whose signal it runs in.
         m_scheduler = [this](int ms, std::function<void()> fire) {
-            QTimer::singleShot(ms, this, std::move(fire));
+            auto* timer = new QTimer(this);
+            timer->setSingleShot(true);
+            timer->setTimerType(Qt::PreciseTimer);
+            connect(timer, &QTimer::timeout, this, [timer, fire = std::move(fire)]() {
+                timer->setParent(nullptr);
+                timer->deleteLater();
+                fire();
+            });
+            timer->start(ms);
         };
     }
 }
@@ -1036,13 +1061,9 @@ void RemoteMicReceiver::stop()
         ++m_waitGeneration;
         done(false);
     }
-    if (m_starved) {
-        m_starved = false;
-        emit starved(false);
-    }
-    m_watching = false;
-    ++m_starvationGeneration;
-    m_starvationCheckPending = false;
+    // Fix wave B: a watched line that ends is no audio returning: the
+    // owner is told how long it had been quiet, never starved(false).
+    endWatch();
     const std::lock_guard<std::mutex> lock(m_lineLock);
     if (m_decoder->opus != nullptr) {
         opus_decoder_destroy(m_decoder->opus);
@@ -1147,10 +1168,20 @@ void RemoteMicReceiver::afterPacket(bool wroteAudio)
     if (!isRunning()) {
         return;
     }
+    // Fix wave B: a watch's first packet, once, before the end of a
+    // starvation: the owner learns its line carries audio (a line that
+    // replaced one which ended mid-key has never starved).
+    if (m_watching && !m_audioArrivedSignalled) {
+        m_audioArrivedSignalled = true;
+        emit audioArrived();
+    }
     if (m_starved) {
         m_starved = false;
-        emit starved(false);
+        emit starved(false, 0);
     }
+    // A packet ends the quiet period: the next one may signal no audio
+    // again. A pending no-audio check finds the newer packet and waits on.
+    m_noAudioSignalled = false;
     if (m_watching && !m_starvationCheckPending) {
         scheduleStarvationCheck(RemoteMicConfig::kStarvationMs);
     }
@@ -1339,21 +1370,40 @@ void RemoteMicReceiver::setWatching(bool watching)
     if (watching == m_watching) {
         return;
     }
-    m_watching = watching;
+    if (!watching) {
+        endWatch();
+        return;
+    }
+    m_watching = true;
     ++m_starvationGeneration;
     m_starvationCheckPending = false;
-    if (watching) {
-        // Measured from the later of the last audio and the start of the
-        // watch.
-        const qint64 at = now();
-        qint64 last = m_lastAudioMs.load(std::memory_order_acquire);
-        while (last < at
-               && !m_lastAudioMs.compare_exchange_weak(last, at, std::memory_order_acq_rel)) {
-        }
-        scheduleStarvationCheck(RemoteMicConfig::kStarvationMs);
-    } else if (m_starved) {
-        m_starved = false;
-        emit starved(false);
+    m_noAudioCheckPending = false;
+    m_noAudioSignalled = false;
+    m_audioArrivedSignalled = false;
+    // Measured from the later of the last audio and the start of the watch.
+    const qint64 at = now();
+    qint64 last = m_lastAudioMs.load(std::memory_order_acquire);
+    while (last < at
+           && !m_lastAudioMs.compare_exchange_weak(last, at, std::memory_order_acq_rel)) {
+    }
+    scheduleStarvationCheck(RemoteMicConfig::kStarvationMs);
+}
+
+void RemoteMicReceiver::endWatch()
+{
+    const bool wasWatching = m_watching;
+    const bool wasStarved = m_starved;
+    m_watching = false;
+    m_starved = false;
+    ++m_starvationGeneration;
+    m_starvationCheckPending = false;
+    m_noAudioCheckPending = false;
+    m_noAudioSignalled = false;
+    m_audioArrivedSignalled = false;
+    if (wasWatching) {
+        const qint64 quiet =
+            std::max<qint64>(0, now() - m_lastAudioMs.load(std::memory_order_acquire));
+        emit watchEnded(quiet, wasStarved);
     }
 }
 
@@ -1383,11 +1433,48 @@ void RemoteMicReceiver::checkStarvation()
         if (!m_starved) {
             m_starved = true;
             qCInfo(lcAudio) << "Remote microphone: no audio for" << quiet << "ms while keyed";
-            emit starved(true);
+            if (!m_noAudioCheckPending && !m_noAudioSignalled) {
+                scheduleNoAudioCheck(static_cast<int>(RemoteMicConfig::kNoAudioCutMs - quiet));
+            }
+            emit starved(true, quiet);
         }
         return;   // the next audio schedules the next check
     }
     scheduleStarvationCheck(static_cast<int>(RemoteMicConfig::kStarvationMs - quiet));
+}
+
+void RemoteMicReceiver::scheduleNoAudioCheck(int ms)
+{
+    m_noAudioCheckPending = true;
+    const quint64 generation = m_starvationGeneration;
+    QPointer<RemoteMicReceiver> self(this);
+    m_scheduler(std::max(1, ms), [self, generation]() {
+        if (self.isNull() || generation != self->m_starvationGeneration) {
+            return;
+        }
+        self->m_noAudioCheckPending = false;
+        self->checkNoAudio();
+    });
+}
+
+void RemoteMicReceiver::checkNoAudio()
+{
+    if (!m_watching || !isRunning() || m_noAudioSignalled) {
+        return;
+    }
+    const qint64 quiet = now() - m_lastAudioMs.load(std::memory_order_acquire);
+    if (quiet >= RemoteMicConfig::kNoAudioCutMs) {
+        m_noAudioSignalled = true;
+        qCWarning(lcAudio) << "Remote microphone: no audio packets for" << quiet
+                           << "ms while keyed";
+        emit noAudio();
+        return;   // the next audio starts the next quiet period
+    }
+    if (!m_starved) {
+        return;   // audio flows: the next starvation schedules the next check
+    }
+    // The line went quiet again after a packet: wait on from that packet.
+    scheduleNoAudioCheck(static_cast<int>(RemoteMicConfig::kNoAudioCutMs - quiet));
 }
 
 } // namespace NereusSDR

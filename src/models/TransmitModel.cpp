@@ -15,6 +15,20 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - pureSignalActive() reads the PS-A state
+//                (PureSignal::isAutoCalEnabled) for the power-change
+//                force-31 dB gate, as Thetis console.cs:46819-46826
+//                [v2.10.3.15] gates on chkFWCATUBypass.Checked; it read
+//                correctionsBeingApplied before. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-10-27 - F5 restore correction: retain the selected radio's saved
+//                 serial port while unplugged; validate direct requests
+//                 independently of trusted restore. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
+//   2026-10-27 - Final fix wave F5: direct authoritative serial-port writes
+//                 validate before persistence; remote mirrors retain the
+//                 Core's accepted port. J.J. Boyd (KG4VCF), AI-assisted
+//                 via OpenAI Codex.
 //   2026-10-09 - VAX TX (virtual device) only where a VAX transmit device
 //                exists: greyed on Windows with the PC Mic route, a saved
 //                choice falls back to PC Mic (R-SPK-21, R-AUD-01).
@@ -118,6 +132,19 @@
 //                 drive source changes only from Setup > Transmit > Power,
 //                 as in Thetis. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-10-26 - CW transmit, the CW settings (R-CW-01): setters that
+//                 clamp and save under hardware/<mac>/tx/, their load and
+//                 save, and their ranges in settingRangeRefusal() (R-CW-03).
+//                 NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Claude Code.
+//   2026-10-27 - CW transmit final fix wave F2: setCwQskUnavailableReason,
+//                 and settingRangeRefusal() refuses QSK where it is not
+//                 offered with the reason. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Claude Code.
+//   2026-10-27 - CW transmit final fix wave F5: settingRangeRefusal()
+//                 takes only None or one of the Core's serial ports for
+//                 cwSerialPort. J.J. Boyd (KG4VCF), AI-assisted via Claude
+//                 Code.
 // =================================================================
 
 // --- From console.cs (Thetis v2.10.3.13) ---
@@ -336,6 +363,7 @@
 #include "core/AppSettings.h"
 #include "core/ParaEqCurve.h"
 #include "core/CfcProfile.h"
+#include "core/CwSerialKeyInput.h"
 #include "core/PaProfile.h"
 #include "core/PureSignal.h"
 #include "core/StepAttenuatorController.h"
@@ -1362,6 +1390,81 @@ QString TransmitModel::settingRangeRefusal(const QByteArray& propertyName,
             QStringLiteral("Choose a second tone delay from %1 to %2 ms.")
                 .arg(kTwoToneFreq2DelayMsMin).arg(kTwoToneFreq2DelayMsMax));
     }
+    // CW transmit (R-CW-01, R-CW-03): the CW settings' ranges (TransmitModel.h).
+    if (propertyName == "cwKeyerSpeed") {
+        return scalar(kCwKeyerSpeedMin, kCwKeyerSpeedMax,
+            QStringLiteral("Choose a keyer speed from %1 to %2 WPM.")
+                .arg(kCwKeyerSpeedMin).arg(kCwKeyerSpeedMax));
+    }
+    if (propertyName == "cwKeyerMode") {
+        return scalar(kCwKeyerModeMin, kCwKeyerModeMax,
+            QStringLiteral("Choose a keyer mode: straight key, iambic A or iambic B."));
+    }
+    if (propertyName == "cwKeyerWeight") {
+        return scalar(kCwKeyerWeightMin, kCwKeyerWeightMax,
+            QStringLiteral("Choose a keyer weight from %1 to %2.")
+                .arg(kCwKeyerWeightMin).arg(kCwKeyerWeightMax));
+    }
+    if (propertyName == "cwSerialPort") {
+        // Final fix wave F5: only None or one of the Core's own serial
+        // ports. The reader opens the port and turns on DTR and RTS, so a
+        // peer can never name some other path.
+        const QString port = value.toString().trimmed();
+        if (port.isEmpty() || cwSerialPortIsHere(port)) {
+            return {};
+        }
+        return QString::fromLatin1(kCwSerialPortNotHereText);
+    }
+    if (propertyName == "cwBreakInMode") {
+        const QString range = scalar(kCwBreakInModeMin, kCwBreakInModeMax,
+            QStringLiteral("Choose a break-in mode: off, semi or QSK."));
+        // Final fix wave F2: QSK where it is not offered is refused with
+        // the reason (R-CW-20), the rule CAT's ZZQK refuses it by, for
+        // every writer, so a write never falls back to Semi silently.
+        if (range.isEmpty() && value.toInt() == static_cast<int>(CwBreakInMode::Qsk)
+            && !m_cwQskUnavailableReason.isEmpty()) {
+            return m_cwQskUnavailableReason;
+        }
+        return range;
+    }
+    if (propertyName == "cwBreakInDelayMs") {
+        return scalar(kCwBreakInDelayMsMin, kCwBreakInDelayMsMax,
+            QStringLiteral("Choose a break-in delay from %1 to %2 ms.")
+                .arg(kCwBreakInDelayMsMin).arg(kCwBreakInDelayMsMax));
+    }
+    if (propertyName == "cwKeyDownDelayMs") {
+        return scalar(kCwKeyDownDelayMsMin, kCwKeyDownDelayMsMax,
+            QStringLiteral("Choose a key-down delay from %1 to %2 ms.")
+                .arg(kCwKeyDownDelayMsMin).arg(kCwKeyDownDelayMsMax));
+    }
+    if (propertyName == "cwKeyUpDelayMs") {
+        return scalar(kCwKeyUpDelayMsMin, kCwKeyUpDelayMsMax,
+            QStringLiteral("Choose a key-up delay from %1 to %2 ms.")
+                .arg(kCwKeyUpDelayMsMin).arg(kCwKeyUpDelayMsMax));
+    }
+    if (propertyName == "cwAutoModeReturnMs") {
+        return scalar(kCwAutoModeReturnMsMin, kCwAutoModeReturnMsMax,
+            QStringLiteral("Choose a mode return delay from %1 to %2 ms.")
+                .arg(kCwAutoModeReturnMsMin).arg(kCwAutoModeReturnMsMax));
+    }
+    if (propertyName == "cwSerialKeyLine") {
+        return scalar(kCwSerialKeyLineMin, kCwSerialKeyLineMax,
+            QStringLiteral("Choose a serial key line: none, DSR or CTS."));
+    }
+    if (propertyName == "cwSerialPttLine") {
+        return scalar(kCwSerialPttLineMin, kCwSerialPttLineMax,
+            QStringLiteral("Choose a serial PTT line: none, DSR or CTS."));
+    }
+    if (propertyName == "cwxSpeed") {
+        return scalar(kCwxSpeedMin, kCwxSpeedMax,
+            QStringLiteral("Choose a CWX speed from %1 to %2 WPM.")
+                .arg(kCwxSpeedMin).arg(kCwxSpeedMax));
+    }
+    if (propertyName == "cwxRepeatDelayS") {
+        return scalar(kCwxRepeatDelaySMin, kCwxRepeatDelaySMax,
+            QStringLiteral("Choose a CWX repeat delay from %1 to %2 seconds.")
+                .arg(kCwxRepeatDelaySMin).arg(kCwxRepeatDelaySMax));
+    }
     return {};
 }
 
@@ -1580,18 +1683,22 @@ void TransmitModel::setLastPower(int value)
 
 bool TransmitModel::pureSignalActive() const noexcept
 {
-    // Phase 3M-4 Task 7 — live read of PureSignal::correctionsBeingApplied.
-    // From Thetis console.cs:46740-46748 [v2.10.3.13]:
+    // Live read of the PS-A button state (PureSignal::isAutoCalEnabled).
+    // From Thetis console.cs:46819-46826 [v2.10.3.15]:
     //   //[2.10.3.5]MW0LGE max tx attenuation when power is increased and PS is enabled
-    //   if (new_pwr != _lastPower && chkFWCATUBypass.Checked && _forceATTwhenPowerChangesWhenPSAon) ...
-    // setPowerUsingTargetDbm uses chkFWCATUBypass.Checked as the predicate
-    // (active when PS-A is enabled).  The Thetis predicate is "PS-A
-    // enabled" (UI-state); NereusSDR uses "calcc has corrections in
-    // flight" (PSForm.cs:1100-1102 [v2.10.3.13] CorrectionsBeingApplied
-    // == _info[14] == 1) which is the runtime equivalent: only when
-    // calcc has a valid correction set does the safety lift to 31 dB
-    // make sense (the gate exists to prevent power surges destabilising
-    // the live correction).
+    //   if (new_pwr != _lastPower && chkFWCATUBypass.Checked && _forceATTwhenPowerChangesWhenPSAon)
+    //   {
+    //       if(new_pwr > _lastPower || _forceATTwhenPowerChangesWhenPSAon_anddecreased)
+    //           SetupForm.ATTOnTX = 31;
+    //
+    //       _lastPower = new_pwr;
+    //   }
+    // The gate is chkFWCATUBypass.Checked, the PS-A button: not PSEnabled
+    // and not "calcc is applying a correction".  NereusSDR's PS-A state is
+    // PureSignal::isAutoCalEnabled(): the PS-A buttons call
+    // setAutoCalEnabled, and Single Cal / Reset / Restore call
+    // forceAutoCalDisable (ForcePureSignalAutoCalDisable,
+    // console.cs:43776-43779 [v2.10.3.15]).
 #ifdef NEREUS_BUILD_TESTS
     // Phase 3C test seam — exercise the ATT-on-TX gate without
     // constructing a full RadioModel + PureSignal coordinator.  Tri-state:
@@ -1604,9 +1711,12 @@ bool TransmitModel::pureSignalActive() const noexcept
     }
 #endif
     if (m_pureSignal != nullptr) {
-        // PureSignal::correctionsBeingApplied is std::atomic<bool>::load,
-        // safe to call from any thread.  noexcept-compatible.
-        return m_pureSignal->correctionsBeingApplied();
+        // Thread: PureSignal and TransmitModel both live on the main
+        // thread.  RadioModel owns PureSignal with no parent and never
+        // moveToThread()s it (only TxChannel moves, to TxWorkerThread), and
+        // setPowerUsingTargetDbm runs on the main thread, so this plain
+        // read of the settings-backed bool is same-thread.
+        return m_pureSignal->isAutoCalEnabled();
     }
     return false;
 }
@@ -2034,8 +2144,9 @@ TransmitModel::TxPowerResult TransmitModel::setPowerUsingTargetDbm(
     //   if (!bSetPower) return new_pwr;
     if (!bSetPower) { return result; }
 
-    // ATT-on-TX-on-power-change safety gate.
-    // From Thetis console.cs:46740-46748 [v2.10.3.13]:
+    // ATT-on-TX-on-power-change safety gate.  pureSignalActive() is the
+    // PS-A button state (chkFWCATUBypass.Checked), see its definition.
+    // From Thetis console.cs:46819-46826 [v2.10.3.15]:
     //   //[2.10.3.5]MW0LGE max tx attenuation when power is increased and PS is enabled
     //   if (new_pwr != _lastPower && chkFWCATUBypass.Checked && _forceATTwhenPowerChangesWhenPSAon)
     //   {
@@ -2679,6 +2790,62 @@ void TransmitModel::loadFromSettings(const QString& mac)
         && s.contains(pfx + QLatin1String("FixedTunePower"))) {
         persistOne(QStringLiteral("FixedTunePower"), QString::number(m_tunePower));
     }
+
+    // ── CW transmit settings (R-CW-01), defaults as TransmitModel.h cites ──
+    setCwKeyerSpeed(s.value(pfx + QLatin1String("CW_KeyerSpeed"),
+                        QString::number(kCwKeyerSpeedDefault)).toInt());
+    setCwKeyerMode(s.value(pfx + QLatin1String("CW_KeyerMode"),
+                        QString::number(kCwKeyerModeDefault)).toInt());
+    setCwKeyerWeight(s.value(pfx + QLatin1String("CW_KeyerWeight"),
+                        QString::number(kCwKeyerWeightDefault)).toInt());
+    setCwReversePaddles(s.value(pfx + QLatin1String("CW_ReversePaddles"),
+                        QStringLiteral("False")).toString() == QLatin1String("True"));
+    setCwStrictSpacing(s.value(pfx + QLatin1String("CW_StrictSpacing"),
+                        QStringLiteral("False")).toString() == QLatin1String("True"));
+    setCwBreakInMode(s.value(pfx + QLatin1String("CW_BreakInMode"),
+                        QString::number(kCwBreakInModeDefault)).toInt());
+    setCwBreakInDelayMs(s.value(pfx + QLatin1String("CW_BreakInDelay"),
+                        QString::number(kCwBreakInDelayMsDefault)).toInt());
+    setCwKeyDownDelayMs(s.value(pfx + QLatin1String("CW_KeyDownDelay"),
+                        QString::number(kCwKeyDownDelayMsDefault)).toInt());
+    setCwKeyUpDelayMs(s.value(pfx + QLatin1String("CW_KeyUpDelay"),
+                        QString::number(kCwKeyUpDelayMsDefault)).toInt());
+    setCwSidetone(s.value(pfx + QLatin1String("CW_Sidetone"),
+                        QStringLiteral("True")).toString() == QLatin1String("True"));
+    setCwRadioSidetone(s.value(pfx + QLatin1String("CW_RadioSidetone"),
+                        QStringLiteral("True")).toString() == QLatin1String("True"));
+    setCwComputerSidetone(s.value(pfx + QLatin1String("CW_ComputerSidetone"),
+                        QStringLiteral("True")).toString() == QLatin1String("True"));
+    setCwAutoModeSwitch(s.value(pfx + QLatin1String("CW_AutoModeSwitch"),
+                        QStringLiteral("False")).toString() == QLatin1String("True"));
+    setCwAutoModeReturn(s.value(pfx + QLatin1String("CW_AutoModeReturn"),
+                        QStringLiteral("False")).toString() == QLatin1String("True"));
+    setCwAutoModeReturnMs(s.value(pfx + QLatin1String("CW_AutoModeReturnMs"),
+                        QString::number(kCwAutoModeReturnMsDefault)).toInt());
+    // F5 correction: restore the saved selection even while unplugged.
+    // The platform reader still refuses to open a name not enumerated now.
+    // Keeping the previous radio's port here could open the wrong device.
+    applyCwSerialPort(s.value(pfx + QLatin1String("CW_SerialPort"), QString()).toString(), false);
+    setCwSerialPaddles(s.value(pfx + QLatin1String("CW_SerialPaddles"),
+                        QStringLiteral("False")).toString() == QLatin1String("True"));
+    setCwSerialKeyLine(s.value(pfx + QLatin1String("CW_SerialKeyLine"),
+                        QString::number(kCwSerialKeyLineDefault)).toInt());
+    setCwSerialPttLine(s.value(pfx + QLatin1String("CW_SerialPttLine"),
+                        QString::number(kCwSerialPttLineDefault)).toInt());
+    setCwxSpeed(s.value(pfx + QLatin1String("CWX_Speed"),
+                        QString::number(kCwxSpeedDefault)).toInt());
+    setCwxRepeat(s.value(pfx + QLatin1String("CWX_Repeat"),
+                        QStringLiteral("False")).toString() == QLatin1String("True"));
+    setCwxRepeatDelayS(s.value(pfx + QLatin1String("CWX_RepeatDelay"),
+                        QString::number(kCwxRepeatDelaySDefault)).toInt());
+    setCwxMemory1(s.value(pfx + QLatin1String("CWX_Memory1"), QString()).toString());
+    setCwxMemory2(s.value(pfx + QLatin1String("CWX_Memory2"), QString()).toString());
+    setCwxMemory3(s.value(pfx + QLatin1String("CWX_Memory3"), QString()).toString());
+    setCwxMemory4(s.value(pfx + QLatin1String("CWX_Memory4"), QString()).toString());
+    setCwxMemory5(s.value(pfx + QLatin1String("CWX_Memory5"), QString()).toString());
+    setCwxMemory6(s.value(pfx + QLatin1String("CWX_Memory6"), QString()).toString());
+    setCwxMemory7(s.value(pfx + QLatin1String("CWX_Memory7"), QString()).toString());
+    setCwxMemory8(s.value(pfx + QLatin1String("CWX_Memory8"), QString()).toString());
 }
 
 void TransmitModel::persistToSettings(const QString& mac) const
@@ -2892,6 +3059,47 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // m_tunePower: under FixedTunePower.
     s.setValue(pfx + QLatin1String("FixedTunePower"),
                QString::number(m_tunePower));
+
+    // ── CW transmit settings (R-CW-01) ───────────────────────────────────
+    s.setValue(pfx + QLatin1String("CW_KeyerSpeed"), QString::number(m_cwKeyerSpeed));
+    s.setValue(pfx + QLatin1String("CW_KeyerMode"), QString::number(m_cwKeyerMode));
+    s.setValue(pfx + QLatin1String("CW_KeyerWeight"), QString::number(m_cwKeyerWeight));
+    s.setValue(pfx + QLatin1String("CW_ReversePaddles"),
+               m_cwReversePaddles ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CW_StrictSpacing"),
+               m_cwStrictSpacing ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CW_BreakInMode"), QString::number(m_cwBreakInMode));
+    s.setValue(pfx + QLatin1String("CW_BreakInDelay"), QString::number(m_cwBreakInDelayMs));
+    s.setValue(pfx + QLatin1String("CW_KeyDownDelay"), QString::number(m_cwKeyDownDelayMs));
+    s.setValue(pfx + QLatin1String("CW_KeyUpDelay"), QString::number(m_cwKeyUpDelayMs));
+    s.setValue(pfx + QLatin1String("CW_Sidetone"),
+               m_cwSidetone ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CW_RadioSidetone"),
+               m_cwRadioSidetone ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CW_ComputerSidetone"),
+               m_cwComputerSidetone ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CW_AutoModeSwitch"),
+               m_cwAutoModeSwitch ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CW_AutoModeReturn"),
+               m_cwAutoModeReturn ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CW_AutoModeReturnMs"), QString::number(m_cwAutoModeReturnMs));
+    s.setValue(pfx + QLatin1String("CW_SerialPort"), m_cwSerialPort);
+    s.setValue(pfx + QLatin1String("CW_SerialPaddles"),
+               m_cwSerialPaddles ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CW_SerialKeyLine"), QString::number(m_cwSerialKeyLine));
+    s.setValue(pfx + QLatin1String("CW_SerialPttLine"), QString::number(m_cwSerialPttLine));
+    s.setValue(pfx + QLatin1String("CWX_Speed"), QString::number(m_cwxSpeed));
+    s.setValue(pfx + QLatin1String("CWX_Repeat"),
+               m_cwxRepeat ? QStringLiteral("True") : QStringLiteral("False"));
+    s.setValue(pfx + QLatin1String("CWX_RepeatDelay"), QString::number(m_cwxRepeatDelayS));
+    s.setValue(pfx + QLatin1String("CWX_Memory1"), m_cwxMemory1);
+    s.setValue(pfx + QLatin1String("CWX_Memory2"), m_cwxMemory2);
+    s.setValue(pfx + QLatin1String("CWX_Memory3"), m_cwxMemory3);
+    s.setValue(pfx + QLatin1String("CWX_Memory4"), m_cwxMemory4);
+    s.setValue(pfx + QLatin1String("CWX_Memory5"), m_cwxMemory5);
+    s.setValue(pfx + QLatin1String("CWX_Memory6"), m_cwxMemory6);
+    s.setValue(pfx + QLatin1String("CWX_Memory7"), m_cwxMemory7);
+    s.setValue(pfx + QLatin1String("CWX_Memory8"), m_cwxMemory8);
 }
 
 // ── Anti-VOX properties (3M-1b C.4) ─────────────────────────────────────────
@@ -4473,6 +4681,291 @@ bool TransmitModel::setCfcProfile(const CfcEditProfile& profile)
     setCfcParaEqData(encodeCfcEditProfile(profile));
     m_activeCfcProfile = profile;
     return true;
+}
+
+// ── CW transmit settings (R-CW-01) ─────────────────────────────────────────
+//
+// NereusSDR-original setters over the ranges and defaults cited in
+// TransmitModel.h. Each clamps, does nothing on an equal value, saves under
+// hardware/<mac>/tx/<Key> (persistOne) and emits its signal.
+
+void TransmitModel::setCwKeyerSpeed(int wpm)
+{
+    const int clamped = std::clamp(wpm, kCwKeyerSpeedMin, kCwKeyerSpeedMax);
+    if (clamped == m_cwKeyerSpeed) { return; }
+    m_cwKeyerSpeed = clamped;
+    persistOne(QStringLiteral("CW_KeyerSpeed"), QString::number(m_cwKeyerSpeed));
+    emit cwKeyerSpeedChanged(m_cwKeyerSpeed);
+}
+
+void TransmitModel::setCwKeyerMode(int mode)
+{
+    const int clamped = std::clamp(mode, kCwKeyerModeMin, kCwKeyerModeMax);
+    if (clamped == m_cwKeyerMode) { return; }
+    m_cwKeyerMode = clamped;
+    persistOne(QStringLiteral("CW_KeyerMode"), QString::number(m_cwKeyerMode));
+    emit cwKeyerModeChanged(m_cwKeyerMode);
+}
+
+void TransmitModel::setCwKeyerWeight(int weight)
+{
+    const int clamped = std::clamp(weight, kCwKeyerWeightMin, kCwKeyerWeightMax);
+    if (clamped == m_cwKeyerWeight) { return; }
+    m_cwKeyerWeight = clamped;
+    persistOne(QStringLiteral("CW_KeyerWeight"), QString::number(m_cwKeyerWeight));
+    emit cwKeyerWeightChanged(m_cwKeyerWeight);
+}
+
+void TransmitModel::setCwReversePaddles(bool on)
+{
+    if (on == m_cwReversePaddles) { return; }
+    m_cwReversePaddles = on;
+    persistOne(QStringLiteral("CW_ReversePaddles"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwReversePaddlesChanged(on);
+}
+
+void TransmitModel::setCwStrictSpacing(bool on)
+{
+    if (on == m_cwStrictSpacing) { return; }
+    m_cwStrictSpacing = on;
+    persistOne(QStringLiteral("CW_StrictSpacing"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwStrictSpacingChanged(on);
+}
+
+void TransmitModel::setCwBreakInMode(int mode)
+{
+    const int clamped = std::clamp(mode, kCwBreakInModeMin, kCwBreakInModeMax);
+    if (clamped == m_cwBreakInMode) { return; }
+    m_cwBreakInMode = clamped;
+    persistOne(QStringLiteral("CW_BreakInMode"), QString::number(m_cwBreakInMode));
+    emit cwBreakInModeChanged(m_cwBreakInMode);
+}
+
+void TransmitModel::setCwBreakInDelayMs(int ms)
+{
+    const int clamped = std::clamp(ms, kCwBreakInDelayMsMin, kCwBreakInDelayMsMax);
+    if (clamped == m_cwBreakInDelayMs) { return; }
+    m_cwBreakInDelayMs = clamped;
+    persistOne(QStringLiteral("CW_BreakInDelay"), QString::number(m_cwBreakInDelayMs));
+    emit cwBreakInDelayMsChanged(m_cwBreakInDelayMs);
+}
+
+void TransmitModel::setCwKeyDownDelayMs(int ms)
+{
+    const int clamped = std::clamp(ms, kCwKeyDownDelayMsMin, kCwKeyDownDelayMsMax);
+    if (clamped == m_cwKeyDownDelayMs) { return; }
+    m_cwKeyDownDelayMs = clamped;
+    persistOne(QStringLiteral("CW_KeyDownDelay"), QString::number(m_cwKeyDownDelayMs));
+    emit cwKeyDownDelayMsChanged(m_cwKeyDownDelayMs);
+}
+
+void TransmitModel::setCwKeyUpDelayMs(int ms)
+{
+    const int clamped = std::clamp(ms, kCwKeyUpDelayMsMin, kCwKeyUpDelayMsMax);
+    if (clamped == m_cwKeyUpDelayMs) { return; }
+    m_cwKeyUpDelayMs = clamped;
+    persistOne(QStringLiteral("CW_KeyUpDelay"), QString::number(m_cwKeyUpDelayMs));
+    emit cwKeyUpDelayMsChanged(m_cwKeyUpDelayMs);
+}
+
+void TransmitModel::setCwSidetone(bool on)
+{
+    if (on == m_cwSidetone) { return; }
+    m_cwSidetone = on;
+    persistOne(QStringLiteral("CW_Sidetone"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwSidetoneChanged(on);
+}
+
+void TransmitModel::setCwRadioSidetone(bool on)
+{
+    if (on == m_cwRadioSidetone) { return; }
+    m_cwRadioSidetone = on;
+    persistOne(QStringLiteral("CW_RadioSidetone"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwRadioSidetoneChanged(on);
+}
+
+void TransmitModel::setCwComputerSidetone(bool on)
+{
+    if (on == m_cwComputerSidetone) { return; }
+    m_cwComputerSidetone = on;
+    persistOne(QStringLiteral("CW_ComputerSidetone"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwComputerSidetoneChanged(on);
+}
+
+void TransmitModel::setCwAutoModeSwitch(bool on)
+{
+    if (on == m_cwAutoModeSwitch) { return; }
+    m_cwAutoModeSwitch = on;
+    persistOne(QStringLiteral("CW_AutoModeSwitch"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwAutoModeSwitchChanged(on);
+}
+
+void TransmitModel::setCwAutoModeReturn(bool on)
+{
+    if (on == m_cwAutoModeReturn) { return; }
+    m_cwAutoModeReturn = on;
+    persistOne(QStringLiteral("CW_AutoModeReturn"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwAutoModeReturnChanged(on);
+}
+
+void TransmitModel::setCwAutoModeReturnMs(int ms)
+{
+    // The 10 ms step: round to the nearest step, then keep the range
+    // (a value under 5 ms rounds to 0 and reads the 1 ms minimum).
+    const int inRange = std::clamp(ms, kCwAutoModeReturnMsMin, kCwAutoModeReturnMsMax);
+    const int stepped = ((inRange + kCwAutoModeReturnMsStep / 2) / kCwAutoModeReturnMsStep)
+        * kCwAutoModeReturnMsStep;
+    const int clamped = std::clamp(stepped, kCwAutoModeReturnMsMin, kCwAutoModeReturnMsMax);
+    if (clamped == m_cwAutoModeReturnMs) { return; }
+    m_cwAutoModeReturnMs = clamped;
+    persistOne(QStringLiteral("CW_AutoModeReturnMs"), QString::number(m_cwAutoModeReturnMs));
+    emit cwAutoModeReturnMsChanged(m_cwAutoModeReturnMs);
+}
+
+void TransmitModel::setCwSerialPort(const QString& text)
+{
+    const QString port = text.trimmed();
+    if (m_cwSerialPortAuthoritative) {
+        const QString refusal = settingRangeRefusal("cwSerialPort", port);
+        if (!refusal.isEmpty()) {
+            emit cwSerialPortRefused(refusal);
+            return;
+        }
+    }
+    applyCwSerialPort(port, true);
+}
+
+void TransmitModel::applyCwSerialPort(const QString& text, bool persist)
+{
+    if (text == m_cwSerialPort) { return; }
+    m_cwSerialPort = text;
+    if (persist) {
+        persistOne(QStringLiteral("CW_SerialPort"), m_cwSerialPort);
+    }
+    emit cwSerialPortChanged(m_cwSerialPort);
+}
+
+void TransmitModel::setCwSerialPaddles(bool on)
+{
+    if (on == m_cwSerialPaddles) { return; }
+    m_cwSerialPaddles = on;
+    persistOne(QStringLiteral("CW_SerialPaddles"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwSerialPaddlesChanged(on);
+}
+
+void TransmitModel::setCwSerialKeyLine(int line)
+{
+    const int clamped = std::clamp(line, kCwSerialKeyLineMin, kCwSerialKeyLineMax);
+    if (clamped == m_cwSerialKeyLine) { return; }
+    m_cwSerialKeyLine = clamped;
+    persistOne(QStringLiteral("CW_SerialKeyLine"), QString::number(m_cwSerialKeyLine));
+    emit cwSerialKeyLineChanged(m_cwSerialKeyLine);
+}
+
+void TransmitModel::setCwSerialPttLine(int line)
+{
+    const int clamped = std::clamp(line, kCwSerialPttLineMin, kCwSerialPttLineMax);
+    if (clamped == m_cwSerialPttLine) { return; }
+    m_cwSerialPttLine = clamped;
+    persistOne(QStringLiteral("CW_SerialPttLine"), QString::number(m_cwSerialPttLine));
+    emit cwSerialPttLineChanged(m_cwSerialPttLine);
+}
+
+void TransmitModel::setCwxSpeed(int wpm)
+{
+    const int clamped = std::clamp(wpm, kCwxSpeedMin, kCwxSpeedMax);
+    if (clamped == m_cwxSpeed) { return; }
+    m_cwxSpeed = clamped;
+    persistOne(QStringLiteral("CWX_Speed"), QString::number(m_cwxSpeed));
+    emit cwxSpeedChanged(m_cwxSpeed);
+}
+
+void TransmitModel::setCwxRepeat(bool on)
+{
+    if (on == m_cwxRepeat) { return; }
+    m_cwxRepeat = on;
+    persistOne(QStringLiteral("CWX_Repeat"), on ? QStringLiteral("True") : QStringLiteral("False"));
+    emit cwxRepeatChanged(on);
+}
+
+void TransmitModel::setCwxRepeatDelayS(int seconds)
+{
+    const int clamped = std::clamp(seconds, kCwxRepeatDelaySMin, kCwxRepeatDelaySMax);
+    if (clamped == m_cwxRepeatDelayS) { return; }
+    m_cwxRepeatDelayS = clamped;
+    persistOne(QStringLiteral("CWX_RepeatDelay"), QString::number(m_cwxRepeatDelayS));
+    emit cwxRepeatDelaySChanged(m_cwxRepeatDelayS);
+}
+
+void TransmitModel::setCwxMemory1(const QString& text)
+{
+    if (text == m_cwxMemory1) { return; }
+    m_cwxMemory1 = text;
+    persistOne(QStringLiteral("CWX_Memory1"), m_cwxMemory1);
+    emit cwxMemory1Changed(m_cwxMemory1);
+}
+
+void TransmitModel::setCwxMemory2(const QString& text)
+{
+    if (text == m_cwxMemory2) { return; }
+    m_cwxMemory2 = text;
+    persistOne(QStringLiteral("CWX_Memory2"), m_cwxMemory2);
+    emit cwxMemory2Changed(m_cwxMemory2);
+}
+
+void TransmitModel::setCwxMemory3(const QString& text)
+{
+    if (text == m_cwxMemory3) { return; }
+    m_cwxMemory3 = text;
+    persistOne(QStringLiteral("CWX_Memory3"), m_cwxMemory3);
+    emit cwxMemory3Changed(m_cwxMemory3);
+}
+
+void TransmitModel::setCwxMemory4(const QString& text)
+{
+    if (text == m_cwxMemory4) { return; }
+    m_cwxMemory4 = text;
+    persistOne(QStringLiteral("CWX_Memory4"), m_cwxMemory4);
+    emit cwxMemory4Changed(m_cwxMemory4);
+}
+
+void TransmitModel::setCwxMemory5(const QString& text)
+{
+    if (text == m_cwxMemory5) { return; }
+    m_cwxMemory5 = text;
+    persistOne(QStringLiteral("CWX_Memory5"), m_cwxMemory5);
+    emit cwxMemory5Changed(m_cwxMemory5);
+}
+
+void TransmitModel::setCwxMemory6(const QString& text)
+{
+    if (text == m_cwxMemory6) { return; }
+    m_cwxMemory6 = text;
+    persistOne(QStringLiteral("CWX_Memory6"), m_cwxMemory6);
+    emit cwxMemory6Changed(m_cwxMemory6);
+}
+
+void TransmitModel::setCwxMemory7(const QString& text)
+{
+    if (text == m_cwxMemory7) { return; }
+    m_cwxMemory7 = text;
+    persistOne(QStringLiteral("CWX_Memory7"), m_cwxMemory7);
+    emit cwxMemory7Changed(m_cwxMemory7);
+}
+
+void TransmitModel::setCwxMemory8(const QString& text)
+{
+    if (text == m_cwxMemory8) { return; }
+    m_cwxMemory8 = text;
+    persistOne(QStringLiteral("CWX_Memory8"), m_cwxMemory8);
+    emit cwxMemory8Changed(m_cwxMemory8);
+}
+
+void TransmitModel::setCwQskUnavailableReason(const QString& reason)
+{
+    if (reason == m_cwQskUnavailableReason) { return; }
+    m_cwQskUnavailableReason = reason;
+    emit cwQskUnavailableReasonChanged(m_cwQskUnavailableReason);
 }
 
 } // namespace NereusSDR

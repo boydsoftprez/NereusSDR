@@ -22,6 +22,8 @@
 //   2026-05-10 - Original test for NereusSDR by J.J. Boyd (KG4VCF),
 //                 with AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-10-27 - CW final correction F9 badge regression. J.J. Boyd
+//                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09 - PC mic states (native audio plan Task 20) by J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -46,6 +48,7 @@
 #include "core/session/StationClient.h"
 #include <QRadioButton>
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
@@ -146,6 +149,34 @@ private slots:
             QCoreApplication::processEvents();
             QVERIFY(page.grab().save(captures + QStringLiteral("/radio-microphone-legacy-core.png")));
         }
+    }
+
+    // CW final correction F9: the selected microphone remains unchanged;
+    // the badge describes the radio keyer while CW makes the signal.
+    void cwModeShowsRadioKeyerAndRestoresMicrophoneBadge()
+    {
+        RadioModel model;
+        SliceModel* slice = model.sliceById(model.addSlice());
+        QVERIFY(slice != nullptr);
+        slice->setDspMode(DSPMode::USB);
+        TransmitModel& tx = model.transmitModel();
+        tx.setMicSource(MicSource::Radio);
+        TxApplet applet(&model);
+        QLabel* badge = findBadge(&applet);
+        QVERIFY(badge != nullptr);
+        QCOMPARE(badge->text(), QStringLiteral("Radio mic"));
+
+        for (const DSPMode mode : {DSPMode::CWL, DSPMode::CWU}) {
+            slice->setDspMode(mode);
+            QCOMPARE(badge->text(), QStringLiteral("Radio keyer"));
+            QCOMPARE(tx.micSource(), MicSource::Radio);
+            tx.setMicSource(MicSource::Pc);
+            QCOMPARE(badge->text(), QStringLiteral("Radio keyer"));
+            QVERIFY(!isAmber(badge));
+            tx.setMicSource(MicSource::Radio);
+        }
+        slice->setDspMode(DSPMode::USB);
+        QCOMPARE(badge->text(), QStringLiteral("Radio mic"));
     }
 
     void liveChange_Pc()

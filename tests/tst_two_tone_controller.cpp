@@ -6,6 +6,9 @@
 // Modification history (NereusSDR):
 //   2026-10-04 — J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //                 Cover two-tone sideband selection after a TX handoff.
+//   2026-10-26 — CW transmit: the refused band-plan check is FM's, since
+//                 CWL and CWU now key (R-CW-05). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Claude Code.
 //
 // Verifies:
 //   I.1.A — setActive(true) when not powered → no MOX engaged, no TXPostGen
@@ -850,8 +853,8 @@ private slots:
         RecordingTxChannel tc(kTxChannelId);
         MoxController mox;
         mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
-        // BandPlanGuard rejects CW.
-        mox.setMoxCheck(makeRejectingCheckFn(DSPMode::CWL));
+        // BandPlanGuard rejects FM (CW keys since CW transmit, R-CW-05).
+        mox.setMoxCheck(makeRejectingCheckFn(DSPMode::FM));
 
         SliceModel slice;
 
@@ -1133,7 +1136,7 @@ private slots:
         RecordingTxChannel tc(kTxChannelId);
         MoxController mox;
         mox.setTimerIntervals(0, 0, 0, 0, 0, 0);
-        mox.setMoxCheck(makeRejectingCheckFn(DSPMode::CWL));
+        mox.setMoxCheck(makeRejectingCheckFn(DSPMode::FM));
         SliceModel slice;
 
         TwoToneController ctrl;

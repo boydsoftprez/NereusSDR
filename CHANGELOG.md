@@ -1,5 +1,501 @@
 # Changelog
 
+## [Unreleased]
+
+[Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
+
+Upgrading from 2026.10.1? Start with the [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html).
+
+Changes on main since 2026.10.1, for the 2026.10.2 release. Update the Core
+and the desktop together, and update the iPhone and iPad app separately if you
+use it. The new remote display format needs a 2026.10.2 Core and updated
+clients; the RX meter timing needs a 2026.10.2 Core and desktop. The phone app
+has its own version number. Older Cores, windows and phone apps still connect
+to each other as before.
+
+### CW transmit and remote transmit recovery
+
+- CW transmit supports the radio's key input, CWX typed text and memories,
+  CAT/TCI and serial key lines. The radio generates and shapes CW; Off, Semi
+  and supported QSK use the Core's ordinary transmit checks. The desktop and
+  phone expose the Core's CW controls and QSK availability.
+  ([#680](https://github.com/boydsoftprez/NereusSDR/pull/680))
+- Remote CW has its own activity lifetime, including QSK with MOX off. A
+  brief network interruption holds RF and pauses the computer sidetone and
+  queued message; recovery restarts the unfinished letter. A prolonged loss,
+  Stop or session end cancels that activity. A delayed answer or keepalive
+  from an old activity cannot restart a stopped message.
+  ([#668](https://github.com/boydsoftprez/NereusSDR/pull/668),
+  [#680](https://github.com/boydsoftprez/NereusSDR/pull/680))
+- Update the Core and the desktop or phone client together to start remote
+  CW. Older clients retain Stop and key release. The regular session,
+  transmit channel and auxiliary watch paths share the same keepalive
+  identity wherever those paths are available. The session keepalive is
+  sent with the transmit-channel copy.
+  ([#652](https://github.com/boydsoftprez/NereusSDR/pull/652))
+- CW receive shift, pitch, filters and display alignment now put the dial at
+  the carrier frequency. Saved CW frequencies retain their numbers and may
+  need one retune after updating.
+  ([#680](https://github.com/boydsoftprez/NereusSDR/pull/680))
+
+### Roundtable and the final release integrations
+
+- Roundtable shows who hears the station speaking on a frequency, with each
+  listener's S-meter reading, distance and tuning offset. It works on every
+  mode, on the desktop, iPhone and iPad, and the public Roundtable page.
+  Sharing starts only after the operator answers the first question, and one
+  switch hides the station. The website's `/roundtable` address redirects to
+  the public page while its protocol and conformance files retain their paths.
+  ([#657](https://github.com/boydsoftprez/NereusSDR/pull/657),
+  [#659](https://github.com/boydsoftprez/NereusSDR/pull/659))
+- Container items gain the remaining Thetis-derived options, controls and
+  copy/paste behavior. Settings survive reload, RX and TX sections receive
+  transmit state, and text containing `%` is saved intact. A history graph
+  keeps its own duration; an empty image path stays empty. The unavailable
+  ADC maximum bar stays unavailable on every load path. A refused save now
+  explains why and reload can recover the saved configuration.
+  ([#664](https://github.com/boydsoftprez/NereusSDR/pull/664),
+  [#666](https://github.com/boydsoftprez/NereusSDR/pull/666),
+  [#669](https://github.com/boydsoftprez/NereusSDR/pull/669),
+  [#671](https://github.com/boydsoftprez/NereusSDR/pull/671),
+  [#672](https://github.com/boydsoftprez/NereusSDR/pull/672),
+  [#677](https://github.com/boydsoftprez/NereusSDR/pull/677),
+  [#683](https://github.com/boydsoftprez/NereusSDR/pull/683))
+- Moving a slice to another receiver stream applies its new sample rate in
+  the same transition, removing a separate 27 ms gap. BIN no longer silences
+  the right ear while noise reduction is running.
+  ([#654](https://github.com/boydsoftprez/NereusSDR/pull/654),
+  [#661](https://github.com/boydsoftprez/NereusSDR/pull/661))
+- A remote audio stream restart no longer drops samples on the way to TCI
+  applications. Samples are carried through the restart instead.
+  ([#687](https://github.com/boydsoftprez/NereusSDR/pull/687))
+- A remote desktop window and the phone recover wanted audio after the Core
+  temporarily answers MediaNotReady, without requiring the operator to turn
+  audio off and on. Retry timing tests follow the actual scheduling decision,
+  including healthy resets, rather than infer it from late delivery.
+  ([#693](https://github.com/boydsoftprez/NereusSDR/pull/693),
+  [#694](https://github.com/boydsoftprez/NereusSDR/pull/694),
+  [#695](https://github.com/boydsoftprez/NereusSDR/pull/695))
+- The phone and iPad expose the desktop's Display controls. Waterfall rows
+  arrive on a steady clock, and the 3D view follows the desktop's appearance
+  and movement. Ordered background intake keeps control replies and media
+  barriers moving without losing or reordering session events.
+  ([#653](https://github.com/boydsoftprez/NereusSDR/pull/653),
+  [#674](https://github.com/boydsoftprez/NereusSDR/pull/674))
+- The phone's 2D waterfall scrolls at the selected period in logical screen
+  points, correcting the slow Retina movement caused by advancing one
+  physical pixel per received row. Its time axis retains the received rows
+  and their timing across display-rate changes, pause and history rewind;
+  it does not ask the Core to generate more FFT frames.
+- **Tools > Roundtable** on the phone now has the Core's Start/Stop control.
+  The existing first-run visibility choice is available there, so starting
+  Roundtable no longer requires opening a desktop client.
+- The tuner gives transmit back when its own front-panel TUNE cycle ends. A
+  station key pressed during the loan keeps transmit and cancels give-back.
+  ([#670](https://github.com/boydsoftprez/NereusSDR/pull/670))
+- A CAT TX received while the station is returning to receive waits for that
+  transition to finish. Stop All TX, a stopped channel or a lost session
+  cancels the waiting request, so it cannot key afterwards.
+  ([#681](https://github.com/boydsoftprez/NereusSDR/pull/681))
+- PureSignal's ATT-on-TX force-31 behavior follows PS-A rather than the wider
+  PureSignal enabled state. A Single Cal with PS-A off starts with the
+  required attenuation, and a forced value is stored in the band's TX ATT.
+  Lifting a run-cal pause also starts Auto-cal when Auto-cal is requested.
+  ([#662](https://github.com/boydsoftprez/NereusSDR/pull/662),
+  [#682](https://github.com/boydsoftprez/NereusSDR/pull/682))
+- The IMD view shows the measured tone separation, and its waterfall correction
+  marks use the workspace colors.
+  ([#665](https://github.com/boydsoftprez/NereusSDR/pull/665))
+- The Anvelina PRO III filter and relay fixes include its DX open-collector
+  outputs. The idle-input-2 Slice B filter correction also covers the seven
+  radio models that use the same second high-pass filter.
+  ([#684](https://github.com/boydsoftprez/NereusSDR/pull/684))
+- A timed-out WDSP channel drain waits for the flush it already requested.
+  Rapid unkey/rekey can no longer leave a running channel bypassed and hang
+  its worker. The fix applies to the shared receive/transmit channel lifecycle.
+  ([#689](https://github.com/boydsoftprez/NereusSDR/pull/689))
+
+### Remote display: waterfall rows that stand alone
+
+- A remote window, the iPhone and iPad app, and a 2026.10.2 Core now send the
+  display in a new format in
+  which every waterfall row and trace stands on its own. A lost network message
+  costs one row, which is filled in by blending its neighbors, and the window
+  never waits for a fresh full frame. Frames are usually smaller than before,
+  and about a third the size of a full frame. An older Core, window or phone
+  app keeps the earlier format.
+  ([#631](https://github.com/boydsoftprez/NereusSDR/pull/631),
+  [#632](https://github.com/boydsoftprez/NereusSDR/pull/632),
+  [#618](https://github.com/boydsoftprez/NereusSDR/pull/618))
+- A Core setting, `RemoteDisplayCodecV2`, turns the new format off for new
+  connections if it ever needs to be. It is on by default, has no Setup page,
+  and is read when the Core starts.
+  ([#631](https://github.com/boydsoftprez/NereusSDR/pull/631))
+- For testing on lossy links, a second Core setting,
+  `DisplayKeyframeEveryFrame` (off by default, no Setup page), sends every
+  frame of the earlier format whole, so a lost frame cannot smear the rows
+  after it. It costs about three times the bytes.
+  ([#622](https://github.com/boydsoftprez/NereusSDR/pull/622))
+
+### Display and waterfall
+
+- A remote pan's waterfall scrolls evenly. It used to move and pause several
+  times a second, and on some windows stopped for about 50 ms twice a second.
+  Rows now slide in on a steady beat, in step with the trace and the audio.
+  ([#598](https://github.com/boydsoftprez/NereusSDR/pull/598))
+- The Core times each spectrum frame from its samples, so waterfall rows leave
+  the Core evenly spaced. A pan running slower than its source no longer
+  alternates short and long row gaps.
+  ([#599](https://github.com/boydsoftprez/NereusSDR/pull/599))
+- A remote window's RX meters (the S-meter and the other receive meters) now
+  move with the audio you hear, as the spectrum already did, instead of as
+  much as 150 ms ahead of it. This needs a 2026.10.2 Core; with an older Core the
+  meters show readings as they arrive.
+  ([#601](https://github.com/boydsoftprez/NereusSDR/pull/601))
+- The pan does less work on every frame: its grid, scales, band plan and
+  frequency labels are redrawn only when one of them changes, not on every
+  frame. Nothing on screen looks different.
+  ([#619](https://github.com/boydsoftprez/NereusSDR/pull/619))
+- The waterfall no longer turns bright green and cyan across its width for
+  several seconds after a Core restart, or when the phone comes back from
+  another app. The noise floor now starts from the first real data instead of
+  climbing up from far below the band. A remote window or the phone needs a
+  2026.10.2 Core for this.
+  ([#628](https://github.com/boydsoftprez/NereusSDR/pull/628))
+- On the GPU spectrum, the trace and peak hold sit on their grid lines when the
+  band plan is shown and when 1 Hz normalization is on. With the band plan the
+  trace read about 10 pixels low, and with normalization about 17 dB off.
+  Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#614](https://github.com/boydsoftprez/NereusSDR/pull/614))
+- NB Blank on the waterfall hides electric-fence lines without freezing the
+  waterfall when a loud SSB station keys up. It now judges each row by its
+  middle level, so a strong station on part of the band no longer counts as a
+  burst, and it hides at most two rows in a row, so a real rise in the noise
+  floor shows after two rows. The threshold setting is unchanged.
+  ([#625](https://github.com/boydsoftprez/NereusSDR/pull/625))
+- A lost I/Q packet no longer draws a false bright line across the spectrum
+  and waterfall. On a link that keeps losing packets, such as Wi-Fi or a
+  Hermes Lite 2, the waterfall keeps moving, with a slight smear at a gap
+  instead of a pause. Thanks to Martin Fischer (OE5SOS), whose Longpath fix
+  this follows.
+  ([#641](https://github.com/boydsoftprez/NereusSDR/pull/641))
+- The Max Bin peak hold falls again after a signal above 0 dBm. It used to
+  creep toward 0 dBm and stay there.
+  ([#608](https://github.com/boydsoftprez/NereusSDR/pull/608))
+- The 3D view no longer shows a false ripple that can look like a band full of
+  stations. On some FFT sizes, some columns took the peak of four bins and the
+  rest of three, and the noise floor stood in ridges through the rows. Every
+  column now takes the peak of equally wide windows. Thanks to Martin Fischer
+  (OE5SOS), whose Longpath fix this follows.
+  ([#647](https://github.com/boydsoftprez/NereusSDR/pull/647))
+
+### Tuning on the pan
+
+- You can grab a receiver anywhere inside its passband to drag-tune it, or
+  within a few pixels of its center line, not just a sliver at the edges.
+  This works for every receiver this window shows on the pan: pressing one
+  that is not selected selects it, and the same drag tunes it. The receiver
+  never jumps to the cursor, and a press without moving never retunes. The
+  filter edges still resize the filter.
+  ([#594](https://github.com/boydsoftprez/NereusSDR/pull/594))
+- Drag a VFO flag sideways to tune its slice. A plain click on the flag still
+  selects, folds and unfolds it, and clicks on RIT and XIT values work as
+  before.
+  ([#594](https://github.com/boydsoftprez/NereusSDR/pull/594))
+- Two-finger trackpad tuning is steadier: one step for each short stretch of
+  travel, at most 20 steps a second, and no coasting after your fingers lift.
+  A mouse wheel still moves one step per notch with no limit. This covers the
+  pan, the flag, RIT and XIT, notch width, zoom, reference level and the dBm
+  strip.
+  ([#594](https://github.com/boydsoftprez/NereusSDR/pull/594))
+- With CTUN on, tuning to a frequency outside the zoomed view (typed entry or
+  a large jump) now moves the receiver there. Before, the flag showed the new
+  frequency but the receiver stayed on the old one. This touches the receive
+  path and has not been checked on a radio.
+  ([#655](https://github.com/boydsoftprez/NereusSDR/pull/655), issue
+  [#648](https://github.com/boydsoftprez/NereusSDR/issues/648))
+- With CTUN on, a tune that stays inside the zoomed view now sets the
+  receiver's offset from the receiver's own center, not from the center of the
+  view. Before, once the view had moved off the receiver's center (for example
+  after the phone tuned a slice past the desktop's zoomed view), the receiver
+  could play a different frequency from the one on the flag. Checked on a
+  radio.
+  ([#663](https://github.com/boydsoftprez/NereusSDR/pull/663))
+
+### Transmit
+
+- TUNE takes its power only from the drive source chosen in **Setup >
+  Transmit > Power > Tune** (**Use Drive Slider**, **Use Tune Slider** or
+  **Use Fixed Drive**). Moving the RF Power or Tune Power slider no longer
+  changes that choice, in a local window, a remote window or the phone. During
+  TUNE, and during the two-tone test, the slider that is not in use is grayed,
+  with a tooltip saying where the source is chosen. A radio keeps its saved
+  source until you pick another in Setup.
+  ([#588](https://github.com/boydsoftprez/NereusSDR/pull/588))
+- SWR protection now lowers the drive when it trips. Before, the trip was seen
+  but the radio kept transmitting at full drive. The protection releases when
+  you unkey, so the next key starts at full drive. An open antenna drops the
+  key with the warning "High SWR condition detected. Please check your antenna
+  connection.", on the desktop and in remote windows. A microphone PTT or VOX
+  key that is still held after that stays off until you let it go; a CAT or
+  TCI program, or a fresh key from another source, keys normally. This changes
+  what the radio transmits, and it has not yet been checked keyed on a radio.
+  ([#604](https://github.com/boydsoftprez/NereusSDR/pull/604))
+- The ANAN-G2E gets its own PA gain table, 53.0 dB on 160 m through 6 m, so it
+  no longer runs far over its 100 W rating (a 50 W setting made 111 W on the
+  bench). Every band gets less drive than before, never more. A G2E still on
+  the untouched default profile moves to the new values on its next connect;
+  an edited or custom profile is left alone. This is a safe starting point, not
+  a calibration: calibrate each band against a wattmeter for exact output.
+  ([#587](https://github.com/boydsoftprez/NereusSDR/pull/587))
+- A large amplifier delay in the PureSignal settings can no longer read past
+  the end of its buffer and crash. Delays the buffer can hold behave exactly as
+  before.
+  ([#606](https://github.com/boydsoftprez/NereusSDR/pull/606))
+
+### Containers
+
+- The TX applet's rows can go in a container on their own: **TX Monitor**,
+  **TX Power**, **TX Filter**, **TX Chain**, **TX VOX**, **TX Processing** and
+  **TX Keying** are in Container Settings' **Available** list. Each one shows
+  and sets the same state as the TX applet and follows the same transmit
+  rules. The TX applet itself is unchanged. Contributed by Brian Sutton.
+  ([#591](https://github.com/boydsoftprez/NereusSDR/pull/591),
+  [#592](https://github.com/boydsoftprez/NereusSDR/pull/592),
+  [#597](https://github.com/boydsoftprez/NereusSDR/pull/597))
+- New **Frequency (Custom)** container item, beside **Frequency (Longpath)**:
+  set the digit size (12 to 160), fit it to the width, pick the font color,
+  center it in the box, and show or hide either A/B slice line. Contributed by
+  Brian Sutton.
+  ([#597](https://github.com/boydsoftprez/NereusSDR/pull/597))
+- The RX applet's rows can go in a container on their own too: **RX
+  Antennas**, **RX Mode**, **RX Step**, **RX Filter**, **RX Pan**, **RX
+  Squelch**, **RX Attenuator**, **RX AGC**, **RX RIT** and **RX XIT**. A
+  container's **RX Filter** can hide its width label or its passband, and you
+  set its number of button columns and its button colors. The RX applet itself
+  is unchanged. Contributed by Brian Sutton.
+  ([#635](https://github.com/boydsoftprez/NereusSDR/pull/635))
+- New **Nereus Band Buttons** item under **Controls**, beside **Band
+  Buttons**: band buttons with the raised look of the PureSignal button, and
+  your own colors for the text and for selected and unselected bands. Contributed by Brian Sutton.
+  ([#635](https://github.com/boydsoftprez/NereusSDR/pull/635))
+- A container's **TX Keying** can hide its slice indicators (the slice letters,
+  the holder line and Take transmit), leaving TUNE and MOX. The TX applet's own
+  keying row is unchanged. Contributed by Brian Sutton.
+  ([#635](https://github.com/boydsoftprez/NereusSDR/pull/635))
+- **Frequency (Custom)** and **Frequency (Longpath)** show the frequency after
+  a direct connection to a radio. They used to stay empty until you changed
+  slices. Contributed by Brian Sutton.
+  ([#635](https://github.com/boydsoftprez/NereusSDR/pull/635))
+
+### Receivers and radios
+
+- When you tune a slice into the range of another receiver on the same pan,
+  the Core puts the two slices back on one receiver. The pan then keeps its
+  history when you switch between them. The slice that moves has one short
+  audio gap.
+  ([#610](https://github.com/boydsoftprez/NereusSDR/pull/610))
+- A slice's S-meter can no longer stick at an impossible reading such as
+  +3086 dBm. A short burst of bad samples after a sample-rate change used to
+  poison the meter until it was next reset; the meter now skips such samples.
+  ([#629](https://github.com/boydsoftprez/NereusSDR/pull/629))
+- A sample-rate change that moves a slice onto a new receiver stream no longer
+  plays about 300 ms of noise, which was where the bad S-meter readings came
+  from. The slice is silent for a few tens of milliseconds instead, and with
+  NB or NB2 on the change can no longer corrupt memory. This touches the
+  receive path and has not yet been checked on a radio.
+  ([#630](https://github.com/boydsoftprez/NereusSDR/pull/630))
+- The filter presets F1 to F10 for LSB, USB, DIGL, DIGU, CWL, CWU, AM, SAM
+  and DSB now have new standard values. For example, CW F1 is 1.0 kHz
+  wide instead of 1.5 kHz. A preset you edited and saved keeps what you saved,
+  and **Reset** gives the new value. If you ever reordered a mode's presets,
+  that mode keeps its old values until you reset it in **Setup > DSP > Filter
+  Presets**. Where no filter is saved yet, DIGU and DIGL start on a 3.0 kHz
+  filter. Below a CW pitch of 500 Hz, a CW preset slides so it no longer
+  crosses the carrier. FM is unchanged.
+  ([#640](https://github.com/boydsoftprez/NereusSDR/pull/640))
+- A receive filter is now kept within limits, however it is set: by a drag, a
+  preset, CAT, TCI, Hamlib rigctld or a saved layout. It is at least 10 Hz
+  wide, at most 10 kHz wide, and no edge is more than 10 kHz from the carrier.
+  A filter that runs past a limit snaps back to it, and the pan, the flag and
+  the filter controls show the filter that was kept. A request for a 0 Hz
+  filter now gives a 10 Hz one. Dragging the whole passband keeps its width at
+  a limit. FM is not limited this way. Thanks to Martin Fischer (OE5SOS),
+  whose Longpath fix this builds on.
+  ([#615](https://github.com/boydsoftprez/NereusSDR/pull/615))
+- New **Limit filter edges to sidebands** checkbox in **Setup > General >
+  Filters**, off by default. When it is on, a filter you set can no longer
+  cross the carrier: LSB, USB, the CW and digital modes and RADE stay on their
+  own side, and AM, SAM and DSB keep the carrier inside. Filters already set
+  stay as they are until you change them. It is a Core setting, so a remote
+  window and the phone (**Setup > General > Filters** there too) change it for
+  every slice on that Core. An older Core grays the phone's page and says so.
+  ([#615](https://github.com/boydsoftprez/NereusSDR/pull/615))
+- The band's AGC and the RF gain slider come back as you left them after a
+  restart. Moving the AGC-T or RF gain slider just before quitting could save
+  one of the pair out of step with the other.
+  ([#645](https://github.com/boydsoftprez/NereusSDR/pull/645))
+- Changing the sample rate live right after connecting no longer fails. A late
+  connection update could wipe the rate and receiver count chosen at connect.
+  Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#611](https://github.com/boydsoftprez/NereusSDR/pull/611))
+- The three receive-only columns in **Hardware Config > Antenna / ALEX** (RX1,
+  RX2 and XVTR, or the labels your radio uses) are checkboxes again. Unticking returns
+  a band to none, which was impossible before. The first two exclude each
+  other, and XVTR can be ticked with either. The phone's Antenna Setup cells
+  follow the same rules; with an older Core it sends only the box you tapped.
+  ([#602](https://github.com/boydsoftprez/NereusSDR/pull/602))
+- Editing a saved radio (a new name or address) keeps the firmware number and
+  receiver count it reported. Before, Radio Info showed no firmware number and
+  the wrong maximum receiver count after an edit.
+  ([#593](https://github.com/boydsoftprez/NereusSDR/pull/593))
+- Searching for radios no longer freezes the window. The search runs in the
+  background, and a steady stream of replies can no longer keep it going
+  forever.
+  ([#600](https://github.com/boydsoftprez/NereusSDR/pull/600))
+- The search pauses while a radio connection starts, so the startup
+  auto-connect and a Connect pressed during a scan no longer go out alongside
+  discovery broadcasts. The Connection panel therefore fills in about 3
+  seconds after you connect, as it already did after a disconnect.
+  ([#621](https://github.com/boydsoftprez/NereusSDR/pull/621))
+- Setup's antenna table (**Hardware Config > Antenna / ALEX > Antenna Control**)
+  is now the only per-band antenna memory. Before, a band's row could change
+  after a radio power cycle, and going from 80 m to 20 m and back lost 80 m's
+  antennas, because each slice also kept an antenna of its own. A slice now
+  takes its antennas from the row for its band, and a pick on a slice (desktop,
+  remote window or phone) writes that band's row. The old per-slice memory is
+  dropped, not read. A row the old bug already changed stays as it is until you
+  set it once. This touches the receive path at connect and has not been
+  checked on a radio. Thanks to Ben (OZ1CT) for the report.
+  ([#637](https://github.com/boydsoftprez/NereusSDR/pull/637))
+
+### CAT
+
+- A saved CAT channel works again after a restart. Its slice binding showed
+  "Invalid binding" and serial-port PTT did nothing until the slice was picked
+  again. Thanks to Ben (OZ1CT) for the report.
+  ([#595](https://github.com/boydsoftprez/NereusSDR/pull/595))
+- A TCI program's AGC gain now sets the AGC-T, the same control as the AGC-T
+  slider, with its full -20 to 120 range. It used to move a different AGC
+  control and read back the wrong number. A TCI AGC change now survives a band
+  change or restart.
+  ([#613](https://github.com/boydsoftprez/NereusSDR/pull/613))
+- A TCI program that stops reading can no longer make NereusSDR's memory grow
+  without limit. Audio and I/Q it cannot take are dropped instead. Thanks to
+  Martin Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#613](https://github.com/boydsoftprez/NereusSDR/pull/613))
+- Over Hamlib rigctld, PKTUSB and PKTLSB use a 3000 Hz default filter instead
+  of 1200 Hz, matching the new DIGU and DIGL starting filter.
+  ([#640](https://github.com/boydsoftprez/NereusSDR/pull/640))
+- TCI refuses connections from web pages. Before, a web page open in your
+  browser could connect to TCI and key the radio. A connection that carries a
+  browser origin is now refused, on the desktop and on the Core. Native TCI
+  programs are unaffected. The Core setting `TciAllowedOrigins` (empty by
+  default, no Setup page) lists origins you choose to allow, separated by
+  commas. Thanks to Martin Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#605](https://github.com/boydsoftprez/NereusSDR/pull/605))
+- A TCI program that stops answering while it holds the key loses the key. The
+  program is checked every second while keyed, and after three missed checks
+  (about 3 seconds) the key is released, as if it had disconnected. This
+  changes when the radio transmits and has not been tried with a radio and a
+  real TCI program yet. Thanks to Martin Fischer (OE5SOS), whose Longpath fix
+  this follows.
+  ([#605](https://github.com/boydsoftprez/NereusSDR/pull/605))
+
+### Remote connections
+
+- On a Mac, iPhone or iPad, a remote session uses IPv6 for audio and display
+  too when both ends have it. Before, they could fall back to IPv4 while the
+  controls used IPv6, because the device offered an IPv6 address it does not
+  send from.
+  ([#642](https://github.com/boydsoftprez/NereusSDR/pull/642))
+
+- A paired window or phone gets its own slice letter back, with that slice's
+  step, AGC and other saved settings, after a Core that runs inside a desktop
+  window restarts. A headless Core already did this. The desktop window's own
+  slice now takes the lowest letter no paired device has kept, so it may start
+  on B or later instead of A. A kept letter shows nothing in the window until
+  its device signs in.
+  ([#627](https://github.com/boydsoftprez/NereusSDR/pull/627))
+
+- A window or Core on a computer whose IPv6 path is silently broken now falls
+  back to IPv4 within a quarter second, instead of waiting until the attempt
+  timed out. This covers remote access, pairing, the relay and a Core typed by
+  name.
+  ([#623](https://github.com/boydsoftprez/NereusSDR/pull/623))
+- A saved Core that is also announcing itself on your network is tried
+  directly on the network as well as through remote access.
+  ([#623](https://github.com/boydsoftprez/NereusSDR/pull/623))
+- The Connections window's columns can be resized, keep their widths as the
+  status text changes, scroll sideways in a narrow window, and show their full
+  text in a tooltip.
+  ([#623](https://github.com/boydsoftprez/NereusSDR/pull/623))
+- When a Core ends a session, the last messages it sent before closing reach
+  the window or phone. They could be cut off 5 seconds after the close.
+  ([#616](https://github.com/boydsoftprez/NereusSDR/pull/616))
+
+### iPhone and iPad app
+
+- The app takes the desktop's workspace look everywhere: the same colors,
+  panels, buttons, switches and corners. Setup uses workspace panels, and on a
+  wide iPad the category list sits beside the page, as in the desktop Setup
+  window. The strong red is kept for transmit only. The spectrum, waterfall,
+  band plan, slice colors and frequency readout are unchanged.
+  ([#603](https://github.com/boydsoftprez/NereusSDR/pull/603))
+- The spectrum stays smooth over long sessions, and the phone runs cooler. It
+  used to turn jittery and warm after a while as the spot list grew.
+  ([#586](https://github.com/boydsoftprez/NereusSDR/pull/586))
+- The band keeps your zoom across launches instead of opening fully zoomed
+  out.
+  ([#586](https://github.com/boydsoftprez/NereusSDR/pull/586))
+- The flag's **...** menu gains **S-meter: Peak / Average / Max Bin**, so you
+  choose what the flag's level shows. The flag now shows the peak by default,
+  as on the desktop, and an **AV** or **MAX** tag appears beside the level when
+  you pick another. The choice belongs to this phone or iPad and also sets the
+  iPad S-meter's RX Mode; it never changes what a desktop window shows. Max
+  Bin is grayed, with the reason, while the slice's pan is not drawn here.
+  ([#629](https://github.com/boydsoftprez/NereusSDR/pull/629))
+- NB Blank on the phone's waterfall now decides as the desktop does: it judges
+  each row by its middle level, so a loud SSB station on part of the band no
+  longer freezes the waterfall, and it hides at most two rows in a row. It also
+  starts fresh when you stop transmitting. The threshold setting is unchanged.
+  ([#626](https://github.com/boydsoftprez/NereusSDR/pull/626))
+- The 3D waterfall on the phone now draws every frame the Core sends, up to 60
+  a second, instead of about 16, and its rows move at the desktop's rate. It
+  used to look slow and jerky. This changes the phone's drawing only; the
+  Core's frames are unchanged.
+  ([#643](https://github.com/boydsoftprez/NereusSDR/pull/643))
+
+### Fixes
+
+- Quit (Cmd-Q, the menu or closing the main window) works while a pan or applet
+  floats in its own window. A floating window's close box still docks it.
+  ([#609](https://github.com/boydsoftprez/NereusSDR/pull/609))
+- Closing a pan, disconnecting the radio or closing a floating window while
+  one of its right-click menus or dialogs is open no longer crashes NereusSDR.
+  Every menu and dialog keeps the same items and buttons. Thanks to Martin
+  Fischer (OE5SOS), whose Longpath fix this follows.
+  ([#607](https://github.com/boydsoftprez/NereusSDR/pull/607))
+- DXCC worked status reads ADIF logs whose fields name their
+  type (for example `<CALL:6:S>`). Such logs used to read as empty.
+  ([#612](https://github.com/boydsoftprez/NereusSDR/pull/612))
+- Release builds no longer show `detached@...` or `-dirty` in the title bar,
+  and the Core packages no longer report it.
+  ([#585](https://github.com/boydsoftprez/NereusSDR/pull/585))
+- For support: the Core logs each receiver's I/Q level, and any noise
+  reduction call that takes longer than 50 ms, with the stage that ran.
+  ([#617](https://github.com/boydsoftprez/NereusSDR/pull/617))
+- Windows no longer logs an Application Error for `nereus-audio-capture.exe`
+  each time the Core starts. The audio capture helper now ends cleanly when the
+  Core closes it. Tested on Windows; an installed Core has not been checked
+  yet.
+  ([#633](https://github.com/boydsoftprez/NereusSDR/pull/633))
+- For support: when a remote connection attempt ends with no answer, the log
+  line now says how long after the start it ended and what it met, such as a
+  refused connection, a connection closed during the secure handshake, or a
+  close before the Core's hello.
+  ([#646](https://github.com/boydsoftprez/NereusSDR/pull/646))
+
 ## [2026.10.1] - 2026-10-17
 
 [Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)

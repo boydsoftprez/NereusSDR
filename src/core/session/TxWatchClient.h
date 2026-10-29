@@ -1,5 +1,6 @@
 // no-port-check: NereusSDR-original direct auxiliary watch transport.
 #pragma once
+#include "core/safety/TxKeepalive.h"
 
 #include <QByteArray>
 #include <QObject>
@@ -64,6 +65,7 @@ public:
     // Neither direction is a delivery or wire-byte measurement.
     AuxiliaryWatchTelemetry telemetry() const { return m_telemetry; }
     bool sendKeepalive(quint64 sequence, quint32 epoch);
+    bool sendKeepalive(const TxKeepalive& value);
 
 signals:
     void ready(quint64 primaryGeneration);

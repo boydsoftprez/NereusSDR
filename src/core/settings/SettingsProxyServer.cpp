@@ -74,6 +74,10 @@
 //                Alex tab's three transmit high-pass switches join the
 //                transmitter's family, as the TX antennas did. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-26 - isAlexHpfTransmitSwitchKey also matches Antenna Control's
+//                "Gnd BPF2 on Tx" (alex/master/bpf2GndOnTx), a transmit
+//                setting held like the high-pass switches (J.J. Boyd KG4VCF,
+//                AI-assisted: Claude Code).
 // =================================================================
 
 #include "core/settings/SettingsProxyServer.h"
@@ -172,7 +176,9 @@ bool SettingsProxyServer::isAlexHpfTransmitSwitchKey(const QString& key)
 {
     // R-R3-46 (parity Task 14): hardware/.../alex/master/{hpfBypassOnTx,
     // hpfBypassOnPs,disable6mLnaOnTx}, compared as StationServer compares
-    // them (case-blind).
+    // them (case-blind). radioHardwareVersion 14: and Antenna Control's
+    // "Gnd BPF2 on Tx" (bpf2GndOnTx), a transmit relay setting of the same
+    // kind.
     const QStringList parts = key.toLower().split(QLatin1Char('/'));
     if (parts.isEmpty() || parts[0] != QLatin1String("hardware")) {
         return false;
@@ -182,7 +188,8 @@ bool SettingsProxyServer::isAlexHpfTransmitSwitchKey(const QString& key)
             const QString& field = parts[i + 2];
             return field == QLatin1String("hpfbypassontx")
                 || field == QLatin1String("hpfbypassonps")
-                || field == QLatin1String("disable6mlnaontx");
+                || field == QLatin1String("disable6mlnaontx")
+                || field == QLatin1String("bpf2gndontx");
         }
     }
     return false;

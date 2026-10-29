@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-25 - onMainWindowStateChanged replaces onConsoleWindowStateChanged:
+//                 the slice-open test covers every slice, not only RX2.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - A floating window is never wider or taller than all the
 //                 screens together: fittedSize bounds a size to that
 //                 (restoreGeometry and the height put back after a
@@ -164,20 +167,19 @@ void FloatingContainer::onOwnerMinimisedChanged(bool minimised)
     }
 }
 
-void FloatingContainer::onConsoleWindowStateChanged(Qt::WindowStates state, bool rx2Enabled)
+void FloatingContainer::onMainWindowStateChanged(Qt::WindowStates state, bool sliceOpen)
 {
-    // From Thetis frmMeterDisplay.cs:114-139
+    // From Thetis frmMeterDisplay.cs:114-139 [v2.10.3.15]
     if (m_formEnabled && m_floating && m_containerMinimises) {
         if (state & Qt::WindowMinimized) {
             hide();
         } else {
+            // Thetis switches on _rx: RX1 always shows, RX2 shows when RX2
+            // is enabled or the form does not hide for an unused RX. Every
+            // slice here takes the RX2 rule, with its own open state.
             bool shouldShow = false;
-            if (m_rxSource == 1) {
+            if (sliceOpen || !m_containerHidesWhenRxNotUsed) {
                 shouldShow = !m_hiddenByMacro;
-            } else if (m_rxSource == 2) {
-                if (rx2Enabled || !m_containerHidesWhenRxNotUsed) {
-                    shouldShow = !m_hiddenByMacro;
-                }
             }
             if (shouldShow) {
                 show();

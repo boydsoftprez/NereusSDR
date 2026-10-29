@@ -5,7 +5,9 @@ import Foundation
 import NereusBand
 import NereusKitTesting
 import NereusLink
+import NereusMedia
 @testable import NereusSDR
+import QuartzCore
 import SwiftUI
 import Testing
 import UIKit
@@ -41,14 +43,43 @@ struct BandMarksShotTests {
 
         let band = model.main.band
         band.endpointId = 1
+        band.settings.waterfallPeriodMs = 30
         band.receive(.context(try #require(BandFlagShotTests.context())))
 
         let host = try Host(model: model)
         defer { host.close() }
         let draw = try await ShotWait.requireBandLaidOut(band, in: host.window)
-        BandFlagShotTests.feed(band, width: draw.requestedPixels, lines: 400)
+        // The waterfall moves by elapsed capture time in logical points,
+        // independently of screen scale. Feed a deterministic 30 Hz source
+        // and advance its existing row clock without waiting in real time.
+        let linePeriod = 1.0 / 30
+        var now = CACurrentMediaTime()
+        var sequence: UInt32 = 0
+        var captureSeconds = 1.0
+        band.lineClock = { now }
+        func feed(lines: Int) {
+            let traces = BandFlagShotTests.traces(width: draw.requestedPixels, lines: lines,
+                low: BandFlagShotTests.centre - BandFlagShotTests.span / 2,
+                stations: BandFlagShotTests.stations)
+            for trace in traces {
+                now += linePeriod
+                captureSeconds += linePeriod
+                sequence += 1
+                band.receive(.displayFrame(DisplayFrame(endpointId: 1, contextGeneration: 1,
+                    encoderSequence: sequence, producerTimestamp: UInt64(captureSeconds * 1_000_000_000),
+                    isKeyframe: sequence == 1, waterfallAdvance: true, minDbm: -160, maxDbm: 0,
+                    traceDbm: trace, waterfallDbm: trace, wideDbm: [])))
+                band.advanceLines(at: now, frameSeconds: 1.0 / 60)
+            }
+            band.advanceLines(at: now + 2 * linePeriod, frameSeconds: 1.0 / 60)
+        }
+        feed(lines: 400)
         band.markAway(Self.markText)
-        BandFlagShotTests.feed(band, width: draw.requestedPixels, lines: 60)
+        // The return follows a real capture-time interruption, not a burst
+        // whose timestamps pretend the phone was never away.
+        now += 65
+        captureSeconds += 65
+        feed(lines: 60)
         try await ShotWait.requireBandShown(band, in: host.window, after: draw)
         #expect(await ShotWait.until { host.markFrame() != nil && host.stepFrame() != nil })
 
@@ -59,9 +90,10 @@ struct BandMarksShotTests {
         #expect(open.maxY < step.minY)
 
         // Scroll it down until it sits across the step box's middle.
-        let lines = Int(((step.midY - open.midY) * host.scale).rounded())
+        let seconds = Double(step.midY - open.midY) * Double(band.settings.waterfallPeriodMs) / 1000
+        let lines = Int((seconds / linePeriod).rounded())
         #expect(lines > 0)
-        BandFlagShotTests.feed(band, width: draw.requestedPixels, lines: lines)
+        feed(lines: lines)
         try await ShotWait.requireBandShown(band, in: host.window, after: draw)
         #expect(await ShotWait.until { host.markFrame().map { abs($0.midY - step.midY) <= 2 } ?? false })
         let mark = try #require(host.markFrame())
@@ -72,7 +104,7 @@ struct BandMarksShotTests {
         // it. Drawn over, the mark's near-opaque strip dims every one of
         // those pixels, and its own words are grey, not bright.
         let crossing = mark.intersection(step)
-        #expect(!crossing.isNull && crossing.height >= 10)
+        try #require(!crossing.isNull && crossing.height >= 10)
         let bright = host.brightPixels(in: crossing)
         #expect(bright > 20, "step box pixels showing through the mark: \(bright)")
 

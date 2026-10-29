@@ -1,0 +1,14 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "welcome",
+    "station": "ezp4x6p5d6d3opyk7lm2wuflhk",
+    "kind": "core",
+    "callsign": null,
+    "grid": null,
+    "time": 1800000000000,
+    "mentions": []
+  },
+  "decodes": false
+}

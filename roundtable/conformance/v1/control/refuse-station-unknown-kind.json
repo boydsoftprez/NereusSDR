@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "chat",
+    "text": "hello"
+  },
+  "decodes": false
+}
