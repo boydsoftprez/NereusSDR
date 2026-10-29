@@ -1,5 +1,8 @@
 // NereusSDR for iOS: the band's Metal shaders, shipped as source and compiled at run time
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   magnified bins and continuous captures blend display colours, keeping
+//   native bin centres and each real row's own frequency coverage.
 
 #include <metal_stdlib>
 using namespace metal;
@@ -81,18 +84,25 @@ struct WaterfallUniforms {
     float4 view;         // the view's low edge from the rows' reference, its span (Hz); z the lines looked back; w 1 when rows carry coverage
 };
 
-fragment float4 bandWaterfallFragment(RectOut in [[stage_in]],
-                                      constant WaterfallUniforms &uniforms [[buffer(0)]],
-                                      device const uint *rowAges [[buffer(1)]],
-                                      texture2d<float, access::read> lines [[texture(0)]],
-                                      texture2d<float> palette [[texture(1)]],
-                                      texture2d<float, access::read> coverages [[texture(2)]]) {
-    uint age = rowAges[uint(max(0.0, floor(in.position.y - uniforms.rect.y)))];
-    if (uniforms.count == 0 || uniforms.columns == 0 || age >= uniforms.count) {
-        return float4(uniforms.background.rgb * uniforms.background.a, uniforms.background.a);
-    }
+// Same 16-byte element as WaterfallTimeAxis.Sample. Texture row addresses
+// are computed independently: filtering raw ring y would cross its seam.
+struct WaterfallSample {
+    uint age;
+    uint neighborAge;
+    float neighborWeight;
+    uint reserved;
+};
+
+static bool waterfallRowColour(uint age, float viewAcross,
+                                constant WaterfallUniforms &uniforms,
+                                texture2d<float, access::read> lines,
+                                texture2d<float> palette,
+                                texture2d<float, access::read> coverages,
+                                thread float4 &colour) {
+    if (uniforms.count == 0 || uniforms.columns == 0 || age >= uniforms.count) { return false; }
     uint row = (uniforms.nextRow + uniforms.capacity - 1 - age) % uniforms.capacity;
-    float across = (in.position.x - uniforms.rect.x) / uniforms.rect.z;
+    float across = viewAcross;
+    float pixelsPerBin = uniforms.rect.z / float(uniforms.columns);
     // A row covering other frequencies than the view (the view moved ahead
     // of the Core) is drawn where its own frequencies fall; past its edges
     // the view is empty.
@@ -101,16 +111,53 @@ fragment float4 bandWaterfallFragment(RectOut in [[stage_in]],
         if (coverage.y > 0.0) {
             float hz = uniforms.view.x + across * uniforms.view.y;
             across = (hz - coverage.x) / coverage.y;
-            if (across < 0.0 || across >= 1.0) {
-                return float4(uniforms.background.rgb * uniforms.background.a, uniforms.background.a);
-            }
+            if (across < 0.0 || across >= 1.0) { return false; }
+            pixelsPerBin *= coverage.y / uniforms.view.y;
         }
     }
-    uint column = min(uint(max(0.0, floor(across * float(uniforms.columns)))), uniforms.columns - 1);
-    float position = lines.read(uint2(column, row)).r;
     constexpr sampler lookup(filter::nearest, address::clamp_to_edge);
-    float4 colour = palette.sample(lookup, float2((position * 255.0 + 0.5) / 256.0, 0.5));
-    return float4(colour.rgb, 1.0);
+    if (pixelsPerBin <= 1.0) {
+        // Smoothing is only for magnification. Preserve the existing
+        // selected bin under native sampling/minification, so a retained
+        // narrow peak is not averaged with a bin the old view did not take.
+        uint column = min(uint(max(0.0, floor(across * float(uniforms.columns)))), uniforms.columns - 1);
+        float value = lines.read(uint2(column, row)).r;
+        colour = float4(palette.sample(lookup, float2((value * 255.0 + 0.5) / 256.0, 0.5)).rgb, 1.0);
+        return true;
+    }
+    // Source bin centres are (column + 0.5) / columns. At native width a
+    // target pixel centre lands exactly on that sample, including peaks.
+    float position = clamp(across * float(uniforms.columns) - 0.5, 0.0, float(uniforms.columns - 1));
+    uint left = uint(floor(position));
+    uint right = min(left + 1, uniforms.columns - 1);
+    float a = lines.read(uint2(left, row)).r;
+    float b = lines.read(uint2(right, row)).r;
+    float3 ca = palette.sample(lookup, float2((a * 255.0 + 0.5) / 256.0, 0.5)).rgb;
+    float3 cb = palette.sample(lookup, float2((b * 255.0 + 0.5) / 256.0, 0.5)).rgb;
+    colour = float4(mix(ca, cb, position - float(left)), 1.0);
+    return true;
+}
+
+fragment float4 bandWaterfallFragment(RectOut in [[stage_in]],
+                                      constant WaterfallUniforms &uniforms [[buffer(0)]],
+                                      device const WaterfallSample *samples [[buffer(1)]],
+                                      texture2d<float, access::read> lines [[texture(0)]],
+                                      texture2d<float> palette [[texture(1)]],
+                                      texture2d<float, access::read> coverages [[texture(2)]]) {
+    WaterfallSample sample = samples[uint(max(0.0, floor(in.position.y - uniforms.rect.y)))];
+    float across = (in.position.x - uniforms.rect.x) / uniforms.rect.z;
+    float4 primary;
+    if (!waterfallRowColour(sample.age, across, uniforms, lines, palette, coverages, primary)) {
+        return float4(uniforms.background.rgb * uniforms.background.a, uniforms.background.a);
+    }
+    float4 neighbor;
+    if (sample.neighborWeight > 0.0 && sample.neighborAge != sample.age
+        && waterfallRowColour(sample.neighborAge, across, uniforms, lines, palette, coverages, neighbor)) {
+        return mix(primary, neighbor, sample.neighborWeight);
+    }
+    // An uncovered neighbor cannot fade valid data into background, and an
+    // uncovered primary above cannot borrow data into its empty frequencies.
+    return primary;
 }
 
 // The 3D view's stacked trace, oldest first so nearer rows cover farther

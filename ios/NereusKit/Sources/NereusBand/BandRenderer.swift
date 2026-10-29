@@ -1,5 +1,7 @@
 // NereusSDR for iOS: draws the band in Metal: the spectrum, the waterfall, the strip, the scales and the Core's extras
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   snapshot capture-neighbor IDs and colour weights in each in-flight row map.
 
 import CoreGraphics
 import Foundation
@@ -175,7 +177,7 @@ public final class BandRenderer {
     private var uploadedLines: UInt64 = 0
     /// Row selection belongs to the frame in flight, like its vertex buffers. Never overwrite GPU-owned mapping.
     private var waterfallMapBuffers: [(any MTLBuffer)?] = Array(repeating: nil, count: BandRenderer.framesInFlight)
-    private var waterfallMapRows: [UInt32] = []
+    private var waterfallMapRows: [WaterfallTimeAxis.Sample] = []
     private var paletteTexture: (any MTLTexture)?
     private var paletteDrawn: StationCatalog.Palette??
     /// The phone's own gradient last drawn, nil while a catalogue palette is.
@@ -1467,12 +1469,13 @@ public final class BandRenderer {
         let height = max(1, Int(ceil(rect.height)))
         let effectiveAxis = history.hasPresentationTimeline ? (axis ?? history.presentationTime(age: lookBack).map { WaterfallTimeAxis(topTime: $0, periodMs: periodMs) }) : nil
         if let effectiveAxis {
-            effectiveAxis.fillAges(history: history, heightPixels: height, scale: scale, into: &waterfallMapRows)
+            effectiveAxis.fillSamples(history: history, heightPixels: height, scale: scale, into: &waterfallMapRows)
         } else {
-            if waterfallMapRows.count != height { waterfallMapRows = Array(repeating: WaterfallTimeAxis.blank, count: height) }
-            for y in waterfallMapRows.indices { waterfallMapRows[y] = UInt32(y + max(0, lookBack)) }
+            if waterfallMapRows.count != height { waterfallMapRows = Array(repeating: .init(age: WaterfallTimeAxis.blank), count: height) }
+            for y in waterfallMapRows.indices { waterfallMapRows[y] = .init(age: UInt32(y + max(0, lookBack))) }
         }
-        let bytes = height * MemoryLayout<UInt32>.stride
+        assert(MemoryLayout<WaterfallTimeAxis.Sample>.stride == 16)
+        let bytes = height * MemoryLayout<WaterfallTimeAxis.Sample>.stride
         if (waterfallMapBuffers[ring]?.length ?? 0) < bytes {
             waterfallMapBuffers[ring] = device.makeBuffer(length: bytes, options: .storageModeShared)
         }
