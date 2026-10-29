@@ -10052,6 +10052,16 @@ nereus_add_test(tst_tx_link_loss_each_path
     fakes/LoopbackTransport.cpp
     REALTIME
     EXTRA_LABELS session)
+# The five microphone-starvation rows and the other real-time waits leave
+# less than 3 s below the aggregate 120 s limit on Linux. Split whole
+# functions, keeping every assertion and the limit; the shared lock keeps
+# the two entries from adding concurrent load when ctest uses -j.
+if(TEST tst_tx_link_loss_each_path)
+    set_property(TEST tst_tx_link_loss_each_path APPEND PROPERTY
+        RESOURCE_LOCK "tx-link-loss-each-path")
+endif()
+nereus_split_test(tst_tx_link_loss_each_path
+    ENV NEREUS_TX_LINK_LOSS_GROUP GROUPS starvation)
 # iPhone app plan Task 39 (D14, R-IOS-13, R-IOS-21): the Core's transmit
 # meter pump, and the mirrored `txState` object (TransmitState): who keyed,
 # the time left, the meters ten times a second while keyed, and why the Core

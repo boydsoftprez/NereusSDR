@@ -1654,6 +1654,31 @@ jobs:
       - name: Test
         working-directory: build
         run: |
+          # Permit the existing audio/CWX FIFO request (rtMax - 1), only
+          # in this ephemeral step and its children. The tests keep the
+          # runner UID; no global capability or RT-throttling change.
+          sudo prlimit --pid "$$" --rtprio=98:98
+          prlimit --pid "$$" --rtprio
+          python3 - <<'PY'
+          import os
+          import resource
+
+          uid = os.geteuid()
+          assert uid != 0, "Realtime tests must run as the runner user"
+          limits = resource.getrlimit(resource.RLIMIT_RTPRIO)
+          assert limits == (98, 98), f"Unexpected realtime priority limits: {limits}"
+          try:
+              os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(98))
+              policy = os.sched_getscheduler(0)
+              priority = os.sched_getparam(0).sched_priority
+          finally:
+              os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
+          assert policy == os.SCHED_FIFO and priority == 98
+          print(f"Realtime fixture: uid={uid} rtprio={limits} "
+                f"policy={policy} priority={priority} restored_policy={os.sched_getscheduler(0)}")
+          PY
+          printf 'Kernel RT period/runtime (us): '
+          cat /proc/sys/kernel/sched_rt_period_us /proc/sys/kernel/sched_rt_runtime_us
           export QT_QPA_PLATFORM=xcb
           export QTEST_FUNCTION_TIMEOUT=240000
           export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
