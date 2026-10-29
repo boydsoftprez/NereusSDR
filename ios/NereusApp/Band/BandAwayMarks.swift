@@ -42,7 +42,7 @@ struct BandAwayMarks: View {
     @ViewBuilder
     private func awayMark(_ mark: BandModel.AwayMark, layout: BandLayout) -> some View {
         let waterfall = layout.waterfall
-        let rows = rowY(mark)
+        let rows = band.awayMarkY(mark, scale: displayScale)
         if rows >= 0, rows <= waterfall.height {
             Text(mark.text)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -56,14 +56,6 @@ struct BandAwayMarks: View {
                 .allowsHitTesting(false)
                 .accessibilityIdentifier("awayMark")
         }
-    }
-
-    private func rowY(_ mark: BandModel.AwayMark) -> CGFloat {
-        if let axis = band.waterfallTimeAxis,
-           let y = axis.yPoints(age: mark.linesSince, history: band.state.history) {
-            return CGFloat(y)
-        }
-        return CGFloat(mark.linesSince - band.lookBackLines) / max(displayScale, 1)
     }
 
     private func dashes(width: CGFloat) -> some View {

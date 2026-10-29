@@ -1,3 +1,5 @@
+// 2026-10-28: Verify opt-in CPU display adaptation and normal display limits.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // tests/tst_daemon_app.cpp
 //
 // R1 Task 10 -- DaemonApp connects a headless nereusd process to a radio
@@ -921,6 +923,7 @@ private slots:
         QVERIFY(freePort != 0);
         cfg.remotePort = static_cast<int>(freePort);
         cfg.remoteBind = QStringLiteral("127.0.0.1");
+        QVERIFY(!cfg.displayAdaptive);
         // Synthetic limits verify the real config consumer, not board capacity.
         cfg.displayApplicationBytesPerSecond = 2000000;
         cfg.spectrumSampleUnitsPerSecond = 1000000;
@@ -952,6 +955,11 @@ private slots:
         QCOMPARE(server->displayBudgetLimits()->applicationBytesPerSecond, quint64{2000000});
         QCOMPARE(server->displayBudgetLimits()->spectrumSampleUnitsPerSecond, quint64{1000000});
         QVERIFY(server->buildCapabilities().displayBudget);
+        QVERIFY(!app.m_stationHost->m_displayGovernor);
+        QVERIFY(!app.m_stationHost->m_displayGovernorTimer);
+        app.m_stationHost->evaluateDisplayLoad();
+        QCOMPARE(server->displayBudgetReason(), DisplayBudgetReason::None);
+        QCOMPARE(server->displayBudgetLimits()->generation, quint32{1});
 
         // Step 4's other half, as of iPhone app Task 12: the Core has its
         // identity key and its certificate pin. (That a new Core creates no
@@ -1073,7 +1081,8 @@ private slots:
         {
             DaemonApp app;
             app.primeBoardForTest(HPSDRHW::HermesLite);
-            const DaemonConfig listening = listenerConfig();
+            DaemonConfig listening = listenerConfig();
+            listening.displayAdaptive = true; // automatic cuts require explicit opt-in
             QVERIFY(listening.remotePort != 0);
             QVERIFY(app.start(listening));
             StationServer* const server = app.stationServer();
@@ -1090,7 +1099,7 @@ private slots:
         {
             DaemonConfig cfg = listenerConfig();
             QVERIFY(cfg.remotePort != 0);
-            cfg.displayAdaptive = false;
+            QVERIFY(!cfg.displayAdaptive); // normal Core must not invent a CPU budget
             DaemonApp app;
             app.primeBoardForTest(HPSDRHW::HermesLite);
             QVERIFY(app.start(cfg));
@@ -1198,6 +1207,7 @@ private slots:
         const DisplayBudgetLimits ceiling = DisplayLoadGovernor::computedCeiling();
         DaemonConfig cfg = listenerConfig();
         QVERIFY(cfg.remotePort != 0);
+        cfg.displayAdaptive = true; // this test exercises the opt-in governor
         cfg.displayApplicationBytesPerSecond = ceiling.applicationBytesPerSecond;
         cfg.spectrumSampleUnitsPerSecond = ceiling.spectrumSampleUnitsPerSecond;
         qint64 now = 0;
@@ -1263,6 +1273,7 @@ private slots:
         const DisplayBudgetLimits ceiling = DisplayLoadGovernor::computedCeiling();
         DaemonConfig cfg = listenerConfig();
         QVERIFY(cfg.remotePort != 0);
+        cfg.displayAdaptive = true; // this test exercises the opt-in governor
         cfg.displayApplicationBytesPerSecond = ceiling.applicationBytesPerSecond;
         cfg.spectrumSampleUnitsPerSecond = ceiling.spectrumSampleUnitsPerSecond;
         qint64 now = 0;

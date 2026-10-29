@@ -5,6 +5,9 @@
 // 2026-10-26: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude Opus 5.5):
 //   while the screen drives the band, each waterfall line waits for the row clock
 //   (WaterfallRowClock) and goes in on its steady grid, as the desktop's remote pans do.
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   waterfall geometry follows sender sample-time deltas; commit/put times
+//   remain local arrival/pacing observations, independent of network jitter.
 
 import Foundation
 import NereusMedia
@@ -162,6 +165,43 @@ public struct BandState: Equatable, Sendable {
             frameLock.reset()
         }
     }
+    private var captureTimeline = CaptureTimeline()
+    private var breakBeforeNextLine = false
+
+    /// Sender nanoseconds are never compared with the phone's clock. Only
+    /// checked integer deltas are translated onto the first local anchor.
+    private struct CaptureTimeline: Equatable, Sendable {
+        private var anchor: UInt64?
+        private var localAnchor = 0.0
+        private var lastStamp: UInt64?
+        private var lastTime: Double?
+
+        mutating func reset() {
+            anchor = nil
+            lastStamp = nil
+        }
+
+        mutating func observe(_ frame: DisplayFrame, at local: Double) -> Double? {
+            let stamp = frame.producerTimestamp
+            guard stamp > 0, local.isFinite,
+                  lastStamp.map({ stamp > $0 }) ?? true else {
+                reset()
+                return nil
+            }
+            if anchor == nil {
+                anchor = stamp
+                localAnchor = local
+            }
+            let time = localAnchor + Double(stamp - anchor!) / 1_000_000_000
+            guard time.isFinite, lastTime.map({ time > $0 }) ?? true else {
+                reset()
+                return nil
+            }
+            lastStamp = stamp
+            lastTime = time
+            return time
+        }
+    }
     /// The clock the waiting lines go in by.
     public private(set) var rowClock = WaterfallRowClock()
     /// Holds the clock's slide starts clear of the screen's frame edges.
@@ -292,13 +332,17 @@ public struct BandState: Equatable, Sendable {
         /// When it was committed: on the steady clock, and in seconds since
         /// 1970 for the waterfall's time readout.
         let arrivedAt: Double
+        let captureTime: Double?
+        let breakBefore: Bool
         let period: Double
         let arrivedWall: Double
     }
 
     /// One line into the waterfall and, with 3D chosen, the stack's fold.
     private mutating func put(_ line: WaitingLine, at steadyNow: Double) {
-        history.append(line: line.line, levels: line.levels, coverage: line.coverage, time: line.arrivedWall, presentationTime: line.arrivedAt, presentationPeriod: line.period)
+        // NaN explicitly preserves unknown capture metadata: nil would use
+        // append's legacy wall-time fallback and invent a geometry clock.
+        history.append(line: line.line, levels: line.levels, coverage: line.coverage, time: line.arrivedWall, presentationTime: line.captureTime ?? .nan, presentationPeriod: line.period, presentationBreakBefore: line.breakBefore)
         foldIntoStack(line.frame, coverage: line.coverage, wide: line.wide, transmitting: line.transmitting)
         if tracesLines {
             putLines.append(PutLine(sequence: line.frame.encoderSequence, arrivedAt: line.arrivedAt,
@@ -351,6 +395,7 @@ public struct BandState: Equatable, Sendable {
             && lhs.waitingLines == rhs.waitingLines && lhs.lastAdvanceNs == rhs.lastAdvanceNs
             && lhs.linesSinceStackRow == rhs.linesSinceStackRow && lhs.tracesLines == rhs.tracesLines
             && lhs.putLines == rhs.putLines
+            && lhs.captureTimeline == rhs.captureTimeline && lhs.breakBeforeNextLine == rhs.breakBeforeNextLine
     }
 
     /// The latest contexts' coverage, by context generation.
@@ -415,6 +460,10 @@ public struct BandState: Equatable, Sendable {
             return
         }
         let coverage = contexts[waiting.contextGeneration]
+        let addsCapture = waiting.waterfallAdvance && !waiting.waterfallDbm.isEmpty && !waterfallHeld
+        let captureTime = addsCapture ? captureTimeline.observe(waiting, at: steady) : nil
+        let breakBefore = addsCapture && breakBeforeNextLine
+        if addsCapture { breakBeforeNextLine = false }
         if waterfallHeld {
             // The line is dropped, but the Core's levels are still noted.
             history.append(frame: waiting, extras: pendingExtras, manualLevels: manualLevels, coverage: coverage,
@@ -430,7 +479,8 @@ public struct BandState: Equatable, Sendable {
                 .adjusted(by: levelAdjustment)
             waitingLines.append(WaitingLine(frame: waiting, line: waterfall, levels: levels, coverage: coverage,
                 wide: wideContexts[waiting.contextGeneration], transmitting: transmittingWaterfall,
-                arrivedAt: steady, period: linePeriodSeconds, arrivedWall: clock()))
+                arrivedAt: steady, captureTime: captureTime, breakBefore: breakBefore,
+                period: linePeriodSeconds, arrivedWall: clock()))
             while waitingLines.count > Self.mostLinesWaiting {
                 put(waitingLines.removeFirst(), at: steady)
             }
@@ -451,7 +501,8 @@ public struct BandState: Equatable, Sendable {
                 waterfallDbm: waterfall, wideDbm: waiting.wideDbm)
             let added = history.append(frame: painted, extras: pendingExtras, manualLevels: manualLevels,
                                        coverage: coverage, adjustment: levelAdjustment, phoneLevels: phoneSetsLevels,
-                                       time: now, presentationTime: steady, presentationPeriod: linePeriodSeconds)
+                                       time: now, presentationTime: captureTime ?? .nan, presentationPeriod: linePeriodSeconds,
+                                       presentationBreakBefore: breakBefore)
             foldIntoStack(waiting, coverage: coverage, wide: wideContexts[waiting.contextGeneration],
                           transmitting: transmittingWaterfall)
             if added && tracesLines {
@@ -475,6 +526,14 @@ public struct BandState: Equatable, Sendable {
         stackFold.clear()
         pending = nil
         pendingExtras = nil
+        captureTimeline.reset()
+        noteInterruption()
+    }
+
+    /// Marks a known missing stretch before the next committed waterfall
+    /// observation. Ordinary view/context changes never call this.
+    public mutating func noteInterruption() {
+        breakBeforeNextLine = true
     }
 
     /// The classic peak hold after `frame`: each sample's highest level,
@@ -531,6 +590,8 @@ public struct BandState: Equatable, Sendable {
         linesSinceStackRow = 0
         putLines.removeAll()
         history.clear()
+        captureTimeline = CaptureTimeline()
+        breakBeforeNextLine = false
         blanker.reset()
         stackFold.clear()
         stack.clear()
