@@ -161,3 +161,8 @@ Browser evidence on the integrated board (local fixtures only):
 - Final browser console has no errors and the board has no horizontal page overflow at its default1512px viewport.
 
 The final syntax check passes. The implemented state board includes first-run, turn, message, phone-layout, popout, archive, settings and moderation routes. These are interactive design examples, not evidence of native apps, real authentication, network delivery or radio transmission. Root layout/publication corrections after the v3 check are lead verification, not a claim of another independent full review.
+
+
+### Miles default and true bearing update
+
+Applied JJ’s request: Miles default, Kilometres option under Roundtable settings, true bearing shown by default. Direction is explicitly talker to reporter. Verified in Chrome that 128 km renders as 80 mi, the 082°T fixture stays unchanged when units switch, every represented panel updates, and missing-grid values stay blank. JavaScript syntax passes. This is a focused display-preference change; no repeated application test suite was run.

@@ -28,3 +28,9 @@ Use the board’s **Coverage matrix** to jump to the screens. The [review and fi
 ## Captured views
 
 [Desktop](previews/desktop.jpg), [public website](previews/web.jpg), [phone keyboard](previews/phone-keyboard.jpg), [phone landscape](previews/phone-landscape.jpg).
+
+## Distance and bearing preference
+
+Roundtable settings default to **Miles (mi)**, with **Kilometres (km)** available. **Show true bearing (°T)** defaults on. The reading table keeps its compact shape by stacking the bearing under distance in one column. Distance and initial true bearing run from the identified talker to the reporter; while you transmit, that is from your station to the stations hearing you. Unknown identity or a missing grid leaves the path fields blank. Unit conversion changes presentation only, including archive distances, and preserves the nearest-first order. The board’s path values and bearings are synthetic fixtures, like its RF readings.
+
+Browser verification: default selection `mi`; K4ABC displays 80 mi / 082°T; switching to km displays 128 km with 082°T unchanged; all four panels update; missing-grid row stays blank; no horizontal page overflow.
