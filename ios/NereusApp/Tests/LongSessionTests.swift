@@ -413,7 +413,7 @@ struct LongSessionTests {
         await model.disconnect()
     }
 
-    @Test("away with Sound only the band stops, and a stretch of a minute or more is marked on return")
+    @Test("away with Sound only the band stops, and every positive stretch is marked on return")
     func soundOnly() async throws {
         let rig = try Self.rig()
         defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
@@ -431,11 +431,14 @@ struct LongSessionTests {
         #expect(band.awayMarks.first?.text.hasPrefix("Locked ") == true)
         #expect(band.awayMarks.first?.text.hasSuffix(" \u{00B7} sound only") == true)
 
-        // A short look at another app is not marked.
+        // A short look at another app labels the gap too.
         rig.session.sceneChanged(inForeground: false)
         rig.clock.now = rig.clock.now.addingTimeInterval(20)
         rig.session.sceneChanged(inForeground: true)
-        #expect(band.awayMarks.count == 1)
+        #expect(band.awayMarks.count == 2)
+        #expect(band.awayMarks.first?.text.hasPrefix("In another app ") == true)
+        rig.session.sceneChanged(inForeground: true)
+        #expect(band.awayMarks.count == 2)
 
         // With Sound only off the band keeps coming, and nothing is marked.
         rig.settings.soundOnlyWhenAway = false
@@ -444,7 +447,7 @@ struct LongSessionTests {
         #expect(subscriber.session.subscribes)
         rig.clock.now = rig.clock.now.addingTimeInterval(3600)
         rig.session.sceneChanged(inForeground: true)
-        #expect(band.awayMarks.count == 1)
+        #expect(band.awayMarks.count == 2)
 
         let utc = TimeZone(identifier: "UTC") ?? .current
         #expect(SessionController.awayText(from: Self.start, to: Self.start.addingTimeInterval(33 * 60), locked: true,
@@ -498,6 +501,18 @@ struct LongSessionTests {
         #expect(band.awayMarks.isEmpty)
     }
 
+    @Test("a nonpositive away clock stretch creates no notice", arguments: [0.0, -1.0])
+    func nonpositiveAwayClockDoesNotMark(seconds: TimeInterval) throws {
+        let rig = try Self.rig()
+        defer { UserDefaults.standard.removePersistentDomain(forName: rig.suite) }
+        rig.session.sessionStarted(owner: 1)
+        rig.session.connectionChanged(.connected)
+        rig.session.sceneChanged(inForeground: false)
+        rig.clock.now = Self.start.addingTimeInterval(seconds)
+        rig.session.sceneChanged(inForeground: true)
+        #expect(rig.app.main.band.awayMarks.isEmpty)
+    }
+
     @Test("sound-only marks belong to the connected listening intent, never no session or an older owner")
     func soundOnlyOwner() throws {
         let rig = try Self.rig()
@@ -521,9 +536,13 @@ struct LongSessionTests {
         rig.session.sessionEnded(owner: 1)
         rig.session.sessionStarted(owner: 2)
         rig.session.connectionChanged(.connected)
+        let newOwnerSince = rig.clock.now
+        #expect(band.awayMarks.isEmpty)
         rig.clock.now = rig.clock.now.addingTimeInterval(20)
         rig.session.sceneChanged(inForeground: true)
-        #expect(band.awayMarks.isEmpty)
+        #expect(band.awayMarks.count == 1)
+        #expect(band.awayMarks.first?.text == SessionController.awayText(
+            from: newOwnerSince, to: rig.clock.now, locked: false))
     }
 
     @Test("the waterfall's mark moves down with each new line and goes once past the oldest")

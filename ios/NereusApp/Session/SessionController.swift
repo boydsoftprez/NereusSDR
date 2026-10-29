@@ -1,5 +1,7 @@
 // NereusSDR for iOS: a long session: what the band asks for, the screen, the sleep timer and the data counters
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-29: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   label every positive tracked away stretch, including short app switches.
 
 import Combine
 import Foundation
@@ -67,8 +69,6 @@ final class SessionController: ObservableObject {
 
     /// How long a note stays on the band.
     static let noteShown: Duration = .seconds(10)
-    /// The shortest stretch away the waterfall marks.
-    static let shortestMarkedStretch: TimeInterval = 60
 
     /// The phone is on cellular now.
     @Published private(set) var cellular = false
@@ -393,7 +393,7 @@ final class SessionController: ObservableObject {
     }
 
     private func markStretch(from start: Date, to end: Date, locked: Bool) {
-        guard end.timeIntervalSince(start) >= Self.shortestMarkedStretch else {
+        guard end.timeIntervalSince(start) > 0 else {
             return
         }
         band.markAway(Self.awayText(from: start, to: end, locked: locked))
