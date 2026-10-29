@@ -131,6 +131,97 @@ struct BandSubscriberTests {
         return .allocationResult(decoded)
     }
 
+    private func addRemainingSlice(_ rig: Rig) {
+        rig.store.apply(.objectCreate(LinkMessage.ObjectCreate(key: "slice:1", className: "SliceModel", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(14_100_000)),
+            .init(ordinal: 11, name: "active", value: .bool(false)),
+            .init(ordinal: 13, name: "sliceIndex", value: .i64(1)),
+            .init(ordinal: 28, name: "sampleRateHz", value: .i64(Self.sampleRate)),
+        ])))
+    }
+
+    private func removeFirstSlice(_ rig: Rig) {
+        rig.store.apply(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 11, name: "active", value: .bool(true)),
+        ])))
+        rig.store.apply(.objectDestroy(LinkMessage.ObjectDestroy(key: "slice:0", className: "SliceModel")))
+    }
+
+    private func retired(_ subscription: DisplaySubscription, budget: Bool) -> MediaControlEvent {
+        budget ? result(for: subscription, accepted: false, reason: "slice removed")
+            : .rejected(.init(endpointId: subscription.endpointId, revision: subscription.revision, reason: "slice removed"))
+    }
+
+    @Test("an accepted endpoint can retire with no operation outstanding", arguments: [false, true])
+    func acceptedRetirementWithoutPendingRequest(budget: Bool) async throws {
+        let rig = rig(budget: budget)
+        rig.subscriber.receive(.mediaState(.connected))
+        #expect(await settle { rig.sent.subscriptions.count == 1 })
+        let old = try #require(rig.sent.subscriptions.last)
+        if budget { rig.subscriber.receive(result(for: old)) }
+        #expect(rig.subscriber.acceptedDisplay != nil)
+        rig.subscriber.receive(retired(old, budget: budget))
+        #expect(rig.subscriber.acceptedDisplay == nil)
+        #expect(rig.subscriber.displayRefusal == "slice removed")
+        addRemainingSlice(rig)
+        removeFirstSlice(rig)
+        #expect(await settle { rig.sent.subscriptions.last?.sliceId == 1 })
+        #expect(rig.subscriber.displayRefusal == nil)
+    }
+
+    @Test("removed-slice retirement and mirror order preserve the newer remaining-slice request",
+          arguments: [false, true], [false, true])
+    func sliceRetirementReconcilesBothEventOrders(budget: Bool, mirrorFirst: Bool) async throws {
+        let rig = rig(budget: budget)
+        addRemainingSlice(rig)
+        rig.subscriber.receive(.mediaState(.connected))
+        #expect(await settle { rig.sent.subscriptions.count == 1 })
+        let old = try #require(rig.sent.subscriptions.last)
+        if budget { rig.subscriber.receive(result(for: old)) }
+        if mirrorFirst {
+            removeFirstSlice(rig)
+            #expect(await settle { rig.sent.subscriptions.last?.sliceId == 1 })
+            rig.subscriber.receive(retired(old, budget: budget))
+        } else {
+            rig.subscriber.receive(retired(old, budget: budget))
+            removeFirstSlice(rig)
+            #expect(await settle { rig.sent.subscriptions.last?.sliceId == 1 })
+        }
+        let current = try #require(rig.sent.subscriptions.last)
+        #expect(current.sliceId == 1)
+        if budget { rig.subscriber.receive(result(for: current)) }
+        #expect(rig.subscriber.acceptedDisplay?.subscription == current)
+        #expect(rig.subscriber.displayRefusal == nil)
+        // An already superseded retirement cannot clear the new acceptance.
+        rig.subscriber.receive(retired(old, budget: budget))
+        #expect(rig.subscriber.acceptedDisplay?.subscription == current)
+        #expect(rig.subscriber.displayRefusal == nil)
+    }
+
+    @Test("only a current recovery context resolves its target's refusal", arguments: [false, true])
+    func matchingRecoveryContextClearsScopedRefusal(budget: Bool) async throws {
+        let rig = rig(budget: budget)
+        rig.subscriber.receive(.mediaState(.connected))
+        #expect(await settle { rig.sent.subscriptions.count == 1 })
+        let failed = try #require(rig.sent.subscriptions.last)
+        rig.subscriber.receive(retired(failed, budget: budget))
+        #expect(rig.subscriber.displayRefusal == "slice removed")
+        rig.subscriber.session = SessionPolicy.Mode.balanced.request
+        #expect(await settle { rig.sent.subscriptions.count == 2 })
+        let current = try #require(rig.sent.subscriptions.last)
+        var context = try #require(BandFlagShotTests.context())
+        context.endpointId = failed.endpointId
+        context.revision = failed.revision
+        rig.subscriber.receive(.context(context))
+        #expect(rig.subscriber.displayRefusal == "slice removed")
+        context.endpointId = current.endpointId
+        context.revision = current.revision
+        rig.subscriber.receive(.context(context))
+        #expect(rig.subscriber.displayRefusal == nil)
+        if budget { rig.subscriber.receive(result(for: current)) }
+        #expect(rig.subscriber.acceptedDisplay?.subscription == current)
+    }
+
     // MARK: What it asks for
 
     @Test("nothing is asked for until the media connection is up")
@@ -439,6 +530,48 @@ struct BandSubscriberTests {
         rig.subscriber.receive(result(for: unanswered))
         rig.subscriber.receive(result(for: try #require(rig.sent.subscriptions.last)))
         #expect(await settle { !rig.subscriber.stalled })
+    }
+
+    @Test("a late older result cannot replace a newer accepted reduction", arguments: [false, true])
+    func reorderedResultsKeepTheNewerHolding(lateAccepted: Bool) async throws {
+        let rig = rig(deadline: .milliseconds(50))
+        rig.subscriber.receive(.mediaState(.connected))
+        #expect(await settle { rig.sent.subscriptions.count == 1 })
+        rig.subscriber.receive(result(for: try #require(rig.sent.subscriptions.last)))
+        rig.subscriber.session = SessionPolicy.Mode.balanced.request
+        #expect(await settle { rig.sent.subscriptions.count == 2 })
+        let older = try #require(rig.sent.subscriptions.last)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(rig.subscriber.stalled)
+        rig.subscriber.session = SessionPolicy.Mode.saver.request
+        #expect(await settle { rig.sent.subscriptions.count == 3 })
+        let newer = try #require(rig.sent.subscriptions.last)
+        rig.subscriber.receive(result(for: newer))
+        rig.subscriber.receive(result(for: older, accepted: lateAccepted, reason: lateAccepted ? "" : "old request failed"))
+        #expect(rig.subscriber.acceptedDisplay?.subscription == newer)
+        #expect(rig.subscriber.displayRefusal == nil)
+        #expect(!rig.subscriber.stalled)
+    }
+
+    @Test("an older unsubscribe cannot erase a newly accepted replacement endpoint")
+    func lateUnsubscribeKeepsTheReplacement() async throws {
+        let rig = rig(deadline: .milliseconds(50))
+        rig.subscriber.receive(.mediaState(.connected))
+        #expect(await settle { rig.sent.subscriptions.count == 1 })
+        let old = try #require(rig.sent.subscriptions.last)
+        rig.subscriber.receive(result(for: old))
+        rig.subscriber.session = .none
+        #expect(await settle { rig.sent.operations.last == .unsubscribe(old.endpointId) })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(rig.subscriber.stalled)
+        rig.subscriber.session = SessionPolicy.Mode.full.request
+        #expect(await settle { rig.sent.subscriptions.count == 2 })
+        let current = try #require(rig.sent.subscriptions.last)
+        #expect(current.endpointId != old.endpointId)
+        rig.subscriber.receive(result(for: current))
+        rig.subscriber.receive(released(old.endpointId, revision: old.revision + 1))
+        #expect(rig.subscriber.acceptedDisplay?.subscription == current)
+        #expect(!rig.subscriber.stalled)
     }
 
     @Test("a budget below the band's floor pauses it and lets its endpoint go")

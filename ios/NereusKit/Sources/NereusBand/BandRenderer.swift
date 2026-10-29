@@ -1,5 +1,7 @@
 // NereusSDR for iOS: draws the band in Metal: the spectrum, the waterfall, the strip, the scales and the Core's extras
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   snapshot exact capture-row IDs in each in-flight time map.
 
 import CoreGraphics
 import Foundation

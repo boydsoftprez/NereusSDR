@@ -1,5 +1,7 @@
 // NereusSDR for iOS: one pan's band as the screens see it: the Core's display events in, what to draw out
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   carry the accepted waterfall frame divider for capture-row continuity.
 
 import Combine
 import Foundation
@@ -501,6 +503,7 @@ final class BandModel: ObservableObject {
     struct AwayMark: Equatable {
         let text: String
         var linesSince: Int
+        var pending = true
     }
 
     /// The marks still on the waterfall, kept apart from the band so that
@@ -644,10 +647,16 @@ final class BandModel: ObservableObject {
         state.stacksRows = settings.spectrumView == .stacked && stackOffered
     }
 
-    /// Marks the stretch the band was not sent, at the waterfall's newest
-    /// line: every line after it arrives above the mark.
+    /// Marks an explicit missing stretch. The notice waits for the first
+    /// resumed waterfall observation, then follows its capture coordinate.
     func markAway(_ text: String) {
+        // A frame still waiting for extras belongs before the interruption.
+        let lines = state.history.linesAppended
+        state.commit(manualLevels: drawnSettings.phoneLevels, at: lineClock())
+        keepLookingBack(since: lines)
+        moveMarks()
         flushLines()
+        state.noteInterruption()
         markedLines = state.history.linesAppended
         away.marks.insert(AwayMark(text: text, linesSince: 0), at: 0)
         changed()
@@ -659,16 +668,40 @@ final class BandModel: ObservableObject {
     private func moveMarks() {
         let lines = state.history.linesAppended
         defer { markedLines = lines }
-        guard !awayMarks.isEmpty, lines > markedLines else {
-            return
-        }
-        let added = Int(min(lines - markedLines, UInt64(state.history.capacity)))
+        guard !awayMarks.isEmpty else { return }
+        let added = lines >= markedLines ? lines - markedLines : 0
         var moved = away.marks
-        for index in moved.indices {
-            moved[index].linesSince += added
+        moved.removeAll { mark in
+            if mark.pending {
+                guard added > 0 else { return false }
+                // The first resumed row must still exist. Never reanchor a
+                // notice to a different retained row after a large batch.
+                return added > UInt64(state.history.count)
+            }
+            return mark.linesSince >= state.history.count
+                || added >= UInt64(state.history.count - mark.linesSince)
         }
-        moved.removeAll { $0.linesSince > state.history.capacity }
-        away.marks = moved
+        for index in moved.indices {
+            if moved[index].pending, added > 0 {
+                moved[index].linesSince = Int(added - 1)
+                moved[index].pending = false
+            } else if !moved[index].pending {
+                moved[index].linesSince += Int(added)
+            }
+        }
+        if moved != away.marks { away.marks = moved }
+
+    }
+
+    /// Shared by the real strip and its model checks. Pending notices stay
+    /// at the held picture's top until an actual waterfall row binds them.
+    func awayMarkY(_ mark: AwayMark, scale: CGFloat) -> CGFloat {
+        if mark.pending { return 0 }
+        if let axis = waterfallTimeAxis,
+           let y = axis.yPoints(age: mark.linesSince, history: state.history) {
+            return CGFloat(y)
+        }
+        return CGFloat(mark.linesSince - lookBackLines) / max(scale, 1)
     }
 
     /// Looks back `lines` lines at the waterfall (0 goes back to live),
@@ -1169,6 +1202,8 @@ final class BandModel: ObservableObject {
         frozenWaterfallTop = nil
         lastWaterfallTop = nil
         state.clear()
+        away.marks.removeAll()
+        markedLines = 0
         stackFloorDbm = nil
         contextRevisions.removeAll()
         contextOrder.removeAll()

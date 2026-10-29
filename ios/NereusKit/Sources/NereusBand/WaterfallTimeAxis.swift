@@ -1,6 +1,8 @@
 // NereusSDR for iOS: the waterfall's visual time axis, independent of received RF row cadence
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // no-port-check: NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex, 2026-10-28.
+// 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   separate ordinary nearest capture cells from explicit lifecycle gaps.
 
 import Foundation
 
@@ -18,6 +20,7 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
     /// The live view lags one real observation, gliding only between known times. Starvation never invents future data.
     public static func liveTop(history: WaterfallHistory, progress: Double) -> Double? {
         guard history.hasPresentationTimeline, let newest = history.presentationTime(age: 0) else { return nil }
+        if history.presentationBreakBefore(age: 0) { return newest }
         guard let previous = history.presentationTime(age: 1), previous <= newest else { return newest }
         return previous + (newest - previous) * min(max(progress.isFinite ? progress : 1, 0), 1)
     }
@@ -48,6 +51,15 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
     private func valid(age: Int, at time: Double, history: WaterfallHistory) -> Bool {
         guard let here = history.presentationTime(age: age) else { return false }
         if let period = history.presentationPeriod(age: age) {
+            let neighbor = time < here ? age + 1 : age - 1
+            if history.presentationTime(age: neighbor) != nil {
+                // A failure to prove encoder continuity is not a missing
+                // observation. Ordinary nearest-time cells always meet.
+                // Only an explicit lifecycle interruption leaves empty time.
+                if !history.presentationBreakBefore(age: min(age, neighbor)) { return true }
+                let boundaryPeriod = max(period, history.presentationPeriod(age: neighbor) ?? period)
+                return abs(time - here) <= boundaryPeriod / 2 + 0.000000001
+            }
             return abs(time - here) <= period / 2 + 0.000000001
         }
         let half = history.presentationTime(age: age - 1).map { max(0, $0 - here) / 2 } ?? secondsPerPoint / 2
@@ -80,4 +92,5 @@ public struct WaterfallTimeAxis: Equatable, Sendable {
             rows[y] = valid(age: age, at: time, history: history) ? UInt32(age) : Self.blank
         }
     }
+
 }

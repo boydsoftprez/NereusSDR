@@ -49,12 +49,13 @@ struct BandMarksShotTests {
         let host = try Host(model: model)
         defer { host.close() }
         let draw = try await ShotWait.requireBandLaidOut(band, in: host.window)
-        // The waterfall moves by elapsed arrival time in logical points,
+        // The waterfall moves by elapsed capture time in logical points,
         // independently of screen scale. Feed a deterministic 30 Hz source
         // and advance its existing row clock without waiting in real time.
         let linePeriod = 1.0 / 30
         var now = CACurrentMediaTime()
         var sequence: UInt32 = 0
+        var captureSeconds = 1.0
         band.lineClock = { now }
         func feed(lines: Int) {
             let traces = BandFlagShotTests.traces(width: draw.requestedPixels, lines: lines,
@@ -62,9 +63,10 @@ struct BandMarksShotTests {
                 stations: BandFlagShotTests.stations)
             for trace in traces {
                 now += linePeriod
+                captureSeconds += linePeriod
                 sequence += 1
                 band.receive(.displayFrame(DisplayFrame(endpointId: 1, contextGeneration: 1,
-                    encoderSequence: sequence, producerTimestamp: UInt64(Double(sequence) * linePeriod * 1_000_000_000),
+                    encoderSequence: sequence, producerTimestamp: UInt64(captureSeconds * 1_000_000_000),
                     isKeyframe: sequence == 1, waterfallAdvance: true, minDbm: -160, maxDbm: 0,
                     traceDbm: trace, waterfallDbm: trace, wideDbm: [])))
                 band.advanceLines(at: now, frameSeconds: 1.0 / 60)
@@ -73,6 +75,10 @@ struct BandMarksShotTests {
         }
         feed(lines: 400)
         band.markAway(Self.markText)
+        // The return follows a real capture-time interruption, not a burst
+        // whose timestamps pretend the phone was never away.
+        now += 65
+        captureSeconds += 65
         feed(lines: 60)
         try await ShotWait.requireBandShown(band, in: host.window, after: draw)
         #expect(await ShotWait.until { host.markFrame() != nil && host.stepFrame() != nil })
