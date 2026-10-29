@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-29 - Restore receiver preferences separately from fresh-slice
+//                VFO seeding; skip saved frequency, mode, filter and rate when
+//                restoreTuning is false. NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-28 - copyNoiseReductionFrom copies the open slice's reducer
 //                and its knobs, including NNR suppression, onto a new
 //                slice. NereusSDR-original. J.J. Boyd (KG4VCF),
@@ -3580,7 +3584,7 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("LastBand"), bandKeyName(band));
 }
 
-void SliceModel::restoreFromSettings(Band band)
+void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
 {
     // Slice control plan Task 5: a band's saved state is a change a
     // listened slice holds back (it would go to the Core as writes).
@@ -3592,7 +3596,7 @@ void SliceModel::restoreFromSettings(Band band)
     // ── Per-band DSP state ────────────────────────────────────────────────────
     // Each key: if absent, leave the current SliceModel default unchanged.
 
-    if (s.contains(bp + QStringLiteral("Frequency"))) {
+    if (restoreTuning && s.contains(bp + QStringLiteral("Frequency"))) {
         setFrequency(s.value(bp + QStringLiteral("Frequency")).toDouble());
     }
     if (s.contains(bp + QStringLiteral("AgcThreshold"))) {
@@ -3648,8 +3652,8 @@ void SliceModel::restoreFromSettings(Band band)
     if (s.contains(bp + QStringLiteral("AgcMaxGain"))) {
         setAgcMaxGain(s.value(bp + QStringLiteral("AgcMaxGain")).toInt());
     }
-    bool restoreFilter = true;
-    if (s.contains(bp + QStringLiteral("DspMode"))) {
+    bool restoreFilter = restoreTuning;
+    if (restoreTuning && s.contains(bp + QStringLiteral("DspMode"))) {
         // Set mode WITHOUT applying the default filter — filter follows below.
         // We must update m_dspMode before reading FilterLow/FilterHigh so
         // the final setFilter call is not superseded by setDspMode's default.
@@ -3719,7 +3723,7 @@ void SliceModel::restoreFromSettings(Band band)
 
     // Phase 3F: per-slice DDC sample rate (per-band). Default 192000 when key
     // absent (new install or pre-3F settings file).
-    if (s.contains(bp + QStringLiteral("SampleRate"))) {
+    if (restoreTuning && s.contains(bp + QStringLiteral("SampleRate"))) {
         setSampleRateHz(s.value(bp + QStringLiteral("SampleRate")).toInt());
     }
 

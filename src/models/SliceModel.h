@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-10-29 - Allow receiver preferences to restore without replacing a
+//              new slice's frequency, mode, filter or DDC sample rate.
+//              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//              OpenAI Codex.
 // 2026-10-28 - copyNoiseReductionFrom: a new slice takes the open
 //              slice's noise-reduction setup, including NNR suppression.
 //              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1564,7 +1568,13 @@ public:
     // RadioModel retains these until its existing coalesced save runs.
     QList<QPair<QString, QVariant>> captureBandSettings(Band band) const;
     void saveToSettings(NereusSDR::Band band);
-    void restoreFromSettings(NereusSDR::Band band);
+    // Fresh creation passes false after its creator/station VFO seed:
+    // frequency, DSP mode, filter and sample rate stay with that seed and
+    // its effective DDC. Receiver
+    // preferences, including Locked, still restore; the lock cannot veto
+    // the seed because it is restored afterwards. Existing callers retain
+    // full tuning restoration, including layout hydration.
+    void restoreFromSettings(NereusSDR::Band band, bool restoreTuning = true);
 
     // Seed a manifest-validated receive descriptor while its Local RadioModel
     // is completely offline.  This is intentionally narrower than the normal

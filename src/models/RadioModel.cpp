@@ -20,6 +20,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-29 - Keep fresh creation on its creator/station VFO seed while
+//                restoring saved receiver preferences. Explicit startup
+//                restoration keeps its own NR; fresh +RX inherits NR.
+//                Retain the restored sample rate across DDC binding.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                OpenAI Codex.
 //   2026-10-28 - A new slice takes the noise-reduction setup of the slice
 //                it is opened from, including NNR suppression and the
 //                other reducers' knobs, whether or not the letter's own
@@ -16221,11 +16227,16 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // letter. A layout hydration still restores through restoreSeed above
     // and does not take this branch. A letter with nothing saved still
     // opens on the active slice's frequency and mode.
+    // 2026-10-29 correction: only an explicit restore owns the VFO here.
+    // Fresh creation restores receiver preferences after its creator seed
+    // below, without applying stale tuning, mode, filter or DDC rate from a reused
+    // numeric letter (and without temporarily starting that saved RADE mode).
     bool restoredSavedState = false;
-    const bool letterWasSaved = SliceModel::loadLastBandFromSettings(index).has_value();
-    if (!restoreSeed && role() == Role::Local && (restoreSavedState || letterWasSaved)) {
-        if (const auto lastBand = SliceModel::loadLastBandFromSettings(index)) {
-            slice->restoreFromSettings(*lastBand);
+    const auto savedLetterBand = SliceModel::loadLastBandFromSettings(index);
+    if (!restoreSeed && role() == Role::Local && restoreSavedState) {
+        if (savedLetterBand) {
+            const Band lastBand = *savedLetterBand;
+            slice->restoreFromSettings(lastBand);
             if (!self || !added) { return -1; }
             restoredSavedState = true;
         }
@@ -16307,14 +16318,16 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             seedFrom = mine;
         }
     }
-    if (!restoreSeed && seedFrom && seedFrom != slice) {
+    if (!restoreSeed && !restoredSavedState) {
         // A letter with nothing saved opens on this slice's frequency and
         // mode. Either way the new slice takes this slice's noise
         // reduction: which reducer is on, and that family's knobs, NNR
         // suppression included. A restored letter keeps its own frequency,
         // mode and receiver settings, and still matches the reducer the
         // operator had open.
-        if (!restoredSavedState) {
+        // 2026-10-29 correction: this is fresh creation only. Explicit
+        // startup restoration retains the letter's independent reducer.
+        if (seedFrom && seedFrom != slice) {
             const double seedFrequency = seedFrom->frequency();
             const DSPMode seedMode = seedFrom->dspMode();
             slice->setFrequency(seedFrequency);
@@ -16322,8 +16335,16 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             slice->setDspMode(seedMode);
             if (!currentAdded()) { return -1; }
         }
-        slice->copyNoiseReductionFrom(*seedFrom);
-        if (!currentAdded()) { return -1; }
+        if (role() == Role::Local && savedLetterBand) {
+            // Restore Locked only after the seed, so a stale saved lock
+            // cannot leave the new device on the constructor frequency.
+            slice->restoreFromSettings(*savedLetterBand, false);
+            if (!currentAdded()) { return -1; }
+        }
+        if (seedFrom && seedFrom != slice) {
+            slice->copyNoiseReductionFrom(*seedFrom);
+            if (!currentAdded()) { return -1; }
+        }
     }
 
     // ── Roll back a slice the allocator refused ─────────────────────────
@@ -16376,6 +16397,10 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         && !panHasSlicesFor(initialPanId, panOwner, slice);
 
     const bool poolReady = m_streamAllocator.streamCount() > 0;
+    // Binding makes the property describe the effective DDC rate. Keep the
+    // restored preference separately until the ordinary rate transaction
+    // below can apply it to the bound receiver.
+    const int restoredSampleRateHz = restoredSavedState ? slice->sampleRateHz() : 0;
     // Review fix round 1, finding 1(c): `&& role() == Role::Local` is a
     // second, independent guard against the same destructive interaction
     // documented on bindSliceToStream's role check above -- if this
@@ -16785,6 +16810,8 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // And put the restored rate on the DDC, not just on the menu, as
         // loadSliceState does for slice A. No-op when the slice has no
         // stream or its stream already runs at that rate.
+        slice->setSampleRateHz(restoredSampleRateHz);
+        if (!currentAdded()) { return -1; }
         applyRestoredSampleRate(slice);
         if (!currentAdded()) { return -1; }
     }
