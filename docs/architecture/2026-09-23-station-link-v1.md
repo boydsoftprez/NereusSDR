@@ -1301,7 +1301,7 @@ table.
 | `waveformVersion` | 1 |
 | `rxMeterStampsVersion` | 1 |
 | `displayCodecVersion` | 2 |
-| `stationRoundtableVersion` | 1 |
+| `stationRoundtableVersion` | 2 |
 
 <!-- /surface -->
 
@@ -6474,6 +6474,10 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `setRotorPresets` | `presets` utf8 | `remoteRotorControlVersion` | 1 | 11 |
 | `refreshRotorPorts` | none | `remoteRotorControlVersion` | 1 | 11 |
 | `roundtable.post` | `roomId` utf8, `text` utf8, `clientId` utf8 | `stationRoundtableVersion` | 1 | 11 |
+| `roundtable.postAt` | `sliceId` i64, `hz` i64, `family` utf8, `text` utf8, `clientId` utf8 | `stationRoundtableVersion` | 2 | 11 |
+| `roundtable.history` | `ids` utf8 | `stationRoundtableVersion` | 2 | 11 |
+| `roundtable.readAt` | `hz` i64, `family` utf8 | `stationRoundtableVersion` | 2 | 11 |
+| `roundtable.unreadAt` | `hz` i64, `family` utf8 | `stationRoundtableVersion` | 2 | 11 |
 | `roundtable.delete` | `messageId` utf8 | `stationRoundtableVersion` | 1 | 11 |
 | `roundtable.name` | `turnId` utf8, `name` utf8 | `stationRoundtableVersion` | 1 | 11 |
 | `roundtable.report` | `kind` utf8, `target` utf8, `reason` utf8 | `stationRoundtableVersion` | 1 | 11 |
@@ -7022,6 +7026,20 @@ These command groups need a sentence beyond the table:
   shared setting. A session ending ends the turn button it was holding.
   The arguments and reasons are in
   [remote rotor control version 1](2026-10-07-remote-rotor-control-v1.md).
+- **Frequency Roundtable** (`stationRoundtableVersion` 2). A peer declaring
+  `roundtable` 2 receives the version 2 capability; version 1 peers retain
+  their existing capability and records. `roundtable.readAt` selects an
+  exact integer-Hz/mode-family context and returns `stream` utf8 naming
+  `roundtableFrequency:<family>-<hz>`, created before the answer. Records
+  retain the existing member/reading/turn/message schema with additive
+  endpoint metadata; member and reading identities are scoped by
+  `sourceRoom/ref`. `roundtable.unreadAt` releases that reader. `postAt`
+  freezes slice, Hz and family; a presence mismatch refuses the post instead
+  of sending at a newly tuned frequency. Its eventual answer and clientId
+  isolation follow `roundtable.post`. Server support is independently
+  negotiated with `frequencyVersion:1`; a legacy server cannot silently
+  provide the new frequency-chat guarantee. See
+  [frequency extension](2026-10-30-roundtable-frequency-extension.md).
 - **Roundtable** (`stationRoundtableVersion` 1). The thirteen
   `roundtable.*` verbs go to the Core's Roundtable, from a peer at agreed
   minor 11 that declared `roundtable` 1 on a Core that runs it (otherwise

@@ -96,6 +96,17 @@ def test_scripts_build_text_as_text():
             assert bad not in text, (path.name, bad)
 
 
+def test_frequency_client_helpers_without_browser():
+    """Exact contexts, paths, authority and exposure need no UI fixture."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is not installed for the lightweight client checks")
+    result = subprocess.run([node, str(HERE / "pages" / "frequency-unit.js")], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 # ----------------------------------------------------------- headless Chrome
 
 

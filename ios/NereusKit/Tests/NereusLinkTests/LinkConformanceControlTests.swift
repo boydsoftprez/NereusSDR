@@ -1,6 +1,7 @@
 // NereusSDR for iOS: the link's control fixtures, decoded and written again by the app's codec
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
+// 2026-10-30: Guarded version2 frequency verbs retain typed metadata. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-24: Roundtable's thirteen verbs pinned. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-26: CW transmit, the four remote CW verbs pinned.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -86,7 +87,7 @@ import Testing
         // Core 31d51c0a4 adds the rotor's seven verbs; refreshRotorPorts is the eighth.
         // Roundtable adds its thirteen roundtable.* verbs.
         // Remote CW adds cw.send, cw.memory, cw.stop and cw.key.
-        #expect(commands.count == 189)
+        #expect(commands.count == 193)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,
@@ -101,6 +102,11 @@ import Testing
             ("refreshStationCatDevices", "stationCatVersion", 1, [], []),
             ("refreshRotorPorts", "remoteRotorControlVersion", 1, [], []),
             ("roundtable.post", "stationRoundtableVersion", 1, ["roomId", "text", "clientId"], ["utf8", "utf8", "utf8"]),
+            ("roundtable.postAt", "stationRoundtableVersion", 2,
+             ["sliceId", "hz", "family", "text", "clientId"], ["i64", "i64", "utf8", "utf8", "utf8"]),
+            ("roundtable.readAt", "stationRoundtableVersion", 2, ["hz", "family"], ["i64", "utf8"]),
+            ("roundtable.history", "stationRoundtableVersion", 2, ["ids"], ["utf8"]),
+            ("roundtable.unreadAt", "stationRoundtableVersion", 2, ["hz", "family"], ["i64", "utf8"]),
             ("roundtable.delete", "stationRoundtableVersion", 1, ["messageId"], ["utf8"]),
             ("roundtable.name", "stationRoundtableVersion", 1, ["turnId", "name"], ["utf8", "utf8"]),
             ("roundtable.report", "stationRoundtableVersion", 1, ["kind", "target", "reason"], ["utf8", "utf8", "utf8"]),

@@ -16,6 +16,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Guarded frequency-context and legacy command coverage.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10).
@@ -249,6 +251,8 @@ private slots:
     void helloSignatureVectors();
     void transcriptSignedWithTheTestKeyVerifies();
     void callsignGridModeAndBandRules();
+    void frequencyContextCommandsAreExplicitAndValidated();
+    void historyIdsAndStatesAreBoundedAndStrict();
 };
 
 void TstRoundtableWire::controlFixtures_data()
@@ -539,5 +543,63 @@ void TstRoundtableWire::callsignGridModeAndBandRules()
                 .contains(QStringLiteral("KG4VCF")));
 }
 
+void TstRoundtableWire::frequencyContextCommandsAreExplicitAndValidated()
+{
+    const QJsonObject post = Wire::postAt(1, 3963007, QStringLiteral("lsb"),
+                                        QStringLiteral("Hello"), QStringLiteral("frequency-test"));
+    const auto decoded = Wire::decode(QString::fromUtf8(Wire::encode(post)), Wire::Direction::StationToServer);
+    QVERIFY2(decoded.ok, qPrintable(decoded.error));
+    QCOMPARE(decoded.message, post);
+    QCOMPARE(decoded.message.value(QStringLiteral("hz")).toInteger(), qint64(3963007));
+    QJsonObject incomplete = post;
+    incomplete.remove(QStringLiteral("hz"));
+    QVERIFY(!Wire::decode(QString::fromUtf8(Wire::encode(incomplete)), Wire::Direction::StationToServer).ok);
+    incomplete = post;
+    incomplete.insert(QStringLiteral("family"), QStringLiteral("room"));
+    QVERIFY(!Wire::decode(QString::fromUtf8(Wire::encode(incomplete)), Wire::Direction::StationToServer).ok);
+    for (const bool live : {false, true}) {
+        const QJsonObject read = Wire::readAt(3963007, QStringLiteral("lsb"), live);
+        const auto result = Wire::decode(QString::fromUtf8(Wire::encode(read)), live ? Wire::Direction::LiveToServer
+                                                               : Wire::Direction::StationToServer);
+        QVERIFY2(result.ok, qPrintable(result.error));
+        QCOMPARE(result.message, read);
+    }
+    // Existing builders retain the exact old command, with no implicit retargeting.
+    const QJsonObject legacy = Wire::post(QStringLiteral("lsb-3963000"),
+                                         QStringLiteral("Hello"), QStringLiteral("legacy"));
+    QVERIFY(!legacy.contains(QStringLiteral("hz")));
+    QCOMPARE(legacy.value(QStringLiteral("type")).toString(), QStringLiteral("post"));
+}
+
 QTEST_GUILESS_MAIN(TstRoundtableWire)
 #include "tst_roundtable_wire.moc"
+
+void TstRoundtableWire::historyIdsAndStatesAreBoundedAndStrict()
+{
+    for (const auto direction : {Wire::Direction::StationToServer, Wire::Direction::LiveToServer}) {
+        QVERIFY(Wire::decode(QStringLiteral(R"({"type":"history","clientId":"h1","ids":[]})"), direction).ok);
+        QVERIFY(Wire::decode(QStringLiteral(R"({"type":"history","clientId":"h1","ids":[1,2]})"), direction).ok);
+        for (const QString& ids : {QStringLiteral("[true]"), QStringLiteral("[1.0]"),
+                QStringLiteral("[1e0]"), QStringLiteral("[0]"), QStringLiteral("[-1]"),
+                QStringLiteral("[1,1]")}) {
+            QVERIFY(!Wire::decode(QStringLiteral(R"({"type":"history","clientId":"h1","ids":%1})").arg(ids), direction).ok);
+        }
+        QJsonArray ids;
+        for (int i = 1; i <= 200; ++i) { ids.append(i); }
+        QJsonObject request{{"type", "history"}, {"clientId", "h1"}, {"ids", ids}};
+        QVERIFY(Wire::decode(QString::fromUtf8(Wire::encode(request)), direction).ok);
+        ids.append(201);
+        request.insert("ids", ids);
+        QVERIFY(!Wire::decode(QString::fromUtf8(Wire::encode(request)), direction).ok);
+    }
+    for (const auto direction : {Wire::Direction::ServerToStation, Wire::Direction::ServerToLive}) {
+        const QString good = QStringLiteral(R"({"type":"history","clientId":"h1","states":[{"id":1,"state":"shown","text":"retained"},{"id":2,"state":"expired","text":null}]})");
+        QVERIFY(Wire::decode(good, direction).ok);
+        for (const QString& bad : {QString(good).replace(QStringLiteral("\"expired\""), QStringLiteral("\"other\"")),
+                QStringLiteral(R"({"type":"history","clientId":"h1","states":[{"id":1,"state":"deleted","text":"leak"}]})"),
+                QStringLiteral(R"({"type":"history","clientId":"h1","states":[{"id":1,"state":"shown","text":null}]})"),
+                QStringLiteral(R"({"type":"history","clientId":"h1","states":[{"id":1,"state":"expired","text":null},{"id":1,"state":"expired","text":null}]})")}) {
+            QVERIFY(!Wire::decode(bad, direction).ok);
+        }
+    }
+}

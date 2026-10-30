@@ -705,8 +705,35 @@ class World:
         if name == "facts":
             return 200, self.facts
         if name == "signin":
-            sim = self.w8 if q.get("who") == "W8DXR" else self.kg
+            # 2026-10-30: real owner-follow fixture identity, retaining desks.
+            # J.J. Boyd / KG4VCF, AI-assisted via Codex.
+            who = q.get("who", "KG4VCF")
+            sim = self.w8 if who == "W8DXR" else self.kg
+            if who not in ("KG4VCF", "W8DXR"):
+                sim = next((candidate for candidate in self.sims if candidate.call == who), None)
+                if sim is None:
+                    return 404, {"error": "station-not-found"}
             return 200, {"path": self.link(sim)}
+        if name == "history":
+            # Disposable fixture-owned records only, using real service/store
+            # mutation paths; this is not a production authorization bypass.
+            ident = int(q.get("msg", "0"))
+            row = self.store.message_get(ident)
+            sender = next((sim for sim in self.sims if row and sim.sid == row["station_id"]), None)
+            if sender is None:
+                return 404, {"error": "fixture-message-not-found"}
+            action = q.get("act")
+            with self.service.event():
+                if action == "delete":
+                    sender.st.send({"type": "delete", "msg": ident})
+                elif action == "remove":
+                    self.store.message_remove(ident, self.kg.sid)
+                    self.service.message_changed(ident)
+                elif action == "expire":
+                    self.store.messages_expire(int(row["t"]) + 1)
+                else:
+                    return 400, {"error": "unknown-fixture-action"}
+            return 200, {"id": ident, "state": self.store.message_get(ident)["state"]}
         if name == "live":
             do = q.get("do", "")
             if do == "drop":

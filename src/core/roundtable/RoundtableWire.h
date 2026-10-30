@@ -26,6 +26,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Explicit guarded frequency-context builders.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10, R-RT-1 Core runner).
@@ -43,6 +45,7 @@
 #include <QByteArray>
 #include <QHash>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -118,6 +121,15 @@ NEREUS_CORE_EXPORT QJsonObject presence(const QString& callsign, const QString& 
 NEREUS_CORE_EXPORT QJsonObject reading(int sliceId, double dbm, qint64 unixMs, bool present);
 NEREUS_CORE_EXPORT QJsonObject post(const QString& roomId, const QString& text,
                                     const QString& clientId);
+/// Negotiated frequencyVersion 1 only; refuses stale presence at the server.
+NEREUS_CORE_EXPORT QJsonObject postAt(int sliceId, qint64 hz, const QString& family,
+                                     const QString& text, const QString& clientId);
+NEREUS_CORE_EXPORT QJsonObject readAt(qint64 hz, const QString& family, bool live = false);
+/// Bounded read-only validation of already received message IDs (frequencyVersion 1).
+NEREUS_CORE_EXPORT QJsonObject history(const QJsonArray& ids, const QString& clientId);
+NEREUS_CORE_EXPORT Decoded decodeHistoryIds(const QString& rawIds);
+NEREUS_CORE_EXPORT Decoded decodeHistoryStates(const QString& rawStates, const QString& clientId);
+NEREUS_CORE_EXPORT bool historyStatesMatch(const QJsonArray& ids, const QJsonArray& states);
 NEREUS_CORE_EXPORT QJsonObject deleteMessage(qint64 messageId);
 NEREUS_CORE_EXPORT QJsonObject name(qint64 turnId, const QString& callsign);
 /// An empty `reason` is sent as null.

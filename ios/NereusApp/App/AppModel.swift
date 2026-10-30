@@ -1,6 +1,7 @@
 // NereusSDR for iOS: the app's model of its Core: the session and everything fed from it
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
+// 2026-10-30: Share Roundtable path preferences through the station settings proxy. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-24: Roundtable plan Task 17, the Roundtable model the screens
 // read, tied to this app's session. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable plan Task 18, the Panadapter tab's swipes, shared
@@ -98,7 +99,7 @@ final class AppModel: ObservableObject {
     /// Roundtable as the Core runs it (spec 11.3): one for the flag lines
     /// and the sheet, tied to this app, so it stops reading as connected
     /// once the app and its session are gone.
-    lazy var roundtable = RoundtableModel(mirror: mirror, commands: commands, records: records, owner: self)
+    lazy var roundtable = RoundtableModel(mirror: mirror, commands: commands, records: records, settings: settings, catalogFeed: main.catalogFeed, owner: self)
     /// The Panadapter tab's swipes (spec 11.3, S1): the band reads its edges, the root its tab bar.
     lazy var swipes = SwipeShortcutModel(settings: phoneSettings)
     /// The speaker at the radio, as the Sound panel shows it: one level and

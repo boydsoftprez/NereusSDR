@@ -1,6 +1,7 @@
 // NereusSDR for iOS: the link's session fixtures, played against the app's session in the client's role
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
+// 2026-10-30: Expect the app's negotiated Roundtable version2 feature. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-22: the app's features gain displayCodec 2 (NSDC v2).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-24: the app asks for Setup description 30 (General's Filters
@@ -189,7 +190,7 @@ import Testing
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
                                   "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
-                                  "roundtable": 1, "remoteCw": 2, "cwSettings": 1])
+                                  "roundtable": 2, "remoteCw": 2, "cwSettings": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the

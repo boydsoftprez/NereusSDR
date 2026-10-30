@@ -208,6 +208,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Versioned guarded frequency-context actions and records.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, remote CW (R-CW-48): remoteCwAvailable.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-22  J.J. Boyd / KG4VCF  RX meter stamps: declares
@@ -1124,6 +1126,13 @@ public:
     bool rotorControlAvailable() const override;
     // Roundtable plan Task 11: see IStationLink.
     bool roundtableAvailable() const override;
+    bool roundtableFrequencyAvailable() const override;
+    CommandOutcome requestRoundtablePostAt(int sliceId, qint64 hz, const QString& family,
+                                           const QString& text, const QString& clientId) override;
+    CommandOutcome requestRoundtableHistory(const QJsonArray& ids, const QString& callerClientId) override;
+    CommandOutcome requestRoundtableReadAt(qint64 hz, const QString& family) override;
+    CommandOutcome requestRoundtableUnreadAt(qint64 hz, const QString& family) override;
+
     // R-R3-47 / R-R3-22: see IStationLink.
     bool pgxlDeviceSettingsAvailable() const override;
     bool tgxlDeviceSettingsAvailable() const override;
@@ -2304,6 +2313,7 @@ private:
         QString verb;
         QString clientId;
         QString roomId;
+        QJsonArray historyIds;
     };
     QHash<quint32, RoundtableCommand> m_roundtableCommands;
     /// The room streams this window follows: its slices' rooms and the

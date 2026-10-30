@@ -24,6 +24,9 @@
 // 2026-10-25: JJ's answer: on a phone the first-run question takes the
 // full height. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
+// 2026-10-30: Exact-frequency contexts, scoped reports, paths and native renders.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import Foundation
 import NereusBand
 import NereusKitTesting
@@ -180,6 +183,108 @@ struct RoundtableSheetTests {
         #expect(RoundtableReadings.rows(room: room, keyed: true).map(\.member.callsign)
                 == ["N4XYZ", "K4QRS", "AA5ABC", "W9ABC"])
         #expect(RoundtableReadings.title(room: room, keyed: true) == "READINGS OF YOU")
+    }
+
+    @Test("own turns match every scoped endpoint without cross-source keyed fallback")
+    func ownTurnsAreScopedAcrossSources() {
+        var ownA = Self.member("same", "KG4VCF", you: true, keyed: true)
+        ownA.sourceRoom = "lsb-7236000"
+        var ownB = Self.member("second", "KG4VCF", you: true)
+        ownB.sourceRoom = "lsb-7240000"
+        var room = Self.roomWith([ownA, ownB], talker: nil)
+        room.frequencyView = true
+        var other = RoundtableModel.Turn(id: 100, kind: "talking",
+            talkers: [.init(ref: "same", callsign: "K4ABC", nth: 1, sourceRoom: "lsb-7240000")],
+            start: 100, end: nil, ending: false, names: [], heard: 1, mine: nil,
+            sourceRoom: "lsb-7240000")
+        #expect(!RoundtableFlagLine.turnIsYours(room, other, open: true))
+        other.talkers[0].ref = "unrelated"
+        #expect(!RoundtableFlagLine.turnIsYours(room, other, open: true))
+        other.talkers[0].ref = "second"
+        #expect(RoundtableFlagLine.turnIsYours(room, other, open: true))
+        #expect(RoundtableFlagLine.turnIsYours(room, other, open: false))
+        other.kind = "doubled"
+        #expect(!RoundtableFlagLine.turnIsYours(room, other, open: true))
+        other.kind = "talking"
+        other.talkers = []
+        #expect(!RoundtableFlagLine.turnIsYours(room, other, open: true))
+        // Independent A and B turns coexist. B's context never inherits
+        // A's You glyph, and B's reporter is not counted as hearing A.
+        var ownTurn = other
+        ownTurn.id = 1
+        ownTurn.hz = 7_236_400
+        ownTurn.sourceRoom = ownA.sourceRoom
+        ownTurn.talkers = [.init(ref: ownA.ref, callsign: ownA.callsign, nth: 1, sourceRoom: ownA.sourceRoom)]
+        other.hz = 7_240_000
+        other.talkers = [.init(ref: "unrelated", callsign: "K4ABC", nth: 1, sourceRoom: "lsb-7240000")]
+        var reporterA = Self.member("reportA", "W1AW", dbm: -73)
+        reporterA.reading?.turn = ownTurn.id
+        var reporterB = Self.member("reportB", "N4XYZ", dbm: -55)
+        reporterB.reading?.turn = other.id
+        room.members += [reporterA, reporterB]
+        room.now = [ownTurn, other]
+        room.hz = 7_240_000
+        #expect(!RoundtableFlagLine.youAreTalking(room))
+        let flagB = RoundtableFlagLine.line(available: true, link: .live, summary: Self.summary(members: 4), room: room, mentions: 0)
+        #expect(flagB?.glyph != .you && flagB?.text.contains("hear you") == false)
+        room.hz = 7_236_400
+        let flagA = RoundtableFlagLine.line(available: true, link: .live, summary: Self.summary(members: 4), room: room, mentions: 0)
+        #expect(flagA?.glyph == .you && flagA?.text == "Roundtable · 1 hear you")
+        other.talkers = []
+        room.frequencyView = false
+        room.id = "lsb-7236000"
+        room.members = [ownA]
+        other.sourceRoom = room.id
+        #expect(RoundtableFlagLine.turnIsYours(room, other, open: true))
+        #expect(!RoundtableFlagLine.turnIsYours(room, other, open: false))
+        other.sourceRoom = "lsb-7240000"
+        #expect(!RoundtableFlagLine.turnIsYours(room, other, open: true))
+    }
+
+    @Test("report rows join the last turn and scope equal refs by source room")
+    func frequencyReportJoin() {
+        var talker = Self.member("same", "K4ABC", km: 10, dbm: -40)
+        talker.sourceRoom = "lsb-7236000"
+        talker.hz = 7_236_400
+        talker.reading?.turn = 99
+        var reporter = Self.member("same", "W1AW", km: 128, dbm: -73)
+        reporter.sourceRoom = "lsb-7240000"
+        reporter.hz = 7_240_000
+        reporter.reading?.turn = 99
+        reporter.bearingDeg = 82
+        var unrelated = Self.member("third", "N4XYZ", km: 1, dbm: -50)
+        unrelated.sourceRoom = "lsb-7240000"
+        unrelated.hz = 7_240_000
+        unrelated.reading?.turn = 98
+        let turn = RoundtableModel.Turn(id: 99, kind: "talking",
+                                       talkers: [.init(ref: "same", callsign: "K4ABC", nth: 1,
+                                                       hz: 7_236_400, grid: "EM73", sourceRoom: "lsb-7236000")],
+                                       start: 0, end: 1000, ending: false, names: [], heard: 1, mine: nil)
+        let room = RoundtableModel.Room(id: "lsb-7236400", band: "40m", family: "lsb", hz: 7_236_400,
+                                       members: [talker, reporter, unrelated], now: [], earlier: [turn], messages: [])
+        let rows = RoundtableReadings.rows(room: room, keyed: false)
+        #expect(rows.map(\.member.callsign) == ["W1AW"])
+        #expect(rows.first?.member.bearingDeg == 82)
+        #expect(rows.first?.member.id != talker.id)
+        #expect(RoundtableReadings.title(room: room, keyed: false) == "HEARD BY")
+        var doubledTurn = turn
+        doubledTurn.kind = "doubled"
+        doubledTurn.talkers.append(.init(ref: "other", callsign: "W1AW", nth: 1))
+        var doubledRoom = room
+        doubledRoom.members[0].you = true
+        let doubledText = RoundtableText.lastTurnText(room: doubledRoom, turn: doubledTurn, now: 4000)
+        #expect(doubledText.contains("doubled · combined RF") && doubledText.contains("K4ABC + W1AW"))
+        #expect(!doubledText.contains("was yours") && !doubledText.contains("Last turn by K4ABC"))
+        var liveRoom = room
+        var older = turn
+        older.id = 98
+        older.start = -100
+        older.end = nil
+        var latest = turn
+        latest.end = nil
+        liveRoom.now = [older, latest]
+        liveRoom.earlier = []
+        #expect(RoundtableReadings.rows(room: liveRoom, keyed: false).map(\.member.callsign) == ["W1AW"])
     }
 
     @Test("a mention is a shown message, not yours, naming your base callsign as a word")
@@ -971,6 +1076,104 @@ struct RoundtableSheetTests {
         }
     }
 
+    @Test("frequency phone renders exact cochannel people, last-talker reports, units and retained chat")
+    func frequencyShots() async throws {
+        let (model, station) = try await shotStation(frequency: true)
+        model.phoneSettings.roundtableFirstRunNoteSeen = true
+        var scene = Self.boardScene()
+        let source = Self.room
+        scene.roomRecords[source] = scene.roomRecords[source]?.map { original in
+            var record = original
+            if record.fields["record"] == .string("member") || record.fields["record"] == .string("reading") {
+                record.fields["sourceRoom"] = .string(source)
+            }
+            if record.fields["record"] == .string("member") {
+                record.fields["hz"] = .number(7_236_400)
+                record.fields["slice"] = .number(0)
+                record.fields["bearingDeg"] = .number(82)
+            }
+            if record.fields["record"] == .string("message") {
+                record.fields["hz"] = .number(7_236_400)
+                record.fields["family"] = .string("lsb")
+            }
+            if record.fields["record"] == .string("turn") {
+                record.fields["sourceRoom"] = .string(source)
+                record.fields["hz"] = .number(7_236_400)
+            }
+            if case .array(let talkers)? = record.fields["talkers"] {
+                record.fields["talkers"] = .array(talkers.map { value in
+                    guard case .object(var talker) = value else { return value }
+                    talker["sourceRoom"] = .string(source)
+                    talker["hz"] = .number(7_236_400)
+                    talker["grid"] = .string("EM73")
+                    return .object(talker)
+                })
+            }
+            return record
+        }
+        scene.rooms[0]["stations"] = .array((scene.roomRecords[source] ?? []).compactMap { record in
+            guard record.fields["record"] == .string("member") else { return nil }
+            var station = record.fields
+            station["family"] = .string("lsb")
+            return .object(station)
+        })
+        for (call, hz, roomId) in [("W1AW", Int64(7_242_800), "lsb-7240000"),
+                                   ("K9XYZ", Int64(7_256_700), "lsb-7256000")] {
+            var summary = FakeStation.roundtableSummary(id: roomId, members: 1)
+            summary["stations"] = .array([.object([
+                "ref": .string("person-" + call), "sourceRoom": .string(roomId), "slice": .number(0),
+                "hz": .number(Double(hz)), "family": .string("lsb"), "callsign": .string(call),
+                "nth": .number(1), "grid": .string("EM73"), "keyed": .bool(false),
+                "away": .bool(false), "joining": .bool(false),
+            ])])
+            scene.rooms.append(summary)
+        }
+        scene.frequencyPresences = [0: source]
+        try await station.deliverRoundtable(scene)
+        model.roundtable.activeSliceId = 0
+        #expect(await settle { model.roundtable.room?.members.first?.hz != nil && model.roundtable.version == 2 })
+        #expect(model.roundtable.frequencyRows.first?.stations.count == 5)
+        #expect(model.roundtable.frequencyRows.map(\.hz) == [7_236_400, 7_242_800, 7_256_700])
+        let tags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
+        #expect(tags.count == 3 && tags[0].label.contains("\n"))
+        #expect(tags[0].reportLines.contains("Last talker: K4ABC"))
+        #expect(tags[0].reportLines.contains(where: { $0.contains("N4XYZ") && $0.contains("-43") }))
+        let narrowLines = RoundtableTagLayout.contentLines(tags[0], width: 80)
+        #expect(narrowLines.contains("Last") && narrowLines.contains("talker") && narrowLines.contains("K4ABC"))
+        #expect(narrowLines.contains(where: { $0.hasPrefix("-43dBm ") }))
+        let font = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        #expect(narrowLines.allSatisfy { ($0 as NSString).size(withAttributes: [.font: font]).width <= 67 },
+                "All visible narrow-strip report text must fit the actual body")
+        let summary = try #require(model.roundtable.frequencyRows.first)
+        var reportView = try #require(model.roundtable.room)
+        reportView.earlier = []
+        let reportNow = Int64(Date().timeIntervalSince1970 * 1000)
+        reportView.now[0].hz = 7_242_800
+        #expect(RoundtableTagLayout.reportLines(for: summary, view: reportView, now: reportNow)
+            == ["Read reports · details"])
+        reportView.now[0].hz = summary.hz
+        reportView.now[0].kind = "doubled"
+        let doubled = RoundtableTagLayout.reportLines(for: summary, view: reportView, now: reportNow)
+        #expect(doubled.contains("Combined RF · unattributed") && !doubled.contains(where: { $0.contains("-43") }))
+        reportView.now[0].kind = "talking"
+        for i in reportView.members.indices { reportView.members[i].reading?.turn = 999 }
+        let mismatched = RoundtableTagLayout.reportLines(for: summary, view: reportView, now: reportNow)
+        #expect(mismatched.contains(where: { $0.contains("No report") }) && !mismatched.contains(where: { $0.contains("-43") }))
+        try await shoot("frequency-spectrum-portrait", model: model, detent: nil)
+        try await shoot("frequency-spectrum-landscape", model: model, detent: nil, size: CGSize(width: 874, height: 402))
+        try await shoot("frequency-half-mi", model: model, detent: .half)
+        try await shoot("frequency-full-mi", model: model, detent: .full)
+        try await shoot("frequency-keyboard-mi", model: model, detent: .full, typing: true)
+        model.settings.apply(.settingsValue(.init(key: "Roundtable/DistanceUnits", origin: "other",
+            properties: [.init(name: "Roundtable/DistanceUnits", value: .utf8("km"))])))
+        #expect(await settle { model.roundtable.distanceUnits == "km" })
+        try await shoot("frequency-landscape-km", model: model, detent: .half, size: CGSize(width: 874, height: 402))
+        await station.deliverRoundtableState { $0.link = .offline }
+        #expect(await settle { model.roundtable.historyStatus == "History stale · offline" })
+        try await shoot("frequency-history-offline", model: model, detent: .full)
+        await model.disconnect()
+    }
+
     // MARK: Helpers
 
     /// Slice A in a 40 m room of five: K4ABC on the air, readings of it
@@ -1040,8 +1243,9 @@ struct RoundtableSheetTests {
     }
 
     /// A fake Core with Roundtable, the main screen's two slices and a band to draw them on.
-    private func shotStation() async throws -> (AppModel, FakeStation) {
-        let (model, station) = try await connected(additions: [.remoteTx, .roundtable])
+    private func shotStation(frequency: Bool = false) async throws -> (AppModel, FakeStation) {
+        let additions: FakeStation.Additions = frequency ? [.remoteTx, .roundtableFrequency] : [.remoteTx, .roundtable]
+        let (model, station) = try await connected(additions: additions)
         try await MainScreenShotTests.fill(station)
         #expect(await settle { model.main.slices.entries.count == 2 })
         model.main.band.endpointId = 1
@@ -1055,9 +1259,10 @@ struct RoundtableSheetTests {
     }
 
     /// The first `type` view in `window`, once one is there.
-    private func settleView<V: UIView>(_ type: V.Type, in window: UIWindow) async -> V? {
+    private func settleView<V: UIView>(_ type: V.Type, in window: UIWindow,
+                                      matching: (V) -> Bool = { _ in true }) async -> V? {
         func find(_ view: UIView) -> V? {
-            if let match = view as? V {
+            if let match = view as? V, matching(match) {
                 return match
             }
             for child in view.subviews {
@@ -1104,8 +1309,8 @@ struct RoundtableSheetTests {
         return (window, host.view)
     }
 
-    private func shoot(_ name: String, model: AppModel, detent: RoundtableSheet.Detent?) async throws {
-        let size = CGSize(width: 402, height: 874)
+    private func shoot(_ name: String, model: AppModel, detent: RoundtableSheet.Detent?,
+                       size: CGSize = CGSize(width: 402, height: 874), typing: Bool = false) async throws {
         let (window, _) = try host(RoundtableShotRoot(model: model, detent: detent), size: size)
         defer {
             window.isHidden = true
@@ -1115,15 +1320,65 @@ struct RoundtableSheetTests {
         let band = model.main.band
         BandFlagShotTests.feed(band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
         try await ShotWait.requireBandShown(band, in: window, after: bandDraw)
-        try await Task.sleep(for: .milliseconds(300))
-        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        if typing {
+            let input = try #require(await settleView(UITextView.self, in: window, matching: { $0.isEditable }))
+            input.becomeFirstResponder()
+            #expect(await settle { input.isFirstResponder })
         }
-        if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty,
-           let data = image.pngData() {
-            let url = URL(fileURLWithPath: directory).appendingPathComponent("roundtable-\(name).png")
-            try data.write(to: url)
-            print("Wrote \(url.path)")
+        try await Task.sleep(for: .milliseconds(300))
+        var landscapeScroll: UIScrollView?
+        if name == "frequency-landscape-km" {
+            let scroll = try #require(await settleView(UIScrollView.self, in: window, matching: { scroll in
+                let frame = scroll.convert(scroll.bounds, to: window)
+                return frame.minX > size.width * 0.3 && frame.width > 400
+                    && scroll.contentSize.height > scroll.bounds.height + 50
+            }))
+            #expect(scroll.bounds.height >= 100, "Landscape reports need a usable native scroll viewport")
+            let composer = try #require(await settleView(UITextView.self, in: window, matching: { $0.isEditable }))
+            #expect(scroll.convert(scroll.bounds, to: window).maxY <= composer.convert(composer.bounds, to: window).minY,
+                    "The pinned composer must not overlap the report viewport")
+            scroll.setContentOffset(.zero, animated: false)
+            window.layoutIfNeeded()
+            print("Landscape Roundtable viewport=\(scroll.bounds.height) content=\(scroll.contentSize.height)")
+            landscapeScroll = scroll
+        }
+        func save(_ captureName: String) throws {
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty,
+               let data = image.pngData() {
+                let url = URL(fileURLWithPath: directory).appendingPathComponent("roundtable-\(captureName).png")
+                try data.write(to: url)
+                print("Wrote \(url.path)")
+            }
+        }
+        try save(name)
+        if let scroll = landscapeScroll {
+            // SwiftUI Text is drawn inside a hosting view; UIKit accessibility
+            // descendants are not a reliable visibility oracle in this render host.
+            // Check the actual scroll geometry and semantic fixture independently,
+            // then retain the rendered end-of-conversation image for visual review.
+            #expect(model.roundtable.room?.messages.contains(where: {
+                $0.text?.contains("KG4VCF you are S9 here") == true
+            }) == true)
+            // Page through the real viewport so LazyVStack materializes rows.
+            // Jumping directly to an estimated end can expose blank estimated
+            // space while reporting a self-consistent contentSize/offset pair.
+            for _ in 0..<12 {
+                let end = max(0, scroll.contentSize.height - scroll.bounds.height
+                              + scroll.adjustedContentInset.bottom)
+                let destination = min(end, scroll.contentOffset.y + scroll.bounds.height * 0.75)
+                scroll.setContentOffset(CGPoint(x: 0, y: destination), animated: false)
+                await ShotWait.laidOut(window)
+            }
+            let visibleEnd = scroll.contentOffset.y + scroll.bounds.height
+                - scroll.adjustedContentInset.bottom
+            #expect(scroll.contentOffset.y > 50)
+            #expect(abs(visibleEnd - scroll.contentSize.height) <= 1,
+                    "The native viewport must reach the conversation end")
+            print("Landscape conversation end=\(visibleEnd) content=\(scroll.contentSize.height)")
+            try save(name + "-chat-scrolled")
         }
     }
 }

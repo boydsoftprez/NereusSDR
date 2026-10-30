@@ -10,6 +10,9 @@
 // once (groups), for the widened applet's list to age each second.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-10-30: Approved frequency-first people, reports and phone interactions.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import NereusBand
 import SwiftUI
 
@@ -112,8 +115,9 @@ enum RoundtableToolsList {
         rooms.map { room in
                 let glyph = RoundtableFlagLine.glyph(ofState: room.state)
                 let mine = sliceRooms.filter { $0.value == room.id }.keys.sorted().compactMap { letters[$0] }
-                return Row(id: room.id, hz: room.hz, frequency: RoundtableText.shortFrequency(room.hz),
-                           glyph: glyph, who: who(glyph, talkers: room.talkers),
+                return Row(id: room.id, hz: room.hz, frequency: room.stations.isEmpty ? RoundtableText.shortFrequency(room.hz) : RoundtableTagLayout.frequencyText(room.hz),
+                           glyph: glyph, who: room.stations.isEmpty ? who(glyph, talkers: room.talkers)
+                               : room.stations.map { RoundtableText.withNth($0.callsign, $0.nth) }.joined(separator: ", "),
                            sub: sub(room, glyph: glyph, now: now), letters: mine,
                            mentions: mentionCounts[room.id] ?? 0, quiet: glyph == .quiet)
             }
@@ -167,6 +171,7 @@ struct RoundtableToolsPage: View {
     let open: (RoundtableModel.RoomSummary) -> Void
 
     @Environment(\.bandOnScreen) private var onScreen
+    @State private var pathSettingsOpen = false
     @State private var chip: String?
     @State private var startedHere = false
     @State private var firstRunForm = false
@@ -185,12 +190,12 @@ struct RoundtableToolsPage: View {
     }
 
     private var shownChip: String {
-        let chips = RoundtableToolsList.chips(roundtable.rooms)
+        let chips = RoundtableToolsList.chips(roundtable.frequencyRows)
         if let chip, chips.contains(where: { $0.id == chip }) {
             return chip
         }
         let sliceRoom = slices.activeSliceId.flatMap { roundtable.sliceRooms[Int64($0)] }
-        return RoundtableToolsList.defaultChip(roundtable.rooms, sliceRoomId: sliceRoom,
+        return RoundtableToolsList.defaultChip(roundtable.frequencyRows, sliceRoomId: sliceRoom,
                                                sliceHz: slices.active.map { Int64($0.slice.frequencyHz) })
     }
 
@@ -202,6 +207,9 @@ struct RoundtableToolsPage: View {
                     .foregroundStyle(RoundtableColours.dim)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("roundtableTools.reason")
+            }
+            if let reason = roundtable.frequencyReason {
+                Text(reason).font(.system(size: 12)).foregroundStyle(RoundtableColours.dim)
             }
             chips
             connection
@@ -215,7 +223,7 @@ struct RoundtableToolsPage: View {
             if roundtable.askingFirstRun {
                 RoundtableFirstRunPrompt { firstRunForm = true }
             }
-            if roundtable.rooms.isEmpty {
+            if roundtable.frequencyRows.isEmpty {
                 Text("Nobody on Roundtable is on the air.")
                     .font(.system(size: 13))
                     .foregroundStyle(RoundtableColours.dim)
@@ -224,7 +232,7 @@ struct RoundtableToolsPage: View {
                 SpotHubPage.Card {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         let now = Int64(context.date.timeIntervalSince1970 * 1000)
-                        let rows = RoundtableToolsList.rows(roundtable.rooms, chip: shownChip,
+                        let rows = RoundtableToolsList.rows(roundtable.frequencyRows, chip: shownChip,
                                                             sliceRooms: roundtable.sliceRooms, letters: letters,
                                                             mentionCounts: roundtable.mentionCounts, now: now)
                         VStack(spacing: 0) {
@@ -238,13 +246,17 @@ struct RoundtableToolsPage: View {
                     }
                 }
             }
-            Text(RoundtableToolsList.note(sliceLetter: sliceLetter))
+            Text(roundtable.frequencyAvailable
+                 ? "People are shown at their actual frequency. Read leaves your slices where they are; Tune is explicit."
+                 : RoundtableToolsList.note(sliceLetter: sliceLetter))
                 .font(.system(size: 12))
                 .foregroundStyle(RoundtableColours.dim2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 2)
                 .accessibilityIdentifier("roundtableTools.note")
         }
+        .onAppear { roundtable.activeSliceId = slices.activeSliceId.map(Int64.init) }
+        .onChange(of: slices.activeSliceId) { _, id in roundtable.activeSliceId = id.map(Int64.init) }
         .onChange(of: roundtable.askingFirstRun) { _, asking in
             if !asking {
                 firstRunForm = false
@@ -279,7 +291,7 @@ struct RoundtableToolsPage: View {
     private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(RoundtableToolsList.chips(roundtable.rooms)) { item in
+                ForEach(RoundtableToolsList.chips(roundtable.frequencyRows)) { item in
                     let on = item.id == shownChip
                     Button {
                         chip = item.id
@@ -327,6 +339,12 @@ struct RoundtableToolsPage: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("roundtableTools.connection")
                 Spacer(minLength: 0)
+                Button { pathSettingsOpen = true } label: {
+                    Image(systemName: "gearshape").frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityLabel("Roundtable path settings")
+                .accessibilityIdentifier("roundtableTools.pathSettings")
+                .sheet(isPresented: $pathSettingsOpen) { RoundtablePathSettings(roundtable: roundtable) }
                 Button(roundtable.sourceControlTitle) {
                     let start = !roundtable.sourceRunning
                     let generation = roundtable.connectionGeneration
@@ -356,7 +374,7 @@ struct RoundtableToolsPage: View {
 
     private func rowView(_ row: RoundtableToolsList.Row) -> some View {
         RoundtableRoomRow(row: row) {
-            if let room = roundtable.rooms.first(where: { $0.id == row.id }) {
+            if let room = roundtable.frequencyRows.first(where: { $0.id == row.id }) {
                 open(room)
             }
         }
@@ -445,7 +463,9 @@ struct RoundtableToolsRoomPage: View {
         roundtable.room?.id == roomId ? roundtable.room : roundtable.view(of: roomId)
     }
 
-    private var tunedHere: Bool { roundtable.sliceRooms.values.contains(roomId) }
+    private var tunedHere: Bool {
+        roundtable.frequencyAvailable ? roundtable.activeContext?.id == roomId : roundtable.sliceRooms.values.contains(roomId)
+    }
 
     var body: some View {
         ScrollView {
@@ -485,5 +505,37 @@ struct RoundtableToolsRoomPage: View {
     private func tune(_ room: RoundtableModel.Room) {
         slices.tap(to: Double(room.hz))
         Task { await roundtable.backToSlice() }
+    }
+}
+
+/// Station preferences are available on the phone even when nobody is on frequency.
+struct RoundtablePathSettings: View {
+    @ObservedObject var roundtable: RoundtableModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let note = roundtable.note { Text(note).font(.footnote).foregroundStyle(.secondary) }
+                Picker("Distance", selection: Binding(get: { roundtable.distanceUnits }, set: { units in
+                    Task { await roundtable.setDistanceUnits(units) }
+                })) {
+                    Text("Miles (mi)").tag("mi")
+                    Text("Kilometres (km)").tag("km")
+                }
+                .accessibilityIdentifier("roundtableDistanceUnits")
+                Toggle("Show true bearing (°T)", isOn: Binding(get: { roundtable.showBearing }, set: { show in
+                    Task { await roundtable.setShowBearing(show) }
+                }))
+                .accessibilityIdentifier("roundtableShowBearing")
+                Text("Distance and initial true bearing run from the identified talker to the reporter. Unknown identity or missing grids leave the path blank.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            .navigationTitle("Roundtable paths")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents([.medium, .large])
     }
 }

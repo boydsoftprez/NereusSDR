@@ -64,3 +64,20 @@ def test_distance_of_one_grid_is_zero_and_subsquares_count():
 def test_antipodes_fit_the_wire_range():
     # The wire's km is 0 to 20038.
     assert grid.distance_km("AA00", "RR99") <= 20038
+
+
+@pytest.mark.parametrize("start,end,want", [("JJ00", "JJ10", 89.99), ("JJ00", "JJ01", 0.0), ("JJ10", "JJ00", 270.01), ("JJ01", "JJ00", 180.0)])
+def test_initial_bearing_is_directed_true_degrees(start, end, want):
+    assert grid.initial_bearing_deg(start, end) == pytest.approx(want, abs=0.02)
+
+
+def test_initial_bearing_is_unknown_for_missing_or_coincident_positions():
+    assert grid.initial_bearing_deg(None, "EM73") is None
+    assert grid.initial_bearing_deg("EM73", "bad") is None
+    assert grid.initial_bearing_deg("EM73", "EM73") is None
+
+
+def test_initial_bearing_crosses_date_line_on_short_path():
+    # Same latitude, neighboring squares across the date line.
+    assert 89 < grid.initial_bearing_deg("RJ90", "AJ00") < 91
+    assert 269 < grid.initial_bearing_deg("AJ00", "RJ90") < 271

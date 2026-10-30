@@ -3,7 +3,8 @@
    reported it and for how long, each station's raw readings on a
    timeline, an hourly histogram, and its messages. Reads GET /v1/me,
    /v1/me/sessions, /v1/me/session/<id> and /v1/me/histogram; posts
-   /signout-everywhere and /archive/delete with the session's CSRF token. */
+   /signout-everywhere and /archive/delete with the session's CSRF token.
+   2026-10-30: mi/km and directed bearing, J.J. Boyd / KG4VCF, Codex. */
 "use strict";
 
 (function () {
@@ -176,6 +177,7 @@
         render();
         histogram();
       }),
+      RT.pathControls(render),
       el("span", { class: "sp" }),
       el("button", { class: "btn small", type: "button", text: "Sign out everywhere", on: { click: signOutEverywhere } }),
     ]);
@@ -284,7 +286,7 @@
       el("span", { class: "f" }, [el("em", { text: RT.bandLong(s.band) }), s.hz ? RT.freqText(s.hz) : s.room]),
       el("span", { class: "w", text: RT.dateText(s.start) + " · " + RT.hhmm(s.start) + " to " + RT.hhmm(s.end) + " UTC · " + minutes(s.end - s.start) }),
       el("span", { class: "sp" }),
-      s.family ? el("a", { href: "/r/" + s.family + "/" + s.hz, text: "Open this frequency's room" }) : null,
+      s.family ? el("a", { href: "/r/" + s.family + "/" + s.hz, text: "Browse this frequency" }) : null,
     ]));
     if (!d) {
       box.appendChild(el("div", { class: "none", text: "Loading…" }));
@@ -363,7 +365,7 @@
           render();
         } },
       }, [
-        el("span", { class: "c" }, [reader.callsign || "", reader.away ? el("span", { class: "away", text: "AWAY" }) : null, reader.km !== null ? el("small", { text: reader.km.toLocaleString("en-US") + " km" }) : null]),
+        el("span", { class: "c" }, [reader.callsign || "", reader.away ? el("span", { class: "away", text: "AWAY" }) : null, RT.pathNode(reader.km, reader.bearingDeg, true)]),
         trk,
         el("span", { class: "wd", text: secondsText(reader.watched) }),
         el("span", { class: "rg", text: range }),

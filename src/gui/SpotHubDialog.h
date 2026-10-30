@@ -11,6 +11,8 @@
 // (see https://github.com/ten9876/AetherSDR/blob/main/LICENSE).
 //
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-05-11  J.J. Boyd / KG4VCF  Phase 3J-2 Task F1. Initial shell
 //                                    port. Constructor wires the same
 //                                    six client pointers AetherSDR
@@ -630,6 +632,8 @@ private:
     QLabel*      m_rtPreview{nullptr};
     QComboBox*   m_rtAwayCombo{nullptr};
     QCheckBox*   m_rtHighlightChk{nullptr};
+    QComboBox*   m_rtDistanceCombo{nullptr};
+    QCheckBox*   m_rtBearingChk{nullptr};
     QLineEdit*   m_rtCallEdit{nullptr};
     QLineEdit*   m_rtGridEdit{nullptr};
     QLabel*      m_rtStationNotice{nullptr};

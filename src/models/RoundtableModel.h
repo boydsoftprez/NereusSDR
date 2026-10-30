@@ -30,6 +30,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Versioned guarded frequency-context actions and records.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 11).
@@ -96,12 +98,15 @@ public:
     /// A test's clock; an empty function restores the wall clock.
     static void setClockForTest(std::function<qint64()> clock);
 
+    static constexpr const char* kFrequencyStreamPrefix = "roundtableFrequency:";
+    static QString frequencyContextId(qint64 hz, const QString& family);
+    static bool isFrequencyContext(const QString& id);
     static QString roomStreamName(const QString& roomId);
     /// The room id of a `roundtableRoom:<id>` stream, else empty.
     static QString roomIdOfStream(const QString& stream);
     /// The `roundtableRooms` records for rooms(): id the room id, fields
     /// {kind: "room", ...summary}.
-    static QHash<QString, QJsonObject> roomsRecords(const QJsonArray& rooms);
+    static QHash<QString, QJsonObject> roomsRecords(const QJsonArray& rooms, int frequencyVersion = 0);
     /// The `roundtableRoom:<id>` records for room(): member:<ref>,
     /// reading:<ref>, turn:<id>, name:<turn id>:<name> and message:<id>.
     static QHash<QString, QJsonObject> roomRecords(const QJsonObject& room);
@@ -131,17 +136,25 @@ public:
     void applyRooms(const QJsonObject& full);
     void applyRoomsDelta(const QJsonObject& delta);
     void applyRoom(const QJsonObject& full);
+    bool frequencyAvailable() const;
+    bool postAt(int sliceId, qint64 hz, const QString& family, const QString& text,
+                const QString& clientId);
+    bool readAt(qint64 hz, const QString& family);
+    void unreadAt(qint64 hz, const QString& family);
+
     void applyRoomDelta(const QJsonObject& delta);
 
     // ---- The Core's streams and answers (window placement).
     /// One `roundtableRooms` or `roundtableRoom:<id>` batch; other streams
     /// are ignored (false).
     bool applyRecordBatch(const RecordBatch& batch);
+    void applyHistoryResult(const QString& clientId, bool ok, const QJsonArray& states, const QString& reason);
+    bool requestHistory(const QJsonArray& ids, const QString& clientId);
     void applyPostResult(const QString& clientId, bool ok, const QString& messageIdOrReason);
     void applyWebLink(const QUrl& url);
     /// A verb the Core refused (other than a post, which answers through
     /// postResult).
-    void applyRefusal(const QString& verb, const QString& reason);
+    void applyRefusal(const QString& verb, const QString& reason, const QString& context = {});
     /// The window's link ended: no rooms in view.
     void clearStationRooms();
 
@@ -219,6 +232,7 @@ signals:
     void sliceRoomsChanged();
     void readingRoomChanged();
     void postResult(const QString& clientId, bool ok, const QString& messageIdOrReason);
+    void historyResult(const QString& clientId, bool ok, const QJsonArray& states, const QString& reason);
     void webLinkReady(const QUrl& url);
     /// `verb` is the roundtable.* verb's name after the dot ("delete").
     void actionRefused(const QString& verb, const QString& reason);
@@ -235,7 +249,7 @@ private:
 
     void connectState(RoundtableState* state);
     void onStateChanged();
-    void upsertMember(RoomView& view, const QJsonObject& member);
+    void upsertMember(RoomView& view, const QJsonObject& member, bool scoped = false);
     void trimMessages(RoomView& view);
     void rebuildRoomsFromRecords();
     void rebuildRoomFromRecords(const QString& roomId);
@@ -251,6 +265,7 @@ private:
     IStationLink* m_link = nullptr;
     QList<QMetaObject::Connection> m_connections;
 
+    int m_serverFrequencyVersion = 0;
     QHash<QString, QJsonObject> m_summaries;
     QHash<QString, RoomView> m_views;
     // Window placement: each stream's records as the Core sent them.

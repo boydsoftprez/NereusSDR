@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-30: Negotiated guarded frequency views and reconnect state.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10: R-RT-6, R-RT-12,
@@ -29,6 +33,7 @@
 //               AI-assisted via Claude Code.
 // =================================================================
 
+#include <utility>
 #include "core/roundtable/RoundtableClient.h"
 
 #include "core/security/StationIdentity.h"
@@ -459,6 +464,7 @@ void RoundtableClient::reconcile()
 
 void RoundtableClient::openLink(Link& link, Leg leg)
 {
+    if (&link == &m_main) { m_frequencyVersion = 0; }
     closeLink(link, false);
     link.leg = leg;
     link.url = leg == Leg::Live ? liveUrl() : m_serverUrl;
@@ -542,6 +548,9 @@ void RoundtableClient::closeLink(Link& link, bool polite)
     link.generation = ++m_nextGeneration;
     link.open = false;
     link.signedIn = false;
+    if (&link == &m_main) {
+        failHistory(tr("Roundtable disconnected before history was checked."));
+    }
     if (!link.socket) {
         return;
     }
@@ -570,7 +579,10 @@ void RoundtableClient::onConnected(Leg leg, quint64 generation)
     link.lastPingMs = link.lastFrameMs;
     if (leg == Leg::Live) {
         // 7.8: the band list, all bands, and the rooms being read.
-        send(link, RoundtableWire::watchBand(QStringLiteral("all")));
+        m_frequencyVersion = 0;
+        QJsonObject watch = RoundtableWire::watchBand(QStringLiteral("all"));
+        watch.insert(QStringLiteral("frequencyVersion"), 1);
+        send(link, watch);
         m_watched.clear();
         syncWatches();
         setState(LinkState::Hidden);
@@ -774,7 +786,9 @@ void RoundtableClient::answerChallenge(Link& link, const QJsonObject& message)
     const QByteArray transcript =
         RoundtableWire::helloTranscript(RoundtableWire::signingHost(link.url), nonce);
     const QByteArray signature = key->sign(transcript);
-    send(link, RoundtableWire::hello(m_software, m_softwareVersion, key->publicKeySpki(), signature));
+    QJsonObject hello = RoundtableWire::hello(m_software, m_softwareVersion, key->publicKeySpki(), signature);
+    hello.insert(QStringLiteral("frequencyVersion"), 1);
+    send(link, hello);
 }
 
 void RoundtableClient::handleError(Link& link, const QJsonObject& message)
@@ -796,6 +810,9 @@ void RoundtableClient::handleError(Link& link, const QJsonObject& message)
         }
     }
     qCInfo(lcRoundtable) << "Roundtable refused" << about.toString() << "with" << code;
+    if (&link == &m_main && about.toString() == QLatin1String("history")) {
+        failHistory(reason);
+    }
     emit errorReceived(code, reason);
 }
 
@@ -815,6 +832,7 @@ void RoundtableClient::handleStation(const QJsonObject& message)
     }
     if (type == QLatin1String("welcome")) {
         m_main.signedIn = true;
+        m_frequencyVersion = message.value(QStringLiteral("frequencyVersion")).toInt();
         m_attempt = 0;
         m_stationId = message.value(QStringLiteral("station")).toString();
         qCInfo(lcRoundtable) << "Signed in to Roundtable as" << shortId(m_stationId);
@@ -833,13 +851,16 @@ void RoundtableClient::handleStation(const QJsonObject& message)
         for (const QString& room : std::as_const(m_reads)) {
             send(m_main, RoundtableWire::read(room));
         }
+        syncFrequencyReads();
         flushQueuedArchive(m_main, m_mainQueue);
         return;
     }
     if (!m_main.signedIn) {
         return;
     }
-    if (type == QLatin1String("posted")) {
+    if (type == QLatin1String("history")) {
+        handleHistory(message);
+    } else if (type == QLatin1String("posted")) {
         const bool ok = message.value(QStringLiteral("ok")).toBool();
         const QString clientId = message.value(QStringLiteral("clientId")).toString();
         emit postResult(clientId, ok,
@@ -868,13 +889,39 @@ void RoundtableClient::handleLive(const QJsonObject& message)
         // The server answered: this reader is up, so the ladder restarts.
         m_attempt = 0;
     }
-    handleViews(type, message);
+    if (type == QLatin1String("history")) {
+        handleHistory(message);
+    } else {
+        handleViews(type, message);
+    }
+}
+
+void RoundtableClient::handleHistory(const QJsonObject& message)
+{
+    const QString clientId = message.value(QStringLiteral("clientId")).toString();
+    const auto it = m_historyRequests.find(clientId);
+    if (m_frequencyVersion < 1 || it == m_historyRequests.end()) { return; }
+    const QJsonArray ids = it->ids;
+    m_historyRequests.erase(it);
+    const QJsonArray states = message.value(QStringLiteral("states")).toArray();
+    const bool matched = RoundtableWire::historyStatesMatch(ids, states);
+    emit historyResult(clientId, matched, matched ? states : QJsonArray{},
+                       matched ? QString() : tr("Roundtable returned different history IDs."));
+}
+
+void RoundtableClient::failHistory(const QString& reason)
+{
+    const auto pending = std::exchange(m_historyRequests, {});
+    for (auto it = pending.cbegin(); it != pending.cend(); ++it) {
+        emit historyResult(it.key(), false, {}, reason);
+    }
 }
 
 void RoundtableClient::handleViews(const QString& type, const QJsonObject& message)
 {
     const qint64 gen = message.value(QStringLiteral("gen")).toInteger();
     if (type == QLatin1String("rooms")) {
+        m_frequencyVersion = message.value(QStringLiteral("frequencyVersion")).toInt(m_frequencyVersion);
         m_roomsGen = gen;
         m_awaitingRooms = false;
         m_listedRooms.clear();
@@ -887,6 +934,7 @@ void RoundtableClient::handleViews(const QString& type, const QJsonObject& messa
         }
         emit roomsReceived(message);
         syncWatches();
+        syncFrequencyReads();
     } else if (type == QLatin1String("roomsDelta")) {
         if (m_awaitingRooms) {
             return;
@@ -913,7 +961,9 @@ void RoundtableClient::handleViews(const QString& type, const QJsonObject& messa
         emit roomsDeltaReceived(message);
         syncWatches();
     } else if (type == QLatin1String("room")) {
-        const QString id = message.value(QStringLiteral("id")).toString();
+        const QString id = (message.value(QStringLiteral("view")).toString() == QLatin1String("frequency")
+                            ? QStringLiteral("frequency:") : QString())
+                           + message.value(QStringLiteral("id")).toString();
         m_roomGens.insert(id, gen);
         m_awaitingRoom.remove(id);
         emit roomReceived(message);
@@ -921,14 +971,20 @@ void RoundtableClient::handleViews(const QString& type, const QJsonObject& messa
             scanForMentions(id, message.value(QStringLiteral("messages")).toArray());
         }
     } else if (type == QLatin1String("delta")) {
-        const QString id = message.value(QStringLiteral("room")).toString();
+        const bool frequency = message.value(QStringLiteral("view")).toString() == QLatin1String("frequency");
+        const QString id = (frequency ? QStringLiteral("frequency:") : QString())
+                           + message.value(QStringLiteral("room")).toString();
         if (m_awaitingRoom.contains(id)) {
             return;
         }
         const qint64 last = m_roomGens.value(id, -1);
         if (last < 0 || gen != last + 1) {
             m_awaitingRoom.insert(id);
-            send(m_main, RoundtableWire::resync(id));
+            QJsonObject resync = RoundtableWire::resync(frequency ? id.mid(10) : id);
+            if (frequency) {
+                resync.insert(QStringLiteral("view"), QStringLiteral("frequency"));
+            }
+            send(m_main, resync);
             return;
         }
         if (message.value(QStringLiteral("closed")).toBool()) {
@@ -1072,6 +1128,13 @@ void RoundtableClient::sendReadingsIfDue(qint64 now)
 void RoundtableClient::serviceTimers()
 {
     const qint64 now = monoNow();
+    const QStringList pendingHistory = m_historyRequests.keys();
+    for (const QString& id : pendingHistory) {
+        if (m_historyRequests.contains(id) && now >= m_historyRequests.value(id).dueMs) {
+            m_historyRequests.remove(id);
+            emit historyResult(id, false, {}, tr("Roundtable did not answer the history check."));
+        }
+    }
     if (m_started && !m_offline && !m_main.socket && m_reconnectDueMs >= 0 && now >= m_reconnectDueMs) {
         m_reconnectDueMs = -1;
         reconcile();
@@ -1115,6 +1178,84 @@ void RoundtableClient::post(const QString& roomId, const QString& text, const QS
     }
     if (!send(m_main, RoundtableWire::post(roomId, text, clientId))) {
         emit postResult(clientId, false, tr("This message can't be sent."));
+    }
+}
+
+bool RoundtableClient::requestHistory(const QJsonArray& ids, const QString& clientId)
+{
+    if (!m_main.open || m_frequencyVersion < 1 || m_historyRequests.size() >= 16
+        || m_historyRequests.contains(clientId)) { return false; }
+    const QJsonObject request = RoundtableWire::history(ids, clientId);
+    if (!RoundtableWire::decode(QString::fromUtf8(RoundtableWire::encode(request)),
+            RoundtableWire::Direction::StationToServer).ok) { return false; }
+    m_historyRequests.insert(clientId, HistoryRequest{ids, monoNow() + kArchiveTimeoutMs});
+    if (!send(m_main, request)) {
+        m_historyRequests.remove(clientId);
+        return false;
+    }
+    return true;
+}
+
+void RoundtableClient::postAt(int sliceId, qint64 hz, const QString& family,
+                             const QString& text, const QString& clientId)
+{
+    if (!stationLive() || m_frequencyVersion < 1) {
+        emit postResult(clientId, false, tr("Frequency chat needs a connected, updated Roundtable server."));
+        return;
+    }
+    if (!send(m_main, RoundtableWire::postAt(sliceId, hz, family, text, clientId))) {
+        emit postResult(clientId, false, tr("This message can't be sent."));
+    }
+}
+
+bool RoundtableClient::readAt(qint64 hz, const QString& family)
+{
+    const QString key = family + QLatin1Char('-') + QString::number(hz);
+    if (m_frequencyReads.contains(key)) {
+        ++m_frequencyReadUsers[key];
+        return true;
+    }
+    const QJsonObject context = RoundtableWire::readAt(hz, family);
+    const auto checked = RoundtableWire::decode(QString::fromUtf8(RoundtableWire::encode(context)),
+                                               RoundtableWire::Direction::StationToServer);
+    if (!checked.ok || m_frequencyReads.size() >= kMaxWatched) {
+        return false;
+    }
+    m_frequencyReads.insert(key, context);
+    m_frequencyReadUsers.insert(key, 1);
+    if (m_main.open && m_frequencyVersion >= 1) {
+        send(m_main, RoundtableWire::readAt(hz, family, m_main.leg == Leg::Live));
+    }
+    return true;
+}
+
+void RoundtableClient::unreadAt(qint64 hz, const QString& family)
+{
+    const QString key = family + QLatin1Char('-') + QString::number(hz);
+    const auto users = m_frequencyReadUsers.find(key);
+    if (users == m_frequencyReadUsers.end()) { return; }
+    if (--users.value() > 0) { return; }
+    m_frequencyReadUsers.erase(users);
+    if (!m_frequencyReads.remove(key) || m_frequencyVersion < 1 || !m_main.open) {
+        return;
+    }
+    QJsonObject message = RoundtableWire::readAt(hz, family, m_main.leg == Leg::Live);
+    message.insert(QStringLiteral("type"), m_main.leg == Leg::Live
+        ? QStringLiteral("unwatchAt") : QStringLiteral("unreadAt"));
+    send(m_main, message);
+    m_roomGens.remove(QStringLiteral("frequency:") + key);
+    m_awaitingRoom.remove(QStringLiteral("frequency:") + key);
+}
+
+void RoundtableClient::syncFrequencyReads()
+{
+    if (!m_main.open || m_frequencyVersion < 1) {
+        return;
+    }
+    for (const QJsonObject& context : std::as_const(m_frequencyReads)) {
+        send(m_main, RoundtableWire::readAt(context.value(QStringLiteral("hz")).toInteger(),
+                                           context.value(QStringLiteral("family")).toString(),
+                                           m_main.leg == Leg::Live));
     }
 }
 

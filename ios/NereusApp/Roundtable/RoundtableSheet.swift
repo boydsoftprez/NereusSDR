@@ -18,6 +18,9 @@
 // sheet at full height, so Stay hidden and Go live show without a scroll.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
+// 2026-10-30: Approved frequency-first people, reports and phone interactions.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import SwiftUI
 
 /// The Roundtable sheet (spec 11.3, D17, U2, U3, U14): a flag's Roundtable
@@ -61,6 +64,7 @@ struct RoundtableSheet: View {
 
     /// The question was answered here: no note follows it.
     @State private var answeredHere = false
+    @State private var compactLandscape = false
 
     static let handleHeight: CGFloat = 22
 
@@ -86,7 +90,7 @@ struct RoundtableSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             // Keyed, the sheet below the gauges is the TX line and the readings of you, as the board draws it.
-            if !keyed {
+            if !keyed && !compactLandscape {
                 handle
             }
             if asking, let askFirstRun {
@@ -106,20 +110,27 @@ struct RoundtableSheet: View {
                 }
                 if !keyed {
                     header
-                    connection
+                    if !compactLandscape { connection }
                 }
                 content
                 if !(dialOn && keyed) {
                     RoundtableComposer(roundtable: roundtable, leadingWidth: dialOn ? 0
-                                       : PttButton.holdDiameter + PttButton.holdClearance) {
+                                       : (compactLandscape ? 44 + 8 : PttButton.holdDiameter + PttButton.holdClearance),
+                                       compact: compactLandscape) {
                         if !dialOn {
-                            PttButton(transmit: transmit, linkUp: linkUp, mode: .hold(diameter: PttButton.holdDiameter),
+                            PttButton(transmit: transmit, linkUp: linkUp, mode: .hold(diameter: compactLandscape ? 44 : PttButton.holdDiameter),
                                       holdObserver: holdObserver)
-                            Spacer().frame(width: PttButton.holdClearance)
+                            Spacer().frame(width: compactLandscape ? 8 : PttButton.holdClearance)
                         }
                     }
                 }
             }
+        }
+        .onGeometryChange(for: Bool.self) { geometry in
+            geometry.size.width > 500 && geometry.size.height < 350
+        } action: { compact in
+            compactLandscape = compact
+            if compact { detent = .full }
         }
         .background(RoundtableColours.ground)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius, topTrailingRadius: WorkspacePalette.panelRadius))
@@ -211,7 +222,7 @@ struct RoundtableSheet: View {
         }
         .padding(.leading, 12)
         .padding(.trailing, 4)
-        .frame(height: 40)
+        .frame(height: compactLandscape ? 44 : 40)
     }
 
     private var connection: some View {
@@ -231,7 +242,7 @@ struct RoundtableSheet: View {
                                ownDbm: slices.entries.first { $0.id == slices.activeSliceId }?.signalDbm,
                                sliceLetter: activeLetter, draftKept: dialOn && keyed && !draft.isEmpty,
                                tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
-                               expand: { detent = .full })
+                               expand: { detent = .full }, compact: compactLandscape)
         } else {
             message("Nobody on Roundtable is tuned here.",
                     detail: "Tap a tag on the band to tune there.")
@@ -298,7 +309,7 @@ extension RoundtableModel {
         guard let shownRoomId else {
             return false
         }
-        return sliceRooms.values.contains(shownRoomId)
+        return frequencyAvailable ? activeContext?.id == shownRoomId : sliceRooms.values.contains(shownRoomId)
     }
 
     /// The station has not answered Roundtable's first question yet.
@@ -372,14 +383,22 @@ struct RoundtableComposer<Leading: View>: View {
     @ObservedObject var roundtable: RoundtableModel
     let leadingWidth: CGFloat
     let leading: Leading
+    var compact = false
 
     @State private var sending = false
-    @State private var failed: String?
+    @State private var failures: [String: String] = [:]
+    @State private var pendingPosts: [String: (text: String, clientId: String)] = [:]
+    private var failureKey: String { roomId.map(roundtable.draftKey) ?? "" }
+    private var failed: String? {
+        get { failures[failureKey] }
+        nonmutating set { failures[failureKey] = newValue }
+    }
     @FocusState private var boxFocused: Bool
 
-    init(roundtable: RoundtableModel, leadingWidth: CGFloat = 0, @ViewBuilder leading: () -> Leading) {
+    init(roundtable: RoundtableModel, leadingWidth: CGFloat = 0, compact: Bool = false, @ViewBuilder leading: () -> Leading) {
         self.roundtable = roundtable
         self.leadingWidth = leadingWidth
+        self.compact = compact
         self.leading = leading()
     }
 
@@ -389,7 +408,7 @@ struct RoundtableComposer<Leading: View>: View {
     private var you: RoundtableModel.Member? { room?.members.first(where: \.you) }
     private var away: Bool { you?.away ?? false }
     private var live: Bool { roundtable.linkState == .live }
-    private var hiddenHere: Bool { roundtable.linkState == .hidden }
+    private var hiddenHere: Bool { roundtable.hidden || roundtable.linkState == .hidden }
 
     private var draft: String {
         roomId.map(roundtable.draft) ?? ""
@@ -406,6 +425,8 @@ struct RoundtableComposer<Leading: View>: View {
 
     /// The hint under the box: why Send is off, or what a post carries.
     private var hint: String? {
+        if !roundtable.firstRunAnswered { return "Choose Stay hidden or Go live before posting." }
+        if roundtable.hidden { return "Hidden stations can’t post." }
         if !tunedHere {
             return "Tune a slice here to post. You can read everything."
         }
@@ -421,7 +442,7 @@ struct RoundtableComposer<Leading: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 0) {
-                leading
+                if !boxFocused { leading }
                 if hiddenHere {
                     Text("Hidden stations can't post. Go live to join in.")
                         .font(.system(size: 12))
@@ -453,7 +474,7 @@ struct RoundtableComposer<Leading: View>: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, compact ? 4 : 8)
         .background(RoundtableColours.ground)
         .overlay(alignment: .top) { Rectangle().fill(RoundtableColours.rule).frame(height: 1) }
     }
@@ -501,17 +522,24 @@ struct RoundtableComposer<Leading: View>: View {
         }
         sending = true
         failed = nil
+        let draftKey = roundtable.draftKey(roomId)
+        let originalFailureKey = failureKey
+        let context = roundtable.activeContext
+        let pending = pendingPosts[draftKey]
+        let clientId = pending?.text == text ? pending!.clientId : UUID().uuidString
+        pendingPosts[draftKey] = (text, clientId)
         Task {
-            let result = await roundtable.post(text, in: roomId)
+            let result = await roundtable.post(text, in: roomId, clientId: clientId, context: context)
             sending = false
             switch result {
             case .posted:
+                if pendingPosts[draftKey]?.clientId == clientId { pendingPosts[draftKey] = nil }
                 // The draft goes only once the Core's Roundtable took it.
-                if roundtable.draft(roomId) == text {
-                    roundtable.setDraft("", for: roomId)
+                if roundtable.drafts[draftKey] == text {
+                    roundtable.drafts[draftKey] = nil
                 }
             case .refused(let reason):
-                failed = reason
+                failures[originalFailureKey] = reason
             }
         }
     }

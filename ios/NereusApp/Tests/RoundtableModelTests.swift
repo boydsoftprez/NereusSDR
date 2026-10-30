@@ -8,6 +8,9 @@
 // 2026-10-25: Roundtable fix wave: a room is built once per change of its
 // records. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-10-30: Exact-frequency contexts, scoped reports, paths and native renders.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import Foundation
 import NereusBand
 import NereusKitTesting
@@ -384,6 +387,297 @@ struct RoundtableModelTests {
         #expect(rt.recentNames(Self.usb).isEmpty)
     }
 
+    @Test("frequency subscriptions follow exact slice Hz without an RF room, and preserve sender context and drafts")
+    func frequencyContextWithoutRFMembership() async throws {
+        let (model, station, rt, _) = try await connected(additions: [.roundtableFrequency])
+        try await MainScreenShotTests.fill(station)
+        #expect(await settle { model.main.catalogFeed.catalog != nil && !model.main.slices.entries.isEmpty })
+        var message = FakeStation.roundtableMessage(id: 901, t: 1000, callsign: "W1AW", text: "Original frequency")
+        message.fields["hz"] = .number(7_236_400)
+        message.fields["family"] = .string("lsb")
+        var scene = FakeStation.RoundtableScene(rooms: [], roomRecords: ["lsb-7236400": [message]], sliceRooms: [:])
+        scene.frequencyPresences = [0: "lsb-7236400"]
+        try await station.deliverRoundtable(scene)
+        model.mirror.apply(.delta(.init(key: "slice:0", properties: [
+            .init(name: "frequency", value: .f64(7_236_400)),
+            .init(name: "dspMode", value: .enumeration(0)),
+        ])))
+        rt.activeSliceId = 0
+        let ready = await settle { rt.activeContext?.id == "lsb-7236400" && rt.room?.messages.count == 1 }
+        if !ready {
+            print("Frequency fixture version=\(rt.version) context=\(String(describing: rt.activeContext)) note=\(rt.note ?? "none") reads=\(station.roundtableReads) followed=\(station.roundtableFollowed)")
+        }
+        try #require(ready)
+        #expect(station.roundtableReads.contains("lsb-7236400"))
+        #expect(station.roundtableFollowed.contains("roundtableFrequency:lsb-7236400"))
+        rt.setDraft("Keep on the original frequency", for: "lsb-7236400")
+        #expect(await rt.post("hello", in: "lsb-7236400", clientId: "frequency-test") == .posted(messageId: "1001"))
+        let originalCount = station.roundtablePosts.count
+        let otherSlice = RoundtableModel.FrequencyContext(sliceId: 1, hz: 7_236_400, family: "lsb")
+        if case .refused = await rt.post("Wrong slice", in: "lsb-7236400", context: otherSlice) {} else {
+            Issue.record("An original draft cannot migrate to another slice at the same Hz")
+        }
+        #expect(station.roundtablePosts.count == originalCount)
+        let args = await sent(station, "roundtable.postAt")
+        #expect(args?.contains(.init(name: "sliceId", value: .i64(0))) == true)
+        #expect(args?.contains(.init(name: "hz", value: .i64(7_236_400))) == true)
+        model.mirror.apply(.delta(.init(key: "slice:0", properties: [
+            .init(name: "frequency", value: .f64(7_250_001)),
+        ])))
+        #expect(await settle { rt.activeContext?.hz == 7_250_001 })
+        let before = station.roundtablePosts.count
+        if case .refused = await rt.post("Keep on the original frequency", in: "lsb-7236400") {} else {
+            Issue.record("A stale frequency retry must refuse")
+        }
+        #expect(station.roundtablePosts.count == before)
+        #expect(rt.draft("lsb-7236400") == "Keep on the original frequency")
+        #expect(rt.draft("lsb-7250001").isEmpty)
+        #expect(rt.receivedMessages.first(where: { $0.id == 901 })?.hz == 7_236_400)
+        await model.disconnect()
+    }
+
+    private static func historyMessage(_ id: Int64, state: String = "shown", text: String = "Received earlier") -> LinkMessage.RecordBatch.Record {
+        var record = FakeStation.roundtableMessage(id: id, t: id, callsign: "W1AW", text: text)
+        record.fields["hz"] = .number(7_236_400)
+        record.fields["family"] = .string("lsb")
+        record.fields["state"] = .string(state)
+        if state != "shown" { record.fields["text"] = .null }
+        return record
+    }
+
+    private func historyConnected(_ messages: [LinkMessage.RecordBatch.Record], replies: HeldCommandReplies? = nil) async throws
+        -> (AppModel, FakeStation, RoundtableModel, TestLinkClock) {
+        let (model, station, rt, clock) = try await connected(additions: [.roundtableFrequency], replies: replies)
+        try await MainScreenShotTests.fill(station)
+        let context = "lsb-7236400"
+        var scene = FakeStation.RoundtableScene(rooms: [], roomRecords: [context: messages], sliceRooms: [:])
+        scene.frequencyPresences = [0: context]
+        try await station.deliverRoundtable(scene)
+        model.mirror.apply(.delta(.init(key: "slice:0", properties: [
+            .init(name: "frequency", value: .f64(7_236_400)), .init(name: "dspMode", value: .enumeration(0))])))
+        rt.activeSliceId = 0
+        try #require(await settle { rt.receivedMessages.count == min(messages.count, 200)
+            && rt.room?.frequencyView == true && rt.historyStatus == nil && !station.roundtableHistoryRequests.isEmpty })
+        return (model, station, rt, clock)
+    }
+
+    @Test("retuned received IDs refresh deletion, moderation, expiry and real restoration without discovery")
+    func retainedHistoryAfterRetuning() async throws {
+        let (model, station, rt, clock) = try await historyConnected([Self.historyMessage(901), Self.historyMessage(902), Self.historyMessage(903)])
+        let mentions = rt.mentionCounts
+        model.mirror.apply(.delta(.init(key: "slice:0", properties: [.init(name: "frequency", value: .f64(7_250_001))])))
+        try #require(await settle { rt.activeContext?.hz == 7_250_001
+            && !station.roundtableFollowed.contains("roundtableFrequency:lsb-7236400") })
+        for (id, state) in [(Int64(901), "deleted"), (902, "removed"), (903, "expired")] {
+            station.setRoundtableHistoryState(.init(id: id, state: state, text: nil))
+        }
+        rt.refreshReceivedHistory()
+        #expect(await settle { rt.receivedMessages.map(\.state) == ["deleted", "removed", "expired"] && rt.historyStatus == nil })
+        #expect(rt.receivedMessages.allSatisfy { $0.text == nil && $0.hz == 7_236_400 })
+        #expect(rt.mentionCounts == mentions)
+        station.setRoundtableHistoryState(.init(id: 902, state: "shown", text: "Actually restored by helper"))
+        await clock.advance(by: 10_000)
+        #expect(await settle { rt.receivedMessages.first(where: { $0.id == 902 })?.text == "Actually restored by helper" })
+        #expect(rt.receivedMessages.map(\.id) == [901, 902, 903])
+        #expect(station.roundtableHistoryRequests.allSatisfy { $0.count <= 200 && Set($0).count == $0.count })
+        let draftContext = try #require(rt.room?.id)
+        rt.setDraft("keep this slice draft", for: draftContext)
+        let draftKey = rt.draftKey(draftContext)
+        await model.disconnect()
+        #expect(await settle { rt.historyStatus == "History stale · offline" })
+        #expect(rt.room?.messages.count == 3, "Disconnected received history stays visible")
+        #expect(rt.room?.messages.first(where: { $0.id == 902 })?.text == "Actually restored by helper")
+        #expect(rt.draftKey(draftContext) == draftKey)
+        #expect(rt.draft(draftContext) == "keep this slice draft")
+        rt.setDraft("edited while offline", for: draftContext)
+        #expect(rt.drafts[draftKey] == "edited while offline")
+    }
+
+    @Test("history snapshots guard each ID against newer live tombstones and ignore unrelated busy arrivals")
+    func retainedHistoryLiveGenerationGuards() async throws {
+        let heldReplies = HeldCommandReplies()
+        let (model, station, rt, _) = try await historyConnected([Self.historyMessage(901), Self.historyMessage(902)], replies: heldReplies)
+        station.setRoundtableHistoryState(.init(id: 902, state: "removed", text: nil))
+        heldReplies.hold("roundtable.history")
+        rt.refreshReceivedHistory()
+        try #require(await settle { heldReplies.count("roundtable.history") >= 1 })
+        await station.deliverRoundtableRoom("lsb-7236400", upserts: [
+            Self.historyMessage(901, state: "deleted"), Self.historyMessage(904, text: "Unrelated live arrival")])
+        try #require(await settle { rt.receivedMessages.first(where: { $0.id == 901 })?.state == "deleted"
+            && rt.receivedMessages.contains(where: { $0.id == 904 }) })
+        await heldReplies.release("roundtable.history")
+        #expect(await settle { rt.receivedMessages.first(where: { $0.id == 902 })?.state == "removed" && rt.historyStatus == nil })
+        #expect(rt.receivedMessages.first(where: { $0.id == 901 })?.text == nil)
+        // A history tombstone also survives reconstruction caused by a meter
+        // or member record while the active stream still holds old shown text.
+        await station.deliverRoundtableRoom("lsb-7236400", upserts: [FakeStation.roundtableMember(ref: "m", callsign: "N4XYZ", seq: 0)])
+        #expect(await settle { rt.room?.members.count == 1 })
+        #expect(rt.room?.messages.first(where: { $0.id == 902 })?.state == "removed")
+        #expect(rt.room?.messages.first(where: { $0.id == 902 })?.text == nil)
+        await model.disconnect()
+    }
+
+    @Test("history cache and metadata stay bounded; malformed replies cannot discover or restore text")
+    func retainedHistoryBoundsAndMalformedReplies() async throws {
+        let (model, station, rt, _) = try await historyConnected((1...240).map { Self.historyMessage(Int64($0)) })
+        #expect(rt.receivedMessages.count == 200 && rt.receivedMessages.first?.id == 41)
+        let ids = rt.receivedMessages.map(\.id)
+        let mentions = rt.mentionCounts
+        station.setRoundtableHistoryReplyOverride("[{\"id\":99999,\"state\":\"shown\",\"text\":\"Unrequested discovery\"}]")
+        rt.refreshReceivedHistory()
+        #expect(await settle { rt.historyStatus == "History stale · refresh failed" })
+        #expect(rt.receivedMessages.map(\.id) == ids && rt.mentionCounts == mentions)
+        #expect(!rt.receivedMessages.contains(where: { $0.id == 99999 }))
+        station.setRoundtableHistoryReplyOverride("not JSON")
+        rt.refreshReceivedHistory()
+        #expect(await settle { rt.historyStatus == "History stale · refresh failed" })
+        #expect(rt.receivedMessages.map(\.id) == ids)
+        station.setRoundtableHistoryReplyOverride(nil)
+        rt.refreshReceivedHistory()
+        #expect(await settle { rt.historyStatus == nil })
+        #expect(station.roundtableHistoryRequests.allSatisfy { $0.count <= 200 })
+        await model.disconnect()
+    }
+
+    @Test("reconnect validates an old retained ID beyond fifty newer messages and cancels the old session reply")
+    func retainedHistoryReconnectBeyondBacklog() async throws {
+        let heldReplies = HeldCommandReplies()
+        let (model, old, rt, _) = try await historyConnected([Self.historyMessage(901)], replies: heldReplies)
+        heldReplies.hold("roundtable.history")
+        rt.refreshReceivedHistory()
+        try #require(await settle { heldReplies.count("roundtable.history") >= 1 })
+        let generation = rt.connectionGeneration
+        await model.disconnect()
+        #expect(await settle { rt.historyStatus == "History stale · offline" })
+        let next = try FakeStation(additions: [.roundtableFrequency])
+        // Sixty later stored messages: only the latest fifty are in the view.
+        for id in 1000..<1060 { next.setRoundtableHistoryState(.init(id: Int64(id), state: "shown", text: "Newer")) }
+        next.setRoundtableHistoryState(.init(id: 901, state: "removed", text: nil))
+        var scene = FakeStation.RoundtableScene(rooms: [], roomRecords: ["lsb-7236400": (1010..<1060).map { Self.historyMessage(Int64($0)) }], sliceRooms: [:])
+        scene.frequencyPresences = [0: "lsb-7236400"]
+        await model.connect(to: next.endpoint, trust: next.trust, authenticator: next.authenticator, transportFactory: next.transportFactory)
+        #expect(await next.waitUntilLive())
+        try #require(await settle { model.connection == .connected })
+        try await MainScreenShotTests.fill(next)
+        // Deliver the Core's live object and records after its real session
+        // snapshot, as all other Roundtable fixtures do. Pre-session delivery
+        // populates the generic fake catalogue without a live record owner.
+        try await next.deliverRoundtable(scene)
+        let refreshed = await settle { rt.connectionGeneration != generation && rt.receivedMessages.count >= 51
+            && rt.receivedMessages.first(where: { $0.id == 901 })?.state == "removed" && rt.historyStatus == nil }
+        if !refreshed {
+            print("History reconnect version=\(rt.version) connected=\(rt.connected) link=\(rt.linkState) status=\(rt.historyStatus ?? "nil") count=\(rt.receivedMessages.count) reads=\(next.roundtableReads) history=\(next.roundtableHistoryRequests) streams=\(next.roundtableFollowed)")
+        }
+        try #require(refreshed)
+        await heldReplies.release("roundtable.history")
+        await TransmitScreenTests.barrier(model, next)
+        #expect(rt.receivedMessages.first(where: { $0.id == 901 })?.text == nil)
+        #expect(next.roundtableHistoryRequests.contains(where: { $0.contains(901) }))
+        await model.disconnect()
+    }
+
+    @Test("exact directory preserves duplicate refs and nullable bearings without inventing sender Hz")
+    func directoryAndScopedReadings() async throws {
+        let (model, station, rt, _) = try await connected()
+        func member(_ source: String, _ call: String, _ bearing: LinkJSON) -> LinkMessage.RecordBatch.Record {
+            var record = FakeStation.roundtableMember(ref: "same", callsign: call, seq: 0)
+            record.id = "member:" + source + "/same"
+            record.fields["sourceRoom"] = .string(source)
+            record.fields["hz"] = .number(14_200_010)
+            record.fields["bearingDeg"] = bearing
+            return record
+        }
+        func reading(_ source: String, _ dbm: Double) -> LinkMessage.RecordBatch.Record {
+            var record = FakeStation.roundtableReading(ref: "same", dbm: dbm, t: 1000, turn: 9)
+            record.id = "reading:" + source + "/same"
+            record.fields["sourceRoom"] = .string(source)
+            return record
+        }
+        var summary = FakeStation.roundtableSummary(id: Self.usb, members: 2)
+        summary["stations"] = .array(["usb-14200000", "usb-14204000"].map { source in
+            .object(["ref": .string("same"), "sourceRoom": .string(source), "slice": .number(1),
+                     "hz": .number(14_200_010), "family": .string("usb"), "callsign": .string("W1AW"),
+                     "nth": .number(1), "grid": .null, "keyed": .bool(false), "away": .bool(false),
+                     "joining": .bool(false)])
+        })
+        // The directory retains every slice placement, while one scoped person
+        // at the same exact Hz appears only once in a cochannel stack.
+        if case .array(var stations)? = summary["stations"], case .object(var same) = stations[0] {
+            same["slice"] = .number(2)
+            stations.append(.object(same))
+            summary["stations"] = .array(stations)
+        }
+        let scene = FakeStation.RoundtableScene(rooms: [summary], roomRecords: [Self.usb: [
+            member("usb-14200000", "W1AW", .number(82)), reading("usb-14200000", -73),
+            member("usb-14204000", "K4ABC", .number(82.5)), reading("usb-14204000", -91),
+            FakeStation.roundtableMessage(id: 20, t: 1000, callsign: "Legacy", text: "No sender Hz"),
+        ]], sliceRooms: [0: Self.usb])
+        try await station.deliverRoundtable(scene)
+        #expect(await settle { rt.room?.members.count == 2 && rt.directory.count == 3 })
+        #expect(Set(rt.directory.map(\.id)).count == 2)
+        let members = try #require(rt.room?.members)
+        #expect(Set(members.map(\.id)).count == 2)
+        #expect(members.first(where: { $0.callsign == "W1AW" })?.reading?.dbm == -73)
+        #expect(members.first(where: { $0.callsign == "K4ABC" })?.reading?.dbm == -91)
+        #expect(members.first(where: { $0.callsign == "W1AW" })?.bearingDeg == 82)
+        #expect(members.first(where: { $0.callsign == "K4ABC" })?.bearingDeg == nil)
+        #expect(rt.room?.messages.first?.hz == nil)
+        var capabilities = model.mirror.capabilities.mapValues(\.wireValue)
+        capabilities["stationRoundtableVersion"] = .i64(2)
+        await station.deliver(.capabilities(.init(properties: capabilities.map { .init(name: $0.key, value: $0.value) })))
+        await station.deliverRoundtableFrequencyCapability(true)
+        #expect(await settle { rt.version == 2 && rt.frequencyAvailable })
+        #expect(rt.frequencyRows.count == 1 && rt.frequencyRows.first?.stations.count == 2)
+        let tags = RoundtableTagLayout.tags(rt, sliceIds: [])
+        #expect(tags.count == 1 && tags.first?.hz == 14_200_010)
+        #expect(tags.first?.label == "W1AW\nW1AW")
+        let narrow = RoundtableTagLayout.layout([
+            RoundtableTag(roomId: "earlier", hz: 10), RoundtableTag(roomId: "neighbor", hz: 20),
+            RoundtableTag(roomId: "selected", hz: 90, mine: true)],
+            hzPerPoint: 1, leftHz: 0, width: 100, tagWidth: 80, gap: 4)
+        #expect(narrow.count == 1 && narrow.first?.roomIds == ["selected"] && narrow.first?.folded == false)
+        await model.disconnect()
+    }
+
+    @Test("Core v2 uses honest legacy fallback until backend frequency metadata, including an empty directory")
+    func backendFrequencyNegotiation() async throws {
+        let (model, station, rt, _) = try await connected()
+        var capabilities = model.mirror.capabilities.mapValues(\.wireValue)
+        capabilities["stationRoundtableVersion"] = .i64(2)
+        await station.deliver(.capabilities(.init(properties: capabilities.map { .init(name: $0.key, value: $0.value) })))
+        try #require(await settle { rt.version == 2 })
+        #expect(!rt.frequencyAvailable && rt.serverFrequencyVersion == 0)
+        #expect(rt.frequencyReason?.contains("server") == true)
+        _ = await rt.read(Self.usb)
+        #expect(station.roundtableAnswered.contains("read"))
+        #expect(!station.roundtableAnswered.contains("readAt"))
+        await station.deliverRoundtableFrequencyCapability(true)
+        try #require(await settle { rt.frequencyAvailable })
+        #expect(rt.rooms.isEmpty && rt.frequencyRows.isEmpty)
+        #expect(rt.serverFrequencyVersion == 1 && rt.frequencyReason == nil)
+        await station.deliverRoundtableFrequencyCapability(false)
+        #expect(await settle { !rt.frequencyAvailable })
+        #expect(rt.rooms.isEmpty && rt.frequencyReason?.contains("server") == true)
+        await model.disconnect()
+    }
+
+    @Test("mode families and path preferences preserve protocol meaning")
+    func frequencyFamiliesAndPathDefaults() async throws {
+        #expect(RoundtableModel.family(ofMode: "SAM") == "am")
+        #expect(RoundtableModel.family(ofMode: "CWL") == "cw")
+        #expect(RoundtableModel.family(ofMode: "CWU") == "cw")
+        #expect(RoundtableModel.family(ofMode: "unrecognised") == nil)
+        let (model, _, rt, _) = try await connected()
+        #expect(rt.distanceUnits == "mi" && rt.showBearing)
+        model.settings.apply(.settingsValue(.init(key: "Roundtable/DistanceUnits", origin: "other", properties: [.init(name: "Roundtable/DistanceUnits", value: .utf8("km"))])))
+        model.settings.apply(.settingsValue(.init(key: "Roundtable/ShowBearing", origin: "other", properties: [.init(name: "Roundtable/ShowBearing", value: .utf8("False"))])))
+        #expect(await settle { rt.distanceUnits == "km" && !rt.showBearing })
+        #expect(RoundtableText.distance(128, units: "mi") == "80")
+        #expect(RoundtableText.distance(128, units: "km") == "128")
+        #expect(RoundtableText.distance(nil, units: "mi").isEmpty)
+        await model.disconnect()
+    }
+
     // MARK: Helpers
 
     /// The 20 m room alone, with `records`, slice 0 in it.
@@ -392,7 +686,7 @@ struct RoundtableModelTests {
                                     roomRecords: [usb: records], sliceRooms: [0: usb])
     }
 
-    private func connected(additions: FakeStation.Additions = [.roundtable]) async throws
+    private func connected(additions: FakeStation.Additions = [.roundtable], replies: HeldCommandReplies? = nil) async throws
         -> (AppModel, FakeStation, RoundtableModel, TestLinkClock) {
         let defaults = try #require(UserDefaults(suiteName: "RoundtableModelTests-\(UUID().uuidString)"))
         let model = AppModel(phoneSettings: PhoneSettings(defaults: defaults),
@@ -400,12 +694,15 @@ struct RoundtableModelTests {
                              platform: platform.platform)
         let station = try FakeStation(additions: additions)
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory)
+                            transportFactory: { endpoint, trust in
+            let inner = station.transportFactory(endpoint, trust)
+            return replies.map { ReplyHoldingTransport(inner: inner, replies: $0) } ?? inner
+        })
         #expect(await station.waitUntilLive())
         #expect(await settle { model.connection == .connected })
         let clock = TestLinkClock()
         let rt = RoundtableModel(mirror: model.mirror, commands: model.commands, records: model.records,
-                                 clock: clock)
+                                 clock: clock, settings: model.settings, catalogFeed: model.main.catalogFeed)
         #expect(await settle { rt.connected })
         // The model reads the session through the app's objects; the app lives as long as the test.
         held.model = model

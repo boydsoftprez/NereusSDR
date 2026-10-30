@@ -43,6 +43,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Negotiated guarded frequency views and reconnect state.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10: R-RT-6, R-RT-12,
@@ -157,6 +159,12 @@ public:
 
     // ---- Station actions.
     void post(const QString& roomId, const QString& text, const QString& clientId);
+    int frequencyVersion() const { return m_frequencyVersion; }
+    void postAt(int sliceId, qint64 hz, const QString& family, const QString& text,
+                const QString& clientId);
+    bool readAt(qint64 hz, const QString& family);
+    bool requestHistory(const QJsonArray& ids, const QString& clientId);
+    void unreadAt(qint64 hz, const QString& family);
     void deleteMessage(const QString& messageId);
     void nameTurn(const QString& turnId, const QString& name);
     /// `kind` is message, turn or station; `target` is the message or turn
@@ -185,6 +193,7 @@ signals:
     void roomReceived(const QJsonObject& full);
     void roomDeltaReceived(const QJsonObject& delta);
     void postResult(const QString& clientId, bool ok, const QString& messageIdOrReason);
+    void historyResult(const QString& clientId, bool ok, const QJsonArray& states, const QString& reason);
     /// {"type":"mention","room":...,"message":{...}}.
     void mentionReceived(const QJsonObject& message);
     /// One answer to one requestWebLink, in the order they were asked.
@@ -244,7 +253,10 @@ private:
     void handleStation(const QJsonObject& message);
     void handleLive(const QJsonObject& message);
     void handleArchive(const QJsonObject& message);
+    void handleHistory(const QJsonObject& message);
+    void failHistory(const QString& reason);
     void handleViews(const QString& type, const QJsonObject& message);
+    void syncFrequencyReads();
     void handleError(Link& link, const QJsonObject& message);
     void answerChallenge(Link& link, const QJsonObject& message);
     bool send(Link& link, const QJsonObject& message);
@@ -308,6 +320,11 @@ private:
     QHash<QString, qint64> m_roomGens;
     QSet<QString> m_awaitingRoom;
     QStringList m_reads;
+    int m_frequencyVersion = 0;
+    QHash<QString, QJsonObject> m_frequencyReads;
+    QHash<QString, int> m_frequencyReadUsers;
+    struct HistoryRequest { QJsonArray ids; qint64 dueMs = 0; };
+    QHash<QString, HistoryRequest> m_historyRequests;
     // The band list as last heard (6.3), each slice's room in it, and the
     // rooms the live reader watches now.
     QHash<QString, RoundtableWire::ListedRoom> m_listedRooms;

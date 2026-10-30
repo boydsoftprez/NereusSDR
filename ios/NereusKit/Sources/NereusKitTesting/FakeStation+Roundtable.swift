@@ -5,6 +5,9 @@
 // 2026-10-24: Roundtable plan Task 16, the fake Core's Roundtable for the
 // phone's tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-10-30: Frequency-view fixtures and guarded v2 commands.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import Foundation
 import NereusLink
 
@@ -27,6 +30,7 @@ extension FakeStation {
     public static let roundtableKey = "roundtable"
     public static let roundtableRoomsStream = "roundtableRooms"
     public static let roundtableRoomStreamPrefix = "roundtableRoom:"
+    public static let roundtableFrequencyStreamPrefix = "roundtableFrequency:"
     /// The link the fake's `roundtable.webSignIn` answers with.
     public static let roundtableWebLink = "https://roundtable.invalid/sign-in/fake"
 
@@ -65,6 +69,8 @@ extension FakeStation {
         public var mentionCounts: [String: Int]
         /// Slice id to the room it is in, or nil.
         public var sliceRooms: [Int: String?]
+        /// Accepted exact slice presence, keyed by slice, independent of RF rooms.
+        public var frequencyPresences: [Int: String] = [:]
 
         public init(rooms: [[String: LinkJSON]], roomRecords: [String: [LinkMessage.RecordBatch.Record]] = [:],
                     link: RoundtableLink = .live, linkSince: Int64 = 1_000, firstRunAnswered: Bool = true,
@@ -187,6 +193,20 @@ extension FakeStation {
         }
     }
 
+    /// Stored history projection used only by the fake Core fixture.
+    public struct RoundtableHistoryState: Codable, Sendable, Equatable {
+        public var id: Int64
+        public var state: String
+        public var text: String?
+        public init(id: Int64, state: String, text: String?) { self.id = id; self.state = state; self.text = text }
+        public func encode(to encoder: any Encoder) throws {
+            var fields = encoder.container(keyedBy: CodingKeys.self)
+            try fields.encode(id, forKey: .id)
+            try fields.encode(state, forKey: .state)
+            if let text { try fields.encode(text, forKey: .text) } else { try fields.encodeNil(forKey: .text) }
+        }
+    }
+
     /// What the fake's Roundtable is doing now, behind its own lock.
     final class RoundtableFakeState: @unchecked Sendable {
         struct Inside {
@@ -199,6 +219,9 @@ extension FakeStation {
             var muteList: [String] = []
             var mentionsSeenMs: Int64 = 0
             var answered: [String] = []
+            var history: [Int64: RoundtableHistoryState] = [:]
+            var historyRequests: [[Int64]] = []
+            var historyReplyOverride: String?
         }
 
         private let lock = NSLock()
@@ -210,7 +233,7 @@ extension FakeStation {
     }
 
     static func roundtableCapabilityVersions(_ additions: Additions) -> [(String, Int)] {
-        additions.contains(.roundtable) ? [(roundtableCapability, 1)] : []
+        additions.contains(.roundtable) ? [(roundtableCapability, additions.contains(.roundtableFrequency) ? 2 : 1)] : []
     }
 
     /// The streams the app follows now, sorted.
@@ -243,6 +266,26 @@ extension FakeStation {
         roundtableState.read { $0.answered }
     }
 
+    public var roundtableHistoryRequests: [[Int64]] { roundtableState.read { $0.historyRequests } }
+    /// Simulates stored moderation/expiry independently of the active view.
+    public func setRoundtableHistoryState(_ state: RoundtableHistoryState) {
+        roundtableState.read { $0.history[state.id] = state }
+    }
+    public func setRoundtableHistoryReplyOverride(_ raw: String?) {
+        roundtableState.read { $0.historyReplyOverride = raw }
+    }
+    private static func rememberHistory(_ records: [LinkMessage.RecordBatch.Record], in inside: inout RoundtableFakeState.Inside, overwrite: Bool = true) {
+        for record in records where record.fields["record"] == .string("message") {
+            guard case .number(let raw)? = record.fields["id"], raw > 0, raw.rounded() == raw else { continue }
+            let id = Int64(raw)
+            let state = record.fields["state"].flatMap { if case .string(let text) = $0 { text } else { nil } } ?? "shown"
+            let text = record.fields["text"].flatMap { if case .string(let text) = $0 { text } else { nil } }
+            if overwrite || inside.history[id] == nil {
+                inside.history[id] = .init(id: id, state: state, text: state == "shown" ? text : nil)
+            }
+        }
+    }
+
     /// Sets the scene and sends it as a Core at `stationRoundtableVersion` 1
     /// would: the class's schema and the `roundtable` object, then a reset
     /// of each stream the app follows.
@@ -252,8 +295,9 @@ extension FakeStation {
         }
         let resets = roundtableState.read { inside -> [LinkMessage] in
             inside.scene = scene
+            Self.rememberHistory(scene.roomRecords.values.flatMap { $0 }, in: &inside)
             inside.delivered = true
-            return inside.followed.sorted().map { Self.roundtableReset(inside.scene, stream: $0) }
+            return inside.followed.sorted().map { Self.roundtableReset(inside.scene, stream: $0, frequency: additions.contains(.roundtableFrequency)) }
         }
         await deliver(.schema(try Self.schema(ofClass: Self.roundtableClass)))
         await deliver(.objectCreate(try Self.objectCreate(key: Self.roundtableKey, className: Self.roundtableClass,
@@ -276,8 +320,10 @@ extension FakeStation {
     /// id replaced) and removed, sent to an app that follows it.
     public func deliverRoundtableRoom(_ roomId: String, upserts: [LinkMessage.RecordBatch.Record],
                                       removes: [String] = []) async {
-        let stream = Self.roundtableRoomStreamPrefix + roomId
+        let stream = (additions.contains(.roundtableFrequency) ? Self.roundtableFrequencyStreamPrefix
+                      : Self.roundtableRoomStreamPrefix) + roomId
         let batch = roundtableState.read { inside -> LinkMessage? in
+            Self.rememberHistory(upserts, in: &inside)
             var records = inside.scene.roomRecords[roomId] ?? []
             for record in upserts {
                 if let index = records.firstIndex(where: { $0.id == record.id }) {
@@ -323,6 +369,17 @@ extension FakeStation {
         }
     }
 
+    /// A real v2 Core exposes negotiated backend support independently of its own capability.
+    public static var roundtableFrequencyCapability: LinkMessage.RecordBatch.Record {
+        .init(id: "frequency-capability", fields: ["kind": .string("frequency"), "version": .number(1)])
+    }
+
+    public func deliverRoundtableFrequencyCapability(_ available: Bool) async {
+        await deliver(.recordBatch(.init(stream: Self.roundtableRoomsStream, generation: 1, reset: false,
+            upserts: available ? [Self.roundtableFrequencyCapability] : [],
+            removes: available ? [] : ["frequency-capability"])))
+    }
+
     // MARK: Answers
 
     /// The fake's answer to a Roundtable verb or stream; nil leaves it to the rest of the fake.
@@ -353,7 +410,7 @@ extension FakeStation {
         let ownVerb = invoke.verb.hasPrefix("roundtable.")
         let stream = text("stream") ?? ""
         let ownStream = ["records.subscribe", "records.unsubscribe"].contains(invoke.verb)
-            && (stream == Self.roundtableRoomsStream || stream.hasPrefix(Self.roundtableRoomStreamPrefix))
+            && (stream == Self.roundtableRoomsStream || stream.hasPrefix(Self.roundtableRoomStreamPrefix) || stream.hasPrefix(Self.roundtableFrequencyStreamPrefix))
         let ownSource = ["spots.connect", "spots.disconnect"].contains(invoke.verb)
             && text("source") == "roundtable"
         guard ownVerb || ownStream || ownSource else {
@@ -377,11 +434,58 @@ extension FakeStation {
                 inside.scene.link = invoke.verb == "spots.connect" ? .live : .off
                 return [result(true), Self.roundtableDelta(Self.roundtableValues(inside.scene))]
             case "records.subscribe":
+                Self.rememberHistory(inside.scene.roomRecords.values.flatMap { $0 }, in: &inside, overwrite: false)
                 inside.followed.insert(stream)
-                return [result(true), Self.roundtableReset(inside.scene, stream: stream)]
+                return [result(true), Self.roundtableReset(inside.scene, stream: stream, frequency: additions.contains(.roundtableFrequency))]
             case "records.unsubscribe":
                 inside.followed.remove(stream)
                 return [result(true)]
+            case "roundtable.history":
+                guard additions.contains(.roundtableFrequency), let raw = text("ids"),
+                      let decoded = try? JSONSerialization.jsonObject(with: Data(raw.utf8)),
+                      let numbers = decoded as? [NSNumber], numbers.count <= 200,
+                      numbers.allSatisfy({ !["c", "d", "f"].contains(String(cString: $0.objCType)) && $0.int64Value > 0 }) else {
+                    return [result(false, Self.roundtableUnreadableReason)]
+                }
+                let ids = numbers.map(\.int64Value)
+                guard Set(ids).count == ids.count else { return [result(false, Self.roundtableUnreadableReason)] }
+                inside.historyRequests.append(ids)
+                let states = ids.map { inside.history[$0] ?? .init(id: $0, state: "expired", text: nil) }
+                guard let data = try? JSONEncoder().encode(states) else { return [result(false, Self.roundtableUnreadableReason)] }
+                return [result(true, values: [.init(name: "states", value: .utf8(inside.historyReplyOverride
+                    ?? String(decoding: data, as: UTF8.self)))])]
+            case "roundtable.postAt":
+                guard let slice = whole("sliceId"), let hz = whole("hz"), let family = text("family"),
+                      let message = text("text"), let clientId = text("clientId"), Self.isClientId(clientId),
+                      !message.isEmpty else { return [result(false, Self.roundtableUnreadableReason)] }
+                let context = "\(family)-\(hz)"
+                guard live, inside.scene.firstRunAnswered, !inside.scene.hidden,
+                      inside.scene.frequencyPresences[Int(slice)] == context else {
+                    return [result(false, "The slice moved. Your draft stays at its original frequency.")]
+                }
+                inside.nextMessageId += 1
+                let id = inside.nextMessageId
+                inside.posts.append(RoundtablePost(roomId: context, text: message, clientId: clientId, messageId: String(id)))
+                var record = Self.roundtableMessage(id: id, t: inside.scene.linkSince, callsign: "KG4VCF", text: message)
+                record.fields["hz"] = .number(Double(hz))
+                record.fields["family"] = .string(family)
+                Self.rememberHistory([record], in: &inside)
+                inside.scene.roomRecords[context, default: []].append(record)
+                var replies = [result(true, values: [.init(name: "messageId", value: .utf8(String(id)))])]
+                let stream = Self.roundtableFrequencyStreamPrefix + context
+                if inside.followed.contains(stream) {
+                    replies.append(.recordBatch(.init(stream: stream, generation: 1, reset: false, upserts: [record], removes: [])))
+                }
+                return replies
+            case "roundtable.readAt", "roundtable.unreadAt":
+                guard let hz = whole("hz"), hz > 0, let family = text("family"),
+                      ["lsb", "usb", "digl", "digu", "am", "fm", "cw", "fdvl", "fdvu"].contains(family) else {
+                    return [result(false, Self.roundtableUnreadableReason)]
+                }
+                let context = "\(family)-\(hz)"
+                if invoke.verb == "roundtable.unreadAt" { return [result(true)] }
+                inside.read.append(context)
+                return [result(true, values: [.init(name: "stream", value: .utf8(Self.roundtableFrequencyStreamPrefix + context))])]
             case "roundtable.post":
                 guard let roomId = text("roomId"), let message = text("text"), let clientId = text("clientId"),
                       !roomId.isEmpty, !message.isEmpty, Self.isClientId(clientId) else {
@@ -396,6 +500,7 @@ extension FakeStation {
                                                    messageId: String(id)))
                 let record = Self.roundtableMessage(id: id, t: inside.scene.linkSince, callsign: "KG4VCF",
                                                     text: message)
+                Self.rememberHistory([record], in: &inside)
                 inside.scene.roomRecords[roomId, default: []].append(record)
                 var replies = [result(true, values: [.init(name: "messageId", value: .utf8(String(id)))])]
                 let roomStream = Self.roundtableRoomStreamPrefix + roomId
@@ -508,12 +613,14 @@ extension FakeStation {
         return .init(id: roomId(of: summary), fields: fields)
     }
 
-    private static func roundtableReset(_ scene: RoundtableScene, stream: String) -> LinkMessage {
-        let records: [LinkMessage.RecordBatch.Record]
+    private static func roundtableReset(_ scene: RoundtableScene, stream: String, frequency: Bool) -> LinkMessage {
+        var records: [LinkMessage.RecordBatch.Record]
         if stream == roundtableRoomsStream {
             records = scene.rooms.map(roomRecord)
+            if frequency { records.append(roundtableFrequencyCapability) }
         } else {
-            records = scene.roomRecords[String(stream.dropFirst(roundtableRoomStreamPrefix.count))] ?? []
+            let prefix = stream.hasPrefix(roundtableFrequencyStreamPrefix) ? roundtableFrequencyStreamPrefix : roundtableRoomStreamPrefix
+            records = scene.roomRecords[String(stream.dropFirst(prefix.count))] ?? []
         }
         return .recordBatch(LinkMessage.RecordBatch(stream: stream, generation: 1, reset: true, upserts: records,
                                                     removes: []))
@@ -569,4 +676,6 @@ extension FakeStation {
 extension FakeStation.Additions {
     /// Roundtable at `stationRoundtableVersion` 1 (FakeStation+Roundtable.swift). Not in ``all``.
     public static let roundtable = FakeStation.Additions(rawValue: 1 << 54)
+    /// Additive frequency contract; includes the legacy surface for compatibility tests.
+    public static let roundtableFrequency: FakeStation.Additions = [.roundtable, .init(rawValue: 1 << 62)]
 }

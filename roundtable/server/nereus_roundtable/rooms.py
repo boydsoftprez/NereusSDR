@@ -114,6 +114,9 @@ def message_object(row: Dict[str, Any], ref: Optional[str] = None) -> Dict[str, 
         "state": row["state"],
         "text": row["text"] if row["state"] == "shown" else None,
         "dbm": row["dbm"],
+        "hz": row.get("hz"),
+        "family": row.get("family"),
+        "sourceRoom": row["room_id"],
     }
 
 
@@ -268,6 +271,8 @@ class Room:
 
     def turn_opened(self, turn: Turn) -> None:
         turn.id = self.book.store.turn_open(self.opening_id or 0, turn.kind, self._talker_pairs(turn), turn.start)
+        self._freeze_talker_identity(turn)
+        self.book.store.turn_endpoints(turn.id, turn.endpoints)
         # Who may name it later (6.9): every member now, and each row that
         # becomes a member while it is open (_became_member).
         turn.members_during = {row.station_id for row in self.members()}
@@ -279,8 +284,10 @@ class Room:
         self.book.ensure_tick()
 
     def turn_changed(self, turn: Turn) -> None:
+        self._freeze_talker_identity(turn)
         if getattr(turn, "stored_talkers", 0) != len(turn.talkers):
             self.book.store.turn_talkers(turn.id, self._talker_pairs(turn))
+            self.book.store.turn_endpoints(turn.id, turn.endpoints)
             turn.stored_talkers = len(turn.talkers)  # type: ignore[attr-defined]
         self.book.touch(self)
 
@@ -310,13 +317,21 @@ class Room:
                 continue
             first, last, dbm, bits = packed
             rows.append(
-                (track.station_id, track.callsign, track.offset_hz, track.km, first, last, dbm, bits, track.not_counted, track.away)
+                (track.station_id, track.callsign, track.offset_hz, track.km, first, last, dbm, bits, track.not_counted, track.away, track.bearing_deg)
             )
         self.book.store.tracks_write(turn.id, rows)
 
     @staticmethod
+    def _freeze_talker_identity(turn: Turn) -> None:
+        # Endpoints describe the turn, not a later presence/profile update.
+        for row, endpoint in zip(turn.talkers, turn.endpoints):
+            endpoint.setdefault("callsign", row.callsign)
+            endpoint.setdefault("nth", row.nth)
+
+    @staticmethod
     def _talker_pairs(turn: Turn) -> List[Tuple[str, str, int]]:
-        return [(row.station_id, row.callsign, row.nth) for row in turn.talkers]
+        return [(row.station_id, endpoint.get("callsign", row.callsign), endpoint.get("nth", row.nth))
+                for row, endpoint in zip(turn.talkers, turn.endpoints)]
 
     # ------------------------------------------------------------ views
 
@@ -339,6 +354,32 @@ class Room:
             return None
         return gridlib.distance_km(row.grid, talker.grid)
 
+    def path_of(self, row: Row, turn: Optional[Turn]) -> Tuple[Optional[int], Optional[int]]:
+        if turn is None or turn.kind != "talking" or len(turn.endpoints) != 1 or turn.talker.station_id == row.station_id:
+            return None, None
+        endpoint = turn.endpoints[0]
+        bearing = gridlib.initial_bearing_deg(endpoint["grid"], row.grid)
+        rounded = int(bearing + 0.5) % 360 if bearing is not None else None
+        return gridlib.distance_km(endpoint["grid"], row.grid), rounded
+
+    def station_objects(self) -> List[Dict[str, Any]]:
+        """Exact public presence for every slice, independent of RF counting."""
+        out = []
+        for sid, row in self.rows.items():
+            if not row.counted:
+                continue
+            entry = self.book.stations.get(sid)
+            if entry is None:
+                continue
+            for slice_id in entry.order:
+                p = entry.placements.get(slice_id)
+                if p is not None and p.room is self:
+                    out.append({"ref": row.ref, "slice": p.slice_id, "sourceRoom": self.id,
+                                "hz": p.hz, "family": p.family, "callsign": row.callsign,
+                                "nth": row.nth, "grid": row.grid, "keyed": p.keyed,
+                                "away": row.away, "joining": not p.member})
+        return out
+
     def member_object(self, row: Row, you: bool = False) -> Dict[str, Any]:
         r = row.reading
         reading = None
@@ -349,12 +390,17 @@ class Room:
                 "present": r.present,
                 "turn": row.reading_turn.id if row.reading_turn is not None else None,
             }
+        track = row.reading_turn.tracks.get(row.station_id) if row.reading_turn is not None else None
         return {
             "ref": row.ref,
+            "sourceRoom": self.id,
+            "slice": row.slice_id,
+            "hz": row.hz,
+            "bearingDeg": track.bearing_deg if track is not None else None,
             "callsign": row.callsign,
             "nth": row.nth,
             "grid": row.grid,
-            "km": self.km_of(row),
+            "km": track.km if track is not None else self.km_of(row),
             "offsetHz": offset_hz(row.hz, self.center),
             "joining": not row.member,
             "away": row.away,
@@ -371,9 +417,11 @@ class Room:
         return {
             "id": turn.id,
             "kind": turn.kind,
+            "sourceRoom": self.id,
+            "hz": turn.endpoints[0]["hz"] if turn.kind == "talking" and turn.endpoints else self.center,
             "talkers": [
-                {"ref": t.ref if t.present and t.room is self else None, "callsign": t.callsign, "nth": t.nth}
-                for t in turn.talkers
+                dict({"ref": t.ref if t.present and t.room is self else None, "callsign": t.callsign, "nth": t.nth}, **endpoint)
+                for t, endpoint in zip(turn.talkers, turn.endpoints)
             ],
             "start": turn.start,
             "end": turn.end,
@@ -475,7 +523,7 @@ class Room:
             "text": m["text"][:SUMMARY_TEXT_CODE_POINTS] if shown else None,
         }
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self, exact: bool = False) -> Dict[str, Any]:
         now = self.now_turns()
         turn = now[0] if now else None
         return {
@@ -483,8 +531,10 @@ class Room:
             "band": self.band,
             "family": self.family,
             "hz": self.center,
+            **({"stations": self.station_objects()} if exact else {}),
             "state": self.state(),
-            "talkers": [row.callsign for t in now for row in t.talkers],
+            "talkers": [endpoint.get("callsign", row.callsign) for t in now
+                        for row, endpoint in zip(t.talkers, t.endpoints)],
             "members": len([row for row in self.members() if row.counted]),
             "messages": self.message_count,
             "last": self.last,
@@ -647,6 +697,8 @@ class RoomBook:
             if p is None:
                 self.place(station_id, s)
             else:
+                if p.hz != s["hz"] or p.keyed != s["keyed"]:
+                    self.touch(p.room)
                 p.hz = s["hz"]
                 p.keyed = bool(s["keyed"])
         for s in slices:
@@ -794,7 +846,7 @@ class RoomBook:
                 track = turn.add_reading(row, reading)
                 track.not_counted = True
                 track.offset_hz = offset_hz(row.hz, room.center)
-                track.km = room.km_of(row)
+                track.km, track.bearing_deg = room.path_of(row, turn)
             return turn
         turn = room.engine.on_reading(row, reading)
         row.reading = reading
@@ -802,7 +854,12 @@ class RoomBook:
         if turn is not None:
             track = turn.tracks[row.station_id]
             track.offset_hz = offset_hz(row.hz, room.center)
-            track.km = room.km_of(row)
+            track.km, track.bearing_deg = room.path_of(row, turn)
+            # Preserve this actual measurement's public identity and path.
+            # Later noise-floor samples/profile changes must not rewrite it.
+            cutoff = (turn.unkey if turn.ending else
+                      room.engine.last_present if turn.kind == "unknown" else None)
+            track.remember_reporter(reading, room.member_object(row), cutoff)
         room.last = max(room.last, wall)
         self.touch(room)
         return turn

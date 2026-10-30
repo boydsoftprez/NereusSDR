@@ -22,6 +22,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: Created (Roundtable plan Task 11). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: Task 11 fix round: the Core's own Roundtable answers
@@ -296,6 +298,11 @@ public:
     }
 
     QList<QJsonObject> posts;
+    QList<QJsonObject> frequencyReads;
+    QList<QJsonObject> historyRequests;
+    void answerHistory(const QString& clientId, const QJsonArray& states)
+    { sendJson({{"type", "history"}, {"clientId", clientId}, {"states", states}}); }
+    bool frequency = false;
     int weblinks = 0;
 
     void answerPost(const QString& clientId, qint64 messageId)
@@ -358,7 +365,12 @@ private:
                 decoded.message.value(QStringLiteral("spki")).toString(), &ok);
             QJsonObject welcome = fixtureWire(QStringLiteral("server-station-welcome-core"));
             welcome.insert(QStringLiteral("station"), RoundtableWire::roundtableId(spki));
+            if (frequency) { welcome.insert(QStringLiteral("frequencyVersion"), 1); }
             sendJson(welcome);
+        } else if (decoded.type == QLatin1String("readAt") || decoded.type == QLatin1String("unreadAt")) {
+            frequencyReads.append(decoded.message);
+        } else if (decoded.type == QLatin1String("history")) {
+            historyRequests.append(decoded.message);
         } else if (decoded.type == QLatin1String("post")) {
             posts.append(decoded.message);
         } else if (decoded.type == QLatin1String("weblink")) {
@@ -630,6 +642,88 @@ private slots:
     }
 
     // ── The verbs ──────────────────────────────────────────────────
+
+    void historyRepliesReturnToTheOriginalDeviceAndCaller()
+    {
+        QTemporaryDir keyDir;
+        const StationIdentity identity = StationIdentity::loadOrCreate(keyDir.path());
+        Core core;
+        FakeRoundtable roundtable;
+        roundtable.frequency = true;
+        QVERIFY(roundtable.listen());
+        core.client()->setServerUrl(roundtable.stationUrl());
+        core.client()->setIdentity(&identity);
+        core.client()->setStationInfo(QStringLiteral("KG4VCF"), QStringLiteral("EM73"));
+        core.client()->setFirstRunAnswered(true);
+        core.client()->start();
+        NEREUS_TRY_COMPARE(core.client()->linkState(), RoundtableClient::LinkState::Live);
+        Window first(core, this, QStringLiteral("first"));
+        Window second(core, this, QStringLiteral("second"));
+        NEREUS_TRY_VERIFY(first.client->roundtableFrequencyAvailable());
+        NEREUS_TRY_VERIFY(second.client->roundtableFrequencyAvailable());
+        QSignalSpy a(first.rooms(), &RoundtableModel::historyResult);
+        QSignalSpy b(second.rooms(), &RoundtableModel::historyResult);
+        QVERIFY(first.rooms()->requestHistory(QJsonArray{1}, QStringLiteral("same")));
+        QVERIFY(second.rooms()->requestHistory(QJsonArray{2}, QStringLiteral("same")));
+        NEREUS_TRY_COMPARE(roundtable.historyRequests.size(), 2);
+        const QString idA = roundtable.historyRequests.at(0).value("clientId").toString();
+        const QString idB = roundtable.historyRequests.at(1).value("clientId").toString();
+        QVERIFY(idA != idB);
+        const QJsonArray statesA{QJsonObject{{"id", 1}, {"state", "deleted"}, {"text", QJsonValue::Null}}};
+        const QJsonArray statesB{QJsonObject{{"id", 2}, {"state", "shown"}, {"text", "retained"}}};
+        roundtable.answerHistory(idB, statesB);
+        NEREUS_TRY_COMPARE(b.size(), 1);
+        QCOMPARE(a.size(), 0);
+        QCOMPARE(b.last().at(0).toString(), QStringLiteral("same"));
+        QCOMPARE(qvariant_cast<QJsonArray>(b.last().at(2)), statesB);
+        roundtable.answerHistory(idA, statesA);
+        NEREUS_TRY_COMPARE(a.size(), 1);
+        QCOMPARE(qvariant_cast<QJsonArray>(a.last().at(2)), statesA);
+        QVERIFY(first.rooms()->rooms().isEmpty());
+        QVERIFY(first.rooms()->viewedRoomIds().isEmpty());
+        auto* old = core.connect(this, {{"roundtable", 1}});
+        const auto refused = invoke(old, "roundtable.history", {utf8("ids", QStringLiteral("[1]"))});
+        QVERIFY(!refused.accepted);
+        for (const QString& raw : {QStringLiteral("[1,1]"), QStringLiteral("[true]"), QStringLiteral("[1.0]")}) {
+            auto* peer = core.connect(this, {{"roundtable", 2}});
+            QVERIFY(!invoke(peer, "roundtable.history", {utf8("ids", raw)}).accepted);
+        }
+        QCOMPARE(roundtable.historyRequests.size(), 2);
+    }
+
+    void twoFrequencyReadersReleaseTheSharedCoreSubscription()
+    {
+        QTemporaryDir keyDir;
+        const StationIdentity identity = StationIdentity::loadOrCreate(keyDir.path());
+        Core core;
+        FakeRoundtable roundtable;
+        roundtable.frequency = true;
+        QVERIFY(roundtable.listen());
+        QVERIFY(identity.isValid());
+        core.client()->setServerUrl(roundtable.stationUrl());
+        core.client()->setIdentity(&identity);
+        core.client()->setStationInfo(QStringLiteral("KG4VCF"), QStringLiteral("EM73"));
+        core.settings->setValue(QStringLiteral("Roundtable/FirstRunAnswer"), QStringLiteral("Live"));
+        core.settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("False"));
+        core.client()->start();
+        NEREUS_TRY_VERIFY(core.client()->linkState() == RoundtableClient::LinkState::Live);
+        QCOMPARE(core.client()->frequencyVersion(), 1);
+        LoopbackTransport* first = core.connect(this, {{"roundtable", 2}});
+        LoopbackTransport* second = core.connect(this, {{"roundtable", 2}});
+        NEREUS_TRY_VERIFY(snapshotDone(first));
+        NEREUS_TRY_VERIFY(snapshotDone(second));
+        const QList<MirrorUpdate> args{i64("hz", 14212000), utf8("family", QStringLiteral("usb"))};
+        QVERIFY(invoke(first, "roundtable.readAt", args).accepted);
+        QVERIFY(invoke(second, "roundtable.readAt", args).accepted);
+        NEREUS_TRY_COMPARE(roundtable.frequencyReads.size(), 1);
+        QVERIFY(invoke(first, "roundtable.unreadAt", args).accepted);
+        QCOMPARE(roundtable.frequencyReads.size(), 1);
+        QVERIFY(invoke(second, "roundtable.unreadAt", args).accepted);
+        NEREUS_TRY_COMPARE(roundtable.frequencyReads.size(), 2);
+        QCOMPARE(roundtable.frequencyReads.last().value(QStringLiteral("type")).toString(),
+                 QStringLiteral("unreadAt"));
+        core.client()->stop();
+    }
 
     void twoConnectionsPostingOneClientIdEachGetTheirOwnAnswer()
     {

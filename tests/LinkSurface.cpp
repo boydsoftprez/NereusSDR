@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Capture negotiated frequency Roundtable version2 surface.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-28: Capture the current remoteCw v2 provider and negotiated
 //               activity tuple. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, remote CW (R-CW-48): the capture declares
@@ -799,7 +801,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   // Roundtable plan Task 11:
                                   // stationRoundtableVersion and
                                   // `roundtable`.
-                                  {"roundtable", 1}})));
+                                  {"roundtable", 2}})));
     clientEnd->sendText(SessionMessages::encode(SessionMessages::authRequest({}, block)));
 
     // The loopback delivers on later event-loop turns, as a socket would.
@@ -910,7 +912,7 @@ QJsonArray captureCapabilities()
     // NSDC v2: sent to a peer that declared displayCodec 2.
     caps.displayCodecVersion = 2;
     // Roundtable plan Task 11: sent to a peer that declared roundtable.
-    caps.stationRoundtableVersion = 1;
+    caps.stationRoundtableVersion = 2;
 
     // The values come from a live station with every feature a Core can
     // switch on: media, telemetry, an enforced display budget with its

@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
@@ -96,6 +98,7 @@ private:
     QPointer<RoundtableWindow> m_window;
     QPointer<SliceModel> m_slice;
     QMetaObject::Connection m_sliceFrequency;
+    QMetaObject::Connection m_sliceMode;
     QMetaObject::Connection m_sliceMeter;
     std::function<void(const QUrl&)> m_urlOpener;
     bool m_webLinkPending = false;

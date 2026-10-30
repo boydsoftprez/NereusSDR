@@ -54,6 +54,8 @@
 //               Claude Code.
 // =================================================================
 
+// 2026-10-30: Real-server frequency read/post regression, J.J. Boyd
+// (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 #include "RealtimeTestLoad.h"
 #include "core/roundtable/RoundtableClient.h"
 #include "core/roundtable/RoundtableWire.h"
@@ -321,6 +323,7 @@ private slots:
     void unknownTurnOpensFromPresentReadingsAndIsNamed();
     void noDeviceAtTheRadioShowsAwayAndIsRefused();
     void archiveThroughTheSignInLinkListsTheSession();
+    void negotiatedFrequencyReadAndGuardedPost();
     void serverKeepsNoAddressOrMessageText();
 
 private:
@@ -763,6 +766,73 @@ void TstRoundtableE2e::archiveThroughTheSignInLinkListsTheSession()
     QVERIFY(readerC.value(QStringLiteral("away")).toBool());
 }
 
+void TstRoundtableE2e::negotiatedFrequencyReadAndGuardedPost()
+{
+    QVERIFY(m_a && m_b);
+    RoundtableClient* sender = m_a->client.get();
+    RoundtableClient* reader = m_b->client.get();
+    QCOMPARE(sender->frequencyVersion(), 1);
+    QCOMPARE(reader->frequencyVersion(), 1);
+    QSignalSpy full(reader, &RoundtableClient::roomReceived);
+    QSignalSpy delta(reader, &RoundtableClient::roomDeltaReceived);
+    QSignalSpy posted(sender, &RoundtableClient::postResult);
+    // Reading at the inclusive boundary crosses RF-room IDs without tuning.
+    const qint64 contextHz = kHz + 5000;
+    const QString context = QStringLiteral("usb-%1").arg(contextHz);
+    QVERIFY(reader->readAt(contextHz, QStringLiteral("usb")));
+    const auto frequencyFull = [&full, &context]() {
+        for (const QList<QVariant>& args : full) {
+            const QJsonObject value = args.first().toJsonObject();
+            if (value.value(QStringLiteral("view")).toString() == QLatin1String("frequency")
+                && value.value(QStringLiteral("id")).toString() == context) { return true; }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(frequencyFull(), kWaitMs);
+    const QString text = QStringLiteral("Exact-frequency integration check");
+    sender->postAt(0, kHz, QStringLiteral("usb"), text, QStringLiteral("frequency-valid"));
+    QTRY_COMPARE_WITH_TIMEOUT(posted.size(), 1, kWaitMs);
+    QVERIFY(posted.first().at(1).toBool());
+    const auto delivered = [&delta, &context, &text]() {
+        for (const QList<QVariant>& args : delta) {
+            const QJsonObject packet = args.first().toJsonObject();
+            if (packet.value(QStringLiteral("view")).toString() != QLatin1String("frequency")
+                || packet.value(QStringLiteral("room")).toString() != context) { continue; }
+            for (const QJsonValue& item : packet.value(QStringLiteral("messages")).toArray()) {
+                const QJsonObject message = item.toObject();
+                if (message.value(QStringLiteral("text")).toString() == text
+                    && message.value(QStringLiteral("hz")).toInteger() == kHz
+                    && message.value(QStringLiteral("family")).toString() == QLatin1String("usb")
+                    && message.value(QStringLiteral("sourceRoom")).toString() == kRoom) { return true; }
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(delivered(), kWaitMs);
+    sender->postAt(0, kHz + 1, QStringLiteral("usb"), text, QStringLiteral("frequency-stale"));
+    QTRY_COMPARE_WITH_TIMEOUT(posted.size(), 2, kWaitMs);
+    QCOMPARE(posted.last().at(0).toString(), QStringLiteral("frequency-stale"));
+    QVERIFY(!posted.last().at(1).toBool());
+    reader->unreadAt(contextHz, QStringLiteral("usb"));
+    // A retained received ID remains checkable without reopening its view.
+    const QString messageId = posted.first().at(2).toString();
+    QVERIFY(messageId.toLongLong() > 0);
+    QSignalSpy history(reader, &RoundtableClient::historyResult);
+    QVERIFY(reader->requestHistory(QJsonArray{messageId.toLongLong()}, QStringLiteral("history-shown")));
+    QTRY_COMPARE_WITH_TIMEOUT(history.size(), 1, kWaitMs);
+    QVERIFY(history.first().at(1).toBool());
+    QCOMPARE(history.first().at(2).toJsonArray().first().toObject().value(QStringLiteral("text")).toString(), text);
+    sender->deleteMessage(messageId);
+    QTRY_COMPARE_WITH_TIMEOUT(m_b->view.messages.value(messageId.toLongLong()).value(QStringLiteral("state")).toString(),
+                              QStringLiteral("deleted"), kWaitMs);
+    QVERIFY(reader->requestHistory(QJsonArray{messageId.toLongLong()}, QStringLiteral("history-deleted")));
+    QTRY_COMPARE_WITH_TIMEOUT(history.size(), 2, kWaitMs);
+    QVERIFY(history.last().at(1).toBool());
+    const QJsonObject removed = history.last().at(2).toJsonArray().first().toObject();
+    QCOMPARE(removed.value(QStringLiteral("state")).toString(), QStringLiteral("deleted"));
+    QVERIFY(removed.value(QStringLiteral("text")).isNull());
+}
+
 void TstRoundtableE2e::serverKeepsNoAddressOrMessageText()
 {
     QVERIFY(m_serverUp);
@@ -784,7 +854,7 @@ void TstRoundtableE2e::serverKeepsNoAddressOrMessageText()
     QVERIFY2(log.contains("standard input closed"), log.constData());
 #endif
     QStringList forbidden{kHost, QStringLiteral("KG4VCF"), QStringLiteral("W4XYZ"), QStringLiteral("K4ABC"), kPostText,
-                          kAwayText};
+                          kAwayText, QStringLiteral("Exact-frequency integration check")};
     forbidden.append(m_stationIds);
     for (const QString& word : std::as_const(forbidden)) {
         QVERIFY2(!word.isEmpty(), "a station had no id");

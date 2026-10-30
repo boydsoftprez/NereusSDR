@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-30: Negotiated frequency views and exact presence fields.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10, R-RT-1 Core runner).
@@ -18,6 +22,7 @@
 //               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include <QJsonDocument>
 #include "core/roundtable/RoundtableWire.h"
 
 #include <QCryptographicHash>
@@ -587,6 +592,27 @@ bool takeFields(const Node& raw, const Fields& fields, const QString& path, QJso
     return true;
 }
 
+// Optional negotiated extensions leave legacy objects byte-for-byte unchanged.
+Post optionalFields(Fields fields, Post before = {})
+{
+    return [fields = std::move(fields), before](const Node& raw, QJsonObject& out,
+                                                const QString& path, QString& why) {
+        if (before && !before(raw, out, path, why)) {
+            return false;
+        }
+        for (const auto& [key, check] : fields) {
+            if (const Node* value = raw.member(key)) {
+                QJsonValue decoded;
+                if (!check(*value, path + key, decoded, why)) {
+                    return false;
+                }
+                out.insert(key, decoded);
+            }
+        }
+        return true;
+    };
+}
+
 Check object(Fields fields, Post post = {})
 {
     return [fields = std::move(fields), post](const Node& v, const QString& path, QJsonValue& out,
@@ -796,6 +822,12 @@ Tables buildTables()
                                       {QStringLiteral("state"), messageState}},
                                      stateText(true));
 
+    const Check presenceStation = object({{QStringLiteral("ref"), rowRef},
+        {QStringLiteral("sourceRoom"), roomId}, {QStringLiteral("slice"), sliceId},
+        {QStringLiteral("hz"), hz}, {QStringLiteral("family"), family},
+        {QStringLiteral("callsign"), callsign}, {QStringLiteral("nth"), nth},
+        {QStringLiteral("grid"), orNull(grid)}, {QStringLiteral("keyed"), boolean},
+        {QStringLiteral("away"), boolean}, {QStringLiteral("joining"), boolean}});
     const Check summary = object({{QStringLiteral("id"), roomId},
                                   {QStringLiteral("band"), band},
                                   {QStringLiteral("family"), family},
@@ -810,7 +842,8 @@ Tables buildTables()
                                   {QStringLiteral("heard"), count},
                                   {QStringLiteral("readings"), array(dbm, 0, 12)},
                                   {QStringLiteral("lastMessage"), orNull(lastMessage)},
-                                  {QStringLiteral("ended"), orNull(unixMs)}});
+                                  {QStringLiteral("ended"), orNull(unixMs)}},
+        optionalFields({{QStringLiteral("stations"), array(presenceStation)}}));
 
     const Check readingObject = object({{QStringLiteral("dbm"), dbm},
                                         {QStringLiteral("t"), unixMs},
@@ -829,11 +862,16 @@ Tables buildTables()
                                  {QStringLiteral("software"), software},
                                  {QStringLiteral("softwareVersion"), softwareVersion},
                                  {QStringLiteral("reading"), orNull(readingObject)},
-                                 {QStringLiteral("you"), boolean}});
+                                 {QStringLiteral("you"), boolean}}, optionalFields({
+        {QStringLiteral("hz"), hz}, {QStringLiteral("sourceRoom"), roomId},
+        {QStringLiteral("slice"), sliceId},
+        {QStringLiteral("bearingDeg"), orNull(whole(0, 359))}}));
 
     const Check talker = object({{QStringLiteral("ref"), orNull(rowRef)},
                                  {QStringLiteral("callsign"), callsign},
-                                 {QStringLiteral("nth"), nth}});
+                                 {QStringLiteral("nth"), nth}}, optionalFields({
+        {QStringLiteral("hz"), orNull(hz)}, {QStringLiteral("grid"), orNull(grid)},
+        {QStringLiteral("sourceRoom"), roomId}}));
     const Check nameCount = object({{QStringLiteral("name"), callsign},
                                     {QStringLiteral("count"), whole(1, kMaxSafe)}});
 
@@ -845,7 +883,8 @@ Tables buildTables()
                                {QStringLiteral("ending"), boolean},
                                {QStringLiteral("names"), array(nameCount)},
                                {QStringLiteral("heard"), count},
-                               {QStringLiteral("mine"), orNull(callsign)}});
+                               {QStringLiteral("mine"), orNull(callsign)}}, optionalFields({
+        {QStringLiteral("hz"), hz}, {QStringLiteral("sourceRoom"), roomId}}));
 
     const Post messageText = [shown = stateText(false), dbm](const Node& raw, QJsonObject& out,
                                                              const QString& path, QString& why) {
@@ -870,7 +909,9 @@ Tables buildTables()
                                   {QStringLiteral("nth"), nth},
                                   {QStringLiteral("t"), unixMs},
                                   {QStringLiteral("state"), messageState}},
-                                 messageText);
+                                 optionalFields({{QStringLiteral("hz"), orNull(hz)},
+                                     {QStringLiteral("family"), orNull(family)},
+                                     {QStringLiteral("sourceRoom"), roomId}}, messageText));
 
     const Fields mentionFields{{QStringLiteral("room"), roomId}, {QStringLiteral("message"), message}};
     const Check mention = object(mentionFields);
@@ -1045,7 +1086,7 @@ Tables buildTables()
     const Kind deltaKind{{{QStringLiteral("room"), roomId},
                           {QStringLiteral("gen"), gen},
                           {QStringLiteral("members"), array(member)},
-                          {QStringLiteral("left"), array(rowRef)},
+                          {QStringLiteral("left"), array(pattern(QStringLiteral("(?:[a-z2-7]{8}|(?:lsb|usb|digl|digu|am|fm|cw|fdvl|fdvu)-[1-9][0-9]{0,10}/[a-z2-7]{8})"), QStringLiteral("a scoped row ref")))},
                           {QStringLiteral("turns"), array(turn)},
                           {QStringLiteral("messages"), array(message)},
                           {QStringLiteral("closed"), boolean}},
@@ -1091,6 +1132,58 @@ Tables buildTables()
         {QStringLiteral("room"), roomKind},     {QStringLiteral("delta"), deltaKind},
         {QStringLiteral("error"), errorKind},
     };
+    const Fields frequencyVersion{{QStringLiteral("frequencyVersion"), whole(1, 1)}};
+    for (auto* kind : {&t.fromStation[QStringLiteral("hello")],
+                       &t.fromLive[QStringLiteral("watchBand")],
+                       &t.toStation[QStringLiteral("welcome")],
+                       &t.toStation[QStringLiteral("rooms")],
+                       &t.toLive[QStringLiteral("rooms")]}) {
+        kind->post = optionalFields(frequencyVersion, kind->post);
+    }
+    // No discovery: bounded unique identifiers in both directions, no text on tombstones.
+    const Post uniqueHistory = [](const Node&, QJsonObject& out, const QString& path, QString& why) {
+        const bool request = out.contains(QStringLiteral("ids"));
+        QSet<qint64> seen;
+        for (const QJsonValue& value : out.value(request ? QStringLiteral("ids") : QStringLiteral("states")).toArray()) {
+            const qint64 valueId = request ? value.toInteger() : value.toObject().value(QStringLiteral("id")).toInteger();
+            if (seen.contains(valueId)) { return bad(why, path, QStringLiteral("a history id repeated")); }
+            seen.insert(valueId);
+        }
+        return true;
+    };
+    const Check historyState = object({{QStringLiteral("id"), id},
+        {QStringLiteral("state"), oneOf({QStringLiteral("shown"), QStringLiteral("deleted"),
+                                        QStringLiteral("removed"), QStringLiteral("expired")})},
+        {QStringLiteral("text"), orNull(text)}},
+        [](const Node&, QJsonObject& out, const QString& path, QString& why) {
+            if ((out.value(QStringLiteral("state")).toString() == QLatin1String("shown"))
+                == out.value(QStringLiteral("text")).isString()) { return true; }
+            return bad(why, path, QStringLiteral("history text disagrees with state"));
+        });
+    const Kind historyRequest{{{QStringLiteral("clientId"), clientId},
+                               {QStringLiteral("ids"), array(id, 0, 200)}}, uniqueHistory};
+    const Kind historyReply{{{QStringLiteral("clientId"), clientId},
+                             {QStringLiteral("states"), array(historyState, 0, 200)}}, uniqueHistory};
+    t.fromStation.insert(QStringLiteral("history"), historyRequest);
+    t.fromLive.insert(QStringLiteral("history"), historyRequest);
+    t.toStation.insert(QStringLiteral("history"), historyReply);
+    t.toLive.insert(QStringLiteral("history"), historyReply);
+    const Fields context{{QStringLiteral("hz"), hz}, {QStringLiteral("family"), family}};
+    t.fromStation.insert(QStringLiteral("postAt"), Kind{{
+        {QStringLiteral("slice"), sliceId}, {QStringLiteral("hz"), hz},
+        {QStringLiteral("family"), family}, {QStringLiteral("text"), text},
+        {QStringLiteral("clientId"), clientId}}, {}});
+    t.fromStation.insert(QStringLiteral("readAt"), Kind{context, {}});
+    t.fromLive.insert(QStringLiteral("watchAt"), Kind{context, {}});
+    t.fromStation.insert(QStringLiteral("unreadAt"), Kind{context, {}});
+    t.fromLive.insert(QStringLiteral("unwatchAt"), Kind{context, {}});
+    for (auto* kind : {&t.fromStation[QStringLiteral("resync")], &t.fromLive[QStringLiteral("resync")]}) {
+        kind->post = optionalFields({{QStringLiteral("view"), oneOf({QStringLiteral("frequency")})}}, kind->post);
+    }
+    for (auto* kind : {&t.toStation[QStringLiteral("room")], &t.toLive[QStringLiteral("room")],
+                       &t.toStation[QStringLiteral("delta")], &t.toLive[QStringLiteral("delta")]}) {
+        kind->post = optionalFields({{QStringLiteral("view"), oneOf({QStringLiteral("frequency")})}}, kind->post);
+    }
     return t;
 }
 
@@ -1280,6 +1373,15 @@ Decoded decode(const QString& text, Direction direction)
     if (kind->post && !kind->post(root, out, QString(), result.error)) {
         return result;
     }
+    if (result.type == QLatin1String("delta")) {
+        const bool frequency = out.value(QStringLiteral("view")).toString() == QLatin1String("frequency");
+        for (const QJsonValue& value : out.value(QStringLiteral("left")).toArray()) {
+            if (value.toString().contains(QLatin1Char('/')) != frequency) {
+                result.error = QStringLiteral("left: wrong row scope for this view");
+                return result;
+            }
+        }
+    }
     result.ok = true;
     result.message = out;
     return result;
@@ -1361,6 +1463,56 @@ QJsonObject post(const QString& roomId, const QString& text, const QString& clie
                        {QStringLiteral("room"), roomId},
                        {QStringLiteral("text"), text},
                        {QStringLiteral("clientId"), clientId}};
+}
+
+QJsonObject postAt(int sliceId, qint64 hz, const QString& family, const QString& text,
+                   const QString& clientId)
+{
+    return {{QStringLiteral("type"), QStringLiteral("postAt")},
+        {QStringLiteral("slice"), sliceId}, {QStringLiteral("hz"), hz},
+        {QStringLiteral("family"), family}, {QStringLiteral("text"), text},
+        {QStringLiteral("clientId"), clientId}};
+}
+
+QJsonObject history(const QJsonArray& ids, const QString& clientId)
+{
+    return {{QStringLiteral("type"), QStringLiteral("history")},
+            {QStringLiteral("clientId"), clientId}, {QStringLiteral("ids"), ids}};
+}
+
+Decoded decodeHistoryIds(const QString& rawIds)
+{
+    if (!QJsonDocument::fromJson(rawIds.toUtf8()).isArray()) { return {}; }
+    return decode(QStringLiteral("{\"type\":\"history\",\"clientId\":\"validate\",\"ids\":")
+                  + rawIds + QLatin1Char('}'), Direction::StationToServer);
+}
+
+Decoded decodeHistoryStates(const QString& rawStates, const QString& clientId)
+{
+    if (!QJsonDocument::fromJson(rawStates.toUtf8()).isArray()) { return {}; }
+    QJsonObject envelope{{QStringLiteral("type"), QStringLiteral("history")},
+                         {QStringLiteral("clientId"), clientId}};
+    QByteArray encoded = encode(envelope);
+    encoded.chop(1);
+    return decode(QString::fromUtf8(encoded) + QStringLiteral(",\"states\":") + rawStates
+                  + QLatin1Char('}'), Direction::ServerToStation);
+}
+
+bool historyStatesMatch(const QJsonArray& ids, const QJsonArray& states)
+{
+    if (ids.size() != states.size()) { return false; }
+    QSet<qint64> expected;
+    for (const QJsonValue& id : ids) { expected.insert(id.toInteger()); }
+    for (const QJsonValue& state : states) {
+        if (!expected.remove(state.toObject().value(QStringLiteral("id")).toInteger())) { return false; }
+    }
+    return expected.isEmpty();
+}
+
+QJsonObject readAt(qint64 hz, const QString& family, bool live)
+{
+    return {{QStringLiteral("type"), live ? QStringLiteral("watchAt") : QStringLiteral("readAt")},
+        {QStringLiteral("hz"), hz}, {QStringLiteral("family"), family}};
 }
 
 QJsonObject deleteMessage(qint64 messageId)

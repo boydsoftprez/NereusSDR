@@ -1,4 +1,6 @@
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
 //                 overlayTargetBlend(), the GPU overlay's premultiplied
 //                 blend, so a test can composite as the GPU path does.
@@ -3130,6 +3132,7 @@ signals:
     // row of a fold's list: tune the active slice to that room. Never
     // emitted while the transmit view shows (as requestTune).
     void roundtableRoomClicked(const QString& roomId);
+    void roundtableReadRequested(const QString& context);
     // Rotor control plan Task 8: the operator tuned to a spot (a label
     // click, a cluster popup entry or the menu's Tune), with its call and
     // its Core-served bearing (-1 when none). MainWindow hands it to

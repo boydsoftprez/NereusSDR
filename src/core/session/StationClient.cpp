@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-30: Versioned guarded frequency-context actions and records.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, remote CW (R-CW-48): declares remoteCw 1 and
@@ -604,6 +608,7 @@
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 
+#include <utility>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include "core/session/NetworkTrouble.h"
@@ -1038,7 +1043,7 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // Roundtable plan Task 11: this window shows the Core's Roundtable (the
     // `roundtable` object, its room streams and the roundtable.* verbs;
     // stationRoundtableVersion 1).
-    m_declaredFeatures.insert(QByteArrayLiteral("roundtable"), 1);
+    m_declaredFeatures.insert(QByteArrayLiteral("roundtable"), 2);
     // R-R3-46 / R-R3-11: this window shows and sets the other ADC's own
     // attenuator for the slices on it (stepAtt rx2AttenuationDb,
     // rx2SliceMask; adcAttenuatorVersion 1).
@@ -2659,7 +2664,13 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     }
     m_roundtableStreams.clear();
     m_roundtableReadStream.clear();
-    m_roundtableCommands.clear();
+    const auto roundtableCommands = std::exchange(m_roundtableCommands, {});
+    for (const RoundtableCommand& command : roundtableCommands) {
+        if (command.verb == QLatin1String("history") && m_radioModel) {
+            m_radioModel->roundtableModel()->applyHistoryResult(command.clientId, false, {},
+                RoundtableState::notConnectedReason());
+        }
+    }
     // R-IOS-13 / R-R3-49: that session's Mod Monitor subscription ended
     // with it; the window's choice of source stays for the next.
     m_modMonitorStream.clear();
@@ -7422,7 +7433,7 @@ StationClient::CommandOutcome StationClient::sendRoundtableCommand(
     }
     const QByteArray name = verb.mid(verb.indexOf('.') + 1);
     m_roundtableCommands.insert(id, RoundtableCommand{ QString::fromLatin1(name), clientId,
-                                                       roomId });
+                                                       roomId, {} });
     return { true, QString() };
 }
 
@@ -7435,6 +7446,75 @@ StationClient::CommandOutcome StationClient::requestRoundtablePost(const QString
                                    stringArgument("text", text),
                                    stringArgument("clientId", clientId) },
                                  clientId);
+}
+
+bool StationClient::roundtableFrequencyAvailable() const
+{
+    return roundtableAvailable() && m_capabilities.stationRoundtableVersion >= 2;
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtablePostAt(
+    int sliceId, qint64 hz, const QString& family, const QString& text, const QString& clientId)
+{
+    if (!roundtableFrequencyAvailable()) { return {false, IStationLink::roundtableUnavailableReason()}; }
+    return sendRoundtableCommand("roundtable.postAt", {
+        intArgument("sliceId", sliceId), countArgument("hz", static_cast<quint64>(hz)),
+        stringArgument("family", family), stringArgument("text", text),
+        stringArgument("clientId", clientId)}, clientId);
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableHistory(
+    const QJsonArray& ids, const QString& callerClientId)
+{
+    if (!roundtableFrequencyAvailable()) { return {false, IStationLink::roundtableUnavailableReason()}; }
+    if (!RoundtableState::isClientId(callerClientId)
+        || !RoundtableWire::decodeHistoryIds(QString::fromUtf8(QJsonDocument(ids).toJson(QJsonDocument::Compact))).ok) {
+        return {false, RoundtableState::unreadableReason()};
+    }
+    int pending = 0;
+    for (const RoundtableCommand& command : std::as_const(m_roundtableCommands)) {
+        if (command.verb == QLatin1String("history")) {
+            ++pending;
+            if (command.clientId == callerClientId) { return {false, RoundtableState::unreadableReason()}; }
+        }
+    }
+    if (pending >= 16) { return {false, RoundtableState::unreadableReason()}; }
+    const quint32 id = invokeCommand("roundtable.history", {
+        stringArgument("ids", QString::fromUtf8(QJsonDocument(ids).toJson(QJsonDocument::Compact)))});
+    if (id == 0) { return {false, RoundtableState::notConnectedReason()}; }
+    m_roundtableCommands.insert(id, RoundtableCommand{QStringLiteral("history"), callerClientId, {}, ids});
+    QTimer::singleShot(RoundtableClient::kArchiveTimeoutMs, this, [this, id]() {
+        const auto it = m_roundtableCommands.find(id);
+        if (it == m_roundtableCommands.end() || it->verb != QLatin1String("history")) { return; }
+        const QString caller = it->clientId;
+        m_roundtableCommands.erase(it);
+        if (m_radioModel) {
+            m_radioModel->roundtableModel()->applyHistoryResult(caller, false, {},
+                QStringLiteral("The Core did not answer the history check."));
+        }
+    });
+    return {true, {}};
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableReadAt(qint64 hz, const QString& family)
+{
+    if (!roundtableFrequencyAvailable()) { return {false, IStationLink::roundtableUnavailableReason()}; }
+    return sendRoundtableCommand("roundtable.readAt", {
+        countArgument("hz", static_cast<quint64>(hz)), stringArgument("family", family)},
+        QString(), RoundtableModel::frequencyContextId(hz, family));
+}
+
+StationClient::CommandOutcome StationClient::requestRoundtableUnreadAt(qint64 hz, const QString& family)
+{
+    if (!roundtableFrequencyAvailable()) { return {false, IStationLink::roundtableUnavailableReason()}; }
+    const QString context = RoundtableModel::frequencyContextId(hz, family);
+    const auto result = sendRoundtableCommand("roundtable.unreadAt", {
+        countArgument("hz", static_cast<quint64>(hz)), stringArgument("family", family)}, QString(), context);
+    if (m_roundtableReadStream == RoundtableModel::roomStreamName(context)) {
+        m_roundtableReadStream.clear();
+        syncRoundtableStreams();
+    }
+    return result;
 }
 
 StationClient::CommandOutcome StationClient::requestRoundtableDelete(const QString& messageId)
@@ -7576,6 +7656,9 @@ bool StationClient::handleRoundtableResult(const SessionMessage& message)
     if (!message.commandVerb.startsWith("roundtable.")) {
         return false;
     }
+    const auto found = m_roundtableCommands.constFind(message.commandId);
+    if (found == m_roundtableCommands.cend()
+        || message.commandVerb != QByteArrayLiteral("roundtable.") + found->verb.toLatin1()) { return true; }
     const RoundtableCommand command = m_roundtableCommands.take(message.commandId);
     RoundtableModel* rooms = m_radioModel.isNull() ? nullptr : m_radioModel->roundtableModel();
     if (rooms == nullptr) {
@@ -7590,13 +7673,22 @@ bool StationClient::handleRoundtableResult(const SessionMessage& message)
         }
         return QString();
     };
-    if (verb == QLatin1String("post")) {
+    if (verb == QLatin1String("history")) {
+        const auto decoded = RoundtableWire::decodeHistoryStates(value("states"), command.clientId);
+        const QJsonArray states = decoded.message.value(QStringLiteral("states")).toArray();
+        const bool ok = message.accepted && decoded.ok
+            && RoundtableWire::historyStatesMatch(command.historyIds, states);
+        rooms->applyHistoryResult(command.clientId, ok, ok ? states : QJsonArray{},
+            ok ? QString() : (message.accepted ? RoundtableState::unreadableReason() : message.reason));
+        return true;
+    }
+    if (verb == QLatin1String("post") || verb == QLatin1String("postAt")) {
         rooms->applyPostResult(command.clientId, message.accepted,
                                message.accepted ? value("messageId") : message.reason);
         return true;
     }
     if (!message.accepted) {
-        rooms->applyRefusal(verb, message.reason);
+        rooms->applyRefusal(verb, message.reason, command.roomId);
         return true;
     }
     if (verb == QLatin1String("webSignIn")) {
@@ -7606,7 +7698,7 @@ bool StationClient::handleRoundtableResult(const SessionMessage& message)
         }
         return true;
     }
-    if (verb == QLatin1String("read")) {
+    if (verb == QLatin1String("read") || verb == QLatin1String("readAt")) {
         const QString stream = value("stream");
         // Only the room the window still reads; a later read replaced it.
         if (!stream.isEmpty() && rooms->readingRoomId() == command.roomId

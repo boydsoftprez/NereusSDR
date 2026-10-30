@@ -8,6 +8,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //                 the GPU overlay pipeline composites its premultiplied
 //                 textures with a source factor of One, not SrcAlpha
@@ -12585,6 +12587,54 @@ constexpr qreal kRoundtableGlyphSize = 9.0;
 constexpr int kRoundtableFoldStackStep = 6;   // stacked glyphs overlap 3 px
 constexpr int kRoundtableFoldStackMax = 3;
 
+// Presence and RF attribution are independent. This is the final displayed
+// content, shared by keepout, painting and the hit rectangle below.
+QStringList roundtableCochannelRows(const RoundtableTag& tag, int maxRows)
+{
+    if (maxRows <= 0) {
+        return {};
+    }
+    const QString details = QStringLiteral("Reports ›");
+    if (maxRows == 1) {
+        return {details};
+    }
+    QStringList rows{roundtableFrequencyText(tag.hz) + QStringLiteral(" MHz")};
+    const int people = static_cast<int>(tag.stations.size());
+    int shown = std::min(3, people);
+    while (shown > 0 && 1 + shown + (shown < people ? 1 : 0) + 1 > maxRows) {
+        --shown;
+    }
+    for (int i = 0; i < shown; ++i) {
+        const QJsonObject station = tag.stations.at(i).toObject();
+        QString name = station.value(QStringLiteral("callsign")).toString();
+        const int nth = station.value(QStringLiteral("nth")).toInt(1);
+        if (nth > 1) {
+            name += QStringLiteral(" (%1)").arg(nth);
+        }
+        rows.append(name);
+    }
+    if (shown < people && rows.size() + 1 < maxRows) {
+        rows.append(QStringLiteral("+%1 people ›").arg(people - shown));
+    }
+    if (tag.reportLines != QStringList{QStringLiteral("Read reports · details")}) {
+        const QStringList reports = tag.reportLines.mid(0, std::max(0, static_cast<int>(tag.reportLines.size()) - 1));
+        const bool heardBy = reports.size() >= 2 && reports.at(1).startsWith(QLatin1String("Heard by"));
+        // Never show a partial reporter identity/sample. A short pan keeps
+        // the people and explicitly directs the reader to the full reports.
+        const int required = heardBy ? std::min(3, static_cast<int>(reports.size())) : static_cast<int>(reports.size());
+        if (rows.size() + required + 1 <= maxRows) {
+            for (const QString& report : reports) {
+                if (rows.size() + 1 >= maxRows) {
+                    break;
+                }
+                rows.append(report);
+            }
+        }
+    }
+    rows.append(details);
+    return rows;
+}
+
 bool roundtableTagsEqual(const QList<RoundtableTag>& a, const QList<RoundtableTag>& b)
 {
     if (a.size() != b.size()) {
@@ -12594,7 +12644,8 @@ bool roundtableTagsEqual(const QList<RoundtableTag>& a, const QList<RoundtableTa
         const RoundtableTag& x = a.at(i);
         const RoundtableTag& y = b.at(i);
         if (x.roomId != y.roomId || x.hz != y.hz || x.state != y.state || x.label != y.label
-            || x.members != y.members || x.mine != y.mine || x.mentionsMe != y.mentionsMe) {
+            || x.members != y.members || x.mine != y.mine || x.mentionsMe != y.mentionsMe
+            || x.stations != y.stations || x.reportLines != y.reportLines) {
             return false;
         }
     }
@@ -12670,7 +12721,9 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         natural = std::max(natural, fixed + labelMetrics.horizontalAdvance(tag.label) + space
                                         + countMetrics.horizontalAdvance(QString::number(tag.members)));
     }
-    const int tagWidth = std::min(natural, kRoundtableTagMaxWidth);
+    const bool hasReports = std::any_of(m_roundtableTags.cbegin(), m_roundtableTags.cend(),
+        [](const RoundtableTag& tag) { return !tag.reportLines.isEmpty(); });
+    const int tagWidth = hasReports ? 208 : std::min(natural, kRoundtableTagMaxWidth);
 
     const int bandTop = specRect.bottom() + 1 - bandPlanStripHeight(p.device());
     const int top = bandTop - kRoundtableTagFootGap - kRoundtableTagHeight;
@@ -12680,7 +12733,18 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     // Where a flag, or the pan's toolbar down its left side, is over the
     // tag row, the tags keep clear of it.
     QList<RoundtableKeepOut> keepOut;
-    const QRect row(specRect.left(), top, specRect.width(), kRoundtableTagHeight);
+    const int maximumRows = std::max(0, (top + kRoundtableTagHeight - specRect.top() - 8) / 14);
+    QHash<QString, QStringList> contentRows;
+    int stackHeight = kRoundtableTagHeight;
+    for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
+        const QStringList rows = tag.reportLines.isEmpty() ? QStringList{} : roundtableCochannelRows(tag, maximumRows);
+        contentRows.insert(tag.roomId, rows);
+        const int pixels = tag.reportLines.isEmpty() ? std::max(1, std::min(4, static_cast<int>(tag.stations.size()))) * kRoundtableTagHeight
+            : rows.size() * 14 + 8;
+        stackHeight = std::max(stackHeight, pixels);
+    }
+    const QRect row(specRect.left(), top + kRoundtableTagHeight - stackHeight,
+                    specRect.width(), stackHeight);
     const auto keepClearOf = [&](const QRect& over) {
         if (over.intersects(row)) {
             keepOut.append(RoundtableKeepOut{static_cast<double>(over.left() - specRect.left()),
@@ -12713,8 +12777,14 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
     for (const RoundtableTagPlacement& placement : placements) {
-        const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())), top, tagWidth,
-                         kRoundtableTagHeight);
+        const RoundtableTag* stackTag = byId.value(placement.roomIds.value(0));
+        const int lines = !placement.folded && stackTag
+            ? std::max(1, std::min(4, static_cast<int>(stackTag->stations.size()))) : 1;
+        const int bodyHeight = !placement.folded && stackTag && !stackTag->reportLines.isEmpty()
+            ? contentRows.value(stackTag->roomId).size() * 14 + 8 : lines * kRoundtableTagHeight;
+        const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())),
+                         top + kRoundtableTagHeight - bodyHeight, tagWidth, bodyHeight);
+        if (rect.top() < specRect.top()) { continue; }
         m_roundtableTagHits.append(RoundtableTagHit{rect, placement.roomIds, placement.folded});
         const RoundtableTag* first = byId.value(placement.roomIds.value(0));
         if (first == nullptr) {
@@ -12776,6 +12846,39 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
             continue;
         }
 
+        if (!first->reportLines.isEmpty()) {
+            const QStringList rows = contentRows.value(first->roomId);
+            p.setFont(labelFont);
+            for (int line = 0; line < rows.size(); ++line) {
+                p.setPen(line == 0 || line == rows.size() - 1 ? count : text);
+                p.drawText(QRect(rect.left() + 7, rect.top() + 4 + line * 14, rect.width() - 14, 14),
+                           Qt::AlignVCenter | Qt::AlignLeft,
+                           labelMetrics.elidedText(rows.at(line), Qt::ElideRight, rect.width() - 14));
+            }
+            continue;
+        }
+        if (!first->stations.isEmpty()) {
+            for (int line = 0; line < lines; ++line) {
+                const QJsonObject station = first->stations.at(line).toObject();
+                QString label = station.value(QStringLiteral("callsign")).toString();
+                const int nth = station.value(QStringLiteral("nth")).toInt(1);
+                if (nth > 1) { label += QStringLiteral(" (%1)").arg(nth); }
+                if (line == lines - 1 && first->stations.size() > lines) {
+                    label += QStringLiteral(" +%1").arg(first->stations.size() - lines);
+                }
+                const qreal y = rect.top() + (line + 0.5) * kRoundtableTagHeight;
+                const int glyph = station.value(QStringLiteral("keyed")).toBool()
+                    ? static_cast<int>(RoundtableGlyph::Talking) : static_cast<int>(RoundtableGlyph::Quiet);
+                paintRoundtableGlyph(p, QPointF(rect.left() + 12, y), kRoundtableGlyphSize,
+                                     glyph, stale, dimmed);
+                p.setFont(labelFont);
+                p.setPen(text);
+                p.drawText(QRect(rect.left() + 24, rect.top() + line * kRoundtableTagHeight,
+                                 rect.width() - 28, kRoundtableTagHeight), Qt::AlignVCenter,
+                           labelMetrics.elidedText(label, Qt::ElideRight, rect.width() - 28));
+            }
+            continue;
+        }
         const qreal glyphX = rect.left() + 1 + kRoundtableTagPadLeft + kRoundtableGlyphSize / 2.0;
         paintRoundtableGlyph(p, QPointF(glyphX, midY), kRoundtableGlyphSize, first->state, stale, dimmed);
         const int textLeft = static_cast<int>(glyphX + kRoundtableGlyphSize / 2.0) + kRoundtableTagInnerGap;
@@ -12805,7 +12908,7 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
         "QMenu::item:disabled { color: #a6a6ac; font-size: 11px; }"
         "QMenu::item:selected { background: #1e3d5f; color: #ececf0; }"
         "QMenu::separator { height: 1px; background: #2a2a2e; margin: 2px 0; }"));
-    QAction* heading = menu.addAction(QStringLiteral("%1 rooms here").arg(roomIds.size()));
+    QAction* heading = menu.addAction(QStringLiteral("%1 frequencies here").arg(roomIds.size()));
     heading->setEnabled(false);
     menu.addSeparator();
     const qreal dpr = std::max<qreal>(1.0, devicePixelRatioF());
@@ -12828,6 +12931,24 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
         const QString text = QStringLiteral("%1   %2   %3")
                                  .arg(roundtableFrequencyText(tag.hz), roundtableFoldWho(tag))
                                  .arg(tag.members);
+        if (!tag.stations.isEmpty()) {
+            auto* details = menu.addMenu(QIcon(glyph), QStringLiteral("%1 · %2 cochannel")
+                .arg(roundtableFrequencyText(tag.hz)).arg(tag.stations.size()));
+            for (const QJsonValue& value : tag.stations) {
+                const QJsonObject station = value.toObject();
+                QAction* person = details->addAction(QStringLiteral("%1 · slice %2 · %3")
+                    .arg(station.value(QStringLiteral("callsign")).toString())
+                    .arg(station.value(QStringLiteral("slice")).toInt())
+                    .arg(station.value(QStringLiteral("grid")).toString()));
+                person->setEnabled(false);
+            }
+            details->addAction(QStringLiteral("Read this frequency"), this,
+                               [this, id]() { emit roundtableReadRequested(id); });
+            QAction* tune = details->addAction(QStringLiteral("Tune active slice here"), this,
+                               [this, id]() { if (!m_moxOverlay) { emit roundtableRoomClicked(id); } });
+            tune->setEnabled(!m_moxOverlay);
+            continue;
+        }
         QAction* row = menu.addAction(QIcon(glyph), text);
         row->setData(id);
         connect(row, &QAction::triggered, this, [this, id] {
@@ -12848,7 +12969,9 @@ bool SpectrumWidget::roundtableTagClick(const QPoint& pos, const QPoint& globalP
         if (!hit.rect.contains(pos)) {
             continue;
         }
-        if (hit.folded) {
+        const bool frequency = !hit.roomIds.isEmpty()
+            && hit.roomIds.first().startsWith(QLatin1String("frequency:"));
+        if (hit.folded || frequency) {
             auto* menu = new QMenu(this);
             menu->setAttribute(Qt::WA_DeleteOnClose);
             buildRoundtableFoldMenu(hit.roomIds, *menu);

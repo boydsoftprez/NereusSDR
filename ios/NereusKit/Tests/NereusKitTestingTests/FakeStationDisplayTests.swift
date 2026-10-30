@@ -30,8 +30,17 @@ struct FakeStationDisplayTests {
         let settings = SettingsProxyClient(session: session)
         let commands = CommandClient(session: session)
         let events = session.events
+        var handledEvents = 0
+        var handledMessages: [String: Int] = [:]
+        var lastState: StationSession.State = .idle
         let feeding = Task { @MainActor in
             for await event in events {
+                handledEvents += 1
+                switch event {
+                case .message(let message): handledMessages[message.kind.rawValue, default: 0] += 1
+                case .stateChanged(let state): lastState = state
+                case .refused: break
+                }
                 mirror.handle(event)
                 settings.handle(event)
                 await commands.handle(event)
@@ -39,7 +48,12 @@ struct FakeStationDisplayTests {
         }
         await session.connect()
         #expect(await station.waitUntilLive())
-        #expect(await poll { mirror.isSnapshotComplete })
+        let snapshotWaitStarted = ContinuousClock.now
+        let snapshotComplete = await poll { mirror.isSnapshotComplete }
+        let snapshotWaitElapsed = ContinuousClock.now - snapshotWaitStarted
+        let sessionState = await session.state
+        #expect(snapshotComplete,
+                "Snapshot wait: elapsed \(snapshotWaitElapsed), session \(sessionState), handled state \(lastState), events \(handledEvents), messages \(handledMessages), objects \(mirror.objectKeys.count), stale \(mirror.isStale), fake live \(station.isLive), connections \(station.connectionCount), unreadable \(station.unreadableFrames.count)")
         return Rig(station: station, session: session, mirror: mirror, settings: settings, commands: commands,
                    feeding: feeding)
     }

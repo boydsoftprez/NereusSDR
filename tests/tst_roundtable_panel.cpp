@@ -22,6 +22,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: Created (Roundtable plan Task 13). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: Roundtable plan Task 15: fitsTheRealAppletColumn, every
@@ -79,6 +81,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QJsonArray>
+#include <QFrame>
 #include <QJsonObject>
 #include <QFontMetrics>
 #include <QLabel>
@@ -156,7 +159,10 @@ void quietPlatformNotes(QtMsgType type, const QMessageLogContext& context, const
 class RecordingLink : public IStationLink {
 public:
     QStringList calls;
+    bool frequency = false;
     CommandOutcome answer{true, QString()};
+    QJsonArray historyIds;
+    QString historyClientId;
 
     CommandOutcome requestAddSlice(const QString&) override { return {}; }
     CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
@@ -165,6 +171,20 @@ public:
     CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
 
     bool roundtableAvailable() const override { return true; }
+    bool roundtableFrequencyAvailable() const override { return frequency; }
+    CommandOutcome requestRoundtableReadAt(qint64 hz, const QString& family) override
+    { return note(QStringLiteral("readAt %1 %2").arg(hz).arg(family)); }
+    CommandOutcome requestRoundtableUnreadAt(qint64 hz, const QString& family) override
+    { return note(QStringLiteral("unreadAt %1 %2").arg(hz).arg(family)); }
+    CommandOutcome requestRoundtableHistory(const QJsonArray& ids, const QString& clientId) override
+    {
+        historyIds = ids;
+        historyClientId = clientId;
+        return note(QStringLiteral("history"));
+    }
+    CommandOutcome requestRoundtablePostAt(int slice, qint64 hz, const QString& family,
+                                          const QString& text, const QString&) override
+    { return note(QStringLiteral("postAt %1 %2 %3 %4").arg(slice).arg(hz).arg(family, text)); }
     CommandOutcome requestRoundtablePost(const QString& roomId, const QString& text,
                                          const QString&) override
     {
@@ -533,6 +553,194 @@ private slots:
         AppSettings::instance().remove(QStringLiteral("AppletroundtableFloating"));
     }
 
+    void exactContextFollowsTuningAndModeWithoutRoomDwell()
+    {
+        Posed p;
+        p.link.frequency = true;
+        p.model.applyRooms({{QStringLiteral("frequencyVersion"), 1}, {QStringLiteral("rooms"), p.model.rooms()}});
+        RoundtablePanel panel(&p.model);
+        panel.followSlice(2);
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        QCOMPARE(panel.roomId(), QStringLiteral("frequency:lsb-7185123"));
+        QVERIFY(p.link.calls.contains(QStringLiteral("readAt 7185123 lsb")));
+        auto* box = child<QPlainTextEdit>(&panel, QStringLiteral("roundtableBox"));
+        QVERIFY(box);
+        box->setPlainText(QStringLiteral("original context draft"));
+        panel.setSliceContext(7185124, QStringLiteral("lsb"));
+        QCOMPARE(box->toPlainText(), QString());
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        QCOMPARE(box->toPlainText(), QStringLiteral("original context draft"));
+        panel.setSliceContext(7185123, QStringLiteral("usb"));
+        QCOMPARE(panel.roomId(), QStringLiteral("frequency:usb-7185123"));
+        QCOMPARE(box->toPlainText(), QString());
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        panel.followSlice(1);
+        QCOMPARE(box->toPlainText(), QString());
+        panel.followSlice(2);
+        QCOMPARE(box->toPlainText(), QStringLiteral("original context draft"));
+    }
+
+    void refusedAutomaticFrequencyReadWaitsForExplicitRetry()
+    {
+        Posed p;
+        p.link.frequency = true;
+        const QJsonObject directory{{QStringLiteral("frequencyVersion"), 1},
+                                    {QStringLiteral("rooms"), p.model.rooms()}};
+        p.model.applyRooms(directory);
+        RoundtablePanel panel(&p.model);
+        panel.followSlice(2);
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        const QString call = QStringLiteral("readAt 7185123 lsb");
+        QCOMPARE(p.link.calls.count(call), 1);
+        p.model.applyRefusal(QStringLiteral("readAt"), QStringLiteral("Close another frequency view."),
+                             RoundtableModel::frequencyContextId(7185123, QStringLiteral("lsb")));
+        QVERIFY(p.model.readingRoomId().isEmpty());
+        p.model.applyRooms(directory);
+        QCOMPARE(p.link.calls.count(call), 1);
+        panel.backToSlice();
+        QCOMPARE(p.link.calls.count(call), 2);
+    }
+
+    void retainedHistoryUpdatesAfterTuningAndRejectsLateRestoration()
+    {
+        Posed p;
+        p.link.frequency = true;
+        p.model.applyRooms({{QStringLiteral("frequencyVersion"), 1},
+                            {QStringLiteral("rooms"), p.model.rooms()}});
+        QJsonObject first = roomOf(QStringLiteral("lsb-7185123"), {}, {},
+            {message(91, QStringLiteral("a"), QStringLiteral("W4ABC"), QStringLiteral("retained secret"))});
+        first.insert(QStringLiteral("view"), QStringLiteral("frequency"));
+        first.insert(QStringLiteral("hz"), 7185123);
+        first.insert(QStringLiteral("family"), QStringLiteral("lsb"));
+        p.model.applyRoom(first);
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 900);
+        panel.followSlice(0);
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        panel.show();
+        settle();
+        QVERIFY(texts(&panel, QStringLiteral("roundtableMessageText")).join(' ').contains(QStringLiteral("retained secret")));
+        // The old frequency is no longer subscribed, but its received text stays.
+        panel.setSliceContext(7200000, QStringLiteral("lsb"));
+        panel.refreshNow();
+        QCOMPARE(p.link.historyIds, QJsonArray{91});
+        const QString request = p.link.historyClientId;
+        QVERIFY(!request.isEmpty());
+        p.model.applyHistoryResult(request, true,
+            {QJsonObject{{QStringLiteral("id"), 91}, {QStringLiteral("state"), QStringLiteral("removed")},
+                         {QStringLiteral("text"), QJsonValue::Null}}}, {});
+        settle();
+        const QString removed = texts(&panel, QStringLiteral("roundtableMessageText")).join(' ');
+        QVERIFY(!removed.contains(QStringLiteral("retained secret")));
+        QVERIFY(removed.contains(QStringLiteral("Removed"), Qt::CaseInsensitive));
+        // A new authoritative tombstone wins over an older in-flight query.
+        g_now += 10001;
+        panel.refreshNow();
+        const QString late = p.link.historyClientId;
+        QJsonObject current = first;
+        current.insert(QStringLiteral("messages"),
+            QJsonArray{message(91, QStringLiteral("a"), QStringLiteral("W4ABC"), {}, QStringLiteral("deleted"))});
+        p.model.applyRoom(current);
+        p.model.applyHistoryResult(late, true,
+            {QJsonObject{{QStringLiteral("id"), 91}, {QStringLiteral("state"), QStringLiteral("shown")},
+                         {QStringLiteral("text"), QStringLiteral("retained secret")}}}, {});
+        settle();
+        QVERIFY(!texts(&panel, QStringLiteral("roundtableMessageText")).join(' ').contains(QStringLiteral("retained secret")));
+        // Hidden anonymous browsing is connected read-only, not offline.
+        p.setLink(RoundtableModel::LinkState::Hidden);
+        const QString previous = p.link.historyClientId;
+        panel.refreshNow();
+        QVERIFY(p.link.historyClientId != previous);
+        p.model.applyHistoryResult(p.link.historyClientId, true,
+            {QJsonObject{{QStringLiteral("id"), 91}, {QStringLiteral("state"), QStringLiteral("deleted")},
+                         {QStringLiteral("text"), QJsonValue::Null}}}, {});
+        settle();
+        QVERIFY(texts(&panel, QStringLiteral("roundtableHistoryStatus")).isEmpty());
+        // Losing capabilities and record snapshots must not hide received text.
+        current.insert(QStringLiteral("messages"),
+            QJsonArray{message(93, QStringLiteral("a"), QStringLiteral("W4ABC"), QStringLiteral("offline retained message"))});
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        p.model.applyRoom(current);
+        p.setLink(RoundtableModel::LinkState::Offline);
+        p.link.frequency = false;
+        p.model.clearStationRooms();
+        settle();
+        QVERIFY(texts(&panel, QStringLiteral("roundtableMessageText")).join(' ').contains(QStringLiteral("offline retained message")));
+        QVERIFY(texts(&panel, QStringLiteral("roundtableHistoryStatus")).join(' ').contains(QStringLiteral("offline")));
+    }
+
+    void refusedFrequencySendRestoresOnlyItsOriginalDraft()
+    {
+        Posed p;
+        p.link.frequency = true;
+        p.model.applyRooms({{QStringLiteral("frequencyVersion"), 1}, {QStringLiteral("rooms"), p.model.rooms()}});
+        RoundtablePanel panel(&p.model);
+        panel.followSlice(2);
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        panel.show();
+        settle();
+        auto* box = child<QPlainTextEdit>(&panel, QStringLiteral("roundtableBox"));
+        auto* send = child<QPushButton>(&panel, QStringLiteral("roundtableSendBtn"));
+        QVERIFY(box && send);
+        box->setPlainText(QStringLiteral("context frozen text"));
+        p.link.answer = {false, QStringLiteral("stale context")};
+        QTest::mouseClick(send, Qt::LeftButton);
+        QVERIFY(p.link.calls.contains(QStringLiteral("postAt 2 7185123 lsb context frozen text")));
+        QCOMPARE(box->toPlainText(), QStringLiteral("context frozen text"));
+        p.link.answer = {true, QString()};
+        panel.setSliceContext(7185124, QStringLiteral("lsb"));
+        QCOMPARE(box->toPlainText(), QString());
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        QCOMPARE(box->toPlainText(), QStringLiteral("context frozen text"));
+    }
+
+    void frequencyReportsJoinLastTurnAndKeepSenderHistory()
+    {
+        Posed p;
+        p.link.frequency = true;
+        p.model.applyRooms({{QStringLiteral("frequencyVersion"), 1}, {QStringLiteral("rooms"), p.model.rooms()}});
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 1400);
+        panel.followSlice(0);
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        QJsonObject heard = member(QStringLiteral("a"), QStringLiteral("W4ABC"), 128,
+                                   QJsonObject{{QStringLiteral("turn"), 30}, {QStringLiteral("dbm"), -73},
+                                               {QStringLiteral("t"), g_now - 2000}, {QStringLiteral("present"), true}});
+        heard.insert(QStringLiteral("sourceRoom"), kOther);
+        heard.insert(QStringLiteral("bearingDeg"), 82);
+        QJsonObject wrong = member(QStringLiteral("a"), QStringLiteral("N3XYZ"), 42,
+                                   QJsonObject{{QStringLiteral("turn"), 29}, {QStringLiteral("dbm"), -85},
+                                               {QStringLiteral("t"), g_now - 1000}});
+        wrong.insert(QStringLiteral("sourceRoom"), kRoom);
+        QJsonObject msg = message(77, QStringLiteral("a"), QStringLiteral("W4ABC"), QStringLiteral("retained text"));
+        msg.insert(QStringLiteral("hz"), 7185123);
+        msg.insert(QStringLiteral("family"), QStringLiteral("lsb"));
+        QJsonObject view = roomOf(QStringLiteral("lsb-7185123"), {},
+            QJsonArray{turn(30, QStringLiteral("talking"),
+                QJsonArray{talker(QStringLiteral("t"), QStringLiteral("W1TLK"))},
+                g_now - 30000, g_now - 1000)}, QJsonArray{msg}, QJsonArray{heard, wrong});
+        view.insert(QStringLiteral("view"), QStringLiteral("frequency"));
+        p.model.applyRoom(view);
+        panel.show();
+        settle();
+        QCOMPARE(panel.findChildren<QFrame*>(QStringLiteral("roundtableReadingRow")).size(), 1);
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("-73")});
+        QVERIFY(texts(&panel, QStringLiteral("roundtableReadingsTitle")).contains(QStringLiteral("HEARD BY")));
+        QVERIFY(!texts(&panel, QStringLiteral("roundtableMessageFrequency")).isEmpty());
+        const QString capture = qEnvironmentVariable("NEREUS_ROUNDTABLE_CAPTURE_DIR");
+        if (!capture.isEmpty()) {
+            QVERIFY(panel.grab().save(capture + QStringLiteral("/desktop-frequency-reports.png")));
+        }
+        panel.setSliceContext(7249000, QStringLiteral("lsb"));
+        settle();
+        auto rows = panel.findChildren<QFrame*>(QStringLiteral("roundtableMessageRow"));
+        QVERIFY(!rows.isEmpty());
+        QVERIFY(rows.last()->property("retained").toBool());
+        if (!capture.isEmpty()) {
+            QVERIFY(panel.grab().save(capture + QStringLiteral("/desktop-frequency-panel.png")));
+        }
+    }
+
     void sectionsInOrder()
     {
         Posed p;
@@ -720,25 +928,25 @@ private slots:
         panel.show();
         settle();
         auto* line = child<QLabel>(&panel, QStringLiteral("roundtableConnectionLine"));
-        QCOMPARE(line->text(), QStringLiteral("Live · last reading 0 s ago"));
+        QCOMPARE(line->text(), QStringLiteral("Live · last reading 0 s ago · Legacy room server"));
         auto* box = child<QPlainTextEdit>(&panel, QStringLiteral("roundtableBox"));
         auto* send = child<QPushButton>(&panel, QStringLiteral("roundtableSendBtn"));
         box->setPlainText(QStringLiteral("hello"));
         QVERIFY(send->isEnabled());
 
         p.setLink(RoundtableModel::LinkState::Reconnecting, g_now - 75000);
-        QCOMPARE(line->text(), QStringLiteral("Reconnecting · nothing new for 1 min"));
+        QCOMPARE(line->text(), QStringLiteral("Reconnecting · nothing new for 1 min · Legacy room server"));
         QVERIFY(!send->isEnabled());
         QCOMPARE(box->toPlainText(), QStringLiteral("hello"));
         QVERIFY(box->isEnabled());
 
         p.setLink(RoundtableModel::LinkState::Offline, 1'800'000'000'000LL - 3600000);
         QVERIFY(line->text().startsWith(QStringLiteral("Offline since ")));
-        QVERIFY(line->text().endsWith(QStringLiteral(" UTC")));
+        QVERIFY(line->text().endsWith(QStringLiteral(" UTC · Legacy room server")));
         p.setLink(RoundtableModel::LinkState::Connecting);
-        QCOMPARE(line->text(), QStringLiteral("Connecting"));
+        QCOMPARE(line->text(), QStringLiteral("Connecting · Legacy room server"));
         p.setLink(RoundtableModel::LinkState::Hidden);
-        QCOMPARE(line->text(), QStringLiteral("You are hidden"));
+        QCOMPARE(line->text(), QStringLiteral("You are hidden · Legacy room server"));
         QVERIFY(!send->isEnabled());
         QCOMPARE(box->toPlainText(), QStringLiteral("hello"));
         p.setLink(RoundtableModel::LinkState::Live);
@@ -901,7 +1109,7 @@ private slots:
         QCOMPARE(texts(&panel, QStringLiteral("roundtableTalkerName")),
                  QStringList{QStringLiteral("Nobody is talking")});
         QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingsTitle")),
-                 QStringList{QStringLiteral("IN THE ROOM")});
+                 QStringList{QStringLiteral("READINGS OF W4ABC")});
     }
 
     void counterAndLimit()
@@ -1190,6 +1398,32 @@ private slots:
         QCOMPARE(parts.join(QLatin1Char(' ')), QStringLiteral("Reading 7.249 · Tune A here · Back to my slice"));
     }
 
+    void quietDoubledTurnNeverNamesAnIndividualLastTalker()
+    {
+        for (bool mine : {false, true}) {
+            Posed p;
+            QJsonObject room = talkingRoom();
+            room.insert(QStringLiteral("now"), QJsonArray{});
+            const QJsonArray pair{talker(QStringLiteral("t"), QStringLiteral("W1TLK")),
+                                  talker(QStringLiteral("me"), QStringLiteral("KG4VCF"))};
+            room.insert(QStringLiteral("earlier"),
+                        QJsonArray{turn(31, QStringLiteral("doubled"), pair, g_now - 9000, g_now - 3000, mine)});
+            p.model.applyRoom(room);
+            RoundtablePanel panel(&p.model);
+            panel.followSlice(0);
+            panel.resize(340, 900);
+            panel.show();
+            settle();
+            auto* body = child<QWidget>(&panel, QStringLiteral("roundtableTalkerBody"));
+            QStringList labels;
+            for (QLabel* label : body->findChildren<QLabel*>()) { labels.append(label->text()); }
+            const QString text = labels.join(QLatin1Char(' '));
+            QVERIFY(text.contains(QStringLiteral("Doubled · combined RF")));
+            QVERIFY(!text.contains(QStringLiteral("Last turn was yours")));
+            QVERIFY(!text.contains(QStringLiteral("Last turn by W1TLK")));
+        }
+    }
+
     void fitsTheRealAppletColumn_data()
     {
         QTest::addColumn<int>("scene");
@@ -1280,7 +1514,7 @@ private slots:
             panel.setOwnReading(-73.0, g_now);
             settle();
             QCOMPARE(texts(&panel, QStringLiteral("roundtableConnectionLine")),
-                     QStringList{QStringLiteral("You are hidden")});
+                     QStringList{QStringLiteral("You are hidden · Legacy room server")});
         }
         if (scene == 7) {
             auto names = panel.findChildren<QPushButton*>(QStringLiteral("roundtableTurnNameBtn"));

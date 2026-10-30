@@ -10,6 +10,9 @@
 // (JJ's answer of 2026-10-25). J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
 
+// 2026-10-30: Approved frequency-first people, reports and phone interactions.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import SwiftUI
 import UIKit
 
@@ -21,6 +24,7 @@ struct RoundtableTag: Equatable {
     var glyph: RoundtableFlagLine.Glyph = .talking
     /// The talker's callsign, You, Unknown, Doubled or Quiet.
     var label: String = ""
+    var reportLines: [String] = []
     var members: Int64 = 0
     /// Your slice's room.
     var mine = false
@@ -77,6 +81,7 @@ enum RoundtableTagLayout {
     static let gap: Double = 4
     static let minWidth: Double = 56
     static let maxWidth: Double = 128
+    static let reportWidth: Double = 176
     static let padLeft: CGFloat = 6
     static let padRight: CGFloat = 7
     /// The glyph to the text.
@@ -136,6 +141,14 @@ enum RoundtableTagLayout {
             } else {
                 reach *= 1.5
             }
+        }
+
+        // A geometric fold must not consume the only clear slot before a
+        // selected cochannel whose frequency happens to sort later.
+        let pinnedIds = Set(visible.filter(\.pinned).map(\.roomId))
+        while items.count > capacity,
+              let remove = items.lastIndex(where: { Set($0.roomIds).isDisjoint(with: pinnedIds) }) {
+            items.remove(at: remove)
         }
 
         // Each tag to the stretch nearest its frequency that still has
@@ -315,8 +328,16 @@ enum RoundtableTagLayout {
     /// station's slices: their rooms are mine.
     @MainActor
     static func tags(_ model: RoundtableModel, sliceIds: [Int64]) -> [RoundtableTag] {
-        let mine = Set(sliceIds.compactMap { model.sliceRooms[$0] })
-        return tags(rooms: model.rooms, mine: mine, mentionCounts: model.mentionCounts, room: model.view(of:))
+        let mine = Set(sliceIds.compactMap { model.frequencyAvailable ? model.sliceContexts[$0]?.id : model.sliceRooms[$0] })
+        var result = tags(rooms: model.frequencyRows, mine: mine, mentionCounts: model.mentionCounts, room: model.view(of:))
+        let view = model.readingRoomId.flatMap(model.view(of:)) ?? model.activeContext.flatMap { model.view(of: $0.id) }
+        if model.frequencyAvailable {
+            for index in result.indices {
+                result[index].reportLines = reportLines(for: model.frequencyRows[index], view: view,
+                                                       now: Int64(Date().timeIntervalSince1970 * 1000))
+            }
+        }
+        return result
     }
 
     /// The tags for `rooms`, with `mine` the rooms of this station's
@@ -335,11 +356,114 @@ enum RoundtableTagLayout {
                 glyph = .you
             }
             out.append(RoundtableTag(roomId: summary.id, hz: summary.hz, glyph: glyph,
-                                     label: RoundtableFlagLine.label(glyph, talkers: summary.talkers),
+                                     label: summary.stations.isEmpty ? RoundtableFlagLine.label(glyph, talkers: summary.talkers)
+                                        : summary.stations.map { RoundtableText.withNth($0.callsign, $0.nth) }.joined(separator: "\n"),
                                      members: summary.members, mine: isMine,
                                      mentionsMe: (mentionCounts[summary.id] ?? 0) > 0))
         }
         return out
+    }
+
+    /// Only a turn at this exact placement and scoped source can label RF.
+    /// Nearby turns belong to the loaded neighborhood but not to this stack.
+    static func reportLines(for summary: RoundtableModel.RoomSummary, view: RoundtableModel.Room?, now: Int64) -> [String] {
+        guard summary.stations.count > 1 else { return [] }
+        let sources = Set(summary.stations.map(\.sourceRoom))
+        let matches: (RoundtableModel.Turn) -> Bool = { turn in
+            turn.hz == summary.hz && turn.sourceRoom.map(sources.contains) == true
+        }
+        guard let view, view.family == summary.family,
+              let turn = view.now.filter(matches).max(by: { $0.start < $1.start })
+                ?? view.earlier.filter(matches).max(by: { ($0.end ?? $0.start) < ($1.end ?? $1.start) }) else {
+            return ["Read reports · details"]
+        }
+        let heading: String
+        if turn.kind == "doubled" { return ["Two stations keyed", "Combined RF · unattributed", "Open details"] }
+        if turn.kind == "unknown" { heading = "Unknown signal" }
+        else if turn.talkers.count == 1 { heading = "Last talker: " + RoundtableText.withNth(turn.talkers[0].callsign, turn.talkers[0].nth) }
+        else { return ["Unattributed signal", "Open details"] }
+        let talkers = Set(turn.talkers.compactMap(\.identity))
+        let reporters = view.members.filter { !talkers.contains($0.id) }
+            .sorted { ($0.km ?? Int64.max, $0.id) < ($1.km ?? Int64.max, $1.id) }
+        var lines = [heading, "Heard by dBm Age"]
+        for member in reporters.prefix(2) {
+            let name = RoundtableText.withNth(member.callsign, member.nth)
+            if let reading = member.reading, reading.turn == turn.id, reading.present,
+               RoundtableText.readingPresent(reading.dbm) {
+                lines.append("\(name)  \(Int(reading.dbm.rounded()))  \(RoundtableText.ageText(now - reading.t))")
+            } else { lines.append("\(name)  —  No report") }
+        }
+        lines.append(reporters.count > 2 ? "+\(reporters.count - 2) · details" : "Open details")
+        return lines
+    }
+
+    /// Final displayed rows, shared by the view, keepout and hit bounds.
+    /// Exact-frequency people remain a directory even when nearby reporters
+    /// measured the last turn. Whole report blocks yield to people/details.
+    static func contentLines(_ tag: RoundtableTag, width: Double, maxRows: Int = 30) -> [String] {
+        guard maxRows > 0 else { return [] }
+        guard !tag.reportLines.isEmpty else { return tag.label.split(separator: "\n").prefix(min(3, maxRows)).map(String.init) }
+        let narrow = width < 125
+        let details = "Reports ›"
+        guard maxRows > 1 else { return [details] }
+        let people = tag.label.split(separator: "\n").map(String.init)
+        let waiting = tag.reportLines == ["Read reports · details"]
+        let heardBy = tag.reportLines.contains("Heard by dBm Age")
+        let heading = tag.reportLines[0]
+        var headings: [String]
+        if narrow, heading.hasPrefix("Last talker: ") {
+            headings = ["Last", "talker", String(heading.dropFirst(13))]
+        } else if narrow, heading == "Two stations keyed" { headings = ["Two", "stations", "keyed"] }
+        else if narrow, heading == "Unknown signal" { headings = ["Unknown", "signal"] }
+        else { headings = [heading] }
+        let reportGroups: [[String]] = heardBy
+            ? tag.reportLines.dropFirst(2).dropLast().map { row in
+                let parts = row.components(separatedBy: "  ")
+                if narrow, parts.count == 3 {
+                    return [parts[0], parts[1] + "dBm " + parts[2].replacingOccurrences(of: " ", with: "")]
+                }
+                if narrow, parts.count == 2 { return [parts[0], "— No report"] }
+                return [row]
+            }
+            : tag.reportLines.dropFirst().dropLast().map { line in
+                narrow && line == "Combined RF · unattributed" ? ["Combined", "RF", "Unassigned"] : [line]
+            }
+        let minimumReportRows = headings.count + (heardBy ? 1 : 0) + (reportGroups.first?.count ?? 0)
+        func presenceRows(_ count: Int) -> Int { count + (count < people.count ? 1 : 0) }
+        var shown = min(narrow ? 2 : 3, people.count)
+        // A third person yields to one complete report before either of the
+        // first two people does. Omitted identities always have an honest +N.
+        if shown == 3, !waiting,
+           2 + presenceRows(shown) + minimumReportRows > maxRows,
+           2 + presenceRows(2) + minimumReportRows <= maxRows { shown = 2 }
+        while shown > 0, 2 + presenceRows(shown) > maxRows { shown -= 1 }
+        var lines = [frequencyText(tag.hz) + (narrow ? "MHz" : " MHz")]
+        lines += people.prefix(shown)
+        if shown < people.count, lines.count + 1 < maxRows { lines.append("+\(people.count - shown) people") }
+        if !waiting {
+            // Compact Last/talker to Last only when that makes the first
+            // complete reporter fit. Keep its full callsign on its own row.
+            if narrow, headings.count == 3, heading.hasPrefix("Last talker: "),
+               lines.count + minimumReportRows + 1 > maxRows {
+                headings.remove(at: 1)
+            }
+            let required = headings.count + (heardBy ? 1 : 0) + (reportGroups.first?.count ?? 0)
+            if lines.count + required + 1 <= maxRows {
+                lines += headings
+                if heardBy { lines.append(narrow ? "Heard by" : "Heard by dBm Age") }
+                for group in reportGroups {
+                    guard lines.count + group.count + 1 <= maxRows else { break }
+                    lines += group
+                }
+            }
+        }
+        lines.append(details)
+        return lines
+    }
+
+    static func tagHeight(_ tag: RoundtableTag, width: Double = 80, maxRows: Int = 30) -> CGFloat {
+        if tag.reportLines.isEmpty { return max(height, CGFloat(min(3, tag.label.split(separator: "\n").count)) * 14 + 8) }
+        return CGFloat(contentLines(tag, width: width, maxRows: maxRows).count) * 13 + 8
     }
 
     /// Hidden while Roundtable is off, unavailable or connecting; stale
@@ -387,7 +511,7 @@ enum RoundtableTagLayout {
 
     /// The +N list's heading.
     static func foldHeading(count: Int, sliceLetter: String) -> String {
-        "\(count) rooms here \u{00B7} a tap tunes slice \(sliceLetter)"
+        "\(count) frequencies here \u{00B7} a tap tunes slice \(sliceLetter)"
     }
 
     /// One width for every tag and fold: the widest tag's, within bounds.
@@ -402,7 +526,7 @@ enum RoundtableTagLayout {
             let members = ("\(tag.members)" as NSString).size(withAttributes: [.font: count]).width
             natural = max(natural, Double((fixed + text + space + members).rounded(.up)))
         }
-        return min(natural, maxWidth)
+        return tags.contains(where: { !$0.reportLines.isEmpty }) ? reportWidth : min(natural, maxWidth)
     }
 }
 
@@ -428,17 +552,31 @@ struct RoundtableTagLayer: View {
     let flagRects: [CGRect]
     let keyed: Bool
     let sliceLetter: String
+    /// Reads reports without tuning, using the main screen’s existing sheet.
+    var readReports: ((String) -> Void)? = nil
     /// Tunes the active slice to a room.
     let tune: (RoundtableModel.RoomSummary) -> Void
 
     @State private var openFold: [String]?
+    @State private var detailsTag: RoundtableTag?
+    @State private var showDetails = false
 
     var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            tagContent
+        }
+    }
+
+    @ViewBuilder
+    private var tagContent: some View {
         let display = RoundtableTagLayout.display(roundtable)
         let tags = RoundtableTagLayout.tags(roundtable, sliceIds: sliceIds)
         if display != .hidden, !tags.isEmpty, top >= 0 {
-            let width = RoundtableTagLayout.tagWidth(tags)
-            let keepOut = Self.keepOut(flagRects, top: top, width: geometryWidth)
+            let maximumRows = max(0, Int((top + RoundtableTagLayout.height - 8) / 13))
+            let bounds = Self.contentBounds(tags, maximumRows: maximumRows, flagRects: flagRects,
+                                            top: top, available: geometryWidth)
+            let keepOut = bounds.keepOut
+            let width = bounds.width
             let placements = RoundtableTagLayout.layout(tags, hzPerPoint: hzPerPoint,
                                                         leftHz: Int64(lowHz.rounded()),
                                                         width: Double(geometryWidth), tagWidth: width,
@@ -450,7 +588,7 @@ struct RoundtableTagLayer: View {
                 ticks(placements, byId: byId, stale: stale, dimmed: dimmed)
                 ForEach(placements, id: \.roomIds) { placement in
                     tagView(placement, byId: byId, stale: stale, dimmed: dimmed)
-                        .offset(x: CGFloat(placement.left), y: top)
+                        .offset(x: CGFloat(placement.left), y: top - stackExtra(placement, byId: byId))
                 }
                 if let fold = openFold, let placement = placements.first(where: { $0.roomIds == fold }) {
                     // A tap anywhere else closes the list, and tunes nothing.
@@ -463,12 +601,55 @@ struct RoundtableTagLayer: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .confirmationDialog("People at " + (detailsTag.map { RoundtableTagLayout.frequencyText($0.hz) } ?? "this frequency"),
+                                isPresented: $showDetails, titleVisibility: .visible) {
+                if let tag = detailsTag {
+                    Button("Read reports") { readReports?(tag.roomId) }
+                    Button("Tune slice \(sliceLetter) here") { tuneTo(tag.roomId) }.disabled(keyed)
+                }
+                Button("Cancel", role: .cancel) {}
+            }
             .onChange(of: placements.map(\.roomIds)) { _, next in
                 if let fold = openFold, !next.contains(fold) {
                     openFold = nil
                 }
             }
         }
+    }
+
+    /// Width can cross the narrow-strip threshold after flags are excluded.
+    /// Recompute clearance from the final rows at that actual width; the
+    /// monotone width bound settles after the wide/narrow presentation switch.
+    static func contentBounds(_ tags: [RoundtableTag], maximumRows: Int, flagRects: [CGRect],
+                              top: CGFloat, available: CGFloat) -> (width: Double, keepOut: [RoundtableKeepOut]) {
+        var width = RoundtableTagLayout.tagWidth(tags)
+        func spans(_ width: Double) -> [RoundtableKeepOut] {
+            let growth = tags.map { max(0, RoundtableTagLayout.tagHeight($0, width: width,
+                maxRows: maximumRows) - RoundtableTagLayout.height) }.max() ?? 0
+            let protected = flagRects.map { CGRect(x: $0.minX, y: $0.minY,
+                width: $0.width, height: $0.height + growth) }
+            return keepOut(protected, top: top, width: available)
+        }
+        for _ in 0..<3 {
+            let keepOut = spans(width)
+            let fitted = min(width, fittingWidth(tags, keepOut: keepOut, available: Double(available)))
+            if fitted == width { return (width, keepOut) }
+            width = fitted
+        }
+        return (width, spans(width))
+    }
+
+    /// Portrait flags can leave a narrow strip. Bound the compact box to the
+    /// actual free stretch, including gap on both sides, so it remains visible.
+    static func fittingWidth(_ tags: [RoundtableTag], keepOut: [RoundtableKeepOut], available: Double) -> Double {
+        var edge = RoundtableTagLayout.gap
+        var freeWidth = 0.0
+        for span in keepOut.sorted(by: { $0.left < $1.left }) {
+            freeWidth = max(freeWidth, span.left - RoundtableTagLayout.gap - edge)
+            edge = max(edge, span.right + RoundtableTagLayout.gap)
+        }
+        freeWidth = max(freeWidth, available - RoundtableTagLayout.gap - edge)
+        return min(RoundtableTagLayout.tagWidth(tags), max(1, freeWidth))
     }
 
     /// The flags that stand in the tag row, as spans the tags keep off. A
@@ -535,15 +716,21 @@ struct RoundtableTagLayer: View {
                         .font(.system(size: RoundtableTagLayout.labelFontSize, weight: .bold))
                         .foregroundStyle(stale ? RoundtableColours.dim : RoundtableColours.text)
                 } else if let tag = first {
-                    glyph(tag.glyph, stale: stale, dimmed: dimmed)
-                    (Text(tag.label)
-                        .font(.system(size: RoundtableTagLayout.labelFontSize, weight: .bold))
+                    if !tag.reportLines.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(RoundtableTagLayout.contentLines(tag, width: placement.width,
+                                maxRows: max(0, Int((top + RoundtableTagLayout.height - 8) / 13))).enumerated()), id: \.offset) { _, line in
+                                Text(line).lineLimit(1).frame(height: 13, alignment: .leading)
+                            }
+                        }
+                        .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(stale ? RoundtableColours.dim : Self.labelColour)
-                     + Text(" \(tag.members)")
-                        .font(.system(size: RoundtableTagLayout.labelFontSize, weight: .semibold))
-                        .foregroundStyle(stale ? RoundtableColours.stale : RoundtableColours.dim))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    } else {
+                        glyph(tag.glyph, stale: stale, dimmed: dimmed)
+                        Text(tag.label).font(.system(size: RoundtableTagLayout.labelFontSize, weight: .bold))
+                            .foregroundStyle(stale ? RoundtableColours.dim : Self.labelColour)
+                            .lineLimit(3).truncationMode(.tail)
+                    }
                 }
             }
             // Leading, with no Spacer: a Spacer would take a gap of its own
@@ -551,7 +738,9 @@ struct RoundtableTagLayer: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, placement.folded ? 5 : RoundtableTagLayout.padLeft)
             .padding(.trailing, RoundtableTagLayout.padRight)
-            .frame(width: CGFloat(placement.width), height: RoundtableTagLayout.height)
+            .frame(width: CGFloat(placement.width), height: placement.folded ? RoundtableTagLayout.height
+                   : first.map { RoundtableTagLayout.tagHeight($0, width: placement.width,
+                       maxRows: max(0, Int((top + RoundtableTagLayout.height - 8) / 13))) } ?? RoundtableTagLayout.height)
             .background(RoundedRectangle(cornerRadius: 4) // kept-radius: roundtable-tag
                 .fill(open ? Self.openFill : Self.fill))
             .overlay(RoundedRectangle(cornerRadius: 4) // kept-radius: roundtable-tag
@@ -568,8 +757,16 @@ struct RoundtableTagLayer: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel(placement, tags: tags))
-        .accessibilityHint(placement.folded ? "Lists the rooms inside" : "Tunes slice \(sliceLetter) there")
+        .accessibilityHint(placement.folded ? "Lists the rooms inside"
+            : first?.reportLines.isEmpty == false && readReports != nil ? "Offers Read reports and Tune slice \(sliceLetter) here"
+            : "Tunes slice \(sliceLetter) there")
         .accessibilityIdentifier(placement.folded ? "roundtableFold" : "roundtableTag.\(placement.roomIds[0])")
+    }
+
+    private func stackExtra(_ placement: RoundtableTagPlacement, byId: [String: RoundtableTag]) -> CGFloat {
+        guard !placement.folded, let id = placement.roomIds.first, let tag = byId[id] else { return 0 }
+        return max(0, RoundtableTagLayout.tagHeight(tag, width: placement.width,
+            maxRows: max(0, Int((top + RoundtableTagLayout.height - 8) / 13))) - RoundtableTagLayout.height)
     }
 
     private func glyph(_ glyph: RoundtableFlagLine.Glyph, stale: Bool, dimmed: Bool) -> some View {
@@ -585,7 +782,8 @@ struct RoundtableTagLayer: View {
         guard let tag = tags.first else {
             return "Roundtable"
         }
-        return "Roundtable \(RoundtableTagLayout.frequencyText(tag.hz)), \(tag.label), \(tag.members) stations"
+        return "Roundtable \(RoundtableTagLayout.frequencyText(tag.hz)), \(tag.label), \(tag.members) stations. "
+            + tag.reportLines.joined(separator: ". ")
     }
 
     private func tapped(_ placement: RoundtableTagPlacement, byId: [String: RoundtableTag]) {
@@ -594,14 +792,17 @@ struct RoundtableTagLayer: View {
             return
         }
         openFold = nil
-        if let id = placement.roomIds.first {
-            tuneTo(id)
+        if let id = placement.roomIds.first, let tag = byId[id] {
+            if !tag.reportLines.isEmpty, readReports != nil {
+                detailsTag = tag
+                showDetails = true
+            } else { tuneTo(id) }
         }
     }
 
     /// Keyed, a tag tunes nothing.
     private func tuneTo(_ roomId: String) {
-        guard !keyed, let summary = roundtable.rooms.first(where: { $0.id == roomId }) else {
+        guard !keyed, let summary = roundtable.frequencyRows.first(where: { $0.id == roomId }) else {
             return
         }
         tune(summary)

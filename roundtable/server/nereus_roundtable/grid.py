@@ -55,3 +55,24 @@ def distance_km(a: object, b: object) -> Optional[int]:
     h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
     km = 2 * EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(h)))
     return int(math.floor(km + 0.5))
+
+
+def initial_bearing_deg(start: object, end: object) -> Optional[float]:
+    """Initial great-circle bearing from start to end, clockwise from true
+    north. Missing or coincident locator centers have no direction.
+
+    Original spherical-geodesy implementation from the locator centers,
+    not adapted from an upstream application.
+    """
+    a, b = position(start), position(end)
+    if a is None or b is None or a == b:
+        return None
+    lat1, lon1 = map(math.radians, a)
+    lat2, lon2 = map(math.radians, b)
+    delta = lon2 - lon1
+    east = math.sin(delta) * math.cos(lat2)
+    north = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(delta)
+    # Antipodal centers do not define a unique initial course.
+    if math.hypot(east, north) < 1e-12:
+        return None
+    return math.degrees(math.atan2(east, north)) % 360.0
