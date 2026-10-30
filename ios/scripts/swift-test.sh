@@ -29,13 +29,16 @@ done
 
 cd "$package_dir" || exit 1
 
+# Swift Testing runs independent suites concurrently unless explicitly disabled.
+# Serialize these socket- and deadline-sensitive integration tests by default;
+# callers can still request parallel execution through the arguments below.
 if [ "$developer_dir" = "$CLT" ]; then
-    swift test \
+    swift test --no-parallel \
         -Xswiftc -F -Xswiftc "$FW" \
         -Xlinker -rpath -Xlinker "$FW" \
         -Xlinker -rpath -Xlinker "$LIB" \
         "$@"
 else
-    swift test "$@"
+    swift test --no-parallel "$@"
 fi
 exit $?
