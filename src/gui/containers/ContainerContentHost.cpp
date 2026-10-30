@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-10-29 - A stack of only clock faces keeps its face height as the
+//                 preferred size and shrinks with the container, so making
+//                 the container shorter does not show a scrollbar.
+//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-26 - Availability of a meter entry is judged on the entry (a
 //                 stored BarPreset ADC maximum bar shows unavailable with its
 //                 reason). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -140,6 +144,33 @@ int preferredWidgetHeight(const QWidget* widget, int width)
     const int wrapped = widget->hasHeightForWidth() ? widget->heightForWidth(width) : -1;
     const int preferred = wrapped >= 0 ? wrapped : widget->sizeHint().height();
     return qBound(widget->minimumHeight(), preferred, widget->maximumHeight());
+}
+bool isClockFace(const MeterItem* item)
+{
+    const auto* face = qobject_cast<const CompositePresetItem*>(item);
+    return face && face->typeId() == QLatin1String("meter.clock");
+}
+// A meter whose rows are all clock faces. Its face height is the size it
+// prefers; it may be shorter, so the container does not scroll to keep it.
+bool clockOnlyMeter(const QWidget* meter, const QVector<ContainerContentHost::EntryRow>& rows)
+{
+    bool any = false;
+    for (const auto& row : rows) {
+        if (row.widget != meter || !row.item) { continue; }
+        any = true;
+        if (!isClockFace(row.item)) { return false; }
+    }
+    return any;
+}
+void assignRunHeight(MeterWidget* meter, int height, bool clockOnly)
+{
+    if (!clockOnly) {
+        meter->setFixedHeight(height);
+        return;
+    }
+    meter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    meter->setMinimumHeight(1);
+    meter->setMaximumHeight(qMax(1, height));
 }
 // Workspace preview: a factory widget whose own controls set its config
 // (ContentConfigNotifier) already shows `current`; it may be kept when
@@ -434,7 +465,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 row.item->clearStackMetadata();
                 row.item->setRect(0, float(row.offset) / runHeight, 1, float(row.height) / runHeight);
             }
-            run->setFixedHeight(runHeight);
+            assignRunHeight(run, runHeight, clockOnlyMeter(run, m_rows));
         } else {
             run->setMinimumHeight(160);
         }
@@ -996,6 +1027,13 @@ void ContainerContentHost::projectStackRows()
         if (row.item) {
             if (qobject_cast<BarPresetItem*>(row.item.data())) {
                 responsiveBaseHeight += row.baseHeight;
+            } else if (auto* meter = qobject_cast<MeterWidget*>(row.widget.data()); meter && clockOnlyMeter(meter, m_rows)) {
+                // One pixel for the whole clock run: the face scales down
+                // into the container instead of forcing the body taller.
+                if (!fixedWidgets.contains(row.widget)) {
+                    fixedWidgets.insert(row.widget);
+                    fixedHeight += 1;
+                }
             } else {
                 fixedHeight += row.baseHeight;
             }
@@ -1074,11 +1112,16 @@ void ContainerContentHost::projectStackRows()
             runRows.append(&row);
         }
         if (runHeight <= 0) { continue; }
-        if (changed || meter->minimumHeight() != runHeight || meter->maximumHeight() != runHeight) {
+        const bool clockOnly = clockOnlyMeter(meter, m_rows);
+        const int fitted = qMax(1, runHeight);
+        const bool fittedAlready = clockOnly
+            ? meter->minimumHeight() == 1 && meter->maximumHeight() == fitted
+            : meter->minimumHeight() == runHeight && meter->maximumHeight() == runHeight;
+        if (changed || !fittedAlready) {
             for (EntryRow* row : runRows) {
                 row->item->setRect(0, float(row->offset) / runHeight, 1, float(row->height) / runHeight);
             }
-            meter->setFixedHeight(runHeight);
+            assignRunHeight(meter, runHeight, clockOnly);
             meter->invalidateGeometry();
         }
     }
