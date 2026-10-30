@@ -16,6 +16,9 @@
 // fake connections' own, and the fake connections send nothing.
 //
 // Modification history (NereusSDR):
+//   2026-10-30: Record passive cold first-edge boundaries and dump after
+//               worker join, preserving request origin and the 2 ms limit.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-29: Preallocate wall-clock edge recording and report the
 //               sender's actual Linux scheduling policy after timing.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -44,6 +47,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1284,16 +1288,62 @@ private slots:
             }
 #endif
         });
-        CwxSender sender;
-        sender.setKeyLine(line);
-        sender.setBreakInActive(true);
-        sender.setSpeedWpm(30);
-        // The schedule starts when the text is sent, so a late first edge
-        // counts against the sender too.
-        const SteadyTime requested = std::chrono::steady_clock::now();
-        QVERIFY(sender.sendText(QStringLiteral("TEST")));
-        QTRY_VERIFY_WITH_TIMEOUT(!sender.isSending(), 5000);
-        sender.setKeyLine(nullptr);
+        CwxSender::FirstEdgeTraceForTest trace{};
+        SteadyTime requested;
+        {
+            CwxSender sender(trace);
+            sender.setKeyLine(line);
+            sender.setBreakInActive(true);
+            sender.setSpeedWpm(30);
+            // The schedule starts when the text is sent, so a late first edge
+            // counts against the sender too.
+            requested = std::chrono::steady_clock::now();
+            const bool admitted = sender.sendText(QStringLiteral("TEST"));
+            trace.sendReturned = std::chrono::steady_clock::now();
+            QVERIFY(admitted);
+            QTRY_VERIFY_WITH_TIMEOUT(!sender.isSending(), 5000);
+            sender.setKeyLine(nullptr);
+        } // no trace reads until the worker is joined, even on early test return
+
+        const auto stampUs = [requested](SteadyTime stamp) -> qint64 {
+            return stamp == SteadyTime{} ? std::numeric_limits<qint64>::min()
+                : std::chrono::duration_cast<std::chrono::microseconds>(stamp - requested).count();
+        };
+        // The sentinel means a stage was not reached. All times share the
+        // unchanged caller request origin; negative startup stamps are valid.
+        qInfo("CWX first-edge trace: us from requested; absent=%lld",
+              static_cast<long long>(std::numeric_limits<qint64>::min()));
+        qInfo("CWX first-edge trace: admission entry=%lld lock=%lld anchor=%lld return=%lld",
+              static_cast<long long>(stampUs(trace.admissionEntered)),
+              static_cast<long long>(stampUs(trace.admissionLocked)),
+              static_cast<long long>(stampUs(trace.anchor)),
+              static_cast<long long>(stampUs(trace.sendReturned)));
+        qInfo("CWX first-edge trace: worker run=%lld priority-ready=%lld first-lock=%lld",
+              static_cast<long long>(stampUs(trace.runEntered)),
+              static_cast<long long>(stampUs(trace.priorityReady)),
+              static_cast<long long>(stampUs(trace.firstLocked)));
+        for (size_t i = 0; i < trace.tickCount; ++i) {
+            const auto& tick = trace.ticks[i];
+            qInfo("CWX first-edge trace: tick[%d] entry=%lld deadline=%lld return=%lld",
+                  static_cast<int>(i), static_cast<long long>(stampUs(tick.entered)),
+                  static_cast<long long>(stampUs(tick.deadline)),
+                  static_cast<long long>(stampUs(tick.returned)));
+        }
+        for (size_t i = 0; i < trace.sleepCount; ++i) {
+            const auto& sleep = trace.sleeps[i];
+            qInfo("CWX first-edge trace: sleep[%d] entry=%lld deadline=%lld coarse-entry=%lld "
+                  "coarse-return=%lld acquired=%d last-nap-entry=%lld last-nap-return=%lld "
+                  "yield-entry=%lld return=%lld",
+                  static_cast<int>(i), static_cast<long long>(stampUs(sleep.entered)),
+                  static_cast<long long>(stampUs(sleep.deadline)),
+                  static_cast<long long>(stampUs(sleep.coarseEntered)),
+                  static_cast<long long>(stampUs(sleep.coarseReturned)), sleep.coarseAcquired,
+                  static_cast<long long>(stampUs(sleep.lastNapEntered)),
+                  static_cast<long long>(stampUs(sleep.lastNapReturned)),
+                  static_cast<long long>(stampUs(sleep.yieldEntered)),
+                  static_cast<long long>(stampUs(sleep.returned)));
+        }
+        qInfo("CWX first-edge trace: sleeps-dropped=%d", static_cast<int>(trace.sleepsDropped));
 
 #if defined(Q_OS_LINUX)
         qInfo("CWX real-time: sender pthread_getschedparam=%d policy=%d priority=%d",
@@ -1321,7 +1371,52 @@ private slots:
         qInfo("CWX real-time: edge offsets (ms) %s", qPrintable(offsets.join(QLatin1Char(' '))));
         qInfo("CWX real-time: %d edges, worst %.3f ms off schedule, load average %.2f before, %.2f after",
               static_cast<int>(got.size()), worstUs / 1000.0, loadBefore, loadAverage1());
+        QVERIFY(requested <= trace.admissionEntered);
+        QVERIFY(trace.admissionEntered <= trace.admissionLocked);
+        QVERIFY(trace.admissionLocked <= trace.anchor);
+        QVERIFY(trace.anchor <= trace.sendReturned);
+        QVERIFY(trace.runEntered <= trace.priorityReady);
+        QVERIFY(trace.priorityReady <= trace.firstLocked);
+        QCOMPARE(trace.tickCount, size_t{2});
+        QCOMPARE(trace.ticks[0].deadline, trace.anchor);
+        QCOMPARE(trace.ticks[1].deadline, trace.anchor + 40ms);
+        QVERIFY(trace.firstLocked <= trace.ticks[0].entered);
+        QVERIFY(trace.ticks[0].entered <= trace.ticks[0].returned);
+        QVERIFY(trace.ticks[0].returned <= trace.ticks[1].entered);
+        QVERIFY(trace.ticks[1].entered <= trace.ticks[1].returned);
+        for (size_t i = 0; i < trace.sleepCount; ++i) {
+            const auto& sleep = trace.sleeps[i];
+            QVERIFY(sleep.entered <= sleep.returned);
+            if (sleep.coarseEntered != SteadyTime{}) {
+                QVERIFY(sleep.entered <= sleep.coarseEntered);
+                QVERIFY(sleep.coarseEntered <= sleep.coarseReturned);
+                QVERIFY(sleep.coarseReturned <= sleep.returned);
+            }
+            if (sleep.lastNapEntered != SteadyTime{}) {
+                QVERIFY(sleep.entered <= sleep.lastNapEntered);
+                QVERIFY(sleep.lastNapEntered <= sleep.lastNapReturned);
+                QVERIFY(sleep.lastNapReturned <= sleep.returned);
+            }
+            if (sleep.yieldEntered != SteadyTime{}) {
+                QVERIFY(sleep.entered <= sleep.yieldEntered);
+                QVERIFY(sleep.yieldEntered <= sleep.returned);
+            }
+        }
         QVERIFY2(worstUs <= 2000, qPrintable(QStringLiteral("worst edge %1 us off").arg(worstUs)));
+    }
+
+    void firstEdgeTraceLivesThroughWorkerJoin()
+    {
+        CwxSender::FirstEdgeTraceForTest trace{};
+        {
+            CwxSender sender(trace);
+        } // joining is the publication boundary, including immediate teardown
+        QVERIFY(trace.runEntered != SteadyTime{});
+        QVERIFY(trace.runEntered <= trace.priorityReady);
+        QVERIFY(trace.priorityReady <= trace.firstLocked);
+        QCOMPARE(trace.admissionEntered, SteadyTime{});
+        QCOMPARE(trace.tickCount, size_t{0});
+        QCOMPARE(trace.sleepCount, size_t{0});
     }
 
     // ── RadioModel: the request gate and the aborts (R-CW-32, R-CW-33) ────
