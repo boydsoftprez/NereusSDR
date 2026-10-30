@@ -44,8 +44,9 @@ avoid an unintended interpretation.
 
 For an unknown signal, click its position in the spectrum or waterfall.
 A short click tunes the active slice to the nearest selected tuning step.
-Dragging empty space pans the view; dragging inside the selected passband
-slides the VFO. The gesture table in [the window chapter](02-desktop-window.md)
+Dragging empty space pans the view; dragging inside a receiver's passband,
+or near its center line, selects that receiver and slides it. Dragging a VFO
+flag sideways tunes its slice. The gesture table in [the window chapter](02-desktop-window.md)
 shows which parts of the display change tuning, filters or presentation.
 
 For small corrections, use the wheel over the VFO frequency field or over an

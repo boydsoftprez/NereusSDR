@@ -1,0 +1,160 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Upgrading to NereusSDR 2026.10.2 | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/guides/upgrading-to-2026.10.2.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual<br>NereusSDR 2026.10.1</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html">Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/upgrading-to-2026.10.1.html">Upgrading to NereusSDR 2026.10.1</a><a href="/guides/upgrading-to-2026.10.2.html" aria-current=page>Upgrading to NereusSDR 2026.10.2</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="upgrading-to-nereussdr-2026102">Upgrading to NereusSDR 2026.10.2</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#update-the-core-and-the-desktop-together">Update the Core and the desktop together</a></li><li><a href="#check-before-you-transmit">Check before you transmit</a></li><li><a href="#what-else-you-will-notice">What else you will notice</a></li><li><a href="#what-to-try">What to try</a></li><li><a href="#reporting">Reporting</a></li></ol></details>
+<p>This guide is prepared for the upcoming release; 2026.10.2 is not yet released.</p>
+<p>Use this note when updating a station from 2026.10.1. It lists what changes
+when you first connect, what to check before you transmit, and a short list of
+things to try. If you are coming from an earlier release, read the
+<a href="/guides/upgrading-to-2026.10.1.html">2026.10.1 note</a> first. When reporting a problem,
+include the installed version, operating system, radio model and firmware, and
+whether you use a local or remote Core.</p>
+<h2 id="update-the-core-and-the-desktop-together">Update the Core and the desktop together</h2>
+<p>The Core owns the radio, the station DSP and the accessories. The console runs
+where you operate. Update both, and the iPhone and iPad app if you use it.
+The phone app has its own version number and delivery through TestFlight;
+desktop and Core packages do not update it. Check the mobile availability
+announcement for the matching phone build. Two improvements need a 2026.10.2
+Core and updated desktop or phone clients:</p>
+<ul>
+<li><strong>The new remote display format.</strong> Every waterfall row and trace stands on
+its own, so a lost network message costs one row instead of smearing the
+rows after it. An older Core, window or phone app keeps the earlier format.</li>
+<li><strong>RX meters held to their audio.</strong> A remote window's S-meter and receive
+meters move with what you hear. With an older Core they show readings as
+they arrive, as before.</li>
+</ul>
+<p>Older Cores, windows and phone apps still connect to each other.</p>
+<p>Remote CW start needs the updated Core and an updated desktop or phone client.
+An older client can still stop CW and release its key. The Core now tracks a
+remote CW message independently of MOX and microphone PTT, including supported
+QSK. A brief link interruption pauses the message and computer sidetone;
+recovery starts the unfinished letter again. Stop, session loss or a prolonged
+dropout cancels the message, so a late response cannot restart it.</p>
+<p>CW receive shift and display alignment now put the dial at the carrier
+frequency. Saved CW frequencies keep their numerical values; check a known CW
+signal and retune once if needed after updating. Radio-side key and paddle
+behavior depends on the firmware and wiring. Physical paddle takeover has not
+been verified on the installed Hermes Lite 2 variant; client and packet tests
+do not establish that physical-input observation.</p>
+<h2 id="check-before-you-transmit">Check before you transmit</h2>
+<ul>
+<li><strong>TUNE uses only the drive source chosen in Setup.</strong> Open <strong>File &gt;
+Settings... &gt; Transmit &gt; Power</strong> and look at the <strong>Tune</strong> group: <strong>Use Drive
+Slider</strong>, <strong>Use Tune Slider</strong> or <strong>Use Fixed Drive</strong>. Moving the RF Power or
+Tune Power slider no longer changes that choice. Your radio keeps the source
+it had saved, which may be whichever slider you last moved in 2026.10.1, so
+pick the one you want before your first TUNE. During TUNE the slider that is
+not in use is grayed.</li>
+<li><strong>ANAN-G2E: less drive on every band.</strong> The G2E has its own PA gain table,
+53.0 dB on 160 m through 6 m, so a given power setting makes less output than
+before. A G2E still on the untouched default PA profile moves to the new
+values on its next connect to the radio; an edited or custom profile is left
+alone, and <strong>Reset Defaults</strong> on the PA Gain page gives the new values. This
+is a safe starting point, not a calibration: check each band against a
+wattmeter into a dummy load.</li>
+<li><strong>SWR protection now lowers the drive.</strong> In 2026.10.1 a high-SWR trip was
+seen but the radio kept full drive. Now the drive drops when protection
+trips, and returns to full when you unkey. An open antenna drops the key with
+<strong>High SWR condition detected. Please check your antenna connection.</strong>, and
+a microphone PTT or VOX key that is still held stays off until you release
+it. Check this into a dummy load before relying on it on the air.</li>
+<li><strong>Check your antenna table rows.</strong> Setup's antenna table is now the only
+per-band antenna memory, and a slice no longer carries its own. Open
+<strong>Hardware Config &gt; Antenna / ALEX &gt; Antenna Control</strong> and check the rows for
+your bands before you transmit. A row that an older version changed by mistake
+stays as it is until you set it once.</li>
+</ul>
+<h2 id="what-else-you-will-notice">What else you will notice</h2>
+<ul>
+<li><strong>Automatic display adaptation.</strong> CPU-based adaptation is now off by
+default. An existing explicit <code>display_adaptive = on</code> stays enabled; set
+it to <code>off</code> and restart the Core if you want to disable it. Connection,
+device and explicit display limits still apply.</li>
+<li><strong>Frequency digits.</strong> The Current Frequency and VFO display digits move one
+step per mouse-wheel notch. Trackpad movement is paced to prevent a short
+swipe from racing the digit under the pointer.</li>
+<li><strong>Phone waterfall speed.</strong> The selected update period now controls visible
+2D scrolling in logical screen points. A saved 10 ms period will look much
+faster than the earlier one-physical-pixel-per-received-row behavior,
+especially on a Retina screen. The received display frame rate still
+controls how often new RF observations arrive; the phone preserves those
+rows and their timestamps rather than requesting extra FFT work. Pause and
+rewind retain the actual history timing when the Core changes frame rate.</li>
+<li><strong>Start Roundtable from the phone.</strong> Open <strong>Tools &gt; Roundtable</strong> and use
+<strong>Start</strong> or <strong>Stop</strong> beside its connection state. The Core owns this
+connection. On first use, choose <strong>Stay hidden</strong> or <strong>Go live</strong> in the
+existing public-visibility prompt; starting the connection does not make
+that choice for you.</li>
+<li><strong>Roundtable follows people and frequency.</strong> Desktop, phone and website show
+exact-frequency people and cochannel callsign stacks, with separately attributed
+last-talker reports. New chat is shared within 5 kHz in the same mode family;
+earlier received messages keep their frequency/time after tuning. Read or browse
+without tuning, and use the explicit Tune action when desired. Distance defaults
+to miles, with kilometres and true-bearing display options. Deleted, moderated
+and expired messages refresh in retained history; disconnected history is marked
+stale. Use matching Core, client and server updates for these frequency views;
+older servers are identified as legacy room servers. See the
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/bench-2026.10.2.md#roundtable-on-desktop-iphone-and-website">combined bench checklist</a>.</li>
+<li><strong>Tuning on the pan.</strong> You can grab a receiver anywhere inside its
+passband, or near its center line, and drag it. Dragging a VFO flag sideways
+tunes its slice. Two-finger trackpad tuning no longer coasts after your
+fingers lift.</li>
+<li><strong>Slice letters after a restart.</strong> A paired window or phone gets its own
+slice letter back, with its step and AGC, when a Core inside a desktop window
+restarts, as a headless Core already did. That desktop window's own slice
+may now start on B or later instead of A.</li>
+<li><strong>Filter presets.</strong> The F1 to F10 presets for the SSB, CW, digital, AM, SAM
+and DSB modes have new default values; CW F1, for example, is 1.0 kHz wide.
+Presets you edited keep what you saved. If you once reordered a mode's
+presets, it keeps the old values until you use <strong>Reset All Rows for This
+Mode</strong> in <strong>Setup &gt; DSP &gt; Filter Presets</strong>.</li>
+<li><strong>Filter limits.</strong> A receive filter now stays between 10 Hz and 10 kHz wide,
+with no edge more than 10 kHz from the carrier, however it is set; FM is not
+limited. A new <strong>Limit filter edges to sidebands</strong> checkbox in <strong>Setup &gt;
+General &gt; Filters</strong> (off by default) also keeps filters from crossing the
+carrier.</li>
+<li><strong>Radio search.</strong> The window stays usable while it searches for radios. The
+search pauses while a connection starts, so the Connection panel fills in
+about 3 seconds after you connect.</li>
+<li><strong>Alex receive-only antennas.</strong> The three receive-only columns in
+<strong>Hardware Config &gt; Antenna / ALEX</strong> are checkboxes again, and unticking one
+returns a band to none.</li>
+<li><strong>The phone and iPad</strong> take the desktop's workspace look, and the band keeps
+your zoom across launches.</li>
+<li><strong>The phone's flag level shows the peak</strong> by default, as on the desktop. To
+go back to the average, open the flag's <strong>...</strong> menu and choose <strong>S-meter:
+Average</strong>.</li>
+</ul>
+<h2 id="what-to-try">What to try</h2>
+<p>Each item is a short check you can do in a few minutes. Note the result,
+including anything that surprised you.</p>
+<ol>
+<li><strong>Remote waterfall.</strong> From a remote window on a 2026.10.2 Core, watch a
+busy band for a few minutes over Wi-Fi or remote access. Confirm the
+waterfall scrolls evenly, with no pauses, repeated rows or smears.</li>
+<li><strong>Remote meters.</strong> Tune a signal that fades in and out and confirm the
+S-meter moves with the audio rather than ahead of it.</li>
+<li><strong>Receiver grab.</strong> Drag a wide receiver from the middle of its passband and
+a narrow CW receiver anywhere inside it. Drag a receiver that is not
+selected and confirm it becomes selected and moves. Drag a VFO flag
+sideways. Confirm the filter edges still resize the filter.</li>
+<li><strong>Trackpad.</strong> Tune with two fingers, slowly and quickly, and confirm the
+frequency stops when your fingers lift. Try a Linux or Windows touchpad if
+you have one.</li>
+<li><strong>TUNE drive source.</strong> Pick each of the three Tune sources in turn, press
+TUNE into a dummy load, and confirm the output follows the chosen source on
+two bands.</li>
+<li><strong>SWR protection.</strong> Into a load with a known high SWR, key and confirm the
+drive drops and comes back to full on the next key. With an open antenna,
+hold PTT and confirm the key drops and stays off until you release it.</li>
+<li><strong>Two slices, one pan.</strong> With slices A and B on one pan, tune A into the
+range B's receiver covers. Click between A and B and confirm the pan keeps
+its history.</li>
+<li><strong>TX rows in a container.</strong> In Container Settings, add <strong>TX Keying</strong> or
+<strong>TX Monitor</strong> from <strong>Available</strong> to a container, apply, and confirm it
+works the same as the row in the TX applet.</li>
+</ol>
+<h2 id="reporting">Reporting</h2>
+<p>Report problems on <a href="https://github.com/boydsoftprez/NereusSDR/issues">GitHub</a>
+or on <a href="https://discord.gg/m35ERjwRe">Discord</a>. Include the installed version,
+operating system, radio model and firmware, and whether you use a local or
+remote Core.</p>
+<div class="page-next"></div></main></div></body></html>

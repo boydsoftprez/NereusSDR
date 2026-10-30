@@ -204,7 +204,8 @@ mouse gestures. Put the pointer on the part you intend to change.
 | --- | --- |
 | Click an empty point in the spectrum/waterfall without dragging. | Tune the active slice to that frequency, rounded to its tuning step. |
 | Drag an empty area horizontally. | Pan the displayed frequency window. |
-| Drag within the selected passband. | Slide the VFO to a new frequency. |
+| Drag within a receiver's passband, or near its center line. | Select that receiver if it is not selected, and slide it to a new frequency. Where receivers overlap, the selected one moves. |
+| Drag a VFO flag sideways. | Tune that slice by the distance dragged. A plain click still selects, folds or unfolds the flag. |
 | Drag a passband edge. | Adjust a receive filter edge. |
 | Drag the spectrum/waterfall divider vertically. | Allocate more height to either display. |
 | Drag the frequency scale horizontally. | Change the displayed bandwidth. |
@@ -214,6 +215,10 @@ mouse gestures. Put the pointer on the part you intend to change.
 | Ctrl+left-drag (Command on macOS) on the dBm scale. | Change how much range the scale shows. |
 | Left-drag the dBm scale. | Move its level window up or down. |
 | Right-drag the dBm scale. | Stretch the range. |
+
+On a trackpad, two-finger tuning moves one step for each short stretch of
+travel, at most 20 steps a second, and stops when your fingers lift. A mouse
+wheel moves one step per notch.
 
 A notch under the pointer takes precedence over ordinary tuning gestures;
 its wheel action resizes the notch. If a wheel turn unexpectedly changes

@@ -159,6 +159,14 @@ to each other as before.
 
 ### Display and waterfall
 
+- CPU-based automatic display adaptation is now off by default for desktop
+  and headless Cores. An existing explicit `display_adaptive = on` remains
+  enabled; set it to `off` and restart the Core to disable it. Connection,
+  device and explicit display limits still apply.
+- The Current Frequency and VFO display digits step once per mouse-wheel
+  notch; trackpad movement is paced so a short swipe no longer races the
+  digit under the pointer. Thanks to funsutton (W4KZO).
+  ([#699](https://github.com/boydsoftprez/NereusSDR/pull/699))
 - A remote pan's waterfall scrolls evenly. It used to move and pause several
   times a second, and on some windows stopped for about 50 ms twice a second.
   Rows now slide in on a steady beat, in step with the trace and the audio.
