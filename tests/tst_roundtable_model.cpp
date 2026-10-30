@@ -16,6 +16,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Scoped frequency-member records and shared path defaults.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: Created (Roundtable plan Task 11). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: Roundtable plan Task 13: earlier turns of the last 30
@@ -201,6 +203,7 @@ public:
     CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
 
     bool roundtableAvailable() const override { return true; }
+    bool roundtableFrequencyAvailable() const override { return true; }
     CommandOutcome requestRoundtablePost(const QString& roomId, const QString& text,
                                          const QString& clientId) override
     {
@@ -222,6 +225,18 @@ public:
     CommandOutcome requestRoundtableRead(const QString& roomId) override
     {
         return note(QStringLiteral("read ") + roomId);
+    }
+    CommandOutcome requestRoundtableHistory(const QJsonArray& ids, const QString& caller) override
+    {
+        return note(QStringLiteral("history %1 %2").arg(caller).arg(ids.size()));
+    }
+    CommandOutcome requestRoundtableReadAt(qint64 hz, const QString& family) override
+    {
+        return note(QStringLiteral("readAt %1 %2").arg(hz).arg(family));
+    }
+    CommandOutcome requestRoundtableUnreadAt(qint64 hz, const QString& family) override
+    {
+        return note(QStringLiteral("unreadAt %1 %2").arg(hz).arg(family));
     }
     CommandOutcome requestRoundtableUnread(const QString& roomId) override
     {
@@ -331,6 +346,81 @@ private slots:
     }
 
     void cleanupTestCase() { RoundtableModel::setClockForTest({}); }
+
+    void historyAnswersStaySeparateFromNearbyViews()
+    {
+        Placements p;
+        QSignalSpy results(&p.remote, &RoundtableModel::historyResult);
+        QVERIFY(p.remote.requestHistory(QJsonArray{1, 2}, QStringLiteral("cache")));
+        QVERIFY(p.link.calls.contains(QStringLiteral("history cache 2")));
+        const QJsonArray states{QJsonObject{{"id", 1}, {"state", "expired"}, {"text", QJsonValue::Null}}};
+        p.remote.applyHistoryResult(QStringLiteral("cache"), true, states, {});
+        QCOMPARE(results.size(), 1);
+        QCOMPARE(qvariant_cast<QJsonArray>(results.last().at(2)), states);
+        QVERIFY(p.remote.viewedRoomIds().isEmpty());
+        RoundtableModel detached;
+        QSignalSpy refused(&detached, &RoundtableModel::historyResult);
+        QVERIFY(!detached.requestHistory(QJsonArray{1}, QStringLiteral("offline")));
+        QCOMPARE(refused.size(), 1);
+        QVERIFY(!refused.last().at(1).toBool());
+    }
+
+    void frequencyViewsKeepRoomScopedRefsSeparate()
+    {
+        RoundtableModel local;
+        RoundtableModel remote;
+        const QString context = RoundtableModel::frequencyContextId(14200007, QStringLiteral("usb"));
+        QCOMPARE(RoundtableModel::roomStreamName(context), QStringLiteral("roundtableFrequency:usb-14200007"));
+        QCOMPARE(RoundtableModel::roomIdOfStream(RoundtableModel::roomStreamName(context)), context);
+        QJsonObject full = roomFull();
+        full.insert(QStringLiteral("view"), QStringLiteral("frequency"));
+        full.insert(QStringLiteral("id"), QStringLiteral("usb-14200007"));
+        QJsonObject a = member(QStringLiteral("abcdefgh"), QStringLiteral("K1ABC"), reading(-83, 1000));
+        a.insert(QStringLiteral("sourceRoom"), kRoom);
+        a.insert(QStringLiteral("hz"), 14200007);
+        QJsonObject b = a;
+        b.insert(QStringLiteral("sourceRoom"), QStringLiteral("usb-14204000"));
+        b.insert(QStringLiteral("callsign"), QStringLiteral("K2ABC"));
+        b.insert(QStringLiteral("hz"), 14204003);
+        full.insert(QStringLiteral("members"), QJsonArray{a, b});
+        local.applyRoom(full);
+        QCOMPARE(local.room(context).value(QStringLiteral("members")).toArray().size(), 2);
+        CoreStream stream(RoundtableModel::roomStreamName(context), RoundtableModel::kRoomCapacity);
+        remote.applyRecordBatch(stream.subscribe());
+        remote.applyRecordBatch(stream.sync(RoundtableModel::roomRecords(local.room(context))));
+        QCOMPARE(compact(local.room(context)), compact(remote.room(context)));
+        local.applyRoomDelta({{QStringLiteral("view"), QStringLiteral("frequency")},
+            {QStringLiteral("room"), QStringLiteral("usb-14200007")},
+            {QStringLiteral("left"), QJsonArray{kRoom + QStringLiteral("/abcdefgh")}}});
+        const QJsonArray remaining = local.room(context).value(QStringLiteral("members")).toArray();
+        QCOMPARE(remaining.size(), 1);
+        QCOMPARE(remaining.first().toObject().value(QStringLiteral("callsign")).toString(), QStringLiteral("K2ABC"));
+        QVERIFY(local.room(QStringLiteral("usb-14200007")).isEmpty());
+    }
+
+    void backendNegotiationReachesAnEmptyBandWindow()
+    {
+        RecordingLink link;
+        RoundtableState state;
+        RoundtableModel remote;
+        remote.attachStation(&link, &state);
+        QVERIFY(!remote.frequencyAvailable()); // Updated Core, server support not established.
+        CoreStream stream(QString::fromLatin1(RoundtableModel::kRoomsStream), RoundtableModel::kRoomsCapacity);
+        remote.applyRecordBatch(stream.subscribe());
+        remote.applyRecordBatch(stream.sync(RoundtableModel::roomsRecords({}, 1)));
+        QVERIFY(remote.frequencyAvailable());
+        QVERIFY(remote.rooms().isEmpty()); // Metadata is never a station or RF room.
+        remote.applyRecordBatch(stream.sync(RoundtableModel::roomsRecords({}, 0)));
+        QVERIFY(!remote.frequencyAvailable());
+    }
+
+    void sharedPathPreferencesHaveApprovedDefaults()
+    {
+        QCOMPARE(RoundtableModel::stationSettingDefault(QStringLiteral("DistanceUnits")), QStringLiteral("mi"));
+        QCOMPARE(RoundtableModel::stationSettingDefault(QStringLiteral("ShowBearing")), QStringLiteral("True"));
+        QVERIFY(RoundtableModel::stationSettingNames().contains(QStringLiteral("DistanceUnits")));
+        QVERIFY(RoundtableModel::stationSettingNames().contains(QStringLiteral("ShowBearing")));
+    }
 
     void bothPlacementsHoldEqualRooms()
     {
@@ -448,6 +538,22 @@ private slots:
         QCOMPARE(RoundtableModel::roomIdOfStream(QStringLiteral("roundtableRoom:usb-14200000")),
                  kRoom);
         QVERIFY(RoundtableModel::roomIdOfStream(QStringLiteral("roundtableRooms")).isEmpty());
+    }
+
+    void refusedFrequencyReadCanRetryWithoutClearingANewerView()
+    {
+        Placements p;
+        const QString first = RoundtableModel::frequencyContextId(14212000, QStringLiteral("usb"));
+        const QString second = RoundtableModel::frequencyContextId(14217000, QStringLiteral("usb"));
+        QVERIFY(p.remote.readAt(14212000, QStringLiteral("usb")));
+        QCOMPARE(p.remote.readingRoomId(), first);
+        p.remote.applyRefusal(QStringLiteral("readAt"), QStringLiteral("Close another frequency view."), first);
+        QVERIFY(p.remote.readingRoomId().isEmpty());
+        QVERIFY(p.remote.readAt(14212000, QStringLiteral("usb")));
+        QCOMPARE(p.link.calls.count(QStringLiteral("readAt 14212000 usb")), 2);
+        QVERIFY(p.remote.readAt(14217000, QStringLiteral("usb")));
+        p.remote.applyRefusal(QStringLiteral("readAt"), QStringLiteral("Old request refused."), first);
+        QCOMPARE(p.remote.readingRoomId(), second);
     }
 
     void aWindowsActionsGoToItsLink()

@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
@@ -25,6 +27,7 @@
 #include "core/AppSettings.h"
 #include "gui/StyleConstants.h"
 #include "gui/roundtable/RoundtablePanel.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "models/RoundtableModel.h"
 
@@ -321,10 +324,30 @@ void RoundtableWindow::rebuildList()
 
     QList<QJsonObject> rooms;
     int onAir = 0;
-    for (const QJsonValue& value : m_model->rooms()) {
-        const QJsonObject summary = value.toObject();
-        onAir += summary.value(QStringLiteral("members")).toInt();
-        rooms.append(summary);
+    if (m_model->frequencyAvailable()) {
+        for (const RoundtableTag& tag : roundtableTagsFor(m_model, {})) {
+            QStringList calls;
+            for (const QJsonValue& value : tag.stations) {
+                const QJsonObject station = value.toObject();
+                QString call = station.value(QStringLiteral("callsign")).toString();
+                if (station.value(QStringLiteral("nth")).toInt(1) > 1) {
+                    call += QStringLiteral(" (%1)").arg(station.value(QStringLiteral("nth")).toInt());
+                }
+                calls.append(call);
+            }
+            rooms.append(QJsonObject{{QStringLiteral("id"), tag.roomId},
+                {QStringLiteral("hz"), tag.hz}, {QStringLiteral("members"), tag.members},
+                {QStringLiteral("family"), tag.roomId.mid(QStringLiteral("frequency:").size()).section(QLatin1Char('-'), 0, 0)},
+                {QStringLiteral("state"), tag.state == static_cast<int>(RoundtableGlyph::Talking) ? QStringLiteral("talking") : QStringLiteral("quiet")},
+                {QStringLiteral("calls"), calls.join(QStringLiteral(" · "))}});
+            onAir += tag.members;
+        }
+    } else {
+        for (const QJsonValue& value : m_model->rooms()) {
+            const QJsonObject summary = value.toObject();
+            onAir += summary.value(QStringLiteral("members")).toInt();
+            rooms.append(summary);
+        }
     }
     std::sort(rooms.begin(), rooms.end(), [](const QJsonObject& a, const QJsonObject& b) {
         return a.value(QStringLiteral("hz")).toInteger() < b.value(QStringLiteral("hz")).toInteger();
@@ -352,6 +375,7 @@ void RoundtableWindow::rebuildList()
         const QString family = summary.value(QStringLiteral("family")).toString(
             id.left(std::max<qsizetype>(0, id.indexOf(QLatin1Char('-')))));
         QStringList talkers;
+        if (summary.contains(QStringLiteral("calls"))) { talkers.append(summary.value(QStringLiteral("calls")).toString()); }
         for (const QJsonValue& value : summary.value(QStringLiteral("talkers")).toArray()) {
             talkers.append(value.toString());
         }
@@ -376,7 +400,7 @@ void RoundtableWindow::rebuildList()
         if (mentions > 0) {
             line += QStringLiteral("  @%1").arg(mentions);
         }
-        Row row{id, line + QLatin1Char('\n') + stateText(summary),
+        Row row{id, line + QLatin1Char('\n') + (summary.contains(QStringLiteral("calls")) ? summary.value(QStringLiteral("calls")).toString() : stateText(summary)),
                 QStringLiteral("Read %1 here").arg(frequencyText(hz)), QVariant()};
         const QString state = summary.value(QStringLiteral("state")).toString();
         if (state == QLatin1String("talking")) {

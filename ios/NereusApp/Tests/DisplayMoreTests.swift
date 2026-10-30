@@ -95,7 +95,8 @@ struct DisplayMoreTests {
         band.lineClock = { arrival }
         for sequence in 1...(visible + 200) {
             arrival += 1.0 / 30
-            band.receive(.displayFrame(BandFixturesApp.frame(level: -100, sequence: UInt32(sequence))))
+            band.receive(.displayFrame(BandFixturesApp.frame(level: -100, sequence: UInt32(sequence),
+                producerTimestamp: UInt64(sequence) * 1_000_000_000 / 30)))
         }
         _ = band.prepareToDraw(size: CGSize(width: 1206, height: 1500), scale: 3)
         let display = rig.main.display
@@ -111,7 +112,8 @@ struct DisplayMoreTests {
         // Ten more lines: still on the same ones, ten further back.
         for sequence in (visible + 201)...(visible + 210) {
             arrival += 1.0 / 30
-            band.receive(.displayFrame(BandFixturesApp.frame(level: -100, sequence: UInt32(sequence))))
+            band.receive(.displayFrame(BandFixturesApp.frame(level: -100, sequence: UInt32(sequence),
+                producerTimestamp: UInt64(sequence) * 1_000_000_000 / 30)))
         }
         #expect(band.lookBackLines == 100)
         #expect(band.overlays(scale: 3).lookBackLines == 100)
@@ -354,10 +356,11 @@ struct DisplayMoreTests {
 
 /// Synthetic frames for these tests (D4).
 enum BandFixturesApp {
-    static func frame(level: Float, sequence: UInt32, samples: Int = 16) -> DisplayFrame {
+    static func frame(level: Float, sequence: UInt32, samples: Int = 16,
+                      producerTimestamp: UInt64? = nil) -> DisplayFrame {
         let trace = [Float](repeating: level, count: samples)
         return DisplayFrame(endpointId: 1, contextGeneration: 1, encoderSequence: sequence,
-                            producerTimestamp: UInt64(sequence) * 33_000_000, isKeyframe: sequence == 1,
+                            producerTimestamp: producerTimestamp ?? UInt64(sequence) * 33_000_000, isKeyframe: sequence == 1,
                             waterfallAdvance: true, minDbm: -160, maxDbm: 0, traceDbm: trace, waterfallDbm: trace,
                             wideDbm: [])
     }

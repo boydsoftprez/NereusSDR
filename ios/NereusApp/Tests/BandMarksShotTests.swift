@@ -25,16 +25,20 @@ struct BandMarksShotTests {
     /// the same wherever the mark is drawn from.
     static let markHeight: CGFloat = 18
 
-    @Test("the sound-only mark scrolls beneath the dial's step box and wheel")
-    func markBeneathTheDial() async throws {
+    @Test("short and long sound-only returns mark the real waterfall beneath its controls", arguments: [20.0, 65.0])
+    func markBeneathTheDial(awaySeconds: TimeInterval) async throws {
         let suite = "BandMarksShotTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
         let settings = PhoneSettings(defaults: defaults)
         settings.dialKind = .thumbwheel
-        let model = AppModel(phoneSettings: settings,
-                             displaySettings: BandDisplaySettingsStore(defaults: defaults))
-        let station = try FakeStation()
+        let clock = LongSessionTests.Clock(LongSessionTests.start)
+        var sources = SessionController.Sources.steady()
+        sources.now = { clock.now }
+        let station = try FakeStation(additions: .wideband)
+        let model = AppModel(phoneSettings: settings, mediaPeerFactory: station.mediaPeerFactory,
+                             displaySettings: BandDisplaySettingsStore(defaults: defaults),
+                             sessionSources: sources)
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
                             transportFactory: station.transportFactory)
         #expect(await station.waitUntilLive())
@@ -42,20 +46,28 @@ struct BandMarksShotTests {
         #expect(await settle(seconds: 5) { model.main.slices.entries.count == 2 })
 
         let band = model.main.band
-        band.endpointId = 1
         band.settings.waterfallPeriodMs = 30
-        band.receive(.context(try #require(BandFlagShotTests.context())))
 
         let host = try Host(model: model)
         defer { host.close() }
         let draw = try await ShotWait.requireBandLaidOut(band, in: host.window)
+        try #require(await settle(seconds: 5) {
+            model.main.subscriber.acceptedDisplay?.subscription.endpointId == band.endpointId
+                && band.endpointId != nil && band.state.frame?.endpointId == band.endpointId
+                && band.state.frame?.traceDbm.count == draw.requestedPixels
+        })
         // The waterfall moves by elapsed capture time in logical points,
         // independently of screen scale. Feed a deterministic 30 Hz source
         // and advance its existing row clock without waiting in real time.
         let linePeriod = 1.0 / 30
         var now = CACurrentMediaTime()
-        var sequence: UInt32 = 0
-        var captureSeconds = 1.0
+        let initial = try #require(band.state.frame)
+        var sequence = initial.encoderSequence
+        var generation = initial.contextGeneration
+        var captureSeconds = Double(initial.producerTimestamp) / 1_000_000_000
+        // Setup subscriptions can restart the fake's timestamp epoch. Begin
+        // the measured episode with fresh history after its final context.
+        band.reset()
         band.lineClock = { now }
         func feed(lines: Int) {
             let traces = BandFlagShotTests.traces(width: draw.requestedPixels, lines: lines,
@@ -65,7 +77,7 @@ struct BandMarksShotTests {
                 now += linePeriod
                 captureSeconds += linePeriod
                 sequence += 1
-                band.receive(.displayFrame(DisplayFrame(endpointId: 1, contextGeneration: 1,
+                band.receive(.displayFrame(DisplayFrame(endpointId: band.endpointId ?? 0, contextGeneration: generation,
                     encoderSequence: sequence, producerTimestamp: UInt64(captureSeconds * 1_000_000_000),
                     isKeyframe: sequence == 1, waterfallAdvance: true, minDbm: -160, maxDbm: 0,
                     traceDbm: trace, waterfallDbm: trace, wideDbm: [])))
@@ -74,12 +86,36 @@ struct BandMarksShotTests {
             band.advanceLines(at: now + 2 * linePeriod, frameSeconds: 1.0 / 60)
         }
         feed(lines: 400)
-        band.markAway(Self.markText)
-        // The return follows a real capture-time interruption, not a burst
-        // whose timestamps pretend the phone was never away.
-        now += 65
-        captureSeconds += 65
+        try #require(band.state.history.hasPresentationTimeline)
+        // Match NereusSDRApp's scenePhase != .background wiring. Inactive
+        // stays foreground; background retires the real subscriber endpoint.
+        model.longSession.sceneChanged(inForeground: true) // active → inactive
+        #expect(band.awayMarks.isEmpty)
+        model.longSession.sceneChanged(inForeground: false) // inactive → background
+        try #require(await settle(seconds: 5) { band.endpointId == nil })
+        clock.now = clock.now.addingTimeInterval(awaySeconds)
+        now += awaySeconds
+        model.longSession.sceneChanged(inForeground: true) // background → inactive
+        #expect(band.awayMarks.count == 1)
+        model.longSession.sceneChanged(inForeground: true) // inactive → active: duplicate
+        #expect(band.awayMarks.count == 1)
+        try #require(await settle(seconds: 5) {
+            band.endpointId != nil && band.state.frame?.endpointId == band.endpointId
+        })
+        // The fake's producer epoch resets with its new endpoint. Continue
+        // from its actually decoded capture; the local lifecycle anchor
+        // already retains the real away duration in waterfall geometry.
+        let resumed = try #require(band.state.frame)
+        sequence = resumed.encoderSequence
+        generation = resumed.contextGeneration
+        captureSeconds = Double(resumed.producerTimestamp) / 1_000_000_000
         feed(lines: 60)
+        try #require(band.state.history.hasPresentationTimeline)
+        let anchor = try #require(band.awayMarks.first)
+        let history = band.state.history
+        let newer = try #require(history.presentationTime(age: anchor.linesSince))
+        let older = try #require(history.presentationTime(age: anchor.linesSince + 1))
+        #expect(band.waterfallTimeAxis?.age(at: older + (newer - older) / 2, history: history) == nil)
         try await ShotWait.requireBandShown(band, in: host.window, after: draw)
         #expect(await ShotWait.until { host.markFrame() != nil && host.stepFrame() != nil })
 

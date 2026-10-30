@@ -8,6 +8,8 @@
 // remain stubs).
 //
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-05-11  J.J. Boyd / KG4VCF  Phase 3J-2 Task F1. Initial
 //                                    shell port; see header for full
 //                                    notes. AI tooling: Anthropic
@@ -203,6 +205,7 @@
 //               while its menu is open no longer frees it twice. With
 //               AI-assisted transformation via Claude Code.
 
+#include "gui/widgets/GuardedComboBox.h"
 #include "SpotHubDialog.h"
 #include "gui/ScopedChildWidget.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -3906,6 +3909,31 @@ void SpotHubDialog::buildRoundtableTab(QTabWidget* tabs)
     awayRow->addStretch();
     stationLayout->addLayout(awayRow);
 
+    auto* pathRow = new QHBoxLayout;
+    pathRow->addWidget(new QLabel(QStringLiteral("Path distance:")));
+    m_rtDistanceCombo = new GuardedComboBox;
+    m_rtDistanceCombo->setObjectName(QStringLiteral("roundtableDistanceUnits"));
+    m_rtDistanceCombo->addItem(QStringLiteral("Miles (mi)"), QStringLiteral("mi"));
+    m_rtDistanceCombo->addItem(QStringLiteral("Kilometres (km)"), QStringLiteral("km"));
+    connect(m_rtDistanceCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        if (m_roundtable) {
+            m_roundtable->setStationSetting(QStringLiteral("DistanceUnits"),
+                                            m_rtDistanceCombo->currentData().toString());
+        }
+    });
+    pathRow->addWidget(m_rtDistanceCombo);
+    pathRow->addStretch();
+    stationLayout->addLayout(pathRow);
+    m_rtBearingChk = new QCheckBox(QStringLiteral("Show true bearing (°T)"));
+    m_rtBearingChk->setObjectName(QStringLiteral("roundtableShowBearing"));
+    connect(m_rtBearingChk, &QCheckBox::toggled, this, [this](bool on) {
+        if (m_roundtable) {
+            m_roundtable->setStationSetting(QStringLiteral("ShowBearing"),
+                                            on ? QStringLiteral("True") : QStringLiteral("False"));
+        }
+    });
+    stationLayout->addWidget(m_rtBearingChk);
+
     m_rtHighlightChk = new QCheckBox(QStringLiteral("Highlight messages that name my callsign"));
     m_rtHighlightChk->setObjectName(QStringLiteral("roundtableHighlightChk"));
     connect(m_rtHighlightChk, &QCheckBox::toggled, this, [this](bool on) {
@@ -4253,6 +4281,16 @@ void SpotHubDialog::refreshRoundtableSettings()
             m_roundtable->stationSetting(QStringLiteral("HighlightMentions"))
             != QLatin1String("False"));
     }
+    {
+        const QSignalBlocker block(m_rtDistanceCombo);
+        m_rtDistanceCombo->setCurrentIndex(rtIndexOfData(
+            m_rtDistanceCombo, m_roundtable->stationSetting(QStringLiteral("DistanceUnits"))));
+    }
+    {
+        const QSignalBlocker block(m_rtBearingChk);
+        m_rtBearingChk->setChecked(m_roundtable->stationSetting(QStringLiteral("ShowBearing"))
+                                   != QLatin1String("False"));
+    }
     // An edit being typed in keeps its text; the Core's value lands when
     // the operator leaves it.
     const auto syncEdit = [](QLineEdit* edit, const QString& value) {
@@ -4414,7 +4452,7 @@ void SpotHubDialog::refreshRoundtable()
             status = rtDot("#e6c200", "warn")
                 + (since > 0
                        ? QStringLiteral("Can't reach the server, trying again (offline since %1 UTC)")
-                             .arg(QDateTime::fromMSecsSinceEpoch(since, QTimeZone::UTC)
+                             .arg(QDateTime::fromMSecsSinceEpoch(since, Qt::UTC)
                                       .toString(QStringLiteral("HH:mm")))
                        : QStringLiteral("Can't reach the server, trying again"));
             break;

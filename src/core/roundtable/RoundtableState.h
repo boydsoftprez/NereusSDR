@@ -27,6 +27,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Versioned guarded frequency-context actions and records.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 11: the `roundtable`
@@ -133,6 +135,11 @@ public:
     bool nameTurn(const QString& turnId, const QString& name, QString* reason);
     bool report(const QString& kind, const QString& target, const QString& reason,
                 QString* refusal);
+    bool postAt(int sliceId, qint64 hz, const QString& family, const QString& text,
+                const QString& clientId, QString* reason);
+    bool readAt(qint64 hz, const QString& family, QString* reason);
+    bool requestHistory(const QJsonArray& ids, const QString& clientId, QString* reason);
+    void unreadAt(qint64 hz, const QString& family);
     bool readRoom(const QString& roomId, QString* reason);
     void unreadRoom(const QString& roomId);
     bool setOperatorHidden(bool hidden, QString* reason);

@@ -1771,7 +1771,8 @@ nereus_add_test(tst_slice_persistence_per_band)
 # Source: NereusSDR-original tests.
 nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
 nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
-nereus_add_test(tst_standalone_slice_restore EXTRA_LABELS models gui)
+# 2026-10-29: authenticated fresh-device placement uses the shared loopback harness.
+nereus_add_test(tst_standalone_slice_restore fakes/LoopbackTransport.cpp EXTRA_LABELS models gui)
 nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
 # A Core that has a radio saves a remote window's tune step for a slice that
 # is not its active one, under that slice's key, and brings it back after a

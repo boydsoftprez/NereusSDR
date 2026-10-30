@@ -6,6 +6,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-30: Versioned guarded frequency-context actions and records.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send {text},
@@ -345,6 +349,7 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
+#include "core/roundtable/RoundtableWire.h"
 #include "core/session/SessionCommandDispatcher.h"
 
 #include "core/TxSliceArbiter.h"
@@ -953,6 +958,15 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // Roundtable connection. Ids travel as their decimal text.
         {"roundtable.post", {arg("roomId", kUtf8), arg("text", kUtf8), arg("clientId", kUtf8)},
          "stationRoundtableVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.postAt", {arg("sliceId", kInt), arg("hz", kInt), arg("family", kUtf8),
+                                arg("text", kUtf8), arg("clientId", kUtf8)},
+         "stationRoundtableVersion", 2, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.history", {arg("ids", kUtf8)},
+         "stationRoundtableVersion", 2, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.readAt", {arg("hz", kInt), arg("family", kUtf8)},
+         "stationRoundtableVersion", 2, kRadioIdentitySessionProtocolMinor},
+        {"roundtable.unreadAt", {arg("hz", kInt), arg("family", kUtf8)},
+         "stationRoundtableVersion", 2, kRadioIdentitySessionProtocolMinor},
         {"roundtable.delete", {arg("messageId", kUtf8)}, "stationRoundtableVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         {"roundtable.name", {arg("turnId", kUtf8), arg("name", kUtf8)},
@@ -1766,7 +1780,10 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
     } else if (invoke.commandVerb == "freedv.setMessage" || invoke.commandVerb == "freedv.sendQsy"
                || invoke.commandVerb == "freedv.setHidden") {
         handleFreedv(invoke);
-    } else if (invoke.commandVerb == "roundtable.post" || invoke.commandVerb == "roundtable.delete"
+    } else if (invoke.commandVerb == "roundtable.post" || invoke.commandVerb == "roundtable.postAt"
+               || invoke.commandVerb == "roundtable.readAt" || invoke.commandVerb == "roundtable.unreadAt"
+               || invoke.commandVerb == "roundtable.history"
+               || invoke.commandVerb == "roundtable.delete"
                || invoke.commandVerb == "roundtable.name"
                || invoke.commandVerb == "roundtable.report"
                || invoke.commandVerb == "roundtable.read"
@@ -5121,7 +5138,28 @@ void SessionCommandDispatcher::handleRoundtable(const SessionMessage& invoke)
     };
     bool readable = false;
     bool flag = false;
-    if (verb == "roundtable.post") {
+    if (verb == "roundtable.postAt" || verb == "roundtable.readAt" || verb == "roundtable.unreadAt") {
+        QVariant hz;
+        QString family;
+        const bool post = verb == "roundtable.postAt";
+        readable = (post ? hasExactlyArguments(invoke.arguments, {"sliceId", "hz", "family", "text", "clientId"})
+                         : hasExactlyArguments(invoke.arguments, {"hz", "family"}))
+            && hasWireKind(invoke.arguments, "hz", MirrorWireKind::Int64)
+            && findArgument(invoke.arguments, "hz", &hz) && hz.typeId() == QMetaType::LongLong
+            && hz.toLongLong() > 0 && findUtf8Argument(invoke.arguments, "family", &family);
+        if (post) {
+            int sliceId = -1;
+            QString text, clientId;
+            readable = readable && findIntArgument(invoke.arguments, "sliceId", &sliceId) == ArgumentStatus::Ok
+                && sliceId >= 0 && sliceId <= 255
+                && findUtf8Argument(invoke.arguments, "text", &text)
+                && findUtf8Argument(invoke.arguments, "clientId", &clientId);
+        }
+    } else if (verb == "roundtable.history") {
+        QString ids;
+        readable = texts({"ids"}) && findUtf8Argument(invoke.arguments, "ids", &ids)
+            && RoundtableWire::decodeHistoryIds(ids).ok;
+    } else if (verb == "roundtable.post") {
         readable = texts({"roomId", "text", "clientId"});
     } else if (verb == "roundtable.delete") {
         readable = texts({"messageId"});

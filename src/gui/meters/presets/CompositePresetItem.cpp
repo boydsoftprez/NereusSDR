@@ -1,5 +1,8 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-10-29 - The clock face accepts a face height of one pixel. The
+//                 stack uses that as its preferred height and can be
+//                 shorter. J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-26 - PR 677 review fix wave (I5): a Signal history face saves
 //                 trace 2 under trace2Channel and keeps "channels" at one
 //                 entry (savedConfiguration), so v2026.10.1 still loads it;
@@ -855,7 +858,8 @@ QString CompositePresetItem::formatSignalReading(double value,MeterUnit unit,boo
     return QStringLiteral("S9+60");
 }
 int CompositePresetItem::minimumConfiguredFaceHeight() const {
-    const QList<int> minimumHeights{144,300,260,180,120,120,120,120,280};
+    // Clock is 1: the face scales to the height it is given.
+    const QList<int> minimumHeights{144,300,260,180,120,120,120,1,280};
     return minimumHeights[int(m_face)];
 }
 QStringList CompositePresetItem::editableChannelFields(int channel) const {

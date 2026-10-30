@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- no-port-check: NereusSDR-original. The public page: every live room, read only. -->
+<!-- no-port-check: NereusSDR-original. The public page: people on frequency and authenticated station follow.
+     2026-10-30: J.J. Boyd / KG4VCF, AI-assisted via Codex. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -19,12 +20,13 @@
     <a class="btn keybtn" href="https://nereussdr.com/roundtable/api.html">Roundtable protocol</a>
     <a class="btn keybtn" href="/key">Your station key</a>
   </header>
+  <div class="owner-bar" id="owner-bar" aria-live="polite"></div>
   <nav class="bands connecting" id="bands" aria-label="Bands">
     <div id="band-buttons" class="filters-bands"></div>
     <span class="sp"></span>
     <div class="filters">
-      <button class="chip" id="quiet-chip" type="button">Quiet rooms <span class="x" id="quiet-count">0</span></button>
-      <label class="chip sortchip">Sort: <select id="sort" aria-label="Sort rooms">
+      <button class="chip" id="quiet-chip" type="button">Quiet stations <span class="x" id="quiet-count">0</span></button>
+      <label class="chip sortchip">Sort: <select id="sort" aria-label="Sort people">
         <option value="f">Frequency</option>
         <option value="n">Most stations</option>
         <option value="t">Newest activity</option>
@@ -33,12 +35,12 @@
   </nav>
   <div class="bmap hidden" id="bmap" aria-label="Band map"></div>
   <div class="main">
-    <section class="list" aria-label="Rooms">
-      <div class="thead"><span>FREQUENCY</span><span>MODE</span><span>ON THE AIR</span><span class="r">TIME</span><span class="r">HEARD</span><span>READINGS</span><span>LAST MESSAGE</span><span class="r">AGO</span></div>
-      <div class="rows" id="rows" tabindex="0" role="listbox" aria-label="Rooms"></div>
-      <div class="lfoot"><span id="shown"></span><span class="kb"><kbd>&#8593;</kbd><kbd>&#8595;</kbd> rooms <kbd>Enter</kbd> read <kbd>/</kbd> search <kbd>Esc</kbd> back</span><span class="sp"></span><span class="legend k"><span class="gl talking"></span>talking</span><span class="legend k"><span class="gl unknown"></span>unknown</span><span class="legend k"><span class="gl doubled"></span>doubled</span><span class="legend k"><span class="gl quiet"></span>quiet</span></div>
+    <section class="list" aria-label="People on frequency">
+      <div class="directory-heading"><strong>PEOPLE ON FREQUENCY</strong><span>Callsigns at actual reported Hz · Browse leaves the radio unchanged</span></div>
+      <div class="rows" id="rows" tabindex="0" role="region" aria-label="People on frequency"></div>
+      <div class="lfoot"><span id="shown"></span><span class="kb"><kbd>&#8593;</kbd><kbd>&#8595;</kbd> groups <kbd>Enter</kbd> read <kbd>/</kbd> search <kbd>Esc</kbd> back</span><span class="sp"></span><span class="legend k"><span class="gl talking"></span>talking</span><span class="legend k"><span class="gl unknown"></span>unknown</span><span class="legend k"><span class="gl doubled"></span>doubled</span><span class="legend k"><span class="gl quiet"></span>quiet</span></div>
     </section>
-    <section class="room" id="room" aria-label="Room"></section>
+    <section class="room" id="room" aria-label="Frequency activity and conversation"></section>
   </div>
 </div>
 <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>

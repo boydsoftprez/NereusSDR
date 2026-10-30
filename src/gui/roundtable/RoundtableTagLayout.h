@@ -31,6 +31,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 14).
@@ -49,6 +51,7 @@
 
 #include <QColor>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QList>
 #include <QPointF>
 #include <QRectF>
@@ -82,7 +85,14 @@ struct RoundtableTag {
     int members = 0;
     bool mine = false;       // your slice's room
     bool mentionsMe = false; // a message there names you
+    QJsonArray stations;     // unique scoped people at this exact context
+    QStringList reportLines; // matching last talker, attributed reporter rows, or Read reports
 };
+
+/// Compact RF rows for this exact cochannel. A neighborhood's unrelated turn
+/// never labels this tag; reading.turn is required for every reported sample.
+NEREUS_GUI_EXPORT QStringList roundtableTagReportLines(const RoundtableTag& tag, const QJsonObject& view,
+                                                       qint64 nowMs);
 
 /// Where one tag, or one fold of tags, sits. rect's x and width are pan
 /// pixels from the left edge of the spectrum; its y and height are the
@@ -148,10 +158,11 @@ struct RoundtableFlagLine {
     bool operator!=(const RoundtableFlagLine& other) const { return !(*this == other); }
 };
 
-/// Whether `turn`, one of room view `room`'s turns, is the station's own:
-/// a talker is the room's "you" member, or, for an `open` turn, that
-/// member is keyed. A turn's `mine` is the name this station gave the turn
-/// (wire spec 6.9), never whose turn it is.
+/// Whether a non-doubled turn explicitly matches any own scoped endpoint.
+/// Frequency views never infer ownership from a different keyed own slice.
+/// A legacy single RF room retains its room-scoped keyed/open fallback.
+/// A turn's `mine` is the name this station gave the turn (wire spec 6.9),
+/// never whose turn it is.
 NEREUS_GUI_EXPORT bool roundtableTurnIsYours(const QJsonObject& room, const QJsonObject& turn, bool open);
 
 /// The line for slice `sliceId`'s flag (design 11.2): the room's member
@@ -160,7 +171,8 @@ NEREUS_GUI_EXPORT bool roundtableTurnIsYours(const QJsonObject& room, const QJso
 /// naming you. While you are hidden, the room as when live with Hidden in
 /// place of Roundtable, dimmed. Not visible while Roundtable is off or not
 /// running here.
-NEREUS_GUI_EXPORT RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int sliceId);
+NEREUS_GUI_EXPORT RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int sliceId,
+                                                                            qint64 hz = 0, const QString& family = {});
 
 /// The state colors (design 11): talking green, unknown amber, doubled
 /// red, you cyan, quiet grey; waiting amber, offline red.

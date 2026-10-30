@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 14).
@@ -206,7 +208,10 @@ QString callsignOf(const QJsonValue& talker)
 bool youAreTalking(const QJsonObject& room)
 {
     for (const QJsonValue& value : room.value(QStringLiteral("now")).toArray()) {
-        if (roundtableTurnIsYours(room, value.toObject(), true)) {
+        const QJsonObject turn = value.toObject();
+        if (room.value(QStringLiteral("view")).toString() == QLatin1String("frequency")
+            && turn.value(QStringLiteral("hz")).toInteger() != room.value(QStringLiteral("hz")).toInteger()) { continue; }
+        if (roundtableTurnIsYours(room, turn, true)) {
             return true;
         }
     }
@@ -236,26 +241,35 @@ QString labelOf(RoundtableGlyph glyph, const QJsonArray& talkers)
 
 bool roundtableTurnIsYours(const QJsonObject& room, const QJsonObject& turn, bool open)
 {
-    if (turn.isEmpty()) {
+    if (turn.isEmpty() || turn.value(QStringLiteral("kind")).toString() == QLatin1String("doubled")) {
         return false;
     }
-    QJsonObject you;
+    const bool frequency = room.value(QStringLiteral("view")).toString() == QLatin1String("frequency");
+    const QString roomId = room.value(QStringLiteral("id")).toString();
+    const QString turnSource = turn.value(QStringLiteral("sourceRoom")).toString();
+    bool legacyKeyed = false;
     for (const QJsonValue& value : room.value(QStringLiteral("members")).toArray()) {
-        if (value.toObject().value(QStringLiteral("you")).toBool()) {
-            you = value.toObject();
-            break;
+        const QJsonObject you = value.toObject();
+        const QString ref = you.value(QStringLiteral("ref")).toString();
+        const QString source = you.value(QStringLiteral("sourceRoom")).toString();
+        if (!you.value(QStringLiteral("you")).toBool() || ref.isEmpty()) { continue; }
+        for (const QJsonValue& value : turn.value(QStringLiteral("talkers")).toArray()) {
+            const QJsonObject talker = value.toObject();
+            const QString talkerSource = talker.value(QStringLiteral("sourceRoom")).toString();
+            if (talker.value(QStringLiteral("ref")).toString() == ref && talkerSource == source
+                && (!frequency || !source.isEmpty())) {
+                return true;
+            }
+        }
+        // An old single RF room may not have named its on-air talker yet.
+        // That fallback never crosses an explicit room boundary and is never
+        // used by a neighborhood containing independent simultaneous turns.
+        if (!frequency && (source.isEmpty() || source == roomId)
+            && (turnSource.isEmpty() || turnSource == roomId) && you.value(QStringLiteral("keyed")).toBool()) {
+            legacyKeyed = true;
         }
     }
-    const QString ref = you.value(QStringLiteral("ref")).toString();
-    if (ref.isEmpty()) {
-        return false;
-    }
-    for (const QJsonValue& talker : turn.value(QStringLiteral("talkers")).toArray()) {
-        if (talker.toObject().value(QStringLiteral("ref")).toString() == ref) {
-            return true;
-        }
-    }
-    return open && you.value(QStringLiteral("keyed")).toBool();
+    return open && legacyKeyed;
 }
 
 QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& tags, double hzPerPixel,
@@ -311,6 +325,20 @@ QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& t
         }
     }
 
+    // A narrow free strip can hold fewer items than the pinned tags plus
+    // folds. Discard unpinned items first so an earlier geometric fold cannot
+    // consume the selected cochannel's only slot.
+    const auto pinned = [&](const Item& item) {
+        return std::any_of(visible.cbegin(), visible.cend(), [&](const Visible& tag) {
+            return tag.pinned && item.roomIds.contains(tag.roomId);
+        });
+    };
+    while (items.size() > capacity) {
+        auto removable = std::find_if(items.rbegin(), items.rend(), [&](const Item& item) { return !pinned(item); });
+        if (removable == items.rend()) { break; }
+        items.erase(std::next(removable).base());
+    }
+
     // Each tag to the stretch nearest its frequency that still has room,
     // keeping their order: a stretch already passed is not gone back to.
     // Tags that find no room are left out (only when even the widest folds
@@ -356,10 +384,148 @@ QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& t
     return out;
 }
 
+QStringList roundtableTagReportLines(const RoundtableTag& tag, const QJsonObject& view, qint64 nowMs)
+{
+    if (tag.stations.size() < 2) { return {}; }
+    const QString family = tag.stations.first().toObject().value(QStringLiteral("family")).toString();
+    QSet<QString> sources;
+    for (const QJsonValue& station : tag.stations) {
+        sources.insert(station.toObject().value(QStringLiteral("sourceRoom")).toString());
+    }
+    QJsonObject chosen;
+    if (view.value(QStringLiteral("family")).toString() == family) {
+        for (const QString& list : {QStringLiteral("now"), QStringLiteral("earlier")}) {
+            qint64 newest = -1;
+            for (const QJsonValue& value : view.value(list).toArray()) {
+                const QJsonObject turn = value.toObject();
+                if (turn.value(QStringLiteral("hz")).toInteger() != tag.hz
+                    || !sources.contains(turn.value(QStringLiteral("sourceRoom")).toString())) { continue; }
+                const qint64 time = turn.value(list == QLatin1String("now") ? QStringLiteral("start")
+                                                                 : QStringLiteral("end")).toInteger();
+                if (time > newest) { chosen = turn; newest = time; }
+            }
+            if (!chosen.isEmpty()) { break; }
+        }
+    }
+    if (chosen.isEmpty()) { return {QStringLiteral("Read reports · details")}; }
+    const QString kind = chosen.value(QStringLiteral("kind")).toString();
+    if (kind == QLatin1String("doubled")) {
+        return {QStringLiteral("Two at once"), QStringLiteral("Combined RF · unattributed"),
+                QStringLiteral("Open details")};
+    }
+    const QJsonArray talkers = chosen.value(QStringLiteral("talkers")).toArray();
+    QSet<QString> talkerIds;
+    for (const QJsonValue& value : talkers) {
+        const QJsonObject talker = value.toObject();
+        talkerIds.insert(talker.value(QStringLiteral("sourceRoom")).toString() + QLatin1Char('/')
+                         + talker.value(QStringLiteral("ref")).toString());
+    }
+    QString heading = QStringLiteral("Unknown signal");
+    if (kind != QLatin1String("unknown")) {
+        if (talkers.size() != 1) { return {QStringLiteral("Unattributed signal"), QStringLiteral("Open details")}; }
+        const QJsonObject talker = talkers.first().toObject();
+        QString name = talker.value(QStringLiteral("callsign")).toString();
+        const int nth = talker.value(QStringLiteral("nth")).toInt(1);
+        if (nth > 1) { name += QStringLiteral(" (%1)").arg(nth); }
+        heading = QStringLiteral("Last talker: ") + name;
+    }
+    QList<QJsonObject> reporters;
+    for (const QJsonValue& value : view.value(QStringLiteral("members")).toArray()) {
+        const QJsonObject member = value.toObject();
+        const QString id = member.value(QStringLiteral("sourceRoom")).toString() + QLatin1Char('/')
+            + member.value(QStringLiteral("ref")).toString();
+        if (!talkerIds.contains(id)) { reporters.append(member); }
+    }
+    std::stable_sort(reporters.begin(), reporters.end(), [](const QJsonObject& a, const QJsonObject& b) {
+        const double da = a.value(QStringLiteral("km")).isDouble() ? a.value(QStringLiteral("km")).toDouble() : 1e20;
+        const double db = b.value(QStringLiteral("km")).isDouble() ? b.value(QStringLiteral("km")).toDouble() : 1e20;
+        return da < db;
+    });
+    QStringList lines{heading, QStringLiteral("Heard by     dBm    Age")};
+    for (int index = 0; index < std::min(3, static_cast<int>(reporters.size())); ++index) {
+        const QJsonObject member = reporters.at(index);
+        QString name = member.value(QStringLiteral("callsign")).toString();
+        const int nth = member.value(QStringLiteral("nth")).toInt(1);
+        if (nth > 1) { name += QStringLiteral(" (%1)").arg(nth); }
+        const QJsonObject reading = member.value(QStringLiteral("reading")).toObject();
+        const double dbm = reading.value(QStringLiteral("dbm")).toDouble(-400);
+        if (reading.value(QStringLiteral("turn")) == chosen.value(QStringLiteral("id"))
+            && reading.value(QStringLiteral("present")).toBool() && std::isfinite(dbm) && dbm >= -160 && dbm <= 94) {
+            const qint64 seconds = std::max<qint64>(0, nowMs - reading.value(QStringLiteral("t")).toInteger()) / 1000;
+            const QString age = seconds < 60 ? QStringLiteral("%1s").arg(seconds)
+                : seconds < 3600 ? QStringLiteral("%1m").arg(seconds / 60) : QStringLiteral("%1h").arg(seconds / 3600);
+            lines.append(QStringLiteral("%1  %2  %3").arg(name).arg(qRound(dbm)).arg(age));
+        } else { lines.append(name + QStringLiteral("  -  No report")); }
+    }
+    lines.append(reporters.size() > 3 ? QStringLiteral("+%1 · details").arg(reporters.size() - 3)
+                                     : QStringLiteral("Open details"));
+    return lines;
+}
+
 QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* model, const QList<int>& sliceIds)
 {
     QList<RoundtableTag> out;
     if (model == nullptr) {
+        return out;
+    }
+    if (model->frequencyAvailable()) {
+        QHash<QString, int> cochannel;
+        for (const QJsonValue& roomValue : model->rooms()) {
+            const QJsonObject summary = roomValue.toObject();
+            for (const QJsonValue& value : summary.value(QStringLiteral("stations")).toArray()) {
+                QJsonObject station = value.toObject();
+                const qint64 hz = station.value(QStringLiteral("hz")).toInteger();
+                const QString family = station.value(QStringLiteral("family")).toString();
+                if (hz <= 0 || family.isEmpty()) {
+                    continue;
+                }
+                const QString context = RoundtableModel::frequencyContextId(hz, family);
+                if (!cochannel.contains(context)) {
+                    RoundtableTag tag;
+                    tag.roomId = context;
+                    tag.hz = hz;
+                    cochannel.insert(context, out.size());
+                    out.append(tag);
+                }
+                RoundtableTag& tag = out[cochannel.value(context)];
+                const QString identity = station.value(QStringLiteral("sourceRoom")).toString() + QLatin1Char('/')
+                    + station.value(QStringLiteral("ref")).toString();
+                bool duplicate = false;
+                for (qsizetype index = 0; index < tag.stations.size(); ++index) {
+                    QJsonObject previous = tag.stations.at(index).toObject();
+                    if (previous.value(QStringLiteral("sourceRoom")).toString() + QLatin1Char('/')
+                        + previous.value(QStringLiteral("ref")).toString() == identity) {
+                        previous.insert(QStringLiteral("keyed"), previous.value(QStringLiteral("keyed")).toBool()
+                                        || station.value(QStringLiteral("keyed")).toBool());
+                        tag.stations[index] = previous;
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate) { tag.stations.append(station); }
+                tag.members = tag.stations.size();
+                const QString call = station.value(QStringLiteral("callsign")).toString();
+                const int nth = station.value(QStringLiteral("nth")).toInt(1);
+                const QString label = nth > 1 ? QStringLiteral("%1 (%2)").arg(call).arg(nth) : call;
+                if (tag.label.isEmpty()) {
+                    tag.label = label;
+                }
+                if (station.value(QStringLiteral("keyed")).toBool()) {
+                    tag.state = static_cast<int>(RoundtableGlyph::Talking);
+                }
+                const bool own = station.value(QStringLiteral("you")).toBool();
+                tag.mine = tag.mine || own;
+                tag.mentionsMe = model->mentionCount(context) > 0;
+            }
+        }
+        for (RoundtableTag& tag : out) {
+            QJsonObject view = model->room(tag.roomId);
+            if (view.isEmpty()) { view = model->room(model->readingRoomId()); }
+            tag.reportLines = roundtableTagReportLines(tag, view, RoundtableModel::nowMs());
+        }
+        std::sort(out.begin(), out.end(), [](const RoundtableTag& a, const RoundtableTag& b) {
+            return a.hz == b.hz ? a.roomId < b.roomId : a.hz < b.hz;
+        });
         return out;
     }
     QSet<QString> mine;
@@ -415,7 +581,7 @@ RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model)
     return RoundtableTagDisplay::Hidden;
 }
 
-RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int sliceId)
+RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int sliceId, qint64 hz, const QString& family)
 {
     using LinkState = RoundtableModel::LinkState;
     RoundtableFlagLine line;
@@ -451,9 +617,28 @@ RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int slice
         break;
     }
 
-    const QString roomId = model->sliceRoomId(sliceId);
+    const bool frequency = model->frequencyAvailable() && hz > 0 && !family.isEmpty();
+    const QString roomId = frequency ? RoundtableModel::frequencyContextId(hz, family)
+                                     : model->sliceRoomId(sliceId);
     QJsonObject summary;
-    if (!roomId.isEmpty()) {
+    if (frequency) {
+        int count = 0;
+        QJsonArray talkers;
+        for (const RoundtableTag& tag : roundtableTagsFor(model, {})) {
+            if (tag.roomId.mid(10).section(QLatin1Char('-'), 0, 0) != family
+                || std::llabs(tag.hz - hz) > 5000) { continue; }
+            count += tag.members;
+            for (const QJsonValue& value : tag.stations) {
+                const QJsonObject station = value.toObject();
+                if (station.value(QStringLiteral("keyed")).toBool()) {
+                    talkers.append(station.value(QStringLiteral("callsign")));
+                }
+            }
+        }
+        summary = QJsonObject{{QStringLiteral("members"), count}, {QStringLiteral("talkers"), talkers},
+            {QStringLiteral("state"), talkers.size() > 1 ? QStringLiteral("doubled")
+                : talkers.isEmpty() ? QStringLiteral("quiet") : QStringLiteral("talking")}};
+    } else if (!roomId.isEmpty()) {
         for (const QJsonValue& value : model->rooms()) {
             if (value.toObject().value(QStringLiteral("id")).toString() == roomId) {
                 summary = value.toObject();
@@ -473,12 +658,22 @@ RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int slice
     // whose reading of you is present.
     const QJsonObject room = model->room(roomId);
     if (youAreTalking(room)) {
+        QSet<qint64> ownTurns;
+        if (frequency) {
+            for (const QJsonValue& value : room.value(QStringLiteral("now")).toArray()) {
+                const QJsonObject turn = value.toObject();
+                if (turn.value(QStringLiteral("hz")).toInteger() == hz && roundtableTurnIsYours(room, turn, true)) {
+                    ownTurns.insert(turn.value(QStringLiteral("id")).toInteger());
+                }
+            }
+        }
         int hearing = 0;
         for (const QJsonValue& value : room.value(QStringLiteral("members")).toArray()) {
             const QJsonObject member = value.toObject();
             const QJsonValue reading = member.value(QStringLiteral("reading"));
             if (!member.value(QStringLiteral("you")).toBool() && reading.isObject()
-                && reading.toObject().value(QStringLiteral("present")).toBool(true)) {
+                && reading.toObject().value(QStringLiteral("present")).toBool(true)
+                && (!frequency || ownTurns.contains(reading.toObject().value(QStringLiteral("turn")).toInteger()))) {
                 ++hearing;
             }
         }

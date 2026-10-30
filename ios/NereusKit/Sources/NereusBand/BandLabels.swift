@@ -1,5 +1,7 @@
 // NereusSDR for iOS: the band's words and numbers, drawn with Core Text into a layer the renderer shows
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-29: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   request the existing scale face by its canonical PostScript name.
 
 import CoreGraphics
 import CoreText
@@ -29,7 +31,7 @@ enum BandLabels {
         var bold = false
     }
 
-    static let fontName = "Menlo"
+    static let fontName = "Menlo-Regular"
 
     /// The width `text` takes, in pixels.
     static func width(of text: String, points: CGFloat, scale: CGFloat, bold: Bool = false) -> CGFloat {

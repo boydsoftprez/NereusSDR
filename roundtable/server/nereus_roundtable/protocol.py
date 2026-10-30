@@ -21,6 +21,9 @@ import unicodedata
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 VERSION = 1
+# 2026-10-30: additive frequency views, J.J. Boyd / KG4VCF, AI-assisted via Codex.
+FREQUENCY_VERSION = 1
+CHAT_RADIUS_HZ = 5000
 
 # Section 2.2: the inbound cap, enforced by the transport before decoding,
 # and the largest message the server ever sends.
@@ -72,6 +75,15 @@ LIMIT_KEYS = (
     "slices",
     "reads",
 )
+
+
+class OptionalField:
+    def __init__(self, check):
+        self.check = check
+
+
+def optional(check):
+    return OptionalField(check)
 
 
 class ProtocolError(Exception):
@@ -268,6 +280,10 @@ Fields = List[Tuple[str, Check]]
 def _fields(raw: Dict[str, Any], fields: Fields, path: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for key, kind in fields:
+        if isinstance(kind, OptionalField):
+            if key in raw:
+                out[key] = kind.check(raw[key], f"{path}{key}")
+            continue
         if key not in raw:
             raise _bad(f"{path}{key}", "missing")
         out[key] = kind(raw[key], f"{path}{key}")
@@ -472,6 +488,34 @@ MESSAGE = _object(
     _message_text,
 )
 
+# Extensions preserve missing fields and old v1 message bytes.
+def extended(check, fields):
+    def apply(raw, path):
+        out = check(raw, path)
+        out.update(_fields(raw, [(key, optional(kind)) for key, kind in fields], path + "."))
+        return out
+    return apply
+
+
+FREQUENCY = _whole(1, 1)
+BEARING = _or_null(_whole(0, 359))
+STATION_PRESENCE = _object([
+    ("ref", ROW_REF), ("slice", SLICE_ID), ("sourceRoom", ROOM_ID),
+    ("hz", HZ), ("family", FAMILY), ("callsign", CALLSIGN), ("nth", NTH),
+    ("grid", _or_null(GRID)), ("keyed", BOOL), ("away", BOOL), ("joining", BOOL),
+])
+SUMMARY = extended(SUMMARY, [("stations", _array(STATION_PRESENCE))])
+MEMBER = extended(MEMBER, [("hz", HZ), ("sourceRoom", ROOM_ID), ("slice", SLICE_ID), ("bearingDeg", BEARING)])
+TALKER = extended(TALKER, [("hz", _or_null(HZ)), ("grid", _or_null(GRID)), ("sourceRoom", ROOM_ID)])
+# Rebuild only the nested talker decoder, preserving all v1 turn fields.
+TURN = _object([
+    ("id", ID), ("kind", TURN_KIND), ("talkers", _array(TALKER)),
+    ("start", UNIX_MS), ("end", _or_null(UNIX_MS)), ("ending", BOOL),
+    ("names", _array(NAME_COUNT)), ("heard", COUNT), ("mine", _or_null(CALLSIGN)),
+    ("hz", optional(HZ)), ("sourceRoom", optional(ROOM_ID)),
+])
+MESSAGE = extended(MESSAGE, [("hz", _or_null(HZ)), ("family", _or_null(FAMILY)), ("sourceRoom", ROOM_ID)])
+
 MENTION_FIELDS: Fields = [("room", ROOM_ID), ("message", MESSAGE)]
 MENTION = _object(MENTION_FIELDS)
 
@@ -492,6 +536,8 @@ class Kind:
 def _hello_keys(raw: Dict[str, Any], out: Dict[str, Any], ctx: Dict[str, Any]) -> None:
     """Section 5.3.1: either spki with sig, or key; anything else is a
     protocol error."""
+    if "frequencyVersion" in raw:
+        out["frequencyVersion"] = FREQUENCY(raw["frequencyVersion"], "frequencyVersion")
     has_spki, has_sig, has_key = "spki" in raw, "sig" in raw, "key" in raw
     if has_spki and has_sig and not has_key:
         out["spki"] = SPKI(raw["spki"], "spki")
@@ -532,12 +578,15 @@ KINDS_FROM_STATION: Dict[str, Kind] = {
     "presence": Kind([("callsign", _or_null(CALLSIGN)), ("grid", _or_null(GRID)), ("atRadio", BOOL)], _presence_slices),
     "reading": Kind([("slice", SLICE_ID), ("dbm", DBM), ("t", UNIX_MS), ("present", BOOL)]),
     "post": Kind([("room", ROOM_ID), ("text", TEXT), ("clientId", CLIENT_ID)]),
+    "postAt": Kind([("slice", SLICE_ID), ("hz", HZ), ("family", FAMILY), ("text", TEXT), ("clientId", CLIENT_ID)]),
+    "readAt": Kind([("hz", HZ), ("family", FAMILY)]),
+    "unreadAt": Kind([("hz", HZ), ("family", FAMILY)]),
     "delete": Kind([("msg", ID)]),
     "name": Kind([("turn", ID), ("name", CALLSIGN)]),
     "report": Kind([("target", _one_of(tuple(REPORT_REASONS)))], _report_keys),
     "read": Kind([("room", ROOM_ID)]),
-    "unread": Kind([("room", ROOM_ID)]),
-    "resync": Kind([("room", _or_null(ROOM_ID))]),
+    "unread": Kind([("room", ROOM_ID), ("view", optional(_one_of(("frequency",))))]),
+    "resync": Kind([("room", _or_null(ROOM_ID)), ("view", optional(_one_of(("frequency",))))]),
     "mentionsSeen": Kind([("t", UNIX_MS)]),
     "weblink": Kind([]),
     "deleteArchive": Kind([("confirm", CONFIRM)]),
@@ -545,13 +594,15 @@ KINDS_FROM_STATION: Dict[str, Kind] = {
 }
 
 KINDS_FROM_LIVE: Dict[str, Kind] = {
-    "watchBand": Kind([("band", _band_or(("all",)))]),
+    "watchBand": Kind([("band", _band_or(("all",))), ("frequencyVersion", optional(FREQUENCY))]),
+    "watchAt": Kind([("hz", HZ), ("family", FAMILY)]),
+    "unwatchAt": Kind([("hz", HZ), ("family", FAMILY)]),
     "watch": Kind([("room", ROOM_ID)]),
-    "unwatch": Kind([("room", ROOM_ID)]),
-    "resync": Kind([("room", _or_null(ROOM_ID))]),
+    "unwatch": Kind([("room", ROOM_ID), ("view", optional(_one_of(("frequency",))))]),
+    "resync": Kind([("room", _or_null(ROOM_ID)), ("view", optional(_one_of(("frequency",))))]),
 }
 
-_ROOMS = Kind([("gen", GEN), ("rooms", _array(SUMMARY))])
+_ROOMS = Kind([("gen", GEN), ("rooms", _array(SUMMARY)), ("frequencyVersion", optional(FREQUENCY))])
 _ROOMS_DELTA = Kind(
     [("gen", GEN), ("add", _array(SUMMARY)), ("change", _array(SUMMARY)), ("remove", _array(ROOM_ID))]
 )
@@ -567,6 +618,7 @@ _ROOM = Kind(
         ("now", _array(TURN)),
         ("earlier", _array(TURN)),
         ("messages", _array(MESSAGE)),
+        ("view", optional(_one_of(("frequency",)))),
     ]
 )
 _DELTA = Kind(
@@ -574,10 +626,11 @@ _DELTA = Kind(
         ("room", ROOM_ID),
         ("gen", GEN),
         ("members", _array(MEMBER)),
-        ("left", _array(ROW_REF)),
+        ("left", _array(_string(1, 64))),
         ("turns", _array(TURN)),
         ("messages", _array(MESSAGE)),
         ("closed", BOOL),
+        ("view", optional(_one_of(("frequency",)))),
     ]
 )
 _ERROR = Kind([("code", CODE), ("reason", REASON), ("about", ABOUT), ("retryAfterMs", RETRY)])
@@ -593,6 +646,7 @@ KINDS_TO_STATION: Dict[str, Kind] = {
             ("time", UNIX_MS),
             ("limits", LIMITS),
             ("mentions", _array(MENTION)),
+            ("frequencyVersion", optional(FREQUENCY)),
         ]
     ),
     "rooms": _ROOMS,
@@ -621,6 +675,37 @@ KINDS_TO_LIVE: Dict[str, Kind] = {
     "delta": _DELTA,
     "error": _ERROR,
 }
+
+def _history_ids(value: Any, path: str) -> List[int]:
+    ids = _array(ID, hi=200)(value, path)
+    if len(set(ids)) != len(ids):
+        raise _bad(path, "duplicate message IDs")
+    return ids
+
+
+def _history_text(raw: Dict[str, Any], out: Dict[str, Any], path: str) -> None:
+    if "text" not in raw:
+        raise _bad(path + "text", "missing")
+    out["text"] = TEXT(raw["text"], path + "text") if out["state"] == "shown" else None
+    if out["state"] != "shown" and raw["text"] is not None:
+        raise _bad(path + "text", "not null for a message that is not shown")
+
+
+_HISTORY_REQUEST = Kind([("clientId", CLIENT_ID), ("ids", _history_ids)])
+_HISTORY_STATE = _object([("id", ID), ("state", MESSAGE_STATE)], _history_text)
+_HISTORY_REPLY = Kind([("clientId", CLIENT_ID), ("states", _array(_HISTORY_STATE, hi=200))])
+
+
+# Keep the frozen v1 kind tables intact for old-peer conformance. The
+# negotiated extension is tested independently and dispatched by decode.
+FREQUENCY_TABLES = {
+    ("station", "server"): {key: KINDS_FROM_STATION.pop(key) for key in ("postAt", "readAt", "unreadAt")},
+    ("live", "server"): {key: KINDS_FROM_LIVE.pop(key) for key in ("watchAt", "unwatchAt")},
+    ("server", "station"): {"history": _HISTORY_REPLY},
+    ("server", "live"): {"history": _HISTORY_REPLY},
+}
+for _sender in ("station", "live"):
+    FREQUENCY_TABLES[(_sender, "server")]["history"] = _HISTORY_REQUEST
 
 TABLES: Dict[Tuple[str, str], Dict[str, Kind]] = {
     ("station", "server"): KINDS_FROM_STATION,
@@ -689,13 +774,23 @@ def decode(text: str, sender: str = "station", receiver: str = "server", max_sli
 def decode_object(obj: Dict[str, Any], sender: str, receiver: str, max_slices: int = MAX_SLICES) -> Dict[str, Any]:
     table = TABLES[(sender, receiver)]
     kind = obj.get("type")
-    if not isinstance(kind, str) or kind not in table:
+    extension = FREQUENCY_TABLES.get((sender, receiver), {})
+    if not isinstance(kind, str) or (kind not in table and kind not in extension):
         raise ProtocolError(CLOSE_PROTOCOL, f"unknown kind {kind!r}")
-    spec = table[kind]
+    spec = table[kind] if kind in table else extension[kind]
     out: Dict[str, Any] = {"type": kind}
     out.update(_fields(obj, spec.fields, ""))
     if spec.post is not None:
         spec.post(obj, out, {"max_slices": max_slices})
+    if kind == "delta":
+        for ref in out["left"]:
+            parts = ref.rsplit("/", 1)
+            if out.get("view") == "frequency":
+                if len(parts) != 2 or room_id_center(parts[0]) is None:
+                    raise _bad("left", "not a sourceRoom/ref")
+                ROW_REF(parts[1], "left")
+            else:
+                ROW_REF(ref, "left")
     return out
 
 
@@ -707,10 +802,14 @@ def encode(message: Dict[str, Any]) -> str:
 
 def message(kind: str, receiver: str = "station", /, **fields: Any) -> Dict[str, Any]:
     """A server message with its keys in the order section 5.4 lists them."""
-    spec = TABLES[("server", receiver)][kind]
+    table = TABLES[("server", receiver)]
+    spec = table[kind] if kind in table else FREQUENCY_TABLES[("server", receiver)][kind]
     out: Dict[str, Any] = {"type": kind}
-    for key, _ in spec.fields:
-        out[key] = fields[key]
+    for key, check in spec.fields:
+        if key in fields:
+            out[key] = fields[key]
+        elif not isinstance(check, OptionalField):
+            raise KeyError(key)
     return out
 
 
@@ -739,6 +838,7 @@ ERROR_CODES = frozenset(
 # Section 8.2's rows, by cause: (code, reason, default retryAfterMs). A
 # screen may show the reason as sent, so each is the exact text.
 REASONS: Dict[str, Tuple[str, str, int]] = {
+    "stale-context": ("not-allowed", "The selected slice has changed frequency or mode. Keep the draft and try on its frequency.", 0),
     "not-member": ("not-member", "Tune to this frequency and stay for 10 seconds before you post or name a turn.", 0),
     "away": ("away", "Nobody is at the radio, so this station can't post or name turns.", 0),
     "hidden": ("hidden", "This station is hidden, so nothing more is taken from it.", 0),
@@ -783,3 +883,21 @@ def error_message(cause: str, about: Optional[str], retry_after_ms: Optional[int
     else:
         retry = 0
     return message("error", receiver, code=code, reason=reason, about=about, retryAfterMs=retry)
+
+
+def legacy_message(value):
+    """Project optional frequency metadata away for unnegotiated v1 peers."""
+    if isinstance(value, list):
+        return [legacy_message(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    drop = {"frequencyVersion", "stations", "sourceRoom", "bearingDeg", "view"}
+    if "joining" in value:
+        drop.add("slice")
+    if "ref" in value and "callsign" in value:
+        drop.update(("hz", "grid")) if "joining" not in value else drop.add("hz")
+    if "kind" in value and "talkers" in value and "start" in value:
+        drop.add("hz")
+    if "text" in value and "state" in value:
+        drop.update(("hz", "family"))
+    return {key: legacy_message(item) for key, item in value.items() if key not in drop}

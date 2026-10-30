@@ -160,6 +160,7 @@ def track_object(track: Dict[str, Any]) -> Dict[str, Any]:
         "away": bool(track["away"]),
         "dbm": dbm,
         "present": present,
+        "bearingDeg": track.get("bearing_deg"),
     }
 
 
@@ -183,6 +184,11 @@ class Web:
         app.route("POST", "/archive/delete", self.archive_delete)
         app.route("GET", "/signin", self.signin)
         app.route("GET", "/v1/me", self.me)
+        app.route("GET", "/v1/me/follow", self.follow)
+        app.route("POST", "/v1/me/postAt", self.post_at)
+        app.route("POST", "/v1/me/nameAt", self.name_at)
+        app.route("POST", "/v1/me/delete", self.delete_message)
+        app.route("POST", "/v1/me/mentionsSeen", self.mentions_seen)
         app.route("GET", "/v1/me/sessions", self.sessions)
         app.route("GET", "/v1/me/histogram", self.histogram)
         app.route_prefix("GET", "/v1/me/session/", self.session)
@@ -456,6 +462,115 @@ class Web:
             },
         )
 
+    def follow(self, request: Request) -> Response:
+        """Owner context is the accepted live station presence, never a web dial."""
+        sid, _ = self._signed_in(request)
+        if sid is None:
+            return _refuse("signed-out")
+        conn = self.service.stations.get(sid)
+        live = conn is not None and not conn.closing and not conn.hidden
+        entry = self.service.book.stations.get(sid)
+        at_radio = bool(live and entry is not None and entry.profile is not None and not entry.profile.away)
+        return _json(200, {"time": self.clock.wall_ms(), "frequencyVersion": 1,
+                           "live": bool(live), "atRadio": at_radio,
+                           "slices": list((conn.presence or {}).values()) if live else [],
+                           "ownMessageIds": [int(row["id"]) for row in self.store.db.execute(
+                               "SELECT id FROM messages WHERE station_id = ? ORDER BY id DESC LIMIT 500", (sid,)
+                           )],
+                           "mentionsSeenMs": (self.store.station_get(sid) or {}).get("mentions_seen") or 0,
+                           "mentions": self.service.mentions_for(sid)})
+
+    def _owner_action(self, request: Request, kind: str) -> Response:
+        """Owner history actions remain available when the radio is offline."""
+        session, form, refused = self._signed_post(request)
+        if refused is not None:
+            return refused
+        assert session is not None and form is not None
+        field = "msg" if kind == "delete" else "t"
+        try:
+            msg = protocol.decode_object({"type": kind, field: int(form[field])}, "station", "server")
+        except (KeyError, ValueError, protocol.ProtocolError):
+            return _refuse("bad-request")
+        if kind == "mentionsSeen" and msg["t"] > self.clock.wall_ms():
+            return _refuse("bad-request")
+        class Action:
+            station_id = session["station_id"]
+            answers = None
+            def __init__(self):
+                self.answers = []
+            def send(self, packet, droppable=False):
+                self.answers.append(packet)
+                return True
+        action = Action()
+        with self.service.event():
+            if kind == "delete":
+                self.service._delete(action, msg)
+            else:
+                self.service._mentions_seen(action, msg)
+        answer = action.answers[-1] if action.answers else {}
+        ok = answer.get("type") != "error"
+        return _json(200 if ok else 409, dict(answer, ok=ok))
+
+    def delete_message(self, request: Request) -> Response:
+        return self._owner_action(request, "delete")
+
+    def mentions_seen(self, request: Request) -> Response:
+        return self._owner_action(request, "mentionsSeen")
+
+    def _frequency_action(self, request: Request, name: bool = False) -> Response:
+        session, form, refused = self._signed_post(request)
+        if refused is not None:
+            return refused
+        assert session is not None and form is not None
+        sid = session["station_id"]
+        conn = self.service.stations.get(sid)
+        if conn is None or conn.closing or conn.hidden or conn.presence is None:
+            return _json(409, {"error": "not-live", "reason": "Your station is not publishing a live frequency."})
+        try:
+            raw = {"type": "postAt", "slice": int(form["slice"]), "hz": int(form["hz"]),
+                   "family": form["family"], "text": "name" if name else form["text"], "clientId": "web-name" if name else form["clientId"]}
+            msg = protocol.decode_object(raw, "station", "server")
+        except (KeyError, ValueError, protocol.ProtocolError):
+            return _refuse("bad-request")
+        listed = conn.presence.get(msg["slice"])
+        from .rooms import FAMILIES
+        if listed is None or listed["hz"] != msg["hz"] or FAMILIES[listed["mode"]][0] != msg["family"]:
+            return _json(409, {"error": "stale-context", "reason": "Your selected slice changed frequency or mode."})
+        # Capture the action answer without stealing the Core socket's queue.
+        class Action:
+            def __init__(self, source):
+                self.source = source
+                self.answers = []
+                self.frequency_version = 1
+            def __getattr__(self, key):
+                return getattr(self.source, key)
+            def send(self, packet, droppable=False):
+                self.answers.append(packet)
+                return True
+        action = Action(conn)
+        with self.service.event():
+            if name:
+                try:
+                    naming = protocol.decode_object({"type": "name", "turn": int(form["turn"]), "name": form["name"]}, "station", "server")
+                except (KeyError, ValueError, protocol.ProtocolError):
+                    return _refuse("bad-request")
+                stored = self.store.turn_get(naming["turn"])
+                center = protocol.room_id_center(stored["room_id"]) if stored is not None else None
+                if center is None or center[0] != msg["family"] or abs(center[1] - msg["hz"]) > 5000:
+                    return _json(409, {"error": "stale-context", "reason": "This turn is outside your selected slice frequency."})
+                self.service._name(action, naming)
+            else:
+                self.service._post_at(action, msg)
+        answer = action.answers[-1] if action.answers else {"ok": True}
+        ok = answer.get("ok", answer.get("type") != "error")
+        return _json(200 if ok else 409, dict(answer, ok=ok))
+
+    def post_at(self, request: Request) -> Response:
+        return self._frequency_action(request)
+
+    def name_at(self, request: Request) -> Response:
+        return self._frequency_action(request, True)
+
     def _summary(self, session: Dict[str, Any], turns: List[Dict[str, Any]], readings: List[Dict[str, Any]]) -> Dict[str, Any]:
         center = protocol.room_id_center(session["room_id"])
         family, hz = center if center is not None else (None, None)
@@ -511,6 +626,7 @@ class Web:
             reader["callsign"] = track["callsign"]
             if track["km"] is not None:
                 reader["km"] = int(track["km"])
+            reader["bearingDeg"] = track.get("bearing_deg")
             if track["offset_hz"] is not None:
                 reader["offsetHz"] = int(track["offset_hz"])
             reader["away"] = reader["away"] or obj["away"]

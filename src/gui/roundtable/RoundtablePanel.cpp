@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
@@ -112,6 +114,12 @@
 namespace NereusSDR {
 
 namespace {
+
+bool historyConnected(const RoundtableModel* model)
+{
+    return model && (model->linkState() == RoundtableModel::LinkState::Live
+                     || model->linkState() == RoundtableModel::LinkState::Hidden);
+}
 
 // The placement mockup's colors (placement.html :root) and Roundtable's
 // state colors (design 11, U7, U8), each the workspace look's role: with the
@@ -513,7 +521,14 @@ QString clockText(qint64 ms)
 
 QString utcText(qint64 unixMs)
 {
-    return QDateTime::fromMSecsSinceEpoch(unixMs, QTimeZone::UTC).toString(QStringLiteral("HH:mm"));
+    return QDateTime::fromMSecsSinceEpoch(unixMs, Qt::UTC).toString(QStringLiteral("HH:mm"));
+}
+
+QString personKey(const QJsonObject& who)
+{
+    const QString ref = who.value(QStringLiteral("ref")).toString();
+    const QString source = who.value(QStringLiteral("sourceRoom")).toString();
+    return source.isEmpty() ? ref : source + QLatin1Char('/') + ref;
 }
 
 QString withNth(const QJsonObject& who)
@@ -526,7 +541,7 @@ QString withNth(const QJsonObject& who)
 QString roomFamily(const QString& roomId)
 {
     const qsizetype dash = roomId.indexOf(QLatin1Char('-'));
-    return dash > 0 ? roomId.left(dash) : QString();
+    return dash > 0 ? roomId.left(dash).section(QLatin1Char(':'), -1) : QString();
 }
 
 qint64 roomHz(const QString& roomId)
@@ -882,7 +897,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
         m_box->installEventFilter(this);
         connect(m_box, &QPlainTextEdit::textChanged, this, [this]() {
             if (!m_settingBox && m_model && !m_shownId.isEmpty()) {
-                m_model->setDraft(m_shownId, m_box->toPlainText());
+                m_model->setDraft(m_shownDraftKey, m_box->toPlainText());
             }
             updateFooter();
         });
@@ -934,18 +949,50 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
     if (m_model) {
         connect(m_model, &RoundtableModel::roomChanged, this, &RoundtablePanel::onRoomChanged);
         connect(m_model, &RoundtableModel::roomsChanged, this, &RoundtablePanel::rebuild);
-        connect(m_model, &RoundtableModel::linkChanged, this, &RoundtablePanel::rebuild);
+        connect(m_model, &RoundtableModel::linkChanged, this, [this]() {
+            m_failedContext.clear();
+            m_historyRequest.clear();
+            m_historyRequestedMs = -1;
+            m_historyFresh = false;
+            rebuild();
+        });
         connect(m_model, &RoundtableModel::sliceRoomsChanged, this, &RoundtablePanel::rebuild);
         connect(m_model, &RoundtableModel::mentionsChanged, this, &RoundtablePanel::rebuild);
         connect(m_model, &RoundtableModel::settingChanged, this, &RoundtablePanel::rebuild);
         connect(m_model, &RoundtableModel::readingRoomChanged, this, [this]() {
+            if (!m_subscribing && m_model->readingRoomId().isEmpty()) {
+                // A refused automatic read waits for an explicit retry, a
+                // tuning change or reconnect, rather than resubmitting here.
+                m_failedContext = roomId();
+            }
             // The Core refused the read, or the room closed.
-            if (!m_readId.isEmpty() && m_model->readingRoomId() != m_readId) {
+            if (!m_subscribing && !m_readId.isEmpty() && m_model->readingRoomId() != m_readId) {
                 m_readId.clear();
             }
             rebuild();
         });
         connect(m_model, &RoundtableModel::postResult, this, &RoundtablePanel::onPostResult);
+        connect(m_model, &RoundtableModel::historyResult, this,
+                [this](const QString& clientId, bool ok, const QJsonArray& states, const QString&) {
+            if (clientId != m_historyRequest) { return; }
+            m_historyRequest.clear();
+            bool unchanged = true;
+            if (ok) {
+                for (const QJsonValue& value : states) {
+                    const QJsonObject state = value.toObject();
+                    const qint64 id = state.value(QStringLiteral("id")).toInteger();
+                    if (!m_requestedHistoryVersions.contains(id)
+                        || m_requestedHistoryVersions.value(id) != m_messageVersions.value(id)) {
+                        unchanged = false;
+                        continue;
+                    }
+                    m_historyStates.insert(id, state);
+                }
+            }
+            m_historyFresh = ok && unchanged && historyConnected(m_model);
+            rebuildMessages(m_model->room(roomId()));
+            showFreshBodies({m_messages});
+        });
     }
 
     m_tick.setInterval(1000);
@@ -972,12 +1019,41 @@ void RoundtablePanel::followSlice(int sliceId)
 
 void RoundtablePanel::setSliceFrequency(qint64 hz)
 {
-    if (hz == m_sliceHz) {
+    setSliceContext(hz, m_sliceFamily);
+}
+
+void RoundtablePanel::setSliceContext(qint64 hz, const QString& family)
+{
+    if (hz == m_sliceHz && family == m_sliceFamily) {
         return;
     }
     m_sliceHz = hz;
-    if (roomId().isEmpty()) {
-        rebuild();
+    m_sliceFamily = family;
+    m_failedContext.clear();
+    m_historyRequestedMs = -1;
+    m_historyFresh = false;
+    m_readId.clear();
+    subscribeContext();
+    rebuild();
+}
+
+QString RoundtablePanel::draftKey() const
+{
+    return RoundtableModel::isFrequencyContext(roomId())
+        ? QStringLiteral("slice:%1:%2").arg(m_sliceId).arg(roomId()) : roomId();
+}
+
+void RoundtablePanel::subscribeContext()
+{
+    if (!m_subscribing && m_model && m_model->frequencyAvailable() && m_readId.isEmpty()
+        && m_sliceHz > 0 && !m_sliceFamily.isEmpty()) {
+        const QString id = RoundtableModel::frequencyContextId(m_sliceHz, m_sliceFamily);
+        if (id == m_failedContext) { return; }
+        if (m_model->readingRoomId() != id) {
+            m_subscribing = true;
+            m_model->readAt(m_sliceHz, m_sliceFamily);
+            m_subscribing = false;
+        }
     }
 }
 
@@ -986,25 +1062,41 @@ void RoundtablePanel::readRoom(const QString& roomId)
     if (!m_model) {
         return;
     }
-    const QString mine = m_model->sliceRoomId(m_sliceId);
+    const QString mine = m_model->frequencyAvailable()
+        ? RoundtableModel::frequencyContextId(m_sliceHz, m_sliceFamily)
+        : m_model->sliceRoomId(m_sliceId);
     if (roomId.isEmpty() || roomId == mine) {
         backToSlice();
         return;
     }
     m_readId = roomId;
-    m_model->readRoom(roomId);
+    if (RoundtableModel::isFrequencyContext(roomId)) {
+        m_subscribing = true;
+        const bool accepted = m_model->readAt(roomHz(roomId), roomFamily(roomId));
+        m_subscribing = false;
+        if (!accepted) { m_readId.clear(); }
+    } else {
+        m_model->readRoom(roomId);
+    }
     rebuild();
 }
 
 void RoundtablePanel::backToSlice()
 {
     if (m_readId.isEmpty()) {
+        if (!m_failedContext.isEmpty()) {
+            m_failedContext.clear();
+            subscribeContext();
+            rebuild();
+        }
         return;
     }
     m_readId.clear();
     if (m_model) {
         m_model->unreadRoom();
     }
+    m_failedContext.clear();
+    subscribeContext();
     rebuild();
 }
 
@@ -1012,6 +1104,10 @@ QString RoundtablePanel::roomId() const
 {
     if (!m_readId.isEmpty()) {
         return m_readId;
+    }
+    if (m_model && (m_model->frequencyAvailable() || !m_retainedMessages.isEmpty())
+        && m_sliceHz > 0 && !m_sliceFamily.isEmpty()) {
+        return RoundtableModel::frequencyContextId(m_sliceHz, m_sliceFamily);
     }
     return m_model ? m_model->sliceRoomId(m_sliceId) : QString();
 }
@@ -1101,7 +1197,7 @@ QString RoundtablePanel::myRef(const QJsonObject& room) const
     for (const QJsonValue& value : room.value(QStringLiteral("members")).toArray()) {
         const QJsonObject member = value.toObject();
         if (member.value(QStringLiteral("you")).toBool()) {
-            return member.value(QStringLiteral("ref")).toString();
+            return personKey(member);
         }
     }
     return {};
@@ -1128,7 +1224,7 @@ bool RoundtablePanel::mineMessage(const QJsonObject& room, const QJsonObject& me
         return true;
     }
     const QString ref = myRef(room);
-    return !ref.isEmpty() && message.value(QStringLiteral("ref")).toString() == ref;
+    return !ref.isEmpty() && personKey(message) == ref;
 }
 
 bool RoundtablePanel::names(const QJsonObject& message, const QString& callsign) const
@@ -1220,15 +1316,36 @@ QList<qint64> RoundtablePanel::unreadMentionIds(const QJsonObject& room) const
 
 void RoundtablePanel::onRoomChanged(const QString& changed)
 {
-    if (changed == roomId()) {
+    if (m_model && m_model->frequencyAvailable() && changed != roomId()) {
+        const QJsonArray updates = m_model->room(changed).value(QStringLiteral("messages")).toArray();
+        for (const QJsonValue& update : updates) {
+            for (qsizetype i = 0; i < m_retainedMessages.size(); ++i) {
+                if (m_retainedMessages.at(i).toObject().value(QStringLiteral("id"))
+                    == update.toObject().value(QStringLiteral("id"))) {
+                    const QJsonObject message = update.toObject();
+                    const qint64 id = message.value(QStringLiteral("id")).toInteger();
+                    if (!m_seenLiveMessages.contains(id) || m_seenLiveMessages.value(id) != message) {
+                        m_messageVersions[id] = ++m_messageVersionSerial;
+                        m_historyStates.remove(id);
+                        m_seenLiveMessages.insert(id, message);
+                    }
+                    m_retainedMessages.replace(i, update);
+                }
+            }
+        }
+    }
+    if (changed == roomId() || !m_retainedMessages.isEmpty()) {
         rebuild();
     }
 }
 
 void RoundtablePanel::rebuild()
 {
+    subscribeContext();
     const QString id = roomId();
-    if (id != m_shownId) {
+    const QString key = draftKey();
+    if (id != m_shownId || key != m_shownDraftKey) {
+        m_shownDraftKey = key;
         m_shownId = id;
         m_known.clear();
         m_new.clear();
@@ -1241,7 +1358,7 @@ void RoundtablePanel::rebuild()
         m_firstShow = true;
         m_notSent->hide();
         m_settingBox = true;
-        m_box->setPlainText(m_model && !id.isEmpty() ? m_model->draft(id) : QString());
+        m_box->setPlainText(m_model && !id.isEmpty() ? m_model->draft(key) : QString());
         m_settingBox = false;
         emit shownRoomChanged(id);
     }
@@ -1650,6 +1767,10 @@ void RoundtablePanel::updateConnectionLine(const QJsonObject& room)
         text = QStringLiteral("Roundtable is off");
         break;
     }
+    if (m_model && !m_model->frequencyAvailable()
+        && (historyConnected(m_model) || m_retainedMessages.isEmpty())) {
+        text += QStringLiteral(" · Legacy room server");
+    }
     m_connection->setText(text);
     m_connection->setStyleSheet(labelStyle(color, kSmallPx, false, false)
                                 + QStringLiteral(" %1").arg(rule()));
@@ -1736,7 +1857,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
 
     const auto gridOf = [&room](const QString& ref) {
         for (const QJsonValue& value : room.value(QStringLiteral("members")).toArray()) {
-            if (value.toObject().value(QStringLiteral("ref")).toString() == ref) {
+            if (personKey(value.toObject()) == ref) {
                 return value.toObject().value(QStringLiteral("grid")).toString();
             }
         }
@@ -1767,14 +1888,18 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             const qint64 ago = now - last.value(QStringLiteral("end")).toInteger();
             const QJsonArray lastTalkers = last.value(QStringLiteral("talkers")).toArray();
             QString text;
-            if (roundtableTurnIsYours(room, last, false)) {
+            if (last.value(QStringLiteral("kind")).toString() == QLatin1String("doubled")) {
+                text = QStringLiteral("Last turn · Doubled · combined RF · %1 ago").arg(ageText(ago));
+            } else if (roundtableTurnIsYours(room, last, false)) {
                 text = QStringLiteral("Last turn was yours, %1 ago").arg(ageText(ago));
             } else if (!lastTalkers.isEmpty()
                        && last.value(QStringLiteral("kind")).toString() != QLatin1String("unknown")) {
-                text = QStringLiteral("Last turn by %1, %2 ago")
+                text = (m_model && m_model->frequencyAvailable() ? QStringLiteral("Last talker · %1 · %2 ago")
+                                                                    : QStringLiteral("Last turn by %1, %2 ago"))
                            .arg(withNth(lastTalkers.first().toObject()), ageText(ago));
             } else {
-                text = QStringLiteral("Last turn by an unknown talker, %1 ago").arg(ageText(ago));
+                text = (m_model && m_model->frequencyAvailable() ? QStringLiteral("Last talker · Unknown · %1 ago")
+                                                                    : QStringLiteral("Last turn by an unknown talker, %1 ago")).arg(ageText(ago));
             }
             col->addWidget(makeWrapped(body, text, dimColor(), kSmallPx));
         }
@@ -1927,7 +2052,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
     QLabel* name = makeElided(body, withNth(talker), talkingColor(), 17, true, true);
     name->setObjectName(QStringLiteral("roundtableTalkerName"));
     row->addWidget(name);
-    row->addWidget(makeLabel(body, gridOf(talker.value(QStringLiteral("ref")).toString()), dimColor(),
+    row->addWidget(makeLabel(body, talker.value(QStringLiteral("grid")).toString(gridOf(personKey(talker))), dimColor(),
                              kSmallPx));
     row->addStretch(1);
     auto* sub = new QHBoxLayout();
@@ -1952,13 +2077,37 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     if (room.isEmpty()) {
         return;
     }
-    const QJsonObject turn = openTurn(room);
+    QJsonObject turn = openTurn(room);
+    if (turn.isEmpty()) {
+        const QJsonArray earlier = room.value(QStringLiteral("earlier")).toArray();
+        if (!earlier.isEmpty()) { turn = earlier.first().toObject(); }
+    }
+    const bool frequency = m_model && m_model->frequencyAvailable();
+    const bool miles = !m_model || m_model->stationSetting(QStringLiteral("DistanceUnits")) != QLatin1String("km");
+    const bool bearing = !m_model || m_model->stationSetting(QStringLiteral("ShowBearing")) != QLatin1String("False");
+    const QString unit = miles ? QStringLiteral("mi") : QStringLiteral("km");
+    const QString turnKind = turn.value(QStringLiteral("kind")).toString();
+    const bool identified = (turnKind == QLatin1String("talking") || turnKind == QLatin1String("known"))
+        && turn.value(QStringLiteral("talkers")).toArray().size() == 1;
+    const auto pathText = [miles, bearing, identified](const QJsonObject& member) {
+        if (!identified) { return QString(); }
+        const QJsonObject reading = member.value(QStringLiteral("reading")).toObject();
+        const QJsonValue km = reading.contains(QStringLiteral("km"))
+            ? reading.value(QStringLiteral("km")) : member.value(QStringLiteral("km"));
+        const QJsonValue direction = reading.contains(QStringLiteral("bearingDeg"))
+            ? reading.value(QStringLiteral("bearingDeg")) : member.value(QStringLiteral("bearingDeg"));
+        QString text = km.isDouble() ? QString::number(std::lround(km.toDouble() / (miles ? 1.609344 : 1.0))) : QString();
+        if (bearing && direction.isDouble() && direction.toInt(-1) >= 0 && direction.toInt() < 360) {
+            text += QStringLiteral("\n%1°T").arg(direction.toInt(), 3, 10, QLatin1Char('0'));
+        }
+        return text;
+    };
     const QString kind = turn.value(QStringLiteral("kind")).toString();
     const bool keyed = roundtableTurnIsYours(room, turn, true);
     QSet<QString> talkerRefs;
     QStringList talkerNames;
     for (const QJsonValue& value : turn.value(QStringLiteral("talkers")).toArray()) {
-        talkerRefs.insert(value.toObject().value(QStringLiteral("ref")).toString());
+        talkerRefs.insert(personKey(value.toObject()));
         talkerNames.append(withNth(value.toObject()));
     }
 
@@ -1992,14 +2141,19 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         if (!isYou) {
             others.append(withNth(member));
         }
-        if (talkerRefs.contains(member.value(QStringLiteral("ref")).toString()) || (keyed && isYou)
+        if (talkerRefs.contains(personKey(member)) || (keyed && isYou)
             || !member.value(QStringLiteral("reading")).isObject()) {
+            continue;
+        }
+        const QJsonObject reading = member.value(QStringLiteral("reading")).toObject();
+        if (frequency && (turn.isEmpty() || reading.value(QStringLiteral("turn")).toInteger(-1)
+                                              != turn.value(QStringLiteral("id")).toInteger(-2))) {
             continue;
         }
         Row row;
         row.member = member;
         const QJsonValue km = member.value(QStringLiteral("km"));
-        row.hasKm = km.isDouble();
+        row.hasKm = km.isDouble() && identified;
         row.km = km.toDouble();
         rows.append(row);
     }
@@ -2039,14 +2193,15 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         if (a.hasKm && a.km != b.km) {
             return a.km < b.km;
         }
-        return a.member.value(QStringLiteral("callsign")).toString()
-             < b.member.value(QStringLiteral("callsign")).toString();
+        const QString ac = a.member.value(QStringLiteral("callsign")).toString();
+        const QString bc = b.member.value(QStringLiteral("callsign")).toString();
+        return ac == bc ? personKey(a.member) < personKey(b.member) : ac < bc;
     });
     const bool byDistance = !rows.isEmpty() && rows.first().hasKm;
 
     auto* head = new QHBoxLayout();
     head->setContentsMargins(8, 6, 8, 3);
-    QLabel* titleLabel = capLabel(body, title);
+    QLabel* titleLabel = capLabel(body, frequency && !turn.isEmpty() ? QStringLiteral("HEARD BY") : title);
     titleLabel->setObjectName(QStringLiteral("roundtableReadingsTitle"));
     titleLabel->setWordWrap(true);
     titleLabel->setMinimumWidth(0);
@@ -2113,6 +2268,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     const int unsentTagWidth = tagWidth(QStringLiteral("NOT SENT"));
     const int awayTagWidth = tagWidth(QStringLiteral("AWAY"));
     int kmNeed = 0;
+    if (bearing && identified) { kmNeed = valueMetrics.horizontalAdvance(QStringLiteral("359°T")) + 1; }
     int offsetNeed = 0;
     int valueNeed = valueMetrics.horizontalAdvance(QStringLiteral("none"));
     int ageNeed = 0;
@@ -2133,12 +2289,12 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         }
         callNeed = std::max(callNeed, callMetrics.horizontalAdvance(kept) + 1 + tags);
         kmNeed = std::max(kmNeed, valueMetrics.horizontalAdvance(
-                                      entry.hasKm ? QString::number(std::lround(entry.km))
-                                                  : member.value(QStringLiteral("grid")).toString()) + 1);
+                                      entry.hasKm ? pathText(member).section(QLatin1Char('\n'), 0, 0)
+                                                  : QString()) + 1);
         offsetNeed = std::max(offsetNeed, valueMetrics.horizontalAdvance(
                                               offsetText(member.value(QStringLiteral("offsetHz")).toInteger())) + 1);
         const double dbm = reading.value(QStringLiteral("dbm")).toDouble();
-        valueNeed = std::max(valueNeed, valueMetrics.horizontalAdvance(sText(dbm)) + 1);
+        valueNeed = std::max(valueNeed, valueMetrics.horizontalAdvance(frequency ? QString::number(std::lround(dbm)) : sText(dbm)) + 1);
         ageNeed = std::max(ageNeed, valueMetrics.horizontalAdvance(
                                         ageText(now - reading.value(QStringLiteral("t")).toInteger())) + 1);
     }
@@ -2149,7 +2305,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         probe.ensurePolished();
         return probe.font();
     }());
-    kmNeed = std::max(kmNeed, headMetrics.horizontalAdvance(QStringLiteral("km")) + 1);
+    kmNeed = std::max(kmNeed, headMetrics.horizontalAdvance(unit) + 1);
     // The Offset head elides (whole in its tooltip) to its first three
     // letters, never further.
     offsetNeed = std::max(offsetNeed, headMetrics.horizontalAdvance(QStringLiteral("Off") + QChar(0x2026)) + 1);
@@ -2223,10 +2379,10 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
             label->setAlignment(align | Qt::AlignVCenter);
             return label;
         };
-        header->addWidget(cell(QStringLiteral("Station"), callWidth, Qt::AlignLeft));
-        header->addWidget(cell(QStringLiteral("km"), kmWidth, Qt::AlignRight));
+        header->addWidget(cell(frequency ? QStringLiteral("Heard by") : QStringLiteral("Station"), callWidth, Qt::AlignLeft));
+        header->addWidget(cell(unit, kmWidth, Qt::AlignRight));
         header->addWidget(cell(QStringLiteral("Offset"), offsetWidth, Qt::AlignRight));
-        header->addWidget(cell(QStringLiteral("Reading"), 0, Qt::AlignLeft), 1);
+        header->addWidget(cell(frequency ? QStringLiteral("dBm") : QStringLiteral("Reading"), 0, Qt::AlignLeft), 1);
         header->addWidget(cell(QStringLiteral("Age"), ageWidth, Qt::AlignRight));
         col->addLayout(header);
     }
@@ -2246,7 +2402,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         rowWidget->setProperty("callsign", member.value(QStringLiteral("callsign")).toString());
         rowWidget->setProperty("stale", stale);
         rowWidget->setProperty("away", away);
-        rowWidget->setFixedHeight(20);
+        rowWidget->setFixedHeight(bearing && identified ? 32 : 20);
         if (isYou) {
             rowWidget->setStyleSheet(QStringLiteral("QFrame#roundtableReadingRow {"
                                                     " background: %1; }")
@@ -2305,9 +2461,11 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
             row->addWidget(bar, 1);
         } else {
             QLabel* km = makeLabel(rowWidget,
-                                   entry.hasKm ? QString::number(std::lround(entry.km))
-                                               : member.value(QStringLiteral("grid")).toString(),
+                                   pathText(member),
                                    stale ? staleColor() : dimColor(), kSmallPx, false, true);
+            km->setToolTip(identified && !talkerNames.isEmpty()
+                ? QStringLiteral("%1 → %2 · %3 · initial true bearing")
+                    .arg(talkerNames.first(), withNth(member), unit) : QString());
             km->setFixedWidth(kmWidth);
             km->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
             row->addWidget(km);
@@ -2320,7 +2478,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
             row->addWidget(offset);
             row->addWidget(bar, 1);
         }
-        QLabel* value = makeLabel(rowWidget, present ? sText(dbm) : QStringLiteral("none"), text,
+        QLabel* value = makeLabel(rowWidget, present ? (frequency ? QString::number(std::lround(dbm)) : sText(dbm)) : QStringLiteral("none"), text,
                                   kSmallPx, false, true);
         value->setObjectName(QStringLiteral("roundtableReadingValue"));
         value->setFixedWidth(valueWidth);
@@ -2520,7 +2678,48 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
 
 void RoundtablePanel::rebuildMessages(const QJsonObject& room)
 {
-    const QJsonArray messages = room.value(QStringLiteral("messages")).toArray();
+    const QJsonArray current = room.value(QStringLiteral("messages")).toArray();
+    QJsonArray messages = current;
+    if (m_model && (m_model->frequencyAvailable() || !m_retainedMessages.isEmpty())) {
+        QHash<qint64, QJsonObject> received;
+        for (const QJsonValue& value : m_retainedMessages) {
+            received.insert(value.toObject().value(QStringLiteral("id")).toInteger(), value.toObject());
+        }
+        for (const QJsonValue& value : current) {
+            const QJsonObject message = value.toObject();
+            const qint64 id = message.value(QStringLiteral("id")).toInteger();
+            if (!m_seenLiveMessages.contains(id) || m_seenLiveMessages.value(id) != message) {
+                m_messageVersions[id] = ++m_messageVersionSerial;
+                m_historyStates.remove(id);
+                m_seenLiveMessages.insert(id, message);
+            }
+            received.insert(id, message);
+        }
+        QList<qint64> ids = received.keys();
+        std::sort(ids.begin(), ids.end());
+        while (ids.size() > 200) { ids.removeFirst(); }
+        messages = {};
+        for (qint64 id : ids) {
+            QJsonObject message = received.value(id);
+            if (m_historyStates.contains(id)) {
+                const QJsonObject state = m_historyStates.value(id);
+                message.insert(QStringLiteral("state"), state.value(QStringLiteral("state")));
+                message.insert(QStringLiteral("text"), state.value(QStringLiteral("text")));
+            }
+            messages.append(message);
+        }
+        const QSet<qint64> kept(ids.cbegin(), ids.cend());
+        for (auto it = m_seenLiveMessages.begin(); it != m_seenLiveMessages.end();) {
+            it = kept.contains(it.key()) ? std::next(it) : m_seenLiveMessages.erase(it);
+        }
+        for (auto it = m_historyStates.begin(); it != m_historyStates.end();) {
+            it = kept.contains(it.key()) ? std::next(it) : m_historyStates.erase(it);
+        }
+        for (auto it = m_messageVersions.begin(); it != m_messageVersions.end();) {
+            it = kept.contains(it.key()) ? std::next(it) : m_messageVersions.erase(it);
+        }
+        m_retainedMessages = messages;
+    }
     QStringList mineIds;
     for (const qint64 id : std::as_const(m_myMessages)) {
         mineIds.append(QString::number(id));
@@ -2534,7 +2733,7 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
     const QString signature = compact(messages) + (m_model ? m_model->muteList().join(QLatin1Char(','))
                                                            : QString())
                             + mineIds.join(QLatin1Char(',')) + shownMuted.join(QLatin1Char(','))
-                            + myRef(room) + myCallsign(room);
+                            + myRef(room) + myCallsign(room) + QString::number(m_historyFresh && historyConnected(m_model));
     if (signature == m_messagesSignature) {
         return;
     }
@@ -2573,6 +2772,14 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
     auto* head = new QHBoxLayout();
     head->setContentsMargins(8, 6, 8, 3);
     head->addWidget(capLabel(body, QStringLiteral("MESSAGES")), 1);
+    if (!m_retainedMessages.isEmpty() && m_model
+        && (!m_historyFresh || !historyConnected(m_model) || !m_model->frequencyAvailable())) {
+        const QString text = !historyConnected(m_model) ? QStringLiteral("History offline")
+            : !m_model->frequencyAvailable() ? QStringLiteral("History unavailable") : QStringLiteral("History updating");
+        auto* status = makeLabel(body, text, dimColor(), kSmallPx);
+        status->setObjectName(QStringLiteral("roundtableHistoryStatus"));
+        col->addWidget(status);
+    }
     int newCount = 0;
     for (const qint64 id : std::as_const(m_new)) {
         if (!m_everOnScreen.contains(id)) {
@@ -2609,6 +2816,11 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
         row->setFocusPolicy(Qt::ClickFocus);
         row->setProperty("navKey", QStringLiteral("m:%1").arg(id));
         row->setProperty("messageId", id);
+        const bool retained = RoundtableModel::isFrequencyContext(roomId())
+            && (!message.value(QStringLiteral("hz")).isDouble()
+                || message.value(QStringLiteral("family")).toString() != roomFamily(roomId())
+                || std::llabs(message.value(QStringLiteral("hz")).toInteger() - roomHz(roomId())) > 5000);
+        row->setProperty("retained", retained);
         row->setProperty("isNew", isNew);
         row->setProperty("mention", mention);
         row->setProperty("unreadMention", unread.contains(id));
@@ -2617,6 +2829,10 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
         auto* rowCol = new QVBoxLayout(row);
         rowCol->setContentsMargins(8, 4, 8, 4);
         rowCol->setSpacing(2);
+        if (retained) {
+            rowCol->addWidget(makeLabel(row, QStringLiteral("EARLIER · retained after tuning"),
+                                       dim2Color(), kSmallPx));
+        }
         m_messageRows.insert(id, row);
         m_navItems.append(row);
         if (row->property("navKey").toString() == focusKey) {
@@ -2663,6 +2879,13 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
         QLabel* who = makeElided(row, withNth(message), isMine ? youColor() : textColor(), kSmallPx, true, true);
         who->setObjectName(QStringLiteral("roundtableMessageWho"));
         top->addWidget(who);
+        if (message.value(QStringLiteral("hz")).isDouble()) {
+            QLabel* frequency = makeLabel(row, shortFrequency(message.value(QStringLiteral("hz")).toInteger()),
+                                          dimColor(), kSmallPx, false, true);
+            frequency->setObjectName(QStringLiteral("roundtableMessageFrequency"));
+            frequency->setToolTip(QStringLiteral("Sender frequency when this message was sent"));
+            top->addWidget(frequency);
+        }
         const QJsonValue dbm = message.value(QStringLiteral("dbm"));
         if (dbm.isDouble()) {
             QLabel* chip = makeLabel(row, sText(dbm.toDouble()), dimColor(), kSmallPx, false, true);
@@ -2767,8 +2990,7 @@ void RoundtablePanel::rebuildEmpty()
     title->setWordWrap(true);
     title->setContentsMargins(8, 4, 8, 0);
     col->addWidget(title);
-    QLabel* how = makeLabel(body, QStringLiteral("Click a callsign on the panadapter to tune there, or "
-                                                 "one of these to read it."),
+    QLabel* how = makeLabel(body, QStringLiteral("Open a callsign on the panadapter to Read its frequency or explicitly tune there."),
                             dimColor(), kSmallPx);
     how->setWordWrap(true);
     how->setContentsMargins(8, 0, 8, 4);
@@ -2910,6 +3132,7 @@ void RoundtablePanel::updatePills()
 
 void RoundtablePanel::refreshNow()
 {
+    refreshHistory();
     const QString id = roomId();
     if (id.isEmpty()) {
         updateConnectionLine({});
@@ -2921,6 +3144,32 @@ void RoundtablePanel::refreshNow()
     rebuildReadings(room);
     showFreshBodies({m_txLine, m_talker, m_readings});
     checkOnScreen();
+}
+
+void RoundtablePanel::refreshHistory()
+{
+    if (!m_model || !m_model->frequencyAvailable() || !historyConnected(m_model) || m_retainedMessages.isEmpty()) { return; }
+    const qint64 now = RoundtableModel::nowMs();
+    if (!m_historyRequest.isEmpty()) {
+        if (now - m_historyRequestedMs < 30000) { return; }
+        m_historyRequest.clear();
+    }
+    if (m_historyRequestedMs >= 0 && now - m_historyRequestedMs < 10000) { return; }
+    QJsonArray ids;
+    m_requestedHistoryVersions.clear();
+    for (const QJsonValue& value : m_retainedMessages) {
+        const qint64 id = value.toObject().value(QStringLiteral("id")).toInteger();
+        if (id > 0 && !m_requestedHistoryVersions.contains(id)) {
+            ids.append(id);
+            m_requestedHistoryVersions.insert(id, m_messageVersions.value(id));
+        }
+    }
+    if (ids.isEmpty()) { return; }
+    m_historyRequest = QStringLiteral("history-%1-%2").arg(reinterpret_cast<quintptr>(this), 0, 16)
+                                                       .arg(++m_historySerial);
+    m_historyRequestedMs = now;
+    const QString request = m_historyRequest;
+    if (!m_model->requestHistory(ids, request)) { m_historyRequest.clear(); }
 }
 
 void RoundtablePanel::setOwnReading(double dbm, qint64 takenMs)
@@ -2955,7 +3204,9 @@ void RoundtablePanel::checkOnScreen()
             continue;
         }
         const QRect place(row->mapTo(area->viewport(), QPoint(0, 0)), row->size());
-        const bool onScreen = isVisible() && row->isVisible() && view.intersects(place);
+        const bool exposed = QApplication::activeModalWidget() == nullptr
+            || QApplication::activeModalWidget()->isAncestorOf(this);
+        const bool onScreen = exposed && isVisible() && row->isVisible() && view.contains(place);
         if (!onScreen) {
             m_onScreenSince.remove(messageId);
             continue;
@@ -3013,15 +3264,21 @@ void RoundtablePanel::send()
         return;
     }
     const QString clientId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    m_pending.insert(clientId, Pending{id, text});
+    m_pending.insert(clientId, Pending{id, draftKey(), text});
     m_notSent->hide();
     m_settingBox = true;
     m_box->clear();
     m_settingBox = false;
-    m_model->setDraft(id, QString());
+    m_model->setDraft(draftKey(), QString());
     updateFooter();
     scrollMessagesToEnd();
-    m_model->post(id, text, clientId);
+    if (m_model->frequencyAvailable()) {
+        if (!m_model->postAt(m_sliceId, m_sliceHz, m_sliceFamily, text, clientId)) {
+            onPostResult(clientId, false, QStringLiteral("Frequency context was refused. Your draft stays here."));
+        }
+    } else {
+        m_model->post(id, text, clientId);
+    }
 }
 
 void RoundtablePanel::onPostResult(const QString& clientId, bool ok, const QString& idOrReason)
@@ -3039,10 +3296,10 @@ void RoundtablePanel::onPostResult(const QString& clientId, bool ok, const QStri
         return;
     }
     // A failed send keeps the text (design 11.1).
-    if (m_model && m_model->draft(pending.roomId).isEmpty()) {
-        m_model->setDraft(pending.roomId, pending.text);
+    if (m_model && m_model->draft(pending.draftKey).isEmpty()) {
+        m_model->setDraft(pending.draftKey, pending.text);
     }
-    if (pending.roomId == m_shownId) {
+    if (pending.draftKey == m_shownDraftKey) {
         if (m_box->toPlainText().isEmpty()) {
             m_settingBox = true;
             m_box->setPlainText(pending.text);
@@ -3067,7 +3324,8 @@ void RoundtablePanel::openNameEditor(QWidget* /*row*/, qint64 turnId)
 void RoundtablePanel::submitName(qint64 turnId, const QString& name)
 {
     const QString callsign = name.trimmed().toUpper();
-    if (!m_model || callsign.isEmpty() || turnId <= 0) {
+    if (!m_model || callsign.isEmpty() || turnId <= 0 || !tunedHere() || !live()
+        || awayHere(m_model->room(roomId()))) {
         return;
     }
     m_model->nameTurn(QString::number(turnId), callsign);
@@ -3133,7 +3391,8 @@ void RoundtablePanel::showReadingMenu(QWidget* row, const QJsonObject& member)
         return;
     }
     const QString callsign = member.value(QStringLiteral("callsign")).toString();
-    const QString target = roomId() + QLatin1Char('/') + member.value(QStringLiteral("ref")).toString();
+    const QString target = member.value(QStringLiteral("sourceRoom")).toString(roomId())
+                         + QLatin1Char('/') + member.value(QStringLiteral("ref")).toString();
     auto* menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("roundtableReadingMenu"));
     menu->setAttribute(Qt::WA_DeleteOnClose);

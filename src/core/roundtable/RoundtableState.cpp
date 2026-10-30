@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-30: Versioned guarded frequency-context actions and records.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 11).
@@ -411,6 +415,62 @@ bool RoundtableState::report(const QString& kind, const QString& target, const Q
     }
     m_client->report(kind, target, reason);
     return true;
+}
+
+bool RoundtableState::postAt(int sliceId, qint64 hz, const QString& family,
+                            const QString& text, const QString& clientId, QString* reason)
+{
+    if (!requireLive(reason)) {
+        return false;
+    }
+    const auto checked = RoundtableWire::decode(
+        QString::fromUtf8(RoundtableWire::encode(RoundtableWire::postAt(sliceId, hz, family, text, clientId))),
+        RoundtableWire::Direction::StationToServer);
+    if (!checked.ok || !isClientId(clientId) || m_client->frequencyVersion() < 1) {
+        if (reason) { *reason = QStringLiteral("Frequency chat needs a valid slice and an updated Roundtable server."); }
+        return false;
+    }
+    m_client->postAt(sliceId, hz, family, text, clientId);
+    return true;
+}
+
+bool RoundtableState::requestHistory(const QJsonArray& ids, const QString& clientId, QString* reason)
+{
+    if (!requireClient(reason)) { return false; }
+    if (!RoundtableWire::decode(QString::fromUtf8(RoundtableWire::encode(RoundtableWire::history(ids, clientId))),
+            RoundtableWire::Direction::StationToServer).ok) {
+        if (reason) { *reason = unreadableReason(); }
+        return false;
+    }
+    if (!m_client->requestHistory(ids, clientId)) {
+        if (reason) { *reason = QStringLiteral("Roundtable cannot check history right now. Try again shortly."); }
+        return false;
+    }
+    return true;
+}
+
+bool RoundtableState::readAt(qint64 hz, const QString& family, QString* reason)
+{
+    if (!requireClient(reason)) {
+        return false;
+    }
+    const auto checked = RoundtableWire::decode(
+        QString::fromUtf8(RoundtableWire::encode(RoundtableWire::readAt(hz, family))),
+        RoundtableWire::Direction::StationToServer);
+    if (!checked.ok || m_client->frequencyVersion() < 1) {
+        if (reason) { *reason = QStringLiteral("Frequency chat needs an updated Roundtable server."); }
+        return false;
+    }
+    if (!m_client->readAt(hz, family)) {
+        if (reason) { *reason = QStringLiteral("Close another frequency view before opening this one."); }
+        return false;
+    }
+    return true;
+}
+
+void RoundtableState::unreadAt(qint64 hz, const QString& family)
+{
+    if (m_client) { m_client->unreadAt(hz, family); }
 }
 
 bool RoundtableState::readRoom(const QString& roomId, QString* reason)

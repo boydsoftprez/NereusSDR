@@ -13,6 +13,9 @@
 // lines, the tags and the sheet do not sort it again on every pass.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-10-30: Frequency views, immutable sender contexts and shared path preferences.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import Combine
 import Foundation
 import NereusLink
@@ -32,9 +35,11 @@ import os
 /// first, each turn's names by count then name, and its last 50 messages;
 /// and the names used on a room's frequency in the last 24 hours.
 ///
-/// It follows the band list once the Core offers Roundtable, the room of
-/// each slice, and the room it reads; it stops following a room no longer
-/// in view, and nothing is followed from a Core without Roundtable.
+/// Version 2 follows the selected slice's actual integer Hz and catalogue
+/// mode family, or an explicitly browsed frequency, using readAt/unreadAt
+/// and the Core's returned frequency stream. The directory preserves exact
+/// slice presence; received chat retains immutable sender context through
+/// tuning. Version 1 keeps the legacy room path and labels its limitation.
 @MainActor
 final class RoundtableModel: ObservableObject {
     // MARK: What the screens read
@@ -58,6 +63,28 @@ final class RoundtableModel: ObservableObject {
         var text: String?
     }
 
+    struct FrequencyContext: Equatable, Hashable, Sendable {
+        var sliceId: Int64
+        var hz: Int64
+        var family: String
+        var id: String { "\(family)-\(hz)" }
+    }
+
+    struct Station: Equatable, Identifiable, Sendable {
+        var ref: String
+        var sourceRoom: String
+        var slice: Int64
+        var hz: Int64
+        var family: String
+        var callsign: String
+        var nth: Int64
+        var grid: String?
+        var keyed: Bool
+        var away: Bool
+        var joining: Bool
+        var id: String { sourceRoom + "/" + ref }
+    }
+
     /// One room in the band list (wire spec 5.2, summary).
     struct RoomSummary: Equatable, Identifiable, Sendable {
         var id: String
@@ -75,6 +102,7 @@ final class RoundtableModel: ObservableObject {
         var readings: [Double]
         var lastMessage: LastMessage?
         var ended: Int64?
+        var stations: [Station] = []
     }
 
     /// A member's newest reading.
@@ -99,13 +127,21 @@ final class RoundtableModel: ObservableObject {
         var softwareVersion: String
         var you: Bool
         var reading: Reading?
-        var id: String { ref }
+        var hz: Int64? = nil
+        var sourceRoom: String? = nil
+        var slice: Int64? = nil
+        var bearingDeg: Int64? = nil
+        var id: String { (sourceRoom.map { $0 + "/" } ?? "") + ref }
     }
 
     struct Talker: Equatable, Sendable {
         var ref: String?
         var callsign: String
         var nth: Int64
+        var hz: Int64? = nil
+        var grid: String? = nil
+        var sourceRoom: String? = nil
+        var identity: String? { ref.map { (sourceRoom.map { $0 + "/" } ?? "") + $0 } }
     }
 
     struct NameCount: Equatable, Sendable {
@@ -125,6 +161,8 @@ final class RoundtableModel: ObservableObject {
         var names: [NameCount]
         var heard: Int64
         var mine: String?
+        var hz: Int64? = nil
+        var sourceRoom: String? = nil
     }
 
     struct Message: Equatable, Identifiable, Sendable {
@@ -136,6 +174,9 @@ final class RoundtableModel: ObservableObject {
         var state: String
         var text: String?
         var dbm: Double?
+        var hz: Int64? = nil
+        var family: String? = nil
+        var sourceRoom: String? = nil
     }
 
     /// One room in view, as the desktop's room() reads it.
@@ -152,6 +193,8 @@ final class RoundtableModel: ObservableObject {
         var earlier: [Turn]
         /// The last 50, oldest first.
         var messages: [Message]
+        /// Exact neighborhoods can contain several independent RF turns.
+        var frequencyView = false
     }
 
     /// A post's answer: the message the Core's Roundtable took, or why not.
@@ -166,6 +209,7 @@ final class RoundtableModel: ObservableObject {
     static let objectKey = "roundtable"
     static let roomsStream = "roundtableRooms"
     static let roomStreamPrefix = RecordStreamClient.roundtableRoomStreamPrefix
+    static let frequencyStreamPrefix = RecordStreamClient.roundtableFrequencyStreamPrefix
     static let roomsCapacity = 500
     static let roomCapacity = RecordStreamClient.roundtableRoomCapacity
     /// Wire spec 5.4.5: a room view holds the last 50 messages.
@@ -195,6 +239,54 @@ final class RoundtableModel: ObservableObject {
     @Published private(set) var sourceControlVersion: Int64 = 0
     /// The band list, by center frequency, then id.
     @Published private(set) var rooms: [RoomSummary] = []
+    @Published private(set) var sliceContexts: [Int64: FrequencyContext] = [:]
+    @Published private(set) var distanceUnits = "mi"
+    @Published private(set) var showBearing = true
+    @Published private(set) var receivedMessages: [Message] = []
+    /// Retained text stays visible while its deletion/moderation status refreshes.
+    @Published private(set) var historyStatus: String?
+    @Published private(set) var serverFrequencyVersion: Int64 = 0
+    var frequencyAvailable: Bool { version >= 2 && serverFrequencyVersion >= 1 }
+    var directory: [Station] { rooms.flatMap(\.stations) }
+    var frequencyRows: [RoomSummary] {
+        guard frequencyAvailable else { return rooms }
+        let grouped = Dictionary(grouping: directory) { "\($0.family)-\($0.hz)" }
+        return grouped.map { id, placements in
+            // A station's two slices at the same exact context are one person.
+            // The scoped ref retains distinct stations with duplicate callsigns.
+            let people = placements.reduce(into: [Station]()) { people, station in
+                if let index = people.firstIndex(where: { $0.id == station.id }) {
+                    people[index].keyed = people[index].keyed || station.keyed
+                } else { people.append(station) }
+            }
+            let first = people[0]
+            return RoomSummary(id: id, band: Self.bandOf(first.hz), family: first.family, hz: first.hz,
+                               state: people.contains(where: \.keyed) ? "talking" : "quiet",
+                               talkers: people.map { RoundtableText.withNth($0.callsign, $0.nth) },
+                               members: Int64(people.count), messages: 0, last: 0, folded: false,
+                               start: nil, heard: 0, readings: [], lastMessage: nil, ended: nil, stations: people)
+        }.sorted { ($0.hz, $0.id) < ($1.hz, $1.id) }
+    }
+    var activeContext: FrequencyContext? {
+        (activeSliceId ?? sliceContexts.keys.sorted().first).flatMap { sliceContexts[$0] }
+    }
+    var frequencyReason: String? {
+        if frequencyAvailable { return nil }
+        return version >= 2
+            ? "The Roundtable server provides legacy room views. Exact-frequency chat requires a newer Roundtable server."
+            : "This Core provides legacy room views. Exact-frequency chat requires a newer Core."
+    }
+    func setDistanceUnits(_ units: String) async {
+        guard ["mi", "km"].contains(units), let settings else { return }
+        let outcome = await settings.write("Roundtable/DistanceUnits", units)
+        note = outcome.propertyOutcome.accepted ? nil : outcome.propertyOutcome.reason
+    }
+    func setShowBearing(_ show: Bool) async {
+        guard let settings else { return }
+        let outcome = await settings.write("Roundtable/ShowBearing", show ? "True" : "False")
+        note = outcome.propertyOutcome.accepted ? nil : outcome.propertyOutcome.reason
+    }
+
     /// Each slice's room, by slice id; a slice in no room is left out.
     @Published private(set) var sliceRooms: [Int64: String] = [:]
     /// The slice whose room the screen shows; nil follows the lowest slice in a room.
@@ -273,6 +365,8 @@ final class RoundtableModel: ObservableObject {
     /// Who wants each room stream in the record client.
     private final class Owner {}
 
+    private let catalogFeed: CatalogFeed?
+    private let settings: SettingsProxyClient?
     private let mirror: MirrorStore
     private let commands: CommandClient
     private let records: RecordStreamClient
@@ -281,6 +375,32 @@ final class RoundtableModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private let sliceOwner = Owner()
     private let readOwner = Owner()
+    static let retainedMessageLimit = 200
+    private var retainedMessages: [Int64: Message] = [:]
+    private var historyRevisions: [Int64: UInt64] = [:]
+    private var historyLiveVersion: UInt64 = 0
+    private var historyValidated: [Int64: UInt64] = [:]
+    private var historyTask: Task<Void, Never>?
+    private var historyTimer: (any LinkTimer)?
+    private var historySerial: UInt64 = 0
+    private var historyGeneration: UInt64?
+    private var historyContext: String?
+    private var historySliceId: Int64?
+
+    private struct HistoryState: Decodable {
+        let id: Int64
+        let state: String
+        let text: String?
+        enum CodingKeys: String, CodingKey { case id, state, text }
+        init(from decoder: any Decoder) throws {
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            id = try fields.decode(Int64.self, forKey: .id)
+            state = try fields.decode(String.self, forKey: .state)
+            guard fields.contains(.text) else { throw DecodingError.keyNotFound(CodingKeys.text,
+                .init(codingPath: decoder.codingPath, debugDescription: "Missing history text state")) }
+            text = try fields.decodeIfPresent(String.self, forKey: .text)
+        }
+    }
     private var views: [String: View] = [:] {
         didSet {
             // Any change to a room's records makes each room built from them anew.
@@ -312,6 +432,8 @@ final class RoundtableModel: ObservableObject {
     private var readSerial = 0
     /// The room was being read when the link went: read it again on the next.
     private var readAgain = false
+    private var frequencyWanted: String?
+    private var frequencyTask: Task<Void, Never>?
     private var pruneTimer: (any LinkTimer)?
 
     /// The app whose session the mirror and the clients carry, when one
@@ -337,7 +459,10 @@ final class RoundtableModel: ObservableObject {
     /// belong to; the model holds it weakly and stops reading as connected
     /// once it is freed.
     init(mirror: MirrorStore, commands: CommandClient, records: RecordStreamClient,
-         clock: any LinkClock = RoundtableWallClock(), owner: AnyObject? = nil) {
+         clock: any LinkClock = RoundtableWallClock(), settings: SettingsProxyClient? = nil, catalogFeed: CatalogFeed? = nil,
+         owner: AnyObject? = nil) {
+        self.catalogFeed = catalogFeed
+        self.settings = settings
         self.mirror = mirror
         self.commands = commands
         self.records = records
@@ -352,6 +477,8 @@ final class RoundtableModel: ObservableObject {
         }
         let watch = ToolMirrorWatch(mirror: mirror) { [weak self] in self?.readAll() }
         watch.watch(records.$streams)
+        if let settings { watch.watch(settings.$values) }
+        if let catalogFeed { watch.watch(catalogFeed.$catalog) }
         self.watch = watch
         readAll()
     }
@@ -363,6 +490,14 @@ final class RoundtableModel: ObservableObject {
         let alive = !owned || owner != nil
         let next = alive ? mirror.capabilityVersion(Self.capabilityName) : 0
         if next != version {
+            if version >= 2 {
+                frequencyTask?.cancel()
+                frequencyWanted = nil
+                readStream = nil
+                readingRoomId = nil
+                readAgain = false
+            }
+            builtRooms.removeAll()
             version = next
         }
         let sourceVersion = alive ? mirror.capabilityVersion("recordStreamVersion") : 0
@@ -375,6 +510,8 @@ final class RoundtableModel: ObservableObject {
             if !up {
                 // The Core forgets this phone's reading with the session.
                 readStream = nil
+                frequencyWanted = nil
+                frequencyTask?.cancel()
                 readAgain = readingRoomId != nil
             }
             connected = up
@@ -382,10 +519,29 @@ final class RoundtableModel: ObservableObject {
         if up, next < 1, readingRoomId != nil {
             readingRoomId = nil
         }
+        let backendVersion = next >= 2 ? (records.streams[Self.roomsStream]?.records.first(where: {
+            $0.id == "frequency-capability" && Self.text($0.fields["kind"]) == "frequency"
+        }).flatMap { Self.whole($0.fields["version"]) } ?? 0) : 0
+        if backendVersion != serverFrequencyVersion {
+            if serverFrequencyVersion >= 1 && backendVersion < 1 {
+                frequencyTask?.cancel()
+                frequencyWanted = nil
+                readStream = nil
+                readingRoomId = nil
+                readAgain = false
+            }
+            serverFrequencyVersion = backendVersion
+            builtRooms.removeAll()
+        }
+        let units = settings?.value("Roundtable/DistanceUnits") == "km" ? "km" : "mi"
+        if units != distanceUnits { distanceUnits = units }
+        let bearing = settings?.value("Roundtable/ShowBearing") != "False"
+        if bearing != showBearing { showBearing = bearing }
         readObject(next >= 1 ? watch?.object(Self.objectKey) : nil)
         syncWants()
         readStreams(next >= 1 ? records.streams : [:])
-        if available, readAgain, let roomId = readingRoomId {
+        syncReceivedHistory()
+        if available, !frequencyAvailable, readAgain, let roomId = readingRoomId {
             readAgain = false
             Task { [weak self] in await self?.sendRead(roomId) }
         }
@@ -427,18 +583,29 @@ final class RoundtableModel: ObservableObject {
                 }
             }
         }
-        if slices != sliceRooms {
-            sliceRooms = slices
+        var contexts: [Int64: FrequencyContext] = [:]
+        for object in mirror.objects(ofClass: "SliceModel") {
+            guard object.key.hasPrefix("slice:"), let id = Int64(object.key.dropFirst("slice:".count)) else { continue }
+            _ = watch?.object(object.key)
+            guard let hz = ToolValue.number(object["frequency"]), hz.isFinite, hz > 0, hz < 1e12,
+                  let mode = ToolValue.number(object["dspMode"]), mode.isFinite, mode >= 0, mode < 1e6,
+                  let label = catalogFeed?.catalog?.modeDescription(Int(mode))?.label,
+                  let family = Self.family(ofMode: label) else { continue }
+            contexts[id] = FrequencyContext(sliceId: id, hz: Int64(hz.rounded()), family: family)
         }
+        if sliceContexts != contexts { sliceContexts = contexts }
+        if frequencyAvailable { slices = contexts.mapValues(\.id) }
+        if slices != sliceRooms { sliceRooms = slices }
         let active: String?
         if let slice = activeSliceId {
             active = slices[slice]
         } else {
             active = slices.keys.sorted().first.flatMap { slices[$0] }
         }
-        if active != sliceRoomId {
-            sliceRoomId = active
-        }
+        // Retain the last exact display context while disconnected or
+        // unsupported, so received history remains readable and visibly stale.
+        let displayed = active ?? (!retainedMessages.isEmpty ? historyContext : nil)
+        if displayed != sliceRoomId { sliceRoomId = displayed }
     }
 
     /// The band list once the Core offers Roundtable, each slice's room and
@@ -457,7 +624,31 @@ final class RoundtableModel: ObservableObject {
             return
         }
         records.want(Self.roomsStream, backlog: Self.roomsCapacity, by: self)
-        let wanted = Set(sliceRooms.values.map(Self.roomStreamName))
+        if frequencyAvailable {
+            for stream in sliceStreams { records.unwant(stream, by: sliceOwner) }
+            sliceStreams = []
+            let wanted = connected ? (readingRoomId ?? activeContext?.id) : nil
+            if wanted != frequencyWanted {
+                let previous = frequencyWanted
+                frequencyWanted = wanted
+                let previousTask = frequencyTask
+                readStream = nil
+                frequencyTask = Task { [weak self] in
+                    await previousTask?.value
+                    guard let self else { return }
+                    if let previous { _ = await self.send("roundtable.unreadAt", self.contextArguments(previous)) }
+                    guard !Task.isCancelled, self.frequencyWanted == wanted else { return }
+                    if let wanted { await self.openFrequency(wanted) }
+                }
+            }
+            if readWanted != readStream {
+                if let stream = readWanted { records.unwant(stream, by: readOwner) }
+                if let stream = readStream { records.want(stream, backlog: Self.roomCapacity, by: readOwner) }
+                readWanted = readStream
+            }
+            return
+        }
+        let wanted = Set(sliceRooms.values.map(streamName))
         for stream in sliceStreams.subtracting(wanted) {
             records.unwant(stream, by: sliceOwner)
         }
@@ -483,7 +674,8 @@ final class RoundtableModel: ObservableObject {
             rooms = summaries
         }
         var changed = false
-        let roomStreams = streams.filter { $0.key.hasPrefix(Self.roomStreamPrefix) }
+        let prefix = frequencyAvailable ? Self.frequencyStreamPrefix : Self.roomStreamPrefix
+        let roomStreams = streams.filter { $0.key.hasPrefix(prefix) }
         for (stream, _) in seen where roomStreams[stream] == nil {
             seen[stream] = nil
             if views.removeValue(forKey: Self.roomId(ofStream: stream)) != nil {
@@ -491,12 +683,23 @@ final class RoundtableModel: ObservableObject {
             }
         }
         for (stream, held) in roomStreams.sorted(by: { $0.key < $1.key }) where seen[stream] != held.records {
+            let previousMessages = Self.view(of: seen[stream] ?? []).messages
             seen[stream] = held.records
             let roomId = Self.roomId(ofStream: stream)
             if held.records.isEmpty {
                 views[roomId] = nil
             } else {
                 var view = Self.view(of: held.records)
+                // Rebuilding after an unrelated meter/member delta must not
+                // reapply an unchanged old shown record over a history tombstone.
+                for message in view.messages.values where previousMessages[message.id] != message {
+                    retainedMessages[message.id] = message
+                    historyLiveVersion &+= 1
+                    historyRevisions[message.id] = historyLiveVersion
+                    historyValidated[message.id] = historyLiveVersion
+                }
+                publishRetainedMessages()
+
                 noteRecentNames(roomId, view)
                 Self.prune(&view, before: clock.nowMilliseconds - Self.earlierWindowMs)
                 views[roomId] = view
@@ -524,7 +727,10 @@ final class RoundtableModel: ObservableObject {
         if let built = builtRooms[roomId], nowMs >= built.builtMs, nowMs < built.validUntilMs {
             return built.room
         }
-        guard let view = views[roomId] else {
+        let retainedView = !retainedMessages.isEmpty && roomId == historyContext
+            && (!connected || !frequencyAvailable)
+        guard let view = views[roomId] ?? ((frequencyAvailable && (roomId == activeContext?.id || roomId == readingRoomId))
+                                         || retainedView ? View() : nil) else {
             return nil
         }
         #if DEBUG
@@ -549,11 +755,12 @@ final class RoundtableModel: ObservableObject {
         }
         open.sort { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
         ended.sort { ($0.end ?? 0) != ($1.end ?? 0) ? ($0.end ?? 0) > ($1.end ?? 0) : $0.id > $1.id }
-        let messages = view.messages.keys.sorted().suffix(Self.roomMessages).compactMap { view.messages[$0] }
+        let messages = (frequencyAvailable || retainedView ? receivedMessages
+                        : view.messages.keys.sorted().suffix(Self.roomMessages).compactMap { view.messages[$0] })
         let room = Room(id: roomId, band: Self.bandOf(hz), family: dash == nil ? "" : family, hz: hz,
                         members: view.members.sorted { $0.seq < $1.seq }.map(\.member),
                         now: open.map(Self.withSortedNames), earlier: ended.map(Self.withSortedNames),
-                        messages: Array(messages))
+                        messages: Array(messages), frequencyView: frequencyAvailable || retainedView)
         // Good until the oldest earlier turn shown leaves the window (an
         // ended turn shows while end >= now - window).
         let validUntil = ended.compactMap(\.end).min().map { $0 + Self.earlierWindowMs + 1 } ?? .max
@@ -573,11 +780,17 @@ final class RoundtableModel: ObservableObject {
     }
 
     func draft(_ roomId: String) -> String {
-        drafts[roomId] ?? ""
+        drafts[draftKey(roomId)] ?? ""
     }
 
     func setDraft(_ text: String, for roomId: String) {
-        drafts[roomId] = text.isEmpty ? nil : text
+        drafts[draftKey(roomId)] = text.isEmpty ? nil : text
+    }
+
+    func draftKey(_ roomId: String) -> String {
+        let frequencyContext = frequencyAvailable || room?.frequencyView == true || historyContext == roomId
+        let slice = activeSliceId ?? activeContext?.sliceId ?? historySliceId ?? -1
+        return frequencyContext ? "\(slice):\(roomId)" : roomId
     }
 
     /// Drops every ended turn older than 30 minutes from the rooms in view.
@@ -596,10 +809,29 @@ final class RoundtableModel: ObservableObject {
     // MARK: Actions
 
     /// Posts `text` in a room. The answer waits for Roundtable itself.
-    func post(_ text: String, in roomId: String, clientId: String = UUID().uuidString) async -> PostResult {
+    func post(_ text: String, in roomId: String, clientId: String = UUID().uuidString,
+              context expectedContext: FrequencyContext? = nil) async -> PostResult {
         if let reason = coreReason {
             note = reason
             return .refused(reason)
+        }
+        if frequencyAvailable {
+            guard let context = activeContext, context.id == roomId,
+                  expectedContext == nil || context == expectedContext,
+                  firstRunAnswered, !hidden, linkState == .live,
+                  !((room?.members.first { $0.you && ($0.slice == nil || $0.slice == context.sliceId) })?.away ?? false) else {
+                return .refused("The selected slice changed or your station cannot post. Your original draft stays here.")
+            }
+            let result = await send("roundtable.postAt", [
+                CommandArgument(name: "sliceId", value: .int(context.sliceId)),
+                CommandArgument(name: "hz", value: .int(context.hz)),
+                CommandArgument(name: "family", value: .text(context.family)),
+                CommandArgument(name: "text", value: .text(text)),
+                CommandArgument(name: "clientId", value: .text(clientId)),
+            ], timeout: Self.answerTimeout)
+            guard let result, result.accepted else { return .refused(note ?? Self.noAnswerReason) }
+            if case .text(let id)? = result.values["messageId"] { return .posted(messageId: id) }
+            return .posted(messageId: "")
         }
         let result = await send("roundtable.post", [
             CommandArgument(name: "roomId", value: .text(roomId)),
@@ -654,6 +886,7 @@ final class RoundtableModel: ObservableObject {
         }
         readingRoomId = roomId
         publishRoom()
+        if frequencyAvailable { syncWants(); return nil }
         return await sendRead(roomId)
     }
 
@@ -664,13 +897,14 @@ final class RoundtableModel: ObservableObject {
         }
         readingRoomId = nil
         readStream = nil
+        if frequencyAvailable { syncWants(); publishRoom(); return }
         readSerial += 1
         syncWants()
         publishRoom()
         guard available else {
             return
         }
-        _ = await send("roundtable.unread", [CommandArgument(name: "roomId", value: .text(roomId))])
+        _ = await send(frequencyAvailable ? "roundtable.unreadAt" : "roundtable.unread", contextArguments(roomId))
     }
 
     /// Back to the active slice's room.
@@ -729,7 +963,7 @@ final class RoundtableModel: ObservableObject {
     private func sendRead(_ roomId: String) async -> String? {
         readSerial += 1
         let serial = readSerial
-        let result = await send("roundtable.read", [CommandArgument(name: "roomId", value: .text(roomId))])
+        let result = await send(frequencyAvailable ? "roundtable.readAt" : "roundtable.read", contextArguments(roomId))
         // Only the room this phone still reads; a later read replaced it.
         guard serial == readSerial, readingRoomId == roomId else {
             return nil
@@ -739,11 +973,53 @@ final class RoundtableModel: ObservableObject {
             publishRoom()
             return result?.reason ?? Self.noAnswerReason
         }
-        if case .text(let stream)? = result.values["stream"], stream == Self.roomStreamName(roomId) {
+        if case .text(let stream)? = result.values["stream"], stream == streamName(roomId) {
             readStream = stream
             syncWants()
         }
         return nil
+    }
+
+    private func openFrequency(_ id: String) async {
+        let result = await send("roundtable.readAt", contextArguments(id))
+        guard !Task.isCancelled, frequencyWanted == id else {
+            // A superseded request may have reached the Core before cancellation.
+            if result?.accepted == true { _ = await send("roundtable.unreadAt", contextArguments(id)) }
+            return
+        }
+        guard let result, result.accepted,
+              case .text(let stream)? = result.values["stream"], stream == streamName(id) else { return }
+        readStream = stream
+        syncWants()
+    }
+
+    static func family(ofMode mode: String) -> String? {
+        // Same names as RoundtableWire::familyOfMode; no DSP numeric assumptions.
+        switch mode.uppercased() {
+        case "LSB": "lsb"
+        case "USB": "usb"
+        case "DIGL": "digl"
+        case "DIGU": "digu"
+        case "AM", "SAM": "am"
+        case "FM": "fm"
+        case "CWL", "CWU": "cw"
+        case "FDVL": "fdvl"
+        case "FDVU": "fdvu"
+        default: nil
+        }
+    }
+
+    private func streamName(_ id: String) -> String {
+        (frequencyAvailable ? Self.frequencyStreamPrefix : Self.roomStreamPrefix) + id
+    }
+
+    private func contextArguments(_ id: String) -> [CommandArgument] {
+        guard frequencyAvailable, let dash = id.firstIndex(of: "-"),
+              let hz = Int64(id[id.index(after: dash)...]) else {
+            return [CommandArgument(name: "roomId", value: .text(id))]
+        }
+        return [CommandArgument(name: "hz", value: .int(hz)),
+                CommandArgument(name: "family", value: .text(String(id[..<dash])))]
     }
 
     private func act(_ verb: String, _ arguments: [CommandArgument]) async -> String? {
@@ -768,6 +1044,105 @@ final class RoundtableModel: ObservableObject {
             Self.logger.info("A Roundtable request was not answered: \(String(describing: error), privacy: .public)")
             note = Self.noAnswerReason
             return nil
+        }
+    }
+
+    // MARK: Bounded retained-message status synchronization
+
+    private func publishRetainedMessages() {
+        let retained = Array(retainedMessages.values.sorted { ($0.t, $0.id) < ($1.t, $1.id) }
+            .suffix(Self.retainedMessageLimit))
+        let ids = Set(retained.map(\.id))
+        retainedMessages = retainedMessages.filter { ids.contains($0.key) }
+        historyRevisions = historyRevisions.filter { ids.contains($0.key) }
+        historyValidated = historyValidated.filter { ids.contains($0.key) }
+        if receivedMessages != retained { receivedMessages = retained }
+        builtRooms.removeAll()
+    }
+
+    private func syncReceivedHistory() {
+        guard !retainedMessages.isEmpty else {
+            historyTask?.cancel(); historyTask = nil
+            historyTimer?.cancel(); historyTimer = nil
+            historyStatus = nil
+            return
+        }
+        guard connected, frequencyAvailable, [.live, .hidden, .reconnecting].contains(linkState) else {
+            historyTask?.cancel(); historyTask = nil
+            historyTimer?.cancel(); historyTimer = nil
+            historySerial &+= 1
+            historyGeneration = nil
+            historyValidated.removeAll()
+            historyStatus = !connected || [.off, .offline, .connecting].contains(linkState)
+                ? "History stale · offline" : "History stale · refresh unavailable"
+            return
+        }
+        let context = readingRoomId ?? activeContext?.id
+        if historyGeneration != connectionGeneration || historyContext != context
+            || (historyTask == nil && historyTimer == nil) {
+            refreshReceivedHistory()
+        }
+    }
+
+    /// Called before exposing Earlier/received history as well as on tuning,
+    /// reconnect and the bounded periodic timer. No IDs are discovered here.
+    func refreshReceivedHistory() {
+        guard connected, frequencyAvailable, [.live, .hidden, .reconnecting].contains(linkState),
+              !retainedMessages.isEmpty else { syncReceivedHistory(); return }
+        historyTask?.cancel()
+        historyTimer?.cancel()
+        historySerial &+= 1
+        let serial = historySerial
+        let generation = connectionGeneration
+        let ids = retainedMessages.keys.sorted()
+        let revisions = historyRevisions
+        historyGeneration = generation
+        historyContext = readingRoomId ?? activeContext?.id
+        historySliceId = activeSliceId ?? activeContext?.sliceId ?? historySliceId
+        historyStatus = "History updating…"
+        historyTimer = clock.schedule(after: .seconds(10)) { [weak self] in
+            await self?.refreshReceivedHistory()
+        }
+        historyTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let encoded = String(decoding: try JSONEncoder().encode(ids), as: UTF8.self)
+                let result = try await self.commands.invoke("roundtable.history",
+                    arguments: [.init(name: "ids", value: .text(encoded))], timeout: Self.commandTimeout)
+                guard !Task.isCancelled, serial == self.historySerial,
+                      generation == self.connectionGeneration, self.connected, self.frequencyAvailable else { return }
+                guard result.accepted, case .text(let raw)? = result.values["states"],
+                      let states = try? JSONDecoder().decode([HistoryState].self, from: Data(raw.utf8)),
+                      states.count == ids.count, Set(states.map(\.id)) == Set(ids),
+                      Set(states.map(\.id)).count == states.count,
+                      states.allSatisfy({ $0.id > 0 && ["shown", "deleted", "removed", "expired"].contains($0.state)
+                          && ($0.state == "shown" ? $0.text != nil : $0.text == nil) }) else {
+                    self.historyTask = nil
+                    self.historyStatus = "History stale · refresh failed"
+                    return
+                }
+                for state in states {
+                    // A newer live tombstone protects just its own ID. Busy
+                    // unrelated arrivals do not invalidate the whole response.
+                    guard var message = self.retainedMessages[state.id],
+                          self.historyRevisions[state.id] == revisions[state.id] else { continue }
+                    message.state = state.state
+                    message.text = state.text
+                    self.retainedMessages[state.id] = message
+                    self.historyValidated[state.id] = self.historyRevisions[state.id]
+                }
+                self.publishRetainedMessages()
+                self.publishRoom()
+                self.historyTask = nil
+                self.historyStatus = self.retainedMessages.keys.allSatisfy {
+                    self.historyValidated[$0] == self.historyRevisions[$0]
+                } ? nil : "History stale · refresh pending"
+            } catch {
+                guard !Task.isCancelled, serial == self.historySerial,
+                      generation == self.connectionGeneration else { return }
+                self.historyTask = nil
+                self.historyStatus = "History stale · refresh failed"
+            }
         }
     }
 
@@ -829,7 +1204,8 @@ final class RoundtableModel: ObservableObject {
     }
 
     static func roomId(ofStream stream: String) -> String {
-        stream.hasPrefix(roomStreamPrefix) ? String(stream.dropFirst(roomStreamPrefix.count)) : ""
+        if stream.hasPrefix(Self.frequencyStreamPrefix) { return String(stream.dropFirst(Self.frequencyStreamPrefix.count)) }
+        return stream.hasPrefix(roomStreamPrefix) ? String(stream.dropFirst(roomStreamPrefix.count)) : ""
     }
 
     private static func view(of records: [LinkMessage.RecordBatch.Record]) -> View {
@@ -846,7 +1222,8 @@ final class RoundtableModel: ObservableObject {
                 }
             case "reading":
                 if let ref = text(fields["ref"]) {
-                    readings[ref] = Reading(dbm: number(fields["dbm"]) ?? 0, t: whole(fields["t"]) ?? 0,
+                    let identity = (text(fields["sourceRoom"]).map { $0 + "/" } ?? "") + ref
+                    readings[identity] = Reading(dbm: number(fields["dbm"]) ?? 0, t: whole(fields["t"]) ?? 0,
                                             present: flag(fields["present"]) ?? false, turn: whole(fields["turn"]))
                 }
             case "turn":
@@ -867,7 +1244,7 @@ final class RoundtableModel: ObservableObject {
         }
         view.members = members.map { entry in
             var member = entry.member
-            member.reading = readings[member.ref]
+            member.reading = readings[member.id]
             return (entry.seq, member)
         }
         for (id, turnNames) in names {
@@ -900,7 +1277,7 @@ final class RoundtableModel: ObservableObject {
                            messages: whole(fields["messages"]) ?? 0, last: whole(fields["last"]) ?? 0,
                            folded: flag(fields["folded"]) ?? false, start: whole(fields["start"]),
                            heard: whole(fields["heard"]) ?? 0, readings: numbers(fields["readings"]),
-                           lastMessage: last, ended: whole(fields["ended"]))
+                           lastMessage: last, ended: whole(fields["ended"]), stations: stations(fields["stations"]))
     }
 
     private static func member(_ fields: [String: LinkJSON]) -> Member? {
@@ -912,7 +1289,8 @@ final class RoundtableModel: ObservableObject {
                       joining: flag(fields["joining"]) ?? false, away: flag(fields["away"]) ?? false,
                       keyed: flag(fields["keyed"]) ?? false, software: text(fields["software"]) ?? "",
                       softwareVersion: text(fields["softwareVersion"]) ?? "", you: flag(fields["you"]) ?? false,
-                      reading: nil)
+                      reading: nil, hz: whole(fields["hz"]), sourceRoom: text(fields["sourceRoom"]),
+                      slice: whole(fields["slice"]), bearingDeg: bearing(fields["bearingDeg"]))
     }
 
     private static func turn(_ fields: [String: LinkJSON]) -> Turn? {
@@ -923,12 +1301,14 @@ final class RoundtableModel: ObservableObject {
         if case .array(let entries)? = fields["talkers"] {
             for case .object(let talker) in entries {
                 talkers.append(Talker(ref: text(talker["ref"]), callsign: text(talker["callsign"]) ?? "",
-                                      nth: whole(talker["nth"]) ?? 1))
+                                      nth: whole(talker["nth"]) ?? 1, hz: whole(talker["hz"]),
+                                      grid: text(talker["grid"]), sourceRoom: text(talker["sourceRoom"])))
             }
         }
         return Turn(id: id, kind: text(fields["kind"]) ?? "", talkers: talkers, start: whole(fields["start"]) ?? 0,
                     end: whole(fields["end"]), ending: flag(fields["ending"]) ?? false, names: [],
-                    heard: whole(fields["heard"]) ?? 0, mine: text(fields["mine"]))
+                    heard: whole(fields["heard"]) ?? 0, mine: text(fields["mine"]),
+                    hz: whole(fields["hz"]), sourceRoom: text(fields["sourceRoom"]))
     }
 
     private static func message(_ fields: [String: LinkJSON]) -> Message? {
@@ -937,7 +1317,26 @@ final class RoundtableModel: ObservableObject {
         }
         return Message(id: id, ref: text(fields["ref"]), callsign: text(fields["callsign"]) ?? "",
                        nth: whole(fields["nth"]) ?? 1, t: whole(fields["t"]) ?? 0, state: text(fields["state"]) ?? "",
-                       text: text(fields["text"]), dbm: number(fields["dbm"]))
+                       text: text(fields["text"]), dbm: number(fields["dbm"]), hz: whole(fields["hz"]),
+                       family: text(fields["family"]), sourceRoom: text(fields["sourceRoom"]))
+    }
+
+    private static func bearing(_ value: LinkJSON?) -> Int64? {
+        guard let bearing = whole(value), (0...359).contains(bearing) else { return nil }
+        return bearing
+    }
+
+    private static func stations(_ value: LinkJSON?) -> [Station] {
+        guard case .array(let entries)? = value else { return [] }
+        return entries.compactMap { entry in
+            guard case .object(let fields) = entry, let ref = text(fields["ref"]),
+                  let source = text(fields["sourceRoom"]), let slice = whole(fields["slice"]),
+                  let hz = whole(fields["hz"]), let family = text(fields["family"]) else { return nil }
+            return Station(ref: ref, sourceRoom: source, slice: slice, hz: hz, family: family,
+                           callsign: text(fields["callsign"]) ?? "", nth: whole(fields["nth"]) ?? 1,
+                           grid: text(fields["grid"]), keyed: flag(fields["keyed"]) ?? false,
+                           away: flag(fields["away"]) ?? false, joining: flag(fields["joining"]) ?? false)
+        }
     }
 
     // MARK: Wire words

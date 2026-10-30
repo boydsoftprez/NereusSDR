@@ -10,6 +10,9 @@
 // its glyph dimmed, as the desktop's does (JJ's answer of 2026-10-25).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
+// 2026-10-30: Approved frequency-first people, reports and phone interactions.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import SwiftUI
 
 /// What a slice's flag says of Roundtable (spec 11.2 and 11.3, D17): the
@@ -72,7 +75,11 @@ struct RoundtableFlagLine: Equatable {
         }
         if let room, youAreTalking(room) {
             // U3: while you transmit there, the others whose reading of you is present.
-            let hearing = room.members.filter { !$0.you && ($0.reading?.present ?? false) }.count
+            let ownTurns = Set(room.now.filter { $0.hz == room.hz && turnIsYours(room, $0, open: true) }.map(\.id))
+            let hearing = room.members.filter {
+                !$0.you && ($0.reading?.present ?? false)
+                    && (!room.frequencyView || $0.reading?.turn.map(ownTurns.contains) == true)
+            }.count
             return RoundtableFlagLine(glyph: .you, text: lead + "\(hearing) hear you", mentions: mentions,
                                       dimmed: dimmed)
         }
@@ -118,21 +125,25 @@ struct RoundtableFlagLine: Equatable {
         }
     }
 
-    /// A turn is yours: one of its talkers is your member, or it is on the
-    /// air and your member is keyed (the desktop's roundtableTurnIsYours).
+    /// Match every own endpoint by scoped identity. A keyed own slice at
+    /// another RF source cannot claim an independent neighborhood turn.
     static func turnIsYours(_ room: RoundtableModel.Room, _ turn: RoundtableModel.Turn, open: Bool) -> Bool {
-        guard let you = room.members.first(where: \.you), !you.ref.isEmpty else {
-            return false
-        }
-        if turn.talkers.contains(where: { $0.ref == you.ref }) {
-            return true
-        }
-        return open && you.keyed
+        guard turn.kind != "doubled" else { return false }
+        let yours = room.members.filter { $0.you && !$0.ref.isEmpty }
+        let scoped = room.frequencyView || room.members.contains { $0.sourceRoom != nil && $0.sourceRoom != room.id }
+        if yours.contains(where: { you in
+            turn.talkers.contains { talker in
+                talker.ref == you.ref && talker.sourceRoom == you.sourceRoom
+                    && (!scoped || !(you.sourceRoom ?? "").isEmpty)
+            }
+        }) { return true }
+        guard !scoped, turn.sourceRoom == nil || turn.sourceRoom == room.id else { return false }
+        return open && yours.contains { $0.keyed && ($0.sourceRoom == nil || $0.sourceRoom == room.id) }
     }
 
     /// One of the room's turns on the air is yours.
     static func youAreTalking(_ room: RoundtableModel.Room) -> Bool {
-        room.now.contains { turnIsYours(room, $0, open: true) }
+        room.now.contains { (!room.frequencyView || $0.hz == room.hz) && turnIsYours(room, $0, open: true) }
     }
 }
 

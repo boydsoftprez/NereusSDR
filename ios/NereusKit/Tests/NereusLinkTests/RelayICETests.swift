@@ -410,8 +410,16 @@ struct RelayICETests {
         await bridge.startInboundConsumers()
         web.receive(.binary(Data([1, 0xbb])))
         web.receive(.binary(Data([2, 0xdd])))
-        #expect(await freshControlPeer.receiveAsync() == Data([0xbb]))
-        #expect(await freshMediaPeer.receiveAsync() == Data([0xdd]))
+        let controlReceiveStarted = ContinuousClock.now
+        let receivedControl = await freshControlPeer.receiveAsync()
+        let controlReceiveElapsed = ContinuousClock.now - controlReceiveStarted
+        #expect(receivedControl == Data([0xbb]),
+                "Fresh control receive: \(String(describing: receivedControl?.map { String(format: "%02x", $0) })), elapsed \(controlReceiveElapsed)")
+        let mediaReceiveStarted = ContinuousClock.now
+        let receivedMedia = await freshMediaPeer.receiveAsync()
+        let mediaReceiveElapsed = ContinuousClock.now - mediaReceiveStarted
+        #expect(receivedMedia == Data([0xdd]),
+                "Fresh raw media receive: \(String(describing: receivedMedia?.map { String(format: "%02x", $0) })), elapsed \(mediaReceiveElapsed)")
         await bridge.close()
         await leg.cancel()
     }

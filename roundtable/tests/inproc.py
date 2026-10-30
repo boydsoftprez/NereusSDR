@@ -113,7 +113,7 @@ class Harness:
     def advance(self, ms: int) -> None:
         self.clock.advance(ms)
 
-    def sign_in(self, key: Optional[ec.EllipticCurvePrivateKey] = None, address: str = "192.0.2.1") -> Station:
+    def sign_in(self, key: Optional[ec.EllipticCurvePrivateKey] = None, address: str = "192.0.2.1", frequency_version: Optional[int] = None) -> Station:
         """A station signs in with a station key; welcome and rooms are
         taken."""
         key = key or ec.generate_private_key(ec.SECP256R1())
@@ -125,6 +125,7 @@ class Harness:
         sig = identity.sign_raw(key, identity.hello_transcript(HOST, nonce))
         station.send(
             {
+                **({"frequencyVersion": frequency_version} if frequency_version is not None else {}),
                 "type": "hello",
                 "v": 1,
                 "software": "test",

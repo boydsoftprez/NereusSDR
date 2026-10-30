@@ -1,6 +1,6 @@
 # NereusSDR 2026.10.2 combined build bench checklist
 
-Use this with the combined candidate after it is installed. Start with the first 30 minutes and use the later sections when the equipment and features are available. Nothing on this sheet has been passed until you record it. PR #339 (XDMA) is excluded from this candidate.
+Use this with the combined candidate after it is installed. Start with the first 30 minutes and use the later sections when the equipment and features are available. Nothing on this sheet has been passed until you record it. PR #339 (XDMA) and #698 (arrow-key tuning, deferred for the hotkey work) are excluded from this candidate.
 
 Only the operator controls the radio and any transmit test, using the existing station procedure and a suitable load. Do not change the station's power, DSP, antenna, amplifier or safety settings just to make a test pass. CW tests are optional; paddles and a straight key are not required. Physical key takeover on the installed Hermes Lite 2 variant remains unverified.
 
@@ -10,6 +10,7 @@ Only the operator controls the radio and any transmit test, using the existing s
 - Candidate commit/build identity: ____________________  (fill in from the delivered build)
 - STRIX desktop/Core build: ____________________  Zephyrus desktop/Core build: ____________________
 - Mac build: ____________________  iPhone app version/build: ____________________
+- Roundtable website URL/deployment identity: ____________________
 - Radio, firmware and protocol: ____________________  Local or remote Core for each client: ____________________
 - Accessories or other software used: ____________________
 
@@ -31,28 +32,28 @@ For each applicable device, record the result in the matrix below. If a feature 
 
 Use **Pass**, **Fail**, **Skip** or **N/A** in each cell. Add device, Core and failure details in Notes; one device passing does not imply the others passed.
 
-| Check | STRIX | Zephyrus | Mac | iPhone | Notes |
-|---|---|---|---|---|---|
-| Start, discovery and connect | | | | | |
-| RX audio, spectrum and S-meter | | | | | |
-| Tuning, filters and CTUN | | | | | |
-| Slices, history and sample rate | | | | | |
-| Save and restore | | | | | |
-| Remote handover, reconnect and audio recovery | | | | | |
-| Phone buttons, 3D, zoom and meter | N/A | N/A | N/A | | |
-| Desktop containers and display | | | | N/A | |
-| CAT / TCI | | | | N/A | |
-| Roundtable | | | | | |
-| PureSignal / optional TX | | | | | |
-| Applicable radio and accessories | | | | | |
-| Optional CWX | | | | | |
+| Check | STRIX | Zephyrus | Mac | iPhone | Website | Notes |
+|---|---|---|---|---|---|---|
+| Start, discovery and connect | | | | | N/A | |
+| RX audio, spectrum and S-meter | | | | | N/A | |
+| Tuning, filters and CTUN | | | | | N/A | |
+| Slices, history and sample rate | | | | | N/A | |
+| Save and restore | | | | | N/A | |
+| Remote handover, reconnect and audio recovery | | | | | N/A | |
+| Phone buttons, 3D, zoom and meter | N/A | N/A | N/A | | N/A | |
+| Desktop containers and display | | | | N/A | N/A | |
+| CAT / TCI | | | | N/A | N/A | |
+| Roundtable | | | | | | |
+| PureSignal / optional TX | | | | | N/A | |
+| Applicable radio and accessories | | | | | N/A | |
+| Optional CWX | | | | | N/A | |
 
 ## Desktop and Core: follow-up checks
 
 - **Display and receiver controls:** Try waterfall pause/history and return to live, resize or float a pan, then close and reopen it. Display remains usable and closing a menu or floating window does not crash the app. Check the remote waterfall for repeated rows or smears and compare remote meter motion to audio. Try the filter presets and, if normally used, sideband limit; the shown filter matches the selected setting.
 - **Containers:** Add one RX row and one TX row from Available, apply, and compare their shown state with the corresponding applet. Try Frequency Custom, band buttons, color and visibility options, then save and reopen the workspace. Chosen options and values return. A refused save should explain why; an unchanged save should not claim new changes. Restore the original workspace if preferred.
 - **CAT and TCI:** If used, reconnect the ordinary native application and check its frequency, mode, filter and AGC control/readback. A saved CAT slice binding remains valid after a normal restart. TCI audio remains continuous during ordinary tuning; note gaps or backlogs. Browser pages should not obtain an unsolicited TCI connection. Do not introduce a new keying test solely for this check.
-- **Roundtable:** With the intended stations and accounts, open the room, check presence and incoming messages on both Cores and the phone, and switch stations normally. The active room and station remain understandable, messages arrive and controls respond. Use any transmit/PTT portion only as the operator's normal station procedure permits; record which participants and Cores were actually checked.
+- **Roundtable:** Use the frequency-first checks below on desktop, phone and website. Record the participating stations and Cores; browsing and chat do not require a transmit test.
 - **Remote recovery:** During normal receive, use an ordinary disconnect/reconnect or station handover. Audio, display and controls recover on the selected Core without stale data from the previous session. Note the actual route and what had to be touched.
 
 ## Phone follow-up
@@ -71,6 +72,17 @@ start alone must not answer it. Skip public participation if it is not wanted.
 
 Check the workspace look and Display settings, slice flags, S-meter Peak/Average/Max Bin availability, and normal setup controls. Change a display option, leave and return: the selected value remains visible. Tune a signal under normal display activity and listen for responsive audio; record an audible delay or backlog rather than estimating a pass. Check 3D rows at the usual viewing rate and look for repeated rows, ridges or stutter. If the Core reports audio unavailable, note whether the current wanted audio recovers after it becomes ready. Record device, app build, Core and connection used.
 
+## Roundtable on desktop, iPhone and website
+
+Use willing participating stations where available; mark participant-dependent checks N/A if no one else is present. Keep a record of the actual frequency and mode family, since the same frequency in a different mode family is a separate conversation.
+
+1. **People at the frequency.** Look at the spectrum overlay, then open Roundtable. People appear at their actual frequencies. Multiple people at one frequency have separate callsign rows and an honest remaining-person count; the people list stays visible when reports load. A very short phone landscape spectrum may offer **Reports** for details. Open details without tuning, then use the explicit Tune action only if wanted.
+2. **Last talker and signal source.** Check that the last talker and each **Heard by** reporter are clearly separate. Raw dBm and age belong to that reporter's sample of that turn. A quiet last report keeps aging; unknown and doubled RF do not claim an individual signal measurement. Missing reports or locations stay blank rather than borrowing another person's values.
+3. **Miles and bearing.** For an unset Roundtable distance preference, the default is **miles**, with **kilometres** available; an existing saved choice stays saved. Switch units and confirm the distance changes while the reported signal and bearing stay the same. Try the bearing option; a usable path shows true bearing with degrees. Missing or ambiguous endpoints have no invented direction. Check each desktop, phone and website preference where offered.
+4. **Frequency conversation.** If another participant is available, exchange a harmless test message in the same mode family. At exactly 5 kHz separation it is received; beyond 5 kHz new messages no longer arrive in that view. Reading or browsing another frequency never tunes the radio. Earlier received messages keep their original frequency and time after tuning away; a draft stays with its original slice/frequency/mode when you return.
+5. **Removal and recovery.** Have the original sender delete a test message after the recipient tunes away. The retained text becomes a tombstone within the normal ten-second history refresh without revisiting the old frequency. If a helper is available, their removal behaves the same. Disconnect the client normally: retained history is visibly stale/offline and the current draft stays present. Reconnect and confirm current message states return; a late reply must not bring deleted text back.
+6. **Visibility and small screens.** Hidden browsing can still read and refresh received history. Away/offline and read-only views do not offer an authorized post or turn-name action. On iPhone, inspect portrait, landscape, half/full sheet and the keyboard; people, attribution, conversation and composer stay reachable. Close and reopen the desktop popout; it follows the same selected context. On the website, signed-out browsing remains read-only and Follow uses the signed-in station's actual slice.
+
 ## Hardware and operator-controlled transmit, only when applicable
 
 - **Antenna and radio:** Review the antenna table for the bands in use; when normally changing bands or receive-only antenna selections, confirm the correct row and displayed choice follow the radio. For an Anvelina, check only configured filter/open-collector outputs against the established station setup. Record model and actual equipment; skip absent hardware.
@@ -84,4 +96,4 @@ Record the device and exact app/Core builds, time, radio/firmware/protocol, loca
 
 ## Coverage notes
 
-This checklist groups the changes since 2026.10.1 from [the changelog](../../CHANGELOG.md), the [upgrade note](upgrading-to-2026.10.2.md), and the combined work: remote transmit/CWX (#668, #680, #681), receive rate and audio (#654, #661, #687, #693–695), containers (#664, #666, #669, #671, #672, #677, #683), phone display (#653, #674), PureSignal (#662, #665, #682), tuner and radio (#670, #684, #689), and Roundtable (#657, #659). Applicable earlier changes on main, including tuning, filters, antenna, TCI/CAT and remote display, are included in the operating checks above.
+This checklist groups the changes since 2026.10.1 from [the changelog](../../CHANGELOG.md), the [upgrade note](upgrading-to-2026.10.2.md), and the combined work: remote transmit/CWX (#668, #680, #681), receive rate and audio (#654, #661, #687, #693–695), containers (#664, #666, #669, #671, #672, #677, #683), phone display (#653, #674), PureSignal (#662, #665, #682), tuner and radio (#670, #684, #689), and Roundtable (#657, #659 and the frequency-first combined implementation). The candidate also includes receiver preference restoration (#697), clock resizing (#706), the latest phone waterfall gap/pacing corrections (#705), and the CW first-edge diagnostics merged in #707. The standard local full-package runner explicitly serializes its deadline-sensitive integration tests; that is a test policy change, not a radio behavior change. Applicable earlier changes on main, including tuning, filters, antenna, TCI/CAT and remote display, are included in the operating checks above.

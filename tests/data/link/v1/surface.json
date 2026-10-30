@@ -587,7 +587,7 @@
         {
             "kind": "i64",
             "name": "stationRoundtableVersion",
-            "value": 1
+            "value": 2
         },
         {
             "kind": "utf8",
@@ -1908,6 +1908,88 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "roundtable.post"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "sliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "hz",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "family",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "text",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "clientId",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 2,
+            "minMinor": 11,
+            "verb": "roundtable.postAt"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "ids",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 2,
+            "minMinor": 11,
+            "verb": "roundtable.history"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "hz",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "family",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 2,
+            "minMinor": 11,
+            "verb": "roundtable.readAt"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "hz",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "family",
+                    "optional": false
+                }
+            ],
+            "capability": "stationRoundtableVersion",
+            "capabilityVersion": 2,
+            "minMinor": 11,
+            "verb": "roundtable.unreadAt"
         },
         {
             "arguments": [

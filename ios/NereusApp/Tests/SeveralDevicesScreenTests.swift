@@ -54,7 +54,7 @@ struct SeveralDevicesScreenTests {
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
                                   "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
-                                  "roundtable": 1, "remoteCw": 2, "cwSettings": 1])
+                                  "roundtable": 2, "remoteCw": 2, "cwSettings": 1])
         // The capabilities that declare it were delivered last; wait for the app to read them.
         #expect(await settle(seconds: 30) { SeveralDevices.available(in: model.mirror) })
 

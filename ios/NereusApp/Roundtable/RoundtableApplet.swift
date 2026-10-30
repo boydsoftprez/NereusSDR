@@ -8,6 +8,9 @@
 // per change, not each second; the TX line's clock is read in the room's
 // timeline. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-10-30: Approved frequency-first people, reports and phone interactions.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import SwiftUI
 
 /// The applets in the iPad's column, top to bottom.
@@ -322,7 +325,7 @@ struct RoundtableWideApplet: View {
 
     private var list: some View {
         // Grouped and sorted once per pass of the list; each second only ages the rows.
-        let groups = RoundtableToolsList.groups(roundtable.rooms)
+        let groups = RoundtableToolsList.groups(roundtable.frequencyRows)
         return ScrollView {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let now = Int64(context.date.timeIntervalSince1970 * 1000)

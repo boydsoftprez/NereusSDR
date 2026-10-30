@@ -31,6 +31,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
@@ -48,6 +50,7 @@
 
 #include <QHash>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QPointer>
 #include <QSet>
 #include <QString>
@@ -95,6 +98,7 @@ public:
     /// The followed slice's frequency in Hz, for the empty state's header
     /// and its list of rooms on the same band.
     void setSliceFrequency(qint64 hz);
+    void setSliceContext(qint64 hz, const QString& family);
     /// Reads `roomId` without tuning (U1); the slice's own room is the same
     /// as backToSlice().
     void readRoom(const QString& roomId);
@@ -148,9 +152,12 @@ protected:
 private:
     struct Pending {
         QString roomId;
+        QString draftKey;
         QString text;
     };
 
+    QString draftKey() const;
+    void subscribeContext();
     void onRoomChanged(const QString& roomId);
     void rebuild();
     void rebuildHead(const QJsonObject& room);
@@ -164,6 +171,7 @@ private:
     void rebuildReadings(const QJsonObject& room);
     void rebuildEarlier(const QJsonObject& room);
     void rebuildMessages(const QJsonObject& room);
+    void refreshHistory();
     void rebuildEmpty();
     void updateConnectionLine(const QJsonObject& room);
     void updateFooter();
@@ -202,6 +210,9 @@ private:
     QPointer<RoundtableModel> m_model;
     int m_sliceId = -1;
     qint64 m_sliceHz = 0;
+    QString m_sliceFamily;
+    QString m_shownDraftKey;
+    QJsonArray m_retainedMessages;
     QString m_readId;
     // setOwnReading(): 0 until the slice's meter reads.
     double m_ownDbm = 0.0;
@@ -224,6 +235,15 @@ private:
     QString m_notSentReason;
     QString m_earlierSignature;
     QString m_messagesSignature;
+    QHash<qint64, QJsonObject> m_seenLiveMessages;
+    QHash<qint64, QJsonObject> m_historyStates;
+    QHash<qint64, quint64> m_messageVersions;
+    QHash<qint64, quint64> m_requestedHistoryVersions;
+    QString m_historyRequest;
+    quint64 m_historySerial = 0;
+    quint64 m_messageVersionSerial = 0;
+    qint64 m_historyRequestedMs = -1;
+    bool m_historyFresh = false;
     bool m_firstShow = true;
     qint64 m_nameEditorTurn = 0;
 
@@ -264,6 +284,8 @@ private:
 
     QTimer m_tick;
     bool m_settingBox = false;
+    bool m_subscribing = false;
+    QString m_failedContext;
     // The room width the sections were last built for, and a rebuild for a
     // new one waiting for the event loop.
     int m_fittedWidth = 0;

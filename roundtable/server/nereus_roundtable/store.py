@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
 from . import messages
 
@@ -232,6 +232,11 @@ class StoreError(Exception):
 class Store:
     def __init__(self, path: str) -> None:
         self.path = path
+        # Committed message changes, coalesced into at most one Hz range
+        # per family. No text or station identity enters this notification.
+        self._message_listeners: Dict[int, Callable[[Dict[str, Tuple[int, int]]], None]] = {}
+        self._next_message_listener = 0
+        self._pending_message_ranges: Dict[str, Tuple[int, int]] = {}
         # Autocommit; a change that touches several rows opens its own
         # transaction.
         self.db = sqlite3.connect(path, isolation_level=None)
@@ -246,6 +251,18 @@ class Store:
 
     def _create(self) -> None:
         self.db.executescript(SCHEMA)
+        # 2026-10-30: additive frequency/path snapshots; old exact values stay unknown.
+        # J.J. Boyd / KG4VCF, AI-assisted via Codex.
+        for table, columns in {
+            "messages": {"hz": "INTEGER", "family": "TEXT"},
+            "turn_readings": {"bearing_deg": "INTEGER"},
+            "turns": {"endpoints": "TEXT"},
+        }.items():
+            existing = {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
+            for column, kind in columns.items():
+                if column not in existing:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
+        self.db.execute("CREATE INDEX IF NOT EXISTS messages_by_frequency ON messages(family,hz,id)")
         # A file made before the talkers' row numbers were kept gains them;
         # its old turns show each talker as the first of its callsign.
         have = {r["name"] for r in self.db.execute("PRAGMA table_info(turns)")}
@@ -264,7 +281,36 @@ class Store:
             raise StoreError(f"the database is schema version {row['version']}, not {SCHEMA_VERSION}")
 
     def close(self) -> None:
+        self._message_listeners.clear()
+        self._pending_message_ranges.clear()
         self.db.close()
+
+    def add_message_listener(self, callback: Callable[[Dict[str, Tuple[int, int]]], None]) -> int:
+        self._next_message_listener += 1
+        self._message_listeners[self._next_message_listener] = callback
+        return self._next_message_listener
+
+    def remove_message_listener(self, token: int) -> None:
+        self._message_listeners.pop(token, None)
+
+    def _message_ranges_changed(self, ranges: Dict[str, Tuple[int, int]]) -> None:
+        if not ranges:
+            return
+        for family, (lo, hi) in ranges.items():
+            previous = self._pending_message_ranges.get(family, (lo, hi))
+            self._pending_message_ranges[family] = (min(lo, previous[0]), max(hi, previous[1]))
+        if not self.db.in_transaction:
+            self._publish_message_ranges()
+
+    def _message_row_changed(self, row: Optional[Dict[str, Any]]) -> None:
+        if row is not None and row.get("hz") is not None and row.get("family") is not None:
+            self._message_ranges_changed({row["family"]: (int(row["hz"]), int(row["hz"]))})
+
+    def _publish_message_ranges(self) -> None:
+        ranges, self._pending_message_ranges = self._pending_message_ranges, {}
+        if ranges:
+            for callback in list(self._message_listeners.values()):
+                callback(dict(ranges))
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -272,13 +318,16 @@ class Store:
         if self.db.in_transaction:
             yield
             return
+        pending = dict(self._pending_message_ranges)
         self.db.execute("BEGIN")
         try:
             yield
         except BaseException:
             self.db.execute("ROLLBACK")
+            self._pending_message_ranges = pending
             raise
         self.db.execute("COMMIT")
+        self._publish_message_ranges()
 
     # ------------------------------------------------------------- stations
 
@@ -412,6 +461,9 @@ class Store:
         )
         return int(cursor.lastrowid)
 
+    def turn_endpoints(self, turn_id: int, endpoints: List[Dict[str, Any]]) -> None:
+        self.db.execute("UPDATE turns SET endpoints = ? WHERE id = ?", (json.dumps(endpoints, separators=(",", ":")), turn_id))
+
     def turn_talkers(self, turn_id: int, talkers: Sequence[Sequence[Any]]) -> None:
         first = self._talker(talkers, 0)
         second = self._talker(talkers, 1)
@@ -444,6 +496,7 @@ class Store:
             for entry in tracks:
                 sid, callsign, offset, km, first, last, dbm, bits, not_counted = entry[:9]
                 away = bool(entry[9]) if len(entry) > 9 else False
+                bearing = entry[10] if len(entry) > 10 else None
                 self.db.execute(
                     "INSERT OR REPLACE INTO turn_readings (turn_id, station_id, callsign, offset_hz, km,"
                     " first_second, last_second, dbm_track, present_track, not_counted, away)"
@@ -462,6 +515,8 @@ class Store:
                         1 if away else 0,
                     ),
                 )
+
+                self.db.execute("UPDATE turn_readings SET bearing_deg = ? WHERE turn_id = ? AND station_id = ?", (bearing, turn_id, sid))
 
     def tracks_of(self, turn_id: int) -> List[Dict[str, Any]]:
         rows = self.db.execute(
@@ -545,6 +600,8 @@ class Store:
         text: str,
         dbm: Optional[float],
         mentions: Iterable[str] = (),
+        hz: Optional[int] = None,
+        family: Optional[str] = None,
     ) -> int:
         """Store a posted message with the sender's callsign and row number
         at the time and its reading of the talker (or None); returns its
@@ -553,7 +610,7 @@ class Store:
         words = list(mentions)
         cursor = self.db.execute(
             "INSERT INTO messages (opening_id, room_id, station_id, callsign, nth, t, text, state, dbm,"
-            " removed_by, mentions) VALUES (?, ?, ?, ?, ?, ?, ?, 'shown', ?, NULL, ?)",
+            " removed_by, mentions, hz, family) VALUES (?, ?, ?, ?, ?, ?, ?, 'shown', ?, NULL, ?, ?, ?)",
             (
                 opening_id,
                 room_id,
@@ -564,10 +621,13 @@ class Store:
                 text,
                 dbm,
                 (" " + " ".join(words) + " ") if words else "",
+                hz,
+                family,
             ),
         )
         message_id = int(cursor.lastrowid)
         self._mentions_add(message_id, words)
+        self._message_row_changed({"hz": hz, "family": family})
         return message_id
 
     def _mentions_add(self, message_id: int, words: Iterable[str]) -> None:
@@ -580,6 +640,23 @@ class Store:
     def message_get(self, message_id: int) -> Optional[Dict[str, Any]]:
         row = self.db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
         return dict(row) if row is not None else None
+
+    def message_states(self, ids: Sequence[int]) -> List[Dict[str, Any]]:
+        """Status for explicitly supplied cached IDs only; no message discovery.
+
+        The service validates the at-most-200 unique positive IDs. One indexed
+        read also sees committed expiry from another Store/process.
+        """
+        if len(ids) > 200 or len(set(ids)) != len(ids) or any(type(i) is not int or not 1 <= i <= 9007199254740991 for i in ids):
+            raise ValueError("invalid history IDs")
+        if not ids:
+            return []
+        slots = ",".join("?" for _ in ids)
+        rows = self.db.execute(
+            "SELECT id,state,CASE WHEN state='shown' THEN text ELSE NULL END AS text "
+            "FROM messages WHERE id IN (" + slots + ")", tuple(ids)).fetchall()
+        found = {int(row["id"]): dict(row) for row in rows}
+        return [found.get(i, {"id": i, "state": "expired", "text": None}) for i in ids]
 
     def message_delete(self, message_id: int, by_station: str) -> str:
         """The sender deletes its own message (wire spec 5.3.5): the text
@@ -594,6 +671,7 @@ class Store:
         if row["state"] != "shown":
             return "unchanged"
         self.db.execute("UPDATE messages SET text = NULL, state = 'deleted' WHERE id = ?", (message_id,))
+        self._message_row_changed(row)
         return "deleted"
 
     def messages_of_room(self, room_id: str, limit: int = 50, before: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -609,6 +687,13 @@ class Store:
                 (room_id, before, limit),
             ).fetchall()
         return [dict(r) for r in reversed(rows)]
+
+    def messages_at(self, hz: int, family: str, limit: int = 50) -> List[Dict[str, Any]]:
+        rows = self.db.execute(
+            "SELECT * FROM messages WHERE family = ? AND hz BETWEEN ? AND ? ORDER BY id DESC LIMIT ?",
+            (family, hz - 5000, hz + 5000, limit),
+        ).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def message_count(self, opening_id: int) -> int:
         row = self.db.execute("SELECT COUNT(*) FROM messages WHERE opening_id = ?", (opening_id,)).fetchone()
@@ -827,15 +912,20 @@ class Store:
         self.db.execute(
             "UPDATE messages SET text = NULL, state = 'removed', removed_by = ? WHERE id = ?", (helper_id, message_id)
         )
+        self._message_row_changed(row)
         return str(row["text"])
 
     def message_restore(self, message_id: int, text: str) -> bool:
         """Undo of a removal: the text is shown again."""
+        previous = self.message_get(message_id)
         cursor = self.db.execute(
             "UPDATE messages SET text = ?, state = 'shown', removed_by = NULL WHERE id = ? AND state = 'removed'",
             (text, message_id),
         )
-        return cursor.rowcount == 1
+        if cursor.rowcount == 1:
+            self._message_row_changed(previous)
+            return True
+        return False
 
     # ------------------------------------------------------------- helpers
 
@@ -870,6 +960,10 @@ class Store:
         text (`state` `expired`); the row, its sender, time and reading
         stay. Returns (id, room id) of each."""
         with self.transaction():
+            contexts = {row["family"]: (int(row["lo"]), int(row["hi"])) for row in self.db.execute(
+                "SELECT family, MIN(hz) AS lo, MAX(hz) AS hi FROM messages"
+                " WHERE state = 'shown' AND t < ? AND hz IS NOT NULL AND family IS NOT NULL GROUP BY family", (before,)
+            )}
             rows = [
                 (int(r["id"]), str(r["room_id"]))
                 for r in self.db.execute("SELECT id, room_id FROM messages WHERE state = 'shown' AND t < ?", (before,))
@@ -883,6 +977,7 @@ class Store:
                 "UPDATE messages SET text = NULL, mentions = '', state = 'expired' WHERE state = 'shown' AND t < ?",
                 (before,),
             )
+            self._message_ranges_changed(contexts)
         return rows
 
     def row_counts(self) -> Dict[str, int]:
@@ -1158,6 +1253,10 @@ class Store:
         left to end and be stored as new. Returns (id, room id) of each
         message whose text was cleared."""
         with self.transaction():
+            contexts = {row["family"]: (int(row["lo"]), int(row["hi"])) for row in self.db.execute(
+                "SELECT family, MIN(hz) AS lo, MAX(hz) AS hi FROM messages"
+                " WHERE station_id = ? AND text IS NOT NULL AND hz IS NOT NULL AND family IS NOT NULL GROUP BY family", (station_id,)
+            )}
             turn_ids = [
                 int(r[0])
                 for r in self.db.execute(
@@ -1193,6 +1292,7 @@ class Store:
                 " AND target IN (SELECT CAST(id AS TEXT) FROM messages WHERE station_id = ?)",
                 (station_id,),
             )
+            self._message_ranges_changed(contexts)
         return cleared
 
     # ------------------------------------------------------------- schema

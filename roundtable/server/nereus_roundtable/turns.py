@@ -70,9 +70,26 @@ class Track:
         self.released = 0
         self.offset_hz: Optional[int] = None
         self.km: Optional[int] = None
+        # 2026-10-30: immutable path snapshot, J.J. Boyd / KG4VCF, Codex.
+        self.bearing_deg: Optional[int] = None
         self.not_counted = False
         # The reader was AWAY at its latest reading (design 11.6).
         self.away = False
+        # At most two public measurement snapshots, independent of turn length:
+        # latest and the latest eligible sample at a possible backdated end.
+        self.reporter_object: Optional[Dict[str, Any]] = None
+        self.reporter_reading: Optional[Reading] = None
+        self._reporter_before_end: Optional[Tuple[Reading, Dict[str, Any]]] = None
+
+    def remember_reporter(self, reading: Reading, member: Dict[str, Any], cutoff: Optional[int]) -> None:
+        if cutoff is None:
+            self._reporter_before_end = None
+        else:
+            if self.reporter_reading is not None and self.reporter_object is not None and self.reporter_reading.arrival <= cutoff:
+                self._reporter_before_end = (self.reporter_reading, self.reporter_object)
+            if reading.arrival <= cutoff:
+                self._reporter_before_end = (reading, member)
+        self.reporter_reading, self.reporter_object = reading, member
 
     def add(self, reading: Reading) -> None:
         self.readings.append(reading)
@@ -82,6 +99,25 @@ class Track:
         kept = [r for r in self.readings if r.arrival <= end]
         dropped = [r for r in self.readings if r.arrival > end]
         self.readings = kept
+        if dropped and self.reporter_reading is not None:
+            latest = self.latest
+            saved = self._reporter_before_end
+            if latest is self.reporter_reading:
+                member = self.reporter_object
+            elif saved is not None and latest is saved[0]:
+                member = saved[1]
+            else:
+                member = None
+            self.reporter_reading = latest if member is not None else None
+            self.reporter_object = member
+            # Persisted path/identity must describe the retained sample too.
+            if member is not None:
+                self.callsign = member["callsign"]
+                self.offset_hz, self.km = member["offsetHz"], member["km"]
+                self.bearing_deg, self.away = member["bearingDeg"], member["away"]
+            else:
+                self.offset_hz = self.km = self.bearing_deg = None
+        self._reporter_before_end = None
         return dropped
 
     def release(self) -> None:
@@ -129,6 +165,7 @@ class Turn:
         self.id = 0
         self.kind = kind
         self.talkers = list(talkers)
+        self.endpoints = [{"hz": row.hz, "grid": row.grid, "sourceRoom": row.room.id} for row in talkers]
         self.start = start
         self.end: Optional[int] = None
         self.ending = False
@@ -363,6 +400,7 @@ class TurnEngine:
         if turn is not None and turn.kind == "doubled":
             if row not in turn.talkers:
                 turn.talkers.append(row)
+                turn.endpoints.append({"hz": row.hz, "grid": row.grid, "sourceRoom": row.room.id})
                 self.room.turn_changed(turn)
             return
         keyed = list(self.keyed)

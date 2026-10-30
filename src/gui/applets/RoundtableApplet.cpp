@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 13).
@@ -170,6 +172,7 @@ void RoundtableApplet::bindActiveSlice()
         return;
     }
     disconnect(m_sliceFrequency);
+    disconnect(m_sliceMode);
     disconnect(m_sliceMeter);
     m_slice = slice;
     if (slice == nullptr) {
@@ -186,11 +189,16 @@ void RoundtableApplet::bindActiveSlice()
     });
     // Tuning the slice anywhere goes back to following it (design 11.1).
     m_sliceFrequency = connect(slice, &SliceModel::frequencyChanged, this, [this](double hz) {
-        m_panel->setSliceFrequency(std::llround(hz));
+        m_panel->setSliceContext(std::llround(hz), m_slice ? familyOf(m_slice->dspMode()) : QString());
         m_panel->backToSlice();
     });
+    m_sliceMode = connect(slice, &SliceModel::dspModeChanged, this, [this](DSPMode mode) {
+        if (m_slice) {
+            m_panel->setSliceContext(std::llround(m_slice->frequency()), familyOf(mode));
+        }
+    });
     m_panel->followSlice(slice->sliceIndex());
-    m_panel->setSliceFrequency(std::llround(slice->frequency()));
+    m_panel->setSliceContext(std::llround(slice->frequency()), familyOf(slice->dspMode()));
 }
 
 void RoundtableApplet::tuneHere(qint64 hz, const QString& family)
@@ -221,6 +229,14 @@ void RoundtableApplet::tuneHere(qint64 hz, const QString& family)
 void RoundtableApplet::tuneToRoom(const QString& roomId)
 {
     if (m_roundtable == nullptr || roomId.isEmpty()) {
+        return;
+    }
+    if (RoundtableModel::isFrequencyContext(roomId)) {
+        const QString context = roomId.mid(QStringLiteral("frequency:").size());
+        const qsizetype dash = context.indexOf(QLatin1Char('-'));
+        if (dash > 0) {
+            tuneHere(context.mid(dash + 1).toLongLong(), context.left(dash));
+        }
         return;
     }
     for (const QJsonValue& value : m_roundtable->rooms()) {

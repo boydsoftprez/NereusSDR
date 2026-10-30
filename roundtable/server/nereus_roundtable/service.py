@@ -41,7 +41,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 
-from . import identity, messages, protocol
+from . import identity, messages, protocol, frequency
 from .clock import RealClock, TimerHandle
 from .config import Config, check as check_config, wire_limits
 from .limits import AddressGroups, Window
@@ -146,6 +146,9 @@ class Connection:
         # before any `watchBand`) and the watched rooms.
         self.watch_band: Optional[str] = None
         self.watched: Set[str] = set()
+        self.frequency_version = 0
+        # Separate namespace: a frequency context can equal an RF room id.
+        self.frequency_views: Dict[str, Dict[str, Any]] = {}
 
     def send(self, message: Dict[str, Any], droppable: bool = False) -> bool:
         """Queue one message. A droppable one (a room delta or a band-list
@@ -160,6 +163,9 @@ class Connection:
         """As `send`, for a message already encoded."""
         if self.closing:
             return False
+        if not self.frequency_version:
+            # Extended data is opt-in; legacy clients keep their exact v1 shapes.
+            text = protocol.encode(protocol.legacy_message(protocol.parse(text)))
         size = len(text.encode("utf-8"))
         config = self.service.config
         count = self.queue.qsize()
@@ -243,6 +249,13 @@ class Service:
         self.store = store if store is not None else Store(":memory:")
         self.random = random
         self.connections: Set[Connection] = set()
+        self.frequency_connections: Set[Connection] = set()
+        self._frequency_directory: Optional[Dict[str, Tuple[Optional[int], Dict[str, Any]]]] = None
+        self._frequency_presence: Dict[str, Any] = {}
+        self._frequency_pending_rooms: Dict[str, Room] = {}
+        self._frequency_directory_ms: Optional[int] = None
+        self._frequency_directory_timer: Optional[TimerHandle] = None
+        self._frequency_message_ranges: Dict[str, Tuple[int, int]] = {}
         self.stations: Dict[str, Connection] = {}
         self.station_groups = AddressGroups()
         self.live_groups = AddressGroups()
@@ -277,12 +290,20 @@ class Service:
         self.band_builds = 0
         self.book = RoomBook(_EventClock(self), self.store, random)
         self.book.reload()
+        self._frequency_message_listener = self.store.add_message_listener(self._message_contexts_changed)
         self.on(STATION, "presence", self._presence)
         self.on(STATION, "reading", self._reading)
         self.on(STATION, "read", self._read)
         self.on(STATION, "unread", self._unread)
         self.on(STATION, "resync", self._resync)
         self.on(STATION, "post", self._post)
+        self.on(STATION, "postAt", self._post_at)
+        self.on(STATION, "readAt", self._frequency_read)
+        self.on(STATION, "unreadAt", self._frequency_unread)
+        self.on(LIVE, "watchAt", self._frequency_read)
+        self.on(LIVE, "unwatchAt", self._frequency_unread)
+        self.on(STATION, "history", self._history)
+        self.on(LIVE, "history", self._history)
         self.on(STATION, "delete", self._delete)
         self.on(STATION, "name", self._name)
         self.on(STATION, "report", self._report)
@@ -403,8 +424,17 @@ class Service:
             self._drop_view(conn, room_id)
         conn.reads.clear()
         conn.watched.clear()
+        conn.frequency_views.clear()
         conn.cancel_timer()
         self.connections.discard(conn)
+        self.frequency_connections.discard(conn)
+        if not self.frequency_connections:
+            self._frequency_directory = None
+            self._frequency_presence.clear()
+            self._frequency_pending_rooms.clear()
+            if self._frequency_directory_timer is not None:
+                self._frequency_directory_timer.cancel()
+                self._frequency_directory_timer = None
         if conn.counted:
             conn.counted = False
             if conn.path == STATION:
@@ -424,6 +454,12 @@ class Service:
 
     def shutdown(self) -> None:
         self.stopping = True
+        self.store.remove_message_listener(self._frequency_message_listener)
+        if self._frequency_directory_timer is not None:
+            self._frequency_directory_timer.cancel()
+            self._frequency_directory_timer = None
+        self._frequency_pending_rooms.clear()
+        self._frequency_message_ranges.clear()
         if self._band_timer is not None:
             self._band_timer.cancel()
             self._band_timer = None
@@ -453,6 +489,9 @@ class Service:
             conn.close(exc.close_code)
             return
         kind = msg["type"]
+        if (kind in {"postAt", "readAt", "watchAt", "unreadAt", "unwatchAt", "history"} or msg.get("view") == "frequency") and not conn.frequency_version:
+            conn.close(protocol.CLOSE_PROTOCOL)
+            return
         if conn.path == STATION:
             if conn.station_id is None:
                 # The first message must be hello (wire spec 3.1).
@@ -468,7 +507,7 @@ class Service:
             if conn.hidden and kind not in AFTER_HIDDEN:
                 # Wire spec 5.3 and 5.3.14; a post is always answered with
                 # `posted` (5.3.4).
-                if kind == "post":
+                if kind in {"post", "postAt"}:
                     self._posted(conn, msg["clientId"], "hidden")
                 else:
                     conn.send(protocol.error_message("hidden", kind))
@@ -520,6 +559,9 @@ class Service:
                 grid = station["grid"]
             self.store.station_upsert(station_id, kind, None, None, now)
         conn.cancel_timer()
+        conn.frequency_version = msg.get("frequencyVersion", 0)
+        if conn.frequency_version:
+            self.frequency_connections.add(conn)
         conn.software = msg["software"]
         conn.software_version = msg["softwareVersion"]
         previous = self.stations.get(station_id)
@@ -543,6 +585,7 @@ class Service:
                 time=now,
                 limits=wire_limits(self.config),
                 mentions=self.mentions_for(station_id),
+                **({"frequencyVersion": 1} if conn.frequency_version else {}),
             )
         )
         self._send_rooms(conn)
@@ -661,6 +704,10 @@ class Service:
         code, reason, _ = protocol.REASONS[cause]
         conn.send(protocol.message("posted", STATION, clientId=client_id, ok=False, msg=None, code=code, reason=reason))
 
+    def _history(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        conn.send(protocol.message("history", conn.path, clientId=msg["clientId"],
+                                   states=self.store.message_states(msg["ids"])))
+
     def _member_row(self, conn: Connection, room_id: str) -> Tuple[Optional[Room], Optional[Row]]:
         """The live room with this id and the station's row there, when that
         row is a member (not joining)."""
@@ -676,7 +723,8 @@ class Service:
         sid = conn.station_id
         assert sid is not None
         client_id = msg["clientId"]
-        room, row = self._member_row(conn, msg["room"])
+        context = msg.get("_context")
+        room, row = context if context is not None else self._member_row(conn, msg["room"])
         if room is None or row is None:
             self._posted(conn, client_id, "not-member")
             return
@@ -702,12 +750,14 @@ class Service:
         # The sender's latest reading here, when it is stored with a turn
         # still open (6.10, design D4).
         dbm = None
-        if row.reading is not None and row.reading_turn is not None and row.reading_turn in room.engine.open:
+        if (context is None or row.slice_id == msg["slice"]) and row.reading is not None and row.reading_turn is not None and row.reading_turn in room.engine.open:
             dbm = row.reading.dbm
         words = messages.words(cleaned)
-        assert room.opening_id is not None
         try:
-            msg_id = self.store.message_add(room.opening_id, room.id, sid, row.callsign, row.nth, wall, cleaned, dbm, words)
+            # A valid postAt can precede RF dwell. Opening 0 is only an
+            # internal message relation; it creates no RF/archive session.
+            sender_hz = msg["hz"] if context is not None else row.hz
+            msg_id = self.store.message_add(room.opening_id or 0, room.id, sid, row.callsign, row.nth, wall, cleaned, dbm, words, hz=sender_hz, family=room.family)
             stored = self.store.message_get(msg_id)
         except sqlite3.Error as exc:
             log.error("a database error saving a message (%s)", type(exc).__name__)
@@ -726,10 +776,167 @@ class Service:
         bases = set(words)
         mention = protocol.message("mention", STATION, room=room.id, message=room.message_object(stored))
         for other in self.stations.values():
-            if other is conn or other.hidden or other.closing or not other.callsign:
+            if other.station_id == sid or other.hidden or other.closing or not other.callsign:
                 continue
             if messages.base_callsign(other.callsign) in bases:
                 self._mentions.append((other, mention))
+
+    def _post_at(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        entry = self.book.stations.get(conn.station_id or "")
+        listed = (conn.presence or {}).get(msg["slice"])
+        placement = entry.placements.get(msg["slice"]) if entry is not None else None
+        if listed is None or placement is None:
+            self._posted(conn, msg["clientId"], "unknown-slice")
+            return
+        if listed["hz"] != msg["hz"] or placement.family != msg["family"]:
+            self._posted(conn, msg["clientId"], "stale-context")
+            return
+        row = placement.room.rows.get(conn.station_id)
+        if row is None or not row.counted:
+            self._posted(conn, msg["clientId"], "not-allowed-empty")
+            return
+        self._post(conn, dict(msg, _context=(placement.room, row)))
+
+    def _frequency_read(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        key = frequency.context_id(msg["hz"], msg["family"])
+        cap = self.config.reads if conn.path == STATION else self.config.watches_per_live_socket
+        legacy = len(conn.reads - self._in_rooms(conn)) if conn.path == STATION else len(conn.watched)
+        if key not in conn.frequency_views and len(conn.frequency_views) + legacy >= cap:
+            conn.send(protocol.error_message("not-allowed-read" if conn.path == STATION else "not-allowed-watch", msg["type"], receiver=conn.path))
+            return
+        data = frequency.snapshot(self, conn, msg["hz"], msg["family"])
+        view = _View()
+        conn.frequency_views[key] = {"hz": msg["hz"], "family": msg["family"], "view": view, "data": data}
+        self._send_view(conn, view, protocol.message("room", conn.path, gen=1, **data), False)
+
+    def _frequency_unread(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        conn.frequency_views.pop(frequency.context_id(msg["hz"], msg["family"]), None)
+
+    def _frequency_resync(self, conn: Connection, msg: Dict[str, Any]) -> None:
+        held = conn.frequency_views.get(msg["room"])
+        if held is None:
+            conn.send(protocol.error_message("not-found", "resync", receiver=conn.path))
+        else:
+            self._frequency_read(conn, {"type": "resync", "hz": held["hz"], "family": held["family"]})
+
+    @staticmethod
+    def _presence_fingerprint(room: Room, stations: List[Dict[str, Any]]) -> Any:
+        # Keyed/RF state uses the existing band pacing. Exact identity,
+        # tuning, consent/removal and away state must be visible at once.
+        fields = ("ref", "slice", "sourceRoom", "hz", "family", "callsign", "nth", "grid", "away", "joining")
+        return (room.live, tuple(tuple(p[key] for key in fields)
+                                for p in sorted(stations, key=lambda p: (p["ref"], p["slice"]))))
+
+    def _ensure_frequency_directory(self) -> None:
+        if self._frequency_directory is not None:
+            return
+        self._frequency_directory = self._band_now(True)
+        self._frequency_presence = {
+            room_id: self._presence_fingerprint(self.book.rooms[room_id], summary["stations"])
+            for room_id, (_, summary) in self._frequency_directory.items()
+        }
+        self._frequency_directory_ms = self.clock.now_ms()
+
+    def _update_frequency_directory_room(self, room: Room, stations: List[Dict[str, Any]]) -> bool:
+        assert self._frequency_directory is not None
+        previous = self._frequency_directory.get(room.id)
+        if not room.live and not stations:
+            self._frequency_directory.pop(room.id, None)
+            return previous is not None
+        entry = (room.opening_id, room.summary(True))
+        self._frequency_directory[room.id] = entry
+        return previous != entry
+
+    def _publish_frequency_directory(self) -> None:
+        assert self._frequency_directory is not None
+        for conn in list(self.frequency_connections):
+            if conn.closing or conn.hidden or conn.band is None or conn.band.stale:
+                continue
+            band = self._cut(self._frequency_directory, self._band_key(conn))
+            add, change, remove = self._merge(conn.band_sent or {}, band)
+            if add or change or remove:
+                conn.band.gen += 1
+                self._send_view(conn, conn.band, protocol.message("roomsDelta", conn.path,
+                                gen=conn.band.gen, add=add, change=change, remove=remove), False)
+                # The global cache mutates by room; a viewer holds its own map.
+                conn.band_sent = dict(band)
+
+    def _update_pending_frequency_directory(self) -> bool:
+        changed = False
+        pending, self._frequency_pending_rooms = self._frequency_pending_rooms, {}
+        for room in pending.values():
+            changed = self._update_frequency_directory_room(room, room.station_objects()) or changed
+        self._frequency_directory_ms = self.clock.now_ms()
+        return changed
+
+    def _frequency_directory_tick(self) -> None:
+        self._frequency_directory_timer = None
+        if not self.stopping and self.frequency_connections and self._frequency_pending_rooms:
+            if self._update_pending_frequency_directory():
+                self._publish_frequency_directory()
+
+    def _message_contexts_changed(self, ranges: Dict[str, Tuple[int, int]]) -> None:
+        if self.stopping:
+            return
+        for family, (lo, hi) in ranges.items():
+            previous = self._frequency_message_ranges.get(family, (lo, hi))
+            self._frequency_message_ranges[family] = (min(lo, previous[0]), max(hi, previous[1]))
+        # Store observers run only after commit, so a standalone retention or
+        # moderation call can publish safely without any RF event to wake it.
+        if self._depth == 0:
+            self.fire(lambda: None)
+
+    @staticmethod
+    def _frequency_view_touched(held: Dict[str, Any], rooms: List[Room], ranges: Dict[str, Tuple[int, int]]) -> bool:
+        hz, family = held["hz"], held["family"]
+        if family in ranges:
+            lo, hi = ranges[family]
+            if lo - protocol.CHAT_RADIUS_HZ <= hz <= hi + protocol.CHAT_RADIUS_HZ:
+                return True
+        data = held["data"]
+        sources = {member["sourceRoom"] for member in data["members"]}
+        sources.update(turn["sourceRoom"] for turn in data["now"] + data["earlier"])
+        return any(room.family == family and (room.id in sources or
+                   abs(room.center - hz) <= protocol.CHAT_RADIUS_HZ + room.width) for room in rooms)
+
+    def _flush_frequency(self, rooms: List[Room]) -> None:
+        ranges, self._frequency_message_ranges = self._frequency_message_ranges, {}
+        if not self.frequency_connections or self.stopping:
+            return
+        self._ensure_frequency_directory()
+        directory_changed = False
+        for room in rooms:
+            stations = room.station_objects()
+            fingerprint = self._presence_fingerprint(room, stations)
+            self._frequency_pending_rooms[room.id] = room
+            if self._frequency_presence.get(room.id) != fingerprint:
+                self._frequency_presence[room.id] = fingerprint
+                directory_changed = self._update_frequency_directory_room(room, stations) or directory_changed
+                self._frequency_pending_rooms.pop(room.id, None)
+        if self._frequency_pending_rooms:
+            last = self._frequency_directory_ms
+            now = self.clock.now_ms()
+            if last is None or now - last >= BAND_PACING_MS:
+                directory_changed = self._update_pending_frequency_directory() or directory_changed
+            elif self._frequency_directory_timer is None:
+                self._frequency_directory_timer = self.call_later(last + BAND_PACING_MS - now,
+                                                                   self._frequency_directory_tick)
+        if directory_changed:
+            self._publish_frequency_directory()
+        for conn in list(self.frequency_connections):
+            if conn.closing or conn.hidden:
+                continue
+            for held in list(conn.frequency_views.values()):
+                view = held["view"]
+                if view.stale or not self._frequency_view_touched(held, rooms, ranges):
+                    continue
+                data = frequency.snapshot(self, conn, held["hz"], held["family"])
+                delta = frequency.changes(held["data"], data)
+                if not any(delta[key] for key in ("members", "left", "turns", "messages")):
+                    continue
+                view.gen += 1
+                self._send_view(conn, view, protocol.message("delta", conn.path, gen=view.gen, **delta), False)
+                held["data"] = data
 
     def _delete(self, conn: Connection, msg: Dict[str, Any]) -> None:
         """Wire spec 5.3.5."""
@@ -779,6 +986,17 @@ class Service:
             conn.send(protocol.error_message("bad-turn", "name"))
             return
         _, row = self._member_row(conn, stored["room_id"])
+        if conn.frequency_version:
+            center = protocol.room_id_center(stored["room_id"])
+            entry = self.book.stations.get(sid)
+            row = None
+            if center is not None and entry is not None:
+                for placement in entry.placements.values():
+                    if frequency.nearby(center[1], center[0], placement.hz, placement.family):
+                        candidate = placement.room.rows.get(sid)
+                        if candidate is not None and candidate.counted:
+                            row = candidate
+                            break
         if row is None:
             conn.send(protocol.error_message("not-member", "name"))
             return
@@ -983,6 +1201,9 @@ class Service:
     def _watch_band(self, conn: Connection, msg: Dict[str, Any]) -> None:
         """Wire spec 5.5: the band list of one band, or of all; a new
         `watchBand` replaces the old."""
+        conn.frequency_version = msg.get("frequencyVersion", conn.frequency_version)
+        if conn.frequency_version:
+            self.frequency_connections.add(conn)
         conn.watch_band = msg["band"]
         self._send_rooms(conn)
 
@@ -993,7 +1214,7 @@ class Service:
             conn.send(protocol.error_message("not-found", "watch", receiver=LIVE))
             return
         if room.id not in conn.watched:
-            if len(conn.watched) >= self.config.watches_per_live_socket:
+            if len(conn.watched) + len(conn.frequency_views) >= self.config.watches_per_live_socket:
                 conn.send(protocol.error_message("not-allowed-watch", "watch", receiver=LIVE))
                 return
             conn.watched.add(room.id)
@@ -1007,6 +1228,9 @@ class Service:
     def _live_resync(self, conn: Connection, msg: Dict[str, Any]) -> None:
         """Wire spec 5.5: the watched band list, or one watched room's view,
         generation 1; `not-found` for what is not watched."""
+        if msg.get("view") == "frequency":
+            self._frequency_resync(conn, msg)
+            return
         room_id = msg["room"]
         if room_id is None:
             if conn.watch_band is None:
@@ -1035,7 +1259,7 @@ class Service:
             return
         inside = self._in_rooms(conn)
         if room.id not in conn.reads and room.id not in inside:
-            if len(conn.reads - inside) >= self.config.reads:
+            if len(conn.reads - inside) + len(conn.frequency_views) >= self.config.reads:
                 conn.send(protocol.error_message("not-allowed-read", "read"))
                 return
             conn.reads.add(room.id)
@@ -1050,6 +1274,9 @@ class Service:
 
     def _resync(self, conn: Connection, msg: Dict[str, Any]) -> None:
         """Wire spec 5.3.10."""
+        if msg.get("view") == "frequency":
+            self._frequency_resync(conn, msg)
+            return
         room_id = msg["room"]
         if room_id is None:
             self._send_rooms(conn)
@@ -1072,8 +1299,9 @@ class Service:
             if not viewers:
                 del self._viewers[room_id]
 
-    def _band_now(self) -> Dict[str, Tuple[Optional[int], Dict[str, Any]]]:
-        return {room.id: (room.opening_id, room.summary()) for room in self.book.live_rooms()}
+    def _band_now(self, exact: bool = False) -> Dict[str, Tuple[Optional[int], Dict[str, Any]]]:
+        rooms = (sorted(self.book.rooms.values(), key=lambda r: (r.center, r.id)) if exact else self.book.live_rooms())
+        return {room.id: (room.opening_id, room.summary(exact)) for room in rooms if room.live or room.station_objects()}
 
     @staticmethod
     def _band_key(conn: Connection) -> str:
@@ -1093,10 +1321,14 @@ class Service:
 
     def _send_rooms(self, conn: Connection) -> None:
         """A full band list, generation 1 (5.4.3)."""
-        band = self._cut(self._band_now(), self._band_key(conn))
-        conn.send(protocol.message("rooms", conn.path, gen=1, rooms=[summary for _, summary in band.values()]))
+        if conn.frequency_version:
+            self._ensure_frequency_directory()
+            band = self._cut(self._frequency_directory or {}, self._band_key(conn))
+        else:
+            band = self._cut(self._band_now(), self._band_key(conn))
+        conn.send(protocol.message("rooms", conn.path, gen=1, rooms=[summary for _, summary in band.values()], **({"frequencyVersion": 1} if conn.frequency_version else {})))
         conn.band = _View()
-        conn.band_sent = band
+        conn.band_sent = dict(band)
         conn.band_seq = -1
         conn.band_last_ms = self.clock.now_ms()
 
@@ -1145,7 +1377,7 @@ class Service:
         waiting = False
         for conn in list(self.connections):
             view = conn.band
-            if conn.closing or conn.hidden or view is None or view.stale:
+            if conn.closing or conn.hidden or conn.frequency_version or view is None or view.stale:
                 continue
             key = self._band_key(conn)
             if conn.band_sent is None and conn.band_seq == old_seq:
@@ -1273,11 +1505,15 @@ class Service:
         changes rooms again, so this runs until nothing is left."""
         self._depth += 1
         try:
+            frequency_rooms: Dict[str, Room] = {}
             for _ in range(100):
                 rooms = self.book.take_touched()
+                frequency_rooms.update((room.id, room) for room in rooms)
                 if not rooms and not self._dirty:
                     break
                 self._flush_once(rooms)
+            if not self.stopping:
+                self._flush_frequency(list(frequency_rooms.values()))
             mentions, self._mentions = self._mentions, []
             for conn, mention in mentions:
                 if not self.stopping and not conn.hidden:

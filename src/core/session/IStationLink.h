@@ -46,6 +46,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-30: Versioned guarded frequency-context actions and records.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-09  J.J. Boyd / KG4VCF  Core speaker: coreSpeakerAvailable,
 //                                    coreSpeakerNeedsNewerCore and
 //                                    coreSpeakerUnavailableReason
@@ -269,6 +273,7 @@
 // =================================================================
 
 #include <QString>
+#include <QJsonArray>
 #include <QVariantMap>
 #include <QtGlobal>
 
@@ -568,6 +573,16 @@ public:
     /// roundtable.* verbs. A post's answer arrives later
     /// (RoundtableModel::postResult), as does the web sign-in link.
     virtual bool roundtableAvailable() const { return false; }
+    virtual bool roundtableFrequencyAvailable() const { return false; }
+    virtual CommandOutcome requestRoundtablePostAt(int, qint64, const QString&, const QString&, const QString&)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableHistory(const QJsonArray&, const QString&)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableReadAt(qint64, const QString&)
+    { return { false, roundtableUnavailableReason() }; }
+    virtual CommandOutcome requestRoundtableUnreadAt(qint64, const QString&)
+    { return { false, roundtableUnavailableReason() }; }
+
     static QString roundtableUnavailableReason()
     { return QStringLiteral("This Core cannot share Roundtable with this app. Updating the Core may help."); }
     virtual CommandOutcome requestRoundtablePost(const QString& /*roomId*/, const QString& /*text*/,

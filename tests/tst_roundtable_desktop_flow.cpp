@@ -44,6 +44,7 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QCheckBox>
+#include <QDir>
 #include <QFile>
 #include <QHostAddress>
 #include <QJsonArray>
@@ -858,6 +859,19 @@ private:
             m_overruns.append(step + QStringLiteral(": ") + overruns.join(QStringLiteral("; ")));
         }
         shots.append({step, screenOf(p.window(), p.sliceId())});
+        const QString directory = qEnvironmentVariable("NEREUS_ROUNDTABLE_CAPTURE_DIR");
+        if (!directory.isEmpty()) {
+            QVERIFY(QDir().mkpath(directory));
+            QString name = QString::fromLatin1(QTest::currentTestFunction()) + QLatin1Char('-') + step;
+            name.replace(QLatin1Char(' '), QLatin1Char('-'));
+            name.replace(QLatin1Char('/'), QLatin1Char('-'));
+            const QString path = directory + QLatin1Char('/') + name;
+            QVERIFY(p.window()->grab().save(path + QStringLiteral("-window.png")));
+            QVERIFY(applet->panel()->grab().save(path + QStringLiteral("-panel.png")));
+            if (panelWindow != nullptr) {
+                QVERIFY(panelWindow->grab().save(path + QStringLiteral("-floating.png")));
+            }
+        }
     }
 
     void runFlow(Placement& p, QList<Shot>& shots)

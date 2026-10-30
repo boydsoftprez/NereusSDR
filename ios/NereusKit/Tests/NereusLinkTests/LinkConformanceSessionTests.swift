@@ -1,6 +1,7 @@
 // NereusSDR for iOS: the link's session fixtures, played against the app's session in the client's role
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
+// 2026-10-30: Expect the app's negotiated Roundtable version2 feature. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-22: the app's features gain displayCodec 2 (NSDC v2).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-24: the app asks for Setup description 30 (General's Filters
@@ -35,10 +36,11 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 89)
+        #expect(fixtures.count == 90)
         // Roundtable's thirteen verbs (stationRoundtableVersion 1), now the
-        // app declares roundtable 1.
+        // app also exercises frequency chat with roundtable 2.
         #expect(fixtures.contains { $0.id == "session-verbs-roundtable" })
+        #expect(fixtures.contains { $0.id == "session-verbs-roundtable-frequency" })
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {
             #expect(fixtures.contains { $0.id == id }, "\(id)")
@@ -189,7 +191,7 @@ import Testing
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
                                   "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
-                                  "roundtable": 1, "remoteCw": 2, "cwSettings": 1])
+                                  "roundtable": 2, "remoteCw": 2, "cwSettings": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the
@@ -333,7 +335,9 @@ import Testing
                             // These producers pin the version-1 form; the phone also handles 2 and 3.
                             #expect(version == 1, "\(fixture.id): \(name)")
                             #expect(LinkFeatures.app[name] == 3, "\(fixture.id): \(name)")
-                        } else if name == "setupDescription" || name == "txEqCurve" {
+                        } else if name == "setupDescription" || name == "txEqCurve" || name == "roundtable" {
+                            // Frozen producers may declare room-only Roundtable 1;
+                            // the app additionally supports frequency capability 2.
                             #expect((LinkFeatures.app[name] ?? 0) >= version, "\(fixture.id): \(name)")
                         } else {
                             #expect(LinkFeatures.app[name] == version, "\(fixture.id): \(name)")

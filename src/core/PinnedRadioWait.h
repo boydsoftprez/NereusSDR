@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include "core/NereusCoreExport.h"
 #include "core/RadioDiscovery.h"
 
 #include <QObject>
@@ -44,7 +45,7 @@ namespace NereusSDR {
 //                joined (the startup scan), that scan keeps running, so
 //                radios on later adapters still reach the list; the wait
 //                stops taking the radio and gives up when that scan ends.
-class PinnedRadioWait : public QObject {
+class NEREUS_CORE_EXPORT PinnedRadioWait : public QObject {
     Q_OBJECT
 public:
     // The backstop is kBackstopFactor times the scan's longest remaining

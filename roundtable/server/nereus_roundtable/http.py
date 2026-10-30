@@ -147,6 +147,8 @@ Handler = Callable[[Request], Union[Response, Awaitable[Response]]]
 
 def json_response(status: int, obj: Any, extra: Optional[List[Tuple[str, str]]] = None) -> Response:
     """A read API answer (wire spec 10.1)."""
+    if not isinstance(obj, dict) or "frequencyVersion" not in obj:
+        obj = protocol.legacy_message(obj)
     body = protocol.encode(obj).encode("utf-8")
     headers = [
         ("Content-Type", "application/json; charset=utf-8"),
@@ -367,6 +369,15 @@ class App:
         try:
             if route == ["rooms"]:
                 return self._rooms(request)
+            if len(route) == 3 and route[0] == "frequency":
+                room_id = self._room_id(route[1], route[2])
+                if room_id is None:
+                    return api_error(400)
+                from . import frequency
+                class Public:
+                    station_id = None
+                view = frequency.snapshot(self.service, Public(), int(route[2]), route[1])
+                return json_response(200, {"time": self._time(), "frequencyVersion": 1, "room": view})
             if len(route) == 3 and route[0] == "room":
                 return self._room(route[1], route[2])
             if len(route) == 4 and route[0] == "room" and route[3] == "messages":
@@ -457,6 +468,9 @@ class App:
             if row[key]:
                 # The row number the talker had in the room, kept with the turn.
                 talkers.append({"ref": None, "callsign": row[key], "nth": int(row[nth])})
+        endpoints = json.loads(row["endpoints"]) if row.get("endpoints") else []
+        for talker, endpoint in zip(talkers, endpoints):
+            talker.update(endpoint)
         heard = 0
         if row["kind"] != "doubled":
             for track in self.store.tracks_of(int(row["id"])):

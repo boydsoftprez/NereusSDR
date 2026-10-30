@@ -35,6 +35,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Explicit negotiation advertisement preserves read-only privacy.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code (Roundtable plan Task 10).
@@ -286,6 +288,7 @@ private slots:
     void cleanup();
 
     void signsInOverTheHostItConnectedTo();
+    void historyRequiresNegotiationAndExactCorrelatedIds();
     void unansweredOpensLiveOnlyAndSendsNothingAboutTheStation();
     void afterTheAnswerPresenceThenReadingsOnceASecond();
     void noReadingWhileKeyed();
@@ -423,7 +426,8 @@ void TstRoundtableClient::unansweredOpensLiveOnlyAndSendsNothingAboutTheStation(
     QVERIFY(c != nullptr);
     QVERIFY(waitFrames(c, 1));
     QCOMPARE(c->frames.first(), (QJsonObject{{QStringLiteral("type"), QStringLiteral("watchBand")},
-                                             {QStringLiteral("band"), QStringLiteral("all")}}));
+                                             {QStringLiteral("band"), QStringLiteral("all")},
+                                             {QStringLiteral("frequencyVersion"), 1}}));
     QTRY_COMPARE_WITH_TIMEOUT(m_client->linkState(), RoundtableClient::LinkState::Hidden, kWaitMs);
 
     // Meters, slices and time pass; still nothing about the station.
@@ -1031,3 +1035,48 @@ void TstRoundtableClient::aStationInfoWriteRestartsTheStationConnection()
 
 QTEST_GUILESS_MAIN(TstRoundtableClient)
 #include "tst_roundtable_client.moc"
+
+void TstRoundtableClient::historyRequiresNegotiationAndExactCorrelatedIds()
+{
+    makeClient(false);
+    m_client->start();
+    FakeConnection* c = waitConnection(QStringLiteral("/v1/live"), 1);
+    QVERIFY(c != nullptr);
+    QVERIFY(waitFrames(c, 1));
+    QSignalSpy results(m_client.get(), &RoundtableClient::historyResult);
+    const QJsonArray ids{1, 2};
+    QVERIFY(!m_client->requestHistory(ids, QStringLiteral("before")));
+    c->send({{"type", "rooms"}, {"gen", 1}, {"rooms", QJsonArray{}}, {"frequencyVersion", 1}});
+    QTRY_COMPARE(m_client->frequencyVersion(), 1);
+    QVERIFY(m_client->requestHistory(ids, QStringLiteral("h1")));
+    QVERIFY(!m_client->requestHistory(ids, QStringLiteral("h1")));
+    const QJsonArray states{QJsonObject{{"id", 1}, {"state", "deleted"}, {"text", QJsonValue::Null}},
+                            QJsonObject{{"id", 2}, {"state", "shown"}, {"text", "old text"}}};
+    c->send({{"type", "history"}, {"clientId", "unknown"}, {"states", states}});
+    QVERIFY(flush(c));
+    QCOMPARE(results.size(), 0);
+    c->send({{"type", "history"}, {"clientId", "h1"}, {"states", states}});
+    QTRY_COMPARE(results.size(), 1);
+    QCOMPARE(results.last().at(0).toString(), QStringLiteral("h1"));
+    QVERIFY(results.last().at(1).toBool());
+    QCOMPARE(qvariant_cast<QJsonArray>(results.last().at(2)), states);
+    QVERIFY(m_client->requestHistory(ids, QStringLiteral("h2")));
+    c->send({{"type", "history"}, {"clientId", "h2"}, {"states", QJsonArray{states.first()}}});
+    QTRY_COMPARE(results.size(), 2);
+    QVERIFY(!results.last().at(1).toBool());
+    QVERIFY(qvariant_cast<QJsonArray>(results.last().at(2)).isEmpty());
+    for (int i = 0; i < 16; ++i) {
+        QVERIFY(m_client->requestHistory(ids, QStringLiteral("bounded-%1").arg(i)));
+    }
+    QVERIFY(!m_client->requestHistory(ids, QStringLiteral("seventeenth")));
+    tick(30001);
+    QCOMPARE(results.size(), 18);
+    for (int i = 2; i < results.size(); ++i) { QVERIFY(!results.at(i).at(1).toBool()); }
+    QVERIFY(m_client->requestHistory(ids, QStringLiteral("disconnect")));
+    m_client->stop();
+    QCOMPARE(results.size(), 19);
+    QVERIFY(!results.last().at(1).toBool());
+    c->send({{"type", "history"}, {"clientId", "disconnect"}, {"states", states}});
+    QCoreApplication::processEvents();
+    QCOMPARE(results.size(), 19);
+}

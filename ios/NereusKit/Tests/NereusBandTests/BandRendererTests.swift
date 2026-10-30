@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import CoreGraphics
+import CoreText
 import Foundation
 import Metal
 import NereusMedia
@@ -17,6 +18,25 @@ import Testing
     static let height = 600
     static let centre = 7_200_000.0
     static let span = 40_000.0
+
+    @Test func scaleFontUsesTheSameFaceAndMetricsWithoutAliasResolution() {
+        let points: CGFloat = 11
+        let text = "-120 7.236.400"
+        for scale: CGFloat in [1, 2, 3] {
+            let reference = CTFontCreateWithName("Menlo" as CFString, points * scale, nil)
+            let selected = CTFontCreateWithName(BandLabels.fontName as CFString, points * scale, nil)
+            #expect(CTFontCopyPostScriptName(selected) as String == BandLabels.fontName)
+            #expect((CTFontCopyPostScriptName(selected) as String) == (CTFontCopyPostScriptName(reference) as String))
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): reference]))
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            let width = CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+            #expect(BandLabels.width(of: text, points: points, scale: scale) == CGFloat(width))
+            let metrics = BandLabels.verticalMetrics(of: text, points: points, scale: scale)
+            #expect(metrics.ascent == ascent && metrics.descent == descent)
+        }
+    }
 
     /// A plain band: no grid, no strip, so a pixel is what the test drew.
     static func plain() -> BandDisplaySettings {

@@ -272,7 +272,7 @@ struct RoundtableToolsPageTests {
         #expect(RoundtableTagLayout.frequencyText(7_030_500) == "7.0305")
         #expect(RoundtableTagLayout.frequencyText(14_074_150) == "14.07415")
         #expect(RoundtableTagLayout.frequencyText(14_074_151) == "14.074151")
-        #expect(RoundtableTagLayout.foldHeading(count: 5, sliceLetter: "A") == "5 rooms here \u{00B7} a tap tunes slice A")
+        #expect(RoundtableTagLayout.foldHeading(count: 5, sliceLetter: "A") == "5 frequencies here \u{00B7} a tap tunes slice A")
         #expect(RoundtableTagLayout.foldWho(RoundtableTag(roomId: "x", hz: 1, glyph: .unknown, label: "Unknown"))
                 == "Unknown talker")
         #expect(RoundtableTagLayout.foldWho(Self.tagAt("K4ABC", 1)) == "K4ABC")

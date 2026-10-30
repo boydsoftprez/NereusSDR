@@ -21,6 +21,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: Created (Roundtable plan Task 14). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-10-24: Roundtable plan Task 15: the toolbar collapse case; your
@@ -117,6 +119,8 @@ bool anyOverlap(const QList<RoundtableTagPlacement>& placements)
 
 class NullLink : public IStationLink {
 public:
+    bool frequency = false;
+    bool roundtableFrequencyAvailable() const override { return frequency; }
     CommandOutcome requestAddSlice(const QString&) override { return {}; }
     CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
     CommandOutcome requestRemoveSlice(int) override { return {}; }
@@ -210,6 +214,219 @@ class TestRoundtableTagLayout : public QObject {
     Q_OBJECT
 
 private slots:
+    void exactCochannelPeopleStayDistinctFromGeometricFolds()
+    {
+        NullLink link;
+        link.frequency = true;
+        RoundtableState state;
+        RoundtableModel model;
+        model.attachStation(&link, &state);
+        QJsonArray stations;
+        for (int slice = 0; slice < 2; ++slice) {
+            stations.append(QJsonObject{{QStringLiteral("ref"), QStringLiteral("same-ref")},
+                {QStringLiteral("sourceRoom"), QStringLiteral("lsb-%1").arg(7185000 + slice * 1000)},
+                {QStringLiteral("slice"), slice}, {QStringLiteral("hz"), 7185123},
+                {QStringLiteral("family"), QStringLiteral("lsb")}, {QStringLiteral("callsign"), QStringLiteral("W4ABC")},
+                {QStringLiteral("nth"), slice + 1}, {QStringLiteral("keyed"), slice == 0}});
+        }
+        QJsonObject summary{{QStringLiteral("id"), QStringLiteral("lsb-7185000")},
+            {QStringLiteral("hz"), 7185000}, {QStringLiteral("stations"), stations}};
+        model.applyRooms(QJsonObject{{QStringLiteral("frequencyVersion"), 1}, {QStringLiteral("rooms"), QJsonArray{summary}}});
+        const auto tags = roundtableTagsFor(&model, {});
+        QCOMPARE(tags.size(), 1);
+        QCOMPARE(tags.first().hz, 7185123LL);
+        QCOMPARE(tags.first().roomId, QStringLiteral("frequency:lsb-7185123"));
+        QCOMPARE(tags.first().stations.size(), 2);
+        QVERIFY(tags.first().stations.at(0).toObject().value(QStringLiteral("sourceRoom"))
+                != tags.first().stations.at(1).toObject().value(QStringLiteral("sourceRoom")));
+        const auto layout = layoutRoundtableTags(tags, 100, 7150000, 800, 80, 4);
+        QCOMPARE(layout.size(), 1);
+        QVERIFY(!layout.first().folded);
+    }
+
+    void ownTurnsRequireEveryScopedEndpointInFrequencyViews()
+    {
+        const QJsonObject ownA{{"sourceRoom", "lsb-7184000"}, {"ref", "same"}, {"you", true}, {"keyed", true}};
+        const QJsonObject ownB{{"sourceRoom", "lsb-7188000"}, {"ref", "second"}, {"you", true}, {"keyed", false}};
+        QJsonObject room{{"id", "lsb-7185123"}, {"view", "frequency"}, {"members", QJsonArray{ownA, ownB}}};
+        QJsonObject other{{"kind", "talking"}, {"sourceRoom", "lsb-7188000"}, {"talkers", QJsonArray{
+            QJsonObject{{"sourceRoom", "lsb-7188000"}, {"ref", "same"}}}}};
+        // Own A is keyed, but the same wire ref at B is another endpoint.
+        QVERIFY(!roundtableTurnIsYours(room, other, true));
+        other.insert("talkers", QJsonArray{QJsonObject{{"sourceRoom", "lsb-7188000"}, {"ref", "unrelated"}}});
+        QVERIFY(!roundtableTurnIsYours(room, other, true));
+        other.insert("talkers", QJsonArray{QJsonObject{{"sourceRoom", "lsb-7188000"}, {"ref", "second"}}});
+        QVERIFY(roundtableTurnIsYours(room, other, true));
+        QVERIFY(roundtableTurnIsYours(room, other, false));
+        other.insert("kind", "doubled");
+        QVERIFY(!roundtableTurnIsYours(room, other, true));
+        other.insert("kind", "talking");
+        other.insert("talkers", QJsonArray{});
+        QVERIFY(!roundtableTurnIsYours(room, other, true));
+        // Only the legacy single RF room keeps its scoped keyed fallback.
+        room.remove("view");
+        room.insert("id", "lsb-7184000");
+        room.insert("members", QJsonArray{ownA});
+        other.insert("sourceRoom", "lsb-7184000");
+        QVERIFY(roundtableTurnIsYours(room, other, true));
+        QVERIFY(!roundtableTurnIsYours(room, other, false));
+        other.insert("sourceRoom", "lsb-7188000");
+        QVERIFY(!roundtableTurnIsYours(room, other, true));
+    }
+
+    void frequencyFlagsDoNotClaimOtherFrequencyTurnsOrReports()
+    {
+        NullLink link;
+        link.frequency = true;
+        RoundtableState state;
+        RoundtableModel model;
+        model.attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        QJsonObject own{{"sourceRoom", "lsb-7184000"}, {"ref", "same"}, {"you", true}, {"keyed", true},
+            {"hz", 7185123}, {"family", "lsb"}, {"callsign", "KG4VCF"}};
+        QJsonObject other{{"sourceRoom", "lsb-7188000"}, {"ref", "same"}, {"keyed", true},
+            {"hz", 7188000}, {"family", "lsb"}, {"callsign", "K4ABC"}};
+        model.applyRooms(QJsonObject{{"frequencyVersion", 1}, {"rooms", QJsonArray{
+            QJsonObject{{"id", "lsb-7184000"}, {"stations", QJsonArray{own, other}}}}}});
+        const QJsonObject turnA{{"id", 1}, {"kind", "talking"}, {"hz", 7185123}, {"sourceRoom", "lsb-7184000"},
+            {"start", 1}, {"talkers", QJsonArray{own}}};
+        const QJsonObject turnB{{"id", 100}, {"kind", "talking"}, {"hz", 7188000}, {"sourceRoom", "lsb-7188000"},
+            {"start", 2}, {"talkers", QJsonArray{other}}};
+        const QJsonObject reporterA{{"ref", "reportA"}, {"sourceRoom", "lsb-7184000"},
+            {"reading", QJsonObject{{"present", true}, {"turn", 1}, {"dbm", -73}, {"t", 1}}}};
+        const QJsonObject reporterB{{"ref", "reportB"}, {"sourceRoom", "lsb-7188000"},
+            {"reading", QJsonObject{{"present", true}, {"turn", 100}, {"dbm", -55}, {"t", 1}}}};
+        for (qint64 hz : {7185123LL, 7188000LL}) {
+            model.applyRoom(QJsonObject{{"id", QStringLiteral("lsb-%1").arg(hz)}, {"view", "frequency"},
+                {"family", "lsb"}, {"hz", hz}, {"members", QJsonArray{own, other, reporterA, reporterB}},
+                {"now", QJsonArray{turnA, turnB}}, {"earlier", QJsonArray{}}, {"messages", QJsonArray{}}});
+        }
+        const auto flagB = roundtableFlagLineFor(&model, 1, 7188000, QStringLiteral("lsb"));
+        QVERIFY(flagB.glyph != static_cast<int>(RoundtableGlyph::You));
+        QVERIFY(!flagB.text.contains(QStringLiteral("hear you")));
+        const auto flagA = roundtableFlagLineFor(&model, 0, 7185123, QStringLiteral("lsb"));
+        QCOMPARE(flagA.glyph, static_cast<int>(RoundtableGlyph::You));
+        QCOMPARE(flagA.text, QStringLiteral("Roundtable · 1 hear you"));
+    }
+
+    void scopedCochannelReportsAndPlacementDedup()
+    {
+        NullLink link;
+        link.frequency = true;
+        RoundtableState state;
+        RoundtableModel model;
+        model.attachStation(&link, &state);
+        const QJsonObject person{{"sourceRoom", "lsb-7184000"}, {"ref", "one"}, {"slice", 0},
+            {"hz", 7185123}, {"family", "lsb"}, {"callsign", "W1AW"}};
+        QJsonObject secondSlice = person;
+        secondSlice.insert("slice", 1);
+        QJsonObject otherPerson = person;
+        otherPerson.insert("ref", "two");
+        QJsonObject otherHz = person;
+        otherHz.insert("hz", 7185500);
+        model.applyRooms(QJsonObject{{"frequencyVersion", 1}, {"rooms", QJsonArray{
+            QJsonObject{{"id", "lsb-7184000"}, {"stations", QJsonArray{person, secondSlice, otherPerson, otherHz}}}}}});
+        const auto tags = roundtableTagsFor(&model, {});
+        QCOMPARE(tags.size(), 2);
+        QCOMPARE(tags.first().stations.size(), 2);
+        QCOMPARE(tags.last().stations.size(), 1);
+        QJsonObject talker{{"sourceRoom", "lsb-7184000"}, {"ref", "one"}, {"callsign", "W1AW"}};
+        QJsonObject turn{{"id", 12}, {"kind", "talking"}, {"hz", 7185123}, {"sourceRoom", "lsb-7184000"},
+            {"start", 1000}, {"talkers", QJsonArray{talker}}};
+        QJsonObject member{{"sourceRoom", "lsb-7184000"}, {"ref", "two"}, {"callsign", "K4ABC"},
+            {"reading", QJsonObject{{"turn", 12}, {"dbm", -73}, {"present", true}, {"t", 2000}}}};
+        QJsonObject view{{"family", "lsb"}, {"now", QJsonArray{turn}}, {"members", QJsonArray{member}}};
+        auto rows = roundtableTagReportLines(tags.first(), view, 27000);
+        QCOMPARE(rows.first(), QStringLiteral("Last talker: W1AW"));
+        QVERIFY(rows.contains(QStringLiteral("K4ABC  -73  25s")));
+        turn.insert("hz", 7185500);
+        view.insert("now", QJsonArray{turn});
+        QCOMPARE(roundtableTagReportLines(tags.first(), view, 27000), QStringList{QStringLiteral("Read reports · details")});
+        turn.insert("hz", 7185123);
+        turn.insert("kind", "doubled");
+        view.insert("now", QJsonArray{turn});
+        rows = roundtableTagReportLines(tags.first(), view, 27000);
+        QVERIFY(rows.contains(QStringLiteral("Combined RF · unattributed")));
+        QVERIFY(!rows.join(' ').contains(QStringLiteral("-73")));
+        turn.insert("kind", "talking");
+        turn.insert("id", 13);
+        view.insert("now", QJsonArray{turn});
+        rows = roundtableTagReportLines(tags.first(), view, 27000);
+        QVERIFY(rows.contains(QStringLiteral("K4ABC  -  No report")));
+    }
+
+    void cochannelBoxHasRealBoundsAndRender()
+    {
+        Pan pan;
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123);
+        tag.mine = true;
+        tag.stations = QJsonArray{QJsonObject{{"callsign", "W1AW"}}, QJsonObject{{"callsign", "K4ABC"}, {"nth", 2}},
+            QJsonObject{{"callsign", "N3XYZ"}}, QJsonObject{{"callsign", "W4KZO"}}, QJsonObject{{"callsign", "KG4VCF"}}};
+        tag.reportLines = {QStringLiteral("Last talker: W1AW"), QStringLiteral("Heard by     dBm    Age"),
+            QStringLiteral("N4XYZ  -73  25s"), QStringLiteral("Open details")};
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        const QImage image = pan.draw();
+        const auto* hit = hitFor(pan.widget, tag.roomId);
+        QVERIFY(hit != nullptr);
+        // Frequency, three distinct people, +2, Last talker, Heard by,
+        // one separately named reporter/sample, and Reports details.
+        QCOMPARE(hit->rect.height(), 9 * 14 + 8);
+        QVERIFY(hit->rect.width() >= 200);
+        QVERIFY(pan.widget.roundtableTagSpectrumRectForTest().contains(hit->rect));
+        QVERIFY(!hit->rect.intersects(pan.flag->geometry()));
+        if (qEnvironmentVariableIsSet("NEREUS_ROUNDTABLE_CAPTURE")) {
+            QImage product(pan.widget.size(), QImage::Format_ARGB32_Premultiplied);
+            product.fill(QColor(15, 15, 26));
+            QPainter painter(&product);
+            const QRect spectrum = pan.widget.roundtableTagSpectrumRectForTest();
+            QVector<float> fixture(spectrum.width(), -125.0f);
+            for (int x = 0; x < fixture.size(); ++x) {
+                fixture[x] += static_cast<float>(3 * std::sin(x * 0.23)
+                    + 58 * std::exp(-std::pow((x - 490) / 20.0, 2)));
+            }
+            pan.widget.setRenderedPixelsForTest(fixture);
+            pan.widget.drawFrequencyGridForTest(painter, spectrum);
+            pan.widget.drawSpectrumForTest(painter, spectrum);
+            pan.widget.drawFreqScaleForTest(painter, pan.widget.freqScaleRectForTest());
+            pan.widget.drawRoundtableTagsForTest(painter, spectrum);
+            // QRhiWidget has no offscreen paint engine; render the actual child
+            // VFO chrome over the same CPU spectrum primitives used in product.
+            for (QWidget* child : pan.widget.findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+                if (child->isVisible()) { child->render(&painter, child->pos()); }
+            }
+            painter.end();
+            QVERIFY(product.save(qEnvironmentVariable("NEREUS_ROUNDTABLE_CAPTURE")));
+        }
+    }
+
+    void shortCochannelBoxKeepsPeopleAndDetailsWithinItsTrueHeight()
+    {
+        Pan pan(360);
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123, true);
+        tag.stations = QJsonArray{QJsonObject{{"callsign", "W1AW"}}, QJsonObject{{"callsign", "K4ABC"}},
+            QJsonObject{{"callsign", "N3XYZ"}}, QJsonObject{{"callsign", "W4KZO"}}, QJsonObject{{"callsign", "KG4VCF"}}};
+        tag.reportLines = {QStringLiteral("Last talker: W4KZO"), QStringLiteral("Heard by     dBm    Age"),
+            QStringLiteral("N4XYZ  -73  25s"), QStringLiteral("K9XYZ  -61  2s"), QStringLiteral("Open details")};
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        pan.draw();
+        const auto* hit = hitFor(pan.widget, tag.roomId);
+        QVERIFY(hit != nullptr);
+        const QRect spectrum = pan.widget.roundtableTagSpectrumRectForTest();
+        QVERIFY(spectrum.contains(hit->rect));
+        QVERIFY(!pan.widget.receiverFlagRegion().intersects(hit->rect));
+        QVERIFY(hit->rect.height() >= 5 * 14 + 8);
+        QCOMPARE((hit->rect.height() - 8) % 14, 0);
+    }
+
+    void selectedCochannelKeepsTheOnlyFreeSlot()
+    {
+        const auto placed = layoutRoundtableTags({tagAt("earlier", 10), tagAt("neighbor", 20),
+            tagAt("selected", 90, true)}, 1, 0, 100, 80, 4);
+        QCOMPARE(placed.size(), 1);
+        QCOMPARE(placed.first().roomIds, QStringList{QStringLiteral("selected")});
+        QVERIFY(!placed.first().folded);
+    }
+
     void fiveTagsFiftyHertzApartFoldIntoOne()
     {
         // 100 Hz per pixel: the five sit within 2 px of each other.
@@ -572,7 +789,7 @@ private slots:
                 rows.append(action);
             }
         }
-        QCOMPARE(menu.actions().first()->text(), QStringLiteral("5 rooms here"));
+        QCOMPARE(menu.actions().first()->text(), QStringLiteral("5 frequencies here"));
         QVERIFY(!menu.actions().first()->isEnabled());
         QCOMPARE(rows.size(), 5);
         QCOMPARE(rows.first()->text(), QStringLiteral("7.185   K0ABC   3"));

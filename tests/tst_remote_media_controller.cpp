@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-10-30  J.J. Boyd / KG4VCF  R-R3-21: observe every retry decision,
+//               including canceled startup steps, and test the hold boundary.
+//               AI-assisted via OpenAI Codex.
 //   2026-10-27  J.J. Boyd / KG4VCF  retiredReceiverStreamStopsWithItsReasonAndDoesNotLoop:
 //                                    a TCI app on the retired stream hears
 //                                    none of the removed slice's audio on
@@ -1295,6 +1298,27 @@ QJsonObject mediaNotReadyContext(const QJsonObject& real)
     off.insert(QStringLiteral("reason"),
                remoteAudioOffReasonToWire(RemoteAudioOffReason::MediaNotReady));
     return off;
+}
+
+// Passive evidence must identify canceled scheduling decisions as well as
+// delivered requests, especially when a held-step assertion fails while keyed.
+QByteArray audioRestartEvidence(const RemoteMediaController& remoteMedia)
+{
+    using Schedule = RemoteMediaController::AudioRestartScheduleForTest;
+    using Timing = RemoteMediaController::AudioRestartTimingForTest;
+    QStringList decisions;
+    for (const Schedule& schedule : remoteMedia.audioRestartSchedulesForTest()) {
+        const Timing& timing = schedule.timing;
+        decisions << QStringLiteral("generation %1, revision %2, at %3 from %4, "
+                                    "delay %5, streak %6, timer %7, dispatch %8, "
+                                    "held %9, canceled %10, request %11")
+            .arg(schedule.retryGeneration).arg(timing.revision)
+            .arg(timing.scheduledAtMs).arg(timing.scheduledFromRequestMs)
+            .arg(timing.delayMs).arg(timing.streak).arg(schedule.timerFiredMs)
+            .arg(schedule.dispatchedMs).arg(schedule.held).arg(schedule.canceled)
+            .arg(timing.requestMs);
+    }
+    return decisions.join(QStringLiteral("; ")).toUtf8();
 }
 
 // What the controller logs when this computer's speaker cannot start remote
@@ -12498,6 +12522,84 @@ private slots:
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // Cancel before the timer can fire, then arm a new held scenario. The
+    // obsolete startup timer must remain in passive evidence without becoming
+    // one of that scenario's held steps or losing its consumed backoff step.
+    void canceledMediaNotReadyBeforeHoldKeepsTheBackoffEvidence()
+    {
+        using Backoff = RemoteAudioRestartBackoff;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        remoteMedia.observeAudioRestartsForTest();
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QJsonObject enabledContext;
+        bool superseded = false;
+        connect(&remoteMedia, &RemoteMediaController::audioContextAccepted, this, [&] {
+            if (superseded || !acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady)) {
+                return;
+            }
+            superseded = true;
+            enabledContext.insert(QStringLiteral("generation"),
+                enabledContext.value(QStringLiteral("generation")).toDouble() + 1);
+            // Synchronous delivery through the controller's normal receive
+            // signal orders both contexts before any due-timer event, even
+            // when a loaded event loop notices the first context late.
+            h.client.mediaControlReceived(enabledContext, h.client.sessionEpoch());
+            remoteMedia.holdAudioRestartForTest(true);
+        });
+        PacedRemoteAudio audio(h);
+        h.forgeReplacesFirstContext = true;
+        h.connectSession(std::nullopt, [&](const QJsonObject& real) {
+            enabledContext = real;
+            return mediaNotReadyContext(real);
+        });
+        const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
+        QTRY_VERIFY_WITH_TIMEOUT(superseded, h.kMediaConnectionWaitMs);
+        QVERIFY(remoteMedia.acceptedAudioContext()->enabled);
+        QCOMPARE(remoteMedia.acceptedAudioContext()->revision,
+                 quint32(enabledContext.value(QStringLiteral("revision")).toInteger()));
+        QVERIFY(!remoteMedia.audioRestartPendingForTest());
+        auto schedules = remoteMedia.audioRestartSchedulesForTest();
+        QCOMPARE(schedules.size(), 1);
+        QVERIFY(schedules.first().canceled);
+        QCOMPARE(schedules.first().timerFiredMs, -1);
+        QCOMPARE(schedules.first().dispatchedMs, -1);
+        QCOMPARE(schedules.first().timing.streak, 1);
+        const int beforeDue = *outboundRequests;
+        QTRY_VERIFY_WITH_TIMEOUT(
+            remoteMedia.audioRestartSchedulesForTest().first().timerFiredMs >= 0, 5000);
+        QCOMPARE(remoteMedia.audioRestartStepsHeldForTest(), 0);
+        QCOMPARE(*outboundRequests, beforeDue);
+        schedules = remoteMedia.audioRestartSchedulesForTest();
+        QVERIFY(schedules.first().canceled);
+        QVERIFY(!schedules.first().held);
+        QCOMPARE(schedules.first().dispatchedMs, -1);
+
+        remoteMedia.raiseAudioRestartForTest(RemoteAudioReceiver::Fault::NoPackets);
+        schedules = remoteMedia.audioRestartSchedulesForTest();
+        QCOMPARE(schedules.size(), 2);
+        const auto retry = schedules.last();
+        const qint64 age = retry.timing.scheduledAtMs - retry.timing.scheduledFromRequestMs;
+        const bool healthyReset = age >= Backoff::kHealthyResetMs;
+        const qint64 step = healthyReset ? Backoff::kFirstDelayMs : 2 * Backoff::kFirstDelayMs;
+        QCOMPARE(retry.timing.streak, healthyReset ? 1 : 2);
+        QCOMPARE(retry.timing.delayMs, std::max<qint64>(0, step - age));
+        QCOMPARE(retry.timing.revision, schedules.first().timing.revision);
+        QCOMPARE(retry.timing.scheduledFromRequestMs,
+                 schedules.first().timing.scheduledFromRequestMs);
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+        QCOMPARE(*outboundRequests, beforeDue);
+        remoteMedia.holdAudioRestartForTest(false);
+        QCOMPARE(*outboundRequests, beforeDue + 1);
+        schedules = remoteMedia.audioRestartSchedulesForTest();
+        QCOMPARE(schedules.first().dispatchedMs, -1);
+        QVERIFY(schedules.last().dispatchedMs
+                >= retry.timing.scheduledAtMs + retry.timing.delayMs);
+        QVERIFY(!schedules.last().canceled);
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // Other accepted off reasons supersede the MediaNotReady-owned step.
     void otherOffReasonsSupersedeMediaNotReadyRetry()
     {
@@ -13053,8 +13155,10 @@ private slots:
         using State = RemoteAudioStatus::State;
         using Backoff = RemoteAudioRestartBackoff;
         using Timing = RemoteMediaController::AudioRestartTimingForTest;
+        using Schedule = RemoteMediaController::AudioRestartScheduleForTest;
         Test::RemoteAudioSessionHarness h;
         RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        remoteMedia.observeAudioRestartsForTest();
         // The Core's display keeps running through the audio outage, so
         // the direct path stays active and only audio retries are measured.
         CoreDisplayKeepAlive display;
@@ -13071,9 +13175,8 @@ private slots:
                 [&](const QJsonObject& control) {
             if (control.value(QStringLiteral("op")) == QLatin1String("audio")
                 && control.value(QStringLiteral("enabled")).toBool()) {
-                // The context reply crosses the queued loopback before
-                // the receiver can schedule the next retry. Copy now,
-                // including startup, before another schedule replaces it.
+                // This captures dispatch time; the separate passive history
+                // includes every schedule, even one canceled before dispatch.
                 requests.append({clock.elapsed(),
                                  quint32(control.value(QStringLiteral("revision")).toDouble()),
                                  remoteMedia.audioRestartTimingForTest()});
@@ -13099,13 +13202,14 @@ private slots:
                              .arg(timing.delayMs).arg(timing.streak).arg(timing.revision);
             }
             return QStringLiteral("requests [%1] ms (outage from request %2); now %3 ms, "
-                                  "connection %4, restart pending %5; %6")
+                                  "connection %4, restart pending %5; %6; schedules [%7]")
                 .arg(parts.join(QStringLiteral("; "))).arg(before + 1).arg(clock.elapsed())
                 .arg(remoteMedia.mediaConnectionId() == connectionId
                          ? QStringLiteral("unchanged") : QStringLiteral("changed"))
                 .arg(remoteMedia.audioRestartPendingForTest() ? QStringLiteral("yes")
                                                               : QStringLiteral("no"))
-                .arg(QString::fromUtf8(h.mediaStage(remoteMedia))).toUtf8();
+                .arg(QString::fromUtf8(h.mediaStage(remoteMedia)))
+                .arg(QString::fromUtf8(audioRestartEvidence(remoteMedia))).toUtf8();
         };
         const auto stepMs = [](int streak) -> int {
             return int(streak == 0 ? Backoff::kFirstDelayMs
@@ -13127,26 +13231,58 @@ private slots:
         bool sawFirstStep = false;
         bool sawSecondStep = false;
         int cappedSteps = 0;
+        qsizetype inspectedSchedules = 0;
+        const auto matchesSchedules = [&] {
+            const QList<Schedule> schedules = remoteMedia.audioRestartSchedulesForTest();
+            // This finite scenario must retain all its history, not silently
+            // accept an oracle whose earliest decisions have been evicted.
+            if (schedules.size() >= 256) { return false; }
+            for (; inspectedSchedules < schedules.size(); ++inspectedSchedules) {
+                const Schedule& schedule = schedules.at(inspectedSchedules);
+                const Timing& timing = schedule.timing;
+                const qint64 age = timing.scheduledAtMs - timing.scheduledFromRequestMs;
+                if (age >= Backoff::kHealthyResetMs) { expectedStreak = 0; }
+                const int step = stepMs(expectedStreak);
+                const qint64 delay = std::max<qint64>(0, step - age);
+                expectedStreak = std::min(expectedStreak + 1, 3);
+                sawFirstStep = sawFirstStep || step == Backoff::kFirstDelayMs;
+                sawSecondStep = sawSecondStep || step == 2 * Backoff::kFirstDelayMs;
+                if (step == Backoff::kMaxDelayMs) { ++cappedSteps; }
+                const auto base = std::find_if(requests.cbegin(), requests.cend(),
+                    [&](const Request& request) { return request.revision == timing.revision; });
+                if (timing.scheduledAtMs < 0 || age < 0 || base == requests.cend()
+                    || timing.scheduledFromRequestMs != base->timing.requestMs
+                    || timing.delayMs != delay || timing.streak != expectedStreak) {
+                    return false;
+                }
+            }
+            // Revisit disposition as timers fire, including canceled ones.
+            for (const Schedule& schedule : schedules) {
+                if (schedule.canceled && schedule.dispatchedMs >= 0) { return false; }
+                if (schedule.dispatchedMs >= 0
+                    && (schedule.timerFiredMs < schedule.timing.scheduledAtMs
+                                                     + schedule.timing.delayMs
+                        || schedule.dispatchedMs < schedule.timing.scheduledAtMs
+                                                     + schedule.timing.delayMs
+                        || (schedule.timing.requestMs >= 0
+                            && schedule.timing.requestMs < schedule.timing.scheduledAtMs
+                                                               + schedule.timing.delayMs))) {
+                    return false;
+                }
+            }
+            return true;
+        };
         const auto matchesAutomaticRetry = [&](qsizetype k) {
+            if (!matchesSchedules()) { return false; }
             const Request& previous = requests.at(k - 1);
             const Request& request = requests.at(k);
-            const Timing& timing = request.timing;
-            const qint64 age = timing.scheduledAtMs - timing.scheduledFromRequestMs;
-            if (age >= Backoff::kHealthyResetMs) { expectedStreak = 0; }
-            const int step = stepMs(expectedStreak);
-            const qint64 delay = std::max<qint64>(0, step - age);
-            expectedStreak = std::min(expectedStreak + 1, 3);
-            sawFirstStep = sawFirstStep || step == Backoff::kFirstDelayMs;
-            sawSecondStep = sawSecondStep || step == 2 * Backoff::kFirstDelayMs;
-            if (step == Backoff::kMaxDelayMs) { ++cappedSteps; }
-            return timing.scheduledAtMs >= 0 && age >= 0
-                && timing.scheduledFromRequestMs == previous.timing.requestMs
-                && timing.revision == previous.revision
-                && request.revision == nextRevision(timing.revision)
-                && timing.delayMs == delay && timing.streak == expectedStreak
-                // Same controller clock for scheduling and dispatch: a
-                // precise timer must not request before its chosen due time.
-                && timing.requestMs >= timing.scheduledAtMs + timing.delayMs;
+            const QList<Schedule> schedules = remoteMedia.audioRestartSchedulesForTest();
+            return std::any_of(schedules.cbegin(), schedules.cend(), [&](const Schedule& schedule) {
+                return !schedule.canceled && schedule.timing.requestMs == request.timing.requestMs
+                    && schedule.timing.scheduledFromRequestMs == previous.timing.requestMs
+                    && schedule.timing.revision == previous.revision
+                    && request.revision == nextRevision(schedule.timing.revision);
+            });
         };
 
         display.timer.start();
@@ -13177,6 +13313,7 @@ private slots:
         for (qsizetype k = inspected + 1; k < requests.size(); ++k) {
             QVERIFY2(matchesAutomaticRetry(k), evidence().constData());
         }
+        QVERIFY2(matchesSchedules(), evidence().constData());
         const qsizetype beforeRetry = requests.size();
         remoteMedia.retryAudio();
         expectedStreak = 0;
@@ -13315,6 +13452,7 @@ private slots:
         const auto routes = qScopeGuard([&h] { h.resetOutputRoutes(); });
         h.attachRemoteHeadphones();
         RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        remoteMedia.observeAudioRestartsForTest();
         // The Core's display runs through the silence, as in production.
         CoreDisplayKeepAlive display;
         DaemonMediaController daemonMedia(&h.server, &h.station, nullptr, display.factory());
@@ -13361,7 +13499,8 @@ private slots:
         QCOMPARE(enabledRequests(coreControls, QStringLiteral("receiver-audio"), sliceA),
                  receiver);
         QVERIFY(!remoteMedia.audioRestartPendingForTest());
-        QVERIFY(!remoteMedia.audioRestartStepHeldForTest());
+        QVERIFY2(!remoteMedia.audioRestartStepHeldForTest(),
+                 audioRestartEvidence(remoteMedia).constData());
         const RemoteAudioStatus keyed = remoteMedia.audioStatus();
         QCOMPARE(keyed.state, State::WaitingForAudio);
         QVERIFY(!keyed.problem.has_value());
@@ -13397,7 +13536,8 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(app.frames(sliceA) >= appFrames + 9600, 10000);
         QCOMPARE(enabledRequests(coreControls, QStringLiteral("receiver-audio"), sliceA),
                  receiver);
-        QVERIFY(!remoteMedia.audioRestartStepHeldForTest());
+        QVERIFY2(!remoteMedia.audioRestartStepHeldForTest(),
+                 audioRestartEvidence(remoteMedia).constData());
         QVERIFY(errors.isEmpty());
 
         remoteMedia.holdAudioRestartForTest(false);
@@ -16806,6 +16946,7 @@ const QStringList kAudioFunctions{
     QStringLiteral("repeatedMediaNotReadyAnswersRecoverOnTheSamePeer"),
     QStringLiteral("enabledContextSupersedesMediaNotReadyRetry"),
     QStringLiteral("otherOffReasonsSupersedeMediaNotReadyRetry"),
+    QStringLiteral("canceledMediaNotReadyBeforeHoldKeepsTheBackoffEvidence"),
 };
 
 } // namespace

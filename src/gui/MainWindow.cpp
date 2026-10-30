@@ -11,6 +11,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-10-27: The note on populatePanSlices no longer says an
+//               operator-asked slice starts fresh. A saved letter comes
+//               back from addSliceOnPan. J.J. Boyd (KG4VCF), AI-assisted
+//               via xAI Grok.
 //   2026-10-26 - Text overlay slice tokens: refreshContainerMeter gives
 //                 each text overlay the VfoSliceState of every open slice
 //                 (the VFO display's feed, sliceStateFor), none for an
@@ -1456,6 +1462,7 @@ warren@wpratt.com
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
+#include "gui/roundtable/RoundtablePanel.h"
 #include "core/SpotSourceHost.h"
 #include "core/station/StationRadios.h"
 #include "gui/setup/ThisCorePage.h"
@@ -6767,6 +6774,15 @@ void MainWindow::wirePanRoundtableTags()
         connect(sw, &SpectrumWidget::roundtableRoomClicked,
                 this, &MainWindow::onRoundtableRoomClicked,
                 Qt::UniqueConnection);
+        if (!sw->property("roundtableReadWired").toBool()) {
+            sw->setProperty("roundtableReadWired", true);
+            connect(sw, &SpectrumWidget::roundtableReadRequested, this, [this](const QString& context) {
+                if (m_roundtableApplet && m_roundtableApplet->panel()) {
+                    m_roundtableApplet->panel()->readRoom(context);
+                    if (m_appletVis) { m_appletVis->setVisible(QStringLiteral("Roundtable"), true); }
+                }
+            });
+        }
     }
 }
 
@@ -6788,14 +6804,40 @@ void MainWindow::refreshRoundtableTags()
     for (SliceModel* slice : m_radioModel->slices()) {
         if (slice) { sliceIds.append(slice->sliceIndex()); }
     }
-    const QList<RoundtableTag> tags = roundtableTagsFor(roundtable, sliceIds);
+    QList<RoundtableTag> tags = roundtableTagsFor(roundtable, sliceIds);
     const RoundtableTagDisplay display = roundtableTagDisplayFor(roundtable);
+    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+        if (it.value()) {
+            SliceModel* slice = nullptr;
+            for (SliceModel* candidate : m_radioModel->slices()) {
+                if (candidate && candidate->sliceIndex() == it.key()) { slice = candidate; break; }
+            }
+            QString family;
+            if (slice) {
+                switch (slice->dspMode()) {
+                case DSPMode::LSB: family = QStringLiteral("lsb"); break;
+                case DSPMode::USB: family = QStringLiteral("usb"); break;
+                case DSPMode::DIGL: family = QStringLiteral("digl"); break;
+                case DSPMode::DIGU: family = QStringLiteral("digu"); break;
+                case DSPMode::AM: case DSPMode::SAM: family = QStringLiteral("am"); break;
+                case DSPMode::FM: family = QStringLiteral("fm"); break;
+                case DSPMode::CWL: case DSPMode::CWU: family = QStringLiteral("cw"); break;
+                case DSPMode::RADE_U: case DSPMode::RADE2_U: family = QStringLiteral("fdvu"); break;
+                case DSPMode::RADE_L: case DSPMode::RADE2_L: family = QStringLiteral("fdvl"); break;
+                default: break;
+                }
+            }
+            if (slice && roundtable && roundtable->frequencyAvailable()) {
+                const QString context = RoundtableModel::frequencyContextId(std::llround(slice->frequency()), family);
+                for (RoundtableTag& tag : tags) { tag.mine = tag.mine || tag.roomId == context; }
+            }
+            it.value()->setRoundtableLine(roundtableFlagLineFor(roundtable, it.key(),
+                slice ? std::llround(slice->frequency()) : 0, family));
+        }
+    }
     for (PanadapterApplet* applet : m_panStack->allApplets()) {
         SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
         if (sw) { sw->setRoundtableTags(tags, display); }
-    }
-    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
-        if (it.value()) { it.value()->setRoundtableLine(roundtableFlagLineFor(roundtable, it.key())); }
     }
 }
 
@@ -11879,6 +11921,14 @@ void MainWindow::populateDefaultMeter()
         connect(roundtable, &RoundtableModel::linkChanged, this, &MainWindow::scheduleRoundtableRefresh);
         connect(roundtable, &RoundtableModel::mentionsChanged, this, &MainWindow::scheduleRoundtableRefresh);
         connect(roundtable, &RoundtableModel::sliceRoomsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        // Quiet retained reports still age even when no server update arrives.
+        // Reuse the coalesced refresh; this never requests data or tunes a slice.
+        auto* reportAgeTimer = new QTimer(this);
+        reportAgeTimer->setInterval(1000);
+        connect(reportAgeTimer, &QTimer::timeout, this, [this, roundtable]() {
+            if (roundtable->frequencyAvailable()) { scheduleRoundtableRefresh(); }
+        });
+        reportAgeTimer->start();
     }
     connect(m_radioModel, &RadioModel::sliceAdded, this, &MainWindow::scheduleRoundtableRefresh);
     connect(m_radioModel, &RadioModel::sliceRemoved, this, &MainWindow::scheduleRoundtableRefresh);
@@ -20254,10 +20304,9 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
         if (hosting) {
             hosting->addOnPan(emptyPan);
         } else {
-            // Settings restore (2026-10-11): the slices made here at
-            // connect (not asked for by the operator) come back as they
-            // were saved, so receivers B to D return like A without a
-            // Core. A layout change or +RX still makes a new slice.
+            // A saved letter comes back whether or not the operator asked
+            // for the slice. addSliceImpl restores it. A letter with
+            // nothing saved still opens on the active slice.
             model->addSliceOnPan(emptyPan, !operatorRequested);
         }
     }

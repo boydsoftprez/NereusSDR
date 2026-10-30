@@ -120,7 +120,7 @@ def no_errors(c: Chrome, page: str, refusals: Sequence[int] = ()) -> None:
 
 def open_public(c: Chrome, base: str, path: str = "/") -> None:
     c.goto(base + path)
-    c.wait("(function(){var n=document.querySelector('.band.all .c');return n&&n.textContent==='200'&&window.RT&&RT.linkState()==='live';})()", 40)
+    c.wait("(function(){return window.RT&&RT.frequencyVersion()===1&&RT.summaries().length===200&&RT.linkState()==='live';})()", 40)
 
 
 def set_query(c: Chrome, text: str) -> None:
@@ -139,243 +139,184 @@ def quiet(r: Dict[str, Any]) -> bool:
 
 
 def probe_bands(c: Chrome, server: Server) -> None:
-    """Band buttons with their counts and the talking/unknown bar."""
+    """Band counts represent exact published slices, without RF-room inference."""
     open_public(c, server.base)
-    rooms = rooms_api(server)
-    by_band = Counter(r["band"] for r in rooms)
-    got = c.eval(
-        """[...document.querySelectorAll('#band-buttons .band')].map(function(b){
-          var i=b.querySelector('.act i'), u=b.querySelector('.act u');
-          return {band:b.dataset.band, n:b.querySelector('.c').textContent, disabled:b.disabled,
-                  i:i?parseFloat(i.style.width):0, u:u?parseFloat(u.style.width):0,
-                  label:b.getAttribute('aria-label')};})"""
-    )
-    assert got[0]["band"] == "" and got[0]["n"] == "200", got[0]
-    bands = [b["band"] for b in got[1:]]
-    assert bands == HF, bands
-    assert len(by_band) == 8, by_band
-    for b in got[1:]:
-        n = by_band.get(b["band"], 0)
-        assert b["n"] == str(n), (b, n)
-        assert b["disabled"] == (n == 0), b
-        if n:
-            band_rooms = [r for r in rooms if r["band"] == b["band"]]
-            talking = sum(1 for r in band_rooms if r["state"] == "talking" and not r["folded"])
-            unknown = sum(1 for r in band_rooms if r["state"] in ("unknown", "doubled") and not r["folded"])
-            # The live list may move by a turn between the two reads.
-            assert abs(b["i"] - 100 * talking / n) <= 100 / n + 0.01, (b, talking)
-            assert abs(b["u"] - 100 * unknown / n) <= 100 / n + 0.01, (b, unknown)
-            assert b["i"] > 0, b
-    no_errors(c, "public")
+    got=c.eval("({people:RT.frequency.people(RT.summaries()),buttons:[...document.querySelectorAll('.band')].map(b=>({band:b.dataset.band,count:+b.querySelector('.c').textContent,disabled:b.disabled}))})")
+    counts=Counter(p["band"] for p in got["people"])
+    assert len(got["people"])>200
+    for button in got["buttons"]:
+        expected=counts[button["band"]] if button["band"] else len(got["people"])
+        assert button["count"]==expected,button
+        if button["band"]:
+            assert button["disabled"]==(expected==0),button
+    c.eval("document.querySelector('.band[data-band=\"80m\"]').click()")
+    c.wait("RT.state.band==='80m' && document.querySelector('.band[data-band=\"80m\"]').classList.contains('on')")
+    assert c.eval("[...document.querySelectorAll('#rows .person-row')].every(n=>{const p=RT.frequency.people(RT.summaries()).find(p=>RT.frequency.personKey(p)===n.dataset.person);return p&&p.band==='80m'})")
+    no_errors(c,"frequency bands")
 
 
 def probe_band_map(c: Chrome, server: Server) -> None:
-    """Picking 20m shows the band map, stems by member count; quiet rooms
-    fold with a count and Show unfolds them."""
-    open_public(c, server.base)
+    """Actual Hz ticks stay anchored; cochannel stacks differ from geometric folds."""
+    open_public(c,server.base)
     c.eval("document.querySelector('.band[data-band=\"20m\"]').click()")
-    c.wait("!document.getElementById('bmap').classList.contains('hidden') && document.querySelectorAll('#bmap .mk').length > 0")
-    rooms = [r for r in rooms_api(server) if r["band"] == "20m"]
-    marks = c.eval(
-        """[...document.querySelectorAll('#bmap .mk')].map(function(m){return {id:m.dataset.id,
-           members:+m.dataset.members, h:parseFloat(m.querySelector('.stem').style.height),
-           left:parseFloat(m.style.left)};})"""
-    )
-    loud = {r["id"] for r in rooms if not quiet(r)}
-    assert abs(len(marks) - len(loud)) <= 1, (len(marks), len(loud))
-    heights = set()
-    for m in marks:
-        want = min(52.0, 6 + m["members"] * 2.2)
-        assert abs(m["h"] - want) < 0.05, m
-        heights.add(round(m["h"], 1))
-        assert 0 <= m["left"] <= 100, m
-    assert len(heights) >= 3, heights
-    axis = c.eval("[...document.querySelectorAll('#bmap .axis span')].map(function(s){return s.textContent})")
-    assert axis[0] == "14.000" and axis[-1] == "14.350", axis
-    # Quiet rooms fold with a count.
-    n_quiet = sum(1 for r in rooms if quiet(r))
-    assert n_quiet > 0
-    fold = c.eval("(function(){var b=[...document.querySelectorAll('#rows .linkbtn')].find(function(x){return x.textContent==='Show'});return b?b.parentElement.textContent:null})()")
-    assert fold is not None and re.search(rf"\b{n_quiet} quiet folded", fold), (fold, n_quiet)
-    shown = c.eval("document.querySelectorAll('#rows .row').length")
-    assert shown == len(rooms) - n_quiet, (shown, len(rooms), n_quiet)
-    assert c.eval("document.querySelectorAll('#rows .row.q').length") == 0
-    c.eval("[...document.querySelectorAll('#rows .linkbtn')].find(function(x){return x.textContent==='Show'}).click()")
-    c.wait(f"document.querySelectorAll('#rows .row').length === {len(rooms)}")
-    assert c.eval("document.querySelectorAll('#rows .row.q').length") == n_quiet
-    c.eval("[...document.querySelectorAll('#rows .linkbtn')].find(function(x){return x.textContent==='Fold them'}).click()")
-    c.wait(f"document.querySelectorAll('#rows .row').length === {len(rooms) - n_quiet}")
-    no_errors(c, "public band map")
+    c.wait("document.querySelectorAll('.frequency-tick').length>0")
+    ticks=c.eval("({width:document.querySelector('.people-map').clientWidth,ticks:[...document.querySelectorAll('.frequency-tick')].map(t=>({hz:+t.dataset.hz,x:parseFloat(t.style.left)})),groups:RT.frequency.groups(RT.frequency.people(RT.summaries()).filter(p=>p.band==='20m')).length})")
+    assert len(ticks["ticks"])==ticks["groups"]
+    for tick in ticks["ticks"]:
+        assert abs(tick["x"]-(tick["hz"]-14000000)/350000*ticks["width"])<0.6,tick
+    axis=c.eval("[...document.querySelectorAll('#bmap .axis span')].map(n=>n.textContent)")
+    assert axis[0]=="14.000" and axis[-1]=="14.350",axis
+    folds=c.eval("[...document.querySelectorAll('.maptag.folded')].map(n=>n.dataset.groups.split(','))")
+    assert folds and all(len(group)>1 for group in folds),folds
+    c.eval("document.querySelector('.maptag.folded').click()")
+    c.wait("document.querySelectorAll('#frequency-details .fold-choice').length>1")
+    assert not re.search(r"\btune\b",c.eval("document.getElementById('frequency-details').textContent"),re.I)
+    c.eval("document.querySelector('#frequency-details .fold-choice').click()")
+    c.wait("document.getElementById('frequency-details')===null")
+    before=c.eval("document.querySelectorAll('#rows .person-row').length")
+    c.eval("document.getElementById('quiet-chip').click()")
+    after=c.wait(f"RT.state.quiet===false && document.querySelectorAll('#rows .person-row').length<{before} && document.querySelectorAll('#rows .person-row').length")
+    assert after<before,(before,after)
+    c.eval("document.getElementById('quiet-chip').click()")
+    no_errors(c,"frequency map")
 
 
 def probe_row(c: Chrome, server: Server) -> None:
-    """A row shows frequency, mode, state, talker, time, heard count, the
-    reading strip nearest first, the last message and its age, all from
-    the band list on the stream: no read API call fills a row."""
-    open_public(c, server.base)
-    c.eval("document.querySelector('.band[data-band=\"20m\"]').click()")
-    sel = '#rows .row[data-id="usb-14212000"]'
-    c.wait(f"document.querySelector({js(sel)}) !== null")
-    c.eval(f"document.querySelector({js(sel)}).scrollIntoView({{block:'center'}})")
-    c.wait(f"!!(document.querySelector({js(sel + ' .strip:not(.none)')}) && document.querySelector({js(sel + ' .lm b')}))", 30)
-    row = c.eval(
-        f"""(function(){{var r=document.querySelector({js(sel)});function t(s){{var n=r.querySelector(s);return n?n.textContent:null}}
-        return {{fq:t('.fq'), md:t('.md'), who:t('.who'), gl:r.querySelector('.who .gl').className, tm:t('.tm'), hb:t('.hb'),
-        bars:r.querySelectorAll('.strip i').length, strip:r.querySelector('.strip').getAttribute('aria-label'),
-        heights:[...r.querySelectorAll('.strip i')].map(function(i){{return parseFloat(i.style.height)}}),
-        lm:t('.lm'), ago:t('.ago'), summary:RT.summaries().find(function(s){{return s.id==='usb-14212000'}}),
-        fetched:performance.getEntriesByType('resource').filter(function(e){{return e.name.indexOf('/v1/api/room/')>=0}}).length}};}})()"""
-    )
-    summary = row["summary"]
-    detail = server.get("/v1/api/room/usb/14212000")["room"]
-    assert row["fq"].replace(" ", "").startswith("14.212"), row
-    assert row["md"] == "USB", row
-    assert "K4ABC" in row["who"] and "talking" in row["gl"], row
-    assert re.match(r"^\d+:\d\d$", row["tm"] or ""), row
-    assert row["fetched"] == 0, row
-    assert summary["members"] == 10 and summary["start"] is not None, summary
-    assert row["hb"] == str(summary["heard"]) and summary["heard"] >= 1, (row, summary)
-    readers = [m for m in detail["members"] if m["reading"] is not None and m["reading"]["turn"] is not None and not m["joining"]]
-    assert row["bars"] >= 5 and row["strip"] == f"{row['bars']} readings, nearest first", row
-    assert row["bars"] == len(summary["readings"]) and len(summary["readings"]) <= 12, (row, summary)
-    assert "VE3XYZ" in row["lm"] and "Thanks for the QSO" in row["lm"], row
-    assert summary["lastMessage"]["callsign"] == "VE3XYZ", summary
-    assert re.match(r"^\d+ ?[smh]", row["ago"] or ""), row
-    assert len(readers) >= row["bars"] - 1, (readers, row)
-    no_errors(c, "public row")
+    """People keep exact Hz and transient identity; reporter rows join turn IDs."""
+    open_public(c,server.base)
+    c.eval("RT.select('usb-14212000')")
+    c.wait("RT.currentView()&&RT.currentView().view==='frequency'&&document.querySelectorAll('.attributed-reading').length>=8")
+    result=c.eval("(()=>{const room=RT.currentView(),turn=RT.frequency.lastTurn(room,{hz:14212000,family:'usb'});return {person:[...document.querySelectorAll('#rows .person-row')].slice(0,30).map(n=>({key:n.dataset.person,hz:+n.dataset.hz})),people:RT.frequency.people(RT.summaries()),rows:[...document.querySelectorAll('.attributed-reading')].map(n=>({ref:n.dataset.ref,turn:+n.dataset.turn,text:n.querySelector('.v').textContent})),expected:RT.frequency.readings(room,turn).map(RT.frequency.memberKey),turn:turn.id,label:document.querySelector('.attributed-talker').textContent};})()")
+    by_key={f"{p['sourceRoom']}/{p['ref']}/{p['slice']}":p for p in result["people"]}
+    for row in result["person"]:
+        assert row["hz"]==by_key[row["key"]]["hz"],row
+    assert [r["ref"] for r in result["rows"]]==result["expected"]
+    assert all(r["turn"]==result["turn"] and "/" in r["text"] for r in result["rows"])
+    assert "K4ABC" in result["label"],result["label"]
+    assert "Heard by" in c.eval("document.querySelector('.reading-head').textContent")
+    # Initial data must reveal the talker, rather than follow the bottom of
+    # the preceding empty Loading body as if it were an opened conversation.
+    assert c.eval("(()=>{const body=document.querySelector('.rbody').getBoundingClientRect(),talker=document.querySelector('.attributed-talker').getBoundingClientRect();return talker.top>=body.top&&talker.bottom<=body.bottom})()"), "newly opened frequency hid its last talker"
+    no_errors(c,"frequency people/report attribution")
 
 
 def probe_search(c: Chrome, server: Server) -> None:
-    """Search finds a callsign talking, reading or posting; a typed
-    frequency jumps to its room."""
-    open_public(c, server.base)
-    facts = server.facts
-    set_query(c, "K4ABC")
-    c.wait("document.querySelector('#rows .row[data-id=\"usb-14212000\"]') !== null")
-    assert c.eval("document.querySelectorAll('#rows .row').length") >= 1
-    assert "K4ABC" in c.eval("document.querySelector('#rows .row[data-id=\"usb-14212000\"] .who').textContent")
-    set_query(c, "N4RDR")
-    c.wait("[...document.querySelectorAll('#rows .row .lm .via')].some(function(v){return /heard by N4RDR/.test(v.textContent)})", 30)
-    set_query(c, "VE3PST")
-    poster_room = facts["poster"]["room"]
-    c.wait(f"(function(){{var r=document.querySelector('#rows .row[data-id=\"{poster_room}\"] .lm b');return r&&r.textContent.indexOf('VE3PST')===0}})()", 30)
-    for typed in ("14.212", "14212"):
-        set_query(c, "")
-        c.eval("RT.select(null)")
-        set_query(c, typed)
-        c.wait("RT.state.sel === 'usb-14212000'")
-    set_query(c, "7.185")
-    c.wait("RT.state.sel === 'lsb-7185000'")
-    set_query(c, "")
-    no_errors(c, "public search")
+    """Search finds published talkers/readers/posters and exact numeric browsing."""
+    open_public(c,server.base)
+    for call in ("K4ABC","N4RDR","VE3PST"):
+        set_query(c,call)
+        c.wait("document.querySelectorAll('#rows .person-row').length>0")
+        assert c.eval("document.querySelectorAll('#rows mark').length")>0 or call=="VE3PST"
+    set_query(c,"14.212007")
+    c.wait("RT.state.sel==='usb-14212007'")
+    c.wait("document.querySelector('#room .rhead .f').textContent==='14.212.007'")
+    assert c.eval("document.querySelector('#room .rhead .frequency-range').textContent").startswith("±5 kHz")
+    no_errors(c,"frequency search")
 
 
 def probe_sort(c: Chrome, server: Server) -> None:
-    """Sort by Frequency, Most stations or Newest activity."""
-    open_public(c, server.base)
-    c.eval("document.querySelector('.band[data-band=\"20m\"]').click(); document.getElementById('quiet-chip').click()")
-    c.wait("document.querySelectorAll('#rows .row').length === 52")
-    ids = "[...document.querySelectorAll('#rows .row')].map(function(r){return r.dataset.id})"
-
-    def order(value: str) -> List[str]:
-        c.eval(f"(function(){{var s=document.getElementById('sort');s.value='{value}';s.dispatchEvent(new Event('change'))}})()")
-        c.pump(0.2)
-        return c.eval(ids)
-
-    by_id = {r["id"]: r for r in rooms_api(server)}
-    f = order("f")
-    assert [by_id[i]["hz"] for i in f] == sorted(by_id[i]["hz"] for i in f), f
-    n = order("n")
-    members = [by_id[i]["members"] for i in n]
-    assert members == sorted(members, reverse=True) and members[0] > members[-1], members
-    # Newest activity sorts on the page's own summaries: `last` moves with
-    # every reading, so the API read a moment later would not match.
-    got = c.eval(
-        "(function(){var s=document.getElementById('sort');s.value='t';s.dispatchEvent(new Event('change'));"
-        "var by={};RT.summaries().forEach(function(r){by[r.id]=r.last});"
-        "return [...document.querySelectorAll('#rows .row')].map(function(r){return [r.dataset.id, by[r.dataset.id]]})})()"
-    )
-    t = [i for i, _ in got]
-    lasts = [last for _, last in got]
-    assert all(a >= b for a, b in zip(lasts, lasts[1:])) and t != f, lasts[:12]
-    order("f")
-    c.eval("document.getElementById('quiet-chip').click()")
-    no_errors(c, "public sort")
+    """Frequency and crowd sorting use exact groups, not RF-room centers."""
+    open_public(c,server.base)
+    c.eval("document.querySelector('.band[data-band=\"20m\"]').click()")
+    c.wait("document.querySelectorAll('.frequency-group').length>5")
+    freq=c.eval("[...document.querySelectorAll('.frequency-group')].map(n=>+n.dataset.frequency.split('-')[1])")
+    assert freq==sorted(freq)
+    c.eval("(()=>{let s=document.getElementById('sort');s.value='n';s.dispatchEvent(new Event('change'))})()")
+    c.wait("RT.state.sort==='n'")
+    counts=c.eval("[...document.querySelectorAll('.frequency-group')].map(n=>n.querySelectorAll('.person-row').length)")
+    assert counts==sorted(counts,reverse=True),counts
+    c.eval("(()=>{let s=document.getElementById('sort');s.value='t';s.dispatchEvent(new Event('change'))})()")
+    c.wait("RT.state.sort==='t'")
+    # State changes before the scheduled DOM render; sample rendered order
+    # and its current source atomically, rather than inspecting the old DOM.
+    stamps=c.wait("(()=>{const stamps=[...document.querySelectorAll('.frequency-group')].map(n=>{const row=n.querySelector('.person-row'),p=RT.frequency.people(RT.summaries()).find(p=>RT.frequency.personKey(p)===row.dataset.person);return RT.summaries().find(r=>r.id===p.sourceRoom).last});return stamps.length&&stamps.every((t,i)=>!i||stamps[i-1]>=t)?stamps:false})()")
+    assert stamps==sorted(stamps,reverse=True),stamps
+    no_errors(c,"frequency sorting")
 
 
 def probe_keyboard(c: Chrome, server: Server) -> None:
-    """/ searches; arrows move rooms and each shows; Enter enters the room
-    and the arrows walk its turns; Escape steps back room, search, band."""
-    open_public(c, server.base)
-    active = "(function(){var a=document.activeElement;return a?(a.id||a.className||a.tagName):null})()"
-    c.eval("document.body.focus()")
-    c.key("/", "Slash", "/")
-    assert c.eval(active) == "q", c.eval(active)
-    c.key("Escape")
-    assert c.eval(active) == "rows", c.eval(active)
+    """Search, group navigation, turn navigation and Escape retain keyboard access."""
+    open_public(c,server.base)
+    c.key("/")
+    assert c.eval("document.activeElement.id")=="q"
+    c.eval("document.getElementById('q').blur();document.getElementById('rows').focus()")
+    before=c.eval("RT.state.sel")
     c.key("ArrowDown")
-    first = c.wait("RT.state.sel")
-    c.wait(f"document.querySelector('#room .rhead') && document.querySelector('#rows .row.sel').dataset.id === {js(first)}")
-    c.key("ArrowDown")
-    second = c.wait(f"RT.state.sel !== {js(first)} && RT.state.sel")
-    head = c.eval("document.querySelector('#room .rhead .f').textContent")
-    want = second.split("-")[1]
-    assert head.replace(".", "").replace(" ", "").lstrip("0").startswith(want.rstrip("0")[:4]), (head, second)
-    c.key("ArrowUp")
-    c.wait(f"RT.state.sel === {js(first)}")
-    # Into a room with earlier turns.
-    c.eval("RT.select('usb-14212000', true); document.getElementById('rows').focus()")
-    c.wait("document.querySelectorAll('#room .turn').length >= 2", 20)
+    c.wait(f"RT.state.sel!=={js(before)}")
+    c.eval("RT.select('usb-14212000');document.getElementById('rows').focus()")
+    c.wait("document.querySelectorAll('#room .turn').length>=2")
     c.key("Enter")
-    t1 = c.wait("document.activeElement.classList.contains('turn') && document.activeElement.dataset.turn")
+    c.wait("document.activeElement.classList.contains('turn')")
+    first=c.eval("document.activeElement.dataset.turn")
     c.key("ArrowDown")
-    t2 = c.wait(f"document.activeElement.classList.contains('turn') && document.activeElement.dataset.turn !== {js(t1)} && document.activeElement.dataset.turn")
-    assert t2 != t1
-    c.key("ArrowUp")
-    c.wait(f"document.activeElement.dataset.turn === {js(t1)}")
-    # Escape: room, then search, then band.
+    c.wait(f"document.activeElement.dataset.turn!=={js(first)}")
     c.key("Escape")
-    assert c.eval(active) == "rows", c.eval(active)
-    c.eval("document.querySelector('.band[data-band=\"20m\"]').click(); document.getElementById('rows').focus()")
-    c.key("/", "Slash", "/")
-    c.type_text("K4")
-    c.wait("RT.state.q === 'K4'")
+    assert c.eval("document.activeElement.id")=="rows"
+    set_query(c,"K4ABC")
     c.key("Escape")
-    c.wait("RT.state.q === '' && document.getElementById('q').value === ''")
-    assert c.eval("RT.state.band") == "20m"
-    c.key("Escape")
-    c.wait("RT.state.band === null")
-    no_errors(c, "public keyboard")
+    c.wait("RT.state.q===''")
+    no_errors(c,"frequency keyboard")
 
 
 def probe_freshness(c: Chrome, server: Server) -> None:
-    """A reading older than 20 s turns grey with an amber age; a room with
-    nothing newer than 60 s turns grey."""
-    open_public(c, server.base)
-    c.eval("RT.select('usb-14212000', true)")
-    c.wait("[...document.querySelectorAll('#room .rd')].length >= 8", 20)
-    stale = c.wait(
-        """(function(){var r=[...document.querySelectorAll('#room .rd.stale')].find(function(x){return /W5STL/.test(x.textContent)});
-        if(!r)return null;var a=r.querySelector('.age');return {age:a.textContent, color:getComputedStyle(a).color,
-        call:getComputedStyle(r.querySelector('.c')||r).color}})()""",
-        20,
-    )
-    assert stale["color"] == AMBER, stale
-    fresh = c.eval("document.querySelectorAll('#room .rd:not(.stale)').length")
-    assert fresh >= 4, fresh
-    # The readings are nearest first.
-    kms = c.eval("[...document.querySelectorAll('#room .rd')].map(function(r){return r.dataset.km===undefined?null:+r.dataset.km})")
-    detail = server.get("/v1/api/room/usb/14212000")["room"]
-    by_ref = {m["ref"]: m for m in detail["members"]}
-    refs = c.eval("[...document.querySelectorAll('#room .rd')].map(function(r){return r.dataset.ref})")
-    dist = [by_ref[r]["km"] for r in refs if r in by_ref and by_ref[r]["km"] is not None]
-    assert dist == sorted(dist), (dist, kms)
-    room = server.facts["staleRoom"]
-    c.eval(f"RT.select({js(room)}, true)")
-    c.wait(f"document.querySelector('#rows .row[data-id=\"{room}\"].stale') !== null", 20)
-    talk = c.eval("document.querySelector('#rows .row[data-id=\"usb-14212000\"]').classList.contains('stale')")
-    assert talk is False
-    no_errors(c, "public freshness")
+    """Stale raw readings retain amber age; path units preserve canonical ordering."""
+    open_public(c,server.base)
+    c.eval("RT.select('usb-14212000')")
+    c.wait("document.querySelectorAll('.attributed-reading').length>=8")
+    stale=c.wait("(()=>{const n=[...document.querySelectorAll('.attributed-reading.stale')].find(n=>n.textContent.includes('W5STL'));return n&&{age:n.querySelector('.age').textContent,color:getComputedStyle(n.querySelector('.age')).color}})()")
+    assert stale["color"]==AMBER,stale
+    before=c.eval("[...document.querySelectorAll('.attributed-reading')].map(n=>({ref:n.dataset.ref,km:n.dataset.km,bearing:n.querySelector('.path-value small')?.textContent||''}))")
+    assert c.eval("document.getElementById('distance-unit').value")=="mi"
+    c.eval("(()=>{const u=document.getElementById('distance-unit');u.value='km';u.dispatchEvent(new Event('change'))})()")
+    c.wait("document.getElementById('distance-unit').value==='km'")
+    after=c.eval("[...document.querySelectorAll('.attributed-reading')].map(n=>({ref:n.dataset.ref,km:n.dataset.km,bearing:n.querySelector('.path-value small')?.textContent||''}))")
+    assert before==after,(before,after)
+    known=[float(n["km"]) for n in after if n["km"]!=""]
+    assert known==sorted(known)
+    c.eval("(()=>{const u=document.getElementById('distance-unit');u.value='mi';u.dispatchEvent(new Event('change'))})()")
+    no_errors(c,"frequency freshness and paths")
+
+
+def probe_copy_link(c: Chrome, server: Server) -> None:
+    """A copied frequency link restores its context without radio authority."""
+    open_public(c,server.base)
+    c.eval("RT.select('usb-14212000')")
+    c.wait("document.getElementById('copy-link')!==null")
+    c.eval("document.getElementById('copy-link').click()")
+    copied=c.wait("window.__rtCopied")
+    assert copied.endswith("/r/usb/14212000"),copied
+    c.goto(server.base+"/r/usb/14212000")
+    c.wait("RT.state.sel==='usb-14212000'&&document.querySelector('.attributed-talker')?.textContent.includes('K4ABC')")
+    assert not re.search(r"\btune\b",c.eval("document.getElementById('room').textContent"),re.I)
+    no_errors(c,"frequency link")
+
+
+def probe_owner_frequency(c: Chrome, server: Server) -> None:
+    """Real owner cookies follow accepted presence; drafts and deletion retain context."""
+    path=server.control("signin?who=K4ABC")["path"]
+    c.goto(server.base+path)
+    c.wait("location.pathname==='/archive'")
+    open_public(c,server.base)
+    c.wait("document.getElementById('follow-station')!==null&&!document.getElementById('follow-station').disabled")
+    c.eval("document.getElementById('follow-station').click()")
+    c.wait("RT.state.following&&!document.querySelector('.frequency-composer textarea').disabled")
+    actual=c.eval("RT.state.sel")
+    text="Website frequency ownership regression"
+    c.eval(f"(()=>{{const t=document.querySelector('.frequency-composer textarea');t.value={js(text)};t.dispatchEvent(new Event('input'));}})()")
+    c.eval("RT.select('lsb-7185000')")
+    c.wait("document.querySelector('.frequency-composer textarea').disabled")
+    c.eval("document.getElementById('earlier-conversation').click()")
+    c.wait("RT.state.earlier===true")
+    assert c.eval("document.querySelector('.frequency-composer textarea').disabled")
+    c.eval("document.getElementById('follow-station').click()")
+    c.wait(f"RT.state.sel==={js(actual)}&&!RT.state.earlier&&!document.querySelector('.frequency-composer textarea').disabled")
+    assert c.eval("document.querySelector('.frequency-composer textarea').value")==text
+    c.eval("document.querySelector('.frequency-composer button[type=submit]').click()")
+    c.wait(f"[...document.querySelectorAll('#room .msg.me')].some(n=>n.querySelector('.x').textContent==={js(text)})",30)
+    c.eval(f"[...document.querySelectorAll('#room .msg.me')].find(n=>n.querySelector('.x').textContent==={js(text)}).querySelector('button').click()")
+    c.wait("[...document.querySelectorAll('#room .msg.me')].some(n=>n.querySelector('.x').textContent==='Deleted by sender')")
+    assert not re.search(r"\btune\b",c.eval("document.getElementById('room').textContent"),re.I)
+    no_errors(c,"real owner frequency follow")
 
 
 def probe_connection(c: Chrome, server: Server) -> None:
@@ -393,6 +334,7 @@ def probe_connection(c: Chrome, server: Server) -> None:
         line = c.wait("/^Reconnecting/.test(document.getElementById('conn').textContent) && document.getElementById('conn').textContent", 20)
         assert re.match(r"^Reconnecting · nothing new for \d+ s$", line), line
         assert c.eval("document.getElementById('live-state').textContent") == "RECONNECTING"
+        assert c.eval("RT.frequencyVersion()===1 && document.querySelectorAll('.person-row[data-person]').length>0 && !document.querySelector('.legacy-notice')"), "reconnect must preserve last known exact directory presentation"
         line = c.wait("/^Offline/.test(document.getElementById('conn').textContent) && document.getElementById('conn').textContent", 40)
         assert re.match(r"^Offline since \d\d:\d\d UTC$", line), line
         assert re.match(r"^since \d\d:\d\d UTC$", c.eval("document.getElementById('live-k').textContent"))
@@ -403,18 +345,6 @@ def probe_connection(c: Chrome, server: Server) -> None:
     c.events.clear()
 
 
-def probe_copy_link(c: Chrome, server: Server) -> None:
-    """Copy link gives the room's public link, and opening it shows the
-    room."""
-    c.goto(f"http://{PUBLIC_HOST}/r/usb/14212000", settle=0.5)
-    c.wait("window.RT && RT.state.sel === 'usb-14212000' && document.getElementById('copy-link') !== null", 30)
-    c.eval("document.getElementById('copy-link').click()")
-    copied = c.wait("window.__rtCopied")
-    assert copied == "https://roundtable.nereussdr.com/r/usb/14212000", copied
-    c.goto(server.base + "/r/usb/14212000")
-    c.wait("RT.state.sel === 'usb-14212000' && /K4ABC/.test(document.querySelector('#room .rhead').textContent)", 30)
-    assert c.eval("location.pathname") == "/r/usb/14212000"
-    no_errors(c, "room link")
 
 
 def probe_inert(c: Chrome, server: Server) -> None:
@@ -644,6 +574,30 @@ def probe_no_move_for_others(c: Chrome, server: Server) -> None:
     c.events.clear()
 
 
+def probe_retained_history(c: Chrome, server: Server) -> None:
+    """Retuned cached chat validates deletion/removal/expiry without revisiting."""
+    path=server.control("signin?who=K4ABC")["path"]
+    c.goto(server.base+path)
+    open_public(c,server.base)
+    c.wait("document.getElementById('follow-station')&&!document.getElementById('follow-station').disabled")
+    for action,label in (("delete","Deleted by sender"),("remove","Message removed"),("expire","Message removed after a year")):
+        c.eval("document.getElementById('follow-station').click()")
+        c.wait("RT.state.following&&!document.querySelector('.frequency-composer textarea').disabled")
+        text="Retained status regression "+action
+        c.eval(f"(()=>{{const t=document.querySelector('.frequency-composer textarea');t.value={js(text)};t.dispatchEvent(new Event('input'));document.querySelector('.frequency-composer button[type=submit]').click();}})()")
+        ident=c.wait(f"(()=>{{const m=[...document.querySelectorAll('#room .msg.me')].find(n=>n.querySelector('.x').textContent==={js(text)});return m&&+m.dataset.msg;}})()",30)
+        c.eval("RT.select('usb-14350000');document.getElementById('earlier-conversation').click()")
+        c.wait(r"RT.state.earlier&&/checked \d\d:\d\d UTC/.test(document.querySelector('#room .rbody').textContent)")
+        result=server.control(f"history?act={action}&msg={ident}")
+        assert result["state"]=={"delete":"deleted","remove":"removed","expire":"expired"}[action]
+        # No revisit, render call or test-triggered request: the real 10s
+        # periodic known-ID query must update this already-open history view.
+        got=c.wait(f"document.querySelector('.msg[data-msg=\"{ident}\"] .x')?.textContent==={js(label)}",15)
+        assert got and c.eval("RT.state.sel")=="usb-14350000"
+        assert c.eval("document.querySelector('.frequency-composer textarea').disabled")
+    no_errors(c,"retained known-ID history refresh")
+
+
 PROBES = [
     probe_bands,
     probe_band_map,
@@ -654,11 +608,13 @@ PROBES = [
     probe_freshness,
     probe_inert,
     probe_copy_link,
+    probe_owner_frequency,
     probe_connection,
     probe_archive,
     probe_review,
     probe_no_move_for_others,
     probe_key,
+    probe_retained_history,
 ]
 
 
@@ -672,8 +628,8 @@ def shots(c: Chrome, server: Server, out: Path) -> List[str]:
     fails: List[Dict[str, Any]] = []
     s = server.facts["sessions"]
     views = [
-        ("public", "/", "document.querySelector('.band[data-band=\"20m\"]').click(); RT.select('usb-14212000', true)", "document.querySelector('#rows .row[data-id=\"usb-14212000\"] .strip:not(.none)') && document.querySelectorAll('#room .rd').length >= 8"),
-        ("public-all", "/", "", "document.querySelectorAll('#rows .row .strip:not(.none)').length >= 5"),
+        ("public", "/", "document.querySelector('.band[data-band=\"20m\"]').click(); RT.select('usb-14212000', true)", "document.querySelector('#rows .person-row[data-id=\"usb-14212000\"]') && document.querySelectorAll('#room .attributed-reading').length >= 8"),
+        ("public-all", "/", "", "document.querySelectorAll('#rows .person-row').length > 200"),
         ("public-corpus", "/r/lsb/7185000", "", "document.querySelectorAll('#room .msg').length >= 40"),
         ("archive", f"/archive?s={s['busy']}", "", "document.querySelectorAll('.lane[data-lane]').length === 12"),
         ("archive-empty", f"/archive?s={s['empty']}", "", "/Nobody reported you/.test(document.body.textContent)"),

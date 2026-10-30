@@ -182,6 +182,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Negotiate frequency chat only with version2 peers.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion(),
 //               peerGetsRoundtable(), the `roundtable` object, the
 //               roundtableRooms and roundtableRoom:<id> streams and the
@@ -1521,7 +1523,7 @@ public:
     int stationCatVersion() const;
     // Roundtable plan Task 11: 1 on a Core that runs Roundtable (its own
     // radio model's RoundtableClient) and keeps its streams.
-    int stationRoundtableVersion() const { return m_roundtableOn ? 1 : 0; }
+    int stationRoundtableVersion() const { return m_roundtableOn ? 2 : 0; }
     /// Roundtable plan Task 11: the room streams' sweep as if `msLater`
     /// had passed (a stream no slice is in and no device read for 10
     /// minutes goes).

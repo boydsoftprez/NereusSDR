@@ -6,6 +6,9 @@
 // 2026-10-25: Roundtable plan Task 18, Roundtable's tags along the foot of
 // the spectrum and the swipes' edge zones. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-10-30: Read exact-frequency cochannel reports without tuning, through
+// the existing Roundtable sheet. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import Combine
 import NereusBand
 import NereusLink
@@ -299,8 +302,18 @@ struct BandGestureLayer: View {
                                    hzPerPoint: geometry.spanHz / Double(max(1, geometry.size.width)),
                                    top: layout.strip.minY - RoundtableTagLayout.footGap - RoundtableTagLayout.height,
                                    tickFoot: layout.strip.minY,
-                                   flagRects: rects + placements.filter(\.isFolded).map(\.rect), keyed: keyed,
-                                   sliceLetter: slices.active?.slice.letter ?? "A") { room in
+                                   flagRects: rects + placements.filter(\.isFolded).map(\.rect) + [arrows]
+                                    + (sideways ? [CGRect(x: BandColumnLayout.origin, y: BandColumnLayout.origin,
+                                        width: BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: geometry.size.height)),
+                                        height: BandColumnLayout.columnHeight(rows: BandColumnLayout.buttonCount
+                                            / BandColumnLayout.columns(bandHeight: geometry.size.height)))] : []), keyed: keyed,
+                                   sliceLetter: slices.active?.slice.letter ?? "A",
+                                   readReports: { context in
+                    Task {
+                        await roundtable.read(context)
+                        openRoundtable?(slices.activeSliceId ?? entries.first?.id ?? 0)
+                    }
+                }) { room in
                     // As the sheet's Tune here: the active slice to the room, then back to its own room.
                     slices.tap(to: Double(room.hz))
                     Task { await roundtable.backToSlice() }
