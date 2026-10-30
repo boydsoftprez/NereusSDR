@@ -40,6 +40,26 @@ to each other as before.
 
 ### Roundtable and the final release integrations
 
+- Roundtable follows people at exact frequencies across desktop, iPhone and
+  website. Cochannel callsigns stay in separate rows, with the last talker
+  and each **Heard by** reporter clearly attributed. Reports show their raw
+  dBm and age; distance defaults to miles with kilometres and true bearing
+  available. Unknown and doubled RF do not acquire an invented individual
+  signal report.
+- Frequency chat reaches people within 5 kHz in the same mode family.
+  Reading stays separate from tuning, and received history keeps its sender
+  frequency and time when tuning away. Bounded history refresh preserves
+  deletion, moderation and expiry across tuning and reconnects; offline
+  history is visibly stale and the original slice draft stays available.
+- Creating a receiver restores its saved preferences while preserving
+  explicit creation choices. The clock can shrink in a container without
+  forcing a scrollbar.
+  ([#697](https://github.com/boydsoftprez/NereusSDR/pull/697),
+  [#706](https://github.com/boydsoftprez/NereusSDR/pull/706))
+- The latest phone waterfall correction preserves display pacing and labels
+  short return-from-background gaps. Moving the passband or pan does not
+  manufacture missing-data rows.
+  ([#705](https://github.com/boydsoftprez/NereusSDR/pull/705))
 - Roundtable shows who hears the station speaking on a frequency, with each
   listener's S-meter reading, distance and tuning offset. It works on every
   mode, on the desktop, iPhone and iPad, and the public Roundtable page.

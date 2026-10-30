@@ -95,7 +95,7 @@ import Testing
         #expect((capabilities[85]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[109]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[116]["value"] as? NSNumber)?.intValue == 2)
-        #expect((capabilities[117]["value"] as? NSNumber)?.intValue == 1)
+        #expect((capabilities[117]["value"] as? NSNumber)?.intValue == 2)
         #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 119)
         for entry in expected {
             try #require(capabilities.count > entry.index)

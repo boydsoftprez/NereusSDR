@@ -81,6 +81,16 @@ do not establish that physical-input observation.
   connection. On first use, choose **Stay hidden** or **Go live** in the
   existing public-visibility prompt; starting the connection does not make
   that choice for you.
+- **Roundtable follows people and frequency.** Desktop, phone and website show
+  exact-frequency people and cochannel callsign stacks, with separately attributed
+  last-talker reports. New chat is shared within 5 kHz in the same mode family;
+  earlier received messages keep their frequency/time after tuning. Read or browse
+  without tuning, and use the explicit Tune action when desired. Distance defaults
+  to miles, with kilometres and true-bearing display options. Deleted, moderated
+  and expired messages refresh in retained history; disconnected history is marked
+  stale. Use matching Core, client and server updates for these frequency views;
+  older servers are identified as legacy room servers. See the
+  [combined bench checklist](bench-2026.10.2.md#roundtable-on-desktop-iphone-and-website).
 - **Tuning on the pan.** You can grab a receiver anywhere inside its
   passband, or near its center line, and drag it. Dragging a VFO flag sideways
   tunes its slice. Two-finger trackpad tuning no longer coasts after your

@@ -131,7 +131,7 @@ import Testing
         #expect(await rig.session.diagnosticsSnapshot().serviceRank == 1)
         let (raw, lease) = try await rig.candidate()
         let move = startMove(rig, lease)
-        for _ in 0..<50_000 { if raw.messages.count >= 2 { break }; await Task.yield() }
+        await raw.waitForMessages(2)
         _ = try #require(raw.messages.count >= 2)
         await rig.old.deliver(.pathSwitch)
         #expect(await move.value)

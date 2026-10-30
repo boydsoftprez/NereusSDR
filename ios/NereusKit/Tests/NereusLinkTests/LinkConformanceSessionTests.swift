@@ -334,7 +334,9 @@ import Testing
                             // These producers pin the version-1 form; the phone also handles 2 and 3.
                             #expect(version == 1, "\(fixture.id): \(name)")
                             #expect(LinkFeatures.app[name] == 3, "\(fixture.id): \(name)")
-                        } else if name == "setupDescription" || name == "txEqCurve" {
+                        } else if name == "setupDescription" || name == "txEqCurve" || name == "roundtable" {
+                            // Frozen producers may declare room-only Roundtable 1;
+                            // the app additionally supports frequency capability 2.
                             #expect((LinkFeatures.app[name] ?? 0) >= version, "\(fixture.id): \(name)")
                         } else {
                             #expect(LinkFeatures.app[name] == version, "\(fixture.id): \(name)")
