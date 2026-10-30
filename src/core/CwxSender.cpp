@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Add passive test-only cold first-edge boundary tracing for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Propose unused mailbox RED scaffolding for J.J. Boyd
@@ -570,7 +572,22 @@ CwxSender::CwxSender(QObject* parent)
 }
 
 CwxSender::CwxSender(Clock clock, Sleeper sleeper, QObject* parent)
+#ifdef NEREUS_BUILD_TESTS
+    : CwxSender(std::move(clock), std::move(sleeper), nullptr, parent)
+{
+}
+
+CwxSender::CwxSender(FirstEdgeTraceForTest& trace, QObject* parent)
+    : CwxSender(Clock{}, Sleeper{}, &trace, parent)
+{
+}
+
+CwxSender::CwxSender(Clock clock, Sleeper sleeper, FirstEdgeTraceForTest* trace, QObject* parent)
+#endif
     : QObject(parent)
+#ifdef NEREUS_BUILD_TESTS
+    , m_firstEdgeTraceForTest(trace)
+#endif
     , m_clock(std::move(clock))
     , m_sleeper(std::move(sleeper))
     , m_mbits(buildMbits())
@@ -894,11 +911,11 @@ void CwxSender::wakeWorker() noexcept
     m_cv.notify_all();
 }
 
-void CwxSender::parkWorker(TimePoint until, bool timed)
+bool CwxSender::parkWorker(TimePoint until, bool timed)
 {
     if (timed) {
         if (!m_interrupt.try_acquire_until(until)) {
-            return;
+            return false;
         }
     } else {
         m_interrupt.acquire();
@@ -907,6 +924,7 @@ void CwxSender::parkWorker(TimePoint until, bool timed)
     // this clear is included in that inspection; one after owns a permit.
     m_wake.store(true, std::memory_order_release);
     m_interruptPending.clear(std::memory_order_release);
+    return true;
 }
 
 #ifdef NEREUS_BUILD_TESTS
@@ -936,6 +954,11 @@ CwxSender::~CwxSender()
 
 void CwxSender::run()
 {
+#ifdef NEREUS_BUILD_TESTS
+    if (m_firstEdgeTraceForTest) {
+        m_firstEdgeTraceForTest->runEntered = std::chrono::steady_clock::now();
+    }
+#endif
     nameThisThread();
     // As the P1 EP2 sender: placed by ThreadPlacement where it manages
     // thread priority (nereusd), otherwise raised for latency.
@@ -959,7 +982,17 @@ void CwxSender::run()
     setCwxTimeConstraintPolicy();
 #endif
 
+#ifdef NEREUS_BUILD_TESTS
+    if (m_firstEdgeTraceForTest) {
+        m_firstEdgeTraceForTest->priorityReady = std::chrono::steady_clock::now();
+    }
+#endif
     std::unique_lock<std::mutex> lock(m_mutex);
+#ifdef NEREUS_BUILD_TESTS
+    if (m_firstEdgeTraceForTest) {
+        m_firstEdgeTraceForTest->firstLocked = std::chrono::steady_clock::now();
+    }
+#endif
     while (!m_quit) {
         consumeRemoteRequestsLocked();
         if ((!m_ticking && !m_keyHeld) || (m_remotePaused && m_heldEpoch == 0)) {
@@ -980,7 +1013,21 @@ void CwxSender::run()
             releaseKeyHeldLocked();
             continue;
         }
+#ifdef NEREUS_BUILD_TESTS
+        FirstEdgeTraceForTest::Tick* tick = nullptr;
+        if (m_firstEdgeTraceForTest
+            && m_firstEdgeTraceForTest->tickCount < m_firstEdgeTraceForTest->ticks.size()) {
+            tick = &m_firstEdgeTraceForTest->ticks[m_firstEdgeTraceForTest->tickCount++];
+            tick->entered = std::chrono::steady_clock::now();
+            tick->deadline = m_nextTick;
+        }
+#endif
         tickLocked();
+#ifdef NEREUS_BUILD_TESTS
+        if (tick) {
+            tick->returned = std::chrono::steady_clock::now();
+        }
+#endif
     }
     lock.unlock();
 
@@ -997,28 +1044,80 @@ void CwxSender::run()
 void CwxSender::preciseSleepUntil(TimePoint until)
 {
     using std::chrono::steady_clock;
+#ifdef NEREUS_BUILD_TESTS
+    FirstEdgeTraceForTest::Sleep* sleep = nullptr;
+    if (m_firstEdgeTraceForTest && m_firstEdgeTraceForTest->tickCount < 2) {
+        if (m_firstEdgeTraceForTest->sleepCount < m_firstEdgeTraceForTest->sleeps.size()) {
+            sleep = &m_firstEdgeTraceForTest->sleeps[m_firstEdgeTraceForTest->sleepCount++];
+            sleep->entered = steady_clock::now();
+            sleep->deadline = until;
+        } else {
+            ++m_firstEdgeTraceForTest->sleepsDropped;
+        }
+    }
+    const auto traceReturn = [sleep]() {
+        if (sleep) {
+            sleep->returned = steady_clock::now();
+        }
+    };
+#endif
     m_wake.store(false, std::memory_order_release);
     const TimePoint coarse = until - kCoarseMargin;
     if (steady_clock::now() < coarse) {
+#ifdef NEREUS_BUILD_TESTS
+        if (sleep) {
+            sleep->coarseEntered = steady_clock::now();
+        }
+        const bool acquired = parkWorker(coarse, true);
+        if (sleep) {
+            sleep->coarseReturned = steady_clock::now();
+            sleep->coarseAcquired = acquired;
+        }
+#else
         parkWorker(coarse, true);
+#endif
         if (m_wake.load(std::memory_order_acquire)
             || (m_remoteRequests.load(std::memory_order_acquire) & quint64{3}) != 0) {
+#ifdef NEREUS_BUILD_TESTS
+            traceReturn();
+#endif
             return;
         }
     }
     while (!m_wake.load(std::memory_order_acquire)) {
         const TimePoint now = steady_clock::now();
         if (now >= until) {
+#ifdef NEREUS_BUILD_TESTS
+            traceReturn();
+#endif
             return;
         }
         const auto left = until - now;
         if (left > kSpinWindow) {
+#ifdef NEREUS_BUILD_TESTS
+            if (sleep) {
+                sleep->lastNapEntered = steady_clock::now();
+            }
+#endif
             shortNap(std::chrono::duration_cast<std::chrono::microseconds>(
                 std::min<steady_clock::duration>(left - kSpinWindow, kNapMax)));
+#ifdef NEREUS_BUILD_TESTS
+            if (sleep) {
+                sleep->lastNapReturned = steady_clock::now();
+            }
+#endif
         } else {
+#ifdef NEREUS_BUILD_TESTS
+            if (sleep && sleep->yieldEntered == TimePoint{}) {
+                sleep->yieldEntered = steady_clock::now();
+            }
+#endif
             std::this_thread::yield();
         }
     }
+#ifdef NEREUS_BUILD_TESTS
+    traceReturn();
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -1240,6 +1339,11 @@ void CwxSender::startTickingLocked()
     m_ticking = true;
     m_currentDelta = 0;
     m_nextTick = m_clock();
+#ifdef NEREUS_BUILD_TESTS
+    if (m_firstEdgeTraceForTest && m_firstEdgeTraceForTest->anchor == TimePoint{}) {
+        m_firstEdgeTraceForTest->anchor = m_nextTick;
+    }
+#endif
     setSendingLocked(true);
     m_wake.store(true, std::memory_order_release);
     wakeWorker();
@@ -1569,12 +1673,22 @@ bool CwxSender::admitRemoteLocked(quint32 epoch, const RemoteAdmission& admit, b
 
 bool CwxSender::sendTextWithEpoch(const QString& text, quint32 epoch, const RemoteAdmission& admit)
 {
+#ifdef NEREUS_BUILD_TESTS
+    if (m_firstEdgeTraceForTest) {
+        m_firstEdgeTraceForTest->admissionEntered = std::chrono::steady_clock::now();
+    }
+#endif
     const QString words = gateWords();
     if (!words.isEmpty()) {
         emit refused(words);
         return false;
     }
     std::unique_lock<std::mutex> lock(m_mutex);
+#ifdef NEREUS_BUILD_TESTS
+    if (m_firstEdgeTraceForTest) {
+        m_firstEdgeTraceForTest->admissionLocked = std::chrono::steady_clock::now();
+    }
+#endif
     int characters = 0;
     std::deque<Element> elements = elementsForText(text, m_speedWpm, &characters);
     if (elements.empty()) {

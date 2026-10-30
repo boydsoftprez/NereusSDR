@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Add passive test-only cold first-edge boundary tracing for
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Propose unused mailbox RED scaffolding for J.J. Boyd
@@ -186,6 +188,7 @@ mw0lge@grange-lane.co.uk
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -283,6 +286,46 @@ public:
     CwxSender(Clock clock, Sleeper sleeper, QObject* parent = nullptr); // tests
     ~CwxSender() override;                         // stops and joins its thread
 
+#ifdef NEREUS_BUILD_TESTS
+    // NereusSDR-original passive diagnostic. Install before the worker starts.
+    // Use for one sendText on the constructing caller, with no other producers.
+    // Zero-initialize once, keep alive until sender destruction, and read ONLY
+    // after destruction joins the worker. Caller and worker own separate fields;
+    // no callback, logging, allocation or additional synchronization is involved.
+    struct FirstEdgeTraceForTest {
+        using Stamp = std::chrono::steady_clock::time_point;
+        struct Tick {
+            Stamp entered{};
+            Stamp deadline{};
+            Stamp returned{};
+        };
+        struct Sleep {
+            Stamp entered{};
+            Stamp deadline{};
+            Stamp coarseEntered{};
+            Stamp coarseReturned{};
+            bool coarseAcquired{false};
+            Stamp lastNapEntered{};
+            Stamp lastNapReturned{};
+            Stamp yieldEntered{};
+            Stamp returned{};
+        };
+        Stamp admissionEntered{}; // caller only
+        Stamp admissionLocked{};
+        Stamp anchor{};
+        Stamp sendReturned{};     // caller records immediately after sendText
+        Stamp runEntered{};       // worker only
+        Stamp priorityReady{};
+        Stamp firstLocked{};
+        std::array<Tick, 2> ticks{};
+        std::array<Sleep, 8> sleeps{}; // bounded interruptions before tick two
+        std::size_t tickCount{0};
+        std::size_t sleepCount{0};
+        std::size_t sleepsDropped{0};
+    };
+    explicit CwxSender(FirstEdgeTraceForTest& trace, QObject* parent = nullptr);
+#endif
+
 
     // Install shared state before any producer is
     // exposed, outside the cut-line lifetime lock; keep it immutable until
@@ -373,6 +416,10 @@ signals:
 
 private:
     using TimePoint = std::chrono::steady_clock::time_point;
+#ifdef NEREUS_BUILD_TESTS
+    CwxSender(Clock clock, Sleeper sleeper, FirstEdgeTraceForTest* trace, QObject* parent);
+    FirstEdgeTraceForTest* const m_firstEdgeTraceForTest{nullptr};
+#endif
 
     // One entry of Thetis's element fifo.
     struct Element {
@@ -393,7 +440,7 @@ private:
     void finishRemoteLocked(quint32 epoch);
     void consumeRemoteRequestsLocked();
     void wakeWorker() noexcept;
-    void parkWorker(TimePoint until, bool timed);
+    bool parkWorker(TimePoint until, bool timed);
     void run();
     void tickLocked();
     void releaseKeyHeldLocked();
