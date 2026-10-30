@@ -5,6 +5,10 @@
 // rationale (R1 Task 10).
 //
 // Modification history (NereusSDR):
+//   2026-10-29: configured startup top-up explicitly restores each saved
+//               receiver, preserving independent NR instead of inheriting
+//               the active slice's fresh +RX setup. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-10: headless Core speaker (JJ's ruling, R-AUD-27): the Core's
 //               speaker plays every receiver
 //               (AudioEngine::setSpeakersPlayEverySlice). J.J. Boyd
@@ -1281,8 +1285,11 @@ void DaemonApp::createConfiguredSlices(int sliceCountRequested)
     // pattern, which likewise leaves the first addSlice() call to its
     // caller), so in that path -- and in the no-radio-found path -- this
     // loop starts from zero and runs the full target times.
+    // Startup reconstructs saved receivers, including the legacy fallback
+    // when no receive-layout manifest exists. Explicit restoration retains
+    // each letter's own NR; ordinary operator +RX keeps its fresh seed rule.
     while (m_radioModel->slices().size() < target) {
-        const int id = m_radioModel->addSlice();
+        const int id = m_radioModel->addSlice(QString(), true);
         if (id < 0) {
             // The allocator refused (e.g. no stream left to share).
             // "Up to" the target, per this class's own contract: stop

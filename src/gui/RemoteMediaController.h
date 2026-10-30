@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-10-30: bounded passive retry schedule history and a hold boundary
+//               for canceled startup steps. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-27: passive audioRestartTimingForTest records the exact retry
 //               scheduling inputs and selected delay. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -628,9 +631,24 @@ public:
         quint32 revision = 0;
     };
     AudioRestartTimingForTest audioRestartTimingForTest() const;
+    /// Test only: opt-in passive history, bounded to the newest 256 schedules.
+    /// Every backoff decision is retained, including canceled timers. A canceled
+    /// record has no dispatch; timerFiredMs also proves its callback came due.
+    /// timing.requestMs is the resulting request's time, or -1 if none was sent.
+    struct AudioRestartScheduleForTest {
+        AudioRestartTimingForTest timing;
+        quint64 retryGeneration = 0;
+        qint64 timerFiredMs = -1;
+        qint64 dispatchedMs = -1;
+        bool held = false;
+        bool canceled = false;
+    };
+    void observeAudioRestartsForTest();
+    QList<AudioRestartScheduleForTest> audioRestartSchedulesForTest() const;
     /// Test only: while held, an audio restart's backoff step that comes
     /// due waits instead of running; releasing runs it (through the same
-    /// fence as ever). No production caller.
+    /// fence as ever). Steps canceled before the hold began are excluded;
+    /// steps canceled during the hold remain observable. No production caller.
     void holdAudioRestartForTest(bool held);
     /// Test only: whether a backoff step came due while held (each one
     /// that did runs, in order, on release).

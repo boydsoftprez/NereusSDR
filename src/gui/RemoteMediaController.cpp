@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-10-30: bounded passive retry schedule history and a hold boundary
+//               for canceled startup steps. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-27: a receiver stream's new context (the lossless trial's
 //               fallback to Opus among them) and its restart no longer
 //               invalidate the slice's TCI stage, so apps keep every
@@ -1878,6 +1881,8 @@ struct RemoteMediaController::Private {
     // released, so a test can order events against the step without
     // racing a real timer.
     bool audioRestartHeldForTest = false;
+    quint64 audioRestartHoldGenerationForTest = 0;
+    quint32 audioRestartHoldRevisionForTest = 0;
     // R-R3-44: setReceiverAudioClockForTest; empty is the receiver's own.
     RemoteAudioReceiver::Clock receiverAudioClockForTest;
     // In the order they came due: an ended restart's step and the step of
@@ -1887,6 +1892,8 @@ struct RemoteMediaController::Private {
     RemoteAudioRestartBackoff audioRestartBackoff;
     // Last scheduling decision only; reading never changes retry state.
     RemoteMediaController::AudioRestartTimingForTest audioRestartTimingForTest;
+    bool observeAudioRestartsForTest = false;
+    QList<RemoteMediaController::AudioRestartScheduleForTest> audioRestartSchedulesForTest;
     // R-R3-51: the speakers' receiver ran out of packets while the Core
     // transmits (it sends the keying device no receive audio), so it was
     // stopped and nothing was asked for; the end of the Core's transmit
@@ -5046,6 +5053,24 @@ RemoteMediaController::audioRestartTimingForTest() const
     return timing;
 }
 
+void RemoteMediaController::observeAudioRestartsForTest()
+{
+    d->audioRestartSchedulesForTest.clear();
+    d->observeAudioRestartsForTest = true;
+}
+
+QList<RemoteMediaController::AudioRestartScheduleForTest>
+RemoteMediaController::audioRestartSchedulesForTest() const
+{
+    QList<AudioRestartScheduleForTest> schedules = d->audioRestartSchedulesForTest;
+    for (AudioRestartScheduleForTest& schedule : schedules) {
+        schedule.canceled = schedule.dispatchedMs < 0
+            && (schedule.retryGeneration != d->audioRetryGeneration
+                || schedule.timing.revision != d->audioRevision);
+    }
+    return schedules;
+}
+
 void RemoteMediaController::setSpeakerDeviceListWaitForTest(qint64 ms)
 {
     d->speakerDeviceListWaitMs = ms;
@@ -5053,6 +5078,10 @@ void RemoteMediaController::setSpeakerDeviceListWaitForTest(qint64 ms)
 
 void RemoteMediaController::holdAudioRestartForTest(bool held)
 {
+    if (held && !d->audioRestartHeldForTest) {
+        d->audioRestartHoldGenerationForTest = d->audioRetryGeneration;
+        d->audioRestartHoldRevisionForTest = d->audioRevision;
+    }
     d->audioRestartHeldForTest = held;
     if (held) {
         return;
@@ -6949,19 +6978,55 @@ void RemoteMediaController::scheduleAudioRetry()
     d->audioRestartTimingForTest = {scheduledFromRequestMs, scheduledAtMs,
                                    scheduledFromRequestMs, delay,
                                    d->audioRestartBackoff.streak(), revision};
-    const auto step = [this, generation, revision] {
+    if (d->observeAudioRestartsForTest) {
+        constexpr qsizetype kHistoryLimit = 256;
+        if (d->audioRestartSchedulesForTest.size() == kHistoryLimit) {
+            d->audioRestartSchedulesForTest.removeFirst();
+        }
+        d->audioRestartSchedulesForTest.append({d->audioRestartTimingForTest, generation});
+        d->audioRestartSchedulesForTest.last().timing.requestMs = -1;
+    }
+    // A generation identifies one schedule. Look it up afresh: bounded
+    // history may evict a record while its timer or held step still exists.
+    const auto record = [this, generation]() -> AudioRestartScheduleForTest* {
+        for (AudioRestartScheduleForTest& schedule : d->audioRestartSchedulesForTest) {
+            if (schedule.retryGeneration == generation) { return &schedule; }
+        }
+        return nullptr;
+    };
+    const auto step = [this, generation, revision, record] {
         if (generation != d->audioRetryGeneration
             || revision != d->audioRevision) { return; }
         d->audioRetryPending = false;
         d->audioRetryForMediaNotReady = false;
+        if (AudioRestartScheduleForTest* schedule = record()) {
+            schedule->dispatchedMs = d->clock.elapsed();
+        }
         const QPointer<RemoteMediaController> self(this);
         requestAudio();
         if (!self) { return; }
+        if (AudioRestartScheduleForTest* schedule = record();
+            schedule && d->audioRevision != revision) {
+            schedule->timing.requestMs = d->lastAudioRequestMs;
+        }
         // 2026-10-16: what this request meets is the window's own retry's.
         d->audioRetryRevision = d->audioRevision;
     };
-    QTimer::singleShot(delay, Qt::PreciseTimer, this, [this, step] {
-        if (d->audioRestartHeldForTest) {
+    QTimer::singleShot(delay, Qt::PreciseTimer, this,
+                      [this, step, record, generation, revision] {
+        // Scope the test hold to steps valid when armed or created during
+        // it. A startup timer canceled before that boundary goes straight
+        // through its ordinary fence. A step canceled during the hold stays
+        // observable, so release can still prove that its fence rejects it.
+        const bool held = d->audioRestartHeldForTest
+            && (generation > d->audioRestartHoldGenerationForTest
+                || (generation == d->audioRestartHoldGenerationForTest
+                    && revision == d->audioRestartHoldRevisionForTest));
+        if (AudioRestartScheduleForTest* schedule = record()) {
+            schedule->timerFiredMs = d->clock.elapsed();
+            schedule->held = held;
+        }
+        if (held) {
             d->heldAudioRestartSteps.push_back(step);
             return;
         }
