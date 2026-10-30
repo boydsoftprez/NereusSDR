@@ -410,7 +410,7 @@ QStringList roundtableTagReportLines(const RoundtableTag& tag, const QJsonObject
     if (chosen.isEmpty()) { return {QStringLiteral("Read reports · details")}; }
     const QString kind = chosen.value(QStringLiteral("kind")).toString();
     if (kind == QLatin1String("doubled")) {
-        return {QStringLiteral("Two stations keyed"), QStringLiteral("Combined RF · unattributed"),
+        return {QStringLiteral("Two at once"), QStringLiteral("Combined RF · unattributed"),
                 QStringLiteral("Open details")};
     }
     const QJsonArray talkers = chosen.value(QStringLiteral("talkers")).toArray();
@@ -455,7 +455,7 @@ QStringList roundtableTagReportLines(const RoundtableTag& tag, const QJsonObject
             const QString age = seconds < 60 ? QStringLiteral("%1s").arg(seconds)
                 : seconds < 3600 ? QStringLiteral("%1m").arg(seconds / 60) : QStringLiteral("%1h").arg(seconds / 3600);
             lines.append(QStringLiteral("%1  %2  %3").arg(name).arg(qRound(dbm)).arg(age));
-        } else { lines.append(name + QStringLiteral("  —  No report")); }
+        } else { lines.append(name + QStringLiteral("  -  No report")); }
     }
     lines.append(reporters.size() > 3 ? QStringLiteral("+%1 · details").arg(reporters.size() - 3)
                                      : QStringLiteral("Open details"));

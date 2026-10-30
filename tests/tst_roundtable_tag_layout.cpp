@@ -352,7 +352,7 @@ private slots:
         turn.insert("id", 13);
         view.insert("now", QJsonArray{turn});
         rows = roundtableTagReportLines(tags.first(), view, 27000);
-        QVERIFY(rows.contains(QStringLiteral("K4ABC  —  No report")));
+        QVERIFY(rows.contains(QStringLiteral("K4ABC  -  No report")));
     }
 
     void cochannelBoxHasRealBoundsAndRender()

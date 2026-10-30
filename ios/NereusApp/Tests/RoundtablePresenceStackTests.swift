@@ -58,7 +58,7 @@ struct RoundtablePresenceStackTests {
     @Test("unknown and doubled signal descriptions do not replace presence")
     func unattributedSignalsKeepPresence() {
         for reports in [["Unknown signal", "Heard by dBm Age", "N4XYZ  -43  4 s", "Open details"],
-                        ["Two stations keyed", "Combined RF · unattributed", "Open details"]] {
+                        ["Two at once", "Combined RF · unattributed", "Open details"]] {
             var value = tag
             value.reportLines = reports
             let rows = RoundtableTagLayout.contentLines(value, width: 176, maxRows: 18)

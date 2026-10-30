@@ -521,7 +521,7 @@ QString clockText(qint64 ms)
 
 QString utcText(qint64 unixMs)
 {
-    return QDateTime::fromMSecsSinceEpoch(unixMs, QTimeZone::UTC).toString(QStringLiteral("HH:mm"));
+    return QDateTime::fromMSecsSinceEpoch(unixMs, Qt::UTC).toString(QStringLiteral("HH:mm"));
 }
 
 QString personKey(const QJsonObject& who)

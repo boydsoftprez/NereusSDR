@@ -36,10 +36,11 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 89)
+        #expect(fixtures.count == 90)
         // Roundtable's thirteen verbs (stationRoundtableVersion 1), now the
-        // app declares roundtable 1.
+        // app also exercises frequency chat with roundtable 2.
         #expect(fixtures.contains { $0.id == "session-verbs-roundtable" })
+        #expect(fixtures.contains { $0.id == "session-verbs-roundtable-frequency" })
         #expect(Set(fixtures.map(\.id)).count == fixtures.count)
         for id in Self.diversityProducerSessions {
             #expect(fixtures.contains { $0.id == id }, "\(id)")

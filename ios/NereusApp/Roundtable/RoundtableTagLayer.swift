@@ -378,7 +378,7 @@ enum RoundtableTagLayout {
             return ["Read reports · details"]
         }
         let heading: String
-        if turn.kind == "doubled" { return ["Two stations keyed", "Combined RF · unattributed", "Open details"] }
+        if turn.kind == "doubled" { return ["Two at once", "Combined RF · unattributed", "Open details"] }
         if turn.kind == "unknown" { heading = "Unknown signal" }
         else if turn.talkers.count == 1 { heading = "Last talker: " + RoundtableText.withNth(turn.talkers[0].callsign, turn.talkers[0].nth) }
         else { return ["Unattributed signal", "Open details"] }
@@ -391,7 +391,7 @@ enum RoundtableTagLayout {
             if let reading = member.reading, reading.turn == turn.id, reading.present,
                RoundtableText.readingPresent(reading.dbm) {
                 lines.append("\(name)  \(Int(reading.dbm.rounded()))  \(RoundtableText.ageText(now - reading.t))")
-            } else { lines.append("\(name)  —  No report") }
+            } else { lines.append("\(name)  -  No report") }
         }
         lines.append(reporters.count > 2 ? "+\(reporters.count - 2) · details" : "Open details")
         return lines
@@ -413,7 +413,7 @@ enum RoundtableTagLayout {
         var headings: [String]
         if narrow, heading.hasPrefix("Last talker: ") {
             headings = ["Last", "talker", String(heading.dropFirst(13))]
-        } else if narrow, heading == "Two stations keyed" { headings = ["Two", "stations", "keyed"] }
+        } else if narrow, heading == "Two at once" { headings = ["Two", "at once"] }
         else if narrow, heading == "Unknown signal" { headings = ["Unknown", "signal"] }
         else { headings = [heading] }
         let reportGroups: [[String]] = heardBy
@@ -422,7 +422,7 @@ enum RoundtableTagLayout {
                 if narrow, parts.count == 3 {
                     return [parts[0], parts[1] + "dBm " + parts[2].replacingOccurrences(of: " ", with: "")]
                 }
-                if narrow, parts.count == 2 { return [parts[0], "— No report"] }
+                if narrow, parts.count == 2 { return [parts[0], "- No report"] }
                 return [row]
             }
             : tag.reportLines.dropFirst().dropLast().map { line in

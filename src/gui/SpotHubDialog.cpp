@@ -4452,7 +4452,7 @@ void SpotHubDialog::refreshRoundtable()
             status = rtDot("#e6c200", "warn")
                 + (since > 0
                        ? QStringLiteral("Can't reach the server, trying again (offline since %1 UTC)")
-                             .arg(QDateTime::fromMSecsSinceEpoch(since, QTimeZone::UTC)
+                             .arg(QDateTime::fromMSecsSinceEpoch(since, Qt::UTC)
                                       .toString(QStringLiteral("HH:mm")))
                        : QStringLiteral("Can't reach the server, trying again"));
             break;
