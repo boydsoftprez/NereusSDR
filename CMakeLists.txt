@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(NereusSDR VERSION 2026.10.1 LANGUAGES C CXX)
+project(NereusSDR VERSION 2026.10.2 LANGUAGES C CXX)
 
 if(APPLE)
     enable_language(OBJCXX)

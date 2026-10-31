@@ -533,7 +533,8 @@ jobs:
           cd ..
           LD_LIBRARY_PATH="$PWD/$LIBDIR" ldd debroot/usr/bin/nereusd > package-ldd.txt
           ! grep -q 'not found' package-ldd.txt
-          sed -e "s/@VERSION@/$VERSION/g" -e "s/@ARCH@/$ARCH/g" \
+          DEBIAN_VERSION=$(python3 scripts/release-version.py debian-version "$VERSION")
+          sed -e "s/@VERSION@/$DEBIAN_VERSION/g" -e "s/@ARCH@/$ARCH/g" \
             -e "s/@DEPENDS@/$DEPS/g" \
             packaging/deb/control.in > debroot/DEBIAN/control
           install -m 0755 packaging/deb/postinst debroot/DEBIAN/postinst
@@ -547,6 +548,7 @@ jobs:
           grep -q 'usr/lib/sysctl.d/10-nereusd.conf$' package-contents.txt
           grep -q 'usr/libexec/nereusd/raise-receive-buffer-limit$' package-contents.txt
           dpkg-deb --info "nereusd_${VERSION}_${ARCH}.deb"
+          test "$(dpkg-deb --field "nereusd_${VERSION}_${ARCH}.deb" Version)" = "$DEBIAN_VERSION"
       - name: Upload Debian package
         uses: actions/upload-artifact@v4
         with:
@@ -616,10 +618,12 @@ jobs:
           runtime=$(docker image inspect --format '{{index .RepoDigests 0}}' debian:trixie-slim)
           [[ "$runtime" =~ @sha256:[0-9a-f]{64}$ ]]
           printf '%s\n' "$runtime" > station-runtime-image.txt
+          NEREUS_DEBIAN_VERSION=$(python3 scripts/release-version.py debian-version "$NEREUS_VERSION")
+          export NEREUS_DEBIAN_VERSION
           # Only the package is mounted: build dependencies and staged libraries
           # cannot mask missing runtime dependencies or installed RUNPATH errors.
           docker run --rm -i --platform linux/arm64 \
-            -e NEREUS_VERSION -e DEBIAN_FRONTEND=noninteractive \
+            -e NEREUS_VERSION -e NEREUS_DEBIAN_VERSION -e DEBIAN_FRONTEND=noninteractive \
             -v "$PWD/station-output:/packages:ro" \
           "$runtime" /bin/bash -s <<'SH'
           set -euo pipefail
@@ -634,7 +638,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends "/packages/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
           test "$(dpkg-query -W -f='${Status}' nereusd)" = 'install ok installed'
-          test "$(dpkg-query -W -f='${Version}' nereusd)" = "$NEREUS_VERSION"
+          test "$(dpkg-query -W -f='${Version}' nereusd)" = "$NEREUS_DEBIAN_VERSION"
           env -u LD_LIBRARY_PATH ldd /usr/bin/nereusd > /tmp/nereusd-ldd.txt
           cat /tmp/nereusd-ldd.txt
           if grep -q 'not found' /tmp/nereusd-ldd.txt; then
@@ -660,13 +664,20 @@ jobs:
           import hashlib
           import json
           import os
+          import subprocess
           from pathlib import Path
 
           version = os.environ["NEREUS_VERSION"]
           package = Path(f"station-output/nereusd_{version}_arm64_trixie.deb")
+          debian_version = subprocess.check_output(
+              ["dpkg-deb", "--field", str(package), "Version"], text=True).strip()
+          expected_debian_version = subprocess.check_output(
+              ["python3", "scripts/release-version.py", "debian-version", version], text=True).strip()
+          assert debian_version == expected_debian_version, "Debian package version mismatch"
           manifest = {
               "source_sha": os.environ["SOURCE_SHA"],
               "version": version,
+              "debian_version": debian_version,
               "os": "Debian 13 (trixie), arm64",
               "builder_image": Path("station-builder-image.txt").read_text().strip(),
               "runtime_image": Path("station-runtime-image.txt").read_text().strip(),

@@ -267,6 +267,83 @@ import Testing
         return (task, write)
     }
 
+    /// The real sender is Sendable and already runs off this actor. A
+    /// second main-actor task before it costs a full busy UI turn per write.
+    /// Hold the actor after registration: the sender must enter while held,
+    /// rather than depending on a particular queue race or timing budget.
+    @Test func propertySendDoesNotWaitForAnotherMainActorTurn() async throws {
+        let admitted = DispatchSemaphore(value: 0)
+        let store = MirrorStore(send: { [sent] message in
+            #expect(PropertySendTestScope.marker == "property-send")
+            try await sent.sender(message)
+            admitted.signal()
+        }, clock: ManualLinkClock())
+        for message in try FixtureReplay.stationMessages("session-connect-connectable") {
+            store.apply(message)
+        }
+        store.afterWriteRegisteredForTesting = {
+            // One second only bounds a deadlock in the old implementation;
+            // success means admission occurred while MainActor was occupied.
+            #expect(admitted.wait(timeout: .now() + 1) == .success,
+                    "the registered write must leave without another MainActor turn")
+        }
+        let writing = Task {
+            await PropertySendTestScope.$marker.withValue("property-send") {
+                await store.write("slice:0", property: "frequency", value: .double(7_074_000))
+            }
+        }
+        #expect(await sent.settle(untilCount: 1))
+        guard case .propertyWrite(let write)? = sent.messages.first else {
+            Issue.record("no registered property.write was sent")
+            store.handle(.stateChanged(.stopped))
+            _ = await writing.value
+            return
+        }
+        let entry = try #require(write.properties.first)
+        store.apply(.propertyResult(.init(key: write.key, writeId: try #require(write.writeId), results: [
+            .init(property: entry.name, accepted: true, reason: "", value: entry),
+        ])))
+        #expect(await writing.value.accepted)
+    }
+
+    @Test func anImmediateReplyResolvesBeforeTheSenderReturns() async throws {
+        let (handoffs, handedOff) = AsyncStream<LinkMessage>.makeStream()
+        let (releases, release) = AsyncStream<Void>.makeStream()
+        defer { handedOff.finish(); release.finish() }
+        let store = MirrorStore(send: { message in
+            handedOff.yield(message)
+            // The result may arrive while the transport's async call is
+            // still returning. It must already have a registered waiter.
+            for await _ in releases { break }
+        }, clock: ManualLinkClock())
+        for message in try FixtureReplay.stationMessages("session-connect-connectable") {
+            store.apply(message)
+        }
+        var outcome: PropertyWriteOutcome?
+        let writing = Task {
+            outcome = await store.write("slice:0", property: "frequency", value: .double(7_074_000))
+        }
+        var messages = handoffs.makeAsyncIterator()
+        guard case .propertyWrite(let write)? = await messages.next() else {
+            Issue.record("no property.write was sent")
+            release.yield(())
+            store.handle(.stateChanged(.stopped))
+            await writing.value
+            return
+        }
+        let entry = try #require(write.properties.first)
+        store.apply(.propertyResult(.init(key: write.key, writeId: try #require(write.writeId), results: [
+            .init(property: entry.name, accepted: true, reason: "", value: entry),
+        ])))
+        for _ in 0..<2_000 {
+            if outcome != nil { break }
+            await Task.yield()
+        }
+        #expect(outcome?.accepted == true, "a reply must not wait for the sender to return")
+        release.yield(())
+        await writing.value
+    }
+
     @Test func aWriteCarriesAFreshWriteIdAndResolvesOnItsResult() async throws {
         let clock = ManualLinkClock()
         let (handoffs, handedOff) = AsyncStream<LinkMessage>.makeStream(bufferingPolicy: .unbounded)
@@ -807,4 +884,9 @@ import Testing
         #expect(read.receivers == [StationMetrics.Receiver(sliceId: 0, inputDelayMs: 4, skippedInputMs: 0,
                                                            loadPercent: 35.5)])
     }
+}
+
+/// Normal unstructured send tasks must keep their caller's task-local context.
+private enum PropertySendTestScope {
+    @TaskLocal static var marker: String?
 }

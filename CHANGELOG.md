@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [2026.10.2-rc1] - 2026-10-30
+
+This is the combined release candidate for 2026.10.2. The latest stable release remains 2026.10.1. See the [bench checklist](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.2-rc1/docs/guides/bench-2026.10.2.md) for candidate acceptance.
+
 [Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
 
 Upgrading from 2026.10.1? Start with the [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html).
@@ -529,6 +533,16 @@ to each other as before.
   refused connection, a connection closed during the secure handshake, or a
   close before the Core's hello.
   ([#646](https://github.com/boydsoftprez/NereusSDR/pull/646))
+
+
+### Release candidate corrections
+
+- Phone control writes hand off without waiting for an extra UI-thread turn
+  behind display work. Pending writes and their deadlines stay registered
+  before sending; reply ordering and transmit authority checks are preserved.
+- Debian release candidates use `~rcN` in package metadata so that the final
+  version upgrades normally. Public tags and download filenames keep `-rcN`;
+  stable packages and station snapshot versions keep their existing identity.
 
 ## [2026.10.1] - 2026-10-17
 
