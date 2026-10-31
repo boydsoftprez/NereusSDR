@@ -6,7 +6,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
-## Current release: 2026.10.1
+## Latest stable release: 2026.10.1
 
 This release adds CAT with Hamlib rigctld, antenna rotor control, native
 audio engines with live device lists, the radio speaker volume in the header,
@@ -16,16 +16,22 @@ phone and the Core speaker need a 2026.10.1 Core; older peers still connect.
 See the [changelog](../CHANGELOG.md) and the
 [2026.10.1 upgrade note](guides/upgrading-to-2026.10.1.md).
 
-## Next release: 2026.10.2 (in progress)
+## Release candidate: 2026.10.2-rc1
 
-Work merged to main since 2026.10.1 is listed in the `[Unreleased]` section of
-the [changelog](../CHANGELOG.md). The larger pieces so far: the remote display
-codec v2 (waterfall rows that stand alone), remote RX meters held to their
-audio, receiver grab and flag drag tuning, TUNE following only the Setup drive
-source, SWR protection that lowers the drive, the TX applet rows as container
-items, and the workspace look on the iPhone and iPad. The new display format
-and the meter timing need a 2026.10.2 Core and window; older peers still
-connect.
+The combined work since 2026.10.1 is listed in the `[2026.10.2-rc1]`
+section of the [changelog](../CHANGELOG.md). It includes frequency-first
+Roundtable across desktop, phone and website; CW transmit and remote
+activity recovery; remote display codec v2 and audio-aligned RX meters;
+receiver grab and flag tuning; saved receiver/container state; TUNE drive
+source and SWR protection fixes; and the phone display and waterfall work.
+New display and meter timing need matching 2026.10.2 peers; older peers
+still connect. The phone app keeps its independent version number.
+
+The [upgrade note](guides/upgrading-to-2026.10.2.md) and
+[bench checklist](guides/bench-2026.10.2.md) cover candidate acceptance.
+Physical HL2 paddle takeover remains unverified. The 50 microsecond
+heavy-load CW optimization goal, XDMA, broader hotkeys and cross-platform
+waterfall time-axis consistency remain deferred.
 
 ## Previous release: 2026.10.0
 

@@ -19,6 +19,7 @@ you: a local desktop, another computer, or your phone or tablet.
 | What you want to do | Where to go |
 | --- | --- |
 | Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
+| Try the 2026.10.2 release candidate | [2026.10.2 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html), [release notes](CHANGELOG.md) and [bench checklist](docs/guides/bench-2026.10.2.md) |
 | Upgrade from 2026.10.0 | [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html) and [release notes](CHANGELOG.md) |
 | Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) and [release notes](CHANGELOG.md) |
 | Run the Core on a Raspberry Pi or another SBC | [Fresh Raspberry Pi OS Lite / Armbian install](https://nereussdr.com/guides/install-core-sbc.html) |
@@ -31,6 +32,35 @@ The [user guide](https://nereussdr.com/manual/) brings the operating instruction
 together, from the first connection to shared stations, digital modes and
 accessories. Join Discord for questions and discussion; use GitHub Issues
 for bug reports and feature requests that need tracking.
+
+## What's new in 2026.10.2-rc1
+
+- **Frequency-first Roundtable.** See people at their frequencies on the
+  desktop, iPhone and website. Stacked callsigns, the last talker and
+  attributed **Heard by** reports keep the source of each signal reading
+  clear. Conversations follow frequency; earlier messages retain their
+  original frequency. Distance defaults to miles, with kilometres and
+  bearing options.
+- **CW and remote transmit recovery.** The Core supports CWX text and
+  memories, radio key input, CAT/TCI and serial key lines, with the same
+  transmit checks. Remote activity has its own keepalive, pause, recovery
+  and cancellation lifetime. QSK availability follows the radio.
+- **Receive and display continuity.** Remote display rows and RX meters
+  follow their audio, tuning and receiver moves preserve continuity, and
+  the phone's waterfall has steady pacing and labelled gaps. CPU-based
+  display adaptation defaults off; an existing explicit choice is kept.
+- **Saved controls and layouts.** Receiver preferences, container items,
+  meter history and clock resizing retain their intended state. The
+  [release notes](CHANGELOG.md) cover the radio, tuner, PureSignal, remote
+  audio and phone fixes in this combined candidate.
+
+**Current candidate: 2026.10.2-rc1. Latest stable: 2026.10.1.** Candidate
+packages appear on the [releases page](https://github.com/boydsoftprez/NereusSDR/releases)
+when published. Read the [2026.10.2 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html)
+before updating a station. Update the Core and desktop together and the
+phone app separately; the phone keeps its own version number. New remote
+display and RX meter timing need matching 2026.10.2 peers. Older peers can
+still connect. Record candidate checks on the [bench checklist](docs/guides/bench-2026.10.2.md).
 
 ## What's new in 2026.10.1
 
@@ -66,13 +96,6 @@ for bug reports and feature requests that need tracking.
   Core installs. Protocol 1 radios get their transmit packets from a thread of
   their own, aimed at Hermes Lite 2 PTT dropping through a Pi Core; that is
   not yet confirmed on a keyed radio. See the [release notes](CHANGELOG.md).
-
-**Current version: 2026.10.1.** Packages are listed on the
-[releases page](https://github.com/boydsoftprez/NereusSDR/releases). Read the
-[2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html)
-before updating a station, and update the Core and desktop together. Rotor
-control, CAT Control on the phone and the Core speaker need a 2026.10.1 Core;
-older Cores and apps still connect.
 
 ## What's new in 2026.10.0
 
@@ -394,9 +417,14 @@ The original reconnect reports in [#235](https://github.com/boydsoftprez/NereusS
 [#299](https://github.com/boydsoftprez/NereusSDR/issues/299) and
 [#300](https://github.com/boydsoftprez/NereusSDR/issues/300) still need reporter retests.
 
-CAT/rigctld and rotor control arrived in 2026.10.1. CW transmit/keyer/QSK, FM pre-emphasis,
-legacy skin import and WAV/IQ recording remain future work. Radio-specific and
-on-air checks are recorded in the [feature verification documents](docs/architecture/).
+CAT/rigctld and rotor control arrived in 2026.10.1; CW transmit, CWX and
+supported QSK are included in this candidate. Physical paddle takeover on
+the installed Hermes Lite 2 firmware remains unverified, and the 50 microsecond
+heavy-load CW optimization goal is deferred. XDMA, the broader hotkey work
+and cross-platform waterfall time-axis consistency are deferred as well.
+FM pre-emphasis, legacy skin import and WAV/IQ recording remain future work.
+Radio-specific and on-air checks are recorded in the
+[feature verification documents](docs/architecture/).
 
 ## Building from Source
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [2026.10.2-rc1] - 2026-10-30
+
+This is the combined release candidate for 2026.10.2. The latest stable release remains 2026.10.1. See the [bench checklist](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.2-rc1/docs/guides/bench-2026.10.2.md) for candidate acceptance.
+
 [Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
 
 Upgrading from 2026.10.1? Start with the [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html).
