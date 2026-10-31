@@ -1,5 +1,7 @@
 // NereusSDR for iOS: asks the Core for the band's display, within the Core's display budget, reductions first
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   passive scalar display identity evidence for phone MAX diagnostics.
 
 import Combine
 import Foundation
@@ -199,6 +201,31 @@ final class BandSubscriber: ObservableObject {
             return nil
         }
         return (subscription, acceptedPanKey)
+    }
+
+    /// Read-only identities even when acceptedDisplay's eligibility guard
+    /// hides its holding. No raw pan keys or connection identifiers escape.
+    struct DisplayDiagnostic: Equatable, Sendable {
+        struct Endpoint: Equatable, Sendable {
+            let sliceId: Int
+            let endpointId: UInt32
+            let revision: UInt32
+        }
+        let mediaUp: Bool
+        let accepted: Endpoint?
+        let requested: Endpoint?
+        let outstandingOperations: Int
+        let asking: Bool
+    }
+
+    var displayDiagnostic: DisplayDiagnostic {
+        func identity(_ holding: Holding) -> DisplayDiagnostic.Endpoint? {
+            guard case .endpoint(let subscription) = holding else { return nil }
+            return .init(sliceId: subscription.sliceId, endpointId: subscription.endpointId,
+                         revision: subscription.revision)
+        }
+        return .init(mediaUp: mediaUp, accepted: identity(accepted), requested: identity(requested),
+                     outstandingOperations: outstanding.count, asking: asking)
     }
     private var acceptedCharge = DisplayQualityAllocator.Charge()
     /// What the newest operation asked for.
