@@ -200,6 +200,27 @@ def probe_row(c: Chrome, server: Server) -> None:
     no_errors(c,"frequency people/report attribution")
 
 
+def probe_signal_mobile(c: Chrome, server: Server) -> None:
+    """A raw fractional report stays precise in data and fits beside age on a phone."""
+    c.size(320, 800, mobile=True)
+    try:
+        open_public(c, server.base)
+        c.eval("RT.select('usb-14212000', true)")
+        result = c.wait("""(()=>{const row=[...document.querySelectorAll('.attributed-reading')].find(n=>n.textContent.includes('N4RDR'));
+          if(!row)return false; const signal=row.querySelector('.v'),age=row.querySelector('.age');
+          const a=signal.getBoundingClientRect(),b=age.getBoundingClientRect();
+          const report=RT.currentView().members.find(m=>m.callsign==='N4RDR').reading;
+          return {text:signal.textContent,title:row.title,raw:report.dbm,signalRight:a.right,ageLeft:b.left,signalScroll:signal.scrollWidth,signalWidth:signal.clientWidth,age:age.textContent};})()""")
+        assert result["raw"] == -66.735748, result
+        assert result["text"] == "S9+6 / -66.7", result
+        assert "-66.7 dBm" in result["title"], result
+        assert result["signalRight"] <= result["ageLeft"] and result["signalScroll"] <= result["signalWidth"], result
+        assert re.fullmatch(r"\d+ s", result["age"]), result
+        no_errors(c, "mobile signal precision")
+    finally:
+        c.size(1280, 800, mobile=False)
+
+
 def probe_search(c: Chrome, server: Server) -> None:
     """Search finds published talkers/readers/posters and exact numeric browsing."""
     open_public(c,server.base)
@@ -602,6 +623,7 @@ PROBES = [
     probe_bands,
     probe_band_map,
     probe_row,
+    probe_signal_mobile,
     probe_search,
     probe_sort,
     probe_keyboard,
