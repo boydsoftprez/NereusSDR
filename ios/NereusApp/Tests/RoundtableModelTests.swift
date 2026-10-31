@@ -11,6 +11,9 @@
 // 2026-10-30: Exact-frequency contexts, scoped reports, paths and native renders.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
+// 2026-10-31: Canonical producer records restore people rows, reads and reconnect support.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import Foundation
 import NereusBand
 import NereusKitTesting
@@ -636,6 +639,64 @@ struct RoundtableModelTests {
             RoundtableTag(roomId: "selected", hz: 90, mine: true)],
             hzPerPoint: 1, leftHz: 0, width: 100, tagWidth: 80, gap: 4)
         #expect(narrow.count == 1 && narrow.first?.roomIds == ["selected"] && narrow.first?.folded == false)
+        await model.disconnect()
+    }
+
+    @Test("canonical Core frequency record enables people rows and exact reads")
+    func canonicalFrequencyCapability() async throws {
+        let (model, station, rt, _) = try await connected(additions: [.roundtableFrequency])
+        var capabilities = model.mirror.capabilities.mapValues(\.wireValue)
+        capabilities["stationRoundtableVersion"] = .i64(2)
+        await station.deliver(.capabilities(.init(properties: capabilities.map { .init(name: $0.key, value: $0.value) })))
+        var quiet = FakeStation.roundtableSummary(id: Self.usb, members: 1, state: "quiet", talkers: [])
+        var joining = FakeStation.roundtableSummary(id: "usb-14204000", members: 0, state: "quiet", talkers: [])
+        func presence(_ source: String, _ call: String, _ hz: Int64, joining: Bool) -> LinkJSON {
+            .array([.object(["ref": .string(call), "sourceRoom": .string(source), "slice": .number(0),
+                            "hz": .number(Double(hz)), "family": .string("usb"), "callsign": .string(call),
+                            "nth": .number(1), "grid": .null, "keyed": .bool(false), "away": .bool(false),
+                            "joining": .bool(joining)])])
+        }
+        quiet["stations"] = presence(Self.usb, "W1AW", 14_200_123, joining: false)
+        joining["stations"] = presence("usb-14204000", "K4ABC", 14_204_321, joining: true)
+        let empty = FakeStation.roundtableSummary(id: "cw-7030000", members: 0, state: "quiet", talkers: [])
+        let scene = FakeStation.RoundtableScene(rooms: [quiet, joining, empty], sliceRooms: [:])
+        try await station.deliverRoundtable(scene)
+        try #require(await settle { rt.rooms.count == 3 && rt.version == 2 })
+        await station.deliver(.recordBatch(.init(stream: "roundtableRooms", generation: 1, reset: false,
+                                                upserts: [], removes: ["frequency-capability"])))
+        try #require(await settle { !rt.frequencyAvailable })
+        // Independent of FakeStation.roundtableFrequencyCapability: this is the
+        // literal fields object emitted by C++ RoundtableModel::roomsRecords().
+        let canonical = LinkMessage.RecordBatch.Record(id: "frequency-capability",
+            fields: ["record": .string("frequency"), "version": .number(1)])
+        await station.deliver(.recordBatch(.init(stream: "roundtableRooms", generation: 1, reset: false,
+                                                upserts: [canonical], removes: [])))
+        try #require(await settle(seconds: 2) { rt.frequencyAvailable })
+        #expect(rt.serverFrequencyVersion == 1 && rt.frequencyReason == nil)
+        #expect(rt.frequencyRows.map(\.hz) == [14_200_123, 14_204_321])
+        #expect(rt.frequencyRows.map(\.members) == [1, 1])
+        #expect(rt.frequencyRows.last?.stations.first?.joining == true)
+        let tags = RoundtableTagLayout.tags(rt, sliceIds: [])
+        #expect(tags.map(\.label) == ["W1AW", "K4ABC"])
+        let chips = RoundtableToolsList.chips(rt.frequencyRows)
+        #expect(chips.map(\.id) == ["all", "20m"] && chips.first?.count == 2)
+        let rows = RoundtableToolsList.rows(rt.frequencyRows, chip: "all", sliceRooms: [:], letters: [:],
+                                            mentionCounts: [:], now: 0)
+        #expect(rows.map(\.who) == ["W1AW", "K4ABC"])
+        #expect(await rt.read(rt.frequencyRows[0].id) == nil)
+        #expect(await sent(station, "roundtable.readAt") != nil)
+        #expect(!station.roundtableAnswered.contains("read"))
+        await station.deliver(.recordBatch(.init(stream: "roundtableRooms", generation: 1, reset: false,
+                                                upserts: [], removes: ["frequency-capability"])))
+        #expect(await settle { !rt.frequencyAvailable && rt.frequencyReason != nil })
+        await model.disconnect()
+        await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                            transportFactory: station.transportFactory)
+        #expect(await station.waitUntilLive())
+        #expect(await settle { rt.connected && rt.version == 2 })
+        await station.deliver(.recordBatch(.init(stream: "roundtableRooms", generation: 1, reset: true,
+                                                upserts: [canonical], removes: [])))
+        #expect(await settle { rt.frequencyAvailable && rt.frequencyRows.isEmpty && rt.frequencyReason == nil })
         await model.disconnect()
     }
 

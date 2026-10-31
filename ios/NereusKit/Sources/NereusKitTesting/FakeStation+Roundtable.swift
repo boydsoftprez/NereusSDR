@@ -8,6 +8,9 @@
 // 2026-10-30: Frequency-view fixtures and guarded v2 commands.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
+// 2026-10-31: Match the real Core's frequency capability record field.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import Foundation
 import NereusLink
 
@@ -371,7 +374,7 @@ extension FakeStation {
 
     /// A real v2 Core exposes negotiated backend support independently of its own capability.
     public static var roundtableFrequencyCapability: LinkMessage.RecordBatch.Record {
-        .init(id: "frequency-capability", fields: ["kind": .string("frequency"), "version": .number(1)])
+        .init(id: "frequency-capability", fields: ["record": .string("frequency"), "version": .number(1)])
     }
 
     public func deliverRoundtableFrequencyCapability(_ available: Bool) async {

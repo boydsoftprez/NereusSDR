@@ -39,6 +39,9 @@
 //               Claude Code.
 // =================================================================
 
+// 2026-10-31: Exercise legacy stripping with real roomRecords() output and preserve v2 data.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 #include <QtTest/QtTest>
 
 #include <QFile>
@@ -917,6 +920,74 @@ private slots:
         QVERIFY(invoke(peer, "roundtable.markMentionRead", {i64("upToMs", 10)}).accepted);
         QCOMPARE(core.settings->value(QStringLiteral("Roundtable/MentionsSeenMs")).toString(),
                  QStringLiteral("1000"));
+    }
+
+    void legacyPeersStripFrequencyFieldsUsingTheRecordType()
+    {
+        Core core;
+        LoopbackTransport* legacy = core.connect(this, {{"roundtable", 1}});
+        LoopbackTransport* frequency = core.connect(this, {{"roundtable", 2}});
+        NEREUS_TRY_VERIFY(snapshotDone(legacy));
+        NEREUS_TRY_VERIFY(snapshotDone(frequency));
+        core.listRooms();
+        QJsonObject view = roomFull(kRoom);
+        QJsonObject member = view.value("members").toArray().first().toObject();
+        member.insert("hz", 14200123);
+        member.insert("slice", 2);
+        member.insert("sourceRoom", kRoom);
+        member.insert("bearingDeg", 82);
+        view.insert("members", QJsonArray{member});
+        const QJsonObject talker{{"ref", "a/1"}, {"callsign", "W1AW"}, {"nth", 1},
+                                {"hz", 14200123}, {"grid", "EM73"}, {"sourceRoom", kRoom}};
+        view.insert("now", QJsonArray{
+            QJsonObject{{"id", 7}, {"kind", "unknown"}, {"hz", 14200123},
+                        {"sourceRoom", kRoom}, {"talkers", QJsonArray{}}},
+            QJsonObject{{"id", 8}, {"kind", "doubled"}, {"hz", 14200123},
+                        {"sourceRoom", kRoom}, {"talkers", QJsonArray{talker}}}});
+        QJsonObject message = view.value("messages").toArray().first().toObject();
+        message.insert("hz", 14200123);
+        message.insert("family", "usb");
+        view.insert("messages", QJsonArray{message});
+        emit core.client()->roomReceived(view);
+        const QString stream = RoundtableModel::roomStreamName(kRoom);
+        for (LoopbackTransport* peer : {legacy, frequency}) {
+            QVERIFY(invoke(peer, "roundtable.read", {utf8("roomId", kRoom)}).accepted);
+            QVERIFY(invoke(peer, "records.subscribe", {utf8("stream", stream), i64("backlog", 400)}).accepted);
+            NEREUS_TRY_VERIFY(!batchesFor(peer, stream).isEmpty());
+        }
+        const RecordBatch currentBatch = batchesFor(frequency, stream).first();
+        const RecordBatch legacyBatch = batchesFor(legacy, stream).first();
+        QCOMPARE(legacyBatch.upserts.size(), currentBatch.upserts.size());
+        QHash<QString, QJsonObject> current;
+        for (const RecordUpsert& upsert : currentBatch.upserts) {
+            current.insert(upsert.id, upsert.fields);
+        }
+        // These are real roomRecords() shapes, not hand-built record-type fixtures.
+        QCOMPARE(current.value("member:a/1").value("record").toString(), QStringLiteral("member"));
+        QCOMPARE(current.value("member:a/1").value("hz").toInteger(), 14200123);
+        QCOMPARE(current.value("member:a/1").value("slice").toInt(), 2);
+        QCOMPARE(current.value("message:31").value("family").toString(), QStringLiteral("usb"));
+        QCOMPARE(current.value("turn:8").value("talkers").toArray().first().toObject(), talker);
+        for (const RecordUpsert& upsert : legacyBatch.upserts) {
+            const QJsonObject fields = upsert.fields;
+            QVERIFY2(!fields.contains("hz"), qPrintable(upsert.id));
+            QVERIFY(!fields.contains("sourceRoom"));
+            QVERIFY(!fields.contains("bearingDeg"));
+            if (fields.value("record").toString() == QLatin1String("member")) {
+                QVERIFY(!fields.contains("slice"));
+            } else if (fields.value("record").toString() == QLatin1String("message")) {
+                QVERIFY(!fields.contains("family"));
+            } else if (fields.value("record").toString() == QLatin1String("turn")) {
+                QCOMPARE(fields.value("kind"), current.value(upsert.id).value("kind"));
+                for (const QJsonValue& endpoint : fields.value("talkers").toArray()) {
+                    QVERIFY(!endpoint.toObject().contains("hz"));
+                    QVERIFY(!endpoint.toObject().contains("grid"));
+                    QVERIFY(!endpoint.toObject().contains("sourceRoom"));
+                }
+            }
+        }
+        const QJsonObject capability = RoundtableModel::roomsRecords({}, 1).value("frequency-capability");
+        QCOMPARE(capability, (QJsonObject{{"record", "frequency"}, {"version", 1}}));
     }
 
     void aReadsStreamIsThereBeforeItsAnswer()
