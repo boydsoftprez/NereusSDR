@@ -168,7 +168,7 @@ class Sim:
                 present = False
             else:
                 present = room.anyone_keyed()
-            dbm = round(self.dbm + self.world.rng.uniform(-3, 3), 1)
+            dbm = -66.735748 if self.call == "N4RDR" else round(self.dbm + self.world.rng.uniform(-3, 3), 1)
             self.st.send({"type": "reading", "slice": 0, "dbm": dbm, "t": now_wall, "present": present})
         else:
             self.presence()

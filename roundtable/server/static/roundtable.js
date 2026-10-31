@@ -187,6 +187,10 @@
     return "S" + s;
   }
 
+  function dbmText(dbm) {
+    return typeof dbm === "number" && Number.isFinite(dbm) ? dbm.toFixed(1) : "—";
+  }
+
   /* 0 to 1 along a bar that ends at S9+40. */
   function sBar(dbm) {
     if (dbm === null || dbm === undefined) {
@@ -278,6 +282,7 @@
   }
 
   RT.sText = sText;
+  RT.dbmText = dbmText;
   RT.sBar = sBar;
   RT.freqText = freqText;
   RT.freqParts = freqParts;
@@ -735,7 +740,7 @@
         if(turn){
           clear(button);add(button,[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),el("b",{text:"Last talker · "+turnLabel(turn)}),el("small",{text:"Heard by · dBm / age"})]);
           const reports=F.readings(currentRoom,turn).slice(0,2);
-          for(const report of reports)add(button,el("small",{class:"stack-report",text:callText(report.callsign,report.nth)+" · "+report.reading.dbm+" / "+Math.max(0,Math.floor((now()-report.reading.t)/1000))+"s"}));
+          for(const report of reports)add(button,el("small",{class:"stack-report",text:callText(report.callsign,report.nth)+" · "+dbmText(report.reading.dbm)+" / "+Math.max(0,Math.floor((now()-report.reading.t)/1000))+"s"}));
           if(!reports.length)button.appendChild(el("small",{text:group.stations.map(p=>p.callsign).join(", ")}));
         }
       }
@@ -791,10 +796,10 @@
   }
   function readingNode(member,turn){
     const reading=member.reading,age=Math.max(0,now()-reading.t),known=turn.kind==="talking";
-    return el("div",{class:"rd attributed-reading"+(age>20000?" stale":""),data:{ref:F.memberKey(member),turn:turn.id,km:typeof member.km==="number"?member.km:"",bearing:known&&Number.isInteger(member.bearingDeg)?member.bearingDeg:""},title:callText(member.callsign,member.nth)+" measured "+turnLabel(turn)+" at "+reading.dbm+" dBm"},[
+    return el("div",{class:"rd attributed-reading"+(age>20000?" stale":""),data:{ref:F.memberKey(member),turn:turn.id,km:typeof member.km==="number"?member.km:"",bearing:known&&Number.isInteger(member.bearingDeg)?member.bearingDeg:""},title:callText(member.callsign,member.nth)+" measured "+turnLabel(turn)+" at "+dbmText(reading.dbm)+" dBm"},[
       el("span",{class:"c"},[highlight(callText(member.callsign,member.nth)),member.away?el("span",{class:"away",text:"AWAY"}):null]),
       RT.pathNode(member.km,member.bearingDeg,known),el("span",{class:"o",text:(member.offsetHz>0?"+":"")+member.offsetHz}),
-      el("span",{class:"v",text:sText(reading.dbm)+" / "+reading.dbm}),el("span",{class:"age",text:Math.floor(age/1000)+" s"}),
+      el("span",{class:"v",text:sText(reading.dbm)+" / "+dbmText(reading.dbm)}),el("span",{class:"age",text:Math.floor(age/1000)+" s"}),
     ]);
   }
   function renderTalk(body,room){
