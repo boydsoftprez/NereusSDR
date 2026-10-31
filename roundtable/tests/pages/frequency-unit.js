@@ -9,7 +9,9 @@ const script = fs.readFileSync(path.join(__dirname,"../../server/static/roundtab
 const storage = new Map();
 const sandbox = { window: {}, document: {body:{dataset:{page:"unit"}}}, localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)}, URLSearchParams, Date, Intl, Map, Set };
 vm.runInNewContext(script,sandbox);
-const F = sandbox.window.RT.frequency;
+const RT = sandbox.window.RT;
+const F = RT.frequency;
+for (const [value, expected] of [[-66.735748, "-66.7"], [-92, "-92.0"], [-0.04, "-0.0"], [0, "0.0"], [NaN, "—"], [Infinity, "—"], [-Infinity, "—"], [null, "—"], [undefined, "—"], ["-66", "—"]]) assert.equal(RT.dbmText(value), expected);
 assert.ok(F,"shared frequency helpers exist");
 const ctx={hz:14212000,family:"usb"};
 for(const delta of [-5000,0,5000]) assert.ok(F.nearby({hz:ctx.hz+delta,family:"usb"},ctx));
