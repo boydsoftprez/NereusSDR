@@ -1710,6 +1710,16 @@ struct ModesTabBindingTests {
         let radioLabel = try Regex(#""(ANT\d|BYPS|EXT\d|XVTR|RX\d|0dB|-[123]0dB)""#)
         // The step attenuator's ranges, as numbers.
         let attenuatorRange = try Regex(#"-28|\b31\b"#)
+        // Dated attribution comments are not radio parameters. Keep the
+        // original numeric guard over code, including its positive controls.
+        func withoutCommentLines(_ source: String) -> String {
+            source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+        }
+        #expect(withoutCommentLines("// 2026-10-31: modification history").firstMatch(of: attenuatorRange) == nil)
+        #expect(withoutCommentLines("// 2026-10-31\nlet maximum = 31").firstMatch(of: attenuatorRange) != nil)
+        #expect(withoutCommentLines("let minimum = -28").firstMatch(of: attenuatorRange) != nil)
         // The DEBUG-only UI-test fixtures under Shared, which stand in for the Core.
         let debugFixtures: Set<String> = ["UITestQuestion.swift", "UITestBand.swift"]
         for file in files {
@@ -1732,7 +1742,7 @@ struct ModesTabBindingTests {
                 #expect(checked.firstMatch(of: radioLabel) == nil, "\(name) holds a radio's label")
             }
             if file.pathComponents.contains("Modes") {
-                #expect(text.firstMatch(of: attenuatorRange) == nil, "\(name) holds an attenuator range")
+                #expect(withoutCommentLines(text).firstMatch(of: attenuatorRange) == nil, "\(name) holds an attenuator range")
             }
         }
     }

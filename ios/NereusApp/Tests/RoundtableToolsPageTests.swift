@@ -11,6 +11,9 @@
 // a ScrollView, which another suite's accessibility walk can blank.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-10-31: Capture quiet and joining people with canonical frequency records.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+
 import Foundation
 import NereusBand
 import NereusKitTesting
@@ -591,6 +594,47 @@ struct RoundtableToolsPageTests {
         await model.disconnect()
     }
 
+    @Test("canonical frequency capability renders quiet people and omits empty rooms")
+    func canonicalFrequencyShots() async throws {
+        let (model, station) = try await shotStation(frequency: true)
+        model.phoneSettings.roundtableFirstRunNoteSeen = true
+        var scene = RoundtableSheetTests.boardScene()
+        scene.rooms = [(Self.sliceRoom, "KG4VCF", Int64(7_236_400), 1, false),
+                       ("lsb-7240000", "W4KZO", Int64(7_242_800), 0, true)].map { id, call, hz, members, joining in
+            var summary = FakeStation.roundtableSummary(id: id, members: members, state: "quiet", talkers: [])
+            summary["stations"] = .array([.object([
+                "ref": .string(call), "sourceRoom": .string(id), "slice": .number(0),
+                "hz": .number(Double(hz)), "family": .string("lsb"), "callsign": .string(call),
+                "nth": .number(1), "grid": .string("EM73"), "keyed": .bool(false),
+                "away": .bool(false), "joining": .bool(joining),
+            ])])
+            return summary
+        }
+        scene.rooms.append(FakeStation.roundtableSummary(id: "lsb-7250000", members: 0,
+                                                          state: "quiet", talkers: []))
+        scene.frequencyPresences = [0: Self.sliceRoom]
+        try await station.deliverRoundtable(scene)
+        // Use the producer's literal record contract independently of the helper.
+        await station.deliver(.recordBatch(.init(stream: "roundtableRooms", generation: 1, reset: false,
+            upserts: [.init(id: "frequency-capability", fields: ["record": .string("frequency"), "version": .number(1)])],
+            removes: [])))
+        try #require(await settle { model.roundtable.frequencyAvailable && model.roundtable.rooms.count == 3 })
+        #expect(model.roundtable.frequencyRows.map(\.members) == [1, 1])
+        #expect(RoundtableTagLayout.tags(model.roundtable, sliceIds: [0]).map(\.label) == ["KG4VCF", "W4KZO"])
+        let flow = Self.flow(model, station)
+        try await shootPage("roundtable-canonical-people-tools-portrait", model: model) {
+            ToolsTab(app: model, flow: flow, spots: model.spots, route: [.roundtable])
+        }
+        try await shootPage("roundtable-canonical-people-tools-landscape", model: model,
+                            size: CGSize(width: 874, height: 402)) {
+            ToolsTab(app: model, flow: flow, spots: model.spots, route: [.roundtable])
+        }
+        try await shootBand("roundtable-canonical-people-band-portrait", model: model)
+        try await shootBand("roundtable-canonical-people-band-landscape", model: model,
+                            size: CGSize(width: 874, height: 402))
+        await model.disconnect()
+    }
+
     // MARK: Helpers
 
     static let sliceRoom = "lsb-7236400"
@@ -639,8 +683,8 @@ struct RoundtableToolsPageTests {
     }
 
     /// A fake Core with Roundtable, the main screen's two slices and a band to draw them on.
-    private func shotStation() async throws -> (AppModel, FakeStation) {
-        let (model, station) = try await connected(additions: [.remoteTx, .roundtable])
+    private func shotStation(frequency: Bool = false) async throws -> (AppModel, FakeStation) {
+        let (model, station) = try await connected(additions: frequency ? [.remoteTx, .roundtableFrequency] : [.remoteTx, .roundtable])
         try await MainScreenShotTests.fill(station)
         #expect(await settle { model.main.slices.entries.count == 2 })
         model.main.band.endpointId = 1
@@ -694,13 +738,14 @@ struct RoundtableToolsPageTests {
     }
 
     private func shootPage<Content: View>(_ name: String, model: AppModel,
+                                          size: CGSize = CGSize(width: 402, height: 874),
                                           @ViewBuilder content: () -> Content) async throws {
         let root = VStack(spacing: 0) {
             content()
             TabBar(selection: .constant(.tools), sideways: false)
         }
         .background(ChromeColours.page)
-        let (window, _) = try host(root)
+        let (window, _) = try host(root, size: size)
         defer {
             window.isHidden = true
             window.rootViewController = nil
@@ -710,8 +755,8 @@ struct RoundtableToolsPageTests {
         try write(name, window)
     }
 
-    private func shootBand(_ name: String, model: AppModel) async throws {
-        let size = CGSize(width: 402, height: 874)
+    private func shootBand(_ name: String, model: AppModel,
+                           size: CGSize = CGSize(width: 402, height: 874)) async throws {
         let (window, _) = try host(BandShotRoot(model: model), size: size)
         defer {
             window.isHidden = true

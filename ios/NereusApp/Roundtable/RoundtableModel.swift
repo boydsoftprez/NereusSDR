@@ -520,7 +520,7 @@ final class RoundtableModel: ObservableObject {
             readingRoomId = nil
         }
         let backendVersion = next >= 2 ? (records.streams[Self.roomsStream]?.records.first(where: {
-            $0.id == "frequency-capability" && Self.text($0.fields["kind"]) == "frequency"
+            $0.id == "frequency-capability" && Self.text($0.fields["record"]) == "frequency"
         }).flatMap { Self.whole($0.fields["version"]) } ?? 0) : 0
         if backendVersion != serverFrequencyVersion {
             if serverFrequencyVersion >= 1 && backendVersion < 1 {

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- The iPhone recognizes the Core’s exact-frequency Roundtable capability,
+  restoring present callsigns in the directory and waterfall instead of empty
+  retained **Quiet** room markers. Older clients receive their intended legacy
+  record fields.
+
 - NNR keeps the operator's selected model running when receiver processing
   falls behind. A measured warning in desktop and phone NNR controls offers
   **Use Standard** or **Turn NNR off**; leaving it alone keeps NNR running.

@@ -1,6 +1,8 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-10-31: Strip legacy Roundtable fields by record type, preserving RF kind.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Negotiate frequency chat only with version2 peers.
@@ -10871,15 +10873,15 @@ RecordBatch StationServer::fitRecordBatchToPeer(SessionTransport* transport,
         batch.removes.removeAll(QStringLiteral("frequency-capability"));
         for (RecordUpsert& upsert : batch.upserts) {
             QJsonObject& fields = upsert.fields;
-            const QString kind = fields.value(QStringLiteral("kind")).toString();
+            const QString recordType = fields.value(QStringLiteral("record")).toString();
             fields.remove(QStringLiteral("stations"));
             fields.remove(QStringLiteral("sourceRoom"));
             fields.remove(QStringLiteral("bearingDeg"));
-            if (kind == QLatin1String("member")) { fields.remove(QStringLiteral("slice")); }
-            if (kind == QLatin1String("member") || kind == QLatin1String("turn")
-                || kind == QLatin1String("message")) { fields.remove(QStringLiteral("hz")); }
-            if (kind == QLatin1String("message")) { fields.remove(QStringLiteral("family")); }
-            if (kind == QLatin1String("turn") && fields.contains(QStringLiteral("talkers"))) {
+            if (recordType == QLatin1String("member")) { fields.remove(QStringLiteral("slice")); }
+            if (recordType == QLatin1String("member") || recordType == QLatin1String("turn")
+                || recordType == QLatin1String("message")) { fields.remove(QStringLiteral("hz")); }
+            if (recordType == QLatin1String("message")) { fields.remove(QStringLiteral("family")); }
+            if (recordType == QLatin1String("turn") && fields.contains(QStringLiteral("talkers"))) {
                 QJsonArray talkers;
                 for (const QJsonValue& value : fields.value(QStringLiteral("talkers")).toArray()) {
                     QJsonObject talker = value.toObject();
