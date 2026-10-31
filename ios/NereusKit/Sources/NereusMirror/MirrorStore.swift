@@ -134,6 +134,11 @@ public final class MirrorStore: ObservableObject {
     private static let logger = Logger(subsystem: "NereusSDR", category: "mirror.store")
 
     private let send: Sender
+    #if DEBUG
+    /// A test can hold this actor after registration to check that transport
+    /// admission does not require another main-actor turn.
+    var afterWriteRegisteredForTesting: (() -> Void)?
+    #endif
     private let clock: any LinkClock
     private var schemas: [String: [String: LinkMessage.SchemaField]] = [:]
     private var currentSchemaIdentities: [String: UInt64] = [:]
@@ -547,10 +552,24 @@ public final class MirrorStore: ObservableObject {
                     await self?.deadlinePassed(writeId)
                 }
             }
-            Task { @MainActor in
-                do {
-                    try await send(message)
-                } catch {
+            sendPrepared(message, writeId: writeId, using: send)
+            #if DEBUG
+            afterWriteRegisteredForTesting?()
+            #endif
+        }
+    }
+
+    /// Pending state and its deadline are installed before this call. The
+    /// Sendable sender already uses its own executor; creating its task here
+    /// avoids an extra main-actor turn behind drawing before each handoff.
+    /// A normal Task retains the caller's priority and task-local context.
+    /// Its lifetime stays independent of the reply and deadline continuations.
+    private nonisolated func sendPrepared(_ message: LinkMessage, writeId: UInt32, using send: @escaping Sender) {
+        Task {
+            do {
+                try await send(message)
+            } catch {
+                await MainActor.run {
                     Self.logger.info("A property write was not sent: \(String(describing: error), privacy: .public)")
                     self.notSent(writeId)
                 }
