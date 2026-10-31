@@ -15,6 +15,9 @@ to each other as before.
 
 ### CW transmit and remote transmit recovery
 
+- On Linux, CWX uses a direct timed wait for keying deadlines, avoiding a
+  semaphore backoff that could delay the first key-down edge. Stop and
+  cancellation retain their durable wakeups.
 - CW transmit supports the radio's key input, CWX typed text and memories,
   CAT/TCI and serial key lines. The radio generates and shapes CW; Off, Semi
   and supported QSK use the Core's ordinary transmit checks. The desktop and
@@ -159,6 +162,9 @@ to each other as before.
 
 ### Display and waterfall
 
+- On iPhone and iPad, a completed control command settles its displayed
+  value before later Core updates, so a later TX-slice change cannot remain
+  hidden under an older selection or make the next tap do nothing.
 - CPU-based automatic display adaptation is now off by default for desktop
   and headless Cores. An existing explicit `display_adaptive = on` remains
   enabled; set it to `off` and restart the Core to disable it. Connection,

@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Use Qt's durable Linux semaphore wait to avoid timed
+//               libstdc++ backoff for J.J. Boyd (KG4VCF), AI-assisted via
+//               OpenAI Codex.
 //   2026-10-30: Add passive test-only cold first-edge boundary tracing for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Add approved remote CW hold/activity integration for
@@ -183,6 +186,10 @@ mw0lge@grange-lane.co.uk
 #include <QObject>
 #include <QString>
 #include <QStringList>
+
+#if defined(Q_OS_LINUX)
+#include <QSemaphore>
+#endif
 
 #include <array>
 #include <atomic>
@@ -494,7 +501,11 @@ private:
     bool m_letterInProgress{false};
     // A coalesced semaphore permit closes predicate->park lost-notify gaps.
     // Request producers take no mutex. Existing thread/clock/priorities stay.
+#if defined(Q_OS_LINUX)
+    QSemaphore m_interrupt{0};
+#else
     std::binary_semaphore m_interrupt{0};
+#endif
     std::atomic_flag m_interruptPending = ATOMIC_FLAG_INIT;
     Clock m_clock;
     Sleeper m_sleeper;

@@ -16,6 +16,11 @@ import os
 /// mirrored properties say; deciding what to offer the operator belongs
 /// above it.
 public actor CommandClient {
+    /// A command presentation registers its wire identity before handoff.
+    /// The task-local scope belongs only to CommandHoldQueue's invocation;
+    /// keying and other commands keep their existing admission path.
+    @TaskLocal static var beforeHeldSend: (@Sendable (String, UInt32) async -> Void)?
+
     public typealias Sender = @Sendable (LinkMessage) async throws -> Void
     /// Captures the logical session at admission. The returned sender must
     /// address that captured session, even if the app publishes a new one.
@@ -185,7 +190,8 @@ public actor CommandClient {
                            onLateOutcome: @escaping @Sendable (Result<CommandResult, CommandError>) async -> Void)
         async throws -> CommandResult {
         let started = begin(verb, arguments: arguments, copies: 1, timeout: timeout,
-                            onPhase: nil, bound: nil, onLateOutcome: onLateOutcome)
+                            onPhase: nil, bound: nil, onLateOutcome: onLateOutcome,
+                            beforeSend: Self.beforeHeldSend)
         return try await withTaskCancellationHandler {
             await started.sent()
             return try await started.result()
@@ -277,7 +283,8 @@ public actor CommandClient {
     private func begin(_ verb: String, arguments: [CommandArgument], copies: Int, timeout: Duration,
                        onPhase: (@Sendable (CommandResult) -> Void)?, bound: BoundSend?,
                        authority: CommandSendPermit? = nil,
-                       onLateOutcome: (@Sendable (Result<CommandResult, CommandError>) async -> Void)? = nil) -> Started {
+                       onLateOutcome: (@Sendable (Result<CommandResult, CommandError>) async -> Void)? = nil,
+                       beforeSend: (@Sendable (String, UInt32) async -> Void)? = nil) -> Started {
         let id = allocateId()
         let (answers, continuation) = AsyncStream.makeStream(of: Result<CommandResult, CommandError>.self,
                                                              bufferingPolicy: .unbounded)
@@ -305,7 +312,8 @@ public actor CommandClient {
         let sending = Task { [weak self] in
             await previous?.value
             await self?.sendCopies(message, id: id, verb: verb, copies: copies, bound: bound,
-                                  sender: admittedSender, generation: admittedGeneration, gate: gate)
+                                  sender: admittedSender, generation: admittedGeneration, gate: gate,
+                                  beforeSend: beforeSend)
         }
         sendTail = sending
         return Started(id: id, sending: sending, answers: answers, client: self, gate: gate)
@@ -313,7 +321,9 @@ public actor CommandClient {
 
     private func sendCopies(_ message: LinkMessage, id: UInt32, verb: String, copies: Int,
                             bound: BoundSend?, sender: @escaping CommandSender,
-                            generation: UInt64, gate: CommandSendPermit) async {
+                            generation: UInt64, gate: CommandSendPermit,
+                            beforeSend: (@Sendable (String, UInt32) async -> Void)?) async {
+        await beforeSend?(verb, id)
         var sent = 0
         do {
             for _ in 0..<copies {

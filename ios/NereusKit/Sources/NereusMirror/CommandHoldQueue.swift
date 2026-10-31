@@ -40,6 +40,7 @@ public final class CommandHoldQueue {
 
     public typealias InvokeWithLate = @MainActor (@escaping OnOutcome) async throws -> CommandResult
 
+    @MainActor
     private final class Request {
         let id: UInt64
         let shows: [Shown]
@@ -49,6 +50,7 @@ public final class CommandHoldQueue {
         let onOutcome: OnOutcome
         var initialFinished = false
         var late: Outcome?
+        var presentationWatch: UInt64?
 
         init(id: UInt64, shows: [Shown], snapshot: UInt64, invoke: @escaping InvokeWithLate, onOutcome: @escaping OnOutcome) {
             self.id = id
@@ -107,10 +109,14 @@ public final class CommandHoldQueue {
         Task { [weak self] in
             let outcome: Outcome
             do {
-                outcome = .success(try await invoke { [weak self] late in
-                    guard let self else { return }
-                    if request.initialFinished { self.settle(control, request, late) }
-                    else { request.late = late }
+                outcome = .success(try await CommandClient.$beforeHeldSend.withValue({ [weak self] verb, id in
+                    await self?.watchPresentation(control, request, verb: verb, id: id)
+                }) {
+                    try await invoke { [weak self] late in
+                        guard let self else { return }
+                        if request.initialFinished { self.settle(control, request, late) }
+                        else { request.late = late }
+                    }
                 })
             } catch let error as CommandError { outcome = .failure(error) }
             catch { outcome = .failure(.timedOut) }
@@ -118,7 +124,22 @@ public final class CommandHoldQueue {
         }
     }
 
+    private func watchPresentation(_ control: String, _ request: Request, verb: String, id: UInt32) {
+        guard sending[control] === request, request.snapshot == store.snapshotIdentity else { return }
+        request.presentationWatch = store.watchCommandPresentation(verb: verb, id: id) { [weak self] result in
+            // The mirror sees the wire result before later Core deltas,
+            // even when the command lane or its caller has not resumed.
+            guard let self, request.snapshot == self.store.snapshotIdentity else { return }
+            request.presentationWatch = nil
+            self.settlePresentation(request, .success(result))
+        }
+    }
+
     private func finish(_ control: String, _ request: Request, _ outcome: Outcome) {
+        if let watch = request.presentationWatch {
+            store.unwatchCommandPresentation(watch)
+            request.presentationWatch = nil
+        }
         sending[control] = nil
         var next = queued.removeValue(forKey: control)
         if case .failure(.linkLost) = outcome, let dropped = next {
@@ -155,6 +176,13 @@ public final class CommandHoldQueue {
     }
 
     private func settle(_ control: String, _ request: Request, _ outcome: Outcome) {
+        settlePresentation(request, outcome)
+        guard current[control] == request.id else { return }
+        if case .success(let result) = outcome, SeveralDevices.waitsForConfirmation(result) { return }
+        request.onOutcome(outcome)
+    }
+
+    private func settlePresentation(_ request: Request, _ outcome: Outcome) {
         for shown in request.shows {
             guard let edit = request.edits[shown.slot],
                   store.isCurrent(shown.key, property: shown.property, edit: edit) else { continue }
@@ -168,9 +196,6 @@ public final class CommandHoldQueue {
                 store.releaseUnsent(shown.key, property: shown.property)
             }
         }
-        guard current[control] == request.id else { return }
-        if case .success(let result) = outcome, SeveralDevices.waitsForConfirmation(result) { return }
-        request.onOutcome(outcome)
     }
 
 }

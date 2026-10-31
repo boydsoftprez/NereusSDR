@@ -136,6 +136,101 @@ struct TuneUnderLoadTests {
         func note(_ hz: Double) { lock.withLock { arrivals.append((now(), hz)) } }
     }
 
+    /// Bounded, test-only timestamps across the fake transport and answer
+    /// task. Aggregate spacing alone cannot distinguish app work from a
+    /// delayed fake-Core observer or an overdue answer task.
+    final class Boundaries: @unchecked Sendable {
+        enum Stage: String {
+            case sent, observed, answerStarted, answerDue, answerReady, deliver, received, handled, delivered, writerResumed
+        }
+        private let lock = NSLock()
+        private var rows: [UInt32: [Stage: Double]] = [:]
+        private var writeIds: [Double: UInt32] = [:]
+
+        func sent(_ id: UInt32, hz: Double) {
+            lock.withLock {
+                rows[id, default: [:]][.sent] = TuneUnderLoadTests.now()
+                writeIds[hz] = id
+            }
+        }
+
+        func writerResumed(_ hz: Double) {
+            lock.withLock {
+                guard let id = writeIds[hz] else { return }
+                rows[id, default: [:]][.writerResumed] = TuneUnderLoadTests.now()
+            }
+        }
+
+        func note(_ stage: Stage, _ id: UInt32, at: Double = TuneUnderLoadTests.now()) {
+            lock.withLock { rows[id, default: [:]][stage] = at }
+        }
+
+        func report(_ label: String, since began: Double) {
+            let rows = lock.withLock { self.rows }
+                .filter { ($0.value[.sent] ?? 0) >= began }
+                .sorted { ($0.value[.sent] ?? 0) < ($1.value[.sent] ?? 0) }
+            func ms(_ end: Double?, _ start: Double?) -> String {
+                guard let end, let start else { return "-" }
+                return String(format: "%.2f", (end - start) * 1_000)
+            }
+            for (index, row) in rows.enumerated() {
+                let t = row.value
+                let next = index + 1 < rows.count ? rows[index + 1].value[.sent] : nil
+                print("TuneBoundary \(label) id \(row.key): "
+                      + "send-observer \(ms(t[.observed], t[.sent])) "
+                      + "observer-answer-task \(ms(t[.answerStarted], t[.observed])) "
+                      + "answer-overdue \(ms(t[.answerReady], t[.answerDue])) "
+                      + "ready-deliver \(ms(t[.deliver], t[.answerReady])) "
+                      + "deliver-receive \(ms(t[.received], t[.deliver])) "
+                      + "receive-handled \(ms(t[.handled], t[.received])) "
+                      + "handled-delivered \(ms(t[.delivered], t[.handled])) "
+                      + "receive-writer-resumed \(ms(t[.writerResumed], t[.received])) "
+                      + "writer-next-send \(ms(next, t[.writerResumed])) "
+                      + "receive-next-send \(ms(next, t[.received])) ms")
+            }
+        }
+    }
+
+    /// Forwards the same fake connection unchanged, recording local admission
+    /// and session ingress before an event is handled. Decodes only property
+    /// frames; recording does not schedule another task or main-queue hop.
+    final class BoundaryTransport: LinkTransport {
+        let base: any LinkTransport
+        let boundaries: Boundaries
+
+        init(base: any LinkTransport, boundaries: Boundaries) {
+            self.base = base
+            self.boundaries = boundaries
+        }
+
+        func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
+            try await base.open { [boundaries] event in
+                var resultId: UInt32?
+                if case .text(let text) = event, text.contains("property.result"),
+                   case .propertyResult(let result) = try? LinkCodec.decode(text), result.key == "slice:0" {
+                    resultId = result.writeId
+                    boundaries.note(.received, result.writeId)
+                }
+                await onEvent(event)
+                if let resultId { boundaries.note(.handled, resultId) }
+            }
+        }
+
+        @discardableResult func send(_ text: String) -> Bool {
+            if text.contains("property.write"), case .propertyWrite(let write) = try? LinkCodec.decode(text),
+               write.key == "slice:0", write.properties.contains(where: { $0.name == "frequency" }),
+               let id = write.writeId, let entry = write.properties.first(where: { $0.name == "frequency" }),
+               case .f64(let hz) = entry.value {
+                boundaries.sent(id, hz: hz)
+            }
+            return base.send(text)
+        }
+
+        func ping() { base.ping() }
+        func close() { base.close() }
+        func setBinaryReceiver(_ receiver: (@Sendable (Data) -> Void)?) { base.setBinaryReceiver(receiver) }
+    }
+
     /// How long a job put on the main queue waits to run: one every 20 ms
     /// from a thread of its own.
     final class MainHops: @unchecked Sendable {
@@ -226,11 +321,16 @@ struct TuneUnderLoadTests {
         let station = try FakeStation(additions: .all)
         let model = AppModel(mediaPeerFactory: station.mediaPeerFactory,
                              displaySettings: BandDisplaySettingsStore(defaults: defaults))
+        let boundaries = Boundaries()
+        let factory = station.transportFactory
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
-                            transportFactory: station.transportFactory, clock: HeartbeatSoonLinkClock())
+                            transportFactory: { endpoint, trust in
+            BoundaryTransport(base: factory(endpoint, trust), boundaries: boundaries)
+        }, clock: HeartbeatSoonLinkClock())
         #expect(await station.waitUntilLive())
         try await MainScreenShotTests.fill(station)
         let main = model.main
+        main.slices.frequencyWriteAnsweredForTesting = { hz in boundaries.writerResumed(hz) }
         #expect(await settle(seconds: 30) {
             main.slices.entries.count == 2 && main.coreName != nil && main.band.catalog != nil
         })
@@ -301,12 +401,20 @@ struct TuneUnderLoadTests {
                         continue
                     }
                     answers.note(hz)
+                    boundaries.note(.observed, writeId)
                     Task.detached {
+                        boundaries.note(.answerStarted, writeId)
+                        let delay = answerDelay.components
+                        let seconds = Double(delay.seconds) + Double(delay.attoseconds) / 1e18
+                        boundaries.note(.answerDue, writeId, at: now() + seconds)
                         try? await Task.sleep(for: answerDelay)
+                        boundaries.note(.answerReady, writeId)
+                        boundaries.note(.deliver, writeId)
                         await station.deliver(.propertyResult(LinkMessage.PropertyResult(key: write.key, writeId: writeId,
                                                                                          results: [
                             .init(property: entry.name, accepted: true, reason: "", value: entry),
                         ])))
+                        boundaries.note(.delivered, writeId)
                         answers.noteAnswered()
                         await station.deliver(.delta(LinkMessage.Delta(key: write.key, properties: [entry])))
                     }
@@ -381,6 +489,7 @@ struct TuneUnderLoadTests {
             p90 \(String(format: "%.1f", percentile(hopMs, 0.9))) max \(String(format: "%.1f", hopMs.max() ?? 0)); \
             lines in \(linesDrawn)\(cost)
             """)
+        boundaries.report(label, since: began)
         await model.disconnect()
         return run
     }
