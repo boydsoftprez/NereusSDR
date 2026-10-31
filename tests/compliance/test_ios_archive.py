@@ -122,17 +122,17 @@ class ArchiveScript(unittest.TestCase):
             args = checkout.recorded()
             version = project_version()
             sha = git(checkout.root, "rev-parse", "--short", "HEAD")
-            # Two commits plus build-number.sh's fixed offset of 1000.
-            for setting in ("CURRENT_PROJECT_VERSION=1002", "MARKETING_VERSION=" + version,
+            # Two commits plus build-number.sh's fixed offset of 1003.
+            for setting in ("CURRENT_PROJECT_VERSION=1005", "MARKETING_VERSION=" + version,
                             "NEREUS_BUILD_TAG=feature/x@" + sha):
                 self.assertIn(setting, args)
             self.assertEqual(args[args.index("-configuration") + 1], "Release")
             self.assertEqual(args[args.index("-destination") + 1], "generic/platform=iOS")
             self.assertEqual(args[-1], "archive")
             archive = Path(args[args.index("-archivePath") + 1])
-            self.assertEqual(archive.name, "NereusSDR %s (1002).xcarchive" % version)
+            self.assertEqual(archive.name, "NereusSDR %s (1005).xcarchive" % version)
             self.assertEqual(archive.parent.resolve(), (checkout.root / "ios" / ".build" / "archive").resolve())
-            self.assertIn("Archived NereusSDR %s (1002)" % version, result.stdout)
+            self.assertIn("Archived NereusSDR %s (1005)" % version, result.stdout)
         finally:
             checkout.close()
 
