@@ -6067,6 +6067,7 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 1. exact key (exception) | `FreeDvReporter/FrequencyAsKhz` | operatorLocal |
 | 1. exact key (exception) | `Roundtable/EarlierTurnsShown` | operatorLocal |
 | 1. exact key (exception) | `Roundtable/PanelOpensOn` | operatorLocal |
+| 1. exact key (exception) | `Roundtable/SignalFormat` | operatorLocal |
 | 1. exact key (exception) | `Roundtable/FirstRunSeen` | operatorLocal |
 | 1. exact key (exception) | `Roundtable/WindowGeometry` | operatorLocal |
 | 2. prefix | `hardware/` | station |

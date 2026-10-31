@@ -52,12 +52,13 @@ public enum SettingsScope: Sendable, Equatable {
         Rule(text: "FreeDvReporter/FrequencyAsKhz", scope: .operatorLocal),
         // Roundtable: how many earlier turns a panel shows, what it opens
         // on, whether this device asked the first-run question and where
-        // its window sits are each device's own; every other Roundtable/
-        // key is the Core's (the prefix rule below).
+        // its window sits, and its signal format are each device's own.
+        // Every other Roundtable/ key is the Core's (the prefix rule below).
         Rule(text: "Roundtable/EarlierTurnsShown", scope: .operatorLocal),
         Rule(text: "Roundtable/PanelOpensOn", scope: .operatorLocal),
         Rule(text: "Roundtable/FirstRunSeen", scope: .operatorLocal),
         Rule(text: "Roundtable/WindowGeometry", scope: .operatorLocal),
+        Rule(text: "Roundtable/SignalFormat", scope: .operatorLocal),
     ]
 
     // Tier 2, in the order the Core checks them.
