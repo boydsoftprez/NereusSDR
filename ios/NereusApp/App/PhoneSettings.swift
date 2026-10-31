@@ -15,6 +15,26 @@ import NereusBand
 import NereusMedia
 import UIKit
 
+enum RoundtableSignalFormat: String, CaseIterable {
+    case dbm, sUnits, both
+
+    var title: String {
+        switch self {
+        case .dbm: "dBm"
+        case .sUnits: "S-units"
+        case .both: "Both"
+        }
+    }
+
+    var next: Self {
+        switch self {
+        case .dbm: .sUnits
+        case .sUnits: .both
+        case .both: .dbm
+        }
+    }
+}
+
 /// The settings Setup marks This phone: kept on the phone in `UserDefaults`,
 /// never sent to the Core. Each screen task adds its own settings here as
 /// named properties over these accessors. Keys are stored under
@@ -297,6 +317,13 @@ final class PhoneSettings: ObservableObject {
     static let cellularNoteShownKey = "data.cellularNoteShown"
 
     // MARK: Roundtable (spec 11.2)
+
+    static let roundtableSignalFormatKey = "roundtable.signalFormat"
+
+    var roundtableSignalFormat: RoundtableSignalFormat {
+        get { RoundtableSignalFormat(rawValue: string(Self.roundtableSignalFormatKey, default: "")) ?? .dbm }
+        set { setString(newValue.rawValue, for: Self.roundtableSignalFormatKey) }
+    }
 
     /// The note that the station answered Roundtable's first question on
     /// another device was shown on this phone.

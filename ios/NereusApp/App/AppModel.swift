@@ -99,7 +99,7 @@ final class AppModel: ObservableObject {
     /// Roundtable as the Core runs it (spec 11.3): one for the flag lines
     /// and the sheet, tied to this app, so it stops reading as connected
     /// once the app and its session are gone.
-    lazy var roundtable = RoundtableModel(mirror: mirror, commands: commands, records: records, settings: settings, catalogFeed: main.catalogFeed, owner: self)
+    lazy var roundtable = RoundtableModel(mirror: mirror, commands: commands, records: records, settings: settings, catalogFeed: main.catalogFeed, phoneSettings: phoneSettings, owner: self)
     /// The Panadapter tab's swipes (spec 11.3, S1): the band reads its edges, the root its tab bar.
     lazy var swipes = SwipeShortcutModel(settings: phoneSettings)
     /// The speaker at the radio, as the Sound panel shows it: one level and

@@ -4112,9 +4112,22 @@ void SpotHubDialog::buildRoundtableTab(QTabWidget* tabs)
     m_rtOpensOnCombo->addItem(QStringLiteral("Readings"), QStringLiteral("Readings"));
     m_rtOpensOnCombo->addItem(QStringLiteral("Messages"), QStringLiteral("Messages"));
     localLayout->addWidget(m_rtOpensOnCombo, 1, 1);
+    localLayout->addWidget(new QLabel(QStringLiteral("Signal format:")), 2, 0);
+    auto* signalFormat = new GuardedComboBox;
+    signalFormat->setObjectName(QStringLiteral("roundtableSignalFormat"));
+    for (const QString& option : {QStringLiteral("dBm"), QStringLiteral("S-units"), QStringLiteral("Both")}) {
+        signalFormat->addItem(option);
+    }
+    signalFormat->setCurrentText(AppSettings::instance().value(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm")).toString());
+    connect(signalFormat, &QComboBox::currentTextChanged, this, [](const QString& value) {
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("Roundtable/SignalFormat"), value);
+        settings.save();
+    });
+    localLayout->addWidget(signalFormat, 2, 1);
     auto* localScope = new QLabel(QStringLiteral("This computer only."));
     localScope->setStyleSheet(kRtScopeStyle);
-    localLayout->addWidget(localScope, 2, 0, 1, 3);
+    localLayout->addWidget(localScope, 3, 0, 1, 3);
     {
         auto& settings = AppSettings::instance();
         m_rtEarlierCombo->setCurrentIndex(rtIndexOfData(
@@ -4261,6 +4274,10 @@ void SpotHubDialog::refreshRoundtableSettings()
 {
     if (m_rtPage == nullptr || !m_roundtable) {
         return;
+    }
+    if (auto* format = m_rtPage->findChild<QComboBox*>(QStringLiteral("roundtableSignalFormat"))) {
+        const QSignalBlocker block(format);
+        format->setCurrentText(AppSettings::instance().value(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm")).toString());
     }
     const bool autoStart =
         m_roundtable->stationSetting(QStringLiteral("AutoStart")) == QLatin1String("True");

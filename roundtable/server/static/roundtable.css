@@ -534,7 +534,7 @@ textarea:focus-visible { outline: 2px solid var(--sel-top); outline-offset: 1px;
 .rd.reading-head { min-height: 27px; font-size: 11px; color: var(--t2); border-bottom: 1px solid var(--bd3); margin-top: 5px; }
 .rd.reading-head > span:not(:first-child) { text-align: right; white-space: nowrap; }
 .rd.attributed-reading .c { font-size: 12px; }
-.rd.attributed-reading .v { font-size: 12px; white-space: nowrap; }
+.rd.attributed-reading .v { font-size: 12px; white-space: pre-line; }
 .attributed-reading.stale .path-value, .attributed-reading.stale .path-value small { color: var(--stale); }
 .name-turn { margin: 5px 14px; }
 .activity-choices { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 12px; }
@@ -597,3 +597,6 @@ textarea:focus-visible { outline: 2px solid var(--sel-top); outline-offset: 1px;
 .roundtable-offline .person-row .gl.talking { background: var(--muted); }
 .roundtable-offline .maptag.selected { border-color: var(--stale); }
 body.public, .public .page { height: 100dvh; }
+
+.signal-value, .signal-heading { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0; text-align: right; white-space: pre-line; }
+.signal-value:focus-visible, .signal-heading:focus-visible { outline: 2px solid var(--accent, #00b4d8); }

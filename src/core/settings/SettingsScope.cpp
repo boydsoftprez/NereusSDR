@@ -208,6 +208,8 @@
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-24 - LimitFiltersToSidebands is Station scope. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-10-31 - Roundtable/SignalFormat is a local reporter-display
+//                preference. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "core/settings/SettingsScope.h"
@@ -324,6 +326,7 @@ const Rule kExceptions[] = {
     // below).
     { "Roundtable/EarlierTurnsShown", SettingsScope::OperatorLocal },
     { "Roundtable/PanelOpensOn", SettingsScope::OperatorLocal },
+    { "Roundtable/SignalFormat", SettingsScope::OperatorLocal },
     // Roundtable plan Task 12 (design 11.2): whether this computer has
     // asked the first-run question or shown the one-time note that another
     // device answered it. The answer itself is the Core's.

@@ -57,7 +57,23 @@ enum RoundtableText {
         guard let reading else {
             return ""
         }
-        return reading.present ? sText(reading.dbm) : "none"
+        return validSignal(reading).map(sText) ?? "none"
+    }
+
+    static func validSignal(_ reading: RoundtableModel.Reading?) -> Double? {
+        guard let reading, reading.present, readingPresent(reading.dbm) else { return nil }
+        return reading.dbm
+    }
+
+    static func signalLines(_ reading: RoundtableModel.Reading?, format: RoundtableSignalFormat) -> [String] {
+        guard let reading else { return [] }
+        guard validSignal(reading) != nil else { return ["none"] }
+        let dbm = String(format: "%.0f", reading.dbm)
+        switch format {
+        case .dbm: return [dbm]
+        case .sUnits: return [sText(reading.dbm)]
+        case .both: return [sText(reading.dbm), dbm + " dBm"]
+        }
     }
 
     /// The range a reading's dbm may take (wire spec 6.5, the desktop's
@@ -837,7 +853,7 @@ struct RoundtableRoomView: View {
                         }
                     }
                     .padding(.horizontal, 12)
-                    .frame(height: 22)
+                    .frame(height: roundtable.signalFormat == .both ? 34 : 22)
                 }
             } else {
                 header
@@ -879,7 +895,12 @@ struct RoundtableRoomView: View {
             Text("Heard by").frame(maxWidth: .infinity, alignment: .leading)
             Text(roundtable.distanceUnits).frame(width: columns.km, alignment: .trailing)
             Text("Offset").frame(width: columns.offset, alignment: .trailing)
-            Text("dBm").frame(width: columns.reading, alignment: .trailing)
+            Button { roundtable.cycleSignalFormat() } label: {
+                Text(roundtable.signalFormat.title).frame(width: columns.reading, alignment: .trailing)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Signal display, \(roundtable.signalFormat.title)")
+            .accessibilityHint("Double tap to change signal display.")
             Text("Age").frame(width: columns.age, alignment: .trailing)
         }
         .lineLimit(1)
@@ -928,12 +949,9 @@ struct RoundtableRoomView: View {
                 .frame(width: columns.offset, alignment: .trailing)
             HStack(spacing: 5) {
                 if columns.bar {
-                    bar(reading?.present == false ? nil : reading?.dbm, stale: stale, you: member.you)
+                    bar(RoundtableText.validSignal(reading), stale: stale, you: member.you)
                 }
-                Text(reading.map { $0.present ? String(format: "%.0f", $0.dbm) : "none" } ?? "")
-                    .font(.system(size: 12, weight: .bold).monospacedDigit())
-                    .foregroundStyle(tint)
-                    .lineLimit(1)
+                signalButton(reading, reporter: member.you ? "You" : RoundtableText.withNth(member.callsign, member.nth), tint: tint)
                     .frame(width: 46, alignment: .trailing)
             }
             .frame(width: columns.reading, alignment: .trailing)
@@ -948,7 +966,7 @@ struct RoundtableRoomView: View {
         .padding(.horizontal, 12)
         .frame(minHeight: compact ? 30 : 36)
         .background(member.you ? RoundtableColours.youRow : .clear)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("roundtableReading-\(member.you ? "You" : member.callsign)")
     }
 
@@ -964,15 +982,34 @@ struct RoundtableRoomView: View {
                 tag("AWAY")
             }
             Spacer(minLength: 2)
-            bar(member.reading?.present == false ? nil : member.reading?.dbm, stale: stale, you: false)
+            bar(RoundtableText.validSignal(member.reading), stale: stale, you: false)
                 .frame(width: 24)
-            Text(RoundtableText.readingText(member.reading))
-                .font(.system(size: 12, weight: .bold).monospacedDigit())
+            signalButton(member.reading, reporter: member.you ? "You" : RoundtableText.withNth(member.callsign, member.nth), tint: stale ? RoundtableColours.stale : RoundtableColours.text)
                 .frame(width: 44, alignment: .trailing)
         }
         .foregroundStyle(stale ? RoundtableColours.stale : RoundtableColours.text)
         .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func signalButton(_ reading: RoundtableModel.Reading?, reporter: String, tint: Color) -> some View {
+        let lines = RoundtableText.signalLines(reading, format: roundtable.signalFormat)
+        return Button { roundtable.cycleSignalFormat() } label: {
+            VStack(alignment: .trailing, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                    Text(line)
+                        .font(.system(size: index == 0 ? 12 : 9, weight: .bold).monospacedDigit())
+                        .lineLimit(1).minimumScaleFactor(0.75)
+                }
+                if lines.isEmpty { Text(" ") }
+            }
+            .foregroundStyle(tint)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(reporter), signal \(lines.isEmpty ? "unavailable" : lines.joined(separator: ", ")), display \(roundtable.signalFormat.title)")
+        .accessibilityHint("Double tap to change signal display.")
     }
 
     private func bar(_ dbm: Double?, stale: Bool, you: Bool) -> some View {

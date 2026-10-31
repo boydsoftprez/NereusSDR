@@ -240,6 +240,16 @@ final class RoundtableModel: ObservableObject {
     /// The band list, by center frequency, then id.
     @Published private(set) var rooms: [RoomSummary] = []
     @Published private(set) var sliceContexts: [Int64: FrequencyContext] = [:]
+    @Published private(set) var signalFormat: RoundtableSignalFormat
+    private let phoneSettings: PhoneSettings?
+
+    func setSignalFormat(_ format: RoundtableSignalFormat) {
+        signalFormat = format
+        phoneSettings?.roundtableSignalFormat = format
+    }
+
+    func cycleSignalFormat() { setSignalFormat(signalFormat.next) }
+
     @Published private(set) var distanceUnits = "mi"
     @Published private(set) var showBearing = true
     @Published private(set) var receivedMessages: [Message] = []
@@ -460,7 +470,9 @@ final class RoundtableModel: ObservableObject {
     /// once it is freed.
     init(mirror: MirrorStore, commands: CommandClient, records: RecordStreamClient,
          clock: any LinkClock = RoundtableWallClock(), settings: SettingsProxyClient? = nil, catalogFeed: CatalogFeed? = nil,
-         owner: AnyObject? = nil) {
+         phoneSettings: PhoneSettings? = nil, owner: AnyObject? = nil) {
+        self.phoneSettings = phoneSettings
+        self.signalFormat = phoneSettings?.roundtableSignalFormat ?? .dbm
         self.catalogFeed = catalogFeed
         self.settings = settings
         self.mirror = mirror
@@ -1223,8 +1235,10 @@ final class RoundtableModel: ObservableObject {
             case "reading":
                 if let ref = text(fields["ref"]) {
                     let identity = (text(fields["sourceRoom"]).map { $0 + "/" } ?? "") + ref
-                    readings[identity] = Reading(dbm: number(fields["dbm"]) ?? 0, t: whole(fields["t"]) ?? 0,
-                                            present: flag(fields["present"]) ?? false, turn: whole(fields["turn"]))
+                    let dbm = number(fields["dbm"])
+                    readings[identity] = Reading(dbm: dbm ?? 0, t: whole(fields["t"]) ?? 0,
+                        present: (flag(fields["present"]) ?? false) && (dbm.map(RoundtableText.readingPresent) ?? false),
+                        turn: whole(fields["turn"]))
                 }
             case "turn":
                 if let turn = turn(fields) {

@@ -517,6 +517,13 @@ struct RoundtablePathSettings: View {
         NavigationStack {
             Form {
                 if let note = roundtable.note { Text(note).font(.footnote).foregroundStyle(.secondary) }
+                Picker("Signal", selection: Binding(get: { roundtable.signalFormat }, set: { roundtable.setSignalFormat($0) })) {
+                    ForEach(RoundtableSignalFormat.allCases, id: \.self) { format in
+                        Text(format.title).tag(format)
+                    }
+                }
+                .accessibilityIdentifier("roundtableSignalFormat")
+                Text("Signal display is kept on this device.").font(.footnote).foregroundStyle(.secondary)
                 Picker("Distance", selection: Binding(get: { roundtable.distanceUnits }, set: { units in
                     Task { await roundtable.setDistanceUnits(units) }
                 })) {
@@ -531,7 +538,7 @@ struct RoundtablePathSettings: View {
                 Text("Distance and initial true bearing run from the identified talker to the reporter. Unknown identity or missing grids leave the path blank.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            .navigationTitle("Roundtable paths")
+            .navigationTitle("Roundtable settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
