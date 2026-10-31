@@ -588,6 +588,58 @@ private slots:
     // leg that lost less input drops the difference so the pair stays
     // sample-aligned. Each sample's I value is its input position, the same
     // on both legs, so an aligned pair has equal I values.
+    void cohosted_mixed_slices_report_their_actual_input_pressure()
+    {
+        DiversityRecorder record;
+        s_diversity = &record;
+        WdspEngine engine;
+        armDiversity(engine, 4);
+        RxDspWorker worker;
+        worker.setEngines(&engine, nullptr);
+        worker.setBufferSizes(4, 64);
+        // Arrange a real local-epoch collision, not just synthetic input:
+        // normal epoch 3 after two binds; mixed epoch 3 after clear+activate.
+        worker.setStreamSlices(0, {7});
+        worker.setStreamSlices(0, {7, 8});
+        worker.setStreamSlices(1, {9});
+        const QVector<float> batch(8, 0.0f);
+        worker.processStampedIqBatch(0, batch, ReceiverManager::enqueueClockNs());
+        const auto normal = worker.inputDelayStatsForSlice(8, 0);
+        QCOMPARE(normal.sourceKind, RxDspWorker::InputSourceKind::Stream);
+        worker.setExternalDiversityRoute(0, 7, 10, 11);
+        QSignalSpy slices(&worker, &RxDspWorker::sliceProcessed);
+        worker.processStampedExternalDiversityIqBatch(10, batch, ReceiverManager::enqueueClockNs());
+        worker.processStampedExternalDiversityIqBatch(11, batch, ReceiverManager::enqueueClockNs());
+        QCOMPARE(slices.count(), 2);
+        QCOMPARE(slices.at(0).at(0).toInt(), 7);
+        QCOMPARE(slices.at(1).at(0).toInt(), 8);
+        worker.processStampedExternalDiversityIqBatch(10, batch,
+            ReceiverManager::enqueueClockNs() - 600000000);
+        const auto target = worker.inputDelayStatsForSlice(7, 0);
+        const auto cohost = worker.inputDelayStatsForSlice(8, 0);
+        QVERIFY(target.droppedInputMs > 0);
+        QCOMPARE(target.context, normal.context);
+        QVERIFY(target.sequence >= normal.sequence);
+        QCOMPARE(target.sourceKind, RxDspWorker::InputSourceKind::ExternalDiversity);
+        QCOMPARE(cohost.sourceKind, target.sourceKind);
+        QVERIFY(target.routeIdentity != normal.routeIdentity);
+        QCOMPARE(cohost.routeIdentity, target.routeIdentity);
+        QCOMPARE(cohost.droppedInputMs, target.droppedInputMs);
+        QCOMPARE(cohost.inputDelayMs, target.inputDelayMs);
+        QCOMPARE(cohost.sequence, target.sequence);
+        QCOMPARE(worker.inputDelayStatsForSlice(9, 1).droppedInputMs, 0);
+        const auto untouched = worker.inputDelayStatsForSlice(9, 1);
+        worker.setStreamSlices(0, {7, 8, 10});
+        const auto rebound = worker.inputDelayStatsForSlice(8, 0);
+        QVERIFY(!rebound.consistent);
+        QVERIFY(rebound.routeIdentity != target.routeIdentity);
+        QCOMPARE(worker.inputDelayStatsForSlice(9, 1).routeIdentity, untouched.routeIdentity);
+        worker.clearExternalDiversityRoute();
+        const auto ordinaryAgain = worker.inputDelayStatsForSlice(8, 0);
+        QCOMPARE(ordinaryAgain.sourceKind, RxDspWorker::InputSourceKind::Stream);
+        QVERIFY(ordinaryAgain.routeIdentity != normal.routeIdentity);
+    }
+
     void stamped_diversity_input_is_bounded_and_stays_aligned()
     {
         DiversityRecorder record;

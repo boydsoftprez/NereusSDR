@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- NNR keeps the operator's selected model running when receiver processing
+  falls behind. A measured warning in desktop and phone NNR controls offers
+  **Use Standard** or **Turn NNR off**; leaving it alone keeps NNR running.
+  Measured recovery clears the warning. Older Cores retain their separate
+  applied-limit reason and **Try again** action.
+
 ## [2026.10.2-rc1] - 2026-10-30
 
 This is the combined release candidate for 2026.10.2. The latest stable release remains 2026.10.1. See the [bench checklist](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.2-rc1/docs/guides/bench-2026.10.2.md) for candidate acceptance.

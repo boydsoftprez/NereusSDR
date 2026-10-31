@@ -648,6 +648,9 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (stationRoundtableVersion > 0) {
         updates.append(intEntry("stationRoundtableVersion", stationRoundtableVersion));
     }
+    if (nnrLoadWarningVersion > 0) {
+        updates.append(intEntry("nnrLoadWarningVersion", nnrLoadWarningVersion));
+    }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();
         if (!json.isEmpty()) updates.append(stringEntry("coreBuildInfo", QString::fromUtf8(json)));
@@ -672,6 +675,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int rxFilterLowPassEntries = 0;
     int radeReasonEntries = 0;
     int rxMeterStampsEntries = 0;
+    int nnrLoadWarningEntries = 0;
     int displayCodecEntries = 0;
     int stationRoundtableEntries = 0;
     int stationCatEntries = 0;
@@ -717,6 +721,14 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 && u.value.typeId() == QMetaType::LongLong) {
                 const qlonglong version = u.value.toLongLong();
                 caps.radeReasonVersion = version > 0 && version <= 65535
+                    ? static_cast<int>(version) : 0;
+            }
+        } else if (u.name == "nnrLoadWarningVersion") {
+            if (++nnrLoadWarningEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong version = u.value.toLongLong();
+                caps.nnrLoadWarningVersion = version > 0 && version <= 65535
                     ? static_cast<int>(version) : 0;
             }
         } else if (u.name == "rxMeterStampsVersion") {

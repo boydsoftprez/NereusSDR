@@ -1,5 +1,6 @@
 // NereusSDR for iOS: the Modes tab's noise buttons: NB, the noise reductions, ANF, SNB and APF, NNR's step-back and settings
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-31: Prioritize selected NNR warning choices; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import SwiftUI
 
@@ -28,10 +29,10 @@ struct NoiseSection: View {
                 .accessibilityHint(model.apfReason ?? "")
                 .accessibilityIdentifier("modesApf")
             }
-            ForEach(rx.noise.filter { $0.reason != nil }) { button in
+            NnrStepBack(rx: rx, identifier: "modesNnr")
+            ForEach(rx.noise.filter { $0.reason != nil && !($0.id == "NNR" && rx.nnrPriorityReason != nil) }) { button in
                 ModesChrome.note("\(button.label): \(button.reason ?? "")")
             }
-            NnrStepBack(rx: rx, identifier: "modesNnr")
             if let reason = model.apfReason {
                 ModesChrome.note("APF: \(reason)")
             }

@@ -1783,6 +1783,7 @@ struct PeerOnlyProperty {
 };
 
 constexpr PeerOnlyProperty kPeerOnlyProperties[] = {
+    {"SliceModel", "slice:", true, "nnrLoadWarning", "nnrLoadWarning"},
     // The Diversity dialog's sensitivity pattern (diversityPatternVersion 1).
     {"SliceModel", "slice:", true, "diversityPattern", "diversityPattern"},
     {"RadioModel", "radio", false, "diversityState", "diversityControl"},
@@ -2801,6 +2802,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     m_stationPeer.transport = m_stationTransport.get();
     m_stationPeer.description = QStringLiteral("this computer");
     m_stationPeer.helloReceived = true;
+    m_declaredFeatures.insert(QByteArrayLiteral("nnrLoadWarning"), 1);
     m_stationPeer.authenticated = true;
     m_stationPeer.snapshotComplete = true;
     m_stationPeer.agreedMajor = kSessionProtocolMajor;
@@ -15203,6 +15205,8 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // property (fitPeerOnlyProperties).
             caps.rxMeterStampsVersion =
                 peerGetsFeatureProperties(transport, QByteArrayLiteral("rxMeterStamps")) ? 1 : 0;
+            caps.nnrLoadWarningVersion =
+                peerGetsFeatureProperties(transport, QByteArrayLiteral("nnrLoadWarning")) ? 1 : 0;
             // Display codec v2 (NSDC v2): for a minor-11 peer that declared
             // displayCodec 2, media on, while the Core's RemoteDisplayCodecV2
             // setting is on (after rxMeterStampsVersion and before

@@ -343,8 +343,7 @@ void RxDspWorker::setExternalDiversityRoute(
         m_externalDiversityRoute = {};
         return;
     }
-    m_externalDiversityStatsSlice.store(route.targetSliceId,
-                                        std::memory_order_relaxed);
+    publishInputSourceContext();
 
 #ifdef NEREUS_BUILD_TESTS
     if (m_externalDiversityRouteHookForTest) {
@@ -368,7 +367,7 @@ void RxDspWorker::clearExternalDiversityRoute()
     m_externalDiversityRoute = {};
     m_externalDiversityChunkSize = 0;
     m_externalDiversityMaxQueuedSamples = 0;
-    m_externalDiversityStatsSlice.store(-1, std::memory_order_relaxed);
+    publishInputSourceContext();
     // A new route starts aligned; an episode in progress ends with the
     // route (its log line is not written: nothing resumed).
     m_externalDiversityInputDelay.skipping = false;
@@ -478,8 +477,8 @@ void RxDspWorker::processStampedExternalDiversityIqBatch(
     StreamAccum& secondary = m_externalDiversitySecondary;
 
     InputDelayState& state = m_externalDiversityInputDelay;
-    const qint64 delayUs =
-        std::max<qint64>(0, (ReceiverManager::enqueueClockNs() - enqueuedNs) / 1000);
+    const qint64 observedNs = ReceiverManager::enqueueClockNs();
+    const qint64 delayUs = std::max<qint64>(0, (observedNs - enqueuedNs) / 1000);
     state.delayUs.store(delayUs, std::memory_order_relaxed);
 
     const qint64 drainSize = m_externalDiversityChunkSize;
@@ -507,6 +506,7 @@ void RxDspWorker::processStampedExternalDiversityIqBatch(
             } else {
                 m_externalDiversityEpisodeAdvance[1] += batchSamples;
             }
+            publishInputObservation(state, observedNs);
             return;
         }
         // Resume: the leg that lost less input is behind the other by the
@@ -524,6 +524,7 @@ void RxDspWorker::processStampedExternalDiversityIqBatch(
         state.episodeSkippedUs = 0;
     }
 
+    publishInputObservation(state, observedNs);
     const qint64 drop = std::min(m_externalDiversityDropPending[leg], batchSamples);
     m_externalDiversityDropPending[leg] -= drop;
     appendExternalDiversitySamples(leg == 0 ? primary : secondary, interleavedIQ,
@@ -869,36 +870,119 @@ bool RxDspWorker::processRadeRxBlock(int sliceIdx, const float* audio48k,
     return true;
 }
 
+// NereusSDR-original (2026-10-31): coherent queue observations for the
+// warning monitor. Recovery's skip/resume decisions remain independent.
+void RxDspWorker::publishInputObservation(InputDelayState& state, qint64 observedNs)
+{
+    state.observationSequence.fetch_add(1);
+    state.observedDelayUs.store(state.delayUs.load(std::memory_order_relaxed));
+    state.observedDroppedUs.store(state.droppedUs.load(std::memory_order_relaxed));
+    state.observedNs.store(observedNs);
+    state.observationSequence.fetch_add(1);
+}
+
+void RxDspWorker::invalidateInputObservation(InputDelayState& state)
+{
+    state.observationSequence.fetch_add(1);
+    state.observedNs.store(0);
+    state.context.fetch_add(1);
+    state.observationSequence.fetch_add(1);
+}
+
+RxDspWorker::InputDelayStats RxDspWorker::readInputObservation(const InputDelayState& state)
+{
+    InputDelayStats out;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const quint64 before = state.observationSequence.load();
+        if ((before & 1U) != 0) {
+            continue;
+        }
+        out.inputDelayMs = state.observedDelayUs.load() / 1000;
+        out.droppedInputMs = state.observedDroppedUs.load() / 1000;
+        out.observationNs = state.observedNs.load();
+        out.context = state.context.load();
+        const quint64 after = state.observationSequence.load();
+        if (before == after) {
+            out.sequence = after;
+            out.consistent = out.observationNs > 0;
+            return out;
+        }
+    }
+    return InputDelayStats{};
+}
+
+void RxDspWorker::publishInputSourceContext()
+{
+    // Control path, on the same DSP thread that changes the route/bindings.
+    // No recovery decision, counter or accumulator is changed here.
+    m_inputSourceSequence.fetch_add(1);
+    const int previousStream = m_externalDiversityStatsStream.load();
+    const int target = m_externalDiversityRoute.active()
+        ? m_externalDiversityRoute.targetSliceId : -1;
+    int mixedStream = -1;
+    if (target >= 0) {
+        for (const auto& [stream, slices] : m_streamSlices) {
+            if (slices.contains(target)) {
+                mixedStream = stream;
+                break;
+            }
+        }
+    }
+    invalidateInputObservation(m_externalDiversityInputDelay);
+    m_externalDiversityStatsSlice.store(target);
+    m_externalDiversityStatsStream.store(mixedStream);
+    const quint64 identity = m_inputSourceSequence.load() + 1;
+    for (int stream : {previousStream, mixedStream}) {
+        if (stream >= 0 && stream < kMaxInputDelayReceivers) {
+            m_inputDelay[stream].sourceRouteIdentity.store(identity);
+        }
+    }
+    m_inputSourceSequence.fetch_add(1);
+}
+
+RxDspWorker::InputDelayStats RxDspWorker::readRoutedInputObservation(
+    int sliceId, int streamIndex, bool forceDiversity) const
+{
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const quint64 before = m_inputSourceSequence.load();
+        if ((before & 1U) != 0) {
+            continue;
+        }
+        const int mixedStream = m_externalDiversityStatsStream.load();
+        const bool diversity = forceDiversity || (sliceId >= 0
+            && (m_externalDiversityStatsSlice.load() == sliceId
+                || (mixedStream >= 0 && mixedStream == streamIndex)));
+        InputDelayStats out;
+        if (diversity) {
+            out = readInputObservation(m_externalDiversityInputDelay);
+            out.sourceKind = InputSourceKind::ExternalDiversity;
+            out.routeIdentity = before;
+        } else if (streamIndex >= 0 && streamIndex < kMaxInputDelayReceivers) {
+            out = readInputObservation(m_inputDelay[streamIndex]);
+            out.sourceKind = InputSourceKind::Stream;
+            out.routeIdentity = m_inputDelay[streamIndex].sourceRouteIdentity.load();
+        }
+        if (before == m_inputSourceSequence.load()) {
+            return out;
+        }
+    }
+    return {};
+}
+
 RxDspWorker::InputDelayStats RxDspWorker::inputDelayStats(int receiverIndex) const
 {
-    InputDelayStats stats;
-    if (receiverIndex < 0 || receiverIndex >= kMaxInputDelayReceivers) {
-        return stats;
-    }
-    const InputDelayState& state = m_inputDelay[receiverIndex];
-    stats.inputDelayMs   = state.delayUs.load(std::memory_order_relaxed) / 1000;
-    stats.droppedInputMs = state.droppedUs.load(std::memory_order_relaxed) / 1000;
-    return stats;
+    return readRoutedInputObservation(-1, receiverIndex);
 }
 
 RxDspWorker::InputDelayStats RxDspWorker::externalDiversityInputDelayStats() const
 {
-    InputDelayStats stats;
-    stats.inputDelayMs =
-        m_externalDiversityInputDelay.delayUs.load(std::memory_order_relaxed) / 1000;
-    stats.droppedInputMs =
-        m_externalDiversityInputDelay.droppedUs.load(std::memory_order_relaxed) / 1000;
-    return stats;
+    return readRoutedInputObservation(-1, -1, true);
 }
 
 RxDspWorker::InputDelayStats RxDspWorker::inputDelayStatsForSlice(int sliceId,
                                                                   int streamIndex) const
 {
-    if (sliceId >= 0
-        && m_externalDiversityStatsSlice.load(std::memory_order_relaxed) == sliceId) {
-        return externalDiversityInputDelayStats();
-    }
-    return streamIndex >= 0 ? inputDelayStats(streamIndex) : InputDelayStats{};
+    return readRoutedInputObservation(sliceId, streamIndex);
 }
 
 qint64 RxDspWorker::spanUsForDrainSize(qint64 inSize, qint64 samples)
@@ -920,9 +1004,10 @@ qint64 RxDspWorker::inputSpanUs(int receiverIndex, qint64 samples) const
     return spanUsForDrainSize(inSize, samples);
 }
 
-// R-R3-40. Runs on the DSP thread. Per batch this adds one clock read and one
-// relaxed atomic store; a skipped batch also adds one relaxed fetch_add. The
-// only log line is written once per episode, when it ends.
+// R-R3-40. Runs on the DSP thread. Each batch reads the clock and publishes
+// a bounded coherent atomic observation; skipped input also updates the
+// recovery counter. No reader can hold up this writer. The only log line is
+// written once per episode, when it ends.
 void RxDspWorker::processStampedIqBatch(int receiverIndex,
                                         const QVector<float>& interleavedIQ,
                                         qint64 enqueuedNs)
@@ -933,8 +1018,8 @@ void RxDspWorker::processStampedIqBatch(int receiverIndex,
     }
 
     InputDelayState& state = m_inputDelay[receiverIndex];
-    const qint64 delayUs =
-        std::max<qint64>(0, (ReceiverManager::enqueueClockNs() - enqueuedNs) / 1000);
+    const qint64 observedNs = ReceiverManager::enqueueClockNs();
+    const qint64 delayUs = std::max<qint64>(0, (observedNs - enqueuedNs) / 1000);
     state.delayUs.store(delayUs, std::memory_order_relaxed);
 
     if (!state.skipping && delayUs > kDspInputDelayLimitMs * 1000) {
@@ -959,6 +1044,7 @@ void RxDspWorker::processStampedIqBatch(int receiverIndex,
                 inputSpanUs(receiverIndex, interleavedIQ.size() / 2);
             state.episodeSkippedUs += spanUs;
             state.droppedUs.fetch_add(spanUs, std::memory_order_relaxed);
+            publishInputObservation(state, observedNs);
             emit batchProcessed();
             return;
         }
@@ -970,6 +1056,7 @@ void RxDspWorker::processStampedIqBatch(int receiverIndex,
         state.episodeSkippedUs = 0;
     }
 
+    publishInputObservation(state, observedNs);
     processIqBatch(receiverIndex, interleavedIQ);
 }
 
@@ -1394,7 +1481,20 @@ QVector<int> RxDspWorker::externalDiversityStreamSlices() const
 void RxDspWorker::setStreamSlices(int streamIndex,
                                   const QVector<int>& sliceIndices)
 {
+    const auto previous = m_streamSlices.find(streamIndex);
+    if ((previous == m_streamSlices.end() || previous->second != sliceIndices)
+        && streamIndex >= 0 && streamIndex < kMaxInputDelayReceivers) {
+        invalidateInputObservation(m_inputDelay[streamIndex]);
+    }
+    const bool cohortChanges = m_externalDiversityRoute.active()
+        && ((previous != m_streamSlices.end()
+             && previous->second.contains(m_externalDiversityRoute.targetSliceId))
+            || sliceIndices.contains(m_externalDiversityRoute.targetSliceId));
+    const bool changed = previous == m_streamSlices.end() || previous->second != sliceIndices;
     m_streamSlices[streamIndex] = sliceIndices;
+    if (cohortChanges && changed) {
+        publishInputSourceContext();
+    }
 }
 
 // ── Phase 3F Sub-Epic I closeout, defect H1 ─────────────────────────────────
@@ -1426,6 +1526,9 @@ void RxDspWorker::setStreamInputChunk(int streamIndex, int inSize)
         return;
     }
 
+    if (streamIndex >= 0 && streamIndex < kMaxInputDelayReceivers) {
+        invalidateInputObservation(m_inputDelay[streamIndex]);
+    }
     // The partial chunk was captured by the DDC at the OLD rate. A WDSP
     // channel carries exactly ONE input rate (SetInputSamplerate,
     // channel.c:197-208 [WDSP v1.29]), so a chunk assembled from both sides
@@ -1449,6 +1552,10 @@ void RxDspWorker::setStreamInputChunk(int streamIndex, int inSize)
 
 void RxDspWorker::clearStreamInputChunks()
 {
+    for (InputDelayState& state : m_inputDelay) {
+        invalidateInputObservation(state);
+    }
+    invalidateInputObservation(m_externalDiversityInputDelay);
     m_streamInSize.clear();
     // Same reasoning as setStreamInputChunk: every stream's partial chunk was
     // captured against the geometry that just went away.
@@ -1460,6 +1567,10 @@ void RxDspWorker::clearStreamInputChunks()
 
 void RxDspWorker::resetAccumulator()
 {
+    for (InputDelayState& state : m_inputDelay) {
+        invalidateInputObservation(state);
+    }
+    invalidateInputObservation(m_externalDiversityInputDelay);
     // Phase 3F Sub-Epic I Task 4: clear every stream's partial chunk.
     // Clearing the vectors in place rather than dropping the map entries
     // keeps QVector's capacity, matching the old single-accumulator

@@ -73,6 +73,46 @@ struct MainScreenShotTests {
         ])))
         #expect(await settle(seconds: 30) { model.main.rx.nnr?.limit == 1 })
         try await shoot(Screen(name: "upright-rx-panel-nnr-stepped-back", sideways: false, rxPanelOpen: true), model: model)
+        // A current Core reports measured pressure without an actual limit.
+        var capabilities = model.mirror.capabilities
+        capabilities["nnrLoadWarningVersion"] = .int(1)
+        await station.deliver(.capabilities(.init(properties: capabilities.map {
+            .init(name: $0.key, value: $0.value.wireValue)
+        })))
+        var schema = try FakeStation.schema(ofClass: "SliceModel")
+        if !schema.fields.contains(where: { $0.name == "nnrLoadWarning" }) {
+            schema.fields.append(.init(ordinal: 155, name: "nnrLoadWarning", kind: .utf8))
+        }
+        await station.deliver(.schema(schema))
+        await station.deliver(.delta(.init(key: "slice:0", properties: [
+            .init(ordinal: 60, name: "nnrModelSlot", value: .i64(1)),
+            .init(ordinal: 72, name: "nnrStandardAvailable", value: .bool(true)),
+            .init(ordinal: 84, name: "nnrStatus", value: .utf8("")),
+            .init(ordinal: 86, name: "nnrLimit", value: .i64(0)),
+            .init(ordinal: 155, name: "nnrLoadWarning", value: .utf8(
+                "Receiver A: receive processing is falling behind. The selected noise reduction remains running.")),
+        ])))
+        #expect(await settle(seconds: 30) { model.main.rx.nnr?.loadWarning != nil })
+        try await shoot(Screen(name: "upright-rx-panel-nnr-load-warning", sideways: false, rxPanelOpen: true), model: model)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let warningWindow = UIWindow(windowScene: scene)
+        let warningHost = ShotHosting.host(NnrStepBack(rx: model.main.rx, identifier: "narrowNnr")
+            .padding(8).background(ChromeColours.page).preferredColorScheme(.dark))
+        warningHost.safeAreaRegions = []
+        let fitted = warningHost.sizeThatFits(in: CGSize(width: 240, height: 1000))
+        #expect(fitted.width <= 240 && fitted.height < 360, "warning and actions wrap within a narrow phone panel")
+        // A small standalone window must sit clear of the scene's status bar,
+        // otherwise its safe-area inset consumes the measured content height.
+        warningWindow.frame = CGRect(origin: CGPoint(x: 0, y: 120), size: CGSize(width: 240, height: ceil(fitted.height)))
+        warningWindow.windowLevel = .alert + 1
+        warningHost.view.frame = warningWindow.bounds
+        warningWindow.rootViewController = warningHost
+        warningWindow.isHidden = false
+        await ShotWait.laidOut(warningWindow)
+        #expect(warningHost.sizeThatFits(in: CGSize(width: 240, height: 1000)).height <= warningWindow.bounds.height)
+        try write(warningWindow, name: "nnr-load-warning-narrow")
+        warningWindow.isHidden = true
+        warningWindow.rootViewController = nil
         // A typed filter edge: the number pad over the RX panel (C2).
         model.main.rx.openFilterEdgePad(low: true)
         try await shoot(Screen(name: "upright-rx-panel-filter-pad", sideways: false, rxPanelOpen: true), model: model)
@@ -191,6 +231,16 @@ struct MainScreenShotTests {
         #expect(band.markers.count == 2)
 
         try write(window, name: screen.name)
+        if screen.name == "upright-rx-panel-nnr-load-warning" {
+            let rows = try #require(Self.scrollViews(in: window).first {
+                $0.bounds.width < window.bounds.width * 0.9
+                    && $0.convert($0.bounds, to: window).minX < 2
+                    && $0.contentSize.height > $0.bounds.height + 1
+            })
+            rows.setContentOffset(CGPoint(x: 0, y: rows.contentSize.height - rows.bounds.height), animated: false)
+            await ShotWait.laidOut(window)
+            try write(window, name: screen.name + "-scrolled")
+        }
         if screen.pillScrolls {
             // The pill sits right of the two columns; its rows scroll under its title.
             let pillLeft = 62 + BandColumnLayout.origin + BandColumnLayout.columnWidth(columns: 2)

@@ -1,6 +1,8 @@
 // NereusSDR for iOS: the features the app declares in its hello
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
+// 2026-10-31: Declare measured NNR load warnings without changing legacy limits.
+//   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-22: the app declares displayCodec 2 (NSDC v2).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-24: the app declares setupDescription 30 (General's Filters page).
@@ -272,5 +274,5 @@ public enum LinkFeatures {
                                             "radioSpeaker": 1, "coreSpeaker": 1,
                                             "spectrumPicture": 1, "firmwareBeta": 1,
                                             "tuneDriveSource": 1, "displayCodec": 2,
-                                            "roundtable": 2, "remoteCw": 2, "cwSettings": 1]
+                                            "roundtable": 2, "remoteCw": 2, "cwSettings": 1, "nnrLoadWarning": 1]
 }

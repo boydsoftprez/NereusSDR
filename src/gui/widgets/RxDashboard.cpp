@@ -1,4 +1,5 @@
 // src/gui/widgets/RxDashboard.cpp
+// 2026-10-31: Measured NNR warning surfaces; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //
 // Phase 3Q Sub-PR-5 (E.1) — RxDashboard widget
 //
@@ -310,6 +311,8 @@ void RxDashboard::bindSlice(SliceModel* slice)
             [this](NrSlot s) { onNrChanged(static_cast<int>(s)); });
     connect(slice, &SliceModel::nnrLimitChanged,   this,
             &RxDashboard::onNnrLimitChanged);
+    connect(slice, &SliceModel::nnrLoadWarningChanged, this,
+            [this] { onNnrLimitChanged(0); });
     connect(slice, &SliceModel::nbModeChanged,     this,
             [this](NbMode m) { onNbChanged(static_cast<int>(m)); });
     connect(slice, &SliceModel::apfEnabledChanged, this,
@@ -408,7 +411,7 @@ void RxDashboard::onNrChanged(int nrSlot)
     // The slice words the reason for this window: a remote window names
     // the Core computer, a local one this computer.
     const QString limitReason = nrSlot == static_cast<int>(NrSlot::NNR) && m_slice
-        ? m_slice->nnrLimitText() : QString();
+        ? (!m_slice->nnrLimitText().isEmpty() ? m_slice->nnrLimitText() : m_slice->nnrLoadWarning()) : QString();
     m_nrBadge->setVariant(limitReason.isEmpty() ? StatusBadge::Variant::On
                                                 : StatusBadge::Variant::Warn);
     m_nrBadge->setToolTip(limitReason.isEmpty()

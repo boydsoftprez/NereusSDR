@@ -463,8 +463,14 @@ private slots:
         // Version 15: 30 new rows, Filter Presets before Options.
         const QJsonObject v15 = projectedCategory(dsp, 15);
         QCOMPARE(v15.value("version"), QJsonValue(15));
-        QCOMPARE(controlCount(v15, 0), 135);
-        QCOMPARE(controlCount(v15, 15), 30);
+        QCOMPARE(controlCount(v15, 0), 136);
+        QCOMPARE(controlCount(v15, 15), 31);
+        const QJsonObject warning = controlById(v15, "dsp.nrAnf.nnrLoadWarning");
+        QCOMPARE(warning.value("kind"), QJsonValue("readout"));
+        QCOMPARE(warning.value("binding").toObject().value("property").toObject(),
+                 (QJsonObject{{"object", "slice:active"}, {"name", "nnrLoadWarning"}}));
+        QCOMPARE(warning.value("gate").toObject(),
+                 (QJsonObject{{"capability", "nnrLoadWarningVersion"}, {"min", 1}}));
         QCOMPARE(pageIdsOf(v15), (QStringList{"dsp.agcAlc", "dsp.nrAnf", "dsp.nbSnb", "dsp.cw",
                                               "dsp.amSam", "dsp.fm", "dsp.cfc", "dsp.tnf",
                                               "dsp.filterPresets", "dsp.options"}));
@@ -3911,7 +3917,7 @@ private slots:
         stableHello.remove("challenge");
         stableHello.remove("identity");
         QCOMPARE(QJsonDocument(stableHello).toJson(QJsonDocument::Compact), QByteArrayLiteral(
-            "{\"features\":{\"deviceAuth\":1,\"pairing\":1,\"radioMic\":2,\"sessionHolder\":1},"
+            "{\"features\":{\"deviceAuth\":1,\"nnrLoadWarning\":1,\"pairing\":1,\"radioMic\":2,\"sessionHolder\":1},"
             "\"major\":1,\"majors\":[1],\"minor\":11,\"peer\":\"nereusd\","
             "\"settingsSchema\":0,\"type\":\"hello\"}"));
         QVERIFY(!hasSetupTraffic(*legacy.app));

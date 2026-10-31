@@ -1,4 +1,5 @@
 // =================================================================
+// 2026-10-31: Measured NNR warning surfaces; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // src/gui/setup/DspSetupPages.cpp  (NereusSDR)
 // =================================================================
 //
@@ -1747,6 +1748,7 @@ void NrAnfSetupPage::rebuildForActiveSlice()
             {"nnrReleaseSpin", "nnrReleaseMs"}, {"nnrResetButton", "nnrResetTuning"},
             // Setup description version 15: the limit row and Diagnostics.
             {"nnrLimitNotice", "nnrLimit"}, {"nnrTryAgainButton", "nnrTryAgain"},
+            {"nnrLoadWarningNotice", "nnrLoadWarning"},
             {"nnrTestModeCombo", "nnrTestMode"}, {"nnrOutputModeCombo", "nnrOutputMode"},
             {"nnrApplyDiagnosticButton", "nnrApplyDiagnostics"}
         };

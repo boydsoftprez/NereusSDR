@@ -211,9 +211,20 @@ public:
     // an index outside [0, kMaxInputDelayReceivers) is processed unbounded.
     static constexpr int kMaxInputDelayReceivers = 32;
 
+    enum class InputSourceKind { Unknown = 0, Stream = 1, ExternalDiversity = 2 };
     struct InputDelayStats {
         qint64 inputDelayMs{0};    // wait of the receiver's latest batch
         qint64 droppedInputMs{0};  // input skipped since this worker started
+        // One coherent publication at stamped-batch entry, after any skip
+        // accounting. No new sequence means no new queue measurement.
+        qint64 observationNs{0};
+        quint64 sequence{0};
+        quint64 context{0};
+        // Local counter epochs can collide between ordinary and mixed
+        // input. Source identity is part of the coherent observation too.
+        InputSourceKind sourceKind{InputSourceKind::Unknown};
+        quint64 routeIdentity{0};
+        bool consistent{false};
     };
 
     // Safe from any thread (atomics). Zeroes for an untracked index.
@@ -224,10 +235,10 @@ public:
     // leg). Safe from any thread (atomics).
     InputDelayStats externalDiversityInputDelayStats() const;
 
-    // The input a slice actually processes: the external-diversity route's
-    // when the slice is that route's target, otherwise its stream's
-    // (inputDelayStats(streamIndex); zeroes for streamIndex < 0). Safe from
-    // any thread (atomics).
+    // The input a slice actually processes: mixed input for the target and
+    // every co-hosted slice on its logical stream; otherwise ordinary input.
+    // Source selection and observation are read coherently, without waiting.
+    // Zeroes for an unknown ordinary stream. Safe from any thread.
     InputDelayStats inputDelayStatsForSlice(int sliceId, int streamIndex) const;
 
     int inSize() const { return m_inSize.load(std::memory_order_relaxed); }
@@ -586,7 +597,24 @@ private:
         std::atomic<qint64> droppedUs{0};
         bool   skipping{false};
         qint64 episodeSkippedUs{0};
+        // The published observation is separate from recovery's counters.
+        // All publication atomics use sequential consistency for the bounded
+        // sequence read; the audio path never waits for a reader.
+        std::atomic<quint64> observationSequence{0};
+        std::atomic<qint64> observedNs{0};
+        std::atomic<qint64> observedDelayUs{0};
+        std::atomic<qint64> observedDroppedUs{0};
+        std::atomic<quint64> context{1};
+        // Protected by m_inputSourceSequence, not observationSequence:
+        // changes when this logical stream enters or leaves mixed input.
+        std::atomic<quint64> sourceRouteIdentity{0};
     };
+    static void publishInputObservation(InputDelayState& state, qint64 observedNs);
+    static void invalidateInputObservation(InputDelayState& state);
+    static InputDelayStats readInputObservation(const InputDelayState& state);
+    InputDelayStats readRoutedInputObservation(int sliceId, int streamIndex,
+                                             bool forceDiversity = false) const;
+    void publishInputSourceContext();
     std::array<InputDelayState, kMaxInputDelayReceivers> m_inputDelay;
 
     // The external-diversity route's bound (R-R3-40): the same state, plus
@@ -600,6 +628,11 @@ private:
     // Target slice of the active route for inputDelayStatsForSlice, -1 when
     // no route is active. Written on the DSP thread, read from any thread.
     std::atomic<int> m_externalDiversityStatsSlice{-1};
+    std::atomic<int> m_externalDiversityStatsStream{-1};
+    // DSP-thread-only writer. Brackets route/cohort publication and the
+    // affected streams' source identities so a reader cannot pair a new
+    // consumer cohort with an old route's observation.
+    std::atomic<quint64> m_inputSourceSequence{0};
 
     // Wall-clock span of `samples` input samples on this stream, from its
     // drain size (inSize = 64 * rate / 48000, see setStreamInputChunk).

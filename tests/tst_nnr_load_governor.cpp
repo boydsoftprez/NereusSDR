@@ -12,6 +12,7 @@
 #include <QtTest>
 
 #include "core/dsp/NnrLoadGovernor.h"
+#include "core/dsp/NnrLoadWarningMonitor.h"
 
 using namespace NereusSDR;
 
@@ -36,6 +37,160 @@ class TestNnrLoadGovernor : public QObject {
     Q_OBJECT
 
 private slots:
+    void freshLagWarnsAndHealthyProcessingRecovers()
+    {
+        NnrLoadWarningMonitor monitor;
+        NnrLoadWarningMonitor::Observation input;
+        input.context.epoch = 1;
+        input.delayMs = 250;
+        for (qint64 now = 0; now <= 2000; now += 500) {
+            input.sequence += 2;
+            input.observedMs = now;
+            QCOMPARE(monitor.observe(0, now, true, input), now == 2000);
+        }
+        input.delayMs = 249;
+        for (qint64 now = 2500; now <= 7500; now += 500) {
+            input.sequence += 2;
+            input.observedMs = now;
+            QCOMPARE(monitor.observe(0, now, true, input), now < 7500);
+        }
+    }
+
+    void aSpikeAndRepeatedStaleReadsCannotFillTheWindow()
+    {
+        NnrLoadWarningMonitor monitor;
+        NnrLoadWarningMonitor::Observation input;
+        input.sequence = 2;
+        input.delayMs = 500;
+        input.observedMs = 0;
+        for (qint64 now = 0; now <= 5000; now += 500) {
+            QVERIFY(!monitor.observe(0, now, true, input));
+        }
+        input.sequence += 2;
+        input.observedMs = 5500;
+        input.delayMs = 0;
+        QVERIFY(!monitor.observe(0, 5500, true, input));
+    }
+
+    void newDropsWarnButHistoricalCountersAndNewContextsDoNot()
+    {
+        NnrLoadWarningMonitor monitor;
+        NnrLoadWarningMonitor::Observation input;
+        input.sequence = 2;
+        input.droppedMs = 7000;
+        QVERIFY(!monitor.observe(0, 0, true, input));
+        input.sequence += 2;
+        input.observedMs = 500;
+        input.droppedMs += 1;
+        QVERIFY(monitor.observe(0, 500, true, input));
+        // No observations support current overload indefinitely.
+        QVERIFY(monitor.observe(0, 1000, true, std::nullopt));
+        QVERIFY(!monitor.observe(0, 5500, true, std::nullopt));
+        input.sequence += 2;
+        input.observedMs = 6000;
+        input.context.epoch += 1;
+        input.droppedMs += 20;
+        QVERIFY(!monitor.observe(0, 6000, true, input));
+        input.sequence += 2;
+        input.observedMs = 6500;
+        input.droppedMs += 1;
+        QVERIFY(monitor.observe(0, 6500, true, input));
+        QVERIFY(!monitor.observe(0, 6501, false, input));
+    }
+
+    void lossAcrossAnUnobservedGapSeedsANewBaseline()
+    {
+        NnrLoadWarningMonitor monitor;
+        NnrLoadWarningMonitor::Observation input;
+        input.sequence = 2;
+        QVERIFY(!monitor.observe(0, 0, true, input));
+        input.sequence = 4;
+        input.observedMs = 6000;
+        input.droppedMs = 100; // may have been skipped long before this batch
+        QVERIFY(!monitor.observe(0, 6000, true, input));
+        input.sequence = 6;
+        input.observedMs = 6500;
+        input.droppedMs = 101;
+        QVERIFY(monitor.observe(0, 6500, true, input));
+    }
+
+    void changingInputSourceClearsWarningEvenWhenLocalCountersCollide()
+    {
+        NnrLoadWarningMonitor monitor;
+        NnrLoadWarningMonitor::Observation normal;
+        normal.context.epoch = 2;
+        normal.context.sourceKind = 1;
+        normal.delayMs = 300;
+        for (qint64 now = 0; now <= 2000; now += 500) {
+            normal.observedMs = now;
+            normal.sequence += 2;
+            QCOMPARE(monitor.observe(0, now, true, normal), now == 2000);
+        }
+        // A diversity state can have the same local epoch and a later
+        // sequence, while worker/channel/stream/rate/model stay unchanged.
+        auto diversity = normal;
+        diversity.context.sourceKind = 2;
+        diversity.context.routeIdentity = 2;
+        diversity.sequence += 2;
+        diversity.observedMs = 2500;
+        diversity.delayMs = 0;
+        QVERIFY(!monitor.observe(0, 2500, true, diversity));
+        diversity.delayMs = 300;
+        for (qint64 now = 3000; now <= 5000; now += 500) {
+            diversity.observedMs = now;
+            diversity.sequence += 2;
+            QCOMPARE(monitor.observe(0, now, true, diversity), now == 5000);
+        }
+        // Replacing/rebinding a route must reset history even when kind,
+        // epoch and the rest of the channel identity remain identical.
+        diversity.context.routeIdentity = 4;
+        diversity.sequence += 2;
+        diversity.observedMs = 5500;
+        diversity.delayMs = 0;
+        QVERIFY(!monitor.observe(0, 5500, true, diversity));
+        diversity.delayMs = 300;
+        for (qint64 now = 6000; now <= 8000; now += 500) {
+            diversity.observedMs = now;
+            diversity.sequence += 2;
+            QCOMPARE(monitor.observe(0, now, true, diversity), now == 8000);
+        }
+        auto ordinaryAgain = diversity;
+        ordinaryAgain.context.sourceKind = 1;
+        ordinaryAgain.context.routeIdentity = 6;
+        ordinaryAgain.observedMs = 8500;
+        ordinaryAgain.sequence += 2;
+        ordinaryAgain.delayMs = 0;
+        ordinaryAgain.droppedMs = 1000; // another source's nondecreasing total
+        QVERIFY(!monitor.observe(0, 8500, true, ordinaryAgain));
+        ordinaryAgain.observedMs = 9000;
+        ordinaryAgain.sequence += 2;
+        ordinaryAgain.droppedMs += 1;
+        QVERIFY(monitor.observe(0, 9000, true, ordinaryAgain));
+    }
+
+    void unknownCounterResetAndTimeGapsBreakDwell()
+    {
+        NnrLoadWarningMonitor monitor;
+        NnrLoadWarningMonitor::Observation input;
+        input.sequence = 2;
+        input.delayMs = 300;
+        input.droppedMs = 50;
+        QVERIFY(!monitor.observe(0, 0, true, input));
+        input.sequence += 2; input.observedMs = 500;
+        QVERIFY(!monitor.observe(0, 500, true, input));
+        QVERIFY(!monitor.observe(0, 1000, true, std::nullopt));
+        for (qint64 now = 1500; now < 3500; now += 500) {
+            input.sequence += 2; input.observedMs = now;
+            QVERIFY(!monitor.observe(0, now, true, input));
+        }
+        input.sequence += 2; input.observedMs = 3500;
+        QVERIFY(monitor.observe(0, 3500, true, input));
+        input.sequence += 2; input.observedMs = 4000; input.droppedMs = 0;
+        QVERIFY(!monitor.observe(0, 4000, true, input));
+        input.sequence += 2; input.observedMs = 10000;
+        QVERIFY(!monitor.observe(0, 10000, true, input));
+    }
+
     void thresholdsAreThePlannedValues()
     {
         QCOMPARE(NnrLoadGovernor::kNnrStepDownLoad, 0.90);

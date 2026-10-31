@@ -1062,6 +1062,60 @@ struct ModesTabBindingTests {
         await model.disconnect()
     }
 
+    @Test("Measured NNR warning preserves Premium and offers explicit existing writes once")
+    func nnrMeasuredWarning() async throws {
+        let (model, station) = try await connected(catalogue: Self.anan, frontEnd: false)
+        let rx = model.main.rx
+        var schema = try FakeStation.schema(ofClass: "SliceModel")
+        let ordinal = schema.fields.first { $0.name == "nnrLoadWarning" }?.ordinal
+            ?? ((schema.fields.map(\.ordinal).max() ?? 0) + 1)
+        if !schema.fields.contains(where: { $0.name == "nnrLoadWarning" }) {
+            schema.fields.append(.init(ordinal: ordinal, name: "nnrLoadWarning", kind: .utf8))
+        }
+        await station.deliver(.schema(schema))
+        let warning = "Receiver A: receive processing is falling behind. The selected noise reduction remains running."
+        await station.deliver(.delta(.init(key: "slice:0", properties: [
+            .init(ordinal: 59, name: "activeNr", value: .enumeration(8)),
+            .init(ordinal: 60, name: "nnrModelSlot", value: .i64(1)),
+            .init(ordinal: 69, name: "nnrAvailable", value: .bool(true)),
+            .init(ordinal: 72, name: "nnrStandardAvailable", value: .bool(true)),
+            .init(ordinal: ordinal, name: "nnrLoadWarning", value: .utf8(warning)),
+        ])))
+        // A value alone cannot claim support from an older Core.
+        #expect(await settle { rx.nnr?.modelSlot == 1 })
+        #expect(rx.nnr?.loadWarning == nil)
+        await Self.deliverCapabilities(station, model: model, ["nnrLoadWarningVersion": .int(1)])
+        #expect(await settle { rx.nnr?.loadWarning == warning })
+        #expect(rx.nnr?.limit == 0 && rx.nnr?.limitText == nil)
+        await deliver(station, key: "slice:0", property: "nnrStatus", ordinal: 84,
+                      value: .utf8("The selected model is unavailable."))
+        #expect(await settle { rx.nnrPriorityReason == "The selected model is unavailable." })
+        #expect(rx.nnr?.loadWarning == warning)
+        await deliver(station, key: "slice:0", property: "nnrStatus", ordinal: 84, value: .utf8(""))
+        #expect(await settle { rx.nnrPriorityReason == nil })
+        #expect(rx.noise.first { $0.label == "NNR" }?.warning == warning)
+        #expect(rx.nnrCanUseStandard)
+        // No change is sent just because the warning arrived.
+        let before = station.messages.filter { if case .propertyWrite = $0 { return true }; return false }.count
+        await idle()
+        #expect(station.messages.filter { if case .propertyWrite = $0 { return true }; return false }.count == before)
+        rx.useStandardForNnrWarning()
+        rx.useStandardForNnrWarning()
+        #expect(await answer(station, key: "slice:0", "nnrModelSlot") == .i64(0))
+        #expect(await settle { !rx.nnrWarningActionPending && rx.nnr?.modelSlot == 0 })
+        #expect(!rx.nnrCanUseStandard)
+        await deliver(station, key: "slice:0", property: "nnrLoadWarning", ordinal: ordinal, value: .utf8(warning))
+        #expect(await settle { rx.nnr?.loadWarning == warning })
+        rx.turnNnrOffForWarning()
+        rx.turnNnrOffForWarning()
+        #expect(await answer(station, key: "slice:0", "activeNr") == .enumeration(0))
+        #expect(await settle { !rx.nnrWarningActionPending && rx.nnr?.loadWarning == nil })
+        #expect(rx.nnr?.modelSlot == 0)
+        await model.disconnect()
+        #expect(await settle { rx.nnr?.loadWarning == nil })
+        rx.turnNnrOffForWarning()
+    }
+
     @Test("RF Power writes power alone at version 5: never the tune drive source or a per-band power table (I3)")
     func rfPowerLeavesPerBandTablesToTheCore() async throws {
         let (model, station) = try await connected(catalogue: Self.anan, frontEnd: false)

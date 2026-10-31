@@ -178,6 +178,35 @@ private slots:
         g_episodeLines.clear();
     }
 
+    void observationsOnlyAdvanceForStampedInputAndResetWithContext()
+    {
+        RxDspWorker worker;
+        worker.setBufferSizes(kInSize, 64);
+        worker.setStreamSlices(0, {0});
+        const QVector<float> batch(kInSize * 2, 0.0f);
+        QVERIFY(!worker.inputDelayStats(0).consistent);
+        worker.processStampedIqBatch(0, batch, ReceiverManager::enqueueClockNs());
+        const auto first = worker.inputDelayStats(0);
+        QVERIFY(first.consistent);
+        QVERIFY(first.observationNs > 0);
+        QVERIFY(first.sequence > 0);
+        QCOMPARE(worker.inputDelayStats(0).sequence, first.sequence);
+        worker.processStampedIqBatch(0, batch, ReceiverManager::enqueueClockNs() - 600000000);
+        const auto skipped = worker.inputDelayStats(0);
+        QVERIFY(skipped.consistent);
+        QVERIFY(skipped.sequence > first.sequence);
+        QVERIFY(skipped.droppedInputMs > first.droppedInputMs);
+        QCOMPARE(skipped.context, first.context);
+        worker.setStreamSlices(0, {1});
+        const auto rebound = worker.inputDelayStats(0);
+        QVERIFY(!rebound.consistent);
+        QVERIFY(rebound.context != skipped.context);
+        worker.processStampedIqBatch(0, batch, ReceiverManager::enqueueClockNs());
+        QVERIFY(worker.inputDelayStats(0).consistent);
+        worker.resetAccumulator();
+        QVERIFY(!worker.inputDelayStats(0).consistent);
+    }
+
     void delayStaysBoundedWhenProcessingCannotKeepUp()
     {
         Harness h;

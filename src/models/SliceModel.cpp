@@ -2096,6 +2096,15 @@ void SliceModel::resetNnrTuning()
     applyNnrSettings(defaults);
 }
 
+void SliceModel::setNnrLoadWarning(const QString& warning)
+{
+    if (m_nnrLoadWarning == warning) {
+        return;
+    }
+    m_nnrLoadWarning = warning;
+    emit nnrLoadWarningChanged(warning);
+}
+
 void SliceModel::setNnrLimit(int limit)
 {
     if (!isValidNnrLimit(limit) || m_nnrLimit == limit) {
@@ -2164,6 +2173,13 @@ bool SliceModel::applyStationNnrDiagnostic(const QByteArray& name, const QVarian
     else if (name == "nnrOutputMode") status.outputMode = value.toInt();
     else if (name == "nnrStatus") status.explanation = value.toString();
     else if (name == "nnrLastError") { setNnrLastError(value.toString()); return true; }
+    else if (name == "nnrLoadWarning") {
+        if (value.metaType().id() != QMetaType::QString) {
+            return false;
+        }
+        setNnrLoadWarning(value.toString());
+        return true;
+    }
     else if (name == "nnrLimit") {
         bool ok = false;
         const int limit = value.toInt(&ok);

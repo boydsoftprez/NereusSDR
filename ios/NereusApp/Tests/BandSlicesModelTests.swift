@@ -435,6 +435,73 @@ struct BandSlicesModelTests {
         ])))
     }
 
+    @MainActor
+    final class NnrWarningHandoff {
+        var admitted = false
+    }
+
+    @Test("NNR warning choices retain their receiver and stop when ownership changes")
+    func nnrWarningActionsKeepTheirReceiverAndAuthority() async {
+        let (slices, store, outbox, commands) = await makeSharedModel()
+        slices.thisDeviceId = "me"
+        var capabilities = store.capabilities
+        capabilities["nnrLoadWarningVersion"] = .int(1)
+        store.apply(.capabilities(.init(properties: capabilities.map {
+            .init(name: $0.key, value: $0.value.wireValue)
+        })))
+        for id in [0, 1] {
+            store.apply(.delta(.init(key: "slice:\(id)", properties: [
+                .init(ordinal: 59, name: "activeNr", value: .enumeration(8)),
+                .init(ordinal: 60, name: "nnrModelSlot", value: .i64(1)),
+                .init(ordinal: 69, name: "nnrAvailable", value: .bool(true)),
+                .init(ordinal: 72, name: "nnrStandardAvailable", value: .bool(true)),
+                .init(ordinal: 155, name: "nnrLoadWarning", value: .utf8("Receiver processing is falling behind. NNR remains running.")),
+            ])))
+        }
+        let rx = RxPanelModel(store: store, slices: slices, catalogFeed: CatalogFeed(store: store), commands: commands,
+            captureSender: { { message, permit in
+                guard !permit.isRevoked else { throw LinkSendError.notConnected }
+                outbox.record(message)
+            } })
+        #expect(await settle { rx.nnrCanUseStandard })
+        // Move to a listened slice before the queued write gets a turn.
+        rx.useStandardForNnrWarning()
+        slices.show(1)
+        #expect(await settle { !rx.nnrWarningActionPending && rx.sliceLetter == "B" })
+        #expect(lastWrite(outbox, "nnrModelSlot") == nil)
+        #expect(!rx.nnrCanUseStandard && !rx.nnrCanTurnOff)
+        rx.useStandardForNnrWarning()
+        rx.turnNnrOffForWarning()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(lastWrite(outbox, "nnrModelSlot") == nil)
+        #expect(lastWrite(outbox, "activeNr") == nil)
+        // The warning remains readable without implying this phone controls it.
+        #expect(rx.nnr?.loadWarning != nil)
+        // Admission alone is insufficient: revoke while the exact session
+        // sender is suspended at its final transport boundary.
+        controller(store, "me", revision: 13)
+        #expect(await settle { slices.active?.listening == false })
+        let handoff = NnrWarningHandoff()
+        let gate = AsyncStream<Void>.makeStream()
+        let boundRx = RxPanelModel(store: store, slices: slices, catalogFeed: CatalogFeed(store: store), commands: commands,
+            captureSender: { { message, permit in
+                await MainActor.run { handoff.admitted = true }
+                for await _ in gate.stream { break }
+                guard !permit.isRevoked else { throw LinkSendError.notConnected }
+                outbox.record(message)
+            } })
+        #expect(await settle { boundRx.nnrCanUseStandard })
+        boundRx.useStandardForNnrWarning()
+        #expect(await settle { handoff.admitted })
+        controller(store, "shack-desktop", revision: 14)
+        #expect(await settle { slices.active?.listening == true })
+        gate.continuation.yield(())
+        #expect(await settle { !boundRx.nnrWarningActionPending })
+        #expect(lastWrite(outbox, "nnrModelSlot") == nil)
+        let unboundRx = RxPanelModel(store: store, slices: slices, catalogFeed: CatalogFeed(store: store), commands: commands)
+        #expect(!unboundRx.nnrCanUseStandard && !unboundRx.nnrCanTurnOff)
+    }
+
     @Test("a slice reads as this phone's until the phone knows its own id; then another's is listened, and nobody's too")
     func listenedSlices() async {
         let (model, store, _, _) = await makeSharedModel()

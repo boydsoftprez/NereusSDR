@@ -23,6 +23,13 @@ their identities and active selection. Stop transmitting before applying.
 A missing saved override is shown explicitly and never silently substitutes a
 different model. Remote changes and files are validated and stored by Core.
 
+Current Cores preserve the selected NNR model under receiver processing pressure.
+The amber warning reports measured queued or skipped input while NNR remains
+selected. Choose **Use Standard** when Premium is selected and Standard is ready,
+**Turn NNR off**, or leave it running. Off retains the model preference; measured
+recovery clears the warning. An older Core's actual automatic limit and **Try
+again** remain separate, as do model readiness and runtime errors.
+
 ## PureSignal 3
 
 The existing PureSignal dialog and applet provide Off, Single, Start Auto,

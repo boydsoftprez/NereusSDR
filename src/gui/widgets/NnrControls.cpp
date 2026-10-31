@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// 2026-10-31: Measured NNR warning surfaces; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // NereusSDR-original WDSP 2.10 NNR controls.
 // 2026-09-23: R-R3-40 runtime step-back notice and "Try again" action, by
 // J.J. Boyd (KG4VCF), with Anthropic Claude Code assistance. Later the same
@@ -28,6 +29,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSlider>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -145,6 +147,36 @@ void NnrControls::buildUi(Presentation presentation)
     m_limitRow->setVisible(false);
     quickForm->addRow(m_limitRow);
 
+    // Pressure is an observation, separate from an actual legacy limit.
+    m_loadWarningRow = new QWidget(quick);
+    m_loadWarningRow->setObjectName(QStringLiteral("nnrLoadWarningRow"));
+    auto* warningLayout = new QVBoxLayout(m_loadWarningRow);
+    warningLayout->setContentsMargins(0, 0, 0, 0);
+    m_loadWarningNotice = new QLabel(m_loadWarningRow);
+    m_loadWarningNotice->setObjectName(QStringLiteral("nnrLoadWarningNotice"));
+    m_loadWarningNotice->setWordWrap(true);
+    m_loadWarningNotice->setStyleSheet(QStringLiteral("QLabel { color: %1; }")
+                                         .arg(QLatin1String(Style::kAmberText)));
+    warningLayout->addWidget(m_loadWarningNotice);
+    auto* warningActions = new QHBoxLayout;
+    m_useStandard = new QPushButton(tr("Use Standard"), m_loadWarningRow);
+    m_useStandard->setObjectName(QStringLiteral("nnrUseStandardButton"));
+    m_useStandard->setAccessibleName(tr("Use Standard NNR model"));
+    m_useStandard->setAutoDefault(false);
+    m_turnOff = new QPushButton(tr("Turn NNR off"), m_loadWarningRow);
+    m_turnOff->setObjectName(QStringLiteral("nnrTurnOffButton"));
+    m_turnOff->setAccessibleName(tr("Turn NNR off and retain the model choice"));
+    m_turnOff->setAutoDefault(false);
+    warningActions->addWidget(m_useStandard);
+    warningActions->addWidget(m_turnOff);
+    warningActions->addStretch();
+    warningLayout->addLayout(warningActions);
+    auto* keepRunning = new QLabel(tr("Leave the warning alone to keep NNR running."), m_loadWarningRow);
+    keepRunning->setWordWrap(true);
+    warningLayout->addWidget(keepRunning);
+    m_loadWarningRow->setVisible(false);
+    quickForm->addRow(m_loadWarningRow);
+
     auto* suppression = new QWidget(quick);
     auto* suppressionRow = new QHBoxLayout(suppression);
     suppressionRow->setContentsMargins(0, 0, 0, 0);
@@ -245,12 +277,20 @@ void NnrControls::buildUi(Presentation presentation)
     diagnosticLayout->addWidget(m_sessionBadge);
 
     auto* readbacks = new QFormLayout;
+    // macOS forms otherwise keep fields at their initial size hint, which
+    // can clip a wrapped status after the workspace font floor is applied.
+    readbacks->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     m_runtime = new QLabel(diagnostics); m_runtime->setObjectName(QStringLiteral("nnrRuntimeReadback"));
     m_models = new QLabel(diagnostics); m_models->setObjectName(QStringLiteral("nnrModelsReadback"));
     m_rateLatency = new QLabel(diagnostics); m_rateLatency->setObjectName(QStringLiteral("nnrRateLatencyReadback"));
     m_source = new QLabel(diagnostics); m_source->setObjectName(QStringLiteral("nnrSourceReadback"));
     m_status = new QLabel(diagnostics); m_status->setObjectName(QStringLiteral("nnrStatusReadback"));
     m_status->setWordWrap(true);
+    // Keep wrapped runtime/error text readable when native typography grows.
+    QSizePolicy statusPolicy = m_status->sizePolicy();
+    statusPolicy.setHorizontalPolicy(QSizePolicy::Expanding);
+    statusPolicy.setVerticalPolicy(QSizePolicy::Minimum);
+    m_status->setSizePolicy(statusPolicy);
     readbacks->addRow(tr("Runtime"), m_runtime);
     readbacks->addRow(tr("Models"), m_models);
     readbacks->addRow(tr("Rate / latency"), m_rateLatency);
@@ -326,6 +366,21 @@ void NnrControls::buildUi(Presentation presentation)
         const bool handled = std::exchange(m_modelPickHandled, false);
         if (!handled && m_slice && index >= 0 && m_slice->nnrLimit() != 0) {
             m_slice->setNnrModelSlot(m_model->itemData(index).toInt());
+        }
+        refresh();
+    });
+    connect(m_useStandard, &QPushButton::clicked, this, [this] {
+        if (m_slice && !m_slice->isReadOnlyListener() && !m_slice->nnrLoadWarning().isEmpty()
+            && m_slice->activeNr() == NrSlot::NNR && m_slice->nnrModelSlot() == 1
+            && m_slice->nnrStandardAvailable()) {
+            m_slice->setNnrModelSlot(0);
+        }
+        refresh();
+    });
+    connect(m_turnOff, &QPushButton::clicked, this, [this] {
+        if (m_slice && !m_slice->isReadOnlyListener() && !m_slice->nnrLoadWarning().isEmpty()
+            && m_slice->activeNr() == NrSlot::NNR) {
+            m_slice->setActiveNr(NrSlot::Off);
         }
         refresh();
     });
@@ -421,6 +476,9 @@ void NnrControls::connectSlice()
     refreshConnection(&SliceModel::nnrDiagnosticsChanged);
     refreshConnection(&SliceModel::nnrLastErrorChanged);
     refreshConnection(&SliceModel::nnrLimitChanged);
+    refreshConnection(&SliceModel::nnrLoadWarningChanged);
+    refreshConnection(&SliceModel::activeNrChanged);
+    refreshConnection(&SliceModel::readOnlyListenerChanged);
     m_sliceConnections.push_back(connect(m_slice.data(), &SliceModel::nnrEditRejected,
                                          this, [this](const QString&) { refresh(); }));
     m_sliceConnections.push_back(connect(m_slice.data(), &QObject::destroyed,
@@ -432,7 +490,7 @@ void NnrControls::setInteractive(bool enabled)
     const QVector<QWidget*> widgets{
         m_model, m_maskFloor, m_maskFloorSlider, m_position, m_alpha, m_alphaKnee,
         m_tau, m_maxGain, m_attack, m_release, m_testMode, m_outputMode,
-        m_reset, m_modelsButton, m_moreButton, m_tryAgain
+        m_reset, m_modelsButton, m_moreButton, m_tryAgain, m_useStandard, m_turnOff
     };
     for (QWidget* widget : widgets) {
         if (widget) {
@@ -453,6 +511,7 @@ void NnrControls::refresh()
         m_source->setText(QStringLiteral("–"));
         m_status->setText(tr("Reopen NNR controls to see this receiver again."));
         m_limitRow->setVisible(false);
+        m_loadWarningRow->setVisible(false);
         return;
     }
 
@@ -460,6 +519,18 @@ void NnrControls::refresh()
     m_limitNotice->setText(limitText);
     m_limitNotice->setToolTip(limitText);
     m_limitRow->setVisible(!limitText.isEmpty());
+
+    const QString warning = m_slice->activeNr() == NrSlot::NNR ? m_slice->nnrLoadWarning() : QString();
+    m_loadWarningNotice->setText(warning);
+    m_loadWarningNotice->setAccessibleName(warning);
+    m_loadWarningRow->setVisible(!warning.isEmpty());
+    const bool canAct = !warning.isEmpty() && !m_slice->isReadOnlyListener();
+    m_useStandard->setVisible(m_slice->nnrModelSlot() == 1 && m_slice->nnrStandardAvailable());
+    m_useStandard->setEnabled(canAct && m_slice->nnrModelSlot() == 1 && m_slice->nnrStandardAvailable());
+    m_turnOff->setEnabled(canAct);
+    const QString actionReason = m_slice->readOnlyListenerReason();
+    m_useStandard->setToolTip(actionReason.isEmpty() ? tr("Select Standard for this receiver.") : actionReason);
+    m_turnOff->setToolTip(actionReason.isEmpty() ? tr("Turn NNR off and keep the saved model choice.") : actionReason);
 
     const auto setComboData = [](QComboBox* combo, int value) {
         QSignalBlocker blocker(combo);

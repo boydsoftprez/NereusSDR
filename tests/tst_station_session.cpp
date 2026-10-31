@@ -389,6 +389,7 @@ private slots:
     void clientKeepsRadioDiagnosticsOnlyWhenNegotiated_data();
     void clientKeepsRadioDiagnosticsOnlyWhenNegotiated();
     void nnrLimitReachesMinorElevenPeerAndTryAgainClearsIt();
+    void nnrLoadWarningIsSeparateAndFeatureGated();
     void featureGatesNameRealProperties();
     void remoteWindowSeesNoSchemaSkewFromTheCurrentCore();
     void nnrLimitIsOmittedForMinorTenPeer();
@@ -1318,6 +1319,64 @@ void TstStationSession::clientKeepsRadioDiagnosticsOnlyWhenNegotiated()
 // R-R3-40: a current GUI sees the Core's runtime NNR step-back and asks for
 // the saved choice back with nnr.tryAgain; a station echo of the model is
 // never taken as the operator asking. No schema-skew or apply warnings.
+void TstStationSession::nnrLoadWarningIsSeparateAndFeatureGated()
+{
+    for (bool declares : {false, true}) {
+        QTemporaryDir directory;
+        AppSettings settings(directory.filePath(QStringLiteral("warning.settings")));
+        auto model = makeStationRadioModel(0);
+        SliceModel* core = model->slices().first();
+        model->governNnrLoadForTest(0, {}); // this case injects mirror state, not live input
+        core->setNnrLoadWarning(QStringLiteral("Receiver A: receive processing is falling behind."));
+        StationServer server(model.get(), settings, NereusSDR::Test::seedUpgradedCoreToken(m_securityDir.path()));
+        RadioModel remote(RadioModel::Role::Remote);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        if (!declares) {
+            client.withholdFeatureForTest("nnrLoadWarning");
+        }
+        auto* station = new LoopbackTransport(QStringLiteral("warning-station"), this);
+        auto* peer = new LoopbackTransport(QStringLiteral("warning-peer"), this);
+        station->linkTo(peer);
+        client.startSession(peer, server.token());
+        server.acceptTransport(station);
+        NEREUS_TRY_VERIFY(remote.sliceById(core->sliceIndex()) != nullptr);
+        SliceModel* mirror = remote.sliceById(core->sliceIndex());
+        NEREUS_TRY_COMPARE(client.capabilities().nnrLoadWarningVersion, declares ? 1 : 0);
+        if (declares) {
+            NEREUS_TRY_COMPARE(mirror->nnrLoadWarning(), core->nnrLoadWarning());
+        } else {
+            QVERIFY(mirror->nnrLoadWarning().isEmpty());
+        }
+        // Exercise deltas and the write-correction path after snapshot.
+        core->setNnrLoadWarning(QStringLiteral("Receiver A: input was skipped to catch up."));
+        mirror->setNnrAlpha(2.25);
+        NEREUS_TRY_COMPARE(core->nnrAlpha(), 2.25);
+        NereusSDR::Test::settleSession();
+        if (declares) {
+            QCOMPARE(mirror->nnrLoadWarning(), core->nnrLoadWarning());
+            core->setNnrLoadWarning({});
+            NEREUS_TRY_VERIFY(mirror->nnrLoadWarning().isEmpty());
+        }
+        bool sawField = false;
+        for (const QByteArray& wire : peer->received()) {
+            // The Core's hello advertises support independently of which
+            // fields this peer declared it can receive.
+            if (decodeOrFail(wire).kind == SessionMessageKind::Hello) {
+                continue;
+            }
+            sawField |= wire.contains("nnrLoadWarning");
+            if (!declares) {
+                QVERIFY2(!wire.contains("nnrLoadWarning"), wire.constData());
+            }
+        }
+        QCOMPARE(sawField, declares);
+        QCOMPARE(core->nnrLimit(), 0);
+        QCOMPARE(mirror->nnrLimit(), 0);
+        client.disconnectFromStation(QStringLiteral("warning complete"));
+    }
+}
+
 void TstStationSession::nnrLimitReachesMinorElevenPeerAndTryAgainClearsIt()
 {
     QTemporaryDir settingsDir;

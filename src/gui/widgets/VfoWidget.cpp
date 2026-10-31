@@ -1,4 +1,5 @@
 // =================================================================
+// 2026-10-31: Measured NNR warning surfaces; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // src/gui/widgets/VfoWidget.cpp  (NereusSDR)
 // =================================================================
 //
@@ -3251,7 +3252,8 @@ void VfoWidget::onNnrLimitChanged(int limit)
     if (!m_nnrBtn || !m_nnrLimitIndicator) { return; }  // not yet built
     // The slice words the reason for this window: a remote window names
     // the Core computer, a local one this computer.
-    const QString reason = m_slice && limit != 0 ? m_slice->nnrLimitText() : QString();
+    const QString reason = m_slice && limit != 0 ? m_slice->nnrLimitText()
+        : m_slice && m_slice->activeNr() == NrSlot::NNR ? m_slice->nnrLoadWarning() : QString();
     m_nnrLimitIndicator->setVisible(!reason.isEmpty());
     m_nnrLimitIndicator->setToolTip(reason);
     m_nnrBtn->setToolTip(reason.isEmpty() ? m_nnrToolTip : reason);
@@ -3546,6 +3548,7 @@ void VfoWidget::setSlice(SliceModel* slice)
                    this, &VfoWidget::setOutputRoute);
         disconnect(m_slice, &SliceModel::nnrLimitChanged,
                    this, &VfoWidget::onNnrLimitChanged);
+        disconnect(m_slice, &SliceModel::nnrLoadWarningChanged, this, nullptr);
         disconnect(m_slice, &SliceModel::nrSelectionRefused, this, nullptr);
         disconnect(m_slice, &SliceModel::radeReasonChanged,
                    this, &VfoWidget::setRadeReason);
@@ -3577,6 +3580,8 @@ void VfoWidget::setSlice(SliceModel* slice)
         onActiveNrChanged(slice->activeNr());
         connect(slice, &SliceModel::nnrLimitChanged,
                 this, &VfoWidget::onNnrLimitChanged, Qt::UniqueConnection);
+        connect(slice, &SliceModel::nnrLoadWarningChanged, this,
+                [this] { onNnrLimitChanged(m_slice ? m_slice->nnrLimit() : 0); });
         connect(slice, &SliceModel::nrSelectionRefused,
                 this, &VfoWidget::onNrSelectionRefused);
     }

@@ -1057,6 +1057,7 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // RX meter stamps: the window holds each slice's RX meter readings until
     // their audio plays, on the spectrum's map (rxMeterStampsVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("rxMeterStamps"), 1);
+    m_declaredFeatures.insert(QByteArrayLiteral("nnrLoadWarning"), 1);
     // HL2 port part 2: this window shows why the Core's transmit is held
     // off (radio's txInhibitReason; txInhibitReasonVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("txInhibitReason"), 1);
