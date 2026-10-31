@@ -49,6 +49,7 @@ for bug reports and feature requests that need tracking.
   follow their audio, tuning and receiver moves preserve continuity, and
   the phone's waterfall has steady pacing and labelled gaps. CPU-based
   display adaptation defaults off; an existing explicit choice is kept.
+  Phone control writes hand off without an extra wait behind display work.
 - **Saved controls and layouts.** Receiver preferences, container items,
   meter history and clock resizing retain their intended state. The
   [release notes](CHANGELOG.md) cover the radio, tuner, PureSignal, remote
