@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+- The iPhone's saved band-return link says **Previous band**, clarifying
+  that taking a slice keeps the earlier view available to return to.
+
+- Roundtable reporter readings offer **dBm**, **S-units**, or **Both** on
+  iPhone/iPad, desktop and website. Tap the signal heading or a reading to
+  cycle formats, or choose one in Roundtable settings. The choice stays
+  on that device or browser; Both stacks the values in the same column.
+
 - The iPhone recognizes the Core’s exact-frequency Roundtable capability,
   restoring present callsigns in the directory and waterfall instead of empty
   retained **Quiet** room markers. Older clients receive their intended legacy

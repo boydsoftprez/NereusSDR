@@ -164,6 +164,74 @@ struct RoundtableSheetTests {
         #expect(!RoundtableText.readingPresent(-160.5) && !RoundtableText.readingPresent(.nan))
     }
 
+    @Test("signal display cycles and stays on this device without Core commands")
+    func signalDisplayPreference() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "RoundtableSignal-\(UUID().uuidString)"))
+        let settings = PhoneSettings(defaults: defaults)
+        #expect(settings.roundtableSignalFormat == .dbm)
+        let (model, station) = try await shotStation(defaults: defaults)
+        let before = station.messages.count
+        #expect(model.roundtable.signalFormat == .dbm)
+        model.roundtable.cycleSignalFormat()
+        #expect(model.roundtable.signalFormat == .sUnits)
+        model.roundtable.cycleSignalFormat()
+        #expect(model.roundtable.signalFormat == .both)
+        #expect(model.phoneSettings.roundtableSignalFormat == .both)
+        let restored = AppModel(phoneSettings: PhoneSettings(defaults: defaults),
+                                displaySettings: BandDisplaySettingsStore(defaults: defaults), platform: platform.platform)
+        #expect(restored.roundtable.signalFormat == .both)
+        model.roundtable.setSignalFormat(.sUnits)
+        #expect(model.phoneSettings.roundtableSignalFormat == .sUnits)
+        model.roundtable.setSignalFormat(.both)
+        model.roundtable.cycleSignalFormat()
+        #expect(model.roundtable.signalFormat == .dbm)
+        #expect(station.messages.count == before)
+        settings.roundtableSignalFormat = .both
+        #expect(PhoneSettings(defaults: defaults).roundtableSignalFormat == .both)
+        defaults.set("unknown", forKey: PhoneSettings.keyPrefix + PhoneSettings.roundtableSignalFormatKey)
+        #expect(settings.roundtableSignalFormat == .dbm)
+        let present = RoundtableModel.Reading(dbm: -73, t: 0, present: true, turn: nil)
+        let missing = RoundtableModel.Reading(dbm: -400, t: 0, present: false, turn: nil)
+        #expect(RoundtableText.signalLines(present, format: .dbm) == ["-73"])
+        #expect(RoundtableText.signalLines(present, format: .sUnits) == ["S9"])
+        #expect(RoundtableText.signalLines(present, format: .both) == ["S9", "-73 dBm"])
+        #expect(RoundtableText.signalLines(missing, format: .both) == ["none"])
+        #expect(RoundtableText.signalLines(nil, format: .both).isEmpty)
+        for value in [1e100, -400.0, Double.nan] {
+            let invalid = RoundtableModel.Reading(dbm: value, t: 0, present: true, turn: nil)
+            for format in RoundtableSignalFormat.allCases {
+                #expect(RoundtableText.signalLines(invalid, format: format) == ["none"])
+                #expect(RoundtableText.validSignal(invalid) == nil)
+            }
+        }
+        #expect(RoundtableText.signalLines(.init(dbm: -67, t: 0, present: true, turn: nil), format: .sUnits) == ["S9 +6"])
+        await model.disconnect()
+    }
+
+    @Test("invalid and missing numeric reports remain absent through record decoding")
+    func invalidSignalRecords() async throws {
+        let (model, station) = try await shotStation()
+        var scene = Self.boardScene()
+        scene.roomRecords[Self.room] = scene.roomRecords[Self.room]?.map { original in
+            var record = original
+            if record.id == "reading:n/2" { record.fields["dbm"] = .number(1e100) }
+            if record.id == "reading:q/3" { record.fields["dbm"] = .number(-400) }
+            if record.id == "reading:w/5" { record.fields.removeValue(forKey: "dbm") }
+            return record
+        }
+        try await station.deliverRoundtable(scene)
+        #expect(await settle { model.roundtable.room?.members.count == 5 })
+        let members = try #require(model.roundtable.room?.members)
+        for ref in ["n/2", "q/3", "w/5"] {
+            let reading = try #require(members.first { $0.ref == ref }?.reading)
+            #expect(!reading.present)
+            #expect(RoundtableText.signalLines(reading, format: .both) == ["none"])
+            #expect(RoundtableText.validSignal(reading) == nil)
+        }
+        #expect(members.first { $0.ref == "n/2" }?.reading?.dbm == 1e100)
+        await model.disconnect()
+    }
+
     @Test("on a phone the first-run question takes the full height; an iPad asks in its form sheet")
     func firstRunAtFullHeight() {
         #expect(RoundtableSheet.firstRunAtFullHeight(asking: true, asksHere: true))
@@ -1035,7 +1103,10 @@ struct RoundtableSheetTests {
             #expect(await settle { model.roundtable.room != nil })
             try await shoot("01-band-flag-line", model: model, detent: nil)
             try await shoot("02-sheet-half", model: model, detent: .half)
-            try await shoot("03-sheet-full", model: model, detent: .full)
+            model.roundtable.setSignalFormat(.both)
+            try await shoot("03-sheet-full-both", model: model, detent: .full)
+            try await shoot("03-sheet-narrow-both", model: model, detent: .full, size: CGSize(width: 320, height: 700))
+            model.roundtable.setSignalFormat(.dbm)
             model.main.transmit.tapPtt()
             #expect(await settle { model.main.transmit.ptt.transmitting })
             try await shoot("04-keyed-sheet-open", model: model, detent: .half)
@@ -1216,8 +1287,8 @@ struct RoundtableSheetTests {
     }
 
     private func connected(additions: FakeStation.Additions = [.remoteTx],
-                           replies: HeldCommandReplies? = nil) async throws -> (AppModel, FakeStation) {
-        let defaults = try #require(UserDefaults(suiteName: "RoundtableSheetTests-\(UUID().uuidString)"))
+                           replies: HeldCommandReplies? = nil, defaults suppliedDefaults: UserDefaults? = nil) async throws -> (AppModel, FakeStation) {
+        let defaults = try #require(suppliedDefaults ?? UserDefaults(suiteName: "RoundtableSheetTests-\(UUID().uuidString)"))
         let model = AppModel(phoneSettings: PhoneSettings(defaults: defaults),
                              displaySettings: BandDisplaySettingsStore(defaults: defaults),
                              platform: platform.platform)
@@ -1243,9 +1314,9 @@ struct RoundtableSheetTests {
     }
 
     /// A fake Core with Roundtable, the main screen's two slices and a band to draw them on.
-    private func shotStation(frequency: Bool = false) async throws -> (AppModel, FakeStation) {
+    private func shotStation(frequency: Bool = false, defaults: UserDefaults? = nil) async throws -> (AppModel, FakeStation) {
         let additions: FakeStation.Additions = frequency ? [.remoteTx, .roundtableFrequency] : [.remoteTx, .roundtable]
-        let (model, station) = try await connected(additions: additions)
+        let (model, station) = try await connected(additions: additions, defaults: defaults)
         try await MainScreenShotTests.fill(station)
         #expect(await settle { model.main.slices.entries.count == 2 })
         model.main.band.endpointId = 1

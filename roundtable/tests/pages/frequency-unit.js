@@ -57,3 +57,20 @@ assert.equal(refreshed[0].callsign,"K4ABC");assert.equal(refreshed[0].hz,1421200
 assert.equal(refreshed[0].state,"removed");assert.equal(refreshed[0].text,null);
 assert.equal(F.historyUpdates(cached,[{id:1,state:"shown",text:"actual restored text"}],true)[0].text,"actual restored text");
 console.log("frequency-unit: all assertions passed");
+assert.equal(RT.signalFormat, "both");
+RT.setSignalFormat("dbm");
+assert.equal(RT.signalText(-81), "-81.0");
+RT.setSignalFormat("s");
+assert.equal(RT.signalText(-81), RT.sText(-81));
+RT.setSignalFormat("both");
+assert.equal(RT.signalText(-81), RT.sText(-81)+"\n-81.0");
+assert.equal(storage.get("roundtable.signalFormat"), "both");
+RT.cycleSignalFormat();
+assert.equal(RT.signalFormat, "dbm");
+assert.equal(RT.signalText(NaN), "—");
+RT.setSignalFormat("s");
+const reloaded = { window: {}, document: {body:{dataset:{page:"unit"}}}, localStorage:sandbox.localStorage, URLSearchParams, Date, Intl, Map, Set };
+vm.runInNewContext(script,reloaded);
+assert.equal(reloaded.window.RT.signalFormat, "s", "browser preference survives reload");
+
+for(const v of [-161, 95, 1e100]) assert.equal(RT.signalText(v), "—");

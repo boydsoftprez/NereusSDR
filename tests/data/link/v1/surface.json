@@ -9910,6 +9910,10 @@
                 "scope": "operatorLocal"
             },
             {
+                "key": "Roundtable/SignalFormat",
+                "scope": "operatorLocal"
+            },
+            {
                 "key": "Roundtable/FirstRunSeen",
                 "scope": "operatorLocal"
             },

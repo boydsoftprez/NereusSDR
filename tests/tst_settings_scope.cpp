@@ -660,6 +660,8 @@ private slots:
             << QStringLiteral("Roundtable/EarlierTurnsShown") << int(SettingsScope::OperatorLocal);
         QTest::newRow("Roundtable/PanelOpensOn is OperatorLocal (a panel preference)")
             << QStringLiteral("Roundtable/PanelOpensOn") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("Roundtable/SignalFormat is OperatorLocal (this computer's reporter display)")
+            << QStringLiteral("Roundtable/SignalFormat") << int(SettingsScope::OperatorLocal);
         QTest::newRow("Roundtable/FirstRunSeen is OperatorLocal (this computer asked)")
             << QStringLiteral("Roundtable/FirstRunSeen") << int(SettingsScope::OperatorLocal);
         QTest::newRow("Roundtable/WindowGeometry is OperatorLocal (this computer's window)")

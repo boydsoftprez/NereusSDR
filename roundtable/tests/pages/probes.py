@@ -191,7 +191,7 @@ def probe_row(c: Chrome, server: Server) -> None:
     for row in result["person"]:
         assert row["hz"]==by_key[row["key"]]["hz"],row
     assert [r["ref"] for r in result["rows"]]==result["expected"]
-    assert all(r["turn"]==result["turn"] and "/" in r["text"] for r in result["rows"])
+    assert all(r["turn"]==result["turn"] and "\n" in r["text"] for r in result["rows"])
     assert "K4ABC" in result["label"],result["label"]
     assert "Heard by" in c.eval("document.querySelector('.reading-head').textContent")
     # Initial data must reveal the talker, rather than follow the bottom of
@@ -212,7 +212,23 @@ def probe_signal_mobile(c: Chrome, server: Server) -> None:
           const report=RT.currentView().members.find(m=>m.callsign==='N4RDR').reading;
           return {text:signal.textContent,title:row.title,raw:report.dbm,signalRight:a.right,ageLeft:b.left,signalScroll:signal.scrollWidth,signalWidth:signal.clientWidth,age:age.textContent};})()""")
         assert result["raw"] == -66.735748, result
-        assert result["text"] == "S9+6 / -66.7", result
+        assert result["text"] == "S9+6\n-66.7", result
+        for width in (320, 390):
+            c.size(width, 800, mobile=True)
+            c.screenshot(Path(f"/tmp/nereus-signal-both-{width}.png"))
+        name = c.eval("[...document.querySelectorAll('.attributed-reading')].find(n=>n.textContent.includes('N4RDR')).querySelector('.signal-value').getAttribute('aria-label')")
+        assert 'N4RDR' in name and 'S9+6' in name and '-66.7' in name and 'Both' in name, name
+        c.eval("document.querySelector('.signal-heading').focus()")
+        assert c.eval("document.activeElement.id") == "signal-heading"
+        c.key("Enter", text="\r")
+        c.wait("RT.signalFormat==='dbm' && document.querySelector('.signal-value').textContent.indexOf('\\n')<0")
+        c.eval("document.querySelector('.signal-value').focus()")
+        c.key("Enter", text="\r")
+        c.wait("RT.signalFormat==='s'")
+        c.eval("document.querySelector('.signal-value').click()")
+        c.wait("RT.signalFormat==='both'")
+        assert c.eval("localStorage.getItem('roundtable.signalFormat')") == "both"
+        assert c.eval("RT.currentView().members.find(m=>m.callsign==='N4RDR').reading.dbm") == -66.735748
         assert "-66.7 dBm" in result["title"], result
         assert result["signalRight"] <= result["ageLeft"] and result["signalScroll"] <= result["signalWidth"], result
         assert re.fullmatch(r"\d+ s", result["age"]), result

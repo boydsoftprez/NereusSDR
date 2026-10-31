@@ -46,6 +46,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QGroupBox>
 #include <QFile>
 #include <QFrame>
 #include <QHostAddress>
@@ -610,6 +611,11 @@ void TstRoundtableSpotHub::thisComputersChoicesAreWrittenHere()
     QCOMPARE(settingOf(QStringLiteral("Roundtable/EarlierTurnsShown")), QStringLiteral("10"));
     opensOn->setCurrentIndex(opensOn->findData(QStringLiteral("Readings")));
     QCOMPARE(settingOf(QStringLiteral("Roundtable/PanelOpensOn")), QStringLiteral("Readings"));
+    auto* signal = hub->findChild<QComboBox*>(QStringLiteral("roundtableSignalFormat"));
+    auto* local = hub->findChild<QGroupBox*>(QStringLiteral("roundtableLocalGroup"));
+    QVERIFY(signal && local && local->isAncestorOf(signal));
+    signal->setCurrentText(QStringLiteral("Both"));
+    QCOMPARE(settingOf(QStringLiteral("Roundtable/SignalFormat")), QStringLiteral("Both"));
     QVERIFY(w.link.calls.isEmpty());
 }
 

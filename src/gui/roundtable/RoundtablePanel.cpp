@@ -2070,6 +2070,9 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
 void RoundtablePanel::rebuildReadings(const QJsonObject& room)
 {
     const qint64 now = RoundtableModel::nowMs();
+    QWidget* focused = QApplication::focusWidget();
+    const QString focusKey = focused && m_readings->isAncestorOf(focused)
+        ? focused->property("signalFocusKey").toString() : QString();
     QWidget* body = freshBody(m_readings);
     auto* col = new QVBoxLayout(body);
     col->setContentsMargins(0, 0, 0, 4);
@@ -2083,6 +2086,21 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         if (!earlier.isEmpty()) { turn = earlier.first().toObject(); }
     }
     const bool frequency = m_model && m_model->frequencyAvailable();
+    const QString format = AppSettings::instance().value(QStringLiteral("Roundtable/SignalFormat"), frequency ? QStringLiteral("dBm") : QStringLiteral("S-units")).toString();
+    const auto formatValue = [&format](double dbm) {
+        if (!std::isfinite(dbm) || dbm < RoundtableWire::kMinDbm || dbm > RoundtableWire::kMaxDbm) {
+            return QStringLiteral("none");
+        }
+        const QString dbmValue = QString::number(std::lround(dbm));
+        return format == QLatin1String("S-units") ? sText(dbm)
+            : format == QLatin1String("Both") ? sText(dbm) + QLatin1Char('\n') + dbmValue : dbmValue;
+    };
+    const auto cycleFormat = [this, format]() {
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"),
+            format == QLatin1String("dBm") ? QStringLiteral("S-units") :
+            format == QLatin1String("S-units") ? QStringLiteral("Both") : QStringLiteral("dBm"));
+        rebuild();
+    };
     const bool miles = !m_model || m_model->stationSetting(QStringLiteral("DistanceUnits")) != QLatin1String("km");
     const bool bearing = !m_model || m_model->stationSetting(QStringLiteral("ShowBearing")) != QLatin1String("False");
     const QString unit = miles ? QStringLiteral("mi") : QStringLiteral("km");
@@ -2294,7 +2312,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         offsetNeed = std::max(offsetNeed, valueMetrics.horizontalAdvance(
                                               offsetText(member.value(QStringLiteral("offsetHz")).toInteger())) + 1);
         const double dbm = reading.value(QStringLiteral("dbm")).toDouble();
-        valueNeed = std::max(valueNeed, valueMetrics.horizontalAdvance(frequency ? QString::number(std::lround(dbm)) : sText(dbm)) + 1);
+        valueNeed = std::max(valueNeed, std::max(valueMetrics.horizontalAdvance(formatValue(dbm).section(QLatin1Char('\n'), 0, 0)), valueMetrics.horizontalAdvance(formatValue(dbm).section(QLatin1Char('\n'), -1))) + 1);
         ageNeed = std::max(ageNeed, valueMetrics.horizontalAdvance(
                                         ageText(now - reading.value(QStringLiteral("t")).toInteger())) + 1);
     }
@@ -2382,7 +2400,14 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         header->addWidget(cell(frequency ? QStringLiteral("Heard by") : QStringLiteral("Station"), callWidth, Qt::AlignLeft));
         header->addWidget(cell(unit, kmWidth, Qt::AlignRight));
         header->addWidget(cell(QStringLiteral("Offset"), offsetWidth, Qt::AlignRight));
-        header->addWidget(cell(frequency ? QStringLiteral("dBm") : QStringLiteral("Reading"), 0, Qt::AlignLeft), 1);
+        auto* signalHeader = new QPushButton(format, body);
+        signalHeader->setMinimumWidth(0);
+        signalHeader->setObjectName(QStringLiteral("roundtableSignalHeading"));
+        signalHeader->setProperty("signalFocusKey", QStringLiteral("heading"));
+        signalHeader->setAccessibleName(QStringLiteral("Signal format: %1. Change signal format").arg(format));
+        signalHeader->setStyleSheet(QStringLiteral("QPushButton { background: transparent; border: none; color: %1; }").arg(dim2Color()));
+        connect(signalHeader, &QPushButton::clicked, this, cycleFormat);
+        header->addWidget(signalHeader, 1);
         header->addWidget(cell(QStringLiteral("Age"), ageWidth, Qt::AlignRight));
         col->addLayout(header);
     }
@@ -2394,15 +2419,18 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         const bool stale = age > kStaleReadingMs;
         const bool away = member.value(QStringLiteral("away")).toBool();
         const bool isYou = member.value(QStringLiteral("you")).toBool();
-        const bool present = reading.value(QStringLiteral("present")).toBool(true);
-        const double dbm = reading.value(QStringLiteral("dbm")).toDouble();
+        const QJsonValue dbmField = reading.value(QStringLiteral("dbm"));
+        const double dbm = dbmField.toDouble();
+        const bool present = reading.value(QStringLiteral("present")).toBool(true)
+            && dbmField.isDouble() && std::isfinite(dbm)
+            && dbm >= RoundtableWire::kMinDbm && dbm <= RoundtableWire::kMaxDbm;
 
         auto* rowWidget = new QFrame(body);
         rowWidget->setObjectName(QStringLiteral("roundtableReadingRow"));
         rowWidget->setProperty("callsign", member.value(QStringLiteral("callsign")).toString());
         rowWidget->setProperty("stale", stale);
         rowWidget->setProperty("away", away);
-        rowWidget->setFixedHeight(bearing && identified ? 32 : 20);
+        rowWidget->setFixedHeight((bearing && identified) || format == QLatin1String("Both") ? 32 : 20);
         if (isYou) {
             rowWidget->setStyleSheet(QStringLiteral("QFrame#roundtableReadingRow {"
                                                     " background: %1; }")
@@ -2478,12 +2506,26 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
             row->addWidget(offset);
             row->addWidget(bar, 1);
         }
-        QLabel* value = makeLabel(rowWidget, present ? (frequency ? QString::number(std::lround(dbm)) : sText(dbm)) : QStringLiteral("none"), text,
+        auto* valueButton = new QPushButton(rowWidget);
+        valueButton->setObjectName(QStringLiteral("roundtableSignalValue"));
+        valueButton->setProperty("signalFocusKey", QStringLiteral("reading:") + personKey(member));
+        valueButton->setFixedWidth(valueWidth);
+        valueButton->setFixedHeight(rowWidget->height());
+        valueButton->setStyleSheet(QStringLiteral("QPushButton { background: transparent; border: none; padding: 0; }"));
+        const QString measurement = present ? formatValue(dbm).replace(QLatin1Char('\n'), QStringLiteral(", ")) : QStringLiteral("none");
+        valueButton->setAccessibleName(QStringLiteral("%1 signal %2, format %3. Change signal format")
+                                           .arg(withNth(member), measurement, format));
+        auto* valueLayout = new QHBoxLayout(valueButton);
+        valueLayout->setContentsMargins(0, 0, 0, 0);
+        connect(valueButton, &QPushButton::clicked, this, cycleFormat);
+        QLabel* value = makeLabel(valueButton, present ? formatValue(dbm) : QStringLiteral("none"), text,
                                   kSmallPx, false, true);
+        value->setAttribute(Qt::WA_TransparentForMouseEvents);
         value->setObjectName(QStringLiteral("roundtableReadingValue"));
         value->setFixedWidth(valueWidth);
         value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        row->addWidget(value);
+        valueLayout->addWidget(value);
+        row->addWidget(valueButton);
         // The age turns amber once stale (U4).
         QLabel* ageLabel = makeLabel(rowWidget, ageText(age), stale ? unknownColor() : dimColor(), kSmallPx,
                                      stale, true);
@@ -2501,6 +2543,15 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         note->setWordWrap(true);
         note->setContentsMargins(8, 3, 8, 5);
         col->addWidget(note);
+    }
+    if (!focusKey.isEmpty()) {
+        showFreshBodies({m_readings});
+        for (QPushButton* button : body->findChildren<QPushButton*>()) {
+            if (button->property("signalFocusKey").toString() == focusKey) {
+                button->setFocus();
+                break;
+            }
+        }
     }
 }
 

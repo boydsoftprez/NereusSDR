@@ -546,6 +546,7 @@ private slots:
     void init()
     {
         g_now = kNow;
+        AppSettings::instance().remove(QStringLiteral("Roundtable/SignalFormat"));
         AppSettings::instance().remove(QStringLiteral("Roundtable/MuteList"));
         AppSettings::instance().remove(QStringLiteral("Roundtable/PanelOpensOn"));
         AppSettings::instance().remove(QStringLiteral("Roundtable/EarlierTurnsShown"));
@@ -725,11 +726,61 @@ private slots:
         settle();
         QCOMPARE(panel.findChildren<QFrame*>(QStringLiteral("roundtableReadingRow")).size(), 1);
         QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("-73")});
+        auto* signalButton = child<QPushButton>(&panel, QStringLiteral("roundtableSignalValue"));
+        QVERIFY(signalButton);
+        QVERIFY(signalButton->accessibleName().contains(QStringLiteral("W4ABC")));
+        QVERIFY(signalButton->accessibleName().contains(QStringLiteral("-73")));
+        signalButton->setFocus();
+        panel.refreshNow();
+        settle();
+        signalButton = child<QPushButton>(&panel, QStringLiteral("roundtableSignalValue"));
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget*>(signalButton));
+        QTest::keyClick(signalButton, Qt::Key_Space);
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("S9")});
+        auto* valueLabel = child<QLabel>(&panel, QStringLiteral("roundtableReadingValue"));
+        QVERIFY(valueLabel->testAttribute(Qt::WA_TransparentForMouseEvents));
+        signalButton = child<QPushButton>(&panel, QStringLiteral("roundtableSignalValue"));
+        QTest::mouseClick(signalButton, Qt::LeftButton, Qt::NoModifier, valueLabel->geometry().center());
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("S9\n-73")});
+        const QString bothCapture = qEnvironmentVariable("NEREUS_ROUNDTABLE_CAPTURE_DIR");
+        if (!bothCapture.isEmpty()) {
+            QVERIFY(panel.grab().save(bothCapture + QStringLiteral("/desktop-frequency-both.png")));
+        }
+        RoundtablePanel recreated(&p.model);
+        recreated.resize(340, 1400);
+        recreated.followSlice(0);
+        recreated.setSliceContext(7185123, QStringLiteral("lsb"));
+        recreated.show();
+        settle();
+        QCOMPARE(texts(&recreated, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("S9\n-73")});
+        auto* reset = child<QPushButton>(&panel, QStringLiteral("roundtableSignalHeading"));
+        QTest::mouseClick(reset, Qt::LeftButton);
+        auto* format = child<QPushButton>(&panel, QStringLiteral("roundtableSignalHeading"));
+        QVERIFY(format);
+        QTest::mouseClick(format, Qt::LeftButton);
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("S9")});
+        format = child<QPushButton>(&panel, QStringLiteral("roundtableSignalHeading"));
+        QTest::mouseClick(format, Qt::LeftButton);
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("S9\n-73")});
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Roundtable/SignalFormat")).toString(), QStringLiteral("Both"));
+        QCOMPARE(heard.value(QStringLiteral("reading")).toObject().value(QStringLiteral("dbm")).toDouble(), -73.0);
+        format = child<QPushButton>(&panel, QStringLiteral("roundtableSignalHeading"));
+        QTest::mouseClick(format, Qt::LeftButton);
         QVERIFY(texts(&panel, QStringLiteral("roundtableReadingsTitle")).contains(QStringLiteral("HEARD BY")));
         QVERIFY(!texts(&panel, QStringLiteral("roundtableMessageFrequency")).isEmpty());
         const QString capture = qEnvironmentVariable("NEREUS_ROUNDTABLE_CAPTURE_DIR");
         if (!capture.isEmpty()) {
             QVERIFY(panel.grab().save(capture + QStringLiteral("/desktop-frequency-reports.png")));
+        }
+        for (const QJsonValue& invalid : {QJsonValue(-400.0), QJsonValue(1e100), QJsonValue(QJsonValue::Null)}) {
+            QJsonObject invalidReading = heard.value(QStringLiteral("reading")).toObject();
+            invalidReading.insert(QStringLiteral("dbm"), invalid);
+            heard.insert(QStringLiteral("reading"), invalidReading);
+            view.insert(QStringLiteral("members"), QJsonArray{heard, wrong});
+            p.model.applyRoom(view);
+            settle();
+            QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("none")});
+            QVERIFY(child<QPushButton>(&panel, QStringLiteral("roundtableSignalValue"))->accessibleName().contains(QStringLiteral("none")));
         }
         panel.setSliceContext(7249000, QStringLiteral("lsb"));
         settle();

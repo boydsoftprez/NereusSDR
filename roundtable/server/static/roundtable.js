@@ -497,12 +497,21 @@
   };
   RT.frequency=F;
   function readPreference(key,fallback) { try { return localStorage.getItem(key) || fallback; } catch(e) { return fallback; } }
+  const signalFormats=["dbm","s","both"];
+  RT.signalFormat=signalFormats.includes(readPreference("roundtable.signalFormat","both")) ? readPreference("roundtable.signalFormat","both") : "dbm";
+  RT.setSignalFormat=function(format) { RT.signalFormat=signalFormats.includes(format)?format:"dbm"; try { localStorage.setItem("roundtable.signalFormat",RT.signalFormat); } catch(e) {} };
+  RT.cycleSignalFormat=function() { RT.setSignalFormat(signalFormats[(signalFormats.indexOf(RT.signalFormat)+1)%signalFormats.length]); };
+  RT.signalText=function(dbm) { if(typeof dbm!=="number"||!Number.isFinite(dbm)||dbm < -160||dbm > 94)return "—"; return RT.signalFormat==="s"?sText(dbm):RT.signalFormat==="both"?sText(dbm)+"\n"+dbmText(dbm):dbmText(dbm); };
+  const signalLabel=()=>({dbm:"dBm",s:"S-units",both:"Both"})[RT.signalFormat];
   RT.pathPreference={unit:readPreference("roundtable.distance","mi")==="km"?"km":"mi",bearing:readPreference("roundtable.bearing","true")!=="false"};
   RT.pathControls=function(changed) {
     const unit=el("select",{id:"distance-unit",attrs:{"aria-label":"Distance units"}},[
       el("option",{value:"mi",text:"Miles (mi)"}),el("option",{value:"km",text:"Kilometres (km)"}),
     ]);
     unit.value=RT.pathPreference.unit;
+    const signal=el("select",{id:"signal-format",attrs:{"aria-label":"Signal format"}},[el("option",{value:"dbm",text:"dBm"}),el("option",{value:"s",text:"S-units"}),el("option",{value:"both",text:"Both"})]);
+    signal.value=RT.signalFormat;
+    signal.addEventListener("change",()=>{RT.setSignalFormat(signal.value);changed();});
     const bearing=el("input",{type:"checkbox",id:"show-bearing",checked:RT.pathPreference.bearing});
     function save() {
       RT.pathPreference.unit=unit.value==="km"?"km":"mi"; RT.pathPreference.bearing=bearing.checked;
@@ -510,7 +519,7 @@
       changed();
     }
     unit.addEventListener("change",save);bearing.addEventListener("change",save);
-    return el("div",{class:"path-controls"},[el("label",{},["Distance ",unit]),el("label",{},[bearing," True bearing (°T)"])]);
+    return el("div",{class:"path-controls"},[el("label",{},["Distance ",unit]),el("label",{},[bearing," True bearing (°T)"]),el("label",{},["Signal ",signal])]);
   };
   RT.pathNode=function(km,bearing,known) {
     const p=F.path(known===false?null:km,bearing,RT.pathPreference.unit,RT.pathPreference.bearing);
@@ -796,10 +805,11 @@
   }
   function readingNode(member,turn){
     const reading=member.reading,age=Math.max(0,now()-reading.t),known=turn.kind==="talking";
+    const signal=RT.signalText(reading.dbm), spokenSignal=signal==="—"?"unavailable":signal.replace("\n",", ");
     return el("div",{class:"rd attributed-reading"+(age>20000?" stale":""),data:{ref:F.memberKey(member),turn:turn.id,km:typeof member.km==="number"?member.km:"",bearing:known&&Number.isInteger(member.bearingDeg)?member.bearingDeg:""},title:callText(member.callsign,member.nth)+" measured "+turnLabel(turn)+" at "+dbmText(reading.dbm)+" dBm"},[
       el("span",{class:"c"},[highlight(callText(member.callsign,member.nth)),member.away?el("span",{class:"away",text:"AWAY"}):null]),
       RT.pathNode(member.km,member.bearingDeg,known),el("span",{class:"o",text:(member.offsetHz>0?"+":"")+member.offsetHz}),
-      el("span",{class:"v",text:sText(reading.dbm)+" / "+dbmText(reading.dbm)}),el("span",{class:"age",text:Math.floor(age/1000)+" s"}),
+      el("button",{class:"v signal-value",id:"signal-"+F.memberKey(member),type:"button",text:signal,attrs:{"aria-label":callText(member.callsign,member.nth)+" signal "+spokenSignal+", format "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{class:"age",text:Math.floor(age/1000)+" s"}),
     ]);
   }
   function renderTalk(body,room){
@@ -810,7 +820,7 @@
     if(turn.kind==="unknown"){body.appendChild(namesNode(turn));body.appendChild(el("button",{class:"btn small name-turn",type:"button",text:"Name unknown turn",disabled:!!gate(),on:{click:()=>showName(turn)}}));}
     if(turn.kind==="doubled")body.appendChild(el("div",{class:"fn",text:"Combined RF is not credited to either talker or either archive. Distance and bearing are blank."}));
     const reads=F.readings(room,turn);
-    const header=el("div",{class:"rd reading-head"},[el("span",{text:"Heard by"}),el("span",{text:RT.pathPreference.unit+(RT.pathPreference.bearing?" / °T":"")}),el("span",{class:"o",text:"Offset Hz"}),el("span",{text:"Signal · dBm"}),el("span",{text:"Age"})]);body.appendChild(header);
+    const header=el("div",{class:"rd reading-head"},[el("span",{text:"Heard by"}),el("span",{text:RT.pathPreference.unit+(RT.pathPreference.bearing?" / °T":"")}),el("span",{class:"o",text:"Offset Hz"}),el("button",{class:"signal-heading",id:"signal-heading",type:"button",text:"Signal · "+signalLabel(),attrs:{"aria-label":"Signal format: "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{text:"Age"})]);body.appendChild(header);
     for(const row of reads)body.appendChild(readingNode(row,turn));
     if(!reads.length)body.appendChild(el("div",{class:"none",text:"No current reporter reading belongs to this turn."}));
     body.appendChild(el("div",{class:"fn",text:turn.kind==="doubled"?"These are raw reports of the combined RF, not of either individual talker.":"Each row is that reporter’s raw reading of "+turnLabel(turn)+". Nearest first; distance and initial true bearing run from talker to reporter. Readings keep their original age after the turn ends."}));
@@ -873,6 +883,7 @@
     const changed=renderedContext!==S.sel,atBottom=old&&old.querySelector(".msg")&&old.scrollHeight-old.clientHeight-old.scrollTop<36,keep=old?old.scrollTop:0;
     const focus=document.activeElement,focusId=focus&&focus.id,focusTurn=focus&&focus.dataset&&focus.dataset.turn,focusStart=focus&&focus.selectionStart,focusEnd=focus&&focus.selectionEnd;
     const oldEarlier=roomBox.querySelector(".earlier-turns");if(oldEarlier&&!changed)earlierOpen.set(S.sel,oldEarlier.open);
+    if(oldPath){const signal=oldPath.querySelector("#signal-format");if(signal)signal.value=RT.signalFormat;}
     clear(roomBox);
     roomBox.appendChild(el("button",{class:"ph-back",type:"button",text:"‹ All people",on:{click:()=>{S.phoneRoom=false;document.body.classList.remove("in-room");rowsBox.focus();}}}));
     if(!c){roomBox.appendChild(el("div",{class:"room-empty",text:everLive?"Browse a callsign or search a frequency to see who hears whom.":"Connecting to Roundtable…"}));return;}
