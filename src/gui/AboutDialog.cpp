@@ -100,6 +100,9 @@ mw0lge@grange-lane.co.uk
 //                 WorkspacePreview::roleColourName() (title-text) with the
 //                 workspace preview on. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code.
+//   2026-10-31 — Added Brian Sutton (W4KZO / funsutton) to the
+//                 NereusSDR contributor roster. J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "AboutDialog.h"
@@ -293,6 +296,7 @@ void AboutDialog::buildUI()
         "",
         "NereusSDR:",
         "  KG4VCF, J.J. Boyd (C++20 / Qt6 port, packaging, CI)",
+        "  W4KZO, Brian Sutton (funsutton): receiver state, tuning, clock and interface contributions",
     };
 
     for (const auto* entry : kRoster) {

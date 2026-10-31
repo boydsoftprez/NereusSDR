@@ -50,7 +50,8 @@
     {
       "title": "NereusSDR desktop and Core",
       "names": [
-        "KG4VCF, J.J. Boyd: C++20 and Qt 6 port, packaging and continuous integration"
+        "KG4VCF, J.J. Boyd: C++20 and Qt 6 port, packaging and continuous integration",
+        "W4KZO, Brian Sutton (funsutton): receiver state, tuning, clock and interface contributions"
       ]
     }
   ],
