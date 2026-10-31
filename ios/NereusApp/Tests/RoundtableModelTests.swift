@@ -414,7 +414,12 @@ struct RoundtableModelTests {
         #expect(station.roundtableReads.contains("lsb-7236400"))
         #expect(station.roundtableFollowed.contains("roundtableFrequency:lsb-7236400"))
         rt.setDraft("Keep on the original frequency", for: "lsb-7236400")
-        #expect(await rt.post("hello", in: "lsb-7236400", clientId: "frequency-test") == .posted(messageId: "1001"))
+        let postPrerequisites = "Frequency post prerequisites: connected=\(rt.connected) version=\(rt.version) backend=\(rt.serverFrequencyVersion) context=\(String(describing: rt.activeContext)) firstRun=\(rt.firstRunAnswered) hidden=\(rt.hidden) link=\(rt.linkState) members=\(String(describing: rt.room?.members)) note=\(rt.note ?? "none")"
+        let postResult = await rt.post("hello", in: "lsb-7236400", clientId: "frequency-test")
+        if postResult != .posted(messageId: "1001") {
+            print("\(postPrerequisites); result=\(postResult); note after post=\(rt.note ?? "none")")
+        }
+        #expect(postResult == .posted(messageId: "1001"))
         let originalCount = station.roundtablePosts.count
         let otherSlice = RoundtableModel.FrequencyContext(sliceId: 1, hz: 7_236_400, family: "lsb")
         if case .refused = await rt.post("Wrong slice", in: "lsb-7236400", context: otherSlice) {} else {

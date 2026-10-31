@@ -1,5 +1,7 @@
 // NereusSDR for iOS: the analog S-meter reads the Core's readings by the menu's choices, keeps them on this device, and lights modes as the Core sends them
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   passive MAX diagnostic format, bounds, raw holding and lifecycle coverage.
 
 import Foundation
 import CoreGraphics
@@ -365,6 +367,238 @@ struct SMeterModelTests {
     }
 
     // MARK: The fake Core
+
+    @Test("Max Bin diagnostics retain signed geometry and use only bounded scalar fields")
+    func maxBinDiagnosticFormat() {
+        var snapshot = SMeterModel.MaxBinDiagnostic(sliceId: 0, gate: .panMismatch)
+        snapshot.slicePanPresent = true
+        snapshot.acceptedPresent = true
+        snapshot.acceptedSliceId = 1
+        snapshot.acceptedEndpoint = 7
+        snapshot.acceptedRevision = 12
+        snapshot.panMatches = false
+        snapshot.bandEndpoint = 7
+        snapshot.frameEndpoint = 7
+        snapshot.frameGeneration = 4
+        snapshot.frameRevision = 12
+        snapshot.coveragePresent = true
+        snapshot.traceCount = 402
+        snapshot.frequencyHz = 14_261_000
+        snapshot.passbandOriginHz = 14_261_000
+        snapshot.filterLowHz = -2_900
+        snapshot.filterHighHz = -100
+        snapshot.coverageCenterHz = 14_261_000
+        snapshot.coverageSpanHz = 48_000
+        snapshot.subscriberState = .init(mediaUp: true,
+            accepted: .init(sliceId: 0, endpointId: 7, revision: 12),
+            requested: .init(sliceId: 1, endpointId: 7, revision: 13), outstandingOperations: 1, asking: false)
+        let text = snapshot.logText(repeated: false)
+        #expect(text.contains("gate=panMismatch slice=0"))
+        #expect(text.contains("acceptedEndpoint=7 acceptedRevision=12"))
+        #expect(text.contains("mediaUp=1 rawAccepted=1 rawAcceptedSlice=0 rawAcceptedEndpoint=7 rawAcceptedRevision=12 requested=1 requestedSlice=1 requestedEndpoint=7 requestedRevision=13 outstanding=1 asking=0"))
+        #expect(text.contains("panMatch=0"))
+        #expect(text.contains("filterLowHz=-2900.000 filterHighHz=-100.000"))
+        #expect(text.contains("valuePresent=0"))
+        #expect(!text.contains("panKey"))
+        snapshot.coverageSpanHz = .nan
+        #expect(snapshot.logText(repeated: true).contains("coverageSpanHz=nonfinite"))
+        #expect(snapshot.logText(repeated: true).contains("repeated=1"))
+    }
+
+    @Test("Max Bin diagnostics throttle per slice, report one persistent failure, and recover")
+    func maxBinDiagnosticRate() {
+        var limiter = SMeterModel.MaxBinDiagnosticLimiter()
+        let missing = SMeterModel.MaxBinDiagnostic(sliceId: 0, gate: .acceptedDisplayMissing)
+        #expect(limiter.record(missing, at: 10) == false)
+        #expect(limiter.record(missing, at: 10.99) == nil)
+        #expect(limiter.record(missing, at: 11) == true)
+        #expect(limiter.record(missing, at: 12) == nil)
+        var ready = missing
+        ready.gate = .eligible
+        ready.valuePresent = true
+        #expect(limiter.record(ready, at: 12) == false)
+        #expect(limiter.record(ready, at: 13) == nil)
+        var changed = ready
+        changed.frameRevision = 2
+        #expect(limiter.record(changed, at: 12.5) == nil)
+        #expect(limiter.record(changed, at: 13) == false)
+        let otherSlice = SMeterModel.MaxBinDiagnostic(sliceId: 1, gate: .acceptedDisplayMissing)
+        #expect(limiter.record(otherSlice, at: 13) == false)
+        #expect(limiter.record(otherSlice, at: .nan) == nil)
+        var malformed = SMeterModel.MaxBinDiagnostic(sliceId: 2, gate: .measurementUnavailable)
+        malformed.coverageSpanHz = .nan
+        #expect(limiter.record(malformed, at: 13) == false)
+        #expect(limiter.record(malformed, at: 14) == true)
+        #expect(limiter.record(malformed, at: 15) == nil)
+    }
+
+    @Test("The passive flag snapshot names the first unchanged MAX guard and observes the fake clock")
+    func maxBinDiagnosticFirstFailure() async throws {
+        let mirror = MirrorStore(send: { _ in })
+        mirror.apply(.objectCreate(.init(key: "slice:0", className: "SliceModel", properties: [
+            .init(name: "sliceIndex", value: .i64(0)), .init(name: "active", value: .bool(true)),
+            .init(name: "frequency", value: .f64(14_261_000)),
+            .init(name: "filterLow", value: .i64(100)), .init(name: "filterHigh", value: .i64(2_900)),
+            .init(name: "panKey", value: .utf8("private-pan-name-never-logged")),
+        ])))
+        let defaults = try #require(UserDefaults(suiteName: "MaxBinDiagnostic-\(UUID().uuidString)"))
+        let main = MainScreenModel(mirror: mirror, settings: SettingsProxyClient(send: { _ in }), commands: nil,
+            operations: .init(subscribe: { _ in Issue.record("No diagnostic display request") },
+                              unsubscribe: { _ in Issue.record("No diagnostic display release") }),
+            displaySettings: BandDisplaySettingsStore(defaults: defaults),
+            meterSettings: SMeterSettingsStore(defaults: defaults))
+        try #require(await settle { main.slices.active != nil })
+        var now = 0.0
+        let meter = SMeterModel(slices: main.slices, band: main.band, subscriber: main.subscriber,
+            transmit: main.transmit, catalogFeed: main.catalogFeed,
+            store: SMeterSettingsStore(defaults: defaults), clock: { now })
+        var captures: [(SMeterModel.MaxBinDiagnostic, Bool)] = []
+        meter.maxBinDiagnostic = { captures.append(($0, $1)) }
+        var entry = try #require(main.slices.active)
+        entry.panKey = nil
+        #expect(meter.flagMaxBinReason(for: entry) == SMeterReadings.maxBinUnavailableText)
+        #expect(captures.last?.0.gate == .slicePanMissing)
+        entry.panKey = "private-pan-name-never-logged"
+        now = 1
+        #expect(meter.flagMaxBinReason(for: entry) == SMeterReadings.maxBinUnavailableText)
+        #expect(captures.last?.0.gate == .acceptedDisplayMissing)
+        #expect(captures.last?.0.slicePanPresent == true && captures.last?.0.acceptedPresent == false)
+        #expect(captures.last?.0.valuePresent == false)
+        #expect(captures.last?.0.logText(repeated: false).contains("private-pan-name") == false)
+        now = 2
+        _ = meter.flagMaxBin(for: entry)
+        #expect(captures.last?.1 == true)
+        now = 3
+        _ = meter.flagMaxBin(for: entry)
+        #expect(captures.count == 3)
+    }
+
+    @Test("Max Bin recovers its accepted pan after a jump, take and sound-only return",
+          arguments: [false, true])
+    func maxBinAssociationAfterJumpAndResume(frameBeforeAllocation: Bool) async throws {
+        let mirror = MirrorStore(send: { _ in })
+        mirror.apply(.hello(.init(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
+        mirror.apply(.capabilities(.init(properties: [
+            .init(name: "remoteMediaVersion", value: .i64(1)),
+            .init(name: "remoteDisplayBudgetVersion", value: .i64(1)),
+            .init(name: "displayApplicationBytesPerSecond", value: .i64(50_000_000)),
+            .init(name: "spectrumSampleUnitsPerSecond", value: .i64(50_000_000)),
+            .init(name: "displayBudgetGeneration", value: .i64(1)),
+            .init(name: "displayBudgetReason", value: .utf8("none")),
+        ])))
+        for id in 0 ... 1 {
+            mirror.apply(.objectCreate(.init(key: "slice:\(id)", className: "SliceModel", properties: [
+                .init(name: "frequency", value: .f64(id == 0 ? 14_261_000 : 7_236_400)),
+                .init(name: "filterLow", value: .i64(100)),
+                .init(name: "filterHigh", value: .i64(2_900)),
+                .init(name: "active", value: .bool(id == 0)),
+                .init(name: "sliceIndex", value: .i64(Int64(id))),
+                .init(name: "signalPeakDbm", value: .f64(-89.3)),
+                .init(name: "signalAverageDbm", value: .f64(-95)),
+                .init(name: "panKey", value: .utf8("pan-\(id)")),
+                .init(name: "streamIndex", value: .i64(Int64(id))),
+                .init(name: "sampleRateHz", value: .i64(192_000)),
+            ])))
+        }
+        var subscriptions: [DisplaySubscription] = []
+        var releases: [UInt32] = []
+        let defaults = try #require(UserDefaults(suiteName: "MaxBinAssociation-\(UUID().uuidString)"))
+        let main = MainScreenModel(mirror: mirror, settings: SettingsProxyClient(send: { _ in }), commands: nil,
+            operations: .init(subscribe: { subscriptions.append($0) }, unsubscribe: { releases.append($0) }),
+            meterSettings: SMeterSettingsStore(defaults: defaults))
+        var diagnostics: [SMeterModel.MaxBinDiagnostic] = []
+        main.sMeter.maxBinDiagnostic = { snapshot, _ in diagnostics.append(snapshot) }
+        _ = main.band.prepareToDraw(size: CGSize(width: 402, height: 800), scale: 3)
+        main.receive(.mediaState(.connected))
+        try #require(await settle { subscriptions.last?.sliceId == 0 })
+
+        func allocation(_ request: DisplaySubscription, held: Bool = true) throws -> MediaControlEvent {
+            let payload: [String: LinkJSON] = [
+                "op": .string("allocation-result"), "connectionId": .string("meter-association"),
+                "endpointId": .number(Double(request.endpointId)), "revision": .number(Double(request.revision)),
+                "accepted": .bool(true), "reason": .string(""), "budgetGeneration": .number(1),
+                "acceptedRevision": .number(held ? Double(request.revision) : 0),
+                "applicationBytesPerSecond": .number(held ? 1000 : 0),
+                "spectrumSampleUnitsPerSecond": .number(held ? 1000 : 0),
+                "messagesPerSecond": .number(held ? 30 : 0),
+            ]
+            return .allocationResult(try #require(MediaControlDecoder.allocationResult(payload)))
+        }
+
+        func acceptAndDraw(_ request: DisplaySubscription, generation: UInt32) throws {
+            let entry = try #require(main.slices.entries.first { $0.id == request.sliceId })
+            let payload: [String: LinkJSON] = [
+                "op": .string("context"), "connectionId": .string("meter-association"),
+                "endpointId": .number(Double(request.endpointId)), "revision": .number(Double(request.revision)),
+                "contextGeneration": .number(Double(generation)), "sourceStream": .number(Double(request.sliceId)),
+                "sourceCentreHz": .number(entry.slice.frequencyHz), "sampleRateHz": .number(192_000),
+                "centreHz": .number(entry.slice.frequencyHz), "spanHz": .number(12_000),
+                "wideCentreHz": .number(0), "wideSpanHz": .number(0),
+                "traceSamples": .number(13), "waterfallSamples": .number(13), "wideSamples": .number(0),
+                "minDbm": .number(-160), "maxDbm": .number(0), "fps": .number(30), "framesPerLine": .number(1),
+            ]
+            if !frameBeforeAllocation { main.receive(try allocation(request)) }
+            main.receive(.context(try #require(MediaControlDecoder.context(payload, wideband: false, grant: false))))
+            main.receive(.displayFrame(.init(endpointId: request.endpointId, contextGeneration: generation,
+                encoderSequence: 1, producerTimestamp: 0, isKeyframe: true, waterfallAdvance: true,
+                minDbm: -160, maxDbm: 0, traceDbm: Array(repeating: -83, count: 13),
+                waterfallDbm: Array(repeating: -100, count: 13), wideDbm: [])))
+            if frameBeforeAllocation { main.receive(try allocation(request)) }
+            #expect(main.subscriber.acceptedDisplay?.panKey == entry.panKey)
+            #expect(main.subscriber.acceptedDisplay?.subscription.revision == main.band.frameRevision)
+            #expect(main.band.state.frame?.endpointId == request.endpointId)
+            #expect(main.sMeter.flagMaxBinReason(for: entry) == nil)
+            #expect(main.sMeter.flagMaxBin(for: entry).value == -83)
+        }
+
+        try acceptAndDraw(try #require(subscriptions.last), generation: 1)
+        main.sMeter.chooseFlagMeter(.maxBin)
+        #expect(main.sMeter.flagLevel(for: try #require(main.slices.active)) == -83)
+
+        main.slices.show(1)
+        try #require(await settle { subscriptions.last?.sliceId == 1 })
+        // A new requested slice hides acceptedDisplay before its allocation
+        // answer, but diagnostics must retain the previous raw holding.
+        #expect(main.subscriber.acceptedDisplay == nil)
+        let transitioning = try #require(main.slices.active)
+        #expect(main.sMeter.flagMaxBinReason(for: transitioning) == SMeterReadings.maxBinUnavailableText)
+        let transitionSnapshot = try #require(diagnostics.last)
+        #expect(transitionSnapshot.gate == .acceptedDisplayMissing && !transitionSnapshot.acceptedPresent)
+        #expect(transitionSnapshot.subscriberState.mediaUp)
+        #expect(transitionSnapshot.subscriberState.accepted?.sliceId == 0)
+        #expect(transitionSnapshot.subscriberState.requested?.sliceId == 1)
+        #expect(transitionSnapshot.subscriberState.accepted?.endpointId
+            == transitionSnapshot.subscriberState.requested?.endpointId)
+        #expect(transitionSnapshot.subscriberState.accepted?.revision == 1)
+        #expect(transitionSnapshot.subscriberState.requested?.revision == 2)
+        #expect(transitionSnapshot.subscriberState.outstandingOperations == 1)
+        #expect(transitionSnapshot.logText(repeated: false).contains("accepted=0 acceptedSlice=absent"))
+        #expect(transitionSnapshot.logText(repeated: false).contains("mediaUp=1 rawAccepted=1 rawAcceptedSlice=0"))
+        try acceptAndDraw(try #require(subscriptions.last), generation: 2)
+        // The accepted outcome's local bookkeeping retains the previous band.
+        // SliceListTests separately covers the actual take command/access delta.
+        main.slices.tookControl(1, revision: 13)
+        #expect(main.slices.jumped)
+        #expect(main.sMeter.flagLevel(for: try #require(main.slices.active)) == -83)
+
+        main.slices.back()
+        try #require(await settle { subscriptions.last?.sliceId == 0 })
+        try acceptAndDraw(try #require(subscriptions.last), generation: 3)
+        #expect(!main.slices.jumped)
+
+        let beforeAway = try #require(subscriptions.last)
+        main.subscriber.session = SessionPolicy.Mode.audioOnly.request
+        try #require(await settle { releases.contains(beforeAway.endpointId) })
+        var released = beforeAway
+        released.revision &+= 1
+        main.receive(try allocation(released, held: false))
+        #expect(main.sMeter.flagMaxBinReason(for: try #require(main.slices.active))
+            == SMeterReadings.maxBinUnavailableText)
+        main.subscriber.session = SessionPolicy.Mode.full.request
+        try #require(await settle { subscriptions.last?.endpointId != beforeAway.endpointId })
+        try acceptAndDraw(try #require(subscriptions.last), generation: 4)
+        #expect(main.sMeter.flagLevel(for: try #require(main.slices.active)) == -83)
+    }
 
     private func connected(additions: FakeStation.Additions = []) async throws
         -> (AppModel, FakeStation, UserDefaults) {
