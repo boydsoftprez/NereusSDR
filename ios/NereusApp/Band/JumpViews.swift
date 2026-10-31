@@ -1,5 +1,8 @@
-// NereusSDR for iOS: showing another slice's band: the Back to your band bar, and the markers at the band's edge
+// NereusSDR for iOS: showing another slice's band: the Previous band bar, and the markers at the band's edge
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// Modification history (NereusSDR):
+// 2026-10-31: JJ chose "Previous band" for the retained return link after
+// taking a slice. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import NereusBand
 import NereusMirror
@@ -7,7 +10,7 @@ import SwiftUI
 
 /// The bar at the band's top while it shows another pan's slice (R-IOS-42,
 /// JJ's rulings of 2026-09-30, the board's `.sll-jumpbar`): one plain
-/// "Back to your band" button, never a gesture alone, and whose band it
+/// "Previous band" button, never a gesture alone, and whose band it
 /// is. Back makes the slice the phone left active again and shows its band.
 struct JumpBar: View {
     let entry: BandSlicesModel.Entry
@@ -16,7 +19,7 @@ struct JumpBar: View {
 
     @Environment(\.dynamicTypeSize) private var typeSize
 
-    static let backTitle = "Back to your band"
+    static let backTitle = "Previous band"
     /// How far the flags start below the band's top while the bar is up:
     /// its 4-point inset, its 44 points and a 4-point gap.
     static let clearance: CGFloat = 52
@@ -27,7 +30,7 @@ struct JumpBar: View {
     static let edge = ChromeColours.panelEdge
 
     /// The bar's width before it is drawn, for keeping the flags clear:
-    /// "Back to your band" and the slice's words at their size.
+    /// "Previous band" and the slice's words at their size.
     static let estimatedWidth: CGFloat = 300
     static let largeEstimatedWidth: CGFloat = 420
 

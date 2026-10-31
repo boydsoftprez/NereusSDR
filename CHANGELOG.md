@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- The iPhone's saved band-return link says **Previous band**, clarifying
+  that taking a slice keeps the earlier view available to return to.
+
 - Roundtable reporter readings offer **dBm**, **S-units**, or **Both** on
   iPhone/iPad, desktop and website. Tap the signal heading or a reading to
   cycle formats, or choose one in Roundtable settings. The choice stays
