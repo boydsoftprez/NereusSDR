@@ -1,13 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 : "${1:?package path required}"
-: "${2:?expected version required}"
+: "${2:?expected public release version required}"
 deb=$1
-version=$2
+script_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+debian_version=$(python3 "$script_root/scripts/release-version.py" debian-version "$2")
 test -f "$deb"
 test "$(dpkg-deb --field "$deb" Package)" = nereusd
 test "$(dpkg-deb --field "$deb" Architecture)" = arm64
-test "$(dpkg-deb --field "$deb" Version)" = "$version"
+test "$(dpkg-deb --field "$deb" Version)" = "$debian_version"
 deps=$(dpkg-deb --field "$deb" Depends)
 test -n "$deps"
 case "$deps" in

@@ -82,7 +82,8 @@ if grep -q 'not found' /tmp/nereus-ldd.txt; then
     cat /tmp/nereus-ldd.txt >&2
     exit 1
 fi
-sed -e "s/@VERSION@/$NEREUS_VERSION/g" -e 's/@ARCH@/arm64/g' \
+DEBIAN_VERSION=$(python3 scripts/release-version.py debian-version "$NEREUS_VERSION")
+sed -e "s/@VERSION@/$DEBIAN_VERSION/g" -e 's/@ARCH@/arm64/g' \
     -e "s/@DEPENDS@/$deps/g" packaging/deb/control.in \
     > /tmp/nereus-debroot/DEBIAN/control
 install -m 0755 packaging/deb/postinst /tmp/nereus-debroot/DEBIAN/postinst
@@ -90,3 +91,4 @@ install -m 0755 packaging/deb/postrm /tmp/nereus-debroot/DEBIAN/postrm
 dpkg-deb --build --root-owner-group /tmp/nereus-debroot \
     "/workspace/station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
 dpkg-deb --info "/workspace/station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb"
+test "$(dpkg-deb --field "/workspace/station-output/nereusd_${NEREUS_VERSION}_arm64_trixie.deb" Version)" = "$DEBIAN_VERSION"

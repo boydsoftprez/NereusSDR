@@ -56,6 +56,18 @@ def last_release(tags):
     return max(finals)[1]
 
 
+def debian_version(version):
+    """Keep the public version separate from Debian's prerelease ordering."""
+    # The station-image workflow also builds untagged CMake-version snapshots.
+    if re.fullmatch(CALENDAR_BASE + r"\+git[0-9a-f]{12}", f"v{version}"):
+        return version
+    if not CALENDAR_TAG.fullmatch(f"v{version}"):
+        raise ReleaseError(f"{version}: expected YYYY.M.N[-suffix], month 1 to 12, no leading zeros")
+    # A hyphen starts a Debian revision, which sorts AFTER the final release.
+    # Tilde sorts before even the empty string; digit runs retain numeric order.
+    return version.replace("-", "~", 1)
+
+
 def check_tag(repo, tag):
     match = CALENDAR_TAG.fullmatch(tag)
     if not match:
@@ -108,11 +120,15 @@ def main():
     last_parser = commands.add_parser("last", help="print the highest final desktop release tag")
     check_parser = commands.add_parser("check", help="validate a calendar release tag")
     check_parser.add_argument("tag")
+    debian_parser = commands.add_parser("debian-version", help="print Debian metadata version for a public release version")
+    debian_parser.add_argument("version")
     for command_parser in (next_parser, last_parser, check_parser):
         command_parser.add_argument("--repo", type=Path, default=Path.cwd())
     args = parser.parse_args()
     try:
-        if args.command == "check":
+        if args.command == "debian-version":
+            output = debian_version(args.version)
+        elif args.command == "check":
             output = check_tag(args.repo, args.tag)
         else:
             tags = git(args.repo, "tag", "--list").splitlines()
