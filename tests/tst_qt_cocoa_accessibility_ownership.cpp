@@ -1,6 +1,8 @@
 // Regression: a synthetic Qt Cocoa table cell must not delete its borrowed
 // parent ID, and incompatible/intercepted methods must never be overwritten.
 // JJ Boyd (KG4VCF), 2026-10-03, with OpenAI Codex assistance.
+// 2026-10-31: Align native lifecycle assertions with the Oct15 intentional
+// item-view reset contract; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-09: native audio plan Task 16, the audio card case runs on a fake
 // Windows catalogue's Driver list. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
@@ -186,8 +188,7 @@ private slots:
         QVERIFY(tree);
         tree->resize(820, 400);
         tree->doItemsLayout();
-        QTreeWidgetItem* selectedItem = tree->currentItem();
-        const QPersistentModelIndex selectedIndex = tree->indexFromItem(selectedItem);
+        const QPersistentModelIndex selectedIndex = tree->indexFromItem(tree->currentItem());
         QSignalSpy connectSpy(&selector, &NereusSDR::ConnectionSelector::connectRequested);
         QSignalSpy resetSpy(tree->model(), &QAbstractItemModel::modelReset);
         QAccessibleInterface* table = QAccessible::queryAccessibleInterface(tree);
@@ -221,10 +222,18 @@ private slots:
         selector.setTargets({selected});
 
         QCOMPARE(selector.selectedKey(), selected.key);
-        QCOMPARE(tree->currentItem(), selectedItem);
-        QVERIFY(selectedIndex.isValid());
-        QCOMPARE(tree->itemFromIndex(selectedIndex), selectedItem);
-        QCOMPARE(resetSpy.count(), 0);
+        // A structural refresh intentionally resets the model first: the
+        // tree owns clones, so the old index is invalid and identity follows
+        // the stable target key, not the deleted item pointer.
+        QVERIFY(!selectedIndex.isValid());
+        QVERIFY(tree->currentItem());
+        QCOMPARE(tree->currentItem()->data(0, Qt::UserRole).toString(), selected.key);
+        QCOMPARE(tree->currentItem()->text(0), selected.name);
+        QVERIFY(tree->currentItem()->isSelected());
+        const QPersistentModelIndex rebuiltIndex = tree->indexFromItem(tree->currentItem());
+        QVERIFY(rebuiltIndex.isValid());
+        QCOMPARE(tree->itemFromIndex(rebuiltIndex), tree->currentItem());
+        QCOMPARE(resetSpy.count(), 1);
         QCOMPARE(connectSpy.count(), 0);
         tree->doItemsLayout();
         NSAutoreleasePool* freshPool = [[NSAutoreleasePool alloc] init];
@@ -237,6 +246,8 @@ private slots:
         [freshPool drain];
         selector.setTargets({});
         QVERIFY(selector.selectedKey().isEmpty());
+        QVERIFY(!rebuiltIndex.isValid());
+        QCOMPARE(resetSpy.count(), 2);
         QVERIFY(table->selectionInterface()->selectedItems().isEmpty());
     }
 
@@ -726,7 +737,9 @@ private slots:
             QCOMPARE(commits.count(), 0);
             QCOMPARE(reconciles.count(), 0);
             QCOMPARE(commands.count(), 0);
-            QCOMPARE(modelResets.count(), 0);
+            // The pre-row-change repair deliberately emits one real reset
+            // per draft switch, while widget signals stay blocked inside it.
+            QCOMPARE(modelResets.count(), switches);
             QCOMPARE(QAccessible::accessibleInterface(tableId), table);
             view->doItemsLayout();
             view->setCurrentIndex(combo->model()->index(combo->currentIndex(), 0));

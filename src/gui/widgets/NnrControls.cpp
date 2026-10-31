@@ -155,6 +155,8 @@ void NnrControls::buildUi(Presentation presentation)
     m_loadWarningNotice = new QLabel(m_loadWarningRow);
     m_loadWarningNotice->setObjectName(QStringLiteral("nnrLoadWarningNotice"));
     m_loadWarningNotice->setWordWrap(true);
+    m_loadWarningNotice->setToolTip(tr("Measured input delay or skipped input. "
+                                     "The selected noise reduction remains running."));
     m_loadWarningNotice->setStyleSheet(QStringLiteral("QLabel { color: %1; }")
                                          .arg(QLatin1String(Style::kAmberText)));
     warningLayout->addWidget(m_loadWarningNotice);

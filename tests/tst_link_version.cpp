@@ -406,6 +406,7 @@ void TstLinkVersion::stationHelloDeclaresItsMajorsAndFeatures()
         // iPhone app Task 12: device sign-in; Task 14: pairing.
         QCOMPARE(hello.value(QStringLiteral("features")).toObject(),
                  (QJsonObject{{QStringLiteral("deviceAuth"), 1},
+                              {QStringLiteral("nnrLoadWarning"), 1},
                               {QStringLiteral("pairing"), 1},
                               {QStringLiteral("radioMic"), 2},
                               // iPhone app Task 71: several devices at once.
