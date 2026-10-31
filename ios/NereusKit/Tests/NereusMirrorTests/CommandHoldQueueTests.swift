@@ -82,6 +82,109 @@ import Testing
                    invoke: { try await core.invoke(label) }, onOutcome: outcomes)
     }
 
+    /// Parks the caller after the real command client received its result,
+    /// before the command queue can consume it. No scheduler timing decides
+    /// whether the following Core deltas overtake that consumer.
+    @MainActor
+    private final class ResultBarrier {
+        private var continuation: CheckedContinuation<Void, Never>?
+        var waiting: Bool { continuation != nil }
+
+        func wait() async {
+            await withCheckedContinuation { continuation = $0 }
+        }
+
+        func release() {
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    @Test("Core TX slice deltas after an accepted result win even while its command caller is parked")
+    func postResultTxSliceDeltaOvertakesParkedCaller() async throws {
+        let store = store()
+        let slices = try (0..<3).map { try #require(store.object("slice:\($0)")) }
+        let client = CommandClient(clock: clock, send: sent.sender)
+        await client.handle(.stateChanged(.ready))
+        let queue = CommandHoldQueue(store: store)
+        let barrier = ResultBarrier()
+        var outcomes: [CommandHoldQueue.Outcome] = []
+        queue.send("tx.setTxSlice", shows: (0..<3).map { .init("slice:\($0)", "txSlice", .bool($0 == 1)) },
+                   invokeWithLate: { late in
+            let result = try await client.invokeHeld("tx.setTxSlice", arguments: [], timeout: .seconds(5),
+                                                    onLateOutcome: { outcome in await MainActor.run { late(outcome) } })
+            await barrier.wait()
+            return result
+        }, onOutcome: { outcomes.append($0) })
+        #expect(await sent.settle(untilCount: 1))
+        let invoke = try #require(sent.messages.compactMap { message -> LinkMessage.CommandInvoke? in
+            if case .commandInvoke(let invoke) = message { return invoke }
+            return nil
+        }.first)
+        // A conflicting change before the answer must remain hidden.
+        for id in 0..<3 { store.apply(delta("slice:\(id)", "txSlice", 4, .bool(id == 2))) }
+        #expect(slices.map { $0["txSlice"] } == [.bool(false), .bool(true), .bool(false)])
+        // Neither an unrelated result nor an interim phase ends this hold.
+        for (verb, id, values) in [
+            ("another.verb", invoke.id, [LinkMessage.PropertyEntry]()),
+            (invoke.verb, invoke.id + 1, []),
+            (invoke.verb, invoke.id, [.init(name: "phase", value: .utf8("pending"))]),
+        ] {
+            store.apply(.commandResult(.init(verb: verb, id: id, accepted: true, reason: "", affected: [], values: values)))
+            for sliceId in 0..<3 { store.apply(delta("slice:\(sliceId)", "txSlice", 4, .bool(sliceId == 0))) }
+            #expect(slices.map { $0["txSlice"] } == [.bool(false), .bool(true), .bool(false)])
+        }
+        let answer = LinkMessage.commandResult(.init(verb: invoke.verb, id: invoke.id, accepted: true,
+                                                     reason: "", affected: [], values: nil))
+        // AppModel feeds the mirror before the separate command lane.
+        store.apply(answer)
+        await client.receive(answer)
+        #expect(await turns { barrier.waiting })
+        #expect(queue.isSending("tx.setTxSlice") && outcomes.isEmpty)
+        for id in 0..<3 { store.apply(delta("slice:\(id)", "txSlice", 4, .bool(id == 0))) }
+        barrier.release()
+        #expect(await turns { !queue.isSending("tx.setTxSlice") })
+        #expect(slices.map { $0["txSlice"] } == [.bool(true), .bool(false), .bool(false)],
+                "post-result Core deltas must not be trapped under the earlier optimistic TX selection")
+        #expect(outcomes.count == 1 && sent.count == 1)
+    }
+
+    @Test("an old wire result cannot end a newer queued TX selection's presentation")
+    func oldWireResultCannotReleaseNewerTxSelection() async throws {
+        let store = store()
+        let slices = try (0..<3).map { try #require(store.object("slice:\($0)")) }
+        let client = CommandClient(clock: clock, send: sent.sender)
+        await client.handle(.stateChanged(.ready))
+        let queue = CommandHoldQueue(store: store)
+        func choose(_ sliceId: Int) {
+            queue.send("tx.setTxSlice", shows: (0..<3).map { .init("slice:\($0)", "txSlice", .bool($0 == sliceId)) },
+                       invokeWithLate: { late in
+                try await client.invokeHeld("tx.setTxSlice", arguments: [], timeout: .seconds(5),
+                                            onLateOutcome: { outcome in await MainActor.run { late(outcome) } })
+            }, onOutcome: { _ in })
+        }
+        choose(1)
+        #expect(await sent.settle(untilCount: 1))
+        let first = try #require(sent.messages.compactMap { message -> LinkMessage.CommandInvoke? in
+            if case .commandInvoke(let invoke) = message { return invoke }
+            return nil
+        }.first)
+        choose(2)
+        let answer = LinkMessage.commandResult(.init(verb: first.verb, id: first.id, accepted: true,
+                                                     reason: "", affected: [], values: nil))
+        store.apply(answer)
+        for id in 0..<3 { store.apply(delta("slice:\(id)", "txSlice", 4, .bool(id == 0))) }
+        #expect(slices.map { $0["txSlice"] } == [.bool(false), .bool(false), .bool(true)])
+        await client.receive(answer)
+        #expect(await sent.settle(untilCount: 2))
+        // A duplicate first result also cannot affect the newly admitted command.
+        store.apply(answer)
+        for id in 0..<3 { store.apply(delta("slice:\(id)", "txSlice", 4, .bool(id == 1))) }
+        #expect(slices.map { $0["txSlice"] } == [.bool(false), .bool(false), .bool(true)])
+        await client.handle(.stateChanged(.idle))
+        #expect(await turns { !queue.isSending("tx.setTxSlice") })
+    }
+
     @Test("an old command timeout or late answer cannot restore over a newer queued touch")
     func timeoutCannotRestoreOverNewerTouch() async throws {
         let store = store()

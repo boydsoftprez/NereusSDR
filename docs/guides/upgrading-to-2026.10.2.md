@@ -1,5 +1,7 @@
 # Upgrading to NereusSDR 2026.10.2
 
+This guide is prepared for the upcoming release; 2026.10.2 is not yet released.
+
 Use this note when updating a station from 2026.10.1. It lists what changes
 when you first connect, what to check before you transmit, and a short list of
 things to try. If you are coming from an earlier release, read the
@@ -69,6 +71,13 @@ do not establish that physical-input observation.
 
 ## What else you will notice
 
+- **Automatic display adaptation.** CPU-based adaptation is now off by
+  default. An existing explicit `display_adaptive = on` stays enabled; set
+  it to `off` and restart the Core if you want to disable it. Connection,
+  device and explicit display limits still apply.
+- **Frequency digits.** The Current Frequency and VFO display digits move one
+  step per mouse-wheel notch. Trackpad movement is paced to prevent a short
+  swipe from racing the digit under the pointer.
 - **Phone waterfall speed.** The selected update period now controls visible
   2D scrolling in logical screen points. A saved 10 ms period will look much
   faster than the earlier one-physical-pixel-per-received-row behavior,

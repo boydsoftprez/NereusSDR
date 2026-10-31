@@ -1,11 +1,14 @@
 # NereusSDR Roundtable
 
-Roundtable groups stations into rooms by frequency, shows each station's
-own S-meter reading of whoever is talking, works out turns, and carries
-short messages about each frequency. Stations reach it over a WebSocket;
-anyone can read the live rooms. Its wire is
+Roundtable shows people at their actual frequencies, attributes each reported
+S-meter reading to the listener, and carries short messages for nearby
+stations in the same mode family. New frequency conversations reach stations
+within 5 kHz; RF rooms and turns remain internal to the server. Stations reach
+it over a WebSocket, and anyone can browse the live view. Its base wire is
 [the Roundtable document](../docs/architecture/2026-10-23-roundtable-v1.md),
-and that document is the authority for every protocol detail.
+with the negotiated frequency-first extension described in the
+[implementation plan](../docs/superpowers/plans/2026-10-30-roundtable-frequency-first.md).
+Legacy clients retain the original room-based protocol.
 
 NereusSDR uses `roundtable.nereussdr.com`. Anyone can run their own server;
 every default is nereussdr.com's, and each one is a setting.

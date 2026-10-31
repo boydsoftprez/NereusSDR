@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Park the controlled worker before peer-close delivery to
+//               prove direct main-thread release for J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-27: F3: controlled watchdog expiry and direct queued-close
 //               release evidence replace wall-clock proxies. J.J. Boyd
 //               (KG4VCF), AI-assisted via OpenAI Codex.
@@ -632,7 +635,7 @@ private slots:
     // at the watchdog.
     void aHeldKeyIsReleasedWhenTheLinkDrops()
     {
-        CwCore rig;
+        CwCore rig(true);
         Device a(QStringLiteral("iPhone"), QStringLiteral("phone"));
         rig.core.pair(a);
         LoopbackTransport* app = rig.core.signIn(a, kCwPeer);
@@ -641,6 +644,11 @@ private slots:
         QVERIFY(rig.core.invoke(app, "cw.key", {boolArg("down", true)})
                     .value(QStringLiteral("accepted")).toBool());
         QVERIFY(rig.cwx()->isKeyHeld());
+        // The cut publishes a durable cancel before main's direct cancel,
+        // so a responsive worker can legitimately write the sole up edge.
+        // Park it outside the sender mutex to prove main releases the key
+        // without worker progress; the controlled clock cannot expire it.
+        QTRY_VERIFY_WITH_TIMEOUT(rig.time.waitingAt(0, CwxSender::kKeyWatchdogMs), 2000);
         const QPointer<LoopbackTransport> peer(app->peerForTest());
         QVERIFY(peer);
         QVERIFY(app->isOpen());
@@ -661,9 +669,11 @@ private slots:
         QVERIFY(!rig.conn.cwKeyLine()->cwxPtt());
         QVERIFY(!rig.cwx()->isSending());
         QCOMPARE(rig.ups.load(), 1);
+        QCOMPARE(rig.upAt.load(), qint64(0));
         // A watchdog edge is written on CwxSender's worker and cannot
         // satisfy this direct, main-thread close-dispatch observation.
         QCOMPARE(rig.upsDuringPeerCloseOnMain.load(), 1);
+        QVERIFY(rig.time.waitingAt(0, CwxSender::kKeyWatchdogMs));
     }
 
     // A transmit cut (Stop All TX) releases a held key and stops the text.

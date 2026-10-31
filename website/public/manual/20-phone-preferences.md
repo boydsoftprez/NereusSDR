@@ -13,6 +13,11 @@ The **This phone** or **This iPad** badge identifies a preference kept on that
 device. A **Core** badge identifies a station setting. These can appear on the
 same page, so check the badge of the particular group before changing it.
 
+On a wide iPad, **Setup** shows its category list on the left with the chosen
+page beside it, as the desktop Setup window does; tapping a category opens its
+first page. On an iPhone, or an iPad in a narrow window, Setup is one list
+whose pages slide in.
+
 The [phone operating chapter](07-iphone-operate.md) covers an ordinary receive
 and transmit session. [Sharing a Core](08-shared-core.md) covers device and
 receiver ownership. The settings below refine those workflows.

@@ -2,20 +2,20 @@
   "downloads": [
     {
       "output": "manual/01-desktop-connect.md",
-      "output_sha256": "8e3dd07d6610563feaa0230ee195a8e744cb7d9679f9d9b52f68a700bf623099",
-      "sha256": "8e3dd07d6610563feaa0230ee195a8e744cb7d9679f9d9b52f68a700bf623099",
+      "output_sha256": "453f9e190f4c80f340daf85624dbacba92bc80ee271309958412f59cf0e6225f",
+      "sha256": "453f9e190f4c80f340daf85624dbacba92bc80ee271309958412f59cf0e6225f",
       "source": "docs/manual/01-desktop-connect.md"
     },
     {
       "output": "manual/02-desktop-window.md",
-      "output_sha256": "9cb00a3a114fb4f5546adf6ed300f14230aed2166b14e1d542cbb76477f7dfcc",
-      "sha256": "9cb00a3a114fb4f5546adf6ed300f14230aed2166b14e1d542cbb76477f7dfcc",
+      "output_sha256": "61ab01f81dd6c1ffa522e357ccd3f2a00d574cd84cb6cce06277cfd761dba37e",
+      "sha256": "61ab01f81dd6c1ffa522e357ccd3f2a00d574cd84cb6cce06277cfd761dba37e",
       "source": "docs/manual/02-desktop-window.md"
     },
     {
       "output": "manual/03-receive.md",
-      "output_sha256": "34e3272d1079388ace58c4f88202c763c2977ce892e01911d8204acde015c19e",
-      "sha256": "34e3272d1079388ace58c4f88202c763c2977ce892e01911d8204acde015c19e",
+      "output_sha256": "26f12b358d16b1b9c408524b48a04ee360689aa8c39cca54f06d50b73db34f71",
+      "sha256": "26f12b358d16b1b9c408524b48a04ee360689aa8c39cca54f06d50b73db34f71",
       "source": "docs/manual/03-receive.md"
     },
     {
@@ -26,8 +26,8 @@
     },
     {
       "output": "manual/05-transmit.md",
-      "output_sha256": "3da198f140d4f48ba0b6e5f0545a498347b7fb3eeb93767bbfb45071a4a5d9df",
-      "sha256": "3da198f140d4f48ba0b6e5f0545a498347b7fb3eeb93767bbfb45071a4a5d9df",
+      "output_sha256": "269b31cba4eed529a08126f30cd2a7bb01d9d9af18033369e8caf6ef702c49f2",
+      "sha256": "269b31cba4eed529a08126f30cd2a7bb01d9d9af18033369e8caf6ef702c49f2",
       "source": "docs/manual/05-transmit.md"
     },
     {
@@ -38,26 +38,26 @@
     },
     {
       "output": "manual/07-iphone-operate.md",
-      "output_sha256": "9fdeb14a3d9e565015bd72191f7555b09626f93074da270212b5c29159e5ea15",
-      "sha256": "9fdeb14a3d9e565015bd72191f7555b09626f93074da270212b5c29159e5ea15",
+      "output_sha256": "46590a009634668336d0e16145b1add1a2f4b7ae459df5b0a49e0da5059c5ef9",
+      "sha256": "46590a009634668336d0e16145b1add1a2f4b7ae459df5b0a49e0da5059c5ef9",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
       "output": "manual/08-shared-core.md",
-      "output_sha256": "6b4d8509b554836769cb7404e9d95ff4aef20124b3e9a8aa849e77e92a324141",
-      "sha256": "6b4d8509b554836769cb7404e9d95ff4aef20124b3e9a8aa849e77e92a324141",
+      "output_sha256": "56912a1fe3e0f581ee0bf6055f846a41877799d099ad97dcb4d428239403036d",
+      "sha256": "56912a1fe3e0f581ee0bf6055f846a41877799d099ad97dcb4d428239403036d",
       "source": "docs/manual/08-shared-core.md"
     },
     {
       "output": "manual/09-tools.md",
-      "output_sha256": "fde11111e69d971eab058ee560fe9d18ca5241cc7ebdcb6b86691efa3f6688be",
-      "sha256": "fde11111e69d971eab058ee560fe9d18ca5241cc7ebdcb6b86691efa3f6688be",
+      "output_sha256": "ef9203b530bba7f7583cc735e175c088263a2fbfc57903a5012e37b82b7154a7",
+      "sha256": "ef9203b530bba7f7583cc735e175c088263a2fbfc57903a5012e37b82b7154a7",
       "source": "docs/manual/09-tools.md"
     },
     {
       "output": "manual/10-customize.md",
-      "output_sha256": "27793397d5519a17d7fde1ec99362dacab32c4da338e993222ba3cf70d953deb",
-      "sha256": "27793397d5519a17d7fde1ec99362dacab32c4da338e993222ba3cf70d953deb",
+      "output_sha256": "39bd979b73efa639f68f270b682d2efc752b4e81af9ff295d72cc4f0fbfcdf42",
+      "sha256": "39bd979b73efa639f68f270b682d2efc752b4e81af9ff295d72cc4f0fbfcdf42",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -68,14 +68,14 @@
     },
     {
       "output": "manual/12-reference.md",
-      "output_sha256": "17f2a120991ff4579d1be49ccd6fcb456fce045f2e1d4e885a9f88fd9f5b3622",
-      "sha256": "17f2a120991ff4579d1be49ccd6fcb456fce045f2e1d4e885a9f88fd9f5b3622",
+      "output_sha256": "d4f795d1c219a53c59da7548426f94d5767f658fc00bf6185b865001c5db542c",
+      "sha256": "d4f795d1c219a53c59da7548426f94d5767f658fc00bf6185b865001c5db542c",
       "source": "docs/manual/12-reference.md"
     },
     {
       "output": "manual/13-receiver-dsp.md",
-      "output_sha256": "53a8d232d3109c9c011b4f6339aadb650842f88d787c90460cbf081cf0d44b64",
-      "sha256": "53a8d232d3109c9c011b4f6339aadb650842f88d787c90460cbf081cf0d44b64",
+      "output_sha256": "efbe59b8746dc919c1f3e36c27a9637e2c9873de1d00e675571e19568a9dc79f",
+      "sha256": "efbe59b8746dc919c1f3e36c27a9637e2c9873de1d00e675571e19568a9dc79f",
       "source": "docs/manual/13-receiver-dsp.md"
     },
     {
@@ -98,8 +98,8 @@
     },
     {
       "output": "manual/17-hardware-antennas-calibration.md",
-      "output_sha256": "4828ebb01c23ab1a544f276250221fec63b2a70b1a976da686cae4aa792607f7",
-      "sha256": "4828ebb01c23ab1a544f276250221fec63b2a70b1a976da686cae4aa792607f7",
+      "output_sha256": "d77f7081c7478257bc653bca0acee85f3c41de6a89db90be72eab66152b2844f",
+      "sha256": "d77f7081c7478257bc653bca0acee85f3c41de6a89db90be72eab66152b2844f",
       "source": "docs/manual/17-hardware-antennas-calibration.md"
     },
     {
@@ -116,8 +116,8 @@
     },
     {
       "output": "manual/20-phone-preferences.md",
-      "output_sha256": "c39ac6966be1a5b7f40885b4c7ac6e5093d2ef3829446218d6b113f656453ba0",
-      "sha256": "c39ac6966be1a5b7f40885b4c7ac6e5093d2ef3829446218d6b113f656453ba0",
+      "output_sha256": "c437cc96eb764fc78f0114237d14ef148229dc68ceba65e75ea5ea74358e2536",
+      "sha256": "c437cc96eb764fc78f0114237d14ef148229dc68ceba65e75ea5ea74358e2536",
       "source": "docs/manual/20-phone-preferences.md"
     },
     {
@@ -426,169 +426,175 @@
   "pages": [
     {
       "output": "manual/index.html",
-      "output_sha256": "7a0ef2c59a0c9a626e93651127553c4b6e72b7f1aad0987f20462e70688c86cd",
+      "output_sha256": "96afd5035638e95c4a963702cfc804e4a27e440279e13fdf6bac03a96cd58d84",
       "sha256": "38eb0a7f702c6e626d2c17cb6264b3a8aaa8dd1e1776de73fe2c0a4e33ecaaf4",
       "source": "docs/manual/README.md"
     },
     {
       "output": "manual/01-desktop-connect.html",
-      "output_sha256": "231eea4890f2de747b09a44cda025cf603858aff55d04c81648b10bbe84e1689",
-      "sha256": "8e3dd07d6610563feaa0230ee195a8e744cb7d9679f9d9b52f68a700bf623099",
+      "output_sha256": "6df869997f1fccee59c174035062c058db096f8b82d4b20d5f9e7361c9350fcc",
+      "sha256": "453f9e190f4c80f340daf85624dbacba92bc80ee271309958412f59cf0e6225f",
       "source": "docs/manual/01-desktop-connect.md"
     },
     {
       "output": "manual/02-desktop-window.html",
-      "output_sha256": "24ad56bcbec0ca297e5f4ac7743b02e59505b351ce9141ccf514e222fe553623",
-      "sha256": "9cb00a3a114fb4f5546adf6ed300f14230aed2166b14e1d542cbb76477f7dfcc",
+      "output_sha256": "e7fdb212bc85e6dadfe94db650829c998270e1cbe20faa368d6761f42aa88d6c",
+      "sha256": "61ab01f81dd6c1ffa522e357ccd3f2a00d574cd84cb6cce06277cfd761dba37e",
       "source": "docs/manual/02-desktop-window.md"
     },
     {
       "output": "manual/03-receive.html",
-      "output_sha256": "b93bd8214abedc8534f4408461b5c20a6c776f6af03bbb9e9a75fa973b33addd",
-      "sha256": "34e3272d1079388ace58c4f88202c763c2977ce892e01911d8204acde015c19e",
+      "output_sha256": "3e9ba66562946c156cb223e06247da06bd4f7f9e378424b4b0bd87c23d0c8170",
+      "sha256": "26f12b358d16b1b9c408524b48a04ee360689aa8c39cca54f06d50b73db34f71",
       "source": "docs/manual/03-receive.md"
     },
     {
       "output": "manual/04-slices.html",
-      "output_sha256": "cb3627fb689452d47fd2c6c5aaaf57de332aebf3df870e7926c8079a0087b2b3",
+      "output_sha256": "8a6ffc840bb2bebf350d57f3016663ab9bd712ae643ffc969e7542def58abf7d",
       "sha256": "e8da42fcd29f5885417e27a427cc69dd9e442acc1392be5047504cd52230aebf",
       "source": "docs/manual/04-slices.md"
     },
     {
       "output": "manual/05-transmit.html",
-      "output_sha256": "da86466e6c595d9bcf0307ad4885c6db1b7cb99a067193b431a75a7ca17c5ceb",
-      "sha256": "3da198f140d4f48ba0b6e5f0545a498347b7fb3eeb93767bbfb45071a4a5d9df",
+      "output_sha256": "5626fd0d4a8680e6d45e7b5ec944de9af0f374c5fd058b3c1d3b4b739fbe7791",
+      "sha256": "269b31cba4eed529a08126f30cd2a7bb01d9d9af18033369e8caf6ef702c49f2",
       "source": "docs/manual/05-transmit.md"
     },
     {
       "output": "manual/06-iphone-connect.html",
-      "output_sha256": "e1f9e68da3795a3d7ccc018a6c6a0641cf00cd41b8a4c2d08578a7a151d23b26",
+      "output_sha256": "3b3a41e81b0d2a41fd70d0ad75cfa0c5b6686caada7f1f7f508b59f48c9caa5f",
       "sha256": "dab4a3616cb89c4e6f30e77eedc6376708c3b50b61fcfc209950ae0f872b808f",
       "source": "docs/manual/06-iphone-connect.md"
     },
     {
       "output": "manual/07-iphone-operate.html",
-      "output_sha256": "75846769cd61d7e555572e1b5934cffa04484920f0d27328a92bc090a7ad3f01",
-      "sha256": "9fdeb14a3d9e565015bd72191f7555b09626f93074da270212b5c29159e5ea15",
+      "output_sha256": "87b778896d852f86bcbdeee557ad0553dcd670a0da425d22012d62079d3e8f0e",
+      "sha256": "46590a009634668336d0e16145b1add1a2f4b7ae459df5b0a49e0da5059c5ef9",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
       "output": "manual/08-shared-core.html",
-      "output_sha256": "d80fb17e9321693638b213fcb95bb40e8947f123bf89e684bf501e1b513262be",
-      "sha256": "6b4d8509b554836769cb7404e9d95ff4aef20124b3e9a8aa849e77e92a324141",
+      "output_sha256": "f0c44f6f566382911a568e4daf67c0784f62424ea793044b6f3c8e4a21bdfa40",
+      "sha256": "56912a1fe3e0f581ee0bf6055f846a41877799d099ad97dcb4d428239403036d",
       "source": "docs/manual/08-shared-core.md"
     },
     {
       "output": "manual/09-tools.html",
-      "output_sha256": "b4dc5d867b2e673cb8edb165ae547e376b4c627b6ad8bb3086c2b646585528a0",
-      "sha256": "fde11111e69d971eab058ee560fe9d18ca5241cc7ebdcb6b86691efa3f6688be",
+      "output_sha256": "d7418c3add50ff1e0ba6e249ee56f37182b4f9265c49890658e51473cfce5006",
+      "sha256": "ef9203b530bba7f7583cc735e175c088263a2fbfc57903a5012e37b82b7154a7",
       "source": "docs/manual/09-tools.md"
     },
     {
       "output": "manual/10-customize.html",
-      "output_sha256": "6d6f2b417ece13563b17f02fd9a710efa4251e558bad1130c72130a58c628a0b",
-      "sha256": "27793397d5519a17d7fde1ec99362dacab32c4da338e993222ba3cf70d953deb",
+      "output_sha256": "c7af52330e6e1a746d3a2b13e28e1a960f6becf516251606c50710ab5741f967",
+      "sha256": "39bd979b73efa639f68f270b682d2efc752b4e81af9ff295d72cc4f0fbfcdf42",
       "source": "docs/manual/10-customize.md"
     },
     {
       "output": "manual/11-troubleshooting.html",
-      "output_sha256": "6fe3a9394e343ce32098670f9a98cde3b779f616f0823976280dc1f05e53a075",
+      "output_sha256": "6d22a6a444d06dc9c07ff4a13f8ba0dbd91a7e2188999314a98f2febdd0e6ad7",
       "sha256": "3c32c8cc82fc71a7bfa2276543c4653c38a62b0900545a7efb51e92f5e1d5639",
       "source": "docs/manual/11-troubleshooting.md"
     },
     {
       "output": "manual/12-reference.html",
-      "output_sha256": "0d32048aba7a63b9c80a5cc390d04359a7a7768d9edb285ef49d730cbfeb1cb2",
-      "sha256": "17f2a120991ff4579d1be49ccd6fcb456fce045f2e1d4e885a9f88fd9f5b3622",
+      "output_sha256": "559e9d0871d9154321491effae3a542178f5fa4480fcfd7b55ada3763ea3a2d9",
+      "sha256": "d4f795d1c219a53c59da7548426f94d5767f658fc00bf6185b865001c5db542c",
       "source": "docs/manual/12-reference.md"
     },
     {
       "output": "manual/13-receiver-dsp.html",
-      "output_sha256": "da53a941bcc0efe25d86355f44427a61b65cf519d997209b6303f44e12ebfad8",
-      "sha256": "53a8d232d3109c9c011b4f6339aadb650842f88d787c90460cbf081cf0d44b64",
+      "output_sha256": "b4f24876570c2694d576755011f05c87d04061a19d916aeb453099ee27ef84bf",
+      "sha256": "efbe59b8746dc919c1f3e36c27a9637e2c9873de1d00e675571e19568a9dc79f",
       "source": "docs/manual/13-receiver-dsp.md"
     },
     {
       "output": "manual/14-voice-profiles.html",
-      "output_sha256": "866931877dd19ffea8d4bf370ba5aa7489b2a370804e4924ed654930d6e42a2a",
+      "output_sha256": "0b3f9ccb58a432fd4bebe82d484df6a03998930fd94841737904077b07661263",
       "sha256": "9b5dd3765b4d563e5f070195871321d2cb3a44125b633a15fb886dd061e3a808",
       "source": "docs/manual/14-voice-profiles.md"
     },
     {
       "output": "manual/15-rade-freedv.html",
-      "output_sha256": "c9bc4b486a57d3c2ce446c3ce36b14849c2ca6b42267fd00a240ae71de41170d",
+      "output_sha256": "7ccfd1561ab8176c0ffa8d241b65eb06091b8b2417179d413b7ead101b054841",
       "sha256": "38f2f4c8fa72136f4ca67c49ad2fe5e9ad63a5d1e3b2315f1ef1a79b4274173f",
       "source": "docs/manual/15-rade-freedv.md"
     },
     {
       "output": "manual/16-spots-reporters.html",
-      "output_sha256": "c036e03e07e48f6f58a0a418b8ed45ba90dca2f5a649ffc6e6d3bb5f5e0e38d4",
+      "output_sha256": "f0928500953eccb433c9112bb3a0fdef1fe3e7fc59325d006828c2289123d96b",
       "sha256": "f05dcdf0736d78adeaeff9b15f6a1abb769b41b22274931baf5b8cc186d34a61",
       "source": "docs/manual/16-spots-reporters.md"
     },
     {
       "output": "manual/17-hardware-antennas-calibration.html",
-      "output_sha256": "13700a8fab6be73dc3245d422e591b394928cf7211ba7c3757daf1ba22046a54",
-      "sha256": "4828ebb01c23ab1a544f276250221fec63b2a70b1a976da686cae4aa792607f7",
+      "output_sha256": "0c6b25b0ec9356a700d25278f54838abc688af71caba6d3487f49d29a9a5c1c3",
+      "sha256": "d77f7081c7478257bc653bca0acee85f3c41de6a89db90be72eab66152b2844f",
       "source": "docs/manual/17-hardware-antennas-calibration.md"
     },
     {
       "output": "manual/18-puresignal-diversity.html",
-      "output_sha256": "3fe43aa416d2eba531a92b840f89efe7f4ebc4355a8d53c69bee60c46f02f630",
+      "output_sha256": "93d0fcc881934e5ed9c2b550e1bcb7041a49dc023a7177fe8021b19cce1edc7d",
       "sha256": "d6c02f8f3ea0e4820fc71017c3be10ee87d4361350ad29268f7b536634c8dc17",
       "source": "docs/manual/18-puresignal-diversity.md"
     },
     {
       "output": "manual/19-amplifiers-tuners.html",
-      "output_sha256": "46ae37f905c2094aee1848a886e1e6e0da57157377a6631d6ae5c3bd22536b4d",
+      "output_sha256": "00f9047e9ce8e014e8be2ebf12e4fc2988e1fed023bd076dce409c547032b317",
       "sha256": "43a83a1bb3ac9c5c31dde8f0e67f5db084d6e620bf39913be215d5e8938e8869",
       "source": "docs/manual/19-amplifiers-tuners.md"
     },
     {
       "output": "manual/20-phone-preferences.html",
-      "output_sha256": "c1c96adef4661a30bd3d37ea9a13bcb4d0d43514dce8e113427e3d274144890a",
-      "sha256": "c39ac6966be1a5b7f40885b4c7ac6e5093d2ef3829446218d6b113f656453ba0",
+      "output_sha256": "59a6d7ed9862ee5db043e0c933534cfd06aeca1e9c1f557aa77bb567fdf9e6f1",
+      "sha256": "c437cc96eb764fc78f0114237d14ef148229dc68ceba65e75ea5ea74358e2536",
       "source": "docs/manual/20-phone-preferences.md"
     },
     {
       "output": "guides/install-core-sbc.html",
-      "output_sha256": "401a1451cd78a1bd59e5f33ad9a3c14e6d4709d227e6f6dcb09115dc9fa8c9cb",
+      "output_sha256": "48a34880e4b46a2f42431c25d9a7800ac139bbafbc38c5384eaf652712edd7c3",
       "sha256": "8136373a17f6ed97e7d30dc5cca8e00a5e01a29bad2c4c7e7ed1db807bb18841",
       "source": "docs/guides/install-core-sbc.md"
     },
     {
       "output": "guides/tx-eq-cfc.html",
-      "output_sha256": "10f2e8ce36793eb4013be0841efee79efcd3ba88a44e81507e8d6d1d01e01e35",
+      "output_sha256": "fdbfb5156c349b1865a501a30511e3757e69b856e556fadbe0bd688d5d889385",
       "sha256": "a4780f58435b7e1e1eee8fb765179c04388fb240af93d2c96c23f40721ad0340",
       "source": "docs/guides/tx-eq-cfc.md"
     },
     {
       "output": "guides/upgrading-to-2026.10.0.html",
-      "output_sha256": "e2c34d99bb08b7be1a7d7ba99375bafc61132c51da342fe79118044f6c978da8",
+      "output_sha256": "e6810ea56d4b8d347783ac78c1eb197bffbff076a222faef07d7ca47c5bbaa5d",
       "sha256": "47f32454c35f64f344500e286a8bf4aec918779d961ba15612a6d65bbf3998f6",
       "source": "docs/guides/upgrading-to-2026.10.0.md"
     },
     {
       "output": "guides/upgrading-to-2026.10.1.html",
-      "output_sha256": "eb790800cb284bb7772ec1d21e0c66eec86f86d2f789ff136f4264d10fb2eebd",
+      "output_sha256": "bdec261a054aeb1d69ad64004fa423e6a6bfb72ca0a61f265ddad5f28e12e3cf",
       "sha256": "8dcde06da8cf2ea55ed9b61d7108df84b79d1c9c6cad52d6425f3d1dce4db67f",
       "source": "docs/guides/upgrading-to-2026.10.1.md"
     },
     {
+      "output": "guides/upgrading-to-2026.10.2.html",
+      "output_sha256": "d5fc352ec6850b20761c04f329e2e2661f418ba1a23347a44eb3a0dbe300a8d9",
+      "sha256": "81eb4bba0254fa369fdc68f3eb486d95b8b393622437391a4a92c0787f14f014",
+      "source": "docs/guides/upgrading-to-2026.10.2.md"
+    },
+    {
       "output": "guides/contributing-with-ai.html",
-      "output_sha256": "fd872c423583bb940513810fc84ee6b6559791e385a6ad9d6265109362ec835e",
+      "output_sha256": "631e88798e754be3126d6669805fbc89e806b7cd52db48f00f5bf42bac264123",
       "sha256": "a8ca3ac9081589e7ada14d972396216d19ecf44b4ba831c91491acc0ace0d3c4",
       "source": "docs/guides/contributing-with-ai.md"
     },
     {
       "output": "guides/remote-access.html",
-      "output_sha256": "9d0a3ba9927db52236430c75aebb924f9d948d98ad44175f814e0a2ce0b841ac",
+      "output_sha256": "d200b2acfbfb32848a988a6773bdfea3672902c766d9e2856cfd8c6f60fdea0d",
       "sha256": "f4956766f7bc56030faa8044ce2fed7b36cb396e0058f68b430cfd92d9f368fd",
       "source": "rendezvous/README.md"
     },
     {
       "output": "roundtable/api.html",
-      "output_sha256": "0bb0d9ba712f571ef762babfd6cc3bd5fe7b772994028443532779d4b6654659",
+      "output_sha256": "42f8cbe3cfba4e5f33ef7ffa2d8c760754be526a21a550a7f386a7ac06f4ea93",
       "sha256": "14ac528b20b070ee2dab6babdb891ed860b9ae0623682546a4a39ce573475216",
       "source": "docs/architecture/2026-10-23-roundtable-v1.md"
     }

@@ -192,6 +192,27 @@ public final class MirrorStore: ObservableObject {
     /// The operator's values shown over the Core's, by key and property.
     private var holds: [String: [String: Hold]] = [:]
 
+    private struct CommandPresentation {
+        let verb: String
+        let id: UInt32
+        let receive: @MainActor (CommandResult) -> Void
+    }
+    private var nextCommandPresentation: UInt64 = 0
+    private var commandPresentations: [UInt64: CommandPresentation] = [:]
+
+    /// Only admitted presentation commands are watched; unrelated results
+    /// need no history. A request removes its watch when it ends otherwise.
+    func watchCommandPresentation(verb: String, id: UInt32,
+                                  receive: @escaping @MainActor (CommandResult) -> Void) -> UInt64 {
+        nextCommandPresentation &+= 1
+        commandPresentations[nextCommandPresentation] = CommandPresentation(verb: verb, id: id, receive: receive)
+        return nextCommandPresentation
+    }
+
+    func unwatchCommandPresentation(_ watch: UInt64) {
+        commandPresentations[watch] = nil
+    }
+
     public init(send: @escaping Sender, clock: any LinkClock = SystemLinkClock()) {
         self.send = send
         self.clock = clock
@@ -314,6 +335,15 @@ public final class MirrorStore: ObservableObject {
             applyDelta(delta)
         case .propertyResult(let result):
             applyResult(result)
+        case .commandResult(let wire):
+            let result = CommandResult(wire)
+            if result.isFinal {
+                for (watch, presentation) in commandPresentations where presentation.id == wire.id
+                    && presentation.verb == wire.verb {
+                    commandPresentations[watch] = nil
+                    presentation.receive(result)
+                }
+            }
         case .snapshotComplete:
             for key in unconfirmed {
                 remove(key)
@@ -551,6 +581,7 @@ public final class MirrorStore: ObservableObject {
     }
 
     private func beginSnapshot() {
+        commandPresentations = [:]
         txSwrSample = nil
         // A new session: whatever this app wrote in the last one goes
         // unconfirmed (the desktop's lost link, StationClient.cpp:2219).
@@ -809,6 +840,7 @@ public final class MirrorStore: ObservableObject {
     }
 
     private func linkLost() {
+        commandPresentations = [:]
         txSwrSample = nil
         isSnapshotComplete = false
         if !objectKeys.isEmpty || !capabilities.isEmpty {

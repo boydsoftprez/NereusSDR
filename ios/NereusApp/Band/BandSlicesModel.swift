@@ -364,6 +364,10 @@ final class BandSlicesModel: ObservableObject {
 
     /// The frequency writer, while it has writes to send or answers to wait for.
     private var writer: Task<Void, Never>?
+    #if DEBUG
+    /// Test-only boundary after the serial writer resumes from a Core answer.
+    var frequencyWriteAnsweredForTesting: ((Double) -> Void)?
+    #endif
     /// The next frequency to write, once the one in flight is answered.
     private var queuedWrite: PendingWrite?
     /// A request to move a receiver's window is waiting for the Core.
@@ -1105,6 +1109,9 @@ final class BandSlicesModel: ObservableObject {
                         self.returnToCore(current.sliceId)
                     }
                 })
+                #if DEBUG
+                self?.frequencyWriteAnsweredForTesting?(current.hz)
+                #endif
                 if !outcome.accepted {
                     Self.logger.info("The Core kept the frequency: \(outcome.reason, privacy: .private)")
                 }

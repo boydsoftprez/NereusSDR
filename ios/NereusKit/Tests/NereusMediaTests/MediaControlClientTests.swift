@@ -5,6 +5,8 @@
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-27: Add wanted-audio MediaNotReady recovery and supersession regressions.
 //   J.J. Boyd (KG4VCF), AI-assisted via Codex.
+// 2026-10-30: Wait for async connection setup without a fixed yield budget.
+//   J.J. Boyd (KG4VCF), AI-assisted via Codex.
 
 import Foundation
 import LinkSessionTestSupport
@@ -1526,7 +1528,9 @@ import Testing
         await rig.client.handle(.stateChanged(.stopped))
     }
 
-    @Test(arguments: [false, true])
+    // The async connected callback can still be waiting for an executor
+    // after a fixed yield budget; wait for it, bounded by the test limit.
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
     func anAlreadyStartedMediaNotReadyRetryCannotSendAfterControlRouteRefresh(replacementSupported: Bool) async throws {
         let clock = StartedClock()
         let recorder = MediaControlRecorder()
@@ -1543,7 +1547,7 @@ import Testing
         let peer = try #require(recorder.peers.last)
         let id = try #require(await client.connectionId)
         peer.become(.connected)
-        try #require(await recorder.settle { recorder.mediaConnectedCalls == 1 })
+        try #require(await recorder.holds { recorder.mediaConnectedCalls == 1 })
         await client.setAudioEnabled(true)
         var context = Self.audioContext(id, revision: 1, generation: 1,
                                         ssrc: MediaControlClient.audioSsrc(forConnection: id),
@@ -1583,7 +1587,8 @@ import Testing
         await client.handle(.stateChanged(.stopped))
     }
 
-    @Test func acceptedReplacementCancelsEvenAnAlreadyStartedMediaNotReadyRetry() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func acceptedReplacementCancelsEvenAnAlreadyStartedMediaNotReadyRetry() async throws {
         let clock = StartedClock()
         let recorder = MediaControlRecorder()
         let client = MediaControlClient(send: recorder.sender, peerFactory: recorder.peerFactory,
@@ -1598,7 +1603,7 @@ import Testing
         let peer = try #require(recorder.peers.last)
         let id = try #require(await client.connectionId)
         peer.become(.connected)
-        try #require(await recorder.settle { recorder.mediaConnectedCalls == 1 })
+        try #require(await recorder.holds { recorder.mediaConnectedCalls == 1 })
         await client.setAudioEnabled(true)
         var context = Self.audioContext(id, revision: 1, generation: 1,
                                         ssrc: MediaControlClient.audioSsrc(forConnection: id),
@@ -1629,7 +1634,7 @@ import Testing
         await client.handle(.stateChanged(.stopped))
     }
 
-    @Test(arguments: ["mute", "profile", "session", "owner", "enabled", "other-reason"])
+    @Test(.timeLimit(.minutes(1)), arguments: ["mute", "profile", "session", "owner", "enabled", "other-reason"])
     func anAlreadyStartedMediaNotReadyRetryCannotOutliveSupersession(supersession: String) async throws {
         let clock = StartedClock()
         let recorder = MediaControlRecorder()
@@ -1645,7 +1650,7 @@ import Testing
         let peer = try #require(recorder.peers.last)
         let id = try #require(await client.connectionId)
         peer.become(.connected)
-        try #require(await recorder.settle { recorder.mediaConnectedCalls == 1 })
+        try #require(await recorder.holds { recorder.mediaConnectedCalls == 1 })
         await client.setAudioEnabled(true)
         let ssrc = MediaControlClient.audioSsrc(forConnection: id)
         var notReady = Self.audioContext(id, revision: 1, generation: 1, ssrc: ssrc,

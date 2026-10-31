@@ -17,6 +17,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-10-30: Use Qt's durable Linux semaphore wait to avoid timed
+//               libstdc++ backoff for J.J. Boyd (KG4VCF), AI-assisted via
+//               OpenAI Codex.
 //   2026-10-30: Add passive test-only cold first-edge boundary tracing for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: Add approved remote CW hold/activity integration for
@@ -914,7 +917,23 @@ void CwxSender::wakeWorker() noexcept
 bool CwxSender::parkWorker(TimePoint until, bool timed)
 {
     if (timed) {
+#if defined(Q_OS_LINUX)
+        // NereusSDR-original API use: GCC 13's timed atomic semaphore can
+        // back off with sleeps that exceed its remaining deadline:
+        // https://github.com/gcc-mirror/gcc/blob/releases/gcc-13.3.0/libstdc++-v3/include/bits/atomic_timed_wait.h#L205-L243
+        // Qt's Linux semaphore instead parks on a futex after checking tokens:
+        // https://github.com/qt/qtbase/blob/v6.4.3/src/corelib/thread/qsemaphore.cpp#L133-L218
+        // Use Qt 6.4's integer API and floor the remaining coarse interval
+        // so millisecond conversion never intentionally extends the target.
+        // Zero still tries a durable permit; negative Qt timeouts wait forever.
+        const qint64 remainingMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            until - std::chrono::steady_clock::now()).count();
+        const int timeoutMs = static_cast<int>(std::clamp<qint64>(
+            remainingMs, 0, std::numeric_limits<int>::max()));
+        if (!m_interrupt.tryAcquire(1, timeoutMs)) {
+#else
         if (!m_interrupt.try_acquire_until(until)) {
+#endif
             return false;
         }
     } else {
