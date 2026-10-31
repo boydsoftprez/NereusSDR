@@ -4,6 +4,8 @@
 // 2026-10-26: CW transmit, the CW passband drawn at its origin from the mode and
 //             the station pitch (R-CW-24, D5). J.J. Boyd (KG4VCF), AI-assisted via
 //             Claude Code.
+// 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
+//   read the Core's present empty pan key as its default pan identity.
 
 import Combine
 import Foundation
@@ -1241,9 +1243,10 @@ final class BandSlicesModel: ObservableObject {
                 continue
             }
             present.insert(id)
+            let slicePanKey = Self.slicePanKey(object)
             // A slice on a pan this device does not show, drawn here if it is this device's.
             var offShownPans = false
-            if let panKey, let pan = object["panKey"]?.text, !pan.isEmpty, pan != panKey {
+            if let panKey, let pan = slicePanKey, pan != panKey {
                 guard let shown = shownPanKeys, !shown.contains(pan) else {
                     continue
                 }
@@ -1266,7 +1269,7 @@ final class BandSlicesModel: ObservableObject {
             next.append(Entry(slice: slice, rxAntenna: object["rxAntenna"]?.text ?? "",
                               txAntenna: object["txAntenna"]?.text ?? "",
                               modeLabel: modeLabel,
-                              panKey: object["panKey"]?.text,
+                              panKey: slicePanKey,
                               signalDbm: object["signalStrengthDbm"]?.number,
                               signalPeakDbm: object["signalPeakDbm"]?.number,
                               signalAverageDbm: object["signalAverageDbm"]?.number,
@@ -1444,6 +1447,14 @@ final class BandSlicesModel: ObservableObject {
         let reason = radeReason ? object["radeReason"]?.text.flatMap { $0.isEmpty ? nil : $0 } : nil
         return RadeReception(callsign: object["lastRadeRxCallsign"]?.text ?? "", snrDb: snr, synced: synced,
                              offsetHz: offset, reason: reason)
+    }
+
+    /// Core RadioModel::rejoinCandidateStreams and receive-layout recovery
+    /// read an empty QString pan key as pan-0. Preserve an absent/wrong-kind
+    /// wire property as unknown; only the present empty string is that alias.
+    private static func slicePanKey(_ object: MirrorObject) -> String? {
+        guard let key = object["panKey"]?.text else { return nil }
+        return key.isEmpty ? PanIdentity.first.corePanKey : key
     }
 
     private static func sliceId(_ object: MirrorObject) -> Int? {

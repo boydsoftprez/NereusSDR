@@ -368,6 +368,92 @@ struct SMeterModelTests {
 
     // MARK: The fake Core
 
+    @Test("The Core's present empty default-pan key lights MAX without accepting a missing or wrong pan")
+    func maxBinCoreDefaultPanKey() async throws {
+        let mirror = MirrorStore(send: { _ in })
+        mirror.apply(.hello(.init(major: 1, minor: 11, settingsSchema: 0, peer: "nereusd")))
+        mirror.apply(.capabilities(.init(properties: [
+            .init(name: "remoteMediaVersion", value: .i64(1)),
+        ])))
+        let create = LinkMessage.objectCreate(.init(key: "slice:0", className: "SliceModel", properties: [
+            .init(name: "sliceIndex", value: .i64(0)), .init(name: "active", value: .bool(true)),
+            .init(name: "frequency", value: .f64(14_252_000)),
+            .init(name: "filterLow", value: .i64(100)), .init(name: "filterHigh", value: .i64(3_000)),
+            .init(name: "panKey", value: .utf8("")),
+            .init(name: "sampleRateHz", value: .i64(192_000)),
+        ]))
+        // Exercise the actual wire string and mirror conversion, not only a
+        // hand-built Entry: an empty string must remain present at that boundary.
+        mirror.apply(try LinkCodec.decode(LinkCodec.encode(create)))
+        #expect(mirror.object("slice:0")?["panKey"] == .text(""))
+        for id in 1 ... 3 {
+            var properties: [LinkMessage.PropertyEntry] = [
+                .init(name: "sliceIndex", value: .i64(Int64(id))),
+                .init(name: "frequency", value: .f64(14_252_000)),
+                .init(name: "filterLow", value: .i64(100)), .init(name: "filterHigh", value: .i64(3_000)),
+            ]
+            if id == 2 { properties.append(.init(name: "panKey", value: .i64(0))) }
+            if id == 3 { properties.append(.init(name: "panKey", value: .utf8("pan-1"))) }
+            mirror.apply(try LinkCodec.decode(LinkCodec.encode(.objectCreate(.init(
+                key: "slice:\(id)", className: "SliceModel", properties: properties)))))
+        }
+        let defaults = try #require(UserDefaults(suiteName: "MaxBinDefaultPan-\(UUID().uuidString)"))
+        let main = MainScreenModel(mirror: mirror, settings: SettingsProxyClient(send: { _ in }), commands: nil,
+            operations: .init(subscribe: { _ in }, unsubscribe: { _ in }),
+            displaySettings: BandDisplaySettingsStore(defaults: defaults),
+            meterSettings: SMeterSettingsStore(defaults: defaults))
+        _ = main.band.prepareToDraw(size: CGSize(width: 402, height: 800), scale: 3)
+        main.receive(.mediaState(.connected))
+        try #require(await settle { main.subscriber.acceptedDisplay != nil && main.slices.entries.count == 4 })
+        let accepted = try #require(main.subscriber.acceptedDisplay)
+        let request = accepted.subscription
+        #expect(main.slices.active?.panKey == "pan-0")
+        #expect(accepted.panKey == "pan-0")
+        let payload: [String: LinkJSON] = [
+            "op": .string("context"), "connectionId": .string("default-pan"),
+            "endpointId": .number(Double(request.endpointId)), "revision": .number(Double(request.revision)),
+            "contextGeneration": .number(104), "sourceStream": .number(0),
+            "sourceCentreHz": .number(14_252_000), "sampleRateHz": .number(192_000),
+            "centreHz": .number(14_252_000), "spanHz": .number(12_000),
+            "wideCentreHz": .number(0), "wideSpanHz": .number(0),
+            "traceSamples": .number(13), "waterfallSamples": .number(13), "wideSamples": .number(0),
+            "minDbm": .number(-160), "maxDbm": .number(0), "fps": .number(30), "framesPerLine": .number(1),
+        ]
+        main.receive(.context(try #require(MediaControlDecoder.context(payload, wideband: false, grant: false))))
+        main.receive(.displayFrame(.init(endpointId: request.endpointId, contextGeneration: 104,
+            encoderSequence: 1, producerTimestamp: 0, isKeyframe: true, waterfallAdvance: true,
+            minDbm: -160, maxDbm: 0, traceDbm: Array(repeating: -83, count: 13),
+            waterfallDbm: Array(repeating: -100, count: 13), wideDbm: [])))
+        let entry = try #require(main.slices.active)
+        main.sMeter.chooseFlagMeter(.maxBin)
+        #expect(main.sMeter.flagMaxBinReason(for: entry) == nil)
+        #expect(main.sMeter.flagLevel(for: entry) == -83)
+        for id in 1 ... 2 {
+            let unknown = try #require(main.slices.entries.first { $0.id == id })
+            #expect(unknown.panKey == nil, "Absent and non-string properties stay unknown")
+            #expect(main.sMeter.flagMaxBin(for: unknown).value == nil)
+        }
+        let otherPan = try #require(main.slices.entries.first { $0.id == 3 })
+        #expect(otherPan.panKey == "pan-1")
+        #expect(main.sMeter.flagMaxBin(for: otherPan).value == nil)
+        main.receive(.mediaState(.closed))
+        #expect(main.band.state.frame != nil, "The old visible picture remains, but must not feed MAX")
+        #expect(main.sMeter.flagMaxBin(for: entry).value == nil)
+
+        // The same effective key must govern pan filtering: the default
+        // alias belongs to pan-0, while unknown wire identities remain unknown.
+        main.slices.panKey = "pan-0"
+        #expect(main.slices.entries.map(\.id) == [0, 1, 2])
+        main.slices.panKey = "pan-1"
+        #expect(main.slices.entries.map(\.id) == [1, 2, 3])
+        #expect(main.slices.entries.filter { $0.id == 1 || $0.id == 2 }.allSatisfy { $0.panKey == nil })
+        // Pan 1's existing rule keeps controlled slices from an unshown
+        // pan. Canonicalizing that identity must not remove those slices.
+        main.slices.shownPanKeys = ["pan-1"]
+        #expect(main.slices.entries.map(\.id) == [0, 1, 2, 3])
+        #expect(main.slices.entries.first { $0.id == 0 }?.panKey == "pan-0")
+    }
+
     @Test("Max Bin diagnostics retain signed geometry and use only bounded scalar fields")
     func maxBinDiagnosticFormat() {
         var snapshot = SMeterModel.MaxBinDiagnostic(sliceId: 0, gate: .panMismatch)

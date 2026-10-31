@@ -72,6 +72,8 @@ start alone must not answer it. Skip public participation if it is not wanted.
 
 Check the workspace look and Display settings, slice flags, S-meter Peak/Average/Max Bin availability, and normal setup controls. Change a display option, leave and return: the selected value remains visible. Tune a signal under normal display activity and listen for responsive audio; record an audible delay or backlog rather than estimating a pass. Check 3D rows at the usual viewing rate and look for repeated rows, ridges or stutter. If the Core reports audio unavailable, note whether the current wanted audio recovers after it becomes ready. Record device, app build, Core and connection used.
 
+**Max Bin default-pan regression:** With the headless Core and the live spectrum visible, select **… > S-meter > Max Bin** on the affected slice. Its bar and value should move with the signal, including when the Core uses its empty default-pan identity. Compare Peak/Average, switch back, then background/return and change the selected slice. Max Bin must use that slice’s current accepted display rather than a cached frame or another pan. If it becomes unavailable, open the S-meter menu briefly before collecting the phone support log; record the time and the reason shown.
+
 ## Roundtable on desktop, iPhone and website
 
 Use willing participating stations where available; mark participant-dependent checks N/A if no one else is present. Keep a record of the actual frequency and mode family, since the same frequency in a different mode family is a separate conversation.
