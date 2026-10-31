@@ -166,3 +166,13 @@ Report problems on [GitHub](https://github.com/boydsoftprez/NereusSDR/issues)
 or on [Discord](https://discord.gg/m35ERjwRe). Include the installed version,
 operating system, radio model and firmware, and whether you use a local or
 remote Core.
+
+## NNR processing warnings
+
+Updated Cores keep the selected NNR model running when receiver processing falls
+behind. Desktop and updated phone clients show a measured warning in the NNR
+controls. Choose **Use Standard** when available, **Turn NNR off**, or leave it
+running. Turning NNR off retains the model choice. Warnings clear after measured
+recovery; missing warning support on an older Core does not establish healthy
+audio. Older Cores retain their actual automatic limit and **Try again** display.
+Update the Core and clients together to see the new warning and choices remotely.

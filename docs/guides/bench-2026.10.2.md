@@ -97,3 +97,18 @@ Record the device and exact app/Core builds, time, radio/firmware/protocol, loca
 ## Coverage notes
 
 This checklist groups the changes since 2026.10.1 from [the changelog](../../CHANGELOG.md), the [upgrade note](upgrading-to-2026.10.2.md), and the combined work: remote transmit/CWX (#668, #680, #681), receive rate and audio (#654, #661, #687, #693–695), containers (#664, #666, #669, #671, #672, #677, #683), phone display (#653, #674), PureSignal (#662, #665, #682), tuner and radio (#670, #684, #689), and Roundtable (#657, #659 and the frequency-first combined implementation). The candidate also includes receiver preference restoration (#697), clock resizing (#706), the latest phone waterfall gap/pacing corrections (#705), and the CW first-edge diagnostics merged in #707. The standard local full-package runner explicitly serializes its deadline-sensitive integration tests; that is a test policy change, not a radio behavior change. Applicable earlier changes on main, including tuning, filters, antenna, TCI/CAT and remote display, are included in the operating checks above.
+
+## NNR warning and operator choice
+
+With a known speech source, compare Standard and Premium on the same receiver.
+A busy-time reading alone must not change the selected model or show a backlog
+warning. Record actual queued/skipped-input evidence separately from listening.
+When measured processing trouble produces an amber warning, confirm that Premium
+and NNR remain selected until you choose **Use Standard** or **Turn NNR off**.
+Leaving the warning alone must keep processing running, without repeated dialogs
+or actions. Confirm measured recovery clears the warning and unrelated receivers
+remain unchanged. Repeat in desktop NNR popup/Settings and phone RX/Modes, check
+wrapping at narrow widths, and verify read-only listeners cannot act. On an older
+Core, preserve the actual limit reason and **Try again**; do not interpret lack of
+new warning support as a passed audio check. Report software checks separately
+from real listening and hardware measurements.

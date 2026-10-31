@@ -9,6 +9,9 @@
 // 2026-10-27: CW transmit final fix wave F2: cwQskUnavailableReason pinned
 //   after the CW settings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+// 2026-10-31: Pin the additive NNR warning capability and read-only slice property.
+//   J.J. Boyd (KG4VCF), AI-assisted via Codex.
+
 import Foundation
 import LinkTestSupport
 import Testing
@@ -25,7 +28,7 @@ import Testing
 
     @Test func newestCapabilitiesSitWhereTheSurfacePinsThem() throws {
         let capabilities = try #require(try Self.surface()["capabilities"] as? [[String: Any]])
-        #expect(capabilities.count == 119)
+        #expect(capabilities.count == 120)
         #expect(capabilities[69]["value"] == nil, "The loopback capture cannot advertise a live TX watch value")
         // The merged b44d638 surface inserts diversityControlVersion after
         // diversityPatternVersion. Capture b20ad1186 also includes the existing
@@ -84,8 +87,9 @@ import Testing
             // declares) goes after it, before the build info, which moves
             // to 117.
             (117, "stationRoundtableVersion", "i64"),
-            // The Remote CW insertion moves that final build-info position to 118.
-            (118, "coreBuildInfo", "utf8"),
+            // The NNR warning capability precedes the final build info.
+            (118, "nnrLoadWarningVersion", "i64"),
+            (119, "coreBuildInfo", "utf8"),
         ]
         // Core trunk b26112687: sliceAccessVersion reads 3 (the Core's own
         // slice can be taken); nothing moved.
@@ -96,7 +100,8 @@ import Testing
         #expect((capabilities[109]["value"] as? NSNumber)?.intValue == 1)
         #expect((capabilities[116]["value"] as? NSNumber)?.intValue == 2)
         #expect((capabilities[117]["value"] as? NSNumber)?.intValue == 2)
-        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 119)
+        #expect((capabilities[118]["value"] as? NSNumber)?.intValue == 1)
+        #expect(Set(capabilities.compactMap { $0["name"] as? String }).count == 120)
         for entry in expected {
             try #require(capabilities.count > entry.index)
             #expect(capabilities[entry.index]["name"] as? String == entry.name, "\(entry.name)")
@@ -321,11 +326,16 @@ import Testing
     /// `SliceModel`, so the RADE frequency offset the phone reads keeps its
     /// ordinal. The RX meter stamp (hello `rxMeterStamps` 1, which the
     /// phone does not declare) is appended after it and moves neither.
-    @Test func sliceRadeReasonIsAppendedLast() throws {
+    /// The NNR warning follows at 155 and also leaves the prior ordinals unchanged.
+    @Test func sliceRadeReasonAndNnrWarningKeepTheirAppendedOrdinals() throws {
         let classes = try #require(try Self.surface()["mirrorClasses"] as? [String: Any])
         let slice = try #require(classes["SliceModel"] as? [String: Any])
         let properties = try #require(slice["properties"] as? [[String: Any]])
-        #expect(properties.count == 155)
+        #expect(properties.count == 156)
+        let warning = try #require(properties.first { $0["name"] as? String == "nnrLoadWarning" })
+        #expect((warning["ordinal"] as? NSNumber)?.intValue == 155)
+        #expect(warning["kind"] as? String == "utf8")
+        #expect(warning["direction"] as? String == "outbound")
         let stamp = try #require(properties.first { $0["name"] as? String == "meterReadingNs" })
         #expect((stamp["ordinal"] as? NSNumber)?.intValue == 154)
         #expect(stamp["kind"] as? String == "i64")

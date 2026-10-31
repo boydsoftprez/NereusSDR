@@ -29,6 +29,17 @@ private slots:
     {
         AppSettings::instance().setValue(QStringLiteral("NnrControls/AdvancedExpanded"), QStringLiteral("True"));
         SliceModel slice(0);
+        slice.setNnrModelSlot(1);
+        slice.setActiveNr(NrSlot::NNR);
+        NnrDiagnostics runtime;
+        runtime.available = true;
+        runtime.ready = true;
+        runtime.running = true;
+        runtime.modelAvailable = {true, true};
+        slice.updateNnrDiagnostics(runtime);
+        QVERIFY(slice.applyStationNnrDiagnostic("nnrLoadWarning", QStringLiteral(
+            "Receiver A: receive processing is falling behind. The selected noise reduction remains running. "
+            "This long warning must wrap within the popup and leave both explicit actions reachable.")));
         const auto selection = slice.activeNr();
         const double alpha = slice.nnrAlpha();
         const double maskFloor = slice.nnrMaskFloorDb();
@@ -44,7 +55,8 @@ private slots:
         QVERIFY(available.contains(popup.geometry()));
         auto* scroll = popup.findChild<QScrollArea*>();
         QVERIFY(scroll);
-        const QStringList names{QStringLiteral("nnrModelCombo"), QStringLiteral("nnrMaskFloorSpin"),
+        const QStringList names{QStringLiteral("nnrLoadWarningNotice"), QStringLiteral("nnrUseStandardButton"),
+            QStringLiteral("nnrTurnOffButton"), QStringLiteral("nnrModelCombo"), QStringLiteral("nnrMaskFloorSpin"),
             QStringLiteral("nnrPositionCombo"), QStringLiteral("nnrAlphaSpin"),
             QStringLiteral("nnrAlphaKneeSpin"), QStringLiteral("nnrTauSpin"),
             QStringLiteral("nnrMaxGainSpin"), QStringLiteral("nnrAttackSpin"),

@@ -1,6 +1,10 @@
 // =================================================================
 // src/core/dsp/NnrLoadGovernor.h  (NereusSDR)
 // =================================================================
+// Legacy policy retained for standalone tests and applied-limit compatibility.
+// NOT consulted by live RadioModel NNR policy; NnrLoadWarningMonitor owns the
+// current measured warning policy and never requests an automatic limit.
+//
 // Decides when a receiver that cannot keep up with neural noise reduction
 // (NNR) steps back: Premium to Standard, Standard to off. The decision is a
 // runtime limit; it never changes the operator's saved choice, and it never

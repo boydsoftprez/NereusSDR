@@ -230,11 +230,59 @@ private slots:
         QCOMPARE(settings.value("hardware/" + mac + "/slices/0/nnr/NnrModelSlot").toInt(), 1);
     }
 
-    // R-R3-40: a receiver that cannot keep up steps back at runtime (Premium
-    // to Standard to off) while the saved choice stays Premium with NNR on;
+    // Busy-time alone does not establish missed receive work or authorize
+    // changing the operator's model.
+    void busyTimeNeverChangesTheSelectedModel()
+    {
+        RadioModel model;
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;
+        model.configureStreamPool(1, 1, kRateHz);
+        const int id = model.addSlice();
+        SliceModel* slice = model.sliceById(id);
+        slice->setNnrModelSlot(1);
+        slice->setActiveNr(NrSlot::NNR);
+        model.openRxChannelPool(1, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(model.waitForReceiveLaneForTest());
+        QVERIFY(slice->nnrRunning());
+        for (qint64 now = 0; now <= 10000; now += 500) {
+            model.governNnrLoadForTest(now, {{id, 0.99}});
+        }
+        QVERIFY(model.waitForReceiveLaneForTest());
+        QCOMPARE(slice->nnrLimit(), 0);
+        QCOMPARE(slice->nnrModelSlot(), 1);
+        QCOMPARE(slice->activeNr(), NrSlot::NNR);
+        QCOMPARE(slice->nnrActualModelSlot(), 1);
+        QVERIFY(slice->nnrLoadWarning().isEmpty());
+        NnrLoadWarningMonitor::Observation input;
+        input.delayMs = 250;
+        for (qint64 now = 11000; now <= 13000; now += 500) {
+            input.sequence += 2;
+            input.observedMs = now;
+            model.observeNnrInputForTest(now, {{id, input}});
+        }
+        QVERIFY(!slice->nnrLoadWarning().isEmpty());
+        QCOMPARE(slice->nnrLimit(), 0);
+        QCOMPARE(slice->nnrModelSlot(), 1);
+        QCOMPARE(slice->activeNr(), NrSlot::NNR);
+        QCOMPARE(slice->nnrActualModelSlot(), 1);
+        input.delayMs = 0;
+        for (qint64 now = 13500; now <= 18500; now += 500) {
+            input.sequence += 2;
+            input.observedMs = now;
+            model.observeNnrInputForTest(now, {{id, input}});
+        }
+        QVERIFY(slice->nnrLoadWarning().isEmpty());
+        input.sequence += 2; input.observedMs = 19000; input.droppedMs = 1;
+        model.observeNnrInputForTest(19000, {{id, input}});
+        QVERIFY(!slice->nnrLoadWarning().isEmpty());
+        slice->setActiveNr(NrSlot::Off);
+        QVERIFY(slice->nnrLoadWarning().isEmpty());
+    }
+
     // "Try again", choosing a model, NNR off and on, and a Core restart all
     // bring the saved choice back.
-    void overloadStepsBackAtRuntimeAndTheOperatorGetsTheSavedChoiceBack()
+    void legacyAppliedLimitsKeepTheSavedChoiceAndManualRetry()
     {
         const QString mac = QStringLiteral("00:1C:2D:03:04:0A");
         const QString prefix = "hardware/" + mac + "/slices/0/nnr/";
@@ -265,22 +313,14 @@ private slots:
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrLimit(), 0);
 
-        const qint64 tick = NnrLoadGovernor::kNnrCheckIntervalMs;
-        qint64 now = 0;
-        const QHash<int, std::optional<double>> overloaded{{id, 0.95}};
-        // Checks until the limit changes; returns how many it took.
-        const auto runUntilStep = [&](const QHash<int, std::optional<double>>& loads) {
-            const int before = slice->nnrLimit();
-            int checks = 0;
-            while (slice->nnrLimit() == before && checks < 40) {
-                model.governNnrLoadForTest(now, loads);
-                now += tick;
-                ++checks;
-            }
-            return checks;
+        // Simulate actual limits received from an older Core. This does
+        // not invoke or recreate an automatic reduction policy.
+        const auto applyLegacyLimit = [&](NnrLimit limit) {
+            QVERIFY(channel->requestNnrLimit(static_cast<int>(limit)));
+            slice->setNnrLimit(static_cast<int>(limit));
         };
 
-        QCOMPARE(runUntilStep(overloaded), 5);   // time base + 2 s
+        applyLegacyLimit(NnrLimit::StandardOnly);
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrLimit(), static_cast<int>(NnrLimit::StandardOnly));
         QVERIFY(model.waitForReceiveLaneForTest());
@@ -305,9 +345,8 @@ private slots:
         QVERIFY(model.waitForReceiveLaneForTest());
         QVERIFY(slice->nnrRunning());
 
-        // Settle: nothing more for 5 s, then 2 s more of overload turns it off.
-        const int settleChecks = runUntilStep(overloaded);
-        QVERIFY2(settleChecks >= 10, "stepped again inside the settle time");
+        // An older Core may also have applied an Off limit.
+        applyLegacyLimit(NnrLimit::Off);
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrLimit(), static_cast<int>(NnrLimit::Off));
         QVERIFY(model.waitForReceiveLaneForTest());
@@ -318,8 +357,8 @@ private slots:
         QVERIFY(!slice->nnrRunning());
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->activeNr(), NrSlot::NNR);
-        // Off is the floor, and light load never raises a level.
-        runUntilStep({{id, 0.1}});
+        // Warning-policy observations do not clear an actual limit.
+        model.governNnrLoadForTest(10000, {{id, 0.1}});
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrLimit(), static_cast<int>(NnrLimit::Off));
 
@@ -344,15 +383,12 @@ private slots:
         QVERIFY(slice->nnrRunning());
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrActualModelSlot(), 1);
-        // The Core's own load sampler keeps ticking while the operator acts
-        // (CI run 40260774173: a loaded runner's lane waits spanned a tick).
-        // The governor's clock is still this test's: a real tick in between
-        // must not set its time base on another clock.
+        // The load sampler can tick between explicit operator actions.
         model.dspLoadTickForTest();
         model.dspLoadTickForTest();
 
         // Choosing the saved model again is the operator asking again too.
-        QCOMPARE(runUntilStep(overloaded), 5);
+        applyLegacyLimit(NnrLimit::StandardOnly);
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrLimit(), static_cast<int>(NnrLimit::StandardOnly));
         slice->setNnrModelSlot(1);
@@ -362,14 +398,13 @@ private slots:
         QCOMPARE(slice->nnrActualModelSlot(), 1);
 
         // So is turning NNR off and on.
-        QCOMPARE(runUntilStep(overloaded), 5);
+        applyLegacyLimit(NnrLimit::StandardOnly);
         slice->setActiveNr(NrSlot::Off);
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrLimit(), 0);
         QVERIFY(model.waitForReceiveLaneForTest());
         QVERIFY(!slice->nnrRunning());
-        // NNR off: an overloaded receiver gets no step.
-        QCOMPARE(runUntilStep(overloaded), 40);
+        model.governNnrLoadForTest(10500, {{id, 0.95}});
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrLimit(), 0);
         slice->setActiveNr(NrSlot::NNR);
@@ -379,7 +414,7 @@ private slots:
         QCOMPARE(slice->nnrActualModelSlot(), 1);
 
         // A Core restart starts with no limit: it is never saved.
-        QCOMPARE(runUntilStep(overloaded), 5);
+        applyLegacyLimit(NnrLimit::StandardOnly);
         model.flushPendingSettingsSave();
         RadioModel restarted;
         restarted.setLastRadioInfoForTest(info);
@@ -491,11 +526,9 @@ private slots:
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrActualModelSlot(), 1);
 
-        qint64 now = 0;
-        while (slice->nnrLimit() == 0 && now < 40 * NnrLoadGovernor::kNnrCheckIntervalMs) {
-            model.governNnrLoadForTest(now, {{id, 0.95}});
-            now += NnrLoadGovernor::kNnrCheckIntervalMs;
-        }
+        // An actual legacy limit remains meaningful to old-Core clients.
+        engine->rxChannel(id)->requestNnrLimit(static_cast<int>(NnrLimit::StandardOnly));
+        slice->setNnrLimit(static_cast<int>(NnrLimit::StandardOnly));
         QVERIFY(model.waitForReceiveLaneForTest());
         QCOMPARE(slice->nnrLimit(), static_cast<int>(NnrLimit::StandardOnly));
         slice->setNnrAlpha(2.0);   // a locked call applies the pending limit

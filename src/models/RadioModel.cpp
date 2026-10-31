@@ -12939,6 +12939,20 @@ void RadioModel::activateSliceChannel(SliceModel* slice)
 // the RxChannel while the SliceModel and its stable identity remain alive.
 void RadioModel::wireNnrSettings(SliceModel* slice)
 {
+    // Clear presentation immediately on explicit context changes; fresh
+    // input must establish any warning for the new choice from scratch.
+    const auto clearWarning = [this, slice]() {
+        m_nnrLoadWarnings.forget(slice->sliceIndex());
+        slice->setNnrLoadWarning({});
+    };
+    connect(slice, &SliceModel::nnrModelSlotChanged, this, clearWarning);
+    connect(slice, &SliceModel::streamIndexChanged, this, clearWarning);
+    connect(slice, &SliceModel::activeNrChanged, this, clearWarning);
+    connect(slice, &SliceModel::nnrDiagnosticsChanged, this, [slice, clearWarning]() {
+        if (!slice->nnrRunning()) {
+            clearWarning();
+        }
+    });
     const QPointer<RadioModel> self(this);
     const QPointer<SliceModel> target(slice);
     const auto current = [&] { return self && target && currentSlicePublication(target.data()); };
@@ -16363,13 +16377,32 @@ void RadioModel::sampleReceiverDspLoad()
 // R-R3-40. Main thread, right after sampleReceiverDspLoad.
 void RadioModel::governNnrLoad(qint64 nowMs)
 {
-    governNnrLoadWith(nowMs, [this](int sliceId) -> std::optional<double> {
-        const std::optional<ReceiverDspLoad> load = receiverDspLoad(sliceId);
-        // Idle is "not measured", never "unloaded" (ReceiverDspLoad::idle).
-        if (!load || load->idle) {
+    Q_UNUSED(nowMs);
+    // The stamped-batch clock, not the timer's relative clock, establishes
+    // whether an input observation is recent enough to support a warning.
+    const qint64 inputNowMs = ReceiverManager::enqueueClockNs() / 1000000;
+    governNnrLoadWith(inputNowMs,
+        [this](int sliceId) -> std::optional<NnrLoadWarningMonitor::Observation> {
+        SliceModel* slice = sliceById(sliceId);
+        RxChannel* channel = m_wdspEngine ? m_wdspEngine->rxChannel(sliceId) : nullptr;
+        if (!slice || !channel || !m_dspWorker) {
             return std::nullopt;
         }
-        return load->load;
+        const RxDspWorker::InputDelayStats input =
+            m_dspWorker->inputDelayStatsForSlice(sliceId, slice->streamIndex());
+        if (!input.consistent && input.context == 0) {
+            return std::nullopt;
+        }
+        NnrLoadWarningMonitor::Observation out;
+        out.context = {reinterpret_cast<quintptr>(m_dspWorker),
+                       reinterpret_cast<quintptr>(channel), input.context,
+                       slice->streamIndex(), channel->sampleRate(), slice->nnrModelSlot(),
+                       static_cast<int>(input.sourceKind), input.routeIdentity};
+        out.sequence = input.consistent ? input.sequence : 0;
+        out.observedMs = input.observationNs / 1000000;
+        out.delayMs = input.inputDelayMs;
+        out.droppedMs = input.droppedInputMs;
+        return out;
     });
 }
 
@@ -16400,19 +16433,32 @@ void RadioModel::dspLoadTickForTest()
 void RadioModel::governNnrLoadForTest(qint64 nowMs,
                                       const QHash<int, std::optional<double>>& loads)
 {
+    Q_UNUSED(loads);
+    // Retained regression seam: busy-time, whatever its value, is not input
+    // pressure and must never change NNR or manufacture a warning.
+    m_nnrGovernorDrivenByTest = true;
+    governNnrLoadWith(nowMs, [](int) {
+        return std::optional<NnrLoadWarningMonitor::Observation>{};
+    });
+}
+
+void RadioModel::observeNnrInputForTest(qint64 nowMs,
+    const QHash<int, NnrLoadWarningMonitor::Observation>& observations)
+{
     if (!m_nnrGovernorDrivenByTest) {
-        // The takeover starts the governor afresh: history a real tick left
-        // was taken on the other clock.
-        m_nnrGovernor = NnrLoadGovernor{};
+        m_nnrLoadWarnings.clear();
         m_nnrGovernorDrivenByTest = true;
     }
-    governNnrLoadWith(nowMs, [&loads](int sliceId) {
-        return loads.value(sliceId, std::nullopt);
+    governNnrLoadWith(nowMs, [&observations](int id)
+        -> std::optional<NnrLoadWarningMonitor::Observation> {
+        const auto found = observations.constFind(id);
+        return found == observations.cend() ? std::nullopt
+                                           : std::optional{found.value()};
     });
 }
 
 void RadioModel::governNnrLoadWith(qint64 nowMs,
-                                   const std::function<std::optional<double>(int)>& load)
+                                   const std::function<std::optional<NnrLoadWarningMonitor::Observation>(int)>& input)
 {
     if (!m_wdspEngine) {
         return;
@@ -16424,6 +16470,8 @@ void RadioModel::governNnrLoadWith(qint64 nowMs,
         const int sliceId = slice->sliceIndex();
         RxChannel* channel = m_wdspEngine->rxChannel(sliceId);
         if (channel == nullptr) {
+            m_nnrLoadWarnings.forget(sliceId);
+            slice->setNnrLoadWarning({});
             continue;
         }
         // Refresh the readback once the worker has run two blocks after the
@@ -16444,17 +16492,15 @@ void RadioModel::governNnrLoadWith(qint64 nowMs,
                 }
             }
         }
-        NnrLoadGovernor::Receiver receiver;
-        // R-R3-40: NNR is only blamed while it is actually running (the
-        // cached, lock-free readback); a receiver with NNR selected but not
-        // running is overloaded by something else.
-        receiver.nnrSelected = slice->activeNr() == NrSlot::NNR && slice->nnrRunning();
-        receiver.savedModelSlot = slice->nnrModelSlot();
-        receiver.limit = static_cast<NnrLimit>(slice->nnrLimit());
-        receiver.load = load(sliceId);
-        if (const std::optional<NnrLimit> next = m_nnrGovernor.observe(sliceId, nowMs, receiver)) {
-            applyNnrLimit(slice, *next);
-        }
+        const bool running = slice->activeNr() == NrSlot::NNR && slice->nnrRunning();
+        const bool warning = m_nnrLoadWarnings.observe(sliceId, nowMs, running, input(sliceId));
+        slice->setNnrLoadWarning(warning
+            ? QStringLiteral("Receiver %1: receive processing is falling behind. "
+                             "The selected noise reduction remains running.")
+                  .arg(sliceId >= 0 && sliceId < 26
+                      ? QString(QChar(QLatin1Char('A').unicode() + sliceId))
+                      : QString::number(sliceId))
+            : QString());
     }
 }
 
@@ -17869,6 +17915,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
     // one's load snapshot or measure from its baseline.
     m_dspLoadSampler.forget(sliceId);
     m_nnrGovernor.forget(sliceId);
+    m_nnrLoadWarnings.forget(sliceId);
     m_nnrLimitReadbackPending.remove(sliceId);
 
     // Reassert the invariant after the victim leaves the list.
@@ -29642,6 +29689,13 @@ void RadioModel::updatePcCaptureDemand()
 
 void RadioModel::teardownConnection()
 {
+    m_nnrLoadWarnings.clear();
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (slice) {
+            slice->setNnrLoadWarning({});
+        }
+    }
+
     if (!m_connection) {
         return;
     }

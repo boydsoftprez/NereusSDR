@@ -14,8 +14,8 @@
     },
     {
       "output": "manual/03-receive.md",
-      "output_sha256": "26f12b358d16b1b9c408524b48a04ee360689aa8c39cca54f06d50b73db34f71",
-      "sha256": "26f12b358d16b1b9c408524b48a04ee360689aa8c39cca54f06d50b73db34f71",
+      "output_sha256": "a58f64ffd2dc55e9809b4ade5ac53f1855382c5dcfde4d04b846dafd2a956bb5",
+      "sha256": "a58f64ffd2dc55e9809b4ade5ac53f1855382c5dcfde4d04b846dafd2a956bb5",
       "source": "docs/manual/03-receive.md"
     },
     {
@@ -38,8 +38,8 @@
     },
     {
       "output": "manual/07-iphone-operate.md",
-      "output_sha256": "46590a009634668336d0e16145b1add1a2f4b7ae459df5b0a49e0da5059c5ef9",
-      "sha256": "46590a009634668336d0e16145b1add1a2f4b7ae459df5b0a49e0da5059c5ef9",
+      "output_sha256": "df4658ca2bd8b9116974a720ebbbc7f473638d060cf7df91db7e8dbf58a94151",
+      "sha256": "df4658ca2bd8b9116974a720ebbbc7f473638d060cf7df91db7e8dbf58a94151",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
@@ -74,8 +74,8 @@
     },
     {
       "output": "manual/13-receiver-dsp.md",
-      "output_sha256": "efbe59b8746dc919c1f3e36c27a9637e2c9873de1d00e675571e19568a9dc79f",
-      "sha256": "efbe59b8746dc919c1f3e36c27a9637e2c9873de1d00e675571e19568a9dc79f",
+      "output_sha256": "a96eaaa67661a2e6de9e1a665d86f3373c371d71f00ce04d8cccc64deb4123bd",
+      "sha256": "a96eaaa67661a2e6de9e1a665d86f3373c371d71f00ce04d8cccc64deb4123bd",
       "source": "docs/manual/13-receiver-dsp.md"
     },
     {
@@ -444,8 +444,8 @@
     },
     {
       "output": "manual/03-receive.html",
-      "output_sha256": "3e9ba66562946c156cb223e06247da06bd4f7f9e378424b4b0bd87c23d0c8170",
-      "sha256": "26f12b358d16b1b9c408524b48a04ee360689aa8c39cca54f06d50b73db34f71",
+      "output_sha256": "64083f258abd77fe767b48e91192b24e007365331b9905c3169fc6f5dd70e1d4",
+      "sha256": "a58f64ffd2dc55e9809b4ade5ac53f1855382c5dcfde4d04b846dafd2a956bb5",
       "source": "docs/manual/03-receive.md"
     },
     {
@@ -468,8 +468,8 @@
     },
     {
       "output": "manual/07-iphone-operate.html",
-      "output_sha256": "87b778896d852f86bcbdeee557ad0553dcd670a0da425d22012d62079d3e8f0e",
-      "sha256": "46590a009634668336d0e16145b1add1a2f4b7ae459df5b0a49e0da5059c5ef9",
+      "output_sha256": "a1ad73d5dc307b47ba71f72e80294fa163a2ff91eb694fca1e82ad02bcefd038",
+      "sha256": "df4658ca2bd8b9116974a720ebbbc7f473638d060cf7df91db7e8dbf58a94151",
       "source": "docs/manual/07-iphone-operate.md"
     },
     {
@@ -504,8 +504,8 @@
     },
     {
       "output": "manual/13-receiver-dsp.html",
-      "output_sha256": "b4f24876570c2694d576755011f05c87d04061a19d916aeb453099ee27ef84bf",
-      "sha256": "efbe59b8746dc919c1f3e36c27a9637e2c9873de1d00e675571e19568a9dc79f",
+      "output_sha256": "536260c109b9679584d0634422e3927b888d6b62cde22ca6ee80ef2b97f449ae",
+      "sha256": "a96eaaa67661a2e6de9e1a665d86f3373c371d71f00ce04d8cccc64deb4123bd",
       "source": "docs/manual/13-receiver-dsp.md"
     },
     {
@@ -576,8 +576,8 @@
     },
     {
       "output": "guides/upgrading-to-2026.10.2.html",
-      "output_sha256": "d5fc352ec6850b20761c04f329e2e2661f418ba1a23347a44eb3a0dbe300a8d9",
-      "sha256": "81eb4bba0254fa369fdc68f3eb486d95b8b393622437391a4a92c0787f14f014",
+      "output_sha256": "ca6076e40a16c5a66ec21a5cb72114ec1acd71a16128fa762a81745f2fecf9b4",
+      "sha256": "8a84cffa9d6c61a350c70f60a7fa30304982ffe953676b8a7f89a223612b48a5",
       "source": "docs/guides/upgrading-to-2026.10.2.md"
     },
     {

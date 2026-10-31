@@ -55,10 +55,16 @@ bool captureIfRequested(QWidget& widget, const QString& fileName,
     if (!QDir().mkpath(directory)) {
         return false;
     }
+    widget.ensurePolished();
     widget.adjustSize();
     widget.resize(qMax(widget.width(), minimumSize.width()),
                   qMax(widget.height(), minimumSize.height()));
     widget.show();
+    QApplication::processEvents();
+    // Native font/style metrics can settle only after the first show.
+    widget.adjustSize();
+    widget.resize(qMax(widget.width(), minimumSize.width()),
+                  qMax(widget.height(), minimumSize.height()));
     QApplication::processEvents();
     return widget.grab().save(QDir(directory).filePath(fileName), "PNG");
 }
@@ -85,6 +91,8 @@ private slots:
     void stepBackIndicatorsOnTheVfoFlagAndDashboard();
     void choosingAnotherModelAsksToTryAgainOnce();
     void remoteWindowsNameTheCoreComputer();
+    void measuredWarningRetainsSelectionAndOffersExplicitActions();
+    void wrappedDiagnosticsRemainReadable();
 };
 
 namespace {
@@ -92,6 +100,107 @@ const QString kStandardOnlyText = QStringLiteral(
     "Noise reduction is using the Standard model. This computer could not keep up with Premium.");
 const QString kOffText = QStringLiteral(
     "Noise reduction was turned off. This computer could not keep up.");
+}
+
+void TestNnrControls::wrappedDiagnosticsRemainReadable()
+{
+    SliceModel slice(0);
+    NnrDiagnostics runtime;
+    runtime.explanation = QStringLiteral(
+        "The selected noise reduction model is unavailable. Receiver processing cannot use this model. "
+        "Select an available model or inspect the station model assets before trying again.");
+    slice.updateNnrDiagnostics(runtime);
+    NnrControls controls(nullptr, &slice, NnrControls::Presentation::Full);
+    controls.ensurePolished();
+    controls.adjustSize();
+    controls.show();
+    QApplication::processEvents();
+    controls.adjustSize();
+    QApplication::processEvents();
+    auto* status = control<QLabel>(controls, "nnrStatusReadback");
+    QVERIFY(status->sizePolicy().hasHeightForWidth());
+    const int required = qMax(status->fontMetrics().height(), status->heightForWidth(status->width()));
+    QVERIFY2(status->height() >= required, qPrintable(QStringLiteral("Wrapped status has %1 px for %2 px of text")
+        .arg(status->height()).arg(required)));
+}
+
+void TestNnrControls::measuredWarningRetainsSelectionAndOffersExplicitActions()
+{
+    SliceModel slice(0);
+    slice.setNnrModelSlot(1);
+    slice.setActiveNr(NrSlot::NNR);
+    NnrDiagnostics runtime;
+    runtime.available = true;
+    runtime.ready = true;
+    runtime.running = true;
+    runtime.modelAvailable = {true, true};
+    runtime.actualModelSlot = 1;
+    runtime.rateSupported = true;
+    runtime.dspRateHz = 48000;
+    runtime.networkRateHz = 48000;
+    runtime.modelSources = {NnrModelSource::Bundled, NnrModelSource::Bundled};
+    slice.updateNnrDiagnostics(runtime);
+    NnrControls controls(nullptr, &slice, NnrControls::Presentation::Compact);
+    VfoWidget vfo;
+    vfo.setSlice(&slice);
+    RxDashboard dashboard;
+    dashboard.bindSlice(&slice);
+    const QString warning = QStringLiteral("Receiver A: receive processing is falling behind. The selected noise reduction remains running.");
+    QVERIFY(slice.applyStationNnrDiagnostic("nnrLoadWarning", warning));
+    auto* row = controls.findChild<QWidget*>(QStringLiteral("nnrLoadWarningRow"));
+    QVERIFY(row);
+    QVERIFY(row->isVisibleTo(&controls));
+    auto* notice = control<QLabel>(controls, "nnrLoadWarningNotice");
+    QCOMPARE(notice->text(), warning);
+    QCOMPARE(slice.nnrLimit(), 0);
+    QCOMPARE(slice.nnrModelSlot(), 1);
+    QCOMPARE(slice.activeNr(), NrSlot::NNR);
+    auto* standard = control<QPushButton>(controls, "nnrUseStandardButton");
+    auto* off = control<QPushButton>(controls, "nnrTurnOffButton");
+    QVERIFY(standard->isEnabled());
+    QVERIFY(off->isEnabled());
+    QVERIFY(captureIfRequested(controls, QStringLiteral("nnr-load-warning-compact.png"), QSize(420, 360)));
+    NnrControls full(nullptr, &slice, NnrControls::Presentation::Full);
+    QVERIFY(captureIfRequested(full, QStringLiteral("nnr-load-warning-full.png"), QSize(480, 720)));
+    QCOMPARE(vfo.findChild<QLabel*>(QStringLiteral("vfoNnrLimitIndicator"))->toolTip(), warning);
+    QCOMPARE(dashboard.badgeForRung(8)->toolTip(), warning);
+    QSignalSpy retry(&slice, &SliceModel::nnrRetryRequested);
+    QSignalSpy modelPicks(&slice, &SliceModel::nnrModelSlotChanged);
+    slice.setReadOnlyListener(true, QStringLiteral("Another device controls receiver A."));
+    QVERIFY(!standard->isEnabled());
+    QVERIFY(!off->isEnabled());
+    standard->click();
+    off->click();
+    QCOMPARE(slice.nnrModelSlot(), 1);
+    QCOMPARE(slice.activeNr(), NrSlot::NNR);
+    slice.setReadOnlyListener(false, {});
+    standard->click();
+    standard->click();
+    QCOMPARE(modelPicks.count(), 1);
+    QCOMPARE(slice.nnrModelSlot(), 0);
+    QCOMPARE(slice.activeNr(), NrSlot::NNR);
+    QCOMPARE(retry.count(), 0);
+    QVERIFY(slice.applyStationNnrDiagnostic("nnrLoadWarning", warning));
+    off->click();
+    off->click();
+    QCOMPARE(slice.activeNr(), NrSlot::Off);
+    QCOMPARE(slice.nnrModelSlot(), 0);
+    QVERIFY(!row->isVisibleTo(&controls));
+    slice.setActiveNr(NrSlot::NNR);
+    QVERIFY(slice.applyStationNnrDiagnostic("nnrLoadWarning", QString()));
+    QVERIFY(!row->isVisibleTo(&controls));
+    QVERIFY(vfo.findChild<QLabel*>(QStringLiteral("vfoNnrLimitIndicator"))->isHidden());
+    // A pressure warning cannot replace a real old-Core limit or runtime error.
+    QVERIFY(slice.applyStationNnrDiagnostic("nnrLoadWarning", warning));
+    slice.setNnrLimit(1);
+    QVERIFY(control<QWidget>(controls, "nnrLimitRow")->isVisibleTo(&controls));
+    QCOMPARE(control<QLabel>(controls, "nnrLimitNotice")->text(), slice.nnrLimitText());
+    slice.reportNnrEditResult(QStringLiteral("The selected NNR model is unavailable."));
+    QVERIFY(control<QLabel>(controls, "nnrStatusReadback")->text().contains(QStringLiteral("unavailable")));
+    QVERIFY(captureIfRequested(controls, QStringLiteral("nnr-warning-legacy-error-coexistence.png"), QSize(420, 360)));
+    SliceModel other(1);
+    controls.bindSlice(&other);
+    QVERIFY(!row->isVisibleTo(&controls));
 }
 
 // R-R3-40: while the Core holds the receiver below the saved choice, the

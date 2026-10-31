@@ -948,6 +948,8 @@ struct StationCapabilities {
     int wdspVersion = 0;
     int wdspCompatibilityVersion = 0;
     int nnrVersion = 0;
+    // Optional minor-11 feature: separate measured input-pressure warning.
+    int nnrLoadWarningVersion = 0;
     int psAlgorithmVersion = 0;
     int propertyResultVersion = 0;
     int dspAssetVersion = 0;

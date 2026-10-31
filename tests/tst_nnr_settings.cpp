@@ -296,6 +296,24 @@ private slots:
         QVERIFY(!slice.applyStationNnrDiagnostic("nnrLimit", QStringLiteral("off")));
         QCOMPARE(slice.nnrLimit(), 0);
     }
+    void loadWarningIsDistinctReadOnlyRuntimeState()
+    {
+        SliceModel slice;
+        QSignalSpy changed(&slice, &SliceModel::nnrLoadWarningChanged);
+        const QString warning = QStringLiteral("Receiver A: receive processing is falling behind. The selected noise reduction remains running.");
+        QVERIFY(slice.applyStationNnrDiagnostic("nnrLoadWarning", warning));
+        QCOMPARE(slice.nnrLoadWarning(), warning);
+        QCOMPARE(slice.nnrLimit(), 0);
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(slice.applyStationNnrDiagnostic("nnrLoadWarning", warning));
+        QCOMPARE(changed.count(), 1);
+        const int index = slice.metaObject()->indexOfProperty("nnrLoadWarning");
+        QVERIFY(index >= 0);
+        QVERIFY(!slice.metaObject()->property(index).isWritable());
+        slice.setNnrLoadWarning({});
+        QVERIFY(slice.nnrLoadWarning().isEmpty());
+    }
+
 };
 
 QTEST_APPLESS_MAIN(TestNnrSettings)

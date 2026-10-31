@@ -37,7 +37,7 @@ For a method comparison, use this sequence:
 2. Listen with NR off and note the wanted speech/tone and the noise between words. Select one candidate method from the NR control and check that its button/readback shows it active.
 3. Compare the same signal with the method enabled. If a different method is offered, turn off the first before selecting the next; do not stack alternatives.
 4. Keep the method only when intelligibility improves without unacceptable artifacts. If it is worse, turn it off or restore its previous tuning value, then confirm the NR readback.
-5. If the option is disabled or steps back, follow the Core/build reason under [Neural receiver methods and model assets](#neural-receiver-methods-and-model-assets). A changed number or enabled indicator alone does not establish better reception.
+5. If the option is disabled or shows a warning, follow the Core/build reason under [Neural receiver methods and model assets](#neural-receiver-methods-and-model-assets). A changed number or enabled indicator alone does not establish better reception.
 
 The detailed entry point is **Setup > DSP > NR/ANF**. These controls apply to the selected receiver as you change them; they are not a staged profile editor. Use the row for the active method only:
 
@@ -112,7 +112,9 @@ For ordinary NNR tuning, **Position** chooses processing before or after AGC. **
 3. Change one advanced value at a time and note its prior value. Compare **Alpha** with **Alpha knee** as a pair; compare **Attack** and **Release** during speech transitions. Keep diagnostic Test/Output modes at **Network** and **Q zero**.
 4. If consonants, level stability or transitions worsen, restore the recorded value or choose **Reset tuning**, then repeat the comparison. The status indicator confirms processor state, not audio quality.
 
-If Core resource protection steps NNR back, read the reason beside the warning. On the phone, **Modes > Noise** or the **RX** panel offers **Try again** when the Core reports that action. Retry after the stated resource/load condition clears; the Core can step the method back again if it remains constrained. An older Core may show a compatibility reason and omit retry. Phone **NNR model** buttons choose the Core-reported Standard or Premium slot; **Reset** resets the available tuning controls for this receiver. After retry, read back the selected method and compare the sound again. Readiness does not prove improved audio.
+A current Core keeps your selected NNR model running when receiver processing falls behind. An amber warning reports measured queued or skipped receiver input; high CPU activity alone does not trigger it. In the NNR popup or Settings, and on the phone in **Modes > Noise** or the **RX** panel, choose **Use Standard** when Premium is selected and Standard is available, or **Turn NNR off**. Turning NNR off retains your model preference. Leaving the warning alone keeps NNR running. The warning clears after measured recovery; an empty warning is not a guarantee of healthy audio. Compare the sound after any change.
+
+An older Core may still reduce Premium to Standard or turn NNR off automatically. Its actual limit remains visible separately, with **Try again** when that Core supports retry. Retry requests the saved model again; the older Core may reduce it again under continuing load. Model availability and runtime errors remain separate from a processing warning. Phone **NNR model** buttons select the Core's Standard or Premium slot; **Reset** resets the tuning controls for this receiver. Readiness does not prove improved audio.
 
 ## Noise blankers and adaptive notch
 

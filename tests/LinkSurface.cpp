@@ -795,6 +795,7 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   // RX meter stamps: rxMeterStampsVersion
                                   // and each slice's meterReadingNs.
                                   {"rxMeterStamps", 1},
+                                  {"nnrLoadWarning", 1},
                                   // NSDC v2: displayCodecVersion and the
                                   // start's declaration.
                                   {"displayCodec", 2},
@@ -909,6 +910,7 @@ QJsonArray captureCapabilities()
     caps.firmwareBetaEntry = true;
     // RX meter stamps: sent to a peer that declared rxMeterStamps.
     caps.rxMeterStampsVersion = 1;
+    caps.nnrLoadWarningVersion = 1;
     // NSDC v2: sent to a peer that declared displayCodec 2.
     caps.displayCodecVersion = 2;
     // Roundtable plan Task 11: sent to a peer that declared roundtable.

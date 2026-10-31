@@ -849,11 +849,16 @@ QJsonValue LinkFixtures::currentCoreStationExpectation(const QJsonValue& expecte
         return expected;
     }
     QJsonObject features = message.value(QStringLiteral("features")).toObject();
-    if (features.value(QStringLiteral("deviceAuth")) != 1
-        || features.contains(QStringLiteral("radioMic"))) {
+    if (features.value(QStringLiteral("deviceAuth")) != 1) {
         return expected;
     }
-    features.insert(QStringLiteral("radioMic"), 2);
+    if (!features.contains(QStringLiteral("radioMic"))) {
+        features.insert(QStringLiteral("radioMic"), 2);
+    }
+    // Frozen fixtures describe older peers. Only the live Core's additive
+    // support advertisement is normalized; peer field expectations remain
+    // exact and continue to prove feature filtering.
+    features.insert(QStringLiteral("nnrLoadWarning"), 1);
     message.insert(QStringLiteral("features"), features);
     return message;
 }

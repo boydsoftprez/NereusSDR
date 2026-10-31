@@ -2,6 +2,8 @@
 // NereusSDR-original WDSP 2.10 NNR controls.
 // 2026-09-23: R-R3-40 runtime step-back notice and "Try again" action, by
 // J.J. Boyd (KG4VCF), with Anthropic Claude Code assistance.
+// 2026-10-31: Measured-load notice and explicit model/off choices. J.J. Boyd (KG4VCF),
+// AI-assisted via OpenAI Codex.
 // 2026-10-13: Explicit GUI DLL imports/exports for typed signal lookup across images.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 #pragma once
@@ -62,6 +64,10 @@ private:
     QWidget* m_limitRow{nullptr};
     QLabel* m_limitNotice{nullptr};
     QPushButton* m_tryAgain{nullptr};
+    QWidget* m_loadWarningRow{nullptr};
+    QLabel* m_loadWarningNotice{nullptr};
+    QPushButton* m_useStandard{nullptr};
+    QPushButton* m_turnOff{nullptr};
     // R-R3-40: set while one model pick's signals are being handled.
     bool m_modelPickHandled{false};
     QDoubleSpinBox* m_maskFloor{nullptr};

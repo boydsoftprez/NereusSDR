@@ -1,5 +1,6 @@
 // NereusSDR for iOS: everything the main screen shows, fed from the app's model and the Core's media events
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-31: Bind NNR warning choices to their session; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-26: CW transmit, the station pitch reaches the slice models, so a CW
 //             passband is drawn at its origin (R-CW-24). J.J. Boyd (KG4VCF),
 //             AI-assisted via Claude Code.
@@ -257,7 +258,8 @@ final class MainScreenModel: ObservableObject {
                                  catalogFeed: catalogFeed, allowsMorePans: UIDevice.current.userInterfaceIdiom == .pad)
         transmitDisplay = TransmitDisplayModel(band: band, slices: slices, mirror: mirror)
         coreTxDisplay = CoreTxDisplaySettings(settings: settings, mirror: mirror)
-        rx = RxPanelModel(store: mirror, slices: slices, catalogFeed: catalogFeed, commands: commands)
+        rx = RxPanelModel(store: mirror, slices: slices, catalogFeed: catalogFeed, commands: commands,
+                          captureSender: captureVoxSender)
         transmit = TransmitModel(mirror: mirror, commands: commands, slices: slices, subscriber: subscriber, band: band,
                                  microphone: microphone, uplink: uplink, settings: settings,
                                  captureVoxSender: captureVoxSender, platform: platform)

@@ -967,6 +967,7 @@
 #include "models/TunerModel.h"
 #include "models/ReceiverDspLoadSampler.h"
 #include "core/dsp/NnrLoadGovernor.h"
+#include "core/dsp/NnrLoadWarningMonitor.h"
 #include <QElapsedTimer>
 #include "Band.h"
 #include "BandPlanManager.h"
@@ -2513,9 +2514,8 @@ public:
 
     /// R-R3-40: one check of every receiver running NNR (the sampler timer
     /// calls this right after sampleReceiverDspLoad, local role only). A
-    /// receiver that cannot keep up steps back one level (NnrLoadGovernor):
-    /// the Core asks its WDSP channel for the limit without the DSP lock and
-    /// sets SliceModel::nnrLimit. The saved NNR choice is never changed.
+    /// receiver with sustained fresh input lag or newly skipped input gets
+    /// a warning. The selected model and runtime limit are never changed.
     /// nowMs is a monotonic clock. Main thread.
     void governNnrLoad(qint64 nowMs);
 
@@ -2525,6 +2525,8 @@ public:
     /// life: the load sampler's tick stops calling governNnrLoad, so the
     /// caller's nowMs is the governor's only clock.
     void governNnrLoadForTest(qint64 nowMs, const QHash<int, std::optional<double>>& loads);
+    void observeNnrInputForTest(qint64 nowMs,
+        const QHash<int, NnrLoadWarningMonitor::Observation>& observations);
 
     /// Test seam: one tick of the load sampler's timer, its three slots in
     /// order (sampleReceiverDspLoad, the governor, reportDspDiagnostics),
@@ -7648,7 +7650,7 @@ private:
     // m_nnrGovernorClock, unless a test has taken the governor over.
     void governNnrLoadOnTick();
     void governNnrLoadWith(qint64 nowMs,
-                           const std::function<std::optional<double>(int)>& load);
+                           const std::function<std::optional<NnrLoadWarningMonitor::Observation>(int)>& input);
     void applyNnrLimit(SliceModel* slice, NnrLimit limit);
     void clearNnrLimit(SliceModel* slice);
     // Follow-up item 1 (R-R3-21): the plain reason NR3 cannot run here, and
@@ -8380,7 +8382,8 @@ private:
     // R-R3-40: the NNR step-back decision, its monotonic clock, and the
     // slices whose NNR readback is refreshed once their WDSP worker has run
     // two blocks after a step (slice id -> worker block count at the step).
-    NnrLoadGovernor m_nnrGovernor;
+    NnrLoadGovernor m_nnrGovernor; // legacy limit bookkeeping only
+    NnrLoadWarningMonitor m_nnrLoadWarnings;
     QElapsedTimer m_nnrGovernorClock;
     // Set by governNnrLoadForTest: the sampler's tick leaves the governor
     // to the test.

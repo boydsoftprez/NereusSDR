@@ -1,5 +1,6 @@
 // NereusSDR for iOS: the RX panel: AF gain, AGC, filter presets, the noise buttons and squelch
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-31: Prioritize selected NNR warning choices; J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import NereusBand
 import NereusModels
@@ -76,10 +77,10 @@ struct RxPanel: View {
                         .accessibilityHint(button.reason ?? button.warning ?? "")
                     }
                 }
-                ForEach(model.noise.filter { $0.reason != nil }) { button in
+                NnrStepBack(rx: model, identifier: "rxPanelNnr")
+                ForEach(model.noise.filter { $0.reason != nil && !($0.id == "NNR" && model.nnrPriorityReason != nil) }) { button in
                     note("\(button.label): \(button.reason ?? "")")
                 }
-                NnrStepBack(rx: model, identifier: "rxPanelNnr")
                 squelch
                 if let reason = model.note {
                     note(reason)

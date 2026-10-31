@@ -962,6 +962,24 @@
               ]
             },
             {
+              "id": "dsp.nrAnf.nnrLoadWarning",
+              "label": "Receive processing",
+              "tooltip": "Measured input delay or skipped input. The selected noise reduction remains running.",
+              "kind": "readout",
+              "binding": {
+                "property": {
+                  "object": "slice:active",
+                  "name": "nnrLoadWarning"
+                }
+              },
+              "applies": "live",
+              "requiresDescriptionVersion": 15,
+              "gate": {
+                "capability": "nnrLoadWarningVersion",
+                "min": 1
+              }
+            },
+            {
               "id": "dsp.nrAnf.nnrLimit",
               "label": "Limit",
               "tooltip": "",

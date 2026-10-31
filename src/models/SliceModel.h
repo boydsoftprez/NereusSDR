@@ -798,6 +798,9 @@ private:
     // "The RX meter stamps"). Declared last so every earlier property keeps
     // its wire ordinal.
     Q_PROPERTY(qint64 meterReadingNs READ meterReadingNs NOTIFY meterReadingNsChanged)
+    // Append-only wire field: measured receive input pressure, never an
+    // applied NNR limit and never persisted. Empty means no current warning.
+    Q_PROPERTY(QString nnrLoadWarning READ nnrLoadWarning NOTIFY nnrLoadWarningChanged)
 
 public:
     // Receive-layout admission bounds: general receive defaults, not a
@@ -1329,6 +1332,8 @@ public:
     // 2 off). Set by the Core when this receiver cannot keep up, and on a
     // remote GUI by the station mirror. Never saved: the operator's saved
     // choice (nnrModelSlot, activeNr) is untouched while it is in force.
+    QString nnrLoadWarning() const { return m_nnrLoadWarning; }
+    void setNnrLoadWarning(const QString& warning);
     int nnrLimit() const { return m_nnrLimit; }
     void setNnrLimit(int limit);
     // The plain-English reason for the limit, empty when there is none. A
@@ -1819,6 +1824,7 @@ signals:
     void nnrDiagnosticsChanged();
     void nnrLastErrorChanged();
     void nnrEditRejected(const QString& reason);
+    void nnrLoadWarningChanged(const QString& warning);
     void nnrLimitChanged(int limit);
     // The operator wants the saved NNR choice back: "Try again", or choosing
     // a model while a limit is in force.
@@ -2040,6 +2046,7 @@ private:
     }
     QString m_settingsRadioMac;
     QString m_nnrLastError;
+    QString m_nnrLoadWarning;
     int m_nnrLimit{0};   // R-R3-40 runtime only; see nnrLimit()
     bool m_nnrLimitFromCore{false};   // set by the station mirror; see nnrLimitText()
     void setNnrLastError(const QString& error);

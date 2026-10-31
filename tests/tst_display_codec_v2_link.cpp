@@ -485,7 +485,11 @@ private slots:
         if (roundtable) {
             QCOMPARE(names.at(field + 1), QStringLiteral("stationRoundtableVersion"));
         }
-        QCOMPARE(field + (roundtable ? 3 : 2), names.size());
+        const bool nnrWarning = names.contains(QStringLiteral("nnrLoadWarningVersion"));
+        if (nnrWarning) {
+            QCOMPARE(names.at(field + (roundtable ? 2 : 1)), QStringLiteral("nnrLoadWarningVersion"));
+        }
+        QCOMPARE(field + (roundtable ? 3 : 2) + (nnrWarning ? 1 : 0), names.size());
         QVERIFY(h.server.displayCodecV2Available(h.server.mediaSessionEpoch()));
         QVERIFY(h.startWith(2));
         QTRY_VERIFY_WITH_TIMEOUT(!h.mediaTransport.isNull(), 10'000);
@@ -739,12 +743,17 @@ private slots:
         QCOMPARE(names.last(), QStringLiteral("coreBuildInfo"));
         QCOMPARE(names.contains(kField), v2);
         if (v2) {
-            // stationRoundtableVersion may sit between it and coreBuildInfo.
+            // Optional Roundtable and NNR warning capabilities precede build info.
             const bool roundtable = names.contains(QStringLiteral("stationRoundtableVersion"));
-            if (roundtable) {
-                QCOMPARE(names.at(names.size() - 2), QStringLiteral("stationRoundtableVersion"));
+            const bool nnrWarning = names.contains(QStringLiteral("nnrLoadWarningVersion"));
+            if (nnrWarning) {
+                QCOMPARE(names.at(names.size() - 2), QStringLiteral("nnrLoadWarningVersion"));
             }
-            QCOMPARE(names.at(names.size() - (roundtable ? 3 : 2)), kField);
+            if (roundtable) {
+                QCOMPARE(names.at(names.size() - 2 - (nnrWarning ? 1 : 0)),
+                         QStringLiteral("stationRoundtableVersion"));
+            }
+            QCOMPARE(names.at(names.size() - (roundtable ? 3 : 2) - (nnrWarning ? 1 : 0)), kField);
         }
         const QJsonObject start = lastOp(outbound, QStringLiteral("start"));
         QVERIFY(!start.isEmpty());

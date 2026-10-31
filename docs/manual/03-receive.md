@@ -236,7 +236,7 @@ NB/NB2, SNB and the automatic notch are separate controls.
 | **NR4** | Spectral baseline noise reduction. Right-click opens its parameter popup. |
 | **DFNR** | DeepFilter noise reduction when offered by the Core/build. |
 | **MNR** | macOS noise reduction when available. |
-| **NNR** | Neural noise reduction with its settings/model choices. An amber limit indicator explains when the Core limits the saved choice. |
+| **NNR** | Neural noise reduction with its settings/model choices. An amber indicator reports measured processing trouble while your selected model keeps running. Open the controls to choose Standard or turn NNR off; an older Core's applied limit is shown separately. |
 | **ANF** | Automatic notch filtering for suitable unwanted tones. |
 | **SNB** | Spectral noise blanker, independently switchable from NB/NB2. Right-click opens NB/SNB setup. |
 | **APF** | CW audio peak filter, with its frequency adjustment where applicable. |

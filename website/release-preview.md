@@ -54,7 +54,7 @@ bugs and feature requests.
 
 The candidate's operator manual and code establish the Core/GUI roles,
 per-device receiver and transmit authority, native phone controls, display
-transport, NNR fallback, PureSignal 3, diversity, containers and voice editors.
+transport, NNR warnings and operator choices, PureSignal 3, diversity, containers and voice editors.
 Its `docs/guides/install-core-sbc.md` and `docs/guides/tx-eq-cfc.md` establish
 fresh-board setup and the desktop Graphic/Parametric EQ/CFC workflows.
 

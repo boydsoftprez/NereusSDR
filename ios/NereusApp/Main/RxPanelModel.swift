@@ -1,10 +1,13 @@
 // NereusSDR for iOS: the RX panel's controls for the active slice: the Core's values in, the operator's writes out
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+// 2026-10-31: Measured NNR warnings and explicit model/off actions; J.J. Boyd
+// (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-10-12: J.J. Boyd (KG4VCF), V2 opt-in/authority gate; AI-assisted via OpenAI Codex.
 
 import Combine
 import Foundation
 import NereusBand
+import NereusLink
 import NereusMirror
 import NereusModels
 import os
@@ -91,6 +94,8 @@ final class RxPanelModel: ObservableObject {
         let premiumReady: Bool
         /// Why Try again cannot be sent; nil when it can.
         let tryAgainReason: String?
+        /// Separate measured backlog warning; nil is no observed warning, not proof of health.
+        let loadWarning: String?
     }
 
     /// One AGC mode button.
@@ -156,6 +161,8 @@ final class RxPanelModel: ObservableObject {
     static let nnrFallback = "NNR cannot run on this Core."
     /// NNR's step-back and model (link document section 7.1, the slice's
     /// `nnrLimit`, `nnrModelSlot`, `nnrStandardAvailable`, `nnrPremiumAvailable`).
+    static let nnrLoadWarning = "nnrLoadWarning"
+    static let nnrLoadWarningCapability = "nnrLoadWarningVersion"
     static let nnrLimit = "nnrLimit"
     static let nnrModelSlot = "nnrModelSlot"
     static let nnrStandardAvailable = "nnrStandardAvailable"
@@ -193,6 +200,9 @@ final class RxPanelModel: ObservableObject {
     @Published private(set) var filterHighHz: Int64?
     /// NNR's step-back, Try again and model; nil without a slice.
     @Published private(set) var nnr: Nnr?
+    @Published private(set) var nnrWarningActionPending = false
+    /// The selected NNR's error remains above warnings and unrelated method notes.
+    @Published private(set) var nnrPriorityReason: String?
     /// The number pad open on the RX panel, if any.
     @Published private(set) var pad: ValuePadModel?
     /// The Core's words for the last write it refused; cleared by the next one it takes.
@@ -206,8 +216,13 @@ final class RxPanelModel: ObservableObject {
     private(set) var slices: BandSlicesModel
     private let catalogFeed: CatalogFeed
     private let commands: CommandClient?
+    private let captureSender: (@Sendable () -> MirrorStore.BoundSender)?
+    private var nnrWarningAuthority: CommandSendPermit?
+    private var nnrWarningTarget: (object: MirrorObject, snapshot: UInt64, sliceId: Int?, controlRevision: Int64?, incarnation: Int64?)?
+    private weak var nnrPresentationSlice: MirrorObject?
     private var watches: Set<AnyCancellable> = []
     private var activeWatch: AnyCancellable?
+    private var ownershipWatch: AnyCancellable?
     private var sliceWatch: AnyCancellable?
     private var assetsWatch: AnyCancellable?
     private var watchedKey: String?
@@ -218,18 +233,34 @@ final class RxPanelModel: ObservableObject {
     private var rebuildQueued = false
     private static let logger = Logger(subsystem: "NereusSDR", category: "rx.panel")
 
-    init(store: MirrorStore, slices: BandSlicesModel, catalogFeed: CatalogFeed, commands: CommandClient? = nil) {
+    init(store: MirrorStore, slices: BandSlicesModel, catalogFeed: CatalogFeed, commands: CommandClient? = nil,
+         captureSender: (@Sendable () -> MirrorStore.BoundSender)? = nil) {
         self.store = store
         self.slices = slices
         self.catalogFeed = catalogFeed
         self.commands = commands
-        activeWatch = slices.$activeSliceId.sink { [weak self] _ in self?.queueRebuild() }
+        self.captureSender = captureSender
+        activeWatch = slices.$activeSliceId.sink { [weak self] next in
+            if let self, let target = self.nnrWarningTarget, next != target.sliceId {
+                self.nnrWarningAuthority?.revoke()
+            }
+            self?.queueRebuild()
+        }
         store.$unconfirmedWrites.sink { [weak self] _ in
             Task { @MainActor in self?.confirmationRevision &+= 1 }
         }.store(in: &watches)
         store.$objectKeys.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
         catalogFeed.$catalog.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
         store.$capabilities.sink { [weak self] _ in self?.queueRebuild() }.store(in: &watches)
+        store.$isStale.sink { [weak self] stale in
+            if stale { self?.nnrWarningAuthority?.revoke() }
+            self?.queueRebuild()
+        }.store(in: &watches)
+        store.$isSnapshotComplete.sink { [weak self] complete in
+            if !complete { self?.nnrWarningAuthority?.revoke() }
+            self?.queueRebuild()
+        }.store(in: &watches)
+        watchNnrOwnership()
         rebuild()
     }
 
@@ -241,8 +272,26 @@ final class RxPanelModel: ObservableObject {
             return
         }
         self.slices = slices
-        activeWatch = slices.$activeSliceId.sink { [weak self] _ in self?.queueRebuild() }
+        activeWatch = slices.$activeSliceId.sink { [weak self] next in
+            if let self, let target = self.nnrWarningTarget, next != target.sliceId {
+                self.nnrWarningAuthority?.revoke()
+            }
+            self?.queueRebuild()
+        }
+        watchNnrOwnership()
         rebuild()
+    }
+
+    private func watchNnrOwnership() {
+        ownershipWatch = slices.$entries.sink { [weak self] entries in
+            guard let self, let target = self.nnrWarningTarget else { return }
+            let entry = entries.first { $0.id == target.sliceId }
+            if entry?.listening != false || entry?.access?.controlRevision != target.controlRevision
+                || entry?.access?.incarnation != target.incarnation {
+                self.nnrWarningAuthority?.revoke()
+            }
+            self.queueRebuild()
+        }
     }
 
     /// The active slice's mirrored object.
@@ -413,6 +462,58 @@ final class RxPanelModel: ObservableObject {
         }
     }
 
+    private var canActOnNnrWarning: Bool {
+        captureSender != nil && !nnrWarningActionPending && store.isSnapshotComplete && !store.isStale
+            && slice === nnrPresentationSlice
+            && slices.active?.listening == false && nnr?.loadWarning != nil
+            && Self.whole(slice?[Property.activeNr]) == Self.nnrSlot
+    }
+
+    var nnrCanUseStandard: Bool {
+        canActOnNnrWarning && nnr?.modelSlot == 1 && nnr?.standardReady == true
+    }
+
+    var nnrCanTurnOff: Bool { canActOnNnrWarning }
+
+    func useStandardForNnrWarning() {
+        guard nnrCanUseStandard else { return }
+        applyNnrWarningChoice(Self.nnrModelSlot, .int(0))
+    }
+
+    func turnNnrOffForWarning() {
+        guard nnrCanTurnOff else { return }
+        applyNnrWarningChoice(Property.activeNr, .enumeration(0))
+    }
+
+    /// Capture the receiver and session at the touch. A queued task cannot
+    /// retarget another slice, send after reconnect, or bypass lost ownership.
+    private func applyNnrWarningChoice(_ property: String, _ value: MirrorValue) {
+        guard let object = slice, let sender = captureSender?() else { return }
+        let identity = store.snapshotIdentity
+        let authority = CommandSendPermit()
+        nnrWarningAuthority = authority
+        nnrWarningTarget = (object, identity, slices.activeSliceId,
+                            slices.active?.access?.controlRevision, slices.active?.access?.incarnation)
+        nnrWarningActionPending = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.nnrWarningActionPending = false
+                self.nnrWarningAuthority = nil
+                self.nnrWarningTarget = nil
+            }
+            guard self.store.snapshotIdentity == identity, self.store.isSnapshotComplete,
+                  !self.store.isStale, self.slice === object, self.slices.active?.listening == false,
+                  self.store.object(object.key) === object,
+                  Self.whole(object[Property.activeNr]) == Self.nnrSlot else { return }
+            let outcome = await self.store.writeBound(object.key, property: property, value: value,
+                sender: sender, authority: authority, expiresAuthorityAtDeadline: true)
+            if self.store.snapshotIdentity == identity, self.slice === object {
+                self.noteOutcome(outcome)
+            }
+        }
+    }
+
     /// The NNR model: 0 Standard, 1 Premium (`nnrModelSlot`).
     func selectNnrModel(_ slot: Int64) {
         guard nnr?.modelSlot != nil, nnr?.modelSlot != slot else {
@@ -469,6 +570,11 @@ final class RxPanelModel: ObservableObject {
 
     private func rebuild() {
         let object = slice
+        if let target = nnrWarningTarget,
+           target.snapshot != store.snapshotIdentity || object !== target.object
+            || store.isStale || !store.isSnapshotComplete || slices.active?.listening != false {
+            nnrWarningAuthority?.revoke()
+        }
         let assets = store.object(Self.dspAssetsKey)
         watch(object, assets: assets)
         let catalog = catalogFeed.catalog
@@ -514,7 +620,20 @@ final class RxPanelModel: ObservableObject {
         let activeNr = has(Property.activeNr) ? Self.whole(object?[Property.activeNr]) : nil
         let dspAssetVersion = store.capabilityVersion("dspAssetVersion")
         let nnrState = Self.nnrState(object, store: store)
+        nnrPresentationSlice = object
         set(\.nnr, nnrState)
+        var priorityReason: String?
+        if activeNr == Self.nnrSlot {
+            if case .text(let error)? = object?["nnrLastError"], !error.isEmpty {
+                priorityReason = error
+            } else if (nnrState?.limit ?? 0) == 0,
+                      case .text(let status)? = object?[Self.nnrStatus], !status.isEmpty {
+                priorityReason = status
+            } else {
+                priorityReason = Self.nnrCannotRun(object)
+            }
+        }
+        set(\.nnrPriorityReason, priorityReason)
         for reduction in Self.reductions {
             let reason: String?
             if object != nil && activeNr == nil {
@@ -527,8 +646,8 @@ final class RxPanelModel: ObservableObject {
                 }
             }
             // The desktop's amber mark on NNR while the Core holds it back.
-            let warning = reduction.slot == Self.nnrSlot && reason == nil && (nnrState?.limit ?? 0) != 0
-                ? nnrState?.limitText : nil
+            let warning = reduction.slot == Self.nnrSlot && reason == nil
+                ? (nnrState?.limitText ?? nnrState?.loadWarning) : nil
             noise.append(Noise(id: reduction.label, kind: .reduction(reduction.slot), label: reduction.label,
                                lit: activeNr == reduction.slot, reason: reason, warning: warning))
         }
@@ -579,10 +698,19 @@ final class RxPanelModel: ObservableObject {
             }
         }
         let offered = (store.agreedMinor ?? 0) >= nnrTryAgainMinor && store.capabilityVersion(nnrCapability) >= 1
+        let warning: String?
+        if store.isSnapshotComplete, !store.isStale,
+           store.capabilityVersion(nnrLoadWarningCapability) >= 1,
+           whole(slice[Property.activeNr]) == nnrSlot,
+           case .text(let text)? = slice[nnrLoadWarning], !text.isEmpty {
+            warning = text
+        } else {
+            warning = nil
+        }
         return Nnr(limit: limit, limitText: limitText, modelSlot: whole(slice[nnrModelSlot]),
                    standardReady: flag(slice[nnrStandardAvailable]) ?? false,
                    premiumReady: flag(slice[nnrPremiumAvailable]) ?? false,
-                   tryAgainReason: offered ? nil : nnrTryAgainOlderCoreText)
+                   tryAgainReason: offered ? nil : nnrTryAgainOlderCoreText, loadWarning: warning)
     }
 
     /// Why NNR cannot run on the slice, or nil when it can: the slice's

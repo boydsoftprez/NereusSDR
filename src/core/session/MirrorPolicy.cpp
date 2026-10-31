@@ -412,6 +412,7 @@ const MirrorPolicy::Entry kEntries[] = {
     // clears it with the nnr.tryAgain command or by choosing a model, and
     // StationServer leaves it out for peers below minor 11.
     { "SliceModel", "nnrLimit", MirrorDirection::Outbound },
+    { "SliceModel", "nnrLoadWarning", MirrorDirection::Outbound },
     { "SliceModel", "nr1Taps", MirrorDirection::Bidirectional },
     { "SliceModel", "nr1Delay", MirrorDirection::Bidirectional },
     { "SliceModel", "nr1Gain", MirrorDirection::Bidirectional },
