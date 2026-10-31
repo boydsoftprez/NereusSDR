@@ -51,7 +51,8 @@ struct AboutAppTests {
     func desktopParity() throws {
         let content = try AboutAppContent.load()
         #expect(content.roster.count == 5)
-        #expect(content.roster.map { $0.names.count } == [21, 1, 4, 1, 1])
+        #expect(content.roster.map { $0.names.count } == [21, 1, 4, 1, 2])
+        #expect(content.roster.last?.names.contains { $0.contains("W4KZO") && $0.contains("funsutton") } == true)
         #expect(content.links.count == 13)
         #expect(content.links.first?.title == "NereusSDR releases / What's New")
         #expect(content.links.last?.title == "Apache-Labs Home")
