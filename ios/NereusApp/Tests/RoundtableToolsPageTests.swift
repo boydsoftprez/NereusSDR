@@ -594,6 +594,84 @@ struct RoundtableToolsPageTests {
         await model.disconnect()
     }
 
+    @Test("card accessibility format and read actions never tune, including while keyed")
+    func reportCardActions() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await shotStation(frequency: true)
+        var scene = Self.bandScene()
+        var summary = FakeStation.roundtableSummary(id: Self.sliceRoom, members: 2, state: "talking", talkers: ["K4ABC"])
+        summary["stations"] = .array(["K4ABC", "N4XYZ"].map { call in .object([
+            "ref": .string(call), "sourceRoom": .string(Self.sliceRoom), "slice": .number(0),
+            "hz": .number(7_236_400), "family": .string("lsb"), "callsign": .string(call),
+            "nth": .number(1), "grid": .string("EM73"), "keyed": .bool(false),
+            "away": .bool(false), "joining": .bool(false),
+        ]) })
+        scene.roomRecords[Self.sliceRoom] = scene.roomRecords[Self.sliceRoom]?.map { original in
+            var record = original
+            if record.fields["record"] == .string("member") || record.fields["record"] == .string("reading") {
+                record.fields["sourceRoom"] = .string(Self.sliceRoom)
+            }
+            if record.fields["record"] == .string("turn") {
+                record.fields["sourceRoom"] = .string(Self.sliceRoom)
+                record.fields["hz"] = .number(7_236_400)
+            }
+            if case .array(let talkers)? = record.fields["talkers"] {
+                record.fields["talkers"] = .array(talkers.map { value in
+                    guard case .object(var talker) = value else { return value }
+                    talker["sourceRoom"] = .string(Self.sliceRoom)
+                    return .object(talker)
+                })
+            }
+            return record
+        }
+        model.roundtable.activeSliceId = 0
+        scene.rooms = [summary]
+        scene.frequencyPresences = [0: Self.sliceRoom]
+        try await station.deliverRoundtable(scene)
+        #expect(await settle { model.roundtable.frequencyRows.first?.stations.count == 2 })
+        #expect(await settle { model.roundtable.room?.now.first?.hz == 7_236_400 })
+        let tuned = Tuned(), read = Tuned()
+        let layer = RoundtableTagLayer(roundtable: model.roundtable, sliceIds: [0], geometryWidth: 402,
+            lowHz: 7_220_000, hzPerPoint: 100, top: 200, tickFoot: 230, flagRects: [],
+            keyed: true, sliceLetter: "A", readReports: { read.ids.append($0) }) { room in tuned.ids.append(room.id) }
+        let (window, _) = try host(layer.frame(width: 402, height: 400))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        await ShotWait.laidOut(window)
+        let tag = try #require(SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window))
+        await MainQueue.drained()
+        let messages = station.messages.count
+        let initialHeight = tag.accessibilityFrame.height
+        #expect(SetupTypedEntryTests.perform("Change signal display", on: tag))
+        #expect(model.roundtable.signalFormat == .sUnits)
+        await ShotWait.laidOut(window)
+        // A native screenshot needs a completed TimelineView update, beyond
+        // the accessibility action's immediate layout transaction.
+        let sLabel = SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window)?.accessibilityLabel
+        try #require(await settle {
+            let label = SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window)?.accessibilityLabel
+            return label != nil && label != sLabel && label?.contains("Signal display: S-units") == true
+        })
+        await ShotWait.laidOut(window)
+        try write("roundtable-overlay-card-s-units", window)
+        #expect(SetupTypedEntryTests.perform("Change signal display", on: tag))
+        #expect(model.roundtable.signalFormat == .both)
+        await ShotWait.laidOut(window)
+        let bothTag = try #require(SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window))
+        #expect(bothTag.accessibilityFrame.height >= initialHeight + 20)
+        #expect(bothTag.accessibilityLabel?.contains("N4XYZ heard K4ABC") == true)
+        #expect(bothTag.accessibilityLabel?.contains("-43 dBm") == true)
+        try write("roundtable-overlay-card-both", window)
+        #expect(SetupTypedEntryTests.perform("Read reports", on: tag))
+        #expect(read.ids == [Self.sliceRoom] && tuned.ids.isEmpty)
+        #expect(station.messages.count == messages)
+        #expect(tag.accessibilityLabel?.contains("K4ABC") == true)
+        #expect(tag.accessibilityLabel?.contains("N4XYZ") == true)
+        #expect(tag.accessibilityFrame.width <= 177 && tag.accessibilityFrame.height > 40)
+        await model.disconnect()
+    }
+
     @Test("canonical frequency capability renders quiet people and omits empty rooms")
     func canonicalFrequencyShots() async throws {
         let (model, station) = try await shotStation(frequency: true)

@@ -1207,38 +1207,143 @@ struct RoundtableSheetTests {
         #expect(model.roundtable.frequencyRows.map(\.hz) == [7_236_400, 7_242_800, 7_256_700])
         let tags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
         #expect(tags.count == 3 && tags[0].label.contains("\n"))
-        #expect(tags[0].reportLines.contains("Last talker: K4ABC"))
-        #expect(tags[0].reportLines.contains(where: { $0.contains("N4XYZ") && $0.contains("-43") }))
-        let narrowLines = RoundtableTagLayout.contentLines(tags[0], width: 80)
-        #expect(narrowLines.contains("Last") && narrowLines.contains("talker") && narrowLines.contains("K4ABC"))
-        #expect(narrowLines.contains(where: { $0.hasPrefix("-43dBm ") }))
-        let font = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        #expect(narrowLines.allSatisfy { ($0 as NSString).size(withAttributes: [.font: font]).width <= 67 },
-                "All visible narrow-strip report text must fit the actual body")
+        #expect(tags[0].card?.state == .known("K4ABC"))
+        let dbmPlan = RoundtableTagLayout.cardPlan(tags[0], width: 176)
+        #expect(dbmPlan.reports.first?.reporter == "N4XYZ" && dbmPlan.reports.first?.signal == ["-43"])
+        model.roundtable.setSignalFormat(.sUnits)
+        let sTags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
+        #expect(RoundtableTagLayout.cardPlan(sTags[0], width: 176).reports.first?.signal == ["S9 +30"])
+        model.roundtable.setSignalFormat(.both)
+        let bothTags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
+        #expect(RoundtableTagLayout.cardPlan(bothTags[0], width: 176).reports.first?.signal == ["S9 +30", "-43 dBm"])
+        model.roundtable.setSignalFormat(.dbm)
+        let narrow = RoundtableTagLayout.cardPlan(tags[0], width: 80)
+        #expect(narrow.stateCaption == "Last talker" && narrow.stateTitle == "K4ABC")
+        #expect(narrow.reports.isEmpty && narrow.showsDetails)
         let summary = try #require(model.roundtable.frequencyRows.first)
         var reportView = try #require(model.roundtable.room)
         reportView.earlier = []
         let reportNow = Int64(Date().timeIntervalSince1970 * 1000)
         reportView.now[0].hz = 7_242_800
-        #expect(RoundtableTagLayout.reportLines(for: summary, view: reportView, now: reportNow)
-            == ["Read reports · details"])
+        #expect(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow)?.state == .waiting)
         reportView.now[0].hz = summary.hz
+        reportView.now[0].sourceRoom = "another-source"
+        #expect(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow)?.state == .waiting)
+        reportView.now[0].sourceRoom = source
         reportView.now[0].kind = "doubled"
-        let doubled = RoundtableTagLayout.reportLines(for: summary, view: reportView, now: reportNow)
-        #expect(doubled.contains("Combined RF · unattributed") && !doubled.contains(where: { $0.contains("-43") }))
-        reportView.now[0].kind = "talking"
+        let doubled = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(doubled.state == .doubled && doubled.reports.isEmpty)
+        reportView.now[0].kind = "unknown"
+        reportView.now[0].talkers = []
+        let unknown = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(unknown.state == .unknown && unknown.reports.first?.reporter == "N4XYZ")
+        reportView.now[0] = try #require(model.roundtable.room?.now.first)
+        var duplicate = reportView.members[1]
+        duplicate.ref = "k/1"
+        duplicate.sourceRoom = "another-source"
+        duplicate.callsign = "K4ABC"
+        duplicate.nth = 2
+        duplicate.km = 0
+        reportView.members.append(duplicate)
+        let scoped = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(scoped.state == .known("K4ABC") && scoped.reports.first?.reporter == "K4ABC (2)")
+        #expect(scoped.reports.first?.id == "another-source/k/1")
         for i in reportView.members.indices { reportView.members[i].reading?.turn = 999 }
-        let mismatched = RoundtableTagLayout.reportLines(for: summary, view: reportView, now: reportNow)
-        #expect(mismatched.contains(where: { $0.contains("No report") }) && !mismatched.contains(where: { $0.contains("-43") }))
+        let mismatched = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(mismatched.reports.isEmpty)
+        // The two nearest members have absent/invalid readings; a later,
+        // matching report must still occupy the compact card's first row.
+        reportView = try #require(model.roundtable.room)
+        for i in reportView.members.indices {
+            if reportView.members[i].callsign == "N4XYZ" { reportView.members[i].reading?.present = false }
+            if reportView.members[i].callsign == "KG4VCF" { reportView.members[i].reading?.dbm = .nan }
+            if reportView.members[i].callsign == "K4QRS" { reportView.members[i].reading?.turn = 999 }
+            if reportView.members[i].callsign == "W9ABC" { reportView.members[i].reading?.t = reportNow - 41_000 }
+        }
+        reportView.earlier = [reportView.now[0]]
+        reportView.earlier[0].end = reportNow - 5000
+        reportView.now = []
+        let quiet = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow + 1000))
+        #expect(quiet.state == .known("K4ABC") && quiet.ended)
+        #expect(quiet.reports.map(\.reporter) == ["W9ABC"])
+        #expect(quiet.reports.first?.age == "42 s" && quiet.reports.first?.stale == true)
+        #expect(quiet.reports.first?.reading.t == reportNow - 41_000)
         try await shoot("frequency-spectrum-portrait", model: model, detent: nil)
         try await shoot("frequency-spectrum-landscape", model: model, detent: nil, size: CGSize(width: 874, height: 402))
+        var longIdentityScene = scene
+        longIdentityScene.rooms[0]["talkers"] = .array([.string("EA8/KG4VCF/MM/QRP")])
+        if case .array(let stations)? = longIdentityScene.rooms[0]["stations"] {
+            longIdentityScene.rooms[0]["stations"] = .array(stations.map { value in
+                guard case .object(var station) = value, station["ref"] == .string("k/1") else { return value }
+                station["callsign"] = .string("EA8/KG4VCF/MM/QRP")
+                station["nth"] = .number(2)
+                return .object(station)
+            })
+        }
+        longIdentityScene.roomRecords[source] = longIdentityScene.roomRecords[source]?.map { original in
+            var record = original
+            if record.id == "member:k/1" {
+                record.fields["callsign"] = .string("EA8/KG4VCF/MM/QRP")
+                record.fields["nth"] = .number(2)
+            }
+            if record.id == "turn:12", case .array(let talkers)? = record.fields["talkers"] {
+                record.fields["talkers"] = .array(talkers.map { value in
+                    guard case .object(var talker) = value else { return value }
+                    talker["callsign"] = .string("EA8/KG4VCF/MM/QRP")
+                    talker["nth"] = .number(2)
+                    return .object(talker)
+                })
+            }
+            return record
+        }
+        try await station.deliverRoundtable(longIdentityScene)
+        try #require(await settle { model.roundtable.room?.now.first?.talkers.first?.callsign == "EA8/KG4VCF/MM/QRP" })
+        try await shoot("overlay-long-identity-small-portrait", model: model, detent: nil, size: CGSize(width: 393, height: 852))
+        try await station.deliverRoundtable(scene)
+        try #require(await settle { model.roundtable.room?.now.first?.talkers.first?.callsign == "K4ABC" })
         try await shoot("frequency-half-mi", model: model, detent: .half)
+        model.roundtable.setSignalFormat(.both)
+        try await shoot("overlay-both-landscape", model: model, detent: nil, size: CGSize(width: 874, height: 402))
+        try await shoot("overlay-both-half-small", model: model, detent: .half, size: CGSize(width: 393, height: 852))
+        model.roundtable.setSignalFormat(.dbm)
         try await shoot("frequency-full-mi", model: model, detent: .full)
         try await shoot("frequency-keyboard-mi", model: model, detent: .full, typing: true)
         model.settings.apply(.settingsValue(.init(key: "Roundtable/DistanceUnits", origin: "other",
             properties: [.init(name: "Roundtable/DistanceUnits", value: .utf8("km"))])))
         #expect(await settle { model.roundtable.distanceUnits == "km" })
         try await shoot("frequency-landscape-km", model: model, detent: .half, size: CGSize(width: 874, height: 402))
+        var emptyScene = scene
+        emptyScene.rooms[0]["state"] = .string("unknown")
+        emptyScene.rooms[0]["members"] = .number(2)
+        emptyScene.rooms[0]["talkers"] = .array([])
+        if case .array(let stations)? = emptyScene.rooms[0]["stations"] {
+            emptyScene.rooms[0]["stations"] = .array(Array(stations.prefix(2)))
+        }
+        emptyScene.roomRecords[source] = emptyScene.roomRecords[source]?.map { original in
+            var record = original
+            if record.fields["record"] == .string("reading") { record.fields["present"] = .bool(false) }
+            if record.id == "turn:12" {
+                record.fields["kind"] = .string("unknown")
+                record.fields["talkers"] = .array([])
+            }
+            return record
+        }
+        try await station.deliverRoundtable(emptyScene)
+        #expect(await settle { model.roundtable.frequencyRows.first?.stations.count == 2
+            && model.roundtable.room?.now.first?.kind == "unknown" })
+        try await shoot("overlay-unknown-no-reports-small-portrait", model: model, detent: nil, size: CGSize(width: 393, height: 852))
+        try await shoot("overlay-unknown-no-reports-small-half", model: model, detent: .half, size: CGSize(width: 393, height: 852))
+        var endedScene = emptyScene
+        endedScene.rooms[0]["state"] = .string("quiet")
+        endedScene.roomRecords[source] = endedScene.roomRecords[source]?.map { original in
+            var record = original
+            if record.id == "turn:12" { record.fields["end"] = .number(Double(Int64(Date().timeIntervalSince1970 * 1000) - 5000)) }
+            return record
+        }
+        try await station.deliverRoundtable(endedScene)
+        try #require(await settle { model.roundtable.room?.now.isEmpty == true
+            && model.roundtable.room?.earlier.contains(where: { $0.id == 12 && $0.end != nil }) == true })
+        try await shoot("overlay-ended-unknown-small-half", model: model, detent: .half, size: CGSize(width: 393, height: 852))
         await station.deliverRoundtableState { $0.link = .offline }
         #expect(await settle { model.roundtable.historyStatus == "History stale · offline" })
         try await shoot("frequency-history-offline", model: model, detent: .full)
@@ -1380,6 +1485,23 @@ struct RoundtableSheetTests {
         return (window, host.view)
     }
 
+    private func reportsGlyphsAreDrawn(_ image: UIImage, in rect: CGRect) -> Bool {
+        guard let raster = image.cgImage,
+              let crop = raster.cropping(to: rect.applying(CGAffineTransform(scaleX: image.scale, y: image.scale)).integral) else { return false }
+        let width = crop.width, height = crop.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+        context.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var blueGlyphPixels = 0
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let red = Int(pixels[offset]), green = Int(pixels[offset + 1]), blue = Int(pixels[offset + 2])
+            if green > 60, green * 5 > red * 6, blue * 10 > green * 11 { blueGlyphPixels += 1 }
+        }
+        return blueGlyphPixels >= 20
+    }
+
     private func shoot(_ name: String, model: AppModel, detent: RoundtableSheet.Detent?,
                        size: CGSize = CGSize(width: 402, height: 874), typing: Bool = false) async throws {
         let (window, _) = try host(RoundtableShotRoot(model: model, detent: detent), size: size)
@@ -1387,6 +1509,9 @@ struct RoundtableSheetTests {
             window.isHidden = true
             window.rootViewController = nil
         }
+        let oldAccessibility = SetupTypedEntryTests.applicationAccessibility()
+        if name.hasPrefix("overlay-") { SetupTypedEntryTests.setApplicationAccessibility(true) }
+        defer { if name.hasPrefix("overlay-") { SetupTypedEntryTests.setApplicationAccessibility(oldAccessibility) } }
         let bandDraw = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
         let band = model.main.band
         BandFlagShotTests.feed(band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
@@ -1413,10 +1538,30 @@ struct RoundtableSheetTests {
             print("Landscape Roundtable viewport=\(scroll.bounds.height) content=\(scroll.contentSize.height)")
             landscapeScroll = scroll
         }
-        func save(_ captureName: String) throws {
-            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-            }
+        var reportsRect: CGRect?
+        if name.hasPrefix("overlay-"), let tag = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0]).first {
+            let node = try #require(SetupTypedEntryTests.element("roundtableTag.\(tag.roomId)", in: window))
+            let frame = window.convert(node.accessibilityFrame, from: window.screen.coordinateSpace)
+            reportsRect = CGRect(x: frame.minX + 4, y: frame.maxY - 22, width: frame.width - 8, height: 18)
+            let width = frame.width
+            let plan = RoundtableTagLayout.cardPlan(tag, width: Double(width))
+            print("Overlay native bounds name=\(name) width=\(width) font=\(plan.stateFontSize) title=\(plan.stateTitle ?? "none")")
+        }
+        func save(_ captureName: String) async throws {
+            var completed: UIImage?
+            try #require(await ShotWait.until {
+                var complete = false
+                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    complete = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                // SwiftUI can commit a complete backing image before all
+                // newly inserted content is drawn. These online fixtures need
+                // the actual Reports glyphs, not merely a complete border.
+                let reportsDrawn = reportsRect.map { reportsGlyphsAreDrawn(image, in: $0) } ?? true
+                if complete && reportsDrawn { completed = image }
+                return complete && reportsDrawn
+            }, "Native capture must contain complete image data")
+            let image = try #require(completed)
             if let directory = ProcessInfo.processInfo.environment["NEREUS_MAIN_SHOTS"], !directory.isEmpty,
                let data = image.pngData() {
                 let url = URL(fileURLWithPath: directory).appendingPathComponent("roundtable-\(captureName).png")
@@ -1424,7 +1569,7 @@ struct RoundtableSheetTests {
                 print("Wrote \(url.path)")
             }
         }
-        try save(name)
+        try await save(name)
         if let scroll = landscapeScroll {
             // SwiftUI Text is drawn inside a hosting view; UIKit accessibility
             // descendants are not a reliable visibility oracle in this render host.
@@ -1449,7 +1594,7 @@ struct RoundtableSheetTests {
             #expect(abs(visibleEnd - scroll.contentSize.height) <= 1,
                     "The native viewport must reach the conversation end")
             print("Landscape conversation end=\(visibleEnd) content=\(scroll.contentSize.height)")
-            try save(name + "-chat-scrolled")
+            try await save(name + "-chat-scrolled")
         }
     }
 }
