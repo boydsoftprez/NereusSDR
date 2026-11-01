@@ -115,14 +115,13 @@ try {
         Tee-Object -FilePath (Join-Path $EvidenceDirectory 'audit-console.txt')
     $status.auditExit = $LASTEXITCODE
     if ($status.auditExit -ne 0) { throw "Controlled provider import audit failed: $($status.auditExit)" }
-    $audit = Get-Content (Join-Path $EvidenceDirectory 'pe-runtime-audit.json') -Raw | ConvertFrom-Json
+    $audit = Get-Content (Join-Path $EvidenceDirectory 'pe-runtime-audit.json') -Raw | ConvertFrom-Json -AsHashtable
     # Prove that every staged provider is the first selected normal-search
     # candidate; ambient MySQL/Git/MSYS2 files must not fill one of these names.
     foreach ($provider in $providers) {
-        $candidateProperty = $audit.normal_search_candidates.PSObject.Properties |
-            Where-Object Name -EQ $provider.name.ToLowerInvariant()
-        if (!$candidateProperty -or !$candidateProperty.Value -or
-            !([IO.Path]::GetFullPath($candidateProperty.Value[0])).Equals(
+        $candidates = $audit['normal_search_candidates'][$provider.name.ToLowerInvariant()]
+        if (!$candidates -or
+            !([IO.Path]::GetFullPath($candidates[0])).Equals(
                 (Join-Path $RuntimeDirectory $provider.name), [StringComparison]::OrdinalIgnoreCase)) {
             throw "Controlled provider was not selected first: $($provider.name)"
         }

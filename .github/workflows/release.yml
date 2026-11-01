@@ -154,6 +154,13 @@ jobs:
         shell: pwsh
         run: ./scripts/ci/windows-controlled-audio-runtime.ps1
 
+      - name: Exercise the exact PR CI helper from Git Bash
+        id: pr_ci_helper
+        if: ${{ !cancelled() && steps.controlled_replay.outcome == 'success' }}
+        working-directory: build
+        shell: bash
+        run: pwsh -NoProfile -File ../scripts/ci/test-windows-audio.ps1
+
       - name: Preserve all recovered evidence and matching runtime providers
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -161,6 +168,10 @@ jobs:
           name: windows-audio-runtime-replay-${{ github.run_id }}
           path: |
             runtime-evidence/
+            windows-audio-test-runtime/*.dll
+            build/windows-audio-runtime-manifest.json
+            build/windows-audio-selected.txt
+            build/windows-audio-tests.xml
             windows-audio-replay.xml
             build/Testing/Temporary/
             build/CMakeCache.txt
