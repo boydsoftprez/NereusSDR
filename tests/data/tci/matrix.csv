@@ -1,7 +1,7 @@
 command,input,expected_response,expected_notifications,thetis_cite,notes
 compat_emulate_esdr3_on,SETUP:TciEmulateExpertSDR3Protocol=True;;noop;,,,TCIServer.cs:2515 [v2.10.3.13],placeholder; verified end-to-end by init burst golden (protocol: line flips Thetis -> ExpertSDR3) — query handler not exposed by Thetis
 compat_emulate_sunsdr2pro_on,SETUP:TciEmulateSunSDR2Pro=True;;noop;,,,TCIServer.cs:2523 [v2.10.3.13],placeholder; verified end-to-end by init burst golden (device: line flips to SunSDR2PRO) — query handler not exposed by Thetis
-compat_cwlu_becomes_cw_on,SETUP:TciCwluBecomesCw=True;;noop;,,,TCIServer.cs:2540 [v2.10.3.13],placeholder; init burst golden covers the modulations_list trailing CW; Phase 7 wired modulation handler but DEFERRED CWLUbecomesCW transform (send-side) — covered by init burst golden today + Phase 11/12 follow-up
+compat_cwlu_becomes_cw_on,SETUP:TciCwluBecomesCw=True;;modulation:1\,cwl;,,modulation:1\,CW;,TCIServer.cs:2174-2195 [v2.10.3.15],CW compatibility enabled; report CW while the actual receive mode remains CWL
 compat_cw_becomes_cwu_above_10mhz_on,SETUP:TciCwBecomesCwuAbove10mhz=True;;noop;,,,TCIServer.cs:3873 [v2.10.3.13],placeholder; Phase 7 wired modulation handler but DEFERRED CWbecomesCWUabove10mhz transform (needs VFOATX/VFOBTX accessors) (W2PA #559)
 compat_iq_swap_off,SETUP:TciIqSwap=False;;noop;,,,TCIServer.cs:6111 [v2.10.3.13],placeholder; effect-site is binary IQ frame builder; Phase 11 confirmed via source-first audit that the effect-site is the binary IQ frame builder (Phase 18 wires; iq_swap toggles I/Q sample order in the wire payload); Phase 18 WIRED — verified by tst_tci_iq_roundtrip::iq_swap_flag_swaps_i_q_pairs
 compat_always_stream_iq_on,SETUP:TciAlwaysStreamIq=True;;noop;,,,TCIServer.cs:5401 [v2.10.3.13],placeholder; effect-site is wantsIQStream early-out; Phase 11 confirmed via source-first audit that the effect-site is wantsIQStream early-out (Phase 18 wires; flag forces IQ broadcast even with no subscriptions); Phase 18 WIRED — verified by tst_tci_iq_roundtrip::always_stream_iq_overrides_subscription
@@ -18,7 +18,7 @@ lock_set_rx0,lock:0\,true;,,lock:0\,true;,TCIServer.cs:3277 [v2.10.3.13],2-arg s
 trailing_semicolon_strip,vfo:0\,0\,14250000,,vfo:0\,0\,14250000;,,TCIServer.cs:4913 [v2.10.3.13],parser strips trailing ; — set still works without it
 modulation_set_rx0_usb,modulation:0\,usb;,,modulation:0\,USB;,TCIServer.cs:3853 [v2.10.3.13],set USB; uppercase per // MW0LGE_22b mods are uppcase on the sun (TCIServer.cs:2155)
 modulation_query_after_set,modulation:0\,usb;;modulation:0;,modulation:0\,USB;,,TCIServer.cs:3933 [v2.10.3.13],query returns current mode uppercase (uses ;; chain)
-modulation_set_rx1_cwl,modulation:1\,cwl;,,modulation:1\,CWL;,TCIServer.cs:3897 [v2.10.3.13],CWL mode set on rx1
+modulation_set_rx1_cwl,SETUP:TciCwluBecomesCw=False;;modulation:1\,cwl;,,modulation:1\,CWL;,TCIServer.cs:3897 [v2.10.3.13],CWL mode set on rx1
 modulation_set_rx0_nfm_alias_fm,modulation:0\,nfm;,,modulation:0\,FM;,TCIServer.cs:3865 [v2.10.3.13],nfm and fm both alias to DSPMode.FM
 rx_filter_band_set_rx0,rx_filter_band:0\,200\,2900;,,rx_filter_band:0\,200\,2900;,TCIServer.cs:4393 [v2.10.3.13],3-arg set filter band
 rx_filter_band_query_after_set,rx_filter_band:0\,200\,2900;;rx_filter_band:0;,rx_filter_band:0\,200\,2900;,,TCIServer.cs:4377 [v2.10.3.13],query returns current filter band (uses ;; chain)

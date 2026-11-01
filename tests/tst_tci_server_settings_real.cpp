@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-11-01: CW tester-feedback regression coverage. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-09-29: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
@@ -108,6 +110,59 @@ class TestTciServerSettingsReal : public QObject {
 private slots:
     void init() { AppSettings::instance().clear(); }
     void cleanup() { AppSettings::instance().clear(); }
+
+    // Thetis TCIServer.cs:2174-2195 [v2.10.3.15] reports both CW
+    // sidebands as CW when requested, through the same sendMode path for
+    // initial state, queries and acknowledgments. The radio keeps its mode.
+    void cwSidebandsUseTheSelectedWireMode_data()
+    {
+        QTest::addColumn<bool>("on");
+        QTest::addColumn<QString>("mode");
+        QTest::addColumn<QString>("wireMode");
+        QTest::addColumn<QString>("path");
+        for (const QString& path : {QStringLiteral("init"), QStringLiteral("query"),
+                                    QStringLiteral("setAck")}) {
+            const auto row = [&path](const char* name, bool on, const char* mode,
+                                     const char* wireMode) {
+                QTest::newRow(qPrintable(path + QLatin1Char('-') + QLatin1String(name)))
+                    << on << QString::fromLatin1(mode) << QString::fromLatin1(wireMode) << path;
+            };
+            row("on-CWU", true, "CWU", "CW");
+            row("on-CWL", true, "CWL", "CW");
+            row("off-CWU", false, "CWU", "CWU");
+            row("off-CWL", false, "CWL", "CWL");
+            row("on-USB", true, "USB", "USB");
+            row("off-USB", false, "USB", "USB");
+        }
+    }
+    void cwSidebandsUseTheSelectedWireMode()
+    {
+        QFETCH(bool, on);
+        QFETCH(QString, mode);
+        QFETCH(QString, wireMode);
+        QFETCH(QString, path);
+        setOption("TciCwluBecomesCw", !on);
+        TestMockRadioModel radio;
+        TciProtocol protocol(&radio);
+        // A running protocol must read a later option change too.
+        setOption("TciCwluBecomesCw", on);
+        for (int rx = 0; rx < 2; ++rx) {
+            radio.setMode(rx, mode);
+            const QString expected = QStringLiteral("modulation:%1,%2;").arg(rx).arg(wireMode);
+            if (path == QStringLiteral("init")) {
+                QVERIFY2(protocol.buildInitBurst().contains(expected), qPrintable(expected));
+            } else if (path == QStringLiteral("query")) {
+                QCOMPARE(protocol.handleCommand(QStringLiteral("modulation:%1;").arg(rx)),
+                         expected);
+            } else {
+                radio.setMode(rx, QStringLiteral("LSB"));
+                QVERIFY(protocol.handleCommand(
+                    QStringLiteral("modulation:%1,%2;").arg(rx).arg(mode)).isEmpty());
+                QCOMPARE(drainLines(protocol), QStringList{expected});
+            }
+            QCOMPARE(radio.mode(rx), mode);
+        }
+    }
 
     // Thetis TCIServer.cs:4003-4025 [v2.10.3.15]: with "CW becomes CWU if
     // 10MHz and above" on, a client's `modulation:rx,cw` sets CWU when the
