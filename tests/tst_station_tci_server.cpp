@@ -1,3 +1,5 @@
+// 2026-11-01: CW tester-feedback regression coverage. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 // no-port-check: NereusSDR-original. R-R3-48 / R-R3-25 the Core's station
 // TCI server and the app's one TCI switch.
 //
@@ -130,6 +132,84 @@ class StationTciServerTest : public QObject {
 private slots:
     void init() { AppSettings::instance().clear(); }
     void cleanup() { AppSettings::instance().clear(); }
+
+    void stationCwOptionReportsTheSameModeToBothClients_data()
+    {
+        QTest::addColumn<bool>("on");
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<QString>("wireMode");
+        QTest::addColumn<QString>("changedWireMode");
+        QTest::newRow("on-CWU") << true << int(DSPMode::CWU)
+                               << QStringLiteral("CW") << QStringLiteral("CWU");
+        QTest::newRow("on-CWL") << true << int(DSPMode::CWL)
+                               << QStringLiteral("CW") << QStringLiteral("CWL");
+        QTest::newRow("off-CWU") << false << int(DSPMode::CWU)
+                                << QStringLiteral("CWU") << QStringLiteral("CW");
+        QTest::newRow("off-CWL") << false << int(DSPMode::CWL)
+                                << QStringLiteral("CWL") << QStringLiteral("CW");
+        QTest::newRow("on-USB") << true << int(DSPMode::USB)
+                               << QStringLiteral("USB") << QStringLiteral("USB");
+        QTest::newRow("off-USB") << false << int(DSPMode::USB)
+                                << QStringLiteral("USB") << QStringLiteral("USB");
+    }
+    void stationCwOptionReportsTheSameModeToBothClients()
+    {
+        QFETCH(bool, on);
+        QFETCH(int, mode);
+        QFETCH(QString, wireMode);
+        QFETCH(QString, changedWireMode);
+        RadioModel model;
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        SliceModel* slice = model.sliceById(a);
+        QVERIFY(slice);
+        slice->setDspMode(static_cast<DSPMode>(mode));
+        StationTciModel state;
+        StationTciController controller(&model, &state);
+        controller.setBindOverride(QStringLiteral("127.0.0.1"));
+        controller.setOptions(true, true, on, true);
+        QCOMPARE(state.cwluBecomesCw(), on);
+        QString reason;
+        QVERIFY(controller.setEnabled(true, freePort(), &reason));
+        TciApp first(controller.server()->port());
+        TciApp second(controller.server()->port());
+        QTRY_VERIFY(first.has(QStringLiteral("ready;")));
+        QTRY_VERIFY(second.has(QStringLiteral("ready;")));
+        const QString expected = QStringLiteral("modulation:0,%1;").arg(wireMode);
+        QVERIFY2(first.has(expected), qPrintable(expected));
+        QVERIFY2(second.has(expected), qPrintable(expected));
+        QCOMPARE(slice->dspMode(), static_cast<DSPMode>(mode));
+
+        // A local mode event must fan out through the same Core-owned option.
+        slice->setDspMode(DSPMode::LSB);
+        QTRY_VERIFY(first.has(QStringLiteral("modulation:0,LSB;")));
+        QTRY_VERIFY(second.has(QStringLiteral("modulation:0,LSB;")));
+        first.frames.clear();
+        second.frames.clear();
+        slice->setDspMode(static_cast<DSPMode>(mode));
+        QTRY_VERIFY(first.has(expected));
+        QTRY_VERIFY(second.has(expected));
+        QCOMPARE(slice->dspMode(), static_cast<DSPMode>(mode));
+
+        first.frames.clear();
+        second.frames.clear();
+        first.socket.sendTextMessage(QStringLiteral("modulation:0;"));
+        second.socket.sendTextMessage(QStringLiteral("modulation:0;"));
+        QTRY_VERIFY(first.has(expected));
+        QTRY_VERIFY(second.has(expected));
+
+        // Change Core options on the running server, then query both apps.
+        // There is no requirement to emit a mode event solely for this toggle.
+        controller.setOptions(true, true, !on, true);
+        first.frames.clear();
+        second.frames.clear();
+        const QString changed = QStringLiteral("modulation:0,%1;").arg(changedWireMode);
+        first.socket.sendTextMessage(QStringLiteral("modulation:0;"));
+        second.socket.sendTextMessage(QStringLiteral("modulation:0;"));
+        QTRY_VERIFY(first.has(changed));
+        QTRY_VERIFY(second.has(changed));
+        QCOMPARE(slice->dspMode(), static_cast<DSPMode>(mode));
+        QVERIFY(!model.mox());
+    }
 
     // The station network is this computer's address on the radio's subnet.
     void stationAddressFacesTheRadio()

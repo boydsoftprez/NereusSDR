@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- TCI now honors **CWL/CWU becomes CW** in initial state, mode queries,
+  acknowledgments and live reports to connected logging applications. The
+  option changes the reported mode only; the receiver keeps its CW sideband.
+
 ## [2026.10.2] - 2026-10-31
 
 This is the combined desktop and Core release for 2026.10.2. See the [bench checklist](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.2/docs/guides/bench-2026.10.2.md) for operating checks and recorded acceptance.

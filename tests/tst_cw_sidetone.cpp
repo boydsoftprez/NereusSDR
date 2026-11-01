@@ -13,6 +13,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-11-01: CW tester-feedback regression coverage. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, the computer sidetone tests (R-CW-39).
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
@@ -428,6 +430,49 @@ private slots:
         QVERIFY(!rig.engine->cwSidetoneRun());
         rig.periods(20);
         QCOMPARE(rig.lastPeak(), 0.0);
+        rig.radio->cwxSender()->setHandKey(false);
+        AppSettings::instance().clear();
+    }
+
+    // R-CW-38/39: the output selections are independent under the master.
+    void radioSidetoneSelectionLeavesComputerOutputUnchanged_data()
+    {
+        QTest::addColumn<bool>("master");
+        QTest::addColumn<bool>("computer");
+        QTest::addColumn<bool>("runs");
+
+        QTest::newRow("computer enabled") << true << true << true;
+        QTest::newRow("computer disabled") << true << false << false;
+        QTest::newRow("master off") << false << true << false;
+    }
+
+    void radioSidetoneSelectionLeavesComputerOutputUnchanged()
+    {
+        QFETCH(bool, master);
+        QFETCH(bool, computer);
+        QFETCH(bool, runs);
+        AppSettings::instance().clear();
+        EngineRig rig;
+        TransmitModel& tm = rig.radio->transmitModel();
+        tm.setCwSidetone(master);
+        tm.setCwComputerSidetone(computer);
+        QVERIFY(rig.radio->cwxSender()->setHandKey(true));
+
+        // Check rendered audio as well as the run gate: selecting or
+        // clearing the radio output cannot start or silence the computer.
+        for (const bool selected : {false, true, false}) {
+            tm.setCwRadioSidetone(selected);
+            QCOMPARE(tm.cwRadioSidetone(), selected);
+            QCOMPARE(tm.cwSidetone(), master);
+            QCOMPARE(tm.cwComputerSidetone(), computer);
+            QCOMPARE(rig.engine->cwSidetoneRun(), runs);
+            rig.periods(20);
+            if (runs) {
+                QVERIFY(rig.lastPeak() > 0.4);
+            } else {
+                QCOMPARE(rig.lastPeak(), 0.0);
+            }
+        }
         rig.radio->cwxSender()->setHandKey(false);
         AppSettings::instance().clear();
     }

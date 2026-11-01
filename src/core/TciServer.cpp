@@ -6,6 +6,9 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-11-01: CW compatibility reporting by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex: live mode broadcasts share
+//                 the protocol's selected CW wire mode without changing DSP.
 //   2026-10-27 - CW transmit, the TCI CW commands (R-CW-35) by J.J. Boyd
 //                (KG4VCF), AI-assisted via Claude Code: each command names
 //                its app to the protocol (the CW owner), and an app that
@@ -1081,7 +1084,8 @@ void TciServer::wireSliceForBroadcast(SliceModel* slice, int sliceId)
             [this, sliceId](NereusSDR::DSPMode mode) {
                 const QString modeStr = SliceModel::modeName(mode);
                 m_protocol->enqueueLocalBroadcast(
-                    QStringLiteral("modulation:%1,%2;").arg(sliceId).arg(modeStr));
+                    QStringLiteral("modulation:%1,%2;").arg(sliceId).arg(
+                        TciProtocol::tciModeForWire(modeStr)));
             });
 
     // ── Filter (rx_filter_band: line) ───────────────────────────────────────

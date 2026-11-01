@@ -9,6 +9,8 @@
 // fake connection records the wire states it is handed.
 //
 // Modification history (NereusSDR):
+// 2026-11-01: CW tester-feedback regression coverage. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, the CW keyer controller. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
 //   2026-10-26: CW transmit early fix wave: stops in QSK and Semi with
@@ -415,6 +417,66 @@ private slots:
     }
 
     // ── Composition (R-CW-07, R-CW-13, R-CW-16, R-CW-38) ───────────────────
+    void computerSidetoneSelectionLeavesRadioWireUnchanged_data()
+    {
+        QTest::addColumn<bool>("master");
+        QTest::addColumn<bool>("radio");
+        QTest::addColumn<bool>("computer");
+        QTest::addColumn<bool>("radioMuted");
+        QTest::addColumn<int>("level");
+
+        QTest::newRow("neither output") << true << false << false << false << 0;
+        QTest::newRow("computer only") << true << false << true << false << 0;
+        QTest::newRow("radio only") << true << true << false << false << 63;
+        QTest::newRow("both outputs") << true << true << true << false << 63;
+        QTest::newRow("master off") << false << true << true << false << 0;
+        QTest::newRow("radio muted") << true << true << true << true << 0;
+    }
+
+    void computerSidetoneSelectionLeavesRadioWireUnchanged()
+    {
+        QFETCH(bool, master);
+        QFETCH(bool, radio);
+        QFETCH(bool, computer);
+        QFETCH(bool, radioMuted);
+        QFETCH(int, level);
+        Rig rig;
+        TransmitModel& tm = rig.model.transmitModel();
+        tm.setCwSidetone(master);
+        tm.setCwRadioSidetone(radio);
+        tm.setCwComputerSidetone(computer);
+        tm.setMonitorVolume(0.5f);
+        tm.setCwKeyerSpeed(31);
+        tm.setCwKeyerWeight(55);
+        tm.setCwBreakInDelayMs(400);
+        tm.setCwKeyUpDelayMs(50);
+        rig.model.setRadioSpeakerMuted(radioMuted);
+        pump();
+
+        CwKeyerController* const keyer = rig.keyer();
+        const CwWireState before = keyer->wireState();
+        // R-CW-38: the master, radio selection and RADIO mute determine
+        // the radio level. At 50% in Semi, (int)(50 * 1.27) is 63.
+        QCOMPARE(before.sidetoneLevel, level);
+        QCOMPARE(rig.conn.states.last(), before);
+        const qsizetype pushes = rig.conn.states.size();
+        QSignalSpy wire(keyer, &CwKeyerController::wireStateChanged);
+
+        // The computer selection must not change any radio keyer field
+        // or push an unnecessary state to the connection, in either direction.
+        for (const bool selected : {!computer, computer}) {
+            tm.setCwComputerSidetone(selected);
+            pump();
+            QCOMPARE(tm.cwComputerSidetone(), selected);
+            QCOMPARE(tm.cwSidetone(), master);
+            QCOMPARE(tm.cwRadioSidetone(), radio);
+            QCOMPARE(keyer->wireState(), before);
+            QCOMPARE(wire.count(), 0);
+            QCOMPARE(rig.conn.states.size(), pushes);
+            QCOMPARE(rig.conn.states.last(), before);
+        }
+    }
+
     void composesTheWireState()
     {
         Rig rig;
