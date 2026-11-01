@@ -1030,7 +1030,8 @@ private:
     // pairs, to base_outbound_port + 4 (network.c:1276-1294, 1363-1376
     // [v2.10.3.15]). The send thread sends a packet whenever the radio's
     // audio buffer, estimated from elapsed time at 48 kHz, is below the
-    // target lead and the ring has one due (takeRadioAudio).
+    // target lead. A primed ring supplies real PCM (takeRadioAudio);
+    // otherwise the sender supplies silence without consuming queued PCM.
     static constexpr int kRadioAudioSpp = 64;
     static constexpr int kRadioAudioPacketBytes = 4 + kRadioAudioSpp * 4;
     static constexpr int kRadioAudioTargetLeadFrames = 960;  // 20 ms at 48 kHz
