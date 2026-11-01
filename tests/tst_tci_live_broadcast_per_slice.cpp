@@ -26,15 +26,19 @@
 // receiver a frame addresses), not in whether a connect exists.
 //
 // Modification history (NereusSDR):
+// 2026-11-01: CW tester-feedback regression coverage. J.J. Boyd (KG4VCF),
+//               AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, CWU and CWL rows: dds and if keep today's
 //               RF-true values and vfo = dds + if (D4, R-CW-26). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
 
 #include <QtTest/QtTest>
+#include <QScopeGuard>
 
 #include "core/TciServer.h"
 #include "core/TciProtocol.h"
 #include "core/AudioEngine.h"
+#include "core/AppSettings.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -95,6 +99,54 @@ class TstTciLiveBroadcastPerSlice : public QObject
     Q_OBJECT
 
 private slots:
+
+    void cw_sideband_live_reports_follow_the_option_data()
+    {
+        QTest::addColumn<bool>("on");
+        QTest::addColumn<int>("mode");
+        QTest::addColumn<QString>("wireMode");
+        QTest::newRow("on-CWU") << true << int(DSPMode::CWU) << QStringLiteral("CW");
+        QTest::newRow("on-CWL") << true << int(DSPMode::CWL) << QStringLiteral("CW");
+        QTest::newRow("off-CWU") << false << int(DSPMode::CWU) << QStringLiteral("CWU");
+        QTest::newRow("off-CWL") << false << int(DSPMode::CWL) << QStringLiteral("CWL");
+        QTest::newRow("on-USB") << true << int(DSPMode::USB) << QStringLiteral("USB");
+        QTest::newRow("off-USB") << false << int(DSPMode::USB) << QStringLiteral("USB");
+    }
+    void cw_sideband_live_reports_follow_the_option()
+    {
+        QFETCH(bool, on);
+        QFETCH(int, mode);
+        QFETCH(QString, wireMode);
+        auto& settings = AppSettings::instance();
+        const auto restoreOption = qScopeGuard([&settings] {
+            settings.remove(QStringLiteral("TciCwluBecomesCw"));
+        });
+        settings.setValue(QStringLiteral("TciCwluBecomesCw"),
+                          on ? QStringLiteral("False") : QStringLiteral("True"));
+        RadioModel model;
+        TciServer server(&model);
+        const int a = model.addSlice(QStringLiteral("pan-0"));
+        const int b = model.addSlice(QStringLiteral("pan-0"));
+        TciProtocol* protocol = server.protocolForTest();
+        QVERIFY(protocol);
+        for (int sliceId : {a, b}) {
+            SliceModel* slice = model.sliceById(sliceId);
+            QVERIFY(slice);
+            slice->setDspMode(DSPMode::LSB);
+        }
+        drainFrames(protocol);
+        // Apply after construction: every later mode event uses the current
+        // option, without replacing the slice's actual DSP sideband.
+        settings.setValue(QStringLiteral("TciCwluBecomesCw"),
+                          on ? QStringLiteral("True") : QStringLiteral("False"));
+        for (int sliceId : {a, b}) {
+            SliceModel* slice = model.sliceById(sliceId);
+            slice->setDspMode(static_cast<DSPMode>(mode));
+            QCOMPARE(framesWithPrefix(drainFrames(protocol), QStringLiteral("modulation:")),
+                     QStringList{QStringLiteral("modulation:%1,%2;").arg(sliceId).arg(wireMode)});
+            QCOMPARE(slice->dspMode(), static_cast<DSPMode>(mode));
+        }
+    }
 
     // The core defect.  Two receivers, each with its own AF gain.  Changing
     // receiver B's gain must put B's value on the wire against B's index and

@@ -21,6 +21,13 @@ supported behavior.
 
 ### Changes since RC1
 
+- Protocol 2 speaker-audio packets continue with silence when the mixer has
+  no audio to supply, removing a host-stream dependency on computer sidetone
+  during radio-generated CW. Real audio, RADIO mute and remote monitor
+  ownership retain their existing paths. This corrects the demonstrated
+  host-side fault; audible confirmation on the reported ANAN-200D is pending.
+  ([#726](https://github.com/boydsoftprez/NereusSDR/pull/726))
+
 - The iPhone Roundtable spectrum overlay uses compact native cards, stacked
   callsigns and clearly attributed reports, sharing the selected S-units,
   dBm or Both display. Narrow layouts disclose full reports without splitting
@@ -587,10 +594,11 @@ supported behavior.
 
 ### Scope and validation limits
 
-- A tester reported ANAN 200D radio-only CW sidetone becoming audible only
-  after also enabling the computer sidetone. The tested protocol, firmware
-  and cause remain under investigation; this release does not claim a
-  hardware sidetone correction for that report.
+- The Protocol 2 radio-audio stream starvation behind a possible ANAN-200D
+  radio-only sidetone dependency is corrected in #726. The reporter's actual
+  protocol, firmware and audible result remain unconfirmed. The existing
+  sender estimates buffer drain from host time; sustained clock drift and
+  scheduler stalls remain separate timing limits, not hardware acceptance.
 
 - Physical key/paddle takeover on the installed Hermes Lite 2 variant remains
   unverified; client and packet tests do not establish that observation.

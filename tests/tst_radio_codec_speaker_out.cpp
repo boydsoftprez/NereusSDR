@@ -22,10 +22,16 @@
 //       volume for both (cmaster.cs:954-957 [v2.10.3.15]); NereusSDR
 //       splits it.
 //
-// Nothing here keys a radio: MOX is never set. One case runs the P2 send
-// thread against a loopback socket with the transmit ring empty.
+// Nothing here keys a radio. The CW regression uses only the engine's
+// test MOX seam; its connections are never initialized or connected. One
+// other case runs the P2 send thread against a loopback socket with the
+// transmit ring empty.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-01  J.J. Boyd / KG4VCF  Radio audio clock regression coverage
+//                                    during only-slice CW TX, with the
+//                                    computer oscillator unkeyed.
+//                                    AI-assisted via OpenAI Codex.
 //   2026-09-30  J.J. Boyd / KG4VCF  Radio codec: created. AI-assisted via
 //                                    Anthropic Claude Code.
 //   2026-09-30  J.J. Boyd / KG4VCF  Radio codec review: the cushion's
@@ -54,6 +60,7 @@
 #include "core/RadioConnection.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 
 #include "fakes/FakeAudioBus.h"
 
@@ -104,6 +111,28 @@ public:
         received.insert(received.end(), samples, samples + frames * 2);
     }
     std::vector<float> received;
+};
+
+// Capture the actual radio output and feed both existing protocol rings.
+// Neither connection opens a socket or starts a sender in this test.
+class RadioPacketTap final : public MasterMixAudioTap {
+public:
+    RadioPacketTap(RadioConnection& p1, RadioConnection& p2) : m_p1(p1), m_p2(p2) {}
+
+    void consume(const float* samples, int frames, int rate) noexcept override
+    {
+        recording.consume(samples, frames, rate);
+        if (rate == RadioConnection::kRadioAudioRateHz) {
+            m_p1.pushRadioAudio(samples, frames);
+            m_p2.pushRadioAudio(samples, frames);
+        }
+    }
+
+    RecordingTap recording;
+
+private:
+    RadioConnection& m_p1;
+    RadioConnection& m_p2;
 };
 
 // A model with one streaming slice at unity AF, the speakers on a fake
@@ -279,6 +308,36 @@ private slots:
         QCOMPARE(conn.serviceRadioAudioSendForTest(1'004'000'000LL, &capture), 3);
     }
 
+    // A running radio needs speaker-audio clocks even when no source
+    // contributes PCM. Silence is paced exactly like ordinary audio, with
+    // bounded lead after a long sender gap and no change to host key state.
+    void p2_emptyRingKeepsClockedSilence()
+    {
+        P2RadioConnection conn;
+        const CwWireState cwBefore = conn.cwWireState();
+        P2RadioConnection::TxIqCapture capture;
+        QCOMPARE(conn.serviceRadioAudioSendForTest(1'000'000'000LL, &capture), 15);
+        QCOMPARE(conn.serviceRadioAudioSendForTest(1'000'000'000LL, &capture), 0);
+        QCOMPARE(conn.serviceRadioAudioSendForTest(1'004'000'000LL, &capture), 3);
+        QCOMPARE(conn.serviceRadioAudioSendForTest(2'004'000'000LL, &capture), 15);
+        QCOMPARE(capture.frames.size(), 33);
+        for (int i = 0; i < capture.frames.size(); ++i) {
+            const QByteArray& packet = capture.frames.at(i);
+            QCOMPARE(packet.size(), 260);
+            const quint32 seq = (quint32(quint8(packet[0])) << 24)
+                | (quint32(quint8(packet[1])) << 16)
+                | (quint32(quint8(packet[2])) << 8) | quint32(quint8(packet[3]));
+            QCOMPARE(seq, quint32(i));
+            for (int offset = 4; offset < packet.size(); offset += 2) {
+                QCOMPARE(be16(packet, offset), quint16(0));
+            }
+        }
+        QVERIFY(conn.cwWireState() == cwBefore);
+        QCOMPARE(conn.cwKeyLine()->p1Bits(true), quint8(0));
+        QVERIFY(!conn.transmitCut());
+        QCOMPARE(conn.radioAudioStats().underruns, quint64(0));
+    }
+
     // ── The ring: cushion, trim, re-prime, counters ─────────────────────
 
     // One oversized block raises the cushion for about two seconds of
@@ -328,19 +387,29 @@ private slots:
             now += 1'000'000'000LL;
             sent += conn.serviceRadioAudioSendForTest(now, &capture);
         }
-        QCOMPARE(sent, 16);
+        // All four passes retain the clock: 16 real-audio packets followed
+        // by silence, rather than stopping the transport on starvation.
+        QCOMPARE(sent, 60);
+        for (int i = 15; i < capture.frames.size(); ++i) {
+            const auto& packet = capture.frames.at(i);
+            QCOMPARE(be16(packet, 4), i < 31 ? kLeftWire : quint16(0));
+            QCOMPARE(be16(packet, 6), i < 31 ? kRightWire : quint16(0));
+        }
         st = conn.radioAudioStats();
         QCOMPARE(st.underruns, quint64(1));
-        QCOMPARE(st.packetsSent, quint64(31));
+        QCOMPARE(st.packetsSent, quint64(75));
         QCOMPARE(st.sendErrors, quint64(0));
-        // Primes again: one block (under the 1984 cushion) waits...
-        conn.pushRadioAudio(block.data(), 1024);
-        now += 1'000'000'000LL;
-        QCOMPARE(conn.serviceRadioAudioSendForTest(now, &capture), 0);
-        // ...and a second one starts the stream.
+        // One block under the 1984 cushion is retained while silence
+        // continues; the second primes real audio again.
         conn.pushRadioAudio(block.data(), 1024);
         now += 1'000'000'000LL;
         QCOMPARE(conn.serviceRadioAudioSendForTest(now, &capture), 15);
+        QCOMPARE(be16(capture.frames.last(), 4), quint16(0));
+        conn.pushRadioAudio(block.data(), 1024);
+        now += 1'000'000'000LL;
+        QCOMPARE(conn.serviceRadioAudioSendForTest(now, &capture), 15);
+        QCOMPARE(be16(capture.frames.last(), 4), kLeftWire);
+        QCOMPARE(be16(capture.frames.last(), 6), kRightWire);
         QCOMPARE(conn.radioAudioStats().underruns, quint64(1));
     }
 
@@ -393,6 +462,100 @@ private slots:
     }
 
     // ── Engine and model ─────────────────────────────────────────────────
+
+    // The only RX slice is withdrawn by MOX and ordinary MON is off.
+    // Hardware CW must still have clocked radio audio whether or not the
+    // computer oscillator runs. The sender supplies zero PCM when the
+    // mixer has nothing, without changing the shared mixer/owner outputs.
+    // This exercises host audio/packet composition, not ANAN gateware.
+    void onlySliceCwTx_radioAudioKeepsFlowing_data()
+    {
+        QTest::addColumn<bool>("computer");
+        QTest::addColumn<int>("expectedFrames");
+        QTest::addColumn<int>("expectedP2Packets");
+
+        QTest::newRow("computer-off") << false << 0 << 15;
+        QTest::newRow("computer-on-unkeyed") << true << 3072 << 15;
+    }
+
+    void onlySliceCwTx_radioAudioKeepsFlowing()
+    {
+        QFETCH(bool, computer);
+        QFETCH(int, expectedFrames);
+        QFETCH(int, expectedP2Packets);
+
+        EngineRig rig;
+        AudioEngine* engine = rig.engine;
+        TransmitModel& tm = rig.radio.transmitModel();
+        rig.radio.sliceById(rig.slice)->setDspMode(DSPMode::CWU);
+        tm.setCwSidetone(true);  // Master, not the computer output selection.
+        tm.setCwRadioSidetone(true);
+        tm.setCwComputerSidetone(false);
+        tm.setMonEnabled(false);
+        engine->setTxMonitorEnabled(false);
+        engine->setTxMonitorLocal(true);
+        engine->setCwSidetoneKey(false);
+        engine->setRadioSpeakerVolume(1.0f);
+        engine->setRadioSpeakerMuted(false);
+        QVERIFY(rig.radio.txBoundSlice() != nullptr);
+        QCOMPARE(rig.radio.txBoundSlice()->sliceIndex(), rig.slice);
+
+        // Enrol the only receiver before key-down, without feeding either
+        // protocol ring. Its nonzero RX audio must stay gated during TX.
+        const std::vector<float> block = stereo(1024, kLeft, kRight);
+        engine->rxBlockReady(rig.slice, block.data(), 1024);
+        QCOMPARE(engine->masterMixForTest().producingSliceCount(), 1);
+        engine->setMoxStateForTest(true);
+        QCOMPARE(engine->masterMixForTest().producingSliceCount(), 0);
+        tm.setCwComputerSidetone(computer);
+        QVERIFY(tm.cwSidetone());
+        QVERIFY(tm.cwRadioSidetone());
+        QVERIFY(!tm.monEnabled());
+        QCOMPARE(engine->cwSidetoneRun(), computer);
+        QVERIFY(!engine->cwSidetoneKeyed());
+
+        P1RadioConnection p1;
+        p1.setBoardForTest(HPSDRHW::Orion);
+        P2RadioConnection p2;
+        RadioPacketTap tap(p1, p2);
+        engine->setRadioOutputTap(&tap);
+        auto clear = qScopeGuard([&] {
+            engine->clearRadioOutputTap(&tap);
+            engine->setMoxStateForTest(false);
+        });
+        for (int i = 0; i < 3; ++i) {
+            engine->rxBlockReady(rig.slice, block.data(), 1024);
+        }
+        QCOMPARE(tap.recording.received.size(), size_t(expectedFrames) * 2);
+        for (const float sample : tap.recording.received) {
+            QCOMPARE(sample, 0.0f);
+        }
+        QVERIFY(!engine->cwSidetoneKeyed());
+
+        // Deterministic fake time: no sender thread, timer or UDP socket.
+        P2RadioConnection::TxIqCapture capture;
+        QCOMPARE(p2.serviceRadioAudioSendForTest(1'000'000'000LL, &capture),
+                 expectedP2Packets);
+        QCOMPARE(capture.frames.size(), expectedP2Packets);
+        for (const QByteArray& packet : capture.frames) {
+            QCOMPARE(packet.size(), 260);
+            for (int offset = 4; offset < packet.size(); offset += 2) {
+                QCOMPARE(be16(packet, offset), quint16(0));
+            }
+        }
+
+        // The existing P1 serializer supplies an EP2 frame either way,
+        // with zero L/R words even when no PCM reached its ring. This is
+        // serialization evidence; the independent P1 pacer is not run.
+        const QByteArray frame = p1.sendTxIqAndCapture(nullptr, 0);
+        QCOMPARE(frame.size(), 1032);
+        for (int zone : {16, 528}) {
+            for (int sample = 0; sample < 63; ++sample) {
+                QCOMPARE(be16(frame, zone + sample * 8), quint16(0));
+                QCOMPARE(be16(frame, zone + sample * 8 + 2), quint16(0));
+            }
+        }
+    }
 
     // R-SPK-01 to R-SPK-03: the radio output tap takes the program at the
     // RADIO level, the speakers at the PC level, each from the same mix.

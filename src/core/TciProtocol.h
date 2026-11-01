@@ -7,6 +7,10 @@
 //   Project Files/Source/Console/TCIServer.cs, original licence included below
 //
 // Modification history (NereusSDR):
+//   2026-11-01: CW compatibility reporting by J.J. Boyd (KG4VCF),
+//                 AI-assisted via OpenAI Codex: share the selected CW wire
+//                 mode across initial state, queries, acknowledgments and
+//                 live broadcasts, retaining the radio's DSP sideband.
 //   2026-10-27: CW transmit, the TCI CW commands (R-CW-35): cw_macros,
 //                 cw_msg, cw_terminal, cw_macros_stop, cw_macros_speed (set,
 //                 query, up, down), cw_macros_delay, cw_keyer_speed and
@@ -523,6 +527,11 @@ public:
     // SliceModel::agcModeChanged can match the init burst formatting.
     static QString tciAgcModeForWire(const QString& enumName);
 
+    // From Thetis TCIServer.cs:2174-2195 [v2.10.3.15] -- sendMode.
+    // Reads this server's existing compatibility option for every outgoing
+    // mode. Public so live slice broadcasts use the same reporting rule.
+    static QString tciModeForWire(const QString& modeUpper);
+
 private:
     SliceModel* mappedSlice(int receiver) const;
     // From Thetis TCIServer.cs:4924-5128 [v2.10.3.13] — 60-case set-command switch.
@@ -555,7 +564,7 @@ private:
     // handleModulationMessage at TCIServer.cs:3837 [v2.10.3.13] dispatches by args.size():
     //   args.size() == 2 → set (parse mode string, set DSPMode + enqueue notification)
     //   args.size() == 1 → query (return current mode uppercase)
-    // CWLUbecomesCW (TCIServer.cs:2148-2153 [v2.10.3.13]) DEFERRED (Phase 11/12 follow-up).
+    // CWLUbecomesCW is applied to outgoing mode lines by tciModeForWire.
     // CWbecomesCWUabove10mhz (TCIServer.cs:3868-3895 [v2.10.3.13]) DEFERRED (needs VFOATX/VFOBTX).
     QString handleModulationCommand(const QStringList& args);
 

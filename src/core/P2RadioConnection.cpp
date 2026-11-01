@@ -40,6 +40,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-01 - Keep radio-speaker audio clocked with zero PCM when the
+//                mixer has no output, independently of computer sidetone.
+//                NereusSDR-original transport repair; J.J. Boyd KG4VCF,
+//                AI-assisted via OpenAI Codex.
 //   2026-10-26 - "Gnd BPF2 on Tx": setMox takes the box at the TX edge and
 //                buildCodecContext hands it to Alex1 bit 8, as Thetis's
 //                HdwMOXChanged does (console.cs:29091 [v2.10.3.15]) (J.J.
@@ -3032,8 +3036,18 @@ int P2RadioConnection::serviceRadioAudioSend(qint64 nowNs, TxIqFrameSink sink, v
     int sent = 0;
     float lr[2 * kRadioAudioSpp];
     char packet[kRadioAudioPacketBytes];
-    while (m_radioAudioLead + kRadioAudioSpp <= kRadioAudioTargetLeadFrames
-           && takeRadioAudio(lr, kRadioAudioSpp)) {
+    while (m_radioAudioLead + kRadioAudioSpp <= kRadioAudioTargetLeadFrames) {
+        // Keep the radio codec clocked even when no mixer source contributes
+        // PCM (for example, the only slice is transmitting with MON off).
+        // ANAN-200D P2 v1.8 gates hardware sidetone's I2S output on the host
+        // audio FIFO: TAPR e7c6584 Orion_NP_v1.8.qar, Orion.v:1224-1284 and
+        // audio_I2S.v:80-120. Thetis keeps its mixer inputs flowing while
+        // powered: console.cs:27749-27771 [v2.10.3.15]. This is an original
+        // sender-side repair; the mixer, key state and audio ownership stay
+        // unchanged. takeRadioAudio retains its cushion/re-prime contract.
+        if (!takeRadioAudio(lr, kRadioAudioSpp)) {
+            std::fill_n(lr, 2 * kRadioAudioSpp, 0.0f);
+        }
         composeRadioAudioPacket(lr, packet);
         // A packet the socket refuses is not retried: the next one follows
         // in its time slot, as the receive audio never waits.
