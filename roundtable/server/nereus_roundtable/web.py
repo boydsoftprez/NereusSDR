@@ -36,7 +36,7 @@ stored, with the session's CSRF token and its end, 30 days on (design C14).
 Archive JSON for the signed-in station (`Cache-Control: no-store`, never
 `Access-Control-Allow-Origin`):
 
-- `GET /v1/me`: `{"time","station":{"callsign","grid","kind"},"csrf"}`.
+- `GET /v1/me`: `{"time","station":{"callsign","grid","kind","helper"},"csrf"}`.
 - `GET /v1/me/sessions`: `{"time","sessions":[summary...]}`, newest first.
   A summary is `{"id","room","band","family","hz","start","end","turns",
   "reported"}`, `reported` counting the stations with readings of it.
@@ -457,7 +457,7 @@ class Web:
             200,
             {
                 "time": self.clock.wall_ms(),
-                "station": {"callsign": station.get("callsign"), "grid": station.get("grid"), "kind": station.get("kind")},
+                "station": {"callsign": station.get("callsign"), "grid": station.get("grid"), "kind": station.get("kind"), "helper": self.service.is_helper(sid)},
                 "csrf": session["csrf_token"],
             },
         )

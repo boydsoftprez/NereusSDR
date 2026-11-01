@@ -467,7 +467,6 @@ body.doc { display: flex; flex-direction: column; min-height: 100vh; }
   .blist .b { grid-template-columns: 1fr auto; }
   .reps .r { grid-template-columns: 90px 1fr; }
   .reps .r .t { grid-column: 1 / 3; text-align: left; }
-  .top .who { display: none; }
 }
 
 /* 2026-10-30: frequency-first public surfaces and path preference.

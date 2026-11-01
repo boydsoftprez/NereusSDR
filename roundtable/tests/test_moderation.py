@@ -130,6 +130,18 @@ ROUTES_POST = (
 )
 
 
+def test_me_reports_only_current_session_helper_capability(harness, browser):
+    h = Helper(harness, browser, "192.0.2.9")
+    other = Helper(harness, browser, "192.0.2.10", config=False)
+    assert browser.get("/v1/me").status == 401
+    assert body_json(h.get("/v1/me"))["station"]["helper"] is True
+    assert body_json(other.get("/v1/me"))["station"]["helper"] is False
+    harness.store.helper_add(other.id, harness.clock.wall_ms())
+    assert body_json(other.get("/v1/me"))["station"]["helper"] is True
+    harness.store.helper_remove(other.id)
+    assert body_json(other.get("/v1/me"))["station"]["helper"] is False
+
+
 def test_a_non_helper_gets_403_on_every_review_route(harness, browser):
     a, b = _members(harness, "K4ABC", "KG4VCF")
     msg_id = _post(a, "buy my amplifier")
