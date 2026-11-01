@@ -6,7 +6,30 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
-## Latest stable release: 2026.10.1
+## Latest stable release: 2026.10.2
+
+The combined work since 2026.10.1 includes frequency-first Roundtable across
+desktop, phone and website, with S-units, dBm or both; CW transmit and remote
+activity recovery; remote display codec v2 and audio-aligned RX meters; saved
+receiver and container state; and phone display and waterfall work. NNR keeps
+the selected model running while offering an operator choice on a measured
+warning. The phone labels its retained return destination **Previous band**
+and recognizes the Core's empty default-pan identity for Max Bin.
+
+Update Core and desktop together. Phone version 2026.10.1 build 9642 is in
+TestFlight testing and has an independent version number. The new display
+format needs an updated Core and client; audio-aligned RX meters need an
+updated Core and desktop; remote CW start needs an updated Core and client.
+Older peers can still connect. See the [upgrade note](guides/upgrading-to-2026.10.2.md)
+and [bench checklist](guides/bench-2026.10.2.md). The signed 2026.10.2-rc1
+is an earlier candidate, not the complete release scope.
+
+Physical HL2 paddle takeover remains unverified. The 50 microsecond heavy-load
+CW optimization goal, XDMA (#339), broader hotkeys (#698), separate Roundtable
+discovery/onboarding work and cross-platform waterfall time-axis consistency
+remain deferred. The strict 2 ms CI check remains in place.
+
+## Previous release: 2026.10.1
 
 This release adds CAT with Hamlib rigctld, antenna rotor control, native
 audio engines with live device lists, the radio speaker volume in the header,
@@ -15,23 +38,6 @@ transmit, remote audio and Core installs. Rotor control, CAT Control on the
 phone and the Core speaker need a 2026.10.1 Core; older peers still connect.
 See the [changelog](../CHANGELOG.md) and the
 [2026.10.1 upgrade note](guides/upgrading-to-2026.10.1.md).
-
-## Release candidate: 2026.10.2-rc1
-
-The combined work since 2026.10.1 is listed in the `[2026.10.2-rc1]`
-section of the [changelog](../CHANGELOG.md). It includes frequency-first
-Roundtable across desktop, phone and website; CW transmit and remote
-activity recovery; remote display codec v2 and audio-aligned RX meters;
-receiver grab and flag tuning; saved receiver/container state; TUNE drive
-source and SWR protection fixes; and the phone display and waterfall work.
-New display and meter timing need matching 2026.10.2 peers; older peers
-still connect. The phone app keeps its independent version number.
-
-The [upgrade note](guides/upgrading-to-2026.10.2.md) and
-[bench checklist](guides/bench-2026.10.2.md) cover candidate acceptance.
-Physical HL2 paddle takeover remains unverified. The 50 microsecond
-heavy-load CW optimization goal, XDMA, broader hotkeys and cross-platform
-waterfall time-axis consistency remain deferred.
 
 ## Previous release: 2026.10.0
 

@@ -7,23 +7,15 @@ verbatim from `CLAUDE.md` as of commit 86a1b20d6.
 
 ## Current status
 
-2026.10.1 is the current release. It adds CAT/rigctld, rotor control, native
-audio engines, the workspace look as the default, receivers restored as they
-were left after a relaunch, and reliability fixes. 2026.10.0, the first CalVer
-release, came before it. See the
-[README](../../README.md), [release notes](../../CHANGELOG.md),
-[2026.10.0 upgrade guide](../guides/upgrading-to-2026.10.0.md) and
-[2026.10.1 upgrade note](../guides/upgrading-to-2026.10.1.md).
-The release summary in [MASTER-PLAN.md](../MASTER-PLAN.md) records current scope.
-
-2026.10.2 is in progress on main. So far it adds the remote display codec v2
-(waterfall rows that stand alone), an evenly scrolling remote waterfall, remote
-RX meters held to their audio, receiver grab and flag drag tuning with steadier
-trackpad steps, TUNE following only the Setup drive source, SWR protection that
-lowers the drive, the ANAN-G2E's own PA gain table, the TX applet rows as
-container items, and the workspace look on the iPhone and iPad. The
-`[Unreleased]` section of the [changelog](../../CHANGELOG.md) lists every
-merged change.
+2026.10.2 is the current desktop and Core release. It combines the work since 2026.10.1,
+including remote display codec v2, audio-aligned remote RX meters, CW and
+remote transmit recovery, frequency-first Roundtable and signal units,
+receiver and container state, and phone display fixes. NNR retains the
+selected model and offers an operator choice on a measured warning. The phone
+also labels **Previous band** and recognizes the Core's empty default-pan
+identity for Max Bin. Phone 2026.10.1 build 9642 is in TestFlight testing;
+its version is independent of the desktop release. The
+[release summary](../MASTER-PLAN.md) records the scope and deferred work.
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
