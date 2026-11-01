@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Protocol 2 radio-speaker audio keeps its existing clock with silent packets
+  when the mixer has no audio to supply. Radio-generated CW sidetone no longer
+  depends on enabling computer sidetone to keep that stream alive. Real audio,
+  RADIO mute, keying authority and remote monitor ownership retain their paths.
+
 - TCI now honors **CWL/CWU becomes CW** in initial state, mode queries,
   acknowledgments and live reports to connected logging applications. The
   option changes the reported mode only; the receiver keeps its CW sideband.
