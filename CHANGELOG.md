@@ -2,33 +2,42 @@
 
 ## [Unreleased]
 
-- Protocol 2 radio-speaker audio keeps its existing clock with silent packets
-  when the mixer has no audio to supply. Radio-generated CW sidetone no longer
-  depends on enabling computer sidetone to keep that stream alive. Real audio,
-  RADIO mute, keying authority and remote monitor ownership retain their paths.
+## [2026.11.0] - 2026-11-01
 
-- TCI now honors **CWL/CWU becomes CW** in initial state, mode queries,
-  acknowledgments and live reports to connected logging applications. The
-  option changes the reported mode only; the receiver keeps its CW sideband.
-
-## [2026.10.2] - 2026-10-31
-
-This is the combined desktop and Core release for 2026.10.2. See the [bench checklist](https://github.com/boydsoftprez/NereusSDR/blob/v2026.10.2/docs/guides/bench-2026.10.2.md) for operating checks and recorded acceptance.
+This is the combined desktop and Core release for 2026.11.0. See the [bench checklist](https://github.com/boydsoftprez/NereusSDR/blob/v2026.11.0/docs/guides/bench-2026.11.0.md) for operating checks and recorded acceptance.
 
 [Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
 
-Upgrading from 2026.10.1? Start with the [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html).
+Upgrading from 2026.10.1? Start with the [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.11.0.html).
 
 Changes since desktop/Core 2026.10.1. Update the Core and desktop together.
 The iPhone and iPad app is delivered separately: phone version **2026.10.1,
-build 9642**, is available in TestFlight and keeps its independent version
+build 9645**, is available in TestFlight and keeps its independent version
 number. Desktop installers do not update the phone app. The new remote
-display format needs a 2026.10.2 Core and an updated client; audio-aligned RX
-meters need a 2026.10.2 Core and desktop. Remote CW start needs an updated
+display format needs a 2026.11.0 Core and an updated client; audio-aligned RX
+meters need a 2026.11.0 Core and desktop. Remote CW start needs an updated
 Core and desktop or phone client. Older peers still connect using their
 supported behavior.
 
 ### Changes since RC1
+
+- Protocol 2 speaker-audio packets continue with silence when the mixer has
+  no audio to supply, removing a host-stream dependency on computer sidetone
+  during radio-generated CW. Real audio, RADIO mute and remote monitor
+  ownership retain their existing paths. This corrects the demonstrated
+  host-side fault; audible confirmation on the reported ANAN-200D is pending.
+  ([#726](https://github.com/boydsoftprez/NereusSDR/pull/726))
+
+- The iPhone Roundtable spectrum overlay uses compact native cards, stacked
+  callsigns and clearly attributed reports, sharing the selected S-units,
+  dBm or Both display. Narrow layouts disclose full reports without splitting
+  labels; ended unknown observations say **Last heard**. This is available in
+  phone build **9645** through Public Preview and JJ manual testing.
+  ([#724](https://github.com/boydsoftprez/NereusSDR/pull/724))
+- TCI honors **CWL/CWU becomes CW** in initial state, mode queries,
+  acknowledgments and live broadcasts to connected logging applications.
+  This changes reported mode strings; the receiver keeps its CW sideband.
+  ([#725](https://github.com/boydsoftprez/NereusSDR/pull/725))
 
 - On iPhone and iPad, **Max Bin** recognizes the Core's default pan, so a
   fresh spectrum on that pan can drive the flag meter. Missing identity,
@@ -183,7 +192,7 @@ supported behavior.
 
 ### Remote display: waterfall rows that stand alone
 
-- A remote window, the iPhone and iPad app, and a 2026.10.2 Core now send the
+- A remote window, the iPhone and iPad app, and a 2026.11.0 Core now send the
   display in a new format in
   which every waterfall row and trace stands on its own. A lost network message
   costs one row, which is filled in by blending its neighbors, and the window
@@ -226,7 +235,7 @@ supported behavior.
   ([#599](https://github.com/boydsoftprez/NereusSDR/pull/599))
 - A remote window's RX meters (the S-meter and the other receive meters) now
   move with the audio you hear, as the spectrum already did, instead of as
-  much as 150 ms ahead of it. This needs a 2026.10.2 Core; with an older Core the
+  much as 150 ms ahead of it. This needs a 2026.11.0 Core; with an older Core the
   meters show readings as they arrive.
   ([#601](https://github.com/boydsoftprez/NereusSDR/pull/601))
 - The pan does less work on every frame: its grid, scales, band plan and
@@ -237,7 +246,7 @@ supported behavior.
   several seconds after a Core restart, or when the phone comes back from
   another app. The noise floor now starts from the first real data instead of
   climbing up from far below the band. A remote window or the phone needs a
-  2026.10.2 Core for this.
+  2026.11.0 Core for this.
   ([#628](https://github.com/boydsoftprez/NereusSDR/pull/628))
 - On the GPU spectrum, the trace and peak hold sit on their grid lines when the
   band plan is shown and when 1 Hz normalization is on. With the band plan the
@@ -585,6 +594,12 @@ supported behavior.
 
 ### Scope and validation limits
 
+- The Protocol 2 radio-audio stream starvation behind a possible ANAN-200D
+  radio-only sidetone dependency is corrected in #726. The reporter's actual
+  protocol, firmware and audible result remain unconfirmed. The existing
+  sender estimates buffer drain from host time; sustained clock drift and
+  scheduler stalls remain separate timing limits, not hardware acceptance.
+
 - Physical key/paddle takeover on the installed Hermes Lite 2 variant remains
   unverified; client and packet tests do not establish that observation.
 - The 50 microsecond heavy-load CW optimization target and cross-platform
@@ -594,6 +609,7 @@ supported behavior.
   Roundtable discovery/onboarding design are outside this release.
 - A reported iPhone talker-naming keyboard/layout issue remains unreproduced
   and unresolved; this release does not claim to fix it.
+
 
 ## [2026.10.2-rc1] - 2026-10-30
 

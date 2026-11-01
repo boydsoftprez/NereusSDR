@@ -6,7 +6,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
-## Latest stable release: 2026.10.2
+## Latest stable release: 2026.11.0
 
 The combined work since 2026.10.1 includes frequency-first Roundtable across
 desktop, phone and website, with S-units, dBm or both; CW transmit and remote
@@ -16,12 +16,12 @@ the selected model running while offering an operator choice on a measured
 warning. The phone labels its retained return destination **Previous band**
 and recognizes the Core's empty default-pan identity for Max Bin.
 
-Update Core and desktop together. Phone version 2026.10.1 build 9642 is in
+Update Core and desktop together. Phone version 2026.10.1 build 9645 is in
 TestFlight testing and has an independent version number. The new display
 format needs an updated Core and client; audio-aligned RX meters need an
 updated Core and desktop; remote CW start needs an updated Core and client.
-Older peers can still connect. See the [upgrade note](guides/upgrading-to-2026.10.2.md)
-and [bench checklist](guides/bench-2026.10.2.md). The signed 2026.10.2-rc1
+Older peers can still connect. See the [upgrade note](guides/upgrading-to-2026.11.0.md)
+and [bench checklist](guides/bench-2026.11.0.md). The signed 2026.10.2-rc1
 is an earlier candidate, not the complete release scope.
 
 Physical HL2 paddle takeover remains unverified. The 50 microsecond heavy-load
