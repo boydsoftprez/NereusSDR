@@ -12,18 +12,19 @@ whether you use a local or remote Core.
 ## Update the Core and the desktop together
 
 The Core owns the radio, the station DSP and the accessories. The console runs
-where you operate. Update both, and the iPhone and iPad app if you use it.
-The phone app has its own version number and delivery through TestFlight;
-desktop and Core packages do not update it. Check the mobile availability
-announcement for the matching phone build. Two improvements need a 2026.10.2
-Core and updated desktop or phone clients:
+where you operate. Update both, and update the phone app separately if you use
+it. The separate iPhone and iPad app has its own
+version number and is delivered through TestFlight; phone version 2026.10.1,
+build 9642, is in TestFlight testing. Desktop and Core packages do not update
+it. The following improvements require updated components:
 
 - **The new remote display format.** Every waterfall row and trace stands on
   its own, so a lost network message costs one row instead of smearing the
-  rows after it. An older Core, window or phone app keeps the earlier format.
+  rows after it. It needs an updated Core and desktop or phone client. An
+  older Core, window or phone app keeps the earlier format.
 - **RX meters held to their audio.** A remote window's S-meter and receive
-  meters move with what you hear. With an older Core they show readings as
-  they arrive, as before.
+  meters move with what you hear. This needs an updated Core and desktop.
+  With an older Core they show readings as they arrive, as before.
 
 Older Cores, windows and phone apps still connect to each other.
 
@@ -100,6 +101,10 @@ do not establish that physical-input observation.
   stale. Use matching Core, client and server updates for these frequency views;
   older servers are identified as legacy room servers. See the
   [combined bench checklist](bench-2026.10.2.md#roundtable-on-desktop-iphone-and-website).
+  Reports can show S-units, dBm or both, with a local choice on each device.
+- **Phone return and meter.** The retained return destination is labeled
+  **Previous band**. Max Bin recognizes the Core’s empty default-pan identity
+  when a fresh spectrum is available.
 - **Tuning on the pan.** You can grab a receiver anywhere inside its
   passband, or near its center line, and drag it. Dragging a VFO flag sideways
   tunes its slice. Two-finger trackpad tuning no longer coasts after your

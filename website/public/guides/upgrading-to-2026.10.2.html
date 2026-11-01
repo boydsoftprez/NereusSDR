@@ -8,18 +8,19 @@ include the installed version, operating system, radio model and firmware, and
 whether you use a local or remote Core.</p>
 <h2 id="update-the-core-and-the-desktop-together">Update the Core and the desktop together</h2>
 <p>The Core owns the radio, the station DSP and the accessories. The console runs
-where you operate. Update both, and the iPhone and iPad app if you use it.
-The phone app has its own version number and delivery through TestFlight;
-desktop and Core packages do not update it. Check the mobile availability
-announcement for the matching phone build. Two improvements need a 2026.10.2
-Core and updated desktop or phone clients:</p>
+where you operate. Update both, and update the phone app separately if you use
+it. The separate iPhone and iPad app has its own
+version number and is delivered through TestFlight; phone version 2026.10.1,
+build 9642, is in TestFlight testing. Desktop and Core packages do not update
+it. The following improvements require updated components:</p>
 <ul>
 <li><strong>The new remote display format.</strong> Every waterfall row and trace stands on
 its own, so a lost network message costs one row instead of smearing the
-rows after it. An older Core, window or phone app keeps the earlier format.</li>
+rows after it. It needs an updated Core and desktop or phone client. An
+older Core, window or phone app keeps the earlier format.</li>
 <li><strong>RX meters held to their audio.</strong> A remote window's S-meter and receive
-meters move with what you hear. With an older Core they show readings as
-they arrive, as before.</li>
+meters move with what you hear. This needs an updated Core and desktop.
+With an older Core they show readings as they arrive, as before.</li>
 </ul>
 <p>Older Cores, windows and phone apps still connect to each other.</p>
 <p>Remote CW start needs the updated Core and an updated desktop or phone client.
@@ -92,7 +93,11 @@ to miles, with kilometres and true-bearing display options. Deleted, moderated
 and expired messages refresh in retained history; disconnected history is marked
 stale. Use matching Core, client and server updates for these frequency views;
 older servers are identified as legacy room servers. See the
-<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/bench-2026.10.2.md#roundtable-on-desktop-iphone-and-website">combined bench checklist</a>.</li>
+<a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/bench-2026.10.2.md#roundtable-on-desktop-iphone-and-website">combined bench checklist</a>.
+Reports can show S-units, dBm or both, with a local choice on each device.</li>
+<li><strong>Phone return and meter.</strong> The retained return destination is labeled
+<strong>Previous band</strong>. Max Bin recognizes the Core’s empty default-pan identity
+when a fresh spectrum is available.</li>
 <li><strong>Tuning on the pan.</strong> You can grab a receiver anywhere inside its
 passband, or near its center line, and drag it. Dragging a VFO flag sideways
 tunes its slice. Two-finger trackpad tuning no longer coasts after your
