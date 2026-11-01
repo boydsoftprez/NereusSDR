@@ -148,6 +148,12 @@ jobs:
           ctest -N -V -R "$selection" > ../runtime-evidence/bash/replay-selected.txt
           ctest -V --interactive-debug-mode 0 -R "$selection" --output-on-failure --no-tests=error --output-junit ../runtime-evidence/bash/replay.xml 2>&1 | tee ../runtime-evidence/bash/replay-console.txt
 
+      - name: Validate the exact intended Qt compiler and OpenSSL runtime
+        id: controlled_replay
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' && steps.identity.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/ci/windows-controlled-audio-runtime.ps1
+
       - name: Preserve all recovered evidence and matching runtime providers
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
