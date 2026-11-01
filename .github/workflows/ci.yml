@@ -1264,31 +1264,10 @@ jobs:
             xvfb-run -a ctest -L realtime --output-on-failure --no-tests=ignore || status=1
             exit "$status"
           elif [ "${{ runner.os }}" = "Windows" ]; then
-            # Normal app builds do not deploy FFTW beside the binaries as
-            # release.yml does. Supply the same known runtime dependencies
-            # without changing Qt/MinGW's existing search precedence.
-            fftw_runtime_dir="$(cygpath -u "$GITHUB_WORKSPACE")/third_party/fftw3/bin"
-            openssl_runtime_dir="$(cygpath -u "$OPENSSL_ROOT_DIR")/bin"
-            test -f "$fftw_runtime_dir/libfftw3-3.dll"
-            test -f "$fftw_runtime_dir/libfftw3f-3.dll"
-            test -d "$openssl_runtime_dir"
-            export PATH="$PATH:$fftw_runtime_dir:$openssl_runtime_dir"
-            selection='^(tst_wasapi_notifier_lifetime(_native)?|tst_wasapi_policy|tst_audio_device_catalog)$'
-            ctest --version
-            ctest -N -V -R "$selection" > windows-audio-selected.txt
-            for image in libNereusCore.dll libNereusSDRLib.dll \
-              tests/tst_wasapi_policy.exe tests/tst_wasapi_notifier_lifetime.exe \
-              tests/tst_audio_device_catalog.exe; do
-              printf 'IMPORTS: %s\n' "$image"
-              objdump -p "$image" | sed -n 's/^[[:space:]]*DLL Name: /  /p'
-            done > windows-audio-imports.txt
-            cat windows-audio-imports.txt
-            where.exe libfftw3-3.dll
-            where.exe libfftw3f-3.dll
-            # Loader errors must fail promptly, not wait on an invisible
-            # Windows error dialog. Keep successful native JSON in the log.
-            ctest -V --interactive-debug-mode 0 -R "$selection" \
-              --output-on-failure --no-tests=error --output-junit windows-audio-tests.xml
+            # Git Bash's startup PATH can select its incompatible UCRT
+            # libstdc++ before Qt's MinGW DLL. Stage the selected packages'
+            # exact runtime files and run in one controlled PowerShell process.
+            pwsh -NoProfile -File ../scripts/ci/test-windows-audio.ps1
           else
             ctest --output-on-failure --no-tests=ignore
           fi
@@ -1302,6 +1281,8 @@ jobs:
             build/Testing/Temporary/
             build/windows-audio-*.txt
             build/windows-audio-tests.xml
+            build/windows-audio-runtime-manifest.json
+            windows-audio-test-runtime/*.dll
             build/CMakeCache.txt
             build/tests/tst_wasapi_policy.exe
             build/tests/tst_wasapi_notifier_lifetime.exe
