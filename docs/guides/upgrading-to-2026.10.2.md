@@ -1,7 +1,5 @@
 # Upgrading to NereusSDR 2026.10.2
 
-This guide is prepared for the upcoming release; 2026.10.2 is not yet released.
-
 Use this note when updating a station from 2026.10.1. It lists what changes
 when you first connect, what to check before you transmit, and a short list of
 things to try. If you are coming from an earlier release, read the

@@ -89,7 +89,7 @@
             <a class="btn" href="https://testflight.apple.com/join/61K3p3xn">Join the iPhone &amp; iPad preview</a>
           </div>
           <p class="hero__meta">
-            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v2026.10.2</span>, <time data-release-date datetime="2026-10">October 2026</time></span></span>
+            <span><i class="led led--green" aria-hidden="true"></i><span>Latest <span data-release-version>v2026.10.2</span>, <time data-release-date datetime="2026-10">Date pending</time></span></span>
             <span>GPLv3</span>
             <span>Built for real stations</span>
           </p>
@@ -548,7 +548,7 @@
             <div class="titlebar"><h3>Roundtable</h3></div>
             <div class="applet__body">
               <h4>See who hears you, on every mode.</h4>
-              <p>Each frequency with people on it is a room. While someone talks, every station in the room shows its own S-meter reading of the talker, with distance and tuning offset, and the room can post short messages on that frequency. Roundtable sits in a panel and on every VFO flag on the desktop, in a sheet on the iPhone and iPad, and on a public page at <a href="https://roundtable.nereussdr.com/">roundtable.nereussdr.com</a>. Nothing is sent until you answer its first question, and one switch hides your station.</p>
+              <p>Roundtable groups people by frequency, with stacked callsigns and separately attributed reports of the last talker. Choose S-units, dBm or both for signal readings. Find it on the desktop, iPhone and iPad, and at <a href="https://roundtable.nereussdr.com/">roundtable.nereussdr.com</a>.</p>
               <ul class="chips">
                 <li class="is-blue">Rooms</li><li>S-meter readings</li><li>Turns</li><li>Messages</li><li>Every mode</li><li>Public page</li>
               </ul>
@@ -630,18 +630,17 @@
           <p class="eyebrow">Status</p>
           <h2 id="status-title">A new chapter <strong>for your station.</strong></h2>
           <p>
-            2026.10.2 brings Roundtable, where every station on a frequency shows how well it hears whoever is
-            talking, and polishes the station of 2026.10.1. The iPhone and iPad app takes the workspace look, remote
-            waterfalls hold up on lossy links and meters keep time with your audio, tuning on the pan gets easier,
-            more of the RX and TX applets fit in containers, and transmit protection gets safer.
+            2026.10.2 brings frequency-first Roundtable, a more resilient remote display, meters aligned with audio,
+            remote CW recovery and NNR processing warnings that leave the choice with the operator. The iPhone
+            and iPad app continues in its separate TestFlight preview.
           </p>
         </header>
 
         <div class="status">
           <ol class="releases" reversed data-reveal aria-label="Release history">
             <li class="is-latest">
-              <div><span class="ver">v2026.10.2</span><time data-release-history datetime="2026-10">Oct 2026</time></div>
-              <p>Roundtable, the workspace look on iPhone and iPad, stand-alone remote waterfall rows, remote meters held to their audio, flag drag to tune, RX and TX rows in containers, and safer transmit. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2">Read the release notes →</a></p>
+              <div><span class="ver">v2026.10.2</span><time data-release-history datetime="2026-10">Date pending</time></div>
+              <p>Frequency-first Roundtable, remote display and CW recovery, audio-aligned meters, and NNR processing warnings with operator choice. <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2">Read the release notes →</a></p>
             </li>
             <li>
               <div><span class="ver">v2026.10.1</span><time datetime="2026-10-17T22:03:26Z">17 Oct 2026</time></div>
@@ -685,14 +684,14 @@
             <div class="next">
               <div class="titlebar"><h3>New in 2026.10.2</h3></div>
               <div class="next__body"><ol>
-                <li><b>Roundtable: see who hears you</b><span>Each frequency with people on it becomes a room. While someone talks, every station in the room shows its own S-meter reading of the talker, with distance and tuning offset, on the desktop, the iPhone and iPad, and the <a href="https://roundtable.nereussdr.com/">public Roundtable page</a>. Nothing is sent until you answer Roundtable's first question, and one switch hides your station. It needs a 2026.10.2 Core.</span></li>
+                <li><b>Roundtable: see who hears you</b><span>Desktop, phone and the <a href="https://roundtable.nereussdr.com/">public Roundtable page</a> show people by frequency, stacked callsigns and separately attributed last-talker reports. Choose S-units, dBm or both. Frequency views need matching Core, client and server updates.</span></li>
                 <li><b>The workspace look, in your hand</b><span>The iPhone and iPad app takes the desktop's palette, panels, buttons and corners, with red kept for transmit. On a wide iPad, Setup lists its categories beside the page, and the 3D waterfall draws every frame at the desktop's pace.</span></li>
-                <li><b>Steadier remote operation</b><span>Each waterfall row from a 2026.10.2 Core stands on its own, so a lost network message costs one row instead of a smear, and a remote window's meters move with what you hear. The waterfall no longer floods bright green after a Core restart, and a paired window or phone gets its own slice back when a desktop Core restarts. Connections race IPv6 and IPv4, a Mac, iPhone or iPad keeps audio and display on IPv6, and a saved Core on your LAN is tried directly.</span></li>
+                <li><b>Steadier remote operation</b><span>Each waterfall row from a 2026.10.2 Core stands on its own, so a lost network message costs one row instead of a smear, and a remote window's meters move with what you hear. Remote CW can resume at the unfinished letter after a brief interruption; a prolonged dropout cancels it. The waterfall no longer floods bright green after a Core restart, and a paired window or phone gets its own slice back when a desktop Core restarts. Connections race IPv6 and IPv4, a Mac, iPhone or iPad keeps audio and display on IPv6, and a saved Core on your LAN is tried directly.</span></li>
                 <li><b>Easier tuning, safer transmit</b><span>Drag a receiver's flag or its whole passband to tune, with trackpad steps that no longer coast. With CTUN on, a frequency you type or tune outside the zoomed view now moves the receiver there, and the receiver always hears the frequency its flag shows. TUNE uses only the drive source chosen in Setup, SWR protection lowers the drive, an open antenna drops the key, the ANAN-G2E has its own PA gain table, and a web page can no longer key the radio through TCI. A TCI program that hangs while keyed loses the key within seconds. Receive filters stay within limits however they are set, with a new option to keep them on their own sideband. RX and TX applet rows, Nereus Band Buttons and a Frequency (Custom) readout can sit in containers.</span></li>
-                <li><b>A cleaner receiver</b><span>NB Blank hides electric-fence lines without freezing the waterfall when a loud station keys up, on the desktop and the phone. A lost I/Q packet no longer draws a false bright line, an S-meter no longer sticks after a sample-rate change, and the filter presets take standard widths, so CW F1 is now 1.0 kHz. The 3D view no longer draws ridges in the noise that look like stations, and each band keeps its own antennas through band changes and restarts. Plus fixes for discovery, floating windows, CAT and TCI, and a Windows Core no longer logs a crash for its audio helper at every start.</span></li>
+                <li><b>A cleaner receiver</b><span>NNR warns when receiver processing falls behind while keeping the selected model running; choose Standard when available, turn NNR off, or keep it running. NB Blank hides electric-fence lines without freezing the waterfall when a loud station keys up, on the desktop and the phone. A lost I/Q packet no longer draws a false bright line, an S-meter no longer sticks after a sample-rate change, and the filter presets take standard widths, so CW F1 is now 1.0 kHz. The 3D view no longer draws ridges in the noise that look like stations, and each band keeps its own antennas through band changes and restarts. Plus fixes for discovery, floating windows, CAT and TCI, and a Windows Core no longer logs a crash for its audio helper at every start.</span></li>
               </ol></div>
             </div>
-            <p class="capture-note">Updating a station? Read the <a href="/guides/upgrading-to-2026.10.2.html">2026.10.2 upgrade note</a> first, update the Core and the desktop together, and check TUNE and the drive before you transmit. The new waterfall format needs a 2026.10.2 Core and updated desktop or iPhone and iPad clients, and meters held to audio need a 2026.10.2 Core and desktop. The phone app has its own version number and is updated through TestFlight; desktop and Core packages do not update it. Older Cores, windows and apps still connect.</p>
+            <p class="capture-note">Updating a station? Read the <a href="/guides/upgrading-to-2026.10.2.html">2026.10.2 upgrade note</a> first, update the Core and the desktop together, and check TUNE and the drive before you transmit. The new waterfall format needs a 2026.10.2 Core and updated desktop or iPhone and iPad clients, and meters held to audio need a 2026.10.2 Core and desktop. Phone version 2026.10.1, build 9642, is in TestFlight testing; desktop and Core packages do not update it. Older Cores, windows and apps still connect. Radio-side CW and physical paddle behavior have validation limits; see the <a href="/guides/upgrading-to-2026.10.2.html">upgrade note</a>.</p>
           </div>
         </div>
       </div>
@@ -709,7 +708,7 @@
         </header>
 
         <p class="dl-meta" data-reveal>
-          <span>Latest <b data-release-version>v2026.10.2</b>, released <time data-release-date datetime="2026-10">October 2026</time></span>
+          <span>Latest <b data-release-version>v2026.10.2</b>, released <time data-release-date datetime="2026-10">Date pending</time></span>
           <a href="https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2" data-release-notes>Release notes</a>
           <a href="https://github.com/boydsoftprez/NereusSDR/releases">All releases</a>
         </p>
@@ -726,13 +725,13 @@
             </div>
             <ul class="dl__files">
               <li><a data-asset="macOS-apple-silicon.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-macOS-apple-silicon.dmg">
-                <b>Apple Silicon · DMG</b><small>NereusSDR-2026.10.2-macOS-apple-silicon.dmg</small><span class="dl__size"></span></a></li>
+                <b>Apple Silicon · DMG</b><small>NereusSDR-2026.10.2-macOS-apple-silicon.dmg</small><span class="dl__size">Size pending</span></a></li>
               <li><a data-asset="macOS-apple-silicon.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-macOS-apple-silicon.pkg">
-                <b>Apple Silicon · Installer</b><small>NereusSDR-2026.10.2-macOS-apple-silicon.pkg</small><span class="dl__size"></span></a></li>
+                <b>Apple Silicon · Installer</b><small>NereusSDR-2026.10.2-macOS-apple-silicon.pkg</small><span class="dl__size">Size pending</span></a></li>
               <li><a data-asset="macOS-intel.dmg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-macOS-intel.dmg">
-                <b>Intel · DMG</b><small>NereusSDR-2026.10.2-macOS-intel.dmg</small><span class="dl__size"></span></a></li>
+                <b>Intel · DMG</b><small>NereusSDR-2026.10.2-macOS-intel.dmg</small><span class="dl__size">Size pending</span></a></li>
               <li><a data-asset="macOS-intel.pkg" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-macOS-intel.pkg">
-                <b>Intel · Installer</b><small>NereusSDR-2026.10.2-macOS-intel.pkg</small><span class="dl__size"></span></a></li>
+                <b>Intel · Installer</b><small>NereusSDR-2026.10.2-macOS-intel.pkg</small><span class="dl__size">Size pending</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Signed with an Apple Developer ID and notarized, so it opens normally.</p>
           </article>
@@ -750,9 +749,9 @@
             </div>
             <ul class="dl__files">
               <li><a data-asset="Windows-x64-setup.exe" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-Windows-x64-setup.exe">
-                <b>Installer</b><small>NereusSDR-2026.10.2-Windows-x64-setup.exe</small><span class="dl__size"></span></a></li>
+                <b>Installer</b><small>NereusSDR-2026.10.2-Windows-x64-setup.exe</small><span class="dl__size">Size pending</span></a></li>
               <li><a data-asset="Windows-x64-portable.zip" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-Windows-x64-portable.zip">
-                <b>Portable ZIP</b><small>NereusSDR-2026.10.2-Windows-x64-portable.zip</small><span class="dl__size"></span></a></li>
+                <b>Portable ZIP</b><small>NereusSDR-2026.10.2-Windows-x64-portable.zip</small><span class="dl__size">Size pending</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--amber" aria-hidden="true"></i>Not code-signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.</p>
           </article>
@@ -768,9 +767,9 @@
             </div>
             <ul class="dl__files">
               <li><a data-asset="x86_64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-x86_64.AppImage">
-                <b>AppImage · x86_64</b><small>NereusSDR-2026.10.2-x86_64.AppImage</small><span class="dl__size"></span></a></li>
+                <b>AppImage · x86_64</b><small>NereusSDR-2026.10.2-x86_64.AppImage</small><span class="dl__size">Size pending</span></a></li>
               <li><a data-asset="aarch64.AppImage" href="https://github.com/boydsoftprez/NereusSDR/releases/download/v2026.10.2/NereusSDR-2026.10.2-aarch64.AppImage">
-                <b>AppImage · ARM64</b><small>NereusSDR-2026.10.2-aarch64.AppImage</small><span class="dl__size"></span></a></li>
+                <b>AppImage · ARM64</b><small>NereusSDR-2026.10.2-aarch64.AppImage</small><span class="dl__size">Size pending</span></a></li>
             </ul>
             <p class="dl__note"><i class="led led--green" aria-hidden="true"></i>Built on Ubuntu 22.04 (x86_64) and 24.04 (ARM64). Mark the file executable, then run it.</p>
           </article>

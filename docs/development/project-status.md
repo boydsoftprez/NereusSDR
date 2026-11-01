@@ -7,16 +7,7 @@ verbatim from `CLAUDE.md` as of commit 86a1b20d6.
 
 ## Current status
 
-2026.10.1 is the current release. It adds CAT/rigctld, rotor control, native
-audio engines, the workspace look as the default, receivers restored as they
-were left after a relaunch, and reliability fixes. 2026.10.0, the first CalVer
-release, came before it. See the
-[README](../../README.md), [release notes](../../CHANGELOG.md),
-[2026.10.0 upgrade guide](../guides/upgrading-to-2026.10.0.md) and
-[2026.10.1 upgrade note](../guides/upgrading-to-2026.10.1.md).
-The release summary in [MASTER-PLAN.md](../MASTER-PLAN.md) records current scope.
-
-2026.10.2 release preparation covers the combined work since 2026.10.1,
+2026.10.2 is the current desktop and Core release. It combines the work since 2026.10.1,
 including remote display codec v2, audio-aligned remote RX meters, CW and
 remote transmit recovery, frequency-first Roundtable and signal units,
 receiver and container state, and phone display fixes. NNR retains the

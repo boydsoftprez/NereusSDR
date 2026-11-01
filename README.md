@@ -19,7 +19,7 @@ you: a local desktop, another computer, or your phone or tablet.
 | What you want to do | Where to go |
 | --- | --- |
 | Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
-| Review 2026.10.2 release preparation | [2026.10.2 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html), [release notes](CHANGELOG.md) and [bench checklist](docs/guides/bench-2026.10.2.md) |
+| Upgrade from 2026.10.1 | [2026.10.2 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html), [release notes](CHANGELOG.md) and [bench checklist](docs/guides/bench-2026.10.2.md) |
 | Upgrade from 2026.10.0 | [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html) and [release notes](CHANGELOG.md) |
 | Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) and [release notes](CHANGELOG.md) |
 | Run the Core on a Raspberry Pi or another SBC | [Fresh Raspberry Pi OS Lite / Armbian install](https://nereussdr.com/guides/install-core-sbc.html) |
@@ -33,7 +33,7 @@ together, from the first connection to shared stations, digital modes and
 accessories. Join Discord for questions and discussion; use GitHub Issues
 for bug reports and feature requests that need tracking.
 
-## 2026.10.2 release preparation
+## What's new in 2026.10.2
 
 - **Frequency-first Roundtable.** See people at their frequencies on the
   desktop, iPhone and website. Stacked callsigns, the last talker and
@@ -58,12 +58,11 @@ for bug reports and feature requests that need tracking.
 - **Saved controls and layouts.** Receiver preferences, container items,
   meter history and clock resizing retain their intended state. The
   [release notes](CHANGELOG.md) cover the radio, tuner, PureSignal, remote
-  audio and phone fixes in the combined release preparation.
+  audio and phone fixes in this release.
 
-**Latest public stable: 2026.10.1.** The 2026.10.2 release is in
-preparation; the earlier signed 2026.10.2-rc1 tag is preserved. Packages
-appear on the [releases page](https://github.com/boydsoftprez/NereusSDR/releases)
-when published. Read the
+**Current release: 2026.10.2.** Download the desktop and Core packages from
+[the release page](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2).
+The earlier signed 2026.10.2-rc1 tag is preserved. Read the
 [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html)
 before updating a station. Update the Core and desktop together. The separate
 phone app, version 2026.10.1 build 9642, is in TestFlight testing. The new

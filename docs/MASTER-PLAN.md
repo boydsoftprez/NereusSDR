@@ -6,17 +6,7 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
-## Latest stable release: 2026.10.1
-
-This release adds CAT with Hamlib rigctld, antenna rotor control, native
-audio engines with live device lists, the radio speaker volume in the header,
-the workspace look as the default, and reliability fixes across display,
-transmit, remote audio and Core installs. Rotor control, CAT Control on the
-phone and the Core speaker need a 2026.10.1 Core; older peers still connect.
-See the [changelog](../CHANGELOG.md) and the
-[2026.10.1 upgrade note](guides/upgrading-to-2026.10.1.md).
-
-## 2026.10.2 release preparation
+## Latest stable release: 2026.10.2
 
 The combined work since 2026.10.1 includes frequency-first Roundtable across
 desktop, phone and website, with S-units, dBm or both; CW transmit and remote
@@ -38,6 +28,16 @@ Physical HL2 paddle takeover remains unverified. The 50 microsecond heavy-load
 CW optimization goal, XDMA (#339), broader hotkeys (#698), separate Roundtable
 discovery/onboarding work and cross-platform waterfall time-axis consistency
 remain deferred. The strict 2 ms CI check remains in place.
+
+## Previous release: 2026.10.1
+
+This release adds CAT with Hamlib rigctld, antenna rotor control, native
+audio engines with live device lists, the radio speaker volume in the header,
+the workspace look as the default, and reliability fixes across display,
+transmit, remote audio and Core installs. Rotor control, CAT Control on the
+phone and the Core speaker need a 2026.10.1 Core; older peers still connect.
+See the [changelog](../CHANGELOG.md) and the
+[2026.10.1 upgrade note](guides/upgrading-to-2026.10.1.md).
 
 ## Previous release: 2026.10.0
 
