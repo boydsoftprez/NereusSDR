@@ -753,15 +753,34 @@ struct PanStackTests {
         main.pan.addSlice(on: .first)
         #expect(await settle { main.slices.entries.count == 2 })
         #expect(rig.stack.addPanState() == (true, nil))
-        // Slice B on no pan: Pan 1 holds one slice, none is spare, and both the radio runs are taken.
+        // The Core's empty key is Pan 1: B remains its spare despite the radio's slice limit.
         await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
             .init(ordinal: 27, name: "panKey", value: .utf8("")),
         ])))
+        #expect(await settle { rig.model.mirror.object("slice:1")?["panKey"] == .text("") })
+        main.slices.catchUp()
+        #expect(main.slices.entries.map(\.panKey) == ["pan-0", "pan-0"])
+        #expect(rig.model.mirror.object("slice:1")?["panKey"] == .text(""))
+        #expect(main.slices.entries.allSatisfy { !$0.listening })
+        #expect(PanStackModel.spareSlice(main.slices.entries)?.id == 1)
+        #expect(await settle { rig.stack.addPanState() == (true, nil) })
+        // B on a distinct, unshown pan leaves one controlled slice per pan, none spare.
+        // It is not on pan-1, which Add a pan would open without needing another slice.
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 27, name: "panKey", value: .utf8("pan-2")),
+        ])))
+        #expect(await settle { main.slices.entries.map(\.panKey) == ["pan-0", "pan-2"] })
+        #expect(main.slices.entries.allSatisfy { !$0.listening })
+        #expect(PanStackModel.spareSlice(main.slices.entries) == nil)
+        #expect(rig.model.mirror.objects(ofClass: BandSlicesModel.sliceClass).count == 2)
         #expect(await settle { rig.stack.addPanState() == (false, "The ANAN-G2 runs two slices.") })
         let asked = invokes(rig.station, PanSheetModel.addSliceVerb).count
+        let writes = panKeyWrites(rig.station).count
         rig.stack.addPan()
         await quiet()
         #expect(invokes(rig.station, PanSheetModel.addSliceVerb).count == asked)
+        #expect(panKeyWrites(rig.station).count == writes)
+        #expect(rig.stack.open == [.first])
         await rig.model.disconnect()
     }
 
