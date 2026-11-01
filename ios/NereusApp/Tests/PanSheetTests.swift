@@ -256,14 +256,17 @@ struct PanSheetTests {
         #expect(await settle { main.pan.note == "The request could not be sent to the Core." })
     }
 
-    @Test("an owned slice with an empty pan key cannot erase this phone's first-pan target")
+    @Test("an owned slice with the Core's empty pan key keeps its raw value and targets the first pan")
     func emptyOwnedPanKey() async throws {
         let (model, station) = try await connected(.all)
         let pan = model.main.pan
         await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
             .init(ordinal: 27, name: "panKey", value: .utf8("")),
         ])))
-        #expect(await settle { model.main.slices.active?.panKey == "" })
+        #expect(await settle { model.mirror.object("slice:0")?["panKey"] == .text("") })
+        model.main.slices.catchUp()
+        #expect(model.main.slices.active?.panKey == "pan-0")
+        #expect(model.mirror.object("slice:0")?["panKey"] == .text(""))
         #expect(pan.panKey == "pan-0")
         pan.addSlice()
         #expect(await settle { !self.invokes(station, PanSheetModel.addSliceVerb).isEmpty })

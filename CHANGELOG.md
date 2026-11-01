@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- The iPhone/iPad Max Bin meter recognizes the Core’s empty default-pan
+  identity. A fresh spectrum on that pan no longer leaves the flag meter
+  blank or Max Bin unavailable; missing identity, other pans and stale
+  display frames remain ineligible.
+
 - The iPhone's saved band-return link says **Previous band**, clarifying
   that taking a slice keeps the earlier view available to return to.
 

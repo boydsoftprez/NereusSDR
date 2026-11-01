@@ -9,9 +9,9 @@
 # The archive carries:
 #
 #   * its build number, CURRENT_PROJECT_VERSION, from build-number.sh: the
-#     commit count of HEAD plus 1000 (D132), so every archive from a newer commit
-#     carries a larger number, as TestFlight asks. An archive needs one, so
-#     this stops when there is no git repository to count;
+#     commit count of HEAD plus the offset maintained in that helper
+#     (D132). Archive from merged main: squash-merged branch counts are not
+#     globally monotonic. This stops without a git repository to count;
 #   * its version, MARKETING_VERSION, as project.yml sets it;
 #   * its name, NEREUS_BUILD_TAG, from build-tag.sh, the same rule as the
 #     device install and the desktop: none on a release tag, otherwise

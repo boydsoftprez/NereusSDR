@@ -10,7 +10,8 @@
 # The build names itself: the tag from build-tag.sh, derived at the moment
 # of the build, goes in as the NEREUS_BUILD_TAG build setting and shows at
 # the foot of Setup. Its number, from build-number.sh (the commit count of
-# HEAD plus 1000), goes in as CURRENT_PROJECT_VERSION, so About's "build N" rises with
+# HEAD plus the offset maintained in that helper), goes in as
+# CURRENT_PROJECT_VERSION, so About's "build N" rises with
 # every commit; without git, project.yml's number stands. Signing is automatic, with the team in
 # ios/Config/Team.xcconfig. When signing or provisioning fails, this stops
 # with Xcode's own error; it never changes the team, the entitlements or the
