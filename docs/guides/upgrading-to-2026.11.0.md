@@ -40,8 +40,13 @@ behavior depends on the firmware and wiring. Physical paddle takeover has not
 been verified on the installed Hermes Lite 2 variant; client and packet tests
 do not establish that physical-input observation.
 
-Richard LB2EG's reported ANAN-200D radio sidetone issue remains unresolved;
-the exact protocol, firmware and key source are still being established.
+Protocol 2 now keeps speaker-audio packets flowing with silence when the
+mixer has no audio, removing a host-stream dependency on computer sidetone
+that can affect radio-generated CW. The source-backed correction is merged
+in [#726](https://github.com/boydsoftprez/NereusSDR/pull/726). Richard LB2EG's
+installed protocol, firmware and audible result remain unconfirmed. The
+existing sender estimates buffer drain from host time; sustained clock drift
+and scheduler stalls remain separate timing limits.
 
 ## Check before you transmit
 
@@ -104,7 +109,7 @@ the exact protocol, firmware and key source are still being established.
   [combined bench checklist](bench-2026.11.0.md#roundtable-on-desktop-iphone-and-website).
   Reports can show S-units, dBm or both, with a local choice on each device.
 - **Phone Roundtable overlay.** The phone overlay shows frequency-first people and attributed reports with the selected signal unit.
-- **TCI CW compatibility.** The proposed compatibility change covers outgoing initialization, queries, acknowledgments and live updates; its release inclusion depends on PR [#725](https://github.com/boydsoftprez/NereusSDR/pull/725) merging.
+- **TCI CW compatibility.** The **CWL/CWU becomes CW** option now applies to outgoing initialization, queries, acknowledgments and live updates for connected loggers. It changes reported mode strings; the receiver keeps its actual CW sideband ([#725](https://github.com/boydsoftprez/NereusSDR/pull/725)).
 - **Phone return and meter.** The retained return destination is labeled
   **Previous band**. Max Bin recognizes the Core’s empty default-pan identity
   when a fresh spectrum is available.

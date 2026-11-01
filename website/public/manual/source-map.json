@@ -582,8 +582,8 @@
     },
     {
       "output": "guides/upgrading-to-2026.11.0.html",
-      "output_sha256": "5687b9bfc7dbd09a8dd6a6f1948d78ed4050780eb0d4853bebdb320ef6cf59ed",
-      "sha256": "9d658a5e730f2678a1c012c717a6506540b289afec9fced0080af6fb9564820c",
+      "output_sha256": "673a8db58d0700644928e9a10486df5f5841fac895696f92d5d333ffbe625bee",
+      "sha256": "848d1c07427cca0ac1adb564aee9e766dec124c5a506402355cd3f0c0834e008",
       "source": "docs/guides/upgrading-to-2026.11.0.md"
     },
     {

@@ -44,9 +44,9 @@ for bug reports and feature requests that need tracking.
   keep identities readable and distinguish ended observations.
 - **CW and remote transmit recovery.** The Core supports CWX text and
   memories, radio key input, CAT/TCI and serial key lines, with the same
-  transmit checks. The reported ANAN-200D radio sidetone issue remains
-  unresolved; its protocol, firmware and key source are still being established.
-  Remote activity has its own keepalive, pause, recovery
+  transmit checks. Protocol 2 speaker-audio continuity no longer depends on
+  computer sidetone; audible confirmation on the reported ANAN-200D remains
+  pending. Remote activity has its own keepalive, pause, recovery
   and cancellation lifetime. QSK availability follows the radio.
 - **Receive and display continuity.** Remote display rows and RX meters
   follow their audio, tuning and receiver moves preserve continuity, and

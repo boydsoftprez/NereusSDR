@@ -34,8 +34,13 @@ signal and retune once if needed after updating. Radio-side key and paddle
 behavior depends on the firmware and wiring. Physical paddle takeover has not
 been verified on the installed Hermes Lite 2 variant; client and packet tests
 do not establish that physical-input observation.</p>
-<p>Richard LB2EG's reported ANAN-200D radio sidetone issue remains unresolved;
-the exact protocol, firmware and key source are still being established.</p>
+<p>Protocol 2 now keeps speaker-audio packets flowing with silence when the
+mixer has no audio, removing a host-stream dependency on computer sidetone
+that can affect radio-generated CW. The source-backed correction is merged
+in <a href="https://github.com/boydsoftprez/NereusSDR/pull/726">#726</a>. Richard LB2EG's
+installed protocol, firmware and audible result remain unconfirmed. The
+existing sender estimates buffer drain from host time; sustained clock drift
+and scheduler stalls remain separate timing limits.</p>
 <h2 id="check-before-you-transmit">Check before you transmit</h2>
 <ul>
 <li><strong>TUNE uses only the drive source chosen in Setup.</strong> Open <strong>File &gt;
@@ -97,7 +102,7 @@ older servers are identified as legacy room servers. See the
 <a href="https://github.com/boydsoftprez/NereusSDR/blob/main/docs/guides/bench-2026.11.0.md#roundtable-on-desktop-iphone-and-website">combined bench checklist</a>.
 Reports can show S-units, dBm or both, with a local choice on each device.</li>
 <li><strong>Phone Roundtable overlay.</strong> The phone overlay shows frequency-first people and attributed reports with the selected signal unit.</li>
-<li><strong>TCI CW compatibility.</strong> The proposed compatibility change covers outgoing initialization, queries, acknowledgments and live updates; its release inclusion depends on PR <a href="https://github.com/boydsoftprez/NereusSDR/pull/725">#725</a> merging.</li>
+<li><strong>TCI CW compatibility.</strong> The <strong>CWL/CWU becomes CW</strong> option now applies to outgoing initialization, queries, acknowledgments and live updates for connected loggers. It changes reported mode strings; the receiver keeps its actual CW sideband (<a href="https://github.com/boydsoftprez/NereusSDR/pull/725">#725</a>).</li>
 <li><strong>Phone return and meter.</strong> The retained return destination is labeled
 <strong>Previous band</strong>. Max Bin recognizes the Core’s empty default-pan identity
 when a fresh spectrum is available.</li>
