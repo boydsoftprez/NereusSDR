@@ -541,14 +541,12 @@ jobs:
       # runs them. Wall-clock to all-green matches macOS / Windows because
       # all four shards run concurrently.
       #
-      # macOS + Windows stay single-job: they don't build the test suite
-      # (the fakes are Linux-specific) so a single runner is already at
-      # parity with each Linux shard.
+      # macOS + Windows stay single-job. macOS builds the app only;
+      # Windows also builds the named audio catalogue/notifier tests.
       #
       # `shard` / `shards` only apply on Linux entries; macOS / Windows
       # leave them unset so CMake's NEREUS_TEST_SHARDS defaults to 0 (no
-      # sharding) — but they don't build tests anyway, so the variable is
-      # moot for them.
+      # sharding). Windows selects its small native test set explicitly.
       #
       # `cache` names the leg's compiler cache (see "Restore compiler
       # cache" in the build job). `linux` marks the legs the self-hosted
@@ -612,8 +610,8 @@ jobs:
   #
   # Linux is the source-of-truth gate for the C++ test suite (see the
   # Configure (Linux) and Test step comments below for the reasoning).
-  # macOS + Windows still build the main app and configure with tests
-  # OFF because the test fakes are Linux/Qt-specific.
+  # macOS builds the main app with tests OFF. Windows enables tests but
+  # builds/runs only the named audio catalogue/notifier targets below.
   # --------------------------------------------------------------------
   build:
     needs: changes
@@ -1158,6 +1156,7 @@ jobs:
             ${CCACHE_BIN:+"-DCMAKE_C_COMPILER_LAUNCHER=$CCACHE_BIN"} \
             ${CCACHE_BIN:+"-DCMAKE_CXX_COMPILER_LAUNCHER=$CCACHE_BIN"} \
             ${CCACHE_BIN:+-DNEREUS_USE_PCH=OFF} \
+            -DNEREUS_BUILD_TESTS=ON \
             -DNEREUS_GPU_SPECTRUM=ON \
             -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
 
@@ -1192,7 +1191,7 @@ jobs:
           case "$RUNNER_OS" in
             Linux)   cmake --build build -j"$(nproc)" --target all all_tests ;;
             macOS)   cmake --build build -j"$(sysctl -n hw.ncpu)" ;;
-            Windows) cmake --build build -j"$NUMBER_OF_PROCESSORS" ;;
+            Windows) cmake --build build -j"$NUMBER_OF_PROCESSORS" --target all tst_wasapi_notifier_lifetime tst_wasapi_policy tst_audio_device_catalog ;;
           esac
 
       # Every libcrypto or libssl the built binaries link must be openssl@3's
@@ -1211,14 +1210,17 @@ jobs:
         shell: bash
         # 2026-05-12 (PR #238 review P1 #4): drop --no-tests=ignore so
         # a configure that produces zero tests fails loud.  Linux is
-        # configured with NEREUS_BUILD_TESTS=ON above; macOS + Windows
-        # still configure with tests OFF (the test suite uses Linux-
+        # configured with NEREUS_BUILD_TESTS=ON above; macOS
+        # still configures with tests OFF (the test suite uses Linux-
         # specific PortAudio / Qt 6.4 fakes that haven't been ported
         # to the macOS / mingw paths yet — separate scope).  So
-        # macOS + Windows still pass through with zero tests for now;
+        # macOS still passes through with zero tests for now;
         # ctest exits 0 with a warning instead of erroring out because
         # there's no test list to run against.  Linux is the source-of-
-        # truth gate for the test suite.
+        # truth gate for the full test suite. Windows builds and runs only
+        # the named audio catalogue/notifier tests. The native notifier
+        # test checks COM lifetime in pristine child processes without
+        # opening streams, starting a Core, or touching station profiles.
         #
         # Ordinary tests select offscreen individually through
         # NEREUS_TESTS_OFFSCREEN in tests/CMakeLists.txt. Native-window
@@ -1261,9 +1263,34 @@ jobs:
             xvfb-run -a ctest -LE realtime -j"$(nproc)" --output-on-failure --no-tests=error || status=1
             xvfb-run -a ctest -L realtime --output-on-failure --no-tests=ignore || status=1
             exit "$status"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            # Git Bash's startup PATH can select its incompatible UCRT
+            # libstdc++ before Qt's MinGW DLL. Stage the selected packages'
+            # exact runtime files and run in one controlled PowerShell process.
+            pwsh -NoProfile -File ../scripts/ci/test-windows-audio.ps1
           else
             ctest --output-on-failure --no-tests=ignore
           fi
+
+      - name: Preserve Windows audio test diagnostics
+        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-audio-tests-pr${{ github.event.number || github.run_id }}
+          path: |
+            build/Testing/Temporary/
+            build/windows-audio-*.txt
+            build/windows-audio-tests.xml
+            build/windows-audio-runtime-manifest.json
+            windows-audio-test-runtime/*.dll
+            build/CMakeCache.txt
+            build/tests/tst_wasapi_policy.exe
+            build/tests/tst_wasapi_notifier_lifetime.exe
+            build/tests/tst_audio_device_catalog.exe
+            build/*.dll
+            third_party/fftw3/bin/*.dll
+          retention-days: 7
+          if-no-files-found: warn
 
       # ------------------------------------------------------------------
       # PR artifact upload
@@ -1741,9 +1768,8 @@ jobs:
   # Linux build with tests off, when Linux runs on the self-hosted runners.
   #
     # R-R3-21 follow-up from the 2026-09-24 checkpoint. The Linux build
-    # jobs have NEREUS_BUILD_TESTS=ON. The macOS and Windows jobs already
-    # build the app with tests off (their configure steps above leave
-    # NEREUS_BUILD_TESTS at its OFF default), but the Linux-only sources
+    # jobs have NEREUS_BUILD_TESTS=ON. The macOS job builds the app with
+    # tests off; Windows enables a small native audio test set. Linux-only sources
     # (the PipeWire bridge and the pipe bus) compile only here, so this
     # is the one build before merge that compiles them with tests off.
     # It builds the app and nereusd a second time in that shape.

@@ -2434,6 +2434,18 @@ nereus_add_test(tst_port_audio_library_lock)
 # every system (format order, periods, notices, transport, results).  The
 # Windows adapter files compile only in Windows CI.
 nereus_add_test(tst_wasapi_policy)
+# Native notifier COM lifetime, including pristine gui-less child processes.
+# No radio/discovery/server/stream setup; failure tests inject per-instance APIs.
+if(WIN32)
+    nereus_add_test(tst_wasapi_notifier_lifetime CORE_ONLY EXTRA_LABELS windows-com-lifetime)
+    set_property(TARGET tst_wasapi_notifier_lifetime PROPERTY DISABLE_PRECOMPILE_HEADERS ON)
+    target_link_libraries(tst_wasapi_notifier_lifetime PRIVATE ole32)
+    nereus_split_test(tst_wasapi_notifier_lifetime
+        ENV NEREUS_WASAPI_NOTIFIER_TEST_GROUP GROUPS native)
+    if(TEST tst_wasapi_notifier_lifetime_native)
+        set_property(TEST tst_wasapi_notifier_lifetime_native APPEND PROPERTY LABELS windows-com-native)
+    endif()
+endif()
 target_compile_definitions(tst_port_audio_library_lock PRIVATE NEREUS_BUILD_TESTS)
 # PortAudio starts on first need, never at launch: building an AudioEngine
 # starts nothing, and the catalog lists the older drivers only once
