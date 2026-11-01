@@ -130,6 +130,24 @@ jobs:
           ctest --test-dir build -V --interactive-debug-mode 0 -R $selection --output-on-failure --no-tests=error --output-junit windows-audio-replay.xml 2>&1 | Tee-Object runtime-evidence/replay-console.txt
           exit $LASTEXITCODE
 
+      - name: Compare the original Git Bash test shell without rebuilding
+        id: bash_replay
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' && steps.identity.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        working-directory: build
+        run: |
+          fftw_runtime_dir="$(cygpath -u "$GITHUB_WORKSPACE")/third_party/fftw3/bin"
+          openssl_runtime_dir="$(cygpath -u "$OPENSSL_ROOT_DIR")/bin"
+          export PATH="$PATH:$fftw_runtime_dir:$openssl_runtime_dir"
+          mkdir -p ../runtime-evidence/bash
+          printf '%s\n' "$PATH" > ../runtime-evidence/bash/shell-path.txt
+          python ../scripts/ci/windows-audio-runtime-replay.py audit --root .. --out ../runtime-evidence/bash > ../runtime-evidence/bash/audit-console.txt 2>&1 || true
+          cat ../runtime-evidence/bash/audit-console.txt
+          selection='^(tst_wasapi_notifier_lifetime(_native)?|tst_wasapi_policy|tst_audio_device_catalog)$'
+          ctest -N -V -R "$selection" > ../runtime-evidence/bash/replay-selected.txt
+          ctest -V --interactive-debug-mode 0 -R "$selection" --output-on-failure --no-tests=error --output-junit ../runtime-evidence/bash/replay.xml 2>&1 | tee ../runtime-evidence/bash/replay-console.txt
+
       - name: Preserve all recovered evidence and matching runtime providers
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
