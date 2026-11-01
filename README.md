@@ -19,7 +19,7 @@ you: a local desktop, another computer, or your phone or tablet.
 | What you want to do | Where to go |
 | --- | --- |
 | Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
-| Upgrade from 2026.10.1 | [2026.10.2 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html), [release notes](CHANGELOG.md) and [bench checklist](docs/guides/bench-2026.10.2.md) |
+| Upgrade from 2026.10.1 | [2026.11.0 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.11.0.html), [release notes](CHANGELOG.md) and [bench checklist](docs/guides/bench-2026.11.0.md) |
 | Upgrade from 2026.10.0 | [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html) and [release notes](CHANGELOG.md) |
 | Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) and [release notes](CHANGELOG.md) |
 | Run the Core on a Raspberry Pi or another SBC | [Fresh Raspberry Pi OS Lite / Armbian install](https://nereussdr.com/guides/install-core-sbc.html) |
@@ -33,17 +33,20 @@ together, from the first connection to shared stations, digital modes and
 accessories. Join Discord for questions and discussion; use GitHub Issues
 for bug reports and feature requests that need tracking.
 
-## What's new in 2026.10.2
+## What's new in 2026.11.0
 
 - **Frequency-first Roundtable.** See people at their frequencies on the
   desktop, iPhone and website. Stacked callsigns, the last talker and
   attributed **Heard by** reports keep the source of each signal reading
   clear. Conversations follow frequency; earlier messages retain their
   original frequency. Distance defaults to miles, with kilometres and
-  bearing options. Reports offer S-units, dBm or both.
+  bearing options. Reports offer S-units, dBm or both. Phone spectrum cards
+  keep identities readable and distinguish ended observations.
 - **CW and remote transmit recovery.** The Core supports CWX text and
   memories, radio key input, CAT/TCI and serial key lines, with the same
-  transmit checks. Remote activity has its own keepalive, pause, recovery
+  transmit checks. The reported ANAN-200D radio sidetone issue remains
+  unresolved; its protocol, firmware and key source are still being established.
+  Remote activity has its own keepalive, pause, recovery
   and cancellation lifetime. QSK availability follows the radio.
 - **Receive and display continuity.** Remote display rows and RX meters
   follow their audio, tuning and receiver moves preserve continuity, and
@@ -60,16 +63,16 @@ for bug reports and feature requests that need tracking.
   [release notes](CHANGELOG.md) cover the radio, tuner, PureSignal, remote
   audio and phone fixes in this release.
 
-**Current release: 2026.10.2.** Download the desktop and Core packages from
-[the release page](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.10.2).
+**Current release: 2026.11.0.** Download the desktop and Core packages from
+[the release page](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.11.0).
 The earlier signed 2026.10.2-rc1 tag is preserved. Read the
-[upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.2.html)
+[upgrade note](https://nereussdr.com/guides/upgrading-to-2026.11.0.html)
 before updating a station. Update the Core and desktop together. The separate
-phone app, version 2026.10.1 build 9642, is in TestFlight testing. The new
+phone app, version 2026.10.1 build 9645, is in TestFlight testing. The new
 remote display format needs an updated Core and client; audio-aligned RX
 meters need the updated Core and desktop; remote CW start needs an updated
 Core and client. Older peers can still connect. Record checks on the
-[bench checklist](docs/guides/bench-2026.10.2.md).
+[bench checklist](docs/guides/bench-2026.11.0.md).
 
 ## What's new in 2026.10.1
 

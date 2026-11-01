@@ -1,13 +1,13 @@
 # NereusSDR User Manual
 
-This manual covers NereusSDR 2026.10.2. Read the
-[2026.10.2 upgrade note](../guides/upgrading-to-2026.10.2.md) for changes since
+This manual covers NereusSDR 2026.11.0. Read the
+[2026.11.0 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.11.0.html) for changes since
 2026.10.1. Procedures retain their documented source and capture baselines,
 with some release captures and live station checks still pending.
 
 The native iPhone/iPad app is available as a
 [public TestFlight preview](https://testflight.apple.com/join/61K3p3xn). Mobile installation
-is separate from the 2026.10.2 desktop and Core packages. The phone's **Rotor** and **CAT Control** tools need a 2026.10.1 Core. Install
+is separate from the 2026.11.0 desktop and Core packages. The phone's **Rotor** and **CAT Control** tools need a 2026.10.1 Core. Install
 TestFlight on your device, open the invitation and follow its installation steps.
 The app requires your own running NereusCore station. These chapters retain
 their documented source and capture baselines; public availability does not

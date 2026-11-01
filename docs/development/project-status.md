@@ -7,13 +7,13 @@ verbatim from `CLAUDE.md` as of commit 86a1b20d6.
 
 ## Current status
 
-2026.10.2 is the current desktop and Core release. It combines the work since 2026.10.1,
+2026.11.0 is the current desktop and Core release. It combines the work since 2026.10.1,
 including remote display codec v2, audio-aligned remote RX meters, CW and
 remote transmit recovery, frequency-first Roundtable and signal units,
 receiver and container state, and phone display fixes. NNR retains the
 selected model and offers an operator choice on a measured warning. The phone
 also labels **Previous band** and recognizes the Core's empty default-pan
-identity for Max Bin. Phone 2026.10.1 build 9642 is in TestFlight testing;
+identity for Max Bin. Phone 2026.10.1 build 9645 is in TestFlight testing;
 its version is independent of the desktop release. The
 [release summary](../MASTER-PLAN.md) records the scope and deferred work.
 
