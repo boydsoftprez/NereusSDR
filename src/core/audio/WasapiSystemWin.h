@@ -16,6 +16,8 @@
 //   2026-10-09: native audio plan Task 9 (R-AUD-01, R-AUD-02, R-AUD-03,
 //               R-AUD-14, R-AUD-16). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-31: retain MTA support for endpoint notification ownership.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #pragma once
@@ -46,6 +48,7 @@
 #include "core/audio/DeviceSampleFormat.h"
 #include "core/audio/IAudioEngineBackend.h"
 #include "core/audio/WasapiPolicy.h"
+#include "core/NereusCoreExport.h"
 
 #include <QList>
 #include <QString>
@@ -160,16 +163,28 @@ QList<WasapiEndpoint> wasapiActiveEndpoints(AudioDeviceDirection direction, bool
 // The console default endpoint of one direction (design choice 1).
 std::optional<QString> wasapiDefaultEndpointId(AudioDeviceDirection direction);
 
+// Native operations for one notification registration. The instance boundary
+// also permits failure testing without real endpoints or global COM hooks.
+struct WasapiNotifierApi {
+    std::function<HRESULT(CO_MTA_USAGE_COOKIE*)> incrementMtaUsage;
+    std::function<HRESULT(CO_MTA_USAGE_COOKIE)> decrementMtaUsage;
+    std::function<HRESULT(IMMDeviceEnumerator**)> createEnumerator;
+    std::function<bool(const std::function<void()>&)> runInMta;
+};
+
 // IMMNotificationClient registration for the life of the object.  Each
 // notice is mapped by wasapiNoticeFor and handed to the sink; the client
 // only posts (no blocking, no register or unregister inside it, and the
 // object, not the system, holds its last reference).  Registered and
 // unregistered on a short-lived thread of its own in the multithreaded
 // apartment, whatever apartment the caller's thread is in.
-class WasapiEndpointNotifier {
+// A retained MTA usage cookie keeps that apartment alive between workers,
+// until the registration, enumerator and callback owner have been released.
+class NEREUS_CORE_EXPORT WasapiEndpointNotifier {
 public:
     using Sink = std::function<void(AudioNotice)>;
     WasapiEndpointNotifier();
+    explicit WasapiEndpointNotifier(WasapiNotifierApi api);
     ~WasapiEndpointNotifier();
     WasapiEndpointNotifier(const WasapiEndpointNotifier&) = delete;
     WasapiEndpointNotifier& operator=(const WasapiEndpointNotifier&) = delete;
@@ -180,10 +195,8 @@ public:
 private:
     struct Client;
     struct SinkState;
-    std::shared_ptr<SinkState> m_state;
-    std::unique_ptr<Client> m_client;
-    WasapiComPtr<IMMDeviceEnumerator> m_enumerator;
-    bool m_registered = false;
+    struct Registration;
+    std::unique_ptr<Registration> m_registration;
 };
 
 // One event-driven stream, initialised and not started.
@@ -216,6 +229,6 @@ WasapiResult wasapiOpenStream(const QString& deviceId, AudioDeviceDirection dire
 bool wasapiEndpointActive(IMMDevice* device);
 
 // Runs fn on a new thread in the multithreaded apartment and waits for it.
-void wasapiRunInMta(const std::function<void()>& fn);
+bool wasapiRunInMta(const std::function<void()>& fn);
 
 } // namespace NereusSDR

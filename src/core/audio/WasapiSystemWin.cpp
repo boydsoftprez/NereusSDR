@@ -12,6 +12,8 @@
 //   2026-10-09: native audio plan Task 9 (R-AUD-01, R-AUD-02, R-AUD-03,
 //               R-AUD-14, R-AUD-16). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-10-31: retain MTA support for endpoint notification ownership.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 
 #include "core/audio/WasapiSystemWin.h"
@@ -449,48 +451,154 @@ private:
     std::atomic<long> m_refs{1};
 };
 
-WasapiEndpointNotifier::WasapiEndpointNotifier()
-    : m_state(std::make_shared<SinkState>())
-    , m_client(std::make_unique<Client>(m_state))
-{
-    wasapiRunInMta([this] {
-        HRESULT hr = S_OK;
-        if (!makeEnumerator(m_enumerator, &hr)) {
-            qCWarning(lcAudio) << "Windows audio: device notices unavailable" << hrText(hr);
+namespace {
+
+// CoIncrementMTAUsage preserves MTA resources even when its last worker
+// CoUninitialize()s. Acquire on the existing MTA worker, not the caller:
+// an uninitialized GUI caller must not implicitly change apartments.
+// https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-coincrementmtausage
+struct NotifierMtaUsage {
+    explicit NotifierMtaUsage(std::function<HRESULT(CO_MTA_USAGE_COOKIE)> release)
+        : decrement(std::move(release))
+    {
+    }
+    NotifierMtaUsage(const NotifierMtaUsage&) = delete;
+    NotifierMtaUsage& operator=(const NotifierMtaUsage&) = delete;
+
+    std::function<HRESULT(CO_MTA_USAGE_COOKIE)> decrement;
+    CO_MTA_USAGE_COOKIE cookie = nullptr;
+
+    ~NotifierMtaUsage() { reset(); }
+
+    void reset()
+    {
+        if (cookie == nullptr) {
             return;
         }
-        hr = m_enumerator->RegisterEndpointNotificationCallback(m_client.get());
+        // A cookie is consumed exactly once; a failed decrement does not
+        // authorize retrying a value whose ownership is now uncertain.
+        const CO_MTA_USAGE_COOKIE owned = std::exchange(cookie, nullptr);
+        const HRESULT hr = decrement(owned);
+        if (FAILED(hr)) {
+            qCWarning(lcAudio) << "Windows audio: MTA usage release failed" << hrText(hr);
+        }
+    }
+};
+
+} // namespace
+
+struct WasapiEndpointNotifier::Registration {
+    explicit Registration(WasapiNotifierApi functions)
+        : api(std::move(functions))
+        , usage{api.decrementMtaUsage}
+        , state(std::make_shared<SinkState>())
+        , client(std::make_unique<Client>(state))
+    {
+    }
+
+    WasapiNotifierApi api;
+    // Reverse member destruction releases the cookie AFTER the callback
+    // owner and enumerator, including partially initialized registrations.
+    NotifierMtaUsage usage;
+    std::shared_ptr<SinkState> state;
+    std::unique_ptr<Client> client;
+    WasapiComPtr<IMMDeviceEnumerator> enumerator;
+    bool registered = false;
+};
+
+WasapiEndpointNotifier::WasapiEndpointNotifier()
+    : WasapiEndpointNotifier({
+          [](CO_MTA_USAGE_COOKIE* cookie) { return CoIncrementMTAUsage(cookie); },
+          [](CO_MTA_USAGE_COOKIE cookie) { return CoDecrementMTAUsage(cookie); },
+          [](IMMDeviceEnumerator** enumerator) {
+              return CoCreateInstance(kWasapiClsidMMDeviceEnumerator, nullptr, CLSCTX_ALL,
+                                      kWasapiIidMMDeviceEnumerator,
+                                      reinterpret_cast<void**>(enumerator));
+          },
+          &wasapiRunInMta})
+{
+}
+
+WasapiEndpointNotifier::WasapiEndpointNotifier(WasapiNotifierApi api)
+    : m_registration(std::make_unique<Registration>(std::move(api)))
+{
+    Registration& registration = *m_registration;
+    const bool entered = registration.api.runInMta([&registration] {
+        CO_MTA_USAGE_COOKIE cookie = nullptr;
+        HRESULT hr = registration.api.incrementMtaUsage(&cookie);
+        if (FAILED(hr)) {
+            qCWarning(lcAudio) << "Windows audio: notification MTA unavailable" << hrText(hr);
+            return;
+        }
+        registration.usage.cookie = cookie;
+        hr = registration.api.createEnumerator(registration.enumerator.put());
+        if (FAILED(hr) || !registration.enumerator) {
+            qCWarning(lcAudio) << "Windows audio: device notices unavailable" << hrText(hr);
+            registration.enumerator.reset();
+            return;
+        }
+        hr = registration.enumerator->RegisterEndpointNotificationCallback(registration.client.get());
         if (FAILED(hr)) {
             qCWarning(lcAudio) << "Windows audio: device notices not registered" << hrText(hr);
-            m_enumerator.reset();
+            registration.enumerator.reset();
             return;
         }
-        m_registered = true;
+        registration.registered = true;
     });
+    if (!entered) {
+        qCWarning(lcAudio) << "Windows audio: notification setup could not enter MTA";
+    }
+    if (!registration.registered) {
+        // Failure left no live registration and released any COM object
+        // inside the worker. Balance the successful lease after its join.
+        registration.usage.reset();
+    }
 }
 
 WasapiEndpointNotifier::~WasapiEndpointNotifier()
 {
     setSink({});
-    wasapiRunInMta([this] {
-        if (m_enumerator && m_registered) {
-            m_enumerator->UnregisterEndpointNotificationCallback(m_client.get());
+    Registration& registration = *m_registration;
+    if (!registration.enumerator) {
+        return;
+    }
+    HRESULT unregisterResult = S_OK;
+    const bool entered = registration.api.runInMta([&registration, &unregisterResult] {
+        if (registration.registered) {
+            unregisterResult = registration.enumerator->UnregisterEndpointNotificationCallback(
+                registration.client.get());
+            if (FAILED(unregisterResult) && unregisterResult != E_NOTFOUND) {
+                return;
+            }
         }
-        m_registered = false;
-        m_enumerator.reset();
+        registration.registered = false;
+        registration.enumerator.reset();
     });
-    // m_client is destroyed after the enumerator let go of it.
+    if (!entered || (FAILED(unregisterResult) && unregisterResult != E_NOTFOUND)) {
+        qCWarning(lcAudio) << "Windows audio: notification cleanup incomplete; retaining registration and MTA until process exit"
+                           << (entered ? hrText(unregisterResult) : QStringLiteral("MTA unavailable"));
+        // A failed unregister/admission cannot prove that callbacks stopped.
+        // Deliberately retain the whole bundle: freeing its client or MTA
+        // would leave a registered raw callback pointer or unloaded code.
+        // No static owner: COM teardown from DLL_PROCESS_DETACH is unsafe.
+        // https://learn.microsoft.com/en-us/windows/win32/api/mmdeviceapi/nf-mmdeviceapi-immdeviceenumerator-unregisterendpointnotificationcallback
+        static_cast<void>(m_registration.release());
+    }
+    // The callback client is destroyed after the enumerator let go of it.
+    // The API does not AddRef/Release that client or promise a drain fence.
+    // On success the bundle then releases its MTA cookie last, after the
+    // cleanup worker's COM scope has ended and that worker has joined.
 }
 
 bool WasapiEndpointNotifier::registered() const
 {
-    return m_registered;
+    return m_registration->registered;
 }
 
 void WasapiEndpointNotifier::setSink(Sink sink)
 {
-    std::lock_guard<std::mutex> lock(m_state->mutex);
-    m_state->sink = std::move(sink);
+    std::lock_guard<std::mutex> lock(m_registration->state->mutex);
+    m_registration->state->sink = std::move(sink);
 }
 
 // ---------------------------------------------------------------------------
@@ -699,15 +807,18 @@ WasapiResult wasapiOpenStream(const QString& deviceId, AudioDeviceDirection dire
     return WasapiResult::Ok;
 }
 
-void wasapiRunInMta(const std::function<void()>& fn)
+bool wasapiRunInMta(const std::function<void()>& fn)
 {
-    std::thread worker([&fn] {
+    bool entered = false;
+    std::thread worker([&fn, &entered] {
         const WasapiComScope com;
         if (com.usable()) {
+            entered = true;
             fn();
         }
     });
     worker.join();
+    return entered;
 }
 
 } // namespace NereusSDR
