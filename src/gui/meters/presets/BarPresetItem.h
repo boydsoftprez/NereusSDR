@@ -85,18 +85,20 @@ class TransmitModel;
 // LEVELER and LEVELER_GAIN, CFC and CFC_GAIN, COMP; DisableMeterType,
 // MeterManager.cs:26773-26792 [v2.10.3.15]).
 enum class TxStage { None, Eq, Leveler, Cfc, Compander };
+class PsStyleBarItem;
 class BarPresetItem : public MeterItem {
     Q_OBJECT
+    friend class PsStyleBarItem;
 public:
     explicit BarPresetItem(QObject* parent = nullptr);
     void configureAsMic();
     void configureAsAlc();
     void configureAsCustom(int bindingId, double minV, double maxV, const QString& label);
-    QString typeId() const;
     // The container type a flavor names: Custom is meter.customBar, every
     // other known flavor meter.<flavor> with its first letter lowercased
     // (AdcMax: meter.adcMax). Empty for an unknown flavor.
     static QString typeIdForFlavor(const QString& flavor);
+    virtual QString typeId() const;
     static QStringList variants();
     bool configureVariant(const QString& flavor);
     // New items (makeEntry) take the kBarPresetThetisDefaults row for their

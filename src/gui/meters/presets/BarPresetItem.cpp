@@ -120,7 +120,9 @@ namespace {
 QString adcMaxUnavailableText() { return QStringLiteral("ADC magnitude is not available"); }
 bool adcMaxWithoutProvider(const BarPresetItem& item)
 {
-    return item.typeId()==QStringLiteral("meter.adcMax") && item.bindingId()<0 && !item.hasMmioBinding();
+    const QString id = item.typeId();
+    return (id == QLatin1String("meter.adcMax") || id == QLatin1String("meter.adcMaxNew"))
+        && item.bindingId()<0 && !item.hasMmioBinding();
 }
 // The caption Thetis draws over a bar is its scale's reading name: each
 // AddXxxBar sets cs.ReadingSource = cb.ReadingSource and cs.ShowType = true,

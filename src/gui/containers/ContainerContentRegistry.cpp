@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-11-01 - SWR New (meter.swrNew) under Ready-made meters: the
+//                 transmit SWR reading in the PureSignal feedback meter's
+//                 shape. The SWR bar is unchanged. J.J. Boyd (KG4VCF),
+//                 AI-assisted via xAI Grok.
+//   2026-11-01 - The same face for every other Ready-made meters name that
+//                 contains "bar" (PsStyleBarItem, type ids ending in New).
+//                 J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-26 - PR 677 review fix wave (I6): the colours an item's user
 //                 picked are saved under the userColours context key, only
 //                 when there is one.
@@ -117,6 +124,8 @@
 #include "gui/meters/presets/ClockPresetItem.h"
 #include "gui/meters/presets/ContestPresetItem.h"
 #include "gui/meters/presets/SMeterPresetItem.h"
+#include "gui/meters/presets/SwrNewItem.h"
+#include "gui/meters/presets/PsStyleBarItem.h"
 #include <memory>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -162,6 +171,8 @@ std::unique_ptr<MeterItem> allocate(const QString& type) {
     if(type=="meter.contest" || type=="ContestPreset") { return std::make_unique<ContestPresetItem>(); }
     if(type=="meter.sMeter" || type=="SMeterPreset") { return std::make_unique<SMeterPresetItem>(); }
     if(type=="meter.spacer") { return std::make_unique<SpacerItem>(); }
+    if(type=="meter.swrNew") { return std::make_unique<SwrNewItem>(); }
+    if(auto face=PsStyleBarItem::create(type)) { return face; }
     for(const QString& variant:BarPresetItem::variants()) { if(type==BarPresetItem::typeIdForFlavor(variant)) { auto face=std::make_unique<BarPresetItem>(); face->configureVariant(variant); return face; } }
     if (type == QLatin1String("meter.mic") || type == QLatin1String("meter.alc") || type == QLatin1String("meter.customBar") || type == QLatin1String("BarPreset")) {
         auto face=std::make_unique<BarPresetItem>();
@@ -399,9 +410,13 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
         add(BarPresetItem::typeIdForFlavor(variant), barTitles.value(variant, variant + QStringLiteral(" bar")),
             ContentGroup::ReadyMadeMeters);
     }
+    add(QStringLiteral("meter.swrNew"), QStringLiteral("SWR New"), ContentGroup::ReadyMadeMeters);
     add(QStringLiteral("meter.mic"), QStringLiteral("Mic bar"), ContentGroup::ReadyMadeMeters);
     add(QStringLiteral("meter.alc"), QStringLiteral("ALC bar"), ContentGroup::ReadyMadeMeters);
     add(QStringLiteral("meter.customBar"), QStringLiteral("Custom bar face"), ContentGroup::ReadyMadeMeters);
+    PsStyleBarItem::eachSpec([&](const QString& typeId, const QString& title) {
+        add(typeId, title, ContentGroup::ReadyMadeMeters);
+    });
     add(QStringLiteral("BAR"), QStringLiteral("Bar"), ContentGroup::BuildingBlocks);
     add(QStringLiteral("SOLID"), QStringLiteral("Solid color"), ContentGroup::BuildingBlocks);
     add(QStringLiteral("IMAGE"), QStringLiteral("Image"), ContentGroup::BuildingBlocks);

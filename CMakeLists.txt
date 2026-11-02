@@ -2140,6 +2140,10 @@ set(GUI_SOURCES
     src/gui/meters/presets/ClockPresetItem.h
     src/gui/meters/presets/ContestPresetItem.cpp
     src/gui/meters/presets/ContestPresetItem.h
+    src/gui/meters/presets/SwrNewItem.cpp
+    src/gui/meters/presets/SwrNewItem.h
+    src/gui/meters/presets/PsStyleBarItem.cpp
+    src/gui/meters/presets/PsStyleBarItem.h
     src/gui/meters/presets/PresetGeometry.h
     src/gui/meters/MeterDynamics.cpp
     src/gui/meters/MeterDynamics.h
