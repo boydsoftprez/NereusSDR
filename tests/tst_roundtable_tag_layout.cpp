@@ -53,6 +53,7 @@
 #include <QSignalSpy>
 
 #include "OperatorWording.h"
+#include "core/AppSettings.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
 #include "core/ConnectionState.h"
@@ -352,7 +353,100 @@ private slots:
         turn.insert("id", 13);
         view.insert("now", QJsonArray{turn});
         rows = roundtableTagReportLines(tags.first(), view, 27000);
-        QVERIFY(rows.contains(QStringLiteral("K4ABC  -  No report")));
+        QVERIFY(!rows.join(' ').contains(QStringLiteral("K4ABC")));
+        QVERIFY(!rows.join(' ').contains(QStringLiteral("-73")));
+    }
+
+    void cochannelReportsFilterBeforeTheDisplayLimit_data()
+    {
+        QTest::addColumn<bool>("unknown");
+        QTest::newRow("known") << false;
+        QTest::newRow("unknown RF") << true;
+    }
+
+    void cochannelReportsFilterBeforeTheDisplayLimit()
+    {
+        QFETCH(bool, unknown);
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123);
+        tag.stations = QJsonArray{QJsonObject{{"sourceRoom", "lsb-7184000"}, {"family", "lsb"}},
+            QJsonObject{{"sourceRoom", "lsb-7184000"}, {"family", "lsb"}}};
+        const QJsonObject talker{{"sourceRoom", "lsb-7184000"}, {"ref", "talker"}, {"callsign", "W1AW"}};
+        QJsonArray members{talker};
+        for (int i = 0; i < 4; ++i) {
+            members.append(QJsonObject{{"sourceRoom", "lsb-7184000"}, {"ref", QString::number(i)},
+                {"callsign", QStringLiteral("N%1ABC").arg(i)}, {"km", i},
+                {"reading", QJsonObject{{"turn", i == 2 ? 11 : 12}, {"dbm", i == 1 ? -400 : -73},
+                    {"present", i != 0}, {"t", 2000}}}});
+        }
+        const QJsonObject turn{{"id", 12}, {"kind", unknown ? "unknown" : "talking"}, {"hz", tag.hz},
+            {"sourceRoom", "lsb-7184000"}, {"start", 1000}, {"talkers", unknown ? QJsonArray{} : QJsonArray{talker}}};
+        const QJsonObject view{{"family", "lsb"}, {"now", QJsonArray{turn}}, {"members", members}};
+        const QStringList rows = roundtableTagReportLines(tag, view, 27000);
+        QVERIFY(rows.contains(QStringLiteral("N3ABC  -73  25s")));
+        QVERIFY(!rows.join(' ').contains(QStringLiteral("N0ABC")));
+        QVERIFY(!rows.join(' ').contains(QStringLiteral("N1ABC")));
+        QVERIFY(!rows.join(' ').contains(QStringLiteral("N2ABC")));
+    }
+
+    void cochannelReportsRespectSelectedSignalFormat_data()
+    {
+        QTest::addColumn<QString>("format");
+        QTest::addColumn<QString>("sample");
+        QTest::addColumn<QString>("heading");
+        QTest::addColumn<QString>("reporter");
+        QTest::addColumn<int>("nth");
+        QTest::newRow("dBm") << QStringLiteral("dBm") << QStringLiteral("K4ABC  -61  25s")
+            << QStringLiteral("Heard by     dBm    Age") << QStringLiteral("K4ABC") << 1;
+        QTest::newRow("S-units") << QStringLiteral("S-units") << QStringLiteral("K4ABC  S9 +12  25s")
+            << QStringLiteral("Heard by     S-units    Age") << QStringLiteral("K4ABC") << 1;
+        QTest::newRow("Both") << QStringLiteral("Both") << QStringLiteral("K4ABC  S9 +12 / -61  25s")
+            << QStringLiteral("Heard by     S / dBm    Age") << QStringLiteral("K4ABC") << 1;
+        QTest::newRow("Both duplicate") << QStringLiteral("Both") << QStringLiteral("KG4VCF (2)  S9 +12 / -61  25s")
+            << QStringLiteral("Heard by     S / dBm    Age") << QStringLiteral("KG4VCF") << 2;
+        QTest::newRow("Both portable duplicate") << QStringLiteral("Both") << QStringLiteral("VK3ABC/P (2)  S9 +12 / -61  25s")
+            << QStringLiteral("Heard by     S / dBm    Age") << QStringLiteral("VK3ABC/P") << 2;
+    }
+
+    void cochannelReportsRespectSelectedSignalFormat()
+    {
+        QFETCH(QString, format);
+        QFETCH(QString, sample);
+        QFETCH(QString, heading);
+        QFETCH(QString, reporter);
+        QFETCH(int, nth);
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"), format);
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123);
+        tag.stations = QJsonArray{QJsonObject{{"sourceRoom", "lsb-7184000"}, {"family", "lsb"}},
+            QJsonObject{{"sourceRoom", "lsb-7184000"}, {"family", "lsb"}}};
+        const QJsonObject talker{{"sourceRoom", "lsb-7184000"}, {"ref", "talker"}, {"callsign", "W1AW"}};
+        const QJsonObject member{{"sourceRoom", "lsb-7184000"}, {"ref", "reporter"}, {"callsign", reporter}, {"nth", nth},
+            {"reading", QJsonObject{{"turn", 12}, {"dbm", -61}, {"present", true}, {"t", 2000}}}};
+        const QJsonObject turn{{"id", 12}, {"kind", "talking"}, {"hz", tag.hz},
+            {"sourceRoom", "lsb-7184000"}, {"start", 1000}, {"talkers", QJsonArray{talker}}};
+        const QJsonObject view{{"family", "lsb"}, {"now", QJsonArray{turn}}, {"members", QJsonArray{talker, member}}};
+        const QStringList rows = roundtableTagReportLines(tag, view, 27000);
+        AppSettings::instance().remove(QStringLiteral("Roundtable/SignalFormat"));
+        QVERIFY2(rows.contains(sample), qPrintable(rows.join('\n')));
+        QVERIFY(rows.contains(heading));
+        tag.stations = QJsonArray{talker, member};
+        tag.reportLines = rows;
+        Pan pan;
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        const QImage image = pan.draw();
+        const auto* hit = hitFor(pan.widget, tag.roomId);
+        QVERIFY(hit != nullptr);
+        QVERIFY(pan.widget.roundtableTagSpectrumRectForTest().contains(hit->rect));
+        QFont font = WorkspacePreview::readableFont(QFont(), &image);
+        font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
+        font.setWeight(QFont::Bold);
+        const QFontMetrics metrics(font, &image);
+        QCOMPARE(metrics.elidedText(sample, Qt::ElideRight, hit->rect.width() - 14), sample);
+        if (qEnvironmentVariableIsSet("NEREUS_ROUNDTABLE_FORMAT_CAPTURES")) {
+            const QString path = qEnvironmentVariable("NEREUS_ROUNDTABLE_FORMAT_CAPTURES")
+                + QLatin1Char('/') + format + (nth > 1 ? QLatin1Char('-') + QString(reporter).replace('/', '_') : QString())
+                + QStringLiteral(".png");
+            QVERIFY(image.copy(hit->rect.adjusted(-4, -4, 4, 4)).save(path));
+        }
     }
 
     void cochannelBoxHasRealBoundsAndRender()

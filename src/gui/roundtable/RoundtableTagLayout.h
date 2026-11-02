@@ -89,6 +89,9 @@ struct RoundtableTag {
     QStringList reportLines; // matching last talker, attributed reporter rows, or Read reports
 };
 
+/// The shared Roundtable panel/tag S-unit conversion.
+NEREUS_GUI_EXPORT QString roundtableSUnitText(double dbm);
+
 /// Compact RF rows for this exact cochannel. A neighborhood's unrelated turn
 /// never labels this tag; reading.turn is required for every reported sample.
 NEREUS_GUI_EXPORT QStringList roundtableTagReportLines(const RoundtableTag& tag, const QJsonObject& view,

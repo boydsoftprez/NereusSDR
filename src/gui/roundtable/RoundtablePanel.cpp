@@ -212,9 +212,6 @@ constexpr int kEmptyRooms = 8;
 constexpr int kNameChips = 3;
 // A message box two lines tall.
 constexpr int kBoxHeight = 46;
-// S9 is -73 dBm, 6 dB an S-unit (the mockup's sText).
-constexpr double kS9Dbm = -73.0;
-constexpr double kDbPerSUnit = 6.0;
 
 QString buttonStyle()
 {
@@ -474,17 +471,6 @@ QString modeLabel(const QString& family)
         return QStringLiteral("FreeDV");
     }
     return family.toUpper();
-}
-
-// The mockup's sText: S1 to S9, then S9 +N.
-QString sText(double dbm)
-{
-    const int over = static_cast<int>(std::lround(dbm - kS9Dbm));
-    if (over < 1) {
-        const int units = static_cast<int>(std::lround(9.0 - (kS9Dbm - dbm) / kDbPerSUnit));
-        return QStringLiteral("S%1").arg(std::clamp(units, 0, 9));
-    }
-    return QStringLiteral("S9 +%1").arg(over);
 }
 
 double sFraction(double dbm)
@@ -2092,8 +2078,8 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
             return QStringLiteral("none");
         }
         const QString dbmValue = QString::number(std::lround(dbm));
-        return format == QLatin1String("S-units") ? sText(dbm)
-            : format == QLatin1String("Both") ? sText(dbm) + QLatin1Char('\n') + dbmValue : dbmValue;
+        return format == QLatin1String("S-units") ? roundtableSUnitText(dbm)
+            : format == QLatin1String("Both") ? roundtableSUnitText(dbm) + QLatin1Char('\n') + dbmValue : dbmValue;
     };
     const auto cycleFormat = [this, format]() {
         AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"),
@@ -2939,7 +2925,7 @@ void RoundtablePanel::rebuildMessages(const QJsonObject& room)
         }
         const QJsonValue dbm = message.value(QStringLiteral("dbm"));
         if (dbm.isDouble()) {
-            QLabel* chip = makeLabel(row, sText(dbm.toDouble()), dimColor(), kSmallPx, false, true);
+            QLabel* chip = makeLabel(row, roundtableSUnitText(dbm.toDouble()), dimColor(), kSmallPx, false, true);
             chip->setToolTip(QStringLiteral("Their reading of the talker when they sent it"));
             chip->setStyleSheet(chip->styleSheet()
                                 + QStringLiteral(" background: %1; border: 1px solid %2;"
@@ -3143,7 +3129,7 @@ void RoundtablePanel::updateFooter()
                 const QJsonValue reading = member.value(QStringLiteral("reading"));
                 if (member.value(QStringLiteral("you")).toBool() && reading.isObject()) {
                     hint += QStringLiteral(" · %1")
-                                .arg(sText(reading.toObject().value(QStringLiteral("dbm")).toDouble()));
+                                .arg(roundtableSUnitText(reading.toObject().value(QStringLiteral("dbm")).toDouble()));
                 }
             }
         }
