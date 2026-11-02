@@ -31,6 +31,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-01: A signal report updates the readings in place. The header
+//               is rebuilt only when who is in the room changes.
+//               J.J. Boyd (KG4VCF), AI-assisted via Grok.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -159,6 +162,7 @@ private:
     QString draftKey() const;
     void subscribeContext();
     void onRoomChanged(const QString& roomId);
+    void scheduleRebuild();
     void rebuild();
     void rebuildHead(const QJsonObject& room);
     void fitCount();
@@ -235,6 +239,11 @@ private:
     QString m_notSentReason;
     QString m_earlierSignature;
     QString m_messagesSignature;
+    // Header and readings skip a full widget rebuild while only a reading
+    // or its age has changed. Cleared when the room itself is rebuilt.
+    QString m_headSignature;
+    QString m_readingsSignature;
+    bool m_rebuildPending = false;
     QHash<qint64, QJsonObject> m_seenLiveMessages;
     QHash<qint64, QJsonObject> m_historyStates;
     QHash<qint64, quint64> m_messageVersions;

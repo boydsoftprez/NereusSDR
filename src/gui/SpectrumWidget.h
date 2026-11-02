@@ -1,4 +1,10 @@
 // Modification history (NereusSDR):
+//   2026-11-01: The waterfall clock is a small label. Its one-second tick
+//               no longer rebuilds the static GPU overlay.
+//               J.J. Boyd (KG4VCF), AI-assisted via Grok.
+//   2026-11-01: Roundtable tags are a child widget (m_roundtableTagLayer).
+//               A report does not repaint the spectrum or its GPU overlays.
+//               J.J. Boyd (KG4VCF), AI-assisted via Grok.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
@@ -2999,6 +3005,20 @@ public:
         m_overlayStaticDirty = false;
 #endif
     }
+    // Roundtable tags are cached in the dynamic overlay. A new tag list
+    // marks that layer, and leaves the static chrome cache alone.
+    bool overlayDynamicDirtyForTest() const {
+#ifdef NEREUS_GPU_SPECTRUM
+        return m_overlayDynamicDirty;
+#else
+        return false;
+#endif
+    }
+    void clearOverlayDynamicDirtyForTest() {
+#ifdef NEREUS_GPU_SPECTRUM
+        m_overlayDynamicDirty = false;
+#endif
+    }
     // Whether the GPU path rebuilds the overlay on every frame (the IMD
     // display is shown), which offscreen tests cannot run.
     bool overlayRebuildsEveryFrameForTest() const { return imdOverlayShown(); }
@@ -3360,6 +3380,10 @@ private:
     float m_disconnectFade{1.0f};  // animated; 1.0 connected, 0.4 disconnected
     QPropertyAnimation* m_fadeAnim{nullptr};
     QLabel* m_disconnectLabel{nullptr};
+    // The hh:mm:ss clock. A child, so the one-second tick does not rebuild
+    // the static overlay.
+    QLabel* m_wfTimestampLabel{nullptr};
+    void refreshWfTimestampLabel();
 
     float disconnectFade() const { return m_disconnectFade; }
     void  setDisconnectFade(float f) { m_disconnectFade = f; update(); }
@@ -4547,6 +4571,10 @@ private:
     QVector<SpotCluster> m_spotClusters;
     // Roundtable plan Task 14: the room tags and what the last pass drew.
     QList<RoundtableTag> m_roundtableTags;
+    // GPU path: tags paint here, above the spectrum and under the flags.
+    // A reading updates this widget only, not the panadapter frame.
+    QWidget* m_roundtableTagLayer{nullptr};
+    void refreshRoundtableTagLayer();
     RoundtableTagDisplay m_roundtableTagDisplay{RoundtableTagDisplay::Hidden};
     QList<RoundtableTagHit> m_roundtableTagHits;
     bool   m_showSpots{true};
@@ -5340,6 +5368,7 @@ private:
         m_overlayStaticDirty = true;
 #endif
         update();
+        refreshRoundtableTagLayer();
     }
 };
 

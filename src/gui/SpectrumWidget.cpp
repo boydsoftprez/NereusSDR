@@ -8,6 +8,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-01: The waterfall clock is a child label. Ticking the second
+//               no longer rebuilds the static overlay. J.J. Boyd (KG4VCF),
+//               AI-assisted via Grok.
+//   2026-11-01: Roundtable tags paint in a child widget so a signal report
+//               does not rebuild or upload a spectrum overlay.
+//               J.J. Boyd (KG4VCF), AI-assisted via Grok.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
@@ -1046,6 +1052,48 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         " letter-spacing: 8px; }"));
     m_disconnectLabel->hide();
     m_disconnectLabel->installEventFilter(this);
+
+#ifdef NEREUS_GPU_SPECTRUM
+    // Tags sit in their own widget. QRhiWidget::paintEvent cannot draw
+    // them, and baking them into an overlay texture uploads the spectrum
+    // band on every report. The child repaints by itself.
+    class RoundtableTagLayer : public QWidget {
+    public:
+        explicit RoundtableTagLayer(SpectrumWidget* spectrum)
+            : QWidget(spectrum), m_spectrum(spectrum)
+        {
+            setAttribute(Qt::WA_TransparentForMouseEvents, true);
+            setAttribute(Qt::WA_NoSystemBackground, true);
+            setAttribute(Qt::WA_TranslucentBackground, true);
+            setAutoFillBackground(false);
+            setFocusPolicy(Qt::NoFocus);
+            QPalette pal = palette();
+            pal.setColor(QPalette::Window, Qt::transparent);
+            setPalette(pal);
+        }
+
+    protected:
+        void paintEvent(QPaintEvent*) override
+        {
+            QPainter painter(this);
+            m_spectrum->drawRoundtableTagsForTest(
+                painter, m_spectrum->roundtableTagSpectrumRectForTest());
+        }
+
+    private:
+        SpectrumWidget* m_spectrum;
+    };
+    m_roundtableTagLayer = new RoundtableTagLayer(this);
+    m_roundtableTagLayer->setGeometry(0, 0, width(), height());
+#endif
+
+    m_wfTimestampLabel = new QLabel(this);
+    m_wfTimestampLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_wfTimestampLabel->setAttribute(Qt::WA_NoSystemBackground, true);
+    m_wfTimestampLabel->setAutoFillBackground(false);
+    m_wfTimestampLabel->setStyleSheet(QStringLiteral(
+        "QLabel { background: transparent; color: rgb(200, 220, 255); }"));
+    m_wfTimestampLabel->hide();
 
     // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core.
     // Presenter-owned helper; the pointer is a non-owning legacy alias.
@@ -6546,12 +6594,51 @@ void SpectrumWidget::syncWfTimestampTicker()
             m_wfTimestampTicker = new QTimer(this);
             m_wfTimestampTicker->setInterval(1000);
             connect(m_wfTimestampTicker, &QTimer::timeout,
-                    this, [this]() { markOverlayDirty(); });
+                    this, &SpectrumWidget::refreshWfTimestampLabel);
         }
         m_wfTimestampTicker->start();
     } else if (m_wfTimestampTicker) {
         m_wfTimestampTicker->stop();
     }
+    refreshWfTimestampLabel();
+}
+
+void SpectrumWidget::refreshWfTimestampLabel()
+{
+    if (!m_wfTimestampLabel) {
+        return;
+    }
+    if (m_wfTimestampPos == TimestampPosition::None || width() <= 0) {
+        m_wfTimestampLabel->hide();
+        return;
+    }
+    const QDateTime now = (m_wfTimestampMode == TimestampMode::UTC)
+                          ? QDateTime::currentDateTimeUtc()
+                          : QDateTime::currentDateTime();
+    const QString stamp = now.toString(QStringLiteral("hh:mm:ss"));
+    QFont font = WorkspacePreview::readableFont(m_wfTimestampLabel->font(), this);
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
+    if (m_wfTimestampLabel->font() != font) {
+        m_wfTimestampLabel->setFont(font);
+    }
+    if (m_wfTimestampLabel->text() != stamp) {
+        m_wfTimestampLabel->setText(stamp);
+    }
+    const QRect wf = spectrumLayout().waterfall;
+    const int pad = 4;
+    const int textW = QFontMetrics(font).horizontalAdvance(stamp) + 2;
+    const int textH = QFontMetrics(font).height();
+    const int x = (m_wfTimestampPos == TimestampPosition::Left)
+                  ? (wf.left() + pad)
+                  : (wf.right() - textW - pad);
+    const QRect place(x, wf.top() + 2, textW, textH);
+    if (m_wfTimestampLabel->geometry() != place) {
+        m_wfTimestampLabel->setGeometry(place);
+    }
+    if (!m_wfTimestampLabel->isVisible()) {
+        m_wfTimestampLabel->show();
+    }
+    m_wfTimestampLabel->raise();
 }
 
 void SpectrumWidget::setWfTimestampPosition(TimestampPosition p)
@@ -6570,6 +6657,7 @@ void SpectrumWidget::setWfTimestampMode(TimestampMode m)
     m_wfTimestampMode = m;
     scheduleSettingsSave();
     markOverlayDirty();
+    refreshWfTimestampLabel();
 }
 
 void SpectrumWidget::setShowRxFilterOnWaterfall(bool on)
@@ -7672,6 +7760,10 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
         m_mouseOverlay->setGeometry(0, 0, width(), height());
         m_mouseOverlay->raise();
     }
+    if (m_roundtableTagLayer) {
+        m_roundtableTagLayer->setGeometry(0, 0, width(), height());
+    }
+    refreshWfTimestampLabel();
 
     // Keep disconnect label sized to the widget; raise so QRhi surface
     // doesn't paint over it on the next frame.
@@ -8575,23 +8667,8 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
         }
     }
 
-    // Timestamp overlay on waterfall (NereusSDR extensions W8/W9).
-    if (m_wfTimestampPos != TimestampPosition::None) {
-        const QDateTime now = (m_wfTimestampMode == TimestampMode::UTC)
-                              ? QDateTime::currentDateTimeUtc()
-                              : QDateTime::currentDateTime();
-        const QString stamp = now.toString(QStringLiteral("hh:mm:ss"));
-        QFont f = WorkspacePreview::readableFont(p.font(), p.device());
-        f.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
-        p.setFont(f);
-        p.setPen(QColor(200, 220, 255));
-        const int pad = 4;
-        const int textW = p.fontMetrics().horizontalAdvance(stamp);
-        int x = (m_wfTimestampPos == TimestampPosition::Left)
-                ? (wfRect.left() + pad)
-                : (wfRect.right() - textW - pad);
-        p.drawText(x, wfRect.top() + 12, stamp);
-    }
+    // The clock is m_wfTimestampLabel. Baking it here made the one-second
+    // tick rebuild this whole overlay.
     // Current accepted receiver positions mark RF columns, never historical
     // peak strength. The history marks below identify status edges by row.
     const ImdMeasurementFrame& imd = m_imdPresenter.frame();
@@ -12686,8 +12763,15 @@ void SpectrumWidget::setRoundtableTags(const QList<RoundtableTag>& tags, Roundta
     }
     m_roundtableTags = tags;
     m_roundtableTagDisplay = display;
-    // The tags are drawn into the GPU path's static overlay.
-    markOverlayDirty();
+    // The child repaints the tags. The spectrum frame is left alone.
+    refreshRoundtableTagLayer();
+}
+
+void SpectrumWidget::refreshRoundtableTagLayer()
+{
+    if (m_roundtableTagLayer) {
+        m_roundtableTagLayer->update();
+    }
 }
 
 QRect SpectrumWidget::roundtableTagSpectrumRectForTest() const
@@ -13426,7 +13510,7 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
     case QEvent::Show:
     case QEvent::Hide:
         if (!m_roundtableTags.isEmpty() && obj->inherits("NereusSDR::SpectrumOverlayPanel")) {
-            markOverlayDirty();
+            refreshRoundtableTagLayer();
         }
         break;
     default:
@@ -16820,8 +16904,10 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             if (m_showSpots) {
                 drawSpotMarkers(p, specRect);
             }
-            // Roundtable plan Task 14: the room tags, as the CPU path.
-            drawRoundtableTags(p, specRect);
+            // Roundtable tags are not baked here. A report or an age would
+            // otherwise rebuild this whole chrome texture. They are drawn
+            // into the dynamic overlay below, which is the layer a tag
+            // change invalidates.
             drawVfoMarker(p, specRect, wfRect);
             drawOffScreenIndicator(p, specRect, wfRect);
 

@@ -6790,7 +6790,9 @@ void MainWindow::scheduleRoundtableRefresh()
 {
     if (m_roundtableRefreshPending) { return; }
     m_roundtableRefreshPending = true;
-    QTimer::singleShot(0, this, [this]() {
+    // Reports arrive several times a second. One pass each 200 ms keeps the
+    // tags current without a spectrum invalidation on every message.
+    QTimer::singleShot(200, this, [this]() {
         m_roundtableRefreshPending = false;
         refreshRoundtableTags();
     });

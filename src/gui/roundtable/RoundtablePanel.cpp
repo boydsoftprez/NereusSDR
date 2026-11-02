@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-01: Signal reports patch the reading row in place
+//               (rebuildReadings). The header keeps its widgets while the
+//               room's membership is unchanged (rebuildHead).
+//               J.J. Boyd (KG4VCF), AI-assisted via Grok.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -454,6 +458,28 @@ QString compact(const QJsonValue& value)
     return QString::fromUtf8(QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact));
 }
 
+// A signal report rewrites dbm, age and path. The talker and the earlier
+// turns do not show those, so a reading must not rebuild them.
+QJsonArray membersWithoutSamples(const QJsonValue& members)
+{
+    QJsonArray out;
+    for (const QJsonValue& value : members.toArray()) {
+        QJsonObject member = value.toObject();
+        if (member.value(QStringLiteral("reading")).isObject()) {
+            QJsonObject reading = member.value(QStringLiteral("reading")).toObject();
+            reading.remove(QStringLiteral("dbm"));
+            reading.remove(QStringLiteral("t"));
+            reading.remove(QStringLiteral("km"));
+            reading.remove(QStringLiteral("bearingDeg"));
+            member.insert(QStringLiteral("reading"), reading);
+        }
+        member.remove(QStringLiteral("km"));
+        member.remove(QStringLiteral("bearingDeg"));
+        out.append(member);
+    }
+    return out;
+}
+
 // 7185000 -> "7.185.000", the room header's frequency (mockup fmtF).
 QString headerFrequency(qint64 hz)
 {
@@ -574,6 +600,18 @@ public:
     {
         setFixedHeight(8);
         setMinimumWidth(kReadingBarMinWidth);
+        setObjectName(QStringLiteral("roundtableReadingBar"));
+    }
+
+    void setSample(double fraction, bool doubled, bool stale)
+    {
+        if (qFuzzyCompare(m_fraction, fraction) && m_doubled == doubled && m_stale == stale) {
+            return;
+        }
+        m_fraction = fraction;
+        m_doubled = doubled;
+        m_stale = stale;
+        update();
     }
 
 protected:
@@ -948,7 +986,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
 
     if (m_model) {
         connect(m_model, &RoundtableModel::roomChanged, this, &RoundtablePanel::onRoomChanged);
-        connect(m_model, &RoundtableModel::roomsChanged, this, &RoundtablePanel::rebuild);
+        connect(m_model, &RoundtableModel::roomsChanged, this, &RoundtablePanel::scheduleRebuild);
         connect(m_model, &RoundtableModel::linkChanged, this, [this]() {
             m_failedContext.clear();
             m_historyRequest.clear();
@@ -1335,8 +1373,22 @@ void RoundtablePanel::onRoomChanged(const QString& changed)
         }
     }
     if (changed == roomId() || !m_retainedMessages.isEmpty()) {
-        rebuild();
+        scheduleRebuild();
     }
+}
+
+void RoundtablePanel::scheduleRebuild()
+{
+    // Readings arrive several times a second. Fold them into one pass so
+    // the panadapter's GUI thread is not rebuilding this panel on each one.
+    if (m_rebuildPending) {
+        return;
+    }
+    m_rebuildPending = true;
+    QTimer::singleShot(200, this, [this]() {
+        m_rebuildPending = false;
+        rebuild();
+    });
 }
 
 void RoundtablePanel::rebuild()
@@ -1354,6 +1406,8 @@ void RoundtablePanel::rebuild()
         m_showMuted.clear();
         m_earlierSignature.clear();
         m_messagesSignature.clear();
+        m_headSignature.clear();
+        m_readingsSignature.clear();
         m_nameEditorTurn = 0;
         m_firstShow = true;
         m_notSent->hide();
@@ -1432,6 +1486,27 @@ void RoundtablePanel::rebuild()
 void RoundtablePanel::rebuildHead(const QJsonObject& room)
 {
     const QString id = roomId();
+    const QJsonArray members = room.value(QStringLiteral("members")).toArray();
+    int count = static_cast<int>(members.size());
+    int away = 0;
+    for (const QJsonValue& value : members) {
+        if (value.toObject().value(QStringLiteral("away")).toBool()) {
+            ++away;
+        }
+    }
+    if (room.isEmpty()) {
+        count = summaryOf(id).value(QStringLiteral("members")).toInt();
+    }
+    // A signal report does not change who is here. Keep the header widgets.
+    const QString signature = id + QChar(tunedHere() ? u'1' : u'0')
+        + QString::number(m_sliceId) + QChar(m_popped ? u'1' : u'0')
+        + QString::number(count) + QLatin1Char('/') + QString::number(away)
+        + QChar(room.isEmpty() ? u'1' : u'0') + headerFrequency(roomHz(id))
+        + QLatin1Char('@') + QString::number(roomWidth());
+    if (signature == m_headSignature && m_countLabel != nullptr) {
+        return;
+    }
+    m_headSignature = signature;
     QWidget* body = freshBody(m_head);
     body->setObjectName(QStringLiteral("roundtableHeaderBody"));
     body->setAttribute(Qt::WA_StyledBackground, true);
@@ -1493,17 +1568,6 @@ void RoundtablePanel::rebuildHead(const QJsonObject& room)
     row->addWidget(mode);
     row->addStretch(1);
 
-    const QJsonArray members = room.value(QStringLiteral("members")).toArray();
-    int count = static_cast<int>(members.size());
-    int away = 0;
-    for (const QJsonValue& value : members) {
-        if (value.toObject().value(QStringLiteral("away")).toBool()) {
-            ++away;
-        }
-    }
-    if (room.isEmpty()) {
-        count = summaryOf(id).value(QStringLiteral("members")).toInt();
-    }
     m_countOneLine = QStringLiteral("%1 in the room").arg(count);
     m_countTwoLines.clear();
     if (away > 0) {
@@ -1804,7 +1868,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
                                                                .toInteger())
                                                         / 60000
                                                   : 0)
-                            + compact(room.value(QStringLiteral("members")));
+                            + compact(membersWithoutSamples(room.value(QStringLiteral("members"))));
     const QString keyedText = clockText(now - start);
     if (signature == property("roundtableTalkerSig").toString()) {
         for (QLabel* label : findChildren<QLabel*>(QStringLiteral("roundtableKeyedTime"))) {
@@ -2073,11 +2137,15 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
     QWidget* focused = QApplication::focusWidget();
     const QString focusKey = focused && m_readings->isAncestorOf(focused)
         ? focused->property("signalFocusKey").toString() : QString();
-    QWidget* body = freshBody(m_readings);
-    auto* col = new QVBoxLayout(body);
-    col->setContentsMargins(0, 0, 0, 4);
-    col->setSpacing(0);
     if (room.isEmpty()) {
+        if (m_readingsSignature == QLatin1String("empty")) {
+            return;
+        }
+        m_readingsSignature = QStringLiteral("empty");
+        QWidget* body = freshBody(m_readings);
+        auto* col = new QVBoxLayout(body);
+        col->setContentsMargins(0, 0, 0, 4);
+        col->setSpacing(0);
         return;
     }
     QJsonObject turn = openTurn(room);
@@ -2216,6 +2284,130 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
         return ac == bc ? personKey(a.member) < personKey(b.member) : ac < bc;
     });
     const bool byDistance = !rows.isEmpty() && rows.first().hasKm;
+
+    // Who is listed, and how the columns are arranged. A new dBm or age
+    // does not change this, so the row widgets stay and only the sample
+    // is rewritten. A stale edge is included: the colours change then.
+    QStringList structure;
+    structure << roomId() << format << unit << kind << title
+              << QString::number(roomWidth())
+              << (miles ? QStringLiteral("mi") : QStringLiteral("km"))
+              << (bearing ? QStringLiteral("brg") : QString())
+              << (identified ? QStringLiteral("id") : QString())
+              << (unsent ? QStringLiteral("unsent") : QString())
+              << (keyed ? QStringLiteral("keyed") : QString())
+              << (anyAway ? QStringLiteral("away") : QString())
+              << (byDistance ? QStringLiteral("near") : QStringLiteral("call"))
+              << others.join(QLatin1Char('|'));
+    for (const Row& entry : std::as_const(rows)) {
+        const QJsonObject reading = entry.member.value(QStringLiteral("reading")).toObject();
+        const qint64 age = now - reading.value(QStringLiteral("t")).toInteger();
+        structure << personKey(entry.member)
+                  << withNth(entry.member)
+                  << QString::number(entry.member.value(QStringLiteral("offsetHz")).toInteger())
+                  << (entry.member.value(QStringLiteral("away")).toBool() ? QStringLiteral("a") : QString())
+                  << (entry.member.value(QStringLiteral("you")).toBool() ? QStringLiteral("y") : QString())
+                  << (entry.hasKm ? QStringLiteral("km") : QString())
+                  << ((age > kStaleReadingMs) ? QStringLiteral("stale") : QStringLiteral("fresh"));
+    }
+    const QString signature = structure.join(QLatin1Char('\n'));
+    QWidget* existingBody = nullptr;
+    if (QLayout* held = m_readings->layout()) {
+        if (QLayoutItem* item = held->itemAt(0)) {
+            existingBody = item->widget();
+        }
+    }
+    if (signature == m_readingsSignature && existingBody != nullptr) {
+        const auto fits = [](const QLabel* label, const QString& text) {
+            if (label == nullptr || label->width() <= 0) {
+                return false;
+            }
+            const QFontMetrics metrics(label->font());
+            for (const QString& line : text.split(QLatin1Char('\n'))) {
+                if (metrics.horizontalAdvance(line) > label->width()) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        bool patched = true;
+        if (!rows.isEmpty()) {
+            const QList<QFrame*> frames = existingBody->findChildren<QFrame*>(
+                QStringLiteral("roundtableReadingRow"), Qt::FindDirectChildrenOnly);
+            if (frames.size() != rows.size()) {
+                patched = false;
+            }
+            for (int i = 0; patched && i < rows.size(); ++i) {
+                const QJsonObject& member = rows.at(i).member;
+                const QString key = QStringLiteral("reading:") + personKey(member);
+                QFrame* frame = nullptr;
+                for (QFrame* candidate : frames) {
+                    auto* button = candidate->findChild<QPushButton*>(QStringLiteral("roundtableSignalValue"));
+                    if (button != nullptr && button->property("signalFocusKey").toString() == key) {
+                        frame = candidate;
+                        break;
+                    }
+                }
+                if (frame == nullptr) {
+                    patched = false;
+                    break;
+                }
+                const QJsonObject reading = member.value(QStringLiteral("reading")).toObject();
+                const QJsonValue dbmField = reading.value(QStringLiteral("dbm"));
+                const double dbm = dbmField.toDouble();
+                const bool present = reading.value(QStringLiteral("present")).toBool(true)
+                    && dbmField.isDouble() && std::isfinite(dbm)
+                    && dbm >= RoundtableWire::kMinDbm && dbm <= RoundtableWire::kMaxDbm;
+                const QString shown = present ? formatValue(dbm) : QStringLiteral("none");
+                const QString ageShown = ageText(now - reading.value(QStringLiteral("t")).toInteger());
+                auto* value = frame->findChild<QLabel*>(QStringLiteral("roundtableReadingValue"));
+                auto* ageLabel = frame->findChild<QLabel*>(QStringLiteral("roundtableReadingAge"));
+                auto* km = frame->findChild<QLabel*>(QStringLiteral("roundtableReadingKm"));
+                auto* barWidget = frame->findChild<QWidget*>(QStringLiteral("roundtableReadingBar"));
+                auto* bar = static_cast<ReadingBar*>(barWidget);
+                if (value == nullptr || ageLabel == nullptr || bar == nullptr
+                    || !fits(value, shown) || !fits(ageLabel, ageShown)) {
+                    patched = false;
+                    break;
+                }
+                if (value->text() != shown) {
+                    value->setText(shown);
+                }
+                if (ageLabel->text() != ageShown) {
+                    ageLabel->setText(ageShown);
+                }
+                const QString measurement = present
+                    ? QString(shown).replace(QLatin1Char('\n'), QStringLiteral(", "))
+                    : QStringLiteral("none");
+                auto* button = frame->findChild<QPushButton*>(QStringLiteral("roundtableSignalValue"));
+                if (button != nullptr) {
+                    button->setAccessibleName(QStringLiteral("%1 signal %2, format %3. Change signal format")
+                                                   .arg(withNth(member), measurement, format));
+                }
+                const bool stale = now - reading.value(QStringLiteral("t")).toInteger() > kStaleReadingMs;
+                bar->setSample(present ? sFraction(dbm) : 0.0, kind == QLatin1String("doubled"), stale);
+                if (km != nullptr) {
+                    const QString path = pathText(member);
+                    if (!path.isEmpty() && !fits(km, path)) {
+                        patched = false;
+                        break;
+                    }
+                    if (km->text() != path) {
+                        km->setText(path);
+                    }
+                }
+            }
+        }
+        if (patched) {
+            return;
+        }
+    }
+    m_readingsSignature = signature;
+
+    QWidget* body = freshBody(m_readings);
+    auto* col = new QVBoxLayout(body);
+    col->setContentsMargins(0, 0, 0, 4);
+    col->setSpacing(0);
 
     auto* head = new QHBoxLayout();
     head->setContentsMargins(8, 6, 8, 3);
@@ -2491,6 +2683,7 @@ void RoundtablePanel::rebuildReadings(const QJsonObject& room)
             QLabel* km = makeLabel(rowWidget,
                                    pathText(member),
                                    stale ? staleColor() : dimColor(), kSmallPx, false, true);
+            km->setObjectName(QStringLiteral("roundtableReadingKm"));
             km->setToolTip(identified && !talkerNames.isEmpty()
                 ? QStringLiteral("%1 → %2 · %3 · initial true bearing")
                     .arg(talkerNames.first(), withNth(member), unit) : QString());
@@ -2563,7 +2756,8 @@ void RoundtablePanel::rebuildEarlier(const QJsonObject& room)
                               .toString();
     const bool canName = tunedHere() && live() && !awayHere(room);
     const QString signature = compact(earlier) + shown + QString::number(canName)
-                            + QString::number(m_nameEditorTurn) + compact(room.value(QStringLiteral("members")));
+                            + QString::number(m_nameEditorTurn)
+                            + compact(membersWithoutSamples(room.value(QStringLiteral("members"))));
     if (signature == m_earlierSignature) {
         return;
     }

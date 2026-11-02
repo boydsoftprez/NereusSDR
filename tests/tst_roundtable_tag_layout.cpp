@@ -17,7 +17,7 @@
 // band plan; a click tunes, +N lists its rooms by frequency and a row
 // tunes; offline greys them, connecting hides them; no tune while keyed.
 // Collapsing the pan's toolbar lays the tags out again, in the GPU path's
-// cached overlay too.
+// dynamic overlay. A tag change leaves the static chrome cache clean.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -1015,12 +1015,14 @@ private slots:
     {
         Pan pan;
         pan.widget.clearOverlayStaticDirtyForTest();
+        pan.widget.clearOverlayDynamicDirtyForTest();
         pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
 #ifdef NEREUS_GPU_SPECTRUM
-        QVERIFY(pan.widget.overlayStaticDirtyForTest());
-        // The same tags again change nothing.
-        pan.widget.clearOverlayStaticDirtyForTest();
+        // Tags paint in their own widget. Neither GPU overlay is rebuilt.
+        QVERIFY(!pan.widget.overlayDynamicDirtyForTest());
+        QVERIFY(!pan.widget.overlayStaticDirtyForTest());
         pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        QVERIFY(!pan.widget.overlayDynamicDirtyForTest());
         QVERIFY(!pan.widget.overlayStaticDirtyForTest());
 #endif
     }
@@ -1048,6 +1050,7 @@ private slots:
         QVERIFY(openRect.left() > toolbar->geometry().right());
 
         pan.widget.clearOverlayStaticDirtyForTest();
+        pan.widget.clearOverlayDynamicDirtyForTest();
         QSignalSpy collapsed(toolbar, &SpectrumOverlayPanel::collapsed);
         auto* collapse = qobject_cast<QPushButton*>(toolbar->childAt(3, 3));
         QVERIFY(collapse != nullptr);
@@ -1056,7 +1059,8 @@ private slots:
         QCOMPARE(collapsed.first().first().toBool(), true);
         QVERIFY(toolbar->geometry().bottom() < openRect.top());
 #ifdef NEREUS_GPU_SPECTRUM
-        QVERIFY(pan.widget.overlayStaticDirtyForTest());
+        QVERIFY(!pan.widget.overlayDynamicDirtyForTest());
+        QVERIFY(!pan.widget.overlayStaticDirtyForTest());
 #endif
         pan.draw();
         const auto* shut = hitFor(pan.widget, id);
@@ -1066,9 +1070,11 @@ private slots:
 
         // Opened again, the tag moves aside again.
         pan.widget.clearOverlayStaticDirtyForTest();
+        pan.widget.clearOverlayDynamicDirtyForTest();
         collapse->click();
 #ifdef NEREUS_GPU_SPECTRUM
-        QVERIFY(pan.widget.overlayStaticDirtyForTest());
+        QVERIFY(!pan.widget.overlayDynamicDirtyForTest());
+        QVERIFY(!pan.widget.overlayStaticDirtyForTest());
 #endif
         pan.draw();
         QCOMPARE(hitFor(pan.widget, id)->rect, openRect);
