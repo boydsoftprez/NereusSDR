@@ -11921,6 +11921,11 @@ void MainWindow::populateDefaultMeter()
         connect(roundtable, &RoundtableModel::linkChanged, this, &MainWindow::scheduleRoundtableRefresh);
         connect(roundtable, &RoundtableModel::mentionsChanged, this, &MainWindow::scheduleRoundtableRefresh);
         connect(roundtable, &RoundtableModel::sliceRoomsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::settingChanged, this, [this](const QString& key) {
+            if (key.isEmpty() || key == QLatin1String("Roundtable/SignalFormat")) {
+                scheduleRoundtableRefresh();
+            }
+        });
         // Quiet retained reports still age even when no server update arrives.
         // Reuse the coalesced refresh; this never requests data or tunes a slice.
         auto* reportAgeTimer = new QTimer(this);

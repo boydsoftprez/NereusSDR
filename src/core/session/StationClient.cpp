@@ -3349,7 +3349,9 @@ void StationClient::onTransportText(const QByteArray& wire)
         // Roundtable plan Task 11: the band list and the rooms in view.
         if (message.recordBatch.stream == QLatin1String(RoundtableModel::kRoomsStream)
             || message.recordBatch.stream.startsWith(
-                QLatin1String(RoundtableModel::kRoomStreamPrefix))) {
+                QLatin1String(RoundtableModel::kRoomStreamPrefix))
+            || message.recordBatch.stream.startsWith(
+                QLatin1String(RoundtableModel::kFrequencyStreamPrefix))) {
             if (roundtableAvailable() && !m_radioModel.isNull()
                 && m_radioModel->roundtableModel() != nullptr) {
                 m_radioModel->roundtableModel()->applyRecordBatch(message.recordBatch);

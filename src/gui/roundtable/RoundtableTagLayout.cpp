@@ -23,6 +23,8 @@
 
 #include "RoundtableTagLayout.h"
 
+#include "core/AppSettings.h"
+#include "core/roundtable/RoundtableWire.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "models/RoundtableModel.h"
 
@@ -40,6 +42,10 @@
 namespace NereusSDR {
 
 namespace {
+
+// S9 is -73 dBm, 6 dB an S-unit (the mockup's sText).
+constexpr double kS9Dbm = -73.0;
+constexpr double kDbPerSUnit = 6.0;
 
 // One tag on the pan before it is placed.
 struct Visible {
@@ -384,6 +390,17 @@ QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& t
     return out;
 }
 
+// The mockup's sText: S1 to S9, then S9 +N.
+QString roundtableSUnitText(double dbm)
+{
+    const int over = static_cast<int>(std::lround(dbm - kS9Dbm));
+    if (over < 1) {
+        const int units = static_cast<int>(std::lround(9.0 - (kS9Dbm - dbm) / kDbPerSUnit));
+        return QStringLiteral("S%1").arg(std::clamp(units, 0, 9));
+    }
+    return QStringLiteral("S9 +%1").arg(over);
+}
+
 QStringList roundtableTagReportLines(const RoundtableTag& tag, const QJsonObject& view, qint64 nowMs)
 {
     if (tag.stations.size() < 2) { return {}; }
@@ -434,14 +451,29 @@ QStringList roundtableTagReportLines(const RoundtableTag& tag, const QJsonObject
         const QJsonObject member = value.toObject();
         const QString id = member.value(QStringLiteral("sourceRoom")).toString() + QLatin1Char('/')
             + member.value(QStringLiteral("ref")).toString();
-        if (!talkerIds.contains(id)) { reporters.append(member); }
+        const QJsonObject reading = member.value(QStringLiteral("reading")).toObject();
+        const double dbm = reading.value(QStringLiteral("dbm")).toDouble(-400);
+        // Match the phone: validate before the display cap, so nearby people
+        // without this turn's report cannot hide a reporter with a real sample.
+        if (!talkerIds.contains(id) && reading.value(QStringLiteral("turn")) == chosen.value(QStringLiteral("id"))
+            && reading.value(QStringLiteral("present")).toBool() && std::isfinite(dbm)
+            && dbm >= RoundtableWire::kMinDbm && dbm <= RoundtableWire::kMaxDbm) {
+            reporters.append(member);
+        }
     }
     std::stable_sort(reporters.begin(), reporters.end(), [](const QJsonObject& a, const QJsonObject& b) {
         const double da = a.value(QStringLiteral("km")).isDouble() ? a.value(QStringLiteral("km")).toDouble() : 1e20;
         const double db = b.value(QStringLiteral("km")).isDouble() ? b.value(QStringLiteral("km")).toDouble() : 1e20;
         return da < db;
     });
-    QStringList lines{heading, QStringLiteral("Heard by     dBm    Age")};
+    const QString format = AppSettings::instance().value(QStringLiteral("Roundtable/SignalFormat"),
+                                                        QStringLiteral("dBm")).toString();
+    const QString unit = format == QLatin1String("S-units") ? QStringLiteral("S-units")
+        : format == QLatin1String("Both") ? QStringLiteral("S / dBm") : QStringLiteral("dBm");
+    QStringList lines{heading};
+    if (!reporters.isEmpty()) {
+        lines.append(QStringLiteral("Heard by     %1    Age").arg(unit));
+    }
     for (int index = 0; index < std::min(3, static_cast<int>(reporters.size())); ++index) {
         const QJsonObject member = reporters.at(index);
         QString name = member.value(QStringLiteral("callsign")).toString();
@@ -449,13 +481,14 @@ QStringList roundtableTagReportLines(const RoundtableTag& tag, const QJsonObject
         if (nth > 1) { name += QStringLiteral(" (%1)").arg(nth); }
         const QJsonObject reading = member.value(QStringLiteral("reading")).toObject();
         const double dbm = reading.value(QStringLiteral("dbm")).toDouble(-400);
-        if (reading.value(QStringLiteral("turn")) == chosen.value(QStringLiteral("id"))
-            && reading.value(QStringLiteral("present")).toBool() && std::isfinite(dbm) && dbm >= -160 && dbm <= 94) {
-            const qint64 seconds = std::max<qint64>(0, nowMs - reading.value(QStringLiteral("t")).toInteger()) / 1000;
-            const QString age = seconds < 60 ? QStringLiteral("%1s").arg(seconds)
-                : seconds < 3600 ? QStringLiteral("%1m").arg(seconds / 60) : QStringLiteral("%1h").arg(seconds / 3600);
-            lines.append(QStringLiteral("%1  %2  %3").arg(name).arg(qRound(dbm)).arg(age));
-        } else { lines.append(name + QStringLiteral("  -  No report")); }
+        const qint64 seconds = std::max<qint64>(0, nowMs - reading.value(QStringLiteral("t")).toInteger()) / 1000;
+        const QString age = seconds < 60 ? QStringLiteral("%1s").arg(seconds)
+            : seconds < 3600 ? QStringLiteral("%1m").arg(seconds / 60) : QStringLiteral("%1h").arg(seconds / 3600);
+        const QString dbmText = QString::number(qRound(dbm));
+        const QString signal = format == QLatin1String("S-units") ? roundtableSUnitText(dbm)
+            : format == QLatin1String("Both") ? roundtableSUnitText(dbm) + QStringLiteral(" / ") + dbmText
+                                             : dbmText;
+        lines.append(QStringLiteral("%1  %2  %3").arg(name, signal, age));
     }
     lines.append(reporters.size() > 3 ? QStringLiteral("+%1 · details").arg(reporters.size() - 3)
                                      : QStringLiteral("Open details"));

@@ -1111,6 +1111,65 @@ private slots:
         QCOMPARE(first.rooms()->mentionCount(kRoom), 0);
     }
 
+    void aWindowReceivesFrequencyReportsAndUpdates()
+    {
+        QTemporaryDir keyDir;
+        const StationIdentity identity = StationIdentity::loadOrCreate(keyDir.path());
+        Core core;
+        FakeRoundtable roundtable;
+        roundtable.frequency = true;
+        QVERIFY(roundtable.listen());
+        core.client()->setServerUrl(roundtable.stationUrl());
+        core.client()->setIdentity(&identity);
+        core.client()->setStationInfo(QStringLiteral("KG4VCF"), QStringLiteral("EM73"));
+        core.settings->setValue(QStringLiteral("Roundtable/FirstRunAnswer"), QStringLiteral("Live"));
+        core.settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("False"));
+        core.client()->start();
+        NEREUS_TRY_COMPARE(core.client()->linkState(), RoundtableClient::LinkState::Live);
+        emit core.client()->roomsReceived(QJsonObject{{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+
+        const QString context = RoundtableModel::frequencyContextId(14212000, QStringLiteral("usb"));
+        const QString source = QStringLiteral("usb-14212000");
+        const qint64 now = RoundtableModel::nowMs();
+        const QJsonObject talker{{"sourceRoom", source}, {"ref", "talker"}, {"callsign", "W1AW"}};
+        QJsonObject talkerMember = talker;
+        talkerMember.insert("reading", QJsonValue::Null);
+        QJsonObject reporter{{"sourceRoom", source}, {"ref", "reporter"}, {"callsign", "K4ABC"},
+            {"reading", QJsonObject{{"turn", 12}, {"dbm", -73}, {"present", true}, {"t", now}}}};
+        QJsonObject view{{"id", "usb-14212000"}, {"view", "frequency"}, {"family", "usb"},
+            {"hz", 14212000}, {"members", QJsonArray{talkerMember, reporter}},
+            {"now", QJsonArray{QJsonObject{{"id", 12}, {"kind", "talking"}, {"hz", 14212000},
+                {"sourceRoom", source}, {"start", now}, {"talkers", QJsonArray{talker}}}}},
+            {"earlier", QJsonArray{}}, {"messages", QJsonArray{QJsonObject{{"id", 41}, {"t", now},
+                {"callsign", "W1AW"}, {"text", "Frequency reports are live"}}}}};
+        emit core.client()->roomReceived(view);
+        Window window(core, this, QStringLiteral("window"));
+        NEREUS_TRY_VERIFY(window.rooms()->frequencyAvailable());
+        QVERIFY(window.rooms()->readAt(14212000, QStringLiteral("usb")));
+        // Go through the real read result, stream subscription and StationClient
+        // dispatch. Calling applyRecordBatch directly would miss dropped streams.
+        NEREUS_TRY_COMPARE(window.rooms()->room(context).value("members").toArray().size(), 2);
+        QCOMPARE(window.rooms()->room(context), core.model.roundtableModel()->room(context));
+        QCOMPARE(window.rooms()->room(context).value("now").toArray().first().toObject().value("id").toInt(), 12);
+        QCOMPARE(window.rooms()->room(context).value("messages").toArray().first().toObject().value("text").toString(),
+                 QStringLiteral("Frequency reports are live"));
+
+        reporter.insert("reading", QJsonObject{{"turn", 12}, {"dbm", -61}, {"present", true}, {"t", now + 1000}});
+        view.insert("members", QJsonArray{talkerMember, reporter});
+        emit core.client()->roomReceived(view);
+        const auto reporterDbm = [&window, &context]() {
+            for (const QJsonValue& member : window.rooms()->room(context).value("members").toArray()) {
+                if (member.toObject().value("ref") == QLatin1String("reporter")) {
+                    return member.toObject().value("reading").toObject().value("dbm").toInt();
+                }
+            }
+            return 0;
+        };
+        NEREUS_TRY_COMPARE(reporterDbm(), -61);
+        QCOMPARE(window.rooms()->room(context), core.model.roundtableModel()->room(context));
+        core.client()->stop();
+    }
+
     void aWindowFollowsTheRoomsItReadsAndItsSlicesAreIn()
     {
         Core core;
