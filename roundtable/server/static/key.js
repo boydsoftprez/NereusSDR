@@ -48,7 +48,7 @@
     ]);
   }
 
-  function newKeyCard() {
+  function newKeyCard(signedIn) {
     const call = field("new-callsign", "Callsign", { placeholder: "W4XYZ" });
     const grid = field("new-grid", "Grid square", { placeholder: "EM73" });
     const out = status();
@@ -69,15 +69,15 @@
       }
     } } }, [el("span", { class: "grow" }, call.label), grid.label, button]);
     return el("section", { class: "card" }, [
-      el("h2", { text: "Get a key" }),
-      el("p", { text: "For a station on other software. One key is one station: your program sends it in place of the key NereusSDR keeps for itself. No email, no password." }),
+      el("h2", { text: signedIn ? "Create a key for another station" : "Get a key" }),
+      el("p", { text: signedIn ? "Create a separate station identity for other software. This does not change the station signed in to this browser." : "For a station on other software. One key is one station: your program sends it in place of the key NereusSDR keeps for itself. No email, no password." }),
       form,
       out,
       shown,
     ]);
   }
 
-  function signInCard() {
+  function signInCard(signedIn) {
     const key = field("signin-key", "Your key", { type: "password", placeholder: "43 characters" });
     const out = status();
     const button = el("button", { class: "btn glass", type: "submit", text: "Sign in" });
@@ -93,8 +93,8 @@
       say(out, false, RT.reasonOf(r));
     } } }, [el("span", { class: "grow" }, key.label), button]);
     return el("section", { class: "card" }, [
-      el("h2", { text: "Sign in with a key" }),
-      el("p", { text: "Opens your archive in this browser. The key is sent once and is not kept in the browser." }),
+      el("h2", { text: signedIn ? "Change identity with a key" : "Sign in with a key" }),
+      el("p", { text: signedIn ? "Sign in as another station in this browser. The key is sent once and is not kept in the browser." : "Opens your archive in this browser. The key is sent once and is not kept in the browser." }),
       form,
       out,
     ]);
@@ -182,13 +182,13 @@
     const me = await RT.me();
     clear(app);
     add(app, [
-      RT.topBar("Your station key", me ? me.station : null),
+      RT.topBar(me ? "Station settings" : "Your station key", me ? me.station : null),
       el("main", { class: "keypage" }, [
-        el("h2", { text: "Two ways into Roundtable" }),
-        el("p", { text: "Roundtable has no email and no password. A station is its key." }),
-        waysIn(me),
-        newKeyCard(),
-        signInCard(),
+        me ? el("p", {}, ["This browser is signed in as ", el("b", { text: me.station.callsign || "your station" }), me.station.helper ? " · Helper. " : ". ", el("a", { href: "/archive", text: "Open your archive" })]) : el("h2", { text: "Two ways into Roundtable" }),
+        me ? el("p", { text: "Manage a website key below, create a key for another station, or change identity with a key." }) : el("p", { text: "Roundtable has no email and no password. A station is its key." }),
+        me ? null : waysIn(me),
+        newKeyCard(!!me),
+        signInCard(!!me),
         profileCard(),
         moveCard(),
       ]),

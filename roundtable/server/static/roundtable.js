@@ -370,10 +370,14 @@
 
   RT.toast = toast;
 
+  function helperLink(station) {
+    return station && station.helper ? el("a", { class: "btn small", href: "/review", text: "Review" }) : null;
+  }
+
   /* The top bar the signed-in pages share. */
   function topBar(title, station) {
     const who = station
-      ? el("span", { class: "who" }, ["Signed in as ", el("b", { text: station.callsign || "" })])
+      ? el("span", { class: "who" }, ["Signed in as ", el("b", { text: station.callsign || "your station" }), station.helper ? " · Helper" : ""])
       : null;
     return el("header", { class: "top" }, [
       el("a", { class: "brand", href: "/" }, [
@@ -385,6 +389,7 @@
       el("h1", { text: title }),
       el("span", { class: "fill" }),
       who,
+      helperLink(station),
     ]);
   }
 
@@ -782,6 +787,8 @@
     const box=$("owner-bar");if(!box)return;
     if(box.contains(document.activeElement)&&document.activeElement.tagName==="SELECT")return;
     clear(box);
+    const keyLink=document.getElementById("station-key-link");
+    if(keyLink)keyLink.textContent=S.me?"Station settings":"Your station key";
     if(!S.me){add(box,[el("span",{text:"Public frequency browsing · no radio controls"}),el("a",{class:"btn small",href:"/key",text:"Sign in"})]);return;}
     const slices=S.follow&&S.follow.slices||[];
     const selector=el("select",{id:"owner-slice",disabled:!slices.length,attrs:{"aria-label":"Station slice"}});
@@ -790,7 +797,7 @@
     selector.addEventListener("change",()=>{S.slice=Number(selector.value);if(S.following){const s=slices.find(s=>s.id===S.slice);if(s)select({hz:s.hz,family:F.family(s.mode)},false);}schedule();});
     const follow=el("input",{id:"follow-station",type:"checkbox",checked:S.following,disabled:!slices.length||version!==1});
     follow.addEventListener("change",()=>{S.following=follow.checked;S.earlier=false;const s=slices.find(s=>s.id===S.slice);if(S.following&&s)select({hz:s.hz,family:F.family(s.mode)},false);schedule();});
-    add(box,[el("span",{},["Signed in as ",el("b",{text:S.me.station.callsign||"your station"})]),selector,el("label",{},[follow," Follow my slice"]),el("a",{class:"btn small",href:"/archive",text:"Your archive"})]);
+    add(box,[el("span",{},["Signed in as ",el("b",{text:S.me.station.callsign||"your station"}),S.me.station.helper?" · Helper":""]),helperLink(S.me.station),selector,el("label",{},[follow," Follow my slice"]),el("a",{class:"btn small",href:"/archive",text:"Your archive"})]);
   }
   function turnLabel(turn){if(!turn)return "No attributed turn";if(turn.kind==="unknown")return "Unknown signal";if(turn.kind==="doubled")return (turn.talkers||[]).map(t=>callText(t.callsign,t.nth)).join(" + ")||"Two stations keyed";return (turn.talkers||[]).map(t=>callText(t.callsign,t.nth)).join(", ")||"Unidentified talker";}
   function chosenTurn(room){return room&&room.now.find(t=>t.id===S.turn)||F.lastTurn(room,current());}

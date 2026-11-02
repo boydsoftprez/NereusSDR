@@ -431,6 +431,37 @@ def sign_in(c: Chrome, server: Server, who: str = "KG4VCF") -> None:
     c.wait("location.pathname === '/archive' && document.querySelector('[data-session]') !== null", 30)
 
 
+def probe_helper_navigation(c: Chrome, server: Server) -> None:
+    c.call("Network.clearBrowserCookies")
+    c.goto(server.base + "/key")
+    c.wait("document.getElementById('signin') !== null")
+    assert c.eval("document.querySelector('h1').textContent") == "Your station key"
+    assert c.eval("document.querySelectorAll('a[href=\"/review\"]').length") == 0
+    sign_in(c, server)
+    for path in ("/", "/archive", "/review", "/key"):
+        c.goto(server.base + path)
+        c.wait("document.querySelector('a[href=\"/review\"]') !== null")
+        assert c.eval("document.querySelectorAll('a[href=\"/review\"]').length") == 1
+        assert "Helper" in c.eval("document.body.textContent")
+    assert c.eval("document.querySelector('h1').textContent") == "Station settings"
+    assert "Signed in as" in c.eval("document.body.textContent")
+    assert "Change identity" in c.eval("document.body.textContent")
+    assert "does not change the station signed in" in c.eval("document.body.textContent")
+    c.size(390, 844, mobile=True)
+    for path in ("/archive", "/review", "/key"):
+        c.goto(server.base + path)
+        c.wait("document.querySelector('a[href=\"/review\"]') !== null")
+        assert c.eval("document.documentElement.scrollWidth <= innerWidth")
+        assert c.eval("[...document.querySelectorAll('.top .who, .top a[href=\"/review\"]')].every(e => { const r=e.getBoundingClientRect(); return r.width > 0 && r.left >= 0 && r.right <= innerWidth; })")
+    c.size(1480, 1000)
+    c.goto(server.base + server.control("signin?who=K4ABC")["path"])
+    c.wait("location.pathname === '/archive' && document.querySelector('.who') !== null", 30)
+    for path in ("/", "/archive", "/key"):
+        c.goto(server.base + path, settle=1)
+        assert c.eval("document.querySelectorAll('a[href=\"/review\"]').length") == 0
+        assert "Signed in as" in c.eval("document.body.textContent")
+
+
 def probe_archive(c: Chrome, server: Server) -> None:
     """Sessions, per-station rows with WATCHED and timelines, keyed-and-lost
     hatching, the first 12 then Show all 34, the hourly histogram, an
@@ -565,6 +596,7 @@ def probe_review(c: Chrome, server: Server) -> None:
 def probe_key(c: Chrome, server: Server) -> None:
     """A key shown once; sign in with a key; change the callsign; move my
     history to a new key, which only the key itself can do."""
+    c.call("Network.clearBrowserCookies")
     c.goto(server.base + "/key")
     c.wait("document.getElementById('new-key') !== null")
     text = c.eval("document.body.textContent")
@@ -648,6 +680,7 @@ PROBES = [
     probe_copy_link,
     probe_owner_frequency,
     probe_connection,
+    probe_helper_navigation,
     probe_archive,
     probe_review,
     probe_no_move_for_others,

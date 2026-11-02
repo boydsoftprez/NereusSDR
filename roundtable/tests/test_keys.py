@@ -185,7 +185,7 @@ def test_key_signin_sets_the_session_cookie(harness, browser):
     assert hashes == [identity.key_hash(identity.from_b64url(token))]
     me = browser.get("/v1/me", browser.cookie_from(r))
     assert me.status == 200
-    assert body_json(me)["station"] == {"callsign": "W4XYZ", "grid": "EM73", "kind": "key"}
+    assert body_json(me)["station"] == {"callsign": "W4XYZ", "grid": "EM73", "kind": "key", "helper": False}
 
 
 def test_key_profile_sets_the_callsign_and_grid(harness, browser):
