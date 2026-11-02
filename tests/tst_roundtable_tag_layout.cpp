@@ -449,6 +449,88 @@ private slots:
         }
     }
 
+    void cochannelReportWidthFollowsTheRenderedFont_data()
+    {
+        QTest::addColumn<bool>("constrained");
+        QTest::newRow("wide font") << false;
+        QTest::newRow("wide font with keepout") << true;
+    }
+
+    void cochannelReportWidthFollowsTheRenderedFont()
+    {
+        QFETCH(bool, constrained);
+        struct FontRestore {
+            QFont saved{QApplication::font()};
+            ~FontRestore() { QApplication::setFont(saved); }
+        } restore;
+        QFont wide = restore.saved;
+        wide.setStretch(125);
+        QApplication::setFont(wide);
+        Pan pan;
+        pan.widget.removeVfoWidget(0);
+        const QRect spectrum = pan.widget.roundtableTagSpectrumRectForTest();
+        SpectrumOverlayPanel* toolbar = nullptr;
+        if (constrained) {
+            toolbar = new SpectrumOverlayPanel(&pan.widget);
+            // Leave 216 pixels after the normal 4-pixel keepout/edge gaps:
+            // enough for the existing card, but not the measured wide font.
+            toolbar->setFixedSize(spectrum.width() - 224, spectrum.height());
+            toolbar->move(spectrum.topLeft());
+            toolbar->show();
+        }
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123, true);
+        tag.stations = QJsonArray{QJsonObject{{"callsign", "W1AW"}},
+            QJsonObject{{"callsign", "VK3ABC/P"}, {"nth", 2}}};
+        const QString sample = QStringLiteral("VK3ABC/P (2)  S9 +12 / -61  25s");
+        tag.reportLines = {QStringLiteral("Last talker: W1AW"), QStringLiteral("Heard by     S / dBm    Age"),
+            sample, QStringLiteral("Open details")};
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        const QImage image = pan.draw();
+        const auto* hit = hitFor(pan.widget, tag.roomId);
+        QVERIFY(hit != nullptr);
+        QVERIFY(spectrum.contains(hit->rect));
+        QFont font = WorkspacePreview::readableFont(QFont(), &image);
+        font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
+        font.setWeight(QFont::Bold);
+        const QFontMetrics metrics(font, &image);
+        const QStringList displayedRows{QStringLiteral("7.185123 MHz"), QStringLiteral("W1AW"),
+            QStringLiteral("VK3ABC/P (2)"), QStringLiteral("Last talker: W1AW"),
+            QStringLiteral("Heard by     S / dBm    Age"), sample, QStringLiteral("Reports ›")};
+        int requiredWidth = 208;
+        for (const QString& row : displayedRows) {
+            requiredWidth = std::max(requiredWidth, metrics.horizontalAdvance(row) + 14);
+        }
+        QVERIFY(requiredWidth > 216);
+        if (!constrained) {
+            QCOMPARE(hit->rect.width(), requiredWidth);
+            QCOMPARE(metrics.elidedText(sample, Qt::ElideRight, hit->rect.width() - 14), sample);
+        } else {
+            QCOMPARE(hit->rect.width(), 208);
+            QVERIFY(!hit->rect.intersects(toolbar->geometry()));
+            QCOMPARE(metrics.elidedText(QStringLiteral("Reports ›"), Qt::ElideRight, hit->rect.width() - 14),
+                     QStringLiteral("Reports ›"));
+            QCOMPARE(hit->rect.height(), displayedRows.size() * 14 + 8);
+            // The disclosure is painted in the last row even when the full
+            // report cannot fit beside the toolbar at the current font width.
+            int textPixels = 0;
+            const QRect disclosure(hit->rect.left() + 7, hit->rect.bottom() - 17, hit->rect.width() - 14, 14);
+            for (int y = disclosure.top(); y <= disclosure.bottom(); ++y) {
+                for (int x = disclosure.left(); x <= disclosure.right(); ++x) {
+                    const QColor color = image.pixelColor(x, y);
+                    if (color.red() > 100 && color.green() > 100 && color.blue() > 100) {
+                        ++textPixels;
+                    }
+                }
+            }
+            QVERIFY(textPixels > 10);
+        }
+        if (qEnvironmentVariableIsSet("NEREUS_ROUNDTABLE_FORMAT_CAPTURES")) {
+            const QString path = qEnvironmentVariable("NEREUS_ROUNDTABLE_FORMAT_CAPTURES")
+                + (constrained ? QStringLiteral("/wide-font-constrained.png") : QStringLiteral("/wide-font.png"));
+            QVERIFY(image.copy(hit->rect.adjusted(-4, -4, 4, 4)).save(path));
+        }
+    }
+
     void cochannelBoxHasRealBoundsAndRender()
     {
         Pan pan;

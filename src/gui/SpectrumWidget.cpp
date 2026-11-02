@@ -12580,6 +12580,7 @@ constexpr int kRoundtableTagFootGap = 8;      // tag bottom to band plan top
 constexpr int kRoundtableTagGap = 4;          // between tags and from the edges
 constexpr int kRoundtableTagMinWidth = 56;
 constexpr int kRoundtableTagMaxWidth = 128;
+constexpr int kRoundtableReportMinWidth = 208;
 constexpr int kRoundtableTagPadLeft = 6;
 constexpr int kRoundtableTagPadRight = 7;
 constexpr int kRoundtableTagInnerGap = 5;     // glyph to text
@@ -12723,7 +12724,7 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     }
     const bool hasReports = std::any_of(m_roundtableTags.cbegin(), m_roundtableTags.cend(),
         [](const RoundtableTag& tag) { return !tag.reportLines.isEmpty(); });
-    const int tagWidth = hasReports ? 208 : std::min(natural, kRoundtableTagMaxWidth);
+    int tagWidth = hasReports ? kRoundtableReportMinWidth : std::min(natural, kRoundtableTagMaxWidth);
 
     const int bandTop = specRect.bottom() + 1 - bandPlanStripHeight(p.device());
     const int top = bandTop - kRoundtableTagFootGap - kRoundtableTagHeight;
@@ -12739,9 +12740,18 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
         const QStringList rows = tag.reportLines.isEmpty() ? QStringList{} : roundtableCochannelRows(tag, maximumRows);
         contentRows.insert(tag.roomId, rows);
+        // Font metrics vary across platforms. Keep the compact minimum, but
+        // make room for every final row's identity, measurement and age.
+        for (const QString& text : rows) {
+            tagWidth = std::max(tagWidth, labelMetrics.horizontalAdvance(text) + 14);
+        }
         const int pixels = tag.reportLines.isEmpty() ? std::max(1, std::min(4, static_cast<int>(tag.stations.size()))) * kRoundtableTagHeight
             : rows.size() * 14 + 8;
         stackHeight = std::max(stackHeight, pixels);
+    }
+    if (hasReports) {
+        tagWidth = std::min(tagWidth, std::max(kRoundtableReportMinWidth,
+                                             specRect.width() - 2 * kRoundtableTagGap));
     }
     const QRect row(specRect.left(), top + kRoundtableTagHeight - stackHeight,
                     specRect.width(), stackHeight);
@@ -12762,9 +12772,16 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
 
     const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
     const double hzPerPixel = m_bandwidthHz / specRect.width();
-    const QList<RoundtableTagPlacement> placements = layoutRoundtableTags(
+    QList<RoundtableTagPlacement> placements = layoutRoundtableTags(
         m_roundtableTags, hzPerPixel, static_cast<qint64>(std::llround(lowHz)), specRect.width(), tagWidth,
         kRoundtableTagGap, keepOut);
+    if (placements.isEmpty() && hasReports && tagWidth > kRoundtableReportMinWidth) {
+        // A narrow free strip must still offer Reports when the complete
+        // reading cannot fit beside the existing flags and toolbar.
+        tagWidth = kRoundtableReportMinWidth;
+        placements = layoutRoundtableTags(m_roundtableTags, hzPerPixel, static_cast<qint64>(std::llround(lowHz)),
+                                          specRect.width(), tagWidth, kRoundtableTagGap, keepOut);
+    }
     if (placements.isEmpty()) {
         return;
     }
