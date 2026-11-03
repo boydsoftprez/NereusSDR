@@ -492,7 +492,7 @@ const BoardCapabilities kHermes = {
     //MI0BOT  [original `case HPSDRModel.HERMESLITE: // MI0BOT: HL2`
     //         attribution at console.cs:8409 — HL2 case-statement marker]
     .hasPureSignal    = true,
-    // From Thetis clsHardwareSpecific.cs:306 [v2.10.3.15] — P1 default.
+    // From Thetis clsHardwareSpecific.cs:306 [v2.10.3.15]: P1 default.
     .psDefaultPeak    = 0.4072,
     .hasDiversityReceiver = false,
     .hasStepAttenuatorCal = false,
@@ -1463,9 +1463,9 @@ double pureSignalDefaultPeakFor(const BoardCapabilities& caps,
         return 0.0;
     }
 
-    // From Thetis clsHardwareSpecific.cs:297-320 [v2.10.3.15] —
+    // From Thetis clsHardwareSpecific.cs:297-320 [v2.10.3.15]:
     // PSDefaultPeak uses the current radio protocol, not a board's usual one.
-    // From mi0bot-Thetis clsHardwareSpecific.cs:303-330 [v2.10.3.13-beta2] —
+    // From mi0bot-Thetis clsHardwareSpecific.cs:303-330 [v2.10.3.13-beta2]:
     // the HermesLite override applies on both protocols.
     constexpr double kHl2Peak = 0.233; // From mi0bot-Thetis clsHardwareSpecific.cs:312,322 [v2.10.3.13-beta2]
     constexpr double kProtocol1Peak = 0.4072; // From Thetis clsHardwareSpecific.cs:306 [v2.10.3.15]

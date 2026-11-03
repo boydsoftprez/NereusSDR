@@ -205,6 +205,7 @@ private slots:
         PureSignal coordinator(&engine, tx, nullptr, nullptr, nullptr, nullptr);
         coordinator.setTimersEnabled(false);
         coordinator.setSettings(&settings);
+        coordinator.applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::OrionMKII));
         PureSignalSessionFacade facade(nullptr, &coordinator);
         QSignalSpy results(&facade, &PureSignalSessionFacade::actionResult);
         QCOMPARE(facade.executeAction(Ps3Action::StartAutomatic, {}, 1).phase,

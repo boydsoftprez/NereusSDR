@@ -496,6 +496,8 @@ void PureSignal::clearTransientOperationsForOff()
 
 bool PureSignal::applyAcceptedSettingsToEngine()
 {
+    // Callers must apply board capabilities before accepted settings can reach WDSP;
+    // the radio connection does this before applying those settings.
     if (!m_settings || !m_tx || !canActuate() || !m_caps.hasPureSignal) {
         return false;
     }
