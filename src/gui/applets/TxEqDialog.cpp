@@ -114,6 +114,10 @@
 //                 leaving the box), as Thetis's NumericUpDowns do.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-11-03 - Graphic Legacy Hz boxes keep their step buttons. With
+//                 the arrows hidden, Qt 6.12's stylesheet style collapses
+//                 a padded spin box's editor to one pixel, so the
+//                 frequency cannot be seen or typed. J.J. Boyd (KG4VCF).
 // =================================================================
 
 //=================================================================
@@ -550,9 +554,11 @@ QWidget* buildBandColumn(const QString& headerLabel,
                      TransmitModel::kTxEqFreqHzMax);
         hz->setSuffix(QString());
         hz->setProperty(kBandIndexProp, bandIndex);
-        // Allow 4-digit + suffix room.
+        // Five digits (up to 22000 Hz) fit beside the arrows at 62 px.
+        // The arrows have to stay. Qt 6.12's stylesheet style collapses
+        // a padded spin box's editor to 1 px when buttonSymbols is
+        // NoButtons, so the frequency cannot be seen or typed.
         hz->setFixedWidth(62);
-        hz->setButtonSymbols(QAbstractSpinBox::NoButtons);
         // Batch 9 — apply the project spinbox style.
         hz->setStyleSheet(NereusSDR::Style::kSpinBoxStyle);
         v->addWidget(hz);
