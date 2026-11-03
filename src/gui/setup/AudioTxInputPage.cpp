@@ -745,6 +745,8 @@ void AudioTxInputPage::updateRadioMicGroupVisibility(HPSDRHW hw)
     // The Hermes Lite 2 takes the Hermes group's Mic In / Line In, boost and
     // Line In Gain through its AK4951 add-on board (P1CodecHl2).
     const bool isHermes = (hw == HPSDRHW::Hermes
+                        // From Thetis setup.cs:19904-19909 [v2.10.3.15]: G2E disables the Orion panel.
+                        //N1GP G2E added [original inline comment from setup.cs:19904]
                         || hw == HPSDRHW::HermesC10
                         || hw == HPSDRHW::HermesII
                         || hw == HPSDRHW::Angelia

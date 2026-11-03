@@ -2365,6 +2365,36 @@ private slots:
         }
     }
 
+    // G2E peers receive the shared mic controls and their transmit bindings,
+    // without the Orion/Saturn connector controls selected by jumpers.
+    void audioG2eDescribesSharedMicControls()
+    {
+        RadioModel radio;
+        radio.setHpsdrModelForTest(HPSDRModel::ANAN_G2E);
+        SetupDescriptionService service;
+        service.setRadioContext(radio.boardCapabilities(), radio.hardwareProfile().model);
+        for (int version : {15, 24}) {
+            const QJsonObject audio = projectedCategory(service.audio(), version);
+            for (const auto& [id, property] : {
+                     std::pair{"micGain", "micGainDb"},
+                     std::pair{"hermesLineIn", "lineIn"},
+                     std::pair{"hermesMicBoost", "micBoost"},
+                     std::pair{"hermesLineInGain", "lineInBoost"}}) {
+                const QJsonObject row = controlById(
+                    audio, QStringLiteral("audio.txInput.") + QLatin1String(id));
+                QVERIFY2(!row.isEmpty(), id);
+                QCOMPARE(row.value("binding").toObject().value("property").toObject(),
+                         (QJsonObject{{"object", "transmit"}, {"name", property}}));
+            }
+            for (const char* id : {"orionMicTipRing", "orionMicBias", "orionMicPttDisabled",
+                                   "orionMicBoost", "saturnMicXlr", "saturnMicTipRing",
+                                   "saturnMicPttDisabled", "saturnMicBias", "saturnMicBoost"}) {
+                QVERIFY2(controlById(audio, QStringLiteral("audio.txInput.")
+                                                + QLatin1String(id)).isEmpty(), id);
+            }
+        }
+    }
+
     // Radio codec lane: the Hermes Lite 2 takes the Hermes group's rows
     // through its AK4951 audio add-on board, which its gateware cannot
     // report: the section is sent, titled for the HL2, each row with the

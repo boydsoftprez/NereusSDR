@@ -723,7 +723,10 @@ bool keepSectionForRadio(QJsonObject* section, const BoardCapabilities& caps)
             section->insert(QStringLiteral("controls"), controls);
             return true;
         }
-        return hw == HPSDRHW::Hermes || hw == HPSDRHW::HermesII || hw == HPSDRHW::Angelia
+        // From Thetis setup.cs:19904-19909 [v2.10.3.15]: G2E disables the Orion panel.
+        //N1GP G2E added [original inline comment from setup.cs:19904]
+        return hw == HPSDRHW::Hermes || hw == HPSDRHW::HermesC10
+            || hw == HPSDRHW::HermesII || hw == HPSDRHW::Angelia
             || hw == HPSDRHW::Atlas;
     }
     if (family == QLatin1String("orion")) {
