@@ -745,6 +745,7 @@ void AudioTxInputPage::updateRadioMicGroupVisibility(HPSDRHW hw)
     // The Hermes Lite 2 takes the Hermes group's Mic In / Line In, boost and
     // Line In Gain through its AK4951 add-on board (P1CodecHl2).
     const bool isHermes = (hw == HPSDRHW::Hermes
+                        || hw == HPSDRHW::HermesC10
                         || hw == HPSDRHW::HermesII
                         || hw == HPSDRHW::Angelia
                         || hw == HPSDRHW::Atlas

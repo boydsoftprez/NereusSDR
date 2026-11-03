@@ -185,6 +185,55 @@ private slots:
                  "Saturn group must be hidden on HermesII board");
     }
 
+    // A G2E uses the shared microphone controls, including when Setup was
+    // opened before the radio connected. Orion/Saturn-specific controls do
+    // not apply to its jumper-selected connector.
+    void g2e_radioMicControls_followConnectionAndBindModel()
+    {
+        RadioModel model;
+        AudioTxInputPage page(&model);
+        QVERIFY(!page.radioMicPlaceholder()->isHidden());
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2E);
+        QVERIFY(model.boardCapabilities().hasMicJack);
+        QVERIFY(model.boardCapabilities().radioMicSelectable());
+        model.emitCurrentRadioChangedForTest();
+
+        QRadioButton* radio = findRadioButton(&page, QStringLiteral("Radio Mic"));
+        QVERIFY(radio && radio->isEnabled());
+        radio->click();
+        QCOMPARE(model.transmitModel().micSource(), MicSource::Radio);
+        QGroupBox* group = page.hermesRadioMicGroup();
+        QVERIFY(!group->isHidden() && group->isEnabled());
+        QVERIFY(page.orionRadioMicGroup()->isHidden());
+        QVERIFY(page.saturnRadioMicGroup()->isHidden());
+        QVERIFY(page.radioMicPlaceholder()->isHidden());
+
+        QRadioButton* line = findRadioButton(group, QStringLiteral("Line In"));
+        QRadioButton* mic = findRadioButton(group, QStringLiteral("Mic In"));
+        QCheckBox* boost = findCheckBox(group, QStringLiteral("+20 dB Mic Boost"));
+        QSlider* lineGain = group->findChild<QSlider*>();
+        QVERIFY(line && mic && boost && lineGain && page.micGainSlider());
+        line->click();
+        QVERIFY(model.transmitModel().lineIn());
+        lineGain->setValue(-21);
+        QCOMPARE(model.transmitModel().lineInBoost(), -10.5);
+        mic->click();
+        QVERIFY(!model.transmitModel().lineIn());
+        boost->setChecked(false);
+        QVERIFY(!model.transmitModel().micBoost());
+        page.micGainSlider()->setValue(10);
+        QCOMPARE(model.transmitModel().micGainDb(), 10);
+
+        model.transmitModel().setLineIn(true);
+        model.transmitModel().setMicBoost(true);
+        model.transmitModel().setLineInBoost(4.5);
+        model.transmitModel().setMicGainDb(12);
+        QVERIFY(line->isChecked());
+        QVERIFY(boost->isChecked());
+        QCOMPARE(lineGain->value(), 9);
+        QCOMPARE(page.micGainSlider()->value(), 12);
+    }
+
     // ── 5. PC Mic → Radio Mic (Saturn) — Saturn group becomes visible ─────────
 
     void saturn_pcToRadio_saturnGroupAppears()
