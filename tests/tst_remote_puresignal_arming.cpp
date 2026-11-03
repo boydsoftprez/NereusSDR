@@ -108,6 +108,7 @@ struct Session {
     {
         core = makeStationRadioModel();
         coordinator = core->installPureSignalForTest(&tx);
+        coordinator->applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::HermesLite));
         coordinator->setTimersEnabled(false);
         server = std::make_unique<StationServer>(
             core.get(), settings, NereusSDR::Test::seedUpgradedCoreToken(securityDir));
@@ -383,6 +384,7 @@ void TstRemotePureSignalArming::olderAppKeepsTodaysReason()
     TxChannel tx(/*channelId=*/1);
     auto core = makeStationRadioModel();
     PureSignal* coordinator = core->installPureSignalForTest(&tx);
+    coordinator->applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::HermesLite));
     coordinator->setTimersEnabled(false);
     QTemporaryDir dir;
     AppSettings settings(dir.filePath(QStringLiteral("older.settings")));

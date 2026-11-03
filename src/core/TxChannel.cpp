@@ -67,6 +67,9 @@ warren@wpratt.com
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 - Issue #734: reject nonfinite/nonpositive PureSignal hardware
+//                 peaks before WDSP divides by them. J.J. Boyd (KG4VCF),
+//                 with OpenAI Codex assistance.
 //   2026-10-04 — Acknowledge PS3 calibration reset before AutoAtt changes,
 //                 with causal TX status and cancellation drain. J.J. Boyd
 //                 (KG4VCF), with OpenAI Codex assistance.
@@ -6123,6 +6126,10 @@ void TxChannel::requestPSTXDelay(double seconds)
 
 void TxChannel::setPSHWPeak(double peak)
 {
+    if (!std::isfinite(peak) || peak <= 0.0) {
+        qCWarning(lcDsp) << "PureSignal: refusing invalid hardware peak" << peak;
+        return;
+    }
 #ifdef HAVE_WDSP
     runOrdered([this, peak]() {
         if (!psAvailable()) return;

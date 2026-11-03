@@ -103,6 +103,7 @@ struct AdmissionCore {
         TxChannel* tx = engine.createTxChannel(WdspEngine::kTxChannelId);
         if (!tx) { return false; }
         coordinator = radio.installPureSignalForTest(tx);
+        coordinator->applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::OrionMKII));
         coordinator->setTimersEnabled(false);
         coordinator->setOperationalReadinessPredicate([this] { return ready; });
         coordinator->setOperationalPermissionPredicate([this] { return permitted; });
@@ -269,6 +270,7 @@ private slots:
             PureSignal coordinator(&engine, tx, nullptr, nullptr, nullptr, nullptr);
             coordinator.setTimersEnabled(false);
             coordinator.setSettings(&settings);
+            coordinator.applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::OrionMKII));
             QVERIFY(coordinator.applyAcceptedSettingsToEngine());
             PureSignalSessionFacade facade(nullptr, &coordinator);
             QCOMPARE(facade.executeAction(Ps3Action::Single, {}, 1).phase,

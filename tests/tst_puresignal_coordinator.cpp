@@ -407,11 +407,7 @@ private slots:
         TxChannel tx(kTxChannelId);
         PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
 
-        BoardCapabilities caps{};
-        caps.psDefaultPeak = 0.2899;     // ANAN-G2 default per cmaster.cs:536
-        caps.psSampleRate  = 192000;
-
-        ps.applyBoardCapabilities(caps);
+        ps.applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::OrionMKII));
     }
 
     // ── Test 14: AutoAttenuateState defaults to Monitor ─────────────────────
@@ -950,11 +946,7 @@ private slots:
         TxChannel tx(kTxChannelId);
         PureSignal ps(nullptr, &tx, nullptr, nullptr, nullptr, nullptr);
 
-        BoardCapabilities caps{};
-        caps.psDefaultPeak = 0.6121;     // ANAN-G2 / Saturn (Task 1 1bbb85a)
-        caps.psSampleRate  = 192000;
-
-        ps.applyBoardCapabilities(caps);
+        ps.applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::Saturn));
 
         QCOMPARE(ps.hwPeak(), 0.6121);
     }

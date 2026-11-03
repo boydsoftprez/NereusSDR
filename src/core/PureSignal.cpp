@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 - Issue #734: consume the active-protocol hardware peak and
+//                 reject invalid normalization before applying settings.
+//                 J.J. Boyd (KG4VCF), with OpenAI Codex assistance.
 //   2026-10-25 — connectAttOnTxPsActive: the PS-A -> StepAttenuatorController
 //                 setPsActive wire (console.cs:29612-29616 [v2.10.3.15]),
 //                 shared by RadioModel and the tests. J.J. Boyd (KG4VCF),
@@ -493,7 +496,12 @@ void PureSignal::clearTransientOperationsForOff()
 
 bool PureSignal::applyAcceptedSettingsToEngine()
 {
-    if (!m_settings || !m_tx || !canActuate()) {
+    if (!m_settings || !m_tx || !canActuate() || !m_caps.hasPureSignal) {
+        return false;
+    }
+    const double peak = hwPeak();
+    if (!std::isfinite(peak) || peak <= 0.0) {
+        qCWarning(lcDsp) << "PureSignal: refusing invalid hardware peak" << peak;
         return false;
     }
     constexpr int kThetisPsRate = 192000;
@@ -506,7 +514,7 @@ bool PureSignal::applyAcceptedSettingsToEngine()
     m_tx->setPSMoxDelay(m_settings->moxDelaySeconds());
     m_tx->setPSLoopDelay(m_settings->loopDelaySeconds());
     applyTxDelaySeconds(m_settings->requestedTxDelayNs() * 1.0e-9);
-    m_tx->setPSHWPeak(hwPeak());
+    m_tx->setPSHWPeak(peak);
     m_tx->setPSRunCal(m_settings->runCalibrationProcessing() ? 1 : 0);
     m_operationalSettingsApplied = true;
     return true;
@@ -1038,11 +1046,17 @@ void PureSignal::setHwPeak(double peak)
 
 void PureSignal::applyBoardCapabilities(const BoardCapabilities& caps)
 {
+    applyBoardCapabilities(caps, caps.protocol);
+}
+
+void PureSignal::applyBoardCapabilities(const BoardCapabilities& caps, ProtocolVersion protocol)
+{
     m_caps = caps;
+    m_caps.psDefaultPeak = BoardCapsTable::pureSignalDefaultPeakFor(caps, protocol);
     // Push the per-board default peak through the calcc engine.  The
     // Thetis equivalent is psdefpeak (PSForm.cs:371-381 [v2.10.3.13])
     // chained from setDefaultPeaks; here we apply it directly.
-    if (m_tx && m_operationalSettingsApplied) {
+    if (m_tx && m_operationalSettingsApplied && m_caps.hasPureSignal) {
         m_tx->setPSHWPeak(hwPeak());
     }
     // Push the per-board feedback rate to the feedback channel.
