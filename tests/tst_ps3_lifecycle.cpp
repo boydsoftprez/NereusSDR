@@ -264,6 +264,7 @@ void TestPs3Lifecycle::realWdspOffAcknowledgesWithRunCalIntentFalse()
     coordinator.setSettings(&settings);
     coordinator.setOperationalPermissionPredicate([] { return true; });
     coordinator.setOperationalReadinessPredicate([] { return true; });
+    coordinator.applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::OrionMKII));
     QVERIFY(coordinator.applyAcceptedSettingsToEngine());
     QCOMPARE(tx->psRunCal(), std::optional<bool>(false));
     QVERIFY(!tx->psCorrectionAvailable().value_or(true));
@@ -510,6 +511,7 @@ void TestPs3Lifecycle::realTxHydrationPersistsIntentWithoutActuation()
     coordinator.setSettings(&settings);
     coordinator.setOperationalPermissionPredicate([] { return true; });
     coordinator.setOperationalReadinessPredicate([] { return true; });
+    coordinator.applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::OrionMKII));
     QVERIFY(coordinator.applyAcceptedSettingsToEngine());
     const double appliedDelayBefore = coordinator.appliedTxDelayNs();
     const double nativePeakBefore = tx->getPSHWPeak();
@@ -568,6 +570,7 @@ void TestPs3Lifecycle::retiredSingleDoesNotReplayWhenRunCalIsLaterEnabled()
     coordinator.setSettings(&settings);
     coordinator.setOperationalPermissionPredicate([] { return true; });
     coordinator.setOperationalReadinessPredicate([] { return true; });
+    coordinator.applyBoardCapabilities(BoardCapsTable::forBoard(HPSDRHW::OrionMKII));
     QVERIFY(coordinator.applyAcceptedSettingsToEngine());
     QSignalSpy started(&coordinator, &PureSignal::calibrationStarted);
 

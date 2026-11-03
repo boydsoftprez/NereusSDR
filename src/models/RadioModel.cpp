@@ -21593,7 +21593,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
             // [v2.10.3.13]: puresignal.SetPSFeedbackRate(txch, ps_rate);).
             // Inline tag preservation: //MI0BOT  [original inline comment
             // from mi0bot-Thetis cmaster.cs:566]
-            m_pureSignal->applyBoardCapabilities(boardCapabilities());
+            m_pureSignal->applyBoardCapabilities(boardCapabilities(), m_lastRadioInfo.protocol);
 
             // ── Task 17 chunk A — wire PSEnabled fan-out into ReceiverManager ──
             //

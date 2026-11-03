@@ -543,7 +543,7 @@ nereus_add_test(tst_ps3_two_tone_completion EXTRA_LABELS session)
 nereus_add_test(tst_station_ps3_two_tone_keepalive fakes/LoopbackTransport.cpp CORE_ONLY EXTRA_LABELS session)
 nereus_add_test(tst_dsp_asset_dialog EXTRA_LABELS gui)
 nereus_add_test(tst_dsp_asset_service EXTRA_LABELS core)
-nereus_add_test(tst_ps3_lifecycle EXTRA_LABELS core)
+nereus_add_test(tst_ps3_lifecycle CORE_ONLY EXTRA_LABELS core)
 if(TARGET wdsp_static)
     # Native unkey must finish its paced down-slew/flush before the 100 ms fallback.
     nereus_add_test(tst_ps3_tx_lane_deadlock WdspPsRampProbe.c CORE_ONLY REALTIME EXTRA_LABELS core)
@@ -1026,7 +1026,10 @@ nereus_add_test(tst_hardware_profile)
 # rx1_rate per mi0bot console.cs:8472-8488), and Atlas (no PureSignal).
 # Source: ramdor clsHardwareSpecific.cs:285-310 [v2.10.3.13] +
 #         mi0bot clsHardwareSpecific.cs:300-330 [v2.10.3.13-beta2].
-nereus_add_test(tst_puresignal_caps)
+nereus_add_test(tst_puresignal_caps CORE_ONLY)
+if(TARGET wdsp_static)
+    nereus_add_test(tst_puresignal_hardware_peak CORE_ONLY)
+endif()
 
 # ── Phase 3M-4 Task 2: PureSignal calcc.c + iqc.c vendored verbatim ──
 # Smoke test: confirms calcc.c (1,164 LOC) + iqc.c (315 LOC) are picked up
@@ -1084,7 +1087,7 @@ nereus_add_test(tst_ps_feedback_channel)
 # auto-attention machine (PSForm.cs:97-122 + 729-790 [v2.10.3.13]).
 # NEREUS_BUILD_TESTS exposes lastPSFeedbackRateForTest seam used by the PR
 # #212 codex-fix A test (HL2 sentinel resolution to cmaster.cs:424 ps_rate).
-nereus_add_test(tst_puresignal_coordinator)
+nereus_add_test(tst_puresignal_coordinator CORE_ONLY)
 target_compile_definitions(tst_puresignal_coordinator PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-4 Task 8: PsForm modeless dialog ────────────────────────────────

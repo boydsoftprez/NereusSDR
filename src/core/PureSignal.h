@@ -414,6 +414,7 @@ public:
     // RadioModel::onConnected when the per-board codec applies its DDC
     // config.
     void applyBoardCapabilities(const BoardCapabilities& caps);
+    void applyBoardCapabilities(const BoardCapabilities& caps, ProtocolVersion protocol);
 
     std::optional<Ps3Snapshot> ps3DisplaySnapshot(
         std::uint64_t sessionGeneration,
@@ -757,7 +758,7 @@ private:
     bool m_ampViewSubscribed{false};
     std::optional<Ps3Snapshot> m_cachedDisplaySnapshot;
 
-    BoardCapabilities m_caps;
+    BoardCapabilities m_caps{};
 };
 
 } // namespace NereusSDR
