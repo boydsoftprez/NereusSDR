@@ -9771,6 +9771,7 @@ nereus_add_test(tst_daemon_app)
 nereus_add_test(tst_station_host fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_handover EXTRA_LABELS session)
 nereus_add_test(tst_station_handover_roundtrip EXTRA_LABELS session)
+nereus_add_test(tst_station_foreign_lock EXTRA_LABELS session)
 nereus_add_test(tst_desktop_station_controller)
 nereus_add_test(tst_desktop_station_window)
 # TX rulings review: MainWindow::hostingSliceActionsForTest and

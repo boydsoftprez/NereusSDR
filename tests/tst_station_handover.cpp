@@ -12,6 +12,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QScopeGuard>
+#include <QSysInfo>
 #include <QTcpServer>
 #include <QTemporaryDir>
 #include <QUuid>
@@ -182,6 +183,54 @@ private slots:
         StationHandover recovered(profile);
         QVERIFY(recovered.acquire(1000));
         recovered.release();
+    }
+
+    // The real Core entry point, on this computer's disk: a lock another
+    // computer left does not stop it, and its log says what happened.
+    void coreTakesOverAnotherComputersLockOnThisDisk()
+    {
+        QTemporaryDir scratch;
+        QVERIFY(scratch.isValid());
+        const QString config = configFile(scratch, true);
+        QVERIFY(!config.isEmpty());
+        const QString socketPath = QDir(scratch.path()).filePath(
+            QString::fromLatin1(StationControlSocket::kSocketName));
+        const QString profile = profileName();
+        const QString directory = AppSettings::resolveConfigDir(profile);
+        QVERIFY(QDir().mkpath(directory));
+        const auto removeProfile = qScopeGuard([&] { QDir(directory).removeRecursively(); });
+
+        QFile leftover(QDir(directory).filePath(QStringLiteral("station.lock")));
+        QVERIFY(leftover.open(QIODevice::WriteOnly));
+        leftover.write("99999\nNereusSDR\nOld-MacBook.local\n"
+                       "017FA02B-0000-5000-A000-000000000000\n");
+        leftover.close();
+
+        QProcess daemon;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("NEREUS_HANDOVER_TEST_PRIMED_BOARD"), QStringLiteral("1"));
+        daemon.setProcessEnvironment(env);
+        daemon.setProcessChannelMode(QProcess::MergedChannels);
+        daemon.start(QCoreApplication::applicationFilePath(),
+                     {QStringLiteral("--daemon-helper"), QStringLiteral("--config"), config,
+                      QStringLiteral("--profile"), profile});
+        const auto stopDaemon = qScopeGuard([&] {
+            if (daemon.state() != QProcess::NotRunning) {
+                daemon.kill();
+                daemon.waitForFinished();
+            }
+        });
+        QVERIFY(daemon.waitForStarted());
+        QVERIFY(QTest::qWaitFor([&] { return controlSocketPresent(socketPath); }, 15000));
+        StationHandover competitor(profile);
+        QVERIFY(!competitor.acquire(0));
+        QVERIFY(!competitor.lockedByOtherComputer());
+#ifndef Q_OS_WIN
+        // QLockFile on Windows opens its file with no sharing, so a live
+        // owner's lock cannot be read back there.
+        QVERIFY(fileBytes(leftover.fileName()).contains(QSysInfo::machineUniqueId()));
+#endif
+        QVERIFY(waitForText(daemon, "Old-MacBook.local"));
     }
 
     void releaseReplyAndSocketPathHandoff()
