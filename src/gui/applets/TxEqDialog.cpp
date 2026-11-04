@@ -45,6 +45,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03 — Native frequency editor sizing by J.J. Boyd (KG4VCF),
+//                 assisted by OpenAI Codex.
 //   2026-10-02 — Native dual-mode editor and exact session history by
 //                 J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 //   2026-04-29 — Phase 3M-3a-i Batch 3 (Task A.1): created by
@@ -202,6 +204,7 @@
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QStyle>
+#include <QStyleOptionSpinBox>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -510,7 +513,7 @@ QWidget* buildBandColumn(const QString& headerLabel,
 {
     QWidget* col = new QWidget(parent);
     QVBoxLayout* v = new QVBoxLayout(col);
-    v->setContentsMargins(2, 2, 2, 2);
+    v->setContentsMargins(0, 2, 0, 2);
     v->setSpacing(3);
     v->setAlignment(Qt::AlignTop);
 
@@ -554,13 +557,22 @@ QWidget* buildBandColumn(const QString& headerLabel,
                      TransmitModel::kTxEqFreqHzMax);
         hz->setSuffix(QString());
         hz->setProperty(kBandIndexProp, bandIndex);
-        // Five digits (up to 22000 Hz) fit beside the arrows at 62 px.
-        // The arrows have to stay. Qt 6.12's stylesheet style collapses
-        // a padded spin box's editor to 1 px when buttonSymbols is
-        // NoButtons, so the frequency cannot be seen or typed.
-        hz->setFixedWidth(62);
         // Batch 9 — apply the project spinbox style.
         hz->setStyleSheet(NereusSDR::Style::kSpinBoxStyle);
+        hz->ensurePolished();
+        // Keep the arrows: Qt 6.12 collapses the padded NoButtons editor
+        // to 1 px. Allow for the current style's arrows, frame and padding
+        // as well as the maximum frequency in the current font.
+        QStyleOptionSpinBox option;
+        option.initFrom(hz);
+        option.buttonSymbols = hz->buttonSymbols();
+        option.frame = hz->hasFrame();
+        option.rect = QRect(0, 0, 1000, hz->sizeHint().height());
+        const int editorWidth = hz->style()->subControlRect(
+            QStyle::CC_SpinBox, &option, QStyle::SC_SpinBoxEditField, hz).width();
+        const int textWidth = hz->fontMetrics().horizontalAdvance(
+            QString::number(TransmitModel::kTxEqFreqHzMax));
+        hz->setFixedWidth(textWidth + 6 + option.rect.width() - editorWidth);
         v->addWidget(hz);
         auto* hzUnit = new QLabel(QObject::tr("Hz"), col); hzUnit->setAlignment(Qt::AlignHCenter); v->addWidget(hzUnit);
         *outFreqSpin = hz;
@@ -591,7 +603,7 @@ QWidget* TxEqDialog::buildLegacyPanel()
     bandGroup->setMaximumHeight(380);
     QHBoxLayout* bandRow = new QHBoxLayout(bandGroup);
     bandRow->setContentsMargins(8, 14, 8, 8);
-    bandRow->setSpacing(2);
+    bandRow->setSpacing(0);
 
     // Preamp column (no freq spinbox).
     {
