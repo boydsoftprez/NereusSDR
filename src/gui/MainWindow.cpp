@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: The flags' S-meter source follows the window's one S-meter, and
+//               a flag can set it (overlay design D40, D41). Display only: nothing
+//               reaches a slice or the radio. A flag line shows open while the
+//               inspector shows its frequency. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-04: The one inspector's routing (overlay design D21, D24 to D27, D34, D36,
 //               D37): a toggle, a swap in place, Back and ⋯, the fold's list and the
 //               short menu. A band click leaves it open. New GUI-thread routes only.
@@ -5687,6 +5692,18 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         connect(slice, &SliceModel::signalStrengthDbmChanged, newFlag, &VfoWidget::setSmeter);
     }
     newFlag->setSmeter(slice->signalStrengthDbm());
+    // Overlay design D40, D41: the flag shows the window's one S-meter choice
+    // and can set it. It reaches the meter and the other flags, nothing else.
+    refreshFlagSMeterSource(newFlag, slice);
+    connect(newFlag, &VfoWidget::sMeterSourceRequested, this, [this](const QString& source) {
+        if (SMeterWidget* sm = m_appletPanel ? m_appletPanel->smeterWidget() : nullptr) {
+            sm->setRxMode(source);
+        }
+    });
+    connect(newFlag, &VfoWidget::flagMenuAboutToOpen, this,
+            [this, newFlag, id = slice->sliceIndex()]() {
+        refreshFlagSMeterSource(newFlag, m_radioModel ? m_radioModel->sliceById(id) : nullptr);
+    });
     newFlag->setFilter(slice->filterLow(), slice->filterHigh());
     newFlag->setAgcMode(slice->agcMode());
     newFlag->setAfGain(slice->afGain());
@@ -6987,6 +7004,36 @@ void MainWindow::refreshRoundtableTags()
         }
     }
     refreshRoundtablePeek();
+    refreshRoundtableLineOpenStates();
+}
+
+void MainWindow::refreshRoundtableLineOpenStates()
+{
+    if (m_shuttingDown || !m_radioModel) { return; }
+    // A fold lists several frequencies, so no line is its own.
+    const bool showing = m_roundtablePeek && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsFold();
+    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+        if (!it.value()) { continue; }
+        const SliceModel* slice = m_radioModel->sliceById(it.key());
+        it.value()->setRoundtableLineOpen(showing && slice
+            && std::llround(slice->frequency()) == static_cast<qint64>(m_roundtablePeek->hz())
+            && familyOfSlice(slice) == m_roundtablePeek->family());
+    }
+}
+
+void MainWindow::refreshFlagSMeterSource(VfoWidget* flag, const SliceModel* slice)
+{
+    const SMeterWidget* sm = m_appletPanel ? m_appletPanel->smeterWidget() : nullptr;
+    if (!flag || !sm) { return; }
+    flag->setSMeterSource(sm->rxModeLabel(), maxBinSpectrumFor(slice) != nullptr);
+}
+
+void MainWindow::refreshFlagSMeterSources()
+{
+    if (m_shuttingDown || !m_radioModel) { return; }
+    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+        refreshFlagSMeterSource(it.value(), m_radioModel->sliceById(it.key()));
+    }
 }
 
 bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& context)
@@ -7031,6 +7078,7 @@ bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& con
     pan->setRoundtableViewedRoom(context);
     m_roundtablePeekTimer->start();
     sampleRoundtablePeekPan();
+    refreshRoundtableLineOpenStates();
     return true;
 }
 
@@ -7101,6 +7149,7 @@ void MainWindow::showOwnRoundtableInspector(SpectrumWidget* pan)
     pan->setRoundtableViewedRoom(context);
     m_roundtablePeekTimer->start();
     sampleRoundtablePeekPan();
+    refreshRoundtableLineOpenStates();
 }
 
 void MainWindow::toggleRoundtableInspector(SpectrumWidget* pan, qint64 hz, const QString& family)
@@ -7137,6 +7186,7 @@ void MainWindow::toggleRoundtableFold(SpectrumWidget* pan, const QStringList& ro
     // The fold's tag takes the outline.
     pan->setRoundtableViewedRoom(roomIds.first());
     updateRoundtableInspectorSpot();
+    refreshRoundtableLineOpenStates();
 }
 
 void MainWindow::updateRoundtableInspectorSpot()
@@ -7335,6 +7385,7 @@ void MainWindow::onRoundtablePeekClosed()
         panel->backToSlice();
     }
     m_roundtablePeekMessages = false;
+    refreshRoundtableLineOpenStates();
 }
 
 SpectrumWidget* MainWindow::panHoldingRoundtableSlice(int sliceId) const
@@ -11964,6 +12015,12 @@ void MainWindow::populateDefaultMeter()
     m_appletPanel->setArrangeController(m_containerManager->arrangeController());
     m_appletPanel->hide();
     auto* panel = m_appletPanel;
+    // Overlay design D40: every flag in this window shows the meter's RX mode,
+    // however it changes. The panel's own menu and a flag land here alike.
+    if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
+        connect(sm, &SMeterWidget::rxModeChanged, this, &MainWindow::refreshFlagSMeterSources);
+        refreshFlagSMeterSources();
+    }
 
     // Task 41 (Phase 3P-II): wire the SMeterWidget (installed by the
     // AppletPanelWidget constructor) into MeterPoller.  WdspEngine is

@@ -13,6 +13,9 @@
 //     (ANANMM's needle scales and history defaults)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - rxModeChanged: every real change of the RX mode, for the
+//                 flags (overlay design D40). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-12 - Add explicit display marker/top scale by J.J. Boyd
 //                 (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-05-19  Ported in C++20/Qt6 for NereusSDR by J.J. Boyd (KG4VCF),
@@ -303,6 +306,8 @@ public:
     // WDSP source without coupling the poller to AppSettings.
     // NereusSDR-native (AetherSDR reads mode directly from its combo box).
     RxMode rxMode() const { return m_rxMode; }
+    // The RX mode's menu label, as rxModeChanged carries it.
+    QString rxModeLabel() const { return rxModeToLabel(m_rxMode); }
     TxMode txMode() const { return m_txMode; }
     // Peak hold state, as the right-click menu shows it.  NereusSDR-native.
     bool peakHoldEnabled() const { return m_peakHoldEnabled; }
@@ -409,6 +414,10 @@ signals:
     // R-R3-21: the face, peak hold or peak decay changed (and was saved),
     // from the right-click menu or from Setup.
     void settingsChanged();
+    // The RX mode really changed, however it was set, in either settings
+    // store: the menu, a flag, or a load. `mode` is its menu label ("Signal",
+    // "Sig Avg", "Signal Peak", "Max Bin").
+    void rxModeChanged(const QString& mode);
     // SettingsStore::Instance only: the TX mode, RX mode, peak hold, decay
     // or face changed (from the right-click menu).  NereusSDR-native.
     void instanceSettingsChanged();

@@ -14,6 +14,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - The flag's ⋯ button opens the right-click list; the S-meter
+//                 item and the bar's source tag (overlay design D39 to D41);
+//                 the Roundtable line's open state. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - The Roundtable line's right-click asks for the short menu on a
 //                frequency server (overlay design D36). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -606,6 +610,16 @@ public:
         update();
     }
 
+    void setOpen(bool open)
+    {
+        if (open == m_open) {
+            return;
+        }
+        m_open = open;
+        setAccessibleDescription(open ? QStringLiteral("Inspector open") : QString());
+        update();
+    }
+
     QSize sizeHint() const override { return QSize(120, kRoundtableLineHeight); }
 
     // How wide the line's text would be, unelided (for tests and fit).
@@ -617,9 +631,13 @@ protected:
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
         const QRectF frame = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-        p.setPen(QPen(hasFocus() ? QColor(0x00, 0xd4, 0xff, 160)
-                                 : QColor(255, 255, 255, underMouse() ? 46 : 26), 1.0));
-        p.setBrush(QColor(0, 0, 0, 89));
+        if (m_open && !hasFocus()) {
+            p.setPen(QPen(QColor(0x5e, 0x8d, 0xb8), 1.0));
+        } else {
+            p.setPen(QPen(hasFocus() ? QColor(0x00, 0xd4, 0xff, 160)
+                                     : QColor(255, 255, 255, underMouse() ? 46 : 26), 1.0));
+        }
+        p.setBrush(m_open ? QColor(0x11, 0x1b, 0x26) : QColor(0, 0, 0, 89));
         p.drawRoundedRect(frame, 3.0, 3.0);
 
         const qreal midY = height() / 2.0;
@@ -643,9 +661,19 @@ protected:
         } else {
             const QString chevron = QStringLiteral("\u203a");
             p.setFont(end);
-            p.setPen(QColor(0xa6, 0xa6, 0xac));
-            const QRect box(endLeft, 0, endW, height());
-            p.drawText(box, Qt::AlignVCenter | Qt::AlignRight, chevron);
+            if (m_open) {
+                // Pointing down, about the middle of the room it stands in.
+                p.setPen(QColor(0xdc, 0xdc, 0xe1));
+                p.save();
+                p.translate(endLeft + endW / 2.0, midY);
+                p.rotate(90.0);
+                p.drawText(QRectF(-endW, -height() / 2.0, 2.0 * endW, height()), Qt::AlignCenter, chevron);
+                p.restore();
+            } else {
+                p.setPen(QColor(0xa6, 0xa6, 0xac));
+                const QRect box(endLeft, 0, endW, height());
+                p.drawText(box, Qt::AlignVCenter | Qt::AlignRight, chevron);
+            }
         }
 
         const int room = roundtableLineTextRoomFor(m_line.mentions, width());
@@ -668,6 +696,7 @@ protected:
     }
 
 private:
+    bool m_open = false;
     RoundtableFlagLine m_line;
 };
 
@@ -950,7 +979,7 @@ VfoWidget::VfoWidget(QWidget* parent)
     buildUI();
 }
 
-// Floating buttons (m_closeBtn/m_lockBtn/m_recBtn/m_playBtn) are parented to
+// Floating buttons (m_closeBtn/m_lockBtn/m_moreBtn/m_recBtn/m_playBtn) are parented to
 // parentWidget() (SpectrumWidget), i.e. they are SIBLINGS of VfoWidget in
 // SpectrumWidget's children list. Qt's parent chain already owns them — do
 // NOT explicitly delete here. Explicit deletes caused issue #113: Qt's
@@ -965,7 +994,7 @@ VfoWidget::~VfoWidget() = default;
 // still alive keeps the ordering ours, so it cannot reproduce issue #113.
 void VfoWidget::destroyFloatingButtons()
 {
-    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_recBtn, &m_playBtn}) {
+    for (QPushButton** btn : {&m_closeBtn, &m_lockBtn, &m_moreBtn, &m_recBtn, &m_playBtn}) {
         if (*btn) {
             delete *btn;
             *btn = nullptr;
@@ -1346,6 +1375,14 @@ void VfoWidget::buildRoundtableLine()
     });
     static_cast<QVBoxLayout*>(layout())->addWidget(button);
     button->hide();
+}
+
+void VfoWidget::setRoundtableLineOpen(bool open)
+{
+    m_roundtableLineOpen = open;
+    if (m_roundtableLineButton) {
+        static_cast<RoundtableLineButton*>(m_roundtableLineButton)->setOpen(open);
+    }
 }
 
 void VfoWidget::setRoundtableLineMenuEnabled(bool enabled)
@@ -3178,6 +3215,18 @@ void VfoWidget::setSmeter(double dbm)
     }
 }
 
+void VfoWidget::setSMeterSource(const QString& source, bool maxBinAvailable)
+{
+    m_sMeterSource = source;
+    m_sMeterMaxBinAvailable = maxBinAvailable;
+    if (m_levelBar) {
+        // Signal and Signal Peak print nothing, as the iPhone does.
+        m_levelBar->setSourceTag(source == QLatin1String("Max Bin") ? QStringLiteral("MAX")
+                                 : source == QLatin1String("Sig Avg") ? QStringLiteral("AV")
+                                                                      : QString());
+    }
+}
+
 void VfoWidget::setRitEnabled(bool v)
 {
     if (m_ritBtn && m_ritBtn->isChecked() != v) {
@@ -3671,6 +3720,21 @@ static const char* kFloatingBtn =
     "  background: rgba(40,55,80,240);"
     "}";
 
+// The ⋯ button: the floating look, its dots the board's weight, lit while its
+// menu is open.
+static const char* kFloatingBtnMore =
+    "QPushButton {"
+    "  background: rgba(20,30,50,230); border: 1px solid rgba(80,100,130,180);"
+    "  border-radius: 10px; color: #c8d8e8; font-size: 13px; font-weight: 700;"
+    "  padding: 0 0 2px 0;"
+    "}"
+    "QPushButton:hover {"
+    "  background: rgba(40,55,80,240);"
+    "}"
+    "QPushButton:pressed {"
+    "  background: #1e3d5f; border-color: #5e8db8; color: #ffffff;"
+    "}";
+
 static const char* kFloatingBtnClose =
     "QPushButton {"
     "  background: rgba(20,30,50,230); border: 1px solid rgba(80,100,130,180);"
@@ -3748,6 +3812,22 @@ void VfoWidget::buildFloatingButtons()
     }
 
     // Record button: checkable, disabled (no consumer yet)
+    // The ⋯ button (overlay design D39): the same list as a right-click. It
+    // stays live on a listened flag, whose menu says itself what is held.
+    m_moreBtn = makeBtn(QString(QChar(0x22ef)), kFloatingBtnMore);
+    m_moreBtn->setObjectName(QStringLiteral("VfoFlagMoreButton"));
+    m_moreBtn->setToolTip(QStringLiteral("More for this slice"));
+    m_moreBtn->setAccessibleName(QStringLiteral("More"));
+    connect(m_moreBtn, &QPushButton::clicked, this, [this]() {
+        // The menu can end this flag (Remove slice), and the button with it.
+        const QPointer<QPushButton> button(m_moreBtn);
+        button->setDown(true);
+        showFlagMenu(button->mapToGlobal(QPoint(0, button->height() + 3)));
+        if (button) {
+            button->setDown(false);
+        }
+    });
+
     m_recBtn = makeBtn(QStringLiteral("\u23FA"), kFloatingBtn);
     // From Thetis console.resx:2028 — ckQuickRec.ToolTip
     m_recBtn->setToolTip(QStringLiteral("Quick Record of \"off the air\" signals"));
@@ -3886,7 +3966,7 @@ void VfoWidget::positionFloatingButtons()
     const bool voiceBuilt = UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice);
 
     bool raisedAny = false;
-    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
+    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_moreBtn, m_recBtn, m_playBtn};
     for (QPushButton* btn : btns) {
         if (!voiceBuilt && (btn == m_recBtn || btn == m_playBtn)) {
             btn->hide();
@@ -3928,7 +4008,7 @@ void VfoWidget::positionFloatingButtons()
 // body also ends up above its own buttons.
 void VfoWidget::raiseAboveSiblings()
 {
-    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn};
+    QPushButton* btns[] = {m_closeBtn, m_lockBtn, m_moreBtn, m_recBtn, m_playBtn};
     for (QPushButton* btn : btns) {
         if (btn) {
             btn->raise();
@@ -4001,7 +4081,7 @@ void VfoWidget::hideEvent(QHideEvent* event)
     endFlagDrag();
     m_dragArmed = false;
     m_releaseAction = ReleaseAction::None;
-    for (QPushButton* button : {m_closeBtn, m_lockBtn, m_recBtn, m_playBtn}) {
+    for (QPushButton* button : {m_closeBtn, m_lockBtn, m_moreBtn, m_recBtn, m_playBtn}) {
         if (button) {
             button->hide();
         }
@@ -4233,6 +4313,7 @@ QRegion VfoWidget::occupiedRegion() const
     }
     region += geometry();
     for (QWidget* w : {static_cast<QWidget*>(m_closeBtn), static_cast<QWidget*>(m_lockBtn),
+                       static_cast<QWidget*>(m_moreBtn),
                        static_cast<QWidget*>(m_recBtn), static_cast<QWidget*>(m_playBtn),
                        static_cast<QWidget*>(m_collapsedFreqLabel.data())}) {
         if (w && w->isVisibleTo(parent)) {
@@ -4472,12 +4553,18 @@ void VfoWidget::wheelEvent(QWheelEvent* event)
 // mapping is exposed on VfoWidget, switch to the real chainIndex.
 void VfoWidget::contextMenuEvent(QContextMenuEvent* event)
 {
+    showFlagMenu(event->globalPos());
+}
+
+void VfoWidget::showFlagMenu(const QPoint& globalPos)
+{
+    emit flagMenuAboutToOpen();
     // From Longpath src/gui/ConnectionPanel.cpp:1536-1570 [@383f058]
     ScopedChildWidget<QMenu> menuOwner(this);   // stirbt nicht mit dem Rahmen, siehe ScopedChildWidget.h
     QMenu& menu = *menuOwner.get();
     populateContextMenu(menu);
     menu.setStyleSheet(QString::fromLatin1(kPopupMenu));   // Phase 3P-I-a T15 — issue #98
-    menu.exec(event->globalPos());
+    menu.exec(globalPos);
 }
 
 void VfoWidget::populateContextMenu(QMenu& menu)
@@ -4595,6 +4682,26 @@ void VfoWidget::populateContextMenu(QMenu& menu)
         });
     }
 
+    // ── S-meter submenu (overlay design D40) ────────────────────────────
+    // The window's one S-meter choice: the panel's meter and every flag in
+    // this window follow, and nothing else hears of it. So a listened flag
+    // keeps it, below.
+    QMenu* sMeterMenu = menu.addMenu(QStringLiteral("S-meter: %1 >").arg(m_sMeterSource));
+    sMeterMenu->setToolTipsVisible(true);
+    for (const QString& source : {QStringLiteral("Signal"), QStringLiteral("Sig Avg"),
+                                  QStringLiteral("Signal Peak"), QStringLiteral("Max Bin")}) {
+        QAction* act = sMeterMenu->addAction(source);
+        act->setCheckable(true);
+        act->setChecked(source == m_sMeterSource);
+        if (source == QLatin1String("Max Bin") && !m_sMeterMaxBinAvailable) {
+            act->setEnabled(false);
+            act->setToolTip(QStringLiteral("Max Bin reads this slice's panadapter. Open its display to see it."));
+        }
+        connect(act, &QAction::triggered, this, [this, source]() {
+            emit sMeterSourceRequested(source);
+        });
+    }
+
     menu.addSeparator();
 
     // R-R3-21: opens the Diversity dialog (Tools > Diversity), which holds
@@ -4619,12 +4726,13 @@ void VfoWidget::populateContextMenu(QMenu& menu)
 
     // Task 14a: every entry below the access actions changes the shared
     // slice (or the radio for it), so on a listened flag each is shown
-    // disabled with who controls the slice.
+    // disabled with who controls the slice. The S-meter item changes only
+    // this window (overlay design D40).
     if (listening) {
         const QList<QAction*> actions = menu.actions();
         for (int i = firstSharedAction; i < actions.size(); ++i) {
             QAction* act = actions.at(i);
-            if (act->isSeparator()) { continue; }
+            if (act->isSeparator() || act == sMeterMenu->menuAction()) { continue; }
             act->setEnabled(false);
             act->setToolTip(m_sliceAccess.heldReason);
         }

@@ -57,6 +57,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLoggingCategory>
+#include <QMetaProperty>
 #include <QMenu>
 #include <QPainter>
 #include <QPlainTextEdit>
@@ -106,6 +107,9 @@
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableTagLayout.h"
 #include "gui/roundtable/RoundtableWindow.h"
+#include "gui/SMeterWidget.h"
+#include "gui/meters/MeterPoller.h"
+#include "gui/widgets/VfoLevelBar.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/RadioModel.h"
 #include "models/RoundtableModel.h"
@@ -1846,6 +1850,128 @@ private slots:
         model->detach();
     }
 
+    void runSMeterSource(MainWindow* window, RadioModel* radio, RadioModel* core, const QList<int>& sliceIds)
+    {
+        SMeterWidget* meter = window->findChild<SMeterWidget*>();
+        auto* poller = window->findChild<MeterPoller*>();
+        QVERIFY(meter && poller);
+        QList<VfoWidget*> flags;
+        for (const int id : sliceIds) {
+            VfoWidget* flag = flagFor(window, id);
+            QVERIFY(flag != nullptr);
+            flags.append(flag);
+        }
+        const auto flagsShow = [&](const QString& source, const QString& tag) {
+            for (VfoWidget* flag : flags) {
+                if (flag->sMeterSource() != source || flag->findChild<VfoLevelBar*>()->sourceTag() != tag) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        // A new flag starts on the window's choice.
+        QVERIFY(flagsShow(QStringLiteral("Signal"), QString()));
+
+        // What is not a reading, on the window's model and on what it stands for. The
+        // choice is display only: not a slice property, not a radio one.
+        const auto stateOf = [](const QObject* object) {
+            QStringList values;
+            const QMetaObject* type = object->metaObject();
+            for (int i = type->propertyOffset(); i < type->propertyCount(); ++i) {
+                const QMetaProperty property = type->property(i);
+                const QString name = QString::fromLatin1(property.name());
+                if (name.contains(QStringLiteral("signal"), Qt::CaseInsensitive)
+                    || name.startsWith(QStringLiteral("adc")) || name.startsWith(QStringLiteral("agc"))
+                    || name == QStringLiteral("meterReadingNs")) {
+                    continue;
+                }
+                values << name + QLatin1Char('=') + property.read(object).toString();
+            }
+            return values;
+        };
+        const auto everything = [&]() {
+            QStringList values = stateOf(radio) + stateOf(core);
+            for (SliceModel* slice : radio->slices()) { values += stateOf(slice); }
+            for (SliceModel* slice : core->slices()) { values += stateOf(slice); }
+            return values;
+        };
+        const QStringList before = everything();
+
+        // Through a flag's own menu, pressed as a person presses it.
+        const auto pick = [&](VfoWidget* flag, const QString& source) {
+            QTimer::singleShot(0, flag, [flag, source]() {
+                for (QMenu* menu : flag->findChildren<QMenu*>(QString(), Qt::FindDirectChildrenOnly)) {
+                    if (!menu->isVisible()) { continue; }
+                    for (QAction* row : menu->actions()) {
+                        if (!row->menu() || !row->text().startsWith(QStringLiteral("S-meter"))) { continue; }
+                        for (QAction* choice : row->menu()->actions()) {
+                            if (choice->text() == source) { choice->trigger(); }
+                        }
+                    }
+                    menu->close();
+                    return;
+                }
+            });
+            flag->moreButtonForTest()->click();
+        };
+        pick(flags.first(), QStringLiteral("Sig Avg"));
+        QCOMPARE(meter->rxMode(), SMeterWidget::RxMode::SignalAverage);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("SMeter_RxSelect")).toInt(), 1);
+        QVERIFY(flagsShow(QStringLiteral("Sig Avg"), QStringLiteral("AV")));
+
+        // From the panel's own control, every flag follows.
+        meter->setRxMode(QStringLiteral("Max Bin"));
+        QVERIFY(flagsShow(QStringLiteral("Max Bin"), QStringLiteral("MAX")));
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("SMeter_RxSelect")).toInt(), 3);
+
+        meter->setRxMode(QStringLiteral("Signal Peak"));
+        QVERIFY(flagsShow(QStringLiteral("Signal Peak"), QString()));
+
+        // The value is what the selector already sends, on a window of a Core.
+        if (radio->role() == RadioModel::Role::Remote) {
+            SliceModel* slice = radio->sliceById(sliceIds.first());
+            QVERIFY(slice != nullptr);
+            VfoLevelBar* bar = flags.first()->findChild<VfoLevelBar*>();
+            slice->setSignalPeakDbm(-62);
+            slice->setSignalAverageDbm(-81);
+            QVERIFY(QMetaObject::invokeMethod(poller, "poll", Qt::DirectConnection));
+            QCOMPARE(bar->value(), -62.0f);
+            pick(flags.first(), QStringLiteral("Sig Avg"));
+            QVERIFY(QMetaObject::invokeMethod(poller, "poll", Qt::DirectConnection));
+            QCOMPARE(bar->value(), -81.0f);
+        }
+
+        meter->setRxMode(QStringLiteral("Signal"));
+        QVERIFY(flagsShow(QStringLiteral("Signal"), QString()));
+        // The two readings set above are readings, so they sit outside this.
+        QCOMPARE(everything(), before);
+
+        // Max Bin greys, with the reason, while no pan shows the slice. The menu
+        // asks at the moment it opens. This one test edit of the slice's stream comes after
+        // the comparison above: it is the test's own write, and the slice records it.
+        SliceModel* slice = radio->sliceById(sliceIds.first());
+        QVERIFY(slice != nullptr);
+        VfoWidget* flag = flags.first();
+        flag->setSMeterSource(flag->sMeterSource(), true);
+        const int stream = slice->streamIndex();
+        const auto openAndClose = [&]() {
+            QTimer::singleShot(0, flag, [flag]() {
+                for (QMenu* menu : flag->findChildren<QMenu*>(QString(), Qt::FindDirectChildrenOnly)) {
+                    if (menu->isVisible()) { menu->close(); return; }
+                }
+            });
+            flag->moreButtonForTest()->click();
+        };
+        openAndClose();
+        const bool shown = flag->sMeterMaxBinAvailable();
+        slice->setStreamIndex(-1);
+        openAndClose();
+        QVERIFY(!flag->sMeterMaxBinAvailable());
+        slice->setStreamIndex(stream);
+        openAndClose();
+        QCOMPARE(flag->sMeterMaxBinAvailable(), shown);
+    }
+
     // Every route of the one inspector, by real clicks, moves nothing but what Tune and
     // the band are for (overlay design D21 to D27, D34, D36, D37).
     void runInspectorRouting(MainWindow* window, RadioModel* radio, RadioModel* core, int sliceId, RoundtableModel* model,
@@ -1988,6 +2114,10 @@ private slots:
         QVERIFY(open());
         QCOMPARE(peek()->hz(), quint64(otherHz));
         QCOMPARE(closed.size(), 0);
+        VfoWidget* lineFlag = flagFor(window, sliceId);
+        QVERIFY(lineFlag != nullptr);
+        // The flag's line reads open only while the inspector shows its frequency.
+        QVERIFY(!lineFlag->roundtableLineOpen());
         QCOMPARE(panel->roomId(), other);
         QVERIFY(tagsClear());
         QVERIFY(nothingMoved());
@@ -1999,9 +2129,11 @@ private slots:
 
         // ── Your own compact tag: your own inspector, no read, and the tag goes ──
         const qsizetype reads = link.reads.size();
+        QVERIFY(!lineFlag->roundtableLineOpen());
         QVERIFY(click(mine));
         QVERIFY(open());
         QVERIFY(peek()->showsOwn());
+        QVERIFY(lineFlag->roundtableLineOpen());
         QCOMPARE(link.reads.size(), reads);
         QVERIFY(!panel->isReading());
         SpectrumWidget::RoundtableTagHit gone;
@@ -2013,10 +2145,12 @@ private slots:
         // While it shows another, your compact tag stays, and a click goes to your own.
         QVERIFY(click(viewed));
         QVERIFY(!peek()->showsOwn());
+        QVERIFY(!lineFlag->roundtableLineOpen());
         QVERIFY(hitOf(mine, &gone));
         const qsizetype closedBefore = closed.size();
         QVERIFY(click(mine));
         QVERIFY(peek()->showsOwn());
+        QVERIFY(lineFlag->roundtableLineOpen());
         QCOMPARE(closed.size(), closedBefore);
         QVERIFY(!panel->isReading());
         QVERIFY(nothingMoved());
@@ -2027,6 +2161,7 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(flag->roundtableLineButtonForTest()->isVisible(), kWaitMs);
         QTest::mouseClick(flag->roundtableLineButtonForTest(), Qt::LeftButton);
         QVERIFY(!open());
+        QVERIFY(!flag->roundtableLineOpen());
         QTest::mouseClick(flag->roundtableLineButtonForTest(), Qt::LeftButton);
         QVERIFY(open());
         QVERIFY(peek()->showsOwn());
@@ -2300,6 +2435,97 @@ private slots:
         model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
         settle();
         model->detach();
+    }
+
+    // Every flag on the frequency the inspector shows reads open: it opens, swaps,
+    // closes, and a slice tuning onto or off the frequency follows. A fold shows no
+    // one frequency.
+    void everyFlagOnTheInspectorsFrequencyReadsOpen()
+    {
+        ReadingLink link;
+        RoundtableState state;
+        Everything p;
+        RadioModel* radio = p.model();
+        const int aId = p.sliceId();
+        const int bId = radio->addSlice(QStringLiteral("pan-0"));
+        const int cId = radio->addSlice(QStringLiteral("pan-0"));
+        SliceModel* a = radio->sliceById(aId);
+        SliceModel* b = radio->sliceById(bId);
+        SliceModel* c = radio->sliceById(cId);
+        QVERIFY(a && b && c);
+        const qint64 home = 14200000;
+        const qint64 elsewhere = 14230000;
+        for (SliceModel* slice : {a, b, c}) { slice->setDspMode(DSPMode::USB); }
+        a->setFrequency(home);
+        b->setFrequency(home);
+        c->setFrequency(elsewhere);
+        RoundtableModel* model = radio->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+        radio->setActiveSliceById(aId);
+        settle();
+        SpectrumWidget* pan = panOf(p.window());
+        QVERIFY(pan != nullptr);
+        VfoWidget* flagA = flagFor(p.window(), aId);
+        VfoWidget* flagB = flagFor(p.window(), bId);
+        VfoWidget* flagC = flagFor(p.window(), cId);
+        QVERIFY(flagA && flagB && flagC);
+        const auto states = [&]() {
+            return QList<bool>{flagA->roundtableLineOpen(), flagB->roundtableLineOpen(), flagC->roundtableLineOpen()};
+        };
+        QCOMPARE(states(), (QList<bool>{false, false, false}));
+
+        // Opens on your own: both flags on that frequency.
+        const QString homeContext = RoundtableModel::frequencyContextId(home, QStringLiteral("usb"));
+        emit pan->roundtableReadRequested(homeContext);
+        settle();
+        auto* peek = pan->findChild<RoundtableFrequencyPeek*>();
+        QVERIFY(peek != nullptr && peek->isOpen());
+        QCOMPARE(states(), (QList<bool>{true, true, false}));
+
+        // Swaps in place to another frequency: the lines swap too.
+        emit pan->roundtableReadRequested(RoundtableModel::frequencyContextId(elsewhere, QStringLiteral("usb")));
+        settle();
+        QVERIFY(peek->isOpen());
+        QCOMPARE(states(), (QList<bool>{false, false, true}));
+
+        // A slice tuning off the shown frequency closes its line; back on opens it.
+        c->setFrequency(elsewhere + 1000);
+        QCOMPARE(states(), (QList<bool>{false, false, false}));
+        c->setFrequency(elsewhere);
+        QCOMPARE(states(), (QList<bool>{false, false, true}));
+        // Another mode family is another frequency.
+        c->setDspMode(DSPMode::LSB);
+        QCOMPARE(states(), (QList<bool>{false, false, false}));
+        c->setDspMode(DSPMode::USB);
+        QCOMPARE(states(), (QList<bool>{false, false, true}));
+
+        // Closes: none.
+        peek->closePeek();
+        QCOMPARE(states(), (QList<bool>{false, false, false}));
+        model->detach();
+    }
+
+    // Overlay design D40, D41: the flag and the panel's meter set one choice for
+    // this window, every flag follows, and nothing reaches a slice or the radio.
+    void aFlagsSMeterChoiceIsThisWindowsAloneOnARadio()
+    {
+        Everything p;
+        const int second = p.model()->addSlice(QStringLiteral("pan-0"));
+        settle();
+        runSMeterSource(p.window(), p.model(), p.core(), {p.sliceId(), second});
+    }
+
+    void aFlagsSMeterChoiceIsThisWindowsAloneOnACore()
+    {
+        WindowOfCore p;
+        QVERIFY(p.ok());
+        QTRY_VERIFY_WITH_TIMEOUT(p.harness().client()->isHandshakeComplete(), kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(p.model()->sliceById(0) != nullptr, kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(flagFor(p.window(), 0) != nullptr, kWaitMs);
+        runSMeterSource(p.window(), p.model(), p.core(), {0});
     }
 
     void theInspectorsRoutesMoveNothingInTheEverythingPlacement()

@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - The flag's ⋯ button, the S-meter item and its source tag
+//                 (overlay design D39 to D41), and the Roundtable line's open
+//                 state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-11-04 - setRoundtableLineMenuEnabled and roundtableLineMenuRequested: the
 //                 line's right-click asks for the short menu on a frequency
 //                 server (overlay design D36). J.J. Boyd (KG4VCF), AI-assisted via
@@ -673,6 +677,8 @@ public:
     // VFO flag crash lane: the floating lock button, and the slice this
     // flag is bound to, for the remote window's close-and-reopen case.
     QPushButton* lockButtonForTest() const { return m_lockBtn; }
+    // The ⋯ button under the lock (overlay design D39).
+    QPushButton* moreButtonForTest() const { return m_moreBtn; }
     SliceModel* sliceForTest() const { return m_slice.data(); }
     // R-R3-49: the floating record and play buttons, for the unbuilt
     // feature sweep.
@@ -741,8 +747,16 @@ public:
     bool sliceAccessPending() const { return !m_accessPending.isEmpty(); }
     // The line shown under the header (pending text when a request waits).
     QString accessLineText() const;
-    // Builds the right-click menu; contextMenuEvent shows what this adds.
+    // Builds the flag's one menu, for a right-click and for the ⋯ button.
     void populateContextMenu(QMenu& menu);
+
+    // The window's one S-meter choice (overlay design D40, D41): "Signal",
+    // "Sig Avg", "Signal Peak" or "Max Bin". The menu marks it and the level
+    // bar prints its tag. maxBinAvailable false greys Max Bin with the reason:
+    // no pan in this window shows the slice. Display only.
+    void setSMeterSource(const QString& source, bool maxBinAvailable);
+    QString sMeterSource() const { return m_sMeterSource; }
+    bool sMeterMaxBinAvailable() const { return m_sMeterMaxBinAvailable; }
 
     // Slice control plan Task 14b (ruling U5): on a listened flag the AF
     // slider and Mute are this device's own volume and mute for the slice,
@@ -806,6 +820,10 @@ public slots:
     /// Whether a right-click on the line asks for the short menu (overlay design
     /// D36). Off, it falls to the flag's own menu, as a legacy server keeps.
     void setRoundtableLineMenuEnabled(bool enabled);
+    /// The inspector is showing this line's frequency: the chevron points down
+    /// and the line brightens, as the board has it. Closed draws as it always did.
+    void setRoundtableLineOpen(bool open);
+    bool roundtableLineOpen() const { return m_roundtableLineOpen; }
     RoundtableFlagLine roundtableLine() const { return m_roundtableLine; }
     QAbstractButton* roundtableLineButtonForTest() const { return m_roundtableLineButton; }
     // The room the line's text has on a line lineWidth wide: after the
@@ -820,6 +838,12 @@ signals:
     void roundtableLineClicked();
     // The line was right-clicked with the short menu on. `globalPos` is where it goes.
     void roundtableLineMenuRequested(QPoint globalPos);
+    // A source was picked from the S-meter item. The flag cannot reach the
+    // window's meter, so MainWindow carries it; it changes only this window.
+    void sMeterSourceRequested(const QString& source);
+    // The menu is about to be built: the last moment to say whether Max Bin
+    // can be read, which turns on where the slice is shown right now.
+    void flagMenuAboutToOpen();
     void frequencyChanged(double hz);
     void modeChanged(NereusSDR::DSPMode mode);
     void filterChanged(int low, int high);
@@ -1085,6 +1109,9 @@ private:
     // Roundtable line (Roundtable plan Task 14).
     void buildRoundtableLine();
     QAbstractButton* m_roundtableLineButton{nullptr};
+    bool m_roundtableLineOpen{false};
+    QString m_sMeterSource{QStringLiteral("Signal")};
+    bool m_sMeterMaxBinAvailable{true};
     RoundtableFlagLine m_roundtableLine;
     bool     m_radeActive{false};
 
@@ -1251,6 +1278,7 @@ private:
     // Rendered as children of parent widget, positioned beside the VFO flag.
     QPushButton* m_closeBtn{nullptr};
     QPushButton* m_lockBtn{nullptr};
+    QPushButton* m_moreBtn{nullptr};
     QPushButton* m_recBtn{nullptr};
     QPushButton* m_playBtn{nullptr};
     bool m_locked{false};
@@ -1296,6 +1324,7 @@ private:
     void holdForListening(QWidget* control) const;
     void buildFloatingButtons();
     void positionFloatingButtons();
+    void showFlagMenu(const QPoint& globalPos);
 };
 
 } // namespace NereusSDR

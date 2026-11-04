@@ -858,6 +858,11 @@ private slots:
     void onRoundtableRoomChanged(const QString& roomId);
     void refreshRoundtableTagsImmediately();
     void refreshRoundtableTags();
+    // Each flag line's open state: the inspector shows its frequency.
+    void refreshRoundtableLineOpenStates();
+    // Each flag's S-meter source (overlay design D40, D41). Display only.
+    void refreshFlagSMeterSource(VfoWidget* flag, const SliceModel* slice);
+    void refreshFlagSMeterSources();
     // A flag's Roundtable line toggles the inspector on that slice's frequency
     // (overlay design D26, D34); a legacy server's opens the panel.
     void toggleRoundtableForSlice(int sliceId);
