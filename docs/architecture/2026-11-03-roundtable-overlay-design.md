@@ -89,7 +89,8 @@ this branch, and fixes the defects its review found.
   signal, clamped to the pan. Portrait uses the same rules with the width it has; JJ chose not to
   review that layout first, so it is checked on a device.
 * **D19. Short pans.** Rows give way first, with "+N more ›". The Double head and the keyed names
-  are the last things to go.
+  are the last things to go. In the inspector (D34), everyone not keyed folds to one "Also here"
+  line first, and what still does not fit scrolls.
 * **D20. Other frequencies' tags.** Along the foot, clear of the card and flags, at the nearest free
   spot, and left off when there is none. A double is red, with a striped top edge, the word Double
   and up to two names. A talker is green with its name and "+N". Quiet is grey with a name and
@@ -98,32 +99,77 @@ this branch, and fixes the defects its review found.
 
 ### Looking without tuning
 
-* **D21. Clicking or tapping a tag views that frequency. It never tunes.** This supersedes the
-  earlier rule that a tag tunes. Clicking the band itself still tunes, as always. Legacy servers
+* **D21. Clicking or tapping a tag views that frequency in the inspector (D34). It never tunes.**
+  This supersedes the earlier rule that a tag tunes. Clicking the band itself still tunes, as always. Legacy servers
   that cannot read another frequency keep today's behaviour.
 * **D22. What the view shows.** Head with state, clock and frequency. "Viewing, not tuned · −11.4 kHz
   from slice A · LSB". "On frequency · N": each station with its glyph, "keyed" when keyed, and its
   offset from the viewed frequency (`member.hz − viewed hz`), or "on freq" at zero. Then the
   readings as D11, adding distance and bearing unless D2 blanks them. A "Your pan" row is first when
   someone is on the air. Then **Tune slice A here**, disabled while you are keyed and when already
-  there. Messages are read only until tuned, and only the viewed frequency's.
+  there. Messages are read only until tuned, and only the viewed frequency's. On your own frequency
+  the inspector drops the "Viewing" line and the Your pan row, and Tune stays in view, greyed, with
+  the reason "Slice A is already here".
 * **D23. Your pan.** The peak on this client's own pan in the family's sideband window, 2.7 kHz
   wide, on the sideband side of the viewed frequency. Blank when off the pan, before the first
   frame, or while transmitting. Calibration matches what the trace draws. Sampled about five times
   a second while a view is open, never per frame, and it adds no thread and no DSP.
-* **D24. Where the view opens.** Desktop: a floating panel under the tag, 300 wide, with a close
-  button. Escape, a click on the band, or tuning closes it. A Messages button opens the Roundtable
-  applet in its read view, with Back to my slice. iPhone: the bottom sheet. iPad: inside the
-  Roundtable applet in the column, with no pop-up, and a popover over the pan when the column is
-  hidden. Web: the room pane, which already browses without touching a radio, so it has no Tune
-  button.
-* **D25. Clicking your own card** opens a menu: Read reports, Signal, with its current format and
-  a press to change it, and Tune slice A here (disabled while keyed). iPhone and iPad use an action
-  sheet with the same three plus Cancel.
-* **D26. Another slice's flag line** views that slice's frequency and leaves the active slice alone.
-  Your own flag line opens your own room.
+* **D24. Where the view opens.** Desktop: the inspector, in your card's spot. iPhone: the bottom
+  sheet. iPad: inside the Roundtable applet in the column, with no pop-up, and a popover over the
+  pan when the column is hidden, for your own frequency as well. Web: the room pane, which already
+  browses without touching a radio, so it has no Tune button.
+* **D25. Clicking your own card** opens the inspector on your own frequency (D34). This replaces
+  the earlier menu. Read reports and Signal move to the inspector's ⋯ (D36). Legacy servers keep
+  their details dialog.
+* **D26. Any slice's flag line** opens the inspector on that slice's frequency and leaves the active
+  slice alone. The same line again closes it. The Messages button is what opens your own room.
 * **D27. A refused or lost read** closes the view with the app's usual status message and leaves
-  the slice alone. Tuning anywhere ends viewing.
+  the slice alone. The Tune button closes the inspector and your card returns. A band click or a
+  band drag tunes as always and leaves the inspector open on what it shows.
+
+### The inspector
+
+Settled on the board, section Desktop, "This proposal" (JJ, 2026-11-04: "build as shown"). The board
+is the reference for every look in this section.
+
+* **D34. One inspector.** Your own card, any tag, a fold's row and any flag's Roundtable line open
+  the same inspector, on the frequency they name. It replaces the card while open, in the card's
+  spot, 300 wide on the desktop, standing on the same foot line. The same thing clicked again, its
+  close button or Escape closes it and your card returns. Another tag swaps it in place, with no
+  close and reopen.
+* **D35. What it shows.** The head (D22) with ⋯ and close. When it shows another frequency, one line
+  under the head, "Viewing · +1.4 kHz" with Back to my slice, which returns to your own frequency in
+  place. Then On frequency, readings, Tune and Messages. Keying and a dropped link behave as D22 and
+  D7 say. A short pan folds unkeyed stations to "Also here", then scrolls with the wheel, fading at
+  the cut. Tune and Messages never scroll away.
+* **D36. Short menu.** Right-clicking a tag gives Open or Close inspector, Tune, Messages and Signal.
+  The inspector's ⋯ has the same list, with Read reports. On iPhone and iPad the sheet's ⋯ has Signal
+  and Cancel. The menu's Tune follows the same gates as the button, greyed and never hidden.
+* **D37. Folds and placement.** A click on "+N" lists that fold's frequencies inside the inspector,
+  and a row opens as D34. Tags stay clear of the open inspector, and near ones fold (D20). The spot
+  follows the flag: if you tune far enough to flip it, the inspector moves with the card's spot. A
+  pan that does not hold the active slice places it by its own slice's flag, or by the clicked tag
+  when it holds no slice. While it shows your own frequency your compact tag is hidden; while it
+  shows another, the compact tag stays and clicking it goes to your own.
+* **D38. Band and phone.** D27 holds on the iPhone too: dragging the band leaves the sheet open.
+  iPhone tapping the card, a tag or the flag line opens one sheet, the same on every frequency; the
+  same thing again closes it; another tag swaps it without changing its height. iPad tags view in
+  the column, and the same tag returns to your own.
+
+### The flag's ⋯ and the S meter
+
+* **D39. Flag ⋯ button.** The desktop flag gets a visible ⋯ button directly under the lock, the same
+  size and style, holding exactly what right-clicking the flag holds. Right-click stays. It is part
+  of the flag's region, so tags keep clear of it, and it follows the flag when it flips.
+* **D40. S-meter item.** The flag's menu gains "S-meter: Signal ›" after Sample rate, listing Signal,
+  Sig Avg, Signal Peak and Max Bin, with the current one marked. It drives the window's one existing
+  S-meter choice (`SMeter_RxSelect`), so the panel's meter and every flag in the window follow, and
+  no new setting exists. A listened flag still offers it, because it changes only this window. Max
+  Bin greys with the reason when no pan shows that slice, as the iPhone does.
+* **D41. The flag's level bar.** Max Bin prints MAX and Sig Avg prints AV above the readout in the
+  bar's tick strip. Signal and Signal Peak print nothing, as the iPhone does. The value is the one
+  the existing selector already sends to the flag, local and remote; nothing new is measured. Signal
+  and Signal Peak read the same on the flag, as they do today, with no held peak added.
 
 ### iPad applet and Widen
 
@@ -169,7 +215,10 @@ decided in one place per client and the drawing code only draws.
   stations.
 * **iPhone and iPad.** One SwiftUI layer on both. `RoundtableTagLayer` gains per-item widths and
   a new `RoundtableMeterBar`; a new `RoundtableFrequencyView` is shared by the sheet, the applet and
-  the popover. `BandCoverage` gains the reverse mapping that Your pan needs.
+  the popover. `BandCoverage` gains the reverse mapping that Your pan needs. The desktop's
+  `RoundtableFrequencyPeek` becomes the inspector: it stays outside `SpectrumOverlayPanel`, and its
+  rect reaches the pan so tags keep clear of it. New signals stay on the GUI thread:
+  `SMeterWidget::rxModeChanged` to the flags, and the flag's menu request back through `MainWindow`.
 * **Web.** `roundtable.js` and `roundtable.css` gain the additions in `web.css`, under the page's
   existing Content Security Policy and with no `innerHTML`.
 
@@ -183,7 +232,7 @@ constants. No ported code: new files carry `no-port-check: NereusSDR-original.`
   connection itself allows tuning.
 * Viewed frequency goes quiet: head says "Nobody talking", the caption says "Last heard 3m ago".
 * Keying while viewing: Tune disables at once; the view stays open.
-* Your slice moves onto the viewed frequency: the view closes and the card takes over.
+* Your slice moves onto the viewed frequency: the inspector becomes your own, in place.
 * Three or more keyed: the head says "Double · 3" and every name shows while room allows, then
   "+N keyed".
 * A callsign that does not fit is cut, never overlapped; a row never wraps.
@@ -198,6 +247,9 @@ constants. No ported code: new files carry `no-port-check: NereusSDR-original.`
 | No hitch | `tst_spectrum_overlay_dirty` and the 1000-updates, zero-invalidations test stay green |
 | D21 to D27 desktop flow | `tst_roundtable_desktop_flow`: a tag click changes no slice |
 | D17 to D29 iOS | App test suites on a simulator; screenshots on an iPhone and an iPad simulator, looked at |
+| D34 to D37 desktop | `tst_roundtable_desktop_flow`, `tst_roundtable_frequency_peek`, `tst_roundtable_tag_layout`; offscreen captures compared with the board, looked at |
+| D38 iOS | App and UI suites on an iPhone and an iPad simulator; screenshots looked at |
+| D39 to D41 | `tst_vfo_level_bar`, flag position and menu tests, remote and local; a capture looked at |
 | Real radios, a real Core, a real double over the air, iPad portrait | **Pending JJ's hardware.** Not claimed by any automated check |
 
 ## Settled from earlier choices

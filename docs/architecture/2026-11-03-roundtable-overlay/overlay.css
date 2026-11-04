@@ -428,3 +428,81 @@ body { background: #08080a; }
 .web-fit iframe, .web-phone iframe { display: block; border: 0; transform-origin: 0 0; }
 .web-narrow { display: flex; gap: 24px; margin-top: 18px; }
 .web-phone { width: 390px; height: 780px; }
+
+/* ---------- One inspector ---------- */
+.rct--unk { --rc-c: var(--rc-unk); }
+.rct--fold { padding-left: 7px; }
+.rc-insp { display: flex; flex-direction: column; height: 100%; box-sizing: border-box; overflow: hidden; }
+.rc-insp .rc__rail { flex: none; }
+.rc-insp .rc__body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; padding: 4px 8px 7px; box-sizing: border-box; }
+.rc-insp .rc__f { margin-right: 2px; }
+.ins-head { flex: none; gap: 5px; min-height: 26px; }
+.ins-b { flex: none; width: 24px; height: 24px; display: grid; place-items: center; background: none; border: 0; border-radius: 4px; color: #a6a6ac; font: 15px/1 system-ui, -apple-system, sans-serif; cursor: pointer; padding: 0; }
+.ins-b:hover { background: #26262b; color: #fff; }
+.ins-view { flex: none; display: flex; align-items: center; gap: 6px; font: 500 11px/14px system-ui, -apple-system, sans-serif; color: #79a8d2; white-space: nowrap; }
+.ins-view span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ins-view button { flex: none; height: 22px; background: #1e3d5f; border: 1px solid #5e8db8; border-radius: 4px; color: #eef3f8; font: 600 11px/1 system-ui, -apple-system, sans-serif; padding: 0 7px; cursor: pointer; }
+.ins-view button:hover { background: #28517b; }
+.ins-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; scrollbar-width: thin; scrollbar-color: #3d3d41 transparent; }
+.ins-list { gap: 2px; }
+.ins-fr { display: grid; grid-template-columns: 11px auto minmax(0, 1fr) auto; column-gap: 7px; align-items: center; height: 28px; padding: 0 5px; background: none; border: 0; border-radius: 4px; color: #dcdce1; font: 600 12px system-ui, -apple-system, sans-serif; text-align: left; cursor: pointer; }
+.ins-fr:hover { background: #1e3d5f; }
+.ins-fr__f { font: 600 11px var(--rc-mono); color: #79a8d2; }
+.ins-fr__w { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-insp .pk-acts { flex: none; }
+.rc-insp .pk-acts button { height: 26px; padding: 0 8px; }
+.rc-fline .chev { transition: transform .12s ease; }
+.rc-fline .rt-chev, .rt-fline .rt-chev { font-size: 0; position: static; flex: none; margin: 0 2px 0 auto; width: 6px; height: 6px; top: auto; right: auto; }
+.rc-fline.is-open .chev { transform: rotate(45deg); color: #dcdce1; }
+.dk__fline.is-open { background: #111b26; border-color: #5e8db8; }
+
+/* The flag's parts drawn over the capture. */
+.dk__flaghit { position: absolute; top: 31px; width: 250px; height: 134px; z-index: 8; cursor: default; }
+.dk__level { position: absolute; top: 107px; width: 244px; height: 34px; z-index: 9; pointer-events: none; }
+.dk__more { position: absolute; z-index: 9; width: 20px; height: 20px; box-sizing: border-box; display: none; place-items: center; padding: 0 0 2px; background: rgba(20, 20, 23, 0.902); border: 1px solid rgba(60, 60, 66, 0.706); border-radius: 10px; color: #dcdce1; font: 700 13px/1 system-ui, -apple-system, sans-serif; cursor: pointer; }
+.dk__more:hover { background: #26262b; }
+.dk__more.is-lit { background: #1e3d5f; border-color: #5e8db8; color: #fff; }
+.dk__txlit { position: absolute; top: 34px; width: 28px; height: 18px; z-index: 9; display: none; pointer-events: none; background: #c25a5c; border-radius: 3px; color: #fff; font: 700 12px/18px system-ui, sans-serif; text-align: center; }
+.dk__ant { position: absolute; top: 34px; width: 32px; height: 18px; z-index: 9; display: none; pointer-events: none; background: #0a0a0e; color: #5b8cff; font: 700 12px/18px system-ui, sans-serif; }
+.dk__smeter { position: absolute; left: 1200px; top: 96px; width: 280px; height: 123px; z-index: 5; }
+.dk__toast { position: absolute; left: 50%; top: 40px; transform: translateX(-50%); z-index: 35; padding: 5px 10px; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 4px; color: #dcdce1; font: 12px system-ui, -apple-system, sans-serif; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .15s; }
+.dk__toast.is-on { opacity: 1; }
+.dk__toast--p { top: auto; bottom: 110px; }
+
+/* The flag's menu: QMenu with the app's popup style. */
+.fl-menu { position: absolute; z-index: 40; display: none; min-width: 200px; padding: 2px 0; background: #1b1b1f; border: 1px solid #3d3d41; box-shadow: 0 10px 28px -8px #000; font: 12px/1.2 system-ui, -apple-system, sans-serif; color: #e8e8ec; }
+.fl-sub { position: absolute; left: 100%; top: -3px; display: none; min-width: 110px; padding: 2px 0; background: #1b1b1f; border: 1px solid #3d3d41; box-shadow: 0 10px 28px -8px #000; }
+.fl-has { position: relative; }
+.fl-has:hover > .fl-sub, .fl-has.is-open > .fl-sub { display: block; }
+.fl-it { display: block; width: 100%; padding: 5px 20px; background: none; border: 0; color: inherit; font: inherit; text-align: left; white-space: nowrap; cursor: pointer; position: relative; }
+.fl-it:hover:not(:disabled), .fl-has:hover > .fl-it { background: #1e3d5f; color: #fff; }
+.fl-it:disabled { color: #6c6c72; cursor: default; }
+.fl-it.is-c::before { content: '\2713'; position: absolute; left: 6px; }
+.fl-sep { height: 1px; margin: 3px 0; background: #2c2c31; }
+
+/* The phone's side buttons and its More menu (FlagSideButtons.swift, FlagMenus.swift). */
+[data-rc-phone] .vfo-fbtns .fb { display: grid; place-items: center; width: 44px; height: 44px; box-sizing: border-box; padding: 0; background: rgba(20, 20, 23, 0.902); border: 1px solid rgba(60, 60, 66, 0.706); border-radius: 22px; color: #dcdce1; font: 700 9px/1 system-ui, -apple-system, sans-serif; letter-spacing: 1px; }
+[data-rc-phone] .vfo-fbtns .fb.is-dim { opacity: 0.4; font-size: 14px; }
+[data-rc-phone] .vfo-fbtns span.fb { font-size: 14px; }
+[data-rc-phone] .vfo-fbtns button.fb { pointer-events: auto; cursor: pointer; }
+[data-rc-phone] .vfo-fbtns .fb.is-lit { background: #1e3d5f; border-color: #5e8db8; color: #fff; }
+.fl-pmenu { position: absolute; left: 10px; top: 150px; z-index: 44; width: 268px; max-height: 560px; overflow: auto; display: none; padding: 4px 0; background: #1b1b1f; border: 1px solid #3d3d41; border-radius: 10px; box-shadow: 0 16px 40px -10px #000; color: #e8e8ec; font: 14px system-ui, -apple-system, sans-serif; }
+.fl-pmenu.is-open { display: block; }
+.fl-ptitle { padding: 8px 14px 6px; color: #a6a6ac; font: 600 12px system-ui, sans-serif; }
+.fl-pit { display: block; width: 100%; min-height: 40px; padding: 0 14px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; position: relative; }
+.fl-pit:hover:not(:disabled) { background: #1e3d5f; }
+.fl-pit:disabled { color: #6c6c72; cursor: default; }
+.fl-pit.is-sub { padding-left: 34px; min-height: 36px; font-size: 13px; }
+.fl-pit.is-c::before { content: '\2713'; position: absolute; left: 16px; color: #79a8d2; }
+.fl-psep { height: 1px; background: #2c2c31; margin: 3px 0; }
+.scr--ipad .fl-pmenu { left: 310px; top: 110px; }
+
+/* The inspector's sheet leaves the band's tags in reach, so another tag swaps in place. */
+.rc-psheet.is-ins { max-height: 50%; }
+.rc-psheet__hd .sp { margin-left: auto; }
+.rc-psheet__hd .pk-back { margin-left: 0; }
+.rc-psheet__hd button.ic { margin-left: 4px; width: 32px; height: 32px; font-size: 15px; }
+.scr--ipad .rc-psheet.is-ins { max-height: none; }
+
+.ins-scroll.has-more { -webkit-mask-image: linear-gradient(#000 calc(100% - 22px), transparent); mask-image: linear-gradient(#000 calc(100% - 22px), transparent); }
+.pk-also { font: 500 11px/14px system-ui, -apple-system, sans-serif; color: #a6a6ac; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

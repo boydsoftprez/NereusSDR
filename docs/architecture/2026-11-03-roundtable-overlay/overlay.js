@@ -37,8 +37,14 @@
   ];
   var S = {
     state: 'talk', look: 'new', fmt: 'both', count: 5, link: 'live',
-    t0: Date.now(), playing: false
+    t0: Date.now(), playing: false,
+    ux: 'one', rx: 'Signal', pan: 'tall'
   };
+  // The one-inspector proposal: every Roundtable click opens one inspector, in one place.
+  function isOne() { return S.look === 'new' && S.ux === 'one'; }
+  var RX_MODES = ['Signal', 'Sig Avg', 'Signal Peak', 'Max Bin'];
+  // FlagMeterChoice.swift tag: only Sig Avg and Max Bin print one.
+  function rxTag(rx) { return rx === 'Sig Avg' ? 'AV' : rx === 'Max Bin' ? 'MAX' : ''; }
   var offsets = {}; // live wander per listener
   LISTENERS.forEach(function (l) { offsets[l.c] = { v: 0, pk: 0, a: 1 + Math.random() * 3 }; });
 
@@ -155,7 +161,7 @@
     } else if (m.state === 'after') {
       h += '<div class="rc__note">Waiting for readings</div>';
     } else {
-      h += '<div class="rc__note">No readings yet</div>';
+      h += '<div class="rc__note">No readings</div>';
     }
     var more = rows.length - showRows.length;
     if (more > 0) { h += '<div class="rc__foot"><span>+' + more + ' more ›</span></div>'; }
@@ -238,6 +244,9 @@
         return '<span class="rct__r"><i class="rcg rcg--' + (t.keyed.indexOf(c) >= 0 ? 'talk' : 'quiet') + '"></i>' + c + '</span>';
       }).join('') + '</div>';
     }
+    if (t.keyed[0] === '?') {
+      return '<div class="rct rct--unk' + off + '"><span class="rct__r"><i class="rcg rcg--unk"></i>Unknown</span></div>';
+    }
     if (t.keyed.length > 1) {
       return '<div class="rct rct--dbl' + off + '"><span class="rct__r rct__d"><i class="rcg rcg--dbl"></i>Double</span>' + t.keyed.slice(0, 2).map(function (c) {
         return '<span class="rct__r" style="padding-left:14px">' + c + '</span>';
@@ -248,6 +257,105 @@
     }
     return '<div class="rct rct--quiet' + off + '"><span class="rct__r"><i class="rcg rcg--quiet"></i>' + t.calls[0] + (t.calls.length > 1 ? ' <small>+' + (t.calls.length - 1) + '</small>' : '') + '</span></div>';
   }
+
+// ---------- The flag's level bar: VfoLevelBar.cpp, with the iPhone's source tag (FlagLevelBar.swift) ----------
+  function paintLevel(c, w, h, scale, dbm, tag, o) {
+    var FLOOR = -130; var CEIL = -20; var S9 = -73;
+    c.setTransform(scale, 0, 0, scale, 0, 0);
+    if (o.bgFill) { c.fillStyle = o.bgFill; c.fillRect(0, 0, w, h); } else { c.clearRect(0, 0, w, h); }
+    var barW = w - o.dbmW - 4;
+    var ticks = [-121, -109, -97, -85, -73, -53, -33];
+    var labels = ['S1', '3', '5', '7', '9', '+20', '+40'];
+    c.fillStyle = o.tick;
+    c.font = o.tickFont;
+    c.textBaseline = 'middle';
+    for (var i = 0; i < ticks.length; i++) {
+      var x = Math.floor((ticks[i] - FLOOR) / (CEIL - FLOOR) * (barW - 1));
+      c.fillRect(x, o.top + o.tickH - 2, 1, 3);
+      c.textAlign = i === 0 ? 'left' : i >= 5 ? 'right' : 'center';
+      c.fillText(labels[i], x, o.top + (o.tickH - 2) / 2);
+    }
+    if (tag) {
+      c.textAlign = 'left';
+      c.font = o.tagFont || '700 10px system-ui, -apple-system, sans-serif';
+      c.fillStyle = o.tagColor || '#dcdce1';
+      c.fillText(tag, barW + 4, o.top + (o.tickH - 2) / 2);
+    }
+    var barTop = o.top + o.tickH;
+    var barH = h - barTop;
+    c.fillStyle = o.bg;
+    c.fillRect(0, barTop, barW, barH);
+    c.strokeStyle = o.border;
+    c.lineWidth = 1;
+    c.strokeRect(0.5, barTop + 0.5, barW - 1, barH - 1);
+    var innerW = barW - 2;
+    var fillW = Math.floor(clamp((dbm - FLOOR) / (CEIL - FLOOR), 0, 1) * innerW);
+    if (fillW > 0) {
+      var s9 = (S9 - FLOOR) / (CEIL - FLOOR);
+      var g = c.createLinearGradient(1, 0, 1 + innerW, 0);
+      g.addColorStop(0, '#00b4d8'); g.addColorStop(s9, '#00b4d8');
+      g.addColorStop(Math.min(s9 + 0.15, 1), '#00d860'); g.addColorStop(1, '#00d860');
+      c.fillStyle = g;
+      c.fillRect(1, barTop + 1, fillW, barH - 2);
+    }
+    c.font = o.dbmFont;
+    c.textAlign = 'left';
+    c.fillStyle = dbm > S9 ? '#00d860' : '#00b4d8';
+    c.fillText(dbm.toFixed(o.digits).replace('-0', '0') + ' dBm', barW + 4, barTop + barH / 2);
+  }
+  // The analog S-Meter's face, drawn live inside the capture's bezel. Its source prints as the app's does.
+  function paintFace(c, needle, value, rx) {
+    var W = 280; var H = 123;
+    c.setTransform(2, 0, 0, 2, 0, 0);
+    var g = c.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#efe5cb'); g.addColorStop(1, '#e4d7b6');
+    c.fillStyle = g;
+    c.beginPath(); c.roundRect(0, 0, W, H, 7); c.fill();
+    var cx = 140; var cy = 112; var R = 90;
+    function ang(d) { // S0 -127 at 146 deg, S9 -73 at 80 deg, +60 -13 at 34 deg
+      var a = d <= -73 ? 146 - (clamp(d, -127, -73) + 127) / 54 * 66 : 80 - (clamp(d, -73, -13) + 73) / 60 * 46;
+      return a * Math.PI / 180;
+    }
+    c.lineCap = 'butt';
+    c.strokeStyle = '#2a2620'; c.lineWidth = 1.4;
+    c.beginPath(); c.arc(cx, cy, R, -ang(-127), -ang(-73), false); c.stroke();
+    c.strokeStyle = '#b02a22'; c.lineWidth = 4;
+    c.beginPath(); c.arc(cx, cy, R, -ang(-73), -ang(-13), false); c.stroke();
+    var marks = [[-121, '1'], [-109, '3'], [-97, '5'], [-85, '7'], [-73, '9'], [-53, '+20'], [-33, '+40'], [-13, '+60']];
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    marks.forEach(function (m) {
+      var a = ang(m[0]);
+      var red = m[0] > -73;
+      c.strokeStyle = red ? '#b02a22' : '#2a2620'; c.lineWidth = 1.4;
+      c.beginPath(); c.moveTo(cx + Math.cos(a) * (R - 8), cy - Math.sin(a) * (R - 8)); c.lineTo(cx + Math.cos(a) * R, cy - Math.sin(a) * R); c.stroke();
+      c.fillStyle = red ? '#b02a22' : '#2a2620';
+      c.font = '600 11px Futura, "Avenir Next", system-ui, sans-serif';
+      var rr = R - 19;
+      c.fillText(m[1], cx + Math.cos(a) * rr + (red ? 9 : 0), cy - Math.sin(a) * rr);
+    });
+    c.fillStyle = '#2a2620';
+    c.font = '600 14px Futura, "Avenir Next", system-ui, sans-serif';
+    try { c.letterSpacing = '1px'; } catch (e0) {}
+    c.fillText('SIGNAL STRENGTH', cx, 12);
+    c.font = '500 10px Futura, "Avenir Next", system-ui, sans-serif';
+    c.fillText('S UNITS', cx, 72);
+    try { c.letterSpacing = '0px'; } catch (e1) {}
+    if (rx !== 'Signal') { c.font = '700 10px system-ui, sans-serif'; c.fillStyle = '#5a4c2c'; c.fillText(rx, cx, 86); }
+    var na = ang(needle);
+    c.strokeStyle = '#1a1814'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(cx, cy); c.lineTo(cx + Math.cos(na) * (R + 2), cy - Math.sin(na) * (R + 2)); c.stroke();
+    c.fillStyle = '#1a1814'; c.beginPath(); c.arc(cx, cy, 8, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#b08a3c'; c.beginPath(); c.arc(cx, cy, 4, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#1a1814';
+    c.font = '600 14px Futura, "Avenir Next", system-ui, sans-serif';
+    c.textAlign = 'right'; c.fillText(sText(value), cx - 14, 111);
+    c.font = '500 12px system-ui, sans-serif';
+    c.textAlign = 'left'; c.fillText(String(Math.round(value)).replace('-', '−') + ' dBm', cx + 14, 111);
+  }
+  var LOCK_OPEN = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0"/></svg>';
+  var LOCK_SHUT = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path fill="none" d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+  var phoneRxHooks = [];
+  function phoneRxChanged() { phoneRxHooks.forEach(function (f) { f(); }); }
 
   // ---------- The flag line ----------
   function flagLine(st, mine) {
@@ -324,7 +432,8 @@
     if (S.look === 'today') {
       placed = this.placeToday(m, b, dialX, flagRects);
       host = placed.el;
-    } else if (m.kind === 'quiet') {
+    } else if (m.kind === 'quiet' || (isOne() && m.kind === 'unk' && !m.reports.length)) {
+      // Nothing to say: a compact tag at its own spot, not an empty card.
       host = null;
     } else {
       placed = this.placeCard(m, b, dialX, flagRects);
@@ -332,27 +441,37 @@
     }
 
     var occupied = [];
+    var insRect = isOne() && b.insRect ? b.insRect() : null;
+    var hadCard = !!host;
+    if (insRect) {
+      // The inspector takes the card's place: one box, not two.
+      if (host) { host.remove(); host = null; placed = null; }
+      occupied.push(insRect);
+      if (self.insMine) { layer.appendChild(tick(dialX, insRect.bottom, b.bandTop, borderOf(m))); }
+    }
     if (host) {
       layer.appendChild(host);
       occupied.push(placed.rect);
       host.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
       host.addEventListener('click', function (e) { e.stopPropagation(); b.openCard(self, m, placed.rect); });
+      host.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); if (b.ctx) { b.ctx(self, self.activeIdx, e); } });
       layer.appendChild(tick(dialX, placed.rect.bottom, b.bandTop, borderOf(m)));
     }
 
     // Other frequencies along the foot, clear of the card and the flags.
     var rest = [];
     this.freqs.forEach(function (e, i) {
-      if (i === self.activeIdx && host) { return; }
+      if (i === self.activeIdx && hadCard) { return; }
       if (b.saidByFlag && b.saidByFlag(e.hz)) { return; }
       var x = b.x(e.hz);
       if (x < 2 || x > b.w - 2) { return; }
       rest.push({ i: i, x: x, t: self.tagAt(i) });
     });
     rest.sort(function (a, c) { return a.x - c.x; });
+    if (b.foldGap && S.look !== 'today') { rest = foldNear(rest, b.foldGap, self); }
     rest.forEach(function (r) {
       var w0 = document.createElement('div');
-      w0.innerHTML = tagHtml(r.t);
+      w0.innerHTML = r.fold ? r.html : tagHtml(r.t);
       var el = w0.firstChild;
       el.style.left = '-999px'; el.style.top = '0px';
       layer.appendChild(el);
@@ -374,19 +493,41 @@
       occupied.push({ left: left, right: left + w, top: foot - h, bottom: foot });
       layer.appendChild(tick(r.x, foot, b.bandTop, getComputedStyle(el).borderTopColor));
       el.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
-      if (self.peekIdx === r.i) { el.classList.add('is-peek'); }
+      if (r.fold ? (isOne() && self.foldIdxs && self.foldIdxs.join() === r.fold.join()) : (self.peekIdx === r.i || (self.insMine && r.i === self.activeIdx))) { el.classList.add('is-peek'); }
       el.addEventListener('click', function (e) {
         e.stopPropagation();
+        if (r.fold) { b.fold(self, r.fold, el); return; }
         if (S.look === 'today') { b.tune(self, r.i); } else { b.peek(self, r.i); }
       });
+      el.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); if (b.ctx && !r.fold) { b.ctx(self, r.i, e); } });
       el.setAttribute('role', 'button');
-      el.setAttribute('aria-label', (S.look === 'today' ? 'Tune to ' : 'View ') + freqShort(self.freqs[r.i].hz));
+      el.setAttribute('aria-label', r.fold ? r.fold.length + ' frequencies' : (S.look === 'today' ? 'Tune to ' : 'View ') + freqShort(self.freqs[r.i].hz));
     });
     // A quiet active frequency gets the compact tag at its own spot; the loop above drew it.
     this.liveHost = host;
     this.liveModel = m;
     this.liveRows = placed ? placed.rows : 0;
   };
+  // Tags too close to read fold into one +N (RoundtableTagLayout).
+  function foldNear(rest, gap, view) {
+    var out = []; var run = [];
+    function flush() {
+      if (run.length < 2) { out = out.concat(run); run = []; return; }
+      var idx = run.map(function (r) { return r.i; });
+      var keyed = run.reduce(function (n, r) { return Math.max(n, r.t.keyed.length); }, 0);
+      var k = keyed > 1 ? 'dbl' : keyed === 1 ? 'talk' : 'quiet';
+      out.push({ fold: idx, x: run.reduce(function (n, r) { return n + r.x; }, 0) / run.length, t: { keyed: [], calls: [] },
+        html: '<div class="rct rct--' + k + ' rct--fold"><span class="rct__r"><i class="rcg rcg--' + k + '"></i>+' + run.length + '</span></div>' });
+      run = [];
+    }
+    rest.forEach(function (r) {
+      if (r.i === view.activeIdx) { flush(); out.push(r); return; }
+      if (run.length && r.x - run[run.length - 1].x > gap) { flush(); }
+      run.push(r);
+    });
+    flush();
+    return out;
+  }
   function tick(x, top, bottom, color) {
     var t = document.createElement('div');
     t.className = 'rc-tick';
@@ -431,7 +572,9 @@
     var underRoom = foot - flagBottom - 4;
     var underRows = fit(full, underRoom);
     var bestStretch = null;
-    var stretches = freeStretches(b, flags, b.top || 2, foot);
+    // The phone's side buttons stand above the card, as on the real iPhone, so the strip beside the flag stays usable.
+    var stretchTop = b.cardTop ? b.cardTop() : (b.top || 2);
+    var stretches = freeStretches(b, flags, stretchTop, foot);
     var considerStretch = function (s, farOnly) {
       var wid = s.right - s.left;
       if (wid < b.minW) { return; }
@@ -444,7 +587,7 @@
     var w = full; var rows = underRows; var left; var useUnder = underRows >= 0;
     if (bestStretch) {
       var bw = Math.min(full, bestStretch.wid);
-      var bRows = fit(bw, foot - (b.top || 2));
+      var bRows = fit(bw, foot - stretchTop);
       if (!useUnder || bRows > underRows) {
         w = bw; rows = Math.max(0, bRows); useUnder = false;
         left = clamp(dialX - w / 2, bestStretch.s.left, bestStretch.s.right - w);
@@ -610,23 +753,51 @@
       (d.live ? '<span class="rc__clock" data-clock>' + mmss(d.clock) + '</span>' : '') +
       '<span class="rc__f">' + freqShort(d.f) + '</span></div>';
     h += d.mine ? (d.note ? '<div class="pk-sub" data-note>' + esc(d.note) + '</div>' : '') : '<div class="pk-sub">Viewing, not tuned' + (away ? ' \u00b7 ' + (away > 0 ? '+' : '\u2212') + Math.abs(away).toFixed(1) + ' kHz from slice A' : '') + ' \u00b7 LSB</div>';
-    if (S.link === 'recon') { h += '<div class="rc__note" style="color:var(--rc-unk)">Reconnecting \u00b7 last known</div>'; }
-    if (S.link === 'offline') { h += '<div class="rc__note">Offline \u00b7 last known</div>'; }
-    h += '<div class="rc__cap"><span>On frequency \u00b7 ' + d.people.length + '</span><span>Tuned</span></div><div class="pk-people">';
-    d.people.forEach(function (p) {
-      h += '<div class="pk-p' + (p.keyed ? ' is-keyed' : '') + '"><i class="rcg rcg--' + (p.keyed ? (d.kind === 'dbl' ? 'dbl' : 'talk') : 'quiet') + '"></i>' +
-        '<span class="pk-c">' + esc(p.c === YOU ? 'You' : p.c) + '</span><span class="pk-k">' + (p.keyed ? 'keyed' : '') + '</span>' +
-        '<span class="pk-o">' + (p.off ? (p.off > 0 ? '+' : '\u2212') + Math.abs(p.off) + ' Hz' : 'on freq') + '</span></div>';
-    });
-    if (!d.people.length) { h += '<div class="rc__note">No stations named here</div>'; }
-    h += '</div>';
-    var cap = d.kind === 'dbl' || d.wasDouble ? '<b>Combined RF</b>' : d.kind === 'you' ? 'Hearing you' : d.kind === 'quiet' || d.kind === 'last' ? 'Last heard ' + age(d.ago) + ' ago' : 'Heard by';
-    h += '<div class="rc__cap"><span>' + cap + '</span><span>' + (S.fmt === 'S' ? 'S' : S.fmt === 'both' ? 'S / dBm' : 'dBm') + '</span></div>';
-    h += d.reports.length ? '<div class="rc__rows">' + d.reports.map(function (r) { return rowHtml(r, false, d); }).join('') + '</div>' : '<div class="rc__note">No readings yet</div>';
+    h += peekMiddle(d);
     if (d.mine) { return h; }
     h += '<div class="pk-acts"><button type="button" class="pk-go" data-a="tune"' + (keyedNow || d.f === d.sliceHz ? ' disabled' : '') + '>Tune slice A here</button>' +
       '<button type="button" data-a="open">Messages</button></div>';
     return h;
+  }
+  function peekMiddle(d) {
+    var h = '';
+    if (S.link === 'recon') { h += '<div class="rc__note" style="color:var(--rc-unk)">Reconnecting \u00b7 last known</div>'; }
+    if (S.link === 'offline') { h += '<div class="rc__note">Offline \u00b7 last known</div>'; }
+    h += '<div class="rc__cap"><span>On frequency \u00b7 ' + d.people.length + '</span><span>Tuned</span></div><div class="pk-people">';
+    var shownPeople = d.compactPeople ? d.people.filter(function (p) { return p.keyed; }) : d.people;
+    var alsoHere = d.compactPeople ? d.people.filter(function (p) { return !p.keyed; }) : [];
+    shownPeople.forEach(function (p) {
+      h += '<div class="pk-p' + (p.keyed ? ' is-keyed' : '') + '"><i class="rcg rcg--' + (p.keyed ? (d.kind === 'dbl' ? 'dbl' : 'talk') : 'quiet') + '"></i>' +
+        '<span class="pk-c">' + esc(p.c === YOU ? 'You' : p.c) + '</span><span class="pk-k">' + (p.keyed ? 'keyed' : '') + '</span>' +
+        '<span class="pk-o">' + (p.off ? (p.off > 0 ? '+' : '\u2212') + Math.abs(p.off) + ' Hz' : 'on freq') + '</span></div>';
+    });
+    // A short pan keeps the readings in view: everyone not keyed folds to one line.
+    if (alsoHere.length) { h += '<div class="pk-also">Also here \u00b7 ' + alsoHere.map(function (p) { return esc(p.c === YOU ? 'You' : p.c); }).join(', ') + '</div>'; }
+    if (!d.people.length) { h += '<div class="rc__note">Nobody here</div>'; }
+    h += '</div>';
+    var cap = d.kind === 'dbl' || d.wasDouble ? '<b>Combined RF</b>' : d.kind === 'you' ? 'Hearing you' : d.kind === 'quiet' || d.kind === 'last' ? 'Last heard ' + age(d.ago) + ' ago' : 'Heard by';
+    h += '<div class="rc__cap"><span>' + cap + '</span><span>' + (S.fmt === 'S' ? 'S' : S.fmt === 'both' ? 'S / dBm' : 'dBm') + '</span></div>';
+    h += d.reports.length ? '<div class="rc__rows">' + d.reports.map(function (r) { return rowHtml(r, false, d); }).join('') + '</div>' : '<div class="rc__note">No readings</div>';
+    return h;
+  }
+  // One inspector: the same box for every frequency, yours or not.
+  function inspectorBody(d, keyedNow) {
+    var who = d.kind === 'dbl' ? 'Double' : d.kind === 'talk' ? d.keyed[0] : d.kind === 'unk' ? 'Unknown signal' : d.kind === 'you' ? 'You \u00b7 on the air' : d.kind === 'last' ? (d.wasDouble ? 'Last double' : d.talkers[0]) : 'Nobody talking';
+    var g = d.kind === 'dbl' ? 'dbl' : d.kind === 'talk' ? 'talk' : d.kind === 'unk' ? 'unk' : d.kind === 'you' ? 'you' : 'quiet';
+    var away = (d.f - d.sliceHz) / 1000;
+    var h = '<div class="rc__head ins-head"><i class="rcg rcg--' + g + '"></i><b class="rc__who">' + esc(who) + '</b>' +
+      (d.live ? '<span class="rc__clock" data-clock>' + mmss(d.clock) + '</span>' : '') +
+      '<span class="rc__f">' + freqShort(d.f) + '</span>' + insButtons() + '</div>';
+    if (!d.mine) {
+      h += '<div class="ins-view"><span>Viewing' + (away ? ' \u00b7 ' + (away > 0 ? '+' : '\u2212') + Math.abs(away).toFixed(1) + ' kHz' : '') + '</span><button type="button" data-a="back">\u2039 Back to my slice</button></div>';
+    } else if (d.note) { h += '<div class="pk-sub" data-note>' + esc(d.note) + '</div>'; }
+    h += '<div class="ins-scroll">' + peekMiddle(d) + '</div>';
+    h += '<div class="pk-acts"><button type="button" class="pk-go" data-a="tune"' + (d.mine ? ' disabled title="Slice A is already here"' : keyedNow ? ' disabled title="Not while you transmit"' : '') + '>Tune slice A here</button>' +
+      '<button type="button" data-a="open">Messages</button></div>';
+    return h;
+  }
+  function insButtons() {
+    return '<button type="button" class="ins-b" data-a="more" aria-label="More">\u22ef</button><button type="button" class="ins-b" data-a="x" aria-label="Close">\u00d7</button>';
   }
   function peekClass(d) {
     return 'rc rc-peek rc--' + (d.kind === 'quiet' ? 'quiet' : d.kind) + (S.link === 'offline' ? ' is-off is-frozen' : S.link === 'recon' ? ' is-frozen' : '');
@@ -686,31 +857,35 @@
       chip(st, x.chip, 'state:' + x.id, function () { stopPlay(); S.state = x.id; views.forEach(function (v) { v.backToScenario && v.backToScenario(); }); redrawAll(); });
     });
     var looks = document.getElementById('rcb-looks');
-    [['new', 'Proposal'], ['today', 'Today’s build']].forEach(function (x) {
-      chip(looks, x[1], 'look:' + x[0], function () { S.look = x[0]; redrawAll(); });
+    [['one', 'This proposal'], ['peek', 'On your Mac now'], ['today', 'Before the overlay']].forEach(function (x) {
+      chip(looks, x[1], 'look:' + x[0], function () { S.look = x[0] === 'today' ? 'today' : 'new'; S.ux = x[0] === 'one' ? 'one' : 'peek'; redrawAll(); });
     });
     var fm = document.getElementById('rcb-formats');
     [['S', 'S-units'], ['dbm', 'dBm'], ['both', 'Both']].forEach(function (x) {
       chip(fm, x[1], 'fmt:' + x[0], function () { S.fmt = x[0]; redrawAll(); });
     });
     var cn = document.getElementById('rcb-counts');
-    [2, 5, 7].forEach(function (n) { chip(cn, String(n), 'count:' + n, function () { S.count = n; redrawAll(); }); });
+    [0, 2, 5, 7].forEach(function (n) { chip(cn, String(n), 'count:' + n, function () { S.count = n; redrawAll(); }); });
     var ln = document.getElementById('rcb-links');
     [['live', 'Live'], ['recon', 'Reconnecting'], ['offline', 'Offline'], ['hidden', 'Hidden']].forEach(function (x) {
       chip(ln, x[1], 'link:' + x[0], function () { S.link = x[0]; redrawAll(); });
+    });
+    var pn = document.getElementById('rcb-pans');
+    [['tall', 'Tall'], ['short', 'Short, like yours']].forEach(function (x) {
+      chip(pn, x[1], 'pan:' + x[0], function () { S.pan = x[0]; redrawAll(); });
     });
   }
   function pressAll() {
     document.querySelectorAll('#rcb-bar .rcb-chip').forEach(function (b) {
       var a = b.getAttribute('data-on').split(':');
-      var v = a[0] === 'state' ? S.state : a[0] === 'look' ? S.look : a[0] === 'fmt' ? S.fmt : a[0] === 'count' ? String(S.count) : a[0] === 'link' ? S.link : null;
+      var v = a[0] === 'state' ? S.state : a[0] === 'look' ? (S.look === 'today' ? 'today' : S.ux) : a[0] === 'pan' ? S.pan : a[0] === 'fmt' ? S.fmt : a[0] === 'count' ? String(S.count) : a[0] === 'link' ? S.link : null;
       if (a[0] !== 'play') { b.setAttribute('aria-pressed', v === a[1] ? 'true' : 'false'); }
     });
   }
   function status() {
     var x = byId[S.state];
     var el = document.getElementById('rcb-status');
-    var pre = S.look === 'today' ? '<b>Today’s build.</b> ' : '';
+    var pre = S.look === 'today' ? '<b>Before the overlay.</b> ' : S.ux === 'peek' ? '<b>On your Mac now.</b> ' : '';
     el.innerHTML = pre + '<b>' + esc(x.t) + '.</b> ' + esc(x.s);
   }
 
@@ -824,7 +999,10 @@
         { hz: 7185000 },
         { hz: 7172000, keyed: ['AA5ABC', 'K0ABC'], calls: ['AA5ABC', 'K0ABC', 'W2ABC', 'N7ABC'] },
         { hz: 7159000, keyed: ['W6ABC'], calls: ['W6ABC', 'KC2ABC', 'N3ABC'] },
-        { hz: 7196000, keyed: [], calls: ['G0ABC', 'N5ABC'] }
+        { hz: 7196000, keyed: [], calls: ['G0ABC', 'N5ABC'] },
+        { hz: 7141000, keyed: ['N2DEF'], calls: ['N2DEF', 'W3DEF'] },
+        { hz: 7143000, keyed: [], calls: ['W8DEF', 'K2DEF'] },
+        { hz: 7144500, keyed: ['W4DEF', 'K9DEF'], calls: ['W4DEF', 'K9DEF', 'N1DEF'] }
       ]
     });
     views.push(view);
@@ -836,26 +1014,179 @@
       layer: layer, w: geo.x1, h: geo.bandTop - 0, top: geo.specTop + 2, foot: geo.bandTop - 8, bandTop: geo.bandTop,
       left: 80, right: geo.x1 - 34,
       cardW: 232, minW: 200, sided: true, x: xAt,
-      flipped: false,
+      flipped: false, foldGap: 44,
+      insRect: function () { return insRectNow; },
+      ctx: function (v, i, e) { openQuick(i, e); },
+      fold: function (v, idx, el) { openFold(idx, el); },
       flags: function () {
         var x = xAt(slice.hz);
         return band.flipped ? [{ left: x - flagW - 2, right: x + 24, top: 30, bottom: 192 }]
           : [{ left: x - 24, right: x + flagW + 2, top: 30, bottom: 192 }];
       },
-      peek: function (v, i) { closeUi(); v.peekIdx = i; draw(); renderPeek(); },
-      tune: function (v, i) { if (keyedYou()) { return; } v.peekIdx = null; peekEl.style.display = 'none'; v.activeIdx = i; slice.hz = v.freqs[i].hz; closeUi(); draw(); },
-      openCard: function (v, m, rect) { openMenu(m, rect); }
+      peek: function (v, i) {
+        closeUi();
+        if (isOne()) { toggleIns(i); return; }
+        v.peekIdx = i; draw(); renderPeek();
+      },
+      tune: function (v, i) { if (keyedYou()) { return; } v.peekIdx = null; v.insMine = false; v.foldIdxs = null; peekEl.style.display = 'none'; v.activeIdx = i; slice.hz = v.freqs[i].hz; closeUi(); draw(); },
+      openCard: function (v, m, rect) {
+        if (isOne()) { closeUi(); toggleIns(v.activeIdx); return; }
+        openMenu(m, rect);
+      }
     };
     var peekEl = document.createElement('div');
     peekEl.style.cssText = 'position:absolute;z-index:12;width:300px;display:none';
     dk.appendChild(peekEl);
     peekEl.addEventListener('click', function (e) { e.stopPropagation(); });
-    var PAN_DB = { 1: -74, 2: -80, 3: -100 };
+    var insRectNow = null;
+    var lastUx = S.ux + S.look;
+    var PAN_DB = { 1: -74, 2: -80, 3: -100, 4: -86, 5: -100, 6: -82 };
+    function inspecting() { return !!(view.insMine || view.peekIdx != null || view.foldIdxs); }
+    function clearIns() { view.insMine = false; view.peekIdx = null; view.foldIdxs = null; insRectNow = null; peekEl.style.display = 'none'; }
+    function toggleIns(i) {
+      var mine = i === view.activeIdx;
+      var same = mine ? view.insMine : view.peekIdx === i;
+      clearIns();
+      if (!same) { if (mine) { view.insMine = true; } else { view.peekIdx = i; } }
+      draw();
+    }
+    function openFold(idx, el) {
+      closeUi();
+      if (isOne()) {
+        var listShown = view.foldIdxs && view.peekIdx == null && view.foldIdxs.join() === idx.join();
+        clearIns();
+        if (!listShown) { view.foldIdxs = idx; }
+        draw();
+        return;
+      }
+      // Today: a small menu of the folded frequencies.
+      menu.innerHTML = '<div class="rc-menu__h">' + idx.length + ' frequencies</div>' + idx.map(function (i) {
+        return '<button type="button" data-i="' + i + '">' + freqShort(view.freqs[i].hz) + ' \u00b7 ' + esc(whoAt(i)) + '</button>';
+      }).join('');
+      menu.style.left = clamp(parseFloat(el.style.left), 4, 1140 - 190) + 'px';
+      menu.style.top = Math.max(34, parseFloat(el.style.top) - 110) + 'px';
+      menu.style.display = 'block';
+      menu.querySelectorAll('[data-i]').forEach(function (b) {
+        b.onclick = function (e) { e.stopPropagation(); closeUi(); view.peekIdx = parseInt(b.getAttribute('data-i'), 10); draw(); renderPeek(); };
+      });
+    }
+    function whoAt(i) {
+      var t = view.tagAt(i);
+      return t.keyed.length > 1 ? 'Double' : t.keyed[0] === '?' ? 'Unknown' : t.keyed[0] || t.calls[0];
+    }
+    // Where the inspector sits: your card's spot, past the flag from the dial.
+    function placeIns(wanted) {
+      var dialX = xAt(slice.hz);
+      var flags = band.flags();
+      var st = freeStretches(band, flags, band.top, band.foot);
+      var best = null;
+      function consider(s, far) {
+        var wid = s.right - s.left;
+        if (wid < 260) { return; }
+        if (far && !(band.flipped ? s.right <= dialX : s.left >= dialX)) { return; }
+        var d = dialX < s.left ? s.left - dialX : dialX > s.right ? dialX - s.right : 0;
+        if (!best || d < best.d) { best = { s: s, d: d, wid: wid }; }
+      }
+      st.forEach(function (s) { consider(s, true); });
+      if (!best) { st.forEach(function (s) { consider(s, false); }); }
+      if (!best) { return { left: band.left, w: wanted }; }
+      var w = Math.min(wanted, best.wid);
+      var left = best.s.left >= dialX ? best.s.left : best.s.right <= dialX ? best.s.right - w : clamp(dialX - w / 2, best.s.left, best.s.right - w);
+      return { left: left, w: w };
+    }
+    function wireIns(root, i) {
+      var x = root.querySelector('[data-a="x"]');
+      if (x) { x.onclick = function (e) { e.stopPropagation(); closeUi(); clearIns(); draw(); }; }
+      var more = root.querySelector('[data-a="more"]');
+      if (more) { more.onclick = function (e) { e.stopPropagation(); openQuick(i == null ? view.activeIdx : i, e, true); }; }
+      var back = root.querySelector('[data-a="back"]');
+      if (back) { back.onclick = function (e) { e.stopPropagation(); clearIns(); view.insMine = true; draw(); }; }
+      var tune = root.querySelector('[data-a="tune"]');
+      if (tune && !tune.disabled) { tune.onclick = function (e) { e.stopPropagation(); band.tune(view, i); }; }
+      var open = root.querySelector('[data-a="open"]');
+      if (open) { open.onclick = function (e) { e.stopPropagation(); if (i === view.activeIdx || i == null) { openApplet(view.modelAt(view.activeIdx)); } else { openViewing(i); } }; }
+    }
+    function renderIns() {
+      if (!isOne() || !inspecting()) { insRectNow = null; peekEl.style.display = 'none'; return; }
+      if (view.peekIdx === view.activeIdx) { view.peekIdx = null; view.insMine = true; }
+      var oldScroll = peekEl.querySelector('.ins-scroll');
+      var scrollTop = oldScroll ? oldScroll.scrollTop : 0;
+      var inner = document.createElement('div');
+      var listOnly = view.foldIdxs && view.peekIdx == null && !view.insMine;
+      if (listOnly) {
+        inner.className = 'rc rc-peek rc-insp rc--quiet';
+        inner.innerHTML = '<div class="rc__rail"></div><div class="rc__body"><div class="rc__head ins-head"><b class="rc__who">' + view.foldIdxs.length + ' frequencies</b><span class="rc__f"></span>' +
+          '<button type="button" class="ins-b" data-a="x" aria-label="Close">\u00d7</button></div><div class="ins-scroll ins-list">' + view.foldIdxs.map(function (i) {
+            var t = view.tagAt(i);
+            var k = t.keyed.length > 1 ? 'dbl' : t.keyed.length === 1 ? 'talk' : 'quiet';
+            return '<button type="button" class="ins-fr" data-i="' + i + '"><i class="rcg rcg--' + k + '"></i><span class="ins-fr__f">' + freqShort(view.freqs[i].hz) + '</span><span class="ins-fr__w">' + esc(whoAt(i)) + (t.keyed.length > 1 ? ' \u00b7 ' + t.keyed.join(' + ') : '') + '</span><span class="chev">\u203a</span></button>';
+          }).join('') + '</div></div>';
+      } else {
+        var d = view.insMine ? mineData(view.modelAt(view.activeIdx)) : peekOf(view.peekIdx);
+        inner.className = peekClass(d) + ' rc-insp';
+        inner.innerHTML = '<div class="rc__rail"></div><div class="rc__body">' + inspectorBody(d, keyedYou()) + '</div>';
+      }
+      peekEl.innerHTML = '';
+      peekEl.appendChild(inner);
+      peekEl.style.display = 'block';
+      peekEl.style.height = 'auto';
+      var pl = placeIns(300);
+      peekEl.style.width = pl.w + 'px';
+      var room = band.foot - band.top;
+      if (!listOnly && peekEl.offsetHeight > room) {
+        d.compactPeople = true;
+        inner.innerHTML = '<div class="rc__rail"></div><div class="rc__body">' + inspectorBody(d, keyedYou()) + '</div>';
+      }
+      var h = Math.min(room, peekEl.offsetHeight);
+      peekEl.style.height = h + 'px';
+      peekEl.style.left = pl.left + 'px';
+      peekEl.style.top = (band.foot - h) + 'px';
+      insRectNow = { left: pl.left, right: pl.left + pl.w, top: band.foot - h, bottom: band.foot };
+      var sc = inner.querySelector('.ins-scroll');
+      if (sc) {
+        sc.scrollTop = scrollTop;
+        // Rows below the fold say so with a fade; the wheel scrolls them here, never tunes.
+        var more = function () { sc.classList.toggle('has-more', sc.scrollHeight - sc.scrollTop - sc.clientHeight > 2); };
+        sc.addEventListener('scroll', more);
+        more();
+      }
+      if (listOnly) {
+        inner.querySelectorAll('[data-i]').forEach(function (b) {
+          b.onclick = function (e) { e.stopPropagation(); view.peekIdx = parseInt(b.getAttribute('data-i'), 10); draw(); };
+        });
+        wireIns(inner, null);
+      } else { wireIns(inner, view.insMine ? view.activeIdx : view.peekIdx); }
+    }
+    // Right-click anywhere Roundtable, or the inspector's own \u22ef.
+    function openQuick(i, e, fromIns) {
+      if (!isOne()) {
+        if (i === view.activeIdx) { var r0 = dk.getBoundingClientRect(); var k0 = r0.width / 1512; openMenu(view.modelAt(i), { right: (e.clientX - r0.left) / k0 - 4, top: (e.clientY - r0.top) / k0 }); }
+        return;
+      }
+      var mine = i === view.activeIdx;
+      var fmtName = S.fmt === 'S' ? 'S-units' : S.fmt === 'both' ? 'Both' : 'dBm';
+      var isOpen = mine ? view.insMine : view.peekIdx === i;
+      menu.innerHTML = '<div class="rc-menu__h">' + freqShort(view.freqs[i].hz) + ' MHz</div>' +
+        (fromIns ? '' : '<button type="button" data-a="view">' + (isOpen ? 'Close inspector' : 'Open inspector') + '</button>') +
+        '<button type="button" data-a="tune"' + (mine ? ' disabled title="Slice A is already here"' : keyedYou() ? ' disabled title="Not while you transmit"' : '') + '>Tune slice A here</button>' +
+        '<button type="button" data-a="msg">Messages</button>' +
+        '<button type="button" data-a="fmt">Signal: ' + fmtName + ' \u00b7 Change</button>';
+      var r = dk.getBoundingClientRect();
+      var k = r.width / 1512;
+      menu.style.left = Math.min((e.clientX - r.left) / k, 1140 - 190) + 'px';
+      menu.style.top = Math.max(34, (e.clientY - r.top) / k) + 'px';
+      menu.style.display = 'block';
+      var on = function (a, fn) { var b = menu.querySelector('[data-a="' + a + '"]'); if (b) { b.onclick = function (ev) { ev.stopPropagation(); closeUi(); fn(); }; } };
+      on('view', function () { toggleIns(i); });
+      on('tune', function () { band.tune(view, i); });
+      on('msg', function () { if (mine) { openApplet(view.modelAt(view.activeIdx)); } else { openViewing(i); } });
+      on('fmt', function () { S.fmt = S.fmt === 'S' ? 'dbm' : S.fmt === 'dbm' ? 'both' : 'S'; redrawAll(); });
+    }
     function peekOf(i) { return peekData(view, i, slice.hz, view.keyedAt(i).length ? (PAN_DB[i] || -72) : null); }
-    function closePeek() { view.peekIdx = null; peekEl.style.display = 'none'; layer.querySelectorAll('.rct.is-peek').forEach(function (t) { t.classList.remove('is-peek'); }); }
+    function closePeek() { view.peekIdx = null; view.insMine = false; view.foldIdxs = null; insRectNow = null; peekEl.style.display = 'none'; layer.querySelectorAll('.rct.is-peek').forEach(function (t) { t.classList.remove('is-peek'); }); }
     function renderPeek() {
       var i = view.peekIdx;
-      if (i == null) { return; }
+      if (i == null || isOne()) { return; }
       var d = peekOf(i);
       var inner = document.createElement('div');
       inner.className = peekClass(d);
@@ -880,13 +1211,17 @@
         '<button type="button" class="pk-back">\u2039 Back to my slice</button>' +
         '<div class="rc-detail"><div class="' + peekClass(d) + ' rc-peek--flat"><div class="rc__body">' + peekBody(d, keyedYou()) + '</div></div>' + viewingChat() + '</div>' + viewingSend();
       applet.querySelector('.rc-applet__hd button').onclick = function () { applet.classList.remove('is-open'); };
-      applet.querySelector('.pk-back').onclick = function () { closePeek(); openApplet(view.modelAt(view.activeIdx)); };
+      applet.querySelector('.pk-back').onclick = function () { closePeek(); draw(); openApplet(view.modelAt(view.activeIdx)); };
       applet.querySelector('[data-a="tune"]').onclick = function () { closePeek(); band.tune(view, i); openApplet(view.modelAt(view.activeIdx)); };
       var more = applet.querySelector('[data-a="open"]');
       more.parentNode.removeChild(more);
     }
-    window.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closePeek(); closeUi(); } });
-    function closeUi() { menu.style.display = 'none'; }
+    window.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') { return; }
+      if (menu.style.display === 'block' || flagMenuOpen()) { closeUi(); return; }
+      closePeek(); draw();
+    });
+    function closeUi() { menu.style.display = 'none'; closeFlagMenu(); }
     function openMenu(m, rect) {
       var keyed = keyedYou();
       var fmtName = S.fmt === 'S' ? 'S-units' : S.fmt === 'both' ? 'Both' : 'dBm';
@@ -909,14 +1244,197 @@
       wireSend(applet);
     }
     dk.addEventListener('click', function (e) {
-      if (menu.style.display === 'block' && !menu.contains(e.target)) { closeUi(); }
-      if (!applet.contains(e.target)) { closePeek(); }
+      if (menu.style.display === 'block' && !menu.contains(e.target)) { menu.style.display = 'none'; }
+      if (flagMenuOpen() && !flagMenu.contains(e.target)) { closeFlagMenu(); }
+      if (!isOne() && !applet.contains(e.target) && view.peekIdx != null) { closePeek(); draw(); }
     });
-    fline.addEventListener('click', function (e) { e.stopPropagation(); openApplet(view.modelAt(view.activeIdx)); });
+    fline.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (isOne()) { closeUi(); toggleIns(view.activeIdx); return; }
+      openApplet(view.modelAt(view.activeIdx));
+    });
+    fline.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); openQuick(view.activeIdx, e); });
+// ---- The flag: the ... button, its menu, the meter's source ----
+    var specK = 1;
+    var panNow = 'tall';
+    var lowBand = crop(0, 311, 1143, 48, 3);
+    var lowCol = crop(1143, 311, 33, 492, 3);
+    lowBand.style.display = 'none'; lowCol.style.display = 'none';
+    // Your window's pan is about 230 px tall: the strip and the waterfall come up.
+    function applyPan() {
+      if (panNow === S.pan) { return; }
+      panNow = S.pan;
+      var d = S.pan === 'short' ? 51 : 0;
+      geo.bandTop = 311 - d; geo.wfTop = 359 - d;
+      band.foot = geo.bandTop - 8; band.bandTop = geo.bandTop;
+      spec.height = (geo.bandTop - geo.specTop) * 2;
+      spec.style.height = (geo.bandTop - geo.specTop) + 'px';
+      wf.height = geo.wfBot - geo.wfTop;
+      wf.style.top = geo.wfTop + 'px'; wf.style.height = (geo.wfBot - geo.wfTop) + 'px';
+      wfMark.style.top = geo.wfTop + 'px'; wfMark.style.height = (geo.wfBot - geo.wfTop) + 'px';
+      lowBand.style.display = lowCol.style.display = d ? 'block' : 'none';
+      lowBand.style.top = geo.bandTop + 'px'; lowCol.style.top = geo.bandTop + 'px';
+      specK = (geo.bandTop - geo.specTop) / 281;
+      prefillDone = false;
+      prefill();
+    }
+    var flagHit = document.createElement('div');
+    flagHit.className = 'dk__flaghit';
+    dk.appendChild(flagHit);
+    flagHit.addEventListener('click', function (e) { e.stopPropagation(); closeUi(); });
+    flagHit.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); openFlagMenu(e, 'all'); });
+    var moreBtn = document.createElement('button');
+    moreBtn.type = 'button';
+    moreBtn.className = 'dk__more';
+    moreBtn.setAttribute('aria-label', 'More for slice A');
+    moreBtn.title = 'More';
+    moreBtn.textContent = '⋯';
+    dk.appendChild(moreBtn);
+    moreBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (flagMenuOpen()) { closeFlagMenu(); return; }
+      menu.style.display = 'none';
+      openFlagMenu(e, 'all');
+    });
+    var levelCv = document.createElement('canvas');
+    levelCv.className = 'dk__level';
+    levelCv.width = 488; levelCv.height = 68;
+    dk.appendChild(levelCv);
+    var txLit = document.createElement('div');
+    txLit.className = 'dk__txlit';
+    txLit.textContent = 'TX';
+    dk.appendChild(txLit);
+    var antEl = document.createElement('div');
+    antEl.className = 'dk__ant';
+    dk.appendChild(antEl);
+    var toast = document.createElement('div');
+    toast.className = 'dk__toast';
+    dk.appendChild(toast);
+    var toastTimer = null;
+    function say(t) { toast.textContent = t; toast.classList.add('is-on'); clearTimeout(toastTimer); toastTimer = setTimeout(function () { toast.classList.remove('is-on'); }, 2600); }
+    var flagMenu = document.createElement('div');
+    flagMenu.className = 'fl-menu';
+    dk.appendChild(flagMenu);
+    var FM = { tx: false, ant: 'ANT1', rate: 192 };
+    function flagMenuOpen() { return flagMenu.style.display === 'block'; }
+    function closeFlagMenu() { flagMenu.style.display = 'none'; moreBtn.classList.remove('is-lit'); }
+    function rxItems() {
+      return RX_MODES.map(function (m) {
+        return { t: m, c: S.rx === m, f: function () { S.rx = m; pressRx(); } };
+      });
+    }
+    function menuItems(mode) {
+      if (mode === 'rx') { return rxItems(); }
+      var items = [
+        { t: 'Make this the TX slice', c: FM.tx, f: function () { FM.tx = !FM.tx; placeFlagParts(parseFloat(flagHit.style.left), xAt(slice.hz)); } },
+        { sep: 1 },
+        { t: 'Antenna >', sub: ['ANT1', 'ANT2', 'ANT3'].map(function (a) { return { t: a, c: FM.ant === a, f: function () { FM.ant = a; placeFlagParts(parseFloat(flagHit.style.left), xAt(slice.hz)); } }; }) },
+        { t: 'Sample rate >', sub: [48, 96, 192, 384, 768, 1536].map(function (r) { return { t: r + ' kHz', c: FM.rate === r, f: function () { FM.rate = r; say('Sample rate ' + r + ' kHz'); } }; }) }
+      ];
+      if (isOne()) { items.push({ t: 'S-meter: ' + S.rx + ' >', sub: rxItems(), id: 'rx' }); }
+      items.push({ sep: 1 },
+        { t: 'Diversity...', f: function () { say('Opens the Diversity dialog, as it does today'); } },
+        { t: 'Filter policy...', f: function () { say('Opens the Filter policy dialog, as it does today'); } },
+        { sep: 1 },
+        { t: 'Remove slice', off: true, tip: 'Slice A always stays' });
+      return items;
+    }
+    function itemEl(it) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'fl-it' + (it.c ? ' is-c' : '');
+      b.textContent = it.t;
+      if (it.off) { b.disabled = true; b.title = it.tip || ''; }
+      if (it.f) { b.addEventListener('click', function (e) { e.stopPropagation(); closeFlagMenu(); it.f(); }); }
+      return b;
+    }
+    function fillMenu(host, items) {
+      items.forEach(function (it) {
+        if (it.sep) { var s = document.createElement('div'); s.className = 'fl-sep'; host.appendChild(s); return; }
+        if (!it.sub) { host.appendChild(itemEl(it)); return; }
+        var w = document.createElement('div');
+        w.className = 'fl-has';
+        var b = itemEl(it);
+        b.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var was = w.classList.contains('is-open');
+          host.querySelectorAll('.fl-has.is-open').forEach(function (o) { o.classList.remove('is-open'); });
+          w.classList.toggle('is-open', !was);
+        });
+        var sub = document.createElement('div');
+        sub.className = 'fl-sub';
+        fillMenu(sub, it.sub);
+        w.appendChild(b); w.appendChild(sub);
+        host.appendChild(w);
+      });
+    }
+    function openFlagMenu(e, mode) {
+      flagMenu.innerHTML = '';
+      fillMenu(flagMenu, menuItems(mode));
+      var r = dk.getBoundingClientRect();
+      var k = r.width / 1512;
+      var fromBtn = e.currentTarget === moreBtn;
+      var x = fromBtn ? parseFloat(moreBtn.style.left) : (e.clientX - r.left) / k;
+      var y = fromBtn ? parseFloat(moreBtn.style.top) + 23 : (e.clientY - r.top) / k;
+      flagMenu.style.left = Math.min(x, 1512 - 210) + 'px';
+      flagMenu.style.top = y + 'px';
+      flagMenu.style.display = 'block';
+      moreBtn.classList.toggle('is-lit', fromBtn);
+    }
+    function pressRx() { drawFlagMeter(); phoneRxChanged(); }
+    function placeFlagParts(flagLeft, x) {
+      flagHit.style.left = flagLeft + 'px';
+      moreBtn.style.display = isOne() ? 'grid' : 'none';
+      moreBtn.style.left = (band.flipped ? x + 3 : x - 23) + 'px';
+      moreBtn.style.top = '55px';
+      levelCv.style.left = (flagLeft + 5) + 'px';
+      txLit.style.display = FM.tx ? 'block' : 'none';
+      txLit.style.left = (flagLeft + 197) + 'px';
+      antEl.style.display = FM.ant === 'ANT1' ? 'none' : 'block';
+      antEl.style.left = (flagLeft + 9) + 'px';
+      antEl.textContent = FM.ant;
+    }
+    var meterCv = document.createElement('canvas');
+    meterCv.className = 'dk__smeter';
+    meterCv.width = 560; meterCv.height = 246;
+    dk.appendChild(meterCv);
+    meterCv.addEventListener('contextmenu', function (e) { e.preventDefault(); e.stopPropagation(); closeUi(); openFlagMenu(e, 'rx'); });
+    meterCv.addEventListener('click', function (e) { e.stopPropagation(); closeUi(); });
+    var MS = { avg: -112, pk: -112, needle: -112 };
+    function meterNow() {
+      var t = Date.now() / 1000;
+      var idx = view.activeIdx;
+      var keyed = keyedYou() ? [] : view.keyedAt(idx);
+      var base = idx === 0 ? -72 : idx === 1 ? -76 : idx === 2 ? -83 : -100;
+      var raw = keyed.length ? Math.max(-114, base + voiceLevel(t, keyed[0].charCodeAt(0) + idx)) : -114 + Math.random() * 3;
+      MS.avg += (raw - MS.avg) * 0.06;
+      MS.pk = Math.max(raw, MS.pk - 0.5);
+      if (S.rx === 'Sig Avg') { return MS.avg; }
+      if (S.rx === 'Signal Peak') { return MS.pk; }
+      if (S.rx === 'Max Bin') {
+        // The strongest point of the passband on this pan: it reads what the trace shows.
+        var dx = xAt(slice.hz);
+        var lo = Math.max(0, Math.floor(dx - 2700 / geo.hzPerPx));
+        var hi = Math.min(bins - 1, Math.floor(dx));
+        var best = -140;
+        for (var b0 = lo; b0 <= hi; b0++) { if (cur[b0] > best) { best = cur[b0]; } }
+        return best;
+      }
+      return raw;
+    }
+    function drawFlagMeter() {
+      var v = meterNow();
+      paintLevel(levelCv.getContext('2d'), 244, 34, 2, v, isOne() ? rxTag(S.rx) : '', {
+        bgFill: '#0a0a0e', tick: '#7f93a6', bg: '#10101c', border: '#304050', top: 3, tickH: 14, dbmW: 60,
+        tickFont: '600 10px system-ui, -apple-system, sans-serif', dbmFont: '700 12px system-ui, -apple-system, sans-serif', digits: 0
+      });
+      MS.needle += (v - MS.needle) * (v > MS.needle ? 0.5 : 0.18);
+      paintFace(meterCv.getContext('2d'), MS.needle, v, S.rx);
+    }
 
     function tunePan(e) {
       if (keyedYou()) { return; }
-      closePeek();
+      if (!isOne()) { closePeek(); }
       var r = dk.getBoundingClientRect();
       var k = r.width / 1512;
       var x = (e.clientX - r.left) / k;
@@ -927,6 +1445,7 @@
         if (Math.abs(view.freqs[i].hz - hz) <= 1500) { view.activeIdx = i; slice.hz = view.freqs[i].hz; }
       }
       if (view.activeIdx < 0) { view.activeIdx = 0; slice.hz = hz; view.freqs[0].hz = hz; } // the on-air scene comes along, so the card's placement shows anywhere on the band
+      closeUi();
       draw();
     }
     spec.addEventListener('click', tunePan);
@@ -937,6 +1456,7 @@
     dk.appendChild(wfMark);
     function draw() {
       var x = xAt(slice.hz);
+      applyPan();
       wfMark.style.left = (x - 2700 / geo.hzPerPx) + 'px';
       band.flipped = x + flagW > band.right;
       var flagLeft = band.flipped ? x - flagW : x + 1;
@@ -945,16 +1465,20 @@
       marker.style.left = (x - 5) + 'px';
       fline.style.left = flagLeft + 'px'; fline.style.top = '165px'; fline.style.width = flagW + 'px';
       fline.innerHTML = flagInner(view.modelAt(view.activeIdx));
+      fline.classList.toggle('is-open', isOne() && !!view.insMine);
+      placeFlagParts(flagLeft, x);
       freqEl.style.cssText = 'left:' + (flagLeft + 100) + 'px;top:72px;width:138px;height:28px';
       var digits = (slice.hz / 1e6).toFixed(6);
       freqEl.textContent = digits.slice(0, -6 + 3) + '.' + digits.slice(-3);
       freqEl.style.display = slice.hz === 7185000 ? 'none' : 'block';
       txEl.style.display = keyedYou() ? 'block' : 'none';
+      renderIns();
       view.draw(band);
       band.x = xAt;
     }
     redrawers.push(function () {
       closeUi();
+      if (lastUx !== S.ux + S.look) { lastUx = S.ux + S.look; closePeek(); applet.classList.remove('is-open'); }
       if (S.look === 'today') { closePeek(); }
       draw();
       renderPeek();
@@ -1028,7 +1552,7 @@
       var dx = xAt(slice.hz);
       spc.fillStyle = 'rgba(0,160,190,0.16)';
       spc.fillRect((dx - 2700 / geo.hzPerPx) * 2, 0, (2700 / geo.hzPerPx) * 2, H);
-      var yOf = function (db) { return ((60 - geo.specTop) + (-50 - db) * (245 / 60)) * 2; };
+      var yOf = function (db) { return ((60 - geo.specTop) + (-50 - db) * (245 / 60) * specK) * 2; };
       for (var b = 0; b < bins; b++) { cur[b] += (r[b] - cur[b]) * 0.55; }
       var grad = spc.createLinearGradient(0, 0, 0, H);
       grad.addColorStop(0, 'rgba(10,120,145,0.55)');
@@ -1061,6 +1585,7 @@
         lastRow = now;
         var r = pushWf(Date.now() / 1000);
         drawSpec(r);
+        drawFlagMeter();
       }
       requestAnimationFrame(loop);
     }
@@ -1078,6 +1603,7 @@
     view.tickLive = function () {
       view.refreshLive();
       if (view.peekIdx != null && peekEl.firstChild) { refreshCard(peekEl.firstChild, peekOf(view.peekIdx)); }
+      if (view.insMine && peekEl.firstChild) { refreshCard(peekEl.firstChild, mineData(view.modelAt(view.activeIdx))); }
     };
     view.redrawCard = draw;
   }
@@ -1109,7 +1635,18 @@
     sheet.className = 'rc-psheet';
     p.root.appendChild(sheet);
 
+    var lastUx = S.ux + S.look;
     function closeActions() { actions.classList.remove('is-open'); }
+    // The sheet's own \u22ef: what is left once the sheet itself is the reading.
+    function openInsActions(m) {
+      var fmtName = S.fmt === 'S' ? 'S-units' : S.fmt === 'both' ? 'Both' : 'dBm';
+      actions.innerHTML = '<div class="rc-actions__h">' + freqShort(m.f) + ' MHz</div>' +
+        '<button type="button" data-a="fmt">Signal: ' + fmtName + ' \u00b7 Change</button>' +
+        '<button type="button" data-a="x">Cancel</button>';
+      actions.classList.add('is-open');
+      actions.querySelector('[data-a="fmt"]').onclick = function () { closeActions(); S.fmt = S.fmt === 'S' ? 'dbm' : S.fmt === 'dbm' ? 'both' : 'S'; redrawAll(); };
+      actions.querySelector('[data-a="x"]').onclick = closeActions;
+    }
     function openActions(m) {
       var fmtName = S.fmt === 'S' ? 'S-units' : S.fmt === 'both' ? 'Both' : 'dBm';
       actions.innerHTML = '<div class="rc-actions__h">People at ' + freqShort(m.f) + '</div>' +
@@ -1229,8 +1766,48 @@
       wireSend(sheet);
     }
     function peekOf(i) { return peekData(view, i, p.slices[p.active].target, view.keyedAt(i).length ? (i === 1 ? -82 : -92) : null); }
-    function closePeek() { view.peekIdx = null; sheet.classList.remove('is-open'); sheet.__peek = false; renderPad(); draw(); }
+    function closePeek() { view.peekIdx = null; view.insMine = false; sheet.classList.remove('is-open', 'is-ins'); sheet.__peek = false; renderPad(); draw(); }
+    // One sheet for every frequency. The same thing tapped again closes it.
+    function toggleIns(i) {
+      closeActions();
+      var mine = i === view.activeIdx;
+      if (columnShowing()) {
+        view.peekIdx = mine || view.peekIdx === i ? null : i;
+        renderPad();
+        draw();
+        return;
+      }
+      var same = sheet.__peek && (mine ? view.insMine : view.peekIdx === i);
+      if (same) { closePeek(); return; }
+      view.peekIdx = mine ? null : i;
+      view.insMine = mine;
+      renderInsSheet();
+      draw();
+    }
+    function renderInsSheet() {
+      var mine = !!view.insMine;
+      var i = view.peekIdx;
+      var d = mine ? mineData(view.modelAt(view.activeIdx)) : peekOf(i);
+      var draftEl = sheet.querySelector('.rc-send input');
+      var draft = draftEl ? draftEl.value : '';
+      sheet.__peek = true;
+      sheet.classList.add('is-open', 'is-ins');
+      sheet.innerHTML = '<button class="rc-psheet__grab" type="button" aria-label="Sheet handle"></button>' +
+        '<div class="rc-psheet__hd">' + (mine ? 'Roundtable <span style="color:#79a8d2;font-weight:600">' + freqShort(d.f) + '</span>' : '<button type="button" class="pk-back">\u2039 Back to my slice</button>') +
+        '<span class="sp"></span><button type="button" class="ic" data-a="more" aria-label="More">\u22ef</button><button type="button" class="ic" data-a="x" aria-label="Close">\u00d7</button></div>' +
+        '<div class="rc-detail"><div class="' + peekClass(d) + ' rc-peek--flat"><div class="rc__body">' + peekBody(d, keyedYou()) + (mine ? '<div class="pk-acts"><button type="button" class="pk-go" disabled title="Slice A is already here">Tune slice A here</button></div>' : '') + '</div></div>' + (mine ? '<div class="msg"><small>Messages</small><div><b>N4RDR</b> Good copy into Knoxville.</div><div><b>KD8LMN</b> Solid here, thanks.</div></div>' : viewingChat()) + '</div>' + (mine ? sendRow() : '');
+      var back = sheet.querySelector('.pk-back');
+      if (back) { back.onclick = function () { view.peekIdx = null; view.insMine = true; renderInsSheet(); draw(); }; }
+      sheet.querySelector('[data-a="x"]').onclick = closePeek;
+      sheet.querySelector('[data-a="more"]').onclick = function () { openInsActions(d); };
+      var tune = sheet.querySelector('[data-a="tune"]');
+      if (tune && !mine) { tune.onclick = function () { band.tune(view, i); closePeek(); }; }
+      var more = sheet.querySelector('[data-a="open"]');
+      if (more) { more.parentNode.removeChild(more); }
+      if (mine) { wireSend(sheet); var inp = sheet.querySelector('.rc-send input'); if (inp) { inp.value = draft; } }
+    }
     function openPeek(i) {
+      if (isOne()) { toggleIns(i); return; }
       view.peekIdx = i;
       if (columnShowing()) { renderPad(); return; }
       sheet.__peek = true;
@@ -1245,13 +1822,23 @@
       var more = sheet.querySelector('[data-a="open"]');
       more.parentNode.removeChild(more);
     }
-    if (kind === 'sheet') { setTimeout(function () { openSheet(view.modelAt(0)); }, 60); }
+    if (kind === 'sheet') { setTimeout(function () { if (isOne()) { toggleIns(view.activeIdx); } else { openSheet(view.modelAt(0)); } }, 60); }
 
     var band = {
       layer: layer, isPhone: true,
       get w() { return p.W; }, get h() { return p.specH; }, get top() { return 2; },
       get foot() { return p.specH - p.bandH - 6; }, get bandTop() { return p.specH - p.bandH; },
       left: kind === 'land' ? 46 : 3, get right() { return p.W - 28; },
+      // Landscape has no height to stand under the buttons: the card sits beside them instead.
+      cardTop: (isPad || kind === 'land') ? null : function () {
+        var bottom = 2;
+        var wrap = p.specWrap.getBoundingClientRect();
+        var k = wrap.width / (p.specWrap.offsetWidth || wrap.width);
+        p.root.querySelectorAll('[data-fbtns]').forEach(function (el) {
+          if (el.offsetParent !== null) { bottom = Math.max(bottom, (el.getBoundingClientRect().bottom - wrap.top) / k + 4); }
+        });
+        return bottom;
+      },
       cardW: isPad ? 232 : 176, minW: isPad ? 200 : 92, underFlag: isPad,
       x: function (hz) { return p.fx(hz); },
       flags: function () {
@@ -1265,12 +1852,15 @@
         });
         return out;
       },
-      peek: function (v, i) { closeActions(); openPeek(i); draw(); },
+      peek: function (v, i) { closeActions(); if (isOne()) { toggleIns(i); return; } openPeek(i); draw(); },
       saidByFlag: function (hz) {
         return p.slices.some(function (s, i) { return i !== p.active && s.target === hz && !s.flag.hidden; });
       },
       tune: function (v, i) { if (keyedYou()) { return; } v.activeIdx = i; p.tuneTo(v.freqs[i].hz); setTimeout(draw, 40); },
-      openCard: function (v, m) { openActions(m); }
+      openCard: function (v, m) {
+        if (isOne()) { toggleIns(v.activeIdx); return; }
+        openActions(m);
+      }
     };
     function flagLines() {
       p.root.querySelectorAll('.rt-fline').forEach(function (d, i) {
@@ -1303,9 +1893,132 @@
         var idx = Array.prototype.indexOf.call(p.root.querySelectorAll('.rt-fline'), fl);
         var at = -1;
         if (idx !== p.active) { view.freqs.forEach(function (q, k) { if (q.hz === p.slices[idx].target && k !== view.activeIdx) { at = k; } }); }
+        if (isOne()) { toggleIns(at >= 0 ? at : view.activeIdx); return; }
         if (at >= 0) { openPeek(at); draw(); } else { openSheet(view.modelAt(view.activeIdx)); }
       }
     }, true);
+    buildPhoneFlag();
+    function buildPhoneFlag() {
+      var more = document.createElement('div');
+      more.className = 'fl-pmenu';
+      p.root.appendChild(more);
+      var lists = {};
+      var rate = 192;
+      var openFor = -1;
+      var note = document.createElement('div');
+      note.className = 'dk__toast dk__toast--p';
+      p.root.appendChild(note);
+      var noteTimer = null;
+      function say(t) { note.textContent = t; note.classList.add('is-on'); clearTimeout(noteTimer); noteTimer = setTimeout(function () { note.classList.remove('is-on'); }, 2400); }
+      function choiceOf() { return S.rx === 'Sig Avg' ? 'Average' : S.rx === 'Max Bin' ? 'Max Bin' : 'Peak'; }
+      function close() { more.classList.remove('is-open'); openFor = -1; lists = {}; p.slices.forEach(function (s) { var b = s.fbtns.querySelector('[data-more]'); if (b) { b.classList.remove('is-lit'); } }); }
+      function row(t, opts) {
+        opts = opts || {};
+        return '<button type="button" class="fl-pit' + (opts.c ? ' is-c' : '') + (opts.sub ? ' is-sub' : '') + '"' + (opts.off ? ' disabled' : '') + ' data-k="' + opts.k + '">' + esc(t) + '</button>';
+      }
+      function render(i) {
+        var s = p.slices[i];
+        var h = '<div class="fl-ptitle">Slice ' + 'ABCD'.charAt(i) + ' \u00b7 More</div>' + row('Make this the TX slice', { k: 'tx' }) + '<div class="fl-psep"></div>';
+        h += row('Antenna >', { k: 'ant' });
+        if (lists.ant) { ['ANT1', 'ANT2', 'ANT3'].forEach(function (a) { h += row(a, { k: 'a:' + a, sub: 1, c: s.flag.querySelector('.vfo__ant--rx').textContent === a }); }); }
+        h += row('Sample rate >', { k: 'rate' });
+        if (lists.rate) { [48, 96, 192, 384, 768, 1536].forEach(function (r) { h += row(r + ' kHz', { k: 'r:' + r, sub: 1, c: rate === r }); }); }
+        h += row('S-meter: ' + choiceOf() + ' >', { k: 'sm' });
+        if (lists.sm) { [['Peak', 'Signal'], ['Average', 'Sig Avg'], ['Max Bin', 'Max Bin']].forEach(function (c) { h += row(c[0], { k: 'm:' + c[1], sub: 1, c: choiceOf() === c[0] }); }); }
+        h += '<div class="fl-psep"></div>' + row('Diversity...', { k: 'div' }) + row('Filter policy...', { k: 'fil', off: true }) + '<div class="fl-psep"></div>' + row('Remove slice', { k: 'rm', off: i === 0 });
+        more.innerHTML = h;
+      }
+      more.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+      more.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var b = e.target.closest('[data-k]');
+        if (!b || b.disabled) { return; }
+        var k = b.getAttribute('data-k');
+        var i = openFor;
+        var s = p.slices[i];
+        if (k === 'ant' || k === 'rate' || k === 'sm') { var was = lists[k]; lists = {}; lists[k] = !was; render(i); return; }
+        if (k.indexOf('a:') === 0) { s.flag.querySelector('.vfo__ant--rx').textContent = k.slice(2); close(); return; }
+        if (k.indexOf('r:') === 0) { rate = parseInt(k.slice(2), 10); say('Sample rate ' + rate + ' kHz'); close(); return; }
+        if (k.indexOf('m:') === 0) { S.rx = k.slice(2); phoneRxChanged(); close(); return; }
+        if (k === 'tx') { if (s.txBtns[0]) { s.txBtns[0].click(); } close(); return; }
+        if (k === 'div') { say('Opens Diversity, as it does today'); close(); return; }
+        if (k === 'rm') { say('Removes this slice, as it does today'); close(); }
+      });
+      p.root.addEventListener('pointerdown', function (e) { if (more.classList.contains('is-open') && !more.contains(e.target) && !e.target.closest('[data-more]')) { close(); } });
+      p.slices.forEach(function (s, i) {
+        s.fbtns.removeAttribute('aria-hidden');
+        s.fbtns.innerHTML = '<span class="fb' + (i === 0 ? ' is-dim' : '') + '" title="Close slice">\u2715</span>' +
+          '<button type="button" class="fb" data-lock aria-label="Lock">' + LOCK_OPEN + '</button>' +
+          '<button type="button" class="fb" data-more aria-label="More for slice">\u2022\u2022\u2022</button>';
+        var lock = s.fbtns.querySelector('[data-lock]');
+        var stop = function (e) { e.stopPropagation(); };
+        lock.addEventListener('pointerdown', stop);
+        lock.addEventListener('click', function (e) { e.stopPropagation(); var on = lock.classList.toggle('is-lit'); lock.innerHTML = on ? LOCK_SHUT : LOCK_OPEN; });
+        var mb = s.fbtns.querySelector('[data-more]');
+        mb.addEventListener('pointerdown', stop);
+        mb.addEventListener('click', function (e) {
+          e.stopPropagation();
+          closeActions();
+          if (openFor === i) { close(); return; }
+          close();
+          openFor = i;
+          render(i);
+          more.classList.add('is-open');
+          mb.classList.add('is-lit');
+        });
+      });
+      // The real side buttons are 44 points across, so the column stands off further.
+      var origPlace = p.place;
+      p.place = function () {
+        origPlace.apply(p, arguments);
+        p.slices.forEach(function (s) {
+          if (s.fbtns.hidden) { return; }
+          var fm = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(s.flag.style.transform || '');
+          var bm = /translate\(([-\d.]+)px/.exec(s.fbtns.style.transform || '');
+          if (!fm || !bm) { return; }
+          var fx = parseFloat(fm[1]);
+          var onLeft = parseFloat(bm[1]) > fx;
+          var bx = clamp(onLeft ? fx + s.flag.offsetWidth + 2 : fx - 46, 0, p.W - 44);
+          s.fbtns.style.transform = 'translate(' + bx.toFixed(1) + 'px, ' + fm[2] + 'px)';
+        });
+      };
+      p.place();
+      // The level bar with its tag: the reading follows the source.
+      var avg = {};
+      var pk = {};
+      var origMeters = p.drawMeters;
+      p.drawMeters = function () {
+        origMeters.apply(p, arguments);
+        p.slices.forEach(function (s, i) {
+          if (s.flag.hidden) { return; }
+          var raw = s.s;
+          avg[i] = avg[i] == null ? raw : avg[i] + (raw - avg[i]) * 0.06;
+          pk[i] = Math.max(raw, (pk[i] == null ? raw : pk[i]) - 0.5);
+          var v = S.rx === 'Sig Avg' ? avg[i] : S.rx === 'Max Bin' ? raw - 12 + Math.random() * 2 : raw;
+          paintLevel(s.level.getContext('2d'), s.level._lw, s.level._lh, s.level._scale, v, rxTag(S.rx), {
+            tick: '#828288', bg: '#050507', border: '#232329', top: 4, tickH: 8, dbmW: 60, tagColor: '#828288',
+            tickFont: '8px system-ui, -apple-system, sans-serif', tagFont: '700 8px system-ui, -apple-system, sans-serif', dbmFont: '700 10px system-ui, -apple-system, sans-serif', digits: 1
+          });
+        });
+      };
+      var origFace = p.drawSMeters;
+      p.drawSMeters = function () {
+        origFace.apply(p, arguments);
+        if (S.rx === 'Signal') { return; }
+        (p.smeters || []).forEach(function (cv) {
+          if (cv.offsetParent === null) { return; }
+          var c = cv.getContext('2d');
+          c.save();
+          c.setTransform(cv._scale || 1, 0, 0, cv._scale || 1, 0, 0);
+          c.font = '700 10px system-ui, sans-serif';
+          c.textAlign = 'center';
+          c.fillStyle = '#a6a6ac';
+          c.fillText(S.rx, (cv._lw || cv.offsetWidth) / 2, 12);
+          c.restore();
+        });
+      };
+      phoneRxHooks.push(function () { p.drawMeters(); });
+    }
     function syncKey() {
       var want = S.state === 'you' || S.state === 'youdbl';
       if (view.activeIdx !== 0) { want = false; }
@@ -1320,7 +2033,8 @@
       flagLines();
     }
     redrawers.push(function () {
-      if (sheet.__peek) { if (S.look === 'today') { closePeek(); } else { openPeek(view.peekIdx); } }
+      if (lastUx !== S.ux + S.look) { lastUx = S.ux + S.look; closePeek(); sheet.classList.remove('is-open'); }
+      if (sheet.__peek) { if (S.look === 'today') { closePeek(); } else if (isOne()) { renderInsSheet(); } else { openPeek(view.peekIdx); } }
       else if (sheet.classList.contains('is-open')) { openSheet(view.modelAt(view.activeIdx)); }
       renderPad();
       draw();
@@ -1370,6 +2084,7 @@
     view.tickLive = function () {
       view.refreshLive();
       if (sheet.__peek && view.peekIdx != null) { refreshCard(sheet, peekOf(view.peekIdx)); }
+      if (sheet.__peek && view.insMine) { refreshCard(sheet, mineData(view.modelAt(view.activeIdx))); }
       if (applet) {
         if (S.look === 'today') { if (++padTicks % 4 === 0) { renderPad(); } }
         else { refreshCard(applet, padView()); }

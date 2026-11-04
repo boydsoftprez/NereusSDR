@@ -11,7 +11,7 @@
 
 **Tech Stack:** Qt6/C++20 desktop (`QPainter` on the GPU tag layer and the CPU path), SwiftUI on iPhone and iPad, plain JavaScript and CSS on the web page, Python and Node for the page tests.
 
-**Spec:** [2026-11-03-roundtable-overlay-design.md](2026-11-03-roundtable-overlay-design.md). Every decision (D1 to D33) is settled there; this is how it gets built. The reference for every look is [board.html](2026-11-03-roundtable-overlay/board.html), Proposal look, with sources `overlay.js`, `overlay.css` and `web.css` beside it. Read those sources, not the 3 MB built file.
+**Spec:** [2026-11-03-roundtable-overlay-design.md](2026-11-03-roundtable-overlay-design.md). Every decision (D1 to D41) is settled there; this is how it gets built. The reference for every look is [board.html](2026-11-03-roundtable-overlay/board.html), Proposal look, with sources `overlay.js`, `overlay.css` and `web.css` beside it. Read those sources, not the 3 MB built file.
 
 ## Global Constraints
 
@@ -315,3 +315,140 @@ Modify:
 
 - [ ] **Step 1:** Run the combined focused checks once and report the summary lines.
 - [ ] **Step 2:** Write the test list. Commit any spec note.
+
+## Task 9: Desktop inspector body and placement
+
+**Requirements:** spec D19, D22, D34, D35, D37. The reference is the board's `inspectorBody`, `placeIns`, `renderIns` and `insButtons` in `docs/architecture/2026-11-03-roundtable-overlay/overlay.js`.
+
+**Files:**
+- Modify: `src/gui/roundtable/RoundtableTagLayout.{h,cpp}`, `src/gui/roundtable/RoundtableFrequencyPeek.{h,cpp}`
+- Test: `tests/tst_roundtable_frequency_peek.cpp`, `tests/tst_roundtable_tag_layout.cpp`
+
+**Interfaces:**
+- Consumes: `RoundtableViewModel` fields (`RoundtableTagLayout.h:281-292`), `placeRoundtableCard` (`RoundtableTagLayout.cpp:2099`), `runRoundtableView` people loop (`:2473-2509`), `paintRoundtableView`, the peek's `showFor`, `setSlice`, `refresh`, `fitToContents`.
+- Produces: `bool RoundtableViewModel::mine`; a pure `QRect placeRoundtableInspector(...)` returning the 300-wide spot on the foot line; `RoundtableFrequencyPeek::showOwn(...)`, `bool showsOwn() const`, `QRect inspectorRect() const`; signals `backRequested()`, `moreRequested(QPoint)`. Keep the class name; it is what tests and `MainWindow` use.
+
+**Acceptance:**
+- A view model with `mine` has no "Viewing" line and no Your pan row, and Tune is present, disabled, with the tooltip "Slice A is already here" on a non-empty slice name.
+- Viewing another frequency shows "Viewing · +1.4 kHz" with Back; pressing Back emits `backRequested` and tunes nothing.
+- `placeRoundtableInspector` is 300 wide with a minimum stretch of 260, stays inside the spectrum from its top to the foot line, stands on the foot, stays clear of flag rects, and uses the board's rule: at the stretch edge unless the dial lies inside it. Cases: tall pan, short pan (120 px usable), flag flipped, no free stretch.
+- A short pan folds unkeyed stations to one "Also here" line before anything else gives way. Keyed names never fold. Height and paint use one walk, so they cannot disagree.
+- What still does not fit scrolls by the wheel inside the body with a fade at the cut. Tune and Messages stay put. A wheel event still never reaches the band.
+- `aViewNeverBecomesATagKeepOutOrDirtiesTheStaticOverlay` keeps its dirty half: no static overlay invalidation. Its keep-out half changes as Task 10 says.
+- A value-only refresh still does not resize (`aValueOnlyRefreshDoesNotResizeTheView`).
+
+**Verification:** Risk: medium (UI, no radio). `QT_QPA_PLATFORM=offscreen ctest --test-dir build -R '^(tst_roundtable_frequency_peek|tst_roundtable_tag_layout)$' --output-on-failure`. Captures from `capturesForTheBoard`, opened and compared with the board.
+
+**Execution note (advisory):** opus. No radio or network. Prerequisite: the iOS CI fixes on the branch.
+
+- [ ] **Step 1:** Add `mine`, the wording, the Also here fold and the placement function, with their tests.
+- [ ] **Step 2:** Add the ⋯ button, the Viewing line with Back, the foot anchor and the scrolling body to the peek, with tests and captures looked at.
+
+## Task 10: Desktop routing: one toggle, swap and short menu
+
+**Requirements:** spec D21, D24, D25, D26, D27, D34, D36, D37.
+
+**Files:**
+- Modify: `src/gui/SpectrumWidget.{h,cpp}`, `src/gui/MainWindow.{h,cpp}`, `src/gui/VfoWidget.cpp` (flag line right-click only)
+- Test: `tests/tst_roundtable_desktop_flow.cpp`, `tests/tst_roundtable_tag_layout.cpp`
+
+**Interfaces:**
+- Consumes: Task 9's API. `roundtableTagClick` (`SpectrumWidget.cpp:13341-13378`), `buildRoundtableCardMenu` (`:13209-13236`), `openRoundtableCardMenu` (`:13238-13259`), the card block (`:13001-13011`), band-click emit (`:14608`), right-press branch (`:14369`), `viewRoundtableFrequency` (`MainWindow.cpp:7000-7020`), `openRoundtableForSlice` (`:7108`), `onRoundtablePeekClosed` (`:7092-7106`).
+- Produces: `MainWindow::toggleRoundtableInspector(pan, hz, family)` and `showOwnRoundtableInspector(pan)`; `SpectrumWidget::setRoundtableInspectorRect(QRect)`, so tags keep clear and the card is not drawn.
+
+**Acceptance (each a real click test, on a hosted window and a remote one):**
+- Clicking your card opens the inspector and hides the card; the same click closes it and the card returns. No read of your own room is started, because `RoundtablePanel::readRoom` calls `backToSlice` for it.
+- Clicking tag A then tag B swaps with no `closed` emitted in between and no slice moved. Clicking B again returns to the card.
+- A flag line toggles the same way. `roundtableReportsRequested` still opens the panel: split it from the toggle at `MainWindow.cpp:6814-6818`, or Messages would toggle.
+- A band click tunes and leaves the inspector open and showing the same thing (`:14608`, `:6813` removed). Landing on the viewed frequency turns it into your own in place, replacing the closes at `:6975-6979` and `:7066-7069`.
+- Tune moves the slice in the right mode, closes it, and the card returns. Keying greys Tune at once with the inspector open.
+- A tag right-click shows Open or Close inspector, Tune, Messages, Signal, tested before the pan's own menus at `:14369`. The flag line's right-click gets the same list. The own-card menu is gone; `.legacy` servers keep what they have.
+- A "+N" click lists the fold in the inspector; a row opens that frequency. Tags never overlap the inspector.
+- A pan without the active slice places it per D37. Removing a pan ends the view (`removingAPanEndsItsView` stays green).
+- `tst_spectrum_overlay_dirty` and the 1000-updates test stay green: tag and rect updates never invalidate the static overlay.
+
+**Verification:** Risk: medium; a mistake here can tune a radio, and the tests above pin that it does not. `QT_QPA_PLATFORM=offscreen ctest --test-dir build -R '^(tst_roundtable_desktop_flow|tst_roundtable_tag_layout|tst_roundtable_frequency_peek|tst_spectrum_overlay_dirty|tst_roundtable_panel)$' --output-on-failure`. Tests that pin the old behavior, named in the report: `aTagViewsAFrequencyWithoutTuning`, `aHostingWindowViewsAnotherSliceAndMovesNothing`, `aRemoteWindowViewsAnotherSliceAndMovesNothing`, `aTalkingCardStandsOnThePanAndClickingItOpensItsMenu`, `theCardMenuOffersReportsSignalAndTuneWithItsGates`, `yourOwnCompactTagOpensTheMenuAndAnotherViewsAndAFoldListsAndViews`, `theCardMenusTuneGoesToTheLiveTurn`, `aFoldsMenuIsParentedToTheWindow`. The fold geometry tests and legacy tests stay as they are.
+
+**Execution note (advisory):** opus. Flag in the PR: new GUI-thread signal routes only, no new thread. Prerequisite: Task 9.
+
+- [ ] **Step 1:** Add the toggle, own state and rect, with the click tests above.
+- [ ] **Step 2:** Replace the own-card menu and fold menu with the short menu and the fold list, updating the named tests in the same commit.
+
+## Task 11: Desktop flag ⋯ button and S-meter tag
+
+**Requirements:** spec D39, D40, D41.
+
+**Files:**
+- Modify: `src/gui/VfoWidget.{h,cpp}`, `src/gui/widgets/VfoLevelBar.{h,cpp}`, `src/gui/SMeterWidget.{h,cpp}`, `src/gui/MainWindow.cpp`
+- Test: `tests/tst_vfo_level_bar.cpp`, `tests/tst_pan_flag_positions.cpp`, `tests/tst_vfo_widget_slice_access.cpp`, `tests/tst_vfo_tooltip_coverage.cpp`
+
+**Interfaces:**
+- Consumes: `makeBtn` (`VfoWidget.cpp:3674-3683`), lock (`:3708-3732`), `positionFloatingButtons` (`:3837-3903`, array `:3873`), flag region (`:3915`, `:3988`, `:4219`), destroy (`:965`), `populateContextMenu` (`:4467-4617`), `setSmeter` (`:3157-3161`), `SMeterWidget::setRxMode` (`SMeterWidget.cpp:600`), selector (`MainWindow.cpp:11785-11798`).
+- Produces: `VfoLevelBar::setSourceTag(const QString&)`; `SMeterWidget::rxModeChanged(const QString&)`; `VfoWidget::setSMeterSource(const QString&, bool maxBinAvailable)` and signal `sMeterSourceRequested(const QString&)`.
+
+**Acceptance:**
+- The ⋯ button sits directly under the lock at the same 20x20 size, moves with the flag when it flips, has a tooltip, and is part of the flag region. It does not use `holdForListening`.
+- Pressing it opens the same list as right-click, one builder, compared item by item in a test.
+- The S-meter item is after Sample rate, marks the current source, and on a listened flag stays enabled while the shared actions stay disabled (`:4607-4615`).
+- Choosing a source through a flag moves the panel meter and every flag in the window. Changing it from the panel meter's own control updates every flag, which needs the new `rxModeChanged` because Global mode emits nothing today.
+- The bar prints MAX for Max Bin and AV for Sig Avg, nothing for Signal and Signal Peak, above the readout, and the readout never moves or clips. A tag switch alone repaints only the bar. Existing `tst_vfo_level_bar` cases stay.
+- The value matches the selector on a local radio and a remote Core. Max Bin greys with a reason when no pan shows the slice.
+- `SMeter_RxSelect` keeps its existing values; no new settings key. `tst_core_has_no_gui_includes` passes.
+
+**Verification:** Risk: medium (UI, no radio). `QT_QPA_PLATFORM=offscreen ctest --test-dir build -R '^(tst_vfo_level_bar|tst_pan_flag_positions|tst_vfo_widget_slice_access|tst_vfo_tooltip_coverage|tst_remote_tx_widgets|tst_app_icon|tst_roundtable_flag_line|tst_core_has_no_gui_includes)$' --output-on-failure`. A flag capture looked at beside the board. Real-radio reading agreement stays pending for JJ's hardware run.
+
+**Execution note (advisory):** opus. Prerequisite: none in this work; it shares only `MainWindow.cpp`, so it runs after Task 10 in the same tree.
+
+- [ ] **Step 1:** Add the button, one menu builder and the S-meter item with tests.
+- [ ] **Step 2:** Add `rxModeChanged`, the route and the bar's tag with tests and a capture looked at.
+
+## Task 12: iPhone and iPad one sheet
+
+**Requirements:** spec D22, D24, D25, D26, D27, D36, D38. iOS flag needs no change: `FlagMoreMenu` and `FlagLevelBar` already do D40 and D41.
+
+**Files:**
+- Modify: `ios/NereusApp/Main/MainScreen.swift`, `ios/NereusApp/Roundtable/RoundtableSheet.swift`, `RoundtableTagLayer.swift`, `RoundtableFrequencyView.swift`, `RoundtableApplet.swift`, `ios/NereusApp/Band/BandGestureLayer.swift`
+- Test: `ios/NereusApp/Tests/RoundtableToolsPageTests.swift`, `ios/NereusApp/UITests/RoundtableUITests.swift`, `RoundtableIPadUITests.swift`
+
+**Interfaces:**
+- Consumes: `tagTap` (`RoundtableTagLayer.swift:1657-1662`), card tap (`:1811-1818`), dialog (`:1732-1746`), `MainScreen.openRoundtable` (`:799-822`), `viewRoundtable` (`:826-852`), `closeRoundtable` (`:905-913`), `endViewing` (`:855-861`), the closes at `:646-651` and `:659-663`, `RoundtableFrequencyHost`.
+- Produces: `MainScreen.toggleRoundtable(target:)`, where the target is your own frequency or a viewed one.
+
+**Acceptance:**
+- Card, tag and flag line go through the toggle. The same target closes. Another swaps in place, keeping the sheet's current height (`:849` no longer forces half).
+- Your own frequency uses `RoundtableFrequencyHost` with Tune greyed and the reason shown, and the message box stays. Back returns to your own in place and does not close.
+- The sheet's ⋯ has Signal and Cancel. `.legacyDetails` keeps its dialog.
+- Dragging the band with the sheet open tunes and leaves the sheet open. The Tune button closes it. A swipe stays guarded while a sheet is up.
+- iPad: tags view in the column; the same tag returns to your own and stays in the applet. With the column hidden your own frequency uses the popover (D24), which toggles the same way.
+- Landscape iPhone: the card stands beside the side buttons, never under them.
+
+**Verification:** Risk: medium (UI, no radio). `-collect-test-diagnostics never -parallel-testing-enabled NO -jobs 2` on a simulator you boot, never the iPhone 18 Pro Max: the suites above, `SwipeShortcutsUITests`, `SMeterModelTests`, `ModesTabBindingTests/noRadioTablesInTheApp`, `TuneUnderLoadTests`. Screenshots on an iPhone and an iPad, looked at beside the board. Tests that pin the old behavior, named in the report: `reportCardActions`, `tagTapRules`, `ownTuneTarget`, `hostedTagViews`, `phoneViewFlow`, `tuneIsPinnedAtHalfHeight`, `flagLines`, `viewEnds`, `viewWords`, `viewShots`, `cardShots`, `testTheFlagLineScrollsTheColumnToTheApplet`, `testWithTheColumnHiddenTheLineOpensThePhoneSheet`.
+
+**Execution note (advisory):** opus. Prerequisite: the iOS CI fixes on the branch. Could run alongside Task 11 only with its own worktree; one lane is the default.
+
+- [ ] **Step 1:** Add the toggle and routing on iPhone with tests.
+- [ ] **Step 2:** Add your own frequency's body, the ⋯ and iPad, with tests and screenshots looked at.
+
+## Task 13: Check the whole and update the test list
+
+**Requirements:** spec Acceptance table rows for D34 to D41.
+
+**Files:**
+- Modify: `jj-test-list.md` in the crew workspace, not in the repository
+- Modify: `docs/architecture/2026-11-03-roundtable-overlay-design.md` (only to record a decision that changed during the build, with its reason)
+
+**Interfaces:**
+- Consumes: everything above.
+- Produces: the updated list of what JJ tests on his hardware.
+
+**Acceptance:**
+- The focused suites from Tasks 9 to 12, the earlier tasks' suites and `tst_core_has_no_gui_includes` pass together on the finished tree, and the web page's suites stay untouched and green if any page file changed.
+- `jj-test-list.md` sections that said the old thing are rewritten: the click on your own card, closing by a band click, your own flag line, and the phone's sheet. It adds the flag ⋯ and S meter on a real radio, local and remote, reading against the trace on Max Bin.
+
+**Verification:** Risk: low. The commands from the earlier tasks, run once.
+
+**Execution note (advisory):** opus; a combined run needs judgment on any failure. Prerequisite: Tasks 9 to 12.
+
+- [ ] **Step 1:** Run the combined focused checks once and report the summary lines.
+- [ ] **Step 2:** Update the test list. Commit any spec note.
+
