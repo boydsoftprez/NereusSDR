@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: One word for a double (overlay design D8). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-03: Present leading/trailing samples and verify current double identities explicitly.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Preserve immediate turn/message changes while coalescing
@@ -1974,7 +1976,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             const QJsonArray lastTalkers = last.value(QStringLiteral("talkers")).toArray();
             QString text;
             if (last.value(QStringLiteral("kind")).toString() == QLatin1String("doubled")) {
-                text = QStringLiteral("Last turn · Doubled · combined RF · %1 ago").arg(ageText(ago));
+                text = QStringLiteral("Last double · combined RF · %1 ago").arg(ageText(ago));
             } else if (roundtableTurnIsYours(room, last, false)) {
                 text = QStringLiteral("Last turn was yours, %1 ago").arg(ageText(ago));
             } else if (!lastTalkers.isEmpty()
@@ -1996,11 +1998,11 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             ? (!identitiesComplete ? (talkers.isEmpty() ? QStringLiteral("DOUBLE · NAMES UNAVAILABLE")
                                                        : QStringLiteral("DOUBLE · NAMES UPDATING"))
                : talkers.size() > 2 ? QStringLiteral("DOUBLE · %1 KEYED").arg(talkers.size()) : QStringLiteral("DOUBLE"))
-            : QStringLiteral("TWO AT ONCE"));
+            : QStringLiteral("DOUBLE"));
         overlapLabel->setObjectName(QStringLiteral("roundtableDoubleIdentityStatus"));
         col->addWidget(overlapLabel);
         // Roundtable plan Task 15: each talker's part (TX, the name, the
-        // "+" after it), then DOUBLED; where they do not fit one line of
+        // "+" after it), then DOUBLE; where they do not fit one line of
         // the room, each talker takes a line of its own.
         QList<QList<QWidget*>> parts;
         for (qsizetype i = 0; i < talkers.size(); ++i) {
@@ -2014,7 +2016,7 @@ void RoundtablePanel::rebuildTalker(const QJsonObject& room)
             }
             parts.append(part);
         }
-        QLabel* tag = makeLabel(body, frequency ? QStringLiteral("DOUBLE") : QStringLiteral("DOUBLED"), txTextColor(), kSmallPx, true);
+        QLabel* tag = makeLabel(body, QStringLiteral("DOUBLE"), txTextColor(), kSmallPx, true);
         tag->setStyleSheet(tag->styleSheet() + QStringLiteral(" background: %1; border: 1px solid"
                                                               " %2; padding: 0 4px;")
                                                    .arg(role(Style::kRedBg, "danger-bg"), doubledColor()));

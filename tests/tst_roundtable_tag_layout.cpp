@@ -21,6 +21,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: Overlay redesign truth rules and card model (design D1 to D9,
+//               D12, D13, D19). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: Created (Roundtable plan Task 14). J.J. Boyd (KG4VCF),
@@ -81,6 +84,30 @@ constexpr double kTagWidth = 80.0;
 constexpr double kGap = 4.0;
 // A pan short enough that the open toolbar reaches the tag row.
 constexpr int kShortPanHeight = 300;
+
+// A station as the directory and a view list it.
+QJsonObject cardPerson(const char* source, const char* ref, const char* call, qint64 hz, bool keyed)
+{
+    return QJsonObject{{"sourceRoom", source}, {"ref", ref}, {"callsign", call}, {"hz", hz},
+                       {"family", "lsb"}, {"keyed", keyed}};
+}
+
+QJsonObject cardTurn(qint64 id, const char* kind, qint64 hz, const char* source, qint64 start,
+                     const QList<QJsonObject>& talkers)
+{
+    QJsonArray names;
+    for (const QJsonObject& talker : talkers) { names.append(talker); }
+    return QJsonObject{{"id", id}, {"kind", kind}, {"hz", hz}, {"sourceRoom", source}, {"start", start},
+                       {"end", QJsonValue::Null}, {"talkers", names}};
+}
+
+// A listener with a present reading of a turn.
+QJsonObject cardReader(const char* source, const char* ref, const char* call, qint64 turn, double dbm, qint64 t)
+{
+    QJsonObject member = cardPerson(source, ref, call, 7185000, false);
+    member.insert("reading", QJsonObject{{"turn", turn}, {"dbm", dbm}, {"present", true}, {"t", t}});
+    return member;
+}
 
 RoundtableTag tagAt(const QString& id, qint64 hz, bool mine = false, bool mentionsMe = false)
 {
@@ -193,7 +220,7 @@ QList<RoundtableTag> panTags()
     tags.append(quiet);
     RoundtableTag doubled = tagAt(QStringLiteral("lsb-7250000"), 7250000);
     doubled.state = static_cast<int>(RoundtableGlyph::Doubled);
-    doubled.label = QStringLiteral("Doubled");
+    doubled.label = QStringLiteral("Double");
     tags.append(doubled);
     for (int i = 0; i < 5; ++i) {
         RoundtableTag close = tagAt(QStringLiteral("lsb-%1").arg(7185000 + i * 50), 7185000 + i * 50);
@@ -228,6 +255,52 @@ bool captureCard(RoundtableTag tag, const QStringList& rows, const QString& scen
     const auto* hit = hitFor(pan.widget, tag.roomId);
     return hit && image.copy(hit->rect.adjusted(-4, -4, 4, 4)).save(directory + QLatin1Char('/') + scene + QStringLiteral(".png"));
 }
+
+// A live frequency-capable model and a clock the test moves.
+struct CardRig {
+    NullLink link;
+    RoundtableState state;
+    RoundtableModel model;
+    qint64 now = 1800000000000LL;
+
+    CardRig()
+    {
+        link.frequency = true;
+        model.attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        RoundtableModel::setClockForTest([this] { return now; });
+        model.applyRooms(QJsonObject{{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+    }
+    ~CardRig()
+    {
+        RoundtableModel::setClockForTest({});
+        model.detach();
+    }
+    void directory(const QList<QJsonObject>& stations)
+    {
+        QJsonArray list;
+        for (const QJsonObject& station : stations) { list.append(station); }
+        model.applyRooms(QJsonObject{{"frequencyVersion", 1}, {"rooms", QJsonArray{
+            QJsonObject{{"id", "lsb-7184000"}, {"stations", list}}}}});
+    }
+    void view(qint64 hz, const QList<QJsonObject>& open, const QList<QJsonObject>& ended,
+              const QList<QJsonObject>& members)
+    {
+        const auto array = [](const QList<QJsonObject>& items) {
+            QJsonArray out;
+            for (const QJsonObject& item : items) { out.append(item); }
+            return out;
+        };
+        model.applyRoom(QJsonObject{{"id", QStringLiteral("lsb-%1").arg(hz)}, {"view", "frequency"},
+            {"family", "lsb"}, {"hz", hz}, {"members", array(members)}, {"now", array(open)},
+            {"earlier", array(ended)}, {"messages", QJsonArray{}}});
+    }
+    RoundtableCardModel card(qint64 hz, RoundtablePeakTracker* peaks = nullptr) const
+    {
+        return roundtableCardModelFor(&model, {}, RoundtableModel::frequencyContextId(hz, QStringLiteral("lsb")),
+                                      static_cast<quint64>(hz), peaks);
+    }
+};
 
 } // namespace
 
@@ -360,7 +433,13 @@ private slots:
         auto rows = roundtableTagReportLines(tags.first(), view, 27000);
         QCOMPARE(rows.first(), QStringLiteral("Talking: W1AW"));
         QVERIFY(rows.contains(QStringLiteral("K4ABC  -73  25s stale")));
+        // Off the dial but within 5 kHz: the nearest live turn, its readings.
         turn.insert("hz", 7185500);
+        view.insert("now", QJsonArray{turn});
+        rows = roundtableTagReportLines(tags.first(), view, 27000);
+        QCOMPARE(rows.first(), QStringLiteral("Talking: W1AW"));
+        QVERIFY(rows.contains(QStringLiteral("K4ABC  -73  25s stale")));
+        turn.insert("hz", 7185123 + 5001);
         view.insert("now", QJsonArray{turn});
         QCOMPARE(roundtableTagReportLines(tags.first(), view, 27000), QStringList{});
         turn.insert("hz", 7185123);
@@ -460,9 +539,13 @@ private slots:
         // this source's turn, even when an endpoint is unavailable.
         rows = roundtableTagReportLines(tag, view, 27000);
         QVERIFY(rows.join(' ').contains(QStringLiteral("Combined RF")));
+        // With neither, the room center is still the nearest live turn (D3).
         c.insert("hz", 7185999); view.insert("members", QJsonArray{c});
-        QVERIFY(roundtableTagReportLines(tag, view, 27000).isEmpty());
+        QVERIFY(roundtableTagReportLines(tag, view, 27000).first().startsWith(QStringLiteral("Double")));
         turn.insert("kind", "unknown"); view.insert("now", QJsonArray{turn});
+        QCOMPARE(roundtableTagReportLines(tag, view, 27000).first(), QStringLiteral("Unknown signal"));
+        // Past the window it says nothing.
+        turn.insert("hz", 7185123 + 5001); view.insert("now", QJsonArray{turn});
         QVERIFY(roundtableTagReportLines(tag, view, 27000).isEmpty());
     }
 
@@ -1072,7 +1155,7 @@ private slots:
         QCOMPARE(tags.at(0).members, 9);
         QVERIFY(tags.at(0).mine);
         QVERIFY(!tags.at(0).mentionsMe);
-        QCOMPARE(tags.at(1).label, QStringLiteral("Doubled"));
+        QCOMPARE(tags.at(1).label, QStringLiteral("Double"));
         QCOMPARE(tags.at(1).state, static_cast<int>(RoundtableGlyph::Doubled));
         QCOMPARE(tags.at(2).label, QStringLiteral("Unknown"));
         QCOMPARE(tags.at(2).state, static_cast<int>(RoundtableGlyph::Unknown));
@@ -1112,6 +1195,333 @@ private slots:
         model.detach();
     }
 
+    void meterRunsOnTheFlagScale()
+    {
+        QCOMPARE(roundtableMeterFraction(-121.0), 0.0);
+        QCOMPARE(roundtableMeterFraction(-33.0), 1.0);
+        QCOMPARE(roundtableMeterFraction(-200.0), 0.0);
+        QCOMPARE(roundtableMeterFraction(0.0), 1.0);
+        QCOMPARE(roundtableMeterFraction(-77.0), 0.5);
+    }
+
+    void peakRisesAtOnceFallsTwoDbASecondAndResetsOnANewTurn()
+    {
+        RoundtablePeakTracker peaks;
+        const QString room = QStringLiteral("lsb-7184000");
+        const QString rx = QStringLiteral("rx");
+        QCOMPARE(peaks.update(room, rx, 1, -80.0, 1000), -80.0);
+        QCOMPARE(peaks.update(room, rx, 1, -60.0, 1000), -60.0);
+        QCOMPARE(peaks.update(room, rx, 1, -90.0, 3000), -64.0);
+        // Never below the reading itself.
+        QCOMPARE(peaks.update(room, rx, 1, -50.0, 3000), -50.0);
+        QCOMPARE(peaks.update(room, rx, 1, -90.0, 103000), -90.0);
+        peaks.update(room, rx, 1, -40.0, 104000);
+        QCOMPARE(peaks.update(room, rx, 2, -70.0, 104000), -70.0);
+        // Another listener, and the same ref in another source room, hold apart.
+        QCOMPARE(peaks.update(room, QStringLiteral("other"), 2, -85.0, 104000), -85.0);
+        QCOMPARE(peaks.update(QStringLiteral("lsb-7188000"), rx, 2, -95.0, 104000), -95.0);
+        QCOMPARE(peaks.update(room, rx, 2, -100.0, 104000), -70.0);
+    }
+
+    void keyedStationsMerelyNearEachOtherAreNotADouble()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185000, true);
+        const QJsonObject b = cardPerson("lsb-7188000", "b", "K4ABC", 7188000, true);
+        rig.directory({a, b});
+        QVERIFY(!roundtableIsDouble({}, QJsonArray{a, b}, 7187000, QStringLiteral("lsb")));
+        for (const RoundtableTag& tag : roundtableTagsFor(&rig.model, {})) {
+            QCOMPARE(tag.state, static_cast<int>(RoundtableGlyph::Talking));
+        }
+        // No view yet, and with an open turn each: the nearest talker either way.
+        for (bool withView : {false, true}) {
+            if (withView) {
+                rig.view(7187000, {cardTurn(1, "talking", 7185000, "lsb-7184000", 100, {a}),
+                                   cardTurn(2, "talking", 7188000, "lsb-7188000", 200, {b})}, {}, {a, b});
+            }
+            const RoundtableFlagLine flag = roundtableFlagLineFor(&rig.model, 0, 7187000, QStringLiteral("lsb"));
+            QCOMPARE(flag.glyph, static_cast<int>(RoundtableGlyph::Talking));
+            QCOMPARE(flag.text, QStringLiteral("Roundtable · 2 · K4ABC"));
+            const RoundtableCardModel card = rig.card(7187000);
+            QCOMPARE(card.kind, RoundtableCardModel::Kind::Talking);
+            QCOMPARE(card.keyed, QStringList{QStringLiteral("K4ABC")});
+        }
+    }
+
+    void aDoubleNamesBothOnAnyFrequency()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185000, true);
+        const QJsonObject b = cardPerson("lsb-7184000", "b", "K4ABC", 7185040, true);
+        rig.directory({a, b});
+        // Known only from the directory: two keyed in one source room, on tags
+        // of their own 40 Hz apart, neither active.
+        const QStringList both{QStringLiteral("W1AW"), QStringLiteral("K4ABC")};
+        const QList<RoundtableTag> directoryOnly = roundtableTagsFor(&rig.model, {},
+            RoundtableModel::frequencyContextId(7100000, QStringLiteral("lsb")));
+        QCOMPARE(directoryOnly.size(), 2);
+        for (const RoundtableTag& tag : directoryOnly) {
+            QCOMPARE(tag.state, static_cast<int>(RoundtableGlyph::Doubled));
+            QCOMPARE(tag.label, QStringLiteral("Double"));
+            QCOMPARE(QSet<QString>(tag.keyed.cbegin(), tag.keyed.cend()), QSet<QString>(both.cbegin(), both.cend()));
+        }
+        QCOMPARE(rig.card(7185000).kind, RoundtableCardModel::Kind::Double);
+        QCOMPARE(rig.card(7185000).keyed, both);
+        // An open doubled turn, the room's center on the wire: active or not.
+        const QJsonObject turn = cardTurn(5, "doubled", 7184000, "lsb-7184000", 100, {a, b});
+        rig.view(7185000, {turn}, {}, {a, b});
+        const QString context = RoundtableModel::frequencyContextId(7185000, QStringLiteral("lsb"));
+        for (const QString& active : {context, RoundtableModel::frequencyContextId(7100000, QStringLiteral("lsb"))}) {
+            for (const RoundtableTag& tag : roundtableTagsFor(&rig.model, {}, active)) {
+                if (tag.roomId == context) {
+                    QCOMPARE(tag.state, static_cast<int>(RoundtableGlyph::Doubled));
+                    QCOMPARE(tag.keyed, both);
+                }
+            }
+        }
+        const RoundtableCardModel card = rig.card(7185000);
+        QCOMPARE(card.kind, RoundtableCardModel::Kind::Double);
+        QCOMPARE(card.keyed, both);
+        QCOMPARE(card.clockMs, rig.now - 100);
+        QVERIFY(roundtableFlagLineFor(&rig.model, 0, 7185000, QStringLiteral("lsb")).text.endsWith(QStringLiteral("Double")));
+    }
+
+    void theTurnShownIsExactThenNearestThenLatest()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185040, true);
+        const QJsonObject b = cardPerson("lsb-7184000", "b", "K4ABC", 7186000, true);
+        const QJsonObject c = cardPerson("lsb-7188000", "c", "N3XYZ", 7188000, true);
+        const QJsonObject ta = cardTurn(1, "talking", 7185040, "lsb-7184000", 100, {a});
+        const QJsonObject tb = cardTurn(2, "talking", 7186000, "lsb-7184000", 200, {b});
+        const QJsonObject tc = cardTurn(3, "talking", 7188000, "lsb-7188000", 300, {c});
+        const auto shown = [&rig](qint64 hz) { return rig.card(hz).keyed.join(QLatin1Char(',')); };
+        // 40 Hz off the dial: found, and the view says so too.
+        rig.view(7185000, {ta}, {}, {a});
+        QCOMPARE(shown(7185000), QStringLiteral("W1AW"));
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185000"), 7185000);
+        QCOMPARE(roundtableTagReportLines(tag, rig.model.room(tag.roomId), rig.now).first(), QStringLiteral("Talking: W1AW"));
+        // 1 kHz beats 3 kHz, in either list order and whichever started last.
+        rig.view(7185000, {tb, tc}, {}, {b, c});
+        QCOMPARE(shown(7185000), QStringLiteral("K4ABC"));
+        // An exact turn beats a nearer-started one.
+        rig.view(7186000, {tb, ta}, {}, {a, b});
+        QCOMPARE(shown(7186000), QStringLiteral("K4ABC"));
+        // Equal distance: the later start.
+        QJsonObject below = cardTurn(4, "talking", 7184000, "lsb-7184000", 900, {a});
+        rig.view(7185000, {tb, below}, {}, {a, b});
+        QCOMPARE(shown(7185000), QStringLiteral("W1AW"));
+        below.insert("start", 50);
+        rig.view(7185000, {below, tb}, {}, {a, b});
+        QCOMPARE(shown(7185000), QStringLiteral("K4ABC"));
+        // The window is inclusive.
+        rig.view(7181040, {ta}, {}, {a});
+        QCOMPARE(rig.card(7181040).kind, RoundtableCardModel::Kind::Talking);
+        rig.view(7180039, {ta}, {}, {a});
+        QCOMPARE(rig.card(7180039).kind, RoundtableCardModel::Kind::Quiet);
+        rig.view(7180040, {ta}, {}, {a});
+        QCOMPARE(rig.card(7180040).kind, RoundtableCardModel::Kind::Talking);
+    }
+
+    void afterADoubleTheNewTurnStartsEmptyAndSaysSo()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185040, true);
+        const QJsonObject b = cardPerson("lsb-7184000", "b", "K4ABC", 7185000, false);
+        const qint64 ended = rig.now - 3500;
+        QJsonObject doubled = cardTurn(5, "doubled", 7184000, "lsb-7184000", ended - 9000, {a, b});
+        doubled.insert("end", ended);
+        const QJsonObject single = cardTurn(6, "talking", 7185040, "lsb-7184000", ended, {a});
+        const QJsonObject rx = cardReader("lsb-7184000", "rx", "VK3ABC", 5, -61, ended - 100);
+        rig.view(7185000, {single}, {doubled}, {a, b, rx});
+        RoundtableCardModel card = rig.card(7185000);
+        QCOMPARE(card.kind, RoundtableCardModel::Kind::Talking);
+        QVERIFY(card.rows.isEmpty());
+        QCOMPARE(card.note, QStringLiteral("Double ended 3s ago"));
+        // A new turn's readings arrive one by one.
+        const QJsonObject heard = cardReader("lsb-7184000", "rx", "VK3ABC", 6, -70, rig.now);
+        rig.view(7185000, {single}, {doubled}, {a, b, heard});
+        card = rig.card(7185000);
+        QCOMPARE(card.rows.size(), 1);
+        QCOMPARE(card.rows.first().dbm, -70.0);
+        rig.now = ended + 7999;
+        QCOMPARE(rig.card(7185000).note, QStringLiteral("Double ended 7s ago"));
+        rig.now = ended + 8000;
+        QVERIFY(rig.card(7185000).note.isEmpty());
+    }
+
+    void aLiveDoubleDropsTheDepartedAndAnEndedOneKeepsEveryName()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185000, true);
+        const QJsonObject b = cardPerson("lsb-7184000", "b", "K4ABC", 7185000, true);
+        const QJsonObject c = cardPerson("lsb-7184000", "c", "N3XYZ", 7185000, false);
+        QJsonObject turn = cardTurn(5, "doubled", 7185000, "lsb-7184000", 100, {a, b, c});
+        rig.view(7185000, {turn}, {}, {a, b, c});
+        RoundtableCardModel card = rig.card(7185000);
+        QCOMPARE(card.kind, RoundtableCardModel::Kind::Double);
+        QCOMPARE(card.keyed, (QStringList{QStringLiteral("W1AW"), QStringLiteral("K4ABC")}));
+        turn.insert("end", rig.now - 1000);
+        rig.view(7185000, {}, {turn}, {a, b, c});
+        card = rig.card(7185000);
+        QCOMPARE(card.kind, RoundtableCardModel::Kind::LastDouble);
+        QCOMPARE(card.keyed, (QStringList{QStringLiteral("W1AW"), QStringLiteral("K4ABC"), QStringLiteral("N3XYZ")}));
+        QCOMPARE(card.endedAgoMs, 1000);
+    }
+
+    void aLiveTalkerIsNeverCaptionedAsPast()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185040, true);
+        QJsonObject old = cardTurn(4, "talking", 7185000, "lsb-7184000", rig.now - 60000, {a});
+        old.insert("end", rig.now - 50000);
+        const QJsonObject live = cardTurn(5, "talking", 7185040, "lsb-7184000", 100, {a});
+        rig.view(7185000, {live}, {old}, {a});
+        QCOMPARE(rig.card(7185000).kind, RoundtableCardModel::Kind::Talking);
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185000"), 7185000);
+        const QStringList rows = roundtableTagReportLines(tag, rig.model.room(tag.roomId), rig.now);
+        QVERIFY2(!rows.join(' ').contains(QStringLiteral("Last")), qPrintable(rows.join('\n')));
+        // With no open turn, it is history.
+        rig.view(7185000, {}, {old}, {a});
+        QCOMPARE(rig.card(7185000).kind, RoundtableCardModel::Kind::LastTalker);
+        QCOMPARE(roundtableTagReportLines(tag, rig.model.room(tag.roomId), rig.now).first(), QStringLiteral("Last talker: W1AW"));
+    }
+
+    void aDroppedLinkFreezesAndHiddenOnlyDims()
+    {
+        using LinkState = RoundtableModel::LinkState;
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185000, true);
+        const QJsonObject rx = cardReader("lsb-7184000", "rx", "VK3ABC", 5, -61, rig.now - 1000);
+        rig.view(7185000, {cardTurn(5, "talking", 7185000, "lsb-7184000", rig.now - 4000, {a})}, {}, {a, rx});
+        RoundtablePeakTracker peaks;
+        RoundtableCardModel card = rig.card(7185000, &peaks);
+        QVERIFY(!card.frozen);
+        QVERIFY(card.note.isEmpty());
+        QVERIFY(card.rows.first().hasPeak);
+
+        rig.state.applyStationValue("linkState", static_cast<int>(LinkState::Reconnecting));
+        card = rig.card(7185000, &peaks);
+        QVERIFY(card.frozen);
+        QCOMPARE(card.kind, RoundtableCardModel::Kind::Talking);
+        QCOMPARE(card.note, QStringLiteral("Reconnecting"));
+        // No tick, and the ages keep counting.
+        QVERIFY(!card.rows.first().hasPeak);
+        QCOMPARE(card.rows.first().ageMs, 1000);
+        rig.now += 5000;
+        QCOMPARE(rig.card(7185000, &peaks).rows.first().ageMs, 6000);
+
+        rig.state.applyStationValue("linkState", static_cast<int>(LinkState::Offline));
+        card = rig.card(7185000, &peaks);
+        QVERIFY(card.frozen);
+        QCOMPARE(card.note, QStringLiteral("Offline"));
+        // 1800000000000 is 08:00 UTC. The clock stops where the link dropped.
+        const qint64 turnStart = rig.now - 9000;
+        rig.view(7185000, {cardTurn(5, "talking", 7185000, "lsb-7184000", turnStart, {a})}, {}, {a, rx});
+        rig.state.applyStationValue("linkSince", rig.now - 1000);
+        card = rig.card(7185000, &peaks);
+        QCOMPARE(card.note, QStringLiteral("Offline since 08:00 UTC"));
+        QCOMPARE(card.clockMs, 8000);
+
+        rig.state.applyStationValue("linkState", static_cast<int>(LinkState::Hidden));
+        card = rig.card(7185000, &peaks);
+        QVERIFY(!card.frozen);
+        QCOMPARE(card.note, QStringLiteral("You are hidden"));
+        QCOMPARE(roundtableTagDisplayFor(&rig.model), RoundtableTagDisplay::Dimmed);
+    }
+
+    void rowsArePresentListenersNeverTransmitters()
+    {
+        CardRig rig;
+        QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185000, true);
+        QJsonObject b = cardPerson("lsb-7184000", "b", "K4ABC", 7185000, true);
+        a.insert("reading", cardReader("lsb-7184000", "a", "W1AW", 5, -50, rig.now).value("reading"));
+        b.insert("reading", cardReader("lsb-7184000", "b", "K4ABC", 5, -50, rig.now).value("reading"));
+        QJsonObject far = cardReader("lsb-7184000", "far", "VK3ABC", 5, -61, rig.now - 1000);
+        far.insert("km", 15000.4); far.insert("bearingDeg", 95); far.insert("offsetHz", -40);
+        QJsonObject near = cardReader("lsb-7184000", "near", "KG4VCF", 5, -70, rig.now - 1000);
+        near.insert("km", 12); near.insert("bearingDeg", 200); near.insert("you", true);
+        QJsonObject gone = cardReader("lsb-7184000", "gone", "N0GONE", 5, -80, rig.now - 1000);
+        QJsonObject goneReading = gone.value("reading").toObject();
+        goneReading.insert("present", false);
+        gone.insert("reading", goneReading);
+        QJsonObject stranger = cardReader("lsb-7188000", "far", "W0RONG", 5, -80, rig.now - 1000);
+        QJsonObject otherTurn = cardReader("lsb-7184000", "other", "W0OLD", 4, -80, rig.now - 1000);
+
+        rig.view(7185000, {cardTurn(5, "talking", 7185000, "lsb-7184000", 100, {a})}, {},
+                 {a, far, near, gone, stranger, otherTurn});
+        RoundtableCardModel card = rig.card(7185000);
+        QCOMPARE(card.rows.size(), 2);
+        QCOMPARE(card.rows.at(0).call, QStringLiteral("KG4VCF"));
+        QVERIFY(card.rows.at(0).you);
+        QCOMPARE(card.rows.at(0).km, std::optional<int>(12));
+        QCOMPARE(card.rows.at(1).call, QStringLiteral("VK3ABC"));
+        QCOMPARE(card.rows.at(1).km, std::optional<int>(15000));
+        QCOMPARE(card.rows.at(1).bearingDeg, std::optional<int>(95));
+        QCOMPARE(card.rows.at(1).offsetHz, -40);
+
+        // Combined RF: the same rows, no path, and no transmitter.
+        const QJsonObject doubled = cardTurn(5, "doubled", 7185000, "lsb-7184000", 100, {a, b});
+        rig.view(7185000, {doubled}, {}, {a, b, far, near, gone, stranger, otherTurn});
+        card = rig.card(7185000);
+        QCOMPARE(card.kind, RoundtableCardModel::Kind::Double);
+        QCOMPARE(card.rows.size(), 2);
+        for (const RoundtableCardRow& row : card.rows) {
+            QVERIFY(!row.km.has_value());
+            QVERIFY(!row.bearingDeg.has_value());
+        }
+        // Still blank once it is history.
+        QJsonObject ended = doubled;
+        ended.insert("end", rig.now - 1000);
+        rig.view(7185000, {}, {ended}, {a, b, far});
+        card = rig.card(7185000);
+        QCOMPARE(card.kind, RoundtableCardModel::Kind::LastDouble);
+        QCOMPARE(card.rows.size(), 1);
+        QVERIFY(!card.rows.first().km.has_value());
+    }
+
+    void anOldRowLosesItsPeak()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185000, true);
+        const QJsonObject atLimit = cardReader("lsb-7184000", "limit", "K1AA", 5, -60, rig.now - 20000);
+        const QJsonObject past = cardReader("lsb-7184000", "past", "K2BB", 5, -60, rig.now - 20001);
+        const QJsonObject turn = cardTurn(5, "talking", 7185000, "lsb-7184000", 100, {a});
+        rig.view(7185000, {turn}, {}, {a, atLimit, past});
+        RoundtablePeakTracker peaks;
+        RoundtableCardModel card = rig.card(7185000, &peaks);
+        QCOMPARE(card.rows.size(), 2);
+        QVERIFY(!card.rows.at(0).old);
+        QVERIFY(card.rows.at(0).hasPeak);
+        QCOMPARE(card.rows.at(0).peakDbm, -60.0);
+        QVERIFY(card.rows.at(1).old);
+        QVERIFY(!card.rows.at(1).hasPeak);
+        // Without a tracker there is nothing to hold.
+        QVERIFY(!rig.card(7185000).rows.at(0).hasPeak);
+        // An ended turn holds no peak: it has stopped moving.
+        QJsonObject ended = turn;
+        ended.insert("end", rig.now - 1000);
+        const QJsonObject fresh = cardReader("lsb-7184000", "limit", "K1AA", 5, -60, rig.now - 1000);
+        rig.view(7185000, {}, {ended}, {a, fresh});
+        QVERIFY(!rig.card(7185000, &peaks).rows.first().hasPeak);
+    }
+
+    void nobodyOnTheFrequencyIsQuietWithThePeopleListed()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185000, false);
+        QJsonObject second = a;
+        second.insert("slice", 1);
+        const QJsonObject elsewhere = cardPerson("lsb-7184000", "b", "K4ABC", 7185040, false);
+        rig.directory({a, second, elsewhere});
+        const RoundtableCardModel card = rig.card(7185000);
+        QCOMPARE(card.kind, RoundtableCardModel::Kind::Quiet);
+        QCOMPARE(card.hz, quint64(7185000));
+        QCOMPARE(card.people, QStringList{QStringLiteral("W1AW")});
+        QVERIFY(card.keyed.isEmpty());
+        QCOMPARE(roundtableCardModelFor(nullptr, {}, {}, 7185000, nullptr).kind, RoundtableCardModel::Kind::Quiet);
+    }
+
     void offlineGreysConnectingHides()
     {
         NullLink link;
@@ -1124,10 +1534,10 @@ private slots:
             {LinkState::Off, RoundtableTagDisplay::Hidden},
             {LinkState::Connecting, RoundtableTagDisplay::Hidden},
             {LinkState::Live, RoundtableTagDisplay::Live},
-            {LinkState::Reconnecting, RoundtableTagDisplay::Live},
+            {LinkState::Reconnecting, RoundtableTagDisplay::Frozen},
             // You are hidden: everything as when live, dimmed.
             {LinkState::Hidden, RoundtableTagDisplay::Dimmed},
-            {LinkState::Offline, RoundtableTagDisplay::Stale}};
+            {LinkState::Offline, RoundtableTagDisplay::Frozen}};
         for (const auto& [link_state, display] : cases) {
             state.applyStationValue("linkState", static_cast<int>(link_state));
             QCOMPARE(roundtableTagDisplayFor(&model), display);
@@ -1351,6 +1761,12 @@ private slots:
         const QImage stale = pan.draw();
         QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 4);
         QCOMPARE(QColor(stale.pixel(edge)).name(), QStringLiteral("#606066"));
+
+        // A dropped link draws the same: no live color (D7).
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Frozen);
+        const QImage frozen = pan.draw();
+        QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 4);
+        QCOMPARE(QColor(frozen.pixel(edge)).name(), QStringLiteral("#606066"));
 
         pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Hidden);
         pan.draw();

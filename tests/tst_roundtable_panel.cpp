@@ -1634,7 +1634,8 @@ private slots:
             QStringList labels;
             for (QLabel* label : body->findChildren<QLabel*>()) { labels.append(label->text()); }
             const QString text = labels.join(QLatin1Char(' '));
-            QVERIFY(text.contains(QStringLiteral("Doubled · combined RF")));
+            QVERIFY(text.contains(QStringLiteral("Last double · combined RF")));
+            QVERIFY(!text.contains(QStringLiteral("Doubled")));
             QVERIFY(!text.contains(QStringLiteral("Last turn was yours")));
             QVERIFY(!text.contains(QStringLiteral("Last turn by W1TLK")));
         }

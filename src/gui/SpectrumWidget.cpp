@@ -12680,7 +12680,7 @@ bool roundtableTagsEqual(const QList<RoundtableTag>& a, const QList<RoundtableTa
         const RoundtableTag& y = b.at(i);
         if (x.roomId != y.roomId || x.hz != y.hz || x.state != y.state || x.label != y.label
             || x.members != y.members || x.mine != y.mine || x.active != y.active || x.mentionsMe != y.mentionsMe
-            || x.stations != y.stations || x.reportLines != y.reportLines) {
+            || x.stations != y.stations || x.keyed != y.keyed || x.reportLines != y.reportLines) {
             return false;
         }
     }
@@ -12753,7 +12753,9 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         || m_bandwidthHz <= 0.0 || specRect.width() <= 0) {
         return;
     }
-    const bool stale = m_roundtableTagDisplay == RoundtableTagDisplay::Stale;
+    // A dropped link draws no live color (overlay design D7).
+    const bool stale = m_roundtableTagDisplay == RoundtableTagDisplay::Stale
+        || m_roundtableTagDisplay == RoundtableTagDisplay::Frozen;
     // You are hidden: the rooms as when live, each state's marking dimmed
     // (roundtableDimmedColor, the workspace look's role).
     const bool dimmed = m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed;
@@ -12998,7 +13000,8 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
         {
             QPainter gp(&glyph);
             paintRoundtableGlyph(gp, QPointF(6.0, 6.0), kRoundtableGlyphSize, tag.state,
-                                 m_roundtableTagDisplay == RoundtableTagDisplay::Stale,
+                                 m_roundtableTagDisplay == RoundtableTagDisplay::Stale
+                                     || m_roundtableTagDisplay == RoundtableTagDisplay::Frozen,
                                  m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed);
         }
         const QString text = QStringLiteral("%1   %2   %3")

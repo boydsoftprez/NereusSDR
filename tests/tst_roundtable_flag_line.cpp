@@ -176,7 +176,7 @@ private slots:
 
         const RoundtableFlagLine doubled = roundtableFlagLineFor(&station.model, 1);
         QCOMPARE(doubled.text, QStringLiteral("Roundtable") + kDot + QStringLiteral("4") + kDot
-                                   + QStringLiteral("Doubled"));
+                                   + QStringLiteral("Double"));
         QCOMPARE(doubled.glyph, glyph(RoundtableGlyph::Doubled));
         const RoundtableFlagLine unknown = roundtableFlagLineFor(&station.model, 2);
         QCOMPARE(unknown.text, QStringLiteral("Roundtable") + kDot + QStringLiteral("3") + kDot
@@ -403,14 +403,14 @@ private slots:
             QStringLiteral("Roundtable") + kDot + QStringLiteral("Reconnecting"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("Nobody here"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("Unknown"),
-            QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("Doubled"),
+            QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("Double"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("99 hear you"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
                 + QStringLiteral("KC1ABC/MM"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
                 + QStringLiteral("Unknown"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
-                + QStringLiteral("Doubled"),
+                + QStringLiteral("Double"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("Nobody here")};
         for (const QString& text : longest) {
             // In the font the widget draws this text in.

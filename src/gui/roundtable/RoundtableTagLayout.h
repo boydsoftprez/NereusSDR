@@ -8,7 +8,7 @@
 // U10; mockups placement.html and the tag and flag parts of board.html).
 //
 // Panadapter tags: one per room along the foot of the spectrum, each the
-// state glyph, the talker's callsign (or Unknown, Doubled, Quiet) and the
+// state glyph, the talker's callsign (or Unknown, Double, Quiet) and the
 // member count. layoutRoundtableTags() is the pure part: where each tag
 // goes across the pan and which ones fold.
 //
@@ -31,6 +31,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: Overlay redesign truth rules and structured card model:
+//               roundtableIsDouble, roundtableCardModelFor,
+//               RoundtablePeakTracker, roundtableMeterFraction and the Frozen
+//               display (design D1 to D9, D12, D13, D19). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-02: Expose passive card rows and current overlap participants.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
@@ -52,6 +57,7 @@
 #include "gui/NereusGuiExport.h"
 
 #include <QColor>
+#include <QHash>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QList>
@@ -59,6 +65,9 @@
 #include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <QVector>
+
+#include <optional>
 
 class QPainter;
 class QFontMetrics;
@@ -84,12 +93,13 @@ struct RoundtableTag {
     QString roomId;
     qint64 hz = 0;           // the room's center
     int state = 0;           // a RoundtableGlyph
-    QString label;           // the talker's callsign, You, Unknown, Doubled or Quiet
+    QString label;           // the talker's callsign, You, Unknown, Double or Quiet
     int members = 0;
     bool mine = false;       // any of your slices' rooms
     bool active = false;     // selected listening context; independent of mine
     bool mentionsMe = false; // a message there names you
     QJsonArray stations;     // unique scoped people at this exact context
+    QStringList keyed;       // who is on the air here; a Double lists each current participant
     QStringList reportLines; // matching last talker, attributed reporter rows, or Read reports
 };
 
@@ -153,16 +163,84 @@ NEREUS_GUI_EXPORT QList<RoundtableTagPlacement> layoutRoundtableTags(const QList
 /// How a pan shows its tags (design 11.1, U4): offline greys them as last
 /// known, connecting hides them. Dimmed is live while you are hidden: the
 /// rooms and talkers as when live, the state marking dimmed.
-enum class RoundtableTagDisplay { Hidden, Live, Stale, Dimmed };
+/// Frozen is a dropped link, Reconnecting or Offline (overlay design D7): last
+/// known, drawn grey as Stale is, with no live color.
+enum class RoundtableTagDisplay { Hidden, Live, Stale, Dimmed, Frozen };
 
 /// The tags for every room in `model`'s band list. `sliceIds` are this
 /// station's slices: their rooms are mine. Empty without a model.
 NEREUS_GUI_EXPORT QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* model,
                                                          const QList<int>& sliceIds, const QString& activeContext = {});
-/// Hidden while Roundtable is off, unavailable or connecting; Stale while
-/// offline; Dimmed while you are hidden (you still see everything, D21);
-/// Live otherwise (live or reconnecting).
+/// Hidden while Roundtable is off, unavailable or connecting; Frozen while
+/// reconnecting or offline; Dimmed while you are hidden (you still see
+/// everything, D21); Live otherwise.
 NEREUS_GUI_EXPORT RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model);
+
+/// Where a reading sits on a card's meter, the flag's S scale: -121 dBm is
+/// empty and -33 dBm is full (overlay design D11).
+NEREUS_GUI_EXPORT double roundtableMeterFraction(double dbm);
+
+/// One listener's reading on the card (overlay design D11). In a double the
+/// reading is combined RF, so km and bearingDeg stay empty (D2). A row past 20
+/// seconds is old and has no peak tick (D13).
+struct RoundtableCardRow {
+    QString call;
+    double dbm = 0.0;
+    qint64 ageMs = 0;
+    std::optional<int> km;
+    std::optional<int> bearingDeg;
+    int offsetHz = 0;
+    bool you = false;
+    bool old = false;
+    double peakDbm = 0.0;
+    bool hasPeak = false;
+};
+
+/// What the card for one frequency says.
+struct RoundtableCardModel {
+    enum class Kind { Talking, You, Double, Unknown, LastTalker, LastDouble, Quiet };
+    Kind kind = Kind::Quiet;
+    quint64 hz = 0;
+    QStringList keyed;      // on the air, or every name for a LastDouble
+    QStringList people;     // the stations at this exact frequency
+    qint64 clockMs = 0;     // how long a live turn has run; stops where a link dropped
+    qint64 endedAgoMs = 0;  // how long ago a Last turn ended
+    QVector<RoundtableCardRow> rows;
+    bool frozen = false;    // Reconnecting or Offline (D7)
+    QString note;           // the link's note, else "Double ended 3s ago" for 8 seconds
+};
+
+/// The held peak for each listener (overlay design D12). Client side only:
+/// never persisted or sent. It rises at once, falls 2 dB a second and resets on
+/// a new turn id, per source room and listener. The caller owns it.
+class NEREUS_GUI_EXPORT RoundtablePeakTracker {
+public:
+    /// Takes a reading and returns the peak to show.
+    double update(const QString& sourceRoom, const QString& ref, qint64 turnId, double dbm, qint64 nowMs);
+
+private:
+    struct Held {
+        qint64 turnId = 0;
+        double peakDbm = 0.0;
+        qint64 atMs = 0;
+    };
+    QHash<QString, QHash<QString, Held>> m_rooms;
+    int m_entries = 0;
+};
+
+/// Whether a frequency is a Double right now (overlay design D1). With a view
+/// of that frequency, only when the turn it shows (D3) is an open doubled turn.
+/// With an empty `view`, known only from `stations` (directory entries), when
+/// two or more keyed stations within 5 kHz in `family` share one source room.
+NEREUS_GUI_EXPORT bool roundtableIsDouble(const QJsonObject& view, const QJsonArray& stations, qint64 hz,
+                                          const QString& family);
+
+/// The card for frequency `hz`, read from `model`'s view of `activeContext`
+/// (with no context, the room of the first of `sliceIds`) and its directory.
+/// `peaks` may be null: rows then have no peak.
+NEREUS_GUI_EXPORT RoundtableCardModel roundtableCardModelFor(const RoundtableModel* model, const QList<int>& sliceIds,
+                                                             const QString& activeContext, quint64 hz,
+                                                             RoundtablePeakTracker* peaks);
 
 /// What a VFO flag's Roundtable line shows.
 struct RoundtableFlagLine {
