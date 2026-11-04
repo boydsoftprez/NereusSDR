@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03 - Extract unchanged track/fill/marker painting operations for
+//                 the optional bar Instrument face. J.J. Boyd (KG4VCF),
+//                 assisted by OpenAI Codex.
 //   2026-10-13 — Sourced feedback ranges and original Qt instruments;
 //                 J.J. Boyd (KG4VCF), assisted by OpenAI Codex.
 // =================================================================
@@ -54,6 +57,7 @@ mw0lge@grange-lane.co.uk
 
 #pragma once
 #include "gui/PureSignalViewStyle.h"
+#include "gui/InstrumentBarDrawing.h"
 #include "core/dsp/Ps3Snapshot.h"
 #include <QLabel>
 #include <QPainter>
@@ -119,20 +123,16 @@ protected:
         painter.setFont(textFont);
         const QRectF bar(3, 4, width() - 6, 12);
         const auto x = [&bar](double value) { return bar.left() + value / kPsFeedbackVisualMaximum * bar.width(); };
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(PureSignalViewStyle::border());
-        painter.drawRoundedRect(bar, 3, 3);
-        painter.setBrush(QColor(psFeedbackColour(150).red(), psFeedbackColour(150).green(),
-            psFeedbackColour(150).blue(), 65));
-        painter.drawRect(QRectF(x(kPsFeedbackBoundaries[1] + 1), bar.top(),
-            x(kPsFeedbackBoundaries[2]) - x(kPsFeedbackBoundaries[1] + 1), bar.height()));
+        InstrumentBarDrawing::track(painter, bar, PureSignalViewStyle::border(),
+            QRectF(x(kPsFeedbackBoundaries[1] + 1), bar.top(),
+                x(kPsFeedbackBoundaries[2]) - x(kPsFeedbackBoundaries[1] + 1), bar.height()),
+            QColor(psFeedbackColour(150).red(), psFeedbackColour(150).green(), psFeedbackColour(150).blue(), 65));
         if (m_available) {
-            painter.setBrush(WorkspacePreview::roleColour(QColor("#7098bb"), "accent"));
-            painter.drawRoundedRect(QRectF(bar.left(), bar.top() + 4,
-                x(std::clamp(m_level, 0, kPsFeedbackVisualMaximum)) - bar.left(), 4), 2, 2);
-            painter.setPen(QPen(PureSignalViewStyle::text(), 2));
-            painter.drawLine(QPointF(x(std::clamp(m_level, 0, kPsFeedbackVisualMaximum)), 1),
-                QPointF(x(std::clamp(m_level, 0, kPsFeedbackVisualMaximum)), 19));
+            InstrumentBarDrawing::fill(painter, QRectF(bar.left(), bar.top() + 4,
+                x(std::clamp(m_level, 0, kPsFeedbackVisualMaximum)) - bar.left(), 4),
+                WorkspacePreview::roleColour(QColor("#7098bb"), "accent"));
+            InstrumentBarDrawing::marker(painter, QPointF(x(std::clamp(m_level, 0, kPsFeedbackVisualMaximum)), 1),
+                QPointF(x(std::clamp(m_level, 0, kPsFeedbackVisualMaximum)), 19), PureSignalViewStyle::text(), 2);
         }
         painter.setPen(PureSignalViewStyle::muted());
         const std::array<int, 5> ticks{0, kPsFeedbackBoundaries[0] + 1,

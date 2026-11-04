@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02: Keep independent active/detail frequency streams acknowledged.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -3209,6 +3211,7 @@ void StationClient::onTransportText(const QByteArray& wire)
             && !m_radioModel.isNull() && m_radioModel->roundtableModel() != nullptr) {
             m_roundtableStreams.clear();
             m_roundtableReadStream.clear();
+            m_roundtableFrequencyReadStreams.clear();
             m_radioModel->roundtableModel()->clearStationRooms();
             invokeCommand("records.subscribe",
                           {MirrorUpdate{0, "stream", MirrorWireKind::Utf8,
@@ -3218,8 +3221,13 @@ void StationClient::onTransportText(const QByteArray& wire)
                                             RoundtableModel::kRoomsCapacity))}});
             syncRoundtableStreams();
             const QString reading = m_radioModel->roundtableModel()->readingRoomId();
-            if (!reading.isEmpty()) {
+            if (!reading.isEmpty() && !RoundtableModel::isFrequencyContext(reading)) {
                 requestRoundtableRead(reading);
+            }
+            for (const QString& context : m_radioModel->roundtableModel()->wantedFrequencyContexts()) {
+                const QString address = context.mid(10);
+                const qsizetype dash = address.indexOf(QLatin1Char('-'));
+                requestRoundtableReadAt(address.mid(dash + 1).toLongLong(), address.left(dash));
             }
         }
         // Parity Task 22 (R-R3-49): the Core's log follows again for the
@@ -7513,10 +7521,8 @@ StationClient::CommandOutcome StationClient::requestRoundtableUnreadAt(qint64 hz
     const QString context = RoundtableModel::frequencyContextId(hz, family);
     const auto result = sendRoundtableCommand("roundtable.unreadAt", {
         countArgument("hz", static_cast<quint64>(hz)), stringArgument("family", family)}, QString(), context);
-    if (m_roundtableReadStream == RoundtableModel::roomStreamName(context)) {
-        m_roundtableReadStream.clear();
-        syncRoundtableStreams();
-    }
+    m_roundtableFrequencyReadStreams.remove(RoundtableModel::roomStreamName(context));
+    syncRoundtableStreams();
     return result;
 }
 
@@ -7633,6 +7639,7 @@ void StationClient::syncRoundtableStreams()
     if (!m_roundtableReadStream.isEmpty()) {
         wanted.insert(m_roundtableReadStream);
     }
+    wanted.unite(m_roundtableFrequencyReadStreams);
     const QSet<QString> followed = m_roundtableStreams;
     for (const QString& stream : followed) {
         if (!wanted.contains(stream)) {
@@ -7703,10 +7710,14 @@ bool StationClient::handleRoundtableResult(const SessionMessage& message)
     }
     if (verb == QLatin1String("read") || verb == QLatin1String("readAt")) {
         const QString stream = value("stream");
-        // Only the room the window still reads; a later read replaced it.
-        if (!stream.isEmpty() && rooms->readingRoomId() == command.roomId
-            && stream == RoundtableModel::roomStreamName(command.roomId)) {
-            m_roundtableReadStream = stream;
+        // An active listening view and a detail view can coexist. A late
+        // answer for a context neither owner wants must not restore it.
+        const bool frequency = verb == QLatin1String("readAt");
+        const bool wanted = frequency ? rooms->wantedFrequencyContexts().contains(command.roomId)
+                                      : rooms->readingRoomId() == command.roomId;
+        if (!stream.isEmpty() && wanted && stream == RoundtableModel::roomStreamName(command.roomId)) {
+            if (frequency) { m_roundtableFrequencyReadStreams.insert(stream); }
+            else { m_roundtableReadStream = stream; }
             syncRoundtableStreams();
         }
     }

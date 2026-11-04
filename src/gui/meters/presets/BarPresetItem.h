@@ -1,5 +1,7 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-11-03 - Existing bar Instrument face, adapting Brian Sutton's
+//                 PR #731 proposal. J.J. Boyd (KG4VCF), with OpenAI Codex.
 //   2026-10-26 - typeIdForFlavor, the one flavor-to-type conversion.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - TxStage and txStage(): the TX stage an EQ, Leveler,
@@ -92,11 +94,11 @@ public:
     void configureAsMic();
     void configureAsAlc();
     void configureAsCustom(int bindingId, double minV, double maxV, const QString& label);
-    QString typeId() const;
     // The container type a flavor names: Custom is meter.customBar, every
     // other known flavor meter.<flavor> with its first letter lowercased
     // (AdcMax: meter.adcMax). Empty for an unknown flavor.
     static QString typeIdForFlavor(const QString& flavor);
+    QString typeId() const;
     static QStringList variants();
     bool configureVariant(const QString& flavor);
     // New items (makeEntry) take the kBarPresetThetisDefaults row for their
@@ -129,6 +131,9 @@ public:
     QJsonObject configuration() const;
     bool applyConfiguration(const QJsonObject&);
     double calibratedPosition(double) const;
+    // Runtime container input is never serialized over the saved face policy.
+    QString resolvedFace() const { return m_face==QLatin1String("Container") ? m_containerFace : m_face; }
+    bool setContainerFace(const QString& face);
     double primaryValue() const { return m_primary.value(); }
     double averageValue() const { return m_average.value(); }
     double peakValue() const { return m_primary.maxHistory(); }
@@ -153,6 +158,7 @@ private:
     QColor m_marker = Qt::yellow, m_background{32,32,32}, m_title{169,169,169};
     QColor m_historyColor{255,0,0,128};
     bool m_showHistory = true, m_peakHold = false, m_showValue = true, m_showPeakValue = true;
+    QString m_face = QStringLiteral("Classic"), m_containerFace = QStringLiteral("Classic");
     QString m_style = QStringLiteral("Line"), m_units = QStringLiteral("dB");
     int m_interval = 100, m_historyMs = 2000, m_ignoreMs = 2000, m_rowHeight = 72;
     MeterDynamics m_primary, m_average;

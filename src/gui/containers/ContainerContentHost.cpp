@@ -399,6 +399,9 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
         for (int i=0;i<m_rows.size();++i) {
             auto& row = m_rows[i]; const auto& entry=document.contents[i];
             row.context=effectiveContext(document,entry);
+            if(auto* bar=qobject_cast<BarPresetItem*>(row.item.data()); bar && bar->setContainerFace(document.config.value("meterFace").toString("Classic"))) {
+                if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {meter->invalidatePresentation(bar);}
+            }
             if (!entry.typeId.startsWith("applet:")) { continue; }
             QWidget* view=m_registry.singletonView(entry.typeId);
             const bool claim=m_registry.claimSingleton(entry.typeId,entry.id);
@@ -560,6 +563,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
             item->setProperty("unsupportedSourceReason", QStringLiteral("This legacy canvas contains different slice sources; move this entry to a stack to read its source"));
             item->setProperty("containerUnsupportedSource",true);
         }
+        if(auto* bar=qobject_cast<BarPresetItem*>(item)) {bar->setContainerFace(document.config.value("meterFace").toString("Classic"));}
         item->setProperty("containerSourceContext", row.context);
         item->setProperty("containerEntryId", entry.id);
         connectItemConfigNotifier(item, entry.id);
@@ -689,6 +693,9 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                 }
             }
             if(row.item) {row.item->setZOrder(entry.paintOrder);}
+            if(auto* bar=qobject_cast<BarPresetItem*>(row.item.data()); bar && bar->setContainerFace(document.config.value("meterFace").toString("Classic"))) {
+                if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {meter->invalidatePresentation(bar);}
+            }
             if(auto* meter=qobject_cast<MeterWidget*>(row.widget.data())) {m_meters.append(meter);}
         }
         if(!row.widget) {

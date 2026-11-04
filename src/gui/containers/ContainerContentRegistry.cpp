@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-11-01 - Original PureSignal-style bar proposal by Brian Sutton
+//                 (PR #731). Adapted as an existing bar face option on
+//                 2026-11-03 by J.J. Boyd (KG4VCF), with OpenAI Codex.
 //   2026-10-26 - PR 677 review fix wave (I6): the colours an item's user
 //                 picked are saved under the userColours context key, only
 //                 when there is one.

@@ -779,7 +779,7 @@ private slots:
             view.insert(QStringLiteral("members"), QJsonArray{heard, wrong});
             p.model.applyRoom(view);
             settle();
-            QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("none")});
+            QTRY_COMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("none")});
             QVERIFY(child<QPushButton>(&panel, QStringLiteral("roundtableSignalValue"))->accessibleName().contains(QStringLiteral("none")));
         }
         panel.setSliceContext(7249000, QStringLiteral("lsb"));
@@ -790,6 +790,171 @@ private slots:
         if (!capture.isEmpty()) {
             QVERIFY(panel.grab().save(capture + QStringLiteral("/desktop-frequency-panel.png")));
         }
+    }
+
+    void browsingDetailsKeepsTheActiveFrequencySubscribed()
+    {
+        Posed p;
+        p.link.frequency = true;
+        p.model.applyRooms({{QStringLiteral("frequencyVersion"), 1}, {QStringLiteral("rooms"), p.model.rooms()}});
+        RoundtablePanel panel(&p.model);
+        panel.followSlice(0);
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        panel.hide();
+        QCOMPARE(p.link.calls.count(QStringLiteral("readAt 7185123 lsb")), 1);
+        panel.readRoom(RoundtableModel::frequencyContextId(7249000, QStringLiteral("lsb")));
+        QCOMPARE(p.model.readingRoomId(), RoundtableModel::frequencyContextId(7249000, QStringLiteral("lsb")));
+        QCOMPARE(p.model.activeFrequencyContext(), RoundtableModel::frequencyContextId(7185123, QStringLiteral("lsb")));
+        QCOMPARE(p.link.calls.count(QStringLiteral("unreadAt 7185123 lsb")), 0);
+        QCOMPARE(p.link.calls.count(QStringLiteral("readAt 7249000 lsb")), 1);
+        panel.backToSlice();
+        QCOMPARE(p.link.calls.count(QStringLiteral("unreadAt 7249000 lsb")), 1);
+        QCOMPARE(p.link.calls.count(QStringLiteral("readAt 7185123 lsb")), 1);
+    }
+
+    void liveDoubleShowsCurrentParticipantsAndCombinedReceiverRows()
+    {
+        Posed p;
+        p.link.frequency = true;
+        p.model.applyRooms({{"frequencyVersion", 1}, {"rooms", p.model.rooms()}});
+        QJsonObject a = member(QStringLiteral("a"), QStringLiteral("W1AW"), 10, QJsonValue::Null);
+        QJsonObject b = member(QStringLiteral("b"), QStringLiteral("K4ABC"), 20, QJsonValue::Null);
+        QJsonObject c = member(QStringLiteral("c"), QStringLiteral("N3XYZ"), 30, QJsonValue::Null);
+        for (QJsonObject* person : {&a, &b, &c}) {
+            person->insert("sourceRoom", kRoom); person->insert("keyed", true);
+            person->insert("hz", 7185123);
+        }
+        QJsonObject receiver = member(QStringLiteral("rx"), QStringLiteral("VK3ABC/P"), 100,
+            QJsonObject{{"present", true}, {"turn", 30}, {"dbm", -61}, {"t", g_now - 1000}});
+        receiver.insert("sourceRoom", kRoom);
+        QJsonObject overlap = turn(30, QStringLiteral("doubled"), {a, b, c}, g_now - 30000, QJsonValue::Null);
+        overlap.insert("sourceRoom", kRoom); overlap.insert("hz", 7185000);
+        QJsonObject view = roomOf(QStringLiteral("lsb-7185123"), {overlap}, {}, {}, {a, b, c, receiver});
+        view.insert("view", "frequency");
+        p.model.applyRoom(view);
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 1400); panel.followSlice(0); panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        panel.show(); settle();
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableTalkerName")).size(), 3);
+        QVERIFY(texts(&panel, QStringLiteral("roundtableReadingsTitle")).join(' ').contains(QStringLiteral("COMBINED RF")));
+        c.insert("keyed", false);
+        c.insert("reading", QJsonObject{{"present", true}, {"turn", 30}, {"dbm", -73}, {"t", g_now - 1000}});
+        view.insert("members", QJsonArray{a, b, c, receiver});
+        p.model.applyRoom(view); settle();
+        QVERIFY(!texts(&panel, QStringLiteral("roundtableTalkerName")).contains(QStringLiteral("N3XYZ")));
+        QVERIFY(texts(&panel, QStringLiteral("roundtableReadingCall")).contains(QStringLiteral("N3XYZ")));
+        QCOMPARE(panel.findChildren<QFrame*>(QStringLiteral("roundtableReadingRow")).size(), 2);
+        view.insert("members", QJsonArray{a, receiver});
+        p.model.applyRoom(view); settle();
+        QVERIFY(!texts(&panel, QStringLiteral("roundtableTalkerName")).contains(QStringLiteral("K4ABC")));
+        QVERIFY(!texts(&panel, QStringLiteral("roundtableTalkerName")).contains(QStringLiteral("N3XYZ")));
+        QVERIFY(texts(&panel, QStringLiteral("roundtableDoubleIdentityStatus")).join(' ').contains(QStringLiteral("UPDATING")));
+        overlap.insert("end", g_now);
+        QJsonObject single = turn(31, QStringLiteral("talking"), {a}, g_now, QJsonValue::Null);
+        single.insert("sourceRoom", kRoom); single.insert("hz", 7185123);
+        b.insert("keyed", false);
+        view.insert("now", QJsonArray{single}); view.insert("earlier", QJsonArray{overlap});
+        view.insert("members", QJsonArray{a, b, c, receiver});
+        p.model.applyRoom(view); settle();
+        QCOMPARE(panel.findChildren<QFrame*>(QStringLiteral("roundtableReadingRow")).size(), 0);
+        QVERIFY(!texts(&panel, QStringLiteral("roundtableReadingsTitle")).join(' ').contains(QStringLiteral("COMBINED RF")));
+    }
+
+    void reportBurstsPresentTheLeadingAndTrailingSamples()
+    {
+        Posed p; p.link.frequency = true;
+        p.model.applyRooms({{"frequencyVersion", 1}, {"rooms", p.model.rooms()}});
+        QJsonObject heard = member(QStringLiteral("a"), QStringLiteral("W4ABC"), 128,
+            QJsonObject{{"turn", 30}, {"dbm", -73}, {"t", g_now}, {"present", true}});
+        QJsonObject view = roomOf(kRoom, {turn(30, QStringLiteral("talking"),
+            {talker(QStringLiteral("t"), QStringLiteral("W1TLK"))}, g_now - 1000, QJsonValue::Null)}, {}, {}, {heard});
+        view.insert("view", "frequency");
+        p.model.applyRoom(view);
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 1400); panel.followSlice(0); panel.setSliceContext(7185000, QStringLiteral("lsb"));
+        panel.show(); settle();
+        const auto report = [&](int dbm) {
+            QJsonObject reading = heard.value("reading").toObject(); reading.insert("dbm", dbm);
+            heard.insert("reading", reading); view.insert("members", QJsonArray{heard}); p.model.applyRoom(view);
+        };
+        report(-74);
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("-74")});
+        report(-75); report(-76);
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("-74")});
+        QTRY_COMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("-76")});
+        heard.insert("callsign", "K4NEW"); view.insert("members", QJsonArray{heard}); p.model.applyRoom(view);
+        QVERIFY(texts(&panel, QStringLiteral("roundtableReadingCall")).contains(QStringLiteral("K4NEW")));
+    }
+
+    void busyFrequencyReportsKeepReadingControlsAndFocus()
+    {
+        Posed p;
+        p.link.frequency = true;
+        p.model.applyRooms({{QStringLiteral("frequencyVersion"), 1},
+                            {QStringLiteral("rooms"), p.model.rooms()}});
+        QJsonObject heard = member(QStringLiteral("a"), QStringLiteral("W4ABC"), 128,
+            QJsonObject{{QStringLiteral("turn"), 30}, {QStringLiteral("dbm"), -73},
+                        {QStringLiteral("t"), g_now - 2000}, {QStringLiteral("present"), true}});
+        QJsonObject view = roomOf(kRoom,
+            {turn(30, QStringLiteral("talking"),
+                  {talker(QStringLiteral("t"), QStringLiteral("W1TLK"))},
+                  g_now - 30000, QJsonValue::Null)}, {}, {}, {heard});
+        view.insert(QStringLiteral("view"), QStringLiteral("frequency"));
+        p.model.applyRoom(view);
+        RoundtablePanel panel(&p.model);
+        panel.resize(340, 1400);
+        panel.followSlice(0);
+        panel.setSliceContext(7185000, QStringLiteral("lsb"));
+        panel.show();
+        settle();
+        auto* header = child<QWidget>(&panel, QStringLiteral("roundtableHeaderBody"));
+        auto* button = child<QPushButton>(&panel, QStringLiteral("roundtableSignalValue"));
+        QVERIFY(header && button);
+        button->setFocus();
+        settle();
+        class ChildCounter : public QObject {
+        public:
+            int additions = 0;
+            bool eventFilter(QObject*, QEvent* event) override {
+                if (event->type() == QEvent::ChildAdded) { ++additions; }
+                return false;
+            }
+        } headerChanges, readingChanges;
+        child<QWidget>(&panel, QStringLiteral("roundtableHeader"))->installEventFilter(&headerChanges);
+        child<QWidget>(&panel, QStringLiteral("roundtableReadings"))->installEventFilter(&readingChanges);
+        // Ten presentation passes, each following a burst of 100 reports.
+        // Explicit presentation boundaries avoid wall-clock FPS assumptions.
+        for (int pass = 0; pass < 10; ++pass) {
+            for (int report = 0; report < 100; ++report) {
+                QJsonObject sample = heard.value(QStringLiteral("reading")).toObject();
+                sample.insert(QStringLiteral("dbm"), -73 - (report % 10));
+                heard.insert(QStringLiteral("reading"), sample);
+                view.insert(QStringLiteral("members"), QJsonArray{heard});
+                p.model.applyRoom(view);
+            }
+            panel.refreshNow();
+            settle();
+        }
+        qInfo("1000 frequency reports / 10 presentation passes: header body additions=%d, reading body additions=%d",
+              headerChanges.additions, readingChanges.additions);
+        QCOMPARE(headerChanges.additions, 0);
+        QCOMPARE(readingChanges.additions, 0);
+        QCOMPARE(child<QPushButton>(&panel, QStringLiteral("roundtableSignalValue")), button);
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget*>(button));
+        QCOMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("-82")});
+        QVERIFY(button->accessibleName().contains(QStringLiteral("-82")));
+
+        // A later report is presented by the real coalescer without a
+        // refreshNow call, a click, a new FFT, or reopening the panel.
+        QJsonObject sample = heard.value(QStringLiteral("reading")).toObject();
+        sample.insert(QStringLiteral("dbm"), -91);
+        heard.insert(QStringLiteral("reading"), sample);
+        view.insert(QStringLiteral("members"), QJsonArray{heard});
+        p.model.applyRoom(view);
+        QTRY_COMPARE(texts(&panel, QStringLiteral("roundtableReadingValue")), QStringList{QStringLiteral("-91")});
+        QCOMPARE(headerChanges.additions, 0);
+        QCOMPARE(readingChanges.additions, 0);
+        QCOMPARE(QApplication::focusWidget(), static_cast<QWidget*>(button));
     }
 
     void sectionsInOrder()

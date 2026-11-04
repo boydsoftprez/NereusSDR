@@ -540,6 +540,29 @@ private slots:
         QVERIFY(RoundtableModel::roomIdOfStream(QStringLiteral("roundtableRooms")).isEmpty());
     }
 
+    void activeAndDetailFrequencyOwnersShareAndReleaseOnlyTheirOwnViews()
+    {
+        Placements p;
+        const QString first = RoundtableModel::frequencyContextId(14212000, QStringLiteral("usb"));
+        const QString second = RoundtableModel::frequencyContextId(14217000, QStringLiteral("usb"));
+        QVERIFY(p.remote.setActiveFrequencyContext(14212000, QStringLiteral("usb")));
+        QVERIFY(p.remote.readAt(14212000, QStringLiteral("usb")));
+        QCOMPARE(p.link.calls.count(QStringLiteral("readAt 14212000 usb")), 1);
+        QVERIFY(p.remote.readAt(14217000, QStringLiteral("usb")));
+        QVERIFY(p.remote.wantedFrequencyContexts().contains(first));
+        QVERIFY(p.remote.wantedFrequencyContexts().contains(second));
+        QCOMPARE(p.link.calls.count(QStringLiteral("unreadAt 14212000 usb")), 0);
+        QVERIFY(p.remote.setActiveFrequencyContext(14217000, QStringLiteral("usb")));
+        QCOMPARE(p.link.calls.count(QStringLiteral("unreadAt 14212000 usb")), 1);
+        QCOMPARE(p.link.calls.count(QStringLiteral("readAt 14217000 usb")), 1);
+        p.remote.unreadRoom();
+        QCOMPARE(p.remote.wantedFrequencyContexts(), QStringList{second});
+        QCOMPARE(p.link.calls.count(QStringLiteral("unreadAt 14217000 usb")), 0);
+        QVERIFY(p.remote.setActiveFrequencyContext(0, {}));
+        QVERIFY(p.remote.wantedFrequencyContexts().isEmpty());
+        QCOMPARE(p.link.calls.count(QStringLiteral("unreadAt 14217000 usb")), 1);
+    }
+
     void refusedFrequencyReadCanRetryWithoutClearingANewerView()
     {
         Placements p;
