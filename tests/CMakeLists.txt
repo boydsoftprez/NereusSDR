@@ -1689,11 +1689,13 @@ nereus_add_test(tst_slice_agc_advanced)
 # Audited 2026-07-25: had no nereus_add_test() call site; compiles and
 # passes against current SliceModel APIs, registered here.
 nereus_add_test(tst_slice_auto_agc)
-nereus_add_test(tst_daemon_agc_source)
+# The daemon's AUTO acquisition must stand on the Core without GUI linkage.
+nereus_add_test(tst_daemon_agc_source CORE_ONLY)
 # Auto AGC-T reads a noise floor referred to a 4096-point FFT: real FFTEngine
 # frames at several sizes and decimations, the tick's threshold in each
 # sizing mode and through a zoom, and a local window against the Core.
 nereus_add_test(tst_auto_agc_floor_reference)
+nereus_add_test(tst_auto_agc_fft_epoch)
 nereus_add_test(tst_desktop_core_auto_agc_floor)
 nereus_add_test(tst_remote_receive_indicators)
 
