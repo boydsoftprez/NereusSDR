@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - Right-click on AUTO, on the RX panel and on an RX AGC
+//                 copy, asks for the AGC/ALC setup page and does not
+//                 toggle AUTO. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-26 - aBlankBandButtonIsDisabledWithAReason. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-23 - Brian Sutton, AI-assisted via xAI Grok.
@@ -188,6 +191,14 @@ QPushButton* appletSql(RxApplet& applet)
 {
     for (QPushButton* button : applet.findChildren<QPushButton*>()) {
         if (button->text() == QStringLiteral("SQL")) { return button; }
+    }
+    return nullptr;
+}
+
+QPushButton* appletAuto(RxApplet& applet)
+{
+    for (QPushButton* button : applet.findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("AUTO")) { return button; }
     }
     return nullptr;
 }
@@ -535,6 +546,45 @@ private slots:
         QCOMPARE(slice.autoAgcEnabled(), true);
         QCOMPARE(toggled.count(), 1);
         QCOMPARE(toggled.at(0).at(0).toBool(), true);
+    }
+
+    // Right-click on AUTO asks for Setup → DSP → AGC/ALC and leaves AUTO off.
+    // The panel is the RX object; the copy is the RX AGC object.
+    void rightClickAutoAsksForTheAgcSetupPage()
+    {
+        RadioModel radio;
+        SliceModel slice(0);
+        RxApplet applet(nullptr, &radio);
+        applet.setSlice(&slice);
+        QPushButton* panelAuto = appletAuto(applet);
+        QVERIFY(panelAuto);
+        QCOMPARE(panelAuto->contextMenuPolicy(), Qt::CustomContextMenu);
+        QVERIFY(panelAuto->toolTip().contains(QStringLiteral("AGC/ALC")));
+
+        QSignalSpy setup(&applet, &RxApplet::openSetupRequested);
+        QSignalSpy toggled(&applet, &RxApplet::autoAgcToggled);
+        emit panelAuto->customContextMenuRequested(QPoint(1, 1));
+        QCOMPARE(setup.count(), 1);
+        QCOMPARE(toggled.count(), 0);
+        QVERIFY(!slice.autoAgcEnabled());
+
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* copy = qobject_cast<RxAgcSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.agc")), &host));
+        QVERIFY(copy);
+        QPushButton* copyAuto = copy->autoButton();
+        QVERIFY(copyAuto);
+        QCOMPARE(copyAuto->contextMenuPolicy(), Qt::CustomContextMenu);
+        QVERIFY(copyAuto->toolTip().contains(QStringLiteral("AGC/ALC")));
+        QVERIFY(!copyAuto->isChecked());
+
+        emit copyAuto->customContextMenuRequested(QPoint(1, 1));
+        QCOMPARE(setup.count(), 2);
+        QCOMPARE(toggled.count(), 0);
+        QVERIFY(!slice.autoAgcEnabled());
+        QVERIFY(!copyAuto->isChecked());
     }
 
     // Shift-click on a copied preset sets the RX filter and matches the TX

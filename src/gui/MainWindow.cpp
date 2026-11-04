@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - The RX applet's setup hop covers a right-click on AUTO
+//                 as well as on the AGC-T slider. Brian Sutton, AI-assisted
+//                 via xAI Grok.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: The note on populatePanSlices no longer says an
@@ -17386,7 +17389,8 @@ void MainWindow::wireSliceToSpectrum()
         // shows (RxApplet's AUTO click), so it is not routed through the
         // window's active slice here.
 
-        // Right-click AGC-T slider → open Setup dialog to AGC/ALC page
+        // Right-click the AGC-T slider or AUTO (this panel or an RX AGC
+        // copy) → open Setup dialog to the AGC/ALC page.
         connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
             auto* dialog = createSetupDialog();
             if (dialog == nullptr) {

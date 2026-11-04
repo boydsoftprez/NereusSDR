@@ -15,6 +15,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - The RX AGC AUTO button says that a right-click opens the
+//                 AGC/ALC setup page. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-26 - Each section but Mode registers its parts (SectionParts);
 //                 RX Filter's hideTop and hideBottom are the hide keys of
 //                 its top and bottom parts, and its preset grid is a part
@@ -529,8 +531,11 @@ RxAgcSection::RxAgcSection(QWidget* parent)
     m_auto->setObjectName(QStringLiteral("RxCopyAgcAuto"));
     m_auto->setCheckable(true);
     raisedButton(m_auto, Style::greenCheckedStyle());
-    // From Thetis setup.designer.cs:38795 [v2.10.3.15] — chkAutoAGCRX1.ToolTip
-    m_auto->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
+    // From Thetis setup.designer.cs:38795 [v2.10.3.15] — chkAutoAGCRX1.ToolTip.
+    // The second line is NereusSDR: right-click opens Setup → DSP → AGC/ALC.
+    m_auto->setToolTip(QStringLiteral(
+        "Automatically adjust AGC based on Noise Floor.\n"
+        "Right-click to open the AGC/ALC setup page."));
     header->addWidget(m_auto);
     rows(this)->addLayout(header);
 
