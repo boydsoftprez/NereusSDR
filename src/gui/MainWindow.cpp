@@ -1,5 +1,7 @@
-// ==========================================================// src/gui/MainWindow.cpp  (NereusSDR)
-// ==========================================================//
+// =================================================================
+// src/gui/MainWindow.cpp  (NereusSDR)
+// =================================================================
+//
 // Ported from Thetis sources:
 //   Project Files/Source/Console/MeterManager.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/dsp.cs, original licence from Thetis source is included below
@@ -7,7 +9,8 @@
 //   Project Files/Source/Console/setup.cs, original licence from Thetis source is included below
 //   Project Files/Source/Console/radio.cs, original licence from Thetis source is included below
 //
-// ==========================================================// Modification history (NereusSDR):
+// =================================================================
+// Modification history (NereusSDR):
 //   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Prioritize passive reports at the selected listening context.
@@ -1086,7 +1089,8 @@
 //                 reason; one VOX line reason (voxLineReason) for the
 //                 container button and the applets. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
-// ==========================================================
+// =================================================================
+
 /*  MeterManager.cs
 
 This file is part of a program that implements a Software-Defined Radio.
@@ -1166,8 +1170,10 @@ warren@wpratt.com
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
-//==========================================================// console.cs
-//==========================================================// Thetis is a C# implementation of a Software Defined Radio.
+//=================================================================
+// console.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
 // Copyright (C) 2004-2009  FlexRadio Systems 
 // Copyright (C) 2010-2020  Doug Wigley
 // Credit is given to Sizenko Alexander of Style-7 (http://www.styleseven.com/) for the Digital-7 font.
@@ -1193,7 +1199,8 @@ warren@wpratt.com
 //    Austin, TX 78750
 //    USA
 //
-//==========================================================// Modifications to support the Behringer Midi controllers
+//=================================================================
+// Modifications to support the Behringer Midi controllers
 // by Chris Codella, W2PA, May 2017.  Indicated by //-W2PA comment lines. 
 // Modifications for using the new database import function.  W2PA, 29 May 2017
 // Support QSK, possible with Protocol-2 firmware v1.7 (Orion-MkI and Orion-MkII), and later.  W2PA, 5 April 2019 
@@ -1214,8 +1221,10 @@ warren@wpratt.com
 
 // Migrated to VS2026 - 18/12/25 MW0LGE v2.10.3.12
 
-//==========================================================// setup.cs
-//==========================================================// Thetis is a C# implementation of a Software Defined Radio.
+//=================================================================
+// setup.cs
+//=================================================================
+// Thetis is a C# implementation of a Software Defined Radio.
 // Copyright (C) 2004-2009  FlexRadio Systems
 // Copyright (C) 2010-2020  Doug Wigley
 //
@@ -1240,8 +1249,10 @@ warren@wpratt.com
 //    Austin, TX 78750
 //    USA
 //
-//==========================================================// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
-//==========================================================//
+//=================================================================
+// Continual modifications Copyright (C) 2019-2026 Richard Samphire (MW0LGE)
+//=================================================================
+//
 //============================================================================================//
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
 // ------------------------------------------------------------------------------------------ //
@@ -1255,8 +1266,10 @@ warren@wpratt.com
 // Richard Samphire can be reached by email at :  mw0lge@grange-lane.co.uk                    //
 //============================================================================================//
 
-//==========================================================// radio.cs
-//==========================================================// PowerSDR is a C# implementation of a Software Defined Radio.
+//=================================================================
+// radio.cs
+//=================================================================
+// PowerSDR is a C# implementation of a Software Defined Radio.
 // Copyright (C) 2004-2009  FlexRadio Systems
 // Copyright (C) 2010-2020  Doug Wigley
 // Copyright (C) 2019-2026  Richard Samphire
@@ -1281,7 +1294,8 @@ warren@wpratt.com
 //    8900 Marybank Dr.
 //    Austin, TX 78750
 //    USA
-//==========================================================//
+//=================================================================
+//
 //============================================================================================//
 // Dual-Licensing Statement (Applies Only to Author's Contributions, Richard Samphire MW0LGE) //
 // ------------------------------------------------------------------------------------------ //
@@ -12583,8 +12597,10 @@ void MainWindow::showWorkspaceProfilesDialog()
 
 void MainWindow::buildMenuBar()
 {
-    // ==================================================================    // FILE
-    // ==================================================================    QMenu* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
+    // =========================================================================
+    // FILE
+    // =========================================================================
+    QMenu* fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
 
     {
         QAction* settingsAction = fileMenu->addAction(QStringLiteral("&Settings..."),
@@ -12630,8 +12646,10 @@ void MainWindow::buildMenuBar()
     fileMenu->addAction(QStringLiteral("&Quit"), QKeySequence(Qt::CTRL | Qt::Key_Q),
                         qApp, &QApplication::quit);
 
-    // ==================================================================    // RADIO
-    // ==================================================================    // ── Radio menu — 3Q-9: role-based items with state-aware enablement ──────
+    // =========================================================================
+    // RADIO
+    // =========================================================================
+    // ── Radio menu — 3Q-9: role-based items with state-aware enablement ──────
     QMenu* radioMenu = menuBar()->addMenu(QStringLiteral("&Radio"));
 
     // Connect (⌘K) — reconnects to the last-used radio. Greyed out when there
@@ -12821,8 +12839,10 @@ void MainWindow::buildMenuBar()
     m_actDisconnect->setEnabled(false);
     m_actProtocolInfo->setEnabled(false);
 
-    // ==================================================================    // VIEW
-    // ==================================================================    QMenu* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
+    // =========================================================================
+    // VIEW
+    // =========================================================================
+    QMenu* viewMenu = menuBar()->addMenu(QStringLiteral("&View"));
 
     // Phase 3F Sub-Epic D Task 14: live Pan Layout / Add slice / Float
     // entries. Replace the NYI submenu and disabled Add/Remove placeholders
@@ -13032,8 +13052,10 @@ void MainWindow::buildMenuBar()
         UnbuiltFeatures::hideUnlessBuilt(kbAction, UnbuiltFeature::Keyboard);
     }
 
-    // ==================================================================    // DSP
-    // ==================================================================    QMenu* dspMenu = menuBar()->addMenu(QStringLiteral("&DSP"));
+    // =========================================================================
+    // DSP
+    // =========================================================================
+    QMenu* dspMenu = menuBar()->addMenu(QStringLiteral("&DSP"));
 
     // ── NR submenu — full slot bank, mutual exclusion via QActionGroup ─────
     // Mirrors VfoWidget's NR bank. Every filter is always listed (R-R3-49,
@@ -13315,8 +13337,10 @@ void MainWindow::buildMenuBar()
         connect(divAction, &QAction::triggered, this, &MainWindow::openDiversityDialog);
     }
 
-    // ==================================================================    // BAND
-    // ==================================================================    QMenu* bandMenu = menuBar()->addMenu(QStringLiteral("&Band"));
+    // =========================================================================
+    // BAND
+    // =========================================================================
+    QMenu* bandMenu = menuBar()->addMenu(QStringLiteral("&Band"));
 
     {
         QMenu* hfMenu = bandMenu->addMenu(QStringLiteral("&HF"));
@@ -13381,8 +13405,10 @@ void MainWindow::buildMenuBar()
         UnbuiltFeatures::hideUnlessBuilt(bandStackAction, UnbuiltFeature::BandStack);
     }
 
-    // ==================================================================    // MODE
-    // ==================================================================    QMenu* modeMenu = menuBar()->addMenu(QStringLiteral("&Mode"));
+    // =========================================================================
+    // MODE
+    // =========================================================================
+    QMenu* modeMenu = menuBar()->addMenu(QStringLiteral("&Mode"));
     modeMenu->setToolTipsVisible(true);
 
     // 12 Thetis-faithful modes + the NereusSDR-native RADE-U / RADE-L
@@ -13480,8 +13506,10 @@ void MainWindow::buildMenuBar()
         if (desktopHosting()) { refreshActiveSlicePresentation(); }
     });
 
-    // ==================================================================    // CONTAINERS
-    // ==================================================================    QMenu* containersMenu = menuBar()->addMenu(QStringLiteral("Contai&ners"));
+    // =========================================================================
+    // CONTAINERS
+    // =========================================================================
+    QMenu* containersMenu = menuBar()->addMenu(QStringLiteral("Contai&ners"));
 
     {
         // New Container: creates a floating container with a fresh MeterWidget,
@@ -13658,8 +13686,10 @@ void MainWindow::buildMenuBar()
         });
     }
 
-    // ==================================================================    // TOOLS
-    // ==================================================================    QMenu* toolsMenu = menuBar()->addMenu(QStringLiteral("&Tools"));
+    // =========================================================================
+    // TOOLS
+    // =========================================================================
+    QMenu* toolsMenu = menuBar()->addMenu(QStringLiteral("&Tools"));
 
     // Phase 3J-2 H1: Spot Hub (DX cluster / RBN / POTA / WSJT-X / FreeDV /
     // PSK Reporter). Modeless singleton dialog; lazy-constructed in
@@ -13834,8 +13864,10 @@ void MainWindow::buildMenuBar()
         }
     }
 
-    // ==================================================================    // HELP
-    // ==================================================================    QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
+    // =========================================================================
+    // HELP
+    // =========================================================================
+    QMenu* helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
 
     {
         QAction* gettingStartedAction = helpMenu->addAction(QStringLiteral("&Getting Started"));
@@ -21131,8 +21163,10 @@ void MainWindow::tryAutoReconnect()
     }
 }
 
-// ======================================================================// Phase 3O Sub-Phase 11 Task 11b — VAX first-run / rescan hook
-// ======================================================================//
+// =============================================================================
+// Phase 3O Sub-Phase 11 Task 11b — VAX first-run / rescan hook
+// =============================================================================
+//
 // Called once from the constructor via QTimer::singleShot(0, ...). Decides
 // whether to show the VaxFirstRunDialog based on audio/FirstRunComplete
 // and a SHA-256 diff of the current detected-cable set against the stored
@@ -21387,10 +21421,12 @@ void MainWindow::closeEvent(QCloseEvent* event)
     if (!m_retiringSession) { QCoreApplication::quit(); }
 }
 
-// ======================================================================// Phase 3G-14: AI-Assisted Issue Reporter
+// =============================================================================
+// Phase 3G-14: AI-Assisted Issue Reporter
 // Ported from AetherSDR TitleBar::showFeatureRequestDialog() /
 // showFeatureRequestDialogImpl()
-// ======================================================================
+// =============================================================================
+
 void MainWindow::fetchLatestReleaseVersion(std::function<void(const QString&)> done)
 {
     auto* nam = new QNetworkAccessManager(this);
