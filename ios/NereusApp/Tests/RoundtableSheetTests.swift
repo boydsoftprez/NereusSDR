@@ -1231,8 +1231,46 @@ struct RoundtableSheetTests {
         #expect(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow)?.state == .waiting)
         reportView.now[0].sourceRoom = source
         reportView.now[0].kind = "doubled"
+        for i in reportView.members.indices where reportView.members[i].callsign == "K4ABC" {
+            reportView.members[i].keyed = true
+        }
         let doubled = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
-        #expect(doubled.state == .doubled && doubled.reports.isEmpty)
+        #expect(doubled.state == .doubled && doubled.reports.first?.reporter == "N4XYZ")
+        #expect(doubled.participants == ["K4ABC"])
+        #expect(doubled.accessibilityText.contains("combined RF"))
+        var singleStation = summary
+        singleStation.stations = Array(summary.stations.prefix(1))
+        #expect(RoundtableTagLayout.card(for: singleStation, view: reportView, now: reportNow)?.reports.isEmpty == false)
+        var second = reportView.now[0].talkers[0]
+        second.callsign = "N4XYZ"
+        second.ref = reportView.members.first(where: { $0.callsign == "N4XYZ" })?.ref
+        second.sourceRoom = source
+        second.nth = 2
+        reportView.now[0].talkers.append(second)
+        for i in reportView.members.indices where reportView.members[i].callsign == "N4XYZ" {
+            reportView.members[i].keyed = true
+        }
+        let overlapping = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(overlapping.participants == ["K4ABC", "N4XYZ (2)"])
+        #expect(!overlapping.reports.contains(where: { $0.reporter == "N4XYZ" }))
+        var third = second
+        third.callsign = "W3XYZ"
+        third.ref = "third"
+        reportView.now[0].talkers.append(third)
+        let three = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        var threeTag = tags[0]
+        threeTag.card = three
+        #expect(RoundtableTagLayout.cardPlan(threeTag, width: 176).stateTitle == "Double (3 TX)")
+        reportView.now[0].end = reportNow
+        reportView.earlier = [reportView.now[0]]
+        reportView.now = []
+        let endedDouble = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(endedDouble.ended && endedDouble.caption == "Last overlap")
+        reportView.now = [try #require(model.roundtable.room?.now.first)]
+        reportView.now[0].id += 1
+        let remaining = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(remaining.state == .known("K4ABC") && remaining.reports.isEmpty)
+        reportView.earlier = []
         reportView.now[0].kind = "unknown"
         reportView.now[0].talkers = []
         let unknown = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))

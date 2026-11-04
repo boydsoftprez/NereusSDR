@@ -30,6 +30,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02: Keep active-frequency reports subscribed while browsing
+//               details. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -140,6 +142,11 @@ public:
     bool postAt(int sliceId, qint64 hz, const QString& family, const QString& text,
                 const QString& clientId);
     bool readAt(qint64 hz, const QString& family);
+    /// Passive selected-frequency reports have an independent owner from
+    /// the detail browser. Both use the existing frequency-view commands.
+    bool setActiveFrequencyContext(qint64 hz, const QString& family);
+    QString activeFrequencyContext() const { return m_activeFrequencyContext; }
+    QStringList wantedFrequencyContexts() const;
     void unreadAt(qint64 hz, const QString& family);
 
     void applyRoomDelta(const QJsonObject& delta);
@@ -272,6 +279,9 @@ private:
     QHash<QString, QHash<QString, QJsonObject>> m_records;
 
     QString m_readingRoomId;
+    QString m_activeFrequencyContext;
+    bool requestFrequencyRead(qint64 hz, const QString& family);
+    void releaseFrequencyRead(const QString& context);
     QHash<QString, QString> m_drafts;
 
     // The `roundtable` object as last seen, for the change signals.

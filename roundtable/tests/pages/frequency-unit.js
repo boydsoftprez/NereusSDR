@@ -29,6 +29,25 @@ assert.equal(sameStation[0].stations.length,1,"two same-station slices are one c
 assert.equal(sameStation[0].stations[0].slices.length,2,"every colocated slice remains represented");
 const room={now:[{id:1,kind:"talking",hz:14212000,start:10,talkers:[{sourceRoom:"usb-14212000",ref:"abcdefgh",callsign:"K4ABC"}]}],earlier:[],members:[{sourceRoom:"usb-14212000",ref:"bcdefghi",callsign:"W4XYZ",km:10,reading:{turn:1,dbm:-81}},{sourceRoom:"usb-14213000",ref:"bcdefghi",callsign:"N4XYZ",km:1,reading:{turn:2,dbm:-30}}]};
 assert.equal(F.readings(room,room.now[0]).length,1,"reading.turn decides attribution, refs are scoped");
+const overlapTalkers = ["aaaaaaaa", "bbbbbbbb", "cccccccc"].map((ref,index)=>({sourceRoom:"usb-14212000",ref,callsign:index===2?"N3XYZ":"W4KZO",nth:index+1}));
+const overlap={id:90,kind:"doubled",start:10,end:null,talkers:overlapTalkers};
+const overlapRoom={now:[overlap],earlier:[],members:[
+  {...overlapTalkers[0],keyed:true,reading:{turn:90,dbm:-60}},
+  {...overlapTalkers[1],keyed:true,reading:{turn:90,dbm:-61}},
+  {...overlapTalkers[2],keyed:false,reading:{turn:90,dbm:-73}},
+  {sourceRoom:"usb-14212000",ref:"dddddddd",callsign:"KK4NZD",nth:1,keyed:false,reading:{turn:90,dbm:-81}},
+]};
+assert.deepEqual(Array.from(F.readings(overlapRoom,overlap),m=>m.ref).sort(),["cccccccc","dddddddd"],"an unkeyed former third participant can receive the current combined RF");
+assert.deepEqual(Array.from(F.activeTalkers(overlapRoom,overlap),m=>m.ref),["aaaaaaaa","bbbbbbbb"],"live double names describe currently keyed participants, not all historical participants");
+assert.equal(F.turnCaption(overlap),"DOUBLE");
+const endedOverlap={...overlap,end:20};
+assert.equal(F.activeTalkers(overlapRoom,endedOverlap).length,3,"ended overlap retains its participant history");
+const departedHistory={...endedOverlap,talkers:overlapTalkers.map(t=>({...t,ref:null}))};
+assert.deepEqual(Array.from(F.activeTalkers(overlapRoom,departedHistory),t=>[t.callsign,t.nth]),overlapTalkers.map(t=>[t.callsign,t.nth]),"historical overlap retains departed callsigns and suffixes without live references");
+assert.equal(F.turnCaption(endedOverlap),"LAST OVERLAP");
+const single={id:91,kind:"talking",start:20,end:null,talkers:[overlapTalkers[0]]};
+assert.equal(F.readings(overlapRoom,single).length,0,"combined samples cannot become individual reports after one participant unkeys");
+assert.equal(F.turnCaption(single),"CURRENT TALKER");
 room.earlier=room.now;room.now=[];assert.equal(F.lastTurn(room,ctx).id,1,"quiet retains identified last turn");
 assert.equal(F.path(128,82,"mi",true).distance,"80");assert.equal(F.path(128,82,"mi",true).bearing,"082°T");
 assert.equal(F.path(128,82,"km",true).distance,"128");assert.equal(F.path(null,82,"mi",true).bearing,"");

@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02: Separate active-frequency and detail ownership for existing reads.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Shared miles-default and bearing display preferences.
@@ -284,6 +286,7 @@ void RoundtableModel::detach()
     m_views.clear();
     m_records.clear();
     m_readingRoomId.clear();
+    m_activeFrequencyContext.clear();
     if (hadRooms) {
         emit roomsChanged();
     }
@@ -629,6 +632,9 @@ void RoundtableModel::applyWebLink(const QUrl& url)
 
 void RoundtableModel::applyRefusal(const QString& verb, const QString& reason, const QString& context)
 {
+    if (verb == QLatin1String("readAt") && !context.isEmpty() && context == m_activeFrequencyContext) {
+        m_activeFrequencyContext.clear();
+    }
     if ((verb == QLatin1String("read") || verb == QLatin1String("readAt"))
         && !m_readingRoomId.isEmpty() && (context.isEmpty() || context == m_readingRoomId)) {
         m_readingRoomId.clear();
@@ -897,40 +903,69 @@ bool RoundtableModel::postAt(int sliceId, qint64 hz, const QString& family,
     return true;
 }
 
-bool RoundtableModel::readAt(qint64 hz, const QString& family)
+bool RoundtableModel::requestFrequencyRead(qint64 hz, const QString& family)
 {
-    const QString id = frequencyContextId(hz, family);
-    if (m_readingRoomId == id) { return true; }
-    if (isFrequencyContext(m_readingRoomId)) {
-        const QString previous = m_readingRoomId.mid(10);
-        const qsizetype dash = previous.indexOf(QLatin1Char('-'));
-        unreadAt(previous.mid(dash + 1).toLongLong(), previous.left(dash));
-    }
-    bool accepted = false;
     if (m_link) {
         const auto result = m_link->requestRoundtableReadAt(hz, family);
-        accepted = stationOutcome(QStringLiteral("readAt"), result.sent, result.reason);
-    } else {
-        QString reason;
-        accepted = m_state && m_state->readAt(hz, family, &reason);
-        if (!accepted) { refuse(QStringLiteral("readAt"), reason); }
+        return stationOutcome(QStringLiteral("readAt"), result.sent, result.reason);
     }
-    if (accepted && m_readingRoomId != id) {
-        m_readingRoomId = id;
-        emit readingRoomChanged();
-    }
+    QString reason;
+    const bool accepted = m_state && m_state->readAt(hz, family, &reason);
+    if (!accepted) { refuse(QStringLiteral("readAt"), reason); }
     return accepted;
 }
 
-void RoundtableModel::unreadAt(qint64 hz, const QString& family)
+void RoundtableModel::releaseFrequencyRead(const QString& context)
 {
+    if (!isFrequencyContext(context)) { return; }
+    const QString address = context.mid(10);
+    const qsizetype dash = address.indexOf(QLatin1Char('-'));
+    const qint64 hz = address.mid(dash + 1).toLongLong();
+    const QString family = address.left(dash);
     if (m_link) {
         const auto result = m_link->requestRoundtableUnreadAt(hz, family);
         stationOutcome(QStringLiteral("unreadAt"), result.sent, result.reason);
     } else if (m_state) {
         m_state->unreadAt(hz, family);
     }
-    if (m_readingRoomId == frequencyContextId(hz, family)) {
+}
+
+QStringList RoundtableModel::wantedFrequencyContexts() const
+{
+    QStringList contexts;
+    if (isFrequencyContext(m_activeFrequencyContext)) { contexts.append(m_activeFrequencyContext); }
+    if (isFrequencyContext(m_readingRoomId) && !contexts.contains(m_readingRoomId)) { contexts.append(m_readingRoomId); }
+    return contexts;
+}
+
+bool RoundtableModel::setActiveFrequencyContext(qint64 hz, const QString& family)
+{
+    const QString id = hz > 0 && !family.isEmpty() ? frequencyContextId(hz, family) : QString();
+    if (id == m_activeFrequencyContext) { return true; }
+    if (!id.isEmpty() && id != m_readingRoomId && !requestFrequencyRead(hz, family)) { return false; }
+    const QString previous = m_activeFrequencyContext;
+    m_activeFrequencyContext = id;
+    if (!previous.isEmpty() && previous != m_readingRoomId) { releaseFrequencyRead(previous); }
+    return true;
+}
+
+bool RoundtableModel::readAt(qint64 hz, const QString& family)
+{
+    const QString id = frequencyContextId(hz, family);
+    if (m_readingRoomId == id) { return true; }
+    if (id != m_activeFrequencyContext && !requestFrequencyRead(hz, family)) { return false; }
+    const QString previous = m_readingRoomId;
+    m_readingRoomId = id;
+    if (isFrequencyContext(previous) && previous != m_activeFrequencyContext) { releaseFrequencyRead(previous); }
+    emit readingRoomChanged();
+    return true;
+}
+
+void RoundtableModel::unreadAt(qint64 hz, const QString& family)
+{
+    const QString id = frequencyContextId(hz, family);
+    if (id != m_activeFrequencyContext) { releaseFrequencyRead(id); }
+    if (m_readingRoomId == id) {
         m_readingRoomId.clear();
         emit readingRoomChanged();
     }

@@ -704,6 +704,29 @@ class World:
         name = path[len("/__test/") :]
         if name == "facts":
             return 200, self.facts
+        if name == "overlap":
+            # Disposable scripted stations exercise real key/turn/read paths.
+            actors = {sim.call: sim for sim in self.sims if sim.call in ("K4ABC", "N4RDR", "W9ABC", "AA4QQ")}
+            action = q.get("act", "double")
+            with self.service.event():
+                actors["K4ABC"].key(True)
+                if action == "double":
+                    actors["N4RDR"].key(True)
+                elif action == "third":
+                    actors["W9ABC"].key(True)
+                elif action == "third-receives":
+                    actors["W9ABC"].key(False)
+                elif action in ("single", "reset"):
+                    actors["N4RDR"].key(False)
+                    actors["W9ABC"].key(False)
+                else:
+                    return 400, {"error": "unknown-overlap-action"}
+                if action in ("double", "third", "third-receives"):
+                    self.clock.advance(1100)
+                    reader = actors["W9ABC"] if action == "third-receives" else actors["AA4QQ"]
+                    reader.st.send({"type": "reading", "slice": 0, "dbm": -63.2,
+                                    "t": self.clock.wall_ms(), "present": True})
+            return 200, {"action": action}
         if name == "signin":
             # 2026-10-30: real owner-follow fixture identity, retaining desks.
             # J.J. Boyd / KG4VCF, AI-assisted via Codex.

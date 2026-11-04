@@ -15,6 +15,8 @@
 
 // 2026-10-30: Frequency views, immutable sender contexts and shared path preferences.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-02: Keep the active frequency's reports live while browsing another view.
+// J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 
 import Combine
 import Foundation
@@ -36,7 +38,7 @@ import os
 /// and the names used on a room's frequency in the last 24 hours.
 ///
 /// Version 2 follows the selected slice's actual integer Hz and catalogue
-/// mode family, or an explicitly browsed frequency, using readAt/unreadAt
+/// mode family, alongside an explicitly browsed frequency, using readAt/unreadAt
 /// and the Core's returned frequency stream. The directory preserves exact
 /// slice presence; received chat retains immutable sender context through
 /// tuning. Version 1 keeps the legacy room path and labels its limitation.
@@ -411,7 +413,7 @@ final class RoundtableModel: ObservableObject {
             text = try fields.decodeIfPresent(String.self, forKey: .text)
         }
     }
-    private var views: [String: View] = [:] {
+    @Published private var views: [String: View] = [:] {
         didSet {
             // Any change to a room's records makes each room built from them anew.
             builtRooms.removeAll(keepingCapacity: true)
@@ -442,7 +444,14 @@ final class RoundtableModel: ObservableObject {
     private var readSerial = 0
     /// The room was being read when the link went: read it again on the next.
     private var readAgain = false
-    private var frequencyWanted: String?
+    /// Active listening and browsed detail share one reader at the same context.
+    private var frequencyWanted: Set<String> = []
+    /// Requests attempted this session, including a read whose answer was lost.
+    /// Removing a want releases even such an unacknowledged Core reader.
+    private var frequencyAttempts: Set<String> = []
+    private var frequencyStreams: [String: String] = [:]
+    private var frequencyRecordWants: Set<String> = []
+    private var frequencySerial: UInt64 = 0
     private var frequencyTask: Task<Void, Never>?
     private var pruneTimer: (any LinkTimer)?
 
@@ -503,8 +512,7 @@ final class RoundtableModel: ObservableObject {
         let next = alive ? mirror.capabilityVersion(Self.capabilityName) : 0
         if next != version {
             if version >= 2 {
-                frequencyTask?.cancel()
-                frequencyWanted = nil
+                resetFrequencyReads()
                 readStream = nil
                 readingRoomId = nil
                 readAgain = false
@@ -522,8 +530,7 @@ final class RoundtableModel: ObservableObject {
             if !up {
                 // The Core forgets this phone's reading with the session.
                 readStream = nil
-                frequencyWanted = nil
-                frequencyTask?.cancel()
+                resetFrequencyReads()
                 readAgain = readingRoomId != nil
             }
             connected = up
@@ -531,13 +538,23 @@ final class RoundtableModel: ObservableObject {
         if up, next < 1, readingRoomId != nil {
             readingRoomId = nil
         }
-        let backendVersion = next >= 2 ? (records.streams[Self.roomsStream]?.records.first(where: {
-            $0.id == "frequency-capability" && Self.text($0.fields["record"]) == "frequency"
-        }).flatMap { Self.whole($0.fields["version"]) } ?? 0) : 0
+        // Losing the session's record cache is not a server downgrade. Keep
+        // the detail intent until the next directory reset confirms support.
+        let backendVersion: Int64
+        if next >= 2 {
+            if up, let directory = records.streams[Self.roomsStream] {
+                backendVersion = directory.records.first(where: {
+                    $0.id == "frequency-capability" && Self.text($0.fields["record"]) == "frequency"
+                }).flatMap { Self.whole($0.fields["version"]) } ?? 0
+            } else {
+                backendVersion = serverFrequencyVersion
+            }
+        } else {
+            backendVersion = 0
+        }
         if backendVersion != serverFrequencyVersion {
-            if serverFrequencyVersion >= 1 && backendVersion < 1 {
-                frequencyTask?.cancel()
-                frequencyWanted = nil
+            if up, records.streams[Self.roomsStream] != nil,
+               serverFrequencyVersion >= 1 && backendVersion < 1 {
                 readStream = nil
                 readingRoomId = nil
                 readAgain = false
@@ -553,7 +570,8 @@ final class RoundtableModel: ObservableObject {
         syncWants()
         readStreams(next >= 1 ? records.streams : [:])
         syncReceivedHistory()
-        if available, !frequencyAvailable, readAgain, let roomId = readingRoomId {
+        if available, !frequencyAvailable, records.streams[Self.roomsStream] != nil,
+           readAgain, let roomId = readingRoomId {
             readAgain = false
             Task { [weak self] in await self?.sendRead(roomId) }
         }
@@ -639,27 +657,17 @@ final class RoundtableModel: ObservableObject {
         if frequencyAvailable {
             for stream in sliceStreams { records.unwant(stream, by: sliceOwner) }
             sliceStreams = []
-            let wanted = connected ? (readingRoomId ?? activeContext?.id) : nil
-            if wanted != frequencyWanted {
-                let previous = frequencyWanted
-                frequencyWanted = wanted
-                let previousTask = frequencyTask
-                readStream = nil
-                frequencyTask = Task { [weak self] in
-                    await previousTask?.value
-                    guard let self else { return }
-                    if let previous { _ = await self.send("roundtable.unreadAt", self.contextArguments(previous)) }
-                    guard !Task.isCancelled, self.frequencyWanted == wanted else { return }
-                    if let wanted { await self.openFrequency(wanted) }
-                }
-            }
-            if readWanted != readStream {
-                if let stream = readWanted { records.unwant(stream, by: readOwner) }
-                if let stream = readStream { records.want(stream, backlog: Self.roomCapacity, by: readOwner) }
-                readWanted = readStream
-            }
+            if let stream = readWanted { records.unwant(stream, by: readOwner) }
+            readWanted = nil
+            readStream = nil
+            let wanted = connected && records.streams[Self.roomsStream] != nil && linkState != .off
+                ? Set([activeContext?.id, readingRoomId].compactMap { $0 }) : []
+            syncFrequencyWants(wanted)
             return
         }
+        // A backend capability downgrade still releases this session's exact
+        // readers with unreadAt, while legacy room views resume independently.
+        syncFrequencyWants([])
         let wanted = Set(sliceRooms.values.map(streamName))
         for stream in sliceStreams.subtracting(wanted) {
             records.unwant(stream, by: sliceOwner)
@@ -992,17 +1000,90 @@ final class RoundtableModel: ObservableObject {
         return nil
     }
 
-    private func openFrequency(_ id: String) async {
-        let result = await send("roundtable.readAt", contextArguments(id))
-        guard !Task.isCancelled, frequencyWanted == id else {
-            // A superseded request may have reached the Core before cancellation.
-            if result?.accepted == true { _ = await send("roundtable.unreadAt", contextArguments(id)) }
-            return
+    private func resetFrequencyReads() {
+        frequencySerial &+= 1
+        frequencyTask?.cancel()
+        frequencyTask = nil
+        frequencyWanted = []
+        frequencyAttempts = []
+        frequencyStreams = [:]
+        for stream in frequencyRecordWants { records.unwant(stream, by: readOwner) }
+        frequencyRecordWants = []
+    }
+
+    private func syncFrequencyWants(_ wanted: Set<String>) {
+        frequencyWanted = wanted
+        syncFrequencyRecordWants()
+        guard connected, version >= 2, frequencyTask == nil,
+              !frequencyAttempts.subtracting(wanted).isEmpty || !wanted.subtracting(frequencyAttempts).isEmpty else { return }
+        let serial = frequencySerial
+        frequencyTask = Task { [weak self] in
+            await self?.reconcileFrequencyReads(serial: serial)
         }
-        guard let result, result.accepted,
-              case .text(let stream)? = result.values["stream"], stream == streamName(id) else { return }
-        readStream = stream
-        syncWants()
+    }
+
+    private func syncFrequencyRecordWants() {
+        let wanted = Set(frequencyStreams.filter { frequencyWanted.contains($0.key) }.map(\.value))
+        for stream in frequencyRecordWants.subtracting(wanted) { records.unwant(stream, by: readOwner) }
+        for stream in wanted.subtracting(frequencyRecordWants).sorted() {
+            records.want(stream, backlog: Self.roomCapacity, by: readOwner)
+        }
+        frequencyRecordWants = wanted
+    }
+
+    /// One reconciler owns reads and releases for this session. A UI change
+    /// updates its desired set without cancelling an in-flight read: its answer
+    /// must either acquire the right stream or release the superseded reader.
+    private func reconcileFrequencyReads(serial: UInt64) async {
+        defer {
+            if serial == frequencySerial { frequencyTask = nil }
+        }
+        while serial == frequencySerial, connected, !Task.isCancelled {
+            if let id = frequencyAttempts.subtracting(frequencyWanted).sorted().first {
+                frequencyAttempts.remove(id)
+                frequencyStreams[id] = nil
+                syncFrequencyRecordWants()
+                _ = await frequencyCommand("roundtable.unreadAt", id: id, serial: serial)
+                continue
+            }
+            let unopened = frequencyWanted.subtracting(frequencyAttempts)
+            // Keep the listening frequency first when a session needs both.
+            guard let id = activeContext.map(\.id).flatMap({ unopened.contains($0) ? $0 : nil })
+                    ?? unopened.sorted().first else { return }
+            frequencyAttempts.insert(id)
+            let result = await frequencyCommand("roundtable.readAt", id: id, serial: serial)
+            guard serial == frequencySerial, connected, !Task.isCancelled else { return }
+            guard frequencyWanted.contains(id) else { continue }
+            guard let result, result.accepted else {
+                note = result?.reason ?? Self.noAnswerReason
+                continue
+            }
+            guard case .text(let stream)? = result.values["stream"], stream == Self.frequencyStreamPrefix + id else {
+                // An accepted response for a different context must never attach
+                // its records to this view. Release our attempted Core reader.
+                note = Self.noAnswerReason
+                _ = await frequencyCommand("roundtable.unreadAt", id: id, serial: serial)
+                continue
+            }
+            note = nil
+            frequencyStreams[id] = stream
+            syncFrequencyRecordWants()
+        }
+    }
+
+    /// Frequency arguments stay exact even if server metadata disappears while
+    /// a read is in flight. Old-session outcomes cannot publish notes or wants.
+    private func frequencyCommand(_ verb: String, id: String, serial: UInt64) async -> CommandResult? {
+        guard serial == frequencySerial, connected, version >= 2, !Task.isCancelled,
+              let dash = id.firstIndex(of: "-"), let hz = Int64(id[id.index(after: dash)...]) else { return nil }
+        do {
+            return try await commands.invoke(verb, arguments: [
+                CommandArgument(name: "hz", value: .int(hz)),
+                CommandArgument(name: "family", value: .text(String(id[..<dash]))),
+            ], timeout: Self.commandTimeout)
+        } catch {
+            return nil
+        }
     }
 
     static func family(ofMode mode: String) -> String? {

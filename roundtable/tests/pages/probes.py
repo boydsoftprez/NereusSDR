@@ -251,6 +251,31 @@ def probe_search(c: Chrome, server: Server) -> None:
     no_errors(c,"frequency search")
 
 
+def probe_live_overlap(c: Chrome, server: Server) -> None:
+    """Key changes update live identities and combined samples without UI actions."""
+    c.goto(server.base + "/r/usb/14212000")
+    c.wait("!!(RT.currentView() && document.querySelector('.attributed-talker'))")
+    try:
+        server.control("overlap?act=double")
+        c.wait("document.querySelector('.rbody .cap').textContent.includes('DOUBLE')")
+        label = c.eval("document.querySelector('.attributed-talker').textContent")
+        assert "K4ABC" in label and "N4RDR" in label, label
+        c.wait("[...document.querySelectorAll('.attributed-reading')].some(n=>n.textContent.includes('AA4QQ'))")
+        assert "raw reports of the combined RF" in c.eval("document.querySelector('.rbody').textContent")
+        assert c.eval("[...document.querySelectorAll('.signal-value')].every(n=>n.getAttribute('aria-label').includes('combined RF'))")
+        double_id = c.eval("RT.currentView().now.find(t=>t.kind==='doubled').id")
+        server.control("overlap?act=third")
+        c.wait("document.querySelector('.attributed-talker').textContent.includes('W9ABC')")
+        server.control("overlap?act=third-receives")
+        c.wait("!document.querySelector('.attributed-talker').textContent.includes('W9ABC') && [...document.querySelectorAll('.attributed-reading')].some(n=>n.textContent.includes('W9ABC'))")
+        server.control("overlap?act=single")
+        c.wait("document.querySelector('.rbody .cap').textContent.includes('CURRENT TALKER') && !document.querySelector('.attributed-talker').textContent.includes('N4RDR')")
+        assert c.eval(f"[...document.querySelectorAll('.attributed-reading')].every(n=>+n.dataset.turn!=={double_id})")
+        no_errors(c, "live overlap transitions")
+    finally:
+        server.control("overlap?act=reset")
+
+
 def probe_sort(c: Chrome, server: Server) -> None:
     """Frequency and crowd sorting use exact groups, not RF-room centers."""
     open_public(c,server.base)
@@ -671,6 +696,7 @@ PROBES = [
     probe_bands,
     probe_band_map,
     probe_row,
+    probe_live_overlap,
     probe_signal_mobile,
     probe_search,
     probe_sort,

@@ -305,8 +305,8 @@ private slots:
 
     // ---- The waterfall time scale ----
 
-    // The clock is in the static overlay; only its ticker refreshes it, so
-    // a timestamp loaded from settings has to start it.
+    // The child clock's ticker must start for a timestamp loaded from
+    // settings, without rebuilding the static overlay.
     void loadedTimestampStartsItsTicker()
     {
         AppSettings::instance().clear();

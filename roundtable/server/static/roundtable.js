@@ -458,10 +458,19 @@
       const open = (room.now || []).filter(inView).slice().sort((a,b)=>Math.abs((a.hz||c.hz)-c.hz)-Math.abs((b.hz||c.hz)-c.hz) || b.start-a.start);
       return open[0] || (room.earlier || []).filter(inView).slice().sort((a,b)=>(b.end||b.start)-(a.end||a.start))[0] || null;
     },
+    activeTalkers: (room,turn) => {
+      const talkers=turn&&turn.talkers||[];
+      if (!turn || turn.kind!=="doubled" || turn.end!=null) return talkers;
+      if (!room) return [];
+      return talkers.filter(t=>t.ref&&room.members.some(m=>F.memberKey(m)===F.memberKey(t)&&m.keyed===true));
+    },
+    turnCaption: turn => !turn ? "ACTIVITY" : turn.kind==="doubled"
+      ? turn.end==null ? "DOUBLE" : "LAST OVERLAP"
+      : turn.end!=null ? "LAST HEARD" : turn.kind==="unknown" ? "CURRENT SIGNAL" : "CURRENT TALKER",
     readings: (room,turn) => {
       if (!room || !turn) return [];
-      const talkers = new Set((turn.talkers || []).filter(t=>t.ref).map(F.memberKey));
-      return room.members.filter(m=>m.reading && m.reading.turn===turn.id && !talkers.has(F.memberKey(m))).sort((a,b)=>{
+      const talkers = new Set(F.activeTalkers(room,turn).map(F.memberKey));
+      return room.members.filter(m=>m.reading && m.reading.turn===turn.id && !talkers.has(F.memberKey(m)) && !(turn.end==null&&m.keyed===true)).sort((a,b)=>{
         const ak=typeof a.km==="number",bk=typeof b.km==="number";
         return ak&&bk&&a.km!==b.km ? a.km-b.km : ak!==bk ? ak?-1:1 : a.callsign.localeCompare(b.callsign) || a.nth-b.nth;
       });
@@ -752,9 +761,9 @@
       if(!folded&&group.stations.length>1&&group.id===S.sel){
         const currentRoom=snapshot(),turn=chosenTurn(currentRoom);
         if(turn){
-          clear(button);add(button,[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),el("b",{text:"Last talker · "+turnLabel(turn)}),el("small",{text:"Heard by · dBm / age"})]);
+          clear(button);add(button,[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),el("b",{text:F.turnCaption(turn)+" · "+turnLabel(turn,currentRoom)}),el("small",{text:(turn.kind==="doubled"?"Combined RF · ":"Heard by · ")+signalLabel()+" / age"})]);
           const reports=F.readings(currentRoom,turn).slice(0,2);
-          for(const report of reports)add(button,el("small",{class:"stack-report",text:callText(report.callsign,report.nth)+" · "+dbmText(report.reading.dbm)+" / "+Math.max(0,Math.floor((now()-report.reading.t)/1000))+"s"}));
+          for(const report of reports)add(button,el("small",{class:"stack-report",text:callText(report.callsign,report.nth)+" · "+RT.signalText(report.reading.dbm).replace("\n"," / ")+" / "+Math.max(0,Math.floor((now()-report.reading.t)/1000))+"s"}));
           if(!reports.length)button.appendChild(el("small",{text:group.stations.map(p=>p.callsign).join(", ")}));
         }
       }
@@ -799,7 +808,7 @@
     follow.addEventListener("change",()=>{S.following=follow.checked;S.earlier=false;const s=slices.find(s=>s.id===S.slice);if(S.following&&s)select({hz:s.hz,family:F.family(s.mode)},false);schedule();});
     add(box,[el("span",{},["Signed in as ",el("b",{text:S.me.station.callsign||"your station"}),S.me.station.helper?" · Helper":""]),helperLink(S.me.station),selector,el("label",{},[follow," Follow my slice"]),el("a",{class:"btn small",href:"/archive",text:"Your archive"})]);
   }
-  function turnLabel(turn){if(!turn)return "No attributed turn";if(turn.kind==="unknown")return "Unknown signal";if(turn.kind==="doubled")return (turn.talkers||[]).map(t=>callText(t.callsign,t.nth)).join(" + ")||"Two stations keyed";return (turn.talkers||[]).map(t=>callText(t.callsign,t.nth)).join(", ")||"Unidentified talker";}
+  function turnLabel(turn,room){if(!turn)return "No attributed turn";if(turn.kind==="unknown")return "Unknown signal";if(turn.kind==="doubled")return F.activeTalkers(room,turn).map(t=>callText(t.callsign,t.nth)).join(" + ")||"Keyed identities unavailable";return (turn.talkers||[]).map(t=>callText(t.callsign,t.nth)).join(", ")||"Unidentified talker";}
   function chosenTurn(room){return room&&room.now.find(t=>t.id===S.turn)||F.lastTurn(room,current());}
   function namesNode(turn){return el("div",{class:"names"},(turn.names||[]).length?turn.names.map(n=>el("span",{class:"nm",text:n.name+" · "+n.count})):"No names suggested.");}
   function showName(turn){
@@ -810,27 +819,28 @@
     form.addEventListener("submit",async e=>{e.preventDefault();const currentReason=gate(c);if(currentReason){status.textContent=currentReason;return;}submit.disabled=true;try{const result=await postForm("/v1/me/nameAt",Object.assign({},captured,{csrf:S.me.csrf,turn:turn.id,name:field.value.trim().toUpperCase()}));if(result.status===200&&result.body&&result.body.ok){box.close();box.remove();fetchContext(c);}else status.textContent=reasonOf(result,"This station could not name that turn.");}catch(e){status.textContent="Naming was not confirmed. Try again when connected.";}finally{submit.disabled=false;}});
     const box=dialog("Name unknown turn",form);field.focus();
   }
-  function readingNode(member,turn){
+  function readingNode(member,turn,room){
     const reading=member.reading,age=Math.max(0,now()-reading.t),known=turn.kind==="talking";
     const signal=RT.signalText(reading.dbm), spokenSignal=signal==="—"?"unavailable":signal.replace("\n",", ");
-    return el("div",{class:"rd attributed-reading"+(age>20000?" stale":""),data:{ref:F.memberKey(member),turn:turn.id,km:typeof member.km==="number"?member.km:"",bearing:known&&Number.isInteger(member.bearingDeg)?member.bearingDeg:""},title:callText(member.callsign,member.nth)+" measured "+turnLabel(turn)+" at "+dbmText(reading.dbm)+" dBm"},[
+    const subject=(turn.kind==="doubled"?"combined RF from ":"")+turnLabel(turn,room);
+    return el("div",{class:"rd attributed-reading"+(age>20000?" stale":""),data:{ref:F.memberKey(member),turn:turn.id,km:typeof member.km==="number"?member.km:"",bearing:known&&Number.isInteger(member.bearingDeg)?member.bearingDeg:""},title:callText(member.callsign,member.nth)+" measured "+subject+" at "+dbmText(reading.dbm)+" dBm"},[
       el("span",{class:"c"},[highlight(callText(member.callsign,member.nth)),member.away?el("span",{class:"away",text:"AWAY"}):null]),
       RT.pathNode(member.km,member.bearingDeg,known),el("span",{class:"o",text:(member.offsetHz>0?"+":"")+member.offsetHz}),
-      el("button",{class:"v signal-value",id:"signal-"+F.memberKey(member),type:"button",text:signal,attrs:{"aria-label":callText(member.callsign,member.nth)+" signal "+spokenSignal+", format "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{class:"age",text:Math.floor(age/1000)+" s"}),
+      el("button",{class:"v signal-value",id:"signal-"+F.memberKey(member),type:"button",text:signal,attrs:{"aria-label":callText(member.callsign,member.nth)+" measured "+subject+", signal "+spokenSignal+", format "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{class:"age",text:Math.floor(age/1000)+" s"}),
     ]);
   }
   function renderTalk(body,room){
     const turn=chosenTurn(room),open=turn&&turn.end===null;
-    body.appendChild(el("div",{class:"cap"},["LAST TALKER",el("span",{text:turn?(open?"on the air":"turn ended "+ago(now()-turn.end)+" ago"):"at this viewed frequency"})]));
-    body.appendChild(el("div",{class:"attributed-talker "+(turn?turn.kind:"quiet")},[glyph(turn?turn.kind:"quiet"),el("strong",{text:turnLabel(turn)}),turn&&turn.hz?el("span",{class:"mono",text:(turn.hz/1e6).toFixed(6)+" MHz"}):null]));
+    body.appendChild(el("div",{class:"cap"},[F.turnCaption(turn),el("span",{text:turn?(open?"on the air":"turn ended "+ago(now()-turn.end)+" ago"):"at this viewed frequency"})]));
+    body.appendChild(el("div",{class:"attributed-talker "+(turn?turn.kind:"quiet")},[glyph(turn?turn.kind:"quiet"),el("strong",{text:turnLabel(turn,room)}),turn&&turn.hz?el("span",{class:"mono",text:(turn.hz/1e6).toFixed(6)+" MHz"}):null]));
     if(!turn){body.appendChild(el("div",{class:"none",text:"No attributed turn near this frequency. Presence does not identify an unknown RF signal."}));return;}
     if(turn.kind==="unknown"){body.appendChild(namesNode(turn));body.appendChild(el("button",{class:"btn small name-turn",type:"button",text:"Name unknown turn",disabled:!!gate(),on:{click:()=>showName(turn)}}));}
-    if(turn.kind==="doubled")body.appendChild(el("div",{class:"fn",text:"Combined RF is not credited to either talker or either archive. Distance and bearing are blank."}));
+    if(turn.kind==="doubled")body.appendChild(el("div",{class:"fn",text:"Combined RF is not credited to any individual talker or archive. Distance and bearing are blank."}));
     const reads=F.readings(room,turn);
     const header=el("div",{class:"rd reading-head"},[el("span",{text:"Heard by"}),el("span",{text:RT.pathPreference.unit+(RT.pathPreference.bearing?" / °T":"")}),el("span",{class:"o",text:"Offset Hz"}),el("button",{class:"signal-heading",id:"signal-heading",type:"button",text:"Signal · "+signalLabel(),attrs:{"aria-label":"Signal format: "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{text:"Age"})]);body.appendChild(header);
-    for(const row of reads)body.appendChild(readingNode(row,turn));
+    for(const row of reads)body.appendChild(readingNode(row,turn,room));
     if(!reads.length)body.appendChild(el("div",{class:"none",text:"No current reporter reading belongs to this turn."}));
-    body.appendChild(el("div",{class:"fn",text:turn.kind==="doubled"?"These are raw reports of the combined RF, not of either individual talker.":"Each row is that reporter’s raw reading of "+turnLabel(turn)+". Nearest first; distance and initial true bearing run from talker to reporter. Readings keep their original age after the turn ends."}));
+    body.appendChild(el("div",{class:"fn",text:turn.kind==="doubled"?"These are raw reports of the combined RF, not of an individual transmitter.":"Each row is that reporter’s raw reading of "+turnLabel(turn)+". Nearest first; distance and initial true bearing run from talker to reporter. Readings keep their original age after the turn ends."}));
     if(room.now.length>1){body.appendChild(el("div",{class:"activity-choices"},room.now.map(t=>el("button",{class:"chip"+(t.id===turn.id?" on":""),type:"button",text:turnLabel(t)+(t.hz?" · "+(t.hz/1e6).toFixed(6):""),on:{click:()=>{S.turn=t.id;schedule();}}}))));}
   }
   function earlierTurns(room){

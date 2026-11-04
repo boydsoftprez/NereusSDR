@@ -694,6 +694,58 @@ private slots:
         QCOMPARE(roundtable.historyRequests.size(), 2);
     }
 
+    void activeFrequencyStreamKeepsUpdatingWhileAnotherDetailIsRead()
+    {
+        QTemporaryDir keyDir;
+        const StationIdentity identity = StationIdentity::loadOrCreate(keyDir.path());
+        Core core;
+        FakeRoundtable roundtable;
+        roundtable.frequency = true;
+        QVERIFY(roundtable.listen());
+        QVERIFY(identity.isValid());
+        core.client()->setServerUrl(roundtable.stationUrl());
+        core.client()->setIdentity(&identity);
+        core.client()->setStationInfo(QStringLiteral("KG4VCF"), QStringLiteral("EM73"));
+        core.settings->setValue(QStringLiteral("Roundtable/FirstRunAnswer"), QStringLiteral("Live"));
+        core.settings->setValue(QStringLiteral("Roundtable/Hidden"), QStringLiteral("False"));
+        core.client()->start();
+        NEREUS_TRY_VERIFY(core.client()->linkState() == RoundtableClient::LinkState::Live);
+        Window window(core, this, QStringLiteral("active-and-detail"));
+        NEREUS_TRY_VERIFY(window.client->isHandshakeComplete());
+        emit core.client()->roomsReceived(QJsonObject{{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+        NEREUS_TRY_VERIFY(window.rooms()->frequencyAvailable());
+        QVERIFY(window.rooms()->setActiveFrequencyContext(14212000, QStringLiteral("usb")));
+        QVERIFY(window.rooms()->readAt(14217000, QStringLiteral("usb")));
+        NEREUS_TRY_COMPARE(roundtable.frequencyReads.size(), 2);
+        const QString active = RoundtableModel::frequencyContextId(14212000, QStringLiteral("usb"));
+        const QString detail = RoundtableModel::frequencyContextId(14217000, QStringLiteral("usb"));
+        const auto sendView = [&](qint64 hz, double dbm) {
+            const QJsonObject receiver{{"sourceRoom", "usb-14212000"}, {"ref", "receiver"}, {"callsign", "K4ABC"},
+                {"reading", QJsonObject{{"present", true}, {"turn", 1}, {"dbm", dbm}, {"t", 12345}}}};
+            emit core.client()->roomReceived(QJsonObject{{"type", "room"}, {"view", "frequency"},
+                {"id", QStringLiteral("usb-%1").arg(hz)}, {"hz", hz}, {"family", "usb"},
+                {"members", QJsonArray{receiver}}, {"now", QJsonArray{}}, {"earlier", QJsonArray{}}, {"messages", QJsonArray{}}});
+        };
+        sendView(14212000, -73);
+        sendView(14217000, -81);
+        NEREUS_TRY_VERIFY(!window.rooms()->room(active).isEmpty());
+        NEREUS_TRY_VERIFY(!window.rooms()->room(detail).isEmpty());
+        QCOMPARE(window.rooms()->readingRoomId(), detail);
+        sendView(14212000, -61);
+        const auto sample = [&]() {
+            return window.rooms()->room(active).value("members").toArray().first().toObject().value("reading").toObject().value("dbm").toDouble();
+        };
+        NEREUS_TRY_COMPARE(sample(), -61.0);
+        window.rooms()->unreadRoom();
+        NEREUS_TRY_COMPARE(roundtable.frequencyReads.size(), 3);
+        QCOMPARE(roundtable.frequencyReads.last().value("type").toString(), QStringLiteral("unreadAt"));
+        QCOMPARE(roundtable.frequencyReads.last().value("hz").toInteger(), 14217000LL);
+        sendView(14212000, -67);
+        NEREUS_TRY_COMPARE(sample(), -67.0);
+        QCOMPARE(window.rooms()->activeFrequencyContext(), active);
+        core.client()->stop();
+    }
+
     void twoFrequencyReadersReleaseTheSharedCoreSubscription()
     {
         QTemporaryDir keyDir;

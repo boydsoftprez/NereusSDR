@@ -20,6 +20,17 @@ struct RoundtablePresenceStackTests {
                 ]), members: 5)
     }
 
+    @Test("active reports take priority and disclose omitted rows")
+    func reportsTakePriority() {
+        var value = tag
+        value.card?.reports.append(.init(id: "a/z", reporter: "W3XYZ", reading: .init(dbm: -70, t: 3000, present: true, turn: 12), age: "2 s", stale: false))
+        let plan = RoundtableTagLayout.cardPlan(value, width: 176, maxRows: 9)
+        #expect(plan.stateTitle == "W4KZO")
+        #expect(!plan.reports.isEmpty)
+        #expect(plan.omittedReports == 3 - plan.reports.count)
+        #expect(plan.people.isEmpty)
+    }
+
     @Test("a narrow card discloses reports without splitting its state into words")
     func narrowCardDisclosesReports() {
         var value = tag
@@ -71,7 +82,7 @@ struct RoundtablePresenceStackTests {
         value.card?.state = .doubled
         value.card?.reports = []
         let doubled = RoundtableTagLayout.cardPlan(value, width: 80)
-        #expect(doubled.stateCaption == "Last overlap" && doubled.stateTitle == "Unattributed")
+        #expect(doubled.stateCaption == "Last overlap" && doubled.stateTitle == "Double")
         let captionWidth = ("Last overlap" as NSString).size(withAttributes: [
             .font: UIFont.systemFont(ofSize: 8)]).width
         #expect(captionWidth <= 67, "Historical combined state must remain readable in the 80-point strip")
@@ -83,11 +94,9 @@ struct RoundtablePresenceStackTests {
         var unloaded = tag
         unloaded.card = .init()
         let waiting = RoundtableTagLayout.cardPlan(unloaded, width: 80, maxRows: 18)
-        for plan in [loaded, waiting] {
-            #expect(plan.people == ["W1AW", "K4ABC (2)"])
-            #expect(plan.omittedPeople == 3)
-            #expect(plan.reports.isEmpty && plan.showsDetails)
-        }
+        #expect(loaded.people.isEmpty && loaded.showsDetails)
+        #expect(waiting.people == ["W1AW", "K4ABC (2)"] && waiting.omittedPeople == 3)
+        #expect(waiting.reports.isEmpty && waiting.showsDetails)
         #expect(loaded.stateTitle == "W4KZO")
         #expect(waiting.stateTitle == nil)
     }
@@ -98,8 +107,7 @@ struct RoundtablePresenceStackTests {
             let plan = RoundtableTagLayout.cardPlan(tag, width: 176, maxRows: limit)
             #expect(plan.height <= CGFloat(limit * 13 + 8))
             if limit >= 9 {
-                #expect(plan.people.prefix(2) == ["W1AW", "K4ABC (2)"])
-                #expect(plan.omittedPeople == 2 && plan.showsDetails)
+                #expect(plan.people.isEmpty && plan.showsDetails)
             }
             if !plan.reports.isEmpty {
                 #expect(plan.stateTitle == "W4KZO")
@@ -115,9 +123,9 @@ struct RoundtablePresenceStackTests {
             value.card?.state = state
             value.card?.reports = []
             let plan = RoundtableTagLayout.cardPlan(value, width: 176, maxRows: 18)
-            #expect(plan.people == ["W1AW", "K4ABC (2)", "N3XYZ"])
+            #expect(plan.people.isEmpty)
             #expect(plan.stateCaption != "Last talker" && plan.reports.isEmpty)
-            #expect(plan.stateTitle == (state == .unknown ? "Unknown signal" : "Unattributed"))
+            #expect(plan.stateTitle == (state == .unknown ? "Unknown signal" : "Double"))
         }
     }
 
@@ -136,7 +144,82 @@ struct RoundtablePresenceStackTests {
         #expect(both.reports.map(\.age) == ["4 s", "2 s"])
         #expect(both.reportHeight == 30 && both.height == dbm.height + 24)
         let constrained = RoundtableTagLayout.cardPlan(value, width: 176, maxRows: 14)
-        #expect(constrained.reports.count == 1 && constrained.reports.first?.signal.count == 2)
+        #expect(constrained.reports.count == 2 && constrained.reports.first?.signal.count == 2)
         #expect(constrained.height <= 190)
+    }
+
+    private func overlapMember(_ ref: String, hz: Int64 = 7_236_400, keyed: Bool = false,
+                               source: String = "lsb-7236000", turn: Int64? = 12) -> RoundtableModel.Member {
+        .init(ref: ref, callsign: ref.uppercased(), nth: 1, offsetHz: 0, joining: false,
+              away: false, keyed: keyed, software: "NereusSDR", softwareVersion: "", you: false,
+              reading: .init(dbm: -73, t: 1000, present: true, turn: turn), hz: hz, sourceRoom: source)
+    }
+
+    private var overlapSummary: RoundtableModel.RoomSummary {
+        .init(id: "lsb-7236400", band: "40m", family: "lsb", hz: 7_236_400,
+              state: "talking", talkers: [], members: 1, messages: 0, last: 1000, folded: false,
+              heard: 0, readings: [], stations: [
+                .init(ref: "a", sourceRoom: "lsb-7236000", slice: 0, hz: 7_236_400, family: "lsb",
+                      callsign: "A", nth: 1, keyed: true, away: false, joining: false),
+              ])
+    }
+
+    private var overlapRoom: RoundtableModel.Room {
+        .init(id: "lsb-7236400", band: "40m", family: "lsb", hz: 7_236_400,
+              members: [overlapMember("a", keyed: true), overlapMember("b", hz: 7_236_700, keyed: true),
+                        overlapMember("c", keyed: true), overlapMember("listener")],
+              now: [.init(id: 12, kind: "doubled", talkers: [
+                .init(ref: "a", callsign: "A", nth: 1, hz: 7_236_400, sourceRoom: "lsb-7236000"),
+                .init(ref: "b", callsign: "B", nth: 2, hz: 7_236_700, sourceRoom: "lsb-7236000"),
+                .init(ref: "c", callsign: "C", nth: 1, hz: 7_236_400, sourceRoom: "lsb-7236000"),
+              ], start: 900, ending: false, names: [], heard: 1, hz: 7_236_000, sourceRoom: "lsb-7236000")],
+              earlier: [], messages: [], frequencyView: true)
+    }
+
+    @Test("a Double at a room center belongs to its exact endpoint or explicitly associated exact listener")
+    func overlapUsesExactAssociation() throws {
+        var room = overlapRoom
+        let endpoint = try #require(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200))
+        #expect(endpoint.state == .doubled && endpoint.participants == ["A", "B (2)", "C"])
+        for i in room.now[0].talkers.indices { room.now[0].talkers[i].hz = 7_236_700 }
+        let listener = try #require(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200))
+        #expect(listener.state == .doubled && listener.reports.map(\.reporter) == ["LISTENER"])
+        for i in room.members.indices { room.members[i].reading?.turn = 999 }
+        #expect(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200)?.state == .waiting)
+        room = overlapRoom
+        room.now[0].sourceRoom = "lsb-7240000"
+        #expect(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200)?.state == .waiting)
+        room = overlapRoom
+        room.family = "usb"
+        #expect(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200)?.state == .waiting)
+        room = overlapRoom
+        room.now[0].kind = "talking"
+        room.now[0].talkers = Array(room.now[0].talkers.prefix(1))
+        #expect(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200)?.state == .waiting)
+        room.now[0].kind = "unknown"
+        room.now[0].talkers = []
+        #expect(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200)?.state == .waiting)
+    }
+
+    @Test("a live Double keeps current keyed identities and lets an unkeyed former talker report combined RF")
+    func overlapThreeToTwoKeepsCurrentParticipants() throws {
+        var room = overlapRoom
+        room.members[2].keyed = false
+        room.members.append(overlapMember("listener", source: "lsb-7240000"))
+        let live = try #require(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200))
+        #expect(live.state == .doubled && live.participants == ["A", "B (2)"])
+        #expect(live.reports.map(\.reporter) == ["C", "LISTENER"])
+        #expect(live.reports.allSatisfy { $0.id.hasPrefix("lsb-7236000/") })
+        room.now[0].end = 1100
+        room.earlier = room.now
+        room.now = []
+        for i in room.members.indices { room.members[i].keyed = false }
+        let ended = try #require(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200))
+        #expect(ended.ended && ended.participants == ["A", "B (2)", "C"])
+        #expect(ended.reports.map(\.reporter) == ["LISTENER"])
+        room.now = [.init(id: 13, kind: "talking", talkers: [room.earlier[0].talkers[0]], start: 1100,
+                          ending: false, names: [], heard: 0, hz: 7_236_400, sourceRoom: "lsb-7236000")]
+        let single = try #require(RoundtableTagLayout.card(for: overlapSummary, view: room, now: 1200))
+        #expect(single.state == .known("A") && single.reports.isEmpty)
     }
 }
