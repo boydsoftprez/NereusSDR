@@ -183,6 +183,38 @@ struct RoundtableCardLayoutTests {
         #expect(inset.minX == 47 + BandColumnLayout.origin)
     }
 
+    @Test("the real short iPhone pan: a double's two names share a line when they fit, and a reading row shows")
+    func shortPanDoubleKeepsARow() throws {
+        let flags = [CGRect(x: 87, y: 0, width: 44, height: 135), CGRect(x: 132, y: 0, width: 200, height: 181),
+                     CGRect(x: 240, y: 190, width: 150, height: 25)]
+        func placed(_ names: [String]) throws -> RoundtablePlacedCard {
+            try #require(RoundtableTagLayout.placedCard(flags: flags, dialX: 133, foot: 239, panWidth: 362, compact: true,
+                                                        card: double(7, names: names)))
+        }
+        let typical = try placed(["K4ABC", "N4XYZ"])
+        #expect(typical.rect.width < 150 && typical.plan.narrow)
+        #expect(typical.plan.namesInRow && typical.plan.names == 2 && typical.plan.namesGap == 6)
+        #expect(typical.plan.rows >= 1 && typical.plan.rows + typical.plan.moreRows == 7 && typical.plan.showsMoreRows)
+        for flag in flags { #expect(!typical.rect.intersects(flag)) }
+
+        // Two long callsigns measure too wide: they stack, the names outlast the rows, and none may fit.
+        let long = try placed(["VE3ABCD/P", "KH6XYZ/MM"])
+        #expect(!long.plan.namesInRow && long.plan.names == 2)
+        #expect(long.plan.rows == 0 && long.plan.moreRows == 7)
+
+        // With no height at all the rows still give way first, and the head and names stay.
+        let none = try #require(RoundtableTagLayout.cardPlan(double(7), width: 124, room: 60))
+        #expect(none.rows == 0 && none.names == 2 && none.namesInRow)
+    }
+
+    @Test("two names on one line at a wide card, as before; three still stack")
+    func wideDoubleResultsStay() throws {
+        let wide = try #require(RoundtableTagLayout.cardPlan(double(5), width: 176, room: 400))
+        #expect(wide.namesInRow && wide.namesGap == 10 && wide.rows == 5)
+        let three = try #require(RoundtableTagLayout.cardPlan(double(5, names: ["K4A", "N4B", "W1C"]), width: 124, room: 400))
+        #expect(!three.namesInRow && three.names == 3)
+    }
+
     @Test("a short pan loses rows first with +N more, and the Double head and names stay")
     func shortPanKeepsDoubleHead() throws {
         let card = double(5)
@@ -208,14 +240,19 @@ struct RoundtableCardLayoutTests {
         var card = double(5)
         card.frozen = true
         card.note = "Reconnecting"
-        let plan = try #require(RoundtableTagLayout.cardPlan(card, width: 125, room: 100))
+        // The names share a line, so the real short pan's 100 points keep every line but the rows.
+        let roomy = try #require(RoundtableTagLayout.cardPlan(card, width: 125, room: 100))
+        #expect(roomy.rows == 0 && roomy.hasCaption && roomy.showsMoreRows && roomy.namesInRow && roomy.hasNote)
+        let plan = try #require(RoundtableTagLayout.cardPlan(card, width: 125, room: 85))
         #expect(plan.rows == 0 && plan.hasCaption && !plan.showsMoreRows && plan.names == 2 && plan.hasNote)
     }
 
-    @Test("a double's two names sit side by side only when they fit and the card is wide")
+    @Test("a double's two names sit side by side whenever they fit, at any width")
     func namesSideBySide() throws {
         #expect(try #require(RoundtableTagLayout.cardPlan(double(), width: 176, room: 300)).namesInRow)
-        #expect(try !(#require(RoundtableTagLayout.cardPlan(double(), width: 149, room: 300)).namesInRow))
+        let narrow = try #require(RoundtableTagLayout.cardPlan(double(), width: 149, room: 300))
+        #expect(narrow.namesInRow && narrow.namesGap == 10)
+        #expect(try !(#require(RoundtableTagLayout.cardPlan(double(), width: 104, room: 300)).namesInRow))
         let long = double(names: ["EA8/KG4VCF/MM/QRP", "VP2E/KG4VCF/QRP"])
         #expect(try !(#require(RoundtableTagLayout.cardPlan(long, width: 176, room: 300)).namesInRow))
         #expect(try !(#require(RoundtableTagLayout.cardPlan(double(names: ["A", "B", "C"]), width: 232, room: 300)).namesInRow))

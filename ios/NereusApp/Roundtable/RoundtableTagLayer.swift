@@ -125,7 +125,7 @@ struct RoundtableTagCard: Equatable {
 /// an age or a clock changing never comes here again.
 struct RoundtableCardPlan: Equatable {
     var width: CGFloat
-    /// Below 150 wide: no clock, one name to a line, no format at the caption's right, S units for Both.
+    /// Below 150 wide: no clock, no format at the caption's right, S units for Both.
     var narrow: Bool
     /// Below 122 wide: no age column, and no frequency in the head.
     var tight: Bool
@@ -137,6 +137,8 @@ struct RoundtableCardPlan: Equatable {
     /// Keyed names drawn, in a double.
     var names: Int
     var namesInRow: Bool
+    /// Between two names on one line: the board's 10, or 6 on a narrow card where 10 does not fit.
+    var namesGap: CGFloat
     /// Keyed names not drawn.
     var moreKeyed: Int
     var showsMoreKeyed: Bool
@@ -939,6 +941,10 @@ enum RoundtableTagLayout {
     static let cardRowCap = 5
     /// The card's top limit, under the pan's top edge.
     static let cardTopGap: CGFloat = 2
+    /// Between two names on one line (overlay.css .rc__names--row).
+    static let cardNamesGap: CGFloat = 10
+    /// The same on a narrow card that 10 would not fit: names still lead with their dots.
+    static let cardNarrowNamesGap: CGFloat = 6
     /// The pan's own left edge margin.
     static let cardLeftGap: CGFloat = 3
     /// The pan's right edge margin, and between the card and what it keeps clear of.
@@ -1087,17 +1093,23 @@ enum RoundtableTagLayout {
         let narrow = width < cardNarrowBelow
         let names = card.kind == .double ? card.keyed.count : 0
         var inRow = false
-        if !narrow && names == 2 {
-            // A dot and its gap before each name, and 10 between them.
+        var namesGap = cardNamesGap
+        if names == 2 {
+            // Two names share a line whenever they fit, at any width: on a short pan
+            // the line they save is a reading row. A dot and its gap before each
+            // name, and the gap between them. The real short pan's card is 2 points
+            // short of two five letter calls at the board's gap, so a narrow card
+            // closes that gap before it stacks them.
             let room = width - 2 * RoundtableCardPlan.border - 2 * RoundtableCardPlan.padHorizontal
-            let wanted = card.keyed.reduce(CGFloat(10)) {
+            let wanted = card.keyed.reduce(CGFloat(0)) {
                 $0 + 12 + textWidth(cardName($1, in: card), size: 11, weight: .bold)
             }
-            inRow = wanted <= room
+            if narrow && wanted + cardNamesGap > room { namesGap = cardNarrowNamesGap }
+            inRow = wanted + namesGap <= room
         }
         return RoundtableCardPlan(width: width, narrow: narrow, tight: width < cardTightBelow, rows: rows,
                                   moreRows: card.rows.count - rows, showsMoreRows: true, names: names,
-                                  namesInRow: inRow, moreKeyed: 0, showsMoreKeyed: true,
+                                  namesInRow: inRow, namesGap: namesGap, moreKeyed: 0, showsMoreKeyed: true,
                                   hasNote: card.note != nil,
                                   hasPastNames: card.kind == .lastDouble && !card.keyed.isEmpty,
                                   hasCaption: true, hasEmptyLine: card.rows.isEmpty)
@@ -2075,7 +2087,7 @@ struct RoundtableCardView: View {
             if plan.names > 0 {
                 let shown = Array(card.keyed.prefix(plan.names))
                 if plan.namesInRow {
-                    HStack(spacing: 10) {
+                    HStack(spacing: plan.namesGap) {
                         ForEach(Array(shown.enumerated()), id: \.offset) { _, name in nameView(name) }
                     }
                 } else {
