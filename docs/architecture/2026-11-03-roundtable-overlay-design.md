@@ -178,7 +178,7 @@ constants. No ported code: new files carry `no-port-check: NereusSDR-original.`
 
 ## Errors and edge cases
 
-* View of a frequency whose stream has not arrived: stations from the directory, "No readings yet".
+* View of a frequency whose stream has not arrived: stations from the directory, "No readings".
 * View while the link drops: D7, "Reconnecting · last known". Tune stays enabled only when the radio
   connection itself allows tuning.
 * Viewed frequency goes quiet: head says "Nobody talking", the caption says "Last heard 3m ago".

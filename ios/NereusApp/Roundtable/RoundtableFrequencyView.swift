@@ -227,7 +227,7 @@ struct RoundtableFrequencyView: View {
     @ViewBuilder
     private var people: some View {
         if data.onFrequency.isEmpty {
-            note("No stations named here")
+            note("Nobody here")
         } else {
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(Array(data.onFrequency.enumerated()), id: \.offset) { _, person in
@@ -273,7 +273,7 @@ struct RoundtableFrequencyView: View {
                 colour: live ? RoundtableCardView.doubleText : RoundtableColours.dim, bold: live)
         let rows = RoundtableFrequencyText.rows(data, panDbm: panDbm, panPeak: panPeak)
         if rows.isEmpty {
-            note(data.note?.hasPrefix("Double ended") == true ? "Waiting for readings" : "No readings yet")
+            note(data.note?.hasPrefix("Double ended") == true ? "Waiting for readings" : "No readings")
         } else {
             let showsPath = RoundtableFrequencyText.showsPath(data)
             VStack(spacing: RoundtableCardPlan.gap) {

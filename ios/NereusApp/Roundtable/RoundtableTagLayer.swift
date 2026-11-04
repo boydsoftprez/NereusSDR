@@ -149,7 +149,7 @@ struct RoundtableCardPlan: Equatable {
     /// A last double's names.
     var hasPastNames: Bool
     var hasCaption: Bool
-    /// "No readings yet", with no readings at all.
+    /// "No readings", with no readings at all.
     var hasEmptyLine: Bool
 
     // MARK: The phone's and the iPad's sizes (overlay.css .rcp)
@@ -2184,7 +2184,7 @@ struct RoundtableCardView: View {
                     }
                 }
                 if plan.hasEmptyLine {
-                    noteText(card.note?.hasPrefix("Double ended") == true ? "Waiting for readings" : "No readings yet")
+                    noteText(card.note?.hasPrefix("Double ended") == true ? "Waiting for readings" : "No readings")
                 }
                 if plan.moreRows > 0 && plan.showsMoreRows {
                     Text("+\(plan.moreRows) more \u{203A}")

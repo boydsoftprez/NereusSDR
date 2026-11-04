@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: The view's and the card's empty lines read "Nobody here" and "No
+//               readings". J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: A pending flag says Double by the pending card's rule, shared in
 //               nearestKeyedTruth. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
@@ -2331,7 +2333,7 @@ void paintRoundtableCard(QPainter& p, const RoundtableCardModel& card, const Rou
     if (plan.rows == 0 && plan.emptyLine) {
         p.setFont(smallFont);
         const bool waiting = !frozen && !dimmed && !card.note.isEmpty();
-        smallLine(waiting ? QStringLiteral("Waiting for readings") : QStringLiteral("No readings yet"), kColorDim);
+        smallLine(waiting ? QStringLiteral("Waiting for readings") : QStringLiteral("No readings"), kColorDim);
     }
     if (plan.moreRows > 0) {
         y += kCardGap;
@@ -2466,7 +2468,7 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
     // On frequency: each station, "keyed", and its offset from the viewed frequency.
     caption(QStringLiteral("On frequency · %1").arg(card.onFrequency.size()), QStringLiteral("Tuned"), kColorDim);
     if (card.onFrequency.isEmpty()) {
-        smallLine(QStringLiteral("No stations named here"), kColorDim);
+        smallLine(QStringLiteral("Nobody here"), kColorDim);
     }
     const int personLine = line(kViewPersonLine);
     for (qsizetype i = 0; i < card.onFrequency.size(); ++i) {
@@ -2514,7 +2516,7 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
     caption(viewCaptionText(card), unit, combined ? kColorDoubleText : kColorDim);
     const int rowCount = std::min<int>(rowLimit, static_cast<int>(rows.size()));
     if (rows.isEmpty()) {
-        smallLine(QStringLiteral("No readings yet"), kColorDim);
+        smallLine(QStringLiteral("No readings"), kColorDim);
     } else if (rowCount > 0) {
         const bool showPath = card.kind != Kind::Double && card.kind != Kind::LastDouble && card.kind != Kind::Unknown;
         const int rowLine = line(kCardRowLine);
