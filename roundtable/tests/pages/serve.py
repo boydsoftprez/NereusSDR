@@ -711,7 +711,7 @@ class World:
             return 200, self.facts
         if name == "overlap":
             # Disposable scripted stations exercise real key/turn/read paths.
-            actors = {sim.call: sim for sim in self.sims if sim.call in ("K4ABC", "N4RDR", "W9ABC", "AA4QQ", "KD8LMN", "K2OTH")}
+            actors = {sim.call: sim for sim in self.sims if sim.call in ("K4ABC", "N4RDR", "W9ABC", "AA4QQ", "KD8LMN", "K2OTH", "W5STL")}
             action = q.get("act", "double")
             with self.service.event():
                 actors["K4ABC"].key(True)
@@ -729,6 +729,13 @@ class World:
                         actors["K2OTH"].key(False)
                 elif action == "other":
                     actors["K2OTH"].key(True)
+                elif action == "stale":
+                    # W5STL's one reading of the turn now open, and no more:
+                    # 20 s on, its row is stale whatever ran before.
+                    actors["W5STL"].readings_until = 0
+                    self.clock.advance(1100)
+                    actors["W5STL"].st.send({"type": "reading", "slice": 0, "dbm": -81.0,
+                                             "t": self.clock.wall_ms(), "present": True})
                 elif action == "absent":
                     # A receiver that hears nothing: every reading from it says
                     # present false while K4ABC's turn stays open.

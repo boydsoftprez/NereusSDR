@@ -9,6 +9,7 @@ Used by test_pages.py and by run.py, which also takes the screenshots.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -404,8 +405,14 @@ def probe_freshness(c: Chrome, server: Server) -> None:
     """Stale raw readings retain amber age; path units preserve canonical ordering."""
     open_public(c,server.base)
     c.eval("RT.select('usb-14212000')")
+    # A turn of its own, whatever ran before: a double and back opens a new one.
+    server.control("overlap?act=double")
+    c.wait("document.querySelector('.rbody .cap').textContent.includes('DOUBLE')")
+    server.control("overlap?act=single")
+    c.wait("document.querySelector('.rbody .cap').textContent.includes('CURRENT TALKER')")
+    server.control("overlap?act=stale")
     c.wait("document.querySelectorAll('.attributed-reading').length>=8")
-    stale=c.wait("(()=>{const n=[...document.querySelectorAll('.attributed-reading.stale')].find(n=>n.textContent.includes('W5STL'));return n&&{age:n.querySelector('.age').textContent,color:getComputedStyle(n.querySelector('.age')).color}})()")
+    stale=c.wait("(()=>{const n=[...document.querySelectorAll('.attributed-reading.stale')].find(n=>n.textContent.includes('W5STL'));return n&&{age:n.querySelector('.age').textContent,color:getComputedStyle(n.querySelector('.age')).color}})()",40)
     assert stale["color"]==AMBER,stale
     meter=c.eval("(()=>{const n=[...document.querySelectorAll('.attributed-reading.stale')].find(n=>n.textContent.includes('W5STL'));return {fill:getComputedStyle(n.querySelector('.rw-meter i')).backgroundColor,tick:!!n.querySelector('.rw-meter u')}})()")
     assert meter=={"fill":"rgb(96, 96, 102)","tick":False},meter
@@ -489,6 +496,55 @@ def probe_connection(c: Chrome, server: Server) -> None:
     c.events.clear()
 
 
+
+
+def probe_dropped_link(c: Chrome, server: Server) -> None:
+    """D7: a dropped link says Last known with no clock, in no live color, for a
+    talker and a double, while reconnecting and offline alike."""
+    read = """(()=>{const cap=document.querySelector('.rbody .cap'),who=document.querySelector('.attributed-talker'),
+      name=who.querySelector('strong'),dot=who.querySelector('.gl'),root=getComputedStyle(document.documentElement);
+      return {cap:cap.textContent,clock:!!cap.querySelector('.rw-clock'),rail:document.querySelector('.rbody .rw-rail').className,
+        kind:who.className,glyph:dot.className,name:name.textContent,color:getComputedStyle(name).color,
+        dim:(()=>{const t=document.createElement('i');t.style.color=root.getPropertyValue('--t2');document.body.appendChild(t);const v=getComputedStyle(t).color;t.remove();return v})()}})()"""
+    def frozen(state: str) -> Dict[str, Any]:
+        got = c.wait(f"RT.linkState()==={js(state)}&&document.querySelector('.rbody .cap').textContent.startsWith('Last known')&&({read})", 45)
+        for word in ("on the air", "CURRENT TALKER", "DOUBLE"):
+            assert word not in got["cap"], got
+        assert not got["clock"] and got["rail"] == "rw-rail quiet", got
+        assert got["kind"] == "attributed-talker quiet" and got["glyph"] == "gl quiet", got
+        assert got["color"] == got["dim"], got
+        return got
+    def back() -> None:
+        server.control("live?do=allow")
+        c.eval("RT.reconnectNow()")
+        c.wait("RT.linkState()==='live'", 30)
+    c.goto(server.base + "/r/usb/14212000")
+    c.wait("RT.linkState()==='live'&&document.querySelector('.rbody .cap')?.textContent.includes('CURRENT TALKER')", 30)
+    try:
+        # A talker: live, then dropped.
+        live = c.eval(read)
+        assert live["clock"] and "on the air" in live["cap"] and live["glyph"] == "gl talking", live
+        server.control("live?do=drop-refuse")
+        assert "K4ABC" in frozen("reconnecting")["name"]
+        back()
+        # A double: red and striped while live, none of it dropped.
+        server.control("overlap?act=double")
+        c.wait("document.querySelector('.rbody .cap').textContent.includes('DOUBLE')")
+        live = c.eval(read)
+        assert live["color"] == "rgb(224, 108, 110)" and live["glyph"] == "gl doubled", live
+        server.control("live?do=drop-refuse")
+        got = frozen("reconnecting")
+        assert "K4ABC" in got["name"] and "N4RDR" in got["name"], got
+        frozen("offline")
+        shots = os.environ.get("ROUNDTABLE_DROPPED_SHOT")
+        if shots:
+            c.screenshot(Path(shots))
+    finally:
+        server.control("live?do=allow")
+        server.control("overlap?act=reset")
+    c.eval("RT.reconnectNow()")
+    c.wait("RT.linkState()==='live'&&document.querySelector('.rbody .cap').textContent.includes('CURRENT TALKER')", 30)
+    c.events.clear()
 
 
 def probe_inert(c: Chrome, server: Server) -> None:
@@ -778,8 +834,8 @@ PROBES = [
     probe_bands,
     probe_band_map,
     probe_row,
-    probe_freshness,  # Before the overlap: its stale row belongs to the turn the overlap ends.
     probe_live_overlap,
+    probe_freshness,
     probe_unknown_signal,
     probe_signal_mobile,
     probe_search,
@@ -789,6 +845,7 @@ PROBES = [
     probe_copy_link,
     probe_owner_frequency,
     probe_connection,
+    probe_dropped_link,
     probe_helper_navigation,
     probe_archive,
     probe_review,

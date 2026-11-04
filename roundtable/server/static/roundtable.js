@@ -794,7 +794,7 @@
       if(!folded&&!dbl&&group.stations.length>1&&group.id===S.sel){
         const currentRoom=snapshot(),turn=chosenTurn(currentRoom);
         if(turn){
-          clear(button);add(button,[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),el("b",{text:F.turnCaption(turn)+" · "+turnLabel(turn,currentRoom)}),el("small",{text:(turn.kind==="doubled"?"Combined RF · ":"Heard by · ")+signalLabel()+" / age"})]);
+          clear(button);add(button,[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),el("b",{text:talkCaption(turn)+" · "+turnLabel(turn,currentRoom)}),el("small",{text:(turn.kind==="doubled"?"Combined RF · ":"Heard by · ")+signalLabel()+" / age"})]);
           const reports=F.readings(currentRoom,turn).slice(0,2);
           for(const report of reports)add(button,el("small",{class:"stack-report",text:callText(report.callsign,report.nth)+" · "+RT.signalText(report.reading.dbm).replace(" "," / ")+" / "+Math.max(0,Math.floor((now()-report.reading.t)/1000))+"s"}));
           if(!reports.length)button.appendChild(el("small",{text:group.stations.map(p=>p.callsign).join(", ")}));
@@ -886,12 +886,13 @@
       })),
     ]);
   }
+  /* D7: a dropped link says what it last knew, never that someone is on the air. */
+  function talkCaption(turn){return linkState()==="live"?F.turnCaption(turn):"Last known";}
   function renderTalk(body,room){
-    const turn=chosenTurn(room),open=turn&&turn.end===null,linked=linkState()==="live",dbl=turn&&turn.kind==="doubled";
+    const turn=chosenTurn(room),open=turn&&turn.end===null,linked=linkState()==="live",dbl=turn&&turn.kind==="doubled",shownKind=turn&&linked?turn.kind:"quiet";
     body.appendChild(el("div",{class:"rw-rail "+(!open||!linked?"quiet":dbl?"dbl":turn.kind==="unknown"?"unk":"talk")}));
-    const clockNow=linked||!lostAt?now():lostAt+offset;
-    body.appendChild(el("div",{class:"cap"},[F.turnCaption(turn),el("span",{},turn?(open?["on the air ",el("span",{class:"rw-clock",text:mmss((clockNow-turn.start)/1000)})]:"turn ended "+ago(now()-turn.end)+" ago"):"at this viewed frequency")]));
-    body.appendChild(el("div",{class:"attributed-talker "+(turn?turn.kind:"quiet")},[glyph(turn?turn.kind:"quiet"),el("strong",{text:turnLabel(turn,room)}),turn&&turn.hz?el("span",{class:"mono",text:(turn.hz/1e6).toFixed(6)+" MHz"}):null]));
+    body.appendChild(el("div",{class:"cap"},[talkCaption(turn),el("span",{},turn?(!linked?"":open?["on the air ",el("span",{class:"rw-clock",text:mmss((now()-turn.start)/1000)})]:"turn ended "+ago(now()-turn.end)+" ago"):"at this viewed frequency")]));
+    body.appendChild(el("div",{class:"attributed-talker "+shownKind},[glyph(shownKind),el("strong",{text:turnLabel(turn,room)}),turn&&turn.hz?el("span",{class:"mono",text:(turn.hz/1e6).toFixed(6)+" MHz"}):null]));
     if(!turn){body.appendChild(el("div",{class:"none",text:"No attributed turn near this frequency. Presence does not identify an unknown RF signal."}));add(body,onFrequency(turn,room));return;}
     if(turn.kind==="unknown"){body.appendChild(namesNode(turn));body.appendChild(el("button",{class:"btn small name-turn",type:"button",text:"Name unknown turn",disabled:!!gate(),on:{click:()=>showName(turn)}}));}
     if(dbl)body.appendChild(el("div",{class:"fn",text:"Combined RF is not credited to any individual talker or archive. Distance and bearing are blank."}));

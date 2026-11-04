@@ -595,6 +595,7 @@ textarea:focus-visible { outline: 2px solid var(--sel-top); outline-offset: 1px;
 .roundtable-offline .maptag, .roundtable-offline .person-row.keyed .person-call, .roundtable-offline .maptag b { color: var(--t2); }
 .roundtable-offline .person-row .gl.talking { background: var(--muted); }
 .roundtable-offline .maptag.selected { border-color: var(--stale); }
+.roundtable-offline .attributed-talker strong { color: var(--t2); }
 body.public, .public .page { height: 100dvh; }
 
 .signal-value, .signal-heading { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; padding: 0; text-align: right; white-space: pre-line; }
