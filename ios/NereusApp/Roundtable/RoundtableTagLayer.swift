@@ -1157,14 +1157,31 @@ enum RoundtableTagLayout {
     }
 
     /// The most reading rows that fit with every other piece; -1 when even none do.
+    /// A double always keeps one reading row if it can: see `oneRowDouble`.
     @MainActor
     static func rowsThatFit(_ card: RoundtableCardData, width: CGFloat, room: CGFloat) -> Int {
         var rows = min(card.rows.count, cardRowCap)
-        while rows >= 0 {
+        while rows >= 1 {
             if fullPlan(card, width: width, rows: rows).height <= room { return rows }
             rows -= 1
         }
-        return -1
+        if oneRowDouble(card, width: width, room: room) != nil { return 1 }
+        return fullPlan(card, width: width, rows: 0).height <= room ? 0 : -1
+    }
+
+    /// Stacked names can leave a double no row. The caption goes before the last
+    /// row: the Double head and the striped meter still say what it is. Live or
+    /// frozen, a double keeps one reading; "+N more" goes first on a frozen card,
+    /// which holds "Last known" longest (D7), and after the caption on a live one.
+    @MainActor
+    private static func oneRowDouble(_ card: RoundtableCardData, width: CGFloat, room: CGFloat) -> RoundtableCardPlan? {
+        guard card.kind == .double, !card.rows.isEmpty else { return nil }
+        var plan = fullPlan(card, width: width, rows: 1)
+        if plan.height <= room { return plan }
+        if card.frozen { plan.showsMoreRows = false } else { plan.hasCaption = false }
+        if plan.height <= room { return plan }
+        if card.frozen { plan.hasCaption = false } else { plan.showsMoreRows = false }
+        return plan.height <= room ? plan : nil
     }
 
     /// The card at `width` in `room` points of height, or nil when not even its
@@ -1187,6 +1204,7 @@ enum RoundtableTagLayout {
     @MainActor
     private static func computePlan(_ card: RoundtableCardData, width: CGFloat, room: CGFloat) -> RoundtableCardPlan? {
         let rows = rowsThatFit(card, width: width, room: room)
+        if rows == 1, let oneRow = oneRowDouble(card, width: width, room: room) { return oneRow }
         if rows >= 0 { return fullPlan(card, width: width, rows: rows) }
         var plan = fullPlan(card, width: width, rows: 0)
         // A dropped link keeps its "Last known" caption longest (D7).

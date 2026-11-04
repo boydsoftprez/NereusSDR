@@ -321,9 +321,20 @@ final class RoundtableModel: ObservableObject {
         }
         let summaries = rooms.filter { sources.contains($0.id) && $0.family == family }
         if let doubled = summaries.first(where: { $0.state == "doubled" }) {
-            // One keyed station cannot name a double: the summary's talkers do.
+            // Who is keyed now, with their slice numbers. Nobody keyed yet: the
+            // summary's talkers carry no slice number and can have left (D5), so
+            // only those the room still lists, as the directory names them.
             let keyed = keyedBySource[doubled.id, default: []].map(name)
-            return ("doubled", doubled.talkers.isEmpty ? keyed : doubled.talkers)
+            if !keyed.isEmpty { return ("doubled", keyed) }
+            var unnamed = doubled.talkers
+            let listed = directory.filter { station in
+                guard station.sourceRoom == doubled.id, let index = unnamed.firstIndex(of: station.callsign) else {
+                    return false
+                }
+                unnamed.remove(at: index)
+                return true
+            }
+            return ("doubled", listed.map(name))
         }
         let keyedHere = people.filter(\.keyed).map(name)
         if !keyedHere.isEmpty { return ("talking", keyedHere) }

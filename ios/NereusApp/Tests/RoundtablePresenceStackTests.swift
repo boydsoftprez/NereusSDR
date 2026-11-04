@@ -279,8 +279,10 @@ struct RoundtablePresenceStackTests {
     @Test("D1: the source room's summary carries through: doubled with its names, unknown, a named talker, else quiet")
     func summaryStateCarriesThrough() {
         let doubled = RoundtableModel.frequencyRows(of: [source("lsb-7236000", [
+            station("k4abc", source: "lsb-7236000", hz: 7_236_500, keyed: false),
+            station("n3xyz", source: "lsb-7236000", hz: 7_236_600, keyed: false),
             station("q", source: "lsb-7236000", hz: 7_236_400, keyed: false)], state: "doubled", talkers: ["K4ABC", "N3XYZ"])])
-        #expect(doubled[0].state == "doubled" && doubled[0].keyedNames == ["K4ABC", "N3XYZ"])
+        #expect(doubled.allSatisfy { $0.state == "doubled" && $0.keyedNames == ["K4ABC", "N3XYZ"] })
         let unknown = RoundtableModel.frequencyRows(of: [source("lsb-7236000", [
             station("q", source: "lsb-7236000", hz: 7_236_400, keyed: false)], state: "unknown")])
         #expect(unknown[0].state == "unknown" && unknown[0].keyedNames.isEmpty)
@@ -288,6 +290,28 @@ struct RoundtablePresenceStackTests {
             station("a", source: "lsb-7236000", hz: 7_236_400, keyed: false),
             station("q", source: "lsb-7236000", hz: 7_236_900, keyed: false)], state: "talking", talkers: ["A"])])
         #expect(talker.map(\.state) == ["talking", "quiet"] && talker[0].keyedNames == ["A"])
+    }
+
+    @Test("D5: a doubled room's fallback names leave out who has gone and keep slice numbers")
+    func doubledFallbackNames() {
+        var second = station("k/2", source: "lsb-7236000", hz: 7_236_500, keyed: false)
+        second.callsign = "K4ABC"
+        second.nth = 2
+        var first = station("k/1", source: "lsb-7236000", hz: 7_236_500, keyed: false)
+        first.callsign = "K4ABC"
+        // The summary's talkers are every endpoint's callsign, gone or not, with no slice number.
+        let rows = RoundtableModel.frequencyRows(of: [source("lsb-7236000", [
+            second, first, station("q", source: "lsb-7236000", hz: 7_236_400, keyed: false),
+        ], state: "doubled", talkers: ["K4ABC", "K4ABC", "GONE"])])
+        #expect(rows.allSatisfy { $0.state == "doubled" })
+        #expect(rows.first { $0.hz == 7_236_400 }?.keyedNames == [RoundtableText.withNth("K4ABC", 2), RoundtableText.withNth("K4ABC", 1)])
+        // Keyed stations name it, each with its number.
+        var keyed = second
+        keyed.keyed = true
+        let live = RoundtableModel.frequencyRows(of: [source("lsb-7236000", [
+            keyed, station("q", source: "lsb-7236000", hz: 7_236_400, keyed: false),
+        ], state: "doubled", talkers: ["K4ABC", "GONE"])])
+        #expect(live.allSatisfy { $0.keyedNames == [RoundtableText.withNth("K4ABC", 2)] })
     }
 
     @Test("a non-active double's tag and list row say Double with both names")

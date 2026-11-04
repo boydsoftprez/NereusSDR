@@ -247,6 +247,28 @@ struct BandSlicesModelTests {
 
     static let foreignWords = "That slice belongs to MacBook Pro. It can be changed only there."
 
+    @Test("a Roundtable Tune moves the slice into the view's family, and keeps a mode already in it")
+    func roundtableTuneMatchesFamily() async {
+        let (model, _, outbox, _, _) = await makeAnsweredModel()
+        let modes = model.catalog?.offeredModes ?? []
+        #expect(!modes.isEmpty)
+        func id(_ label: String) -> Int? { modes.first { $0.label.uppercased() == label }?.id }
+        typealias Model = BandSlicesModel
+        // A USB slice tuned from an LSB view changes mode; CWL and SAM stay put in their families.
+        #expect(Model.modeForTune(family: "lsb", sliceMode: "USB", modes: modes) == id("LSB"))
+        #expect(Model.modeForTune(family: "lsb", sliceMode: "LSB", modes: modes) == nil)
+        #expect(Model.modeForTune(family: "cw", sliceMode: "CWL", modes: modes) == nil)
+        #expect(Model.modeForTune(family: "cw", sliceMode: "USB", modes: modes) == id("CWU"))
+        #expect(Model.modeForTune(family: "am", sliceMode: "SAM", modes: modes) == nil)
+        // FreeDV moves the frequency only.
+        #expect(Model.modeForTune(family: "fdvl", sliceMode: "USB", modes: modes) == nil)
+        // Through the wire: slice 0 is LSB in this fixture, the view USB.
+        model.tune(toHz: 7_250_000, family: "usb")
+        #expect(await settle { lastWrite(outbox, "dspMode") != nil })
+        #expect(lastWrite(outbox, "dspMode")?.properties.first?.value == .enumeration(Int64(id("USB") ?? -1)))
+        #expect(await settle { lastWrite(outbox, "frequency")?.properties.first?.value == .f64(7_250_000) })
+    }
+
     @Test("direct mode writes follow the Core's default-off catalogue")
     func directModeWriteRequiresCatalogueOffer() async {
         let (model, _, outbox, _, _) = await makeAnsweredModel()

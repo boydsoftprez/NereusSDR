@@ -678,7 +678,8 @@ struct RoundtableToolsPageTests {
 
     /// The active frequency's scene for the card's pictures, with a double, a
     /// talker and a quiet frequency elsewhere on the band, and a frequency slice B's flag speaks for.
-    private static func cardScene(double: Bool, link: FakeStation.RoundtableLink = .live) -> FakeStation.RoundtableScene {
+    private static func cardScene(double: Bool, link: FakeStation.RoundtableLink = .live,
+                                  wideNames: Bool = false) -> FakeStation.RoundtableScene {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let source = sliceRoom
         let listeners: [(String, String, Double, Int64, Double, Int64, Bool)] = [
@@ -696,7 +697,8 @@ struct RoundtableToolsPageTests {
                 "seq": .number(Double(seq)),
             ]))
         }
-        let talkers = double ? [("k/1", "K4ABC"), ("n/9", "N4XYZ")] : [("k/1", "K4ABC")]
+        let talkers = wideNames ? [("k/1", "VE3WIDE/MM"), ("n/9", "KG4WIDE/QRP")]
+            : double ? [("k/1", "K4ABC"), ("n/9", "N4XYZ")] : [("k/1", "K4ABC")]
         for (index, talker) in talkers.enumerated() {
             member(talker.0, talker.1, km: nil, keyed: true, you: false, seq: index)
         }
@@ -898,6 +900,34 @@ struct RoundtableToolsPageTests {
         await model.disconnect()
     }
 
+    @Test("at half height Tune is pinned above the composer, on the screen, however long the readings")
+    func tuneIsPinnedAtHalfHeight() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, _) = try await viewStation()
+        let (window, _) = try host(BandShotRoot(model: model))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        let tag = try await requireElement("roundtableTag.\(Self.viewedRoom)", in: window)
+        #expect(tag.accessibilityActivate())
+        _ = try await requireElement("roundtableViewHead", in: window)
+        // Shorter, so half height leaves the readings far less than they need.
+        window.frame.size.height = 640
+        window.layoutIfNeeded()
+        let tune = try await requireElement("roundtableViewTune", in: window)
+        let composer = try await requireElement("roundtableBox", in: window)
+        let head = try await requireElement("roundtableViewHead", in: window)
+        try await Task.sleep(for: .milliseconds(500))
+        func frame(_ element: NSObject) -> CGRect { (element as? UIAccessibilityElement)?.accessibilityFrame ?? element.accessibilityFrame }
+        let tuneFrame = frame(tune), composerFrame = frame(composer), headFrame = frame(head)
+        #expect(tuneFrame.maxY <= composerFrame.minY + 1, "Tune \(tuneFrame) composer \(composerFrame)")
+        #expect(tuneFrame.minY >= headFrame.minY, "Tune \(tuneFrame) head \(headFrame)")
+        #expect(window.bounds.contains(tuneFrame))
+        await model.disconnect()
+    }
+
     @Test("another slice's flag line views its frequency and leaves the active slice; your own opens your room")
     func flagLines() async throws {
         // An iPad's slice B has a full flag, with its line; a phone's short pan folds it.
@@ -1036,11 +1066,19 @@ struct RoundtableToolsPageTests {
         card.frozen = true
         #expect(Words.rows(card, panDbm: -70, panPeak: -68).isEmpty)
         // Tune.
-        #expect(Words.canTune(hz: 1, sliceHz: 2, keyed: false, tunable: true, linkUp: true))
-        #expect(!Words.canTune(hz: 1, sliceHz: 2, keyed: true, tunable: true, linkUp: true))
-        #expect(!Words.canTune(hz: 1, sliceHz: 1, keyed: false, tunable: true, linkUp: true))
-        #expect(!Words.canTune(hz: 1, sliceHz: 2, keyed: false, tunable: false, linkUp: true))
-        #expect(!Words.canTune(hz: 1, sliceHz: 2, keyed: false, tunable: true, linkUp: false))
+        func can(hz: Int64 = 1, family: String = "lsb", sliceHz: Int64? = 2, sliceFamily: String? = "lsb",
+                 keyed: Bool = false, tunable: Bool = true, linkUp: Bool = true) -> Bool {
+            Words.canTune(hz: hz, family: family, sliceHz: sliceHz, sliceFamily: sliceFamily, keyed: keyed,
+                          tunable: tunable, linkUp: linkUp)
+        }
+        #expect(can())
+        #expect(!can(keyed: true))
+        #expect(!can(sliceHz: 1))
+        #expect(!can(tunable: false))
+        #expect(!can(linkUp: false))
+        // The same frequency in another family is not "already there".
+        #expect(can(sliceHz: 1, sliceFamily: "usb"))
+        #expect(!can(sliceHz: nil, sliceFamily: nil))
     }
 
     @Test("a live double's view has a clock and blank paths; a frozen one has no clock")
@@ -1140,8 +1178,10 @@ struct RoundtableToolsPageTests {
             }
             try await shoot("ipad-portrait-own", size: portrait, tag: false)
         } else {
+            // The sheet opens at half height, with Tune pinned above the composer.
             try await shoot("iphone-sheet-double", size: portrait) { window in
                 #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
+                #expect(SetupTypedEntryTests.element("roundtableViewTune", in: window) != nil)
             }
         }
         _ = station
@@ -1191,6 +1231,14 @@ struct RoundtableToolsPageTests {
         #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).kind == .double
             && model.roundtable.cardData(context: Self.sliceRoom).rows.count == 6 })
         try await shoot(pad ? "landscape-double" : "short-double", size: pad ? landscape : portrait)
+        if !pad {
+            // Names too wide to share a line: stacked, the double still has a reading.
+            try await station.deliverRoundtable(Self.cardScene(double: true, wideNames: true))
+            #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).keyed.contains("VE3WIDE/MM") })
+            try await shoot("short-double-wide", size: portrait)
+            try await station.deliverRoundtable(Self.cardScene(double: true))
+            #expect(await settle { !model.roundtable.cardData(context: Self.sliceRoom).keyed.contains("VE3WIDE/MM") })
+        }
         if pad {
             try await shoot("portrait-double", size: portrait)
         } else {

@@ -333,7 +333,7 @@ struct BandGestureLayer: View {
                     slices.tap(to: Double(hz))
                 }) { room in
                     // As the sheet's Tune here: the active slice to the room, then back to its own room.
-                    slices.tap(to: Double(room.hz))
+                    slices.tune(toHz: room.hz, family: room.family)
                     Task { await roundtable.backToSlice() }
                 }
             }

@@ -94,6 +94,38 @@ struct RoundtableSheetTests {
                                         mentions: 0)?.text == "Roundtable \u{00B7} Nobody here")
     }
 
+    @Test("D3: the flag line follows the card's turn, so a slice 40 Hz off a talker names them")
+    func flagLineFollowsTheNearbyTurn() {
+        let quiet = Self.summary(members: 2, state: "quiet", talkers: [])
+        func view(_ kind: String, talkers: [RoundtableModel.Talker], ended: Bool = false,
+                  keyed: Bool = true) -> RoundtableModel.Room {
+            let turn = RoundtableModel.Turn(id: 7, kind: kind, talkers: talkers, start: 0, end: ended ? 5 : nil, ending: false,
+                                            names: [], heard: 0, mine: nil, hz: 7_236_440, sourceRoom: "lsb-7236000")
+            var members = talkers.map { talker -> RoundtableModel.Member in
+                var one = Self.member(talker.ref ?? "", talker.callsign, keyed: keyed)
+                one.sourceRoom = "lsb-7236000"
+                return one
+            }
+            members.append(Self.member("me", "KG4VCF"))
+            return RoundtableModel.Room(id: Self.room, band: "40m", family: "lsb", hz: 7_236_400, members: members,
+                                        now: ended ? [] : [turn], earlier: ended ? [turn] : [], messages: [], frequencyView: true)
+        }
+        func text(_ room: RoundtableModel.Room, summary: RoundtableModel.RoomSummary? = nil) -> String? {
+            RoundtableFlagLine.line(available: true, link: .live, summary: summary ?? quiet, room: room, mentions: 0)?.text
+        }
+        let k4abc = RoundtableModel.Talker(ref: "k", callsign: "K4ABC", nth: 2, hz: 7_236_440, sourceRoom: "lsb-7236000")
+        let n4xyz = RoundtableModel.Talker(ref: "n", callsign: "N4XYZ", nth: 1, hz: 7_236_440, sourceRoom: "lsb-7236000")
+        #expect(text(view("talking", talkers: [k4abc])) == "Roundtable \u{00B7} 2 \u{00B7} " + RoundtableText.withNth("K4ABC", 2))
+        #expect(text(view("doubled", talkers: [k4abc, n4xyz])) == "Roundtable \u{00B7} 2 \u{00B7} Double")
+        #expect(text(view("unknown", talkers: [])) == "Roundtable \u{00B7} 2 \u{00B7} Unknown")
+        // An ended turn is not on the air: the row's own word stands.
+        #expect(text(view("talking", talkers: [k4abc], ended: true)) == "Roundtable \u{00B7} 2 \u{00B7} Quiet")
+        // Nobody on this exact frequency, and the card still names the talker.
+        let alone = view("talking", talkers: [k4abc])
+        #expect(RoundtableFlagLine.line(available: true, link: .live, summary: nil, room: alone, mentions: 0)?.text
+            == "Roundtable \u{00B7} 2 \u{00B7} " + RoundtableText.withNth("K4ABC", 2))
+    }
+
     @Test("the flag line reads members and talker, Double, Quiet, @N, and N hear you while you talk")
     func flagLineWords() {
         let talking = RoundtableFlagLine.line(available: true, link: .live, summary: Self.summary(members: 9),

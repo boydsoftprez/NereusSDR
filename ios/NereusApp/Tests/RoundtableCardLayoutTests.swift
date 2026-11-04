@@ -197,10 +197,10 @@ struct RoundtableCardLayoutTests {
         #expect(typical.plan.rows >= 1 && typical.plan.rows + typical.plan.moreRows == 7 && typical.plan.showsMoreRows)
         for flag in flags { #expect(!typical.rect.intersects(flag)) }
 
-        // Two long callsigns measure too wide: they stack, the names outlast the rows, and none may fit.
+        // Two long callsigns measure too wide: they stack, and the caption gives way so one reading stays.
         let long = try placed(["VE3ABCD/P", "KH6XYZ/MM"])
         #expect(!long.plan.namesInRow && long.plan.names == 2)
-        #expect(long.plan.rows == 0 && long.plan.moreRows == 7)
+        #expect(long.plan.rows == 1 && long.plan.moreRows == 6 && !long.plan.hasCaption)
 
         // With no height at all the rows still give way first, and the head and names stay.
         let none = try #require(RoundtableTagLayout.cardPlan(double(7), width: 124, room: 60))
@@ -235,16 +235,66 @@ struct RoundtableCardLayoutTests {
         #expect(RoundtableTagLayout.cardPlan(card, width: 120, room: 28) == nil)
     }
 
-    @Test("a dropped link keeps Last known longer than +N more")
-    func frozenKeepsCaption() throws {
-        var card = double(5)
+    @Test("a double's stacked names never leave it without a reading: the caption goes first, frozen too")
+    func shortDoubleKeepsOneRow() throws {
+        typealias Plan = RoundtableCardPlan
+        let row = Plan.rowHeight + Plan.gap
+        // Too wide to share a line.
+        var card = double(6, names: ["VE3ABCD/P", "KH6XYZ/MM"])
+        let width: CGFloat = 125
+        let full = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: 400))
+        #expect(!full.namesInRow && full.names == 2 && full.rows == 5 && full.hasCaption)
+        // Four rows gone: one left with the caption. Then the caption goes before the last row.
+        let oneRow = full.height - 4 * row
+        let withCaption = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: oneRow))
+        #expect(withCaption.rows == 1 && withCaption.hasCaption && withCaption.showsMoreRows)
+        let room = oneRow - Plan.captionHeight - Plan.gap
+        let plan = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: room))
+        #expect(plan.rows == 1 && !plan.hasCaption && plan.showsMoreRows && plan.names == 2 && plan.height <= room)
+        #expect(RoundtableTagLayout.rowsThatFit(card, width: width, room: room) == 1)
+        // "+N more" goes next, still before the last row.
+        let least = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: room - Plan.footHeight - Plan.gap))
+        #expect(least.rows == 1 && !least.hasCaption && !least.showsMoreRows)
+        // Frozen: the same rule, with "+N more" going first so Last known stays longest.
         card.frozen = true
         card.note = "Reconnecting"
-        // The names share a line, so the real short pan's 100 points keep every line but the rows.
-        let roomy = try #require(RoundtableTagLayout.cardPlan(card, width: 125, room: 100))
-        #expect(roomy.rows == 0 && roomy.hasCaption && roomy.showsMoreRows && roomy.namesInRow && roomy.hasNote)
-        let plan = try #require(RoundtableTagLayout.cardPlan(card, width: 125, room: 85))
-        #expect(plan.rows == 0 && plan.hasCaption && !plan.showsMoreRows && plan.names == 2 && plan.hasNote)
+        let frozenFull = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: 400))
+        let frozenRoom = frozenFull.height - 4 * row - Plan.footHeight - Plan.gap
+        let kept = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: frozenRoom))
+        #expect(kept.rows == 1 && kept.hasCaption && !kept.showsMoreRows)
+        let frozen = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: frozenRoom - Plan.captionHeight - Plan.gap))
+        #expect(frozen.rows == 1 && !frozen.hasCaption && !frozen.showsMoreRows && frozen.hasNote)
+        // A card that is not a double keeps its old order: the rows go first.
+        var talking = double(6)
+        talking.kind = .talking
+        talking.keyed = ["K4ABC"]
+        let talker = try #require(RoundtableTagLayout.cardPlan(talking, width: width, room: 400))
+        let noRows = try #require(RoundtableTagLayout.cardPlan(talking, width: width, room: talker.height - 5 * row))
+        #expect(noRows.rows == 0 && noRows.hasCaption)
+    }
+
+    @Test("a dropped link keeps Last known longer than +N more")
+    func frozenKeepsCaption() throws {
+        typealias Plan = RoundtableCardPlan
+        let row = Plan.rowHeight + Plan.gap
+        var card = double(6)
+        card.frozen = true
+        card.note = "Reconnecting"
+        let width: CGFloat = 125
+        let full = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: 400))
+        #expect(full.rows == 5 && full.namesInRow && full.hasCaption && full.showsMoreRows && full.hasNote)
+        // One reading left, then "+N more" gives way, then the caption, and the last reading after those.
+        let one = full.height - 4 * row
+        let room = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: one))
+        #expect(room.rows == 1 && room.hasCaption && room.showsMoreRows)
+        let noMore = one - Plan.footHeight - Plan.gap
+        let plan = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: noMore))
+        #expect(plan.rows == 1 && plan.hasCaption && !plan.showsMoreRows && plan.names == 2 && plan.hasNote)
+        let noCaption = noMore - Plan.captionHeight - Plan.gap
+        let last = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: noCaption))
+        #expect(last.rows == 1 && !last.hasCaption && !last.showsMoreRows && last.hasNote)
+        let none = try #require(RoundtableTagLayout.cardPlan(card, width: width, room: noCaption - row))
+        #expect(none.rows == 0 && !none.hasCaption && none.names == 2 && none.hasNote)
     }
 
     @Test("a double's two names sit side by side whenever they fit, at any width")

@@ -72,7 +72,11 @@ struct RoundtableFlagLine: Equatable {
         }
         let dimmed = link == .hidden
         let lead = dimmed ? hiddenPrefix : prefix
-        guard let summary, summary.members > 0 else {
+        // D3: what the card shows, the turn within 5 kHz, even with nobody on this exact frequency.
+        let live = room.flatMap(liveOnAir)
+        let listed = summary?.members ?? 0
+        let members = listed > 0 || live == nil ? listed : Int64(room?.members.count ?? 0)
+        guard members > 0 else {
             return RoundtableFlagLine(glyph: .quiet, text: lead + "Nobody here", dimmed: dimmed)
         }
         if let room, youAreTalking(room) {
@@ -85,10 +89,25 @@ struct RoundtableFlagLine: Equatable {
             return RoundtableFlagLine(glyph: .you, text: lead + "\(hearing) hear you", mentions: mentions,
                                       dimmed: dimmed)
         }
-        let glyph = glyph(ofState: summary.state)
-        return RoundtableFlagLine(glyph: glyph, text: lead + "\(summary.members) \u{00B7} "
-                                  + label(glyph, talkers: summary.keyedNames.isEmpty ? summary.talkers : summary.keyedNames),
+        let truth = live ?? (state: summary?.state ?? "quiet", talkers: summary.map {
+            $0.keyedNames.isEmpty ? $0.talkers : $0.keyedNames
+        } ?? [])
+        let glyph = glyph(ofState: truth.state)
+        return RoundtableFlagLine(glyph: glyph, text: lead + "\(members) \u{00B7} " + label(glyph, talkers: truth.talkers),
                                   mentions: mentions, dimmed: dimmed)
+    }
+
+    /// The live turn a frequency view's card shows, in the band list's state words.
+    /// Nil with no live turn: the band list then speaks for this exact frequency.
+    private static func liveOnAir(_ room: RoundtableModel.Room) -> (state: String, talkers: [String])? {
+        guard room.frequencyView, let chosen = RoundtableTagLayout.chosenTurn(in: room), !chosen.historical else {
+            return nil
+        }
+        let turn = chosen.turn
+        if turn.kind == "doubled" { return ("doubled", []) }
+        let names = turn.kind == "unknown" ? [] : RoundtableTagLayout.participants(of: turn, in: room)
+            .filter { !$0.callsign.isEmpty }.map { RoundtableText.withNth($0.callsign, $0.nth) }
+        return names.isEmpty ? ("unknown", []) : ("talking", names)
     }
 
     /// The line for a slice, read from the model.

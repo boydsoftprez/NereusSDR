@@ -273,11 +273,15 @@ struct RoundtableSheet: View {
                                frequencyHead: AnyView(
                                 RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
                                                         viewing: true, keyed: transmit.ptt.transmitting, linkUp: linkUp,
-                                                        panLevel: panLevel, showsBack: false,
-                                                        onTune: { hz in
-                                                            slices.tap(to: Double(hz))
-                                                            close()
-                                                        }, onBack: close)),
+                                                        panLevel: panLevel, showsBack: false, showsTune: false,
+                                                        onTune: { _, _ in }, onBack: close)),
+                               frequencyFoot: AnyView(
+                                RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
+                                                           keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                           onTune: { hz, family in
+                                                               slices.tune(toHz: hz, family: family)
+                                                               close()
+                                                           })),
                                showsEarlier: false, viewing: true)
         } else if let room {
             RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
@@ -310,7 +314,7 @@ struct RoundtableSheet: View {
     }
 
     private func tuneHere(_ room: RoundtableModel.Room) {
-        slices.tap(to: Double(room.hz))
+        slices.tune(toHz: room.hz, family: room.family)
         Task { await roundtable.backToSlice() }
     }
 

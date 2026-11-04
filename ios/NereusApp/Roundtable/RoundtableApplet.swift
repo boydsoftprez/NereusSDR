@@ -216,8 +216,8 @@ struct RoundtableAppletRoom: View {
         AnyView(RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
                                         viewing: roundtable.isViewing, keyed: keyed, linkUp: linkUp,
                                         panLevel: panLevel, banner: banner(_:),
-                                        onTune: { hz in
-                                            slices.tap(to: Double(hz))
+                                        onTune: { hz, family in
+                                            slices.tune(toHz: hz, family: family)
                                             Task { await roundtable.backToSlice() }
                                         },
                                         onBack: { Task { await roundtable.backToSlice() } }))
@@ -277,7 +277,7 @@ struct RoundtableAppletRoom: View {
     }
 
     private func tuneHere(_ room: RoundtableModel.Room) {
-        slices.tap(to: Double(room.hz))
+        slices.tune(toHz: room.hz, family: room.family)
         Task { await roundtable.backToSlice() }
     }
 }

@@ -503,6 +503,8 @@ struct RoundtableRoomView: View {
     /// Takes the place of the read bar, the talker and the readings: a frequency's
     /// view leads, and the room's earlier turns and messages follow (overlay design D22, D28).
     var frequencyHead: AnyView? = nil
+    /// Pinned under the scrolling room, above the composer: a view's Tune.
+    var frequencyFoot: AnyView? = nil
     /// The iPad's applet shows the earlier turns; a view of a frequency elsewhere does not.
     var showsEarlier = true
     /// A frequency being viewed: its messages are read only until you tune here.
@@ -557,25 +559,30 @@ struct RoundtableRoomView: View {
                         arrived(count: count, reader: embedded.reader)
                     }
                 } else {
-                    ScrollViewReader { reader in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 0) {
-                                sections(now: now)
+                    VStack(spacing: 0) {
+                        ScrollViewReader { reader in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 0) {
+                                    sections(now: now)
+                                }
+                            }
+                            .scrollIndicators(.hidden)
+                            .accessibilityIdentifier("roundtableRoomScroll")
+                            .overlay(alignment: .bottom) {
+                                // Keyed, the readings of you fill the sheet; the pills wait for the key to come off.
+                                if !keyed && !compact {
+                                    pills(reader: reader)
+                                }
+                            }
+                            .onChange(of: compactJumpSerial) { _, _ in
+                                if let id = unreadMentions.first { reader.scrollTo(id, anchor: .top) }
+                            }
+                            .onChange(of: room.messages.count) { _, count in
+                                arrived(count: count, reader: reader)
                             }
                         }
-                        .scrollIndicators(.hidden)
-                        .accessibilityIdentifier("roundtableRoomScroll")
-                        .overlay(alignment: .bottom) {
-                            // Keyed, the readings of you fill the sheet; the pills wait for the key to come off.
-                            if !keyed && !compact {
-                                pills(reader: reader)
-                            }
-                        }
-                        .onChange(of: compactJumpSerial) { _, _ in
-                            if let id = unreadMentions.first { reader.scrollTo(id, anchor: .top) }
-                        }
-                        .onChange(of: room.messages.count) { _, count in
-                            arrived(count: count, reader: reader)
+                        if let frequencyFoot {
+                            frequencyFoot
                         }
                     }
                 }

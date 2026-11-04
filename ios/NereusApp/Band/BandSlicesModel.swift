@@ -423,6 +423,26 @@ final class BandSlicesModel: ObservableObject {
         write(hz, to: entry.id)
     }
 
+    /// A Roundtable Tune: the active slice to a frequency in its family, the
+    /// mode first when the slice is in another family, as a tap otherwise.
+    func tune(toHz hz: Int64, family: String) {
+        if let entry = active, isTunable(entry),
+           let mode = Self.modeForTune(family: family, sliceMode: entry.modeLabel, modes: catalog?.offeredModes ?? []) {
+            setMode(mode, sliceId: entry.id)
+        }
+        tap(to: Double(hz))
+    }
+
+    /// The mode a Tune writes. A slice already in the family keeps its mode (CWL
+    /// stays CWL, SAM stays SAM); otherwise the family's mode. FreeDV moves the
+    /// frequency only: which FreeDV mode is the operator's.
+    static func modeForTune(family: String, sliceMode: String, modes: [StationCatalog.Mode]) -> Int? {
+        guard RoundtableModel.family(ofMode: sliceMode) != family else { return nil }
+        let labels = ["lsb": "LSB", "usb": "USB", "digl": "DIGL", "digu": "DIGU", "am": "AM", "fm": "FM", "cw": "CWU"]
+        guard let label = labels[family] else { return nil }
+        return modes.first { $0.label.uppercased() == label }?.id
+    }
+
     /// One write of the slice's mode (`dspMode`, the catalogue's `modes` id).
     func setMode(_ mode: Int, sliceId: Int) {
         guard catalog?.offeredModes.contains(where: { $0.id == mode }) == true else { return }

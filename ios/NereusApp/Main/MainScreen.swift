@@ -471,8 +471,8 @@ struct MainScreen: View {
             if showsRoundtablePopover {
                 RoundtableFrequencyPopover(roundtable: roundtable, slices: main.slices, transmit: transmit,
                                            stationCallsign: app.freedv.callsign, linkUp: pttLinkUp, panLevel: panLevel,
-                                           onTune: { hz in
-                                               main.slices.tap(to: Double(hz))
+                                           onTune: { hz, family in
+                                               main.slices.tune(toHz: hz, family: family)
                                                endViewing()
                                            }, onBack: endViewing)
                     .padding(.vertical, Self.roundtablePopoverInset)

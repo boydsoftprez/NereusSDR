@@ -534,7 +534,7 @@ struct RoundtableToolsRoomPage: View {
     }
 
     private func tune(_ room: RoundtableModel.Room) {
-        slices.tap(to: Double(room.hz))
+        slices.tune(toHz: room.hz, family: room.family)
         Task { await roundtable.backToSlice() }
     }
 }

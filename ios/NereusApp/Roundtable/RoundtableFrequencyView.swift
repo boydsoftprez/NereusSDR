@@ -72,9 +72,10 @@ enum RoundtableFrequencyText {
 
     /// D22: Tune is off while keyed, when already there, and when the radio's
     /// own connection or the slice itself will not take it. "Already there"
-    /// is the frequency alone: a tune writes nothing else.
-    static func canTune(hz: Int64, sliceHz: Int64?, keyed: Bool, tunable: Bool, linkUp: Bool) -> Bool {
-        !keyed && tunable && linkUp && sliceHz != nil && hz != sliceHz
+    /// counts the family: a Tune from an LSB view moves a USB slice's mode too.
+    static func canTune(hz: Int64, family: String, sliceHz: Int64?, sliceFamily: String?, keyed: Bool, tunable: Bool,
+                        linkUp: Bool) -> Bool {
+        !keyed && tunable && linkUp && sliceHz != nil && (hz != sliceHz || family != sliceFamily)
     }
 }
 
@@ -97,14 +98,13 @@ struct RoundtableFrequencyView: View {
     var showsBack = true
     /// Sits between Back and the head: the applet's frequency line, live line and rail.
     var banner: AnyView? = nil
+    /// Off where the Tune is pinned outside the scrolling head.
+    var showsTune = true
     let onTune: () -> Void
     let onBack: () -> Void
 
     private static let subText = Color(red: 0x79 / 255, green: 0xA8 / 255, blue: 0xD2 / 255)
     private static let personText = Color(red: 0xC8 / 255, green: 0xC8 / 255, blue: 0xCE / 255)
-    private static let tuneFill = Color(red: 0x2F / 255, green: 0x5F / 255, blue: 0x92 / 255)
-    private static let tuneEdge = Color(red: 0x5E / 255, green: 0x8D / 255, blue: 0xB8 / 255)
-
     private var isDouble: Bool { data.kind == .double }
 
     private var glyph: RoundtableFlagLine.Glyph {
@@ -160,7 +160,7 @@ struct RoundtableFrequencyView: View {
                 caption("On frequency \u{00B7} \(data.onFrequency.count)", trailing: "Tuned", colour: RoundtableColours.dim)
                 people
                 readings
-                if viewing {
+                if viewing && showsTune {
                     tuneButton
                 }
             }
@@ -292,7 +292,21 @@ struct RoundtableFrequencyView: View {
     }
 
     private var tuneButton: some View {
-        Button(action: onTune) {
+        RoundtableFrequencyTuneButton(sliceLetter: sliceLetter, canTune: canTune, action: onTune)
+    }
+}
+
+/// "Tune slice A here", in the view or pinned under it.
+struct RoundtableFrequencyTuneButton: View {
+    let sliceLetter: String
+    let canTune: Bool
+    let action: () -> Void
+
+    private static let tuneFill = Color(red: 0x2F / 255, green: 0x5F / 255, blue: 0x92 / 255)
+    private static let tuneEdge = Color(red: 0x5E / 255, green: 0x8D / 255, blue: 0xB8 / 255)
+
+    var body: some View {
+        Button(action: action) {
             Text("Tune slice \(sliceLetter) here")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.white)
@@ -306,6 +320,34 @@ struct RoundtableFrequencyView: View {
         .buttonStyle(.plain)
         .disabled(!canTune)
         .accessibilityIdentifier("roundtableViewTune")
+    }
+}
+
+/// Tune pinned above the composer, so a half-height sheet always reaches it while
+/// the view scrolls behind.
+struct RoundtableFrequencyTuneBar: View {
+    @ObservedObject var roundtable: RoundtableModel
+    @ObservedObject var slices: BandSlicesModel
+    let contextId: String
+    let keyed: Bool
+    let linkUp: Bool
+    let onTune: (Int64, String) -> Void
+
+    var body: some View {
+        let data = roundtable.cardData(context: contextId)
+        let active = slices.active
+        RoundtableFrequencyTuneButton(
+            sliceLetter: active?.slice.letter ?? "A",
+            canTune: RoundtableFrequencyHost.canTune(data, active: active, keyed: keyed,
+                                                     tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp),
+            action: { onTune(data.hz, data.family) })
+            .padding(.horizontal, 10)
+            .background(RoundtableColours.ground)
+            .overlay(alignment: .top) {
+                Rectangle().fill(RoundtableTagLayer.listRule).frame(height: 1)
+            }
+            // A container, so the room's own identifier does not replace the button's.
+            .accessibilityElement(children: .contain)
     }
 }
 
@@ -378,8 +420,20 @@ struct RoundtableFrequencyHost: View {
     var showsBack = true
     /// The applet's lines above the head, which read the same card.
     var banner: ((RoundtableCardData) -> AnyView)? = nil
-    let onTune: (Int64) -> Void
+    /// Off where the caller pins a RoundtableFrequencyTuneBar instead.
+    var showsTune = true
+    let onTune: (Int64, String) -> Void
     let onBack: () -> Void
+
+    /// Whether Tune can act on this card from this slice.
+    @MainActor
+    static func canTune(_ data: RoundtableCardData, active: BandSlicesModel.Entry?, keyed: Bool, tunable: Bool,
+                        linkUp: Bool) -> Bool {
+        RoundtableFrequencyText.canTune(hz: data.hz, family: data.family,
+                                        sliceHz: active.map { Int64($0.slice.frequencyHz.rounded()) },
+                                        sliceFamily: active.flatMap { RoundtableModel.family(ofMode: $0.modeLabel) },
+                                        keyed: keyed, tunable: tunable, linkUp: linkUp)
+    }
 
     /// D23: about five times a second.
     static let panPeriodSeconds = 0.2
@@ -397,15 +451,14 @@ struct RoundtableFrequencyHost: View {
             let dbm = keyed || data.frozen ? nil : panLevel?(data.hz, data.family)
             RoundtableFrequencyView(
                 data: data, viewing: viewing,
-                canTune: RoundtableFrequencyText.canTune(hz: data.hz, sliceHz: sliceHz, keyed: keyed,
-                                                         tunable: active.map(slices.isTunable) ?? false,
-                                                         linkUp: linkUp),
+                canTune: Self.canTune(data, active: active, keyed: keyed,
+                                      tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp),
                 sliceHz: sliceHz, sliceLetter: active?.slice.letter ?? "A", format: roundtable.signalFormat,
                 units: roundtable.distanceUnits, showBearing: roundtable.showBearing,
                 panDbm: dbm,
                 panPeak: dbm.map { panPeak($0, hz: data.hz, now: Int64(context.date.timeIntervalSince1970 * 1000)) },
                 reconnecting: roundtable.linkState == .reconnecting, showsBack: showsBack,
-                banner: banner?(data), onTune: { onTune(data.hz) }, onBack: onBack)
+                banner: banner?(data), showsTune: showsTune, onTune: { onTune(data.hz, data.family) }, onBack: onBack)
         }
     }
 }
@@ -421,7 +474,7 @@ struct RoundtableFrequencyPopover: View {
     let stationCallsign: String
     let linkUp: Bool
     var panLevel: ((Int64, String) -> Double?)? = nil
-    let onTune: (Int64) -> Void
+    let onTune: (Int64, String) -> Void
     let onBack: () -> Void
 
     static let width: CGFloat = 370
@@ -455,7 +508,11 @@ struct RoundtableFrequencyPopover: View {
                                     RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
                                                             viewing: true, keyed: transmit.ptt.transmitting,
                                                             linkUp: linkUp, panLevel: panLevel, showsBack: false,
-                                                            onTune: onTune, onBack: onBack)),
+                                                            showsTune: false, onTune: { _, _ in }, onBack: onBack)),
+                                   frequencyFoot: AnyView(
+                                    RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
+                                                               keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                               onTune: onTune)),
                                    showsEarlier: false, viewing: true)
             }
         }
