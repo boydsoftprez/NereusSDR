@@ -9365,6 +9365,7 @@ private:
     std::unique_ptr<SsbModulationAnalyzer> m_ssbModFb;
     std::atomic<int>  m_ssbModFbStream{1};
     std::atomic<bool> m_ssbModFbWanted{false};
+    std::atomic<bool> m_ssbModMoxOn{false};
     std::atomic<bool> m_ssbModTxTapEnabled{true};
     std::atomic<bool> m_ssbModActive{false};
     std::array<std::optional<SsbModulationAnalyzer::Snapshot>, 2> m_stationSsbModMonitor;

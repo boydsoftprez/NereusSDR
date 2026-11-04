@@ -4641,6 +4641,7 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     m_ssbModTx = std::make_unique<SsbModulationAnalyzer>();
     m_ssbModFb = std::make_unique<SsbModulationAnalyzer>();
     connect(m_moxController, &MoxController::moxStateChanged, this, [this](bool on) {
+        m_ssbModMoxOn.store(on, std::memory_order_release);
         if (on) {
             if (m_ssbModTx) { m_ssbModTx->reset(); }
             if (m_ssbModFb) {
@@ -4661,7 +4662,7 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
             m_amModFb->pushIq(samples.constData(), frames);
         }
         if (m_ssbModFbWanted.load(std::memory_order_acquire)
-            && m_ssbModActive.load(std::memory_order_acquire)
+            && m_ssbModMoxOn.load(std::memory_order_acquire)
             && streamIndex == m_ssbModFbStream.load(std::memory_order_acquire)
             && m_ssbModFb) {
             m_ssbModFb->pushIq(samples.constData(), frames);
@@ -21459,7 +21460,8 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
             }
             if (m_ssbModTx) {
                 m_ssbModTx->setSampleRate(txOutRate);
-                refreshSsbModulationTap();
+                m_txChannel->setSsbModulationTap(
+                    m_ssbModTxTapEnabled.load() ? m_ssbModTx.get() : nullptr);
             }
 
             // Task 4.2: give TxChannel a handle to WdspEngine so onModeChanged()
@@ -27010,21 +27012,18 @@ void RadioModel::setSsbModFeedbackWanted(bool wanted)
 void RadioModel::setSsbModTxTapEnabled(bool enabled)
 {
     m_ssbModTxTapEnabled.store(enabled, std::memory_order_release);
-    refreshSsbModulationTap();
+    // The caller decides when the tap is on, as the AM tap does. A second
+    // mode check here was taking the tap off while the Core was measuring.
+    if (m_txChannel) {
+        m_txChannel->setSsbModulationTap(
+            enabled && m_ssbModTx ? m_ssbModTx.get() : nullptr);
+    }
 }
 
 void RadioModel::refreshSsbModulationTap()
 {
-    const bool active = ssbTxActive();
-    const bool was = m_ssbModActive.exchange(active, std::memory_order_acq_rel);
-    if (active != was) {
-        if (m_ssbModTx) { m_ssbModTx->reset(); }
-        if (m_ssbModFb) { m_ssbModFb->reset(); }
-    }
-    if (m_txChannel) {
-        const bool tap = active && m_ssbModTxTapEnabled.load(std::memory_order_acquire) && m_ssbModTx;
-        m_txChannel->setSsbModulationTap(tap ? m_ssbModTx.get() : nullptr);
-    }
+    // Feedback samples follow this flag. It does not touch the TX tap.
+    m_ssbModActive.store(ssbTxActive(), std::memory_order_release);
 }
 
 bool RadioModel::ssbTxActive() const

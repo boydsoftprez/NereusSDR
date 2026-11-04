@@ -103,12 +103,10 @@ bool SsbModMonitorPublisher::keyedInSsb() const
 void SsbModMonitorPublisher::setOpen(int source, bool open)
 {
     const auto index = static_cast<std::size_t>(source);
-    if (m_open[index] == open) {
-        return;
-    }
+    const bool changed = m_open[index] != open;
     m_open[index] = open;
     if (m_radio) {
-        if (open) {
+        if (changed && open) {
             if (SsbModulationAnalyzer* analyzer = m_radio->ssbModulationAnalyzer(source)) {
                 analyzer->reset();
                 if (source == 1) {
@@ -119,11 +117,16 @@ void SsbModMonitorPublisher::setOpen(int source, bool open)
                 }
             }
         }
+        // Re-applied every read. A one-time set was left off if the
+        // feedback flag was cleared while this source stayed open.
         if (source == 0) {
             m_radio->setSsbModTxTapEnabled(open);
         } else {
             m_radio->setSsbModFeedbackWanted(open);
         }
+    }
+    if (!changed) {
+        return;
     }
     m_unsent[index].reset();
     if (!open) {

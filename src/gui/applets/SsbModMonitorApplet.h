@@ -30,11 +30,13 @@
 class QLabel;
 class QPushButton;
 class QSpinBox;
+class QStackedWidget;
 class QWidget;
 
 namespace NereusSDR {
 
 class HGauge;
+class VintageModMeterWidget;
 
 class SsbModScopeWidget : public QWidget {
     Q_OBJECT
@@ -42,13 +44,17 @@ public:
     explicit SsbModScopeWidget(QWidget* parent = nullptr);
     void setTrace(std::vector<float> pct);
     void setOverThresholdPct(double pct);
-    QSize sizeHint() const override { return {240, 96}; }
-    QSize minimumSizeHint() const override { return {120, 60}; }
+    /// The AM monitor's green screen: 10 columns by 6 rows, with the
+    /// envelope drawn across it.
+    void setVintage(bool on);
+    QSize sizeHint() const override { return {240, 140}; }
+    QSize minimumSizeHint() const override { return {120, 120}; }
 protected:
     void paintEvent(QPaintEvent* event) override;
 private:
     std::vector<float> m_trace;
     double m_overPct{89.0};
+    bool m_vintage{true};
 };
 
 class SsbModMonitorApplet : public AppletWidget {
@@ -77,6 +83,8 @@ public:
 public slots:
     void setSource(Source s);
     void resetPeaks();
+    /// The illuminated analog faces, the same pair the AM monitor uses.
+    void setVintageMeters(bool on);
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -96,13 +104,18 @@ private:
     Source m_source{Source::TxIq};
     QTimer m_timer;
     bool   m_overLit{false};
+    bool   m_vintage{true};
 
     QPushButton* m_srcTxBtn{nullptr};
     QPushButton* m_srcFbBtn{nullptr};
     QPushButton* m_resetBtn{nullptr};
+    QPushButton* m_vuBtn{nullptr};
     QSpinBox*    m_fbStreamSpin{nullptr};
+    QStackedWidget* m_meterStack{nullptr};
     HGauge*      m_peakGauge{nullptr};
     HGauge*      m_avgGauge{nullptr};
+    VintageModMeterWidget* m_peakMeter{nullptr};
+    VintageModMeterWidget* m_avgMeter{nullptr};
     QLabel*      m_peakValue{nullptr};
     QLabel*      m_avgValue{nullptr};
     QLabel*      m_crestValue{nullptr};

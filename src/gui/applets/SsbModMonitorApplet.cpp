@@ -13,6 +13,7 @@
 #include "core/session/IStationLink.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
+#include "gui/VintageModMeterWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -26,6 +27,7 @@
 #include <QPushButton>
 #include <QShowEvent>
 #include <QSpinBox>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -37,6 +39,7 @@ namespace {
 constexpr auto kKeySource   = "SsbModMon/Source";
 constexpr auto kKeyOverDb   = "SsbModMon/OverDb";
 constexpr auto kKeyFbStream = "SsbModMon/FbStream";
+constexpr auto kKeyVintage  = "SsbModMon/VintageMeters";
 constexpr int  kRefreshMs   = 33;
 constexpr double kScopeMax  = 120.0;
 
@@ -48,7 +51,7 @@ double percentForDbfs(double dbfs)
 
 SsbModScopeWidget::SsbModScopeWidget(QWidget* parent) : QWidget(parent)
 {
-    setMinimumHeight(60);
+    setMinimumHeight(120);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
@@ -64,11 +67,78 @@ void SsbModScopeWidget::setOverThresholdPct(double pct)
     update();
 }
 
+void SsbModScopeWidget::setVintage(bool on)
+{
+    if (m_vintage != on) {
+        m_vintage = on;
+        update();
+    }
+}
+
 void SsbModScopeWidget::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
     const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+
+    if (m_vintage) {
+        // Same screen as the AM monitor's VU scope: dark green, an orange
+        // graticule of 10 columns by 6 rows, and the envelope mirrored
+        // about the centre line. 100% of full scale fills the screen.
+        p.fillRect(r, QColor(0x10, 0x30, 0x18));
+        p.setPen(QPen(QColor(0xc0, 0x70, 0x30, 170), 1.0));
+        constexpr int kCols = 10;
+        constexpr int kRows = 6;
+        for (int i = 1; i < kCols; ++i) {
+            const double x = r.left() + r.width() * i / kCols;
+            p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()));
+        }
+        for (int j = 1; j < kRows; ++j) {
+            const double y = r.top() + r.height() * j / kRows;
+            p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
+        }
+        p.setPen(QPen(QColor(0x90, 0x90, 0xa0), 1.0));
+        p.drawRect(r);
+        if (m_trace.size() >= 2) {
+            const double mid = r.center().y();
+            const double half = r.height() / 2.0 * 0.92;
+            const double dx = r.width() / static_cast<double>(m_trace.size() - 1);
+            QPainterPath top;
+            top.moveTo(r.left(), mid);
+            for (std::size_t i = 0; i < m_trace.size(); ++i) {
+                const double amp = std::clamp(static_cast<double>(m_trace[i]) / 100.0, 0.0, 1.0);
+                const double x = r.left() + dx * static_cast<double>(i);
+                if (i == 0) {
+                    top.moveTo(x, mid - amp * half);
+                } else {
+                    top.lineTo(x, mid - amp * half);
+                }
+            }
+            QPainterPath fill = top;
+            for (std::size_t i = m_trace.size(); i-- > 0;) {
+                const double amp = std::clamp(static_cast<double>(m_trace[i]) / 100.0, 0.0, 1.0);
+                fill.lineTo(r.left() + dx * static_cast<double>(i), mid + amp * half);
+            }
+            fill.closeSubpath();
+            p.fillPath(fill, QColor(0x8c, 0xe0, 0x50));
+            p.setPen(QPen(QColor(0x50, 0x90, 0x30), 1.0));
+            p.drawPath(top);
+            QPainterPath bottom;
+            for (std::size_t i = 0; i < m_trace.size(); ++i) {
+                const double amp = std::clamp(static_cast<double>(m_trace[i]) / 100.0, 0.0, 1.0);
+                const double x = r.left() + dx * static_cast<double>(i);
+                const double y = mid + amp * half;
+                if (i == 0) {
+                    bottom.moveTo(x, y);
+                } else {
+                    bottom.lineTo(x, y);
+                }
+            }
+            p.drawPath(bottom);
+        }
+        return;
+    }
+
     p.fillRect(r, QColor(Style::kInsetBg));
     p.setPen(QColor(Style::kInsetBorder));
     p.drawRect(r);
@@ -116,6 +186,7 @@ void SsbModScopeWidget::paintEvent(QPaintEvent*)
 SsbModMonitorApplet::SsbModMonitorApplet(RadioModel* model, QWidget* parent)
     : AppletWidget(model, parent)
 {
+    setMinimumHeight(360);
     buildUI();
     loadSettings();
     m_timer.setInterval(kRefreshMs);
@@ -236,11 +307,16 @@ void SsbModMonitorApplet::buildUI()
     m_fbStreamSpin->setFixedWidth(46);
     m_resetBtn = styledButton(QStringLiteral("RESET"), 52);
     m_resetBtn->setToolTip(QStringLiteral("Clear peak-hold and the flasher."));
+    m_vuBtn = amberToggle(QStringLiteral("VU"), 34);
+    m_vuBtn->setToolTip(QStringLiteral(
+        "Illuminated analog gauges, the same faces as the AM Mod Monitor."));
     srcRow->addWidget(m_srcTxBtn);
     srcRow->addWidget(m_srcFbBtn);
     srcRow->addWidget(m_fbStreamSpin);
     srcRow->addStretch(1);
+    srcRow->addWidget(m_vuBtn);
     srcRow->addWidget(m_resetBtn);
+    connect(m_vuBtn, &QPushButton::toggled, this, &SsbModMonitorApplet::setVintageMeters);
     vbox->addLayout(srcRow);
 
     connect(m_srcTxBtn, &QPushButton::clicked, this, [this]() { setSource(Source::TxIq); });
@@ -269,8 +345,33 @@ void SsbModMonitorApplet::buildUI()
     m_avgGauge->setUnit(QStringLiteral("%"));
     m_avgGauge->setTickLabels({QStringLiteral("0"), QStringLiteral("50"),
                                QStringLiteral("100"), QStringLiteral("120")});
-    vbox->addWidget(m_peakGauge);
-    vbox->addWidget(m_avgGauge);
+    // Page 0: the bar gauges. Page 1: the illuminated analog faces.
+    m_meterStack = new QStackedWidget(body);
+    auto* barsPage = new QWidget(m_meterStack);
+    auto* barsLay = new QVBoxLayout(barsPage);
+    barsLay->setContentsMargins(0, 0, 0, 0);
+    barsLay->setSpacing(3);
+    barsLay->addWidget(m_peakGauge);
+    barsLay->addWidget(m_avgGauge);
+    m_meterStack->addWidget(barsPage);
+
+    auto* vuPage = new QWidget(m_meterStack);
+    auto* vuLay = new QHBoxLayout(vuPage);
+    vuLay->setContentsMargins(0, 0, 0, 0);
+    vuLay->setSpacing(3);
+    m_peakMeter = new VintageModMeterWidget(vuPage);
+    m_peakMeter->setCaption(QStringLiteral("PEAK"));
+    m_peakMeter->setRange(0.0, 140.0);
+    m_peakMeter->setRedZoneStart(100.0);
+    m_avgMeter = new VintageModMeterWidget(vuPage);
+    m_avgMeter->setCaption(QStringLiteral("AVERAGE"));
+    m_avgMeter->setRange(0.0, 140.0);
+    m_avgMeter->setRedZoneStart(100.0);
+    vuLay->addWidget(m_peakMeter, 1);
+    vuLay->addWidget(m_avgMeter, 1);
+    vuPage->setMinimumHeight(132);
+    m_meterStack->addWidget(vuPage);
+    vbox->addWidget(m_meterStack);
 
     auto* grid = new QGridLayout();
     grid->setHorizontalSpacing(4);
@@ -334,6 +435,8 @@ void SsbModMonitorApplet::loadSettings()
     const int src = s.value(QString::fromLatin1(kKeySource), QStringLiteral("0")).toInt();
     const int over = s.value(QString::fromLatin1(kKeyOverDb), QStringLiteral("-1")).toInt();
     const int fb = s.value(QString::fromLatin1(kKeyFbStream), QStringLiteral("1")).toInt();
+    const bool vu = s.value(QString::fromLatin1(kKeyVintage), QStringLiteral("True")).toString()
+                    != QLatin1String("False");
     {
         const QSignalBlocker b1(m_overSpin);
         const QSignalBlocker b2(m_fbStreamSpin);
@@ -345,6 +448,24 @@ void SsbModMonitorApplet::loadSettings()
         m_model->setSsbModFeedbackStream(fb);
     }
     setSource(src == 1 ? Source::PaFeedback : Source::TxIq);
+    {
+        const QSignalBlocker block(m_vuBtn);
+        m_vuBtn->setChecked(vu);
+    }
+    setVintageMeters(vu);
+}
+
+void SsbModMonitorApplet::setVintageMeters(bool on)
+{
+    m_vintage = on;
+    if (m_meterStack) {
+        m_meterStack->setCurrentIndex(on ? 1 : 0);
+    }
+    if (m_scope) {
+        m_scope->setVintage(on);
+    }
+    AppSettings::instance().setValue(QString::fromLatin1(kKeyVintage),
+                                     on ? QStringLiteral("True") : QStringLiteral("False"));
 }
 
 void SsbModMonitorApplet::setSource(Source src)
@@ -377,6 +498,16 @@ void SsbModMonitorApplet::resetPeaks()
     }
     m_peakGauge->setPeakValue(-999.0);
     m_avgGauge->setPeakValue(-999.0);
+    if (m_peakMeter) {
+        m_peakMeter->setPeakValue(-1.0);
+        m_peakMeter->setValue(0.0);
+        m_peakMeter->setLit(false);
+    }
+    if (m_avgMeter) {
+        m_avgMeter->setPeakValue(-1.0);
+        m_avgMeter->setValue(0.0);
+        m_avgMeter->setLit(false);
+    }
     m_overLit = false;
     setLamp(m_overFlasher, QStringLiteral("OVER"), Style::kInsetBg, Style::kTextInactive, Style::kInsetBorder);
 }
@@ -405,27 +536,15 @@ void SsbModMonitorApplet::tick()
         return;
     }
     if (isRemoteWindow()) {
-        if (!m_available) {
-            return;
+        // The Core already measures only while keyed in USB or LSB. Show
+        // what it sends. A local mode check here was discarding those
+        // readings, so the gauges and the scope stayed empty.
+        if (m_available) {
+            applySnapshot(m_model->stationSsbModMonitorSnapshot(static_cast<int>(m_source))
+                              .value_or(SsbModulationAnalyzer::Snapshot{}));
         }
-        if (!txIsSsbVoice()) {
-            applySnapshot(SsbModulationAnalyzer::Snapshot{});
-            setLamp(m_lamp, QStringLiteral("USB / LSB"), Style::kInsetBg, Style::kTextInactive,
-                    Style::kInsetBorder);
-            return;
-        }
-        applySnapshot(m_model->stationSsbModMonitorSnapshot(static_cast<int>(m_source))
-                          .value_or(SsbModulationAnalyzer::Snapshot{}));
         return;
     }
-    if (!txIsSsbVoice()) {
-        m_model->refreshSsbModulationTap();
-        applySnapshot(SsbModulationAnalyzer::Snapshot{});
-        setLamp(m_lamp, QStringLiteral("USB / LSB"), Style::kInsetBg, Style::kTextInactive,
-                Style::kInsetBorder);
-        return;
-    }
-    m_model->refreshSsbModulationTap();
     auto* analyzer = m_model->ssbModulationAnalyzer(static_cast<int>(m_source));
     if (!analyzer) {
         return;
@@ -445,13 +564,21 @@ void SsbModMonitorApplet::setLamp(QLabel* lamp, const QString& text,
 
 void SsbModMonitorApplet::applySnapshot(const SsbModulationAnalyzer::Snapshot& s)
 {
-    const bool live = s.signalPresent;
-    const double peak = live ? s.peakPct : 0.0;
+    const bool live = s.signalPresent || s.peakPct > 0.5 || s.scope.size() >= 2;
+    const double peak = live ? std::max(s.peakPct, s.peakHoldPct) : 0.0;
     const double avg = live ? s.avgPct : 0.0;
     m_peakGauge->setValue(peak);
     m_avgGauge->setValue(avg);
     m_peakGauge->setPeakValue(live && s.peakHoldPct > 0.0 ? s.peakHoldPct : -999.0);
     m_avgGauge->setPeakValue(-999.0);
+    if (m_peakMeter && m_avgMeter) {
+        m_peakMeter->setLit(live);
+        m_avgMeter->setLit(live);
+        m_peakMeter->setValue(peak);
+        m_avgMeter->setValue(avg);
+        m_peakMeter->setPeakValue(live && s.peakHoldPct > 0.0 ? s.peakHoldPct : -1.0);
+        m_avgMeter->setPeakValue(-1.0);
+    }
 
     if (live) {
         m_peakValue->setText(QStringLiteral("%1").arg(s.peakHoldDbfs, 0, 'f', 1));
@@ -484,7 +611,7 @@ void SsbModMonitorApplet::applySnapshot(const SsbModulationAnalyzer::Snapshot& s
     }
     if (m_scope) {
         m_scope->setOverThresholdPct(percentForDbfs(limit));
-        m_scope->setTrace(live ? s.scope : std::vector<float>{});
+        m_scope->setTrace(s.scope);
     }
 }
 
