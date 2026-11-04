@@ -2304,6 +2304,7 @@ private:
     class DigitalApplet*    m_digitalApplet{nullptr};
     class PureSignalApplet* m_pureSignalApplet{nullptr};
     class ModMonitorApplet* m_modMonApplet{nullptr};   // AM Mod Monitor
+    class SsbModMonitorApplet* m_ssbModMonApplet{nullptr}; // SSB Mod Monitor
     class DiversityApplet*  m_diversityApplet{nullptr};
     class CwxApplet*        m_cwxApplet{nullptr};
     QLabel*                 m_statusCwxLabel{nullptr};

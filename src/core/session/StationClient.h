@@ -1662,6 +1662,9 @@ public:
     void setModMonitorSource(int source) override;
     /// txModMonitor.reset for a source.
     CommandOutcome requestModMonitorReset(int source) override;
+    bool txSsbModMonitorAvailable() const override;
+    void setSsbModMonitorSource(int source) override;
+    CommandOutcome requestSsbModMonitorReset(int source) override;
     /// Parity Task 21 (R-IOS-18): minor 11 and stationRadiosVersion at
     /// least 1 on a ready session.
     bool stationRadiosAvailable() const override;
@@ -2081,6 +2084,9 @@ private:
     int m_modMonitorSource = -1;
     QString m_modMonitorStream;
     void syncModMonitorSubscription();
+    int m_ssbModMonitorSource = -1;
+    QString m_ssbModMonitorStream;
+    void syncSsbModMonitorSubscription();
     /// Task 78: this session's hello declared sessionHolder 1.
     bool m_declaredSessionHolder = false;
     bool m_declaresSessionHolder = true;

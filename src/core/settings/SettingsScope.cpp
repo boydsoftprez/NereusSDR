@@ -702,6 +702,9 @@ const Rule kWholeKeys[] = {
     // source, flasher thresholds and meter style (ModMon/Source,
     // PosFlashPct, NegFlashPct, VintageMeters) are each window's.
     { "ModMon/FbStream", SettingsScope::Station },
+    // The SSB Mod Monitor's feedback receiver. The source choice and the
+    // over-threshold are each window's own.
+    { "SsbModMon/FbStream", SettingsScope::Station },
 
     // ---- Reviewed and deliberately pinned OperatorLocal --------------
     // Each of these has a name that reads as a TX-safety or station-

@@ -993,6 +993,16 @@ public:
     virtual CommandOutcome requestModMonitorReset(int /*source*/)
     { return { false, modMonitorUnavailableReason() }; }
 
+    // SSB Mod Monitor. The Core sends envelope readings while keyed in
+    // USB or LSB. 0 on txSsbModMonitorVersion (or no such entry) means
+    // this Core does not.
+    static QString ssbModMonitorUnavailableReason()
+    { return QStringLiteral("This Core does not send the SSB modulation monitor. Updating the Core may help."); }
+    virtual bool txSsbModMonitorAvailable() const { return false; }
+    virtual void setSsbModMonitorSource(int /*source*/) {}
+    virtual CommandOutcome requestSsbModMonitorReset(int /*source*/)
+    { return { false, ssbModMonitorUnavailableReason() }; }
+
     // R-R3-46 / R-R3-21 (radioHardwareVersion 4): the filter policy dialog
     // in a remote window. Whether the Core takes a filter policy change from
     // this app now, why not in plain words, and the request itself (chain

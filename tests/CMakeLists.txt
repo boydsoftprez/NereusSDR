@@ -2035,6 +2035,7 @@ nereus_add_test(tst_mic_profile_manager)
 # peak-reading analyzer: +/- peak %, carrier tracking, no-carrier, peak
 # hold vs window peaks, reset; applet flasher latch + carrier lamp.
 nereus_add_test(tst_am_modulation_analyzer)
+nereus_add_test(tst_ssb_modulation_analyzer)
 
 # ── AppletPanelWidget float / dock round-trip (AM Mod Monitor pop-out) ──
 nereus_add_test(tst_applet_float_dock)

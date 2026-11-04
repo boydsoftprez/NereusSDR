@@ -1918,7 +1918,9 @@ mw0lge@grange-lane.co.uk
 #include "core/ClarityController.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/AmModulationAnalyzer.h"
+#include "core/SsbModulationAnalyzer.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorRecord.h"
 #include "BandDefaults.h"
 #include "BandGrid.h"
 #include "RxDspWorker.h"
@@ -4636,13 +4638,33 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     });
     // Direct connection: forkIqToTaps runs on the connection thread and
     // the analyzer is thread-safe, so no queuing / copying is needed.
+    m_ssbModTx = std::make_unique<SsbModulationAnalyzer>();
+    m_ssbModFb = std::make_unique<SsbModulationAnalyzer>();
+    connect(m_moxController, &MoxController::moxStateChanged, this, [this](bool on) {
+        if (on) {
+            if (m_ssbModTx) { m_ssbModTx->reset(); }
+            if (m_ssbModFb) {
+                m_ssbModFb->reset();
+                const int fs = streamSampleRateHz(m_ssbModFbStream.load());
+                if (fs > 0) { m_ssbModFb->setSampleRate(fs); }
+            }
+        }
+        refreshSsbModulationTap();
+    });
     connect(this, &RadioModel::rawIqDataForStream, this,
             [this](int streamIndex, const QVector<float>& samples) {
-        if (!m_amModFbWanted.load(std::memory_order_acquire)) { return; }
-        if (!m_amModMoxOn.load(std::memory_order_acquire))    { return; }
-        if (streamIndex != m_amModFbStream.load(std::memory_order_acquire)) { return; }
-        if (m_amModFb) {
-            m_amModFb->pushIq(samples.constData(), samples.size() / 2);
+        const int frames = samples.size() / 2;
+        if (m_amModFbWanted.load(std::memory_order_acquire)
+            && m_amModMoxOn.load(std::memory_order_acquire)
+            && streamIndex == m_amModFbStream.load(std::memory_order_acquire)
+            && m_amModFb) {
+            m_amModFb->pushIq(samples.constData(), frames);
+        }
+        if (m_ssbModFbWanted.load(std::memory_order_acquire)
+            && m_ssbModActive.load(std::memory_order_acquire)
+            && streamIndex == m_ssbModFbStream.load(std::memory_order_acquire)
+            && m_ssbModFb) {
+            m_ssbModFb->pushIq(samples.constData(), frames);
         }
     }, Qt::DirectConnection);
 
@@ -6011,6 +6033,19 @@ void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
         }
         return;
     }
+    const int ssbModSource = SsbModMonitorRecord::sourceOfStream(batch.stream);
+    if (ssbModSource >= 0) {
+        auto& held = m_stationSsbModMonitor[static_cast<std::size_t>(ssbModSource)];
+        if (batch.reset || !batch.removes.isEmpty()) {
+            held.reset();
+        }
+        for (const RecordUpsert& u : batch.upserts) {
+            if (u.id == QLatin1String(SsbModMonitorRecord::kRecordId)) {
+                held = SsbModMonitorRecord::fromFields(u.fields);
+            }
+        }
+        return;
+    }
     // Parity Task 21 (R-IOS-18): the Core's radios, in the Core's order.
     if (batch.stream == QLatin1String("stationRadios")) {
         QList<StationRadioEntry> entries = batch.reset ? QList<StationRadioEntry>{}
@@ -6169,6 +6204,7 @@ void RadioModel::clearStationRecords()
     clearStationSpots();
     clearStationFreedv();
     clearStationModMonitor();
+    clearStationSsbModMonitor();
     if (!m_stationCoreLog.isEmpty()) {
         m_stationCoreLog.clear();
         emit stationCoreLogChanged();
@@ -21421,6 +21457,10 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 m_txChannel->setAmModulationTap(
                     m_amModTxTapEnabled.load() ? m_amModTx.get() : nullptr);
             }
+            if (m_ssbModTx) {
+                m_ssbModTx->setSampleRate(txOutRate);
+                refreshSsbModulationTap();
+            }
 
             // Task 4.2: give TxChannel a handle to WdspEngine so onModeChanged()
             // can call rebuild() when the active mode's DSP-Options settings change.
@@ -26950,6 +26990,78 @@ void RadioModel::clearStationModMonitor()
 {
     m_stationModMonitor[0].reset();
     m_stationModMonitor[1].reset();
+}
+
+SsbModulationAnalyzer* RadioModel::ssbModulationAnalyzer(int source) const
+{
+    return source == 1 ? m_ssbModFb.get() : m_ssbModTx.get();
+}
+
+void RadioModel::setSsbModFeedbackStream(int streamIndex)
+{
+    m_ssbModFbStream.store(std::clamp(streamIndex, 0, 4), std::memory_order_release);
+}
+
+void RadioModel::setSsbModFeedbackWanted(bool wanted)
+{
+    m_ssbModFbWanted.store(wanted, std::memory_order_release);
+}
+
+void RadioModel::setSsbModTxTapEnabled(bool enabled)
+{
+    m_ssbModTxTapEnabled.store(enabled, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::refreshSsbModulationTap()
+{
+    const bool active = ssbTxActive();
+    const bool was = m_ssbModActive.exchange(active, std::memory_order_acq_rel);
+    if (active != was) {
+        if (m_ssbModTx) { m_ssbModTx->reset(); }
+        if (m_ssbModFb) { m_ssbModFb->reset(); }
+    }
+    if (m_txChannel) {
+        const bool tap = active && m_ssbModTxTapEnabled.load(std::memory_order_acquire) && m_ssbModTx;
+        m_txChannel->setSsbModulationTap(tap ? m_ssbModTx.get() : nullptr);
+    }
+}
+
+bool RadioModel::ssbTxActive() const
+{
+    if (!isTransmitting()) {
+        return false;
+    }
+    const SliceModel* slice = txBoundSlice();
+    if (slice == nullptr) {
+        return false;
+    }
+    const DSPMode mode = slice->dspMode();
+    return mode == DSPMode::USB || mode == DSPMode::LSB;
+}
+
+void RadioModel::applySsbModMonitorSetting(const QString& key, const QVariant& value)
+{
+    if (key != QLatin1String("SsbModMon/FbStream")) {
+        return;
+    }
+    bool ok = false;
+    const int stream = value.isValid() ? value.toString().toInt(&ok) : 1;
+    setSsbModFeedbackStream(value.isValid() && !ok ? 1 : stream);
+}
+
+std::optional<SsbModulationAnalyzer::Snapshot> RadioModel::stationSsbModMonitorSnapshot(int source) const
+{
+    if (source != 0 && source != 1) {
+        return std::nullopt;
+    }
+    return m_stationSsbModMonitor[static_cast<std::size_t>(source)];
+}
+
+void RadioModel::clearStationSsbModMonitor()
+{
+    m_stationSsbModMonitor[0].reset();
+    m_stationSsbModMonitor[1].reset();
 }
 
 void RadioModel::refreshSliceAntennasFromAlex(SliceModel* slice)

@@ -618,6 +618,7 @@
 #include "core/session/RemoteStationOptions.h"
 #include "core/session/BandLinkFit.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorRecord.h"
 
 #include "core/AppSettings.h"
 #include "core/CfcProfile.h"
@@ -2675,6 +2676,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     // R-IOS-13 / R-R3-49: that session's Mod Monitor subscription ended
     // with it; the window's choice of source stays for the next.
     m_modMonitorStream.clear();
+    m_ssbModMonitorStream.clear();
 
     if (!m_settingsProxy.isNull()) {
         m_settingsProxy->setReady(false);
@@ -3238,10 +3240,13 @@ void StationClient::onTransportText(const QByteArray& wire)
         // R-IOS-13 / R-R3-49: the Mod Monitor's stream, when the window
         // shows it; a new snapshot is a new subscription.
         m_modMonitorStream.clear();
+        m_ssbModMonitorStream.clear();
         if (!m_radioModel.isNull()) {
             m_radioModel->clearStationModMonitor();
+            m_radioModel->clearStationSsbModMonitor();
         }
         syncModMonitorSubscription();
+        syncSsbModMonitorSubscription();
         if (firstSnapshot) {
             qCInfo(lcStationClient) << "Session established with" << m_capabilities.stationName;
             // iPhone app plan Task 27: where the Core was reached, tried
@@ -3365,7 +3370,8 @@ void StationClient::onTransportText(const QByteArray& wire)
             }
             break;
         }
-        if ((spotSourcesAvailable() || stationRadiosAvailable() || stationTciServerAvailable() || txModMonitorAvailable())
+        if ((spotSourcesAvailable() || stationRadiosAvailable() || stationTciServerAvailable()
+             || txModMonitorAvailable() || txSsbModMonitorAvailable())
             && !m_radioModel.isNull()) {
             m_radioModel->applyStationRecordBatch(message.recordBatch);
         }
@@ -6617,6 +6623,59 @@ StationClient::CommandOutcome StationClient::requestModMonitorReset(int source)
                        {MirrorUpdate{0, "source", MirrorWireKind::Int64,
                                      QVariant(static_cast<qlonglong>(source))}},
                        QStringLiteral("the modulation monitor reset"));
+}
+
+bool StationClient::txSsbModMonitorAvailable() const
+{
+    return spotSourcesAvailable() && m_capabilities.txSsbModMonitorVersion >= 1;
+}
+
+void StationClient::setSsbModMonitorSource(int source)
+{
+    m_ssbModMonitorSource = source == 0 || source == 1 ? source : -1;
+    syncSsbModMonitorSubscription();
+}
+
+void StationClient::syncSsbModMonitorSubscription()
+{
+    const QString wanted = txSsbModMonitorAvailable()
+        ? SsbModMonitorRecord::streamName(m_ssbModMonitorSource)
+        : QString();
+    if (wanted == m_ssbModMonitorStream) {
+        return;
+    }
+    const auto streamArgument = [](const QString& stream) {
+        return MirrorUpdate{0, "stream", MirrorWireKind::Utf8, QVariant(stream)};
+    };
+    if (!m_ssbModMonitorStream.isEmpty() && stationLinkReady()) {
+        invokeCommand("records.unsubscribe", {streamArgument(m_ssbModMonitorStream)});
+    }
+    if (!m_radioModel.isNull()) {
+        m_radioModel->clearStationSsbModMonitor();
+    }
+    m_ssbModMonitorStream = wanted;
+    if (!wanted.isEmpty()) {
+        invokeCommand("records.subscribe",
+                      {streamArgument(wanted),
+                       MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
+                                    QVariant(static_cast<qlonglong>(SsbModMonitorRecord::kCapacity))}});
+    }
+}
+
+StationClient::CommandOutcome StationClient::requestSsbModMonitorReset(int source)
+{
+    if (!txSsbModMonitorAvailable()) {
+        return {false, stationLinkReady() ? ssbModMonitorUnavailableReason()
+                                          : QStringLiteral("Not connected to the Core, so the "
+                                                           "reset was not sent.")};
+    }
+    if (source != 0 && source != 1) {
+        return {false, QStringLiteral("This app does not know that monitor source.")};
+    }
+    return sendCommand("txSsbModMonitor.reset", -1,
+                       {MirrorUpdate{0, "source", MirrorWireKind::Int64,
+                                     QVariant(static_cast<qlonglong>(source))}},
+                       QStringLiteral("the SSB modulation monitor reset"));
 }
 
 bool StationClient::stationRadiosAvailable() const

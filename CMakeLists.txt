@@ -1159,6 +1159,7 @@ set(CORE_SOURCES
     src/core/TxDisplayFeed.cpp
     src/core/TxDisplayFeed.h
     src/core/AmModulationAnalyzer.cpp
+    src/core/SsbModulationAnalyzer.cpp
     src/core/NoiseFloorEstimator.cpp
     src/core/NoiseFloorTracker.cpp
     src/core/ClarityController.cpp
@@ -1639,6 +1640,8 @@ list(APPEND CORE_SOURCES
     # readings on two record streams, and the Core's side that feeds them.
     src/core/session/ModMonitorRecord.cpp
     src/core/session/ModMonitorPublisher.cpp
+    src/core/session/SsbModMonitorRecord.cpp
+    src/core/session/SsbModMonitorPublisher.cpp
     # Parity Task 21 (R-IOS-18): the Core's radios and its choice of one.
     src/core/station/StationRadios.cpp
     # iPhone app Task 71 (R-IOS-02): who holds a place on the Core, and the
@@ -2277,6 +2280,7 @@ set(GUI_SOURCES
     src/gui/applets/DigitalApplet.cpp
     src/gui/applets/PureSignalApplet.cpp
     src/gui/applets/ModMonitorApplet.cpp
+    src/gui/applets/SsbModMonitorApplet.cpp
     src/gui/applets/AppletFloatingWindow.cpp
     src/gui/VintageModMeterWidget.cpp
     src/gui/applets/DiversityApplet.cpp

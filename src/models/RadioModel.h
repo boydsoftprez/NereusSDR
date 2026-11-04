@@ -953,6 +953,7 @@
 #include "core/TgxlConnection.h"
 #include "core/FaultLog.h"
 #include "core/AmModulationAnalyzer.h"
+#include "core/SsbModulationAnalyzer.h"
 #include "core/session/IStationLink.h"
 #include "core/station/StationRadios.h"
 // Remote-daemon R2 Task 18: the handshake descriptor applyStationCapabilities()
@@ -4284,6 +4285,29 @@ public:
     std::optional<AmModulationAnalyzer::Snapshot> stationModMonitorSnapshot(int source) const;
     /// The Core's Mod Monitor readings leave this window.
     void clearStationModMonitor();
+
+    // ── SSB Mod Monitor (NereusSDR-original) ──────────────────────────────
+    /// source 0 = TX I/Q leaving WDSP, 1 = PureSignal feedback receiver.
+    /// Fed only while the TX slice is USB or LSB.
+    SsbModulationAnalyzer* ssbModulationAnalyzer(int source) const;
+    void setSsbModFeedbackStream(int streamIndex);
+    int  ssbModFeedbackStream() const { return m_ssbModFbStream.load(); }
+    void setSsbModFeedbackWanted(bool wanted);
+    bool ssbModFeedbackWanted() const { return m_ssbModFbWanted.load(); }
+    /// The Core turns this off until a device watches the SSB monitor.
+    /// A local window leaves it on and refreshSsbModulationTap attaches
+    /// the tap only while transmitting USB or LSB.
+    void setSsbModTxTapEnabled(bool enabled);
+    bool ssbModTxTapEnabled() const { return m_ssbModTxTapEnabled.load(); }
+    /// Attach or detach the TX tap from the current mode and MOX state.
+    void refreshSsbModulationTap();
+    /// Transmitting, and the TX slice is USB or LSB.
+    bool ssbTxActive() const;
+    /// A window's SsbModMon/FbStream, or its removal (rx1). Ignores every
+    /// other key.
+    void applySsbModMonitorSetting(const QString& key, const QVariant& value);
+    std::optional<SsbModulationAnalyzer::Snapshot> stationSsbModMonitorSnapshot(int source) const;
+    void clearStationSsbModMonitor();
 
     // Phase 3F Sub-Epic J Task 11: the one place GUI code may resolve a
     // slice's WDSP channel. Mirrors txChannel()'s shape. Added so MainWindow
@@ -9335,6 +9359,15 @@ private:
     std::atomic<bool> m_amModTxTapEnabled{true};
     // R-IOS-13 / R-R3-49: a remote window's copy of the Core's readings.
     std::array<std::optional<AmModulationAnalyzer::Snapshot>, 2> m_stationModMonitor;
+
+    // SSB Mod Monitor analyzers: [0] TX I/Q tap, [1] PS feedback receiver.
+    std::unique_ptr<SsbModulationAnalyzer> m_ssbModTx;
+    std::unique_ptr<SsbModulationAnalyzer> m_ssbModFb;
+    std::atomic<int>  m_ssbModFbStream{1};
+    std::atomic<bool> m_ssbModFbWanted{false};
+    std::atomic<bool> m_ssbModTxTapEnabled{true};
+    std::atomic<bool> m_ssbModActive{false};
+    std::array<std::optional<SsbModulationAnalyzer::Snapshot>, 2> m_stationSsbModMonitor;
 
     // TX mic source — strategy interface for silence (3M-1a) or real mic (3M-1b).
     // Owned by RadioModel via unique_ptr. NullMicSource for 3M-1a; replaced with

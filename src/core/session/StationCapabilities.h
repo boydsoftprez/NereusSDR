@@ -834,6 +834,12 @@ struct StationCapabilities {
     /// after remoteIqVersion and all earlier optional entries. 0: a window shows its
     /// Mod Monitor disabled with the reason.
     int txModMonitorVersion = 0;
+    /// 1 means the Core sends SSB Mod Monitor readings on txSsbModulation
+    /// and txSsbModulationFeedback while a subscriber watches and the radio
+    /// is keyed in USB or LSB, and takes txSsbModMonitor.reset. 0 omits the
+    /// entry so an older peer's capability list is unchanged. A window with
+    /// 0 shows the SSB Mod Monitor disabled.
+    int txSsbModMonitorVersion = 0;
     /// iPhone app Task 71 (R-IOS-02; the several-devices design, ruling
     /// 10.1): 1 means the Core admits up to four devices at once, sends the
     /// `connectedDevices` object and takes session.leave. Sent before the

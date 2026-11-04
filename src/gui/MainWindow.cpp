@@ -1494,6 +1494,7 @@ warren@wpratt.com
 #include "applets/DigitalApplet.h"
 #include "applets/PureSignalApplet.h"
 #include "applets/ModMonitorApplet.h"
+#include "applets/SsbModMonitorApplet.h"
 #include "applets/DiversityApplet.h"
 #include "applets/CwxApplet.h"
 #include "core/CwxSender.h"
@@ -2971,6 +2972,8 @@ void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry&
         contents.prepend(entry);
     } else if (entry.typeId == QLatin1String("applet:mod_monitor")) {
         contents.insert(qMin(1, contents.size()), entry);
+    } else if (entry.typeId == QLatin1String("applet:ssb_mod_monitor")) {
+        contents.insert(qMin(2, contents.size()), entry);
     } else {
         contents.append(entry);
     }
@@ -11835,6 +11838,10 @@ void MainWindow::populateDefaultMeter()
     m_modMonApplet = new ModMonitorApplet(m_radioModel, nullptr);
     panel->insertApplet(0, m_modMonApplet);   // directly below the S-Meter
 
+    // SSB Mod Monitor: envelope, peak hold and crest for USB and LSB.
+    m_ssbModMonApplet = new SsbModMonitorApplet(m_radioModel, nullptr);
+    panel->insertApplet(1, m_ssbModMonApplet);
+
     m_catApplet = new CatApplet(m_radioModel, nullptr);
     panel->addApplet(m_catApplet);
 
@@ -12166,6 +12173,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Vax")]        = m_vaxApplet;
     m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
     m_appletsById[QStringLiteral("ModMon")]     = m_modMonApplet;
+    m_appletsById[QStringLiteral("SsbModMon")]  = m_ssbModMonApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
@@ -12218,6 +12226,8 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("PureSignal"),   true);
     m_appletVis->registerApplet(QStringLiteral("ModMon"),
                                 QStringLiteral("AM Mod Monitor"), true);
+    m_appletVis->registerApplet(QStringLiteral("SsbModMon"),
+                                QStringLiteral("SSB Mod Monitor"), true);
     m_appletVis->registerApplet(QStringLiteral("Amp"),
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),

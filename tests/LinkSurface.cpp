@@ -842,6 +842,8 @@ QJsonArray captureCapabilities()
     caps.coreBuildInfo = CoreBuildInfo{QStringLiteral("0.5.2"), QStringLiteral("link-surface@fixture")};
     caps.settingsBackupVersion = 1;
     caps.remoteIqVersion = 1;
+    // SSB Mod Monitor: sent by a Core whose record streams are up.
+    caps.txSsbModMonitorVersion = 1;
     caps.waveformVersion = 1;
     caps.setupDescriptionVersion = 1;
     caps.miniDisplayVersion = 1;
