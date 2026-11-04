@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: The one inspector's words (overlay design D19, D22, D34, D35, D37):
+//               RoundtableViewModel::mine, "Viewing · +1.4 kHz", the Also here fold,
+//               a body that scrolls behind a fixed head, and
+//               placeRoundtableInspector. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-04: The view's and the card's empty lines read "Nobody here" and "No
 //               readings". J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: A pending flag says Double by the pending card's rule, shared in
@@ -60,6 +65,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QLocale>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPolygonF>
@@ -2096,30 +2102,45 @@ bool roundtableCardSameStructure(const RoundtableCardModel& a, const RoundtableC
     return true;
 }
 
-RoundtableCardPlacement placeRoundtableCard(const RoundtableCardModel& card, const QRect& pan, int dialX,
-                                            const QVector<QRect>& flags, bool flagFlipped, const QFontMetrics& fm)
-{
-    RoundtableCardPlacement placed;
-    if (pan.isEmpty()) { return placed; }
+namespace {
 
-    // The stretches of the pan between keep-outs. Half-open: [left, right).
+struct PanSpan {
+    int left;
+    int right;
+};
+
+// The stretches of the pan between keep-outs. Half-open: [left, right).
+QVector<PanSpan> freePanSpans(const QRect& pan, const QVector<QRect>& flags)
+{
     QVector<QRect> blocks;
     blocks.reserve(flags.size());
     for (const QRect& flag : flags) {
         if (flag.intersects(pan)) { blocks.append(flag); }
     }
     std::sort(blocks.begin(), blocks.end(), [](const QRect& a, const QRect& b) { return a.left() < b.left(); });
-    struct Span { int left; int right; };
-    QVector<Span> spans;
+    QVector<PanSpan> spans;
     spans.reserve(blocks.size() + 1);
     int left = pan.left();
     const int panRight = pan.left() + pan.width();
     for (const QRect& block : std::as_const(blocks)) {
         const int end = block.left() - kCardFlagGap;
-        if (end > left) { spans.append(Span{left, end}); }
+        if (end > left) { spans.append(PanSpan{left, end}); }
         left = std::max(left, block.left() + block.width() + kCardFlagGap);
     }
-    if (panRight > left) { spans.append(Span{left, panRight}); }
+    if (panRight > left) { spans.append(PanSpan{left, panRight}); }
+    return spans;
+}
+
+} // namespace
+
+RoundtableCardPlacement placeRoundtableCard(const RoundtableCardModel& card, const QRect& pan, int dialX,
+                                            const QVector<QRect>& flags, bool flagFlipped, const QFontMetrics& fm)
+{
+    RoundtableCardPlacement placed;
+    if (pan.isEmpty()) { return placed; }
+
+    using Span = PanSpan;
+    const QVector<Span> spans = freePanSpans(pan, flags);
 
     // Nearest the dial, then widest. The far side of the flag first (D16).
     const auto choose = [&](bool farOnly) -> std::optional<Span> {
@@ -2159,6 +2180,41 @@ RoundtableCardPlacement placeRoundtableCard(const RoundtableCardModel& card, con
     const int x = std::clamp(dialX - width / 2, span->left, span->right - width);
     placed.card = QRect(x, pan.top() + pan.height() - plan.height, width, plan.height);
     return placed;
+}
+
+QRect placeRoundtableInspector(const QRect& pan, int dialX, const QVector<QRect>& flags, bool flagFlipped, int height)
+{
+    if (pan.isEmpty()) { return QRect(); }
+    const int tall = std::clamp(height, 0, pan.height());
+    const int top = pan.top() + pan.height() - tall;
+    const QVector<PanSpan> spans = freePanSpans(pan, flags);
+
+    // overlay.js placeIns: past the flag from the dial first, then any stretch.
+    // The nearest to the dial wins; the first of equals, from the left.
+    const auto choose = [&](bool farOnly) -> std::optional<PanSpan> {
+        std::optional<PanSpan> best;
+        int bestDistance = 0;
+        for (const PanSpan& span : spans) {
+            if (span.right - span.left < kRoundtableInspectorMinStretch) { continue; }
+            if (farOnly && !(flagFlipped ? span.right <= dialX : span.left >= dialX)) { continue; }
+            const int distance = dialX < span.left ? span.left - dialX : dialX > span.right ? dialX - span.right : 0;
+            if (!best || distance < bestDistance) {
+                best = span;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    };
+    std::optional<PanSpan> span = choose(true);
+    if (!span) { span = choose(false); }
+    // No stretch has room: the inspector still opens, at the pan's edge.
+    if (!span) { return QRect(pan.left(), top, std::min(kRoundtableInspectorWidth, pan.width()), tall); }
+
+    const int width = std::min(kRoundtableInspectorWidth, span->right - span->left);
+    const int x = span->left >= dialX ? span->left
+        : span->right <= dialX ? span->right - width
+        : std::clamp(dialX - width / 2, span->left, span->right - width);
+    return QRect(x, top, width, tall);
 }
 
 void paintRoundtableStripes(QPainter& p, const QRectF& rect, const QColor& on, const QColor& off, qreal onWidth,
@@ -2348,21 +2404,22 @@ void paintRoundtableCard(QPainter& p, const RoundtableCardModel& card, const Rou
 
 namespace {
 
-constexpr int kViewSectionGap = 4;   // .rc-peek .rc__body
+constexpr int kViewSectionGap = 4;   // .rc-insp .rc__body
+constexpr int kViewPadTop = 4;       // .rc-insp .rc__body
+constexpr int kViewPadSide = 8;
+constexpr int kViewHeadLine = 26;    // .ins-head
+constexpr int kViewBackLine = 22;    // .ins-view button
+constexpr int kViewBackSide = 8;     // its side padding and border
+constexpr int kViewFade = 22;        // .ins-scroll.has-more
+constexpr int kViewFadeSlack = 2;
 constexpr int kViewPersonLine = 14;  // .pk-p
 constexpr int kViewPersonGap = 2;    // .pk-people
 constexpr int kViewPersonGlyph = 11;
 constexpr int kViewOffsetMinWidth = 46;  // .pk-o
-constexpr int kViewCloseRoom = 18;   // .rc-peek .rc__f
-const QColor kColorViewSub(0x79, 0xa8, 0xd2);  // .pk-sub
+constexpr int kViewHeadButtons = 60;  // .rc-insp .rc__f's margin, then ⋯ and close with their gaps
+const QColor kColorViewSub(0x79, 0xa8, 0xd2);  // .pk-sub, .ins-view
+const QColor kColorViewFade(10, 10, 12);       // the card's fill, solid at the cut
 const QColor kColorKeyedText = kColorTalking;
-
-QString viewFamilyText(const QString& family)
-{
-    if (family == QLatin1String("fdvl")) { return QStringLiteral("FreeDV L"); }
-    if (family == QLatin1String("fdvu")) { return QStringLiteral("FreeDV U"); }
-    return family.toUpper();
-}
 
 QString viewCaptionText(const RoundtableCardModel& card)
 {
@@ -2370,10 +2427,12 @@ QString viewCaptionText(const RoundtableCardModel& card)
 }
 
 // Walks the view's words top to bottom. With a painter it draws them; without
-// one it only measures, so the height and the drawing can never disagree.
-// Returns the height used from the rect's top.
-int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect& rect, int rowLimit,
-                      const QPaintDevice* device)
+// one it only measures, so the height and the drawing can never disagree. The
+// head stays put; everything under it moves by `scrollY` and is cut at
+// `bodyHeight`, with a fade while more lies below. A negative `bodyHeight` shows
+// the whole body with no cut.
+RoundtableViewLayout runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect& rect, bool foldPeople,
+                                       int scrollY, int bodyHeight, const QPaintDevice* device)
 {
     using Kind = RoundtableCardModel::Kind;
     const RoundtableCardModel& card = view.card;
@@ -2381,35 +2440,40 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
     const QFont whoFont = cardFont(device, 13, QFont::Bold);
     const QFont smallFont = cardFont(device, 10, QFont::Medium);
     const QFont personFont = cardFont(device, 11, QFont::DemiBold);
+    const QFont viewingFont = cardFont(device, 11, QFont::Medium);
     const QFont clockFont = cardFont(device, 10, QFont::DemiBold, true);
     const QFontMetrics fm(cardFont(device, 12, QFont::Bold), device);
     const QFontMetrics whoMetrics(whoFont, device);
     const QFontMetrics smallMetrics(smallFont, device);
     const QFontMetrics personMetrics(personFont, device);
+    const QFontMetrics viewingMetrics(viewingFont, device);
     const QFontMetrics clockMetrics(clockFont, device);
     const auto line = [&fm](int base) { return cardLine(base, fm); };
 
-    const int bodyLeft = rect.left() + kCardBorder + kCardPadSide;
-    const int bodyRight = rect.left() + rect.width() - kCardBorder - kCardPadSide;
+    const int bodyLeft = rect.left() + kCardBorder + kViewPadSide;
+    const int bodyRight = rect.left() + rect.width() - kCardBorder - kViewPadSide;
     const int bodyWidth = bodyRight - bodyLeft;
-    int y = rect.top() + kCardBorder + kCardRail + kCardPadTop;
+    int y = rect.top() + kCardBorder + kCardRail + kViewPadTop;
 
-    // Head: glyph, who, clock on any live turn, frequency, room for the close box.
+    RoundtableViewLayout layout;
+    layout.backWidth = personMetrics.horizontalAdvance(roundtableViewBackText()) + 2 * kViewBackSide;
+
+    // Head: glyph, who, clock on any live turn, frequency, room for ⋯ and close.
     {
-        const int h = line(kCardHeadLine);
+        const int h = std::max(kViewHeadLine, line(kCardHeadLine));
         if (p != nullptr) {
             paintRoundtableGlyph(*p, QPointF(bodyLeft + kCardGlyphSize / 2.0, y + h / 2.0), kCardGlyphSize,
                                  cardGlyph(card), frozen || cardIsLast(card), false);
             const int textLeft = bodyLeft + static_cast<int>(kCardGlyphSize) + kCardTextGap;
             const QString frequency = roundtableFrequencyText(static_cast<qint64>(card.hz));
             const int frequencyWidth = clockMetrics.horizontalAdvance(frequency);
-            const int frequencyRight = bodyRight - kViewCloseRoom;
+            const int frequencyRight = bodyRight - kViewHeadButtons;
             // A dropped link has no live clock (D7).
             const bool live = !frozen && !cardIsLast(card) && card.kind != Kind::Quiet && card.clockMs > 0;
             const QString clock = live ? clockText(card.clockMs) : QString();
             const int clockWidth = live ? clockMetrics.horizontalAdvance(clock) + kCardTextGap : 0;
             const int room = std::max(0, frequencyRight - textLeft - frequencyWidth - clockWidth - kCardTextGap);
-            const QString who = whoMetrics.elidedText(roundtableViewHeadText(card), Qt::ElideRight, room);
+            const QString who = whoMetrics.elidedText(roundtableViewHeadText(view), Qt::ElideRight, room);
             p->setFont(whoFont);
             p->setPen(card.kind == Kind::LastTalker ? kColorLastText : cardWhoColor(card));
             p->drawText(QRect(textLeft, y, room, h), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, who);
@@ -2426,8 +2490,50 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
         y += h;
     }
 
-    const auto smallLine = [&](const QString& text, const QColor& color, int indent = 0) {
+    // Another frequency says so, with Back beside it (the widget's). Your own says
+    // only what its card would, as a turn ending. A dropped link's line is the body's.
+    const QString subText = roundtableViewSubText(view);
+    const bool ownNote = view.mine && !frozen && !card.note.isEmpty();
+    if (!view.mine) {
         y += kViewSectionGap;
+        layout.viewingTop = y - rect.top();
+        if (p != nullptr) {
+            const int room = std::max(0, bodyWidth - layout.backWidth - kCardTextGap);
+            p->setFont(viewingFont);
+            p->setPen(kColorViewSub);
+            p->drawText(QRect(bodyLeft, y, room, kViewBackLine), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
+                        viewingMetrics.elidedText(subText, Qt::ElideRight, room));
+        }
+        y += kViewBackLine;
+    } else if (ownNote) {
+        y += kViewSectionGap;
+        const int h = line(kCardSmallLine);
+        if (p != nullptr) {
+            p->setFont(smallFont);
+            p->setPen(kColorViewSub);
+            p->drawText(QRect(bodyLeft, y, bodyWidth, h), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
+                        smallMetrics.elidedText(card.note, Qt::ElideRight, bodyWidth));
+        }
+        y += h;
+    }
+    y += kViewSectionGap;
+    const int bodyTop = y;
+    layout.head = bodyTop - rect.top();
+
+    // Everything below moves with the wheel and stops at the cut.
+    const bool cut = p != nullptr && bodyHeight >= 0;
+    if (cut) {
+        p->save();
+        p->setClipRect(QRect(rect.left() + kCardBorder, bodyTop, rect.width() - 2 * kCardBorder, bodyHeight),
+                       Qt::IntersectClip);
+    }
+    if (p != nullptr) { y -= scrollY; }
+    const int contentTop = y;
+
+    int gap = 0;
+    const auto smallLine = [&](const QString& text, const QColor& color, int indent = 0) {
+        y += gap;
+        gap = kViewSectionGap;
         const int h = line(kCardSmallLine);
         if (p != nullptr) {
             p->setFont(smallFont);
@@ -2439,7 +2545,8 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
         y += h;
     };
     const auto caption = [&](const QString& left, const QString& right, const QColor& leftColor) {
-        y += kViewSectionGap;
+        y += gap;
+        gap = kViewSectionGap;
         const int h = line(kCardCaption);
         if (p != nullptr) {
             p->setPen(QPen(kColorRule, 1));
@@ -2454,12 +2561,11 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
         y += h;
     };
 
-    smallLine(roundtableViewSubText(view), kColorViewSub);
-    const QString link = roundtableViewLinkText(card);
+    const QString link = ownNote ? QString() : roundtableViewLinkText(card);
     if (!link.isEmpty()) {
         const bool waiting = card.note == QLatin1String("Reconnecting");
         if (waiting && p != nullptr) {
-            paintRoundtableGlyph(*p, QPointF(bodyLeft + 4.0, y + kViewSectionGap + line(kCardSmallLine) / 2.0), 8.0,
+            paintRoundtableGlyph(*p, QPointF(bodyLeft + 4.0, y + gap + line(kCardSmallLine) / 2.0), 8.0,
                                  static_cast<int>(RoundtableGlyph::Waiting));
         }
         smallLine(link, waiting ? kColorUnknown : kColorDim, waiting ? 12 : 0);
@@ -2471,9 +2577,17 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
         smallLine(QStringLiteral("Nobody here"), kColorDim);
     }
     const int personLine = line(kViewPersonLine);
+    // A short pan keeps the readings in view: everyone not keyed folds to one line (D19).
+    QStringList alsoHere;
+    int peopleDrawn = 0;
     for (qsizetype i = 0; i < card.onFrequency.size(); ++i) {
         const RoundtableCardPerson& person = card.onFrequency.at(i);
-        y += i == 0 ? kViewSectionGap : kViewPersonGap;
+        if (foldPeople && !person.keyed) {
+            alsoHere.append(person.you ? QStringLiteral("You") : person.name);
+            continue;
+        }
+        y += peopleDrawn == 0 ? kViewSectionGap : kViewPersonGap;
+        ++peopleDrawn;
         if (p != nullptr) {
             const int glyph = !person.keyed ? static_cast<int>(RoundtableGlyph::Quiet)
                 : card.kind == Kind::Double ? static_cast<int>(RoundtableGlyph::Doubled)
@@ -2507,6 +2621,17 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
         }
         y += personLine;
     }
+    if (!alsoHere.isEmpty()) {
+        y += peopleDrawn == 0 ? kViewSectionGap : kViewPersonGap;
+        if (p != nullptr) {
+            const QString text = QStringLiteral("Also here · ") + alsoHere.join(QStringLiteral(", "));
+            p->setFont(viewingFont);
+            p->setPen(kColorDim);
+            p->drawText(QRect(bodyLeft, y, bodyWidth, personLine), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
+                        viewingMetrics.elidedText(text, Qt::ElideRight, bodyWidth));
+        }
+        y += personLine;
+    }
 
     // The readings, as the card's rows, with the path unless D2 blanks it.
     const QVector<RoundtableCardRow> rows = roundtableViewRows(view);
@@ -2514,10 +2639,10 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
         : view.format == QLatin1String("Both") ? QStringLiteral("S / dBm") : QStringLiteral("dBm");
     const bool combined = !frozen && card.kind == Kind::Double;
     caption(viewCaptionText(card), unit, combined ? kColorDoubleText : kColorDim);
-    const int rowCount = std::min<int>(rowLimit, static_cast<int>(rows.size()));
+    const int rowCount = static_cast<int>(rows.size());
     if (rows.isEmpty()) {
         smallLine(QStringLiteral("No readings"), kColorDim);
-    } else if (rowCount > 0) {
+    } else {
         const bool showPath = card.kind != Kind::Double && card.kind != Kind::LastDouble && card.kind != Kind::Unknown;
         const int rowLine = line(kCardRowLine);
         if (p == nullptr) {
@@ -2532,18 +2657,22 @@ int runRoundtableView(QPainter* p, const RoundtableViewModel& view, const QRect&
             }
         }
     }
-    if (rowCount < rows.size()) {
-        y += kCardGap;
-        const int h = line(kCardFoot);
-        if (p != nullptr) {
-            p->setFont(smallFont);
-            p->setPen(kColorFrequency);
-            p->drawText(QRect(bodyLeft, y, bodyWidth, h), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
-                        QStringLiteral("+%1 more ›").arg(rows.size() - rowCount));
+    layout.total = layout.head + (y - contentTop);
+    if (cut) {
+        p->restore();
+        // Rows below the cut say so with a fade (overlay.js renderIns).
+        if (layout.total - layout.head - scrollY - bodyHeight > kViewFadeSlack && bodyHeight > 0) {
+            const int fade = std::min(kViewFade, bodyHeight);
+            const QRect band(rect.left() + kCardBorder, bodyTop + bodyHeight - fade, rect.width() - 2 * kCardBorder, fade);
+            QColor clear = kColorViewFade;
+            clear.setAlpha(0);
+            QLinearGradient gradient(0.0, band.top(), 0.0, band.top() + band.height());
+            gradient.setColorAt(0.0, clear);
+            gradient.setColorAt(1.0, kColorViewFade);
+            p->fillRect(band, gradient);
         }
-        y += h;
     }
-    return y - rect.top();
+    return layout;
 }
 
 } // namespace
@@ -2562,19 +2691,31 @@ QString roundtableViewHeadText(const RoundtableCardModel& card)
     }
 }
 
+QString roundtableViewHeadText(const RoundtableViewModel& view)
+{
+    // Your own frequency keeps its last talker's name, as your card does (overlay.js mineData).
+    if (view.mine && view.card.kind == RoundtableCardModel::Kind::LastTalker) { return cardHeadText(view.card); }
+    return roundtableViewHeadText(view.card);
+}
+
+QString roundtableViewBackText()
+{
+    return QStringLiteral("‹ Back to my slice");
+}
+
 QString roundtableViewSubText(const RoundtableViewModel& view)
 {
+    if (view.mine) { return QString(); }
     const double awayKhz = (static_cast<double>(view.card.hz) - static_cast<double>(view.sliceHz)) / 1000.0;
-    QString text = QStringLiteral("Viewing, not tuned");
+    QString text = QStringLiteral("Viewing");
     // A window that controls no slice has nothing to be away from.
     if (!view.sliceName.isEmpty() && std::abs(awayKhz) >= 0.05) {
         // The board writes a true minus sign.
-        text += QStringLiteral(" · %1%2 kHz from slice %3")
+        text += QStringLiteral(" · %1%2 kHz")
                     .arg(awayKhz > 0 ? QStringLiteral("+") : QString(QChar(0x2212)))
-                    .arg(std::abs(awayKhz), 0, 'f', 1)
-                    .arg(view.sliceName);
+                    .arg(std::abs(awayKhz), 0, 'f', 1);
     }
-    return text + QStringLiteral(" · ") + viewFamilyText(view.family);
+    return text;
 }
 
 QString roundtableViewLinkText(const RoundtableCardModel& card)
@@ -2615,8 +2756,9 @@ QVector<RoundtableCardRow> roundtableViewRows(const RoundtableViewModel& view)
     rows.reserve(card.rows.size() + 1);
     const bool onAir = card.kind == Kind::Talking || card.kind == Kind::You || card.kind == Kind::Double
         || card.kind == Kind::Unknown;
-    // Your pan speaks only for now, so it stays out of a frozen card (D7).
-    if (onAir && !card.frozen && view.panDbm) {
+    // Your pan speaks only for now, so it stays out of a frozen card (D7), and your
+    // own frequency has no use for it (D22).
+    if (onAir && !card.frozen && !view.mine && view.panDbm) {
         RoundtableCardRow pan;
         pan.label = QStringLiteral("Your pan");
         pan.you = true;
@@ -2629,20 +2771,23 @@ QVector<RoundtableCardRow> roundtableViewRows(const RoundtableViewModel& view)
     return rows;
 }
 
-int roundtableViewHeight(const RoundtableViewModel& view, int width, int rowLimit, const QPaintDevice* device)
+RoundtableViewLayout roundtableViewLayout(const RoundtableViewModel& view, int width, bool foldPeople,
+                                          const QPaintDevice* device)
 {
-    return runRoundtableView(nullptr, view, QRect(0, 0, width, 0), rowLimit, device);
+    return runRoundtableView(nullptr, view, QRect(0, 0, width, 0), foldPeople, 0, -1, device);
 }
 
-void paintRoundtableView(QPainter& p, const RoundtableViewModel& view, const QRect& rect, int rowLimit)
+RoundtableViewLayout paintRoundtableView(QPainter& p, const RoundtableViewModel& view, const QRect& rect, bool foldPeople,
+                                         int scrollY, int bodyHeight)
 {
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
     const bool dimmed = view.card.note == QLatin1String("You are hidden");
     if (dimmed) { p.setOpacity(p.opacity() * kCardDimmedOpacity); }
     paintCardFrame(p, rect, view.card, dimmed);
-    runRoundtableView(&p, view, rect, rowLimit, p.device());
+    const RoundtableViewLayout layout = runRoundtableView(&p, view, rect, foldPeople, scrollY, bodyHeight, p.device());
     p.restore();
+    return layout;
 }
 
 QList<RoundtableTag> roundtableMergeDoubleTags(const QList<RoundtableTag>& tags)

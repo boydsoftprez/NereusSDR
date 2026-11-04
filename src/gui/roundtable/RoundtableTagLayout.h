@@ -259,6 +259,21 @@ NEREUS_GUI_EXPORT RoundtableCardPlacement placeRoundtableCard(const RoundtableCa
                                                               int dialX, const QVector<QRect>& flags,
                                                               bool flagFlipped, const QFontMetrics& fm);
 
+/// The inspector's width, and the narrowest stretch it takes, on the desktop pan
+/// (overlay design D34, D37; overlay.js placeIns).
+inline constexpr int kRoundtableInspectorWidth = 300;
+inline constexpr int kRoundtableInspectorMinStretch = 260;
+
+/// Where the inspector stands (overlay design D34, D37). Pure. `pan` is the
+/// spectrum from its top to the foot line, its bottom the foot. `height` is what
+/// the inspector wants, cut to the pan. `flags` and `flagFlipped` as
+/// placeRoundtableCard. It takes the stretch nearest the dial, past the flag if one
+/// has room, narrower than 300 only in a stretch that is, and sits at the stretch's
+/// edge unless the dial lies inside it. With no stretch at least 260 wide it stays
+/// open at the pan's left edge, over the flag. Null only for an empty pan.
+NEREUS_GUI_EXPORT QRect placeRoundtableInspector(const QRect& pan, int dialX, const QVector<QRect>& flags,
+                                                 bool flagFlipped, int height);
+
 /// A reading in the chosen format: "dBm", "S-units" or "Both".
 NEREUS_GUI_EXPORT QString roundtableSignalText(double dbm, const QString& format);
 
@@ -277,9 +292,10 @@ NEREUS_GUI_EXPORT void paintRoundtableCard(QPainter& p, const RoundtableCardMode
 NEREUS_GUI_EXPORT void paintRoundtableStripes(QPainter& p, const QRectF& rect, const QColor& on, const QColor& off,
                                               qreal onWidth, qreal offWidth);
 
-/// What a view of another frequency shows (overlay design D22, D23).
+/// What the inspector shows (overlay design D22, D23, D35).
 struct RoundtableViewModel {
     RoundtableCardModel card;
+    bool mine = false;       // your own frequency: no Viewing line, no Your pan row
     QString family;          // of the viewed frequency
     quint64 sliceHz = 0;     // the active slice
     QString sliceFamily;
@@ -294,7 +310,12 @@ struct RoundtableViewModel {
 /// The view's head: the card's words, with "Nobody talking" when no turn is open
 /// (the view's own wording, from the board's peekBody).
 NEREUS_GUI_EXPORT QString roundtableViewHeadText(const RoundtableCardModel& card);
-/// "Viewing, not tuned · −11.4 kHz from slice A · LSB".
+/// The same for the whole view: your own frequency keeps its last talker's name.
+NEREUS_GUI_EXPORT QString roundtableViewHeadText(const RoundtableViewModel& view);
+/// "‹ Back to my slice".
+NEREUS_GUI_EXPORT QString roundtableViewBackText();
+/// "Viewing · −11.4 kHz", or "Viewing" with no distance to give. Empty on your own
+/// frequency.
 NEREUS_GUI_EXPORT QString roundtableViewSubText(const RoundtableViewModel& view);
 /// "Reconnecting · last known", "Offline since HH:MM UTC · last known", or the
 /// card's other note.
@@ -306,12 +327,23 @@ NEREUS_GUI_EXPORT QString roundtableViewPathText(const RoundtableCardRow& row, b
 /// The readings as the view lists them: Your pan first while someone is on the
 /// air, then the card's rows.
 NEREUS_GUI_EXPORT QVector<RoundtableCardRow> roundtableViewRows(const RoundtableViewModel& view);
-/// How tall the view's words are from the rect's top, up to where its buttons go,
-/// showing at most `rowLimit` reading rows.
-NEREUS_GUI_EXPORT int roundtableViewHeight(const RoundtableViewModel& view, int width, int rowLimit,
-                                           const QPaintDevice* device);
-/// Draws the frame and the words of the view in `rect`.
-NEREUS_GUI_EXPORT void paintRoundtableView(QPainter& p, const RoundtableViewModel& view, const QRect& rect, int rowLimit);
+/// How the view's words stack, from the rect's top, up to where its buttons go.
+struct RoundtableViewLayout {
+    int head = 0;        // what stays put, ending where the body starts
+    int total = 0;       // the head and the whole body
+    int viewingTop = -1; // the Viewing line's top, -1 without one
+    int backWidth = 0;   // what Back's words need
+    int body() const { return total - head; }
+};
+/// Measures the view. `foldPeople` folds everyone not keyed to one "Also here" line
+/// (overlay design D19). The same walk as paintRoundtableView.
+NEREUS_GUI_EXPORT RoundtableViewLayout roundtableViewLayout(const RoundtableViewModel& view, int width, bool foldPeople,
+                                                            const QPaintDevice* device);
+/// Draws the frame and the words of the view in `rect` and returns the same layout.
+/// The body moves up by `scrollY` and is cut `bodyHeight` below the head, fading
+/// while more lies below; a negative `bodyHeight` draws it whole.
+NEREUS_GUI_EXPORT RoundtableViewLayout paintRoundtableView(QPainter& p, const RoundtableViewModel& view, const QRect& rect,
+                                                           bool foldPeople = false, int scrollY = 0, int bodyHeight = -1);
 
 /// The held peak for each listener (overlay design D12). Client side only:
 /// never persisted or sent. It rises at once, falls 2 dB a second and resets on

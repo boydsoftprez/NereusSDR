@@ -1489,7 +1489,7 @@ private slots:
         QCOMPARE(peek()->viewForTest().card.onFrequency.size(), qsizetype(2));
         QVERIFY(peek()->viewForTest().card.rows.isEmpty());
         QCOMPARE(roundtableViewSubText(peek()->viewForTest()),
-                 QStringLiteral("Viewing, not tuned \u00b7 \u221211.4 kHz from slice A \u00b7 USB"));
+                 QStringLiteral("Viewing \u00b7 \u221211.4 kHz"));
 
         // The stream, with offsets from the viewed frequency.
         QJsonObject reporter = quiet;
@@ -2082,7 +2082,7 @@ private slots:
         QVERIFY(!tuneButton()->isEnabled());
         QCOMPARE(panelTune->text(), QStringLiteral("Tune here"));
         QVERIFY(!panelTune->isEnabled());
-        QVERIFY(!roundtableViewSubText(peek()->viewForTest()).contains(QStringLiteral("from slice")));
+        QCOMPARE(roundtableViewSubText(peek()->viewForTest()), QStringLiteral("Viewing"));
         const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_CAPTURE_DIR");
         if (!captures.isEmpty()) {
             settle();

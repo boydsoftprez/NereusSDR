@@ -6,17 +6,21 @@
 // tests/tst_roundtable_frequency_peek.cpp  (NereusSDR)
 // =================================================================
 //
-// The floating view of another frequency (overlay design D21 to D24): its words,
-// the Tune gates, Your pan, how it closes, and that nothing inside it reaches the
-// band underneath. The flow through MainWindow is in tst_roundtable_desktop_flow.
+// The one inspector (overlay design D21 to D24, D34, D35, D37): its words, your own
+// frequency, the Tune gates, Back and ⋯, Your pan, the foot line, the Also here fold,
+// the scrolling body, how it closes, and that nothing inside it reaches the band
+// underneath. The flow through MainWindow is in tst_roundtable_desktop_flow.
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: The one inspector. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-11-03: original implementation for NereusSDR by J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
+#include <QtTest/qtestspontaneevent.h>
 
 #include <cmath>
 
@@ -27,6 +31,7 @@
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QToolButton>
+#include <QWheelEvent>
 
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
@@ -110,6 +115,8 @@ struct Pan {
     QPushButton* tune() const { return peek->findChild<QPushButton*>(QStringLiteral("roundtablePeekTune")); }
     QPushButton* messages() const { return peek->findChild<QPushButton*>(QStringLiteral("roundtablePeekMessages")); }
     QToolButton* close() const { return peek->findChild<QToolButton*>(QStringLiteral("roundtablePeekClose")); }
+    QToolButton* more() const { return peek->findChild<QToolButton*>(QStringLiteral("roundtablePeekMore")); }
+    QPushButton* back() const { return peek->findChild<QPushButton*>(QStringLiteral("roundtablePeekBack")); }
 };
 
 // Whether any pixel of `rect` is `color`.
@@ -129,8 +136,50 @@ QImage render(const RoundtableFrequencyPeek& peek)
     QImage image(peek.size(), QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::black);
     QPainter painter(&image);
-    paintRoundtableView(painter, peek.viewForTest(), QRect(QPoint(0, 0), peek.size()), peek.rowLimitForTest());
+    paintRoundtableView(painter, peek.viewForTest(), QRect(QPoint(0, 0), peek.size()));
     return image;
+}
+
+// A card too long for most pans: three on frequency and 14 readings.
+RoundtableCardModel longTalker()
+{
+    RoundtableCardModel card = talker();
+    for (int i = 0; i < 12; ++i) { card.rows.append(rowOf(QStringLiteral("K%1").arg(i), -70.0)); }
+    return card;
+}
+
+// Counts the wheel events that reach a widget.
+class WheelCounter : public QObject {
+public:
+    int count = 0;
+
+protected:
+    bool eventFilter(QObject*, QEvent* event) override
+    {
+        if (event->type() == QEvent::Wheel) { ++count; }
+        return false;
+    }
+};
+
+// Sends one wheel notch to `target` as the window system would, so an unhandled one
+// climbs to the parent; true if something took it.
+bool wheelNotch(QWidget* target, int angle)
+{
+    const QPoint position = target->rect().center();
+    QWheelEvent event(QPointF(position), QPointF(target->mapToGlobal(position)), QPoint(), QPoint(0, angle), Qt::NoButton,
+                      Qt::NoModifier, Qt::NoScrollPhase, false);
+    QSpontaneKeyEvent::setSpontaneous(&event);
+    QCoreApplication::instance()->notify(target, &event);
+    return event.isAccepted();
+}
+
+int brightness(const QImage& image, const QRect& area)
+{
+    int total = 0;
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        for (int x = area.left(); x <= area.right(); ++x) { total += qGray(image.pixel(x, y)); }
+    }
+    return total;
 }
 
 } // namespace
@@ -139,23 +188,29 @@ class TestRoundtableFrequencyPeek : public QObject {
     Q_OBJECT
 
 private slots:
-    void theLineSaysHowFarAndWhichSideband()
+    // D35: the distance and nothing else, and no line at all on your own frequency.
+    void theLineSaysHowFar()
     {
         RoundtableViewModel view;
         view.card.hz = kViewedHz;
         view.family = QStringLiteral("lsb");
         view.sliceHz = kSliceHz;
         const QChar minus(0x2212);
-        QCOMPARE(roundtableViewSubText(view), QStringLiteral("Viewing, not tuned · %1 11.4 kHz from slice A · LSB")
-                                                  .arg(minus).replace(QStringLiteral("%1 ").arg(minus), QString(minus)));
-        view.card.hz = 7212000;
+        QCOMPARE(roundtableViewSubText(view), QStringLiteral("Viewing · %1").arg(minus) + QStringLiteral("11.4 kHz"));
+        view.card.hz = kSliceHz + 1400;
         view.family = QStringLiteral("fdvu");
         view.sliceName = QStringLiteral("B");
-        QCOMPARE(roundtableViewSubText(view), QStringLiteral("Viewing, not tuned · +12.0 kHz from slice B · FreeDV U"));
+        QCOMPARE(roundtableViewSubText(view), QStringLiteral("Viewing · +1.4 kHz"));
         // Another family on the slice's own frequency has no distance to give.
         view.card.hz = kSliceHz;
         view.family = QStringLiteral("cw");
-        QCOMPARE(roundtableViewSubText(view), QStringLiteral("Viewing, not tuned · CW"));
+        QCOMPARE(roundtableViewSubText(view), QStringLiteral("Viewing"));
+        // Nor does a window with no slice.
+        view.card.hz = kViewedHz;
+        view.sliceName.clear();
+        QCOMPARE(roundtableViewSubText(view), QStringLiteral("Viewing"));
+        view.mine = true;
+        QVERIFY(roundtableViewSubText(view).isEmpty());
     }
 
     void offsetsAndPathsAreWrittenAsTheBoardDoes()
@@ -403,17 +458,360 @@ private slots:
         QVERIFY(pan.peek->height() > geometry.height());
     }
 
-    void rowsGiveWayFirstOnAShortPan()
+    // D22: your own frequency drops the Viewing line and Your pan; Tune stays, greyed, with why.
+    void yourOwnFrequencyHasNoViewingLineOrYourPan()
+    {
+        Pan pan;
+        pan.peek->setSlice(kSliceHz, QStringLiteral("lsb"), QStringLiteral("A"));
+        QSignalSpy closed(pan.peek, &RoundtableFrequencyPeek::closed);
+        pan.peek->showOwn(kSliceHz, QStringLiteral("lsb"));
+        RoundtableCardModel card = talker();
+        card.hz = kSliceHz;
+        pan.peek->refresh(card, -71.0, false);
+        QVERIFY(pan.peek->showsOwn());
+        QVERIFY(pan.peek->viewForTest().mine);
+        QVERIFY(roundtableViewSubText(pan.peek->viewForTest()).isEmpty());
+        QCOMPARE(roundtableViewLayout(pan.peek->viewForTest(), 300, false, pan.peek).viewingTop, -1);
+        QVERIFY(pan.back()->isHidden());
+        for (const RoundtableCardRow& row : roundtableViewRows(pan.peek->viewForTest())) {
+            QVERIFY(row.label != QStringLiteral("Your pan"));
+        }
+        QVERIFY(pan.tune()->isVisible());
+        QVERIFY(!pan.tune()->isEnabled());
+        QCOMPARE(pan.tune()->text(), QStringLiteral("Tune slice A here"));
+        QCOMPARE(pan.tune()->toolTip(), QStringLiteral("Slice A is already here"));
+        // The slice's own name, and the reason holds while keyed.
+        pan.peek->setSlice(kSliceHz, QStringLiteral("lsb"), QStringLiteral("C"));
+        pan.peek->refresh(card, std::nullopt, true);
+        QCOMPARE(pan.tune()->toolTip(), QStringLiteral("Slice C is already here"));
+        // No slice: greyed, the plain words, no slice to name.
+        pan.peek->setSlice(0, QString(), QString());
+        pan.peek->refresh(card, std::nullopt, false);
+        QVERIFY(!pan.tune()->isEnabled());
+        QCOMPARE(pan.tune()->text(), QStringLiteral("Tune slice here"));
+        QVERIFY(pan.tune()->toolTip().isEmpty());
+
+        // Your own frequency keeps its last talker's name; another says nobody is talking.
+        RoundtableViewModel view;
+        view.card.kind = Kind::LastTalker;
+        view.card.keyed = {QStringLiteral("W1AW")};
+        QCOMPARE(roundtableViewHeadText(view), QStringLiteral("Nobody talking"));
+        view.mine = true;
+        QCOMPARE(roundtableViewHeadText(view), QStringLiteral("W1AW"));
+
+        // Another frequency swaps in place: no close, and the Viewing line is back.
+        pan.peek->setSlice(kSliceHz, QStringLiteral("lsb"), QStringLiteral("A"));
+        pan.peek->showFor(kSliceHz + 1400, QStringLiteral("lsb"));
+        QVERIFY(pan.peek->isOpen());
+        QVERIFY(!pan.peek->showsOwn());
+        QVERIFY(!pan.back()->isHidden());
+        QCOMPARE(closed.size(), 0);
+    }
+
+    void yourPansComingAndGoingDoesNotResizeYourOwnFrequency()
+    {
+        Pan pan;
+        pan.peek->showOwn(kSliceHz, QStringLiteral("lsb"));
+        RoundtableCardModel card = talker();
+        card.hz = kSliceHz;
+        pan.peek->refresh(card, std::nullopt, false);
+        const int fits = pan.peek->fitsForTest();
+        pan.peek->refresh(card, -71.0, false);
+        pan.peek->refresh(card, std::nullopt, false);
+        QCOMPARE(pan.peek->fitsForTest(), fits);
+    }
+
+    void tuneSaysWhyItIsGreyedWhileKeyed()
+    {
+        Pan pan;
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+        pan.peek->refresh(talker(), std::nullopt, true);
+        QVERIFY(!pan.tune()->isEnabled());
+        QCOMPARE(pan.tune()->toolTip(), QStringLiteral("Not while you transmit"));
+        pan.peek->refresh(talker(), std::nullopt, false);
+        QVERIFY(pan.tune()->isEnabled());
+        QVERIFY(pan.tune()->toolTip().isEmpty());
+        // On your slice's own frequency by another route, the same reason as your own.
+        pan.peek->setSlice(kViewedHz, QStringLiteral("lsb"), QStringLiteral("A"));
+        pan.peek->refresh(talker(), std::nullopt, false);
+        QCOMPARE(pan.tune()->toolTip(), QStringLiteral("Slice A is already here"));
+    }
+
+    void backAsksAndTunesNothing()
+    {
+        Pan pan;
+        pan.widget.setUpdatesEnabled(true);
+        pan.peek->showFor(kSliceHz + 1400, QStringLiteral("lsb"));
+        RoundtableCardModel card = talker();
+        card.hz = kSliceHz + 1400;
+        pan.peek->refresh(card, -71.0, false);
+        QCOMPARE(roundtableViewSubText(pan.peek->viewForTest()), QStringLiteral("Viewing · +1.4 kHz"));
+        QVERIFY(pan.back()->isVisible());
+        QVERIFY(pan.back()->isEnabled());
+        QCOMPARE(pan.back()->focusPolicy(), Qt::NoFocus);
+        // Beside the words, under the head, all of it inside the view.
+        QVERIFY(pan.peek->rect().contains(pan.back()->geometry()));
+        QVERIFY(pan.back()->geometry().top() >= pan.more()->geometry().bottom());
+        QVERIFY(pan.back()->width() >= pan.back()->fontMetrics().horizontalAdvance(pan.back()->text()));
+
+        QSignalSpy back(pan.peek, &RoundtableFrequencyPeek::backRequested);
+        QSignalSpy tune(pan.peek, &RoundtableFrequencyPeek::tuneRequested);
+        QSignalSpy clicked(&pan.widget, &SpectrumWidget::frequencyClicked);
+        QTest::mouseClick(pan.back(), Qt::LeftButton);
+        QCOMPARE(back.size(), 1);
+        QCOMPARE(tune.size(), 0);
+        QCOMPARE(clicked.size(), 0);
+        QVERIFY(pan.peek->isOpen());
+
+        // Nowhere to go without a slice: greyed, not hidden.
+        pan.peek->setSlice(0, QString(), QString());
+        QVERIFY(pan.back()->isVisible());
+        QVERIFY(!pan.back()->isEnabled());
+    }
+
+    void moreAsksForItsMenuUnderTheButton()
+    {
+        Pan pan;
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+        QCOMPARE(pan.more()->focusPolicy(), Qt::NoFocus);
+        QCOMPARE(pan.more()->geometry().size(), QSize(24, 24));
+        QCOMPARE(pan.close()->geometry().size(), QSize(24, 24));
+        QVERIFY(pan.more()->geometry().right() < pan.close()->geometry().left());
+        QSignalSpy more(pan.peek, &RoundtableFrequencyPeek::moreRequested);
+        pan.more()->click();
+        QCOMPARE(more.size(), 1);
+        QCOMPARE(more.first().first().toPoint(), pan.more()->mapToGlobal(QPoint(0, 24)));
+        QVERIFY(pan.peek->isOpen());
+    }
+
+    void itStandsOnTheFootLineInTheCardsSpot()
+    {
+        Pan pan;
+        const QRect spot(4, 30, 1192, 500);
+        const int dialX = 600;
+        const QRect flag(dialX - 24, 30, 276, 162);
+        QSignalSpy closed(pan.peek, &RoundtableFrequencyPeek::closed);
+        pan.peek->setInspectorSpot(spot, dialX, {flag}, false);
+        QVERIFY(pan.peek->inspectorRect().isNull());
+        pan.peek->showOwn(kSliceHz, QStringLiteral("lsb"));
+        pan.peek->refresh(talker(), std::nullopt, false);
+        QRect rect = pan.peek->inspectorRect();
+        QCOMPARE(rect, pan.peek->geometry());
+        QCOMPARE(rect.width(), 300);
+        QCOMPARE(rect.left(), flag.left() + flag.width() + 4);
+        QCOMPARE(rect.top() + rect.height(), spot.top() + spot.height());
+
+        // The same spot again does nothing; a flipped flag moves it past the flag.
+        const int fits = pan.peek->fitsForTest();
+        pan.peek->setInspectorSpot(spot, dialX, {flag}, false);
+        QCOMPARE(pan.peek->fitsForTest(), fits);
+        const QRect flipped(dialX - 252, 30, 276, 162);
+        pan.peek->setInspectorSpot(spot, dialX, {flipped}, true);
+        rect = pan.peek->inspectorRect();
+        QCOMPARE(rect.left() + rect.width(), flipped.left() - 4);
+        QCOMPARE(rect.top() + rect.height(), spot.top() + spot.height());
+        QCOMPARE(closed.size(), 0);
+
+        // A taller card grows upward from the foot.
+        const int top = rect.top();
+        RoundtableCardModel card = talker();
+        card.rows.append(rowOf(QStringLiteral("K4NEW"), -60.0));
+        pan.peek->refresh(card, std::nullopt, false);
+        QVERIFY(pan.peek->geometry().top() < top);
+        QCOMPARE(pan.peek->geometry().top() + pan.peek->height(), spot.top() + spot.height());
+
+        pan.peek->closePeek();
+        QVERIFY(pan.peek->inspectorRect().isNull());
+    }
+
+    // D19: a short pan folds everyone not keyed before anything else gives way.
+    void aShortPanFoldsTheUnkeyedToOneLineFirst()
+    {
+        Pan pan;
+        RoundtableViewModel view;
+        view.card = talker();
+        const RoundtableViewLayout whole = roundtableViewLayout(view, 300, false, pan.peek);
+        const RoundtableViewLayout folded = roundtableViewLayout(view, 300, true, pan.peek);
+        // Two quiet stations become one line. The head does not move.
+        QVERIFY(folded.total < whole.total);
+        QCOMPARE(folded.head, whole.head);
+        // Keyed names never fold.
+        view.card = doubled();
+        view.card.onFrequency.removeLast();
+        QCOMPARE(roundtableViewLayout(view, 300, true, pan.peek).total, roundtableViewLayout(view, 300, false, pan.peek).total);
+
+        const QRect spot(4, 30, 1192, 500);
+        pan.peek->setInspectorSpot(spot, 600, {}, false);
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+        pan.peek->refresh(talker(), std::nullopt, false);
+        QVERIFY(!pan.peek->foldedForTest());
+        const int wants = pan.peek->height();
+        QCOMPARE(pan.peek->maxScrollForTest(), 0);
+
+        // One pixel short of the whole list folds, and the fold is enough: nothing scrolls.
+        pan.peek->setInspectorSpot(QRect(4, 30, 1192, wants - 1), 600, {}, false);
+        QVERIFY(pan.peek->foldedForTest());
+        QCOMPARE(pan.peek->maxScrollForTest(), 0);
+        QVERIFY(pan.peek->height() < wants);
+        pan.peek->setInspectorSpot(spot, 600, {}, false);
+        QVERIFY(!pan.peek->foldedForTest());
+    }
+
+    // The fold draws its line where the measure said. Height and paint are one walk.
+    void heightAndPaintAreOneWalk_data()
+    {
+        QTest::addColumn<bool>("fold");
+        QTest::addColumn<bool>("mine");
+        QTest::addColumn<bool>("frozen");
+        QTest::newRow("whole") << false << false << false;
+        QTest::newRow("fold") << true << false << false;
+        QTest::newRow("mine fold") << true << true << false;
+        QTest::newRow("frozen fold") << true << false << true;
+    }
+
+    void heightAndPaintAreOneWalk()
+    {
+        QFETCH(bool, fold);
+        QFETCH(bool, mine);
+        QFETCH(bool, frozen);
+        RoundtableViewModel view;
+        view.card = longTalker();
+        view.mine = mine;
+        view.panDbm = -70.0;
+        if (frozen) {
+            view.card.frozen = true;
+            view.card.note = QStringLiteral("Reconnecting");
+        }
+        QImage image(300, 700, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::black);
+        const RoundtableViewLayout measured = roundtableViewLayout(view, 300, fold, &image);
+        QPainter painter(&image);
+        const RoundtableViewLayout painted = paintRoundtableView(painter, view, image.rect(), fold, 7, 60);
+        QCOMPARE(painted.head, measured.head);
+        QCOMPARE(painted.total, measured.total);
+        QCOMPARE(painted.viewingTop, measured.viewingTop);
+    }
+
+    // D19, D35: what still does not fit scrolls by the wheel, and only the body moves.
+    void whatStillDoesNotFitScrolls()
+    {
+        Pan pan;
+        pan.widget.setUpdatesEnabled(true);
+        const QRect spot(4, 30, 1192, 200);
+        pan.peek->setInspectorSpot(spot, 600, {}, false);
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+        pan.peek->refresh(longTalker(), -71.0, false);
+        QVERIFY(pan.peek->foldedForTest());
+        QCOMPARE(pan.peek->geometry().height(), spot.height());
+        QCOMPARE(pan.peek->geometry().top(), spot.top());
+        QVERIFY(pan.peek->maxScrollForTest() > 0);
+        QVERIFY(pan.peek->bodyHeightForTest() > 0);
+        QCOMPARE(pan.peek->scrollForTest(), 0);
+
+        const QRect tune = pan.tune()->geometry();
+        const QRect messages = pan.messages()->geometry();
+        const QRect close = pan.close()->geometry();
+        const QRect back = pan.back()->geometry();
+        const QRect geometry = pan.peek->geometry();
+        QCOMPARE(tune.bottom() + 1 + 8, geometry.height());
+        const int fits = pan.peek->fitsForTest();
+
+        WheelCounter onBand;
+        pan.widget.installEventFilter(&onBand);
+        QSignalSpy clicked(&pan.widget, &SpectrumWidget::frequencyClicked);
+
+        QVERIFY(wheelNotch(pan.peek, -120));
+        QCOMPARE(pan.peek->scrollForTest(), 40);
+        // Over a button, and at both ends, it still stops here.
+        QVERIFY(wheelNotch(pan.tune(), -120));
+        QCOMPARE(pan.peek->scrollForTest(), 80);
+        for (int i = 0; i < 40; ++i) { QVERIFY(wheelNotch(pan.peek, -120)); }
+        QCOMPARE(pan.peek->scrollForTest(), pan.peek->maxScrollForTest());
+        for (int i = 0; i < 40; ++i) { QVERIFY(wheelNotch(pan.peek, 120)); }
+        QCOMPARE(pan.peek->scrollForTest(), 0);
+        // A wheel with no vertical part, too.
+        QVERIFY(wheelNotch(pan.peek, 0));
+
+        QCOMPARE(onBand.count, 0);
+        QCOMPARE(clicked.size(), 0);
+        QCOMPARE(pan.tune()->geometry(), tune);
+        QCOMPARE(pan.messages()->geometry(), messages);
+        QCOMPARE(pan.close()->geometry(), close);
+        QCOMPARE(pan.back()->geometry(), back);
+        QCOMPARE(pan.peek->geometry(), geometry);
+        QCOMPARE(pan.peek->fitsForTest(), fits);
+        QVERIFY(pan.peek->isOpen());
+
+        // The place holds through a refresh, and a shorter list pulls it back.
+        wheelNotch(pan.peek, -120);
+        pan.peek->refresh(longTalker(), -72.0, false);
+        QCOMPARE(pan.peek->scrollForTest(), 40);
+        for (int i = 0; i < 40; ++i) { wheelNotch(pan.peek, -120); }
+        RoundtableCardModel shorter = longTalker();
+        shorter.rows.removeLast();
+        pan.peek->refresh(shorter, -72.0, false);
+        QCOMPARE(pan.peek->scrollForTest(), pan.peek->maxScrollForTest());
+        // Another frequency starts at the top.
+        pan.peek->showFor(kViewedHz + 1000, QStringLiteral("lsb"));
+        QCOMPARE(pan.peek->scrollForTest(), 0);
+    }
+
+    // The two ends of the short pan: 120 px still holds the head and the buttons.
+    void aVeryShortPanKeepsTheButtons()
+    {
+        Pan pan;
+        const QRect spot(4, 30, 1192, 120);
+        pan.peek->setInspectorSpot(spot, 600, {}, false);
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+        pan.peek->refresh(longTalker(), -71.0, false);
+        QCOMPARE(pan.peek->height(), 120);
+        QVERIFY(pan.peek->bodyHeightForTest() >= 0);
+        QVERIFY(pan.peek->rect().contains(pan.tune()->geometry()));
+        QVERIFY(pan.peek->rect().contains(pan.messages()->geometry()));
+        QVERIFY(pan.back()->geometry().bottom() < pan.tune()->geometry().top());
+    }
+
+    // D19 on the view with no spot: the old floating place folds and scrolls the same.
+    void theFloatingPlaceStaysInsideThePan()
     {
         Pan pan(240);
-        RoundtableCardModel card = talker();
-        for (int i = 0; i < 12; ++i) { card.rows.append(rowOf(QStringLiteral("K%1").arg(i), -70.0)); }
+        RoundtableCardModel card = longTalker();
         pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
         pan.peek->refresh(card, std::nullopt, false);
         QVERIFY(pan.peek->height() <= 240 - 8);
-        QVERIFY(pan.peek->rowLimitForTest() < card.rows.size());
+        QVERIFY(pan.peek->foldedForTest());
+        QVERIFY(pan.peek->maxScrollForTest() > 0);
         QVERIFY(pan.widget.rect().contains(pan.peek->geometry()));
         QVERIFY(pan.widget.rect().contains(pan.peek->mapToParent(pan.tune()->geometry().bottomRight())));
+    }
+
+    void aCutFadesWhileMoreLiesBelowAndNotAtTheEnd()
+    {
+        RoundtableViewModel view;
+        view.card = longTalker();
+        QImage image(300, 700, QImage::Format_ARGB32_Premultiplied);
+        const RoundtableViewLayout layout = roundtableViewLayout(view, 300, false, &image);
+        const int body = 120;
+        const QRect band(1, layout.head + body - 8, 298, 8);
+        const auto draw = [&](int scrollY, int bodyHeight) {
+            QImage out(300, 700, QImage::Format_ARGB32_Premultiplied);
+            out.fill(Qt::black);
+            QPainter painter(&out);
+            paintRoundtableView(painter, view, out.rect(), false, scrollY, bodyHeight);
+            return out;
+        };
+        // The same words at the same place, with and without the fade over them.
+        const int faded = brightness(draw(0, body), band);
+        const int whole = brightness(draw(0, -1), band);
+        QVERIFY2(faded < whole, qPrintable(QStringLiteral("%1 against %2").arg(faded).arg(whole)));
+        // At the end nothing lies below: the last pixels are the words, undimmed.
+        const int end = layout.body() - body;
+        const QRect endBand(1, layout.head + body - 8, 298, 8);
+        const QImage atEnd = draw(end, body);
+        QVERIFY(brightness(atEnd, endBand) > 0);
+        QImage shifted = draw(0, -1);
+        const QRect sameWords(1, layout.head + layout.body() - 8, 298, 8);
+        QCOMPARE(brightness(atEnd, endBand), brightness(shifted, sameWords));
     }
 
     // Escape is the view's only while its own window has the keyboard. A dialog
@@ -592,7 +990,7 @@ private slots:
         QVERIFY(pan.tune()->isVisible());
         QVERIFY(!pan.tune()->isEnabled());
         QCOMPARE(pan.tune()->text(), QStringLiteral("Tune slice here"));
-        QCOMPARE(roundtableViewSubText(pan.peek->viewForTest()), QStringLiteral("Viewing, not tuned · USB"));
+        QCOMPARE(roundtableViewSubText(pan.peek->viewForTest()), QStringLiteral("Viewing"));
     }
 
     // D7: a dropped link has no live clock, even a stopped one.
@@ -646,6 +1044,14 @@ private slots:
         QTest::newRow("reconnecting") << QStringLiteral("reconnecting");
         QTest::newRow("quiet") << QStringLiteral("quiet");
         QTest::newRow("freedv-same-frequency") << QStringLiteral("freedv-same-frequency");
+        QTest::newRow("own") << QStringLiteral("own");
+        QTest::newRow("viewing") << QStringLiteral("viewing");
+        QTest::newRow("viewing-double") << QStringLiteral("viewing-double");
+        QTest::newRow("short-fold") << QStringLiteral("short-fold");
+        QTest::newRow("short-scroll") << QStringLiteral("short-scroll");
+        QTest::newRow("short-120") << QStringLiteral("short-120");
+        QTest::newRow("no-slice") << QStringLiteral("no-slice");
+        QTest::newRow("flag-flipped") << QStringLiteral("flag-flipped");
     }
 
     void capturesForTheBoard()
@@ -675,11 +1081,53 @@ private slots:
         pan.peek->setPathPreferences(true, true);
         const bool freedv = scene == QLatin1String("freedv-same-frequency");
         if (freedv) { pan.peek->setSlice(kViewedHz, QStringLiteral("usb"), QStringLiteral("A")); }
-        pan.peek->showFor(kViewedHz, freedv ? QStringLiteral("fdvu") : QStringLiteral("lsb"), QPoint(40, 40));
+
+        // The new scenes stand on the board's foot line beside a flag, on the pan.
+        const bool flipped = scene == QLatin1String("flag-flipped");
+        const bool own = scene == QLatin1String("own") || flipped;
+        const bool fold = scene == QLatin1String("short-fold");
+        const bool scroll = scene == QLatin1String("short-scroll");
+        const bool tiny = scene == QLatin1String("short-120");
+        const bool onFoot = own || fold || scroll || tiny || scene == QLatin1String("viewing")
+            || scene == QLatin1String("viewing-double") || scene == QLatin1String("no-slice");
+        if (scene == QLatin1String("viewing-double")) { card = doubled(); }
+        if (scroll || tiny) { card = longTalker(); }
+        if (scene == QLatin1String("no-slice")) { pan.peek->setSlice(0, QString(), QString()); }
+        const int dialX = flipped ? 800 : 570;
+        const QRect flag = flipped ? QRect(dialX - 252, 30, 276, 162) : QRect(dialX - 24, 30, 276, 162);
+        const int footTop = fold ? 133 : scroll ? 93 : tiny ? 183 : 32;
+        const QRect spot(80, footTop, 1109 - 80, 303 - footTop);
+        if (onFoot) {
+            pan.peek->setInspectorSpot(spot, dialX, {flag}, flipped);
+            if (own) {
+                pan.peek->setSlice(kViewedHz, QStringLiteral("lsb"), QStringLiteral("A"));
+                pan.peek->showOwn(kViewedHz, QStringLiteral("lsb"));
+            } else {
+                pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+            }
+        } else {
+            pan.peek->showFor(kViewedHz, freedv ? QStringLiteral("fdvu") : QStringLiteral("lsb"), QPoint(40, 40));
+        }
         pan.peek->refresh(card, level, false);
-        QImage image(pan.peek->size() + QSize(80, 80), QImage::Format_ARGB32_Premultiplied);
-        image.fill(QColor(0x06, 0x07, 0x0a));
-        {
+        if (fold) {
+            // Exactly the room the folded list needs, and one row less than the whole.
+            const RoundtableViewLayout folded = roundtableViewLayout(pan.peek->viewForTest(), 300, true, pan.peek);
+            pan.peek->setInspectorSpot(QRect(80, 303 - (folded.total + 45), 1109 - 80, folded.total + 45), dialX, {flag}, false);
+        }
+        QImage image;
+        if (onFoot) {
+            image = QImage(1143, 340, QImage::Format_ARGB32_Premultiplied);
+            image.fill(QColor(0x06, 0x07, 0x0a));
+            QPainter painter(&image);
+            painter.fillRect(flag, QColor(0x22, 0x26, 0x2e));
+            painter.setPen(QColor(0x5e, 0x8d, 0xb8));
+            painter.drawLine(dialX, 0, dialX, 339);
+            painter.setPen(QColor(0x3d, 0x3d, 0x41));
+            painter.drawLine(0, 303, 1142, 303);
+            pan.peek->render(&painter, pan.peek->pos(), QRegion(), QWidget::DrawChildren);
+        } else {
+            image = QImage(pan.peek->size() + QSize(80, 80), QImage::Format_ARGB32_Premultiplied);
+            image.fill(QColor(0x06, 0x07, 0x0a));
             QPainter painter(&image);
             pan.peek->render(&painter, QPoint(40, 40), QRegion(), QWidget::DrawChildren);
         }

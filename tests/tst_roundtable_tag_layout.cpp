@@ -21,6 +21,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: placeRoundtableInspector. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-03: Overlay redesign truth rules and card model (design D1 to D9,
 //               D12, D13, D19). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
@@ -858,6 +860,94 @@ private slots:
         AppSettings::instance().remove(QStringLiteral("Roundtable/SignalFormat"));
         QVERIFY2(rows.contains(sample), qPrintable(rows.join('\n')));
         QVERIFY(rows.contains(heading));
+    }
+
+    // ---- The inspector: placement (overlay design D34, D37; overlay.js placeIns) ----
+
+    void theInspectorStandsOnTheFootPastTheFlag()
+    {
+        const int dialX = 400;
+        const QRect flag = boardFlag(dialX);
+        const QRect placed = placeRoundtableInspector(kBoardPan, dialX, {flag}, false, 180);
+        QCOMPARE(placed.width(), 300);
+        QCOMPARE(placed.height(), 180);
+        // At the stretch's edge, 4 px past the flag, not centered on anything.
+        QCOMPARE(placed.left(), flag.left() + flag.width() + 4);
+        QCOMPARE(placed.top() + placed.height(), 303);
+        QVERIFY(!placed.intersects(flag));
+    }
+
+    void theInspectorIsCutToAShortPanAndStaysInside()
+    {
+        const int dialX = 400;
+        const QRect flag = boardFlag(dialX);
+        const QRect shortPan(80, 183, 1029, 120);
+        const QRect placed = placeRoundtableInspector(shortPan, dialX, {flag}, false, 400);
+        QCOMPARE(placed.height(), 120);
+        QCOMPARE(placed.top(), 183);
+        QCOMPARE(placed.top() + placed.height(), 303);
+        QCOMPARE(placed.width(), 300);
+        QVERIFY(!placed.intersects(flag));
+        // Tall enough, it asks for no more than it wants.
+        const QRect tall = placeRoundtableInspector(kBoardPan, dialX, {flag}, false, 90);
+        QCOMPARE(tall.height(), 90);
+        QCOMPARE(tall.top() + tall.height(), 303);
+    }
+
+    void theInspectorFollowsAFlippedFlag()
+    {
+        const int dialX = 800;
+        const QRect flag = boardFlag(dialX, true);
+        const QRect placed = placeRoundtableInspector(kBoardPan, dialX, {flag}, true, 180);
+        QCOMPARE(placed.width(), 300);
+        // Ends 4 px short of the flag, on the far side from the dial.
+        QCOMPARE(placed.left() + placed.width(), flag.left() - 4);
+        QVERIFY(!placed.intersects(flag));
+        QCOMPARE(placed.top() + placed.height(), 303);
+    }
+
+    // The two stretches differ from the card's: a 260 stretch counts, 259 does not,
+    // and narrower than 300 it takes what there is.
+    void theInspectorsStretchIsAtLeast260()
+    {
+        const QRect pan(0, 0, 1000, 300);
+        const int dialX = 300;
+        const auto flagEnding = [](int right) { return QRect(100, 0, right - 100, 100); };
+        // Past the flag there is 1000 - 736 = 264 wide: narrower than 300, still taken.
+        QRect placed = placeRoundtableInspector(pan, dialX, {flagEnding(732)}, false, 100);
+        QCOMPARE(placed.left(), 736);
+        QCOMPARE(placed.width(), 264);
+        // 1000 - 741 = 259 is too narrow, and so is what the flag leaves on the near
+        // side: no stretch has room, so it stays open at the pan's edge.
+        placed = placeRoundtableInspector(pan, dialX, {flagEnding(737)}, false, 100);
+        QCOMPARE(placed.left(), pan.left());
+        QCOMPARE(placed.width(), 300);
+    }
+
+    void theInspectorUsesTheDialOnlyWhenItLiesInsideTheStretch()
+    {
+        const QRect pan(0, 0, 1000, 300);
+        // Nothing in the way: the stretch holds the dial, so it centers on it.
+        QCOMPARE(placeRoundtableInspector(pan, 500, {}, false, 100).left(), 350);
+        // Clamped to the stretch near an end.
+        QCOMPARE(placeRoundtableInspector(pan, 40, {}, false, 100).left(), 0);
+        QCOMPARE(placeRoundtableInspector(pan, 980, {}, false, 100).left(), 700);
+        // A flag out of the pan's height keeps nothing clear.
+        QCOMPARE(placeRoundtableInspector(pan, 500, {QRect(400, -200, 200, 100)}, false, 100).left(), 350);
+    }
+
+    void theInspectorStaysOpenWithNoFreeStretch()
+    {
+        const QRect wall(80, 30, 1029, 162);
+        const QRect placed = placeRoundtableInspector(kBoardPan, 570, {wall}, false, 180);
+        QCOMPARE(placed.left(), kBoardPan.left());
+        QCOMPARE(placed.width(), 300);
+        QCOMPARE(placed.top() + placed.height(), 303);
+        // A pan narrower than the inspector holds it inside, and an empty one has no spot.
+        const QRect narrow = placeRoundtableInspector(QRect(10, 0, 200, 300), 50, {}, false, 100);
+        QCOMPARE(narrow.left(), 10);
+        QCOMPARE(narrow.width(), 200);
+        QVERIFY(placeRoundtableInspector(QRect(), 50, {}, false, 100).isNull());
     }
 
     // ---- The live card: placement (overlay design D16, D19) ----
