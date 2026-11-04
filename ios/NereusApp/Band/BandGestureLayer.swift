@@ -112,6 +112,8 @@ struct BandGestureLayer: View {
     var roundtableLines: [Int: RoundtableFlagLine] = [:]
     /// A Roundtable line's tap, with its slice.
     var openRoundtable: ((Int) -> Void)?
+    /// Views a frequency without tuning there (overlay design D21).
+    var viewRoundtable: ((String) -> Void)?
     /// The Roundtable sheet is up over a dial: the dial sits in the 92-point
     /// strip under it, the knob drawn smaller (spec 11.3).
     var dialStrip = false
@@ -316,10 +318,19 @@ struct BandGestureLayer: View {
                                    otherFlagHz: Set(flags.filter { !$0.1.isFolded && $0.0.id != slices.activeSliceId }
                                     .map { Int64($0.0.slice.frequencyHz.rounded()) }),
                                    readReports: { context in
-                    Task {
-                        await roundtable.read(context)
+                    if roundtable.frequencyAvailable {
+                        // Your own frequency's reports are your own room, with nothing to read.
                         openRoundtable?(slices.activeSliceId ?? entries.first?.id ?? 0)
+                    } else {
+                        Task {
+                            await roundtable.read(context)
+                            openRoundtable?(slices.activeSliceId ?? entries.first?.id ?? 0)
+                        }
                     }
+                }, viewFrequency: viewRoundtable,
+                                   activeSliceHz: slices.active.map { Int64($0.slice.frequencyHz.rounded()) },
+                                   tuneHz: { hz in
+                    slices.tap(to: Double(hz))
                 }) { room in
                     // As the sheet's Tune here: the active slice to the room, then back to its own room.
                     slices.tap(to: Double(room.hz))

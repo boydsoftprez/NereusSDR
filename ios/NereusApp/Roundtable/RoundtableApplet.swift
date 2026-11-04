@@ -10,6 +10,8 @@
 
 // 2026-10-30: Approved frequency-first people, reports and phone interactions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: The applet's frequency view and Widen's list (overlay design D24, D28, D29).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -68,6 +70,10 @@ struct RoundtableAppletConfig {
     let firstRunNoteSeen: Binding<Bool>
     /// Opens the first-run question, a form sheet in the middle of the screen.
     let askFirstRun: () -> Void
+    /// The session is up: the radio can be tuned.
+    var linkUp = true
+    /// This client's pan at a frequency and family, for a view's Your pan.
+    var panLevel: ((Int64, String) -> Double?)? = nil
 }
 
 /// The Roundtable applet (spec 11.4, picture 6): a title bar like the
@@ -87,6 +93,8 @@ struct RoundtableApplet: View {
     var embedding: RoundtableRoomEmbedding?
     @Binding var firstRunNoteSeen: Bool
     let askFirstRun: () -> Void
+    var linkUp = true
+    var panLevel: ((Int64, String) -> Double?)? = nil
 
     /// The applet's id in the column's scroll.
     static let id = "roundtableApplet"
@@ -98,7 +106,8 @@ struct RoundtableApplet: View {
             RoundtableAppletTitle(wide: wide, toggleWide: toggleWide, moveUp: moveUp, moveDown: moveDown)
             RoundtableAppletRoom(roundtable: roundtable, transmit: transmit, slices: slices,
                                  stationCallsign: stationCallsign, narrow: true, embedding: embedding,
-                                 firstRunNoteSeen: $firstRunNoteSeen, askFirstRun: askFirstRun)
+                                 firstRunNoteSeen: $firstRunNoteSeen, askFirstRun: askFirstRun,
+                                 linkUp: linkUp, panLevel: panLevel)
         }
         .background(RoundtableColours.ground)
         .accessibilityElement(children: .contain)
@@ -175,20 +184,55 @@ struct RoundtableAppletRoom: View {
     var embedding: RoundtableRoomEmbedding?
     @Binding var firstRunNoteSeen: Bool
     let askFirstRun: () -> Void
+    var linkUp = true
+    var panLevel: ((Int64, String) -> Double?)? = nil
 
     private var keyed: Bool { transmit.ptt.transmitting }
     private var noting: Bool {
         roundtable.available && roundtable.firstRunAnswered && !firstRunNoteSeen
     }
+    /// D28: a server that speaks in frequencies shows the same head, list and
+    /// readings as the view. A legacy room keeps its talker and readings.
+    private var frequencyFirst: Bool {
+        roundtable.frequencyAvailable && roundtable.room != nil && !roundtable.askingFirstRun
+            && roundtable.coreReason == nil
+    }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let room = roundtable.room, !roundtable.askingFirstRun {
-                RoundtableRoomHead(room: room)
+    /// The frequency line, the live line and the rail (overlay.js padHead, padMain).
+    private func banner(_ data: RoundtableCardData) -> AnyView {
+        AnyView(VStack(alignment: .leading, spacing: 0) {
+            if let room = roundtable.room {
+                RoundtableRoomHead(room: room, stations: data.onFrequency.count)
                     .padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
             }
-            RoundtableConnectionLine(roundtable: roundtable, room: roundtable.room)
+            RoundtableConnectionLine(roundtable: roundtable, room: roundtable.room,
+                                     viewingLetter: roundtable.isViewing ? slices.active?.slice.letter ?? "A" : nil)
+            RoundtableFrequencyRail(data: data)
+        })
+    }
+
+    private func frequencyHead(_ room: RoundtableModel.Room) -> AnyView {
+        AnyView(RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
+                                        viewing: roundtable.isViewing, keyed: keyed, linkUp: linkUp,
+                                        panLevel: panLevel, banner: banner(_:),
+                                        onTune: { hz in
+                                            slices.tap(to: Double(hz))
+                                            Task { await roundtable.backToSlice() }
+                                        },
+                                        onBack: { Task { await roundtable.backToSlice() } }))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !frequencyFirst {
+                if let room = roundtable.room, !roundtable.askingFirstRun {
+                    RoundtableRoomHead(room: room)
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                }
+                RoundtableConnectionLine(roundtable: roundtable, room: roundtable.room)
+            }
             if let reason = roundtable.coreReason {
                 note(reason, detail: nil)
             } else if roundtable.askingFirstRun {
@@ -206,9 +250,13 @@ struct RoundtableAppletRoom: View {
                                        ownDbm: slices.active?.signalDbm,
                                        sliceLetter: slices.active?.slice.letter ?? "A",
                                        tuneHere: roundtable.readingRoomId == nil ? nil : { tuneHere(room) },
-                                       narrow: narrow, embedded: embedding)
+                                       narrow: narrow, embedded: embedding,
+                                       frequencyHead: frequencyFirst ? frequencyHead(room) : nil,
+                                       viewing: roundtable.isViewing)
                 } else {
-                    note("Nobody on Roundtable is tuned here.", detail: "Tap a tag on the band to tune there.")
+                    note("Nobody on Roundtable is tuned here.",
+                         detail: roundtable.frequencyAvailable ? "Tap a tag on the band to view that frequency."
+                            : "Tap a tag on the band to tune there.")
                 }
             }
         }
@@ -283,6 +331,8 @@ struct RoundtableAppletFoot: View {
 /// The widened applet (spec 11.4, picture 6's second): the column gives
 /// the band up for the room list, by band, beside the room. A tap on a row
 /// reads that room (your slice's own row goes back to it); nothing tunes.
+/// Every frequency shows, a double says Double with its names, your own stays
+/// cyan and the viewed one the selection blue (overlay design D29).
 struct RoundtableWideApplet: View {
     @ObservedObject var roundtable: RoundtableModel
     @ObservedObject var transmit: TransmitModel
@@ -291,6 +341,8 @@ struct RoundtableWideApplet: View {
     let toggleWide: () -> Void
     @Binding var firstRunNoteSeen: Bool
     let askFirstRun: () -> Void
+    var linkUp = true
+    var panLevel: ((Int64, String) -> Double?)? = nil
 
     /// The room list's width (the board's).
     static let listWidth: CGFloat = 250
@@ -309,7 +361,8 @@ struct RoundtableWideApplet: View {
                 VStack(spacing: 0) {
                     RoundtableAppletRoom(roundtable: roundtable, transmit: transmit, slices: slices,
                                          stationCallsign: stationCallsign, narrow: false,
-                                         firstRunNoteSeen: $firstRunNoteSeen, askFirstRun: askFirstRun)
+                                         firstRunNoteSeen: $firstRunNoteSeen, askFirstRun: askFirstRun,
+                                         linkUp: linkUp, panLevel: panLevel)
                         .frame(maxHeight: .infinity, alignment: .top)
                     if !transmit.ptt.transmitting, roundtable.room != nil, !roundtable.askingFirstRun {
                         RoundtableComposer(roundtable: roundtable) { EmptyView() }
@@ -342,13 +395,21 @@ struct RoundtableWideApplet: View {
                                                             sliceRooms: roundtable.sliceRooms, letters: letters,
                                                             mentionCounts: roundtable.mentionCounts, now: now)
                         ForEach(rows) { row in
-                            RoundtableRoomRow(row: row, frequencyWidth: 60,
-                                              identifier: "roundtableWide.row.\(row.id)") {
-                                open(row.id)
+                            if roundtable.frequencyAvailable {
+                                RoundtableWideRow(row: RoundtableToolsList.wideRow(row, keyedNames: keyedNames(row.id)),
+                                                  selected: row.id == roundtable.readingRoomId,
+                                                  mine: row.mine) {
+                                    open(row.id)
+                                }
+                            } else {
+                                RoundtableRoomRow(row: row, frequencyWidth: 60,
+                                                  identifier: "roundtableWide.row.\(row.id)") {
+                                    open(row.id)
+                                }
+                                .background(row.id == roundtable.shownRoomId && !row.mine
+                                            ? Color.white.opacity(0.06) : Color.clear)
+                                .accessibilityAddTraits(row.id == roundtable.shownRoomId ? .isSelected : [])
                             }
-                            .background(row.id == roundtable.shownRoomId && !row.mine
-                                        ? Color.white.opacity(0.06) : Color.clear)
-                            .accessibilityAddTraits(row.id == roundtable.shownRoomId ? .isSelected : [])
                         }
                     }
                 }
@@ -361,13 +422,19 @@ struct RoundtableWideApplet: View {
     private func bandHead(_ band: RoundtableToolsList.Chip) -> some View {
         HStack(spacing: 6) {
             Text(band.title).font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.dim)
-            Text("\(band.count) room\(band.count == 1 ? "" : "s")").font(.system(size: 11))
+            let noun = roundtable.frequencyAvailable ? (band.count == 1 ? "frequency" : "frequencies")
+                : (band.count == 1 ? "room" : "rooms")
+            Text("\(band.count) \(noun)").font(.system(size: 11))
                 .foregroundStyle(RoundtableColours.dim)
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 4)
         .accessibilityAddTraits(.isHeader)
+    }
+
+    private func keyedNames(_ roomId: String) -> [String] {
+        roundtable.frequencyRows.first { $0.id == roomId }?.keyedNames ?? []
     }
 
     private func open(_ roomId: String) {
@@ -378,5 +445,81 @@ struct RoundtableWideApplet: View {
                 _ = await roundtable.read(roomId)
             }
         }
+    }
+}
+
+/// One frequency in Widen's list (overlay.css .rci-l): the glyph, frequency, who
+/// and the line under it, your slices' letters and @N. A tap views; it never tunes.
+struct RoundtableWideRow: View {
+    let row: RoundtableToolsList.WideRow
+    /// The frequency being viewed: the selection blue.
+    let selected: Bool
+    /// A slice of yours is here: cyan.
+    let mine: Bool
+    let open: () -> Void
+
+    static let mineFill = Color(red: 0x16 / 255, green: 0x25 / 255, blue: 0x36 / 255)
+    static let selectedFill = Color(red: 0x1E / 255, green: 0x3D / 255, blue: 0x5F / 255)
+    static let selectedEdge = Color(red: 0x5E / 255, green: 0x8D / 255, blue: 0xB8 / 255)
+    private static let badgeText = Color(red: 0x04 / 255, green: 0x16 / 255, blue: 0x1C / 255)
+
+    private var fill: Color { selected ? Self.selectedFill : mine ? Self.mineFill : Color.clear }
+    private var edge: Color { selected ? Self.selectedEdge : mine ? RoundtableColours.you : Color.clear }
+    private var whoColour: Color {
+        switch row.base.glyph {
+        case .doubled: RoundtableCardView.doubleText
+        case .unknown: RoundtableColours.unknown
+        case .quiet, .offline, .waiting: RoundtableColours.dim
+        case .talking, .you: RoundtableColours.text
+        }
+    }
+
+    var body: some View {
+        Button(action: open) {
+            HStack(alignment: .top, spacing: 7) {
+                RoundtableGlyphView(glyph: row.base.glyph, size: 10)
+                    .frame(width: 11, height: 16)
+                Text(row.base.frequency)
+                    .font(.system(size: 12, weight: .bold).monospaced())
+                    .foregroundStyle(row.base.quiet ? RoundtableColours.dim : RoundtableColours.bright)
+                    .fixedSize()
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(row.who).font(.system(size: 12, weight: .semibold)).foregroundStyle(whoColour)
+                    Text(row.sub).font(.system(size: 10, weight: .medium)).foregroundStyle(RoundtableColours.dim)
+                }
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(row.base.letters, id: \.self) { letter in
+                    Text(letter)
+                        .font(.system(size: 11, weight: .heavy).monospaced())
+                        .foregroundStyle(Self.badgeText)
+                        .padding(.horizontal, 4)
+                        .frame(minWidth: 16)
+                        .background(RoundtableColours.you, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                }
+                if row.base.mentions > 0 {
+                    Text("@\(row.base.mentions)")
+                        .font(.system(size: 11, weight: .bold).monospaced())
+                        .foregroundStyle(Self.badgeText)
+                        .padding(.horizontal, 4)
+                        .frame(minWidth: 16)
+                        .background(RoundtableColours.you, in: Capsule())
+                }
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 8)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(fill)
+            .overlay(alignment: .leading) { Rectangle().fill(edge).frame(width: 2) }
+            .overlay(alignment: .bottom) { Rectangle().fill(RoundtableTagLayer.rowRule).frame(height: 1) }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Views this frequency. Your slices stay where they are.")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("roundtableWide.row.\(row.base.id)")
     }
 }

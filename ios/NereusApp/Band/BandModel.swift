@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-28: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   carry the accepted waterfall frame divider for capture-row continuity.
+// 2026-11-03: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//   panLevel, the level Roundtable's frequency view shows as Your pan (overlay design D23).
 
 import Combine
 import Foundation
@@ -1086,6 +1088,40 @@ final class BandModel: ObservableObject {
     /// transmit display: the band is drawn with the transmit grid, levels
     /// and palette (``BandDisplaySettings/keyedOverlay``).
     var transmitOverlay: Bool { transmit.keyedHere || showsTransmit }
+
+    /// D23: Your pan's window, as wide as a sideband's passband.
+    static let panLevelWindowHz = 2_700.0
+
+    /// The frequencies Your pan looks at for a frequency in `family`: on its
+    /// sideband's side, or centred where the family has no side (the desktop's
+    /// roundtablePanLevel).
+    static func panLevelWindow(hz: Double, family: String) -> ClosedRange<Double> {
+        switch family {
+        case "lsb", "digl", "fdvl": (hz - panLevelWindowHz)...hz
+        case "usb", "digu", "fdvu": hz...(hz + panLevelWindowHz)
+        default: (hz - panLevelWindowHz / 2)...(hz + panLevelWindowHz / 2)
+        }
+    }
+
+    /// D23: the peak this pan drew in the family's sideband window at `hz`, read
+    /// from the trace as it is drawn. Nil off this pan, before a frame of this
+    /// session, or while the band is showing or holding for transmit.
+    func panLevel(hz: Int64, family: String) -> Double? {
+        guard !transmitOverlay, frameRevision != nil, let frame = state.frame, let coverage = state.frameCoverage else {
+            return nil
+        }
+        let samples = frame.traceDbm.count
+        let dial = Double(hz)
+        guard coverage.sample(forHz: dial, samples: samples) != nil else {
+            return nil
+        }
+        let window = Self.panLevelWindow(hz: dial, family: family)
+        guard let low = coverage.sample(forHz: max(window.lowerBound, coverage.lowHz), samples: samples),
+              let high = coverage.sample(forHz: min(window.upperBound, coverage.highHz), samples: samples) else {
+            return nil
+        }
+        return frame.traceDbm[low...high].filter(\.isFinite).max().map(Double.init)
+    }
 
     /// The settings the band is drawn with now: the pan's own, or while
     /// keyed on it their transmit overlay.

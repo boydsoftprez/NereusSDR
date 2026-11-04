@@ -14,6 +14,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-03: One word: Double, with its names (overlay design D1, D8).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-03: Widen's rows, as overlay design D29 words them.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -125,6 +127,30 @@ enum RoundtableToolsList {
                            sub: sub(room, glyph: glyph, now: now), letters: mine,
                            mentions: mentionCounts[room.id] ?? 0, quiet: glyph == .quiet)
             }
+    }
+
+    /// One row of Widen's list (overlay.js padList): a double says Double, with
+    /// its names under it; anyone else says who, with the count under it.
+    struct WideRow: Equatable {
+        var base: Row
+        var who: String
+        var sub: String
+    }
+
+    static func wideRow(_ row: Row, keyedNames: [String]) -> WideRow {
+        let mine = row.mine ? " \u{00B7} you" : ""
+        let names = keyedNames.filter { !$0.isEmpty }
+        switch row.glyph {
+        case .doubled:
+            return WideRow(base: row, who: "Double",
+                           sub: (names.isEmpty ? row.sub : names.joined(separator: " + ")) + mine)
+        case .talking:
+            return WideRow(base: row, who: names.first ?? "Unknown talker", sub: row.sub + mine)
+        case .unknown:
+            return WideRow(base: row, who: "Unknown talker", sub: row.sub + mine)
+        case .quiet, .waiting, .offline, .you:
+            return WideRow(base: row, who: "Quiet", sub: row.sub + mine)
+        }
     }
 
     static func who(_ glyph: RoundtableFlagLine.Glyph, talkers: [String]) -> String {

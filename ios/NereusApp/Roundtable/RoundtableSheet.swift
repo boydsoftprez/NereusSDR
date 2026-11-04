@@ -20,6 +20,8 @@
 
 // 2026-10-30: Approved frequency-first people, reports and phone interactions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Viewing a frequency without tuning, in the sheet (overlay design D21 to D24).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -61,6 +63,8 @@ struct RoundtableSheet: View {
     /// the screen (spec 11.4): the sheet shows a line that asks it here,
     /// and this opens it. Nil asks in the sheet itself, as on a phone.
     var askFirstRun: (() -> Void)?
+    /// This client's pan at a frequency and family, for a view's Your pan.
+    var panLevel: ((Int64, String) -> Double?)?
 
     /// The question was answered here: no note follows it.
     @State private var answeredHere = false
@@ -86,6 +90,8 @@ struct RoundtableSheet: View {
     private var noting: Bool {
         roundtable.available && roundtable.firstRunAnswered && !firstRunNoteSeen && !answeredHere
     }
+    /// A frequency is being viewed, not your own (overlay design D21).
+    private var viewing: Bool { roundtable.isViewing }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -108,7 +114,9 @@ struct RoundtableSheet: View {
                 if noting {
                     RoundtableFirstRunNote(hidden: roundtable.hidden) { firstRunNoteSeen = true }
                 }
-                if !keyed {
+                if viewing {
+                    viewingHeader
+                } else if !keyed {
                     header
                     if !compactLandscape { connection }
                 }
@@ -225,6 +233,28 @@ struct RoundtableSheet: View {
         .frame(height: compactLandscape ? 44 : 40)
     }
 
+    /// "‹ Back to my slice" and close: either lets go of the read and closes.
+    private var viewingHeader: some View {
+        HStack(spacing: 8) {
+            RoundtableBackButton(chip: true, action: close)
+            Spacer(minLength: 4)
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(RoundtableColours.text)
+                    .frame(width: 30, height: 30)
+                    .background(Color.white.opacity(0.08), in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close")
+            .accessibilityIdentifier("roundtableClose")
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 4)
+    }
+
     private var connection: some View {
         RoundtableConnectionLine(roundtable: roundtable, room: room)
     }
@@ -235,6 +265,20 @@ struct RoundtableSheet: View {
     private var content: some View {
         if let reason = roundtable.coreReason {
             message(reason, detail: nil)
+        } else if viewing, let room {
+            RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
+                               keyedSince: nil, keyedForSeconds: 0, tunedHere: tunedHere,
+                               stationCallsign: stationCallsign, ownDbm: nil, sliceLetter: activeLetter,
+                               compact: false,
+                               frequencyHead: AnyView(
+                                RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
+                                                        viewing: true, keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                        panLevel: panLevel, showsBack: false,
+                                                        onTune: { hz in
+                                                            slices.tap(to: Double(hz))
+                                                            close()
+                                                        }, onBack: close)),
+                               showsEarlier: false, viewing: true)
         } else if let room {
             RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
                                keyedSince: PttButton.keyedSince(transmit.ptt),
@@ -245,7 +289,8 @@ struct RoundtableSheet: View {
                                expand: { detent = .full }, compact: compactLandscape)
         } else {
             message("Nobody on Roundtable is tuned here.",
-                    detail: "Tap a tag on the band to tune there.")
+                    detail: roundtable.frequencyAvailable ? "Tap a tag on the band to view that frequency."
+                        : "Tap a tag on the band to tune there.")
         }
     }
 
@@ -312,6 +357,10 @@ extension RoundtableModel {
         return frequencyAvailable ? activeContext?.id == shownRoomId : sliceRooms.values.contains(shownRoomId)
     }
 
+    /// A frequency is being viewed without tuning there (overlay design D21). A
+    /// legacy server's read bar is the room's own.
+    var isViewing: Bool { frequencyAvailable && readingRoomId != nil }
+
     /// The station has not answered Roundtable's first question yet.
     var askingFirstRun: Bool {
         available && linkState != .off && !firstRunAnswered
@@ -322,6 +371,10 @@ extension RoundtableModel {
 /// as the sheet's header and the applet's head show them.
 struct RoundtableRoomHead: View {
     let room: RoundtableModel.Room
+    /// Who the frequency's own list counts, before its stream names them.
+    var stations: Int? = nil
+
+    private var count: Int { stations ?? room.members.count }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -331,7 +384,7 @@ struct RoundtableRoomHead: View {
             Text(RoundtableText.modeLabel(room.family))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(RoundtableColours.you)
-            Text("\(room.members.count) station\(room.members.count == 1 ? "" : "s")")
+            Text("\(count) station\(count == 1 ? "" : "s")")
                 .font(.system(size: 11)).foregroundStyle(RoundtableColours.dim)
             if room.members.first(where: \.you)?.away == true {
                 Text("AWAY").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.dim)
@@ -346,6 +399,8 @@ struct RoundtableRoomHead: View {
 struct RoundtableConnectionLine: View {
     @ObservedObject var roundtable: RoundtableModel
     let room: RoundtableModel.Room?
+    /// Viewing another frequency, this slice stays put (overlay.js padHead).
+    var viewingLetter: String? = nil
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -361,8 +416,10 @@ struct RoundtableConnectionLine: View {
             }
             HStack(spacing: 6) {
                 Circle().fill(colour).frame(width: 6, height: 6)
-                Text(line.text).font(.system(size: 11)).foregroundStyle(line.tone == .live ? RoundtableColours.dim
-                                                                         : colour)
+                Text(line.tone == .live ? viewingLetter.map { "Live \u{00B7} viewing \u{00B7} slice \($0) stays put" } ?? line.text
+                     : line.text)
+                    .font(.system(size: 11)).foregroundStyle(line.tone == .live ? RoundtableColours.dim
+                                                             : colour)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }

@@ -244,6 +244,17 @@ struct RoundtableCardData: Equatable {
         /// The held peak in dBm, for the tick. Nil on an old reading, an ended
         /// turn or a dropped link: those have no tick.
         var peak: Double?
+        /// Says this instead of the call: "Your pan".
+        var label: String? = nil
+    }
+
+    /// One station around this frequency, for a frequency view's list (D22).
+    struct Person: Equatable {
+        var name: String
+        var keyed: Bool
+        var you: Bool
+        /// `member.hz - viewed hz`.
+        var offsetHz: Int64
     }
 
     var kind: Kind = .quiet
@@ -266,6 +277,10 @@ struct RoundtableCardData: Equatable {
     /// Where the live turn's talker is, which can be up to 5 kHz off `hz`. Nil
     /// with no live turn.
     var liveHz: Int64?
+    var family = ""
+    /// Each station in this frequency's neighborhood: the stream's members, or
+    /// until it arrives the directory's (D22).
+    var onFrequency: [Person] = []
 }
 
 /// Each listener's held peak (overlay design D12): client side, per source room,
@@ -833,12 +848,36 @@ enum RoundtableTagLayout {
         return card
     }
 
+    /// A view's list: each station against the viewed frequency (D22). Until the
+    /// stream arrives the directory says who is nearby, as the server's members do.
+    static func onFrequency(hz: Int64, family: String, members: [RoundtableModel.Member],
+                            directory: [RoundtableModel.Station]) -> [RoundtableCardData.Person] {
+        var seen = Set<String>()
+        if !members.isEmpty {
+            return members.compactMap { member in
+                let at = member.hz ?? hz
+                guard abs(at - hz) <= nearbyHz, seen.insert(member.id).inserted else { return nil }
+                return .init(name: RoundtableText.withNth(member.callsign, member.nth), keyed: member.keyed,
+                             you: member.you, offsetHz: at - hz)
+            }
+        }
+        return directory.compactMap { station in
+            guard station.family == family, abs(station.hz - hz) <= nearbyHz, seen.insert(station.id).inserted else {
+                return nil
+            }
+            return .init(name: RoundtableText.withNth(station.callsign, station.nth), keyed: station.keyed,
+                         you: false, offsetHz: station.hz - hz)
+        }
+    }
+
     /// What the card for one frequency says (the desktop's roundtableCardModelFor).
     /// `peaks` holds each listener's peak; nil leaves the ticks off.
     static func cardData(summary: RoundtableModel.RoomSummary, view: RoundtableModel.Room?, now: Int64,
                          link: RoundtableModel.LinkState, linkSince: Int64,
-                         peaks: RoundtablePeakTracker? = nil) -> RoundtableCardData {
+                         peaks: RoundtablePeakTracker? = nil,
+                         directory: [RoundtableModel.Station] = []) -> RoundtableCardData {
         var card = RoundtableCardData(hz: summary.hz)
+        card.family = summary.family
         // D7: a dropped link freezes, and says which way it dropped.
         card.frozen = link == .reconnecting || link == .offline
         let linkNote: String?
@@ -851,6 +890,8 @@ enum RoundtableTagLayout {
         card.note = linkNote
         card.people = summary.stations.map { RoundtableText.withNth($0.callsign, $0.nth) }
         let known = view?.family == summary.family ? view : nil
+        card.onFrequency = onFrequency(hz: summary.hz, family: summary.family, members: known?.members ?? [],
+                                       directory: directory.isEmpty ? summary.stations : directory)
 
         guard let known, let chosen = chosenTurn(hz: summary.hz, family: summary.family, view: known) else {
             // Known only from the directory (D1): who is keyed, with no readings.
@@ -1451,8 +1492,9 @@ enum RoundtableTagLayout {
     }
 
     /// The +N list's heading.
-    static func foldHeading(count: Int, sliceLetter: String) -> String {
-        "\(count) frequencies here \u{00B7} a tap tunes slice \(sliceLetter)"
+    static func foldHeading(count: Int, sliceLetter: String, viewing: Bool = false) -> String {
+        viewing ? "\(count) frequencies here \u{00B7} a tap views one"
+            : "\(count) frequencies here \u{00B7} a tap tunes slice \(sliceLetter)"
     }
 
     /// A tag's own width, to its own text and at most `maxWidth` (the board sizes
@@ -1488,6 +1530,8 @@ enum RoundtableTagLayout {
 /// The tags along the foot of the spectrum, above the band-plan strip and clear
 /// of the flags, and the active frequency's card: a tap on a tag tunes the active
 /// slice to its room; a tap on +N lists its rooms by frequency, and a row tunes.
+/// On a server that can read another frequency a tap on a tag or a row views it
+/// and tunes nothing (overlay design D21), and your own opens its action sheet.
 /// Keyed, a tag tunes nothing. A dropped link greys them as last known; connecting
 /// hides them; while you are hidden their marking is dimmed. They take touches only
 /// inside their own rects, so the band still drags.
@@ -1516,13 +1560,62 @@ struct RoundtableTagLayer: View {
     var compact: Bool? = nil
     /// Reads reports without tuning, using the main screen’s existing sheet.
     var readReports: ((String) -> Void)? = nil
+    /// Views a frequency, on a server that can show one (overlay design D21). Nothing tunes.
+    var viewFrequency: ((String) -> Void)? = nil
+    /// The active slice's exact frequency, for the card menu's Tune.
+    var activeSliceHz: Int64? = nil
+    /// Tunes the active slice to an exact frequency: the card menu's Tune.
+    var tuneHz: ((Int64) -> Void)? = nil
     /// Tunes the active slice to a room.
     let tune: (RoundtableModel.RoomSummary) -> Void
 
     @Environment(\.horizontalSizeClass) private var widthClass
     @State private var openFold: [String]?
-    @State private var detailsTag: RoundtableTag?
+    @State private var detailsTarget: MenuTarget?
     @State private var showDetails = false
+
+    /// The frequency the card's action sheet is about.
+    private struct MenuTarget: Equatable {
+        var roomId: String
+        var hz: Int64
+    }
+
+    /// What a tap on a tag or a fold's row does.
+    enum TagTap: Equatable {
+        /// D21: views the frequency and tunes nothing.
+        case view(String)
+        /// D25: your own frequency's action sheet.
+        case ownMenu(String)
+        /// A legacy server cannot view: the sheet of details today's tag offers.
+        case legacyDetails(String)
+        /// A legacy server cannot view: tunes, as it always has.
+        case tune(String)
+    }
+
+    /// A tag's tap (D21, D25). `canView` is a server that can read another frequency.
+    static func tagTap(roomId: String, canView: Bool, activeContext: String?, hasDetails: Bool) -> TagTap {
+        if canView {
+            return roomId == activeContext ? .ownMenu(roomId) : .view(roomId)
+        }
+        return hasDetails ? .legacyDetails(roomId) : .tune(roomId)
+    }
+
+    /// A row in a fold's list: it views, and never tunes, on a capable server.
+    static func foldRowTap(roomId: String, canView: Bool) -> TagTap {
+        canView ? .view(roomId) : .tune(roomId)
+    }
+
+    /// Where the card's Tune goes (controller's ruling): the live talker's exact
+    /// frequency. Nil, and so disabled, while keyed, with no live turn, or when
+    /// the slice is already exactly there.
+    static func ownTuneTarget(_ card: RoundtableCardData, keyed: Bool, sliceHz: Int64?) -> Int64? {
+        guard !keyed, let live = card.liveHz, live != sliceHz else {
+            return nil
+        }
+        return live
+    }
+
+    private var canView: Bool { roundtable.frequencyAvailable && viewFrequency != nil }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
@@ -1575,12 +1668,18 @@ struct RoundtableTagLayer: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .confirmationDialog("People at " + (detailsTag.map { RoundtableTagLayout.frequencyText($0.hz) } ?? "this frequency"),
+            .confirmationDialog("People at " + (detailsTarget.map { RoundtableTagLayout.frequencyText($0.hz) } ?? "this frequency"),
                                 isPresented: $showDetails, titleVisibility: .visible) {
-                if let tag = detailsTag {
-                    Button("Read reports") { readReports?(tag.roomId) }
+                if let target = detailsTarget {
+                    Button("Read reports") { readReports?(target.roomId) }
                     Button("Signal: \(roundtable.signalFormat.title) · Change") { roundtable.cycleSignalFormat() }
-                    Button("Tune slice \(sliceLetter) here") { tuneTo(tag.roomId) }.disabled(keyed)
+                    if canView {
+                        let live = Self.ownTuneTarget(roundtable.cardData(context: target.roomId), keyed: keyed,
+                                                      sliceHz: activeSliceHz)
+                        Button("Tune slice \(sliceLetter) here") { if let live { tuneHz?(live) } }.disabled(live == nil)
+                    } else {
+                        Button("Tune slice \(sliceLetter) here") { tuneTo(target.roomId) }.disabled(keyed)
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             }
@@ -1650,13 +1749,11 @@ struct RoundtableTagLayer: View {
         let roomId = tag?.roomId ?? "\(card.hz)"
         return Button {
             openFold = nil
-            if let tag {
-                if tag.card != nil, readReports != nil {
-                    detailsTag = tag
-                    showDetails = true
-                } else {
-                    tuneTo(tag.roomId)
-                }
+            if canView, let activeId = roundtable.activeContext?.id {
+                perform(.ownMenu(activeId), hz: card.hz)
+            } else if let tag {
+                perform(Self.tagTap(roomId: tag.roomId, canView: false, activeContext: nil,
+                                    hasDetails: tag.card != nil && readReports != nil), hz: tag.hz)
             }
         } label: {
             RoundtableCardView(card: card, plan: placed.plan, format: roundtable.signalFormat, dimmed: dimmed,
@@ -1666,7 +1763,8 @@ struct RoundtableTagLayer: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tag.map { accessibilityLabel(RoundtableTagPlacement(left: 0, width: 0, roomIds: [$0.roomId]), tags: [$0]) } ?? "Roundtable")
-        .accessibilityHint(tag?.card != nil && readReports != nil ? "Offers Read reports, signal display and Tune slice \(sliceLetter) here"
+        .accessibilityHint(canView || (tag?.card != nil && readReports != nil)
+            ? "Offers Read reports, signal display and Tune slice \(sliceLetter) here"
             : "Tunes slice \(sliceLetter) there")
         .accessibilityIdentifier("roundtableTag.\(roomId)")
         .accessibilityActions {
@@ -1740,6 +1838,14 @@ struct RoundtableTagLayer: View {
             .overlay(RoundedRectangle(cornerRadius: 4) // kept-radius: roundtable-tag
                 .strokeBorder(open ? Self.openBorder : border, lineWidth: 1))
             .overlay {
+                // The frequency being viewed (overlay.css .rct.is-peek).
+                if !placement.folded, first?.roomId == roundtable.readingRoomId, canView {
+                    RoundedRectangle(cornerRadius: 5) // kept-radius: roundtable-tag
+                        .strokeBorder(Self.openBorder, lineWidth: 2)
+                        .padding(-2)
+                }
+            }
+            .overlay {
                 if !placement.folded, first?.mine == true, !stale {
                     RoundedRectangle(cornerRadius: 5) // kept-radius: roundtable-tag
                         .strokeBorder(dimmed ? Self.mineRing.opacity(RoundtableColours.dimmedOpacity)
@@ -1752,6 +1858,9 @@ struct RoundtableTagLayer: View {
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel(placement, tags: tags))
         .accessibilityHint(placement.folded ? "Lists the rooms inside"
+            : canView ? (first?.roomId == roundtable.activeContext?.id
+                         ? "Offers Read reports, signal display and Tune slice \(sliceLetter) here"
+                         : "Views this frequency. Your slices stay where they are.")
             : first?.card != nil && readReports != nil ? "Offers Read reports, signal display and Tune slice \(sliceLetter) here"
             : "Tunes slice \(sliceLetter) there")
         .accessibilityIdentifier(placement.folded ? "roundtableFold" : "roundtableTag.\(placement.roomIds[0])")
@@ -1826,10 +1935,20 @@ struct RoundtableTagLayer: View {
         }
         openFold = nil
         if let id = placement.roomIds.first, let tag = byId[id] {
-            if tag.card != nil, readReports != nil {
-                detailsTag = tag
-                showDetails = true
-            } else { tuneTo(id) }
+            perform(Self.tagTap(roomId: id, canView: canView, activeContext: roundtable.activeContext?.id,
+                                hasDetails: tag.card != nil && readReports != nil), hz: tag.hz)
+        }
+    }
+
+    private func perform(_ tap: TagTap, hz: Int64) {
+        switch tap {
+        case .view(let id):
+            viewFrequency?(id)
+        case .ownMenu(let id), .legacyDetails(let id):
+            detailsTarget = MenuTarget(roomId: id, hz: hz)
+            showDetails = true
+        case .tune(let id):
+            tuneTo(id)
         }
     }
 
@@ -1850,7 +1969,7 @@ struct RoundtableTagLayer: View {
                     max(4, geometryWidth - RoundtableTagLayout.foldListWidth - 4))
         let y = max(4, top - 6 - listHeight)
         VStack(alignment: .leading, spacing: 0) {
-            Text(RoundtableTagLayout.foldHeading(count: tags.count, sliceLetter: sliceLetter))
+            Text(RoundtableTagLayout.foldHeading(count: tags.count, sliceLetter: sliceLetter, viewing: canView))
                 .font(.system(size: 11))
                 .foregroundStyle(RoundtableColours.dim)
                 .lineLimit(1)
@@ -1863,7 +1982,7 @@ struct RoundtableTagLayer: View {
                 }
                 Button {
                     openFold = nil
-                    tuneTo(tag.roomId)
+                    perform(Self.foldRowTap(roomId: tag.roomId, canView: canView), hz: tag.hz)
                 } label: {
                     HStack(spacing: 7) {
                         RoundtableGlyphView(glyph: tag.glyph, size: RoundtableTagLayout.glyphSize,
@@ -2156,13 +2275,15 @@ struct RoundtableCardRow: View {
     let format: RoundtableSignalFormat
     let narrow: Bool
     let tight: Bool
+    /// A frequency view's distance and bearing, in their own column (D22).
+    var path: String? = nil
 
     var body: some View {
         let old = row.old
         VStack(spacing: 1) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 // A call that does not fit is cut, never overlapped.
-                Text(row.you ? "You" : row.call)
+                Text(row.label ?? (row.you ? "You" : row.call))
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(old ? RoundtableCardView.oldText
                                      : row.you ? RoundtableColours.you : RoundtableTagLayer.labelColour)
@@ -2170,6 +2291,13 @@ struct RoundtableCardRow: View {
                     .fixedSize()
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .clipped()
+                if let path {
+                    Text(path)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(RoundtableColours.dim)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
                 Text(RoundtableTagLayout.cardSignal(row.dbm, format: format, narrow: narrow))
                     .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                     .foregroundStyle(old ? RoundtableCardView.oldText : RoundtableTagLayer.labelColour)

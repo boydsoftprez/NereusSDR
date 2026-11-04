@@ -500,6 +500,13 @@ struct RoundtableRoomView: View {
     var embedded: RoundtableRoomEmbedding?
     /// Short landscape sheet: reserve its height for reports and conversation.
     var compact = false
+    /// Takes the place of the read bar, the talker and the readings: a frequency's
+    /// view leads, and the room's earlier turns and messages follow (overlay design D22, D28).
+    var frequencyHead: AnyView? = nil
+    /// The iPad's applet shows the earlier turns; a view of a frequency elsewhere does not.
+    var showsEarlier = true
+    /// A frequency being viewed: its messages are read only until you tune here.
+    var viewing = false
 
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.bandOnScreen) private var bandOnScreen
@@ -601,17 +608,23 @@ struct RoundtableRoomView: View {
         if roundtable.linkState == .hidden {
             hiddenBanner
         }
-        if roundtable.readingRoomId != nil {
-            readBar
+        if let frequencyHead {
+            frequencyHead
+        } else {
+            if roundtable.readingRoomId != nil {
+                readBar
+            }
+            if keyed {
+                txLine
+            } else if !compact || ["unknown", "doubled"].contains(openTurn?.kind ?? "") {
+                talker(now: now)
+            }
+            readings(now: now)
         }
-        if keyed {
-            txLine
-        } else if !compact || ["unknown", "doubled"].contains(openTurn?.kind ?? "") {
-            talker(now: now)
-        }
-        readings(now: now)
         if full {
-            earlierTurns
+            if showsEarlier {
+                earlierTurns
+            }
             messages(now: now)
         }
         tracked(Color.clear.frame(height: 1).id(Self.endId),
@@ -1202,7 +1215,8 @@ struct RoundtableRoomView: View {
         let fresh = room.messages.filter(isNew).count
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                caption(roundtable.frequencyAvailable ? "RECEIVED CONVERSATION" : "MESSAGES")
+                caption(viewing ? "MESSAGES \u{00B7} READ ONLY UNTIL YOU TUNE HERE"
+                        : roundtable.frequencyAvailable && frequencyHead == nil ? "RECEIVED CONVERSATION" : "MESSAGES")
                 small(fresh > 0 ? "\(room.messages.count), \(fresh) new" : "\(room.messages.count)")
             }
             .padding(.horizontal, 12)
@@ -1349,7 +1363,11 @@ struct RoundtableRoomView: View {
             return
         }
         if embedded?.scroll.atEnd ?? atEnd {
-            withAnimation { reader.scrollTo(Self.endId, anchor: .bottom) }
+            // A frequency being viewed keeps its head in sight: its stream
+            // arriving is no reason to scroll to its last message.
+            if !viewing {
+                withAnimation { reader.scrollTo(Self.endId, anchor: .bottom) }
+            }
         } else if let embedded {
             embedded.scroll.waiting += added
         } else {

@@ -234,6 +234,7 @@ final class RoundtableModel: ObservableObject {
     static let olderCoreReason = "This Core does not run Roundtable for this app. Updating the Core may help."
     static let notConnectedReason = SpotsModel.notConnectedReason
     static let noAnswerReason = "The Core did not answer this request."
+    static let lostReadText = "This Core can't show another frequency right now."
 
     // MARK: Published
 
@@ -346,7 +347,7 @@ final class RoundtableModel: ObservableObject {
                            members: 0, messages: 0, last: 0, folded: false, start: nil, heard: 0, readings: [],
                            lastMessage: nil, ended: nil)
         return RoundtableTagLayout.cardData(summary: summary, view: view(of: id), now: clock.nowMilliseconds,
-                                            link: linkState, linkSince: linkSince, peaks: peaks)
+                                            link: linkState, linkSince: linkSince, peaks: peaks, directory: directory)
     }
     var activeContext: FrequencyContext? {
         (activeSliceId ?? sliceContexts.keys.sorted().first).flatMap { sliceContexts[$0] }
@@ -382,6 +383,10 @@ final class RoundtableModel: ObservableObject {
     @Published private(set) var sliceRoomId: String?
     /// The room this phone reads (``read(_:)``), or nil.
     @Published private(set) var readingRoomId: String?
+    /// Bumped each time a read ends without being asked to (overlay design D27),
+    /// with `lostReadReason` to say why.
+    @Published private(set) var lostReads = 0
+    private(set) var lostReadReason: String?
     /// The room in view: the one read, else the slice's.
     @Published private(set) var room: Room?
     @Published private(set) var linkState: LinkState = .off
@@ -583,7 +588,7 @@ final class RoundtableModel: ObservableObject {
             if version >= 2 {
                 resetFrequencyReads()
                 readStream = nil
-                readingRoomId = nil
+                loseRead()
                 readAgain = false
             }
             builtRooms.removeAll()
@@ -605,7 +610,7 @@ final class RoundtableModel: ObservableObject {
             connected = up
         }
         if up, next < 1, readingRoomId != nil {
-            readingRoomId = nil
+            loseRead()
         }
         // Losing the session's record cache is not a server downgrade. Keep
         // the detail intent until the next directory reset confirms support.
@@ -625,7 +630,7 @@ final class RoundtableModel: ObservableObject {
             if up, records.streams[Self.roomsStream] != nil,
                serverFrequencyVersion >= 1 && backendVersion < 1 {
                 readStream = nil
-                readingRoomId = nil
+                loseRead()
                 readAgain = false
             }
             serverFrequencyVersion = backendVersion
@@ -644,6 +649,16 @@ final class RoundtableModel: ObservableObject {
             readAgain = false
             Task { [weak self] in await self?.sendRead(roomId) }
         }
+    }
+
+    /// A read ended that nobody asked to end: the view closes and says so (D27).
+    private func loseRead() {
+        guard readingRoomId != nil else {
+            return
+        }
+        readingRoomId = nil
+        lostReadReason = coreReason ?? Self.lostReadText
+        lostReads &+= 1
     }
 
     private func readObject(_ object: MirrorObject?) {
@@ -810,6 +825,22 @@ final class RoundtableModel: ObservableObject {
 
     // MARK: Readers
 
+    /// The retained messages of one frequency context, oldest first (overlay
+    /// design D22): those in its family within the window the Core's stream for
+    /// that context carries (store.messages_at). A message that names no frequency
+    /// cannot be said to belong here.
+    func messages(for contextId: String) -> [Message] {
+        guard let dash = contextId.firstIndex(of: "-"),
+              let hz = Int64(contextId[contextId.index(after: dash)...]) else {
+            return []
+        }
+        let family = String(contextId[..<dash])
+        return receivedMessages.filter { message in
+            guard message.family == family, let at = message.hz else { return false }
+            return abs(at - hz) <= RoundtableTagLayout.nearbyHz
+        }
+    }
+
     /// A room in view (the desktop's room()), or nil when it is not followed.
     func view(of roomId: String) -> Room? {
         let nowMs = clock.nowMilliseconds
@@ -844,7 +875,8 @@ final class RoundtableModel: ObservableObject {
         }
         open.sort { $0.start != $1.start ? $0.start < $1.start : $0.id < $1.id }
         ended.sort { ($0.end ?? 0) != ($1.end ?? 0) ? ($0.end ?? 0) > ($1.end ?? 0) : $0.id > $1.id }
-        let messages = (frequencyAvailable || retainedView ? receivedMessages
+        let messages = (frequencyAvailable && roomId == readingRoomId ? self.messages(for: roomId)
+                        : frequencyAvailable || retainedView ? receivedMessages
                         : view.messages.keys.sorted().suffix(Self.roomMessages).compactMap { view.messages[$0] })
         let room = Room(id: roomId, band: Self.bandOf(hz), family: dash == nil ? "" : family, hz: hz,
                         members: view.members.sorted { $0.seq < $1.seq }.map(\.member),
@@ -974,6 +1006,8 @@ final class RoundtableModel: ObservableObject {
             await unread()
         }
         readingRoomId = roomId
+        // What it shows differs while it is the one being read.
+        builtRooms[roomId] = nil
         publishRoom()
         if frequencyAvailable { syncWants(); return nil }
         return await sendRead(roomId)
@@ -986,6 +1020,7 @@ final class RoundtableModel: ObservableObject {
         }
         readingRoomId = nil
         readStream = nil
+        builtRooms[roomId] = nil
         if frequencyAvailable { syncWants(); publishRoom(); return }
         readSerial += 1
         syncWants()

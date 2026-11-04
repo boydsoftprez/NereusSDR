@@ -393,6 +393,38 @@ struct RoundtableModelTests {
         #expect(rt.recentNames(Self.usb).isEmpty)
     }
 
+    @Test("a viewed frequency's messages are that context's, and your own room's stay as they were")
+    func messagesForAContext() async throws {
+        let (model, station, rt, _) = try await connected(additions: [.roundtableFrequency])
+        try await MainScreenShotTests.fill(station)
+        #expect(await settle { !model.main.slices.entries.isEmpty })
+        func message(_ id: Int64, hz: Double?, family: String?) -> LinkMessage.RecordBatch.Record {
+            var record = FakeStation.roundtableMessage(id: id, t: 1_000 + id, callsign: "W1AW", text: "m\(id)")
+            if let hz { record.fields["hz"] = .number(hz) }
+            if let family { record.fields["family"] = .string(family) }
+            return record
+        }
+        var scene = FakeStation.RoundtableScene(rooms: [], roomRecords: [
+            "lsb-7236400": [message(1, hz: 7_236_400, family: "lsb"), message(2, hz: 7_240_000, family: "lsb"),
+                            message(3, hz: 7_236_400, family: "usb"), message(4, hz: nil, family: nil)],
+            "lsb-7225000": [message(5, hz: 7_225_000, family: "lsb"), message(6, hz: 7_229_500, family: "lsb")],
+        ], sliceRooms: [:])
+        scene.frequencyPresences = [0: "lsb-7236400"]
+        try await station.deliverRoundtable(scene)
+        rt.activeSliceId = 0
+        #expect(await settle { rt.room?.id == "lsb-7236400" && rt.receivedMessages.count == 4 })
+        #expect(rt.room?.messages.map(\.id) == [1, 2, 3, 4])
+        _ = await rt.read("lsb-7225000")
+        #expect(await settle { rt.receivedMessages.count == 6 })
+        // Within the 5 kHz its stream carries, in its family; never another frequency's.
+        #expect(rt.messages(for: "lsb-7225000").map(\.id) == [5, 6])
+        #expect(await settle { rt.room?.messages.map(\.id) == [5, 6] })
+        #expect(rt.messages(for: "lsb-7236400").map(\.id) == [1, 2])
+        #expect(rt.messages(for: "not-a-context").isEmpty)
+        await rt.backToSlice()
+        #expect(await settle { rt.room?.id == "lsb-7236400" && rt.room?.messages.count == 6 })
+    }
+
     @Test("frequency subscriptions follow exact slice Hz without an RF room, and preserve sender context and drafts")
     func frequencyContextWithoutRFMembership() async throws {
         let (model, station, rt, _) = try await connected(additions: [.roundtableFrequency])
