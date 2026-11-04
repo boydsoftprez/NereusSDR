@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -346,6 +349,20 @@ void FFTEngine::setDecimation(int factor)
 
 void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
 {
+    feedIQWithAutoAgcEpoch(interleavedIQ, 1);
+}
+
+void FFTEngine::feedIQForAutoAgc(const QVector<float>& interleavedIQ, quint64 epoch)
+{
+    feedIQWithAutoAgcEpoch(interleavedIQ, epoch);
+}
+
+void FFTEngine::feedIQWithAutoAgcEpoch(const QVector<float>& interleavedIQ, quint64 epoch)
+{
+    if (m_autoAgcInputEpoch != epoch) {
+        m_autoAgcInputEpoch = epoch;
+        m_autoAgcCleanSamples = 0;
+    }
 #ifdef HAVE_FFTW3
     // From Longpath src/core/FFTEngine.cpp:241-249 [@383f058] (PR 62).
     // Ein Loch im Strom macht das angefangene Fenster wertlos: der
@@ -437,6 +454,9 @@ void FFTEngine::feedIQ(const QVector<float>& interleavedIQ)
         m_iqRaw[m_iqWritePos][0] = interleavedIQ[i * 2 + 1];  // Q -> I
         m_iqRaw[m_iqWritePos][1] = interleavedIQ[i * 2];      // I -> Q
         m_iqWritePos++;
+        // Count at each append, not after the batch: a batch can contain
+        // several transforms, including its first mixed-context window.
+        m_autoAgcCleanSamples = qMin(m_autoAgcCleanSamples + 1, m_currentFftSize);
     }
     m_inputPairsFed += numPairs;
 #else
@@ -475,6 +495,7 @@ bool FFTEngine::applyPendingWindowReset()
     }
     // From Longpath src/core/FFTEngine.cpp:246-249 [@383f058] (PR 62).
     m_iqWritePos = 0;
+    m_autoAgcCleanSamples = 0;
     m_refillingAfterReset = true;
     m_windowResets.fetch_add(1);
     return true;
@@ -537,6 +558,7 @@ void FFTEngine::resetInputHistory()
     // FFTW buffer.  Restarting the rate limiter also lets the first wholly
     // new-context frame through immediately.
     m_iqWritePos = 0;
+    m_autoAgcCleanSamples = 0;
     m_decimationCounter = 0;
     m_skipPending = 0;
     m_frameTimerStarted = false;
@@ -602,6 +624,7 @@ void FFTEngine::replanFft()
 
     m_currentFftSize = size;
     m_iqWritePos = 0;
+    m_autoAgcCleanSamples = 0;
 
     // Recompute window coefficients
     computeWindow();
@@ -888,6 +911,9 @@ void FFTEngine::processFrame()
     // term at line 348 above.  Both ride the same signal — keeps slot
     // and bins in lock-step without a separate setter coordination dance.
     emit fftReady(m_receiverId, binsDbm);
+    if ((m_autoAgcInputEpoch & 1U) == 0 && m_autoAgcCleanSamples == m_currentFftSize) {
+        emit autoAgcFrameReady(m_receiverId, binsDbm, m_autoAgcInputEpoch);
+    }
     emit fftReadyLinear(m_receiverId, binsLinear,
                         m_windowEnb, static_cast<double>(m_dbmOffset),
                         m_inputGeneration.load());
@@ -923,8 +949,10 @@ void FFTEngine::processFrame()
                      m_iqRaw + advance,
                      static_cast<size_t>(overlap) * sizeof(fftwf_complex));
         m_iqWritePos = overlap;
+        m_autoAgcCleanSamples = qMin(m_autoAgcCleanSamples, overlap);
     } else {
         m_iqWritePos = 0;
+        m_autoAgcCleanSamples = 0;
     }
 
     // 2026-05-26 KG4VCF: record FFT compute time after all per-frame

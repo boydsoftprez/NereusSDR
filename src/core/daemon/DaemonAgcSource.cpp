@@ -6,6 +6,9 @@
 // no noise-floor or AGC algorithm.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-09-30: The per-bin dBm conversion moved to DaemonSpectrumSource's
 // engine threads; the values are unchanged.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via Anthropic Claude Code.
@@ -39,6 +42,7 @@ DaemonSpectrumSourceConfig configFor(const RadioModel& radioModel, int streamInd
     // calibration path (m_fftEngine == nullptr).
     config.centreHz = radioModel.streamCentreHz(streamIndex);
     config.sampleRateHz = radioModel.streamSampleRateHz(streamIndex);
+    config.autoAgcEpoch = radioModel.autoAgcAcquisitionEpoch();
 
     // Two complete 4096-complex-sample frames, expressed in the source's
     // interleaved-float unit.  This remains explicitly bounded and changes
@@ -52,6 +56,7 @@ DaemonSpectrumSourceConfig configFor(const RadioModel& radioModel, int streamInd
 struct DaemonAgcSource::StreamState {
     int streamIndex{-1};
     quint64 measurementGeneration{0};
+    bool heldForTransmit{false};
     std::unique_ptr<NoiseFloorTracker> tracker;
 };
 
@@ -86,8 +91,8 @@ DaemonAgcSource::DaemonAgcSource(RadioModel* radioModel, QObject* parent)
             this, &DaemonAgcSource::onStreamAdcRoutingChanged);
     connect(m_radioModel, &RadioModel::connectionStateChanged,
             this, &DaemonAgcSource::onConnectionStateChanged);
-    connect(&m_radioModel->transmitModel(), &TransmitModel::moxChanged,
-            this, &DaemonAgcSource::onMoxChanged);
+    connect(m_radioModel, &RadioModel::autoAgcAcquisitionChanged,
+            this, &DaemonAgcSource::onAcquisitionChanged);
 
     // The local tracker resets for attenuation/preamp changes.  The daemon
     // uses the same controller as the station model, so these are source
@@ -161,13 +166,14 @@ void DaemonAgcSource::onFrameAvailable(MediaSourceKey key)
     // meter offset, percentile estimator, or client calibration participates.
     // The source converts it on its engine thread
     // (DaemonSpectrumSource::binsLinearToDbm), so no per-bin log10 runs here.
-    if (!frame->binsDbmValid || frame->binsDbm.size() != frame->binsLinear.size()) {
+    if (!frame->autoAgcEpoch.has_value() || !frame->binsDbmValid
+        || frame->binsDbm.size() != frame->binsLinear.size()) {
         return;
     }
     const QVector<float>& binsDbm = frame->binsDbm;
 
     StreamState& state = *it->second;
-    state.tracker->feed(binsDbm, kTrackerFrameIntervalMs);
+    state.tracker->feedForEpoch(binsDbm, kTrackerFrameIntervalMs, *frame->autoAgcEpoch);
     publishIfGood(state);
 }
 
@@ -225,15 +231,37 @@ void DaemonAgcSource::onConnectionStateChanged(ConnectionState state)
     }
 }
 
-void DaemonAgcSource::onMoxChanged(bool mox)
+void DaemonAgcSource::onAcquisitionChanged(quint64 epoch)
 {
-    if (mox) {
-        for (const auto& [streamIndex, unused] : m_streams) {
-            Q_UNUSED(unused);
-            retireStream(streamIndex);
+    if ((epoch & 1U) != 0) {
+        for (auto& [streamIndex, state] : m_streams) {
+            // A TX-only hold preserves the exact pre-TX estimator. Other
+            // lifecycle changes still use retireStream/invalidate below.
+            state->heldForTransmit = m_radioModel && m_radioModel->isConnected();
+            state->tracker->setAcquisitionEpoch(epoch);
+            ++state->measurementGeneration;
+            publishInvalid(*state);
+            m_source->deactivate(sourceKey(streamIndex));
         }
     } else {
-        reconcileAllStreams();
+        for (auto& [streamIndex, state] : m_streams) {
+            if (!state->heldForTransmit) { continue; }
+            state->heldForTransmit = false;
+            if (!canReceiveFromStream(streamIndex) || !hasBoundSlices(streamIndex)) {
+                retireStream(streamIndex);
+                continue;
+            }
+            state->tracker->setAcquisitionEpoch(epoch);
+            if (m_source->activate(sourceKey(streamIndex), configFor(*m_radioModel, streamIndex))) {
+                m_radioModel->setStreamNoiseFloorTracker(streamIndex, state->tracker.get());
+            }
+        }
+        // Streams added during the hold still need their first source.
+        for (SliceModel* slice : m_radioModel->slices()) {
+            if (slice && slice->streamIndex() >= 0 && !m_source->activeSources().contains(sourceKey(slice->streamIndex()))) {
+                reconcileStream(slice->streamIndex());
+            }
+        }
     }
 }
 
@@ -320,6 +348,7 @@ void DaemonAgcSource::retireStream(int streamIndex)
         return;
     }
     StreamState& state = *it->second;
+    state.heldForTransmit = false;
     invalidate(state);
     if (m_source) {
         m_source->deactivate(sourceKey(streamIndex));
@@ -418,7 +447,7 @@ void DaemonAgcSource::publishIfGood(StreamState& state)
 bool DaemonAgcSource::canReceiveFromStream(int streamIndex) const
 {
     return m_radioModel && m_radioModel->isConnected()
-        && !m_radioModel->transmitModel().isMox()
+        && !m_radioModel->autoAgcAcquisitionInhibited()
         && !m_suspendedStreams.contains(streamIndex)
         && m_radioModel->streamActive(streamIndex);
 }

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -90,6 +93,11 @@ public:
     // One frame of full-band bins, as FFTEngine::fftReady sends them: the
     // frame's size is binsDbm.size().
     void feed(const QVector<float>& binsDbm, float frameIntervalMs);
+    // NereusSDR-original AUTO acquisition metadata. Odd epochs inhibit
+    // acquisition; changing epoch holds all estimator/convergence state.
+    void setAcquisitionEpoch(quint64 epoch);
+    void feedForEpoch(const QVector<float>& binsDbm, float frameIntervalMs, quint64 epoch);
+    bool acquisitionCurrent() const noexcept { return m_acquisitionCurrent; }
     // The floor per bin at the size the frames arrive in: what is drawn on
     // the pan, and what every reader but Auto AGC-T uses.
     float noiseFloor() const noexcept { return m_lerpAverage; }
@@ -107,6 +115,8 @@ public:
     void setAttackTimeMs(float ms) { m_attackTimeMs = ms; }
 
 private:
+    quint64 m_acquisitionEpoch{0};
+    bool m_acquisitionCurrent{false};
     float m_lerpAverage{-200.0f};      // From Thetis v2.10.3.13 display.cs:4628
     float m_agcLerpAverage{-200.0f};   // NereusSDR-original: agcNoiseFloor()
     float m_attackTimeMs{2000.0f};     // From Thetis v2.10.3.13 display.cs:4638
