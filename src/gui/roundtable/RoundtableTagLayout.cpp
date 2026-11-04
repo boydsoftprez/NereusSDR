@@ -7,6 +7,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: A tag reads only its own turns; a pending card says Double from
+//               the start; a doubled summary names per endpoint; Tune's "writes
+//               nothing" rule. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-11-03: The view of another frequency (overlay design D22, D23) shares
 //               the card's frame and reading row: paintCardFrame, paintCardRow.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -520,6 +524,29 @@ struct FrequencyTruth {
     QStringList keyed;
 };
 
+// Who a doubled room's summary is about: who is keyed there now, with their slice
+// numbers. Nobody keyed in the directory yet: the summary's talkers carry no slice
+// number and may have left, so only those still listed here are named, as the
+// directory names them, once per endpoint: two of one callsign keep both (D5).
+QStringList doubledRoomNames(const QJsonObject& summary, const QJsonArray& stations, const QStringList& keyed)
+{
+    if (!keyed.isEmpty()) { return keyed; }
+    const QString id = summary.value(QStringLiteral("id")).toString();
+    QStringList unnamed;
+    for (const QJsonValue& talker : summary.value(QStringLiteral("talkers")).toArray()) {
+        unnamed.append(talker.toString());
+    }
+    QStringList names;
+    for (const QJsonValue& stationValue : stations) {
+        const QJsonObject station = stationValue.toObject();
+        if (station.value(QStringLiteral("sourceRoom")).toString() == id
+            && unnamed.removeOne(station.value(QStringLiteral("callsign")).toString())) {
+            names.append(personName(station));
+        }
+    }
+    return names;
+}
+
 // D1's directory rule, read only from the source rooms this frequency's own
 // stations sit in: a double in the room next door says nothing about this one.
 // Two keyed stations in one of them are a double; so is a summary that says so,
@@ -563,24 +590,7 @@ FrequencyTruth directoryTruth(const QJsonArray& rooms, const QJsonArray& station
         }
         const QString state = summary.value(QStringLiteral("state")).toString();
         if (state == QLatin1String("doubled")) {
-            QStringList names = keyedBySource.value(id);
-            if (names.isEmpty()) {
-                // Nobody keyed in the directory yet: the summary's talkers carry
-                // no slice number and may have left, so only those still listed
-                // here are named, as the directory names them (D5).
-                const QJsonArray talkers = summary.value(QStringLiteral("talkers")).toArray();
-                QSet<QString> named;
-                for (const QJsonValue& stationValue : stations) {
-                    const QJsonObject station = stationValue.toObject();
-                    const QString call = station.value(QStringLiteral("callsign")).toString();
-                    if (station.value(QStringLiteral("sourceRoom")).toString() == id && !named.contains(call)
-                        && talkers.contains(QJsonValue(call))) {
-                        named.insert(call);
-                        names.append(personName(station));
-                    }
-                }
-            }
-            return {QStringLiteral("doubled"), names};
+            return {QStringLiteral("doubled"), doubledRoomNames(summary, stations, keyedBySource.value(id))};
         }
         unknown = unknown || state == QLatin1String("unknown");
     }
@@ -601,6 +611,32 @@ bool viewIsPending(const QJsonObject& view)
 QJsonObject viewForFamily(const QJsonObject& view, const QString& family)
 {
     return view.value(QStringLiteral("family")).toString() == family ? view : QJsonObject();
+}
+
+// The view as one tag reads it (D1, D20). A view lists every room of the family
+// within 5 kHz: a neighbor's turn belongs on the view and the card (D3), never on
+// this tag, whose own turns are those on its exact frequency or in its stations'
+// source rooms.
+QJsonObject viewOfTag(const QJsonObject& view, const RoundtableTag& tag)
+{
+    if (view.isEmpty()) { return view; }
+    QSet<QString> sources;
+    for (const QJsonValue& station : tag.stations) {
+        sources.insert(station.toObject().value(QStringLiteral("sourceRoom")).toString());
+    }
+    QJsonObject own = view;
+    for (const QString& list : {QStringLiteral("now"), QStringLiteral("earlier")}) {
+        QJsonArray kept;
+        for (const QJsonValue& value : view.value(list).toArray()) {
+            const QJsonObject turn = value.toObject();
+            if (sources.contains(turn.value(QStringLiteral("sourceRoom")).toString())
+                || turnDistance(view, turn, tag.hz) == 0) {
+                kept.append(value);
+            }
+        }
+        own.insert(list, kept);
+    }
+    return own;
 }
 
 // What one frequency is now: its open turn when a view knows, otherwise what the
@@ -652,6 +688,13 @@ double RoundtablePeakTracker::update(const QString& sourceRoom, const QString& r
     m_rooms[sourceRoom].insert(ref, Held{turnId, dbm, nowMs});
     ++m_entries;
     return dbm;
+}
+
+bool roundtableTuneWritesNothing(qint64 hz, const QString& family, qint64 sliceHz, const QString& sliceFamily)
+{
+    // FreeDV moves the frequency only: which FreeDV mode is the operator's.
+    return hz == sliceHz
+        && (family == sliceFamily || family == QLatin1String("fdvu") || family == QLatin1String("fdvl"));
 }
 
 bool roundtableIsDouble(const QJsonObject& view, const QJsonArray& rooms, qint64 hz, const QString& family)
@@ -749,8 +792,31 @@ RoundtableCardModel roundtableCardModelFor(const RoundtableModel* model, const Q
             } else if (truth.state == QLatin1String("unknown")) {
                 card.kind = Kind::Unknown;
             } else if (!keyed.isEmpty()) {
+                // D3: the turn the stream will bring. A keyed station in a room the
+                // summary calls doubled is on that double, so the card says so from
+                // the start rather than naming one and then changing its mind.
+                const QString source = keyed.first().value(QStringLiteral("sourceRoom")).toString();
+                QStringList inSource;
+                for (const QJsonObject& station : keyed) {
+                    if (station.value(QStringLiteral("sourceRoom")).toString() == source) {
+                        inSource.append(personName(station));
+                    }
+                }
                 card.kind = Kind::Talking;
                 card.keyed = QStringList{personName(keyed.first())};
+                if (!source.isEmpty() && inSource.size() >= 2) {
+                    card.kind = Kind::Double;
+                    card.keyed = inSource;
+                }
+                for (const QJsonValue& value : model->rooms()) {
+                    const QJsonObject summary = value.toObject();
+                    if (!source.isEmpty() && summary.value(QStringLiteral("id")).toString() == source
+                        && summary.value(QStringLiteral("state")).toString() == QLatin1String("doubled")) {
+                        card.kind = Kind::Double;
+                        card.keyed = doubledRoomNames(summary, stations, inSource);
+                        break;
+                    }
+                }
             }
         }
         return card;
@@ -1211,7 +1277,7 @@ QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* model, const QList
         }
         for (RoundtableTag& tag : out) {
             const QString family = familyOfContext(tag.roomId);
-            const QJsonObject ownView = viewForFamily(model->room(tag.roomId), family);
+            const QJsonObject ownView = viewOfTag(viewForFamily(model->room(tag.roomId), family), tag);
             // D1, for every frequency, not only the active one.
             const FrequencyTruth truth = frequencyTruth(ownView, summaries, directory, tag.hz, family);
             if (truth.state == QLatin1String("doubled")) {
@@ -1234,17 +1300,21 @@ QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* model, const QList
                     && tag.reportLines.first().startsWith(QLatin1String("Talking: "))) {
                     tag.reportLines[0].replace(0, 9, QStringLiteral("Last known: "));
                 }
-                // What the tag says comes from the card, never from the text.
+                // What the tag says comes from the card, never from the text, and
+                // only while the card speaks of this tag's own turn: a card can show
+                // a neighbor's within 5 kHz (D3), and the tag then stays as it is.
                 const RoundtableCardModel card = roundtableCardModelFor(model, sliceIds, tag.roomId,
                                                                         static_cast<quint64>(tag.hz), nullptr);
-                if (card.kind == RoundtableCardModel::Kind::Double) {
+                const bool ownQuiet = truth.state == QLatin1String("quiet");
+                if (card.kind == RoundtableCardModel::Kind::Double && truth.state == QLatin1String("doubled")) {
                     tag.state = static_cast<int>(RoundtableGlyph::Doubled);
                     tag.label = QStringLiteral("Double");
                     tag.keyed = card.keyed;
-                } else if (card.kind == RoundtableCardModel::Kind::Unknown) {
+                } else if (card.kind == RoundtableCardModel::Kind::Unknown && !ownQuiet) {
                     tag.state = static_cast<int>(RoundtableGlyph::Unknown);
                     tag.label = labelOf(RoundtableGlyph::Unknown, {});
-                } else if (card.kind == RoundtableCardModel::Kind::Talking || card.kind == RoundtableCardModel::Kind::You) {
+                } else if ((card.kind == RoundtableCardModel::Kind::Talking || card.kind == RoundtableCardModel::Kind::You)
+                           && !ownQuiet) {
                     tag.state = static_cast<int>(RoundtableGlyph::Talking);
                 }
             }
@@ -2475,7 +2545,8 @@ QString roundtableViewSubText(const RoundtableViewModel& view)
 {
     const double awayKhz = (static_cast<double>(view.card.hz) - static_cast<double>(view.sliceHz)) / 1000.0;
     QString text = QStringLiteral("Viewing, not tuned");
-    if (std::abs(awayKhz) >= 0.05) {
+    // A window that controls no slice has nothing to be away from.
+    if (!view.sliceName.isEmpty() && std::abs(awayKhz) >= 0.05) {
         // The board writes a true minus sign.
         text += QStringLiteral(" · %1%2 kHz from slice %3")
                     .arg(awayKhz > 0 ? QStringLiteral("+") : QString(QChar(0x2212)))

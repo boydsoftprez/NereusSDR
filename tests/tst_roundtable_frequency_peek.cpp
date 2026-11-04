@@ -29,6 +29,7 @@
 
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
+#include "core/session/media/SpectrumEndpoint.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/roundtable/RoundtableFrequencyPeek.h"
 #include "gui/roundtable/RoundtableTagLayout.h"
@@ -521,6 +522,58 @@ private slots:
         QCOMPARE(pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).value_or(0.0), -70.0 + shift);
     }
 
+    // A remote pan's frames carry the Core's calibration already, so the trace
+    // adds no operator offset and neither does the level beside it (I1).
+    void aRemotePansLevelAddsNoOperatorOffset()
+    {
+        Pan pan;
+        pan.widget.setSpectrumDetector(SpectrumDetector::Average);
+        const quint64 viewed = 7188000;
+        QVector<float> pixels(kPixels, -120.0f);
+        pixels[static_cast<int>((viewed - 2000 - 7104000) / 1000)] = -70.0f;
+        pan.widget.setDbmCalOffset(3.0f);
+        pan.widget.setStationCalOffsetDb(20.0f);
+        pan.widget.setRenderedPixelsForTest(pixels);
+        // Local, every term counts: this is what the remote branch must not do.
+        QCOMPARE(pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).value_or(0.0), -47.0);
+        pan.widget.setRemoteSpectrumContext(SpectrumEndpointContext{}, kPanCenterHz, kPanSpanHz, 4096);
+        pan.widget.setRenderedPixelsForTest(pixels);
+        QCOMPARE(static_cast<double>(pan.widget.fftTraceShiftDbForTest()), 0.0);
+        QCOMPARE(pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).value_or(0.0), -70.0);
+    }
+
+    // D22: Tune greys when it would do nothing, and with no slice to move.
+    void tuneGreysWhenItWouldWriteNothing()
+    {
+        Pan pan;
+        pan.peek->showFor(kViewedHz, QStringLiteral("usb"), QPoint(100, 100));
+        const auto tuneEnabled = [&pan](quint64 viewedHz, const char* viewedFamily, quint64 sliceHz, const char* sliceFamily) {
+            pan.peek->showFor(viewedHz, QString::fromLatin1(viewedFamily), QPoint(100, 100));
+            pan.peek->setSlice(sliceHz, QString::fromLatin1(sliceFamily), QStringLiteral("A"));
+            RoundtableCardModel card = talker();
+            card.hz = viewedHz;
+            pan.peek->refresh(card, std::nullopt, false);
+            return pan.tune()->isEnabled();
+        };
+        QVERIFY(!tuneEnabled(7188000, "usb", 7188000, "usb"));
+        QVERIFY(tuneEnabled(7188000, "usb", 7188000, "lsb"));   // writes the mode
+        QVERIFY(tuneEnabled(7188000, "usb", 7190000, "usb"));   // moves
+        // A FreeDV view writes no mode: from another family on this frequency, nothing to do.
+        QVERIFY(!tuneEnabled(7188000, "fdvu", 7188000, "usb"));
+        QVERIFY(!tuneEnabled(7188000, "fdvl", 7188000, "lsb"));
+        QVERIFY(!tuneEnabled(7188000, "fdvl", 7188000, "fdvl"));
+        QVERIFY(tuneEnabled(7188000, "fdvu", 7190000, "usb"));
+
+        // No slice this window controls: Tune is in view, greyed, and says no letter.
+        pan.peek->showFor(7188000, QStringLiteral("usb"), QPoint(100, 100));
+        pan.peek->setSlice(0, QString(), QString());
+        pan.peek->refresh(talker(), std::nullopt, false);
+        QVERIFY(pan.tune()->isVisible());
+        QVERIFY(!pan.tune()->isEnabled());
+        QCOMPARE(pan.tune()->text(), QStringLiteral("Tune slice here"));
+        QCOMPARE(roundtableViewSubText(pan.peek->viewForTest()), QStringLiteral("Viewing, not tuned · USB"));
+    }
+
     // D7: a dropped link has no live clock, even a stopped one.
     void aFrozenViewHasNoClock()
     {
@@ -571,6 +624,7 @@ private slots:
         QTest::newRow("your-pan-blank") << QStringLiteral("your-pan-blank");
         QTest::newRow("reconnecting") << QStringLiteral("reconnecting");
         QTest::newRow("quiet") << QStringLiteral("quiet");
+        QTest::newRow("freedv-same-frequency") << QStringLiteral("freedv-same-frequency");
     }
 
     void capturesForTheBoard()
@@ -598,7 +652,9 @@ private slots:
             for (RoundtableCardPerson& person : card.onFrequency) { person.keyed = false; }
         }
         pan.peek->setPathPreferences(true, true);
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(40, 40));
+        const bool freedv = scene == QLatin1String("freedv-same-frequency");
+        if (freedv) { pan.peek->setSlice(kViewedHz, QStringLiteral("usb"), QStringLiteral("A")); }
+        pan.peek->showFor(kViewedHz, freedv ? QStringLiteral("fdvu") : QStringLiteral("lsb"), QPoint(40, 40));
         pan.peek->refresh(card, level, false);
         QImage image(pan.peek->size() + QSize(80, 80), QImage::Format_ARGB32_Premultiplied);
         image.fill(QColor(0x06, 0x07, 0x0a));

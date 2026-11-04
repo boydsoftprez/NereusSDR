@@ -1143,9 +1143,13 @@ void RoundtablePanel::updateReadTune()
     if (m_readTune == nullptr) {
         return;
     }
+    const bool noSlice = m_sliceId < 0;
+    m_readTune->setText(noSlice ? QStringLiteral("Tune here")
+                                : QStringLiteral("Tune %1 here").arg(QChar(u'A' + std::clamp(m_sliceId, 0, 25))));
+    const QString id = roomId();
     const bool alreadyThere = !m_sliceFamily.isEmpty() && m_sliceHz > 0
-        && roomId() == RoundtableModel::frequencyContextId(m_sliceHz, m_sliceFamily);
-    m_readTune->setEnabled(m_tuneAllowed && !alreadyThere);
+        && roundtableTuneWritesNothing(roomHz(id), roomFamily(id), m_sliceHz, m_sliceFamily);
+    m_readTune->setEnabled(m_tuneAllowed && !noSlice && !alreadyThere);
 }
 
 void RoundtablePanel::backToSlice()

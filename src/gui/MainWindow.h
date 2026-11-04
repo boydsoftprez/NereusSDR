@@ -2295,6 +2295,9 @@ private:
     // appeared for the new slice and operators had no way to interact
     // with it.
     QHash<int, class VfoWidget*> m_vfoWidgetsBySlice;
+    // Each flag's destroyed connection takes this as its receiver. Declared after
+    // the map, so it lets go first: QWidget deletes the flags after the members.
+    QObject m_vfoFlagLifetime;
 
     // Applets (Phase 3-UI)
     class AmpApplet*   m_ampApplet{nullptr};

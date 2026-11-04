@@ -2883,6 +2883,12 @@ public:
     const QString& roundtableViewedRoom() const { return m_roundtableViewedRoom; }
     /// The active slice's letter, for "Tune slice A here".
     void setRoundtableActiveSliceName(const QString& name) { m_roundtableSliceName = name; }
+    /// Tune's words. Empty name: this window controls no slice, and Tune is greyed.
+    QString roundtableTuneText() const
+    {
+        return m_roundtableSliceName.isEmpty() ? QStringLiteral("Tune slice here")
+                                               : QStringLiteral("Tune slice %1 here").arg(m_roundtableSliceName);
+    }
     /// Your own card's menu (overlay design D25): Read reports, Signal and Tune.
     /// `alreadyThere` greys Tune as keying does.
     void buildRoundtableCardMenu(const QString& room, qint64 hz, bool alreadyThere, QMenu& menu);

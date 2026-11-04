@@ -340,6 +340,12 @@ private:
 NEREUS_GUI_EXPORT bool roundtableIsDouble(const QJsonObject& view, const QJsonArray& rooms, qint64 hz,
                                           const QString& family);
 
+/// Whether a Tune to `hz` in `family` would do nothing for a slice at `sliceHz` in
+/// `sliceFamily` (D22): already there, and no mode to write. A FreeDV view writes
+/// no mode, so it counts as there from any family on the same frequency.
+NEREUS_GUI_EXPORT bool roundtableTuneWritesNothing(qint64 hz, const QString& family, qint64 sliceHz,
+                                                   const QString& sliceFamily);
+
 /// The card for frequency `hz`, read from `model`'s view of `activeContext`
 /// (with no context, the room of the first of `sliceIds`) and its directory.
 /// `peaks` may be null: rows then have no peak.

@@ -1669,8 +1669,24 @@ private slots:
         QVERIFY(!panelTune->isEnabled());
         panelTune->click();
         QCOMPARE(std::llround(slice->frequency()), 14200000LL);
+        // Unkeying shows nothing held from the key: the level the pan showed while
+        // keyed is gone at once, not shown for a tick and fed to the peak.
+        pan->setRenderedPixelsForTest(QVector<float>(193, -20.0f));
+        QTest::qWait(2 * peekTimer->interval() + 50);
+        bool sawUnkey = false;
+        std::optional<double> panAtUnkey;
+        const QMetaObject::Connection unkeyProbe = connect(p.model(), &RadioModel::transmittingChanged, this,
+            [&](bool transmitting) {
+                if (!transmitting && !sawUnkey) {
+                    sawUnkey = true;
+                    panAtUnkey = peek()->viewForTest().panDbm;
+                }
+            });
         mox->setMox(false);
         QTRY_VERIFY_WITH_TIMEOUT(!p.model()->isTransmitting(), kWaitMs);
+        disconnect(unkeyProbe);
+        QVERIFY(sawUnkey);
+        QVERIFY2(!panAtUnkey.has_value(), qPrintable(QString::number(panAtUnkey.value_or(0.0))));
         QTRY_VERIFY_WITH_TIMEOUT(button("roundtablePeekTune")->isEnabled(), kWaitMs);
         QVERIFY(panelTune->isEnabled());
         // With no radio there is nothing to tune, whatever Roundtable's link says.
@@ -1781,11 +1797,9 @@ private slots:
         SpectrumWidget* pan = stack->spectrum(QStringLiteral("pan-going"));
         QVERIFY(pan != nullptr);
         settle();
-        // A new pan takes a slice with it. As a layout change does, its slices go
-        // home first, so the pan that goes holds no flag.
-        for (SliceModel* each : p.model()->slices()) { each->setPanKey(QStringLiteral("pan-0")); }
-        settle();
-        for (VfoWidget* flag : pan->findChildren<VfoWidget*>()) { QFAIL(qPrintable(flag->objectName())); }
+        // A new pan takes a slice with it, and the pan goes with its flag still on
+        // it: the window must not be left holding the dead flag.
+        QVERIFY(!pan->findChildren<VfoWidget*>().isEmpty());
         emit pan->roundtableReadRequested(viewed);
         QPointer<RoundtableFrequencyPeek> peek = pan->findChild<RoundtableFrequencyPeek*>();
         QVERIFY(peek && peek->isOpen());
@@ -1798,6 +1812,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!peekTimer->isActive(), kWaitMs);
         QVERIFY(!applet->panel()->isReading());
         QCOMPARE(std::llround(slice->frequency()), 14200000LL);
+        // The next refresh walks the window's flags: this crashed on the dead one.
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+        settle();
         model->detach();
     }
 
@@ -1907,6 +1924,181 @@ private slots:
         QCOMPARE(std::llround(a->frequency()), 14200000LL);
         QCOMPARE(std::llround(b->frequency()), 14230000LL);
         peek()->closePeek();
+
+        model->detach();
+        window.setDesktopStationController(nullptr);
+    }
+
+    // A hosting window whose phone holds transmit and chose its own slice: the
+    // radio's active slice is the phone's. The panel's label, its stream and Tune
+    // follow this window's own slice, and it never moves a slice it does not control.
+    void aHostingWindowFollowsItsOwnSliceAndNeverThePhones()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        AppSettings::instance().setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* radio = window.radioModel();
+        radio->setBoardForTest(HPSDRHW::Saturn);
+        radio->configureStreamPool(5, 5, 192000);
+        radio->setConnectionStateForTest(ConnectionState::Connected);
+        const int aId = radio->addSlice(QStringLiteral("pan-0"));
+        const int bId = radio->addSlice(QStringLiteral("pan-0"));
+        const int cId = radio->addSlice(QStringLiteral("pan-0"));
+        SliceModel* a = radio->sliceById(aId);
+        SliceModel* b = radio->sliceById(bId);
+        SliceModel* c = radio->sliceById(cId);
+        QVERIFY(a && b && c);
+        for (SliceModel* slice : {a, b, c}) { slice->setDspMode(DSPMode::USB); }
+        a->setFrequency(14200000);
+        b->setFrequency(14230000);
+        c->setFrequency(14210000);
+        window.resize(1512, 869);
+        window.show();
+        StationHostOptions options;
+        options.settings = &settings;
+        options.securityDirectory = directory.path();
+        options.hostingDevice = StationHostOptions::HostingDevice{QStringLiteral("Shack Mac mini"), QStringLiteral("Shack")};
+        options.remoteBind = QStringLiteral("127.0.0.1");
+        options.statusPage = false;
+        options.remotePort = unusedLoopbackPort();
+        DesktopStationController controller(radio, options);
+        window.setDesktopStationController(&controller);
+        QVERIFY(controller.start(true));
+        ReadingLink link;
+        RoundtableState state;
+        RoundtableModel* model = radio->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        const QString viewed = RoundtableModel::frequencyContextId(14188600, QStringLiteral("usb"));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{QJsonObject{{"id", "usb-14188600"},
+            {"stations", QJsonArray{QJsonObject{{"sourceRoom", "usb-14188600"}, {"ref", "q"}, {"callsign", "W2ABC"},
+                {"hz", 14188600}, {"family", "usb"}, {"keyed", false}}}}}}}});
+
+        SliceOwnership* ownership = radio->sliceOwnership();
+        const QByteArray phone = QByteArrayLiteral("token:phone");
+        const QByteArray station = SliceOwnership::stationDevice();
+        QVERIFY(radio->setActiveRxFor(station, aId));
+        ownership->setOwner(bId, phone);
+        QVERIFY(radio->setActiveSliceByIdFor(phone, bId));
+        radio->setTransmitHolder(phone);
+        settle();
+        QCOMPARE(radio->activeSlice(), b);
+        QCOMPARE(ownership->activeFor(station), aId);
+
+        SpectrumWidget* pan = panOf(&window);
+        RoundtableApplet* applet = appletOf(&window);
+        QVERIFY(pan && applet);
+        RoundtablePanel* panel = applet->panel();
+        pan->setFrequencyRange(14200000.0, kPanSpanHz);
+        settle();
+        const auto contextOf = [](const SliceModel* slice) {
+            return RoundtableModel::frequencyContextId(std::llround(slice->frequency()), QStringLiteral("usb"));
+        };
+
+        // The stream, the card and the flag are A's.
+        QCOMPARE(panel->roomId(), contextOf(a));
+        QVERIFY(link.reads.contains(QStringLiteral("usb-14200000")));
+        QVERIFY(!link.reads.contains(QStringLiteral("usb-14230000")));
+        QCOMPARE(model->readingRoomId(), contextOf(a));
+
+        // Moving the phone's slice is not this window's news.
+        b->setFrequency(14231000);
+        settle();
+        QCOMPARE(panel->roomId(), contextOf(a));
+
+        const auto clickTag = [&]() {
+            QImage image(pan->size(), QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            {
+                QPainter painter(&image);
+                pan->drawRoundtableTagsForTest(painter, pan->roundtableTagSpectrumRectForTest());
+            }
+            for (const SpectrumWidget::RoundtableTagHit& hit : pan->roundtableTagHitsForTest()) {
+                if (hit.roomIds.contains(viewed)) {
+                    QTest::mouseClick(pan, Qt::LeftButton, Qt::NoModifier, hit.rect.center());
+                    return true;
+                }
+            }
+            return false;
+        };
+        const auto peek = [&]() { return pan->findChild<RoundtableFrequencyPeek*>(); };
+        const auto tuneButton = [&]() { return peek()->findChild<QPushButton*>(QStringLiteral("roundtablePeekTune")); };
+
+        // The view's label names A, and Tune moves A, not the phone's slice.
+        QVERIFY(clickTag());
+        QVERIFY(peek() != nullptr && peek()->isOpen());
+        QCOMPARE(tuneButton()->text(), QStringLiteral("Tune slice A here"));
+        auto* panelTune = panel->findChild<QPushButton*>(QStringLiteral("roundtableTuneHereBtn"));
+        QVERIFY(panelTune != nullptr);
+        QCOMPARE(panelTune->text(), QStringLiteral("Tune A here"));
+        QTRY_VERIFY_WITH_TIMEOUT(tuneButton()->isEnabled(), kWaitMs);
+        tuneButton()->click();
+        settle();
+        QCOMPARE(std::llround(a->frequency()), 14188600LL);
+        QCOMPARE(std::llround(b->frequency()), 14231000LL);
+        a->setFrequency(14200000);
+        settle();
+
+        // This station picks C while the phone holds transmit: the station-level
+        // active slice does not change, so activeSliceChanged stays silent.
+        QSignalSpy radioActive(radio, &RadioModel::activeSliceChanged);
+        QVERIFY(radio->setActiveRxFor(station, cId));
+        settle();
+        QCOMPARE(radioActive.count(), 0);
+        QCOMPARE(radio->activeSlice(), b);
+        QCOMPARE(panel->roomId(), contextOf(c));
+        QCOMPARE(model->readingRoomId(), contextOf(c));
+        QVERIFY(clickTag());
+        QVERIFY(peek()->isOpen());
+        QTRY_COMPARE_WITH_TIMEOUT(tuneButton()->text(), QStringLiteral("Tune slice C here"), kWaitMs);
+        QCOMPARE(panelTune->text(), QStringLiteral("Tune C here"));
+        tuneButton()->click();
+        settle();
+        QCOMPARE(std::llround(c->frequency()), 14188600LL);
+        QCOMPARE(std::llround(a->frequency()), 14200000LL);
+        QCOMPARE(std::llround(b->frequency()), 14231000LL);
+        c->setFrequency(14210000);
+        settle();
+
+        // This window controls no slice now: the panel follows nothing, a tag still
+        // views, and Tune stays in view, greyed. Nothing moves and nothing is selected.
+        ownership->setOwner(aId, phone);
+        ownership->setOwner(cId, phone);
+        settle();
+        QCOMPARE(ownership->activeFor(station), -1);
+        QVERIFY(clickTag());
+        QVERIFY(peek() != nullptr && peek()->isOpen());
+        QCOMPARE(peek()->hz(), quint64(14188600));
+        QTRY_COMPARE_WITH_TIMEOUT(tuneButton()->text(), QStringLiteral("Tune slice here"), kWaitMs);
+        QVERIFY(tuneButton()->isVisible());
+        QVERIFY(!tuneButton()->isEnabled());
+        QCOMPARE(panelTune->text(), QStringLiteral("Tune here"));
+        QVERIFY(!panelTune->isEnabled());
+        QVERIFY(!roundtableViewSubText(peek()->viewForTest()).contains(QStringLiteral("from slice")));
+        const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_CAPTURE_DIR");
+        if (!captures.isEmpty()) {
+            settle();
+            QVERIFY(window.grab().save(captures + QStringLiteral("/no-slice-view-tune-disabled.png")));
+        }
+        applet->tuneToRoom(viewed);
+        settle();
+        QVERIFY(peek()->isOpen());
+        const qint64 aHz = std::llround(a->frequency());
+        const qint64 cHz = std::llround(c->frequency());
+        // A flag line of another slice views too, rather than selecting it.
+        if (VfoWidget* flag = flagFor(&window, bId); flag != nullptr && flag->roundtableLineButtonForTest() != nullptr) {
+            flag->roundtableLineButtonForTest()->click();
+            settle();
+        }
+        QCOMPARE(ownership->activeFor(station), -1);
+        QCOMPARE(std::llround(a->frequency()), aHz);
+        QCOMPARE(std::llround(b->frequency()), 14231000LL);
+        QCOMPARE(std::llround(c->frequency()), cHz);
+        if (peek() != nullptr) { peek()->closePeek(); }
 
         model->detach();
         window.setDesktopStationController(nullptr);

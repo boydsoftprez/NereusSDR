@@ -3281,6 +3281,8 @@ void MainWindow::refreshDesktopStationState()
     // that pan retirement may already have destroyed during shutdown.
     if (m_shuttingDown) { return; }
     if (!m_radioModel || m_radioModel->role() != RadioModel::Role::Local) { return; }
+    // Hosting starting or stopping changes which slice is this window's.
+    if (m_roundtableApplet) { m_roundtableApplet->syncFromModel(); }
     const quint64 bindingGeneration = m_desktopBindingGeneration;
     const bool hosting = desktopHosting();
     StationServer* server = hosting ? m_desktopStationController->server() : nullptr;
@@ -5596,6 +5598,15 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
     if (!newFlag) { return nullptr; }
     m_vfoWidgetsBySlice.insert(sliceIndex, newFlag);
+    // A flag can die with its pan while its entry remains: the map never holds a
+    // dead flag. m_vfoFlagLifetime goes before the map and before the children,
+    // so this never runs on the map once it is gone (see ~MainWindow's toasts).
+    connect(newFlag, &QObject::destroyed, &m_vfoFlagLifetime, [this, sliceIndex, newFlag]() {
+        const auto entry = m_vfoWidgetsBySlice.constFind(sliceIndex);
+        if (entry != m_vfoWidgetsBySlice.constEnd() && entry.value() == newFlag) {
+            m_vfoWidgetsBySlice.remove(sliceIndex);
+        }
+    });
 
     // Initial slice state push so the flag paints the right freq/mode/filter
     // on first show (mirrors wireSliceToSpectrum for Slice A).
@@ -6901,6 +6912,8 @@ constexpr int kRoundtablePeekRefreshMs = 200;
 
 void MainWindow::refreshRoundtableTags()
 {
+    // Pan retirement may already have destroyed the flags and pans this reads.
+    if (m_shuttingDown) { return; }
     if (!m_panStack || !m_radioModel) { return; }
     const RoundtableModel* roundtable = m_radioModel->roundtableModel();
     QList<int> sliceIds;
@@ -6941,7 +6954,7 @@ void MainWindow::refreshRoundtableTags()
             sw->setRoundtableTags(tags, display);
             const bool hosts = active && sw->vfoWidget(active->sliceIndex()) != nullptr;
             sw->setRoundtableCard(hosts ? card : RoundtableCardModel{}, activeContext);
-            if (active) { sw->setRoundtableActiveSliceName(QString(active->sliceLetter())); }
+            sw->setRoundtableActiveSliceName(active ? QString(active->sliceLetter()) : QString());
         }
     }
     refreshRoundtablePeek();
@@ -6950,15 +6963,16 @@ void MainWindow::refreshRoundtableTags()
 bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& context)
 {
     RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
+    // A window that controls no slice still views (active is null): Tune greys.
     const SliceModel* active = activeSliceForWindow();
-    if (!pan || !panel || !active) { return false; }
+    if (!pan || !panel) { return false; }
     const QString address = context.mid(QStringLiteral("frequency:").size());
     const qsizetype dash = address.indexOf(QLatin1Char('-'));
     if (dash <= 0) { return false; }
     const QString family = address.left(dash);
     const qint64 hz = address.mid(dash + 1).toLongLong();
     const QString activeFamily = familyOfSlice(active);
-    if (!activeFamily.isEmpty()
+    if (active && !activeFamily.isEmpty()
         && context == RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily)) {
         closeRoundtablePeek();
         return false;
@@ -7023,7 +7037,9 @@ bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& con
 void MainWindow::sampleRoundtablePeekPan()
 {
     const auto* pan = m_roundtablePeek ? qobject_cast<const SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr;
-    m_roundtablePeekPanDbm = pan && m_roundtablePeek->isOpen()
+    // Keyed, a pan with no overlay still has a level, and it is not one to come
+    // back to: holding it would show it on unkey and latch the peak tick.
+    m_roundtablePeekPanDbm = pan && m_roundtablePeek->isOpen() && !(m_radioModel && m_radioModel->isTransmitting())
         ? pan->roundtablePanLevel(m_roundtablePeek->hz(), m_roundtablePeek->family()) : std::nullopt;
     refreshRoundtablePeek();
 }
@@ -7038,16 +7054,16 @@ void MainWindow::refreshRoundtablePeek()
     if (!m_roundtablePeek->isOpen()) { return; }
     const RoundtableModel* roundtable = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
     const SliceModel* active = activeSliceForWindow();
-    if (!roundtable || !active) {
+    if (!roundtable) {
         closeRoundtablePeek();
         return;
     }
     const quint64 hz = m_roundtablePeek->hz();
     const QString family = m_roundtablePeek->family();
-    const qint64 activeHz = std::llround(active->frequency());
+    const qint64 activeHz = active ? std::llround(active->frequency()) : 0;
     const QString activeFamily = familyOfSlice(active);
     // Your slice moved onto the viewed frequency: the card takes over.
-    if (activeHz == static_cast<qint64>(hz) && activeFamily == family) {
+    if (active && activeHz == static_cast<qint64>(hz) && activeFamily == family) {
         closeRoundtablePeek();
         return;
     }
@@ -7055,7 +7071,7 @@ void MainWindow::refreshRoundtablePeek()
     for (SliceModel* slice : m_radioModel->slices()) {
         if (slice) { sliceIds.append(slice->sliceIndex()); }
     }
-    m_roundtablePeek->setSlice(static_cast<quint64>(activeHz), activeFamily, QString(active->sliceLetter()));
+    m_roundtablePeek->setSlice(static_cast<quint64>(activeHz), activeFamily, active ? QString(active->sliceLetter()) : QString());
     m_roundtablePeek->setPathPreferences(
         roundtable->stationSetting(QStringLiteral("DistanceUnits")) != QLatin1String("km"),
         roundtable->stationSetting(QStringLiteral("ShowBearing")) != QLatin1String("False"));
@@ -7097,7 +7113,7 @@ void MainWindow::openRoundtableForSlice(int sliceId)
     // This window's own slice: a hosted window selects for itself, whichever
     // slice the radio's other devices have active.
     const SliceModel* active = activeSliceForWindow();
-    if (roundtable && roundtable->frequencyAvailable() && active && active->sliceIndex() != sliceId) {
+    if (roundtable && roundtable->frequencyAvailable() && (!active || active->sliceIndex() != sliceId)) {
         SliceModel* other = m_radioModel->sliceById(sliceId);
         const QString family = familyOfSlice(other);
         if (other && !family.isEmpty()) {
@@ -7108,6 +7124,12 @@ void MainWindow::openRoundtableForSlice(int sliceId)
             }
             const QString context = RoundtableModel::frequencyContextId(std::llround(other->frequency()), family);
             if (!viewRoundtableFrequency(pan, context)) { showRoundtablePanel(); }
+            return;
+        }
+        // No slice of this window's to view from, and nothing here to view: a line
+        // never selects a slice for a window that controls none.
+        if (!active) {
+            showRoundtablePanel();
             return;
         }
     }
@@ -12194,6 +12216,18 @@ void MainWindow::populateDefaultMeter()
     // Roundtable tab.
     m_roundtableApplet = new RoundtableApplet(m_radioModel);
     panel->addApplet(m_roundtableApplet);
+    // This window's own slice, so the label, the stream and Tune agree and a hosting
+    // window never moves a slice another device controls. activeSliceChanged is not
+    // enough: it stays silent when only this station's choice changes while a phone
+    // holds transmit, and every change of an owner's choice fires activeChanged.
+    m_roundtableApplet->setSliceSource([this]() { return activeSliceForWindow(); });
+    if (SliceOwnership* ownership = m_radioModel->sliceOwnership()) {
+        connect(ownership, &SliceOwnership::activeChanged, this, [this]() {
+            if (m_shuttingDown) { return; }
+            m_roundtableApplet->syncFromModel();
+            refreshRoundtableTagsImmediately();
+        });
+    }
     // Roundtable plan Task 14 (design 11.2): the tags on every pan follow
     // the band list, the link, the slices' rooms and mentions of you.
     if (RoundtableModel* roundtable = m_radioModel->roundtableModel()) {

@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: Tune greys when it would write nothing, and with no slice.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: original implementation for NereusSDR by J.J. Boyd (KG4VCF),
 //               with AI-assisted implementation via Anthropic Claude Code
 //               (overlay redesign).
@@ -189,9 +191,12 @@ void RoundtableFrequencyPeek::closePeek()
 
 void RoundtableFrequencyPeek::updateTuneButton()
 {
-    m_tune->setText(QStringLiteral("Tune slice %1 here").arg(m_view.sliceName));
-    const bool alreadyThere = m_view.card.hz == m_view.sliceHz && m_view.family == m_view.sliceFamily;
-    m_tune->setEnabled(!m_keyed && !alreadyThere);
+    // With no slice this window controls, Tune stays in view and greyed.
+    const bool noSlice = m_view.sliceName.isEmpty();
+    m_tune->setText(noSlice ? QStringLiteral("Tune slice here") : QStringLiteral("Tune slice %1 here").arg(m_view.sliceName));
+    const bool alreadyThere = roundtableTuneWritesNothing(static_cast<qint64>(m_view.card.hz), m_view.family,
+                                                          static_cast<qint64>(m_view.sliceHz), m_view.sliceFamily);
+    m_tune->setEnabled(!m_keyed && !noSlice && !alreadyThere);
 }
 
 void RoundtableFrequencyPeek::fitToContents()

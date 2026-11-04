@@ -68,6 +68,7 @@
 #define private public
 #include "gui/SpectrumWidget.h"
 #undef private
+#include "gui/roundtable/RoundtableFrequencyPeek.h"
 #include "gui/roundtable/RoundtableTagLayout.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/VfoWidget.h"
@@ -1982,13 +1983,140 @@ private slots:
         QCOMPARE(onPan.at(1).mergedHz, QList<qint64>{7203040});
         QCOMPARE(onPan.at(1).keyed, (QStringList{QStringLiteral("W1AW"), QStringLiteral("K4ABC")}));
 
-        QVERIFY(rig.card(7200000).kind != RoundtableCardModel::Kind::Double);
+        // The card reads by D3, within 5 kHz: the tag above stays quiet (see below).
+        QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Double);
         QCOMPARE(rig.card(7203000).kind, RoundtableCardModel::Kind::Double);
         QVERIFY(roundtableFlagLineFor(&rig.model, 0, 7200000, QStringLiteral("lsb")).glyph
                 != static_cast<int>(RoundtableGlyph::Doubled));
         const QJsonArray rooms = rig.model.rooms();
         QVERIFY(!roundtableIsDouble({}, rooms, 7200000, QStringLiteral("lsb")));
         QVERIFY(roundtableIsDouble({}, rooms, 7203000, QStringLiteral("lsb")));
+    }
+
+    // Clicking quiet tag Q opens a view that holds the double 3 kHz away. The view
+    // and card say Double (D3), Q's tag stays quiet, and one double is one tag
+    // (D1, D20), whether Q is only viewed or is your slice's own frequency.
+    void aViewedQuietTagNextToADoubleStaysQuietAndOneTagSaysDouble()
+    {
+        CardRig rig;
+        const QJsonObject q = cardPerson("lsb-7200000", "q", "W2QQQ", 7200000, false);
+        const QJsonObject a = cardPerson("lsb-7203000", "a", "W1AW", 7203000, true);
+        const QJsonObject b = cardPerson("lsb-7203000", "b", "K4ABC", 7203040, true);
+        rig.rooms(QJsonArray{
+            QJsonObject{{"id", "lsb-7200000"}, {"family", "lsb"}, {"state", "quiet"}, {"stations", QJsonArray{q}}},
+            QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "doubled"},
+                {"talkers", QJsonArray{"W1AW", "K4ABC"}}, {"stations", QJsonArray{a, b}}}});
+        const QString context = RoundtableModel::frequencyContextId(7200000, QStringLiteral("lsb"));
+        QVERIFY(rig.model.readAt(7200000, QStringLiteral("lsb")));
+        rig.view(7200000, {cardTurn(5, "doubled", 7203000, "lsb-7203000", 100, {a, b})}, {}, {q, a, b});
+        QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Double);
+        QCOMPARE(rig.card(7200000).keyed, (QStringList{QStringLiteral("W1AW"), QStringLiteral("K4ABC")}));
+        for (const QString& active : {QString(), context}) {
+            const QList<RoundtableTag> onPan = roundtableMergeDoubleTags(roundtableTagsFor(&rig.model, {}, active));
+            QCOMPARE(onPan.size(), qsizetype(2));
+            QCOMPARE(onPan.at(0).hz, qint64(7200000));
+            QCOMPARE(onPan.at(0).state, static_cast<int>(RoundtableGlyph::Quiet));
+            QCOMPARE(onPan.at(0).label, QStringLiteral("W2QQQ"));
+            QVERIFY(onPan.at(0).keyed.isEmpty());
+            QCOMPARE(onPan.at(1).state, static_cast<int>(RoundtableGlyph::Doubled));
+            QCOMPARE(onPan.at(1).mergedHz, QList<qint64>{7203040});
+        }
+        const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_CARD_CAPTURES");
+        if (!captures.isEmpty()) {
+            Pan pan;
+            pan.widget.setRoundtableTags(roundtableTagsFor(&rig.model, {}), RoundtableTagDisplay::Live);
+            const QImage shot = pan.draw();
+            const QRect tagsRow = pan.widget.roundtableTagSpectrumRectForTest();
+            QVERIFY(shot.copy(QRect(380, tagsRow.bottom() - 110, 460, 120)).save(captures + QStringLiteral("/viewed-quiet-next-to-double.png")));
+        }
+        // A talker next door is the same: the card names them, the tag stays quiet.
+        rig.view(7200000, {cardTurn(6, "talking", 7203000, "lsb-7203000", 100, {a})}, {}, {q, a});
+        QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Talking);
+        const QList<RoundtableTag> talking = roundtableTagsFor(&rig.model, {}, context);
+        QCOMPARE(talking.first().state, static_cast<int>(RoundtableGlyph::Quiet));
+        // Q's own room doubling is its own news.
+        const QJsonObject k = cardPerson("lsb-7200000", "k", "N3XYZ", 7200020, true);
+        rig.view(7200000, {cardTurn(7, "doubled", 7200000, "lsb-7200000", 100, {k, q})}, {}, {k, q});
+        QCOMPARE(roundtableTagsFor(&rig.model, {}, context).first().state, static_cast<int>(RoundtableGlyph::Doubled));
+    }
+
+    // D3 before the stream arrives: the chosen keyed station's room is doubled, so
+    // the card says Double with its names from the start, and does not flip. Tags
+    // stay under the source-room rule.
+    void aPendingCardNextToADoubleSaysDoubleFromTheStart()
+    {
+        CardRig rig;
+        const QJsonObject q = cardPerson("lsb-7200000", "q", "W2QQQ", 7200000, false);
+        const QJsonObject a = cardPerson("lsb-7203000", "a", "W1AW", 7203000, true);
+        const QJsonObject b = cardPerson("lsb-7203000", "b", "K4ABC", 7203040, true);
+        const QJsonObject quietRoom{{"id", "lsb-7200000"}, {"family", "lsb"}, {"state", "quiet"}, {"stations", QJsonArray{q}}};
+        rig.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "doubled"},
+            {"talkers", QJsonArray{"W1AW", "K4ABC"}}, {"stations", QJsonArray{a, b}}}});
+        QVERIFY(rig.model.readAt(7200000, QStringLiteral("lsb")));
+        const RoundtableCardModel pending = rig.card(7200000);
+        QCOMPARE(pending.kind, RoundtableCardModel::Kind::Double);
+        QCOMPARE(pending.keyed, (QStringList{QStringLiteral("W1AW"), QStringLiteral("K4ABC")}));
+        const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_CARD_CAPTURES");
+        if (!captures.isEmpty()) {
+            Pan pan;
+            pan.widget.setUpdatesEnabled(true);
+            RoundtableFrequencyPeek peek(&pan.widget);
+            peek.setSlice(7188600, QStringLiteral("lsb"), QStringLiteral("A"));
+            peek.showFor(7200000, QStringLiteral("lsb"), QPoint(40, 40));
+            peek.refresh(pending, std::nullopt, false);
+            QVERIFY(peek.grab().save(captures + QStringLiteral("/pending-view-next-to-double.png")));
+        }
+        const QList<RoundtableTag> tags = roundtableTagsFor(&rig.model, {});
+        QCOMPARE(tags.first().state, static_cast<int>(RoundtableGlyph::Quiet));
+        // One left of it: still that double, naming who is on it.
+        rig.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "doubled"},
+            {"talkers", QJsonArray{"W1AW", "GONE"}}, {"stations", QJsonArray{a}}}});
+        QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Double);
+        QCOMPARE(rig.card(7200000).keyed, QStringList{QStringLiteral("W1AW")});
+        // A room that is not doubled: one talker, named.
+        rig.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "talking"},
+            {"talkers", QJsonArray{"W1AW"}}, {"stations", QJsonArray{a}}}});
+        QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Talking);
+        QCOMPARE(rig.card(7200000).keyed, QStringList{QStringLiteral("W1AW")});
+        // Two keyed in one source room are a double before its summary says so (D1).
+        rig.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "talking"},
+            {"talkers", QJsonArray{"W1AW"}}, {"stations", QJsonArray{a, b}}}});
+        QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Double);
+        // Two keyed merely near each other, in different rooms, are not.
+        QJsonObject elsewhere = b;
+        elsewhere.insert("sourceRoom", "lsb-7204000");
+        rig.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "talking"},
+                                 {"talkers", QJsonArray{"W1AW"}}, {"stations", QJsonArray{a}}},
+                             QJsonObject{{"id", "lsb-7204000"}, {"family", "lsb"}, {"state", "talking"},
+                                 {"talkers", QJsonArray{"K4ABC"}}, {"stations", QJsonArray{elsewhere}}}});
+        QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Talking);
+    }
+
+    // One callsign on two slices doubling itself keeps both names with their
+    // numbers: a summary's talkers are per endpoint, and so are its names.
+    void aDoubledSummaryNamesEachEndpointOfOneCallsign()
+    {
+        CardRig rig;
+        QJsonObject second = cardPerson("lsb-7184000", "k2", "K4ABC", 7185000, false);
+        second.insert("nth", 2);
+        const QJsonObject first = cardPerson("lsb-7184000", "k1", "K4ABC", 7185000, false);
+        rig.rooms(QJsonArray{QJsonObject{{"id", "lsb-7184000"}, {"family", "lsb"}, {"state", "doubled"},
+            {"talkers", QJsonArray{"K4ABC", "K4ABC", "N0GONE"}}, {"stations", QJsonArray{second, first}}}});
+        const QStringList both{QStringLiteral("K4ABC (2)"), QStringLiteral("K4ABC")};
+        QCOMPARE(roundtableTagsFor(&rig.model, {}).first().keyed, both);
+        QCOMPARE(rig.card(7185000).keyed, both);
+        // One talker of the two: only as many names as the summary has endpoints.
+        rig.rooms(QJsonArray{QJsonObject{{"id", "lsb-7184000"}, {"family", "lsb"}, {"state", "doubled"},
+            {"talkers", QJsonArray{"K4ABC", "N0GONE"}}, {"stations", QJsonArray{second, first}}}});
+        QCOMPARE(roundtableTagsFor(&rig.model, {}).first().keyed, QStringList{QStringLiteral("K4ABC (2)")});
+        // Keyed, each with its number.
+        QJsonObject keyedSecond = second;
+        keyedSecond.insert("keyed", true);
+        QJsonObject keyedFirst = first;
+        keyedFirst.insert("keyed", true);
+        rig.rooms(QJsonArray{QJsonObject{{"id", "lsb-7184000"}, {"family", "lsb"}, {"state", "doubled"},
+            {"talkers", QJsonArray{"K4ABC", "K4ABC"}}, {"stations", QJsonArray{keyedSecond, keyedFirst}}}});
+        QCOMPARE(rig.card(7185000).keyed, both);
     }
 
     // Ruling I4a and D5: one participant left, the turn is still doubled, and only

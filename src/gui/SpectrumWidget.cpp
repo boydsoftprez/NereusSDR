@@ -13227,8 +13227,8 @@ void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, boo
     });
     signal->setObjectName(QStringLiteral("roundtableMenuSignal"));
 
-    const bool canTune = !roundtableKeyed() && !room.isEmpty() && !alreadyThere;
-    QAction* tune = menu.addAction(QStringLiteral("Tune slice %1 here").arg(m_roundtableSliceName), this, [this, room]() {
+    const bool canTune = !roundtableKeyed() && !room.isEmpty() && !alreadyThere && !m_roundtableSliceName.isEmpty();
+    QAction* tune = menu.addAction(roundtableTuneText(), this, [this, room]() {
         if (!roundtableKeyed() && !room.isEmpty()) { emit roundtableRoomClicked(room); }
     });
     tune->setObjectName(QStringLiteral("roundtableMenuTune"));
@@ -13303,8 +13303,8 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
             }
             details->addAction(QStringLiteral("Read this frequency"), this,
                                [this, id]() { emit roundtableReadRequested(id); });
-            const bool canTune = !roundtableKeyed() && !tag.active;
-            QAction* tune = details->addAction(QStringLiteral("Tune slice %1 here").arg(m_roundtableSliceName), this,
+            const bool canTune = !roundtableKeyed() && !tag.active && !m_roundtableSliceName.isEmpty();
+            QAction* tune = details->addAction(roundtableTuneText(), this,
                                [this, id]() { if (!roundtableKeyed()) { emit roundtableRoomClicked(id); } });
             tune->setEnabled(canTune);
             continue;
@@ -13322,9 +13322,9 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
             }
             details->addAction(QStringLiteral("Read this frequency"), this,
                                [this, id]() { emit roundtableReadRequested(id); });
-            QAction* tune = details->addAction(QStringLiteral("Tune slice %1 here").arg(m_roundtableSliceName), this,
+            QAction* tune = details->addAction(roundtableTuneText(), this,
                                [this, id]() { if (!roundtableKeyed()) { emit roundtableRoomClicked(id); } });
-            tune->setEnabled(!roundtableKeyed());
+            tune->setEnabled(!roundtableKeyed() && !m_roundtableSliceName.isEmpty());
             continue;
         }
         QAction* row = menu.addAction(QIcon(glyph), text);
