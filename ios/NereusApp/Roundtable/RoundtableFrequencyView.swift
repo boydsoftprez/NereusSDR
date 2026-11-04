@@ -4,7 +4,10 @@
 // Modification history (NereusSDR):
 // 2026-11-03: Overlay redesign design D21 to D29.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: Tune is off when it would write nothing, or when no mode reaches the family.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
+import NereusModels
 import SwiftUI
 
 /// The words and rules of a frequency view, apart from any view (overlay design D22).
@@ -73,9 +76,13 @@ enum RoundtableFrequencyText {
     /// D22: Tune is off while keyed, when already there, and when the radio's
     /// own connection or the slice itself will not take it. "Already there"
     /// counts the family: a Tune from an LSB view moves a USB slice's mode too.
+    /// A FreeDV view writes no mode, so from any family on the same frequency it
+    /// has nothing to do. `familyReachable` is false when getting to this family
+    /// needs a mode the Core's catalog does not offer (or has not sent).
     static func canTune(hz: Int64, family: String, sliceHz: Int64?, sliceFamily: String?, keyed: Bool, tunable: Bool,
-                        linkUp: Bool) -> Bool {
-        !keyed && tunable && linkUp && sliceHz != nil && (hz != sliceHz || family != sliceFamily)
+                        linkUp: Bool, familyReachable: Bool = true) -> Bool {
+        let writesMode = family != sliceFamily && family != "fdvu" && family != "fdvl"
+        return !keyed && tunable && linkUp && familyReachable && sliceHz != nil && (hz != sliceHz || writesMode)
     }
 }
 
@@ -339,7 +346,8 @@ struct RoundtableFrequencyTuneBar: View {
         RoundtableFrequencyTuneButton(
             sliceLetter: active?.slice.letter ?? "A",
             canTune: RoundtableFrequencyHost.canTune(data, active: active, keyed: keyed,
-                                                     tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp),
+                                                     tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp,
+                                                     modes: slices.catalog?.offeredModes ?? []),
             action: { onTune(data.hz, data.family) })
             .padding(.horizontal, 10)
             .background(RoundtableColours.ground)
@@ -428,11 +436,14 @@ struct RoundtableFrequencyHost: View {
     /// Whether Tune can act on this card from this slice.
     @MainActor
     static func canTune(_ data: RoundtableCardData, active: BandSlicesModel.Entry?, keyed: Bool, tunable: Bool,
-                        linkUp: Bool) -> Bool {
+                        linkUp: Bool, modes: [StationCatalog.Mode]) -> Bool {
         RoundtableFrequencyText.canTune(hz: data.hz, family: data.family,
                                         sliceHz: active.map { Int64($0.slice.frequencyHz.rounded()) },
                                         sliceFamily: active.flatMap { RoundtableModel.family(ofMode: $0.modeLabel) },
-                                        keyed: keyed, tunable: tunable, linkUp: linkUp)
+                                        keyed: keyed, tunable: tunable, linkUp: linkUp,
+                                        familyReachable: active.map {
+                                            BandSlicesModel.familyReachable(family: data.family, sliceMode: $0.modeLabel, modes: modes)
+                                        } ?? false)
     }
 
     /// D23: about five times a second.
@@ -452,7 +463,8 @@ struct RoundtableFrequencyHost: View {
             RoundtableFrequencyView(
                 data: data, viewing: viewing,
                 canTune: Self.canTune(data, active: active, keyed: keyed,
-                                      tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp),
+                                      tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp,
+                                      modes: slices.catalog?.offeredModes ?? []),
                 sliceHz: sliceHz, sliceLetter: active?.slice.letter ?? "A", format: roundtable.signalFormat,
                 units: roundtable.distanceUnits, showBearing: roundtable.showBearing,
                 panDbm: dbm,

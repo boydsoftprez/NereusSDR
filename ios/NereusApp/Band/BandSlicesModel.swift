@@ -4,6 +4,8 @@
 // 2026-10-26: CW transmit, the CW passband drawn at its origin from the mode and
 //             the station pitch (R-CW-24, D5). J.J. Boyd (KG4VCF), AI-assisted via
 //             Claude Code.
+// 2026-11-04: A Roundtable Tune writes the mode, then the frequency once the Core keeps it.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   read the Core's present empty pan key as its default pan identity.
 
@@ -341,6 +343,8 @@ final class BandSlicesModel: ObservableObject {
 
     private let store: MirrorStore
     private let directOutcomeOwner = ControlOutcomeOwner()
+    /// A Roundtable Tune's mode write whose frequency has not gone yet.
+    private var waitingModeForTune: UInt64?
     private let commands: CommandClient?
     private let now: () -> TimeInterval
     private var watching: [String: AnyCancellable] = [:]
@@ -423,14 +427,69 @@ final class BandSlicesModel: ObservableObject {
         write(hz, to: entry.id)
     }
 
-    /// A Roundtable Tune: the active slice to a frequency in its family, the
-    /// mode first when the slice is in another family, as a tap otherwise.
+    /// A Roundtable Tune: the active slice to a frequency in its family, as a tap
+    /// otherwise. A slice in another family takes the mode first, and the frequency
+    /// only once the Core has kept it: a refused mode shows its refusal and moves
+    /// nothing, so the slice is never on the right frequency in the wrong family.
+    /// With no mode to get there, it says so and moves nothing.
     func tune(toHz hz: Int64, family: String) {
-        if let entry = active, isTunable(entry),
-           let mode = Self.modeForTune(family: family, sliceMode: entry.modeLabel, modes: catalog?.offeredModes ?? []) {
-            setMode(mode, sliceId: entry.id)
+        guard let entry = active else { return }
+        let modes = catalog?.offeredModes ?? []
+        guard isTunable(entry) else {
+            tap(to: Double(hz))
+            return
         }
-        tap(to: Double(hz))
+        guard Self.familyReachable(family: family, sliceMode: entry.modeLabel, modes: modes) else {
+            showReason(Self.familyUnreachableText)
+            return
+        }
+        guard let mode = Self.modeForTune(family: family, sliceMode: entry.modeLabel, modes: modes) else {
+            tap(to: Double(hz))
+            return
+        }
+        writeModeThenTune(mode, hz: Double(hz), sliceId: entry.id)
+    }
+
+    static let familyUnreachableText = "This Core has not offered the mode for that frequency, so the slice stayed where it is."
+
+    private func writeModeThenTune(_ mode: Int, hz: Double, sliceId: Int) {
+        let key = "slice:\(sliceId)"
+        let value = MirrorValue.enumeration(Int64(mode))
+        let edit = store.hold(key, property: "dspMode", value: value)
+        let noteEdit = directOutcomeOwner.begin()
+        waitingModeForTune = noteEdit
+        // Once only, on the answer or a late one, and only while this is still the
+        // operator's latest action on this same slice.
+        let proceed: @MainActor (PropertyWriteOutcome) -> Void = { [weak self] outcome in
+            guard let self, outcome.accepted, outcome.isCurrent, self.waitingModeForTune == noteEdit,
+                  self.activeSliceId == sliceId else { return }
+            self.waitingModeForTune = nil
+            self.tap(to: hz)
+        }
+        let store = store
+        Task { [weak self] in
+            let outcome = await store.write(key, property: "dspMode", value: value, edit: edit,
+                                            onLateOutcome: { [weak self] outcome in
+                guard let self, self.directOutcomeOwner.isCurrent(noteEdit) else { return }
+                self.note(outcome)
+                proceed(outcome)
+            })
+            guard let self, self.directOutcomeOwner.isCurrent(noteEdit) else { return }
+            self.note(outcome)
+            proceed(outcome)
+        }
+    }
+
+    /// Roundtable's room families and the mode a Tune writes for each. FreeDV has
+    /// none: it moves the frequency only.
+    private static let tuneModeLabels = ["lsb": "LSB", "usb": "USB", "digl": "DIGL", "digu": "DIGU", "am": "AM",
+                                         "fm": "FM", "cw": "CWU"]
+
+    /// Whether a Tune can reach `family` from `sliceMode`: already in it, nothing to
+    /// write, or the catalog offers the mode. A nil or empty catalog offers nothing.
+    static func familyReachable(family: String, sliceMode: String, modes: [StationCatalog.Mode]) -> Bool {
+        guard RoundtableModel.family(ofMode: sliceMode) != family, let label = tuneModeLabels[family] else { return true }
+        return modes.contains { $0.label.uppercased() == label }
     }
 
     /// The mode a Tune writes. A slice already in the family keeps its mode (CWL
@@ -438,8 +497,7 @@ final class BandSlicesModel: ObservableObject {
     /// frequency only: which FreeDV mode is the operator's.
     static func modeForTune(family: String, sliceMode: String, modes: [StationCatalog.Mode]) -> Int? {
         guard RoundtableModel.family(ofMode: sliceMode) != family else { return nil }
-        let labels = ["lsb": "LSB", "usb": "USB", "digl": "DIGL", "digu": "DIGU", "am": "AM", "fm": "FM", "cw": "CWU"]
-        guard let label = labels[family] else { return nil }
+        guard let label = tuneModeLabels[family] else { return nil }
         return modes.first { $0.label.uppercased() == label }?.id
     }
 

@@ -1079,6 +1079,95 @@ struct RoundtableToolsPageTests {
         // The same frequency in another family is not "already there".
         #expect(can(sliceHz: 1, sliceFamily: "usb"))
         #expect(!can(sliceHz: nil, sliceFamily: nil))
+        // A FreeDV view writes no mode: from any family on this frequency, nothing to do.
+        #expect(!can(family: "fdvu", sliceHz: 1, sliceFamily: "usb"))
+        #expect(!can(family: "fdvl", sliceHz: 1, sliceFamily: "lsb"))
+        #expect(!can(family: "fdvl", sliceHz: 1, sliceFamily: "fdvl"))
+        #expect(can(family: "fdvu", sliceHz: 2, sliceFamily: "usb"))
+        // With no mode to reach the family, off.
+        #expect(!Words.canTune(hz: 1, family: "lsb", sliceHz: 2, sliceFamily: "usb", keyed: false, tunable: true,
+                               linkUp: true, familyReachable: false))
+    }
+
+    @Test("a RADE slice has a frequency context, and Tune is off when it is already there")
+    func radeSliceHasAContext() async throws {
+        let (model, station) = try await viewStation()
+        for (mode, family) in [(Int64(14), "fdvu"), (Int64(15), "fdvl")] {
+            await station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+                .init(ordinal: 2, name: "dspMode", value: .enumeration(mode)),
+            ])))
+            #expect(await settle { model.roundtable.sliceContexts[1]?.family == family })
+        }
+        let context = try #require(model.roundtable.sliceContexts[1])
+        let entry = try #require(model.main.slices.entries.first { $0.id == 1 })
+        var data = RoundtableCardData(hz: context.hz)
+        data.family = context.family
+        #expect(!RoundtableFrequencyHost.canTune(data, active: entry, keyed: false, tunable: true, linkUp: true,
+                                                 modes: model.main.slices.catalog?.offeredModes ?? []))
+        await model.disconnect()
+    }
+
+    @Test("an unviewed slice's flag names who is on the air within 5 kHz, through the model")
+    func unviewedSliceFlagFollowsTheNearestKeyed() async throws {
+        let (model, station) = try await viewStation()
+        let context = try #require(model.roundtable.sliceContexts[1])
+        #expect(model.roundtable.view(of: context.id) == nil)
+        var scene = Self.viewScene()
+        let source = "lsb-\(context.hz + 3_000)"
+        var summary = FakeStation.roundtableSummary(id: source, members: 1, state: "talking", talkers: ["W9XYZ"])
+        summary["stations"] = .array([FakeStation.roundtableStation(ref: "x/1", callsign: "W9XYZ", sourceRoom: source,
+                                                                    hz: context.hz + 3_000, keyed: true)])
+        // Only this neighbor: on iPad the scene's own rooms sit nearer slice B.
+        scene.rooms = [summary]
+        scene.roomRecords = [:]
+        try await station.deliverRoundtable(scene)
+        #expect(await settle { RoundtableFlagLine.line(model.roundtable, sliceId: 1)?.text.hasSuffix("W9XYZ") == true })
+        await model.disconnect()
+    }
+
+    /// Set NEREUS_ROUNDTABLE_VIEW_SHOTS to a folder to run this and write its pictures there.
+    @Test("shots: a view before its stream beside a double, and a FreeDV view with Tune off",
+          .enabled(if: !(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_VIEW_SHOTS"] ?? "").isEmpty))
+    func secondRoundViewShots() async throws {
+        let directory = try #require(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_VIEW_SHOTS"])
+        func station(_ ref: String, _ source: String, _ hz: Int64, _ keyed: Bool) -> RoundtableModel.Station {
+            .init(ref: ref, sourceRoom: source, slice: 0, hz: hz, family: "lsb", callsign: ref, nth: 1, keyed: keyed,
+                  away: false, joining: false)
+        }
+        func summary(_ id: String, _ hz: Int64, _ stations: [RoundtableModel.Station]) -> RoundtableModel.RoomSummary {
+            .init(id: id, band: "40m", family: "lsb", hz: hz, state: "quiet", talkers: [], members: Int64(stations.count),
+                  messages: 0, last: 0, folded: false, heard: 0, readings: [], stations: stations)
+        }
+        let directoryStations = [station("W2QQQ", "lsb-7236000", 7_236_000, false)]
+        let doubled = [station("W1AW", "lsb-7239000", 7_239_000, true), station("K4ABC", "lsb-7239000", 7_239_040, true)]
+        let rows = RoundtableModel.frequencyRows(of: [summary("lsb-7236000", 7_236_000, directoryStations),
+                                                      summary("lsb-7239000", 7_239_000, doubled)])
+        var pending = RoundtableTagLayout.cardData(summary: try #require(rows.first { $0.hz == 7_236_000 }), view: nil, now: 0,
+                                                   link: .live, linkSince: 0, directory: directoryStations + doubled, rows: rows)
+        pending.family = "lsb"
+        #expect(pending.kind == .double)
+        var freedv = pending
+        freedv.family = "fdvu"
+        let cannot = !RoundtableFrequencyText.canTune(hz: 7_236_000, family: "fdvu", sliceHz: 7_236_000, sliceFamily: "usb",
+                                                      keyed: false, tunable: true, linkUp: true)
+        #expect(cannot)
+        for (name, card, canTune, sliceHz) in [("pending-next-to-double", pending, true, Int64(7_224_600)),
+                                               ("freedv-same-frequency", freedv, false, Int64(7_236_000))] {
+            let view = RoundtableFrequencyView(data: card, viewing: true, canTune: canTune, sliceHz: sliceHz, sliceLetter: "A",
+                                               format: .dbm, units: "mi", showBearing: true, panDbm: nil, panPeak: nil,
+                                               reconnecting: false, showsBack: false, onTune: {}, onBack: {})
+                .background(Color.black)
+            let (window, _) = try host(view, size: CGSize(width: 402, height: 420))
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            try await Task.sleep(for: .milliseconds(600))
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            try #require(image.pngData()).write(to: URL(fileURLWithPath: directory).appendingPathComponent("view-\(name).png"))
+        }
     }
 
     @Test("a live double's view has a clock and blank paths; a frozen one has no clock")

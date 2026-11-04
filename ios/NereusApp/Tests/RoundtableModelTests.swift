@@ -995,6 +995,9 @@ struct RoundtableModelTests {
         #expect(RoundtableModel.family(ofMode: "CWL") == "cw")
         #expect(RoundtableModel.family(ofMode: "CWU") == "cw")
         #expect(RoundtableModel.family(ofMode: "unrecognised") == nil)
+        // A slice's mode reaches this as the catalog's label; the wire says FDVU.
+        for label in ["RADE-U", "RADE2-U", "FDVU"] { #expect(RoundtableModel.family(ofMode: label) == "fdvu") }
+        for label in ["RADE-L", "RADE2-L", "FDVL"] { #expect(RoundtableModel.family(ofMode: label) == "fdvl") }
         let (model, _, rt, _) = try await connected()
         #expect(rt.distanceUnits == "mi" && rt.showBearing)
         model.settings.apply(.settingsValue(.init(key: "Roundtable/DistanceUnits", origin: "other", properties: [.init(name: "Roundtable/DistanceUnits", value: .utf8("km"))])))

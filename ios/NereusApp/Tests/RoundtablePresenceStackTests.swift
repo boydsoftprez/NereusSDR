@@ -314,6 +314,59 @@ struct RoundtablePresenceStackTests {
         #expect(live.allSatisfy { $0.keyedNames == [RoundtableText.withNth("K4ABC", 2)] })
     }
 
+    @Test("D3 before the stream: the card and flag name who is on the air within 5 kHz, and a tag stays quiet")
+    func pendingCardAndFlagFollowTheNearestKeyed() {
+        typealias Layout = RoundtableTagLayout
+        let q = station("q", source: "lsb-7236000", hz: 7_236_000, keyed: false)
+        func rows(_ neighbors: RoundtableModel.RoomSummary...) -> [RoundtableModel.RoomSummary] {
+            RoundtableModel.frequencyRows(of: [source("lsb-7236000", [q])] + neighbors)
+        }
+        func card(_ rows: [RoundtableModel.RoomSummary], view: RoundtableModel.Room? = nil) -> RoundtableCardData {
+            Layout.cardData(summary: rows.first { $0.hz == 7_236_000 }!, view: view, now: 0, link: .live, linkSince: 0, rows: rows)
+        }
+        func flag(_ rows: [RoundtableModel.RoomSummary], view: RoundtableModel.Room? = nil) -> RoundtableFlagLine? {
+            RoundtableFlagLine.line(available: true, link: .live, summary: rows.first { $0.hz == 7_236_000 }, room: view,
+                                    mentions: 0, nearby: Layout.nearbyOnAir(hz: 7_236_000, family: "lsb", rows: rows))
+        }
+        func quietTag(_ rows: [RoundtableModel.RoomSummary]) -> Bool {
+            Layout.tags(rooms: rows, mine: [], mentionCounts: [:], room: { _ in nil }).first { $0.hz == 7_236_000 }?.glyph == .quiet
+        }
+        // One talker 3 kHz away, in another room.
+        let talker = rows(source("lsb-7239000", [station("a", source: "lsb-7239000", hz: 7_239_000, keyed: true)],
+                                 state: "talking", talkers: ["A"]))
+        #expect(card(talker).kind == .talking && card(talker).keyed == ["A"])
+        #expect(flag(talker)?.glyph == .talking && flag(talker)?.text == "Roundtable \u{00B7} 1 \u{00B7} A")
+        #expect(quietTag(talker))
+        #expect(Layout.card(for: talker.first { $0.hz == 7_236_000 }!, view: nil, now: 0, rows: talker)?.state == .known("A"))
+        // Nobody on the slice's own frequency: the flag still names them.
+        #expect(RoundtableFlagLine.line(available: true, link: .live, summary: nil, room: nil, mentions: 0,
+                                        nearby: Layout.nearbyOnAir(hz: 7_236_500, family: "lsb", rows: talker))?.glyph == .talking)
+        // The nearest of two.
+        let two = rows(source("lsb-7239000", [station("a", source: "lsb-7239000", hz: 7_239_000, keyed: true)]),
+                       source("lsb-7234000", [station("b", source: "lsb-7234000", hz: 7_234_000, keyed: true)]))
+        #expect(card(two).keyed == ["B"])
+        // Two keyed in different rooms are two talkers, never a Double.
+        #expect(card(two).kind == .talking && flag(two)?.glyph == .talking && quietTag(two))
+        // A double in its own room next door says Double from the start; the tag stays quiet (C1).
+        let doubled = rows(source("lsb-7239000", [station("a", source: "lsb-7239000", hz: 7_239_000, keyed: true),
+                                                  station("b", source: "lsb-7239000", hz: 7_239_040, keyed: true)]))
+        #expect(card(doubled).kind == .double && card(doubled).keyed == ["A", "B"])
+        #expect(flag(doubled)?.glyph == .doubled)
+        #expect(quietTag(doubled))
+        // Another family and beyond 5 kHz say nothing.
+        let far = rows(source("lsb-7242000", [station("a", source: "lsb-7242000", hz: 7_242_000, keyed: true)]),
+                       source("usb-7237000", [station("u", source: "usb-7237000", hz: 7_237_000, keyed: true, family: "usb")]))
+        #expect(card(far).kind == .quiet && card(far).keyed.isEmpty && flag(far)?.glyph == .quiet)
+        // A stream that has arrived and knows better wins.
+        let arrived = RoundtableModel.Room(id: "lsb-7236000", band: "40m", family: "lsb", hz: 7_236_000,
+                                           members: [RoundtableModel.Member(ref: "q", callsign: "Q", nth: 1, grid: nil, km: nil, offsetHz: 0,
+                                                                            joining: false, away: false, keyed: false, software: "",
+                                                                            softwareVersion: "", you: false, reading: nil)],
+                                           now: [], earlier: [], messages: [], frequencyView: true)
+        #expect(card(talker, view: arrived).kind == .quiet)
+        #expect(flag(talker, view: arrived)?.glyph == .quiet)
+    }
+
     @Test("a non-active double's tag and list row say Double with both names")
     @MainActor
     func nonActiveDoubleShowsBothNames() throws {

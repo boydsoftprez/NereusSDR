@@ -9,6 +9,8 @@
 // their marking dimmed (RoundtableTagDisplay.dimmed), as the desktop's do
 // (JJ's answer of 2026-10-25). J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-11-04: A pending card follows the nearest keyed station within 5 kHz; tags stay quiet.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 // 2026-10-30: Approved frequency-first people, reports and phone interactions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -673,7 +675,8 @@ enum RoundtableTagLayout {
                 guard result[index].roomId == activeId,
                       let summary = rows.first(where: { $0.id == result[index].roomId }) else { continue }
                 result[index].card = card(for: summary, view: view,
-                                          now: Int64(Date().timeIntervalSince1970 * 1000), format: model.signalFormat)
+                                          now: Int64(Date().timeIntervalSince1970 * 1000), format: model.signalFormat,
+                                          rows: rows)
                 result[index].card?.frozen = display(model) == .stale
             }
         }
@@ -808,19 +811,51 @@ enum RoundtableTagLayout {
         }.sorted { ($0.km ?? Int64.max, $0.id) < ($1.km ?? Int64.max, $1.id) }
     }
 
+    /// What the stream will bring for a frequency it has not reached yet (D3): the
+    /// nearest keyed station within the window in this family, in the words of its
+    /// own exact row. That row's state is the source-room rule (D1), so keyed
+    /// neighbors in different rooms never make a Double here. The card and flag read
+    /// this; a tag reads only its own row.
+    static func nearbyOnAir(hz: Int64, family: String,
+                            rows: [RoundtableModel.RoomSummary]) -> (state: String, names: [String], members: Int64)? {
+        let near = rows.filter { $0.family == family && abs($0.hz - hz) <= nearbyHz }
+        var best: RoundtableModel.RoomSummary?
+        for row in near where row.stations.contains(where: \.keyed) {
+            if let current = best, abs(current.hz - hz) <= abs(row.hz - hz) { continue }
+            best = row
+        }
+        guard let best, let talker = best.stations.first(where: \.keyed) else { return nil }
+        let members = near.reduce(Int64(0)) { $0 + $1.members }
+        if best.state == "doubled" { return ("doubled", best.keyedNames, members) }
+        return ("talking", [RoundtableText.withNth(talker.callsign, talker.nth)], members)
+    }
+
+    /// A frequency's state and names from the directory alone: its own row, or with
+    /// nothing on it, what is on the air within the window (D3).
+    private static func directoryTruth(summary: RoundtableModel.RoomSummary,
+                                       rows: [RoundtableModel.RoomSummary]) -> (state: String, names: [String]) {
+        let settled = summary.state == "doubled" || summary.state == "unknown"
+            || (summary.state == "talking" && !summary.keyedNames.isEmpty)
+        if !settled, let nearby = nearbyOnAir(hz: summary.hz, family: summary.family, rows: rows) {
+            return (nearby.state, nearby.names)
+        }
+        return (summary.state, summary.keyedNames)
+    }
+
     /// The tag's card, by the truth rules above. A frequency whose stream has
     /// not arrived says only what the directory knows (D1).
     static func card(for summary: RoundtableModel.RoomSummary, view: RoundtableModel.Room?, now: Int64,
-                     format: RoundtableSignalFormat = .dbm) -> RoundtableTagCard? {
+                     format: RoundtableSignalFormat = .dbm, rows: [RoundtableModel.RoomSummary] = []) -> RoundtableTagCard? {
         let known = view?.family == summary.family ? view : nil
         guard let known, let chosen = chosenTurn(hz: summary.hz, family: summary.family, view: known) else {
             var card = RoundtableTagCard(format: format)
             if known == nil || (known?.members.isEmpty == true && known?.now.isEmpty == true) {
-                if summary.state == "doubled" {
+                let truth = directoryTruth(summary: summary, rows: rows)
+                if truth.state == "doubled" {
                     card.state = .doubled
-                    card.participants = summary.keyedNames
-                } else if summary.state == "talking", summary.keyedNames.count == 1 {
-                    card.state = .known(summary.keyedNames[0])
+                    card.participants = truth.names
+                } else if truth.state == "talking", truth.names.count == 1 {
+                    card.state = .known(truth.names[0])
                 }
             }
             return card
@@ -875,7 +910,8 @@ enum RoundtableTagLayout {
     static func cardData(summary: RoundtableModel.RoomSummary, view: RoundtableModel.Room?, now: Int64,
                          link: RoundtableModel.LinkState, linkSince: Int64,
                          peaks: RoundtablePeakTracker? = nil,
-                         directory: [RoundtableModel.Station] = []) -> RoundtableCardData {
+                         directory: [RoundtableModel.Station] = [],
+                         rows: [RoundtableModel.RoomSummary] = []) -> RoundtableCardData {
         var card = RoundtableCardData(hz: summary.hz)
         card.family = summary.family
         // D7: a dropped link freezes, and says which way it dropped.
@@ -896,13 +932,14 @@ enum RoundtableTagLayout {
         guard let known, let chosen = chosenTurn(hz: summary.hz, family: summary.family, view: known) else {
             // Known only from the directory (D1): who is keyed, with no readings.
             if known == nil || (known?.members.isEmpty == true && known?.now.isEmpty == true) {
-                switch summary.state {
+                let truth = directoryTruth(summary: summary, rows: rows)
+                switch truth.state {
                 case "doubled":
                     card.kind = .double
-                    card.keyed = summary.keyedNames
-                case "talking" where !summary.keyedNames.isEmpty:
+                    card.keyed = truth.names
+                case "talking" where !truth.names.isEmpty:
                     card.kind = .talking
-                    card.keyed = summary.keyedNames
+                    card.keyed = truth.names
                 case "unknown":
                     card.kind = .unknown
                 default:

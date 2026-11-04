@@ -9,11 +9,15 @@
 // 2026-10-25: while you are hidden the line reads "Hidden · 9 · K4ABC" with
 // its glyph dimmed, as the desktop's does (JJ's answer of 2026-10-25).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: A flag with no stream yet names who is on the air within 5 kHz, as the card does.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 // 2026-10-30: Approved frequency-first people, reports and phone interactions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-03: One word: Double (overlay design D8); a frequency reads its own row.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: Before any stream, what is on the air within 5 kHz (D3), for a slice
+// nobody views too. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -51,8 +55,11 @@ struct RoundtableFlagLine: Equatable {
 
     /// The line for one slice: its room (`roomId`, nil when the slice is in
     /// none), the band list's summary of it, and the room as followed.
+    /// `nearby` is what the directory says is on the air within 5 kHz, which speaks
+    /// while no stream has arrived and this frequency's own row has no one keyed.
     static func line(available: Bool, link: RoundtableModel.LinkState, summary: RoundtableModel.RoomSummary?,
-                     room: RoundtableModel.Room?, mentions: Int) -> RoundtableFlagLine? {
+                     room: RoundtableModel.Room?, mentions: Int,
+                     nearby: (state: String, names: [String], members: Int64)? = nil) -> RoundtableFlagLine? {
         guard available else {
             return nil
         }
@@ -74,8 +81,13 @@ struct RoundtableFlagLine: Equatable {
         let lead = dimmed ? hiddenPrefix : prefix
         // D3: what the card shows, the turn within 5 kHz, even with nobody on this exact frequency.
         let live = room.flatMap(liveOnAir)
+        let streamArrived = room.map { !$0.members.isEmpty || !$0.now.isEmpty } ?? false
+        let ownSettled = summary.map {
+            $0.state == "doubled" || $0.state == "unknown" || ($0.state == "talking" && !$0.keyedNames.isEmpty)
+        } ?? false
+        let pending = streamArrived || ownSettled ? nil : nearby
         let listed = summary?.members ?? 0
-        let members = listed > 0 || live == nil ? listed : Int64(room?.members.count ?? 0)
+        let members = listed > 0 ? listed : live != nil ? Int64(room?.members.count ?? 0) : pending?.members ?? 0
         guard members > 0 else {
             return RoundtableFlagLine(glyph: .quiet, text: lead + "Nobody here", dimmed: dimmed)
         }
@@ -89,7 +101,7 @@ struct RoundtableFlagLine: Equatable {
             return RoundtableFlagLine(glyph: .you, text: lead + "\(hearing) hear you", mentions: mentions,
                                       dimmed: dimmed)
         }
-        let truth = live ?? (state: summary?.state ?? "quiet", talkers: summary.map {
+        let truth = live ?? pending.map { (state: $0.state, talkers: $0.names) } ?? (state: summary?.state ?? "quiet", talkers: summary.map {
             $0.keyedNames.isEmpty ? $0.talkers : $0.keyedNames
         } ?? [])
         let glyph = glyph(ofState: truth.state)
@@ -115,9 +127,12 @@ struct RoundtableFlagLine: Equatable {
     static func line(_ model: RoundtableModel, sliceId: Int64) -> RoundtableFlagLine? {
         let roomId = model.sliceRooms[sliceId]
         // A frequency context has its own row: no source room carries its id.
-        let summary = roomId.flatMap { id in model.frequencyRows.first { $0.id == id } }
+        let rows = model.frequencyRows
+        let summary = roomId.flatMap { id in rows.first { $0.id == id } }
+        let context = model.frequencyAvailable ? model.sliceContexts[sliceId] : nil
         return line(available: model.available, link: model.linkState, summary: summary,
-                    room: roomId.flatMap(model.view(of:)), mentions: roomId.map { model.mentionCounts[$0] ?? 0 } ?? 0)
+                    room: roomId.flatMap(model.view(of:)), mentions: roomId.map { model.mentionCounts[$0] ?? 0 } ?? 0,
+                    nearby: context.flatMap { RoundtableTagLayout.nearbyOnAir(hz: $0.hz, family: $0.family, rows: rows) })
     }
 
     static func glyph(ofState state: String) -> Glyph {

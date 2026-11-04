@@ -249,7 +249,7 @@ struct BandSlicesModelTests {
 
     @Test("a Roundtable Tune moves the slice into the view's family, and keeps a mode already in it")
     func roundtableTuneMatchesFamily() async {
-        let (model, _, outbox, _, _) = await makeAnsweredModel()
+        let (model, store, outbox, _, _) = await makeAnsweredModel()
         let modes = model.catalog?.offeredModes ?? []
         #expect(!modes.isEmpty)
         func id(_ label: String) -> Int? { modes.first { $0.label.uppercased() == label }?.id }
@@ -266,6 +266,42 @@ struct BandSlicesModelTests {
         model.tune(toHz: 7_250_000, family: "usb")
         #expect(await settle { lastWrite(outbox, "dspMode") != nil })
         #expect(lastWrite(outbox, "dspMode")?.properties.first?.value == .enumeration(Int64(id("USB") ?? -1)))
+        // The frequency waits for the Core to keep the mode.
+        #expect(lastWrite(outbox, "frequency") == nil)
+        #expect(await answerWrite(store, outbox, "dspMode", accepted: true, reason: ""))
+        #expect(await settle { lastWrite(outbox, "frequency")?.properties.first?.value == .f64(7_250_000) })
+    }
+
+    @Test("a Tune whose mode the Core refuses shows the refusal and leaves the frequency alone")
+    func roundtableTuneRefusedModeMovesNothing() async {
+        let (model, store, outbox, _, _) = await makeAnsweredModel()
+        #expect(await settle { model.active != nil })
+        model.tune(toHz: 7_250_000, family: "usb")
+        #expect(await answerWrite(store, outbox, "dspMode", accepted: false, reason: Self.foreignWords))
+        #expect(await settle { model.refusal?.text == Self.foreignWords })
+        for _ in 0..<100 {
+            await Task.yield()
+        }
+        #expect(lastWrite(outbox, "frequency") == nil)
+        #expect(model.active?.slice.frequencyHz == 7_236_400)
+        // Nothing clears the refusal behind the operator's back.
+        #expect(model.refusal?.text == Self.foreignWords)
+    }
+
+    @Test("a Tune with no mode to reach the family says so and moves nothing")
+    func roundtableTuneWithNoCatalogMovesNothing() async {
+        let (model, _, outbox, _, _) = makeModel()
+        #expect(await settle { model.active != nil })
+        #expect(model.catalog?.offeredModes.isEmpty ?? true)
+        model.tune(toHz: 7_250_000, family: "usb")
+        #expect(await settle { model.refusal?.text == BandSlicesModel.familyUnreachableText })
+        #expect(lastWrite(outbox, "frequency") == nil && lastWrite(outbox, "dspMode") == nil)
+        // FreeDV writes no mode, so it can still move.
+        #expect(BandSlicesModel.familyReachable(family: "fdvu", sliceMode: "", modes: []))
+        #expect(!BandSlicesModel.familyReachable(family: "usb", sliceMode: "", modes: []))
+        #expect(!BandSlicesModel.familyReachable(family: "usb", sliceMode: "LSB", modes: []))
+        #expect(BandSlicesModel.familyReachable(family: "cw", sliceMode: "CWL", modes: []))
+        model.tune(toHz: 7_250_000, family: "fdvu")
         #expect(await settle { lastWrite(outbox, "frequency")?.properties.first?.value == .f64(7_250_000) })
     }
 

@@ -12,6 +12,8 @@
 // its records change or an earlier turn leaves the window, so the flag
 // lines, the tags and the sheet do not sort it again on every pass.
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-04: RADE labels map to the FreeDV families; a frequency context passes the rows to its card.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 // 2026-10-30: Frequency views, immutable sender contexts and shared path preferences.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -352,13 +354,15 @@ final class RoundtableModel: ObservableObject {
     /// The card for one frequency or room, as every client's card reads it.
     func cardData(context id: String) -> RoundtableCardData {
         let dash = id.firstIndex(of: "-")
-        let summary = frequencyRows.first { $0.id == id }
+        let rows = frequencyRows
+        let summary = rows.first { $0.id == id }
             ?? RoomSummary(id: id, band: "", family: dash.map { String(id[..<$0]) } ?? "",
                            hz: dash.flatMap { Int64(id[id.index(after: $0)...]) } ?? 0, state: "quiet", talkers: [],
                            members: 0, messages: 0, last: 0, folded: false, start: nil, heard: 0, readings: [],
                            lastMessage: nil, ended: nil)
         return RoundtableTagLayout.cardData(summary: summary, view: view(of: id), now: clock.nowMilliseconds,
-                                            link: linkState, linkSince: linkSince, peaks: peaks, directory: directory)
+                                            link: linkState, linkSince: linkSince, peaks: peaks, directory: directory,
+                                            rows: rows)
     }
     var activeContext: FrequencyContext? {
         (activeSliceId ?? sliceContexts.keys.sorted().first).flatMap { sliceContexts[$0] }
@@ -1211,8 +1215,10 @@ final class RoundtableModel: ObservableObject {
         case "AM", "SAM": "am"
         case "FM": "fm"
         case "CWL", "CWU": "cw"
-        case "FDVL": "fdvl"
-        case "FDVU": "fdvu"
+        // The catalog's labels (SliceModel::modeName) reach this for a slice; the
+        // wire's names are FDVL and FDVU.
+        case "FDVL", "RADE-L", "RADE2-L": "fdvl"
+        case "FDVU", "RADE-U", "RADE2-U": "fdvu"
         default: nil
         }
     }
