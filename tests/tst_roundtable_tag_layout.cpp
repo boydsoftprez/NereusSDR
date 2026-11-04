@@ -42,10 +42,13 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 
 #include <QAction>
+#include <QHash>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -286,6 +289,99 @@ bool hasColor(const QImage& image, const QRect& area, const QColor& want)
     for (int y = area.top(); y <= area.bottom(); ++y) {
         for (int x = area.left(); x <= area.right(); ++x) {
             if (QColor(image.pixel(x, y)).name() == want.name()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+constexpr int kAgeColumnWidth = 16;  // kCardAgeMinWidth: every age has this much
+constexpr double kSameColorCosine = 0.97;  // The card's grey text reads 0.92 against amber.
+constexpr double kBlendMinCoverage = 0.33;
+constexpr double kBlendMaxOffLine = 16.0;
+constexpr double kBlendMinLine = 100.0;  // Darker colors are too near the background to tell.
+
+// Text never need hold its exact color: antialiasing blends a glyph into what
+// is behind it, and a thin stem in a small font may never reach full coverage.
+// These two probes read text by the blend, so they hold with any font.
+
+// The color most of `area` is filled with: what text there is drawn over.
+QColor backgroundIn(const QImage& image, const QRect& area)
+{
+    QHash<QRgb, int> counts;
+    QRgb most = 0;
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        for (int x = area.left(); x <= area.right(); ++x) {
+            const QRgb rgb = image.pixel(x, y);
+            if (++counts[rgb] > counts.value(most)) { most = rgb; }
+        }
+    }
+    return QColor(most);
+}
+
+// How far `pixel` lies from `background` toward `want` (1 is all the way), and
+// how far off that line it lies, in color levels.
+struct BlendReading {
+    double coverage = 0.0;
+    double offLine = 0.0;
+};
+
+BlendReading readBlend(const QColor& pixel, const QColor& background, const QColor& want)
+{
+    const std::array<double, 3> line{double(want.red() - background.red()), double(want.green() - background.green()),
+                                     double(want.blue() - background.blue())};
+    const std::array<double, 3> ink{double(pixel.red() - background.red()), double(pixel.green() - background.green()),
+                                    double(pixel.blue() - background.blue())};
+    const double lengthSquared = line[0] * line[0] + line[1] * line[1] + line[2] * line[2];
+    BlendReading reading;
+    reading.coverage = (ink[0] * line[0] + ink[1] * line[1] + ink[2] * line[2]) / lengthSquared;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        const double rest = ink[i] - reading.coverage * line[i];
+        reading.offLine += rest * rest;
+    }
+    reading.offLine = std::sqrt(reading.offLine);
+    return reading;
+}
+
+// True when the ink in `area` that differs from `before` adds up to `want`:
+// its edges and any color fringes sum to the way the color lies from the
+// background, and any other color of text points elsewhere.
+bool changedInkIsColor(const QImage& before, const QImage& image, const QRect& area, const QColor& want)
+{
+    const QColor background = backgroundIn(image, area);
+    std::array<double, 3> sum{0.0, 0.0, 0.0};
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        for (int x = area.left(); x <= area.right(); ++x) {
+            if (before.pixel(x, y) == image.pixel(x, y)) { continue; }
+            const QColor pixel(image.pixel(x, y));
+            sum[0] += pixel.red() - background.red();
+            sum[1] += pixel.green() - background.green();
+            sum[2] += pixel.blue() - background.blue();
+        }
+    }
+    const std::array<double, 3> line{double(want.red() - background.red()), double(want.green() - background.green()),
+                                     double(want.blue() - background.blue())};
+    const double sumLength = std::sqrt(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
+    const double lineLength = std::sqrt(line[0] * line[0] + line[1] * line[1] + line[2] * line[2]);
+    if (sumLength < lineLength) { return false; }  // Less ink than one whole pixel.
+    return (sum[0] * line[0] + sum[1] * line[1] + sum[2] * line[2]) / (sumLength * lineLength) >= kSameColorCosine;
+}
+
+// True when any pixel of `area` is `want`, or a bright `want` blended over the
+// area's background at a third coverage or more. For checks that a color is absent.
+bool hasColorOrBlend(const QImage& image, const QRect& area, const QColor& want)
+{
+    if (hasColor(image, area, want)) { return true; }
+    const QColor background = backgroundIn(image, area);
+    if (std::hypot(want.red() - background.red(), want.green() - background.green(), want.blue() - background.blue())
+        < kBlendMinLine) {
+        return false;
+    }
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        for (int x = area.left(); x <= area.right(); ++x) {
+            const BlendReading reading = readBlend(QColor(image.pixel(x, y)), background, want);
+            if (reading.coverage >= kBlendMinCoverage && reading.offLine <= kBlendMaxOffLine) {
                 return true;
             }
         }
@@ -1075,6 +1171,35 @@ private slots:
         QVERIFY(hasColor(image, all, QColor(0x0d, 0x4a, 0x58)));
     }
 
+    // What a thin stem looks like with a font that never reaches full coverage.
+    void theTextColorProbesHoldWithNoPixelAtFullCoverage()
+    {
+        const QColor background(0x1b, 0x1b, 0x1f);
+        const QColor amber(0xd8, 0xa5, 0x5f);
+        const QColor grey(0xa6, 0xa6, 0xac);
+        const auto stem = [&background](const QColor& color, double coverage) {
+            QImage image(16, 12, QImage::Format_ARGB32_Premultiplied);
+            image.fill(background);
+            const QColor ink(int(background.red() + coverage * (color.red() - background.red())),
+                             int(background.green() + coverage * (color.green() - background.green())),
+                             int(background.blue() + coverage * (color.blue() - background.blue())));
+            for (int y = 2; y < 9; ++y) { image.setPixelColor(7, y, ink); }
+            return image;
+        };
+        QImage nothing(16, 12, QImage::Format_ARGB32_Premultiplied);
+        nothing.fill(background);
+        const QRect all = nothing.rect();
+        const QImage amberStem = stem(amber, 0.6);
+        QVERIFY(!hasColor(amberStem, all, amber));
+        QVERIFY(changedInkIsColor(nothing, amberStem, all, amber));
+        QVERIFY(hasColorOrBlend(amberStem, all, amber));
+        const QImage greyStem = stem(grey, 0.6);
+        QVERIFY(!changedInkIsColor(nothing, greyStem, all, amber));
+        QVERIFY(!hasColorOrBlend(greyStem, all, amber));
+        // No ink is not the color.
+        QVERIFY(!changedInkIsColor(nothing, nothing, all, amber));
+    }
+
     void anOldRowGoesGreyWithAnAmberAgeAndNoTick()
     {
         const QFontMetrics fm = cardMetrics();
@@ -1111,8 +1236,10 @@ private slots:
                 QVERIFY(QColor(old.pixel(x, y)).lightness() <= 180);
             }
         }
-        // The age is amber.
-        QVERIFY(hasColor(old, oldRect.adjusted(oldRect.width() - 40, 0, -2, 0), QColor(0xd8, 0xa5, 0x5f)));
+        // The age is amber: the narrowest age column, right of any value, above
+        // the meter. The caption's unit shares the column and does not change.
+        const QRect ageColumn(meter.right() + 1 - kAgeColumnWidth, oldRect.top(), kAgeColumnWidth, meter.top() - oldRect.top());
+        QVERIFY(changedInkIsColor(fresh, old, ageColumn, QColor(0xd8, 0xa5, 0x5f)));
     }
 
     void aFrozenCardDrawsNoLiveColor()
@@ -1130,7 +1257,7 @@ private slots:
         QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), QStringLiteral("#606066"));
         for (const QColor& live : {QColor(0xe0, 0x6c, 0x6e), QColor(0xc2, 0x5a, 0x5c), QColor(0x4c, 0xaf, 0x6a),
                                    QColor(0x3a, 0x1a, 0x1b), QColor(0x5d, 0x2c, 0x2e), QColor(0x00, 0xd4, 0xff)}) {
-            QVERIFY2(!hasColor(image, hit->rect, live), qPrintable(live.name()));
+            QVERIFY2(!hasColorOrBlend(image, hit->rect, live), qPrintable(live.name()));
         }
     }
 
@@ -1151,7 +1278,7 @@ private slots:
         const auto* hit = cardHit(pan.widget);
         QVERIFY(hit != nullptr);
         // Grey head and border, no green anywhere on it.
-        QVERIFY(!hasColor(image, hit->rect, QColor(0x4c, 0xaf, 0x6a)));
+        QVERIFY(!hasColorOrBlend(image, hit->rect, QColor(0x4c, 0xaf, 0x6a)));
         // The plain text does not claim to be live either.
         const QString context = RoundtableModel::frequencyContextId(7185000, QStringLiteral("lsb"));
         for (const RoundtableTag& tag : roundtableTagsFor(&rig.model, {}, context)) {
@@ -1310,8 +1437,8 @@ private slots:
         // Frozen: grey, and the stripes stop.
         pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Frozen);
         const QImage frozen = pan.draw();
-        QVERIFY(!hasColor(frozen, hit->rect, QColor(0xe0, 0x6c, 0x6e)));
-        QVERIFY(!hasColor(frozen, hit->rect, QColor(0x3a, 0x1a, 0x1b)));
+        QVERIFY(!hasColorOrBlend(frozen, hit->rect, QColor(0xe0, 0x6c, 0x6e)));
+        QVERIFY(!hasColorOrBlend(frozen, hit->rect, QColor(0x3a, 0x1a, 0x1b)));
     }
 
     void eachTagIsSizedToItsOwnText()
