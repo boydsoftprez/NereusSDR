@@ -31,6 +31,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02: Expose passive card rows and current overlap participants.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -59,6 +61,7 @@
 #include <QStringList>
 
 class QPainter;
+class QFontMetrics;
 
 namespace NereusSDR {
 
@@ -83,7 +86,8 @@ struct RoundtableTag {
     int state = 0;           // a RoundtableGlyph
     QString label;           // the talker's callsign, You, Unknown, Doubled or Quiet
     int members = 0;
-    bool mine = false;       // your slice's room
+    bool mine = false;       // any of your slices' rooms
+    bool active = false;     // selected listening context; independent of mine
     bool mentionsMe = false; // a message there names you
     QJsonArray stations;     // unique scoped people at this exact context
     QStringList reportLines; // matching last talker, attributed reporter rows, or Read reports
@@ -91,6 +95,20 @@ struct RoundtableTag {
 
 /// The shared Roundtable panel/tag S-unit conversion.
 NEREUS_GUI_EXPORT QString roundtableSUnitText(double dbm);
+
+/// Final whole rows for the passive active-frequency card. A constrained
+/// card replaces omitted report rows with an explicit count and details.
+NEREUS_GUI_EXPORT QStringList roundtableCochannelRows(const RoundtableTag& tag, int maxRows,
+    const QFontMetrics* metrics = nullptr, int textWidth = 0);
+
+/// Supplied participants, using explicit current member key states for a
+/// live double; ended overlaps retain their historical participants.
+NEREUS_GUI_EXPORT QJsonArray roundtableTurnParticipants(const QJsonObject& view, const QJsonObject& turn,
+    bool* identitiesComplete = nullptr);
+
+/// Ignore numeric samples, ages and path measurements when deciding
+/// whether a room change requires immediate structural presentation.
+NEREUS_GUI_EXPORT QString roundtableRoomStructureSignature(QJsonObject room);
 
 /// Compact RF rows for this exact cochannel. A neighborhood's unrelated turn
 /// never labels this tag; reading.turn is required for every reported sample.
@@ -140,7 +158,7 @@ enum class RoundtableTagDisplay { Hidden, Live, Stale, Dimmed };
 /// The tags for every room in `model`'s band list. `sliceIds` are this
 /// station's slices: their rooms are mine. Empty without a model.
 NEREUS_GUI_EXPORT QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* model,
-                                                         const QList<int>& sliceIds);
+                                                         const QList<int>& sliceIds, const QString& activeContext = {});
 /// Hidden while Roundtable is off, unavailable or connecting; Stale while
 /// offline; Dimmed while you are hidden (you still see everything, D21);
 /// Live otherwise (live or reconnecting).

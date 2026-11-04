@@ -8,6 +8,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: Preserve clock stacking and split geometry; keep tag-only refreshes out of static overlays.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-02: Schedule CPU tag repaints when no GPU child exists.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-01: The waterfall clock is a child label. Ticking the second
+//               no longer rebuilds the static overlay. Brian Sutton (W4KZO).
+//   2026-11-01: Roundtable tags paint in a child widget so a signal report
+//               does not rebuild or upload a spectrum overlay.
+//               Brian Sutton (W4KZO).
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-25  J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
@@ -1046,6 +1055,50 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         " letter-spacing: 8px; }"));
     m_disconnectLabel->hide();
     m_disconnectLabel->installEventFilter(this);
+
+#ifdef NEREUS_GPU_SPECTRUM
+    // Tags sit in their own widget. QRhiWidget::paintEvent cannot draw
+    // them, and baking them into an overlay texture uploads the spectrum
+    // band on every report. The child repaints by itself.
+    class RoundtableTagLayer : public QWidget {
+    public:
+        explicit RoundtableTagLayer(SpectrumWidget* spectrum)
+            : QWidget(spectrum), m_spectrum(spectrum)
+        {
+            setAttribute(Qt::WA_TransparentForMouseEvents, true);
+            setAttribute(Qt::WA_NoSystemBackground, true);
+            setAttribute(Qt::WA_TranslucentBackground, true);
+            setAutoFillBackground(false);
+            setFocusPolicy(Qt::NoFocus);
+            QPalette pal = palette();
+            pal.setColor(QPalette::Window, Qt::transparent);
+            setPalette(pal);
+        }
+
+    protected:
+        void paintEvent(QPaintEvent*) override
+        {
+            QPainter painter(this);
+            m_spectrum->paintRoundtableTags(painter);
+        }
+
+    private:
+        SpectrumWidget* m_spectrum;
+    };
+    m_roundtableTagLayer = new RoundtableTagLayer(this);
+    m_roundtableTagLayer->setGeometry(0, 0, width(), height());
+#endif
+
+    m_wfTimestampLabel = new QLabel(this);
+    m_wfTimestampLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_wfTimestampLabel->setAttribute(Qt::WA_NoSystemBackground, true);
+    m_wfTimestampLabel->setAutoFillBackground(false);
+    m_wfTimestampLabel->setStyleSheet(QStringLiteral(
+        "QLabel { background: transparent; color: rgb(200, 220, 255); }"));
+    m_wfTimestampLabel->hide();
+    // Above the parent surface, below every sibling overlay. A clock tick
+    // must never overtake a flag, open flyout or disconnect banner.
+    m_wfTimestampLabel->lower();
 
     // Phase 3M-4 Task 12 — two-tone IMD overlay analytical core.
     // Presenter-owned helper; the pointer is a non-owning legacy alias.
@@ -4081,6 +4134,7 @@ void SpectrumWidget::setSpectrumFrac(float frac)
     const float clamped = qBound(0.10f, frac, 0.90f);
     if (std::abs(m_spectrumFrac - clamped) < 1e-6f) { return; }
     m_spectrumFrac = clamped;
+    refreshWfTimestampLabel();
     markOverlayDirty();
     update();
     scheduleSettingsSave();
@@ -6538,7 +6592,7 @@ void SpectrumWidget::setWfAverageMode(AverageMode m)
     update();
 }
 
-// Start/stop the 1 Hz overlay refresh timer so the clock ticks live.
+// Start/stop the 1 Hz child-label refresh timer so the clock ticks live.
 void SpectrumWidget::syncWfTimestampTicker()
 {
     if (m_wfTimestampPos != TimestampPosition::None) {
@@ -6546,11 +6600,49 @@ void SpectrumWidget::syncWfTimestampTicker()
             m_wfTimestampTicker = new QTimer(this);
             m_wfTimestampTicker->setInterval(1000);
             connect(m_wfTimestampTicker, &QTimer::timeout,
-                    this, [this]() { markOverlayDirty(); });
+                    this, &SpectrumWidget::refreshWfTimestampLabel);
         }
         m_wfTimestampTicker->start();
     } else if (m_wfTimestampTicker) {
         m_wfTimestampTicker->stop();
+    }
+    refreshWfTimestampLabel();
+}
+
+void SpectrumWidget::refreshWfTimestampLabel()
+{
+    if (!m_wfTimestampLabel) {
+        return;
+    }
+    if (m_wfTimestampPos == TimestampPosition::None || width() <= 0) {
+        m_wfTimestampLabel->hide();
+        return;
+    }
+    const QDateTime now = (m_wfTimestampMode == TimestampMode::UTC)
+                          ? QDateTime::currentDateTimeUtc()
+                          : QDateTime::currentDateTime();
+    const QString stamp = now.toString(QStringLiteral("hh:mm:ss"));
+    QFont font = WorkspacePreview::readableFont(m_wfTimestampLabel->font(), this);
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
+    if (m_wfTimestampLabel->font() != font) {
+        m_wfTimestampLabel->setFont(font);
+    }
+    if (m_wfTimestampLabel->text() != stamp) {
+        m_wfTimestampLabel->setText(stamp);
+    }
+    const QRect wf = spectrumLayout().waterfall;
+    const int pad = 4;
+    const int textW = QFontMetrics(font).horizontalAdvance(stamp) + 2;
+    const int textH = QFontMetrics(font).height();
+    const int x = (m_wfTimestampPos == TimestampPosition::Left)
+                  ? (wf.left() + pad)
+                  : (wf.right() - textW - pad);
+    const QRect place(x, wf.top() + 2, textW, textH);
+    if (m_wfTimestampLabel->geometry() != place) {
+        m_wfTimestampLabel->setGeometry(place);
+    }
+    if (!m_wfTimestampLabel->isVisible()) {
+        m_wfTimestampLabel->show();
     }
 }
 
@@ -6570,6 +6662,7 @@ void SpectrumWidget::setWfTimestampMode(TimestampMode m)
     m_wfTimestampMode = m;
     scheduleSettingsSave();
     markOverlayDirty();
+    refreshWfTimestampLabel();
 }
 
 void SpectrumWidget::setShowRxFilterOnWaterfall(bool on)
@@ -7672,6 +7765,10 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
         m_mouseOverlay->setGeometry(0, 0, width(), height());
         m_mouseOverlay->raise();
     }
+    if (m_roundtableTagLayer) {
+        m_roundtableTagLayer->setGeometry(0, 0, width(), height());
+    }
+    refreshWfTimestampLabel();
 
     // Keep disconnect label sized to the widget; raise so QRhi surface
     // doesn't paint over it on the next frame.
@@ -8517,7 +8614,7 @@ void SpectrumWidget::drawWaterfall(QPainter& p, const QRect& wfRect)
     drawWaterfallChrome(p, wfRect);
 }
 
-// Phase 3G-8 commit 10: waterfall chrome (filter/zero-line/timestamp
+// Phase 3G-8 commit 10: waterfall chrome (filter/zero-line
 // overlays + opacity dim) factored out of drawWaterfall() so the GPU
 // overlay texture can reuse it. Called with a full-opacity painter.
 void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
@@ -8575,23 +8672,8 @@ void SpectrumWidget::drawWaterfallChrome(QPainter& p, const QRect& wfRect)
         }
     }
 
-    // Timestamp overlay on waterfall (NereusSDR extensions W8/W9).
-    if (m_wfTimestampPos != TimestampPosition::None) {
-        const QDateTime now = (m_wfTimestampMode == TimestampMode::UTC)
-                              ? QDateTime::currentDateTimeUtc()
-                              : QDateTime::currentDateTime();
-        const QString stamp = now.toString(QStringLiteral("hh:mm:ss"));
-        QFont f = WorkspacePreview::readableFont(p.font(), p.device());
-        f.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
-        p.setFont(f);
-        p.setPen(QColor(200, 220, 255));
-        const int pad = 4;
-        const int textW = p.fontMetrics().horizontalAdvance(stamp);
-        int x = (m_wfTimestampPos == TimestampPosition::Left)
-                ? (wfRect.left() + pad)
-                : (wfRect.right() - textW - pad);
-        p.drawText(x, wfRect.top() + 12, stamp);
-    }
+    // The clock is m_wfTimestampLabel. Baking it here made the one-second
+    // tick rebuild this whole overlay.
     // Current accepted receiver positions mark RF columns, never historical
     // peak strength. The history marks below identify status edges by row.
     const ImdMeasurementFrame& imd = m_imdPresenter.frame();
@@ -12588,54 +12670,6 @@ constexpr qreal kRoundtableGlyphSize = 9.0;
 constexpr int kRoundtableFoldStackStep = 6;   // stacked glyphs overlap 3 px
 constexpr int kRoundtableFoldStackMax = 3;
 
-// Presence and RF attribution are independent. This is the final displayed
-// content, shared by keepout, painting and the hit rectangle below.
-QStringList roundtableCochannelRows(const RoundtableTag& tag, int maxRows)
-{
-    if (maxRows <= 0) {
-        return {};
-    }
-    const QString details = QStringLiteral("Reports ›");
-    if (maxRows == 1) {
-        return {details};
-    }
-    QStringList rows{roundtableFrequencyText(tag.hz) + QStringLiteral(" MHz")};
-    const int people = static_cast<int>(tag.stations.size());
-    int shown = std::min(3, people);
-    while (shown > 0 && 1 + shown + (shown < people ? 1 : 0) + 1 > maxRows) {
-        --shown;
-    }
-    for (int i = 0; i < shown; ++i) {
-        const QJsonObject station = tag.stations.at(i).toObject();
-        QString name = station.value(QStringLiteral("callsign")).toString();
-        const int nth = station.value(QStringLiteral("nth")).toInt(1);
-        if (nth > 1) {
-            name += QStringLiteral(" (%1)").arg(nth);
-        }
-        rows.append(name);
-    }
-    if (shown < people && rows.size() + 1 < maxRows) {
-        rows.append(QStringLiteral("+%1 people ›").arg(people - shown));
-    }
-    if (tag.reportLines != QStringList{QStringLiteral("Read reports · details")}) {
-        const QStringList reports = tag.reportLines.mid(0, std::max(0, static_cast<int>(tag.reportLines.size()) - 1));
-        const bool heardBy = reports.size() >= 2 && reports.at(1).startsWith(QLatin1String("Heard by"));
-        // Never show a partial reporter identity/sample. A short pan keeps
-        // the people and explicitly directs the reader to the full reports.
-        const int required = heardBy ? std::min(3, static_cast<int>(reports.size())) : static_cast<int>(reports.size());
-        if (rows.size() + required + 1 <= maxRows) {
-            for (const QString& report : reports) {
-                if (rows.size() + 1 >= maxRows) {
-                    break;
-                }
-                rows.append(report);
-            }
-        }
-    }
-    rows.append(details);
-    return rows;
-}
-
 bool roundtableTagsEqual(const QList<RoundtableTag>& a, const QList<RoundtableTag>& b)
 {
     if (a.size() != b.size()) {
@@ -12645,7 +12679,7 @@ bool roundtableTagsEqual(const QList<RoundtableTag>& a, const QList<RoundtableTa
         const RoundtableTag& x = a.at(i);
         const RoundtableTag& y = b.at(i);
         if (x.roomId != y.roomId || x.hz != y.hz || x.state != y.state || x.label != y.label
-            || x.members != y.members || x.mine != y.mine || x.mentionsMe != y.mentionsMe
+            || x.members != y.members || x.mine != y.mine || x.active != y.active || x.mentionsMe != y.mentionsMe
             || x.stations != y.stations || x.reportLines != y.reportLines) {
             return false;
         }
@@ -12687,8 +12721,24 @@ void SpectrumWidget::setRoundtableTags(const QList<RoundtableTag>& tags, Roundta
     }
     m_roundtableTags = tags;
     m_roundtableTagDisplay = display;
-    // The tags are drawn into the GPU path's static overlay.
-    markOverlayDirty();
+    // The child repaints the tags. The spectrum frame is left alone.
+    refreshRoundtableTagLayer();
+}
+
+void SpectrumWidget::refreshRoundtableTagLayer()
+{
+    if (m_roundtableTagLayer) {
+        m_roundtableTagLayer->update();
+    } else {
+        // CPU builds paint tags in paintEvent. With no incoming FFT there
+        // is no other frame to reveal a changed, hidden or aged tag.
+        update();
+    }
+}
+
+void SpectrumWidget::paintRoundtableTags(QPainter& painter)
+{
+    drawRoundtableTags(painter, spectrumLayout().spectrum);
 }
 
 QRect SpectrumWidget::roundtableTagSpectrumRectForTest() const
@@ -12723,7 +12773,7 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
                                         + countMetrics.horizontalAdvance(QString::number(tag.members)));
     }
     const bool hasReports = std::any_of(m_roundtableTags.cbegin(), m_roundtableTags.cend(),
-        [](const RoundtableTag& tag) { return !tag.reportLines.isEmpty(); });
+        [](const RoundtableTag& tag) { return tag.active && !tag.reportLines.isEmpty(); });
     int tagWidth = hasReports ? kRoundtableReportMinWidth : std::min(natural, kRoundtableTagMaxWidth);
 
     const int bandTop = specRect.bottom() + 1 - bandPlanStripHeight(p.device());
@@ -12734,19 +12784,20 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     // Where a flag, or the pan's toolbar down its left side, is over the
     // tag row, the tags keep clear of it.
     QList<RoundtableKeepOut> keepOut;
-    const int maximumRows = std::max(0, (top + kRoundtableTagHeight - specRect.top() - 8) / 14);
+    const int reportRowHeight = std::max(14, labelMetrics.height() + 2);
+    const int maximumRows = std::max(0, (top + kRoundtableTagHeight - specRect.top() - 8) / reportRowHeight);
     QHash<QString, QStringList> contentRows;
     int stackHeight = kRoundtableTagHeight;
     for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
-        const QStringList rows = tag.reportLines.isEmpty() ? QStringList{} : roundtableCochannelRows(tag, maximumRows);
+        const QStringList rows = !tag.active || tag.reportLines.isEmpty() ? QStringList{} : roundtableCochannelRows(tag, maximumRows);
         contentRows.insert(tag.roomId, rows);
         // Font metrics vary across platforms. Keep the compact minimum, but
         // make room for every final row's identity, measurement and age.
         for (const QString& text : rows) {
             tagWidth = std::max(tagWidth, labelMetrics.horizontalAdvance(text) + 14);
         }
-        const int pixels = tag.reportLines.isEmpty() ? std::max(1, std::min(4, static_cast<int>(tag.stations.size()))) * kRoundtableTagHeight
-            : rows.size() * 14 + 8;
+        const int pixels = !tag.active || tag.reportLines.isEmpty() ? std::max(1, std::min(4, static_cast<int>(tag.stations.size()))) * kRoundtableTagHeight
+            : rows.size() * reportRowHeight + 8;
         stackHeight = std::max(stackHeight, pixels);
     }
     if (hasReports) {
@@ -12785,6 +12836,11 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     if (placements.isEmpty()) {
         return;
     }
+    for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
+        if (tag.active && !tag.reportLines.isEmpty()) {
+            contentRows[tag.roomId] = roundtableCochannelRows(tag, maximumRows, &labelMetrics, tagWidth - 14);
+        }
+    }
 
     QHash<QString, const RoundtableTag*> byId;
     for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
@@ -12797,8 +12853,8 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         const RoundtableTag* stackTag = byId.value(placement.roomIds.value(0));
         const int lines = !placement.folded && stackTag
             ? std::max(1, std::min(4, static_cast<int>(stackTag->stations.size()))) : 1;
-        const int bodyHeight = !placement.folded && stackTag && !stackTag->reportLines.isEmpty()
-            ? contentRows.value(stackTag->roomId).size() * 14 + 8 : lines * kRoundtableTagHeight;
+        const int bodyHeight = !placement.folded && stackTag && stackTag->active && !stackTag->reportLines.isEmpty()
+            ? contentRows.value(stackTag->roomId).size() * reportRowHeight + 8 : lines * kRoundtableTagHeight;
         const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())),
                          top + kRoundtableTagHeight - bodyHeight, tagWidth, bodyHeight);
         if (rect.top() < specRect.top()) { continue; }
@@ -12863,14 +12919,14 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
             continue;
         }
 
-        if (!first->reportLines.isEmpty()) {
+        if (first->active && !first->reportLines.isEmpty()) {
             const QStringList rows = contentRows.value(first->roomId);
             p.setFont(labelFont);
             for (int line = 0; line < rows.size(); ++line) {
                 p.setPen(line == 0 || line == rows.size() - 1 ? count : text);
-                p.drawText(QRect(rect.left() + 7, rect.top() + 4 + line * 14, rect.width() - 14, 14),
+                p.drawText(QRect(rect.left() + 7, rect.top() + 4 + line * reportRowHeight, rect.width() - 14, reportRowHeight),
                            Qt::AlignVCenter | Qt::AlignLeft,
-                           labelMetrics.elidedText(rows.at(line), Qt::ElideRight, rect.width() - 14));
+                           rows.at(line));
             }
             continue;
         }
@@ -12948,6 +13004,30 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
         const QString text = QStringLiteral("%1   %2   %3")
                                  .arg(roundtableFrequencyText(tag.hz), roundtableFoldWho(tag))
                                  .arg(tag.members);
+        const bool frequency = id.startsWith(QLatin1String("frequency:"));
+        if (frequency && roomIds.size() > 1) {
+            QAction* row = menu.addAction(QIcon(glyph), text);
+            row->setData(id);
+            connect(row, &QAction::triggered, this, [this, id] { emit roundtableReadRequested(id); });
+            continue;
+        }
+        if (frequency) {
+            QMenu* details = &menu;
+            for (const QJsonValue& value : tag.stations) {
+                const QJsonObject station = value.toObject();
+                QAction* person = details->addAction(QStringLiteral("%1 · slice %2 · %3")
+                    .arg(station.value(QStringLiteral("callsign")).toString())
+                    .arg(station.value(QStringLiteral("slice")).toInt())
+                    .arg(station.value(QStringLiteral("grid")).toString()));
+                person->setEnabled(false);
+            }
+            details->addAction(QStringLiteral("Read this frequency"), this,
+                               [this, id]() { emit roundtableReadRequested(id); });
+            QAction* tune = details->addAction(QStringLiteral("Tune active slice here"), this,
+                               [this, id]() { if (!m_moxOverlay) { emit roundtableRoomClicked(id); } });
+            tune->setEnabled(!m_moxOverlay);
+            continue;
+        }
         if (!tag.stations.isEmpty()) {
             auto* details = menu.addMenu(QIcon(glyph), QStringLiteral("%1 · %2 cochannel")
                 .arg(roundtableFrequencyText(tag.hz)).arg(tag.stations.size()));
@@ -12988,7 +13068,9 @@ bool SpectrumWidget::roundtableTagClick(const QPoint& pos, const QPoint& globalP
         }
         const bool frequency = !hit.roomIds.isEmpty()
             && hit.roomIds.first().startsWith(QLatin1String("frequency:"));
-        if (hit.folded || frequency) {
+        if (frequency && !hit.folded) {
+            emit roundtableReadRequested(hit.roomIds.first());
+        } else if (hit.folded) {
             auto* menu = new QMenu(this);
             menu->setAttribute(Qt::WA_DeleteOnClose);
             buildRoundtableFoldMenu(hit.roomIds, *menu);
@@ -13443,7 +13525,7 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
     case QEvent::Show:
     case QEvent::Hide:
         if (!m_roundtableTags.isEmpty() && obj->inherits("NereusSDR::SpectrumOverlayPanel")) {
-            markOverlayDirty();
+            refreshRoundtableTagLayer();
         }
         break;
     default:
@@ -14031,6 +14113,20 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
             emit notchCreateRequested(xToHz(mx, specRect), narrow);
             event->accept();
             return;
+        }
+
+        if (event->modifiers() == Qt::NoModifier && m_roundtableTagDisplay != RoundtableTagDisplay::Hidden) {
+            for (const RoundtableTagHit& hit : std::as_const(m_roundtableTagHits)) {
+                if (hit.rect.contains(QPoint(mx, my)) && !hit.roomIds.isEmpty()
+                    && hit.roomIds.first().startsWith(QLatin1String("frequency:"))) {
+                    auto* menu = new QMenu(this);
+                    menu->setAttribute(Qt::WA_DeleteOnClose);
+                    buildRoundtableFoldMenu(hit.roomIds, *menu);
+                    menu->popup(event->globalPosition().toPoint());
+                    event->accept();
+                    return;
+                }
+            }
         }
 
         // Right-click on a notch marker opens the notch menu.  Thetis
@@ -14781,6 +14877,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         const float frac = static_cast<float>(my)
             / std::max(1, layout.contentHeight);
         m_spectrumFrac = std::clamp(frac, 0.10f, 0.90f);
+        refreshWfTimestampLabel();
 #ifdef NEREUS_GPU_SPECTRUM
         markOverlayDirty();
 #else
@@ -16837,13 +16934,14 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             if (m_showSpots) {
                 drawSpotMarkers(p, specRect);
             }
-            // Roundtable plan Task 14: the room tags, as the CPU path.
-            drawRoundtableTags(p, specRect);
+            // Roundtable tags are not baked here. A report or an age would
+            // otherwise rebuild this whole chrome texture. Their child
+            // widget paints independently of both GPU overlay textures.
             drawVfoMarker(p, specRect, wfRect);
             drawOffScreenIndicator(p, specRect, wfRect);
 
             // Phase 3G-8 commit 10: waterfall chrome (filter/zero line/
-            // timestamp/opacity dim) lands in the overlay texture on GPU
+            // opacity dim) lands in the overlay texture on GPU
             // so the same setters work in both paths. Overlay texture
             // invalidation keys track every setter that feeds this plus
             // VFO/filter changes via setVfoFrequency/setFilterOffset.
@@ -17962,9 +18060,10 @@ void SpectrumWidget::refreshReceiverFlagRegion()
     if (region != m_receiverFlagRegion) {
         m_receiverFlagRegion = region;
         emit receiverFlagRegionChanged();
-        // Roundtable plan Task 14: the tags keep clear of the flags.
+        // Roundtable keepouts belong to the tag child. The flag event
+        // filter separately invalidates static marker geometry as needed.
         if (m_roundtableTagDisplay != RoundtableTagDisplay::Hidden && !m_roundtableTags.isEmpty()) {
-            markOverlayDirty();
+            refreshRoundtableTagLayer();
         }
     }
 }

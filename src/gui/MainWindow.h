@@ -847,6 +847,8 @@ private slots:
     /// Every pan's Roundtable tags from the Roundtable model, at most once
     /// per event-loop pass however many of its signals arrive.
     void scheduleRoundtableRefresh();
+    void onRoundtableRoomChanged(const QString& roomId);
+    void refreshRoundtableTagsImmediately();
     void refreshRoundtableTags();
     // A flag's Roundtable line: activate its slice and show the panel.
     void openRoundtableForSlice(int sliceId);
@@ -2319,7 +2321,9 @@ private:
     class TunerApplet*      m_tunerApplet{nullptr};
     class RotorApplet*      m_rotorApplet{nullptr};
     class RoundtableApplet* m_roundtableApplet{nullptr};  // Roundtable plan Task 13
-    bool m_roundtableRefreshPending{false};               // Roundtable plan Task 14
+    bool m_roundtableRefreshPending{false};               // latest trailing sample
+    QTimer* m_roundtableRefreshTimer{nullptr};
+    QHash<QString, QString> m_roundtableRoomStructures;
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};
