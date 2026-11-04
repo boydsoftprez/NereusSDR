@@ -1986,8 +1986,9 @@ private slots:
         // The card reads by D3, within 5 kHz: the tag above stays quiet (see below).
         QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Double);
         QCOMPARE(rig.card(7203000).kind, RoundtableCardModel::Kind::Double);
-        QVERIFY(roundtableFlagLineFor(&rig.model, 0, 7200000, QStringLiteral("lsb")).glyph
-                != static_cast<int>(RoundtableGlyph::Doubled));
+        // So does the flag, by the card's rule, from before any stream.
+        QCOMPARE(roundtableFlagLineFor(&rig.model, 0, 7200000, QStringLiteral("lsb")).glyph,
+                 static_cast<int>(RoundtableGlyph::Doubled));
         const QJsonArray rooms = rig.model.rooms();
         QVERIFY(!roundtableIsDouble({}, rooms, 7200000, QStringLiteral("lsb")));
         QVERIFY(roundtableIsDouble({}, rooms, 7203000, QStringLiteral("lsb")));
@@ -2090,6 +2091,58 @@ private slots:
                              QJsonObject{{"id", "lsb-7204000"}, {"family", "lsb"}, {"state", "talking"},
                                  {"talkers", QJsonArray{"K4ABC"}}, {"stations", QJsonArray{elsewhere}}}});
         QCOMPARE(rig.card(7200000).kind, RoundtableCardModel::Kind::Talking);
+    }
+
+    // The flag reads the same rule as the card before the stream arrives: it says
+    // Double from the start, viewed or not, and does not flip when the stream comes.
+    void aPendingFlagNextToADoubleSaysDoubleFromTheStart()
+    {
+        CardRig rig;
+        const QJsonObject q = cardPerson("lsb-7200000", "q", "W2QQQ", 7200000, false);
+        const QJsonObject a = cardPerson("lsb-7203000", "a", "W1AW", 7203000, true);
+        const QJsonObject b = cardPerson("lsb-7203000", "b", "K4ABC", 7203040, true);
+        const QJsonObject quietRoom{{"id", "lsb-7200000"}, {"family", "lsb"}, {"state", "quiet"}, {"stations", QJsonArray{q}}};
+        const auto flag = [&rig] { return roundtableFlagLineFor(&rig.model, 0, 7200000, QStringLiteral("lsb")); };
+        const QString doubleText = QStringLiteral("Roundtable \u00b7 3 \u00b7 Double");
+        rig.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "doubled"},
+            {"talkers", QJsonArray{"W1AW", "K4ABC"}}, {"stations", QJsonArray{a, b}}}});
+        // Nobody viewing, then a read with no stream yet.
+        QCOMPARE(flag().text, doubleText);
+        QCOMPARE(flag().glyph, static_cast<int>(RoundtableGlyph::Doubled));
+        QVERIFY(rig.model.readAt(7200000, QStringLiteral("lsb")));
+        QCOMPARE(flag().text, doubleText);
+        // The tags stay under the source-room rule.
+        QCOMPARE(roundtableTagsFor(&rig.model, {}).first().state, static_cast<int>(RoundtableGlyph::Quiet));
+        // The stream arrives: the same word.
+        rig.view(7200000, {cardTurn(5, "doubled", 7203000, "lsb-7203000", 100, {a, b})}, {}, {q, a, b});
+        QCOMPARE(flag().text, doubleText);
+
+        // A stream that says nobody is on the air is not a double from the directory.
+        rig.view(7200000, {}, {}, {q});
+        QVERIFY(flag().glyph != static_cast<int>(RoundtableGlyph::Doubled));
+        CardRig next;
+        const auto nextFlag = [&next] { return roundtableFlagLineFor(&next.model, 0, 7200000, QStringLiteral("lsb")); };
+        // One left of it: still that double.
+        next.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "doubled"},
+            {"talkers", QJsonArray{"W1AW", "GONE"}}, {"stations", QJsonArray{a}}}});
+        QCOMPARE(nextFlag().glyph, static_cast<int>(RoundtableGlyph::Doubled));
+        // Two keyed in one source room are a double before its summary says so.
+        next.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "talking"},
+            {"talkers", QJsonArray{"W1AW"}}, {"stations", QJsonArray{a, b}}}});
+        QCOMPARE(nextFlag().glyph, static_cast<int>(RoundtableGlyph::Doubled));
+        // A room that is not doubled: one talker, named.
+        next.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "talking"},
+            {"talkers", QJsonArray{"W1AW"}}, {"stations", QJsonArray{a}}}});
+        QCOMPARE(nextFlag().glyph, static_cast<int>(RoundtableGlyph::Talking));
+        QCOMPARE(nextFlag().text, QStringLiteral("Roundtable \u00b7 2 \u00b7 W1AW"));
+        // Two keyed merely near each other, in different rooms, are not a double.
+        QJsonObject elsewhere = b;
+        elsewhere.insert("sourceRoom", "lsb-7204000");
+        next.rooms(QJsonArray{quietRoom, QJsonObject{{"id", "lsb-7203000"}, {"family", "lsb"}, {"state", "talking"},
+                                  {"talkers", QJsonArray{"W1AW"}}, {"stations", QJsonArray{a}}},
+                              QJsonObject{{"id", "lsb-7204000"}, {"family", "lsb"}, {"state", "talking"},
+                                  {"talkers", QJsonArray{"K4ABC"}}, {"stations", QJsonArray{elsewhere}}}});
+        QCOMPARE(nextFlag().glyph, static_cast<int>(RoundtableGlyph::Talking));
     }
 
     // One callsign on two slices doubling itself keeps both names with their

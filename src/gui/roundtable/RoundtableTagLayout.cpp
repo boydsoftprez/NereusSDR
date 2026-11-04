@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: A pending flag says Double by the pending card's rule, shared in
+//               nearestKeyedTruth. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-11-04: A tag reads only its own turns; a pending card says Double from
 //               the start; a doubled summary names per endpoint; Tune's "writes
 //               nothing" rule. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -598,6 +601,35 @@ FrequencyTruth directoryTruth(const QJsonArray& rooms, const QJsonArray& station
     return {unknown ? QStringLiteral("unknown") : QStringLiteral("quiet"), {}};
 }
 
+// D3: the turn the stream will bring, for a frequency with no word of its own. A
+// keyed station in a room the summary calls doubled is on that double, and so are
+// two keyed in one source room, so the card and flag say so from the start rather
+// than naming one and then changing their mind. Keyed neighbors in different rooms
+// are not a double. Tags never read this: they stay under directoryTruth (D1).
+FrequencyTruth nearestKeyedTruth(const QJsonArray& rooms, const QJsonArray& stations, qint64 hz, const QString& family)
+{
+    const QList<QJsonObject> keyed = keyedNear(stations, hz, family);
+    if (keyed.isEmpty()) { return {}; }
+    const QString source = keyed.first().value(QStringLiteral("sourceRoom")).toString();
+    QStringList inSource;
+    for (const QJsonObject& station : keyed) {
+        if (station.value(QStringLiteral("sourceRoom")).toString() == source) {
+            inSource.append(personName(station));
+        }
+    }
+    if (!source.isEmpty()) {
+        for (const QJsonValue& value : rooms) {
+            const QJsonObject summary = value.toObject();
+            if (summary.value(QStringLiteral("id")).toString() == source
+                && summary.value(QStringLiteral("state")).toString() == QLatin1String("doubled")) {
+                return {QStringLiteral("doubled"), doubledRoomNames(summary, stations, inSource)};
+            }
+        }
+        if (inSource.size() >= 2) { return {QStringLiteral("doubled"), inSource}; }
+    }
+    return {QStringLiteral("talking"), QStringList{personName(keyed.first())}};
+}
+
 // A read whose stream has not arrived has an empty view of its own: it knows
 // nothing yet, and says nothing against the directory.
 bool viewIsPending(const QJsonObject& view)
@@ -785,37 +817,19 @@ RoundtableCardModel roundtableCardModelFor(const RoundtableModel* model, const Q
         // read whose stream has not arrived has an empty view of its own.
         if (viewIsPending(view)) {
             const FrequencyTruth truth = directoryTruth(model->rooms(), stations, dial, family);
-            const QList<QJsonObject> keyed = keyedNear(stations, dial, family);
             if (truth.state == QLatin1String("doubled")) {
                 card.kind = Kind::Double;
                 card.keyed = truth.keyed;
             } else if (truth.state == QLatin1String("unknown")) {
                 card.kind = Kind::Unknown;
-            } else if (!keyed.isEmpty()) {
-                // D3: the turn the stream will bring. A keyed station in a room the
-                // summary calls doubled is on that double, so the card says so from
-                // the start rather than naming one and then changing its mind.
-                const QString source = keyed.first().value(QStringLiteral("sourceRoom")).toString();
-                QStringList inSource;
-                for (const QJsonObject& station : keyed) {
-                    if (station.value(QStringLiteral("sourceRoom")).toString() == source) {
-                        inSource.append(personName(station));
-                    }
-                }
-                card.kind = Kind::Talking;
-                card.keyed = QStringList{personName(keyed.first())};
-                if (!source.isEmpty() && inSource.size() >= 2) {
+            } else {
+                const FrequencyTruth nearest = nearestKeyedTruth(model->rooms(), stations, dial, family);
+                if (nearest.state == QLatin1String("doubled")) {
                     card.kind = Kind::Double;
-                    card.keyed = inSource;
-                }
-                for (const QJsonValue& value : model->rooms()) {
-                    const QJsonObject summary = value.toObject();
-                    if (!source.isEmpty() && summary.value(QStringLiteral("id")).toString() == source
-                        && summary.value(QStringLiteral("state")).toString() == QLatin1String("doubled")) {
-                        card.kind = Kind::Double;
-                        card.keyed = doubledRoomNames(summary, stations, inSource);
-                        break;
-                    }
+                    card.keyed = nearest.keyed;
+                } else if (nearest.state == QLatin1String("talking")) {
+                    card.kind = Kind::Talking;
+                    card.keyed = nearest.keyed;
                 }
             }
         }
@@ -1446,6 +1460,11 @@ RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int slice
             state = talkers.isEmpty() ? QStringLiteral("unknown") : QStringLiteral("talking");
         } else if (truth.state == QLatin1String("unknown")) {
             state = QStringLiteral("unknown");
+        } else if (viewIsPending(view)
+                   && nearestKeyedTruth(summaries, stationsOfRooms(summaries), hz, family).state
+                       == QLatin1String("doubled")) {
+            // Before the stream, by the card's rule: Double from the start.
+            state = QStringLiteral("doubled");
         } else {
             for (const QJsonObject& station : keyedNear(stations, hz, family)) {
                 talkers.append(station.value(QStringLiteral("callsign")));
