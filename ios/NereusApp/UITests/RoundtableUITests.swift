@@ -10,6 +10,9 @@
 // 2026-10-25: JJ's answer: on a phone the first-run question opens at full
 // height, Stay hidden and Go live on screen without a scroll. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: One sheet on every frequency under a finger: toggle, Back in place, the more
+// button, and a band drag that leaves it open (overlay design D22, D27, D36, D38).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -46,6 +49,88 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
         XCTAssertEqual(app.descendants(matching: .any)["ptt"].label, "Push to talk, tap to key and tap again to unkey")
         XCTAssertEqual(holdLog(app), "none")
+    }
+
+    /// D38: the flag line, the card and a tag open one sheet. The same thing closes it,
+    /// Back stays up on your own, and the slice's flag never changes.
+    @MainActor
+    func testOneSheetTogglesAndBackStaysOnYourOwn() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        let flag = app.descendants(matching: .any)["flagA"]
+        let line = app.descendants(matching: .any)["roundtableLineA"]
+        XCTAssertTrue(line.waitForExistence(timeout: 30))
+        let before = flag.label
+        let sheet = try openSheet(app)
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableViewTuneReason"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTune"].isEnabled)
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].exists, "your own keeps its box")
+        try save("roundtable-ui-one-sheet-own")
+        line.tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "the same line did not close the sheet")
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        tag.tap()
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let back = app.descendants(matching: .any)["roundtableBackToSlice"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        let half = sheet.frame
+        try save("roundtable-ui-one-sheet-viewed")
+        back.tap()
+        XCTAssertTrue(back.waitForNonExistence(timeout: 10), "Back did not return to your own")
+        XCTAssertTrue(sheet.exists, "Back closed the sheet")
+        XCTAssertEqual(sheet.frame.minY, half.minY, accuracy: 2, "Back moved the sheet")
+        tag.tap()
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        tag.tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "the same tag did not close the sheet")
+        XCTAssertEqual(flag.label, before, "a tap moved the slice")
+        XCTAssertEqual(holdLog(app), "none")
+    }
+
+    /// D36: the sheet's more button has Signal and Cancel and nothing else.
+    @MainActor
+    func testTheMoreButtonHasSignalAndCancel() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        _ = try openSheet(app)
+        let more = app.buttons["roundtableMore"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        more.tap()
+        let signal = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Signal: '")).firstMatch
+        XCTAssertTrue(signal.waitForExistence(timeout: 10))
+        try save("roundtable-ui-more")
+        XCTAssertTrue(app.buttons["Cancel"].exists)
+        XCTAssertFalse(app.buttons["Read reports"].exists)
+        // The sheet's own Tune is the only one: the menu has none.
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tune slice'")).count, 1)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(signal.waitForNonExistence(timeout: 10))
+    }
+
+    /// D27, D38: a drag on the band tunes and leaves the sheet open on what it shows.
+    @MainActor
+    func testDraggingTheBandLeavesTheSheetOpen() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        let flag = app.descendants(matching: .any)["flagA"]
+        XCTAssertTrue(flag.waitForExistence(timeout: 30))
+        let before = flag.label
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        tag.tap()
+        let sheet = app.descendants(matching: .any)["roundtableSheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let back = app.descendants(matching: .any)["roundtableBackToSlice"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        // A drag on the slice's flag is the band's own tuning gesture, above the sheet.
+        flag.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: flag.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        waitUntil("the drag did not tune the slice") { flag.label != before }
+        XCTAssertTrue(sheet.exists, "the drag closed the sheet")
+        XCTAssertTrue(back.exists, "the drag ended the view")
+        XCTAssertEqual(holdLog(app), "none")
+        try save("roundtable-ui-drag-keeps-sheet")
     }
 
     /// U2: with the sheet open PTT is press and hold beside the box, and
@@ -215,11 +300,12 @@ final class RoundtableUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(firstRun: Bool = false) -> XCUIApplication {
+    private func launch(firstRun: Bool = false, frequency: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         // The band with slice A in a Roundtable room, with no Core (a debug build's launch arguments).
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusRoundtableFixture"]
             + (firstRun ? ["-NereusRoundtableFirstRun"] : [])
+            + (frequency ? ["-NereusRoundtableFrequency"] : [])
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()

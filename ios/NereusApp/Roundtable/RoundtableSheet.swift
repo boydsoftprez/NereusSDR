@@ -22,6 +22,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-03: Viewing a frequency without tuning, in the sheet (overlay design D21 to D24).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: One sheet on every frequency: your own uses the frequency view, Back stays
+// up on your own, and the more button has Signal and Cancel (overlay design D22, D25, D36, D38).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -58,6 +61,8 @@ struct RoundtableSheet: View {
     /// The first-run note was shown on this phone.
     @Binding var firstRunNoteSeen: Bool
     let close: () -> Void
+    /// Back to your own frequency, in place: the sheet stays up (D35, D38).
+    let back: () -> Void
     var holdObserver: ((PttHold.Action) -> Void)?
     /// On an iPad the first-run question is a form sheet in the middle of
     /// the screen (spec 11.4): the sheet shows a line that asks it here,
@@ -92,6 +97,9 @@ struct RoundtableSheet: View {
     }
     /// A frequency is being viewed, not your own (overlay design D21).
     private var viewing: Bool { roundtable.isViewing }
+    /// A short landscape sheet needs its height for the reports: your own frequency's
+    /// greyed Tune, which has nothing to do there, sits with them, not pinned.
+    private var ownTuneScrolls: Bool { compactLandscape && !viewing }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -115,10 +123,14 @@ struct RoundtableSheet: View {
                     RoundtableFirstRunNote(hidden: roundtable.hidden) { firstRunNoteSeen = true }
                 }
                 if viewing {
-                    viewingHeader
+                    inspectorBar
                 } else if !keyed {
-                    header
-                    if !compactLandscape { connection }
+                    if roundtable.frequencyAvailable {
+                        inspectorBar
+                    } else {
+                        header
+                        if !compactLandscape { connection }
+                    }
                 }
                 content
                 if !(dialOn && keyed) {
@@ -233,26 +245,11 @@ struct RoundtableSheet: View {
         .frame(height: compactLandscape ? 44 : 40)
     }
 
-    /// "‹ Back to my slice" and close: either lets go of the read and closes.
-    private var viewingHeader: some View {
-        HStack(spacing: 8) {
-            RoundtableBackButton(chip: true, action: close)
-            Spacer(minLength: 4)
-            Button(action: close) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(RoundtableColours.text)
-                    .frame(width: 30, height: 30)
-                    .background(Color.white.opacity(0.08), in: Circle())
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close")
-            .accessibilityIdentifier("roundtableClose")
-        }
-        .padding(.leading, 12)
-        .padding(.trailing, 4)
+    /// The one sheet's head: Back or your frequency, then more and close (overlay.js renderInsSheet).
+    private var inspectorBar: some View {
+        RoundtableInspectorBar(roundtable: roundtable, viewing: viewing, closeId: "roundtableClose",
+                               onBack: back, onClose: close)
+            .frame(height: compactLandscape ? 44 : 40)
     }
 
     private var connection: some View {
@@ -265,24 +262,26 @@ struct RoundtableSheet: View {
     private var content: some View {
         if let reason = roundtable.coreReason {
             message(reason, detail: nil)
-        } else if viewing, let room {
+        } else if roundtable.frequencyAvailable, let room {
+            // One sheet on every frequency (D38). Your own keeps its earlier turns at full height, where they can be named.
             RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
                                keyedSince: nil, keyedForSeconds: 0, tunedHere: tunedHere,
                                stationCallsign: stationCallsign, ownDbm: nil, sliceLetter: activeLetter,
-                               compact: false,
+                               compact: compactLandscape,
                                frequencyHead: AnyView(
                                 RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
-                                                        viewing: true, keyed: transmit.ptt.transmitting, linkUp: linkUp,
-                                                        panLevel: panLevel, showsBack: false, showsTune: false,
-                                                        onTune: { _, _ in }, onBack: close)),
-                               frequencyFoot: AnyView(
+                                                        viewing: viewing, keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                        panLevel: panLevel, showsBack: false, showsTune: ownTuneScrolls,
+                                                        onTune: { _, _ in }, onBack: back)),
+                               frequencyFoot: ownTuneScrolls ? nil : AnyView(
                                 RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
-                                                           keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                           viewing: viewing, keyed: transmit.ptt.transmitting, linkUp: linkUp,
                                                            onTune: { hz, family in
                                                                slices.tune(toHz: hz, family: family)
                                                                close()
                                                            })),
-                               showsEarlier: false, viewing: true)
+                               showsEarlier: !viewing && detent == .full, viewing: viewing)
+                .id(room.id)
         } else if let room {
             RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
                                keyedSince: PttButton.keyedSince(transmit.ptt),
@@ -368,6 +367,83 @@ extension RoundtableModel {
     /// The station has not answered Roundtable's first question yet.
     var askingFirstRun: Bool {
         available && linkState != .off && !firstRunAnswered
+    }
+}
+
+/// The one inspector's head on a sheet or a panel: Back on a viewed frequency, or
+/// Roundtable and your frequency on your own, then more and close (overlay.js renderInsSheet).
+struct RoundtableInspectorBar: View {
+    @ObservedObject var roundtable: RoundtableModel
+    let viewing: Bool
+    let closeId: String
+    let onBack: () -> Void
+    let onClose: () -> Void
+
+    @State private var moreOpen = false
+
+    static func signalTitle(_ format: RoundtableSignalFormat) -> String {
+        "Signal: \(format.title) \u{00B7} Change"
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if viewing {
+                RoundtableBackButton(chip: true, action: onBack)
+            } else {
+                // The word gives way on a narrow panel, so the frequency is never cut.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Roundtable").font(.system(size: 14, weight: .bold)).foregroundStyle(RoundtableColours.bright)
+                            .fixedSize()
+                        ownHead.fixedSize()
+                    }
+                    ownHead
+                }
+                .layoutPriority(1)
+            }
+            Spacer(minLength: 4)
+            HStack(spacing: 0) {
+                icon("ellipsis") { moreOpen = true }
+                    .accessibilityLabel("More")
+                    .accessibilityIdentifier("roundtableMore")
+                icon("xmark", action: onClose)
+                    .accessibilityLabel(viewing ? "Close" : "Close Roundtable")
+                    .accessibilityIdentifier(closeId)
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 4)
+        .confirmationDialog(roundtable.room.map { RoundtableTagLayout.frequencyText($0.hz) + " MHz" } ?? "Roundtable",
+                            isPresented: $moreOpen, titleVisibility: .visible) {
+            Button(Self.signalTitle(roundtable.signalFormat)) { roundtable.cycleSignalFormat() }
+            // The system's popover menu drops a cancel-role row, and the design shows Cancel (D36).
+            if #available(iOS 26, *) {
+                Button("Cancel") {}
+            } else {
+                Button("Cancel", role: .cancel) {}
+            }
+        }
+    }
+
+    /// Who the frequency's own list counts, as the view below does, before its stream names them.
+    @ViewBuilder
+    private var ownHead: some View {
+        if let room = roundtable.room {
+            RoundtableRoomHead(room: room, stations: roundtable.cardData(context: room.id).onFrequency.count)
+        }
+    }
+
+    private func icon(_ name: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(RoundtableColours.text)
+                .frame(width: 30, height: 30)
+                .background(Color.white.opacity(0.08), in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

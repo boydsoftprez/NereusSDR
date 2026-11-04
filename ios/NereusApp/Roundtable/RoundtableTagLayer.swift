@@ -1591,8 +1591,8 @@ enum RoundtableTagLayout {
 /// The tags along the foot of the spectrum, above the band-plan strip and clear
 /// of the flags, and the active frequency's card: a tap on a tag tunes the active
 /// slice to its room; a tap on +N lists its rooms by frequency, and a row tunes.
-/// On a server that can read another frequency a tap on a tag or a row views it
-/// and tunes nothing (overlay design D21), and your own opens its action sheet.
+/// On a server that can read another frequency a tap on a tag, a row or your own
+/// card opens the one inspector and tunes nothing (overlay design D21, D34).
 /// Keyed, a tag tunes nothing. A dropped link greys them as last known; connecting
 /// hides them; while you are hidden their marking is dimmed. They take touches only
 /// inside their own rects, so the band still drags.
@@ -1623,10 +1623,6 @@ struct RoundtableTagLayer: View {
     var readReports: ((String) -> Void)? = nil
     /// Views a frequency, on a server that can show one (overlay design D21). Nothing tunes.
     var viewFrequency: ((String) -> Void)? = nil
-    /// The active slice's exact frequency, for the card menu's Tune.
-    var activeSliceHz: Int64? = nil
-    /// Tunes the active slice to an exact frequency: the card menu's Tune.
-    var tuneHz: ((Int64) -> Void)? = nil
     /// Tunes the active slice to a room.
     let tune: (RoundtableModel.RoomSummary) -> Void
 
@@ -1643,10 +1639,8 @@ struct RoundtableTagLayer: View {
 
     /// What a tap on a tag or a fold's row does.
     enum TagTap: Equatable {
-        /// D21: views the frequency and tunes nothing.
+        /// D21, D25: the inspector on that frequency, your own as well. It tunes nothing.
         case view(String)
-        /// D25: your own frequency's action sheet.
-        case ownMenu(String)
         /// A legacy server cannot view: the sheet of details today's tag offers.
         case legacyDetails(String)
         /// A legacy server cannot view: tunes, as it always has.
@@ -1656,7 +1650,7 @@ struct RoundtableTagLayer: View {
     /// A tag's tap (D21, D25). `canView` is a server that can read another frequency.
     static func tagTap(roomId: String, canView: Bool, activeContext: String?, hasDetails: Bool) -> TagTap {
         if canView {
-            return roomId == activeContext ? .ownMenu(roomId) : .view(roomId)
+            return .view(roomId)
         }
         return hasDetails ? .legacyDetails(roomId) : .tune(roomId)
     }
@@ -1664,16 +1658,6 @@ struct RoundtableTagLayer: View {
     /// A row in a fold's list: it views, and never tunes, on a capable server.
     static func foldRowTap(roomId: String, canView: Bool) -> TagTap {
         canView ? .view(roomId) : .tune(roomId)
-    }
-
-    /// Where the card's Tune goes (controller's ruling): the live talker's exact
-    /// frequency. Nil, and so disabled, while keyed, with no live turn, or when
-    /// the slice is already exactly there.
-    static func ownTuneTarget(_ card: RoundtableCardData, keyed: Bool, sliceHz: Int64?) -> Int64? {
-        guard !keyed, let live = card.liveHz, live != sliceHz else {
-            return nil
-        }
-        return live
     }
 
     private var canView: Bool { roundtable.frequencyAvailable && viewFrequency != nil }
@@ -1734,13 +1718,7 @@ struct RoundtableTagLayer: View {
                 if let target = detailsTarget {
                     Button("Read reports") { readReports?(target.roomId) }
                     Button("Signal: \(roundtable.signalFormat.title) · Change") { roundtable.cycleSignalFormat() }
-                    if canView {
-                        let live = Self.ownTuneTarget(roundtable.cardData(context: target.roomId), keyed: keyed,
-                                                      sliceHz: activeSliceHz)
-                        Button("Tune slice \(sliceLetter) here") { if let live { tuneHz?(live) } }.disabled(live == nil)
-                    } else {
-                        Button("Tune slice \(sliceLetter) here") { tuneTo(target.roomId) }.disabled(keyed)
-                    }
+                    Button("Tune slice \(sliceLetter) here") { tuneTo(target.roomId) }.disabled(keyed)
                 }
                 Button("Cancel", role: .cancel) {}
             }
@@ -1811,7 +1789,7 @@ struct RoundtableTagLayer: View {
         return Button {
             openFold = nil
             if canView, let activeId = roundtable.activeContext?.id {
-                perform(.ownMenu(activeId), hz: card.hz)
+                perform(.view(activeId), hz: card.hz)
             } else if let tag {
                 perform(Self.tagTap(roomId: tag.roomId, canView: false, activeContext: nil,
                                     hasDetails: tag.card != nil && readReports != nil), hz: tag.hz)
@@ -1824,8 +1802,8 @@ struct RoundtableTagLayer: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tag.map { accessibilityLabel(RoundtableTagPlacement(left: 0, width: 0, roomIds: [$0.roomId]), tags: [$0]) } ?? "Roundtable")
-        .accessibilityHint(canView || (tag?.card != nil && readReports != nil)
-            ? "Offers Read reports, signal display and Tune slice \(sliceLetter) here"
+        .accessibilityHint(canView ? "Opens this frequency in Roundtable and tunes nothing"
+            : tag?.card != nil && readReports != nil ? "Offers Read reports, signal display and Tune slice \(sliceLetter) here"
             : "Tunes slice \(sliceLetter) there")
         .accessibilityIdentifier("roundtableTag.\(roomId)")
         .accessibilityActions {
@@ -2005,7 +1983,7 @@ struct RoundtableTagLayer: View {
         switch tap {
         case .view(let id):
             viewFrequency?(id)
-        case .ownMenu(let id), .legacyDetails(let id):
+        case .legacyDetails(let id):
             detailsTarget = MenuTarget(roomId: id, hz: hz)
             showDetails = true
         case .tune(let id):

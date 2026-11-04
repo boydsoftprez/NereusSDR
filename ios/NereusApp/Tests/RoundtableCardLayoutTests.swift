@@ -99,6 +99,31 @@ struct RoundtableCardLayoutTests {
         #expect(doubleCard?.placement == .beside && doubleCard?.plan.names == 2)
     }
 
+    @Test("the real iPhone 17 on its side: the card stands beside the flag's side buttons, never under them")
+    func realSidewaysGeometry() {
+        // From the band on its side: the button column, the round buttons, the flags and the scale's arrows.
+        let column = CGRect(x: 6, y: 6, width: 162, height: 130)
+        let arrows = CGRect(x: 835, y: 0, width: 39, height: 52)
+        let cases: [(buttons: CGRect, flag: CGRect, other: CGRect, dial: CGFloat)] = [
+            // The flag right of the dial, its round buttons to its left.
+            (CGRect(x: 244, y: 0, width: 44, height: 135), CGRect(x: 290, y: 0, width: 200, height: 181),
+             CGRect(x: 519, y: 0, width: 150, height: 25), 263),
+            // Flipped, near the top of the pan: the round buttons on the flag's right.
+            (CGRect(x: 602, y: 0, width: 44, height: 135), CGRect(x: 400, y: 0, width: 200, height: 181),
+             CGRect(x: 220, y: 0, width: 150, height: 25), 600),
+        ]
+        for item in cases {
+            let flags = [item.flag, item.other, item.buttons]
+            let placed = RoundtableTagLayout.placedCard(flags: flags, keepOut: [column, arrows], dialX: item.dial, foot: 86,
+                                                        panWidth: 835, compact: true, card: double())
+            let card = placed?.rect ?? .null
+            #expect(!card.isNull)
+            for block in flags + [column, arrows] {
+                #expect(!card.intersects(block), "\(card) meets \(block)")
+            }
+        }
+    }
+
     @Test("under 122 wide no age and no frequency in the head; under 150 S units for Both")
     func narrowRules() throws {
         let tight = try #require(RoundtableTagLayout.cardPlan(talking(), width: 121, room: 300))

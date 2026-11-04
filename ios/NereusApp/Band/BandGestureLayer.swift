@@ -114,6 +114,8 @@ struct BandGestureLayer: View {
     var openRoundtable: ((Int) -> Void)?
     /// Views a frequency without tuning there (overlay design D21).
     var viewRoundtable: ((String) -> Void)?
+    /// A flag's Roundtable line: that slice's frequency, and the same line closes it (D26).
+    var toggleRoundtableLine: ((Int) -> Void)?
     /// The Roundtable sheet is up over a dial: the dial sits in the 92-point
     /// strip under it, the knob drawn smaller (spec 11.3).
     var dialStrip = false
@@ -327,11 +329,7 @@ struct BandGestureLayer: View {
                             openRoundtable?(slices.activeSliceId ?? entries.first?.id ?? 0)
                         }
                     }
-                }, viewFrequency: viewRoundtable,
-                                   activeSliceHz: slices.active.map { Int64($0.slice.frequencyHz.rounded()) },
-                                   tuneHz: { hz in
-                    slices.tap(to: Double(hz))
-                }) { room in
+                }, viewFrequency: viewRoundtable) { room in
                     // As the sheet's Tune here: the active slice to the room, then back to its own room.
                     slices.tune(toHz: room.hz, family: room.family)
                     Task { await roundtable.backToSlice() }
@@ -502,9 +500,9 @@ struct BandGestureLayer: View {
                         bypassOn: controls?.bypassOn ?? false,
                         openDiversity: controls.map { controls in { controls.openDiversity(entry) } },
                         roundtable: roundtableLines[id],
-                        openRoundtable: openRoundtable.map { open in {
+                        openRoundtable: toggleRoundtableLine.map { toggle in {
                             controls?.close()
-                            open(id)
+                            toggle(id)
                         } })
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.

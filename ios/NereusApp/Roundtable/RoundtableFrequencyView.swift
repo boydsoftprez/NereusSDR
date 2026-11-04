@@ -6,6 +6,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-04: Tune is off when it would write nothing, or when no mode reaches the family.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: One inspector on iPhone and iPad: your own frequency greys Tune with its
+// reason, and the panel takes your own frequency too (overlay design D22, D24, D36).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusModels
 import SwiftUI
@@ -73,6 +76,11 @@ enum RoundtableFrequencyText {
                                        old: false, peak: panPeak, label: "Your pan")] + card.rows
     }
 
+    /// D22: why Tune is greyed on your own frequency.
+    static func alreadyHere(sliceLetter: String) -> String {
+        "Slice \(sliceLetter) is already here"
+    }
+
     /// D22: Tune is off while keyed, when already there, and when the radio's
     /// own connection or the slice itself will not take it. "Already there"
     /// counts the family: a Tune from an LSB view moves a USB slice's mode too.
@@ -88,7 +96,8 @@ enum RoundtableFrequencyText {
 
 /// One frequency: the head, how far it is from your slice, who is on it and
 /// what each listener reads, then Tune. Your own frequency reads the same with
-/// `viewing` false, and has no Tune (overlay design D22, D28; overlay.js peekBody).
+/// `viewing` false, and its Tune is greyed, never hidden, with the reason shown
+/// (overlay design D22, D28; overlay.js peekBody).
 struct RoundtableFrequencyView: View {
     let data: RoundtableCardData
     let viewing: Bool
@@ -167,7 +176,7 @@ struct RoundtableFrequencyView: View {
                 caption("On frequency \u{00B7} \(data.onFrequency.count)", trailing: "Tuned", colour: RoundtableColours.dim)
                 people
                 readings
-                if viewing && showsTune {
+                if showsTune {
                     tuneButton
                 }
             }
@@ -299,7 +308,7 @@ struct RoundtableFrequencyView: View {
     }
 
     private var tuneButton: some View {
-        RoundtableFrequencyTuneButton(sliceLetter: sliceLetter, canTune: canTune, action: onTune)
+        RoundtableFrequencyTuneButton(sliceLetter: sliceLetter, canTune: viewing && canTune, own: !viewing, action: onTune)
     }
 }
 
@@ -307,12 +316,28 @@ struct RoundtableFrequencyView: View {
 struct RoundtableFrequencyTuneButton: View {
     let sliceLetter: String
     let canTune: Bool
+    /// Your own frequency: greyed, and says why (D22).
+    var own = false
     let action: () -> Void
 
     private static let tuneFill = Color(red: 0x2F / 255, green: 0x5F / 255, blue: 0x92 / 255)
     private static let tuneEdge = Color(red: 0x5E / 255, green: 0x8D / 255, blue: 0xB8 / 255)
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            tune
+            if own {
+                Text(RoundtableFrequencyText.alreadyHere(sliceLetter: sliceLetter))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(RoundtableColours.dim)
+                    .lineLimit(1)
+                    .padding(.bottom, 4)
+                    .accessibilityIdentifier("roundtableViewTuneReason")
+            }
+        }
+    }
+
+    private var tune: some View {
         Button(action: action) {
             Text("Tune slice \(sliceLetter) here")
                 .font(.system(size: 11, weight: .semibold))
@@ -336,6 +361,8 @@ struct RoundtableFrequencyTuneBar: View {
     @ObservedObject var roundtable: RoundtableModel
     @ObservedObject var slices: BandSlicesModel
     let contextId: String
+    /// Viewing another frequency; false is your own, where Tune has nothing to do.
+    var viewing = true
     let keyed: Bool
     let linkUp: Bool
     let onTune: (Int64, String) -> Void
@@ -345,9 +372,10 @@ struct RoundtableFrequencyTuneBar: View {
         let active = slices.active
         RoundtableFrequencyTuneButton(
             sliceLetter: active?.slice.letter ?? "A",
-            canTune: RoundtableFrequencyHost.canTune(data, active: active, keyed: keyed,
-                                                     tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp,
-                                                     modes: slices.catalog?.offeredModes ?? []),
+            canTune: viewing && RoundtableFrequencyHost.canTune(data, active: active, keyed: keyed,
+                                                                tunable: active.map(slices.isTunable) ?? false, linkUp: linkUp,
+                                                                modes: slices.catalog?.offeredModes ?? []),
+            own: !viewing,
             action: { onTune(data.hz, data.family) })
             .padding(.horizontal, 10)
             .background(RoundtableColours.ground)
@@ -475,10 +503,10 @@ struct RoundtableFrequencyHost: View {
     }
 }
 
-/// The room under a frequency's view: read only messages until you tune here.
-/// A floating panel over the pan when an iPad's column is not showing
-/// (overlay.css .scr--ipad .rc-psheet): the band beneath it still tunes, and
-/// tuning closes it, so it is not a modal popover.
+/// The inspector as a floating panel over the pan when an iPad's column is not
+/// showing (overlay.css .scr--ipad .rc-psheet), on your own frequency as well (D24).
+/// The band beneath it still tunes and leaves it open (D27), so it is not a modal
+/// popover. A viewed frequency's messages are read only until you tune here.
 struct RoundtableFrequencyPopover: View {
     @ObservedObject var roundtable: RoundtableModel
     @ObservedObject var slices: BandSlicesModel
@@ -486,46 +514,59 @@ struct RoundtableFrequencyPopover: View {
     let stationCallsign: String
     let linkUp: Bool
     var panLevel: ((Int64, String) -> Double?)? = nil
+    /// The first-run note was shown on this device.
+    @Binding var firstRunNoteSeen: Bool
+    /// Opens the first-run question's form sheet.
+    let askFirstRun: () -> Void
     let onTune: (Int64, String) -> Void
+    /// Back to your own frequency, in place.
     let onBack: () -> Void
+    let onClose: () -> Void
 
     static let width: CGFloat = 370
 
+    private var viewing: Bool { roundtable.isViewing }
+    private var keyed: Bool { transmit.ptt.transmitting }
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                RoundtableBackButton(chip: true, action: onBack)
+            RoundtableInspectorBar(roundtable: roundtable, viewing: viewing, closeId: "roundtableViewClose",
+                                   onBack: onBack, onClose: onClose)
+            if roundtable.askingFirstRun {
+                RoundtableFirstRunPrompt(ask: askFirstRun)
                 Spacer(minLength: 0)
-                Button(action: onBack) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(RoundtableColours.text)
-                        .frame(width: 30, height: 30)
-                        .background(Color.white.opacity(0.08), in: Circle())
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+            } else if let reason = roundtable.coreReason {
+                Text(reason)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(RoundtableColours.bright)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 0)
+            } else {
+                if !firstRunNoteSeen {
+                    RoundtableFirstRunNote(hidden: roundtable.hidden) { firstRunNoteSeen = true }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close")
-                .accessibilityIdentifier("roundtableViewClose")
-            }
-            .padding(.leading, 10)
-            .padding(.trailing, 4)
-            if let room = roundtable.room {
-                RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: transmit.ptt.transmitting,
-                                   keyedSince: nil, keyedForSeconds: 0, tunedHere: roundtable.tunedToShownRoom,
-                                   stationCallsign: stationCallsign, ownDbm: nil,
-                                   sliceLetter: slices.active?.slice.letter ?? "A",
-                                   frequencyHead: AnyView(
-                                    RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
-                                                            viewing: true, keyed: transmit.ptt.transmitting,
-                                                            linkUp: linkUp, panLevel: panLevel, showsBack: false,
-                                                            showsTune: false, onTune: { _, _ in }, onBack: onBack)),
-                                   frequencyFoot: AnyView(
-                                    RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
-                                                               keyed: transmit.ptt.transmitting, linkUp: linkUp,
-                                                               onTune: onTune)),
-                                   showsEarlier: false, viewing: true)
+                if let room = roundtable.room {
+                    RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
+                                       keyedSince: nil, keyedForSeconds: 0, tunedHere: roundtable.tunedToShownRoom,
+                                       stationCallsign: stationCallsign, ownDbm: nil,
+                                       sliceLetter: slices.active?.slice.letter ?? "A",
+                                       frequencyHead: AnyView(
+                                        RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
+                                                                viewing: viewing, keyed: keyed,
+                                                                linkUp: linkUp, panLevel: panLevel, showsBack: false,
+                                                                showsTune: false, onTune: { _, _ in }, onBack: onBack)),
+                                       frequencyFoot: AnyView(
+                                        RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
+                                                                   viewing: viewing, keyed: keyed, linkUp: linkUp,
+                                                                   onTune: onTune)),
+                                       showsEarlier: !viewing, viewing: viewing)
+                        .id(room.id)
+                    if !viewing {
+                        // Your own frequency keeps its message box. PTT stays on the band beside the panel.
+                        RoundtableComposer(roundtable: roundtable) { EmptyView() }
+                    }
+                }
             }
         }
         .frame(width: Self.width)

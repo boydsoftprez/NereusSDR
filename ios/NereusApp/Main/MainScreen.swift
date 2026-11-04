@@ -126,8 +126,10 @@ struct MainScreen: View {
     @State private var pttHold = PttLatchHold()
     /// The Roundtable sheet, open at this height, or closed.
     @State private var roundtableSheet: RoundtableSheet.Detent?
-    /// The sheet is up to view a frequency: it closes when that view ends.
+    /// The sheet is up on a viewed frequency: a lost read closes it (D27).
     @State private var viewingInSheet = false
+    /// An iPad with the column hidden shows your own frequency in the panel (D24).
+    @State private var roundtablePanelOwn = false
     /// Where the keyed gauges end on the band, while keyed.
     @State private var gaugesFoot: CGFloat?
     @State private var firstRunNoteSeen: Bool
@@ -237,6 +239,8 @@ struct MainScreen: View {
             if inColumn {
                 // The applet shows the room: the phone's sheet gives way to it.
                 roundtableSheet = nil
+                viewingInSheet = false
+                roundtablePanelOwn = false
             } else {
                 roundtableWide = false
             }
@@ -456,7 +460,8 @@ struct MainScreen: View {
                                     dialOn: dialStrip, linkUp: pttLinkUp,
                                     stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare,
                                     firstRunNoteSeen: firstRunNoteSeenBinding,
-                                    close: closeRoundtable, holdObserver: holdObserver,
+                                    close: closeRoundtable, back: { toggleRoundtable(target: .own) },
+                                    holdObserver: holdObserver,
                                     askFirstRun: layoutNow.isIPad ? { firstRunForm = true } : nil,
                                     panLevel: panLevel)
                         .frame(maxWidth: sideways ? Self.roundtableSidewaysWidth : .infinity)
@@ -471,10 +476,12 @@ struct MainScreen: View {
             if showsRoundtablePopover {
                 RoundtableFrequencyPopover(roundtable: roundtable, slices: main.slices, transmit: transmit,
                                            stationCallsign: app.freedv.callsign, linkUp: pttLinkUp, panLevel: panLevel,
+                                           firstRunNoteSeen: firstRunNoteSeenBinding,
+                                           askFirstRun: { firstRunForm = true },
                                            onTune: { hz, family in
                                                main.slices.tune(toHz: hz, family: family)
-                                               endViewing()
-                                           }, onBack: endViewing)
+                                               closeRoundtable()
+                                           }, onBack: { toggleRoundtable(target: .own) }, onClose: closeRoundtable)
                     .padding(.vertical, Self.roundtablePopoverInset)
                     .padding(.trailing, Self.roundtablePopoverTrailing)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
@@ -643,22 +650,25 @@ struct MainScreen: View {
                 transmit.releaseHeldPtt()
             }
         }
-        .onChange(of: roundtable.readingRoomId) { _, reading in
-            if reading == nil, viewingInSheet {
-                viewingInSheet = false
-                roundtableSheet = nil
-            }
-        }
-        // D27: a read lost closes the view, as above, and says so.
+        // D27: a read lost closes the view and says so. The panel goes with the read.
         .onChange(of: roundtable.lostReads) { _, _ in
+            if viewingInSheet {
+                closeRoundtable()
+            }
             if let reason = roundtable.lostReadReason {
                 main.slices.showReason(reason)
             }
         }
-        // D27: tuning anywhere ends viewing, here or on another device, and the card takes over.
-        .onChange(of: main.slices.active.map { Int64($0.slice.frequencyHz.rounded()) }) { _, _ in
-            if roundtable.isViewing, bandOnScreen {
-                endViewing()
+        // D27, D38: a band drag tunes and the view stays on what it shows. Only when
+        // your slice lands on the viewed frequency does it become your own, in place.
+        .onChange(of: roundtable.activeContext?.id) { _, context in
+            if let context, roundtable.isViewing, context == roundtable.readingRoomId {
+                returnToOwn()
+            }
+        }
+        .onChange(of: roundtable.frequencyAvailable) { _, available in
+            if !available {
+                roundtablePanelOwn = false
             }
         }
     }
@@ -796,17 +806,81 @@ struct MainScreen: View {
         return lines
     }
 
-    private func openRoundtable(_ sliceId: Int) {
-        // D26: another slice's flag line views that slice's frequency and leaves
-        // the active slice alone. A legacy server has no such view.
-        if roundtable.frequencyAvailable, sliceId != main.slices.activeSliceId,
-           let context = roundtable.sliceContexts[Int64(sliceId)]?.id {
+    /// What the one inspector shows: your own frequency or a viewed one (D34, D38).
+    enum RoundtableTarget: Equatable {
+        case own
+        case viewed(String)
+    }
+
+    /// What asking for a target does.
+    enum RoundtableStep: Equatable {
+        case close
+        case show(RoundtableTarget)
+    }
+
+    /// D38: the same thing again closes, another swaps in place. The iPad's column
+    /// has nothing to close: the same tag returns it to your own (overlay.js toggleIns).
+    static func roundtableStep(target: RoundtableTarget, shown: RoundtableTarget?, inColumn: Bool) -> RoundtableStep {
+        guard target == shown else {
+            return .show(target)
+        }
+        return inColumn ? .show(.own) : .close
+    }
+
+    /// What the inspector shows now, or nil when it is closed.
+    private var roundtableShown: RoundtableTarget? {
+        guard appletInColumn || roundtableSheet != nil || showsRoundtablePopover else {
+            return nil
+        }
+        if roundtable.isViewing, let reading = roundtable.readingRoomId {
+            return .viewed(reading)
+        }
+        return .own
+    }
+
+    /// The card, a tag, a fold's row, a flag's line and Back all come here. Nothing
+    /// here tunes: only a band drag and the Tune button do (D21).
+    func toggleRoundtable(target: RoundtableTarget) {
+        roundtable.activeSliceId = main.slices.activeSliceId.map(Int64.init)
+        switch Self.roundtableStep(target: target, shown: roundtableShown, inColumn: appletInColumn) {
+        case .close:
+            closeRoundtable()
+        case .show(.own):
+            openRoundtable(main.slices.activeSliceId ?? main.slices.entries.first?.id ?? 0)
+        case .show(.viewed(let context)):
             viewRoundtable(context)
+        }
+    }
+
+    /// A context on the band: your own frequency, or one to view.
+    private func roundtableTarget(_ context: String) -> RoundtableTarget {
+        context == roundtable.activeContext?.id ? .own : .viewed(context)
+    }
+
+    /// D26: a slice's flag line, on that slice's frequency, leaving the active slice
+    /// alone. A legacy server has no such view: its line opens your room, as ever.
+    private func toggleRoundtableLine(_ sliceId: Int) {
+        guard roundtable.frequencyAvailable else {
+            openRoundtable(sliceId)
             return
         }
-        // Your own line opens your own room, not one being viewed.
+        let context = sliceId == main.slices.activeSliceId ? nil : roundtable.sliceContexts[Int64(sliceId)]?.id
+        toggleRoundtable(target: context.map(roundtableTarget) ?? .own)
+    }
+
+    /// Back to your own frequency in place: the inspector stays up.
+    private func returnToOwn() {
+        viewingInSheet = false
+        if showsRoundtablePopover {
+            roundtablePanelOwn = true
+        }
+        Task { await roundtable.backToSlice() }
+    }
+
+    /// Your own frequency in the inspector, swapped in at the height it has.
+    private func openRoundtable(_ sliceId: Int) {
         if roundtable.isViewing {
-            endViewing()
+            returnToOwn()
         }
         sheet = nil
         rxPanelOpen = false
@@ -818,23 +892,27 @@ struct MainScreen: View {
             appletScrollRequest += 1
             return
         }
-        roundtableSheet = .half
+        if layoutNow.isIPad, roundtable.frequencyAvailable {
+            // D24: the panel over the pan, for your own frequency as well.
+            roundtableSheet = nil
+            roundtablePanelOwn = true
+            return
+        }
+        if roundtableSheet == nil {
+            roundtableSheet = .half
+        }
     }
 
     /// D21, D24: a frequency in view, tuned nowhere. iPhone: the sheet. iPad with
     /// the column showing: the applet. iPad without it: the panel over the pan.
     private func viewRoundtable(_ context: String) {
-        roundtable.activeSliceId = main.slices.activeSliceId.map(Int64.init)
-        if context == roundtable.activeContext?.id {
-            // Your own frequency has no view of its own.
-            openRoundtable(main.slices.activeSliceId ?? main.slices.entries.first?.id ?? 0)
-            return
-        }
         Task {
             if let reason = await roundtable.read(context) {
                 // D27: the view closes with the usual status line, and no slice moves.
                 main.slices.showReason(reason)
-                endViewing()
+                if roundtable.isViewing {
+                    closeRoundtable()
+                }
                 return
             }
             sheet = nil
@@ -844,25 +922,20 @@ struct MainScreen: View {
                 appletScrollRequest += 1
             } else if layoutNow.isIPad {
                 roundtableSheet = nil
+                roundtablePanelOwn = false
             } else {
                 viewingInSheet = true
-                roundtableSheet = .half
+                // A swap keeps the height the sheet has (D38).
+                if roundtableSheet == nil {
+                    roundtableSheet = .half
+                }
             }
         }
     }
 
-    /// Back to my slice: lets go of the read and closes whatever showed it.
-    private func endViewing() {
-        Task { await roundtable.backToSlice() }
-        if viewingInSheet {
-            viewingInSheet = false
-            roundtableSheet = nil
-        }
-    }
-
-    /// The iPad's panel over the pan: viewing with no column to show it.
+    /// The iPad's panel over the pan: the inspector with no column to show it (D24).
     private var showsRoundtablePopover: Bool {
-        layoutNow.isIPad && !appletInColumn && roundtable.isViewing && bandOnScreen
+        layoutNow.isIPad && !appletInColumn && (roundtable.isViewing || roundtablePanelOwn) && bandOnScreen
     }
 
     /// The panel's margins in the band (overlay.css .scr--ipad .rc-psheet).
@@ -905,6 +978,7 @@ struct MainScreen: View {
     private func closeRoundtable() {
         roundtableSheet = nil
         viewingInSheet = false
+        roundtablePanelOwn = false
         transmit.releaseHeldPtt()
         // Closing a frequency's view lets go of its read (D24).
         if roundtable.isViewing {
@@ -917,6 +991,7 @@ struct MainScreen: View {
     /// A sheet or panel is up: no swipe opens anything.
     private var panelsUp: Bool {
         sheet != nil || rxPanelOpen || txPanelOpen || soundPanelOpen || roundtableSheet != nil
+            || showsRoundtablePopover
     }
 
     /// The swipe under the finger, when it brings in `target` from a band edge.
@@ -1025,7 +1100,8 @@ struct MainScreen: View {
                              // Roundtable reads Pan 1's slices, as its sheet does.
                              roundtableLines: first ? roundtableLines : [:],
                              openRoundtable: first ? { id in openRoundtable(id) } : nil,
-                             viewRoundtable: first ? { context in viewRoundtable(context) } : nil,
+                             viewRoundtable: first ? { context in toggleRoundtable(target: roundtableTarget(context)) } : nil,
+                             toggleRoundtableLine: first ? { id in toggleRoundtableLine(id) } : nil,
                              dialStrip: strip, roundtable: first ? roundtable : nil,
                              swipes: swipesHere ? swipes : nil)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
