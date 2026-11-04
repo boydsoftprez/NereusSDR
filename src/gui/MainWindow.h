@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: The view of another frequency: viewRoundtableFrequency,
+//               refreshRoundtablePeek, m_roundtablePeek. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: m_roundtablePeaks, the held peaks on the live card. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: wireDialRequests(): a dial's tuning, step, slice select and
@@ -853,8 +855,16 @@ private slots:
     void onRoundtableRoomChanged(const QString& roomId);
     void refreshRoundtableTagsImmediately();
     void refreshRoundtableTags();
-    // A flag's Roundtable line: activate its slice and show the panel.
+    // A flag's Roundtable line: your own opens your room; another slice's views
+    // its frequency and leaves the active slice alone (overlay design D26).
     void openRoundtableForSlice(int sliceId);
+    void showRoundtablePanel();
+    // The floating view of another frequency (overlay design D21 to D27). False
+    // when the frequency is your own, so there is nothing to view.
+    bool viewRoundtableFrequency(SpectrumWidget* pan, const QString& context);
+    void refreshRoundtablePeek();
+    void closeRoundtablePeek();
+    void onRoundtablePeekClosed();
 
     /// TNF inbound handlers. Each mutates the single global NotchModel; the
     /// frequencies arrive already resolved in the emitting pan's own
@@ -2328,6 +2338,12 @@ private:
     QTimer* m_roundtableRefreshTimer{nullptr};
     QHash<QString, QString> m_roundtableRoomStructures;
     RoundtablePeakTracker m_roundtablePeaks;              // overlay design D12
+    QPointer<class RoundtableFrequencyPeek> m_roundtablePeek;  // overlay design D24
+    QTimer* m_roundtablePeekTimer{nullptr};               // Your pan, D23: only while open
+    QString m_roundtablePeekContext;
+    bool m_roundtablePeekMessages{false};                 // the panel keeps reading after a close
+    bool m_roundtablePeekOpening{false};
+    bool m_roundtablePeekJustLost{false};                 // a refusal's message follows its close
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};

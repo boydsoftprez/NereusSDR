@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: Tune is refused and its button greyed while keyed (overlay design
+//               D22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -96,6 +98,10 @@ RoundtableApplet::RoundtableApplet(RadioModel* model, RoundtableModel* roundtabl
     build();
     if (m_model != nullptr) {
         connect(m_model, &RadioModel::activeSliceChanged, this, [this](int) { bindActiveSlice(); });
+        // Keying greys Tune at once (overlay design D22).
+        connect(m_model, &RadioModel::transmittingChanged, this,
+                [this](bool transmitting) { m_panel->setTuneAllowed(!transmitting); });
+        m_panel->setTuneAllowed(!m_model->isTransmitting());
     }
     bindActiveSlice();
 }
@@ -205,6 +211,9 @@ void RoundtableApplet::tuneHere(qint64 hz, const QString& family)
 {
     SliceModel* slice = m_slice;
     if (slice == nullptr || hz <= 0) {
+        return;
+    }
+    if (m_model != nullptr && m_model->isTransmitting()) {
         return;
     }
     // A slice already in the room's family keeps its mode (CWL stays CWL,

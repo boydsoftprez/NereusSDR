@@ -31,6 +31,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: setTuneAllowed: the read bar's Tune greys while keyed (overlay
+//               design D22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-01: A signal report updates the readings in place. The header
 //               is rebuilt only when who is in the room changes.
 //               Brian Sutton (W4KZO).
@@ -107,6 +109,10 @@ public:
     void readRoom(const QString& roomId);
     /// Back to following the slice.
     void backToSlice();
+
+    /// Whether the read bar's Tune may act: false while keyed (overlay design
+    /// D22). The button greys; it is never hidden.
+    void setTuneAllowed(bool allowed);
 
     /// The room shown (the read one, else the slice's), or empty.
     QString roomId() const;
@@ -305,6 +311,9 @@ private:
     // The read bar's second line, for Back to my slice when one line does
     // not fit.
     QWidget* m_readBack = nullptr;
+    QPushButton* m_readTune = nullptr;
+    void updateReadTune();
+    bool m_tuneAllowed = true;
     QWidget* m_readBackSeparator = nullptr;
     QHBoxLayout* m_readFirstLine = nullptr;
     QHBoxLayout* m_readSecondLine = nullptr;

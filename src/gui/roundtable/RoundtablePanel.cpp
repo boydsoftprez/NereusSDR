@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: setTuneAllowed: the read bar's Tune greys while keyed and when
+//               already there (overlay design D22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: One word for a double (overlay design D8). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
 //   2026-11-03: Present leading/trailing samples and verify current double identities explicitly.
@@ -809,6 +811,7 @@ RoundtablePanel::RoundtablePanel(RoundtableModel* model, QWidget* parent)
         QPushButton* tune = makeButton(m_readBar, QStringLiteral("Tune A here"), primaryStyle());
         tune->setObjectName(QStringLiteral("roundtableTuneHereBtn"));
         tune->setToolTip(QStringLiteral("Tune the slice to this room"));
+        m_readTune = tune;
         connect(tune, &QPushButton::clicked, this, [this]() {
             const QString id = roomId();
             if (!id.isEmpty()) {
@@ -1126,6 +1129,25 @@ void RoundtablePanel::readRoom(const QString& roomId)
     rebuildImmediately();
 }
 
+void RoundtablePanel::setTuneAllowed(bool allowed)
+{
+    if (allowed == m_tuneAllowed) {
+        return;
+    }
+    m_tuneAllowed = allowed;
+    updateReadTune();
+}
+
+void RoundtablePanel::updateReadTune()
+{
+    if (m_readTune == nullptr) {
+        return;
+    }
+    const bool alreadyThere = !m_sliceFamily.isEmpty() && m_sliceHz > 0
+        && roomId() == RoundtableModel::frequencyContextId(m_sliceHz, m_sliceFamily);
+    m_readTune->setEnabled(m_tuneAllowed && !alreadyThere);
+}
+
 void RoundtablePanel::backToSlice()
 {
     if (m_readId.isEmpty()) {
@@ -1438,6 +1460,7 @@ void RoundtablePanel::rebuild()
 
     m_fittedWidth = roomWidth();
     m_readBar->setVisible(isReading());
+    updateReadTune();
     m_readLabel->setText(QStringLiteral("Reading %1").arg(shortFrequency(roomHz(id))));
     fitReadBar();
 

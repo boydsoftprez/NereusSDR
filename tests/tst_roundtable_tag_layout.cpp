@@ -906,7 +906,7 @@ private slots:
 
     // ---- The live card: drawing (D10, D11, D13, D15) ----
 
-    void aTalkingCardStandsOnThePanAndClicksLikeItsFrequency()
+    void aTalkingCardStandsOnThePanAndClickingItOpensItsMenu()
     {
         Pan pan;
         const QString room = QStringLiteral("frequency:lsb-7200000");
@@ -930,14 +930,116 @@ private slots:
         const QColor green(0x4c, 0xaf, 0x6a);
         QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), green.name());
         QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top() + 2)).name(), green.name());
-        // A click reads the frequency; it never tunes.
+        // A click opens your menu (D25); it neither views nor tunes.
         const QPoint click = hit->rect.center();
         QSignalSpy read(&pan.widget, &SpectrumWidget::roundtableReadRequested);
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
         QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
         QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, click);
+        QCOMPARE(read.size(), 0);
+        QCOMPARE(tuned.size(), 0);
+        QCOMPARE(plainTune.size(), 0);
+        auto* menu = pan.widget.findChild<QMenu*>(QStringLiteral("roundtableCardMenu"));
+        QVERIFY(menu != nullptr);
+        menu->close();
+    }
+
+    void theCardMenuOffersReportsSignalAndTuneWithItsGates()
+    {
+        Pan pan;
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(talkingCard(), room);
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm"));
+        const auto action = [](QMenu& menu, const char* name) {
+            return menu.findChild<QAction*>(QString::fromLatin1(name));
+        };
+
+        QMenu menu;
+        pan.widget.buildRoundtableCardMenu(room, 7200000, false, menu);
+        QCOMPARE(action(menu, "roundtableMenuRead")->text(), QStringLiteral("Read reports"));
+        QCOMPARE(action(menu, "roundtableMenuSignal")->text(), QStringLiteral("Signal: dBm \u00b7 Change"));
+        QCOMPARE(action(menu, "roundtableMenuTune")->text(), QStringLiteral("Tune slice A here"));
+        QVERIFY(action(menu, "roundtableMenuTune")->isEnabled());
+
+        QSignalSpy reports(&pan.widget, &SpectrumWidget::roundtableReportsRequested);
+        action(menu, "roundtableMenuRead")->trigger();
+        QCOMPARE(reports.size(), 1);
+
+        // Signal moves the shared key along and the card follows, with nothing else closing.
+        QSignalSpy cycled(&pan.widget, &SpectrumWidget::roundtableSignalFormatCycled);
+        const QImage before = pan.draw();
+        action(menu, "roundtableMenuSignal")->trigger();
+        QCOMPARE(cycled.size(), 1);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Roundtable/SignalFormat")).toString(),
+                 QStringLiteral("S-units"));
+        QVERIFY(pan.draw() != before);
+        QMenu second;
+        pan.widget.buildRoundtableCardMenu(room, 7200000, false, second);
+        QCOMPARE(action(second, "roundtableMenuSignal")->text(), QStringLiteral("Signal: S-units \u00b7 Change"));
+        AppSettings::instance().remove(QStringLiteral("Roundtable/SignalFormat"));
+
+        // Tune tunes here, and is greyed when already there and while keyed.
+        QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
+        action(menu, "roundtableMenuTune")->trigger();
+        QCOMPARE(tuned.size(), 1);
+        QCOMPARE(tuned.first().first().toString(), room);
+        QMenu there;
+        pan.widget.buildRoundtableCardMenu(room, 7200000, true, there);
+        QVERIFY(!action(there, "roundtableMenuTune")->isEnabled());
+        pan.widget.setMoxOverlay(true);
+        QMenu keyed;
+        pan.widget.buildRoundtableCardMenu(room, 7200000, false, keyed);
+        QVERIFY(!action(keyed, "roundtableMenuTune")->isEnabled());
+        pan.widget.setMoxOverlay(false);
+
+        // Another slice's letter.
+        pan.widget.setRoundtableActiveSliceName(QStringLiteral("B"));
+        QMenu lettered;
+        pan.widget.buildRoundtableCardMenu(room, 7200000, false, lettered);
+        QCOMPARE(action(lettered, "roundtableMenuTune")->text(), QStringLiteral("Tune slice B here"));
+    }
+
+    void yourOwnCompactTagOpensTheMenuAndAnotherViewsAndAFoldListsAndViews()
+    {
+        Pan pan;
+        RoundtableTag mine = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        mine.active = true;
+        mine.stations = {QJsonObject{{"callsign", "W1AW"}}};
+        RoundtableTag other = tagAt(QStringLiteral("frequency:lsb-7170000"), 7170000);
+        other.stations = {QJsonObject{{"callsign", "K4ABC"}}};
+        RoundtableTag foldA = tagAt(QStringLiteral("frequency:lsb-7185000"), 7185000);
+        RoundtableTag foldB = tagAt(QStringLiteral("frequency:lsb-7185050"), 7185050);
+        RoundtableTag foldC = tagAt(QStringLiteral("frequency:lsb-7185100"), 7185100);
+        pan.widget.setRoundtableTags({mine, other, foldA, foldB, foldC}, RoundtableTagDisplay::Live);
+        pan.draw();
+        QSignalSpy read(&pan.widget, &SpectrumWidget::roundtableReadRequested);
+        QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
+        QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
+
+        const QRect mineRect = hitFor(pan.widget, mine.roomId)->rect;
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, mineRect.center());
+        auto* menu = pan.widget.findChild<QMenu*>(QStringLiteral("roundtableCardMenu"));
+        QVERIFY(menu != nullptr);
+        QVERIFY(!menu->findChild<QAction*>(QStringLiteral("roundtableMenuTune"))->isEnabled());
+        menu->close();
+        QCOMPARE(read.size(), 0);
+
+        const QRect otherRect = hitFor(pan.widget, other.roomId)->rect;
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, otherRect.center());
         QCOMPARE(read.size(), 1);
-        QCOMPARE(read.first().first().toString(), room);
+        QCOMPARE(read.first().first().toString(), other.roomId);
+
+        // A fold on a capable server lists; its rows view, never tune.
+        const auto* foldHit = hitFor(pan.widget, foldA.roomId);
+        QVERIFY(foldHit != nullptr);
+        QVERIFY(foldHit->folded);
+        QMenu list;
+        pan.widget.buildRoundtableFoldMenu(foldHit->roomIds, list);
+        for (QAction* row : list.actions()) {
+            if (row->isEnabled() && !row->isSeparator()) { row->trigger(); }
+        }
+        QCOMPARE(read.size(), 1 + foldHit->roomIds.size());
         QCOMPARE(tuned.size(), 0);
         QCOMPARE(plainTune.size(), 0);
     }
@@ -2197,7 +2299,7 @@ private slots:
         QMenu secondary;
         pan.widget.buildRoundtableFoldMenu({tag.roomId}, secondary);
         for (QAction* action : secondary.actions()) {
-            if (action->text() == QLatin1String("Tune active slice here")) {
+            if (action->text() == QLatin1String("Tune slice A here")) {
                 QVERIFY(!action->isEnabled());
                 action->trigger();
             }

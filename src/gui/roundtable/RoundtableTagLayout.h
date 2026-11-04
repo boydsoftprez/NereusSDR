@@ -31,6 +31,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: The view of another frequency: RoundtableViewModel,
+//               paintRoundtableView and its text (overlay design D22, D23).
+//               RoundtableCardModel::onFrequency, RoundtableCardRow::label.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: The live card and tags on the pan: placeRoundtableCard,
 //               paintRoundtableCard, roundtableMergeDoubleTags (overlay design
 //               D10, D11, D13 to D16, D19, D20). The text-row card path and the
@@ -76,6 +80,7 @@
 #include <optional>
 
 class QPainter;
+class QPaintDevice;
 class QFontMetrics;
 
 namespace NereusSDR {
@@ -193,6 +198,7 @@ NEREUS_GUI_EXPORT double roundtableMeterFraction(double dbm);
 /// seconds is old and has no peak tick (D13).
 struct RoundtableCardRow {
     QString call;
+    QString label;           // shown in place of the call: "Your pan"
     double dbm = 0.0;
     qint64 ageMs = 0;
     std::optional<int> km;
@@ -204,6 +210,14 @@ struct RoundtableCardRow {
     bool hasPeak = false;
 };
 
+/// One station at a frequency, as a view of it lists them (overlay design D22).
+struct RoundtableCardPerson {
+    QString name;
+    bool keyed = false;
+    bool you = false;
+    qint64 offsetHz = 0;  // the station's frequency less the viewed one
+};
+
 /// What the card for one frequency says.
 struct RoundtableCardModel {
     enum class Kind { Talking, You, Double, Unknown, LastTalker, LastDouble, Quiet };
@@ -212,6 +226,7 @@ struct RoundtableCardModel {
     QStringList keyed;      // on the air, or every name for a LastDouble
     QString keyedYou;       // which of keyed is this station, in a double
     QStringList people;     // the stations at this exact frequency
+    QVector<RoundtableCardPerson> onFrequency;  // the view's list, from the stream or else the directory
     qint64 clockMs = 0;     // how long a live turn has run; stops where a link dropped
     qint64 endedAgoMs = 0;  // how long ago a Last turn ended
     QVector<RoundtableCardRow> rows;
@@ -256,6 +271,41 @@ NEREUS_GUI_EXPORT void paintRoundtableCard(QPainter& p, const RoundtableCardMode
 /// repeating gradients: `onWidth` and `offWidth` along the gradient, in pixels.
 NEREUS_GUI_EXPORT void paintRoundtableStripes(QPainter& p, const QRectF& rect, const QColor& on, const QColor& off,
                                               qreal onWidth, qreal offWidth);
+
+/// What a view of another frequency shows (overlay design D22, D23).
+struct RoundtableViewModel {
+    RoundtableCardModel card;
+    QString family;          // of the viewed frequency
+    quint64 sliceHz = 0;     // the active slice
+    QString sliceFamily;
+    QString sliceName = QStringLiteral("A");
+    QString format = QStringLiteral("dBm");
+    bool miles = true;
+    bool bearing = true;
+    std::optional<double> panDbm;  // this client's own pan; empty when it has no level
+    double panPeakDbm = 0.0;
+};
+
+/// The view's head: the card's words, with "Nobody talking" when no turn is open
+/// (the view's own wording, from the board's peekBody).
+NEREUS_GUI_EXPORT QString roundtableViewHeadText(const RoundtableCardModel& card);
+/// "Viewing, not tuned · −11.4 kHz from slice A · LSB".
+NEREUS_GUI_EXPORT QString roundtableViewSubText(const RoundtableViewModel& view);
+/// "Reconnecting · last known", "Offline · last known", or the card's other note.
+NEREUS_GUI_EXPORT QString roundtableViewLinkText(const RoundtableCardModel& card);
+/// A station's offset from the viewed frequency: "on freq" or "+20 Hz".
+NEREUS_GUI_EXPORT QString roundtableViewOffsetText(qint64 offsetHz);
+/// "1,240 mi 087°"; empty when the row has no path (D2 blanks it in a double).
+NEREUS_GUI_EXPORT QString roundtableViewPathText(const RoundtableCardRow& row, bool miles, bool bearing);
+/// The readings as the view lists them: Your pan first while someone is on the
+/// air, then the card's rows.
+NEREUS_GUI_EXPORT QVector<RoundtableCardRow> roundtableViewRows(const RoundtableViewModel& view);
+/// How tall the view's words are from the rect's top, up to where its buttons go,
+/// showing at most `rowLimit` reading rows.
+NEREUS_GUI_EXPORT int roundtableViewHeight(const RoundtableViewModel& view, int width, int rowLimit,
+                                           const QPaintDevice* device);
+/// Draws the frame and the words of the view in `rect`.
+NEREUS_GUI_EXPORT void paintRoundtableView(QPainter& p, const RoundtableViewModel& view, const QRect& rect, int rowLimit);
 
 /// The held peak for each listener (overlay design D12). Client side only:
 /// never persisted or sent. It rises at once, falls 2 dB a second and resets on

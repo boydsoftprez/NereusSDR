@@ -2225,6 +2225,18 @@ private slots:
         QVERIFY(panel->isReading());
         first->setFrequency(14200000.0);
         QVERIFY(!panel->isReading());
+
+        // Tune greys while keyed, and is never hidden (overlay design D22).
+        panel->readRoom(kOther);
+        settle();
+        auto* tuneHere = child<QPushButton>(panel, QStringLiteral("roundtableTuneHereBtn"));
+        QVERIFY(tuneHere->isEnabled());
+        panel->setTuneAllowed(false);
+        QVERIFY(!tuneHere->isEnabled());
+        QVERIFY(tuneHere->isVisible());
+        panel->setTuneAllowed(true);
+        QVERIFY(tuneHere->isEnabled());
+        panel->backToSlice();
     }
 
     void appletArchiveOpensTheSignInLink()

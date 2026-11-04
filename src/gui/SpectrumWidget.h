@@ -2,6 +2,10 @@
 //   2026-11-01: The waterfall clock is a small label. Its one-second tick
 //               no longer rebuilds the static GPU overlay.
 //               Brian Sutton (W4KZO).
+//   2026-11-03: Roundtable view of another frequency: roundtablePanLevel,
+//                 roundtableViewAnchor, the viewed tag's outline and the card's
+//                 menu (overlay design D21 to D25). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-03: The live Roundtable card on the pan (setRoundtableCard), and
 //                 a hit list that tells the card from the tags. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2836,7 +2840,8 @@ public:
     // plan: the state glyph, the talker (or Unknown, Double, Quiet) and
     // the member count. Crowded tags fold into +N (layoutRoundtableTags).
     // `display` Hidden draws none, Frozen greys them as last known. Display
-    // only: a click asks for a tune through roundtableRoomClicked.
+    // only: a legacy server's tag asks for a tune through roundtableRoomClicked,
+    // and a frequency tag asks to be viewed through roundtableReadRequested.
     void setRoundtableTags(const QList<RoundtableTag>& tags, RoundtableTagDisplay display);
     /// The live card for the active slice's frequency on this pan (overlay
     /// design D10). A Quiet card draws none. `roomId` is the frequency a click
@@ -2861,6 +2866,21 @@ public:
     /// The textures are premultiplied, so the source color takes One.
     static QRhiGraphicsPipeline::TargetBlend overlayTargetBlend();
 #endif
+    /// This client's own level in the family's sideband window at `hz`, 2.7 kHz
+    /// wide (overlay design D23): nullopt off the pan, before the first frame and
+    /// while transmitting.
+    std::optional<double> roundtablePanLevel(quint64 hz, const QString& family) const;
+    /// Where a view of `room` opens: under its tag, else under `hz` at the foot
+    /// of the spectrum.
+    QPoint roundtableViewAnchor(const QString& room, qint64 hz) const;
+    /// The tag of the frequency being viewed gets an outline. Empty for none.
+    void setRoundtableViewedRoom(const QString& room);
+    const QString& roundtableViewedRoom() const { return m_roundtableViewedRoom; }
+    /// The active slice's letter, for "Tune slice A here".
+    void setRoundtableActiveSliceName(const QString& name) { m_roundtableSliceName = name; }
+    /// Your own card's menu (overlay design D25): Read reports, Signal and Tune.
+    /// `alreadyThere` greys Tune as keying does.
+    void buildRoundtableCardMenu(const QString& room, qint64 hz, bool alreadyThere, QMenu& menu);
     /// The rows a fold's list holds: a heading, then one row per room in
     /// `roomIds` (by frequency), each emitting roundtableRoomClicked.
     void buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu);
@@ -3162,6 +3182,12 @@ signals:
     // emitted while the transmit view shows (as requestTune).
     void roundtableRoomClicked(const QString& roomId);
     void roundtableReadRequested(const QString& context);
+    // A left press on the pan that no tag or card took (overlay design D24).
+    void roundtableBandClicked();
+    // The card menu's Read reports.
+    void roundtableReportsRequested();
+    // The card menu's Signal: the shared format key just moved on.
+    void roundtableSignalFormatCycled();
     // Rotor control plan Task 8: the operator tuned to a spot (a label
     // click, a cluster popup entry or the menu's Tune), with its call and
     // its Core-served bearing (-1 when none). MainWindow hands it to
@@ -4591,6 +4617,9 @@ private:
     RoundtableCardModel m_roundtableCard;
     QString m_roundtableCardRoom;
     QString m_roundtableCardFormat;
+    QString m_roundtableViewedRoom;
+    QString m_roundtableSliceName{QStringLiteral("A")};
+    void openRoundtableCardMenu(const RoundtableTagHit& hit);
     // GPU path: tags paint here, above the spectrum and under the flags.
     // A reading updates this widget only, not the panadapter frame.
     QWidget* m_roundtableTagLayer{nullptr};
