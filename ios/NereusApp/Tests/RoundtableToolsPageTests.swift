@@ -1200,6 +1200,36 @@ struct RoundtableToolsPageTests {
         #expect(try await !clockShown(card))
     }
 
+    @Test("a pending view and pan card show no clock until a turn start is known")
+    func pendingViewHasNoClock() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        func clockShown(_ data: RoundtableCardData) async throws -> Bool {
+            let view = RoundtableFrequencyView(data: data, viewing: true, canTune: false, sliceHz: 7_236_400,
+                                               onTune: {}, onBack: {})
+            let (window, _) = try host(view.frame(width: 300).background(Color.black))
+            defer { window.isHidden = true; window.rootViewController = nil }
+            await ShotWait.laidOut(window)
+            return SetupTypedEntryTests.element("roundtableViewClock", in: window) != nil
+                || SetupTypedEntryTests.element("roundtableViewHead", in: window)?.accessibilityLabel?.contains("0:00") == true
+        }
+        // Known only from the directory: Double and Talking, with nothing to time.
+        var pending = RoundtableCardData(hz: 7_225_000)
+        pending.family = "lsb"
+        pending.keyed = ["AA5ABC", "K0ABC"]
+        pending.kind = .double
+        #expect(RoundtableTagLayout.cardClockText(pending) == nil)
+        #expect(try await !clockShown(pending))
+        pending.kind = .talking
+        pending.keyed = ["AA5ABC"]
+        #expect(RoundtableTagLayout.cardClockText(pending) == nil)
+        #expect(try await !clockShown(pending))
+        // The turn's start arrives with the stream.
+        pending.clock = 95_000
+        #expect(RoundtableTagLayout.cardClockText(pending) == "1:35")
+    }
+
     /// Set NEREUS_ROUNDTABLE_VIEW_SHOTS to a folder to run this and write its pictures there.
     @Test("shots: the frequency view on the phone sheet, the iPad applet, Widen, the popover and portrait",
           .enabled(if: !(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_VIEW_SHOTS"] ?? "").isEmpty))

@@ -189,8 +189,8 @@ struct RoundtableFrequencyView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             // A dropped link has no live clock (D7).
-            if isLive && !data.frozen {
-                Text(RoundtableTagLayout.cardClock(data.clock))
+            if isLive && !data.frozen, let clock = RoundtableTagLayout.cardClockText(data) {
+                Text(clock)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(RoundtableColours.dim)
                     .fixedSize()

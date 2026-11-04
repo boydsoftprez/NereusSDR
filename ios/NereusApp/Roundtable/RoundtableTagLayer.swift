@@ -1094,6 +1094,12 @@ enum RoundtableTagLayout {
         return "\(seconds / 60):" + String(format: "%02d", seconds % 60)
     }
 
+    /// The card's clock. No turn's start known yet, as a view whose stream has not
+    /// arrived: no clock, as the desktop, rather than "0:00".
+    static func cardClockText(_ card: RoundtableCardData) -> String? {
+        card.clock > 0 ? cardClock(card.clock) : nil
+    }
+
     /// The head's frequency: MHz, three decimals when the frequency allows.
     static func cardFrequency(_ hz: Int64) -> String {
         let decimals = hz % 1000 == 0 ? 3 : hz % 100 == 0 ? 4 : 5
@@ -2222,8 +2228,8 @@ struct RoundtableCardView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             // The clock is on a double's head only.
-            if card.kind == .double && !plan.narrow {
-                Text(RoundtableTagLayout.cardClock(card.clock))
+            if card.kind == .double && !plan.narrow, let clock = RoundtableTagLayout.cardClockText(card) {
+                Text(clock)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(RoundtableColours.dim)
                     .fixedSize()
