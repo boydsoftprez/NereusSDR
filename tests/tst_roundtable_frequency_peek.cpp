@@ -21,6 +21,7 @@
 #include <cmath>
 
 #include <QApplication>
+#include <QDialog>
 #include <QDir>
 #include <QPainter>
 #include <QPushButton>
@@ -413,6 +414,26 @@ private slots:
         QVERIFY(pan.peek->rowLimitForTest() < card.rows.size());
         QVERIFY(pan.widget.rect().contains(pan.peek->geometry()));
         QVERIFY(pan.widget.rect().contains(pan.peek->mapToParent(pan.tune()->geometry().bottomRight())));
+    }
+
+    // Escape is the view's only while its own window has the keyboard. A dialog
+    // of that window keeps it, however QWindow::isActive answers for the window.
+    void escapeWaitsForItsOwnWindowToBeActive()
+    {
+        Pan pan;
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        QDialog dialog(&pan.widget);
+        dialog.show();
+        QTRY_VERIFY(QApplication::activeWindow() == &dialog);
+        QVERIFY(pan.widget.windowHandle()->isActive());
+
+        QTest::keyClick(&pan.widget, Qt::Key_Escape);
+        QVERIFY(pan.peek->isOpen());
+
+        pan.widget.activateWindow();
+        QTRY_VERIFY(QApplication::activeWindow() == &pan.widget);
+        QTest::keyClick(&pan.widget, Qt::Key_Escape);
+        QVERIFY(!pan.peek->isOpen());
     }
 
     void escapeAndTheCloseBoxCloseOnce()

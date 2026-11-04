@@ -1532,8 +1532,12 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!peek()->viewForTest().card.frozen, kWaitMs);
 
         // ── Escape closes, and the panel goes back to the slice ──
+        // Wait on what the shortcut checks, the application's active window. The
+        // first-run audio dialog opens in a fresh profile, and it can hold the
+        // focus here. QWindow::isActive counts a window's own dialog as active,
+        // so qWaitForWindowActive returns before this activation is delivered.
         p.window()->activateWindow();
-        QVERIFY(QTest::qWaitForWindowActive(p.window()));
+        QTRY_VERIFY_WITH_TIMEOUT(QApplication::activeWindow() == p.window(), kWaitMs);
         QTest::keyClick(p.window(), Qt::Key_Escape);
         QVERIFY(!open());
         QVERIFY(!panel->isReading());
