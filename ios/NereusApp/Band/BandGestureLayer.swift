@@ -8,6 +8,9 @@
 
 // 2026-10-30: Read exact-frequency cochannel reports without tuning, through
 // the existing Roundtable sheet. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Overlay redesign D17, D18 and D20: the card and tags keep off the flags,
+// the side buttons and the dBm scale, and a frequency another flag speaks for has no tag.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Combine
 import NereusBand
@@ -72,6 +75,8 @@ struct BandGestureLayer: View {
     var trailingInset: CGFloat = 0
     /// Sideways, the phone's other rounded edge on the left, which PTT keeps inside.
     var leadingInset: CGFloat = 0
+    /// The button column over this band, and whether it is folded; nil when there is none.
+    var buttonColumnFolded: Bool?
     /// The pan's display, which a drag up or down on the frequency-scale
     /// row (the split) or on the dBm scale moves; nil leaves those places to
     /// pan the band, as everywhere else.
@@ -296,18 +301,20 @@ struct BandGestureLayer: View {
                 SpotLayer(spots: spots, geometry: geometry, placements: placements)
             }
             if let roundtable {
-                // 8 points above the band plan, clear of every flag and folded tag.
+                // Just above the band plan, clear of every flag and folded tag.
                 RoundtableTagLayer(roundtable: roundtable, sliceIds: entries.map { Int64($0.id) },
                                    geometryWidth: geometry.size.width, lowHz: geometry.lowHz,
                                    hzPerPoint: geometry.spanHz / Double(max(1, geometry.size.width)),
                                    top: layout.strip.minY - RoundtableTagLayout.footGap - RoundtableTagLayout.height,
                                    tickFoot: layout.strip.minY,
-                                   flagRects: rects + placements.filter(\.isFolded).map(\.rect) + [arrows]
-                                    + (sideways ? [CGRect(x: BandColumnLayout.origin, y: BandColumnLayout.origin,
-                                        width: BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: geometry.size.height)),
-                                        height: BandColumnLayout.columnHeight(rows: BandColumnLayout.buttonCount
-                                            / BandColumnLayout.columns(bandHeight: geometry.size.height)))] : []), keyed: keyed,
+                                   flagRects: placements.map(\.rect) + columns.values.sorted { $0.minX < $1.minX }, keyed: keyed,
                                    sliceLetter: slices.active?.slice.letter ?? "A",
+                                   panKeepOut: [arrows]
+                                    + (buttonColumnFolded.map { [BandColumnLayout.frame(bandHeight: layout.size.height,
+                                                                                         leadingInset: leadingInset, folded: $0)] } ?? []),
+                                   usableWidth: arrows.minX,
+                                   otherFlagHz: Set(flags.filter { !$0.1.isFolded && $0.0.id != slices.activeSliceId }
+                                    .map { Int64($0.0.slice.frequencyHz.rounded()) }),
                                    readReports: { context in
                     Task {
                         await roundtable.read(context)

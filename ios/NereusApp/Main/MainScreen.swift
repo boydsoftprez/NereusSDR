@@ -14,6 +14,8 @@
 // 2026-10-25: Roundtable fix wave: the swipes' model is a @StateObject, made
 // once when the screen makes its own. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
+// 2026-11-03: Overlay redesign D18: the band's Roundtable card and tags keep off
+// the button column. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -351,7 +353,8 @@ struct MainScreen: View {
                 }
             } else {
                 bandLayers(main.controls(for: .first), sideways: sideways, leadingInset: sideways ? leadingInset : 0,
-                           trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn)
+                           trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn,
+                           buttonColumnFolded: column ? columnFolded : nil)
             }
             GeometryReader { proxy in
                 if let audio = app.audio {
@@ -672,7 +675,7 @@ struct MainScreen: View {
         })
         return ZStack(alignment: .topLeading) {
             bandLayers(controls, sideways: sideways, leadingInset: leadingInset, trailingInset: trailingInset,
-                       swipesHere: swipesOn, foot: foot, menuBinding: menu)
+                       swipesHere: swipesOn, foot: foot, buttonColumnFolded: folded.wrappedValue, menuBinding: menu)
             BandButtonColumn(pan: pan, open: open, folded: folded, main: main, displayTab: $displayTab,
                              leadingInset: leadingInset, trailingInset: trailingInset,
                              openSetup: {
@@ -881,7 +884,7 @@ struct MainScreen: View {
     /// is its.
     @ViewBuilder
     private func bandLayers(_ controls: PanControls, sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat,
-                            swipesHere: Bool, foot: Bool = true,
+                            swipesHere: Bool, foot: Bool = true, buttonColumnFolded: Bool? = nil,
                             menuBinding: Binding<BandMenuAnchor?>? = nil) -> some View {
         let band = controls.band.band
         let slices = controls.band.slices
@@ -903,7 +906,8 @@ struct MainScreen: View {
                              keyed: transmit.ptt.transmitting, txFilterHz: transmit.txFilterHz,
                              onAirSliceId: transmit.radioOnAirSliceId, txZeroLineSliceId: transmit.txZeroLineSliceId,
                              foreign: main.foreign, sideways: sideways,
-                             trailingInset: trailingInset, leadingInset: leadingInset, display: controls.display,
+                             trailingInset: trailingInset, leadingInset: leadingInset,
+                             buttonColumnFolded: buttonColumnFolded, display: controls.display,
                              spots: app.spots,
                              readout: main.meterReadout,
                              flagLevel: { [weak sMeter = main.sMeter] in sMeter?.flagLevel(for: $0) },

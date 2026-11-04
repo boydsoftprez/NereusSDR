@@ -222,7 +222,7 @@ struct RoundtableToolsPageTests {
                                             mentionCounts: ["lsb-7212000": 2], room: { _ in nil })
         try #require(tags.count == 4)
         #expect(tags[0] == RoundtableTag(roomId: "lsb-7185000", hz: 7_185_000, glyph: .talking, label: "W1TLK",
-                                         members: 9, mine: true, mentionsMe: false))
+                                         members: 9, mine: true, mentionsMe: false, keyed: ["W1TLK"]))
         #expect(tags[1].label == "Double" && tags[1].glyph == .doubled)
         #expect(tags[2].label == "Unknown" && tags[2].glyph == .unknown && tags[2].mentionsMe && !tags[2].mine)
         #expect(tags[3].label == "Quiet" && tags[3].glyph == .quiet)
@@ -283,14 +283,14 @@ struct RoundtableToolsPageTests {
         #expect(RoundtableTagLayout.foldWho(Self.tagAt("K4ABC", 1)) == "K4ABC")
     }
 
-    @Test("one width for every tag, the widest label's, between 56 and 128 points")
+    @Test("each tag is as wide as its own words, up to 128 points, and a fold holds three glyphs and +99")
     func tagWidths() {
-        #expect(RoundtableTagLayout.tagWidth([]) == RoundtableTagLayout.minWidth)
-        #expect(RoundtableTagLayout.tagWidth([Self.tagAt("Q", 1)]) == RoundtableTagLayout.minWidth)
+        let short = RoundtableTagLayout.itemWidth(RoundtableTag(roomId: "x", hz: 1, label: "Q", members: 1))
+        let call = RoundtableTagLayout.itemWidth(RoundtableTag(roomId: "x", hz: 1, label: "KG4VCF", members: 9))
+        #expect(short < call && call < RoundtableTagLayout.maxWidth)
         let long = RoundtableTag(roomId: "x", hz: 1, label: String(repeating: "W", count: 40), members: 12)
-        #expect(RoundtableTagLayout.tagWidth([long]) == RoundtableTagLayout.maxWidth)
-        let mid = RoundtableTagLayout.tagWidth([RoundtableTag(roomId: "x", hz: 1, label: "KG4VCF", members: 9)])
-        #expect(mid > RoundtableTagLayout.minWidth && mid < RoundtableTagLayout.maxWidth)
+        #expect(RoundtableTagLayout.itemWidth(long) == RoundtableTagLayout.maxWidth)
+        #expect(RoundtableTagLayout.foldWidth() >= RoundtableTagLayout.minWidth)
     }
 
     @Test("a flag in the tag row keeps the tags off its span; one that only meets the row's edge does not")
@@ -644,7 +644,7 @@ struct RoundtableToolsPageTests {
         let tag = try #require(SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window))
         await MainQueue.drained()
         let messages = station.messages.count
-        let initialHeight = tag.accessibilityFrame.height
+        let initialFrame = tag.accessibilityFrame
         #expect(SetupTypedEntryTests.perform("Change signal display", on: tag))
         #expect(model.roundtable.signalFormat == .sUnits)
         await ShotWait.laidOut(window)
@@ -661,7 +661,8 @@ struct RoundtableToolsPageTests {
         #expect(model.roundtable.signalFormat == .both)
         await ShotWait.laidOut(window)
         let bothTag = try #require(SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window))
-        #expect(bothTag.accessibilityFrame.height >= initialHeight + 20)
+        // S and dBm share one line (D11): nothing shifts when the format changes (D14).
+        #expect(bothTag.accessibilityFrame == initialFrame)
         #expect(bothTag.accessibilityLabel?.contains("N4XYZ heard K4ABC") == true)
         #expect(bothTag.accessibilityLabel?.contains("-43 dBm") == true)
         try write("roundtable-overlay-card-both", window)
@@ -671,6 +672,127 @@ struct RoundtableToolsPageTests {
         #expect(tag.accessibilityLabel?.contains("K4ABC") == true)
         #expect(tag.accessibilityLabel?.contains("N4XYZ") == true)
         #expect(tag.accessibilityFrame.width <= 177 && tag.accessibilityFrame.height > 40)
+        await model.disconnect()
+    }
+
+    /// The active frequency's scene for the card's pictures, with a double, a
+    /// talker and a quiet frequency elsewhere on the band, and a frequency slice B's flag speaks for.
+    private static func cardScene(double: Bool, link: FakeStation.RoundtableLink = .live) -> FakeStation.RoundtableScene {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let source = sliceRoom
+        let listeners: [(String, String, Double, Int64, Double, Int64, Bool)] = [
+            ("n/2", "N4RDR", 179, 39, -67, 1_000, false), ("y/4", "KG4VCF", 212, 135, -73, 2_000, true),
+            ("d/5", "KD8LMN", 496, 12, -78, 3_000, false), ("a/6", "AA4QQ", 565, 50, -110, 1_000, false),
+            ("s/7", "N0SPM", 872, 333, -78, 26_000, false), ("w/8", "W5ABC", 901, 281, -88, 2_000, false),
+        ]
+        var records: [LinkMessage.RecordBatch.Record] = []
+        func member(_ ref: String, _ call: String, km: Double?, keyed: Bool, you: Bool, seq: Int) {
+            records.append(.init(id: "member:\(source)/\(ref)", fields: [
+                "record": .string("member"), "ref": .string(ref), "sourceRoom": .string(source), "hz": .number(7_236_400),
+                "callsign": .string(call), "nth": .number(1), "grid": .string("EM73"), "km": km.map(LinkJSON.number) ?? .null,
+                "offsetHz": .number(0), "joining": .bool(false), "away": .bool(false), "keyed": .bool(keyed),
+                "software": .string("NereusSDR"), "softwareVersion": .string("26.10.3"), "you": .bool(you),
+                "seq": .number(Double(seq)),
+            ]))
+        }
+        let talkers = double ? [("k/1", "K4ABC"), ("n/9", "N4XYZ")] : [("k/1", "K4ABC")]
+        for (index, talker) in talkers.enumerated() {
+            member(talker.0, talker.1, km: nil, keyed: true, you: false, seq: index)
+        }
+        for (index, listener) in listeners.enumerated() {
+            member(listener.0, listener.1, km: listener.2, keyed: false, you: listener.6, seq: 10 + index)
+            var reading = FakeStation.roundtableReading(ref: listener.0, dbm: listener.4, t: now - listener.5, turn: 12)
+            reading.id = "reading:\(source)/\(listener.0)"
+            reading.fields["sourceRoom"] = .string(source)
+            records.append(reading)
+        }
+        records.append(.init(id: "turn:12", fields: [
+            "record": .string("turn"), "id": .number(12), "kind": .string(double ? "doubled" : "talking"),
+            "talkers": .array(talkers.map { .object(["ref": .string($0.0), "callsign": .string($0.1), "nth": .number(1),
+                                                     "hz": .number(7_236_400), "sourceRoom": .string(source)]) }),
+            "start": .number(Double(now - 83_000)), "end": .null, "ending": .bool(false), "heard": .number(6),
+            "mine": .null, "sourceRoom": .string(source), "hz": .number(7_236_400),
+        ]))
+        func room(_ id: String, hz: Int64, state: String, _ people: [(String, Bool)]) -> [String: LinkJSON] {
+            var summary = FakeStation.roundtableSummary(id: id, members: people.count, state: state,
+                                                        talkers: people.filter(\.1).map(\.0))
+            summary["band"] = .string("40m")
+            summary["stations"] = .array(people.map {
+                FakeStation.roundtableStation(ref: $0.0, callsign: $0.0, sourceRoom: id, hz: hz, keyed: $0.1)
+            })
+            return summary
+        }
+        var mine = room(source, hz: 7_236_400, state: double ? "doubled" : "talking",
+                        talkers.map { ($0.1, true) } + listeners.map { ($0.1, false) })
+        mine["stations"] = .array(talkers.map {
+            FakeStation.roundtableStation(ref: $0.0, callsign: $0.1, sourceRoom: source, hz: 7_236_400, keyed: true)
+        } + listeners.map {
+            FakeStation.roundtableStation(ref: $0.0, callsign: $0.1, sourceRoom: source, hz: 7_236_400)
+        })
+        var scene = FakeStation.RoundtableScene(rooms: [
+            mine,
+            room("lsb-7225000", hz: 7_225_000, state: "doubled", [("AA5ABC", true), ("K0ABC", true), ("W2ABC", false)]),
+            room("lsb-7249000", hz: 7_249_000, state: "talking", [("K1SAID", true)]),
+            room("lsb-7254000", hz: 7_254_000, state: "talking", [("W6ABC", true), ("KC2ABC", false)]),
+            room("lsb-7261000", hz: 7_261_000, state: "quiet", [("W2DEF", false), ("N5ABC", false), ("K7ABC", false)]),
+        ], roomRecords: [source: records], link: link, linkSince: now - 12_000, sliceRooms: [0: source])
+        scene.frequencyPresences = [0: source, 1: "lsb-7249000"]
+        return scene
+    }
+
+    /// Set NEREUS_ROUNDTABLE_CARD_SHOTS to a folder to run this and write its pictures there.
+    @Test("shots: the card and tags on the real band",
+          .enabled(if: !(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_CARD_SHOTS"] ?? "").isEmpty))
+    func cardShots() async throws {
+        let directory = try #require(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_CARD_SHOTS"])
+        let (model, station) = try await shotStation(frequency: true)
+        model.phoneSettings.roundtableFirstRunNoteSeen = true
+        model.roundtable.activeSliceId = 0
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        let portrait = pad ? CGSize(width: 1032, height: 1376) : CGSize(width: 402, height: 874)
+        let landscape = pad ? CGSize(width: 1376, height: 1032) : CGSize(width: 874, height: 402)
+        func shoot(_ name: String, size: CGSize) async throws {
+            let (window, _) = try host(BandShotRoot(model: model), size: size)
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            let bandDraw = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+            BandFlagShotTests.feed(model.main.band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
+            try await ShotWait.requireBandShown(model.main.band, in: window, after: bandDraw)
+            try await Task.sleep(for: .milliseconds(600))
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(pad ? "ipad" : "iphone")-\(name).png")
+            try #require(image.pngData()).write(to: url)
+            let summary = model.roundtable.cardData(context: Self.sliceRoom)
+            print("Card shot \(url.lastPathComponent) kind=\(summary.kind) keyed=\(summary.keyed) rows=\(summary.rows.count) frozen=\(summary.frozen)")
+        }
+        try await station.deliverRoundtable(Self.cardScene(double: false))
+        #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).kind == .talking
+            && model.roundtable.cardData(context: Self.sliceRoom).rows.count == 6 })
+        try await shoot(pad ? "landscape-talking" : "short-talking", size: pad ? landscape : portrait)
+        try await station.deliverRoundtable(Self.cardScene(double: true))
+        #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).kind == .double
+            && model.roundtable.cardData(context: Self.sliceRoom).rows.count == 6 })
+        try await shoot(pad ? "landscape-double" : "short-double", size: pad ? landscape : portrait)
+        if pad {
+            try await shoot("portrait-double", size: portrait)
+        } else {
+            // A taller pan: the display sheet's Spectrum height.
+            model.main.display.setSpectrumHeight(65)
+            try await shoot("tall-double", size: portrait)
+            try await station.deliverRoundtable(Self.cardScene(double: false))
+            #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).kind == .talking })
+            try await shoot("tall-talking", size: portrait)
+            model.main.display.setSpectrumHeight(40)
+            try await station.deliverRoundtable(Self.cardScene(double: true))
+            try await shoot("sideways-double", size: landscape)
+        }
+        try await station.deliverRoundtable(Self.cardScene(double: true, link: .reconnecting))
+        #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).frozen })
+        try await shoot(pad ? "landscape-frozen" : "short-frozen", size: pad ? landscape : portrait)
         await model.disconnect()
     }
 

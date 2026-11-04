@@ -22,132 +22,38 @@ struct RoundtablePresenceStackTests {
                 ]), members: 5)
     }
 
-    @Test("active reports take priority and disclose omitted rows")
-    func reportsTakePriority() {
-        var value = tag
-        value.card?.reports.append(.init(id: "a/z", reporter: "W3XYZ", reading: .init(dbm: -70, t: 3000, present: true, turn: 12), age: "2 s", stale: false))
-        let plan = RoundtableTagLayout.cardPlan(value, width: 176, maxRows: 9)
-        #expect(plan.stateTitle == "W4KZO")
-        #expect(!plan.reports.isEmpty)
-        #expect(plan.omittedReports == 3 - plan.reports.count)
-        #expect(plan.people.isEmpty)
-    }
-
-    @Test("a narrow card discloses reports without splitting its state into words")
-    func narrowCardDisclosesReports() {
-        var value = tag
-        value.card?.state = .unknown
-        value.card?.reports = []
-        for (width, innerWidth) in [(76.33333333333333, 68.33333333333333), (80.0, 72.0), (100.0, 87.0)] {
-            let plan = RoundtableTagLayout.cardPlan(value, width: width, maxRows: 18)
-            #expect(plan.stateTitle == "Unknown signal")
-            #expect(plan.stateCaption == nil && plan.reports.isEmpty)
-            #expect(plan.showsDetails)
-            #expect(plan.height <= 105)
-            let text = ("Unknown signal" as NSString).size(withAttributes: [
-                .font: UIFont.systemFont(ofSize: plan.stateFontSize, weight: .medium)]).width
-            #expect(text <= innerWidth, "The complete state must fit inside the actual card padding")
-        }
-    }
-
-    @Test("long portable identities and suffixes retain readable text and their full accessible identity")
-    func longIdentityKeepsReadableFloor() throws {
+    @Test("long portable identities keep their full accessible identity")
+    func longIdentityStaysAccessible() {
         let identity = "EA8/KG4VCF/MM/QRP (2)"
         var value = tag
         value.card?.state = .known(identity)
-        for width in [80.0, 100.0] {
-            let plan = RoundtableTagLayout.cardPlan(value, width: width)
-            #expect(plan.stateFontSize >= 8 && plan.stateFontSize <= 10)
-            #expect(plan.stateTitle == identity)
-            #expect(value.card?.accessibilityText.contains(identity) == true)
-        }
-        let floorWidth = (identity as NSString).size(withAttributes: [
-            .font: UIFont.systemFont(ofSize: 8, weight: .medium)]).width
-        #expect(floorWidth > 72, "This identity needs honest ellipsis at 80 points, not smaller text")
-        value.card?.state = .unattributed
-        #expect(RoundtableTagLayout.cardPlan(value, width: 80).stateFontSize >= 8)
+        #expect(value.card?.accessibilityText.contains(identity) == true)
     }
 
     @Test("ended unknown and combined observations say last heard without changing measurement ages")
     func endedObservationIsVisiblyHistorical() {
         var value = tag
         value.card?.state = .unknown
-        let live = RoundtableTagLayout.cardPlan(value, width: 176)
+        #expect(value.card?.caption == nil)
         value.card?.ended = true
-        let ended = RoundtableTagLayout.cardPlan(value, width: 176)
-        #expect(live.stateCaption == nil && ended.stateCaption == "Last heard")
-        #expect(ended.stateTitle == "Unknown signal")
-        #expect(ended.reports.map(\.age) == ["4 s", "2 s"])
+        #expect(value.card?.caption == "Last heard")
+        #expect(value.card?.reports.map(\.age) == ["4 s", "2 s"])
         #expect(value.card?.accessibilityText.contains("Turn ended") == true)
         value.card?.state = .known("W4KZO")
-        #expect(RoundtableTagLayout.cardPlan(value, width: 80).stateCaption == "Last talker")
+        #expect(value.card?.caption == "Last talker")
         value.card?.state = .doubled
-        value.card?.reports = []
-        let doubled = RoundtableTagLayout.cardPlan(value, width: 80)
-        #expect(doubled.stateCaption == "Last double" && doubled.stateTitle == "Double")
-        let captionWidth = ("Last double" as NSString).size(withAttributes: [
-            .font: UIFont.systemFont(ofSize: 8)]).width
-        #expect(captionWidth <= 67, "Historical combined state must remain readable in the 80-point strip")
+        #expect(value.card?.caption == "Last double" && value.card?.state.title == "Double")
     }
 
-    @Test("loaded and unloaded reports preserve the same capped exact-frequency people")
+    @Test("a compact tag names one of the people here and counts the rest, whatever reports are loaded")
     func loadedReportsKeepPresence() {
-        let loaded = RoundtableTagLayout.cardPlan(tag, width: 80, maxRows: 18)
-        var unloaded = tag
-        unloaded.card = .init()
-        let waiting = RoundtableTagLayout.cardPlan(unloaded, width: 80, maxRows: 18)
-        #expect(loaded.people.isEmpty && loaded.showsDetails)
-        #expect(waiting.people == ["W1AW", "K4ABC (2)"] && waiting.omittedPeople == 3)
-        #expect(waiting.reports.isEmpty && waiting.showsDetails)
-        #expect(loaded.stateTitle == "W4KZO")
-        #expect(waiting.stateTitle == nil)
-    }
-
-    @Test("short legal height keeps whole rows and explicit reports disclosure")
-    func shortHeightUsesHonestDetails() {
-        for limit in 0...18 {
-            let plan = RoundtableTagLayout.cardPlan(tag, width: 176, maxRows: limit)
-            #expect(plan.height <= CGFloat(limit * 13 + 8))
-            if limit >= 9 {
-                #expect(plan.people.isEmpty && plan.showsDetails)
-            }
-            if !plan.reports.isEmpty {
-                #expect(plan.stateTitle == "W4KZO")
-                #expect(plan.reports.first?.reporter == "N4XYZ")
-            }
-        }
-    }
-
-    @Test("unknown and doubled signal descriptions do not replace presence or infer a known talker")
-    func unattributedSignalsKeepPresence() {
-        for state in [RoundtableTagCard.State.unknown, .doubled] {
-            var value = tag
-            value.card?.state = state
-            value.card?.reports = []
-            let plan = RoundtableTagLayout.cardPlan(value, width: 176, maxRows: 18)
-            #expect(plan.people.isEmpty)
-            #expect(plan.stateCaption != "Last talker" && plan.reports.isEmpty)
-            #expect(plan.stateTitle == (state == .unknown ? "Unknown signal" : "Double"))
-        }
-    }
-
-    @Test("Both retains aligned semantic reporter rows and enough height for both signal lines")
-    func selectedSignalFitsWholeRows() {
         var value = tag
-        let dbm = RoundtableTagLayout.cardPlan(value, width: 176)
-        #expect(dbm.reports.map(\.signal) == [["-43"], ["-61"]])
-        value.card?.format = .sUnits
-        let sUnits = RoundtableTagLayout.cardPlan(value, width: 176)
-        #expect(sUnits.reports.map(\.signal) == [["S9 +30"], ["S9 +12"]])
-        value.card?.format = .both
-        let both = RoundtableTagLayout.cardPlan(value, width: 176)
-        #expect(both.reports.map(\.signal) == [["S9 +30", "-43 dBm"], ["S9 +12", "-61 dBm"]])
-        #expect(both.reports.map(\.reporter) == ["N4XYZ", "K9XYZ"])
-        #expect(both.reports.map(\.age) == ["4 s", "2 s"])
-        #expect(both.reportHeight == 30 && both.height == dbm.height + 24)
-        let constrained = RoundtableTagLayout.cardPlan(value, width: 176, maxRows: 14)
-        #expect(constrained.reports.count == 2 && constrained.reports.first?.signal.count == 2)
-        #expect(constrained.height <= 190)
+        value.stationed = true
+        value.glyph = .quiet
+        let face = RoundtableTagLayout.face(value)
+        #expect(face.head == "W1AW" && face.count == "+4" && face.names.isEmpty)
+        value.card = .init()
+        #expect(RoundtableTagLayout.face(value) == face)
     }
 
     private func overlapMember(_ ref: String, hz: Int64 = 7_236_400, keyed: Bool = false,

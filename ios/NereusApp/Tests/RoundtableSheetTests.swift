@@ -1210,18 +1210,12 @@ struct RoundtableSheetTests {
         let tags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
         #expect(tags.count == 3 && tags[0].label.contains("\n"))
         #expect(tags[0].card?.state == .known("K4ABC"))
-        let dbmPlan = RoundtableTagLayout.cardPlan(tags[0], width: 176)
-        #expect(dbmPlan.reports.first?.reporter == "N4XYZ" && dbmPlan.reports.first?.signal == ["-43"])
-        model.roundtable.setSignalFormat(.sUnits)
-        let sTags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
-        #expect(RoundtableTagLayout.cardPlan(sTags[0], width: 176).reports.first?.signal == ["S9 +30"])
-        model.roundtable.setSignalFormat(.both)
-        let bothTags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
-        #expect(RoundtableTagLayout.cardPlan(bothTags[0], width: 176).reports.first?.signal == ["S9 +30", "-43 dBm"])
-        model.roundtable.setSignalFormat(.dbm)
-        let narrow = RoundtableTagLayout.cardPlan(tags[0], width: 80)
-        #expect(narrow.stateCaption == nil && narrow.stateTitle == "K4ABC")
-        #expect(narrow.reports.isEmpty && narrow.showsDetails)
+        #expect(tags[0].card?.reports.first?.reporter == "N4XYZ")
+        #expect(tags[0].card?.reports.first.map { RoundtableText.signalLines($0.reading, format: .dbm) } == ["-43"])
+        #expect(RoundtableTagLayout.cardSignal(-43, format: .dbm, narrow: false) == "\u{2212}43")
+        #expect(RoundtableTagLayout.cardSignal(-43, format: .sUnits, narrow: false) == "S9 +30")
+        #expect(RoundtableTagLayout.cardSignal(-43, format: .both, narrow: false) == "S9 +30 \u{2212}43")
+        #expect(RoundtableTagLayout.cardSignal(-43, format: .both, narrow: true) == "S9 +30")
         let summary = try #require(model.roundtable.frequencyRows.first)
         var reportView = try #require(model.roundtable.room)
         reportView.earlier = []
@@ -1268,9 +1262,8 @@ struct RoundtableSheetTests {
         thirdMember.keyed = true
         reportView.members.append(thirdMember)
         let three = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
-        var threeTag = tags[0]
-        threeTag.card = three
-        #expect(RoundtableTagLayout.cardPlan(threeTag, width: 176).stateTitle == "Double \u{00B7} 3")
+        #expect(RoundtableTagLayout.cardHead(RoundtableCardData(kind: .double, hz: three.reports.isEmpty ? 0 : 1, keyed: three.participants),
+                                             narrow: false) == "Double \u{00B7} 3")
         reportView.now[0].end = reportNow
         reportView.earlier = [reportView.now[0]]
         reportView.now = []
@@ -1597,10 +1590,11 @@ struct RoundtableSheetTests {
         if name.hasPrefix("overlay-"), let tag = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0]).first {
             let node = try #require(SetupTypedEntryTests.element("roundtableTag.\(tag.roomId)", in: window))
             let frame = window.convert(node.accessibilityFrame, from: window.screen.coordinateSpace)
-            reportsRect = CGRect(x: frame.minX + 4, y: frame.maxY - 22, width: frame.width - 8, height: 18)
-            let width = frame.width
-            let plan = RoundtableTagLayout.cardPlan(tag, width: Double(width))
-            print("Overlay native bounds name=\(name) width=\(width) font=\(plan.stateFontSize) title=\(plan.stateTitle ?? "none")")
+            // The head's frequency, in the card's blue, says the card has drawn.
+            if model.roundtable.cardData(context: tag.roomId).kind != .quiet, frame.width >= RoundtableTagLayout.cardTightBelow {
+                reportsRect = CGRect(x: frame.midX, y: frame.minY + 5, width: frame.width / 2 - 2, height: 15)
+            }
+            print("Overlay native bounds name=\(name) width=\(frame.width) height=\(frame.height)")
         }
         func save(_ captureName: String) async throws {
             var completed: UIImage?
