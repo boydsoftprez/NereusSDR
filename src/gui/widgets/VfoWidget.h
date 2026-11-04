@@ -15,6 +15,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - setRoundtableLineMenuEnabled and roundtableLineMenuRequested: the
+//                 line's right-click asks for the short menu on a frequency
+//                 server (overlay design D36). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-10-25 - roundtableLineFont and roundtableLineTextRoom: the
 //                 Roundtable line's text is drawn at Normal when it does
 //                 not fit its room at semibold. J.J. Boyd
@@ -799,6 +803,9 @@ public slots:
     // · 9 · K4ABC" with its glyph and @N. Hidden while line.visible is false;
     // a click emits roundtableLineClicked.
     void setRoundtableLine(const RoundtableFlagLine& line);
+    /// Whether a right-click on the line asks for the short menu (overlay design
+    /// D36). Off, it falls to the flag's own menu, as a legacy server keeps.
+    void setRoundtableLineMenuEnabled(bool enabled);
     RoundtableFlagLine roundtableLine() const { return m_roundtableLine; }
     QAbstractButton* roundtableLineButtonForTest() const { return m_roundtableLineButton; }
     // The room the line's text has on a line lineWidth wide: after the
@@ -811,6 +818,8 @@ public slots:
 signals:
     // The Roundtable line was clicked: open the Roundtable panel.
     void roundtableLineClicked();
+    // The line was right-clicked with the short menu on. `globalPos` is where it goes.
+    void roundtableLineMenuRequested(QPoint globalPos);
     void frequencyChanged(double hz);
     void modeChanged(NereusSDR::DSPMode mode);
     void filterChanged(int low, int high);

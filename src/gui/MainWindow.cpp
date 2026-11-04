@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: The one inspector's routing (overlay design D21, D24 to D27, D34, D36,
+//               D37): a toggle, a swap in place, Back and ⋯, the fold's list and the
+//               short menu. A band click leaves it open. New GUI-thread routes only.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: A tag or another slice's flag line views a frequency without tuning
 //               (overlay design D21 to D27): viewRoundtableFrequency and the card's
 //               menu. A click no longer forces the applet open. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -5807,7 +5811,9 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // Roundtable plan Task 14 (design 11.2): the flag's Roundtable line
     // opens the panel on this slice; the line itself follows the model.
     connect(newFlag, &VfoWidget::roundtableLineClicked, this,
-            [this, sliceIndex]() { openRoundtableForSlice(sliceIndex); });
+            [this, sliceIndex]() { toggleRoundtableForSlice(sliceIndex); });
+    connect(newFlag, &VfoWidget::roundtableLineMenuRequested, this,
+            [this, sliceIndex](QPoint at) { openRoundtableMenuForSlice(sliceIndex, at); });
     connect(slice, &SliceModel::frequencyChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
     connect(slice, &SliceModel::dspModeChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
     scheduleRoundtableRefresh();
@@ -6785,6 +6791,21 @@ void MainWindow::refreshPanNotchMinWidth()
     }
 }
 
+namespace {
+
+// A frequency context, "frequency:usb-14200000", as its frequency and family.
+bool parseRoundtableContext(const QString& context, qint64& hz, QString& family)
+{
+    const QString address = context.mid(QStringLiteral("frequency:").size());
+    const qsizetype dash = address.indexOf(QLatin1Char('-'));
+    if (!RoundtableModel::isFrequencyContext(context) || dash <= 0) { return false; }
+    family = address.left(dash);
+    hz = address.mid(dash + 1).toLongLong();
+    return hz > 0;
+}
+
+} // namespace
+
 void MainWindow::wirePanRoundtableTags()
 {
     if (!m_panStack) { return; }
@@ -6802,7 +6823,9 @@ void MainWindow::wirePanRoundtableTags()
                 // A frequency-capable server views without tuning or opening
                 // anything else (overlay design D21); a legacy room reads in the panel.
                 if (model && model->frequencyAvailable() && RoundtableModel::isFrequencyContext(context)) {
-                    viewRoundtableFrequency(sw, context);
+                    qint64 hz = 0;
+                    QString family;
+                    if (parseRoundtableContext(context, hz, family)) { toggleRoundtableInspector(sw, hz, family); }
                     return;
                 }
                 if (m_roundtableApplet && m_roundtableApplet->panel()) {
@@ -6810,11 +6833,16 @@ void MainWindow::wirePanRoundtableTags()
                     if (m_appletVis) { m_appletVis->setVisible(QStringLiteral("Roundtable"), true); }
                 }
             });
-            connect(sw, &SpectrumWidget::roundtableBandClicked, this, &MainWindow::closeRoundtablePeek);
-            connect(sw, &SpectrumWidget::roundtableReportsRequested, this, [this]() {
-                if (const SliceModel* active = activeSliceForWindow()) {
-                    openRoundtableForSlice(active->sliceIndex());
-                }
+            connect(sw, &SpectrumWidget::roundtableFoldClicked, this, [this, sw](const QStringList& roomIds) {
+                toggleRoundtableFold(sw, roomIds);
+            });
+            connect(sw, &SpectrumWidget::roundtableTagMenuRequested, this, [this, sw](const QString& context, QPoint at) {
+                openRoundtableMenu(sw, context, at, false);
+            });
+            connect(sw, &SpectrumWidget::roundtableMessagesRequested, this, &MainWindow::openRoundtableMessages);
+            connect(sw, &SpectrumWidget::roundtableReportsRequested, this, &MainWindow::openRoundtableReports);
+            connect(sw, &SpectrumWidget::roundtableInspectorSpotChanged, this, [this, sw]() {
+                if (m_roundtablePeek && m_roundtablePeek->parentWidget() == sw) { updateRoundtableInspectorSpot(); }
             });
             connect(sw, &SpectrumWidget::roundtableSignalFormatCycled, this, [this]() {
                 if (RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr) {
@@ -6939,6 +6967,7 @@ void MainWindow::refreshRoundtableTags()
             }
             it.value()->setRoundtableLine(roundtableFlagLineFor(roundtable, it.key(),
                 slice ? std::llround(slice->frequency()) : 0, family));
+            it.value()->setRoundtableLineMenuEnabled(roundtable && roundtable->frequencyAvailable());
         }
     }
     // The card stands on the pan that hosts the active slice's flag. A legacy
@@ -6965,58 +6994,52 @@ bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& con
     RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
     // A window that controls no slice still views (active is null): Tune greys.
     const SliceModel* active = activeSliceForWindow();
-    if (!pan || !panel) { return false; }
-    const QString address = context.mid(QStringLiteral("frequency:").size());
-    const qsizetype dash = address.indexOf(QLatin1Char('-'));
-    if (dash <= 0) { return false; }
-    const QString family = address.left(dash);
-    const qint64 hz = address.mid(dash + 1).toLongLong();
+    qint64 hz = 0;
+    QString family;
+    if (!pan || !panel || !parseRoundtableContext(context, hz, family)) { return false; }
     const QString activeFamily = familyOfSlice(active);
     if (active && !activeFamily.isEmpty()
         && context == RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily)) {
-        closeRoundtablePeek();
-        return false;
+        // readRoom would take your own room back to the slice and look refused.
+        showOwnRoundtableInspector(pan);
+        return true;
     }
 
-    if (m_roundtablePeek && m_roundtablePeek->parentWidget() != pan) {
-        m_roundtablePeek->closePeek();
-        m_roundtablePeek->deleteLater();
-        m_roundtablePeek = nullptr;
-    }
+    adoptRoundtablePeek(pan);
 
     // Through the panel, which owns the one reading slot and otherwise takes it
-    // back for the slice. The active frequency's own slot stays live.
+    // back for the slice. The active frequency's own slot stays live. It holds the
+    // read while the slice tunes, so a band click leaves this view as it is (D27).
     m_roundtablePeekContext = context;
+    m_roundtablePeekFold.clear();
     m_roundtablePeekOpening = true;
+    panel->setHoldRead(true);
     panel->readRoom(context);
     m_roundtablePeekOpening = false;
     if (!panel->isReading() || panel->roomId() != context) {
         // Refused: the status bar has said why (D27). The slice is untouched.
         m_roundtablePeekContext.clear();
+        panel->setHoldRead(false);
         closeRoundtablePeek();
         return true;
     }
 
-    if (!m_roundtablePeek) {
-        auto* peek = new RoundtableFrequencyPeek(pan);
-        m_roundtablePeek = peek;
-        connect(peek, &RoundtableFrequencyPeek::closed, this, &MainWindow::onRoundtablePeekClosed);
-        connect(peek, &RoundtableFrequencyPeek::tuneRequested, this, [this]() {
-            const QString target = m_roundtablePeekContext;
-            if (m_radioModel && m_radioModel->isTransmitting()) { return; }
-            m_roundtablePeekMessages = false;
-            if (m_roundtableApplet) { m_roundtableApplet->tuneToRoom(target); }
-            closeRoundtablePeek();
-        });
-        connect(peek, &RoundtableFrequencyPeek::messagesRequested, this, [this]() {
-            // The panel stays on this frequency, with Back to my slice.
-            m_roundtablePeekMessages = true;
-            showRoundtablePanel();
-        });
-        // Flags raise themselves on every pass; the view stays over them.
-        connect(pan, &SpectrumWidget::flagsRaised, peek, [peek]() {
-            if (peek->isOpen()) { peek->raise(); }
-        });
+    m_roundtablePeekMessages = false;
+    m_roundtablePeekAnchorHz = hz;
+    updateRoundtableInspectorSpot();
+    m_roundtablePeek->showFor(static_cast<quint64>(hz), family);
+    pan->setRoundtableViewedRoom(context);
+    m_roundtablePeekTimer->start();
+    sampleRoundtablePeekPan();
+    return true;
+}
+
+void MainWindow::adoptRoundtablePeek(SpectrumWidget* pan)
+{
+    if (m_roundtablePeek && m_roundtablePeek->parentWidget() != pan) {
+        m_roundtablePeek->closePeek();
+        m_roundtablePeek->deleteLater();
+        m_roundtablePeek = nullptr;
     }
     if (!m_roundtablePeekTimer) {
         m_roundtablePeekTimer = new QTimer(this);
@@ -7024,12 +7047,188 @@ bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& con
         m_roundtablePeekTimer->setInterval(kRoundtablePeekRefreshMs);
         connect(m_roundtablePeekTimer, &QTimer::timeout, this, &MainWindow::sampleRoundtablePeekPan);
     }
+    if (m_roundtablePeek) { return; }
+    auto* peek = new RoundtableFrequencyPeek(pan);
+    m_roundtablePeek = peek;
+    connect(peek, &RoundtableFrequencyPeek::closed, this, &MainWindow::onRoundtablePeekClosed);
+    connect(peek, &RoundtableFrequencyPeek::tuneRequested, this, [this]() { tuneRoundtableRoom(m_roundtablePeekContext); });
+    connect(peek, &RoundtableFrequencyPeek::messagesRequested, this, [this]() {
+        openRoundtableMessages(m_roundtablePeekContext);
+    });
+    // Back moves nothing: it is your own frequency, in place (D35).
+    connect(peek, &RoundtableFrequencyPeek::backRequested, this, [this, pan]() { showOwnRoundtableInspector(pan); });
+    connect(peek, &RoundtableFrequencyPeek::moreRequested, this, [this, pan](QPoint at) {
+        openRoundtableMenu(pan, m_roundtablePeekContext, at, true);
+    });
+    connect(peek, &RoundtableFrequencyPeek::foldRowClicked, this, [this, pan](const QString& roomId) {
+        viewRoundtableFrequency(pan, roomId);
+    });
+    // Flags raise themselves on every pass; the view stays over them.
+    connect(pan, &SpectrumWidget::flagsRaised, peek, [peek]() {
+        if (peek->isOpen()) { peek->raise(); }
+    });
+}
+
+void MainWindow::releaseRoundtablePeekRead()
+{
+    RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
+    if (!panel) { return; }
+    panel->setHoldRead(false);
+    if (!m_roundtablePeekContext.isEmpty() && panel->isReading() && panel->roomId() == m_roundtablePeekContext) {
+        m_roundtablePeekOpening = true;
+        panel->backToSlice();
+        m_roundtablePeekOpening = false;
+    }
+}
+
+void MainWindow::showOwnRoundtableInspector(SpectrumWidget* pan)
+{
+    const SliceModel* active = activeSliceForWindow();
+    const QString family = familyOfSlice(active);
+    if (!pan || !active || family.isEmpty()) { return; }
+    adoptRoundtablePeek(pan);
+    // Your own room needs no read of its own: the panel's readRoom would call
+    // backToSlice for it. Only a view's read has to end, with no close (D34).
+    releaseRoundtablePeekRead();
+    const qint64 hz = std::llround(active->frequency());
+    const QString context = RoundtableModel::frequencyContextId(hz, family);
+    m_roundtablePeekContext = context;
+    m_roundtablePeekFold.clear();
     m_roundtablePeekMessages = false;
-    m_roundtablePeek->showFor(static_cast<quint64>(hz), family, pan->roundtableViewAnchor(context, hz));
+    m_roundtablePeekAnchorHz = hz;
+    updateRoundtableInspectorSpot();
+    m_roundtablePeek->showOwn(static_cast<quint64>(hz), family);
     pan->setRoundtableViewedRoom(context);
     m_roundtablePeekTimer->start();
     sampleRoundtablePeekPan();
-    return true;
+}
+
+void MainWindow::toggleRoundtableInspector(SpectrumWidget* pan, qint64 hz, const QString& family)
+{
+    if (!pan || hz <= 0 || family.isEmpty()) { return; }
+    if (m_roundtablePeek && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsFold()
+        && m_roundtablePeek->parentWidget() == pan && m_roundtablePeek->hz() == static_cast<quint64>(hz)
+        && m_roundtablePeek->family() == family) {
+        closeRoundtablePeek();
+        return;
+    }
+    viewRoundtableFrequency(pan, RoundtableModel::frequencyContextId(hz, family));
+}
+
+void MainWindow::toggleRoundtableFold(SpectrumWidget* pan, const QStringList& roomIds)
+{
+    if (!pan || roomIds.isEmpty()) { return; }
+    if (m_roundtablePeek && m_roundtablePeek->showsFold() && m_roundtablePeek->parentWidget() == pan
+        && m_roundtablePeekFold == roomIds) {
+        closeRoundtablePeek();
+        return;
+    }
+    const QVector<RoundtableFoldRow> rows = pan->roundtableFoldRows(roomIds);
+    if (rows.isEmpty()) { return; }
+    adoptRoundtablePeek(pan);
+    releaseRoundtablePeekRead();
+    m_roundtablePeekContext.clear();
+    m_roundtablePeekFold = roomIds;
+    m_roundtablePeekMessages = false;
+    m_roundtablePeekAnchorHz = rows.first().hz;
+    if (m_roundtablePeekTimer) { m_roundtablePeekTimer->stop(); }
+    updateRoundtableInspectorSpot();
+    m_roundtablePeek->showFold(rows);
+    // The fold's tag takes the outline.
+    pan->setRoundtableViewedRoom(roomIds.first());
+    updateRoundtableInspectorSpot();
+}
+
+void MainWindow::updateRoundtableInspectorSpot()
+{
+    auto* pan = m_roundtablePeek ? qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr;
+    if (!pan) { return; }
+    const SliceModel* active = activeSliceForWindow();
+    const SpectrumWidget::RoundtableInspectorSpot spot
+        = pan->roundtableInspectorSpot(active ? active->sliceIndex() : -1, m_roundtablePeekAnchorHz);
+    m_roundtablePeek->setInspectorSpot(spot.pan, spot.dialX, spot.flags, spot.flagFlipped);
+    pan->setRoundtableInspectorRect(m_roundtablePeek->inspectorRect());
+}
+
+void MainWindow::openRoundtableMenu(SpectrumWidget* pan, const QString& context, const QPoint& at, bool fromInspector)
+{
+    qint64 hz = 0;
+    QString family;
+    if (!pan || !m_radioModel || !parseRoundtableContext(context, hz, family)) { return; }
+    const SliceModel* active = activeSliceForWindow();
+    SpectrumWidget::RoundtableMenuOptions options;
+    options.fromInspector = fromInspector;
+    options.inspectorOpen = m_roundtablePeek && m_roundtablePeek->isOpen() && m_roundtablePeek->parentWidget() == pan
+        && m_roundtablePeekContext == context;
+    // What the inspector's own button waits on (refreshRoundtablePeek).
+    options.tuneAllowed = !m_radioModel->isTransmitting() && m_radioModel->isConnected();
+    const bool alreadyThere = active
+        && roundtableTuneWritesNothing(hz, family, std::llround(active->frequency()), familyOfSlice(active));
+    // On the top level window: a pan's native window cannot be a popup's transient parent.
+    auto* menu = new QMenu(this);
+    menu->setObjectName(QStringLiteral("roundtableShortMenu"));
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    pan->buildRoundtableCardMenu(context, hz, alreadyThere, *menu, options);
+    menu->popup(at);
+}
+
+void MainWindow::openRoundtableMenuForSlice(int sliceId, const QPoint& at)
+{
+    const SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
+    const QString family = familyOfSlice(slice);
+    SpectrumWidget* pan = panHoldingRoundtableSlice(sliceId);
+    if (slice && pan && !family.isEmpty()) {
+        openRoundtableMenu(pan, RoundtableModel::frequencyContextId(std::llround(slice->frequency()), family), at, false);
+    }
+}
+
+void MainWindow::openRoundtableMessages(const QString& context)
+{
+    RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
+    if (!panel || context.isEmpty()) { return; }
+    const bool open = m_roundtablePeek && m_roundtablePeek->isOpen();
+    const bool viewing = open && !m_roundtablePeek->showsOwn() && !m_roundtablePeek->showsFold();
+    auto* pan = open ? qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr;
+    const SliceModel* active = activeSliceForWindow();
+    const QString activeFamily = familyOfSlice(active);
+    const bool own = active && !activeFamily.isEmpty()
+        && context == RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily);
+    // The panel has one reading slot. A view on another frequency follows it, so
+    // the two never disagree and the view is never closed for it.
+    if (own) {
+        if (viewing) { showOwnRoundtableInspector(pan); }
+        panel->backToSlice();
+    } else if (viewing && context != m_roundtablePeekContext) {
+        viewRoundtableFrequency(pan, context);
+        if (!m_roundtablePeek || !m_roundtablePeek->isOpen()) { return; }
+    } else if (!viewing) {
+        m_roundtablePeekOpening = true;
+        panel->readRoom(context);
+        m_roundtablePeekOpening = false;
+        if (!panel->isReading()) { return; }
+    }
+    // The panel stays on this frequency, with Back to my slice.
+    m_roundtablePeekMessages = true;
+    showRoundtablePanel();
+}
+
+void MainWindow::openRoundtableReports()
+{
+    const SliceModel* active = activeSliceForWindow();
+    if (!active) { return; }
+    // Your own room is the panel's now: a view of another turns to it in place.
+    if (m_roundtablePeek && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsOwn() && !m_roundtablePeek->showsFold()) {
+        showOwnRoundtableInspector(qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget()));
+    }
+    openRoundtableForSlice(active->sliceIndex());
+}
+
+void MainWindow::tuneRoundtableRoom(const QString& context)
+{
+    if (m_radioModel && m_radioModel->isTransmitting()) { return; }
+    m_roundtablePeekMessages = false;
+    if (m_roundtableApplet) { m_roundtableApplet->tuneToRoom(context); }
+    closeRoundtablePeek();
 }
 
 // Your pan is read here only, on the view's timer and as it opens (overlay
@@ -7039,7 +7238,8 @@ void MainWindow::sampleRoundtablePeekPan()
     const auto* pan = m_roundtablePeek ? qobject_cast<const SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr;
     // Keyed, a pan with no overlay still has a level, and it is not one to come
     // back to: holding it would show it on unkey and latch the peak tick.
-    m_roundtablePeekPanDbm = pan && m_roundtablePeek->isOpen() && !(m_radioModel && m_radioModel->isTransmitting())
+    m_roundtablePeekPanDbm = pan && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsFold()
+            && !m_roundtablePeek->showsOwn() && !(m_radioModel && m_radioModel->isTransmitting())
         ? pan->roundtablePanLevel(m_roundtablePeek->hz(), m_roundtablePeek->family()) : std::nullopt;
     refreshRoundtablePeek();
 }
@@ -7048,7 +7248,7 @@ void MainWindow::refreshRoundtablePeek()
 {
     if (!m_roundtablePeek) {
         // Its pan went away while it was open: end the view here.
-        if (!m_roundtablePeekContext.isEmpty()) { onRoundtablePeekClosed(); }
+        if (!m_roundtablePeekContext.isEmpty() || !m_roundtablePeekFold.isEmpty()) { onRoundtablePeekClosed(); }
         return;
     }
     if (!m_roundtablePeek->isOpen()) { return; }
@@ -7058,15 +7258,41 @@ void MainWindow::refreshRoundtablePeek()
         closeRoundtablePeek();
         return;
     }
-    const quint64 hz = m_roundtablePeek->hz();
-    const QString family = m_roundtablePeek->family();
-    const qint64 activeHz = active ? std::llround(active->frequency()) : 0;
-    const QString activeFamily = familyOfSlice(active);
-    // Your slice moved onto the viewed frequency: the card takes over.
-    if (active && activeHz == static_cast<qint64>(hz) && activeFamily == family) {
-        closeRoundtablePeek();
+    auto* pan = qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget());
+    if (m_roundtablePeek->showsFold()) {
+        const QVector<RoundtableFoldRow> rows = pan ? pan->roundtableFoldRows(m_roundtablePeekFold) : QVector<RoundtableFoldRow>{};
+        if (rows.isEmpty()) {
+            closeRoundtablePeek();
+            return;
+        }
+        m_roundtablePeek->setFoldRows(rows);
+        updateRoundtableInspectorSpot();
         return;
     }
+    const qint64 activeHz = active ? std::llround(active->frequency()) : 0;
+    const QString activeFamily = familyOfSlice(active);
+    const bool activeHere = active && !activeFamily.isEmpty();
+    if (m_roundtablePeek->showsOwn()) {
+        // Your own frequency is wherever your slice is: it follows a band click (D27).
+        if (!activeHere) {
+            closeRoundtablePeek();
+            return;
+        }
+        const QString context = RoundtableModel::frequencyContextId(activeHz, activeFamily);
+        if (context != m_roundtablePeekContext) {
+            m_roundtablePeekContext = context;
+            m_roundtablePeekAnchorHz = activeHz;
+            m_roundtablePeekPanDbm.reset();
+            m_roundtablePeek->showOwn(static_cast<quint64>(activeHz), activeFamily);
+            if (pan) { pan->setRoundtableViewedRoom(context); }
+        }
+    } else if (activeHere && activeHz == static_cast<qint64>(m_roundtablePeek->hz()) && activeFamily == m_roundtablePeek->family()) {
+        // Your slice moved onto the viewed frequency: it is your own now, in place (D27).
+        showOwnRoundtableInspector(pan);
+        return;
+    }
+    const quint64 hz = m_roundtablePeek->hz();
+    updateRoundtableInspectorSpot();
     QList<int> sliceIds;
     for (SliceModel* slice : m_radioModel->slices()) {
         if (slice) { sliceIds.append(slice->sliceIndex()); }
@@ -7082,6 +7308,8 @@ void MainWindow::refreshRoundtablePeek()
                               transmitting ? std::nullopt : m_roundtablePeekPanDbm,
                               // Tune also waits on the radio itself, whatever Roundtable's link is doing.
                               transmitting || !m_radioModel->isConnected());
+    // A change of who is listed can change its height.
+    if (pan) { pan->setRoundtableInspectorRect(m_roundtablePeek->inspectorRect()); }
 }
 
 void MainWindow::closeRoundtablePeek()
@@ -7094,50 +7322,60 @@ void MainWindow::onRoundtablePeekClosed()
     if (m_roundtablePeekTimer) { m_roundtablePeekTimer->stop(); }
     if (auto* pan = m_roundtablePeek ? qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr) {
         pan->setRoundtableViewedRoom(QString());
+        pan->setRoundtableInspectorRect(QRect());
     }
     const QString context = m_roundtablePeekContext;
     m_roundtablePeekContext.clear();
+    m_roundtablePeekFold.clear();
+    m_roundtablePeekAnchorHz = 0;
     // After Messages the panel stays on this frequency until Back to my slice.
     RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
+    if (panel) { panel->setHoldRead(false); }
     if (panel && !m_roundtablePeekMessages && panel->isReading() && panel->roomId() == context) {
         panel->backToSlice();
     }
     m_roundtablePeekMessages = false;
 }
 
-void MainWindow::openRoundtableForSlice(int sliceId)
+SpectrumWidget* MainWindow::panHoldingRoundtableSlice(int sliceId) const
 {
-    // Another slice's flag line views its frequency and leaves the active slice
-    // alone (overlay design D26). A legacy server has no such view.
+    for (PanadapterApplet* applet : m_panStack ? m_panStack->allApplets() : QList<PanadapterApplet*>{}) {
+        SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
+        if (sw && sw->vfoWidget(sliceId) != nullptr) { return sw; }
+    }
+    return nullptr;
+}
+
+void MainWindow::toggleRoundtableForSlice(int sliceId)
+{
     const RoundtableModel* roundtable = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+    if (!roundtable || !roundtable->frequencyAvailable()) {
+        openRoundtableForSlice(sliceId);
+        return;
+    }
     // This window's own slice: a hosted window selects for itself, whichever
     // slice the radio's other devices have active.
     const SliceModel* active = activeSliceForWindow();
-    if (roundtable && roundtable->frequencyAvailable() && (!active || active->sliceIndex() != sliceId)) {
-        SliceModel* other = m_radioModel->sliceById(sliceId);
-        const QString family = familyOfSlice(other);
-        if (other && !family.isEmpty()) {
-            SpectrumWidget* pan = nullptr;
-            for (PanadapterApplet* applet : m_panStack ? m_panStack->allApplets() : QList<PanadapterApplet*>{}) {
-                SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
-                if (sw && sw->vfoWidget(sliceId) != nullptr) { pan = sw; break; }
-            }
-            const QString context = RoundtableModel::frequencyContextId(std::llround(other->frequency()), family);
-            if (!viewRoundtableFrequency(pan, context)) { showRoundtablePanel(); }
-            return;
-        }
-        // No slice of this window's to view from, and nothing here to view: a line
-        // never selects a slice for a window that controls none.
-        if (!active) {
-            showRoundtablePanel();
-            return;
-        }
+    const SliceModel* slice = m_radioModel->sliceById(sliceId);
+    const QString family = familyOfSlice(slice);
+    SpectrumWidget* pan = panHoldingRoundtableSlice(sliceId);
+    if (slice && !family.isEmpty() && pan) {
+        // Any slice's line, your own too: it leaves the active slice alone (D26).
+        toggleRoundtableInspector(pan, std::llround(slice->frequency()), family);
+        return;
     }
-    // Your own line opens your own room, not one being viewed.
-    if (m_roundtablePeek && m_roundtablePeek->isOpen()) {
-        m_roundtablePeekMessages = false;
-        closeRoundtablePeek();
+    // No slice of this window's to view from, and nothing here to view: a line
+    // never selects a slice for a window that controls none.
+    if (!active) {
+        showRoundtablePanel();
+        return;
     }
+    openRoundtableForSlice(sliceId);
+}
+
+void MainWindow::openRoundtableForSlice(int sliceId)
+{
+    const RoundtableModel* roundtable = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
     if (roundtable && roundtable->frequencyAvailable() && m_roundtableApplet && m_roundtableApplet->panel()) {
         m_roundtableApplet->panel()->backToSlice();
     }
@@ -7166,7 +7404,8 @@ void MainWindow::showRoundtablePanel()
 
 void MainWindow::onRoundtableRoomClicked(const QString& roomId)
 {
-    if (m_roundtableApplet) { m_roundtableApplet->tuneToRoom(roomId); }
+    // The short menu's Tune, as the inspector's own (D27); a legacy tag has no view.
+    tuneRoundtableRoom(roomId);
 }
 
 void MainWindow::wirePanNotchHandlers()
@@ -12238,7 +12477,8 @@ void MainWindow::populateDefaultMeter()
         connect(roundtable, &RoundtableModel::actionRefused, this, [this](const QString& verb, const QString& reason) {
             if (verb != QLatin1String("readAt")) { return; }
             const bool viewing = m_roundtablePeekOpening || m_roundtablePeekJustLost
-                || (m_roundtablePeek && m_roundtablePeek->isOpen());
+                || (m_roundtablePeek && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsOwn()
+                    && !m_roundtablePeek->showsFold());
             if (viewing) {
                 statusBar()->showMessage(reason.isEmpty() ? QStringLiteral("That frequency could not be read right now.")
                                                           : OperatorReasonText::forDisplay(reason),
@@ -12246,10 +12486,12 @@ void MainWindow::populateDefaultMeter()
             }
         });
         if (RoundtablePanel* readPanel = m_roundtableApplet->panel()) {
-            // The panel left the viewed frequency: a refusal, a closed room, or a
-            // tune anywhere, which takes it back to the slice (D27).
+            // The panel left the viewed frequency: a refusal, a closed room, or its own
+            // Back to my slice (D27). A tune does not: the panel holds the read for an
+            // open view. Your own frequency and a fold's list read nothing to lose.
             connect(readPanel, &RoundtablePanel::shownRoomChanged, this, [this, readPanel]() {
                 if (m_roundtablePeekOpening || !m_roundtablePeek || !m_roundtablePeek->isOpen()
+                    || m_roundtablePeek->showsOwn() || m_roundtablePeek->showsFold()
                     || readPanel->roomId() == m_roundtablePeekContext) {
                     return;
                 }

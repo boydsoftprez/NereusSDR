@@ -49,7 +49,9 @@
 #include <cstddef>
 #include <cstdlib>
 
+#include <QAbstractButton>
 #include <QAction>
+#include <QContextMenuEvent>
 #include <QHash>
 #include <QImage>
 #include <QJsonArray>
@@ -1102,7 +1104,7 @@ private slots:
 
     // ---- The live card: drawing (D10, D11, D13, D15) ----
 
-    void aTalkingCardStandsOnThePanAndClickingItOpensItsMenu()
+    void aTalkingCardStandsOnThePanAndClickingItAsksForTheInspector()
     {
         Pan pan;
         const QString room = QStringLiteral("frequency:lsb-7200000");
@@ -1126,77 +1128,119 @@ private slots:
         const QColor green(0x4c, 0xaf, 0x6a);
         QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), green.name());
         QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top() + 2)).name(), green.name());
-        // A click opens your menu (D25); it neither views nor tunes.
+        // A click asks for the inspector (D25); there is no menu of its own, no tune.
         const QPoint click = hit->rect.center();
         QSignalSpy read(&pan.widget, &SpectrumWidget::roundtableReadRequested);
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
         QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
         QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, click);
-        QCOMPARE(read.size(), 0);
+        QCOMPARE(read.size(), 1);
+        QCOMPARE(read.first().first().toString(), room);
         QCOMPARE(tuned.size(), 0);
         QCOMPARE(plainTune.size(), 0);
-        auto* menu = pan.widget.findChild<QMenu*>(QStringLiteral("roundtableCardMenu"));
-        QVERIFY(menu != nullptr);
-        menu->close();
+        QVERIFY(pan.widget.window()->findChild<QMenu*>() == nullptr);
     }
 
-    void theCardMenuOffersReportsSignalAndTuneWithItsGates()
+    void theShortMenuOffersTheInspectorTuneMessagesAndSignalWithItsGates()
     {
         Pan pan;
-        const QString room = QStringLiteral("frequency:lsb-7200000");
+        const QString room = QStringLiteral("frequency:lsb-7180000");
         pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
-        pan.widget.setRoundtableCard(talkingCard(), room);
         AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm"));
         const auto action = [](QMenu& menu, const char* name) {
             return menu.findChild<QAction*>(QString::fromLatin1(name));
         };
+        const auto rows = [](QMenu& menu) {
+            QStringList out;
+            for (QAction* row : menu.actions()) {
+                if (!row->isSeparator()) { out.append(row->text()); }
+            }
+            return out;
+        };
 
         QMenu menu;
-        pan.widget.buildRoundtableCardMenu(room, 7200000, false, menu);
-        QCOMPARE(action(menu, "roundtableMenuRead")->text(), QStringLiteral("Read reports"));
-        QCOMPARE(action(menu, "roundtableMenuSignal")->text(), QStringLiteral("Signal: dBm \u00b7 Change"));
-        QCOMPARE(action(menu, "roundtableMenuTune")->text(), QStringLiteral("Tune slice A here"));
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, menu);
+        QCOMPARE(rows(menu), (QStringList{QStringLiteral("7.180 MHz"), QStringLiteral("Open inspector"),
+                                          QStringLiteral("Tune slice A here"), QStringLiteral("Messages"),
+                                          QStringLiteral("Signal: dBm · Change")}));
         QVERIFY(action(menu, "roundtableMenuTune")->isEnabled());
 
+        // Open or Close, and it only asks.
+        SpectrumWidget::RoundtableMenuOptions opened;
+        opened.inspectorOpen = true;
+        QMenu closing;
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, closing, opened);
+        QCOMPARE(action(closing, "roundtableMenuInspector")->text(), QStringLiteral("Close inspector"));
+        QSignalSpy read(&pan.widget, &SpectrumWidget::roundtableReadRequested);
+        action(closing, "roundtableMenuInspector")->trigger();
+        QCOMPARE(read.size(), 1);
+        QCOMPARE(read.first().first().toString(), room);
+
+        // Messages only asks.
+        QSignalSpy messages(&pan.widget, &SpectrumWidget::roundtableMessagesRequested);
+        action(menu, "roundtableMenuMessages")->trigger();
+        QCOMPARE(messages.size(), 1);
+        QCOMPARE(messages.first().first().toString(), room);
+
+        // The inspector's own ⋯: the same list with Read reports, and no Open or Close.
+        SpectrumWidget::RoundtableMenuOptions inspector;
+        inspector.fromInspector = true;
+        QMenu more;
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, more, inspector);
+        QVERIFY(action(more, "roundtableMenuInspector") == nullptr);
+        QCOMPARE(rows(more), (QStringList{QStringLiteral("7.180 MHz"), QStringLiteral("Tune slice A here"),
+                                          QStringLiteral("Messages"), QStringLiteral("Signal: dBm · Change"),
+                                          QStringLiteral("Read reports")}));
         QSignalSpy reports(&pan.widget, &SpectrumWidget::roundtableReportsRequested);
-        action(menu, "roundtableMenuRead")->trigger();
+        action(more, "roundtableMenuRead")->trigger();
         QCOMPARE(reports.size(), 1);
 
-        // Signal moves the shared key along and the card follows, with nothing else closing.
+        // Signal moves the shared key along, with nothing else closing.
         QSignalSpy cycled(&pan.widget, &SpectrumWidget::roundtableSignalFormatCycled);
-        const QImage before = pan.draw();
         action(menu, "roundtableMenuSignal")->trigger();
         QCOMPARE(cycled.size(), 1);
         QCOMPARE(AppSettings::instance().value(QStringLiteral("Roundtable/SignalFormat")).toString(),
                  QStringLiteral("S-units"));
-        QVERIFY(pan.draw() != before);
         QMenu second;
-        pan.widget.buildRoundtableCardMenu(room, 7200000, false, second);
-        QCOMPARE(action(second, "roundtableMenuSignal")->text(), QStringLiteral("Signal: S-units \u00b7 Change"));
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, second);
+        QCOMPARE(action(second, "roundtableMenuSignal")->text(), QStringLiteral("Signal: S-units · Change"));
         AppSettings::instance().remove(QStringLiteral("Roundtable/SignalFormat"));
 
-        // Tune tunes here, and is greyed when already there and while keyed.
+        // Tune tunes here, and is greyed with its reason, never hidden.
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
         action(menu, "roundtableMenuTune")->trigger();
         QCOMPARE(tuned.size(), 1);
         QCOMPARE(tuned.first().first().toString(), room);
         QMenu there;
-        pan.widget.buildRoundtableCardMenu(room, 7200000, true, there);
+        pan.widget.buildRoundtableCardMenu(room, 7180000, true, there);
         QVERIFY(!action(there, "roundtableMenuTune")->isEnabled());
+        QCOMPARE(action(there, "roundtableMenuTune")->toolTip(), QStringLiteral("Slice A is already here"));
         pan.widget.setMoxOverlay(true);
         QMenu keyed;
-        pan.widget.buildRoundtableCardMenu(room, 7200000, false, keyed);
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, keyed);
         QVERIFY(!action(keyed, "roundtableMenuTune")->isEnabled());
+        QCOMPARE(action(keyed, "roundtableMenuTune")->toolTip(), QStringLiteral("Not while you transmit"));
         pan.widget.setMoxOverlay(false);
+        // What only the window knows: another device keying, no radio.
+        SpectrumWidget::RoundtableMenuOptions waiting;
+        waiting.tuneAllowed = false;
+        QMenu remote;
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, remote, waiting);
+        QVERIFY(!action(remote, "roundtableMenuTune")->isEnabled());
 
-        // Another slice's letter.
+        // Another slice's letter, and no slice at all.
         pan.widget.setRoundtableActiveSliceName(QStringLiteral("B"));
         QMenu lettered;
-        pan.widget.buildRoundtableCardMenu(room, 7200000, false, lettered);
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, lettered);
         QCOMPARE(action(lettered, "roundtableMenuTune")->text(), QStringLiteral("Tune slice B here"));
+        pan.widget.setRoundtableActiveSliceName(QString());
+        QMenu none;
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, none);
+        QCOMPARE(action(none, "roundtableMenuTune")->text(), QStringLiteral("Tune slice here"));
+        QVERIFY(!action(none, "roundtableMenuTune")->isEnabled());
     }
 
-    void yourOwnCompactTagOpensTheMenuAndAnotherViewsAndAFoldListsAndViews()
+    void yourOwnCompactTagAndAnotherAskForTheInspectorAndAFoldAsksForItsList()
     {
         Pan pan;
         RoundtableTag mine = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
@@ -1210,34 +1254,276 @@ private slots:
         pan.widget.setRoundtableTags({mine, other, foldA, foldB, foldC}, RoundtableTagDisplay::Live);
         pan.draw();
         QSignalSpy read(&pan.widget, &SpectrumWidget::roundtableReadRequested);
+        QSignalSpy fold(&pan.widget, &SpectrumWidget::roundtableFoldClicked);
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
         QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
 
-        const QRect mineRect = hitFor(pan.widget, mine.roomId)->rect;
-        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, mineRect.center());
-        auto* menu = pan.widget.findChild<QMenu*>(QStringLiteral("roundtableCardMenu"));
-        QVERIFY(menu != nullptr);
-        QVERIFY(!menu->findChild<QAction*>(QStringLiteral("roundtableMenuTune"))->isEnabled());
-        menu->close();
-        QCOMPARE(read.size(), 0);
-
-        const QRect otherRect = hitFor(pan.widget, other.roomId)->rect;
-        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, otherRect.center());
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, hitFor(pan.widget, mine.roomId)->rect.center());
         QCOMPARE(read.size(), 1);
-        QCOMPARE(read.first().first().toString(), other.roomId);
+        QCOMPARE(read.first().first().toString(), mine.roomId);
 
-        // A fold on a capable server lists; its rows view, never tune.
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, hitFor(pan.widget, other.roomId)->rect.center());
+        QCOMPARE(read.size(), 2);
+        QCOMPARE(read.last().first().toString(), other.roomId);
+
+        // A fold on a capable server asks for its list, never a menu; never a tune.
         const auto* foldHit = hitFor(pan.widget, foldA.roomId);
         QVERIFY(foldHit != nullptr);
         QVERIFY(foldHit->folded);
-        QMenu list;
-        pan.widget.buildRoundtableFoldMenu(foldHit->roomIds, list);
-        for (QAction* row : list.actions()) {
-            if (row->isEnabled() && !row->isSeparator()) { row->trigger(); }
-        }
-        QCOMPARE(read.size(), 1 + foldHit->roomIds.size());
+        const QStringList foldRooms = foldHit->roomIds;
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, foldHit->rect.center());
+        QCOMPARE(fold.size(), 1);
+        QCOMPARE(fold.first().first().toStringList(), foldRooms);
+        QVERIFY(pan.widget.window()->findChild<QMenu*>() == nullptr);
+        QCOMPARE(read.size(), 2);
         QCOMPARE(tuned.size(), 0);
         QCOMPARE(plainTune.size(), 0);
+
+        // What the list says.
+        const QVector<RoundtableFoldRow> rows = pan.widget.roundtableFoldRows(foldRooms);
+        QCOMPARE(rows.size(), foldRooms.size());
+        QCOMPARE(rows.at(1).hz, 7185050);
+        // A double in the list names who.
+        RoundtableTag doubled = foldB;
+        doubled.state = static_cast<int>(RoundtableGlyph::Doubled);
+        doubled.keyed = {QStringLiteral("AA5ABC"), QStringLiteral("K0ABC")};
+        doubled.label = QStringLiteral("Double");
+        pan.widget.setRoundtableTags({doubled}, RoundtableTagDisplay::Live);
+        QCOMPARE(pan.widget.roundtableFoldRows({doubled.roomId}).first().who, QStringLiteral("Double · AA5ABC + K0ABC"));
+        // Gone from the band, gone from the list.
+        QVERIFY(pan.widget.roundtableFoldRows({QStringLiteral("frequency:lsb-1")}).isEmpty());
+    }
+
+    // D36: tested before the pan's own menus, and the pan's context menu stays away.
+    void aRightClickOnATagAsksForTheShortMenuBeforeThePans()
+    {
+        Pan pan;
+        RoundtableTag other = tagAt(QStringLiteral("frequency:lsb-7140000"), 7140000);
+        RoundtableTag legacy = tagAt(QStringLiteral("lsb-7120000"), 7120000);
+        RoundtableTag foldA = tagAt(QStringLiteral("frequency:lsb-7185000"), 7185000);
+        RoundtableTag foldB = tagAt(QStringLiteral("frequency:lsb-7185050"), 7185050);
+        RoundtableTag foldC = tagAt(QStringLiteral("frequency:lsb-7185100"), 7185100);
+        pan.widget.setRoundtableTags({other, legacy, foldA, foldB, foldC}, RoundtableTagDisplay::Live);
+        pan.draw();
+        QSignalSpy asked(&pan.widget, &SpectrumWidget::roundtableTagMenuRequested);
+        QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
+        const auto contextAccepted = [&pan](const QPoint& at) {
+            QContextMenuEvent event(QContextMenuEvent::Mouse, at, pan.widget.mapToGlobal(at));
+            event.ignore();
+            QApplication::sendEvent(&pan.widget, &event);
+            return event.isAccepted();
+        };
+        const QPoint at = hitFor(pan.widget, other.roomId)->rect.center();
+        QTest::mouseClick(&pan.widget, Qt::RightButton, Qt::NoModifier, at);
+        QCOMPARE(asked.size(), 1);
+        QCOMPARE(asked.first().first().toString(), other.roomId);
+        QCOMPARE(asked.first().at(1).toPoint(), pan.widget.mapToGlobal(at));
+        QVERIFY(contextAccepted(at));
+        QCOMPARE(plainTune.size(), 0);
+
+        // A fold has no menu, and the pan's stays away from it too.
+        const QPoint foldAt = hitFor(pan.widget, foldA.roomId)->rect.center();
+        QTest::mouseClick(&pan.widget, Qt::RightButton, Qt::NoModifier, foldAt);
+        QCOMPARE(asked.size(), 1);
+        QVERIFY(contextAccepted(foldAt));
+
+        // A legacy server's tag keeps what it had, and so does the bare band.
+        const QPoint legacyAt = hitFor(pan.widget, legacy.roomId)->rect.center();
+        QVERIFY(!contextAccepted(legacyAt));
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        QVERIFY(!contextAccepted(QPoint(spec.center().x(), spec.top() + 10)));
+        QCOMPARE(asked.size(), 1);
+
+        // Ctrl keeps its notch.
+        QSignalSpy notch(&pan.widget, &SpectrumWidget::notchCreateRequested);
+        QTest::mouseClick(&pan.widget, Qt::RightButton, Qt::ControlModifier, at);
+        QCOMPARE(notch.size(), 1);
+        QCOMPARE(asked.size(), 1);
+    }
+
+    // D34, D37: one box, not two; tags keep clear; and none of it reaches the static overlay.
+    void theOpenInspectorHidesTheCardAndTagsKeepClearOfIt()
+    {
+        Pan pan;
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        RoundtableTag mine = tagAt(room, 7200000);
+        mine.active = true;
+        RoundtableTag near = tagAt(QStringLiteral("frequency:lsb-7212000"), 7212000);
+        RoundtableTag far = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        pan.widget.setRoundtableTags({mine, near, far}, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(talkingCard(), room);
+        pan.draw();
+        QVERIFY(cardHit(pan.widget) != nullptr);
+        const QRect cardRect = cardHit(pan.widget)->rect;
+        const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
+        const QRect inspector = placeRoundtableInspector(spot.pan, spot.dialX, spot.flags, spot.flagFlipped, 300);
+        QVERIFY(inspector.isValid());
+        // In the card's spot, the edge by the flag the same, on the same foot line.
+        QVERIFY(spot.flagFlipped);
+        QCOMPARE(inspector.right(), cardRect.right());
+        QCOMPARE(inspector.bottom(), cardRect.bottom());
+
+        QCoreApplication::processEvents();
+        pan.widget.clearOverlayStaticDirtyForTest();
+        const QString viewed = near.roomId;
+        pan.widget.setRoundtableViewedRoom(viewed);
+        pan.widget.setRoundtableInspectorRect(inspector);
+        QVERIFY(!pan.widget.overlayStaticDirtyForTest());
+        const QImage open = pan.draw();
+        QVERIFY(cardHit(pan.widget) == nullptr);
+        // Where the card's green was is nothing while the inspector is the box.
+        QVERIFY(QColor(open.pixel(cardRect.center().x(), cardRect.top())).name() != QStringLiteral("#4caf6a"));
+        for (const SpectrumWidget::RoundtableTagHit& hit : pan.widget.roundtableTagHitsForTest()) {
+            QVERIFY2(!hit.rect.intersects(inspector), qPrintable(hit.roomIds.join(QLatin1Char(' '))));
+        }
+        QVERIFY(hitFor(pan.widget, far.roomId) != nullptr);
+
+        // Closed: the card returns where it was.
+        pan.widget.setRoundtableInspectorRect(QRect());
+        pan.widget.setRoundtableViewedRoom(QString());
+        pan.draw();
+        QVERIFY(cardHit(pan.widget) != nullptr);
+        QCOMPARE(cardHit(pan.widget)->rect, cardRect);
+
+        // A thousand moves never touch the static overlay.
+        QCoreApplication::processEvents();
+        pan.widget.clearOverlayStaticDirtyForTest();
+        for (int i = 0; i < 1000; ++i) {
+            pan.widget.setRoundtableInspectorRect(inspector.translated(i % 7, 0));
+        }
+        pan.widget.setRoundtableInspectorRect(QRect());
+        QVERIFY(!pan.widget.overlayStaticDirtyForTest());
+    }
+
+    // D37: your compact tag goes while it shows your own, and stays while it shows another.
+    void yourCompactTagGoesOnlyWhileItShowsYourOwn()
+    {
+        Pan pan;
+        const QString room = QStringLiteral("frequency:lsb-7180000");
+        RoundtableTag mine = tagAt(room, 7180000);
+        mine.active = true;
+        RoundtableTag other = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        pan.widget.setRoundtableTags({mine, other}, RoundtableTagDisplay::Live);
+        pan.draw();
+        QVERIFY(hitFor(pan.widget, room) != nullptr);
+        const QRect inspector(900, 200, 280, 200);
+        pan.widget.setRoundtableInspectorRect(inspector);
+        pan.widget.setRoundtableViewedRoom(other.roomId);
+        pan.draw();
+        QVERIFY(hitFor(pan.widget, room) != nullptr);
+        pan.widget.setRoundtableViewedRoom(room);
+        pan.draw();
+        QVERIFY(hitFor(pan.widget, room) == nullptr);
+        QVERIFY(hitFor(pan.widget, other.roomId) != nullptr);
+    }
+
+    // D37: the spot needs no card or tag, follows the flag, and a pan without the
+    // slice uses its own flag, or the clicked tag.
+    void theInspectorsSpotNeedsNoCardAndFollowsTheFlag()
+    {
+        Pan pan;
+        pan.flag->setFrequency(7200000);
+        pan.widget.updateVfoPositions();
+        QSignalSpy changed(&pan.widget, &SpectrumWidget::roundtableInspectorSpotChanged);
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        const SpectrumWidget::RoundtableInspectorSpot quiet = pan.widget.roundtableInspectorSpot(0, 0);
+        QCOMPARE(quiet.pan.bottom() + 1, spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest() - 8);
+        QCOMPARE(quiet.pan.top(), spec.top() + 2);
+        QCOMPARE(quiet.dialX, spec.left() + spec.width() / 2);
+        QVERIFY(!quiet.flags.isEmpty());
+        QCOMPARE(quiet.flagFlipped, pan.flag->geometry().center().x() < quiet.dialX);
+
+        // The flag moves and the spot says so, with whichever side the flag now hangs on.
+        pan.flag->setFrequency(7290000);
+        pan.widget.updateVfoPositions();
+        QVERIFY(changed.size() >= 1);
+        const SpectrumWidget::RoundtableInspectorSpot right = pan.widget.roundtableInspectorSpot(0, 0);
+        QVERIFY(right.dialX > quiet.dialX);
+        QVERIFY(right.flagFlipped);
+        pan.flag->setFrequency(7110000);
+        pan.widget.updateVfoPositions();
+        const SpectrumWidget::RoundtableInspectorSpot left = pan.widget.roundtableInspectorSpot(0, 0);
+        QVERIFY(left.dialX < quiet.dialX);
+        QVERIFY(!left.flagFlipped);
+
+        // A resize says so too.
+        const int before = changed.size();
+        pan.widget.resize(1100, 700);
+        QVERIFY(changed.size() > before);
+
+        // The slice named is not on this pan: this pan's own flag.
+        const SpectrumWidget::RoundtableInspectorSpot own = pan.widget.roundtableInspectorSpot(7, 7150000);
+        QCOMPARE(own.dialX, pan.widget.roundtableInspectorSpot(0, 0).dialX);
+
+        // A pan with no slice: the clicked tag.
+        SpectrumWidget empty;
+        empty.setUpdatesEnabled(false);
+        empty.resize(1200, 760);
+        empty.setSampleRate(kPanSpanHz);
+        empty.setDdcCenterFrequency(kPanCenterHz);
+        empty.setFrequencyRange(kPanCenterHz, kPanSpanHz);
+        const QRect emptySpec = empty.roundtableTagSpectrumRectForTest();
+        const SpectrumWidget::RoundtableInspectorSpot byTag = empty.roundtableInspectorSpot(0, static_cast<qint64>(kPanCenterHz));
+        QCOMPARE(byTag.dialX, emptySpec.left() + emptySpec.width() / 2);
+        QVERIFY(byTag.flags.isEmpty());
+    }
+
+    // The line's right-click: the flag's own menu unless a frequency server asks for the short one.
+    void aFlagLinesRightClickAsksOnlyWhenTheMenuIsOn()
+    {
+        Pan pan;
+        QAbstractButton* line = pan.flag->roundtableLineButtonForTest();
+        QVERIFY(line != nullptr);
+        QCOMPARE(line->contextMenuPolicy(), Qt::DefaultContextMenu);
+        pan.flag->setRoundtableLineMenuEnabled(true);
+        QCOMPARE(line->contextMenuPolicy(), Qt::CustomContextMenu);
+        QSignalSpy asked(pan.flag, &VfoWidget::roundtableLineMenuRequested);
+        QSignalSpy clicked(pan.flag, &VfoWidget::roundtableLineClicked);
+        const QPoint at(5, 5);
+        QContextMenuEvent event(QContextMenuEvent::Mouse, at, line->mapToGlobal(at));
+        QApplication::sendEvent(line, &event);
+        QCOMPARE(asked.size(), 1);
+        QCOMPARE(asked.first().first().toPoint(), line->mapToGlobal(at));
+        QCOMPARE(clicked.size(), 0);
+        pan.flag->setRoundtableLineMenuEnabled(false);
+        QCOMPARE(line->contextMenuPolicy(), Qt::DefaultContextMenu);
+    }
+
+    // 120 px usable, another frequency, through the same spot the window uses.
+    void aVeryShortPanStillOpensTheInspectorInside()
+    {
+        Pan pan;
+        for (int height = 760; height > 100 && pan.widget.roundtableInspectorSpot(0, 0).pan.height() > 120; --height) {
+            pan.widget.resize(1200, height);
+        }
+        const SpectrumWidget::RoundtableInspectorSpot spot = pan.widget.roundtableInspectorSpot(0, 0);
+        QCOMPARE(spot.pan.height(), 120);
+        auto* peek = new RoundtableFrequencyPeek(&pan.widget);
+        peek->setSlice(7200000, QStringLiteral("lsb"), QStringLiteral("A"));
+        peek->setInspectorSpot(spot.pan, spot.dialX, spot.flags, spot.flagFlipped);
+        peek->showFor(7188600, QStringLiteral("lsb"));
+        RoundtableCardModel card = talkingCard(3);
+        card.hz = 7188600;
+        peek->refresh(card, -71.0, false);
+        pan.widget.setRoundtableInspectorRect(peek->inspectorRect());
+        QCOMPARE(peek->inspectorRect().height(), 120);
+        QVERIFY(spot.pan.contains(peek->inspectorRect()));
+        QVERIFY(peek->foldedForTest());
+        QVERIFY(peek->maxScrollForTest() > 0);
+        QVERIFY(peek->bodyHeightForTest() > 0);
+        const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_ROUTING_CAPTURES");
+        if (!captures.isEmpty()) {
+            // The fixture holds the pan's updates, and its children's with them.
+            pan.widget.setUpdatesEnabled(true);
+            pan.widget.show();
+            QCoreApplication::processEvents();
+            QImage image = pan.draw();
+            image.fill(Qt::black);
+            QPainter painter(&image);
+            painter.drawImage(peek->inspectorRect().topLeft(), peek->grab().toImage());
+            painter.end();
+            QVERIFY(image.copy(0, 0, 360, 130).save(captures + QStringLiteral("/usable-120-another-frequency.png")));
+        }
     }
 
     void aDoubleCardHasStripesOnRailAndMeters()
@@ -2527,81 +2813,43 @@ private slots:
     }
 
     // The real click: card, menu, Tune, on the exact frequency in the card's family.
-    void theCardMenusTuneGoesToTheLiveTurn()
+    // D22, D36: your own frequency's Tune is greyed whichever turn is live; a tag's
+    // Tune goes to that tag's own frequency.
+    void aMenusTuneGoesToItsOwnFrequency()
     {
         Pan pan;
         pan.flag->setActiveSlice(true);
         pan.widget.setRoundtableActiveSliceName(QStringLiteral("A"));
-        const QString room = RoundtableModel::frequencyContextId(7200000, QStringLiteral("lsb"));
-        RoundtableCardModel card = talkingCard(1);
-        card.liveHz = 7200040;
-        pan.widget.setRoundtableCard(card, room);
-        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
-        const auto clickCard = [&pan]() {
-            pan.draw();
-            const QList<SpectrumWidget::RoundtableTagHit>& hits = pan.widget.roundtableTagHitsForTest();
-            const auto it = std::find_if(hits.cbegin(), hits.cend(), [](const SpectrumWidget::RoundtableTagHit& hit) {
-                return hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card;
-            });
-            if (it == hits.cend()) { return static_cast<QAction*>(nullptr); }
-            QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, it->rect.center());
-            QMenu* menu = nullptr;
-            for (QMenu* candidate : pan.widget.findChildren<QMenu*>(QStringLiteral("roundtableCardMenu"))) {
-                menu = candidate;
-            }
-            return menu != nullptr ? menu->findChild<QAction*>(QStringLiteral("roundtableMenuTune")) : nullptr;
-        };
-        const auto closeMenus = [&pan]() {
-            for (QMenu* menu : pan.widget.findChildren<QMenu*>(QStringLiteral("roundtableCardMenu"))) {
-                menu->close();
-            }
-            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        };
-
+        const QString room = RoundtableModel::frequencyContextId(7180000, QStringLiteral("lsb"));
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
-        QAction* tune = clickCard();
+        QMenu menu;
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, menu);
+        QAction* tune = menu.findChild<QAction*>(QStringLiteral("roundtableMenuTune"));
         QVERIFY(tune != nullptr);
         QVERIFY(tune->isEnabled());
         const QString captures = qEnvironmentVariable("NEREUS_ROUNDTABLE_CARD_CAPTURES");
         if (!captures.isEmpty()) {
-            // The pan with the menu where it opens, right of the card.
-            QImage shot = pan.draw();
-            auto* open = qobject_cast<QMenu*>(tune->parent());
-            QVERIFY(open != nullptr);
-            const QRect cardRect = pan.widget.roundtableTagHitsForTest().first().rect;
-            QPainter painter(&shot);
-            painter.drawPixmap(cardRect.right() + 5, cardRect.top(), open->grab());
-            painter.end();
-            QVERIFY(shot.save(captures + QStringLiteral("/card-menu-tune-enabled.png")));
+            QVERIFY(menu.grab().save(captures + QStringLiteral("/short-menu.png")));
         }
         tune->trigger();
         QCOMPARE(tuned.size(), 1);
-        QCOMPARE(tuned.first().first().toString(), RoundtableModel::frequencyContextId(7200040, QStringLiteral("lsb")));
-        closeMenus();
+        QCOMPARE(tuned.first().first().toString(), room);
 
-        // Exactly on it: nowhere to go.
-        pan.flag->setFrequency(7200040);
-        tune = clickCard();
-        QVERIFY(tune != nullptr);
-        QVERIFY(!tune->isEnabled());
-        closeMenus();
-        pan.flag->setFrequency(7200000);
-
-        // Keyed: greyed, on a pan that never had the overlay.
+        // Keyed: greyed, on a pan that never had the overlay, and a trigger does nothing.
         pan.widget.setDisplayKeyed(true, 0, 0);
-        tune = clickCard();
+        QMenu keyed;
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, keyed);
+        tune = keyed.findChild<QAction*>(QStringLiteral("roundtableMenuTune"));
         QVERIFY(!tune->isEnabled());
         tune->trigger();
         QCOMPARE(tuned.size(), 1);
-        closeMenus();
         pan.widget.setDisplayKeyed(false, 0, 0);
 
-        // No live turn.
-        card.liveHz = 0;
-        pan.widget.setRoundtableCard(card, room);
-        tune = clickCard();
+        // Your own: greyed.
+        QMenu own;
+        pan.widget.buildRoundtableCardMenu(room, 7180000, true, own);
+        tune = own.findChild<QAction*>(QStringLiteral("roundtableMenuTune"));
         QVERIFY(!tune->isEnabled());
-        closeMenus();
     }
 
     // Two pans: only the transmitting one has the overlay, and both are keyed.

@@ -31,6 +31,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: setHoldRead: an open inspector's read outlasts a tune (overlay design
+//               D27). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: setTuneAllowed: the read bar's Tune greys while keyed (overlay
 //               design D22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-01: A signal report updates the readings in place. The header
@@ -109,6 +111,11 @@ public:
     void readRoom(const QString& roomId);
     /// Back to following the slice.
     void backToSlice();
+    /// While on, the room being read stays read when the slice tunes or the window
+    /// picks another slice, and only the slice's own stream moves: the inspector is
+    /// showing it (overlay design D27). Landing on that room still ends the read.
+    void setHoldRead(bool hold) { m_holdRead = hold; }
+    bool holdsRead() const { return m_holdRead; }
 
     /// Whether the read bar's Tune may act: false while keyed (overlay design
     /// D22). The button greys; it is never hidden.
@@ -225,6 +232,7 @@ private:
     QString m_shownDraftKey;
     QJsonArray m_retainedMessages;
     QString m_readId;
+    bool m_holdRead{false};
     // setOwnReading(): 0 until the slice's meter reads.
     double m_ownDbm = 0.0;
     qint64 m_ownReadingMs = 0;

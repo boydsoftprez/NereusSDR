@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: The one inspector's routing: toggleRoundtableInspector,
+//               showOwnRoundtableInspector, the fold's list and the short menu.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: The view of another frequency: viewRoundtableFrequency,
 //               refreshRoundtablePeek, m_roundtablePeek. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: m_roundtablePeaks, the held peaks on the live card. J.J. Boyd
@@ -855,10 +858,29 @@ private slots:
     void onRoundtableRoomChanged(const QString& roomId);
     void refreshRoundtableTagsImmediately();
     void refreshRoundtableTags();
-    // A flag's Roundtable line: your own opens your room; another slice's views
-    // its frequency and leaves the active slice alone (overlay design D26).
+    // A flag's Roundtable line toggles the inspector on that slice's frequency
+    // (overlay design D26, D34); a legacy server's opens the panel.
+    void toggleRoundtableForSlice(int sliceId);
+    // Your own room in the panel: a legacy flag line, and Read reports.
     void openRoundtableForSlice(int sliceId);
     void showRoundtablePanel();
+    // The one inspector (overlay design D34). The same frequency again closes it;
+    // another swaps in place with no close in between. None of this moves a slice.
+    void toggleRoundtableInspector(SpectrumWidget* pan, qint64 hz, const QString& family);
+    void showOwnRoundtableInspector(SpectrumWidget* pan);
+    void toggleRoundtableFold(SpectrumWidget* pan, const QStringList& roomIds);
+    // The short menu (D36) on a tag, the card, a flag line or the inspector's ⋯.
+    void openRoundtableMenu(SpectrumWidget* pan, const QString& context, const QPoint& at, bool fromInspector);
+    void openRoundtableMenuForSlice(int sliceId, const QPoint& at);
+    void openRoundtableMessages(const QString& context);
+    void openRoundtableReports();
+    void tuneRoundtableRoom(const QString& context);
+    SpectrumWidget* panHoldingRoundtableSlice(int sliceId) const;
+    // Makes the one inspector this pan's, closing it on any other (a change of pan).
+    void adoptRoundtablePeek(SpectrumWidget* pan);
+    // Ends the read of what the inspector was viewing, with no close.
+    void releaseRoundtablePeekRead();
+    void updateRoundtableInspectorSpot();
     // The floating view of another frequency (overlay design D21 to D27). False
     // when the frequency is your own, so there is nothing to view.
     bool viewRoundtableFrequency(SpectrumWidget* pan, const QString& context);
@@ -2348,6 +2370,8 @@ private:
     std::optional<double> m_roundtablePeekPanDbm;         // the last sample of Your pan
     bool m_roundtablePeekMessages{false};                 // the panel keeps reading after a close
     bool m_roundtablePeekOpening{false};
+    QStringList m_roundtablePeekFold;                     // the fold listed, D37
+    qint64 m_roundtablePeekAnchorHz{0};                   // the clicked tag: a pan with no slice's spot
     bool m_roundtablePeekJustLost{false};                 // a refusal's message follows its close
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.

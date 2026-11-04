@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - The Roundtable line's right-click asks for the short menu on a
+//                frequency server (overlay design D36). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-10-25 - The BIN tooltip says both ears hear the same audio while
 //                noise reduction, SNB or the auto-notch is on (issue #650).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
@@ -1338,8 +1341,21 @@ void VfoWidget::buildRoundtableLine()
     auto* button = new RoundtableLineButton(this);
     m_roundtableLineButton = button;
     connect(button, &QAbstractButton::clicked, this, &VfoWidget::roundtableLineClicked);
+    connect(button, &QWidget::customContextMenuRequested, this, [this, button](const QPoint& pos) {
+        emit roundtableLineMenuRequested(button->mapToGlobal(pos));
+    });
     static_cast<QVBoxLayout*>(layout())->addWidget(button);
     button->hide();
+}
+
+void VfoWidget::setRoundtableLineMenuEnabled(bool enabled)
+{
+    if (!m_roundtableLineButton) {
+        return;
+    }
+    m_roundtableLineButton->setContextMenuPolicy(enabled ? Qt::CustomContextMenu : Qt::DefaultContextMenu);
+    m_roundtableLineButton->setToolTip(enabled ? QStringLiteral("Open or close the inspector")
+                                               : QStringLiteral("Open the Roundtable panel"));
 }
 
 int VfoWidget::roundtableLineTextRoom(const RoundtableFlagLine& line, int lineWidth)

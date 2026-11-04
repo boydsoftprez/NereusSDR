@@ -19,11 +19,15 @@
 // what it lists changes.
 //
 // It holds no model. MainWindow gives it a RoundtableCardModel on the 200 ms
-// refresh while it is open. Escape, the close box, a click on the band and tuning
-// close it; MainWindow routes all but the first two. Back and ⋯ only ask.
+// refresh while it is open. Escape and the close box close it here; Tune, a refused
+// read and a change of pan close it from MainWindow. A click on the band does not
+// (D27). Back and ⋯ only ask. It can also list a fold's frequencies (showFold, D37),
+// and a row only asks too.
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: A fold's list (showFold, setFoldRows, foldRowClicked). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector: your own frequency, ⋯, the Viewing line with
 //               Back, the foot anchor and the scrolling body. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -68,6 +72,10 @@ public:
     /// The same on your own frequency: no Viewing line and no Your pan row, and Tune
     /// greyed with its reason (D22, D35).
     void showOwn(quint64 hz, const QString& family);
+    /// Lists a fold's frequencies, on the foot line, with only the close box.
+    void showFold(const QVector<RoundtableFoldRow>& rows);
+    /// The list's rows in place, no reopen.
+    void setFoldRows(const QVector<RoundtableFoldRow>& rows);
     /// Where the foot-line spot is: see placeRoundtableInspector. `pan` is in the
     /// parent's coordinates. Moves it only when something here changed.
     void setInspectorSpot(const QRect& pan, int dialX, const QVector<QRect>& flags, bool flagFlipped);
@@ -83,7 +91,10 @@ public:
 
     bool isOpen() const { return m_open; }
     /// Open on your own frequency.
-    bool showsOwn() const { return m_open && m_view.mine; }
+    bool showsOwn() const { return m_open && !m_listing && m_view.mine; }
+    /// Open on a fold's list.
+    bool showsFold() const { return m_open && m_listing; }
+    const QVector<RoundtableFoldRow>& foldRowsForTest() const { return m_rows; }
     /// Where it is in the parent's coordinates; null while closed.
     QRect inspectorRect() const { return m_open ? geometry() : QRect(); }
     quint64 hz() const { return m_view.card.hz; }
@@ -106,6 +117,8 @@ signals:
     void backRequested();
     /// ⋯ was pressed. `globalPos` is under the button, where its menu goes.
     void moreRequested(QPoint globalPos);
+    /// A row of a fold's list was clicked. It tunes nothing.
+    void foldRowClicked(QString roomId);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -113,6 +126,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
+    void leaveEvent(QEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -120,6 +134,9 @@ private:
     void open(quint64 hz, const QString& family, bool mine);
     void updateTuneButton();
     void fitToContents();
+    void fitList();
+    void placeHeadButtons(const QRect& wanted);
+    void setHoverRow(int row);
 
     RoundtableViewModel m_view;
     RoundtablePeakTracker m_panPeak;
@@ -141,6 +158,9 @@ private:
     int m_bodyHeight{0};
     bool m_keyed{false};
     bool m_open{false};
+    bool m_listing{false};
+    QVector<RoundtableFoldRow> m_rows;
+    int m_hoverRow{-1};
 };
 
 } // namespace NereusSDR

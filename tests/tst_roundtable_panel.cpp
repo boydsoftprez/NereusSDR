@@ -812,6 +812,42 @@ private slots:
         QCOMPARE(p.link.calls.count(QStringLiteral("readAt 7185123 lsb")), 1);
     }
 
+    // An open inspector holds its read: a tune moves only the slice's own stream, and
+    // landing on the read room ends it (overlay design D27).
+    void aHeldReadOutlastsATuneAndEndsOnLanding()
+    {
+        Posed p;
+        p.link.frequency = true;
+        p.model.applyRooms({{QStringLiteral("frequencyVersion"), 1}, {QStringLiteral("rooms"), p.model.rooms()}});
+        RoundtablePanel panel(&p.model);
+        panel.followSlice(0);
+        panel.setSliceContext(7185123, QStringLiteral("lsb"));
+        panel.hide();
+        const QString other = RoundtableModel::frequencyContextId(7249000, QStringLiteral("lsb"));
+        panel.setHoldRead(true);
+        panel.readRoom(other);
+        QVERIFY(panel.isReading());
+
+        panel.setSliceContext(7190000, QStringLiteral("lsb"));
+        QVERIFY(panel.isReading());
+        QCOMPARE(panel.roomId(), other);
+        QCOMPARE(p.model.readingRoomId(), other);
+        QCOMPARE(p.model.activeFrequencyContext(), RoundtableModel::frequencyContextId(7190000, QStringLiteral("lsb")));
+        QCOMPARE(p.link.calls.count(QStringLiteral("unreadAt 7249000 lsb")), 0);
+        panel.followSlice(0);
+        QVERIFY(panel.isReading());
+
+        panel.setSliceContext(7249000, QStringLiteral("lsb"));
+        QVERIFY(!panel.isReading());
+        panel.setHoldRead(false);
+
+        // Not held, a tune goes back to the slice as it always has.
+        panel.readRoom(RoundtableModel::frequencyContextId(7185123, QStringLiteral("lsb")));
+        QVERIFY(panel.isReading());
+        panel.setSliceContext(7200000, QStringLiteral("lsb"));
+        QVERIFY(!panel.isReading());
+    }
+
     void liveDoubleShowsCurrentParticipantsAndCombinedReceiverRows()
     {
         Posed p;

@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: A fold's list in the inspector (overlay design D37). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector's words (overlay design D19, D22, D34, D35, D37):
 //               RoundtableViewModel::mine, "Viewing · +1.4 kHz", the Also here fold,
 //               a body that scrolls behind a fixed head, and
@@ -2788,6 +2790,97 @@ RoundtableViewLayout paintRoundtableView(QPainter& p, const RoundtableViewModel&
     const RoundtableViewLayout layout = runRoundtableView(&p, view, rect, foldPeople, scrollY, bodyHeight, p.device());
     p.restore();
     return layout;
+}
+
+namespace {
+
+constexpr int kFoldRowHeight = 28;  // .ins-fr
+constexpr int kFoldRowGap = 2;      // .ins-list
+constexpr int kFoldRowPad = 5;      // .ins-fr
+constexpr int kFoldColumnGap = 7;   // .ins-fr
+constexpr int kFoldGlyphColumn = 11;
+const QColor kColorFoldFrequency(0x79, 0xa8, 0xd2);  // .ins-fr__f
+const QColor kColorFoldHover(0x1e, 0x3d, 0x5f);      // .ins-fr:hover
+const QColor kColorFoldName(0xdc, 0xdc, 0xe1);       // .ins-fr
+
+} // namespace
+
+int roundtableFoldListBodyTop()
+{
+    return kCardBorder + kCardRail + kViewPadTop + kViewHeadLine;
+}
+
+int roundtableFoldListHeight(int rows)
+{
+    const int body = rows > 0 ? rows * kFoldRowHeight + (rows - 1) * kFoldRowGap : 0;
+    return roundtableFoldListBodyTop() + body + kViewPadTop + kCardBorder;
+}
+
+int roundtableFoldListRowAt(const QPoint& pos, const QRect& rect, int rows, int scrollY)
+{
+    const int top = rect.top() + roundtableFoldListBodyTop();
+    if (pos.y() < top || pos.x() < rect.left() || pos.x() > rect.right()) {
+        return -1;
+    }
+    const int y = pos.y() - top + scrollY;
+    const int row = y / (kFoldRowHeight + kFoldRowGap);
+    return row < rows && y % (kFoldRowHeight + kFoldRowGap) < kFoldRowHeight ? row : -1;
+}
+
+void paintRoundtableFoldList(QPainter& p, const QVector<RoundtableFoldRow>& rows, const QRect& rect, int hoverRow, int scrollY)
+{
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    paintCardFrame(p, rect, RoundtableCardModel{}, false);
+    const QFont headFont = cardFont(p.device(), 13, QFont::Bold);
+    const QFont nameFont = cardFont(p.device(), 12, QFont::DemiBold);
+    const QFont frequencyFont = cardFont(p.device(), 11, QFont::DemiBold, true);
+    const QFontMetrics nameMetrics(nameFont, p.device());
+    const QFontMetrics frequencyMetrics(frequencyFont, p.device());
+    const int left = rect.left() + kCardBorder + kViewPadSide;
+    const int right = rect.left() + rect.width() - kCardBorder - kViewPadSide;
+    p.setFont(headFont);
+    p.setPen(kColorFoldName);
+    p.drawText(QRect(left, rect.top() + kCardBorder + kCardRail + kViewPadTop, right - left - kViewHeadButtons, kViewHeadLine),
+               Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
+               QStringLiteral("%1 frequencies").arg(rows.size()));
+
+    const int bodyTop = rect.top() + roundtableFoldListBodyTop();
+    const int bodyHeight = std::max(0, rect.top() + rect.height() - kCardBorder - bodyTop);
+    p.save();
+    p.setClipRect(QRect(rect.left() + kCardBorder, bodyTop, rect.width() - 2 * kCardBorder, bodyHeight), Qt::IntersectClip);
+    int y = bodyTop - scrollY;
+    const QString chevron(QChar(0x203a));
+    for (qsizetype i = 0; i < rows.size(); ++i, y += kFoldRowHeight + kFoldRowGap) {
+        const RoundtableFoldRow& row = rows.at(i);
+        const QRect line(left, y, right - left, kFoldRowHeight);
+        if (i == hoverRow) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(kColorFoldHover);
+            p.drawRoundedRect(line, 4, 4);
+        }
+        int x = line.left() + kFoldRowPad;
+        paintRoundtableGlyph(p, QPointF(x + kFoldGlyphColumn / 2.0, line.center().y() + 0.5), kCardGlyphSize, row.state,
+                             row.frozen, row.dimmed);
+        x += kFoldGlyphColumn + kFoldColumnGap;
+        const QString frequency = roundtableFrequencyText(row.hz);
+        p.setFont(frequencyFont);
+        p.setPen(kColorFoldFrequency);
+        const int frequencyWidth = frequencyMetrics.horizontalAdvance(frequency);
+        p.drawText(QRect(x, line.top(), frequencyWidth, line.height()), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, frequency);
+        x += frequencyWidth + kFoldColumnGap;
+        const int chevronWidth = nameMetrics.horizontalAdvance(chevron);
+        const int chevronLeft = line.right() - kFoldRowPad - chevronWidth;
+        p.setFont(nameFont);
+        p.setPen(kColorDim);
+        p.drawText(QRect(chevronLeft, line.top(), chevronWidth + 1, line.height()), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, chevron);
+        p.setPen(kColorFoldName);
+        const int room = std::max(0, chevronLeft - kFoldColumnGap - x);
+        p.drawText(QRect(x, line.top(), room, line.height()), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
+                   nameMetrics.elidedText(row.who, Qt::ElideRight, room));
+    }
+    p.restore();
+    p.restore();
 }
 
 QList<RoundtableTag> roundtableMergeDoubleTags(const QList<RoundtableTag>& tags)

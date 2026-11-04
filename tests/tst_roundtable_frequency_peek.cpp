@@ -869,11 +869,83 @@ private slots:
         pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
         pan.peek->refresh(talker(), std::nullopt, false);
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::frequencyClicked);
-        QSignalSpy band(&pan.widget, &SpectrumWidget::roundtableBandClicked);
         QTest::mouseClick(pan.peek, Qt::LeftButton, Qt::NoModifier, QPoint(20, 50));
         QCOMPARE(tuned.size(), 0);
-        QCOMPARE(band.size(), 0);
         QVERIFY(pan.peek->isOpen());
+    }
+
+    // D37: a fold's list, its rows only ask, and the close box is all it keeps.
+    void aFoldListsItsFrequenciesAndARowOnlyAsks()
+    {
+        Pan pan;
+        pan.widget.setUpdatesEnabled(true);
+        QVector<RoundtableFoldRow> rows;
+        for (int i = 0; i < 3; ++i) {
+            RoundtableFoldRow row;
+            row.roomId = QStringLiteral("frequency:lsb-%1").arg(7185000 + i * 50);
+            row.hz = 7185000 + i * 50;
+            row.state = static_cast<int>(RoundtableGlyph::Quiet);
+            row.who = QStringLiteral("W%1ABC").arg(i);
+            rows.append(row);
+        }
+        QSignalSpy asked(pan.peek, &RoundtableFrequencyPeek::foldRowClicked);
+        QSignalSpy closed(pan.peek, &RoundtableFrequencyPeek::closed);
+        QSignalSpy tuned(&pan.widget, &SpectrumWidget::frequencyClicked);
+        pan.peek->showFold(rows);
+        QVERIFY(pan.peek->showsFold());
+        QVERIFY(!pan.peek->showsOwn());
+        QVERIFY(!pan.tune()->isVisibleTo(pan.peek));
+        QVERIFY(!pan.messages()->isVisibleTo(pan.peek));
+        QVERIFY(!pan.more()->isVisibleTo(pan.peek));
+        QVERIFY(!pan.back()->isVisibleTo(pan.peek));
+        QVERIFY(pan.close()->isVisibleTo(pan.peek));
+        QCOMPARE(pan.peek->height(), roundtableFoldListHeight(3));
+
+        const int rowStep = 30;  // .ins-fr and the list's gap
+        QTest::mouseClick(pan.peek, Qt::LeftButton, Qt::NoModifier, QPoint(40, roundtableFoldListBodyTop() + rowStep + 14));
+        QCOMPARE(asked.size(), 1);
+        QCOMPARE(asked.first().first().toString(), rows.at(1).roomId);
+        // The gap between rows and the head ask nothing.
+        QTest::mouseClick(pan.peek, Qt::LeftButton, Qt::NoModifier, QPoint(40, roundtableFoldListBodyTop() + 29));
+        QTest::mouseClick(pan.peek, Qt::LeftButton, Qt::NoModifier, QPoint(40, 5));
+        QCOMPARE(asked.size(), 1);
+        QCOMPARE(tuned.size(), 0);
+        QCOMPARE(closed.size(), 0);
+
+        // Fewer rows in place; then back to a frequency, and every button returns.
+        rows.removeLast();
+        pan.peek->setFoldRows(rows);
+        QCOMPARE(pan.peek->foldRowsForTest().size(), qsizetype(2));
+        QCOMPARE(pan.peek->height(), roundtableFoldListHeight(2));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+        QVERIFY(!pan.peek->showsFold());
+        QCOMPARE(closed.size(), 0);
+        QVERIFY(pan.tune()->isVisibleTo(pan.peek));
+        QVERIFY(pan.more()->isVisibleTo(pan.peek));
+        QVERIFY(pan.back()->isVisibleTo(pan.peek));
+        pan.close()->click();
+        QCOMPARE(closed.size(), 1);
+    }
+
+    void aLongFoldScrollsAndKeepsItsHead()
+    {
+        Pan pan;
+        QVector<RoundtableFoldRow> rows;
+        for (int i = 0; i < 30; ++i) {
+            RoundtableFoldRow row;
+            row.roomId = QStringLiteral("frequency:lsb-%1").arg(7185000 + i * 50);
+            row.hz = 7185000 + i * 50;
+            rows.append(row);
+        }
+        pan.peek->setInspectorSpot(QRect(4, 2, 1000, 240), 300, {}, false);
+        pan.peek->showFold(rows);
+        QCOMPARE(pan.peek->height(), 240);
+        QVERIFY(pan.peek->maxScrollForTest() > 0);
+        QWheelEvent wheel(QPointF(40, 100), pan.peek->mapToGlobal(QPointF(40, 100)), QPoint(), QPoint(0, -120),
+                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(pan.peek, &wheel);
+        QCOMPARE(pan.peek->scrollForTest(), 40);
+        QCOMPARE(roundtableFoldListRowAt(QPoint(40, 5), pan.peek->rect(), 30, pan.peek->scrollForTest()), -1);
     }
 
     void thePanLevelIsThePeakInTheSidebandWindow()

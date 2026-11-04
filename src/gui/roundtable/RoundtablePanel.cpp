@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: setHoldRead keeps an open inspector's read across a tune, and a
+//               refused read lets go of the one it replaced (overlay design D27).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: setTuneAllowed: the read bar's Tune greys while keyed and when
 //               already there (overlay design D22). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: One word for a double (overlay design D8). J.J. Boyd (KG4VCF),
@@ -1050,7 +1053,7 @@ RoundtablePanel::~RoundtablePanel() = default;
 void RoundtablePanel::followSlice(int sliceId)
 {
     m_sliceId = sliceId;
-    if (!m_readId.isEmpty()) {
+    if (!m_readId.isEmpty() && !m_holdRead) {
         m_readId.clear();
         if (m_model) {
             m_model->unreadRoom();
@@ -1074,6 +1077,16 @@ void RoundtablePanel::setSliceContext(qint64 hz, const QString& family)
     m_failedContext.clear();
     m_historyRequestedMs = -1;
     m_historyFresh = false;
+    if (m_holdRead && !m_readId.isEmpty()
+        && (m_sliceHz <= 0 || m_sliceFamily.isEmpty()
+            || m_readId != RoundtableModel::frequencyContextId(m_sliceHz, m_sliceFamily))) {
+        // The read stays. Only the slice's own stream follows it.
+        if (m_model && m_model->frequencyAvailable()) {
+            m_model->setActiveFrequencyContext(m_sliceHz, m_sliceFamily);
+        }
+        updateReadTune();
+        return;
+    }
     m_readId.clear();
     subscribeContext();
     rebuildImmediately();
@@ -1117,12 +1130,20 @@ void RoundtablePanel::readRoom(const QString& roomId)
         backToSlice();
         return;
     }
+    const bool wasReading = !m_readId.isEmpty();
     m_readId = roomId;
     if (RoundtableModel::isFrequencyContext(roomId)) {
         m_subscribing = true;
         const bool accepted = m_model->readAt(roomHz(roomId), roomFamily(roomId));
         m_subscribing = false;
-        if (!accepted) { m_readId.clear(); }
+        if (!accepted) {
+            m_readId.clear();
+            // The read this one would have replaced is still open: let it go too.
+            if (wasReading) {
+                m_model->unreadRoom();
+                subscribeContext();
+            }
+        }
     } else {
         m_model->readRoom(roomId);
     }

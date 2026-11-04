@@ -345,6 +345,26 @@ NEREUS_GUI_EXPORT RoundtableViewLayout roundtableViewLayout(const RoundtableView
 NEREUS_GUI_EXPORT RoundtableViewLayout paintRoundtableView(QPainter& p, const RoundtableViewModel& view, const QRect& rect,
                                                            bool foldPeople = false, int scrollY = 0, int bodyHeight = -1);
 
+/// One row of a fold's list in the inspector (overlay design D37).
+struct RoundtableFoldRow {
+    QString roomId;
+    qint64 hz = 0;
+    int state = 0;        // a RoundtableGlyph
+    QString who;          // "VE3XYZ", or "Double · AA5ABC + K0ABC"
+    bool frozen = false;  // a dropped link draws no live color (D7)
+    bool dimmed = false;  // you are hidden
+    bool operator==(const RoundtableFoldRow&) const = default;
+};
+/// How tall the list wants to be, head and rows.
+NEREUS_GUI_EXPORT int roundtableFoldListHeight(int rows);
+/// Where the rows start, under the fixed head.
+NEREUS_GUI_EXPORT int roundtableFoldListBodyTop();
+/// The row under `pos`, in `rect`'s coordinates, or -1.
+NEREUS_GUI_EXPORT int roundtableFoldListRowAt(const QPoint& pos, const QRect& rect, int rows, int scrollY);
+/// Draws "N frequencies" and its rows in `rect` (overlay.js renderIns, .ins-list).
+NEREUS_GUI_EXPORT void paintRoundtableFoldList(QPainter& p, const QVector<RoundtableFoldRow>& rows, const QRect& rect,
+                                               int hoverRow, int scrollY);
+
 /// The held peak for each listener (overlay design D12). Client side only:
 /// never persisted or sent. It rises at once, falls 2 dB a second and resets on
 /// a new turn id, per source room and listener. The caller owns it.

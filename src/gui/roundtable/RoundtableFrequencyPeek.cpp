@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04: A fold's list (overlay design D37). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-11-04: The one inspector: your own frequency, ⋯, the Viewing line with
 //               Back, the foot anchor and the scrolling body. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -169,16 +171,60 @@ void RoundtableFrequencyPeek::setInspectorSpot(const QRect& pan, int dialX, cons
     m_spotFlags = flags;
     m_spotFlipped = flagFlipped;
     if (m_open && m_onFoot) {
-        fitToContents();
+        if (m_listing) {
+            fitList();
+        } else {
+            fitToContents();
+        }
     }
+}
+
+void RoundtableFrequencyPeek::showFold(const QVector<RoundtableFoldRow>& rows)
+{
+    if (!m_listing) {
+        m_scroll = 0;
+    }
+    m_onFoot = true;
+    m_listing = true;
+    m_rows = rows;
+    m_hoverRow = -1;
+    m_view.card = RoundtableCardModel{};
+    m_open = true;
+    m_tune->hide();
+    m_messages->hide();
+    m_more->hide();
+    m_back->hide();
+    fitList();
+    show();
+    raise();
+    update();
+}
+
+void RoundtableFrequencyPeek::setFoldRows(const QVector<RoundtableFoldRow>& rows)
+{
+    if (!showsFold() || rows == m_rows) {
+        return;
+    }
+    const bool sameSize = rows.size() == m_rows.size();
+    m_rows = rows;
+    if (!sameSize) {
+        fitList();
+    }
+    update();
 }
 
 void RoundtableFrequencyPeek::open(quint64 hz, const QString& family, bool mine)
 {
-    if (!m_open || m_view.card.hz != hz || m_view.family != family || m_view.mine != mine) {
+    if (!m_open || m_listing || m_view.card.hz != hz || m_view.family != family || m_view.mine != mine) {
         m_panPeak = RoundtablePeakTracker();
         m_scroll = 0;
     }
+    m_listing = false;
+    m_rows.clear();
+    m_hoverRow = -1;
+    m_tune->show();
+    m_messages->show();
+    m_more->show();
     m_view.mine = mine;
     m_view.card = RoundtableCardModel{};
     m_view.card.hz = hz;
@@ -211,7 +257,7 @@ void RoundtableFrequencyPeek::setPathPreferences(bool miles, bool bearing)
 
 void RoundtableFrequencyPeek::refresh(const RoundtableCardModel& model, std::optional<double> panDbm, bool keyed)
 {
-    if (!m_open) {
+    if (!m_open || m_listing) {
         return;
     }
     // Values redraw in place; only structure takes the walk that sizes the view.
@@ -246,6 +292,8 @@ void RoundtableFrequencyPeek::closePeek()
         return;
     }
     m_open = false;
+    m_listing = false;
+    m_rows.clear();
     hide();
     emit closed();
 }
@@ -272,7 +320,44 @@ void RoundtableFrequencyPeek::updateTuneButton()
 
 int RoundtableFrequencyPeek::maxScrollForTest() const
 {
+    if (m_listing) {
+        return std::max(0, roundtableFoldListHeight(static_cast<int>(m_rows.size())) - roundtableFoldListBodyTop()
+                               - m_bodyHeight);
+    }
     return std::max(0, m_layout.body() - m_bodyHeight);
+}
+
+void RoundtableFrequencyPeek::fitList()
+{
+    ++m_fits;
+    const QWidget* host = parentWidget();
+    const QRect spot = m_spotPan.isEmpty() && host != nullptr ? host->rect().adjusted(kEdgeGap, kEdgeGap, -kEdgeGap, -kEdgeGap)
+                                                              : m_spotPan;
+    const int wantedHeight = roundtableFoldListHeight(static_cast<int>(m_rows.size()));
+    const int height = std::min(spot.height(), wantedHeight);
+    m_bodyHeight = std::max(0, height - roundtableFoldListBodyTop());
+    m_scroll = std::clamp(m_scroll, 0, maxScrollForTest());
+    const int dialX = m_spotPan.isEmpty() ? spot.center().x() : m_spotDialX;
+    const QRect wanted = placeRoundtableInspector(spot, dialX, m_spotFlags, m_spotFlipped, height);
+    if (geometry() != wanted) {
+        setGeometry(wanted);
+    }
+    placeHeadButtons(wanted);
+}
+
+void RoundtableFrequencyPeek::placeHeadButtons(const QRect& wanted)
+{
+    const int closeLeft = wanted.width() - kBodySide - kHeadButton;
+    m_close->setGeometry(closeLeft, kHeadButtonTop, kHeadButton, kHeadButton);
+    m_more->setGeometry(closeLeft - kHeadButtonGap - kHeadButton, kHeadButtonTop, kHeadButton, kHeadButton);
+}
+
+void RoundtableFrequencyPeek::setHoverRow(int row)
+{
+    if (row != m_hoverRow) {
+        m_hoverRow = row;
+        update();
+    }
 }
 
 void RoundtableFrequencyPeek::fitToContents()
@@ -321,9 +406,7 @@ void RoundtableFrequencyPeek::fitToContents()
     const int tuneWidth = std::max(0, inner - kButtonGap) / 2;
     m_tune->setGeometry(kBodySide, buttonTop, tuneWidth, kButtonHeight);
     m_messages->setGeometry(kBodySide + tuneWidth + kButtonGap, buttonTop, inner - tuneWidth - kButtonGap, kButtonHeight);
-    const int closeLeft = wanted.width() - kBodySide - kHeadButton;
-    m_close->setGeometry(closeLeft, kHeadButtonTop, kHeadButton, kHeadButton);
-    m_more->setGeometry(closeLeft - kHeadButtonGap - kHeadButton, kHeadButtonTop, kHeadButton, kHeadButton);
+    placeHeadButtons(wanted);
     m_back->setVisible(!m_view.mine);
     if (m_layout.viewingTop >= 0) {
         m_back->setGeometry(wanted.width() - kBodySide - m_layout.backWidth, m_layout.viewingTop, m_layout.backWidth, kBackHeight);
@@ -333,6 +416,10 @@ void RoundtableFrequencyPeek::fitToContents()
 void RoundtableFrequencyPeek::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
+    if (m_listing) {
+        paintRoundtableFoldList(painter, m_rows, rect(), m_hoverRow, m_scroll);
+        return;
+    }
     paintRoundtableView(painter, m_view, rect(), m_fold, m_scroll, m_bodyHeight);
     const int ruleY = height() - actionsHeight() + kActionsAbove;
     painter.fillRect(QRect(kBodySide, ruleY, width() - 2 * kBodySide, kActionsRule), kRuleColor);
@@ -347,6 +434,12 @@ void RoundtableFrequencyPeek::mousePressEvent(QMouseEvent* event)
 void RoundtableFrequencyPeek::mouseReleaseEvent(QMouseEvent* event)
 {
     event->accept();
+    if (m_listing && event->button() == Qt::LeftButton) {
+        const int row = roundtableFoldListRowAt(event->position().toPoint(), rect(), static_cast<int>(m_rows.size()), m_scroll);
+        if (row >= 0) {
+            emit foldRowClicked(m_rows.at(row).roomId);
+        }
+    }
 }
 
 void RoundtableFrequencyPeek::mouseDoubleClickEvent(QMouseEvent* event)
@@ -357,6 +450,15 @@ void RoundtableFrequencyPeek::mouseDoubleClickEvent(QMouseEvent* event)
 void RoundtableFrequencyPeek::mouseMoveEvent(QMouseEvent* event)
 {
     event->accept();
+    if (m_listing) {
+        setHoverRow(roundtableFoldListRowAt(event->position().toPoint(), rect(), static_cast<int>(m_rows.size()), m_scroll));
+    }
+}
+
+void RoundtableFrequencyPeek::leaveEvent(QEvent* event)
+{
+    setHoverRow(-1);
+    QWidget::leaveEvent(event);
 }
 
 // The wheel moves the body and stops here, at either end and over the buttons too.
@@ -375,7 +477,11 @@ void RoundtableFrequencyPeek::wheelEvent(QWheelEvent* event)
 bool RoundtableFrequencyPeek::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == parentWidget() && event->type() == QEvent::Resize && m_open) {
-        fitToContents();
+        if (m_listing) {
+            fitList();
+        } else {
+            fitToContents();
+        }
         // After the pan's own resize, which raises its mouse overlay.
         QTimer::singleShot(0, this, [this]() {
             if (m_open) {
