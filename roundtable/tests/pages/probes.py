@@ -191,7 +191,18 @@ def probe_row(c: Chrome, server: Server) -> None:
     for row in result["person"]:
         assert row["hz"]==by_key[row["key"]]["hz"],row
     assert [r["ref"] for r in result["rows"]]==result["expected"]
-    assert all(r["turn"]==result["turn"] and "\n" in r["text"] for r in result["rows"])
+    assert all(r["turn"]==result["turn"] and re.fullmatch(r"S\d(\+\d+)? -?\d+\.\d",r["text"]) for r in result["rows"]),result["rows"]
+    # Full width: a green meter beneath, its width the dBm on the flag's scale,
+    # distance and bearing on one line, and the list says who is on frequency.
+    rows=c.eval("""[...document.querySelectorAll('.attributed-reading')].map(n=>{const m=RT.currentView().members.find(m=>RT.frequency.memberKey(m)===n.dataset.ref),i=n.querySelector('.rw-meter i'),o=n.querySelector('.rw-meter').getBoundingClientRect(),small=n.querySelector('.path-value small');
+      return {call:m.callsign,width:parseFloat(i.style.width),want:RT.frequency.meterFraction(m.reading.dbm)*100,height:o.height,color:getComputedStyle(i).backgroundColor,stale:n.classList.contains('stale'),path:small?getComputedStyle(n.querySelector('.path-value')).display+'/'+getComputedStyle(small).display:'',lines:n.querySelector('.v').getClientRects().length};})""")
+    assert rows
+    for row in rows:
+        assert abs(row["width"]-row["want"])<0.06 and row["height"]==3 and row["lines"]==1,row
+        assert row["color"]==("rgb(96, 96, 102)" if row["stale"] else "rgb(76, 175, 106)"),row
+        assert row["path"] in ("","flex/block"),row
+    assert any(row["path"] for row in rows),rows
+    assert c.eval("getComputedStyle(document.querySelector('.rw-onfreq')).display")=="none"
     assert "K4ABC" in result["label"],result["label"]
     assert "Heard by" in c.eval("document.querySelector('.reading-head').textContent")
     # Initial data must reveal the talker, rather than follow the bottom of
@@ -212,7 +223,14 @@ def probe_signal_mobile(c: Chrome, server: Server) -> None:
           const report=RT.currentView().members.find(m=>m.callsign==='N4RDR').reading;
           return {text:signal.textContent,title:row.title,raw:report.dbm,signalRight:a.right,ageLeft:b.left,signalScroll:signal.scrollWidth,signalWidth:signal.clientWidth,age:age.textContent};})()""")
         assert result["raw"] == -66.735748, result
-        assert result["text"] == "S9+6\n-66.7", result
+        assert result["text"] == "S9+6 -66.7", result
+        # Four columns with no offset, distance over bearing, nothing clipped,
+        # and "On frequency" shown inside the room.
+        phone = c.eval("""(()=>{const rows=[...document.querySelectorAll('.attributed-reading')],withPath=rows.find(n=>n.querySelector('.path-value small'));
+          return {columns:getComputedStyle(rows[0]).gridTemplateColumns.split(' ').length,offset:getComputedStyle(rows[0].querySelector('.o')).display,clipped:rows.filter(n=>{const v=n.querySelector('.v');return v.scrollWidth>v.clientWidth}).map(n=>n.textContent),stack:withPath&&getComputedStyle(withPath.querySelector('.path-value')).display+'/'+getComputedStyle(withPath.querySelector('.path-value small')).display,onfreq:getComputedStyle(document.querySelector('.rw-onfreq')).display,onfreqRows:document.querySelectorAll('.rw-onfreq .rw-p').length,meter:rows[0].querySelector('.rw-meter').getBoundingClientRect().height,wide:document.documentElement.scrollWidth<=innerWidth};})()""")
+        assert phone == {"columns": 4, "offset": "none", "clipped": [], "stack": "block/block", "onfreq": "block", "onfreqRows": phone["onfreqRows"], "meter": 3, "wide": True}, phone
+        assert phone["onfreqRows"] > 1, phone
+        assert c.eval("[...document.querySelectorAll('.rw-onfreq .rw-p')].some(n=>n.classList.contains('on')&&n.textContent.includes('K4ABC'))"), "the keyed station is marked on frequency"
         for width in (320, 390):
             c.size(width, 800, mobile=True)
             c.screenshot(Path(f"/tmp/nereus-signal-both-{width}.png"))
@@ -221,7 +239,7 @@ def probe_signal_mobile(c: Chrome, server: Server) -> None:
         c.eval("document.querySelector('.signal-heading').focus()")
         assert c.eval("document.activeElement.id") == "signal-heading"
         c.key("Enter", text="\r")
-        c.wait("RT.signalFormat==='dbm' && document.querySelector('.signal-value').textContent.indexOf('\\n')<0")
+        c.wait("RT.signalFormat==='dbm' && document.querySelector('.signal-value').textContent.indexOf(' ')<0")
         c.eval("document.querySelector('.signal-value').focus()")
         c.key("Enter", text="\r")
         c.wait("RT.signalFormat==='s'")
@@ -257,23 +275,84 @@ def probe_live_overlap(c: Chrome, server: Server) -> None:
     c.wait("!!(RT.currentView() && document.querySelector('.attributed-talker'))")
     try:
         server.control("overlap?act=double")
-        c.wait("document.querySelector('.rbody .cap').textContent.includes('DOUBLE')")
+        c.wait("document.querySelector('.rbody .cap').textContent.includes('DOUBLE') && !!document.querySelector('.frequency-group.rw-dbl[data-frequency=\"usb-14212000\"]')")
         label = c.eval("document.querySelector('.attributed-talker').textContent")
         assert "K4ABC" in label and "N4RDR" in label, label
+        # The list, on every frequency the double's stations hold: a red edge,
+        # a Double tag, the double glyph and red text on the keyed rows.
+        groups = c.eval("""(()=>{const room=RT.summaries().find(r=>r.id==='usb-14212000');const keyed=room.stations.filter(p=>p.keyed).map(p=>p.family+'-'+p.hz);
+          return keyed.map(id=>{const g=document.querySelector('.frequency-group[data-frequency="'+id+'"]'),rows=[...g.querySelectorAll('.person-row.keyed')];
+            return {id,dbl:g.classList.contains('rw-dbl'),edge:getComputedStyle(g).boxShadow,tag:g.querySelector('.frequency-label .rw-tag.dbl')?.textContent,glyphs:rows.every(n=>n.classList.contains('rw-d')&&n.querySelector('.gl.doubled')),colors:rows.map(n=>getComputedStyle(n.querySelector('.person-call')).color),n:rows.length}})})()""")
+        assert len(groups) == 2, groups
+        for group in groups:
+            assert group["dbl"] and group["tag"] == "Double" and group["glyphs"] and group["n"] == 1 and "rgb(194, 90, 92)" in group["edge"], group
+            assert group["colors"] == ["rgb(224, 108, 110)"], group
+        # The band map: red, striped along its top, says Double with the names.
+        tag = c.wait("""(()=>{const n=[...document.querySelectorAll('.maptag.rw-dbl')].find(n=>n.textContent.includes('K4ABC')&&n.textContent.includes('N4RDR'));if(!n)return false;const b=getComputedStyle(n,'::before');
+          return {word:n.querySelector('.rw-dw').textContent,stripe:b.backgroundImage,height:b.height,border:getComputedStyle(n).borderTopColor,color:getComputedStyle(n.querySelector('.rw-dw')).color}})()""")
+        assert tag["word"] == "Double" and "repeating-linear-gradient" in tag["stripe"] and tag["height"] == "3px", tag
+        assert tag["border"] == "rgb(194, 90, 92)" and tag["color"] == "rgb(224, 108, 110)", tag
+        # Folds stay as they were, and one holding a Double says so.
+        folds = c.eval("""(()=>{const all=RT.frequency.groups(RT.frequency.people(RT.summaries()));return [...document.querySelectorAll('.maptag.folded')].map(n=>({red:n.classList.contains('rw-dbl'),says:n.textContent.includes('Double'),has:n.dataset.groups.split(',').some(id=>RT.frequency.groupState(all.find(g=>g.id===id),RT.summaries())==='double')}))})()""")
+        assert folds and all(f["red"] == f["has"] == f["says"] for f in folds), folds
+        # The room: the striped rail, a ticking clock, and full width keeps "On
+        # frequency" out of the room.
+        assert "repeating-linear-gradient" in c.eval("getComputedStyle(document.querySelector('.rbody .rw-rail.dbl')).backgroundImage")
+        assert c.eval("getComputedStyle(document.querySelector('.rw-onfreq')).display") == "none"
+        clock = c.eval("document.querySelector('.rbody .cap .rw-clock').textContent")
+        assert re.fullmatch(r"\d+:\d\d", clock), clock
+        assert "on the air" in c.eval("document.querySelector('.rbody .cap span').textContent")
+        c.wait(f"document.querySelector('.rbody .cap .rw-clock').textContent!=={js(clock)}", 5)
+        assert c.eval("[...document.querySelectorAll('.lfoot .legend')].map(n=>n.textContent)") == ["talking", "unknown", "double", "quiet"]
         c.wait("[...document.querySelectorAll('.attributed-reading')].some(n=>n.textContent.includes('AA4QQ'))")
         assert "raw reports of the combined RF" in c.eval("document.querySelector('.rbody').textContent")
+        row = c.eval("""(()=>{const n=[...document.querySelectorAll('.attributed-reading')].find(n=>n.textContent.includes('AA4QQ')),i=n.querySelector('.rw-meter i');
+          return {signal:n.querySelector('.v').textContent,path:n.querySelector('.path-value').textContent,fill:getComputedStyle(i).backgroundImage,width:parseFloat(i.style.width),tick:!!n.querySelector('.rw-meter u')}})()""")
+        assert row["signal"] == "S10 -63.2" or re.fullmatch(r"S9\+10 -63\.2", row["signal"]), row
+        assert row["path"] == "" and "repeating-linear-gradient" in row["fill"] and abs(row["width"] - 65.7) < 0.1 and row["tick"], row
+        assert c.eval("document.querySelector('.rd.reading-head').textContent").startswith("Combined RF")
         assert c.eval("[...document.querySelectorAll('.signal-value')].every(n=>n.getAttribute('aria-label').includes('combined RF'))")
         double_id = c.eval("RT.currentView().now.find(t=>t.kind==='doubled').id")
         server.control("overlap?act=third")
         c.wait("document.querySelector('.attributed-talker').textContent.includes('W9ABC')")
         server.control("overlap?act=third-receives")
         c.wait("!document.querySelector('.attributed-talker').textContent.includes('W9ABC') && [...document.querySelectorAll('.attributed-reading')].some(n=>n.textContent.includes('W9ABC'))")
+        # Activity chips name both open turns, with the room passed in.
+        server.control("overlap?act=other")
+        chips = c.wait("(()=>{const t=[...document.querySelectorAll('.activity-choices .chip')].map(n=>n.textContent);return t.length>1&&t})()")
+        assert any("K4ABC" in t and "N4RDR" in t for t in chips) and any("K2OTH" in t for t in chips), chips
+        assert "Keyed identities unavailable" not in c.eval("document.body.textContent")
         server.control("overlap?act=single")
         c.wait("document.querySelector('.rbody .cap').textContent.includes('CURRENT TALKER') && !document.querySelector('.attributed-talker').textContent.includes('N4RDR')")
         assert c.eval(f"[...document.querySelectorAll('.attributed-reading')].every(n=>+n.dataset.turn!=={double_id})")
+        # Two keyed 4 kHz apart in different source rooms: no Double anywhere on either.
+        got = c.wait("""(()=>{const a=document.querySelector('.frequency-group[data-frequency="usb-14212000"]'),b=document.querySelector('.frequency-group[data-frequency="usb-14216000"]');
+          if(!a||!b||a.classList.contains('rw-dbl')||b.classList.contains('rw-dbl')||!b.querySelector('.person-row.keyed'))return false;
+          return {tags:a.querySelectorAll('.rw-tag').length+b.querySelectorAll('.rw-tag').length,glyphs:[a,b].every(g=>g.querySelector('.person-row.keyed .gl.talking')),doubleTags:[...document.querySelectorAll('.maptag.rw-dbl')].filter(n=>/K4ABC|K2OTH/.test(n.textContent)).length,state:RT.frequency.groupState(RT.frequency.groups(RT.frequency.people(RT.summaries())).find(g=>g.id==='usb-14212000'),RT.summaries())}})()""")
+        assert got == {"tags": 0, "glyphs": True, "doubleTags": 0, "state": "talking"}, got
+        # A receiver reporting present false. The engine stores the reading with
+        # the open turn (turns.py on_reading), so the page alone keeps it out.
+        server.control("overlap?act=absent")
+        absent = c.wait("""(()=>{const v=RT.currentView(),m=v.members.find(m=>m.callsign==='KD8LMN');return m&&m.reading&&m.reading.present===false&&{turn:m.reading.turn,open:v.now.map(t=>t.id),row:[...document.querySelectorAll('.attributed-reading')].some(n=>n.textContent.includes('KD8LMN'))}})()""")
+        assert absent["turn"] in absent["open"] and not absent["row"], absent
         no_errors(c, "live overlap transitions")
     finally:
         server.control("overlap?act=reset")
+
+
+def probe_unknown_signal(c: Chrome, server: Server) -> None:
+    """An unknown signal is amber in the list and the room, and says so."""
+    open_public(c, server.base)
+    wanted = """RT.frequency.groups(RT.frequency.people(RT.summaries())).find(g=>RT.frequency.groupState(g,RT.summaries())==='unknown'&&!RT.summaries().some(r=>r.family===g.family&&r.state!=='quiet'&&r.state!=='unknown'&&Math.abs(r.hz-g.hz)<=6000))"""
+    group = c.wait(f"(()=>{{const g={wanted};return g&&g.id}})()", 30)
+    c.eval(f"RT.select({js(group)})")
+    c.wait(f"RT.currentView()&&RT.currentView().id==={js(group)}&&document.querySelector('.attributed-talker strong')?.textContent==='Unknown signal'")
+    got = c.eval(f"""(()=>{{const g=document.querySelector('.frequency-group[data-frequency="{group}"]'),tag=g.querySelector('.rw-tag.unk'),room=RT.currentView(),turn=room.now.find(t=>t.kind==='unknown');
+      return {{tag:tag.textContent,color:getComputedStyle(tag).color,edge:g.classList.contains('rw-dbl'),cap:document.querySelector('.rbody .cap').textContent,rail:getComputedStyle(document.querySelector('.rbody .rw-rail.unk')).backgroundColor,meters:[...document.querySelectorAll('.rw-k-unk .attributed-reading:not(.stale) .rw-meter i')].map(n=>getComputedStyle(n).backgroundColor),rows:document.querySelectorAll('.attributed-reading').length,wanted:RT.frequency.readings(room,turn).length,absent:room.members.filter(m=>m.reading&&m.reading.present===false&&m.reading.turn===turn.id).length,keyedWords:document.querySelectorAll('.frequency-group[data-frequency="{group}"] .person-row.keyed').length}}}})()""")
+    assert got["tag"] == "Unknown signal" and got["color"] == AMBER and not got["edge"], got
+    assert got["cap"].startswith("CURRENT SIGNAL") and got["rail"] == AMBER, got
+    assert all(color == AMBER for color in got["meters"]) and got["rows"] == got["wanted"] and got["keyedWords"] == 0, got
+    no_errors(c, "unknown signal")
 
 
 def probe_sort(c: Chrome, server: Server) -> None:
@@ -285,7 +364,8 @@ def probe_sort(c: Chrome, server: Server) -> None:
     assert freq==sorted(freq)
     c.eval("(()=>{let s=document.getElementById('sort');s.value='n';s.dispatchEvent(new Event('change'))})()")
     c.wait("RT.state.sort==='n'")
-    counts=c.eval("[...document.querySelectorAll('.frequency-group')].map(n=>n.querySelectorAll('.person-row').length)")
+    # State changes before the scheduled DOM render, so wait for the render too.
+    counts=c.wait("(()=>{const counts=[...document.querySelectorAll('.frequency-group')].map(n=>n.querySelectorAll('.person-row').length);return counts.length&&counts.every((n,i)=>!i||counts[i-1]>=n)?counts:false})()")
     assert counts==sorted(counts,reverse=True),counts
     c.eval("(()=>{let s=document.getElementById('sort');s.value='t';s.dispatchEvent(new Event('change'))})()")
     c.wait("RT.state.sort==='t'")
@@ -327,6 +407,8 @@ def probe_freshness(c: Chrome, server: Server) -> None:
     c.wait("document.querySelectorAll('.attributed-reading').length>=8")
     stale=c.wait("(()=>{const n=[...document.querySelectorAll('.attributed-reading.stale')].find(n=>n.textContent.includes('W5STL'));return n&&{age:n.querySelector('.age').textContent,color:getComputedStyle(n.querySelector('.age')).color}})()")
     assert stale["color"]==AMBER,stale
+    meter=c.eval("(()=>{const n=[...document.querySelectorAll('.attributed-reading.stale')].find(n=>n.textContent.includes('W5STL'));return {fill:getComputedStyle(n.querySelector('.rw-meter i')).backgroundColor,tick:!!n.querySelector('.rw-meter u')}})()")
+    assert meter=={"fill":"rgb(96, 96, 102)","tick":False},meter
     before=c.eval("[...document.querySelectorAll('.attributed-reading')].map(n=>({ref:n.dataset.ref,km:n.dataset.km,bearing:n.querySelector('.path-value small')?.textContent||''}))")
     assert c.eval("document.getElementById('distance-unit').value")=="mi"
     c.eval("(()=>{const u=document.getElementById('distance-unit');u.value='km';u.dispatchEvent(new Event('change'))})()")
@@ -696,12 +778,13 @@ PROBES = [
     probe_bands,
     probe_band_map,
     probe_row,
+    probe_freshness,  # Before the overlap: its stale row belongs to the turn the overlap ends.
     probe_live_overlap,
+    probe_unknown_signal,
     probe_signal_mobile,
     probe_search,
     probe_sort,
     probe_keyboard,
-    probe_freshness,
     probe_inert,
     probe_copy_link,
     probe_owner_frequency,

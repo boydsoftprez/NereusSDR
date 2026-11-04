@@ -465,16 +465,44 @@
       return talkers.filter(t=>t.ref&&room.members.some(m=>F.memberKey(m)===F.memberKey(t)&&m.keyed===true));
     },
     turnCaption: turn => !turn ? "ACTIVITY" : turn.kind==="doubled"
-      ? turn.end==null ? "DOUBLE" : "LAST OVERLAP"
+      ? turn.end==null ? "DOUBLE" : "LAST DOUBLE"
       : turn.end!=null ? "LAST HEARD" : turn.kind==="unknown" ? "CURRENT SIGNAL" : "CURRENT TALKER",
     readings: (room,turn) => {
       if (!room || !turn) return [];
       const talkers = new Set(F.activeTalkers(room,turn).map(F.memberKey));
-      return room.members.filter(m=>m.reading && m.reading.turn===turn.id && !talkers.has(F.memberKey(m)) && !(turn.end==null&&m.keyed===true)).sort((a,b)=>{
+      return room.members.filter(m=>m.reading && m.reading.present!==false && m.reading.turn===turn.id && !talkers.has(F.memberKey(m)) && !(turn.end==null&&m.keyed===true)).sort((a,b)=>{
         const ak=typeof a.km==="number",bk=typeof b.km==="number";
         return ak&&bk&&a.km!==b.km ? a.km-b.km : ak!==bk ? ak?-1:1 : a.callsign.localeCompare(b.callsign) || a.nth-b.nth;
       });
     },
+    /* Who is keyed in one source room, one entry per station. A frequency
+       known only from the directory cannot see a turn, so this is its Double. */
+    keyedIn: (sourceRoom,group,summaries) => {
+      const room=summaries&&summaries.get?summaries.get(sourceRoom):(summaries||[]).find(r=>r.id===sourceRoom);
+      const keyed=new Map();
+      for(const s of (room&&room.stations||[]).concat(group.stations||[])) if(s.keyed&&s.sourceRoom===sourceRoom&&!keyed.has(F.memberKey(s))) keyed.set(F.memberKey(s),s);
+      return Array.from(keyed.values());
+    },
+    /* summaries is the band list, as an array or a Map by room id. Keyed
+       stations in different source rooms are never a Double, however close. */
+    groupState: (group,summaries) => {
+      const roomOf=id=>summaries&&summaries.get?summaries.get(id):(summaries||[]).find(r=>r.id===id);
+      const stations=group.stations||[];
+      if(group.legacy) return group.state==="doubled"?"double":["talking","unknown"].includes(group.state)?group.state:"quiet";
+      const keyed=stations.filter(s=>s.keyed);
+      if(keyed.some(s=>{const room=roomOf(s.sourceRoom);return room&&room.state==="doubled"||F.keyedIn(s.sourceRoom,group,summaries).length>1;})) return "double";
+      if(keyed.length) return "talking";
+      return stations.some(s=>{const room=roomOf(s.sourceRoom);return room&&room.state==="unknown";})?"unknown":"quiet";
+    },
+    doubleNames: (group,summaries) => {
+      const names=new Map();
+      for(const s of (group.stations||[]).filter(s=>s.keyed)) for(const k of F.keyedIn(s.sourceRoom,group,summaries)) names.set(F.memberKey(k),callText(k.callsign,k.nth));
+      return Array.from(names.values());
+    },
+    meterFraction: dbm => typeof dbm==="number"&&Number.isFinite(dbm)?Math.max(0,Math.min(1,(dbm+121)/88)):0,
+    /* Rises at once, falls 2 dB a second. The caller keys it by source room,
+       listener and turn. */
+    peakHold: (held,dbm,at) => ({peak:held?Math.max(dbm,held.peak-2*Math.max(0,at-held.at)/1000):dbm,at:at}),
     path: (km,bearing,unit,show) => ({
       distance: typeof km==="number" && Number.isFinite(km) ? Math.round(unit==="km"?km:km/1.609344).toLocaleString("en-US") : "",
       bearing: typeof km==="number" && Number.isInteger(bearing) && bearing>=0 && bearing<360 && show ? String(bearing).padStart(3,"0")+"°T" : "",
@@ -515,7 +543,7 @@
   RT.signalFormat=signalFormats.includes(readPreference("roundtable.signalFormat","both")) ? readPreference("roundtable.signalFormat","both") : "dbm";
   RT.setSignalFormat=function(format) { RT.signalFormat=signalFormats.includes(format)?format:"dbm"; try { localStorage.setItem("roundtable.signalFormat",RT.signalFormat); } catch(e) {} };
   RT.cycleSignalFormat=function() { RT.setSignalFormat(signalFormats[(signalFormats.indexOf(RT.signalFormat)+1)%signalFormats.length]); };
-  RT.signalText=function(dbm) { if(typeof dbm!=="number"||!Number.isFinite(dbm)||dbm < -160||dbm > 94)return "—"; return RT.signalFormat==="s"?sText(dbm):RT.signalFormat==="both"?sText(dbm)+"\n"+dbmText(dbm):dbmText(dbm); };
+  RT.signalText=function(dbm) { if(typeof dbm!=="number"||!Number.isFinite(dbm)||dbm < -160||dbm > 94)return "—"; return RT.signalFormat==="s"?sText(dbm):RT.signalFormat==="both"?sText(dbm)+" "+dbmText(dbm):dbmText(dbm); };
   const signalLabel=()=>({dbm:"dBm",s:"S-units",both:"Both"})[RT.signalFormat];
   RT.pathPreference={unit:readPreference("roundtable.distance","mi")==="km"?"km":"mi",bearing:readPreference("roundtable.bearing","true")!=="false"};
   RT.pathControls=function(changed) {
@@ -550,7 +578,7 @@
   const S={band:null,q:"",quiet:true,sort:"f",sel:null,phoneRoom:false,earlier:false,following:false,slice:null,me:null,follow:null,turn:null};
   let ws=null,version=0,negotiated=false,listGen=0,viewGen=0,view=null,link="connecting",everLive=false,lastHeard=0,lostAt=Date.now(),offset=0,attempt=0,retryTimer=null;
   let queued=false,renderedContext=null,ownerBusy=false,ownerSeenMs=0,pendingSeenMs=0,marking=false;
-  const historyRevisions=new Map(),historyValidated=new Map();
+  const historyRevisions=new Map(),historyValidated=new Map(),peaks=new Map();
   let historySerial=0,historyPending=null,historyStale=true,historyValidatedAt=0;
   let tokens=20,tokensAt=Date.now(),pauseUntil=0,fetching=new Set();
   const BACKOFF=[1000,2000,5000,10000,30000],rowsBox=$("rows"),roomBox=$("room"),q=$("q");
@@ -707,17 +735,21 @@
     }
     $("quiet-count").textContent=String(people().filter(p=>!p.keyed).length);$("quiet-chip").classList.toggle("on",S.quiet);$("quiet-chip").setAttribute("aria-pressed",String(S.quiet));
   }
+  /* A dropped link never claims a live Double or Unknown signal. */
+  function shownState(group){return linkState()==="live"?F.groupState(group,rooms):"quiet";}
+  function stateTag(state){return state==="double"?el("span",{class:"rw-tag dbl"},[glyph("doubled"),"Double"]):state==="unknown"?el("span",{class:"rw-tag unk"},[glyph("unknown"),"Unknown signal"]):null;}
   function renderDirectory(){
     const keep=rowsBox.scrollTop;clear(rowsBox);
     const groups=directoryGroups();let band=null;
     for(const group of groups){
       if(group.band!==band){band=group.band;rowsBox.appendChild(el("div",{class:"grp"},[el("b",{class:"bn",text:bandLong(band)}),el("span",{class:"gc",text:version===1?"People at their reported frequencies":"Legacy frequency list · station positions unavailable"})]));}
-      const section=el("section",{class:"frequency-group"+(group.id===S.sel?" selected":""),data:{frequency:group.id}});
-      const label=el("button",{class:"frequency-label",type:"button",on:{click:()=>select(group,true)}},[freqNode("fq",group.hz),el("span",{class:"md",text:FAMILY_LABEL[group.family]||group.family}),group.stations.length>1?el("span",{class:"tag cochannel-label",text:group.stations.length+" cochannel"}):null]);
+      const state=shownState(group),dbl=state==="double";
+      const section=el("section",{class:"frequency-group"+(group.id===S.sel?" selected":"")+(dbl?" rw-dbl":""),data:{frequency:group.id}});
+      const label=el("button",{class:"frequency-label",type:"button",on:{click:()=>select(group,true)}},[freqNode("fq",group.hz),el("span",{class:"md",text:FAMILY_LABEL[group.family]||group.family}),stateTag(state),group.stations.length>1?el("span",{class:"tag cochannel-label",text:group.stations.length+" cochannel"}):null]);
       section.appendChild(label);
       for(const person of group.stations){
-        section.appendChild(el("button",{class:"person-row row"+(person.keyed?" keyed":""),type:"button",data:{id:group.id,person:F.personKey(person),hz:person.hz},attrs:{"aria-pressed":String(group.id===S.sel),"aria-label":"Browse "+callText(person.callsign,person.nth)+" at "+freqText(person.hz)+" Hz"},on:{click:()=>select(group,true)}},[
-          glyph(person.keyed?"talking":"quiet"),el("span",{class:"person-call"},highlight(callText(person.callsign,person.nth))),el("span",{class:"person-grid",text:person.grid||""}),el("span",{class:"person-state",title:person.slices.length>1?person.slices.length+" slices at this exact frequency":"",text:(person.away?"AWAY":person.keyed?"Keyed":person.joining?"Joining":"Listening")+(person.slices.length>1?" · "+person.slices.length+" slices":"")}),el("span",{class:"browse-word",text:"Browse ›"}),
+        section.appendChild(el("button",{class:"person-row row"+(person.keyed?" keyed":"")+(person.keyed&&dbl?" rw-d":""),type:"button",data:{id:group.id,person:F.personKey(person),hz:person.hz},attrs:{"aria-pressed":String(group.id===S.sel),"aria-label":"Browse "+callText(person.callsign,person.nth)+" at "+freqText(person.hz)+" Hz"},on:{click:()=>select(group,true)}},[
+          glyph(person.keyed?(dbl?"doubled":"talking"):"quiet"),el("span",{class:"person-call"},highlight(callText(person.callsign,person.nth))),el("span",{class:"person-grid",text:person.grid||""}),el("span",{class:"person-state",title:person.slices.length>1?person.slices.length+" slices at this exact frequency":"",text:(person.away?"AWAY":person.keyed?"Keyed":person.joining?"Joining":"Listening")+(person.slices.length>1?" · "+person.slices.length+" slices":"")}),el("span",{class:"browse-word",text:"Browse ›"}),
         ]));
       }
       if(group.legacy)section.appendChild(el("button",{class:"person-row row",type:"button",data:{id:group.id},on:{click:()=>select(group,true)}},[glyph(group.state||"quiet"),el("span",{class:"person-call",text:(group.talkers||[]).join(" + ")||"Quiet frequency"}),el("span",{class:"browse-word",text:"Read ›"})]));
@@ -753,17 +785,18 @@
     for(const g of groups){const tick=el("span",{class:"frequency-tick",data:{hz:g.groups[0].hz},title:freqText(g.groups[0].hz)+" Hz"});tick.style.left=g.anchor+"px";inner.appendChild(tick);}
     for(const cluster of clusters){
       const folded=cluster.groups.length>1,group=cluster.groups[0],calls=group.stations.map(p=>callText(p.callsign,p.nth));
-      const button=el("button",{class:"maptag"+(cluster.pinned?" selected":"")+(folded?" folded":"")+(group.stations.length>1&&!folded?" cochannel":""),type:"button",data:{groups:cluster.groups.map(g=>g.id).join(",")},attrs:{"aria-label":folded?"Browse "+cluster.groups.length+" crowded frequency groups":calls.join(", ")+" at "+freqText(group.hz)+" Hz"},on:{click:()=>{
+      const dbl=cluster.groups.some(g=>shownState(g)==="double"),doubleNames=dbl&&!folded?F.doubleNames(group,rooms):[];
+      const button=el("button",{class:"maptag"+(cluster.pinned?" selected":"")+(folded?" folded":"")+(group.stations.length>1&&!folded?" cochannel":"")+(dbl?" rw-dbl":""),type:"button",data:{groups:cluster.groups.map(g=>g.id).join(",")},attrs:{"aria-label":folded?"Browse "+cluster.groups.length+" crowded frequency groups"+(dbl?", a Double among them":""):(dbl?"Double, "+doubleNames.join(", "):calls.join(", "))+" at "+freqText(group.hz)+" Hz"},on:{click:()=>{
         if(!folded){select(group,true);return;}
         const choices=cluster.groups.map(g=>el("button",{class:"fold-choice",type:"button",on:{click:()=>{select(g,true);$("frequency-details").close();$("frequency-details").remove();}}},[freqNode("fq",g.hz),el("span",{text:FAMILY_LABEL[g.family]}),el("b",{text:g.stations.map(p=>callText(p.callsign,p.nth)).join(", ")}),el("span",{text:"Browse"})]));
         dialog("People in crowded groups",choices);
-      }}},folded?[el("b",{text:"+"+cluster.groups.length+" groups"}),el("small",{text:cluster.groups.reduce((n,g)=>n+g.stations.length,0)+" station positions · details"})]:[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),...calls.slice(0,3).map(call=>el("b",{text:call})),calls.length>3?el("small",{text:"+"+(calls.length-3)+" · Browse"}):null]);
-      if(!folded&&group.stations.length>1&&group.id===S.sel){
+      }}},folded?[el("b",{text:"+"+cluster.groups.length+" groups"}),dbl?el("small",{class:"rw-dw",text:"Double"}):el("small",{text:cluster.groups.reduce((n,g)=>n+g.stations.length,0)+" station positions · details"})]:dbl?[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),el("b",{class:"rw-dw",text:"Double"}),...doubleNames.slice(0,2).map(call=>el("b",{text:call}))]:[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),...calls.slice(0,3).map(call=>el("b",{text:call})),calls.length>3?el("small",{text:"+"+(calls.length-3)+" · Browse"}):null]);
+      if(!folded&&!dbl&&group.stations.length>1&&group.id===S.sel){
         const currentRoom=snapshot(),turn=chosenTurn(currentRoom);
         if(turn){
           clear(button);add(button,[el("small",{text:(group.hz/1e6).toFixed(6)+" · "+FAMILY_LABEL[group.family]}),el("b",{text:F.turnCaption(turn)+" · "+turnLabel(turn,currentRoom)}),el("small",{text:(turn.kind==="doubled"?"Combined RF · ":"Heard by · ")+signalLabel()+" / age"})]);
           const reports=F.readings(currentRoom,turn).slice(0,2);
-          for(const report of reports)add(button,el("small",{class:"stack-report",text:callText(report.callsign,report.nth)+" · "+RT.signalText(report.reading.dbm).replace("\n"," / ")+" / "+Math.max(0,Math.floor((now()-report.reading.t)/1000))+"s"}));
+          for(const report of reports)add(button,el("small",{class:"stack-report",text:callText(report.callsign,report.nth)+" · "+RT.signalText(report.reading.dbm).replace(" "," / ")+" / "+Math.max(0,Math.floor((now()-report.reading.t)/1000))+"s"}));
           if(!reports.length)button.appendChild(el("small",{text:group.stations.map(p=>p.callsign).join(", ")}));
         }
       }
@@ -808,7 +841,7 @@
     follow.addEventListener("change",()=>{S.following=follow.checked;S.earlier=false;const s=slices.find(s=>s.id===S.slice);if(S.following&&s)select({hz:s.hz,family:F.family(s.mode)},false);schedule();});
     add(box,[el("span",{},["Signed in as ",el("b",{text:S.me.station.callsign||"your station"}),S.me.station.helper?" · Helper":""]),helperLink(S.me.station),selector,el("label",{},[follow," Follow my slice"]),el("a",{class:"btn small",href:"/archive",text:"Your archive"})]);
   }
-  function turnLabel(turn,room){if(!turn)return "No attributed turn";if(turn.kind==="unknown")return "Unknown signal";if(turn.kind==="doubled")return F.activeTalkers(room,turn).map(t=>callText(t.callsign,t.nth)).join(" + ")||"Keyed identities unavailable";return (turn.talkers||[]).map(t=>callText(t.callsign,t.nth)).join(", ")||"Unidentified talker";}
+  function turnLabel(turn,room){if(!turn)return "No attributed turn";if(turn.kind==="unknown")return "Unknown signal";if(turn.kind==="doubled")return F.activeTalkers(room,turn).map(t=>callText(t.callsign,t.nth)).join(" + ")||(room?"Double":"Keyed identities unavailable");return (turn.talkers||[]).map(t=>callText(t.callsign,t.nth)).join(", ")||"Unidentified talker";}
   function chosenTurn(room){return room&&room.now.find(t=>t.id===S.turn)||F.lastTurn(room,current());}
   function namesNode(turn){return el("div",{class:"names"},(turn.names||[]).length?turn.names.map(n=>el("span",{class:"nm",text:n.name+" · "+n.count})):"No names suggested.");}
   function showName(turn){
@@ -821,32 +854,59 @@
   }
   function readingNode(member,turn,room){
     const reading=member.reading,age=Math.max(0,now()-reading.t),known=turn.kind==="talking";
-    const signal=RT.signalText(reading.dbm), spokenSignal=signal==="—"?"unavailable":signal.replace("\n",", ");
+    const signal=RT.signalText(reading.dbm), spokenSignal=signal==="—"?"unavailable":signal.replace(" ",", ");
+    const stale=age>20000,fill=el("i"),meter=el("span",{class:"rw-meter",attrs:{"aria-hidden":"true"}},fill);
+    fill.style.width=(F.meterFraction(reading.dbm)*100).toFixed(1)+"%";
+    if(turn.end===null&&typeof reading.dbm==="number"&&Number.isFinite(reading.dbm)){
+      const key=member.sourceRoom+"/"+member.ref+"/"+turn.id,held=F.peakHold(peaks.get(key),reading.dbm,Date.now());
+      peaks.set(key,held);
+      if(!stale&&linkState()==="live"){const tick=el("u");tick.style.left=(F.meterFraction(held.peak)*100).toFixed(1)+"%";meter.appendChild(tick);}
+    }
     const subject=(turn.kind==="doubled"?"combined RF from ":"")+turnLabel(turn,room);
-    return el("div",{class:"rd attributed-reading"+(age>20000?" stale":""),data:{ref:F.memberKey(member),turn:turn.id,km:typeof member.km==="number"?member.km:"",bearing:known&&Number.isInteger(member.bearingDeg)?member.bearingDeg:""},title:callText(member.callsign,member.nth)+" measured "+subject+" at "+dbmText(reading.dbm)+" dBm"},[
+    return el("div",{class:"rd attributed-reading rw-m"+(stale?" stale":""),data:{ref:F.memberKey(member),turn:turn.id,km:typeof member.km==="number"?member.km:"",bearing:known&&Number.isInteger(member.bearingDeg)?member.bearingDeg:""},title:callText(member.callsign,member.nth)+" measured "+subject+" at "+dbmText(reading.dbm)+" dBm"},[
       el("span",{class:"c"},[highlight(callText(member.callsign,member.nth)),member.away?el("span",{class:"away",text:"AWAY"}):null]),
       RT.pathNode(member.km,member.bearingDeg,known),el("span",{class:"o",text:(member.offsetHz>0?"+":"")+member.offsetHz}),
-      el("button",{class:"v signal-value",id:"signal-"+F.memberKey(member),type:"button",text:signal,attrs:{"aria-label":callText(member.callsign,member.nth)+" measured "+subject+", signal "+spokenSignal+", format "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{class:"age",text:Math.floor(age/1000)+" s"}),
+      el("button",{class:"v signal-value",id:"signal-"+F.memberKey(member),type:"button",text:signal,attrs:{"aria-label":callText(member.callsign,member.nth)+" measured "+subject+", signal "+spokenSignal+", format "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{class:"age",text:Math.floor(age/1000)+" s"}),meter,
+    ]);
+  }
+  /* Only a phone shows this: at full width the list beside the room says it. */
+  function onFrequency(turn,room){
+    const c=current(),linked=linkState()==="live",near=new Map();
+    const active=new Set(turn&&turn.kind==="doubled"&&turn.end===null?F.activeTalkers(room,turn).map(F.memberKey):[]);
+    for(const p of people().filter(p=>F.nearby(p,c)).sort((a,b)=>Math.abs(a.hz-c.hz)-Math.abs(b.hz-c.hz))){
+      const key=F.memberKey(p),seen=near.get(key);
+      if(seen)seen.keyed=seen.keyed||p.keyed;else near.set(key,p);
+    }
+    if(!near.size)return null;
+    return el("div",{class:"rw-onfreq"},[
+      el("div",{class:"cap"},["ON FREQUENCY",el("span",{text:near.size+" station"+(near.size===1?"":"s")})]),
+      el("div",{class:"rw-people"},Array.from(near.values()).map(p=>{
+        const on=p.keyed&&linked,dd=on&&active.has(F.memberKey(p)),off=p.hz-c.hz;
+        return el("div",{class:"rw-p"+(on?" on":"")+(dd?" d":"")},[glyph(on?(dd?"doubled":"talking"):"quiet"),el("span",{class:"c",text:callText(p.callsign,p.nth)}),el("span",{class:"k",text:on?"keyed":""}),el("span",{class:"o",text:off?(off>0?"+":"")+off+" Hz":"on freq"})]);
+      })),
     ]);
   }
   function renderTalk(body,room){
-    const turn=chosenTurn(room),open=turn&&turn.end===null;
-    body.appendChild(el("div",{class:"cap"},[F.turnCaption(turn),el("span",{text:turn?(open?"on the air":"turn ended "+ago(now()-turn.end)+" ago"):"at this viewed frequency"})]));
+    const turn=chosenTurn(room),open=turn&&turn.end===null,linked=linkState()==="live",dbl=turn&&turn.kind==="doubled";
+    body.appendChild(el("div",{class:"rw-rail "+(!open||!linked?"quiet":dbl?"dbl":turn.kind==="unknown"?"unk":"talk")}));
+    const clockNow=linked||!lostAt?now():lostAt+offset;
+    body.appendChild(el("div",{class:"cap"},[F.turnCaption(turn),el("span",{},turn?(open?["on the air ",el("span",{class:"rw-clock",text:mmss((clockNow-turn.start)/1000)})]:"turn ended "+ago(now()-turn.end)+" ago"):"at this viewed frequency")]));
     body.appendChild(el("div",{class:"attributed-talker "+(turn?turn.kind:"quiet")},[glyph(turn?turn.kind:"quiet"),el("strong",{text:turnLabel(turn,room)}),turn&&turn.hz?el("span",{class:"mono",text:(turn.hz/1e6).toFixed(6)+" MHz"}):null]));
-    if(!turn){body.appendChild(el("div",{class:"none",text:"No attributed turn near this frequency. Presence does not identify an unknown RF signal."}));return;}
+    if(!turn){body.appendChild(el("div",{class:"none",text:"No attributed turn near this frequency. Presence does not identify an unknown RF signal."}));add(body,onFrequency(turn,room));return;}
     if(turn.kind==="unknown"){body.appendChild(namesNode(turn));body.appendChild(el("button",{class:"btn small name-turn",type:"button",text:"Name unknown turn",disabled:!!gate(),on:{click:()=>showName(turn)}}));}
-    if(turn.kind==="doubled")body.appendChild(el("div",{class:"fn",text:"Combined RF is not credited to any individual talker or archive. Distance and bearing are blank."}));
+    if(dbl)body.appendChild(el("div",{class:"fn",text:"Combined RF is not credited to any individual talker or archive. Distance and bearing are blank."}));
+    add(body,onFrequency(turn,room));
     const reads=F.readings(room,turn);
-    const header=el("div",{class:"rd reading-head"},[el("span",{text:"Heard by"}),el("span",{text:RT.pathPreference.unit+(RT.pathPreference.bearing?" / °T":"")}),el("span",{class:"o",text:"Offset Hz"}),el("button",{class:"signal-heading",id:"signal-heading",type:"button",text:"Signal · "+signalLabel(),attrs:{"aria-label":"Signal format: "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{text:"Age"})]);body.appendChild(header);
-    for(const row of reads)body.appendChild(readingNode(row,turn,room));
-    if(!reads.length)body.appendChild(el("div",{class:"none",text:"No current reporter reading belongs to this turn."}));
-    body.appendChild(el("div",{class:"fn",text:turn.kind==="doubled"?"These are raw reports of the combined RF, not of an individual transmitter.":"Each row is that reporter’s raw reading of "+turnLabel(turn)+". Nearest first; distance and initial true bearing run from talker to reporter. Readings keep their original age after the turn ends."}));
-    if(room.now.length>1){body.appendChild(el("div",{class:"activity-choices"},room.now.map(t=>el("button",{class:"chip"+(t.id===turn.id?" on":""),type:"button",text:turnLabel(t)+(t.hz?" · "+(t.hz/1e6).toFixed(6):""),on:{click:()=>{S.turn=t.id;schedule();}}}))));}
+    const header=el("div",{class:"rd reading-head rw-mh"},[el("span",{text:dbl?"Combined RF · heard by":"Heard by"}),el("span",{text:RT.pathPreference.unit+(RT.pathPreference.bearing?" / °T":"")}),el("span",{class:"o",text:"Offset Hz"}),el("button",{class:"signal-heading",id:"signal-heading",type:"button",text:"Signal · "+signalLabel(),attrs:{"aria-label":"Signal format: "+signalLabel()+". Change signal format"},on:{click:()=>{RT.cycleSignalFormat();schedule();}}}),el("span",{text:"Age"})]);
+    body.appendChild(el("div",{class:"rw-k-"+(dbl?"dbl":turn.end!==null?"last":turn.kind==="unknown"?"unk":"talk"),data:{readings:"yes"}},[header,reads.map(row=>readingNode(row,turn,room)),reads.length?null:el("div",{class:"none",text:"No current reporter reading belongs to this turn."})]));
+    for(const [key,held] of peaks)if(Date.now()-held.at>60000)peaks.delete(key);
+    body.appendChild(el("div",{class:"fn",text:dbl?"These are raw reports of the combined RF, not of an individual transmitter.":"Each row is that reporter’s raw reading of "+turnLabel(turn,room)+". Nearest first"+(turn.kind==="unknown"?".":"; distance and initial true bearing run from talker to reporter.")+" Readings keep their original age after the turn ends."}));
+    if(room.now.length>1){body.appendChild(el("div",{class:"activity-choices"},room.now.map(t=>el("button",{class:"chip"+(t.id===turn.id?" on":""),type:"button",text:turnLabel(t,room)+(t.hz?" · "+(t.hz/1e6).toFixed(6):""),on:{click:()=>{S.turn=t.id;schedule();}}}))));}
   }
   function earlierTurns(room){
     const key=S.sel,details=el("details",{class:"earlier-turns",open:earlierOpen.get(key)||false});details.addEventListener("toggle",()=>earlierOpen.set(key,details.open));details.appendChild(el("summary",{text:"Earlier turns · last 30 minutes"}));
     if(!room||!room.earlier.length){details.appendChild(el("div",{class:"none",text:"No earlier turns in this window."}));return details;}
-    for(const turn of room.earlier){const row=el("div",{class:"turn",data:{turn:turn.id},attrs:{tabindex:"0"}},[el("span",{class:"t",text:hhmm(turn.start)}),glyph(turn.kind),el("span",{},[el("b",{class:"c",text:turnLabel(turn)}),el("small",{text:turn.hz?" · "+(turn.hz/1e6).toFixed(6)+" MHz":""})]),el("span",{class:"d",text:mmss(((turn.end||now())-turn.start)/1000)})]);details.appendChild(row);if(turn.kind==="unknown"){details.appendChild(namesNode(turn));details.appendChild(el("button",{class:"btn small name-turn",type:"button",text:"Name",disabled:!!gate(),on:{click:()=>showName(turn)}}));}}
+    for(const turn of room.earlier){const row=el("div",{class:"turn",data:{turn:turn.id},attrs:{tabindex:"0"}},[el("span",{class:"t",text:hhmm(turn.start)}),glyph(turn.kind),el("span",{},[el("b",{class:"c"+(turn.kind==="doubled"?" doubled":turn.kind==="unknown"?" unknown":""),text:turnLabel(turn,room)}),el("small",{text:turn.hz?" · "+(turn.hz/1e6).toFixed(6)+" MHz":""})]),el("span",{class:"d",text:mmss(((turn.end||now())-turn.start)/1000)})]);details.appendChild(row);if(turn.kind==="unknown"){details.appendChild(namesNode(turn));details.appendChild(el("button",{class:"btn small name-turn",type:"button",text:"Name",disabled:!!gate(),on:{click:()=>showName(turn)}}));}}
     return details;
   }
   function saveMute(){try{localStorage.setItem("roundtable.muted",JSON.stringify(Array.from(muted)));}catch(e){/* Browser-local mute still works in this tab. */}}
