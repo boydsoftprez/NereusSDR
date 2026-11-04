@@ -668,6 +668,7 @@
 #include "models/Band.h"
 #include "models/DisplaySettingsModel.h"
 #include "models/NotchModel.h"
+#include "models/RoundtableModel.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -12713,7 +12714,7 @@ bool roundtableCardRowsEqual(const QVector<RoundtableCardRow>& a, const QVector<
 
 bool roundtableCardsEqual(const RoundtableCardModel& a, const RoundtableCardModel& b)
 {
-    return a.kind == b.kind && a.hz == b.hz && a.keyed == b.keyed && a.keyedYou == b.keyedYou
+    return a.kind == b.kind && a.hz == b.hz && a.liveHz == b.liveHz && a.keyed == b.keyed && a.keyedYou == b.keyedYou
         && a.clockMs == b.clockMs && a.endedAgoMs == b.endedAgoMs && a.frozen == b.frozen && a.note == b.note
         && roundtableCardRowsEqual(a.rows, b.rows);
 }
@@ -12829,6 +12830,11 @@ void SpectrumWidget::setRoundtableCard(const RoundtableCardModel& card, const QS
         && roundtableCardsEqual(card, m_roundtableCard)) {
         return;
     }
+    // Values redraw in place; only structure places the card again (D14).
+    if (roomId != m_roundtableCardRoom || format != m_roundtableCardFormat
+        || !roundtableCardSameStructure(card, m_roundtableCard)) {
+        m_roundtableCardPlacedValid = false;
+    }
     m_roundtableCard = card;
     m_roundtableCardRoom = roomId;
     m_roundtableCardFormat = format;
@@ -12909,7 +12915,19 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
             const int panTop = specRect.top() + kRoundtableCardTopGap;
             const QRect pan(specRect.left() + kRoundtableTagGap, panTop, specRect.width() - 2 * kRoundtableTagGap,
                             bandTop - kRoundtableTagFootGap - panTop);
-            placed = placeRoundtableCard(m_roundtableCard, pan, dialX, controls, flipped, cardNameMetrics);
+            if (!m_roundtableCardPlacedValid || pan != m_roundtableCardPlacedPan || dialX != m_roundtableCardPlacedDialX
+                || flipped != m_roundtableCardPlacedFlipped || controls != m_roundtableCardPlacedControls
+                || cardNameFont != m_roundtableCardPlacedFont) {
+                m_roundtableCardPlaced = placeRoundtableCard(m_roundtableCard, pan, dialX, controls, flipped, cardNameMetrics);
+                m_roundtableCardPlacedPan = pan;
+                m_roundtableCardPlacedDialX = dialX;
+                m_roundtableCardPlacedFlipped = flipped;
+                m_roundtableCardPlacedControls = controls;
+                m_roundtableCardPlacedFont = cardNameFont;
+                m_roundtableCardPlacedValid = true;
+                ++m_roundtableCardPlacements;
+            }
+            placed = m_roundtableCardPlaced;
         }
     }
     const bool hasCard = !placed.card.isNull();
@@ -12983,7 +13001,7 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     if (hasCard) {
         m_roundtableTagHits.append(RoundtableTagHit{placed.card,
             m_roundtableCardRoom.isEmpty() ? QStringList{} : QStringList{m_roundtableCardRoom}, false,
-            RoundtableTagHit::Kind::Card, static_cast<qint64>(m_roundtableCard.hz)});
+            RoundtableTagHit::Kind::Card, static_cast<qint64>(m_roundtableCard.hz), m_roundtableCard.liveHz});
         // A dashed tick joins the card to the dial (D16).
         QColor tick = roundtableCardColor(m_roundtableCard);
         tick.setAlphaF(tick.alphaF() * (dimmed ? 0.4 : 0.75));
@@ -13156,7 +13174,8 @@ std::optional<double> SpectrumWidget::roundtablePanLevel(quint64 hz, const QStri
     if (peak <= kRoundtableNoPanLevelDbm) {
         return std::nullopt;
     }
-    return peak + static_cast<double>(dbmCalOffset());
+    // As the trace draws it (D23): its calibration and its 1 Hz normalize.
+    return peak + static_cast<double>(fftTraceShiftDb());
 }
 
 QPoint SpectrumWidget::roundtableViewAnchor(const QString& room, qint64 hz) const
@@ -13180,6 +13199,13 @@ void SpectrumWidget::setRoundtableViewedRoom(const QString& room)
     refreshRoundtableTagLayer();
 }
 
+// Every pan of the window is keyed together (setDisplayKeyed); only the
+// transmitting pan has the overlay (overlay design D22).
+bool SpectrumWidget::roundtableKeyed() const
+{
+    return m_moxOverlay || m_displayKeyed;
+}
+
 void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, bool alreadyThere, QMenu& menu)
 {
     menu.setStyleSheet(roundtableMenuStyle());
@@ -13201,9 +13227,9 @@ void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, boo
     });
     signal->setObjectName(QStringLiteral("roundtableMenuSignal"));
 
-    const bool canTune = !m_moxOverlay && !alreadyThere;
+    const bool canTune = !roundtableKeyed() && !room.isEmpty() && !alreadyThere;
     QAction* tune = menu.addAction(QStringLiteral("Tune slice %1 here").arg(m_roundtableSliceName), this, [this, room]() {
-        if (!m_moxOverlay) { emit roundtableRoomClicked(room); }
+        if (!roundtableKeyed() && !room.isEmpty()) { emit roundtableRoomClicked(room); }
     });
     tune->setObjectName(QStringLiteral("roundtableMenuTune"));
     tune->setEnabled(canTune);
@@ -13211,18 +13237,24 @@ void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, boo
 
 void SpectrumWidget::openRoundtableCardMenu(const RoundtableTagHit& hit)
 {
-    bool alreadyThere = std::any_of(m_roundtableTags.cbegin(), m_roundtableTags.cend(), [&hit](const RoundtableTag& tag) {
-        return tag.active && hit.roomIds.contains(tag.roomId);
-    });
+    // Tune goes to the live turn's exact frequency, in this card's family. With
+    // no live turn there is nowhere to go.
+    const QString context = hit.roomIds.value(0);
+    QString target;
+    if (hit.tuneHz > 0 && RoundtableModel::isFrequencyContext(context)) {
+        target = RoundtableModel::frequencyContextId(
+            hit.tuneHz, context.mid(QStringLiteral("frequency:").size()).section(QLatin1Char('-'), 0, 0));
+    }
+    bool alreadyThere = false;
     for (const VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
-        alreadyThere = alreadyThere || (vfo->isActiveSlice() && std::llround(vfo->frequency()) == hit.hz);
+        alreadyThere = alreadyThere || (vfo->isActiveSlice() && std::llround(vfo->frequency()) == hit.tuneHz);
     }
     // On the top level window: this widget's native window cannot be a popup's
     // transient parent.
     auto* menu = new QMenu(window());
     menu->setObjectName(QStringLiteral("roundtableCardMenu"));
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    buildRoundtableCardMenu(hit.roomIds.value(0), hit.hz, alreadyThere, *menu);
+    buildRoundtableCardMenu(target, hit.hz, alreadyThere, *menu);
     menu->popup(mapToGlobal(QPoint(hit.rect.right() + 5, hit.rect.top())));
 }
 
@@ -13271,9 +13303,9 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
             }
             details->addAction(QStringLiteral("Read this frequency"), this,
                                [this, id]() { emit roundtableReadRequested(id); });
-            const bool canTune = !m_moxOverlay && !tag.active;
+            const bool canTune = !roundtableKeyed() && !tag.active;
             QAction* tune = details->addAction(QStringLiteral("Tune slice %1 here").arg(m_roundtableSliceName), this,
-                               [this, id]() { if (!m_moxOverlay) { emit roundtableRoomClicked(id); } });
+                               [this, id]() { if (!roundtableKeyed()) { emit roundtableRoomClicked(id); } });
             tune->setEnabled(canTune);
             continue;
         }
@@ -13291,14 +13323,14 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
             details->addAction(QStringLiteral("Read this frequency"), this,
                                [this, id]() { emit roundtableReadRequested(id); });
             QAction* tune = details->addAction(QStringLiteral("Tune slice %1 here").arg(m_roundtableSliceName), this,
-                               [this, id]() { if (!m_moxOverlay) { emit roundtableRoomClicked(id); } });
-            tune->setEnabled(!m_moxOverlay);
+                               [this, id]() { if (!roundtableKeyed()) { emit roundtableRoomClicked(id); } });
+            tune->setEnabled(!roundtableKeyed());
             continue;
         }
         QAction* row = menu.addAction(QIcon(glyph), text);
         row->setData(id);
         connect(row, &QAction::triggered, this, [this, id] {
-            if (m_moxOverlay) {
+            if (roundtableKeyed()) {
                 return;
             }
             emit roundtableRoomClicked(id);
@@ -13329,12 +13361,15 @@ bool SpectrumWidget::roundtableTagClick(const QPoint& pos, const QPoint& globalP
         } else if (frequency && !hit.folded) {
             emit roundtableReadRequested(hit.roomIds.first());
         } else if (hit.folded) {
-            auto* menu = new QMenu(this);
+            // On the top level window: this widget's native window cannot be a
+            // popup's transient parent.
+            auto* menu = new QMenu(window());
+            menu->setObjectName(QStringLiteral("roundtableFoldMenu"));
             menu->setAttribute(Qt::WA_DeleteOnClose);
             buildRoundtableFoldMenu(hit.roomIds, *menu);
             menu->popup(globalPos);
-        } else if (!m_moxOverlay && !hit.roomIds.isEmpty()) {
-            // Tuning while the transmit view shows is refused, as requestTune.
+        } else if (!roundtableKeyed() && !hit.roomIds.isEmpty()) {
+            // Tuning while keyed is refused, as requestTune.
             emit roundtableRoomClicked(hit.roomIds.first());
         }
         return true;

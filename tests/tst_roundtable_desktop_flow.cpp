@@ -61,6 +61,8 @@
 #include <QRandomGenerator>
 #include <QScrollBar>
 #include <QSignalSpy>
+#include <QPointer>
+#include <QSslSocket>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QWebSocket>
@@ -71,6 +73,7 @@
 #include <vector>
 
 #include "OperatorWording.h"
+#include "UnusedLoopbackPort.h"
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
 #include "core/MoxController.h"
@@ -87,7 +90,10 @@
 #include "fakes/LoopbackTransport.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "fakes/UpgradedCoreToken.h"
+#include "core/SliceOwnership.h"
+#include "gui/DesktopStationController.h"
 #include "gui/MainWindow.h"
+#include "gui/PanadapterStack.h"
 #include "gui/PanadapterApplet.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/applets/AppletVisibilityController.h"
@@ -627,6 +633,25 @@ public:
 private:
     std::unique_ptr<RemoteWindowHarness> m_harness;
     bool m_ok = false;
+};
+
+// A Core that reads any frequency for this window.
+class ReadingLink : public IStationLink {
+public:
+    QStringList reads;
+    bool roundtableAvailable() const override { return true; }
+    bool roundtableFrequencyAvailable() const override { return true; }
+    CommandOutcome requestAddSlice(const QString&) override { return {}; }
+    CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
+    CommandOutcome requestRemoveSlice(int) override { return {}; }
+    CommandOutcome requestActiveSlice(int) override { return {}; }
+    CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
+    CommandOutcome requestRoundtableReadAt(qint64 hz, const QString& family) override
+    {
+        reads.append(QStringLiteral("%1-%2").arg(family).arg(hz));
+        return {true, {}};
+    }
+    CommandOutcome requestRoundtableUnreadAt(qint64, const QString&) override { return {true, {}}; }
 };
 
 void settle()
@@ -1601,9 +1626,25 @@ private slots:
         p.window()->statusBar()->clearMessage();
         settle();
 
-        // ── Keying: Tune greys at once in the view and the panel; the view stays ──
+        // ── Your pan is read on the view's timer, however often the tags refresh (D23) ──
         QVERIFY(clickHit(viewed));
         QVERIFY(open());
+        pan->setRenderedPixelsForTest(QVector<float>(193, -90.0f));
+        QTRY_VERIFY_WITH_TIMEOUT(peek()->viewForTest().panDbm.has_value(), kWaitMs);
+        const double sampled = peek()->viewForTest().panDbm.value_or(0.0);
+        peekTimer->stop();
+        pan->setRenderedPixelsForTest(QVector<float>(193, -70.0f));
+        QJsonObject refreshedView = view;
+        QJsonObject newerReporter = reporter;
+        newerReporter.insert("reading", QJsonObject{{"turn", 1}, {"present", true}, {"dbm", -61}, {"t", g_now}});
+        refreshedView.insert("members", QJsonArray{talker, newerReporter});
+        model->applyRoom(refreshedView);
+        QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().card.rows.first().dbm, -61.0, kWaitMs);
+        QCOMPARE(peek()->viewForTest().panDbm.value_or(0.0), sampled);
+        peekTimer->start();
+        QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().panDbm.value_or(0.0), sampled + 20.0, kWaitMs);
+
+        // ── Keying: Tune greys at once in the view and the panel; the view stays ──
         MoxController* mox = p.core()->moxController();
         QVERIFY(mox != nullptr);
         p.server().setRemoteTransmitAllowed(true);
@@ -1612,6 +1653,17 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(p.model()->isTransmitting(), kWaitMs);
         QTRY_VERIFY_WITH_TIMEOUT(!button("roundtablePeekTune")->isEnabled(), kWaitMs);
         QVERIFY(open());
+        // A pan that is not the transmitting one has no overlay, only the key:
+        // Your pan is blank there too, and its card's Tune waits (D22, D23).
+        QTRY_VERIFY_WITH_TIMEOUT(pan->displayKeyed(), kWaitMs);
+        pan->setMoxOverlay(false);
+        QTest::qWait(2 * peekTimer->interval() + 50);
+        QVERIFY(!peek()->viewForTest().panDbm.has_value());
+        {
+            QMenu cardMenu;
+            pan->buildRoundtableCardMenu(viewed, viewedHz, false, cardMenu);
+            QVERIFY(!cardMenu.findChild<QAction*>(QStringLiteral("roundtableMenuTune"))->isEnabled());
+        }
         auto* panelTune = panel->findChild<QPushButton*>(QStringLiteral("roundtableTuneHereBtn"));
         QVERIFY(panelTune != nullptr);
         QVERIFY(!panelTune->isEnabled());
@@ -1700,6 +1752,215 @@ private slots:
         QVERIFY(applet->isVisible());
         QCOMPARE(panel->roomId(), mine);
         menu->close();
+        model->detach();
+    }
+
+    // A pan goes away under an open view: the view ends with it, the panel goes
+    // back to the slice, and nothing is left running.
+    void removingAPanEndsItsView()
+    {
+        ReadingLink link;
+        RoundtableState state;
+        Everything p;
+        SliceModel* slice = p.model()->sliceById(p.sliceId());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14200000);
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        const QString viewed = RoundtableModel::frequencyContextId(14230000, QStringLiteral("usb"));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{QJsonObject{{"id", "usb-14230000"},
+            {"stations", QJsonArray{QJsonObject{{"sourceRoom", "usb-14230000"}, {"ref", "q"}, {"callsign", "W2ABC"},
+                {"hz", 14230000}, {"family", "usb"}, {"keyed", false}}}}}}}});
+        RoundtableApplet* applet = appletOf(p.window());
+        auto* stack = p.window()->findChild<PanadapterStack*>();
+        QVERIFY(applet && stack);
+        QVERIFY(stack->addPanadapter(QStringLiteral("pan-going")) != nullptr);
+        SpectrumWidget* pan = stack->spectrum(QStringLiteral("pan-going"));
+        QVERIFY(pan != nullptr);
+        settle();
+        // A new pan takes a slice with it. As a layout change does, its slices go
+        // home first, so the pan that goes holds no flag.
+        for (SliceModel* each : p.model()->slices()) { each->setPanKey(QStringLiteral("pan-0")); }
+        settle();
+        for (VfoWidget* flag : pan->findChildren<VfoWidget*>()) { QFAIL(qPrintable(flag->objectName())); }
+        emit pan->roundtableReadRequested(viewed);
+        QPointer<RoundtableFrequencyPeek> peek = pan->findChild<RoundtableFrequencyPeek*>();
+        QVERIFY(peek && peek->isOpen());
+        QVERIFY(applet->panel()->isReading());
+        auto* peekTimer = p.window()->findChild<QTimer*>(QStringLiteral("roundtablePeekTimer"));
+        QVERIFY(peekTimer && peekTimer->isActive());
+
+        stack->removePanadapter(QStringLiteral("pan-going"));
+        QTRY_VERIFY_WITH_TIMEOUT(peek.isNull(), kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(!peekTimer->isActive(), kWaitMs);
+        QVERIFY(!applet->panel()->isReading());
+        QCOMPARE(std::llround(slice->frequency()), 14200000LL);
+        model->detach();
+    }
+
+    // A window hosting the Core selects for itself: another slice's flag line
+    // views it, a tag views too, and neither moves a slice or the selection.
+    void aHostingWindowViewsAnotherSliceAndMovesNothing()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        AppSettings::instance().setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* radio = window.radioModel();
+        radio->setBoardForTest(HPSDRHW::Saturn);
+        radio->configureStreamPool(5, 5, 192000);
+        radio->setConnectionStateForTest(ConnectionState::Connected);
+        const int aId = radio->addSlice(QStringLiteral("pan-0"));
+        const int bId = radio->addSlice(QStringLiteral("pan-0"));
+        SliceModel* a = radio->sliceById(aId);
+        SliceModel* b = radio->sliceById(bId);
+        QVERIFY(a && b);
+        a->setDspMode(DSPMode::USB);
+        b->setDspMode(DSPMode::USB);
+        a->setFrequency(14200000);
+        b->setFrequency(14230000);
+        window.resize(1512, 869);
+        window.show();
+        StationHostOptions options;
+        options.settings = &settings;
+        options.securityDirectory = directory.path();
+        options.hostingDevice = StationHostOptions::HostingDevice{QStringLiteral("Shack Mac mini"), QStringLiteral("Shack")};
+        options.remoteBind = QStringLiteral("127.0.0.1");
+        options.statusPage = false;
+        options.remotePort = unusedLoopbackPort();
+        DesktopStationController controller(radio, options);
+        window.setDesktopStationController(&controller);
+        QVERIFY(controller.start(true));
+        SliceOwnership* ownership = radio->sliceOwnership();
+        QVERIFY(radio->setActiveRxFor(SliceOwnership::stationDevice(), aId));
+        QCOMPARE(ownership->activeFor(SliceOwnership::stationDevice()), aId);
+
+        ReadingLink link;
+        RoundtableState state;
+        RoundtableModel* model = radio->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        const QString viewed = RoundtableModel::frequencyContextId(14188600, QStringLiteral("usb"));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{QJsonObject{{"id", "usb-14188600"},
+            {"stations", QJsonArray{QJsonObject{{"sourceRoom", "usb-14188600"}, {"ref", "q"}, {"callsign", "W2ABC"},
+                {"hz", 14188600}, {"family", "usb"}, {"keyed", false}}}}}}}});
+        SpectrumWidget* pan = panOf(&window);
+        RoundtableApplet* applet = appletOf(&window);
+        QVERIFY(pan && applet);
+        pan->setFrequencyRange(14200000.0, kPanSpanHz);
+        settle();
+        const auto peek = [&]() { return pan->findChild<RoundtableFrequencyPeek*>(); };
+        const auto open = [&]() { return peek() != nullptr && peek()->isOpen(); };
+        const auto nothingMoved = [&]() {
+            return ownership->activeFor(SliceOwnership::stationDevice()) == aId
+                && ownership->activeRxFor(SliceOwnership::stationDevice()) == aId
+                && radio->activeSlice() == a && std::llround(a->frequency()) == 14200000
+                && std::llround(b->frequency()) == 14230000;
+        };
+
+        // Another slice's flag line.
+        VfoWidget* flagB = flagFor(&window, bId);
+        QVERIFY(flagB != nullptr && flagB->roundtableLineButtonForTest() != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(flagB->roundtableLineButtonForTest()->isVisible(), kWaitMs);
+        QTest::mouseClick(flagB->roundtableLineButtonForTest(), Qt::LeftButton);
+        QVERIFY(open());
+        QCOMPARE(peek()->hz(), quint64(14230000));
+        QVERIFY(nothingMoved());
+        QVERIFY(link.reads.contains(QStringLiteral("usb-14230000")));
+
+        // A tag, on the same pan.
+        QImage image(pan->size(), QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::black);
+        {
+            QPainter painter(&image);
+            pan->drawRoundtableTagsForTest(painter, pan->roundtableTagSpectrumRectForTest());
+        }
+        bool clicked = false;
+        for (const SpectrumWidget::RoundtableTagHit& hit : pan->roundtableTagHitsForTest()) {
+            if (hit.roomIds.contains(viewed)) {
+                QTest::mouseClick(pan, Qt::LeftButton, Qt::NoModifier, hit.rect.center());
+                clicked = true;
+                break;
+            }
+        }
+        QVERIFY(clicked);
+        QVERIFY(open());
+        QCOMPARE(peek()->hz(), quint64(14188600));
+        QVERIFY(nothingMoved());
+
+        // The window selects B: now A's line is the other one, and B's is its own.
+        QVERIFY(radio->setActiveRxFor(SliceOwnership::stationDevice(), bId));
+        settle();
+        VfoWidget* flagA = flagFor(&window, aId);
+        QVERIFY(flagA != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(flagA->roundtableLineButtonForTest()->isVisible(), kWaitMs);
+        QTest::mouseClick(flagA->roundtableLineButtonForTest(), Qt::LeftButton);
+        QVERIFY(open());
+        QCOMPARE(peek()->hz(), quint64(14200000));
+        QCOMPARE(ownership->activeFor(SliceOwnership::stationDevice()), bId);
+        QCOMPARE(std::llround(a->frequency()), 14200000LL);
+        QCOMPARE(std::llround(b->frequency()), 14230000LL);
+        peek()->closePeek();
+
+        model->detach();
+        window.setDesktopStationController(nullptr);
+    }
+
+    // The same from a window of the Core: the selection is the Core's, and a view
+    // asks it for nothing.
+    void aRemoteWindowViewsAnotherSliceAndMovesNothing()
+    {
+        WindowOfCore p;
+        QVERIFY(p.ok());
+        SliceModel* coreA = p.core()->sliceById(0);
+        QVERIFY(coreA != nullptr);
+        coreA->setDspMode(DSPMode::USB);
+        coreA->setFrequency(14200000);
+        const int otherId = p.core()->addSlice(QStringLiteral("pan-0"));
+        QVERIFY(otherId >= 0);
+        SliceModel* coreB = p.core()->sliceById(otherId);
+        coreB->setDspMode(DSPMode::USB);
+        coreB->setFrequency(14230000);
+        QTRY_VERIFY_WITH_TIMEOUT(p.harness().client()->isHandshakeComplete(), kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(p.model()->sliceById(otherId) != nullptr, kWaitMs);
+        QTRY_COMPARE_WITH_TIMEOUT(std::llround(p.model()->sliceById(otherId)->frequency()), 14230000LL, kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(flagFor(p.window(), otherId) != nullptr, kWaitMs);
+        p.model()->setActiveSliceById(0);
+        QTRY_VERIFY_WITH_TIMEOUT(p.model()->activeSlice() != nullptr && p.model()->activeSlice()->sliceIndex() == 0, kWaitMs);
+        SliceModel* coreActive = p.core()->activeSlice();
+
+        ReadingLink link;
+        RoundtableState state;
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+        QVERIFY(model->frequencyAvailable());
+        SpectrumWidget* pan = panOf(p.window());
+        QVERIFY(pan != nullptr);
+        settle();
+
+        VfoWidget* flag = flagFor(p.window(), otherId);
+        QTRY_VERIFY_WITH_TIMEOUT(flag->roundtableLineButtonForTest() != nullptr
+                                 && flag->roundtableLineButtonForTest()->isVisible(), kWaitMs);
+        QTest::mouseClick(flag->roundtableLineButtonForTest(), Qt::LeftButton);
+        settle();
+        auto* peek = pan->findChild<RoundtableFrequencyPeek*>();
+        QVERIFY(peek != nullptr && peek->isOpen());
+        QCOMPARE(peek->hz(), quint64(14230000));
+        QVERIFY(link.reads.contains(QStringLiteral("usb-14230000")));
+        QCOMPARE(p.model()->activeSlice()->sliceIndex(), 0);
+        QCOMPARE(p.core()->activeSlice(), coreActive);
+        QCOMPARE(std::llround(coreA->frequency()), 14200000LL);
+        QCOMPARE(std::llround(coreB->frequency()), 14230000LL);
+        peek->closePeek();
         model->detach();
     }
 

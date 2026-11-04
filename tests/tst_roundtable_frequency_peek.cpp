@@ -18,6 +18,8 @@
 
 #include <QtTest/QtTest>
 
+#include <cmath>
+
 #include <QApplication>
 #include <QDir>
 #include <QPainter>
@@ -189,7 +191,7 @@ private slots:
         card.note = QStringLiteral("Reconnecting");
         QCOMPARE(roundtableViewLinkText(card), QStringLiteral("Reconnecting · last known"));
         card.note = QStringLiteral("Offline since 14:32 UTC");
-        QCOMPARE(roundtableViewLinkText(card), QStringLiteral("Offline · last known"));
+        QCOMPARE(roundtableViewLinkText(card), QStringLiteral("Offline since 14:32 UTC · last known"));
         card.frozen = false;
         card.note = QStringLiteral("You are hidden");
         QCOMPARE(roundtableViewLinkText(card), QStringLiteral("You are hidden"));
@@ -487,6 +489,14 @@ private slots:
         QCOMPARE(pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).value_or(0.0), -67.0);
         pan.widget.setDbmCalOffset(0.0f);
 
+        // The trace's whole calibration: the station's term as well, as attenuation sets it.
+        pan.widget.setStationCalOffsetDb(20.0f);
+        QCOMPARE(pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).value_or(0.0), -50.0);
+        pan.widget.setDbmCalOffset(3.0f);
+        QCOMPARE(pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).value_or(0.0), -47.0);
+        pan.widget.setDbmCalOffset(0.0f);
+        pan.widget.setStationCalOffsetDb(0.0f);
+
         // Blank while transmitting.
         pan.widget.setMoxOverlay(true);
         QVERIFY(!pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).has_value());
@@ -495,6 +505,62 @@ private slots:
         QVERIFY(!pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).has_value());
         pan.widget.setTxActiveForTest(false);
         QVERIFY(pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).has_value());
+    }
+
+    void thePanLevelMatchesTheTraceWithNormalizeOn()
+    {
+        Pan pan;
+        QVector<float> pixels(kPixels, -120.0f);
+        const quint64 viewed = 7188000;
+        pixels[static_cast<int>((viewed - 2000 - 7104000) / 1000)] = -70.0f;
+        pan.widget.setRenderedPixelsForTest(pixels);
+        pan.widget.setSpectrumDetector(SpectrumDetector::Average);
+        pan.widget.setDispNormalize(true);
+        const double shift = static_cast<double>(pan.widget.fftTraceShiftDbForTest());
+        QVERIFY(std::abs(shift) > 1.0);
+        QCOMPARE(pan.widget.roundtablePanLevel(viewed, QStringLiteral("lsb")).value_or(0.0), -70.0 + shift);
+    }
+
+    // D7: a dropped link has no live clock, even a stopped one.
+    void aFrozenViewHasNoClock()
+    {
+        Pan pan;
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        const auto drawn = [&pan](qint64 clockMs, bool frozen) {
+            RoundtableCardModel card = talker();
+            card.clockMs = clockMs;
+            card.frozen = frozen;
+            if (frozen) { card.note = QStringLiteral("Reconnecting"); }
+            pan.peek->refresh(card, std::nullopt, false);
+            return pan.peek->grab().toImage();
+        };
+        QVERIFY(drawn(83000, false) != drawn(3599000, false));
+        QCOMPARE(drawn(83000, true), drawn(3599000, true));
+    }
+
+    // D14: a value-only refresh redraws and does not work out the size again.
+    void aValueOnlyRefreshDoesNotResizeTheView()
+    {
+        Pan pan;
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        RoundtableCardModel card = talker();
+        pan.peek->refresh(card, -70.0, false);
+        const int fits = pan.peek->fitsForTest();
+        const QRect geometry = pan.peek->geometry();
+        card.clockMs += 1000;
+        card.rows[0].dbm -= 5.0;
+        card.rows[0].ageMs += 1000;
+        pan.peek->refresh(card, -71.0, false);
+        QCOMPARE(pan.peek->fitsForTest(), fits);
+        QCOMPARE(pan.peek->viewForTest().card.rows.first().dbm, card.rows[0].dbm);
+        QCOMPARE(pan.peek->viewForTest().panDbm.value_or(0.0), -71.0);
+        QCOMPARE(pan.peek->geometry(), geometry);
+        // Your pan's row going away is structure, and so is a new reading.
+        pan.peek->refresh(card, std::nullopt, false);
+        QCOMPARE(pan.peek->fitsForTest(), fits + 1);
+        card.rows.append(rowOf(QStringLiteral("K4NEW"), -60.0));
+        pan.peek->refresh(card, std::nullopt, false);
+        QCOMPARE(pan.peek->fitsForTest(), fits + 2);
     }
 
     void capturesForTheBoard_data()

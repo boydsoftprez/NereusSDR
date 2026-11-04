@@ -863,6 +863,7 @@ private slots:
     // when the frequency is your own, so there is nothing to view.
     bool viewRoundtableFrequency(SpectrumWidget* pan, const QString& context);
     void refreshRoundtablePeek();
+    void sampleRoundtablePeekPan();
     void closeRoundtablePeek();
     void onRoundtablePeekClosed();
 
@@ -2341,6 +2342,7 @@ private:
     QPointer<class RoundtableFrequencyPeek> m_roundtablePeek;  // overlay design D24
     QTimer* m_roundtablePeekTimer{nullptr};               // Your pan, D23: only while open
     QString m_roundtablePeekContext;
+    std::optional<double> m_roundtablePeekPanDbm;         // the last sample of Your pan
     bool m_roundtablePeekMessages{false};                 // the panel keeps reading after a close
     bool m_roundtablePeekOpening{false};
     bool m_roundtablePeekJustLost{false};                 // a refusal's message follows its close

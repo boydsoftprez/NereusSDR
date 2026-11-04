@@ -25,6 +25,9 @@ this branch, and fixes the defects its review found.
   a frequency known only from the directory, when two or more keyed stations share one
   `sourceRoom`. Two keyed stations that merely sit within 5 kHz of each other in different source
   rooms are not a Double.
+  Tags on a pan follow the source room, so a listener's frequency in a doubled room joins the one
+  merged Double (D20); the web's list rows follow what is on that exact frequency, so a lone
+  listener's row stays quiet while the room card says Double.
 * **D2. Readings during a double are combined RF.** They are never credited to a transmitter.
   Distance and bearing are blank. Transmitters never appear among the listeners.
 * **D3. Choosing the turn to show.** Use the exact-Hz turn if there is one, otherwise the nearest

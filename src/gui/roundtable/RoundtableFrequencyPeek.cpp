@@ -151,6 +151,10 @@ void RoundtableFrequencyPeek::refresh(const RoundtableCardModel& model, std::opt
     if (!m_open) {
         return;
     }
+    // Values redraw in place; only structure takes the walk that sizes the view.
+    const bool sameShape = roundtableCardSameStructure(model, m_view.card)
+        && panDbm.has_value() == m_view.panDbm.has_value();
+    const QString previousFormat = m_view.format;
     m_view.card = model;
     m_view.panDbm = panDbm;
     if (panDbm) {
@@ -162,7 +166,9 @@ void RoundtableFrequencyPeek::refresh(const RoundtableCardModel& model, std::opt
                         .toString();
     m_keyed = keyed;
     updateTuneButton();
-    fitToContents();
+    if (!sameShape || previousFormat != m_view.format) {
+        fitToContents();
+    }
     // The pan raises its mouse overlay on a resize.
     const QWidget* host = parentWidget();
     if (host != nullptr && !host->children().isEmpty() && host->children().constLast() != this) {
@@ -190,6 +196,7 @@ void RoundtableFrequencyPeek::updateTuneButton()
 
 void RoundtableFrequencyPeek::fitToContents()
 {
+    ++m_fits;
     const QWidget* host = parentWidget();
     const int available = host != nullptr ? std::max(0, host->height() - 2 * kEdgeGap) : QWIDGETSIZE_MAX;
     const int width = host != nullptr ? std::min(kWidth, std::max(0, host->width() - 2 * kEdgeGap)) : kWidth;

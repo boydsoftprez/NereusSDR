@@ -6801,8 +6801,8 @@ void MainWindow::wirePanRoundtableTags()
             });
             connect(sw, &SpectrumWidget::roundtableBandClicked, this, &MainWindow::closeRoundtablePeek);
             connect(sw, &SpectrumWidget::roundtableReportsRequested, this, [this]() {
-                if (m_radioModel && m_radioModel->activeSlice()) {
-                    openRoundtableForSlice(m_radioModel->activeSlice()->sliceIndex());
+                if (const SliceModel* active = activeSliceForWindow()) {
+                    openRoundtableForSlice(active->sliceIndex());
                 }
             });
             connect(sw, &SpectrumWidget::roundtableSignalFormatCycled, this, [this]() {
@@ -6907,7 +6907,7 @@ void MainWindow::refreshRoundtableTags()
     for (SliceModel* slice : m_radioModel->slices()) {
         if (slice) { sliceIds.append(slice->sliceIndex()); }
     }
-    const SliceModel* active = m_radioModel->activeSlice();
+    const SliceModel* active = activeSliceForWindow();
     const QString activeFamily = familyOfSlice(active);
     const QString activeContext = active && !activeFamily.isEmpty()
         ? RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily) : QString();
@@ -6950,7 +6950,7 @@ void MainWindow::refreshRoundtableTags()
 bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& context)
 {
     RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
-    const SliceModel* active = m_radioModel ? m_radioModel->activeSlice() : nullptr;
+    const SliceModel* active = activeSliceForWindow();
     if (!pan || !panel || !active) { return false; }
     const QString address = context.mid(QStringLiteral("frequency:").size());
     const qsizetype dash = address.indexOf(QLatin1Char('-'));
@@ -7008,14 +7008,24 @@ bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& con
         m_roundtablePeekTimer = new QTimer(this);
         m_roundtablePeekTimer->setObjectName(QStringLiteral("roundtablePeekTimer"));
         m_roundtablePeekTimer->setInterval(kRoundtablePeekRefreshMs);
-        connect(m_roundtablePeekTimer, &QTimer::timeout, this, &MainWindow::refreshRoundtablePeek);
+        connect(m_roundtablePeekTimer, &QTimer::timeout, this, &MainWindow::sampleRoundtablePeekPan);
     }
     m_roundtablePeekMessages = false;
     m_roundtablePeek->showFor(static_cast<quint64>(hz), family, pan->roundtableViewAnchor(context, hz));
     pan->setRoundtableViewedRoom(context);
     m_roundtablePeekTimer->start();
-    refreshRoundtablePeek();
+    sampleRoundtablePeekPan();
     return true;
+}
+
+// Your pan is read here only, on the view's timer and as it opens (overlay
+// design D23: about five times a second, however often the tags refresh).
+void MainWindow::sampleRoundtablePeekPan()
+{
+    const auto* pan = m_roundtablePeek ? qobject_cast<const SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr;
+    m_roundtablePeekPanDbm = pan && m_roundtablePeek->isOpen()
+        ? pan->roundtablePanLevel(m_roundtablePeek->hz(), m_roundtablePeek->family()) : std::nullopt;
+    refreshRoundtablePeek();
 }
 
 void MainWindow::refreshRoundtablePeek()
@@ -7027,7 +7037,7 @@ void MainWindow::refreshRoundtablePeek()
     }
     if (!m_roundtablePeek->isOpen()) { return; }
     const RoundtableModel* roundtable = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
-    const SliceModel* active = m_radioModel ? m_radioModel->activeSlice() : nullptr;
+    const SliceModel* active = activeSliceForWindow();
     if (!roundtable || !active) {
         closeRoundtablePeek();
         return;
@@ -7049,11 +7059,13 @@ void MainWindow::refreshRoundtablePeek()
     m_roundtablePeek->setPathPreferences(
         roundtable->stationSetting(QStringLiteral("DistanceUnits")) != QLatin1String("km"),
         roundtable->stationSetting(QStringLiteral("ShowBearing")) != QLatin1String("False"));
-    const auto* pan = qobject_cast<const SpectrumWidget*>(m_roundtablePeek->parentWidget());
+    const bool transmitting = m_radioModel->isTransmitting();
+    // A pan other than the transmitting one has no overlay of its own, and on a
+    // remote window only the Core says who is keyed: blank at once, on any pan.
     m_roundtablePeek->refresh(roundtableCardModelFor(roundtable, sliceIds, m_roundtablePeekContext, hz, &m_roundtablePeaks),
-                              pan ? pan->roundtablePanLevel(hz, family) : std::nullopt,
+                              transmitting ? std::nullopt : m_roundtablePeekPanDbm,
                               // Tune also waits on the radio itself, whatever Roundtable's link is doing.
-                              m_radioModel->isTransmitting() || !m_radioModel->isConnected());
+                              transmitting || !m_radioModel->isConnected());
 }
 
 void MainWindow::closeRoundtablePeek()
@@ -7082,7 +7094,9 @@ void MainWindow::openRoundtableForSlice(int sliceId)
     // Another slice's flag line views its frequency and leaves the active slice
     // alone (overlay design D26). A legacy server has no such view.
     const RoundtableModel* roundtable = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
-    const SliceModel* active = m_radioModel ? m_radioModel->activeSlice() : nullptr;
+    // This window's own slice: a hosted window selects for itself, whichever
+    // slice the radio's other devices have active.
+    const SliceModel* active = activeSliceForWindow();
     if (roundtable && roundtable->frequencyAvailable() && active && active->sliceIndex() != sliceId) {
         SliceModel* other = m_radioModel->sliceById(sliceId);
         const QString family = familyOfSlice(other);

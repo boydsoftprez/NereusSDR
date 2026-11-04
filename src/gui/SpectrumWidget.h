@@ -1801,6 +1801,7 @@ public:
     // and the trace and fill vertices exactly as renderGpuFrame() uploads
     // them.
     void setRenderedPixelsForTest(const QVector<float>& dbm) { m_renderedPixels = dbm; }
+    float fftTraceShiftDbForTest() const { return fftTraceShiftDb(); }
     void drawSpectrumForTest(QPainter& p, const QRect& r) { drawSpectrum(p, r); }
     bool drawsSpectrumBackgroundForTest() const { return drawsSpectrumBackground(); }
     void paintSpectrumBackgroundForTest(QPainter& p, const QRect& r) {
@@ -2857,7 +2858,11 @@ public:
         bool folded = false;
         Kind kind = Kind::Tag;
         qint64 hz = 0;  // the frequency it speaks for; a fold's first
+        qint64 tuneHz = 0;  // a card's live turn, where its Tune goes; 0 with none
     };
+    /// How many times the card has been placed: a value-only change places it no
+    /// more (overlay design D14).
+    int roundtableCardPlacementsForTest() const { return m_roundtableCardPlacements; }
     /// What the last tag pass drew (it is redrawn with the overlay).
     const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
     void drawRoundtableTagsForTest(QPainter& p, const QRect& specRect) { drawRoundtableTags(p, specRect); }
@@ -2881,6 +2886,8 @@ public:
     /// Your own card's menu (overlay design D25): Read reports, Signal and Tune.
     /// `alreadyThere` greys Tune as keying does.
     void buildRoundtableCardMenu(const QString& room, qint64 hz, bool alreadyThere, QMenu& menu);
+    /// Whether this window is keyed, on whichever pan: a Roundtable Tune waits.
+    bool roundtableKeyed() const;
     /// The rows a fold's list holds: a heading, then one row per room in
     /// `roomIds` (by frequency), each emitting roundtableRoomClicked.
     void buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu);
@@ -4617,6 +4624,15 @@ private:
     RoundtableCardModel m_roundtableCard;
     QString m_roundtableCardRoom;
     QString m_roundtableCardFormat;
+    // Where the card last went, and what decided it (D14).
+    RoundtableCardPlacement m_roundtableCardPlaced;
+    QRect m_roundtableCardPlacedPan;
+    QVector<QRect> m_roundtableCardPlacedControls;
+    QFont m_roundtableCardPlacedFont;
+    int m_roundtableCardPlacedDialX = 0;
+    bool m_roundtableCardPlacedFlipped = false;
+    bool m_roundtableCardPlacedValid = false;
+    int m_roundtableCardPlacements = 0;
     QString m_roundtableViewedRoom;
     QString m_roundtableSliceName{QStringLiteral("A")};
     void openRoundtableCardMenu(const RoundtableTagHit& hit);

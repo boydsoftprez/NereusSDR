@@ -228,11 +228,16 @@ struct RoundtableCardModel {
     QStringList people;     // the stations at this exact frequency
     QVector<RoundtableCardPerson> onFrequency;  // the view's list, from the stream or else the directory
     qint64 clockMs = 0;     // how long a live turn has run; stops where a link dropped
+    qint64 liveHz = 0;      // the live turn's exact frequency, a double's participant nearest the dial; 0 with none
     qint64 endedAgoMs = 0;  // how long ago a Last turn ended
     QVector<RoundtableCardRow> rows;
     bool frozen = false;    // Reconnecting or Offline (D7)
     QString note;           // the link's note, else "Double ended 3s ago" for 8 seconds
 };
+
+/// True when two cards differ only in values: readings, ages, the clock and the
+/// words of a note. Such a change moves nothing and redraws in place (D14).
+NEREUS_GUI_EXPORT bool roundtableCardSameStructure(const RoundtableCardModel& a, const RoundtableCardModel& b);
 
 /// Where the card goes on the desktop pan (overlay design D16). card is null
 /// when no stretch of the pan has room. rows is how many reading rows fit, at
@@ -291,7 +296,8 @@ struct RoundtableViewModel {
 NEREUS_GUI_EXPORT QString roundtableViewHeadText(const RoundtableCardModel& card);
 /// "Viewing, not tuned · −11.4 kHz from slice A · LSB".
 NEREUS_GUI_EXPORT QString roundtableViewSubText(const RoundtableViewModel& view);
-/// "Reconnecting · last known", "Offline · last known", or the card's other note.
+/// "Reconnecting · last known", "Offline since HH:MM UTC · last known", or the
+/// card's other note.
 NEREUS_GUI_EXPORT QString roundtableViewLinkText(const RoundtableCardModel& card);
 /// A station's offset from the viewed frequency: "on freq" or "+20 Hz".
 NEREUS_GUI_EXPORT QString roundtableViewOffsetText(qint64 offsetHz);
@@ -327,9 +333,11 @@ private:
 
 /// Whether a frequency is a Double right now (overlay design D1). With a view
 /// of that frequency, only when the turn it shows (D3) is an open doubled turn.
-/// With an empty `view`, known only from `stations` (directory entries), when
-/// two or more keyed stations within 5 kHz in `family` share one source room.
-NEREUS_GUI_EXPORT bool roundtableIsDouble(const QJsonObject& view, const QJsonArray& stations, qint64 hz,
+/// With no view, or one whose stream has not arrived, known only from `rooms`
+/// (the directory's summaries): the source rooms of the stations at exactly `hz`
+/// in `family` decide. Two or more of their keyed stations within 5 kHz, or a
+/// summary whose state is doubled, which holds with one participant left.
+NEREUS_GUI_EXPORT bool roundtableIsDouble(const QJsonObject& view, const QJsonArray& rooms, qint64 hz,
                                           const QString& family);
 
 /// The card for frequency `hz`, read from `model`'s view of `activeContext`

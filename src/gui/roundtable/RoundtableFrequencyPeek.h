@@ -68,6 +68,9 @@ public:
     QString family() const { return m_view.family; }
     /// What the view is drawing now.
     const RoundtableViewModel& viewForTest() const { return m_view; }
+    /// How many times the view has worked out its size: a value-only refresh
+    /// does not (overlay design D14).
+    int fitsForTest() const { return m_fits; }
     int rowLimitForTest() const { return m_rowLimit; }
 
 signals:
@@ -90,6 +93,7 @@ private:
 
     RoundtableViewModel m_view;
     RoundtablePeakTracker m_panPeak;
+    int m_fits = 0;
     QPushButton* m_tune{nullptr};
     QPushButton* m_messages{nullptr};
     QToolButton* m_close{nullptr};
