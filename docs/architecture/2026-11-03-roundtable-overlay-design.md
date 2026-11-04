@@ -102,8 +102,7 @@ this branch, and fixes the defects its review found.
 * **D21. Clicking or tapping a tag views that frequency in the inspector (D34). It never tunes.**
   This supersedes the earlier rule that a tag tunes. Clicking the band itself still tunes, as always. Legacy servers
   that cannot read another frequency keep today's behaviour.
-* **D22. What the view shows.** Head with state, clock and frequency. "Viewing, not tuned · −11.4 kHz
-  from slice A · LSB". "On frequency · N": each station with its glyph, "keyed" when keyed, and its
+* **D22. What the view shows.** Head with state, clock and frequency. The Viewing line (D35). "On frequency · N": each station with its glyph, "keyed" when keyed, and its
   offset from the viewed frequency (`member.hz − viewed hz`), or "on freq" at zero. Then the
   readings as D11, adding distance and bearing unless D2 blanks them. A "Your pan" row is first when
   someone is on the air. Then **Tune slice A here**, disabled while you are keyed and when already
