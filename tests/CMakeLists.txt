@@ -1694,7 +1694,8 @@ nereus_add_test(tst_daemon_agc_source CORE_ONLY)
 # Auto AGC-T reads a noise floor referred to a 4096-point FFT: real FFTEngine
 # frames at several sizes and decimations, the tick's threshold in each
 # sizing mode and through a zoom, and a local window against the Core.
-nereus_add_test(tst_auto_agc_floor_reference)
+# AUTO floor/reference behavior must work in the headless Core without GUI linkage.
+nereus_add_test(tst_auto_agc_floor_reference CORE_ONLY)
 nereus_add_test(tst_auto_agc_fft_epoch)
 nereus_add_test(tst_desktop_core_auto_agc_floor)
 nereus_add_test(tst_remote_receive_indicators)
@@ -1776,7 +1777,8 @@ nereus_add_test(tst_slice_persistence_per_band)
 # without a Core, receivers B to D come back at connect like A.
 # Source: NereusSDR-original tests.
 nereus_add_test(tst_slice_settings_restore EXTRA_LABELS models)
-nereus_add_test(tst_radio_slice_settings_restore EXTRA_LABELS models core)
+# Station slice persistence and AUTO writes are headless Core behavior.
+nereus_add_test(tst_radio_slice_settings_restore CORE_ONLY EXTRA_LABELS models core)
 # 2026-10-29: authenticated fresh-device placement uses the shared loopback harness.
 nereus_add_test(tst_standalone_slice_restore fakes/LoopbackTransport.cpp EXTRA_LABELS models gui)
 nereus_add_test(tst_session_end_save EXTRA_LABELS gui)
@@ -8969,7 +8971,8 @@ if(WDSP_FOUND)
     endif()
 endif()
 
-nereus_add_test(tst_connectable_radio_model
+# The fake connected-radio harness exercises Core models and DSP without GUI linkage.
+nereus_add_test(tst_connectable_radio_model CORE_ONLY
     fakes/P1FakeRadio.cpp
     fakes/ConnectableRadioModel.cpp)
 target_compile_definitions(tst_connectable_radio_model PRIVATE NEREUS_BUILD_TESTS)

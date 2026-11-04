@@ -243,9 +243,7 @@ private slots:
             noise.append((static_cast<float>((state >> 8) & 0xffffU) / 32767.5f - 1.0f) * 0.20f);
         }
         for (int frame = 0; frame < 90 && !b->stationAutoAgcNoiseFloorValid(); ++frame) {
-            QVERIFY(QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
-                                              Q_ARG(int, b->streamIndex()),
-                                              Q_ARG(QVector<float>, noise)));
+            radio.forkIqToTapsForTest(b->streamIndex(), noise);
             QTest::qWait(35);
         }
         QVERIFY(b->stationAutoAgcNoiseFloorValid());
