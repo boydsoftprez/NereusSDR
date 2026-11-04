@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - Right-click on the AUTO button, on this panel and on an
+//                 RX AGC copy, opens Setup on the AGC/ALC page. The slider
+//                 already did. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-26 - The dynamic shows and hides of a copy's antenna buttons,
 //                 preamp check box and AGC info line go through the copy's
 //                 parts, so a container copy that hides one keeps it
@@ -1273,8 +1276,11 @@ void RxApplet::buildUi()
         m_agcAutoLabel->setFixedWidth(30);
         new AutoBadgeFit(m_agcAutoLabel);
         m_agcAutoLabel->setCursor(Qt::PointingHandCursor);
-        // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip
-        m_agcAutoLabel->setToolTip(QStringLiteral("Automatically adjust AGC based on Noise Floor"));
+        // From Thetis v2.10.3.13 setup.designer.cs:38679 — chkAutoAGCRX1.ToolTip.
+        // The second line is NereusSDR: right-click opens Setup → DSP → AGC/ALC.
+        m_agcAutoLabel->setToolTip(QStringLiteral(
+            "Automatically adjust AGC based on Noise Floor.\n"
+            "Right-click to open the AGC/ALC setup page."));
         connect(m_agcAutoLabel, &QPushButton::clicked, this, [this]() {
             if (isListening()) { return; }  // Task 15: another device controls it
             // The slice the applet shows, as every other control here. The
@@ -1283,6 +1289,13 @@ void RxApplet::buildUi()
             const bool on = m_slice ? !m_slice->autoAgcEnabled() : !m_autoAgcActive;
             if (m_slice) { m_slice->setAutoAgcEnabled(on); }
             emit autoAgcToggled(on);
+        });
+        // Right-click opens Setup. QAbstractButton ignores a non-left press,
+        // so this does not also toggle AUTO. Same hop as the slider below.
+        m_agcAutoLabel->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(m_agcAutoLabel, &QWidget::customContextMenuRequested,
+                this, [this](const QPoint&) {
+            emit openSetupRequested();
         });
         headerRow->addWidget(m_agcAutoLabel);
 
@@ -2840,10 +2853,13 @@ void RxApplet::wireAgcSection(RxAgcSection* section)
         if (m_slice) { m_slice->setAutoAgcEnabled(on); }
         emit autoAgcToggled(on);
     });
+    // Right-click the threshold or AUTO. A non-left press does not toggle
+    // the checkable AUTO button (QAbstractButton ignores it).
+    const auto openAgcSetup = [this](const QPoint&) { emit openSetupRequested(); };
     section->slider()->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(section->slider(), &QWidget::customContextMenuRequested, this, [this](const QPoint&) {
-        emit openSetupRequested();
-    });
+    connect(section->slider(), &QWidget::customContextMenuRequested, this, openAgcSetup);
+    section->autoButton()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(section->autoButton(), &QWidget::customContextMenuRequested, this, openAgcSetup);
 }
 
 void RxApplet::wireRitSection(RxRitSection* section)
