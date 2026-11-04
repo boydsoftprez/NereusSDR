@@ -50,8 +50,8 @@ this branch, and fixes the defects its review found.
 ### The card
 
 * **D10. Contents, top to bottom.** A 3 px rail in the state's color, striped for a double. A head
-  line with the state glyph, the name (or "Double", "Unknown", "You · on the air"), a clock while
-  on the air, and the frequency. For a double, each keyed station on its own line or side by side
+  line with the state glyph, the name (or "Double", "Unknown", "You · on the air"), a clock on a
+  double's head, and the frequency. For a double, each keyed station on its own line or side by side
   when two fit. A caption: "Heard by", "Hearing you", "Combined RF" or "Last heard 6s ago", with
   the signal format at the right when the card is wide enough. Then one row per listener, nearest
   first.

@@ -4582,6 +4582,12 @@ private:
     QList<RoundtableTag> m_roundtableTags;
     // The tags as the pan draws them: one per double (roundtableMergeDoubleTags).
     QList<RoundtableTag> m_roundtablePanTags;
+    // Tag widths, measured once per tag text and font (measureRoundtableTags).
+    void measureRoundtableTags(const QFont& labelFont, const QFont& countFont, const QPaintDevice* device);
+    QHash<QString, int> m_roundtableTagWidths;
+    QFont m_roundtableTagMeasuredFont;
+    int m_roundtableFoldWidth{0};
+    bool m_roundtableTagsMeasured{false};
     RoundtableCardModel m_roundtableCard;
     QString m_roundtableCardRoom;
     QString m_roundtableCardFormat;

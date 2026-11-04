@@ -12675,6 +12675,7 @@ constexpr int kRoundtableTagInnerGap = 5;     // glyph to text
 constexpr qreal kRoundtableGlyphSize = 9.0;
 constexpr int kRoundtableFoldStackStep = 6;   // stacked glyphs overlap 3 px
 constexpr int kRoundtableFoldStackMax = 3;
+constexpr int kRoundtableTagWidthCacheMax = 512;
 
 bool roundtableTagsEqual(const QList<RoundtableTag>& a, const QList<RoundtableTag>& b)
 {
@@ -12767,9 +12768,57 @@ void SpectrumWidget::setRoundtableTags(const QList<RoundtableTag>& tags, Roundta
     }
     m_roundtableTags = tags;
     m_roundtablePanTags = roundtableMergeDoubleTags(tags);
+    m_roundtableTagsMeasured = false;
     m_roundtableTagDisplay = display;
     // The child repaints the tags. The spectrum frame is left alone.
     refreshRoundtableTagLayer();
+}
+
+// Each tag is as wide as its own text (D20), within the bound. A paint with
+// nothing new measures nothing; new tags measure only text not yet seen.
+void SpectrumWidget::measureRoundtableTags(const QFont& labelFont, const QFont& countFont, const QPaintDevice* device)
+{
+    const bool fontChanged = labelFont != m_roundtableTagMeasuredFont;
+    if (m_roundtableTagsMeasured && !fontChanged) {
+        return;
+    }
+    if (fontChanged || m_roundtableTagWidths.size() > kRoundtableTagWidthCacheMax) {
+        m_roundtableTagWidths.clear();
+    }
+    m_roundtableTagMeasuredFont = labelFont;
+    const QFontMetrics labelMetrics(labelFont, device);
+    const QFontMetrics countMetrics(countFont, device);
+    const int fixed = 2 + kRoundtableTagPadLeft + static_cast<int>(kRoundtableGlyphSize)
+        + kRoundtableTagInnerGap + kRoundtableTagPadRight;
+    for (RoundtableTag& tag : m_roundtablePanTags) {
+        const QString count = roundtableTagCountText(tag);
+        const int names = roundtableTagNameLines(tag);
+        QString key = tag.label + QChar(0x1f) + count;
+        for (int k = 0; k < names; ++k) {
+            key += QChar(0x1f) + tag.keyed.at(k);
+        }
+        auto found = m_roundtableTagWidths.constFind(key);
+        if (found == m_roundtableTagWidths.constEnd()) {
+            // 2 px over: advances round, and a name must not elide at its own width.
+            int width = fixed + labelMetrics.horizontalAdvance(tag.label) + 2;
+            if (names == 0 && !count.isEmpty()) {
+                width += labelMetrics.horizontalAdvance(QLatin1Char(' ')) + countMetrics.horizontalAdvance(count);
+            }
+            for (int k = 0; k < names; ++k) {
+                width = std::max(width, 2 + kRoundtableTagPadLeft + kRoundtableTagNameIndent
+                                            + labelMetrics.horizontalAdvance(tag.keyed.at(k))
+                                            + kRoundtableTagPadRight + 2);
+            }
+            found = m_roundtableTagWidths.insert(key, std::min(width, kRoundtableTagMaxWidth));
+        }
+        tag.width = found.value();
+    }
+    // A fold: its stacked glyphs and a two digit +N.
+    const int stack = 1 + 5 + static_cast<int>(kRoundtableGlyphSize)
+        + (kRoundtableFoldStackMax - 1) * kRoundtableFoldStackStep + 4;
+    m_roundtableFoldWidth = std::max(kRoundtableTagMinWidth, stack + labelMetrics.horizontalAdvance(QStringLiteral("+99"))
+                                                                 + kRoundtableTagPadRight + 1);
+    m_roundtableTagsMeasured = true;
 }
 
 void SpectrumWidget::setRoundtableCard(const RoundtableCardModel& card, const QString& roomId)
@@ -12878,6 +12927,10 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         }
         return false;
     };
+    const QFont labelFont = roundtableTagFont(p.device(), 11, QFont::Bold);
+    const QFont countFont = roundtableTagFont(p.device(), 11, QFont::DemiBold);
+    measureRoundtableTags(labelFont, countFont, p.device());
+
     QList<RoundtableTag> shown;
     shown.reserve(m_roundtablePanTags.size());
     for (const RoundtableTag& tag : std::as_const(m_roundtablePanTags)) {
@@ -12887,30 +12940,15 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         shown.append(tag);
     }
 
-    const QFont labelFont = roundtableTagFont(p.device(), 11, QFont::Bold);
-    const QFont countFont = roundtableTagFont(p.device(), 11, QFont::DemiBold);
     const QFontMetrics labelMetrics(labelFont, p.device());
     const QFontMetrics countMetrics(countFont, p.device());
     const int space = labelMetrics.horizontalAdvance(QLatin1Char(' '));
-    const int fixed = 2 + kRoundtableTagPadLeft + static_cast<int>(kRoundtableGlyphSize)
-        + kRoundtableTagInnerGap + kRoundtableTagPadRight;
 
-    // One width for every tag and fold: the widest tag's, within bounds; a
-    // longer label is cut short. The row is as tall as the tallest double.
-    int natural = kRoundtableTagMinWidth;
+    // The row is as tall as the tallest double.
     int stackHeight = kRoundtableTagHeight;
     for (const RoundtableTag& tag : std::as_const(shown)) {
-        // 2 px over: advances round, and a name must not elide at its own width.
-        natural = std::max(natural, fixed + labelMetrics.horizontalAdvance(tag.label) + space
-                                        + countMetrics.horizontalAdvance(roundtableTagCountText(tag)) + 2);
-        const int names = roundtableTagNameLines(tag);
-        for (int k = 0; k < names; ++k) {
-            natural = std::max(natural, 2 + kRoundtableTagPadLeft + kRoundtableTagNameIndent
-                                            + labelMetrics.horizontalAdvance(tag.keyed.at(k)) + kRoundtableTagPadRight);
-        }
-        stackHeight = std::max(stackHeight, kRoundtableTagHeight + names * kRoundtableTagNameLine);
+        stackHeight = std::max(stackHeight, kRoundtableTagHeight + roundtableTagNameLines(tag) * kRoundtableTagNameLine);
     }
-    const int tagWidth = std::min(natural, kRoundtableTagMaxWidth);
 
     // Tags keep clear of what is over their row, and of the card.
     const QRect row(specRect.left(), top + kRoundtableTagHeight - stackHeight, specRect.width(), stackHeight);
@@ -12931,7 +12969,7 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
     const double hzPerPixel = m_bandwidthHz / specRect.width();
     const QList<RoundtableTagPlacement> placements = layoutRoundtableTags(
-        shown, hzPerPixel, static_cast<qint64>(std::llround(lowHz)), specRect.width(), tagWidth,
+        shown, hzPerPixel, static_cast<qint64>(std::llround(lowHz)), specRect.width(), m_roundtableFoldWidth,
         kRoundtableTagGap, keepOut);
 
     QHash<QString, const RoundtableTag*> byId;
@@ -12959,7 +12997,8 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         const int names = !placement.folded && first ? roundtableTagNameLines(*first) : 0;
         const int bodyHeight = kRoundtableTagHeight + names * kRoundtableTagNameLine;
         const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())),
-                         top + kRoundtableTagHeight - bodyHeight, tagWidth, bodyHeight);
+                         top + kRoundtableTagHeight - bodyHeight, static_cast<int>(std::lround(placement.rect.width())),
+                         bodyHeight);
         if (rect.top() < specRect.top()) { continue; }
         m_roundtableTagHits.append(RoundtableTagHit{rect, placement.roomIds, placement.folded,
                                                     RoundtableTagHit::Kind::Tag, first ? first->hz : 0});
@@ -13038,9 +13077,10 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         paintRoundtableGlyph(p, QPointF(glyphX, midY), kRoundtableGlyphSize, first->state, stale, dimmed);
         const int textLeft = static_cast<int>(glyphX + kRoundtableGlyphSize / 2.0) + kRoundtableTagInnerGap;
         const int textRight = rect.right() - kRoundtableTagPadRight;
-        const QString members = roundtableTagCountText(*first);
+        // A double with names has no count beside the word.
+        const QString members = names > 0 ? QString() : roundtableTagCountText(*first);
         const int countWidth = countMetrics.horizontalAdvance(members);
-        const int labelRoom = std::max(0, textRight - textLeft - space - countWidth);
+        const int labelRoom = std::max(0, textRight - textLeft - (members.isEmpty() ? 0 : space + countWidth));
         const QString label = labelMetrics.elidedText(first->label, Qt::ElideRight, labelRoom);
         p.setFont(labelFont);
         p.setPen(isDouble && !stale ? QColor(0xe0, 0x6c, 0x6e) : text);

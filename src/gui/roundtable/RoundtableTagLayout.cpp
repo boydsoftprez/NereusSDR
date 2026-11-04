@@ -86,6 +86,7 @@ struct Visible {
     QString roomId;
     bool pinned = false;  // mine, active or mentionsMe: never folds
     bool active = false;
+    double width = 0.0;
 };
 
 // A tag or a fold, centered on x.
@@ -93,38 +94,45 @@ struct Item {
     double x = 0.0;
     QStringList roomIds;
     bool folded = false;
+    double width = 0.0;
 };
 
-// Whether a group's tags can sit side by side, each no further than one
-// tag's width from its own frequency. With the tags `step` apart, tag k
-// sits at start + k * step; the best start puts the largest move as small
-// as it can be, half the spread of x_k - k * step.
-bool slidesApart(const QList<Visible>& visible, const QList<int>& group, double step,
-                 double tagWidth)
+// Whether a group's tags can sit side by side, each no further than the
+// group's widest tag from its own frequency. Side by side, tag k's center sits
+// at start + c_k, c_k being the widths and gaps before it; the best start puts
+// the largest move as small as it can be, half the spread of x_k - c_k.
+bool slidesApart(const QList<Visible>& visible, const QList<int>& group, double gap)
 {
     double lowest = 0.0;
     double highest = 0.0;
+    double center = 0.0;
+    double widest = 0.0;
     for (int k = 0; k < group.size(); ++k) {
-        const double offset = visible.at(group.at(k)).x - k * step;
+        const Visible& tag = visible.at(group.at(k));
+        if (k > 0) {
+            center += (visible.at(group.at(k - 1)).width + tag.width) / 2.0 + gap;
+        }
+        const double offset = tag.x - center;
         lowest = k == 0 ? offset : std::min(lowest, offset);
         highest = k == 0 ? offset : std::max(highest, offset);
+        widest = std::max(widest, tag.width);
     }
-    return (highest - lowest) / 2.0 <= tagWidth;
+    return (highest - lowest) / 2.0 <= widest;
 }
 
 // Tags that would overlap their neighbor share a group, which reaches
 // `reach` pixels at most. A group whose unpinned tags number two or more
 // folds them when they cannot move aside, or always when `forceFold`.
-QList<Item> groupTags(const QList<Visible>& visible, double tagWidth, double gap, double reach,
+QList<Item> groupTags(const QList<Visible>& visible, double foldWidth, double gap, double reach,
                       bool forceFold)
 {
-    const double step = tagWidth + gap;
     QList<QList<int>> groups;
     for (int i = 0; i < visible.size(); ++i) {
         if (!groups.isEmpty()) {
             const QList<int>& group = groups.last();
             const double fromLast = visible.at(i).x - visible.at(group.last()).x;
             const double fromFirst = visible.at(i).x - visible.at(group.first()).x;
+            const double step = (visible.at(group.last()).width + visible.at(i).width) / 2.0 + gap;
             if (fromLast < step && fromFirst < reach) {
                 groups.last().append(i);
                 continue;
@@ -142,15 +150,17 @@ QList<Item> groupTags(const QList<Visible>& visible, double tagWidth, double gap
             }
         }
         const bool fold = unpinned.size() >= 2
-            && (forceFold || !slidesApart(visible, group, step, tagWidth));
+            && (forceFold || !slidesApart(visible, group, gap));
         for (int index : group) {
             if (!fold || visible.at(index).pinned) {
-                items.append(Item{visible.at(index).x, QStringList{visible.at(index).roomId}, false});
+                items.append(Item{visible.at(index).x, QStringList{visible.at(index).roomId}, false,
+                                  visible.at(index).width});
             }
         }
         if (fold) {
             Item folded;
             folded.folded = true;
+            folded.width = foldWidth;
             double sum = 0.0;
             for (int index : unpinned) {
                 sum += visible.at(index).x;
@@ -169,21 +179,19 @@ QList<Item> groupTags(const QList<Visible>& visible, double tagWidth, double gap
 struct Stretch {
     double left = 0.0;
     double right = 0.0;
-    int capacity = 0;
 };
 
 // The pan less the keep-out stretches, each side `gap` from an edge or a
-// keep-out, with how many tags each holds.
-QList<Stretch> stretchesOf(double width, double tagWidth, double gap, QList<RoundtableKeepOut> keepOut)
+// keep-out.
+QList<Stretch> stretchesOf(double width, double gap, QList<RoundtableKeepOut> keepOut)
 {
     std::sort(keepOut.begin(), keepOut.end(),
               [](const RoundtableKeepOut& a, const RoundtableKeepOut& b) { return a.left < b.left; });
     QList<Stretch> out;
     double left = gap;
     const auto close = [&](double right) {
-        if (right - left >= tagWidth) {
-            const int capacity = static_cast<int>(std::floor((right - left + gap) / (tagWidth + gap)));
-            out.append(Stretch{left, right, capacity});
+        if (right > left) {
+            out.append(Stretch{left, right});
         }
     };
     for (const RoundtableKeepOut& block : keepOut) {
@@ -197,22 +205,39 @@ QList<Stretch> stretchesOf(double width, double tagWidth, double gap, QList<Roun
     return out;
 }
 
-int capacityOf(const QList<Stretch>& stretches)
+// How many of `items`, in order, the stretches hold side by side. An item that
+// finds no room is passed over, and the next may still fit.
+qsizetype itemsThatFit(const QList<Item>& items, const QList<Stretch>& stretches, double gap)
 {
-    int total = 0;
-    for (const Stretch& stretch : stretches) {
-        total += stretch.capacity;
+    qsizetype placed = 0;
+    qsizetype current = 0;
+    double used = 0.0;  // of the current stretch, with a gap after each tag in it
+    for (const Item& item : items) {
+        qsizetype s = current;
+        double taken = used;
+        while (s < stretches.size() && taken + item.width > stretches.at(s).right - stretches.at(s).left) {
+            ++s;
+            taken = 0.0;
+        }
+        if (s < stretches.size()) {
+            current = s;
+            used = taken + item.width + gap;
+            ++placed;
+        }
     }
-    return total;
+    return placed;
 }
 
-// The stretch nearest x.
-qsizetype nearestStretch(const QList<Stretch>& stretches, double x)
+// The stretch nearest x that is wide enough for `width`; -1 when none is.
+qsizetype nearestStretch(const QList<Stretch>& stretches, double x, double width)
 {
-    qsizetype best = 0;
+    qsizetype best = -1;
     double bestDistance = -1.0;
     for (qsizetype k = 0; k < stretches.size(); ++k) {
         const Stretch& stretch = stretches.at(k);
+        if (stretch.right - stretch.left < width) {
+            continue;
+        }
         const double distance = x < stretch.left ? stretch.left - x : x > stretch.right ? x - stretch.right : 0.0;
         if (bestDistance < 0.0 || distance < bestDistance) {
             best = k;
@@ -755,27 +780,37 @@ QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& t
         if (x < 0.0 || x > width) {
             continue;
         }
-        visible.append(Visible{x, tag.hz, tag.roomId, tag.mine || tag.active || tag.mentionsMe, tag.active});
+        visible.append(Visible{x, tag.hz, tag.roomId, tag.mine || tag.active || tag.mentionsMe, tag.active,
+                               tag.width > 0.0 ? tag.width : tagWidth});
     }
     std::stable_sort(visible.begin(), visible.end(), [](const Visible& a, const Visible& b) {
         return a.hz != b.hz ? a.hz < b.hz : a.roomId < b.roomId;
     });
 
-    const QList<Stretch> stretches = stretchesOf(width, tagWidth, gap, keepOut);
-    const int capacity = capacityOf(stretches);
-    if (capacity <= 0) {
+    const QList<Stretch> stretches = stretchesOf(width, gap, keepOut);
+    if (stretches.isEmpty()) {
         return out;
     }
+    // A tag wider than every stretch has no clear spot, and is left off.
+    double roomiest = 0.0;
+    for (const Stretch& stretch : stretches) {
+        roomiest = std::max(roomiest, stretch.right - stretch.left);
+    }
+    visible.removeIf([roomiest](const Visible& tag) { return tag.width > roomiest; });
 
     // First only the groups that cannot move aside fold. If the tags still
     // don't fit across the pan, every overlapping group folds, and then the
     // groups reach further each round until they fit or span the pan.
-    double reach = tagWidth + gap;
+    double widest = tagWidth;
+    for (const Visible& tag : std::as_const(visible)) {
+        widest = std::max(widest, tag.width);
+    }
+    double reach = widest + gap;
     bool forceFold = false;
     QList<Item> items;
     for (;;) {
         items = groupTags(visible, tagWidth, gap, reach, forceFold);
-        if (items.size() <= capacity || reach > width) {
+        if (itemsThatFit(items, stretches, gap) == items.size() || reach > width) {
             break;
         }
         if (!forceFold) {
@@ -793,7 +828,7 @@ QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& t
             return tag.pinned && item.roomIds.contains(tag.roomId);
         });
     };
-    while (items.size() > capacity) {
+    while (itemsThatFit(items, stretches, gap) < items.size()) {
         auto removable = std::find_if(items.rbegin(), items.rend(), [&](const Item& item) { return !pinned(item); });
         if (removable == items.rend()) {
             removable = std::find_if(items.rbegin(), items.rend(), [&](const Item& item) {
@@ -811,16 +846,24 @@ QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& t
     // Tags that find no room are left out (only when even the widest folds
     // do not fit, a narrow pan).
     QList<QList<qsizetype>> byStretch(stretches.size());
+    QList<double> used(stretches.size(), 0.0);
     qsizetype current = 0;
     for (qsizetype k = 0; k < items.size(); ++k) {
-        qsizetype target = std::max(nearestStretch(stretches, items.at(k).x), current);
-        while (target < stretches.size() && byStretch.at(target).size() >= stretches.at(target).capacity) {
+        const double itemWidth = items.at(k).width;
+        const qsizetype nearest = nearestStretch(stretches, items.at(k).x, itemWidth);
+        if (nearest < 0) {
+            continue;
+        }
+        qsizetype target = std::max(nearest, current);
+        while (target < stretches.size()
+               && used.at(target) + itemWidth > stretches.at(target).right - stretches.at(target).left) {
             ++target;
         }
         if (target >= stretches.size()) {
-            break;
+            continue;
         }
         byStretch[target].append(k);
+        used[target] += itemWidth + gap;
         current = target;
     }
 
@@ -833,18 +876,18 @@ QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& t
         QList<double> lefts;
         double edge = stretches.at(s).left;
         for (qsizetype k : members) {
-            const double left = std::max(items.at(k).x - tagWidth / 2.0, edge);
+            const double left = std::max(items.at(k).x - items.at(k).width / 2.0, edge);
             lefts.append(left);
-            edge = left + tagWidth + gap;
+            edge = left + items.at(k).width + gap;
         }
         edge = stretches.at(s).right;
         for (qsizetype m = members.size() - 1; m >= 0; --m) {
-            lefts[m] = std::min(lefts.at(m), edge - tagWidth);
+            lefts[m] = std::min(lefts.at(m), edge - items.at(members.at(m)).width);
             edge = lefts.at(m) - gap;
         }
         for (qsizetype m = 0; m < members.size(); ++m) {
             const Item& item = items.at(members.at(m));
-            out.append(RoundtableTagPlacement{QRectF(lefts.at(m), 0.0, tagWidth, 0.0), item.roomIds,
+            out.append(RoundtableTagPlacement{QRectF(lefts.at(m), 0.0, item.width, 0.0), item.roomIds,
                                               item.folded});
         }
     }
@@ -1063,6 +1106,11 @@ QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* model, const QList
             tag.active = tag.roomId == activeContext;
             if (tag.active) {
                 tag.reportLines = roundtableTagReportLines(tag, view, RoundtableModel::nowMs());
+                // A dropped link never claims to be live (D7), in the text too.
+                if (roundtableTagDisplayFor(model) == RoundtableTagDisplay::Frozen && !tag.reportLines.isEmpty()
+                    && tag.reportLines.first().startsWith(QLatin1String("Talking: "))) {
+                    tag.reportLines[0].replace(0, 9, QStringLiteral("Last known: "));
+                }
                 // What the tag says comes from the card, never from the text.
                 const RoundtableCardModel card = roundtableCardModelFor(model, sliceIds, tag.roomId,
                                                                         static_cast<quint64>(tag.hz), nullptr);
@@ -1827,9 +1875,10 @@ void paintRoundtableCard(QPainter& p, const RoundtableCardModel& card, const Rou
         const int textLeft = bodyLeft + static_cast<int>(kCardGlyphSize) + kCardTextGap;
         const QString frequency = roundtableFrequencyText(static_cast<qint64>(card.hz));
         const int frequencyWidth = clockMetrics.horizontalAdvance(frequency);
-        const bool live = !cardIsLast(card) && card.clockMs > 0;
-        const QString clock = live ? clockText(card.clockMs) : QString();
-        const int clockWidth = live ? clockMetrics.horizontalAdvance(clock) + kCardTextGap : 0;
+        // The clock is on a double's head only (D10).
+        const bool hasClock = card.kind == Kind::Double && card.clockMs > 0;
+        const QString clock = hasClock ? clockText(card.clockMs) : QString();
+        const int clockWidth = hasClock ? clockMetrics.horizontalAdvance(clock) + kCardTextGap : 0;
         const int room = std::max(0, bodyRight - textLeft - frequencyWidth - clockWidth - kCardTextGap);
         const QString who = whoMetrics.elidedText(cardHeadText(card), Qt::ElideRight, room);
         QColor whoColor = kColorText;
@@ -1846,7 +1895,7 @@ void paintRoundtableCard(QPainter& p, const RoundtableCardModel& card, const Rou
         p.setPen(whoColor);
         p.drawText(QRect(textLeft, y, room, h), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, who);
         p.setFont(clockFont);
-        if (live) {
+        if (hasClock) {
             p.setPen(kColorDim);
             p.drawText(QRect(textLeft + whoMetrics.horizontalAdvance(who) + kCardTextGap, y, clockWidth, h),
                        Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, clock);

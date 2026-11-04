@@ -108,6 +108,7 @@ struct RoundtableTag {
     QStringList keyed;       // who is on the air here; a Double lists each current participant
     QStringList reportLines; // the active frequency's report, as plain text
     QList<qint64> mergedHz;  // other exact frequencies roundtableMergeDoubleTags folded into this tag
+    double width = 0.0;      // how wide it draws, to its own text; 0 takes the layout's tagWidth
 };
 
 /// The shared Roundtable panel/tag S-unit conversion.
@@ -137,8 +138,9 @@ struct RoundtableTagPlacement {
 };
 
 /// Lays `tags` out across a pan `width` pixels wide whose left edge is
-/// `leftHz`, at `hzPerPixel`. Every tag and fold is `tagWidth` wide, with
-/// at least `gap` between neighbors and from either edge. Tags whose
+/// `leftHz`, at `hzPerPixel`. Each tag is its own `width` wide, or `tagWidth`
+/// when that is 0; a fold is `tagWidth` wide. At least `gap` lies between
+/// neighbors and from either edge. Tags whose
 /// frequency is off the pan are left out. The placements are in order of
 /// frequency.
 NEREUS_GUI_EXPORT QList<RoundtableTagPlacement> layoutRoundtableTags(const QList<RoundtableTag>& tags,
