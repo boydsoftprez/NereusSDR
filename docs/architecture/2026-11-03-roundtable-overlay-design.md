@@ -1,0 +1,213 @@
+# Roundtable overlay redesign
+
+Status: approved by JJ on the interactive board, 2026-11-03. Implementation plan:
+[2026-11-03-roundtable-overlay-plan.md](2026-11-03-roundtable-overlay-plan.md).
+
+The board is the reference for every look and behaviour here. Open
+[board.html](2026-11-03-roundtable-overlay/board.html); its sources sit beside it (`overlay.js`,
+`overlay.css`, `web.css`, `sections.html`, `make_board.py`). Where this document and the board
+disagree, the board's Proposal look wins for appearance and this document wins for behaviour.
+
+## Goal
+
+Make the live overlay say who is on a frequency and how each listener hears them, truthfully and
+at a glance, on the desktop, iPhone, iPad and the public web page. A double is unmistakable.
+Anyone can look at another frequency without moving their radio.
+
+The work starts from Codex's live frequency reports, committed unchanged as the first commit of
+this branch, and fixes the defects its review found.
+
+## Decisions
+
+### Truth rules, shared by every client
+
+* **D1. What a double is.** A frequency is a Double only when its open turn is `doubled`, or, for
+  a frequency known only from the directory, when two or more keyed stations share one
+  `sourceRoom`. Two keyed stations that merely sit within 5 kHz of each other in different source
+  rooms are not a Double.
+* **D2. Readings during a double are combined RF.** They are never credited to a transmitter.
+  Distance and bearing are blank. Transmitters never appear among the listeners.
+* **D3. Choosing the turn to show.** Use the exact-Hz turn if there is one, otherwise the nearest
+  live turn within ±5 kHz in the same family, and on a tie the one that started most recently.
+  This is what the web page does today, so returning to the remaining talker after a double works
+  everywhere. Readings still belong to the turn the server attached them to.
+* **D4. After a double.** The remaining talker's new turn starts with no readings; they arrive one
+  by one. Combined readings never carry over. The line "Double ended 3s ago" shows for 8 seconds.
+* **D5. Departed participants.** While a double is live, a participant who has gone is dropped.
+  An ended double keeps every name, as history.
+* **D6. A live talker is never captioned as past.** "Last talker" appears only when no turn is
+  open.
+* **D7. A dropped link never claims to be live.** Reconnecting and Offline freeze the card: no live
+  colors, no rail stripes moving, no peak tick, meters grey, ages keep counting, and the caption
+  reads "Last known". Reconnecting shows its amber note, Offline shows "Offline since HH:MM UTC".
+  Hidden dims the card and says "You are hidden". Tags follow the same rule.
+* **D8. One word.** "Double" everywhere a current double is named; "Last double" for an ended one.
+  These go away: "Doubled", "DOUBLED", "TWO AT ONCE", "LAST OVERLAP", "Last overlap". The legend
+  entry on the web page becomes "double". "Combined RF" stays.
+* **D9. Present listeners only.** A reading row needs `present: true`. All three clients filter
+  this; the web page does not today.
+
+### The card
+
+* **D10. Contents, top to bottom.** A 3 px rail in the state's color, striped for a double. A head
+  line with the state glyph, the name (or "Double", "Unknown", "You · on the air"), a clock while
+  on the air, and the frequency. For a double, each keyed station on its own line or side by side
+  when two fit. A caption: "Heard by", "Hearing you", "Combined RF" or "Last heard 6s ago", with
+  the signal format at the right when the card is wide enough. Then one row per listener, nearest
+  first.
+* **D11. A reading row.** Call, signal in the chosen format, age, and beneath them a 3 px meter.
+  This replaces the inline text-only table. The meter runs on the flag's S scale,
+  `fraction = clamp((dbm + 121) / 88, 0, 1)`, with division marks at 13.6, 27.3, 40.9, 54.5 and
+  77.3 percent. Color follows state: talking green, you cyan, unknown amber, a double striped red
+  (`#e06c6e` on `#5d2c2e`), your own row striped cyan in a double. A 1 px white peak tick marks the
+  listener's held peak.
+* **D12. Peak hold.** Client side, per source room, listener and turn. It rises at once, falls
+  2 dB per second, and resets on a new turn. It is not on the wire and is not sent anywhere.
+* **D13. Old readings.** Past 20 seconds a row greys, its age turns amber and its tick goes.
+* **D14. Movement.** Values, meters, ages and the clock update in place, without rebuilding the
+  card, so nothing shifts or flickers.
+* **D15. Colors.** Talking `#4caf6a`, unknown `#d8a55f`, double `#c25a5c` with text `#e06c6e`, you
+  `#00d4ff`, quiet `#7e7e85`, card fill `rgba(10,10,12,0.92)`, rule `#2a2a2e`, dim text `#a6a6ac`.
+  Nobody talking draws no card, only the compact tag.
+
+### Placement
+
+* **D16. Desktop.** Card 232 wide, anchored to the foot of the spectrum, on the far side of the
+  active slice's flag, away from the stations around the dial. Left of about 57% of the pan's width
+  the flag is to the right of the dial and the card sits past it. In the next 18% or so there is no
+  room past the flag, and the card comes back beside the dial on the near side. On the last 25% or
+  so the flag flips left and the card sits past it on the left. A dashed tick joins the card to
+  the dial. Other slices' flags and the pan's own controls are keep-outs.
+* **D17. iPhone.** Card 176 wide under the flag when the pan is tall enough. Otherwise it goes in
+  the strip beside the flag, down to about 104 wide. Below 122 wide the row drops its age column
+  and the head drops the frequency, which the flag already says. Below 150 wide the signal shows S
+  units when the format is Both.
+* **D18. iPad.** Card 232 wide under the flag, starting at the dial so it stays off a lower-sideband
+  signal, clamped to the pan. Portrait uses the same rules with the width it has; JJ chose not to
+  review that layout first, so it is checked on a device.
+* **D19. Short pans.** Rows give way first, with "+N more ›". The Double head and the keyed names
+  are the last things to go.
+* **D20. Other frequencies' tags.** Along the foot, clear of the card and flags, at the nearest free
+  spot, and left off when there is none. A double is red, with a striped top edge, the word Double
+  and up to two names. A talker is green with its name and "+N". Quiet is grey with a name and
+  "+N". One double spanning several exact frequencies in one source room is one tag. A frequency a
+  flag already speaks for has no tag.
+
+### Looking without tuning
+
+* **D21. Clicking or tapping a tag views that frequency. It never tunes.** This supersedes the
+  earlier rule that a tag tunes. Clicking the band itself still tunes, as always. Legacy servers
+  that cannot read another frequency keep today's behaviour.
+* **D22. What the view shows.** Head with state, clock and frequency. "Viewing, not tuned · −11.4 kHz
+  from slice A · LSB". "On frequency · N": each station with its glyph, "keyed" when keyed, and its
+  offset from the viewed frequency (`member.hz − viewed hz`), or "on freq" at zero. Then the
+  readings as D11, adding distance and bearing unless D2 blanks them. A "Your pan" row is first when
+  someone is on the air. Then **Tune slice A here**, disabled while you are keyed and when already
+  there. Messages are read only until tuned, and only the viewed frequency's.
+* **D23. Your pan.** The peak on this client's own pan in the family's sideband window, 2.7 kHz
+  wide, on the sideband side of the viewed frequency. Blank when off the pan, before the first
+  frame, or while transmitting. Calibration matches what the trace draws. Sampled about five times
+  a second while a view is open, never per frame, and it adds no thread and no DSP.
+* **D24. Where the view opens.** Desktop: a floating panel under the tag, 300 wide, with a close
+  button. Escape, a click on the band, or tuning closes it. A Messages button opens the Roundtable
+  applet in its read view, with Back to my slice. iPhone: the bottom sheet. iPad: inside the
+  Roundtable applet in the column, with no pop-up, and a popover over the pan when the column is
+  hidden. Web: the room pane, which already browses without touching a radio, so it has no Tune
+  button.
+* **D25. Clicking your own card** opens a menu: Read reports, Signal, with its current format and
+  a press to change it, and Tune slice A here (disabled while keyed). iPhone and iPad use an action
+  sheet with the same three plus Cancel.
+* **D26. Another slice's flag line** views that slice's frequency and leaves the active slice alone.
+  Your own flag line opens your own room.
+* **D27. A refused or lost read** closes the view with the app's usual status message and leaves
+  the slice alone. Tuning anywhere ends viewing.
+
+### iPad applet and Widen
+
+* **D28.** The applet shows the frequency line ("7.236.400 LSB 6 stations"), the live line, a rail,
+  then the same head, On frequency and readings as the view, then Earlier turns, Messages and the
+  message box. Viewing adds Back to my slice at the top.
+* **D29.** Widen keeps its current width and gesture. The left list shows every frequency; a double
+  says Double with its names. A row views that frequency and never tunes. Your own frequency stays
+  highlighted in cyan and the viewed one in the selection blue.
+
+### Web page
+
+* **D30.** A double's frequency group gets a red left edge and a "Double" tag on its label, and its
+  keyed rows get the double glyph and red text. An unknown signal gets an amber "Unknown signal"
+  tag. On the band map a double is red with a striped top and says Double with its names.
+* **D31.** In the room, a rail above the caption, a clock beside "on the air", reading rows as D11
+  with S and dBm on one line, and distance and bearing on one line at full width. At 760 px wide
+  or less the page keeps its four columns (no offset) and stacks distance over bearing.
+* **D32.** "On frequency" shows inside the room only at 760 px wide or less. At full width the list
+  beside the room already says it.
+* **D33.** Activity chips keep their names (`roundtable.js` passes the room). Nothing else on the
+  page changes: bands, search, sort, quiet stations, distance, bearing, signal, tabs, mute, composer.
+
+## Out of scope and unchanged
+
+No server, wire protocol, I/Q, WDSP, audio or transmit change. `frequency.py` and
+`test_frequency.py` stay as they are. No new settings: the signal format, distance units and
+bearing preferences already exist. The Roundtable panel on the desktop keeps its layout and gains
+only the wording (D8) and the keyed gate on Tune (D22). The earlier-turns and messages areas keep
+their behaviour.
+
+## Architecture
+
+Every client derives one structured card from its existing model, so the words and numbers are
+decided in one place per client and the drawing code only draws.
+
+* **Desktop.** `RoundtableTagLayout` gains a structured `RoundtableCardModel` and a pure placement
+  function. `SpectrumWidget` paints the card and tags on both the GPU tag layer and the CPU path,
+  and keeps its rule that tag updates never invalidate the static overlay. The view is a new child
+  widget, `RoundtableFrequencyPeek`, that does not inherit `SpectrumOverlayPanel`, so it never
+  becomes a tag keep-out. It reads through the existing `readAt` path (one reading slot plus the
+  active slot; the active card stays live). Until the stream arrives it shows the directory's
+  stations.
+* **iPhone and iPad.** One SwiftUI layer on both. `RoundtableTagLayer` gains per-item widths and
+  a new `RoundtableMeterBar`; a new `RoundtableFrequencyView` is shared by the sheet, the applet and
+  the popover. `BandCoverage` gains the reverse mapping that Your pan needs.
+* **Web.** `roundtable.js` and `roundtable.css` gain the additions in `web.css`, under the page's
+  existing Content Security Policy and with no `innerHTML`.
+
+Nothing under `src/core/` or `src/models/` may include a GUI header (Rule R1). All colors above are
+constants. No ported code: new files carry `no-port-check: NereusSDR-original.`
+
+## Errors and edge cases
+
+* View of a frequency whose stream has not arrived: stations from the directory, "No readings yet".
+* View while the link drops: D7, "Reconnecting · last known". Tune stays enabled only when the radio
+  connection itself allows tuning.
+* Viewed frequency goes quiet: head says "Nobody talking", the caption says "Last heard 3m ago".
+* Keying while viewing: Tune disables at once; the view stays open.
+* Your slice moves onto the viewed frequency: the view closes and the card takes over.
+* Three or more keyed: the head says "Double · 3" and every name shows while room allows, then
+  "+N keyed".
+* A callsign that does not fit is cut, never overlapped; a row never wraps.
+
+## Acceptance and evidence
+
+| What | Evidence |
+| --- | --- |
+| D1 to D9 truth rules on desktop and iOS | Unit tests on the card model, with the cases named in the plan |
+| D1, D3, D9, D30 to D33 on web | `frequency-unit.js`, `probes.py` with a real double on the test server |
+| D10 to D20 desktop drawing | Offscreen widget tests of placement and hit rects; focused captures looked at, not just generated |
+| No hitch | `tst_spectrum_overlay_dirty` and the 1000-updates, zero-invalidations test stay green |
+| D21 to D27 desktop flow | `tst_roundtable_desktop_flow`: a tag click changes no slice |
+| D17 to D29 iOS | App test suites on a simulator; screenshots on an iPhone and an iPad simulator, looked at |
+| Real radios, a real Core, a real double over the air, iPad portrait | **Pending JJ's hardware.** Not claimed by any automated check |
+
+## Settled from earlier choices
+
+These follow from what JJ chose or have one sensible answer. Each is his to veto.
+
+* Nearest within ±5 kHz replaces the iPhone's exact-frequency rule, including its old note that
+  nearby RF is not evidence. Readings still come from the server's attribution, so nothing is
+  inferred from level.
+* "Last overlap" becomes "Last double" (D8).
+* Your pan is a peak across the sideband window, not one trace bin (D23).
+* Peak tick falls 2 dB a second (D12), matching the board.
+* Far side is measured from the active slice's flag; other flags are keep-outs (D16).
+* Tag viewing also applies to the desktop's other-slice flag line (D26).
+* The Roundtable panel's layout stays (see Out of scope); the board's small read view is the
+  floating panel, and Messages leads to the panel.
