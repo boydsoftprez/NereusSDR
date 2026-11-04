@@ -20,6 +20,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-02: Prioritize active reports and show authoritative combined overlaps.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Overlay redesign truth rules (design D1 to D9), the card data and
+// peak hold, as the desktop's RoundtableTagLayout.cpp.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 import UIKit
@@ -30,7 +33,7 @@ struct RoundtableTag: Equatable {
     /// The room's center.
     var hz: Int64
     var glyph: RoundtableFlagLine.Glyph = .talking
-    /// The talker's callsign, You, Unknown, Doubled or Quiet.
+    /// The talker's callsign, You, Unknown, Double or Quiet.
     var label: String = ""
     var card: RoundtableTagCard? = nil
     var members: Int64 = 0
@@ -47,7 +50,6 @@ struct RoundtableTagCard: Equatable {
 
         var caption: String? {
             switch self {
-            case .known: "Last talker"
             case .doubled: "Combined RF"
             default: nil
             }
@@ -74,15 +76,20 @@ struct RoundtableTagCard: Equatable {
     var participants: [String] = []
     var reports: [Report] = []
     var format: RoundtableSignalFormat = .dbm
+    /// A dropped link (overlay design D7): nothing here claims to be live.
+    var frozen = false
 
-    /// Historical observations must not look like a new unknown/overlap.
-    /// Known identity already has the temporal "Last talker" caption.
+    /// Historical observations must not look like a new unknown or double, and
+    /// a live talker is never captioned as past (overlay design D6).
     var caption: String? {
+        guard state.title != nil else { return nil }
+        if frozen { return "Last known" }
         guard ended else { return state.caption }
         switch state {
+        case .known: return "Last talker"
         case .unknown, .unattributed: return "Last heard"
-        case .doubled: return "Last overlap"
-        default: return state.caption
+        case .doubled: return "Last double"
+        case .waiting: return nil
         }
     }
 
@@ -126,6 +133,90 @@ struct RoundtableTagCardPlan: Equatable {
     var height: CGFloat = 8
 }
 
+/// What the card for one frequency says, for the drawing code to draw (the
+/// desktop's RoundtableCardModel). Times are in milliseconds.
+struct RoundtableCardData: Equatable {
+    enum Kind: Equatable { case talking, you, double, unknown, lastTalker, lastDouble, quiet }
+
+    /// One listener's reading. In a double it is combined RF, so `km` and
+    /// `bearing` stay nil (overlay design D2). Past 20 seconds it is old (D13).
+    struct Row: Equatable {
+        var call: String
+        var dbm: Double
+        var age: Int64
+        var km: Int64?
+        var bearing: Int64?
+        var offsetHz: Int64
+        var you: Bool
+        var old: Bool
+        /// The held peak in dBm, for the tick. Nil on an old reading, an ended
+        /// turn or a dropped link: those have no tick.
+        var peak: Double?
+    }
+
+    var kind: Kind = .quiet
+    var hz: Int64
+    /// On the air, or every name for a last double.
+    var keyed: [String] = []
+    /// The stations at this exact frequency.
+    var people: [String] = []
+    /// How long a live turn has run; stops where a link dropped.
+    var clock: Int64 = 0
+    /// How long ago a last turn ended.
+    var endedAgo: Int64 = 0
+    var rows: [Row] = []
+    /// Reconnecting or offline (D7).
+    var frozen = false
+    /// The link's note, else "Double ended 3s ago" for 8 seconds.
+    var note: String?
+    /// Where the live turn's talker is, which can be up to 5 kHz off `hz`. Nil
+    /// with no live turn.
+    var liveHz: Int64?
+}
+
+/// Each listener's held peak (overlay design D12): client side, per source room,
+/// listener and turn. It rises at once, falls 2 dB a second and resets on a new
+/// turn. Never on the wire.
+final class RoundtablePeakTracker {
+    /// D12: a held peak falls this fast.
+    private static let fallDbPerSecond = 2.0
+    /// Forgets everything past this many listeners. A lost tick comes straight
+    /// back, so a long session cannot grow it without bound.
+    private static let maxEntries = 1024
+
+    private struct Held {
+        var turn: Int64
+        var peak: Double
+        var at: Int64
+    }
+
+    private var rooms: [String: [String: Held]] = [:]
+    private var entries = 0
+
+    /// The held peak after this reading.
+    func update(sourceRoom: String, ref: String, turn: Int64, dbm: Double, now: Int64) -> Double {
+        if var held = rooms[sourceRoom]?[ref] {
+            if held.turn == turn {
+                let seconds = Double(max(0, now - held.at)) / 1000
+                held.peak = max(held.peak - Self.fallDbPerSecond * seconds, dbm)
+            } else {
+                held.turn = turn
+                held.peak = dbm
+            }
+            held.at = now
+            rooms[sourceRoom]?[ref] = held
+            return held.peak
+        }
+        if entries >= Self.maxEntries {
+            rooms.removeAll()
+            entries = 0
+        }
+        rooms[sourceRoom, default: [:]][ref] = Held(turn: turn, peak: dbm, at: now)
+        entries += 1
+        return dbm
+    }
+}
+
 /// Where one tag, or one fold of tags, sits: `left` and `width` in points
 /// from the pan's left edge; `roomIds` lists the rooms in it by frequency.
 struct RoundtableTagPlacement: Equatable {
@@ -145,8 +236,8 @@ struct RoundtableKeepOut: Equatable {
     var right: Double
 }
 
-/// How the pan shows its tags (design 11.1, U4): offline greys them as
-/// last known, connecting hides them. `dimmed` is live while you are
+/// How the pan shows its tags (design 11.1, U4): a dropped link, reconnecting
+/// or offline, greys them as last known (overlay design D7), connecting hides them. `dimmed` is live while you are
 /// hidden: the rooms and talkers as when live, the state marking dimmed.
 enum RoundtableTagDisplay: Equatable {
     case hidden
@@ -428,11 +519,13 @@ enum RoundtableTagLayout {
         let activeId = model.activeContext?.id
         let view = activeId.flatMap(model.view(of:))
         if model.frequencyAvailable {
+            let rows = model.frequencyRows
             for index in result.indices {
                 guard result[index].roomId == activeId,
-                      let summary = model.frequencyRows.first(where: { $0.id == result[index].roomId }) else { continue }
+                      let summary = rows.first(where: { $0.id == result[index].roomId }) else { continue }
                 result[index].card = card(for: summary, view: view,
                                           now: Int64(Date().timeIntervalSince1970 * 1000), format: model.signalFormat)
+                result[index].card?.frozen = display(model) == .stale
             }
         }
         return result
@@ -453,8 +546,11 @@ enum RoundtableTagLayout {
             if isMine, let view = room(summary.id), RoundtableFlagLine.youAreTalking(view) {
                 glyph = .you
             }
+            // A double says so and names who is on it (overlay design D1, D8).
+            let doubleLabel = (["Double"] + summary.keyedNames).joined(separator: "\n")
             out.append(RoundtableTag(roomId: summary.id, hz: summary.hz, glyph: glyph,
                                      label: summary.stations.isEmpty ? RoundtableFlagLine.label(glyph, talkers: summary.talkers)
+                                        : glyph == .doubled ? doubleLabel
                                         : summary.stations.map { RoundtableText.withNth($0.callsign, $0.nth) }.joined(separator: "\n"),
                                      members: summary.members, mine: isMine,
                                      mentionsMe: (mentionCounts[summary.id] ?? 0) > 0))
@@ -462,63 +558,234 @@ enum RoundtableTagLayout {
         return out
     }
 
-    /// Doubles carry the room center in turn.hz. Their immutable endpoints or
-    /// an exact listener's explicit reading.turn associate them with this dial.
-    /// Single/unknown turns still require exact Hz; nearby RF is not evidence.
+    // MARK: Truth rules (overlay design D1 to D9, as the desktop's RoundtableTagLayout.cpp)
+
+    /// D3: how far from the dial a turn or a station still counts, inclusive.
+    nonisolated static let nearbyHz: Int64 = 5000
+    /// D4: how long "Double ended 3s ago" stays.
+    static let doubleEndedNoteMs: Int64 = 8000
+    /// D11: the meter runs on the flag's S scale.
+    static let meterFloorDbm = -121.0
+    static let meterSpanDb = 88.0
+
+    /// Where a reading sits on a card's meter: -121 dBm is empty, -33 dBm is full.
+    static func meterFraction(_ dbm: Double) -> Double {
+        min(1, max(0, (dbm - meterFloorDbm) / meterSpanDb))
+    }
+
+    /// How far a turn sits from `hz`. A legacy room's turns name no frequency:
+    /// the room is the frequency. A double's turn.hz is its RF room's center, so
+    /// an endpoint or a listener's reading of it at `hz` puts it on this dial.
+    private static func turnDistance(_ turn: RoundtableModel.Turn, hz: Int64, view: RoundtableModel.Room) -> Int64 {
+        guard let turnHz = turn.hz, turnHz > 0 else { return 0 }
+        if turn.kind == "doubled" {
+            let source = turn.sourceRoom
+            if turn.talkers.contains(where: { $0.hz == hz && $0.sourceRoom == source })
+                || view.members.contains(where: { $0.hz == hz && $0.sourceRoom == source && $0.reading?.turn == turn.id }) {
+                return 0
+            }
+        }
+        return abs(turnHz - hz)
+    }
+
+    /// D3: the live turn to show: the exact-Hz one, else the nearest within the
+    /// window in this family, and on a tie the one that started last. A
+    /// frequency view skips a turn with no source room: its id means nothing
+    /// outside one.
+    static func liveTurn(hz: Int64, family: String, view: RoundtableModel.Room) -> RoundtableModel.Turn? {
+        guard view.family == family else { return nil }
+        var best: (turn: RoundtableModel.Turn, distance: Int64)?
+        for turn in view.now where turn.end == nil && (!view.frequencyView || turn.sourceRoom != nil) {
+            let distance = turnDistance(turn, hz: hz, view: view)
+            guard distance <= nearbyHz else { continue }
+            if let current = best, (distance, -turn.start) >= (current.distance, -current.turn.start) { continue }
+            best = (turn, distance)
+        }
+        return best?.turn
+    }
+
+    static func liveTurn(summary: RoundtableModel.RoomSummary, view: RoundtableModel.Room) -> RoundtableModel.Turn? {
+        liveTurn(hz: summary.hz, family: summary.family, view: view)
+    }
+
+    /// The live turn, or only when none is near, the one that ended last.
+    static func chosenTurn(hz: Int64, family: String,
+                           view: RoundtableModel.Room) -> (turn: RoundtableModel.Turn, historical: Bool)? {
+        if let live = liveTurn(hz: hz, family: family, view: view) { return (live, false) }
+        guard view.family == family else { return nil }
+        let ended = view.earlier.filter {
+            (!view.frequencyView || $0.sourceRoom != nil) && turnDistance($0, hz: hz, view: view) <= nearbyHz
+        }.max { ($0.end ?? $0.start) < ($1.end ?? $1.start) }
+        return ended.map { ($0, true) }
+    }
+
+    static func chosenTurn(in room: RoundtableModel.Room) -> (turn: RoundtableModel.Turn, historical: Bool)? {
+        chosenTurn(hz: room.hz, family: room.family, view: room)
+    }
+
+    /// Who a turn's talkers are. D5: a live double's current participants, those
+    /// in its source room still keyed, so one who has gone is dropped; an ended
+    /// double keeps every name. A legacy room has no source room to check against.
+    static func participants(of turn: RoundtableModel.Turn, in view: RoundtableModel.Room) -> [RoundtableModel.Talker] {
+        guard view.frequencyView, turn.kind == "doubled" else { return turn.talkers }
+        let source = turn.sourceRoom
+        let inSource = turn.talkers.filter { $0.sourceRoom == nil || $0.sourceRoom == source }
+        guard turn.end == nil else { return inSource }
+        return inSource.filter { talker in
+            guard let ref = talker.ref else { return false }
+            let talkerSource = talker.sourceRoom ?? source
+            return view.members.contains { $0.ref == ref && $0.sourceRoom == talkerSource && $0.keyed }
+        }
+    }
+
+    /// The member ids of a turn's current talkers, in the turn's source room.
+    static func talkerIds(of turn: RoundtableModel.Turn, in view: RoundtableModel.Room) -> Set<String> {
+        Set(participants(of: turn, in: view).compactMap { talker in
+            talker.ref.map { ref in ((talker.sourceRoom ?? turn.sourceRoom).map { $0 + "/" } ?? "") + ref }
+        })
+    }
+
+    /// D2, D9: the listeners with a usable reading of this turn, nearest first.
+    /// Never a transmitter, and turn ids do not cross a source room.
+    private static func reporters(of turn: RoundtableModel.Turn, in view: RoundtableModel.Room,
+                                  historical: Bool) -> [RoundtableModel.Member] {
+        let talkers = talkerIds(of: turn, in: view)
+        return view.members.filter { member in
+            member.sourceRoom == turn.sourceRoom && !talkers.contains(member.id) && (historical || !member.keyed)
+                && member.reading?.turn == turn.id && RoundtableText.validSignal(member.reading) != nil
+        }.sorted { ($0.km ?? Int64.max, $0.id) < ($1.km ?? Int64.max, $1.id) }
+    }
+
+    /// The tag's card, by the truth rules above. A frequency whose stream has
+    /// not arrived says only what the directory knows (D1).
     static func card(for summary: RoundtableModel.RoomSummary, view: RoundtableModel.Room?, now: Int64,
                      format: RoundtableSignalFormat = .dbm) -> RoundtableTagCard? {
-        let sources = Set(summary.stations.map(\.sourceRoom))
-        let matches: (RoundtableModel.Turn) -> Bool = { turn in
-            guard let view, let source = turn.sourceRoom, sources.contains(source) else { return false }
-            guard turn.kind == "doubled" else { return turn.hz == summary.hz }
-            return turn.talkers.contains { $0.hz == summary.hz && $0.sourceRoom == source }
-                || view.members.contains { $0.hz == summary.hz && $0.sourceRoom == source && $0.reading?.turn == turn.id }
-        }
-        guard let view, view.family == summary.family,
-              let turn = view.now.filter(matches).max(by: { $0.start < $1.start })
-                ?? view.earlier.filter(matches).max(by: { ($0.end ?? $0.start) < ($1.end ?? $1.start) }) else {
-            return RoundtableTagCard(format: format)
-        }
-        var card = RoundtableTagCard(ended: turn.end != nil, format: format)
-        var participants = turn.talkers
-        if turn.kind == "doubled" {
-            participants = participants.filter { $0.sourceRoom == nil || $0.sourceRoom == turn.sourceRoom }
-        }
-        if turn.kind == "doubled", turn.end == nil {
-            // The server retains everyone who keyed during a Double. Existing
-            // members' current keyed state identifies who is transmitting now.
-            participants = participants.filter { talker in
-                guard let ref = talker.ref else { return true }
-                let source = talker.sourceRoom ?? turn.sourceRoom
-                let members = view.members.filter { $0.ref == ref && $0.sourceRoom == source }
-                return members.isEmpty || members.contains(where: \.keyed)
+        let known = view?.family == summary.family ? view : nil
+        guard let known, let chosen = chosenTurn(hz: summary.hz, family: summary.family, view: known) else {
+            var card = RoundtableTagCard(format: format)
+            if known == nil || (known?.members.isEmpty == true && known?.now.isEmpty == true) {
+                if summary.state == "doubled" {
+                    card.state = .doubled
+                    card.participants = summary.keyedNames
+                } else if summary.state == "talking", summary.keyedNames.count == 1 {
+                    card.state = .known(summary.keyedNames[0])
+                }
             }
+            return card
         }
+        let turn = chosen.turn
+        var card = RoundtableTagCard(ended: chosen.historical, format: format)
         if turn.kind == "doubled" {
             card.state = .doubled
-            card.participants = participants.filter { !$0.callsign.isEmpty }.map { RoundtableText.withNth($0.callsign, $0.nth) }
-        } else if turn.kind == "unknown" { card.state = .unknown }
-        else if turn.talkers.count == 1 {
+            card.participants = participants(of: turn, in: known).filter { !$0.callsign.isEmpty }
+                .map { RoundtableText.withNth($0.callsign, $0.nth) }
+        } else if turn.kind == "unknown" {
+            card.state = .unknown
+        } else if turn.talkers.count == 1 {
             card.state = .known(RoundtableText.withNth(turn.talkers[0].callsign, turn.talkers[0].nth))
-        } else { card.state = .unattributed; return card }
-        let talkers = Set(participants.compactMap { talker -> String? in
-            guard let ref = talker.ref else { return nil }
-            let source = talker.sourceRoom ?? (turn.kind == "doubled" ? turn.sourceRoom : nil)
-            return (source.map { $0 + "/" } ?? "") + ref
-        })
-        // Filter before the display cap: an absent nearby reading cannot hide
-        // a real reporter. Identity is scoped by source room, never callsign.
-        card.reports = view.members.filter {
-                !talkers.contains($0.id) && (turn.kind != "doubled" || ($0.sourceRoom == turn.sourceRoom && !$0.keyed))
+        } else {
+            card.state = .unattributed
+            return card
+        }
+        card.reports = reporters(of: turn, in: known, historical: chosen.historical).compactMap { member in
+            guard let reading = member.reading else { return nil }
+            return .init(id: member.id, reporter: RoundtableText.withNth(member.callsign, member.nth),
+                         reading: reading, age: RoundtableText.ageText(now - reading.t),
+                         stale: now - reading.t > RoundtableText.staleReadingMs)
+        }
+        return card
+    }
+
+    /// What the card for one frequency says (the desktop's roundtableCardModelFor).
+    /// `peaks` holds each listener's peak; nil leaves the ticks off.
+    static func cardData(summary: RoundtableModel.RoomSummary, view: RoundtableModel.Room?, now: Int64,
+                         link: RoundtableModel.LinkState, linkSince: Int64,
+                         peaks: RoundtablePeakTracker? = nil) -> RoundtableCardData {
+        var card = RoundtableCardData(hz: summary.hz)
+        // D7: a dropped link freezes, and says which way it dropped.
+        card.frozen = link == .reconnecting || link == .offline
+        let linkNote: String?
+        switch link {
+        case .reconnecting: linkNote = "Reconnecting"
+        case .offline: linkNote = linkSince > 0 ? "Offline since \(RoundtableText.utcText(linkSince)) UTC" : "Offline"
+        case .hidden: linkNote = "You are hidden"
+        case .off, .connecting, .live: linkNote = nil
+        }
+        card.note = linkNote
+        card.people = summary.stations.map { RoundtableText.withNth($0.callsign, $0.nth) }
+        let known = view?.family == summary.family ? view : nil
+
+        guard let known, let chosen = chosenTurn(hz: summary.hz, family: summary.family, view: known) else {
+            // Known only from the directory (D1): who is keyed, with no readings.
+            if known == nil || (known?.members.isEmpty == true && known?.now.isEmpty == true) {
+                switch summary.state {
+                case "doubled":
+                    card.kind = .double
+                    card.keyed = summary.keyedNames
+                case "talking" where !summary.keyedNames.isEmpty:
+                    card.kind = .talking
+                    card.keyed = summary.keyedNames
+                case "unknown":
+                    card.kind = .unknown
+                default:
+                    break
+                }
             }
-            .sorted { ($0.km ?? Int64.max, $0.id) < ($1.km ?? Int64.max, $1.id) }
-            .compactMap { member in
-                guard let reading = member.reading, reading.turn == turn.id,
-                      RoundtableText.validSignal(reading) != nil else { return nil }
-                return .init(id: member.id, reporter: RoundtableText.withNth(member.callsign, member.nth),
-                             reading: reading, age: RoundtableText.ageText(now - reading.t),
-                             stale: now - reading.t > RoundtableText.staleReadingMs)
+            return card
+        }
+
+        let turn = chosen.turn
+        let doubled = turn.kind == "doubled"
+        let people = participants(of: turn, in: known)
+        card.keyed = people.filter { !$0.callsign.isEmpty }.map { RoundtableText.withNth($0.callsign, $0.nth) }
+        if chosen.historical {
+            card.kind = doubled ? .lastDouble : .lastTalker
+            card.endedAgo = max(0, now - (turn.end ?? now))
+        } else {
+            if doubled {
+                card.kind = .double
+            } else if RoundtableFlagLine.turnIsYours(known, turn, open: true) {
+                card.kind = .you
+            } else if turn.kind == "unknown" || card.keyed.isEmpty {
+                card.kind = .unknown
+                card.keyed = []
+            } else {
+                card.kind = .talking
             }
+            // The clock stops where the link dropped: past that nothing is known.
+            card.clock = max(0, (card.frozen && linkSince > 0 ? linkSince : now) - turn.start)
+            // A double's turn.hz is its room's center: tune to who is on it.
+            let exact = doubled ? people.compactMap(\.hz).min { abs($0 - summary.hz) < abs($1 - summary.hz) } : nil
+            card.liveHz = exact ?? turn.hz ?? summary.hz
+        }
+
+        // D4: the remaining talker's new turn says the double just ended. Its
+        // rows come only from readings of this turn, so none carry over. A link
+        // note takes the one line while the link is not live.
+        if !chosen.historical, !doubled, linkNote == nil {
+            let newestEnd = known.earlier.filter {
+                $0.kind == "doubled" && $0.sourceRoom == turn.sourceRoom
+                    && turnDistance($0, hz: summary.hz, view: known) <= nearbyHz
+            }.compactMap(\.end).max()
+            if let newestEnd, max(0, now - newestEnd) < doubleEndedNoteMs {
+                card.note = "Double ended \(max(0, now - newestEnd) / 1000)s ago"
+            }
+        }
+
+        // D2, D9, D12, D13: present listeners, never a transmitter; combined RF
+        // has no path; a tick only on a fresh reading of a live turn on a live link.
+        let tracker = chosen.historical || card.frozen ? nil : peaks
+        card.rows = reporters(of: turn, in: known, historical: chosen.historical).compactMap { member in
+            guard let reading = member.reading else { return nil }
+            let age = max(0, now - reading.t)
+            let old = age > RoundtableText.staleReadingMs
+            let held = tracker?.update(sourceRoom: member.sourceRoom ?? "", ref: member.ref, turn: turn.id,
+                                       dbm: reading.dbm, now: now)
+            return RoundtableCardData.Row(call: RoundtableText.withNth(member.callsign, member.nth), dbm: reading.dbm,
+                                          age: age, km: doubled ? nil : member.km,
+                                          bearing: doubled ? nil : member.bearingDeg, offsetHz: member.offsetHz,
+                                          you: member.you, old: old, peak: old ? nil : held)
+        }
         return card
     }
 
@@ -541,7 +808,7 @@ enum RoundtableTagLayout {
         if remaining >= stateHeight {
             plan.stateCaption = card.caption
             plan.stateTitle = card.state == .doubled && card.participants.count > 2
-                ? "Double (\(card.participants.count) TX)" : card.state.title
+                ? "Double \u{00B7} \(card.participants.count)" : card.state.title
             if let title = plan.stateTitle {
                 let natural = (title as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 10, weight: .medium)]).width
                 let innerWidth = max(1, CGFloat(width) - plan.leadingPadding - plan.trailingPadding - 1)
@@ -604,8 +871,8 @@ enum RoundtableTagLayout {
     }
 
     /// Hidden while Roundtable is off, unavailable or connecting; stale
-    /// while offline; dimmed while you are hidden (you still see
-    /// everything, D21); live otherwise (live or reconnecting).
+    /// while reconnecting or offline (overlay design D7); dimmed while you are
+    /// hidden (you still see everything, D21); live otherwise.
     static func display(available: Bool, link: RoundtableModel.LinkState) -> RoundtableTagDisplay {
         guard available else {
             return .hidden
@@ -613,11 +880,11 @@ enum RoundtableTagLayout {
         switch link {
         case .off, .connecting:
             return .hidden
-        case .offline:
+        case .reconnecting, .offline:
             return .stale
         case .hidden:
             return .dimmed
-        case .live, .reconnecting:
+        case .live:
             return .live
         }
     }
@@ -643,7 +910,10 @@ enum RoundtableTagLayout {
 
     /// Who a fold's row names: "Unknown talker" for an unknown, else the label.
     static func foldWho(_ tag: RoundtableTag) -> String {
-        tag.glyph == .unknown ? "Unknown talker" : tag.label
+        if tag.glyph == .doubled {
+            return tag.label.split(separator: "\n").joined(separator: " \u{00B7} ")
+        }
+        return tag.glyph == .unknown ? "Unknown talker" : tag.label
     }
 
     /// The +N list's heading.

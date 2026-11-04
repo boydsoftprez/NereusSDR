@@ -13,6 +13,8 @@
 
 // 2026-10-31: Capture quiet and joining people with canonical frequency records.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Pins follow the overlay redesign (design D7, D8).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -221,7 +223,7 @@ struct RoundtableToolsPageTests {
         try #require(tags.count == 4)
         #expect(tags[0] == RoundtableTag(roomId: "lsb-7185000", hz: 7_185_000, glyph: .talking, label: "W1TLK",
                                          members: 9, mine: true, mentionsMe: false))
-        #expect(tags[1].label == "Doubled" && tags[1].glyph == .doubled)
+        #expect(tags[1].label == "Double" && tags[1].glyph == .doubled)
         #expect(tags[2].label == "Unknown" && tags[2].glyph == .unknown && tags[2].mentionsMe && !tags[2].mine)
         #expect(tags[3].label == "Quiet" && tags[3].glyph == .quiet)
         // Your own turn in your slice's room: You, in cyan (U8).
@@ -249,7 +251,7 @@ struct RoundtableToolsPageTests {
         #expect(RoundtableTagLayout.display(available: false, link: .hidden) == .hidden)
         // You are hidden: every room as when live, its marking dimmed.
         let cases: [(RoundtableModel.LinkState, RoundtableTagDisplay)] = [
-            (.off, .hidden), (.connecting, .hidden), (.live, .live), (.reconnecting, .live), (.hidden, .dimmed),
+            (.off, .hidden), (.connecting, .hidden), (.live, .live), (.reconnecting, .stale), (.hidden, .dimmed),
             (.offline, .stale),
         ]
         for (link, display) in cases {
@@ -332,7 +334,7 @@ struct RoundtableToolsPageTests {
         try #require(rows.count == 4)
         #expect(rows.map(\.id) == ["lsb-7185000", "lsb-7200000", "lsb-7212000", "lsb-7236400"])
         #expect(rows[0].who == "Quiet" && rows[0].sub == "last W2ABC, 18 min ago" && rows[0].quiet)
-        #expect(rows[1].who == "Doubled: N4XYZ" && rows[1].sub == "1 station \u{00B7} 1 message")
+        #expect(rows[1].who == "Double: N4XYZ" && rows[1].sub == "1 station \u{00B7} 1 message")
         #expect(rows[2].who == "Unknown talker" && rows[2].sub == "4 stations")
         #expect(rows[3] == RoundtableToolsList.Row(id: "lsb-7236400", hz: 7_236_400, frequency: "7.236",
                                                    glyph: .talking, who: "K4ABC",

@@ -13,6 +13,8 @@
 
 // 2026-10-31: Canonical producer records restore people rows, reads and reconnect support.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: A double through the real session, frozen links and peak hold (overlay design).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import Combine
@@ -834,6 +836,44 @@ struct RoundtableModelTests {
             RoundtableTag(roomId: "selected", hz: 90, mine: true)],
             hzPerPoint: 1, leftHz: 0, width: 100, tagWidth: 80, gap: 4)
         #expect(narrow.count == 1 && narrow.first?.roomIds == ["selected"] && narrow.first?.folded == false)
+        await model.disconnect()
+    }
+
+    @Test("through the real session a non-active double reads as a double with both names, and the card freezes on a dropped link")
+    func nonActiveDoubleAndFrozenCard() async throws {
+        let (model, station, rt, _) = try await connected()
+        let source = "lsb-7236000"
+        var doubled = FakeStation.roundtableSummary(id: source, members: 2, state: "quiet", talkers: [])
+        doubled["stations"] = .array([
+            FakeStation.roundtableStation(ref: "a", callsign: "K4ABC", sourceRoom: source, hz: 7_236_400, keyed: true),
+            FakeStation.roundtableStation(ref: "b", callsign: "N3XYZ", sourceRoom: source, hz: 7_236_700, keyed: true),
+        ])
+        var neighbor = FakeStation.roundtableSummary(id: "lsb-7240000", members: 1, state: "quiet", talkers: [])
+        neighbor["stations"] = .array([
+            FakeStation.roundtableStation(ref: "c", callsign: "W1AW", sourceRoom: "lsb-7240000", hz: 7_239_000, keyed: true),
+        ])
+        try await station.deliverRoundtable(.init(rooms: [doubled, neighbor], link: .live, linkSince: 3_600_000))
+        var capabilities = model.mirror.capabilities.mapValues(\.wireValue)
+        capabilities["stationRoundtableVersion"] = .i64(2)
+        await station.deliver(.capabilities(.init(properties: capabilities.map { .init(name: $0.key, value: $0.value) })))
+        await station.deliverRoundtableFrequencyCapability(true)
+        #expect(await settle { rt.frequencyAvailable && rt.frequencyRows.count == 3 })
+        #expect(rt.frequencyRows.map(\.state) == ["doubled", "doubled", "talking"])
+        #expect(rt.frequencyRows[0].keyedNames == ["K4ABC", "N3XYZ"])
+        let tags = RoundtableTagLayout.tags(rt, sliceIds: [])
+        #expect(tags[0].glyph == .doubled && tags[0].label == "Double\nK4ABC\nN3XYZ")
+        #expect(tags[2].glyph == .talking && tags[2].label == "W1AW")
+        let live = rt.cardData(context: "lsb-7236400")
+        #expect(live.kind == .double && live.keyed == ["K4ABC", "N3XYZ"] && !live.frozen && live.note == nil)
+        #expect(live.people == ["K4ABC"] && live.rows.isEmpty)
+
+        await station.deliverRoundtableState { $0.link = .offline }
+        #expect(await settle { rt.linkState == .offline })
+        let offline = rt.cardData(context: "lsb-7236400")
+        #expect(offline.frozen && offline.note == "Offline since 01:00 UTC")
+        #expect(RoundtableTagLayout.display(rt) == .stale)
+        // A frequency nobody is listed on still has a card to read.
+        #expect(rt.cardData(context: "lsb-7300000").hz == 7_300_000)
         await model.disconnect()
     }
 

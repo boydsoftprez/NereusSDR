@@ -17,6 +17,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-11-02: Keep the active frequency's reports live while browsing another view.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Overlay redesign truth rules: a frequency row carries its state and
+// keyed names (design D1), and the card data with client-side peak hold.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Combine
 import Foundation
@@ -105,6 +108,9 @@ final class RoundtableModel: ObservableObject {
         var lastMessage: LastMessage?
         var ended: Int64?
         var stations: [Station] = []
+        /// Who is on the air at this frequency. Filled for a frequency row; a
+        /// legacy room's names are in `talkers`.
+        var keyedNames: [String] = []
     }
 
     /// A member's newest reading.
@@ -262,6 +268,14 @@ final class RoundtableModel: ObservableObject {
     var directory: [Station] { rooms.flatMap(\.stations) }
     var frequencyRows: [RoomSummary] {
         guard frequencyAvailable else { return rooms }
+        return Self.frequencyRows(of: rooms)
+    }
+
+    /// One row per exact frequency in the directory. Its state comes from the
+    /// source room's summary or from two keyed stations in one source room
+    /// (overlay design D1), never from keyed neighbors in other rooms.
+    nonisolated static func frequencyRows(of rooms: [RoomSummary]) -> [RoomSummary] {
+        let directory = rooms.flatMap(\.stations)
         let grouped = Dictionary(grouping: directory) { "\($0.family)-\($0.hz)" }
         return grouped.map { id, placements in
             // A station's two slices at the same exact context are one person.
@@ -272,12 +286,67 @@ final class RoundtableModel: ObservableObject {
                 } else { people.append(station) }
             }
             let first = people[0]
+            let truth = frequencyTruth(hz: first.hz, family: first.family, people: people,
+                                       directory: directory, rooms: rooms)
             return RoomSummary(id: id, band: Self.bandOf(first.hz), family: first.family, hz: first.hz,
-                               state: people.contains(where: \.keyed) ? "talking" : "quiet",
+                               state: truth.state,
                                talkers: people.map { RoundtableText.withNth($0.callsign, $0.nth) },
                                members: Int64(people.count), messages: 0, last: 0, folded: false,
-                               start: nil, heard: 0, readings: [], lastMessage: nil, ended: nil, stations: people)
+                               start: nil, heard: 0, readings: [], lastMessage: nil, ended: nil, stations: people,
+                               keyedNames: truth.keyedNames)
         }.sorted { ($0.hz, $0.id) < ($1.hz, $1.id) }
+    }
+
+    /// What one exact frequency's row says, from the directory and the
+    /// summaries of the source rooms its stations sit in.
+    private nonisolated static func frequencyTruth(hz: Int64, family: String, people: [Station], directory: [Station],
+                                                   rooms: [RoomSummary]) -> (state: String, keyedNames: [String]) {
+        // The keyed stations in the window, nearest first, each person once
+        // however many of their slices the directory lists.
+        var seen = Set<String>()
+        let near = directory.filter {
+            $0.keyed && $0.family == family && abs($0.hz - hz) <= RoundtableTagLayout.nearbyHz && seen.insert($0.id).inserted
+        }.enumerated().sorted {
+            (abs($0.element.hz - hz), $0.offset) < (abs($1.element.hz - hz), $1.offset)
+        }.map(\.element)
+        let name: (Station) -> String = { RoundtableText.withNth($0.callsign, $0.nth) }
+        // Only the source rooms this frequency's stations sit in: a double in the
+        // room next door says nothing about this one.
+        let sources = Set(people.map(\.sourceRoom))
+        let keyedBySource = Dictionary(grouping: near.filter { !$0.sourceRoom.isEmpty && sources.contains($0.sourceRoom) },
+                                       by: \.sourceRoom)
+        if let station = near.first(where: { (keyedBySource[$0.sourceRoom]?.count ?? 0) >= 2 }) {
+            return ("doubled", keyedBySource[station.sourceRoom, default: []].map(name))
+        }
+        let summaries = rooms.filter { sources.contains($0.id) && $0.family == family }
+        if let doubled = summaries.first(where: { $0.state == "doubled" }) {
+            // One keyed station cannot name a double: the summary's talkers do.
+            let keyed = keyedBySource[doubled.id, default: []].map(name)
+            return ("doubled", doubled.talkers.isEmpty ? keyed : doubled.talkers)
+        }
+        let keyedHere = people.filter(\.keyed).map(name)
+        if !keyedHere.isEmpty { return ("talking", keyedHere) }
+        if summaries.contains(where: { $0.state == "unknown" }) { return ("unknown", []) }
+        for summary in summaries where summary.state == "talking" {
+            let named = people.filter { summary.talkers.contains($0.callsign) || summary.talkers.contains(name($0)) }.map(name)
+            if !named.isEmpty { return ("talking", named) }
+        }
+        return ("quiet", [])
+    }
+
+    /// Held readings for the card (overlay design D12). Client side only.
+    let peaks = RoundtablePeakTracker()
+
+    /// The card for one frequency or room, as every client's card reads it.
+    func cardData(context id: String) -> RoundtableCardData {
+        let dash = id.firstIndex(of: "-")
+        let summary = frequencyRows.first { $0.id == id }
+            ?? RoomSummary(id: id, band: "", family: dash.map { String(id[..<$0]) } ?? "",
+                           hz: dash.flatMap { Int64(id[id.index(after: $0)...]) } ?? 0, state: "quiet", talkers: [],
+                           members: 0, messages: 0, last: 0, folded: false, start: nil, heard: 0, readings: [],
+                           lastMessage: nil, ended: nil)
+        return RoundtableTagLayout.cardData(summary: summary, view: view(of: id), now: clock.nowMilliseconds,
+                                            link: linkState, linkSince: linkSince, peaks: peaks)
     }
     var activeContext: FrequencyContext? {
         (activeSliceId ?? sliceContexts.keys.sorted().first).flatMap { sliceContexts[$0] }
@@ -1437,7 +1506,7 @@ final class RoundtableModel: ObservableObject {
     // MARK: Wire words
 
     /// RoundtableWire::kBands: each band's edges in Hz, both included.
-    private static let bands: [(name: String, from: Int64, to: Int64)] = [
+    private nonisolated static let bands: [(name: String, from: Int64, to: Int64)] = [
         ("2200m", 135_700, 137_800), ("630m", 472_000, 479_000),
         ("160m", 1_800_000, 2_000_000), ("80m", 3_500_000, 4_000_000),
         ("60m", 5_250_000, 5_450_000), ("40m", 7_000_000, 7_300_000),
@@ -1451,7 +1520,7 @@ final class RoundtableModel: ObservableObject {
     ]
 
     /// The band a center frequency is in (wire spec 6.2), or `other`.
-    static func bandOf(_ hz: Int64) -> String {
+    nonisolated static func bandOf(_ hz: Int64) -> String {
         bands.first { hz >= $0.from && hz <= $0.to }?.name ?? "other"
     }
 

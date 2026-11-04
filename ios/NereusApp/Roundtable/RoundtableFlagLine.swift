@@ -12,6 +12,8 @@
 
 // 2026-10-30: Approved frequency-first people, reports and phone interactions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: One word: Double (overlay design D8); a frequency reads its own row.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -85,14 +87,16 @@ struct RoundtableFlagLine: Equatable {
         }
         let glyph = glyph(ofState: summary.state)
         return RoundtableFlagLine(glyph: glyph, text: lead + "\(summary.members) \u{00B7} "
-                                  + label(glyph, talkers: summary.talkers), mentions: mentions, dimmed: dimmed)
+                                  + label(glyph, talkers: summary.keyedNames.isEmpty ? summary.talkers : summary.keyedNames),
+                                  mentions: mentions, dimmed: dimmed)
     }
 
     /// The line for a slice, read from the model.
     @MainActor
     static func line(_ model: RoundtableModel, sliceId: Int64) -> RoundtableFlagLine? {
         let roomId = model.sliceRooms[sliceId]
-        let summary = roomId.flatMap { id in model.rooms.first { $0.id == id } }
+        // A frequency context has its own row: no source room carries its id.
+        let summary = roomId.flatMap { id in model.frequencyRows.first { $0.id == id } }
         return line(available: model.available, link: model.linkState, summary: summary,
                     room: roomId.flatMap(model.view(of:)), mentions: roomId.map { model.mentionCounts[$0] ?? 0 } ?? 0)
     }
@@ -117,7 +121,7 @@ struct RoundtableFlagLine: Equatable {
         case .talking:
             return talkers.first.flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown"
         case .doubled:
-            return "Doubled"
+            return "Double"
         case .unknown:
             return "Unknown"
         case .quiet, .waiting, .offline:

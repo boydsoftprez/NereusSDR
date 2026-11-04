@@ -12,6 +12,8 @@
 
 // 2026-10-30: Approved frequency-first people, reports and phone interactions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: One word: Double, with its names (overlay design D1, D8).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -116,7 +118,9 @@ enum RoundtableToolsList {
                 let glyph = RoundtableFlagLine.glyph(ofState: room.state)
                 let mine = sliceRooms.filter { $0.value == room.id }.keys.sorted().compactMap { letters[$0] }
                 return Row(id: room.id, hz: room.hz, frequency: room.stations.isEmpty ? RoundtableText.shortFrequency(room.hz) : RoundtableTagLayout.frequencyText(room.hz),
-                           glyph: glyph, who: room.stations.isEmpty ? who(glyph, talkers: room.talkers)
+                           glyph: glyph, who: glyph == .doubled
+                               ? who(glyph, talkers: room.keyedNames.isEmpty ? room.talkers : room.keyedNames)
+                               : room.stations.isEmpty ? who(glyph, talkers: room.talkers)
                                : room.stations.map { RoundtableText.withNth($0.callsign, $0.nth) }.joined(separator: ", "),
                            sub: sub(room, glyph: glyph, now: now), letters: mine,
                            mentions: mentionCounts[room.id] ?? 0, quiet: glyph == .quiet)
@@ -131,7 +135,8 @@ enum RoundtableToolsList {
         case .unknown:
             return "Unknown talker"
         case .doubled:
-            return talker.map { "Doubled: \($0)" } ?? "Doubled"
+            let names = talkers.filter { !$0.isEmpty }
+            return names.isEmpty ? "Double" : "Double: " + names.joined(separator: ", ")
         case .quiet, .waiting, .offline, .you:
             return "Quiet"
         }

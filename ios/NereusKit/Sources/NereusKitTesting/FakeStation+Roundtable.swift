@@ -10,6 +10,8 @@
 
 // 2026-10-31: Match the real Core's frequency capability record field.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Directory stations for the overlay redesign tests.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusLink
@@ -129,6 +131,14 @@ extension FakeStation {
                 "members": .number(Double(members)), "messages": .number(Double(messages)),
                 "last": .number(Double(last)), "folded": .bool(false), "start": .null, "heard": .number(0),
                 "readings": .array([]), "lastMessage": .null, "ended": .null]
+    }
+
+    /// One station as a band list row's `stations` lists it.
+    public static func roundtableStation(ref: String, callsign: String, sourceRoom: String, hz: Int64,
+                                         family: String = "lsb", keyed: Bool = false) -> LinkJSON {
+        .object(["ref": .string(ref), "sourceRoom": .string(sourceRoom), "slice": .number(0), "hz": .number(Double(hz)),
+                 "family": .string(family), "callsign": .string(callsign), "nth": .number(1), "grid": .null,
+                 "keyed": .bool(keyed), "away": .bool(false), "joining": .bool(false)])
     }
 
     public static func roundtableMember(ref: String, callsign: String, seq: Int64, you: Bool = false)
