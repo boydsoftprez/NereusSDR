@@ -2133,6 +2133,15 @@ private slots:
         QVERIFY(model);
         model->attachStation(&link, &state);
         state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        // This Core has no Roundtable server, and the real client still feeds this
+        // model: its rooms stream says "no frequency reads" whenever it lands, which
+        // can be after the line below. Hold the capability the test is about.
+        QObject capabilityHold;
+        connect(model, &RoundtableModel::roomsChanged, &capabilityHold, [model]() {
+            if (!model->frequencyAvailable()) {
+                model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+            }
+        });
         model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
         QVERIFY(model->frequencyAvailable());
         SpectrumWidget* pan = panOf(p.window());
@@ -2142,6 +2151,7 @@ private slots:
         VfoWidget* flag = flagFor(p.window(), otherId);
         QTRY_VERIFY_WITH_TIMEOUT(flag->roundtableLineButtonForTest() != nullptr
                                  && flag->roundtableLineButtonForTest()->isVisible(), kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(model->frequencyAvailable(), kWaitMs);
         QTest::mouseClick(flag->roundtableLineButtonForTest(), Qt::LeftButton);
         settle();
         auto* peek = pan->findChild<RoundtableFrequencyPeek*>();
