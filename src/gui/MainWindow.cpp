@@ -6895,9 +6895,20 @@ void MainWindow::refreshRoundtableTags()
                 slice ? std::llround(slice->frequency()) : 0, family));
         }
     }
+    // The card stands on the pan that hosts the active slice's flag. A legacy
+    // server has no frequency card and keeps its tags (overlay design D21).
+    RoundtableCardModel card;
+    if (active && !activeContext.isEmpty() && roundtable && roundtable->frequencyAvailable()) {
+        card = roundtableCardModelFor(roundtable, sliceIds, activeContext,
+                                      static_cast<quint64>(std::llround(active->frequency())), &m_roundtablePeaks);
+    }
     for (PanadapterApplet* applet : m_panStack->allApplets()) {
         SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
-        if (sw) { sw->setRoundtableTags(tags, display); }
+        if (sw) {
+            sw->setRoundtableTags(tags, display);
+            const bool hosts = active && sw->vfoWidget(active->sliceIndex()) != nullptr;
+            sw->setRoundtableCard(hosts ? card : RoundtableCardModel{}, activeContext);
+        }
     }
 }
 

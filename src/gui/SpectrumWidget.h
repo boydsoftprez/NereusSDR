@@ -2,6 +2,9 @@
 //   2026-11-01: The waterfall clock is a small label. Its one-second tick
 //               no longer rebuilds the static GPU overlay.
 //               Brian Sutton (W4KZO).
+//   2026-11-03: The live Roundtable card on the pan (setRoundtableCard), and
+//                 a hit list that tells the card from the tags. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-01: Roundtable tags are a child widget (m_roundtableTagLayer).
 //               A report does not repaint the spectrum or its GPU overlays.
 //               Brian Sutton (W4KZO).
@@ -2830,18 +2833,25 @@ public:
 
     // ---- Roundtable room tags (Roundtable plan Task 14, design 11.2) ----
     // One tag per room along the foot of the spectrum, above the band
-    // plan: the state glyph, the talker (or Unknown, Doubled, Quiet) and
+    // plan: the state glyph, the talker (or Unknown, Double, Quiet) and
     // the member count. Crowded tags fold into +N (layoutRoundtableTags).
-    // `display` Hidden draws none, Stale greys them as last known. Display
+    // `display` Hidden draws none, Frozen greys them as last known. Display
     // only: a click asks for a tune through roundtableRoomClicked.
     void setRoundtableTags(const QList<RoundtableTag>& tags, RoundtableTagDisplay display);
+    /// The live card for the active slice's frequency on this pan (overlay
+    /// design D10). A Quiet card draws none. `roomId` is the frequency a click
+    /// on it reads, and the tag it stands in for.
+    void setRoundtableCard(const RoundtableCardModel& card, const QString& roomId);
     const QList<RoundtableTag>& roundtableTags() const { return m_roundtableTags; }
     RoundtableTagDisplay roundtableTagDisplay() const { return m_roundtableTagDisplay; }
-    /// A drawn tag or fold, in this widget's coordinates.
+    /// A drawn card, tag or fold, in this widget's coordinates.
     struct RoundtableTagHit {
+        enum class Kind { Tag, Card };
         QRect rect;
         QStringList roomIds;
         bool folded = false;
+        Kind kind = Kind::Tag;
+        qint64 hz = 0;  // the frequency it speaks for; a fold's first
     };
     /// What the last tag pass drew (it is redrawn with the overlay).
     const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
@@ -4570,6 +4580,11 @@ private:
     QVector<SpotCluster> m_spotClusters;
     // Roundtable plan Task 14: the room tags and what the last pass drew.
     QList<RoundtableTag> m_roundtableTags;
+    // The tags as the pan draws them: one per double (roundtableMergeDoubleTags).
+    QList<RoundtableTag> m_roundtablePanTags;
+    RoundtableCardModel m_roundtableCard;
+    QString m_roundtableCardRoom;
+    QString m_roundtableCardFormat;
     // GPU path: tags paint here, above the spectrum and under the flags.
     // A reading updates this widget only, not the panadapter frame.
     QWidget* m_roundtableTagLayer{nullptr};

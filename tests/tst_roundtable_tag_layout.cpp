@@ -240,20 +240,65 @@ const SpectrumWidget::RoundtableTagHit* hitFor(const SpectrumWidget& widget, con
     return nullptr;
 }
 
-bool captureCard(RoundtableTag tag, const QStringList& rows, const QString& scene)
+// A card with `rows` listeners, nearest first.
+RoundtableCardModel talkingCard(int rows = 3, RoundtableCardModel::Kind kind = RoundtableCardModel::Kind::Talking)
 {
-    const QString directory = qEnvironmentVariable("NEREUS_ROUNDTABLE_LIVE_CAPTURES");
-    if (directory.isEmpty()) { return true; }
-    tag.active = true;
-    tag.reportLines = rows;
-    if (!rows.isEmpty() && rows.first().startsWith(QLatin1String("Double"))) {
-        tag.state = static_cast<int>(RoundtableGlyph::Doubled);
+    RoundtableCardModel card;
+    card.kind = kind;
+    card.hz = 7200000;
+    card.keyed = kind == RoundtableCardModel::Kind::Double ? QStringList{QStringLiteral("W1AW"), QStringLiteral("K4ABC")}
+                                                           : QStringList{QStringLiteral("W1AW")};
+    card.clockMs = 83000;
+    const QStringList calls{"N4RDR", "KD8LMN", "AA4QQ", "VE3XYZ", "W9ABC", "K1ABC", "N3XYZ"};
+    for (int i = 0; i < rows; ++i) {
+        RoundtableCardRow row;
+        row.call = calls.at(i % calls.size());
+        row.dbm = -66.0 - 8.0 * i;
+        row.ageMs = 2000 + 1000 * i;
+        row.peakDbm = row.dbm + 6.0;
+        row.hasPeak = true;
+        card.rows.append(row);
     }
-    Pan pan;
-    pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
-    const QImage image = pan.draw();
-    const auto* hit = hitFor(pan.widget, tag.roomId);
-    return hit && image.copy(hit->rect.adjusted(-4, -4, 4, 4)).save(directory + QLatin1Char('/') + scene + QStringLiteral(".png"));
+    return card;
+}
+
+QFontMetrics cardMetrics()
+{
+    QFont font = WorkspacePreview::readableFont(QFont());
+    font.setPixelSize(WorkspacePreview::readableTextPixelSize(12));
+    font.setWeight(QFont::Bold);
+    return QFontMetrics(font);
+}
+
+// The board's desktop band: dial 570 of a 1143 wide pan, the tool strip to 80,
+// the scale from 1109, the foot at 303, and a flag 250 wide.
+const QRect kBoardPan(80, 32, 1109 - 80, 303 - 32);
+
+QRect boardFlag(int dialX, bool flipped = false)
+{
+    return flipped ? QRect(dialX - 252, 30, 276, 162) : QRect(dialX - 24, 30, 276, 162);
+}
+
+bool hasColor(const QImage& image, const QRect& area, const QColor& want)
+{
+    for (int y = area.top(); y <= area.bottom(); ++y) {
+        for (int x = area.left(); x <= area.right(); ++x) {
+            if (QColor(image.pixel(x, y)).name() == want.name()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+const SpectrumWidget::RoundtableTagHit* cardHit(const SpectrumWidget& widget)
+{
+    for (const SpectrumWidget::RoundtableTagHit& hit : widget.roundtableTagHitsForTest()) {
+        if (hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card) {
+            return &hit;
+        }
+    }
+    return nullptr;
 }
 
 // A live frequency-capable model and a clock the test moves.
@@ -477,7 +522,6 @@ private slots:
         QStringList rows = roundtableTagReportLines(tag, view, 27000);
         QVERIFY2(rows.join(' ').contains(QStringLiteral("VK3ABC/P  S9 +12 / -61  2s")), qPrintable(rows.join(QLatin1Char('\n'))));
         QVERIFY(rows.first().contains(QStringLiteral("W1AW")));
-        QVERIFY(captureCard(tag, rows, QStringLiteral("single-both")));
         turn.insert("kind", "doubled"); turn.insert("talkers", QJsonArray{a, b, c});
         QJsonObject transmitting = b;
         transmitting.insert("reading", listener.value("reading"));
@@ -493,7 +537,6 @@ private slots:
         QVERIFY(rows.join(' ').contains(QStringLiteral("VK3ABC/P  S9 +12 / -61  2s")));
         QVERIFY(!rows.join(' ').contains(QStringLiteral("K4ABC (2)  S9")));
         QVERIFY(!rows.join(' ').contains(QStringLiteral("WRONG")));
-        QVERIFY(captureCard(tag, rows, QStringLiteral("double-three-both")));
         // One remains keyed: old combined samples do not become its report.
         QJsonObject single = turn;
         single.insert("id", 13); single.insert("kind", "talking"); single.insert("talkers", QJsonArray{a});
@@ -503,12 +546,10 @@ private slots:
         QVERIFY(!rows.join(' ').contains(QStringLiteral("Double")));
         QVERIFY(!rows.join(' ').contains(QStringLiteral("-61")));
         QVERIFY(rows.join(' ').contains(QStringLiteral("No matching reports")));
-        QVERIFY(captureCard(tag, rows, QStringLiteral("single-awaiting-new-report")));
         view.insert("now", QJsonArray{});
         rows = roundtableTagReportLines(tag, view, 60000);
         QVERIFY(rows.first().startsWith(QStringLiteral("Last double")));
         QVERIFY(rows.join(' ').contains(QStringLiteral("stale")));
-        QVERIFY(captureCard(tag, rows, QStringLiteral("last-double-stale")));
     }
 
     void offCenterDoubleUsesEndpointsAndOnlyCurrentlyKeyedParticipants()
@@ -532,7 +573,6 @@ private slots:
         QVERIFY(rows.first().contains(QStringLiteral("K4ABC")));
         QVERIFY(!rows.first().contains(QStringLiteral("N3XYZ")));
         QVERIFY(rows.join(' ').contains(QStringLiteral("N3XYZ  -73  1s")));
-        QVERIFY(captureCard(tag, rows, QStringLiteral("double-two-third-now-receiving")));
         turn.insert("talkers", QJsonArray{QJsonObject{{"sourceRoom", "lsb-7185000"}, {"ref", "x"}, {"hz", 7185999}}});
         view.insert("now", QJsonArray{turn});
         // An exact-dial receiver explicitly ties the combined sample to
@@ -577,55 +617,11 @@ private slots:
         QVERIFY(!lines.first().contains(QStringLiteral("(3)")));
         QVERIFY(lines.first().contains(QStringLiteral("identities updating")));
         view.insert("members", QJsonArray{});
-        tag.reportLines = roundtableTagReportLines(tag, view, 1000);
-        QFont font = WorkspacePreview::readableFont(QFont());
-        font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
-        font.setWeight(QFont::Bold); font.setStretch(125);
-        const QFontMetrics metrics(font);
-        const QStringList narrow = roundtableCochannelRows(tag, 8, &metrics, 194);
-        QVERIFY2(narrow.join(' ').contains(QStringLiteral("Double")), qPrintable(narrow.join(' ')));
-        QVERIFY(narrow.join(' ').contains(QStringLiteral("unavailable")));
+        QVERIFY(roundtableTagReportLines(tag, view, 1000).first().contains(QStringLiteral("unavailable")));
         turn.insert("end", 900);
         view.insert("now", QJsonArray{}); view.insert("earlier", QJsonArray{turn});
         QCOMPARE(roundtableTurnParticipants(view, turn).size(), 3);
         QVERIFY(roundtableTagReportLines(tag, view, 1000).first().contains(QStringLiteral("N3XYZ")));
-    }
-
-    void passiveCardsPrioritizeWholeReportsAndDiscloseOmissions()
-    {
-        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123);
-        tag.active = true;
-        tag.stations = QJsonArray{QJsonObject{{"callsign", "REDUNDANT"}}, QJsonObject{{"callsign", "PRESENCE"}}};
-        tag.active = true;
-        tag.reportLines = {QStringLiteral("Talking: W1AW"), QStringLiteral("Heard by     dBm    Age"),
-            QStringLiteral("K1ABC  -73  2s"), QStringLiteral("K2ABC  -74  2s"),
-            QStringLiteral("K3ABC  -75  2s"), QStringLiteral("K4ABC  -76  2s"), QStringLiteral("Open details")};
-        const QStringList rows = roundtableCochannelRows(tag, 7);
-        QCOMPARE(rows.size(), 7);
-        QVERIFY(rows.contains(QStringLiteral("K3ABC  -75  2s")));
-        QCOMPARE(rows.last(), QStringLiteral("+1 reports · details ›"));
-        QVERIFY(!rows.join(' ').contains(QStringLiteral("REDUNDANT")));
-        const QStringList roomy = roundtableCochannelRows(tag, 20);
-        QVERIFY(roomy.contains(QStringLiteral("K4ABC  -76  2s")));
-        QCOMPARE(roomy.last(), QStringLiteral("Reports ›"));
-        QFont font = WorkspacePreview::readableFont(QFont());
-        font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
-        font.setWeight(QFont::Bold);
-        const QFontMetrics metrics(font);
-        tag.reportLines.insert(3, QStringLiteral("VK3ABC/PORTABLE (2)  S9 +12 / -61  25s stale"));
-        const QStringList narrow = roundtableCochannelRows(tag, 20, &metrics, 194);
-        QVERIFY(narrow.last().contains(QStringLiteral("+1 reports")));
-        QVERIFY(!narrow.join(' ').contains(QStringLiteral("VK3ABC/PORTABLE")));
-        for (const QString& row : narrow) { QVERIFY(metrics.horizontalAdvance(row) <= 194); }
-        tag.reportLines = {QStringLiteral("Double (3): W1AW + K4ABC (2) + N3XYZ"),
-            QStringLiteral("Combined RF · Heard by · S / dBm · Age"), QStringLiteral("K1ABC  -73  2s"), QStringLiteral("Open details")};
-        const QStringList doubleRows = roundtableCochannelRows(tag, 12, &metrics, 194);
-        QVERIFY(doubleRows.join(' ').contains(QStringLiteral("W1AW")));
-        QVERIFY(doubleRows.join(' ').contains(QStringLiteral("K4ABC (2)")));
-        QVERIFY(doubleRows.join(' ').contains(QStringLiteral("N3XYZ")));
-        QVERIFY(doubleRows.join(' ').contains(QStringLiteral("Combined RF")));
-        QVERIFY(doubleRows.contains(QStringLiteral("K1ABC  -73  2s")));
-        for (const QString& row : doubleRows) { QCOMPARE(metrics.elidedText(row, Qt::ElideRight, 194), row); }
     }
 
     void theSelectedContextIsIndependentOfAllOwnSliceTags()
@@ -683,7 +679,6 @@ private slots:
         QCOMPARE(tags.first().state, static_cast<int>(RoundtableGlyph::Unknown));
         QCOMPARE(tags.first().reportLines.first(), QStringLiteral("Unknown signal"));
         QVERIFY(!tags.first().reportLines.join(' ').contains(QStringLiteral("W1AW")));
-        QVERIFY(captureCard(tags.first(), tags.first().reportLines, QStringLiteral("unknown-one-receiver-no-directory")));
     }
 
     void cochannelReportsFilterBeforeTheDisplayLimit_data()
@@ -757,189 +752,584 @@ private slots:
         AppSettings::instance().remove(QStringLiteral("Roundtable/SignalFormat"));
         QVERIFY2(rows.contains(sample), qPrintable(rows.join('\n')));
         QVERIFY(rows.contains(heading));
-        tag.stations = QJsonArray{talker, member};
-        tag.reportLines = rows;
-        tag.active = true;
-        Pan pan;
-        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
-        const QImage image = pan.draw();
-        const auto* hit = hitFor(pan.widget, tag.roomId);
-        QVERIFY(hit != nullptr);
-        QVERIFY(pan.widget.roundtableTagSpectrumRectForTest().contains(hit->rect));
-        QFont font = WorkspacePreview::readableFont(QFont(), &image);
-        font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
-        font.setWeight(QFont::Bold);
-        const QFontMetrics metrics(font, &image);
-        if (metrics.elidedText(sample, Qt::ElideRight, hit->rect.width() - 14) == sample) {
-            QCOMPARE(metrics.elidedText(sample, Qt::ElideRight, hit->rect.width() - 14), sample);
-        } else {
-            const QStringList finalRows = roundtableCochannelRows(tag, 20, &metrics, hit->rect.width() - 14);
-            QVERIFY(finalRows.last().contains(QStringLiteral("+1 reports")));
-            QVERIFY(!finalRows.contains(sample));
-        }
-        if (qEnvironmentVariableIsSet("NEREUS_ROUNDTABLE_FORMAT_CAPTURES")) {
-            const QString path = qEnvironmentVariable("NEREUS_ROUNDTABLE_FORMAT_CAPTURES")
-                + QLatin1Char('/') + format + (nth > 1 ? QLatin1Char('-') + QString(reporter).replace('/', '_') : QString())
-                + QStringLiteral(".png");
-            QVERIFY(image.copy(hit->rect.adjusted(-4, -4, 4, 4)).save(path));
+    }
+
+    // ---- The live card: placement (overlay design D16, D19) ----
+
+    void theCardSitsPastTheFlagOnTheFoot()
+    {
+        const QFontMetrics fm = cardMetrics();
+        const int dialX = 570;
+        const QRect flag = boardFlag(dialX);
+        const RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(), kBoardPan, dialX, {flag}, false, fm);
+        QVERIFY(!placed.card.isNull());
+        QCOMPARE(placed.card.width(), 232);
+        QVERIFY(placed.card.left() > flag.right());
+        QCOMPARE(placed.card.top() + placed.card.height(), 303);
+        QVERIFY(!placed.beside);
+        QCOMPARE(placed.rows, 3);
+        QCOMPARE(placed.moreRows, 0);
+    }
+
+    void theCardComesBackOnTheNearSideWithoutRoomPastTheFlag()
+    {
+        const QFontMetrics fm = cardMetrics();
+        // 199 free past the flag: too few.
+        int dialX = 654;
+        QRect flag = boardFlag(dialX);
+        QCOMPARE(flag.left() + flag.width() + 4 + 199, 1109);
+        RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(), kBoardPan, dialX, {flag}, false, fm);
+        QVERIFY(placed.beside);
+        QCOMPARE(placed.card.width(), 232);
+        QVERIFY(placed.card.right() < flag.left());
+        // 200 free: past the flag at that width.
+        flag.translate(-1, 0);
+        dialX -= 1;
+        placed = placeRoundtableCard(talkingCard(), kBoardPan, dialX, {flag}, false, fm);
+        QVERIFY(!placed.beside);
+        QCOMPARE(placed.card.width(), 200);
+        QVERIFY(placed.card.left() > flag.right());
+    }
+
+    void aFlippedFlagPutsTheCardPastItOnTheLeft()
+    {
+        const QFontMetrics fm = cardMetrics();
+        const int dialX = 1000;
+        const QRect flag = boardFlag(dialX, true);
+        const RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(), kBoardPan, dialX, {flag}, true, fm);
+        QVERIFY(!placed.beside);
+        QVERIFY(placed.card.right() < flag.left());
+        QCOMPARE(placed.card.width(), 232);
+    }
+
+    void theCardNeverCrossesAFlagOrLeavesThePan_data()
+    {
+        QTest::addColumn<int>("dialX");
+        QTest::addColumn<bool>("flipped");
+        for (int dialX = 90; dialX < 1100; dialX += 97) {
+            QTest::addRow("right of %d", dialX) << dialX << false;
+            QTest::addRow("left of %d", dialX) << dialX << true;
         }
     }
 
-    void cochannelReportWidthFollowsTheRenderedFont_data()
+    void theCardNeverCrossesAFlagOrLeavesThePan()
     {
-        QTest::addColumn<bool>("constrained");
-        QTest::newRow("wide font") << false;
-        QTest::newRow("wide font with keepout") << true;
+        QFETCH(int, dialX);
+        QFETCH(bool, flipped);
+        const QFontMetrics fm = cardMetrics();
+        const QVector<QRect> flags{boardFlag(dialX, flipped), QRect(600, 30, 90, 162)};
+        const RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(7), kBoardPan, dialX, flags, flipped, fm);
+        if (placed.card.isNull()) {
+            return;
+        }
+        QVERIFY(kBoardPan.contains(placed.card));
+        for (const QRect& flag : flags) {
+            QVERIFY(!placed.card.intersects(flag));
+        }
     }
 
-    void cochannelReportWidthFollowsTheRenderedFont()
+    void noStretchWideEnoughMeansNoCard()
     {
-        QFETCH(bool, constrained);
-        struct FontRestore {
-            QFont saved{QApplication::font()};
-            ~FontRestore() { QApplication::setFont(saved); }
-        } restore;
-        QFont wide = restore.saved;
-        wide.setStretch(125);
-        QApplication::setFont(wide);
-        Pan pan;
-        pan.widget.removeVfoWidget(0);
-        const QRect spectrum = pan.widget.roundtableTagSpectrumRectForTest();
-        SpectrumOverlayPanel* toolbar = nullptr;
-        if (constrained) {
-            toolbar = new SpectrumOverlayPanel(&pan.widget);
-            // Leave 216 pixels after the normal 4-pixel keepout/edge gaps:
-            // enough for the existing card, but not the measured wide font.
-            toolbar->setFixedSize(spectrum.width() - 224, spectrum.height());
-            toolbar->move(spectrum.topLeft());
-            toolbar->show();
+        // A flag each side, 199 between them and neither side of them wider.
+        const QFontMetrics fm = cardMetrics();
+        const QRect pan(0, 0, 803, 300);
+        const QVector<QRect> flags{QRect(199, 0, 201, 100), QRect(603, 0, 200, 100)};
+        const RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(), pan, 500, flags, false, fm);
+        QVERIFY(placed.card.isNull());
+        QCOMPARE(placed.rows, 0);
+    }
+
+    void rowsGiveWayFirstOnAShortPan()
+    {
+        const QFontMetrics fm = cardMetrics();
+        RoundtableCardPlacement placed = placeRoundtableCard(talkingCard(7), kBoardPan, 570, {boardFlag(570)}, false, fm);
+        QCOMPARE(placed.rows, 5);
+        QCOMPARE(placed.moreRows, 2);
+        const RoundtableCardModel card = talkingCard(5, RoundtableCardModel::Kind::Double);
+        int last = 5;
+        int zeroRowsHeight = 0;
+        for (int height = 220; height >= 40; height -= 4) {
+            const QRect pan(80, 303 - height, 1029, height);
+            placed = placeRoundtableCard(card, pan, 570, {}, false, fm);
+            QVERIFY(!placed.card.isNull());
+            QVERIFY2(placed.rows <= last, "a shorter pan never shows more rows");
+            QCOMPARE(placed.moreRows, 5 - placed.rows);
+            QVERIFY(placed.card.height() <= height);
+            QCOMPARE(placed.card.top() + placed.card.height(), 303);
+            last = placed.rows;
+            if (placed.rows == 0 && zeroRowsHeight == 0) { zeroRowsHeight = height; }
         }
-        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123, true);
-        tag.stations = QJsonArray{QJsonObject{{"callsign", "W1AW"}},
-            QJsonObject{{"callsign", "VK3ABC/P"}, {"nth", 2}}};
-        const QString sample = QStringLiteral("VK3ABC/P (2)  S9 +12 / -61  25s stale");
-        tag.active = true;
-        tag.reportLines = {QStringLiteral("Talking: W1AW"), QStringLiteral("Heard by     S / dBm    Age"),
-            sample, QStringLiteral("Open details")};
-        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
-        const QImage image = pan.draw();
-        const auto* hit = hitFor(pan.widget, tag.roomId);
-        QVERIFY(hit != nullptr);
-        QVERIFY(spectrum.contains(hit->rect));
-        QFont font = WorkspacePreview::readableFont(QFont(), &image);
-        font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
-        font.setWeight(QFont::Bold);
-        const QFontMetrics metrics(font, &image);
-        const QStringList displayedRows{QStringLiteral("7.185123 MHz"), QStringLiteral("Talking: W1AW"),
-            QStringLiteral("Heard by     S / dBm    Age"), sample, QStringLiteral("Reports ›")};
-        int requiredWidth = 208;
-        for (const QString& row : displayedRows) {
-            requiredWidth = std::max(requiredWidth, metrics.horizontalAdvance(row) + 14);
+        QVERIFY(zeroRowsHeight > 0);
+    }
+
+    void aShortPanKeepsTheDoubleHeadAndNames()
+    {
+        const QFontMetrics fm = cardMetrics();
+        const RoundtableCardModel card = talkingCard(5, RoundtableCardModel::Kind::Double);
+        // Room for the rail, the head and one line of names, nothing else.
+        const int height = 2 + 3 + 5 + 5 + 16 + 3 + 15 + 2 + 2;
+        const QRect pan(0, 0, 800, height);
+        const RoundtableCardPlacement placed = placeRoundtableCard(card, pan, 100, {}, false, fm);
+        QVERIFY(!placed.card.isNull());
+        QCOMPARE(placed.rows, 0);
+        QCOMPARE(placed.moreRows, 5);
+        QImage image(800, height, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::black);
+        {
+            QPainter painter(&image);
+            paintRoundtableCard(painter, card, placed, QStringLiteral("dBm"), fm, false);
         }
-        QVERIFY(requiredWidth > 216);
-        if (!constrained) {
-            QCOMPARE(hit->rect.width(), requiredWidth);
-            QCOMPARE(metrics.elidedText(sample, Qt::ElideRight, hit->rect.width() - 14), sample);
-        } else {
-            QCOMPARE(hit->rect.width(), 208);
-            QVERIFY(!hit->rect.intersects(toolbar->geometry()));
-            QCOMPARE(metrics.elidedText(QStringLiteral("Reports ›"), Qt::ElideRight, hit->rect.width() - 14),
-                     QStringLiteral("Reports ›"));
-            const QStringList finalRows = roundtableCochannelRows(tag, 20, &metrics, hit->rect.width() - 14);
-            QVERIFY(finalRows.last().contains(QStringLiteral("+1 reports")));
-            QVERIFY(!finalRows.contains(sample));
-            QCOMPARE(hit->rect.height(), finalRows.size() * std::max(14, metrics.height() + 2) + 8);
-            // The disclosure is painted in the last row even when the full
-            // report cannot fit beside the toolbar at the current font width.
-            int textPixels = 0;
-            const QRect disclosure(hit->rect.left() + 7, hit->rect.bottom() - 17, hit->rect.width() - 14, 14);
-            for (int y = disclosure.top(); y <= disclosure.bottom(); ++y) {
-                for (int x = disclosure.left(); x <= disclosure.right(); ++x) {
-                    const QColor color = image.pixelColor(x, y);
-                    if (color.red() > 100 && color.green() > 100 && color.blue() > 100) {
-                        ++textPixels;
-                    }
-                }
+        // The rail's stripes and the red name dot are both there.
+        QVERIFY(hasColor(image, QRect(placed.card.left() + 2, placed.card.top() + 1, 40, 3), QColor(0xe0, 0x6c, 0x6e)));
+        QVERIFY(hasColor(image, placed.card.adjusted(7, 24, -7, 0), QColor(0xe0, 0x6c, 0x6e)));
+    }
+
+    void valueUpdatesChangeNoCardGeometry()
+    {
+        const QFontMetrics fm = cardMetrics();
+        RoundtableCardModel card = talkingCard(4);
+        const QVector<QRect> flags{boardFlag(570)};
+        const RoundtableCardPlacement first = placeRoundtableCard(card, kBoardPan, 570, flags, false, fm);
+        for (int i = 0; i < 40; ++i) {
+            for (RoundtableCardRow& row : card.rows) {
+                row.dbm -= 3.0;
+                row.ageMs += 37000;
+                row.old = row.ageMs > 20000;
+                row.peakDbm = row.dbm + 1.0;
             }
-            QVERIFY(textPixels > 10);
-        }
-        if (qEnvironmentVariableIsSet("NEREUS_ROUNDTABLE_FORMAT_CAPTURES")) {
-            const QString path = qEnvironmentVariable("NEREUS_ROUNDTABLE_FORMAT_CAPTURES")
-                + (constrained ? QStringLiteral("/wide-font-constrained.png") : QStringLiteral("/wide-font.png"));
-            QVERIFY(image.copy(hit->rect.adjusted(-4, -4, 4, 4)).save(path));
+            card.clockMs += 61000;
+            const RoundtableCardPlacement again = placeRoundtableCard(card, kBoardPan, 570, flags, false, fm);
+            QCOMPARE(again.card, first.card);
+            QCOMPARE(again.rows, first.rows);
         }
     }
 
-    void cochannelBoxHasRealBoundsAndRender()
+    // ---- The live card: drawing (D10, D11, D13, D15) ----
+
+    void aTalkingCardStandsOnThePanAndClicksLikeItsFrequency()
     {
         Pan pan;
-        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123);
-        tag.mine = true;
-        tag.stations = QJsonArray{QJsonObject{{"callsign", "W1AW"}}, QJsonObject{{"callsign", "K4ABC"}, {"nth", 2}},
-            QJsonObject{{"callsign", "N3XYZ"}}, QJsonObject{{"callsign", "W4KZO"}}, QJsonObject{{"callsign", "KG4VCF"}}};
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        RoundtableTag tag = tagAt(room, 7200000);
         tag.active = true;
-        tag.reportLines = {QStringLiteral("Talking: W1AW"), QStringLiteral("Heard by     dBm    Age"),
-            QStringLiteral("N4XYZ  -73  25s stale"), QStringLiteral("Open details")};
+        tag.stations = {QJsonObject{{"callsign", "W1AW"}}};
         pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(talkingCard(), room);
         const QImage image = pan.draw();
-        const auto* hit = hitFor(pan.widget, tag.roomId);
+        // The card speaks for the frequency: no tag of its own.
+        QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 1);
+        const auto* hit = cardHit(pan.widget);
         QVERIFY(hit != nullptr);
-        // Frequency, current talker, Heard by, one complete reporter and
-        // details; presence does not consume the report card's space.
-        QFont font = WorkspacePreview::readableFont(QFont(), &image);
-        font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
-        font.setWeight(QFont::Bold);
-        QCOMPARE(hit->rect.height(), 5 * std::max(14, QFontMetrics(font, &image).height() + 2) + 8);
-        QVERIFY(hit->rect.width() >= 200);
-        QVERIFY(pan.widget.roundtableTagSpectrumRectForTest().contains(hit->rect));
-        QVERIFY(!hit->rect.intersects(pan.flag->geometry()));
-        if (qEnvironmentVariableIsSet("NEREUS_ROUNDTABLE_CAPTURE")) {
-            QImage product(pan.widget.size(), QImage::Format_ARGB32_Premultiplied);
-            product.fill(QColor(15, 15, 26));
-            QPainter painter(&product);
-            const QRect spectrum = pan.widget.roundtableTagSpectrumRectForTest();
-            QVector<float> fixture(spectrum.width(), -125.0f);
-            for (int x = 0; x < fixture.size(); ++x) {
-                fixture[x] += static_cast<float>(3 * std::sin(x * 0.23)
-                    + 58 * std::exp(-std::pow((x - 490) / 20.0, 2)));
-            }
-            pan.widget.setRenderedPixelsForTest(fixture);
-            pan.widget.drawFrequencyGridForTest(painter, spectrum);
-            pan.widget.drawSpectrumForTest(painter, spectrum);
-            pan.widget.drawFreqScaleForTest(painter, pan.widget.freqScaleRectForTest());
-            pan.widget.drawRoundtableTagsForTest(painter, spectrum);
-            // QRhiWidget has no offscreen paint engine; render the actual child
-            // VFO chrome over the same CPU spectrum primitives used in product.
-            for (QWidget* child : pan.widget.findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-                if (child->isVisible()) { child->render(&painter, child->pos()); }
-            }
-            painter.end();
-            QVERIFY(product.save(qEnvironmentVariable("NEREUS_ROUNDTABLE_CAPTURE")));
-        }
-    }
-
-    void shortCochannelBoxKeepsReportsAndDetailsWithinItsTrueHeight()
-    {
-        Pan pan(360);
-        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7185123"), 7185123, true);
-        tag.stations = QJsonArray{QJsonObject{{"callsign", "W1AW"}}, QJsonObject{{"callsign", "K4ABC"}},
-            QJsonObject{{"callsign", "N3XYZ"}}, QJsonObject{{"callsign", "W4KZO"}}, QJsonObject{{"callsign", "KG4VCF"}}};
-        tag.active = true;
-        tag.reportLines = {QStringLiteral("Last talker: W4KZO"), QStringLiteral("Heard by     dBm    Age"),
-            QStringLiteral("N4XYZ  -73  25s stale"), QStringLiteral("K9XYZ  -61  2s"), QStringLiteral("Open details")};
-        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
-        pan.draw();
-        const auto* hit = hitFor(pan.widget, tag.roomId);
-        QVERIFY(hit != nullptr);
-        const QRect spectrum = pan.widget.roundtableTagSpectrumRectForTest();
-        QVERIFY(spectrum.contains(hit->rect));
+        QCOMPARE(hit->hz, 7200000);
+        QCOMPARE(hit->roomIds, QStringList{room});
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        QVERIFY(spec.contains(hit->rect));
         QVERIFY(!pan.widget.receiverFlagRegion().intersects(hit->rect));
-        QFont font = WorkspacePreview::readableFont(QFont());
-        font.setPixelSize(WorkspacePreview::readableTextPixelSize(11));
-        font.setWeight(QFont::Bold);
-        const int rowHeight = std::max(14, QFontMetrics(font).height() + 2);
-        QVERIFY(hit->rect.height() >= 5 * rowHeight + 8);
-        QCOMPARE((hit->rect.height() - 8) % rowHeight, 0);
+        QCOMPARE(hit->rect.bottom() + 1, spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest() - 8);
+        // Border, rail and meter in the talking green.
+        const QColor green(0x4c, 0xaf, 0x6a);
+        QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), green.name());
+        QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top() + 2)).name(), green.name());
+        // A click reads the frequency; it never tunes.
+        const QPoint click = hit->rect.center();
+        QSignalSpy read(&pan.widget, &SpectrumWidget::roundtableReadRequested);
+        QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
+        QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, click);
+        QCOMPARE(read.size(), 1);
+        QCOMPARE(read.first().first().toString(), room);
+        QCOMPARE(tuned.size(), 0);
+        QCOMPARE(plainTune.size(), 0);
+    }
+
+    void aDoubleCardHasStripesOnRailAndMeters()
+    {
+        Pan pan;
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
+        RoundtableCardModel card = talkingCard(2, RoundtableCardModel::Kind::Double);
+        card.rows[1].you = true;
+        pan.widget.setRoundtableCard(card, QStringLiteral("frequency:lsb-7200000"));
+        const QImage image = pan.draw();
+        const auto* hit = cardHit(pan.widget);
+        QVERIFY(hit != nullptr);
+        const QRect rail(hit->rect.left() + 6, hit->rect.top() + 1, hit->rect.width() - 12, 3);
+        QVERIFY(hasColor(image, rail, QColor(0xe0, 0x6c, 0x6e)));
+        QVERIFY(hasColor(image, rail, QColor(0x3a, 0x1a, 0x1b)));
+        QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), QStringLiteral("#c25a5c"));
+        const QRect all = hit->rect.adjusted(6, 40, -6, -2);
+        QVERIFY(hasColor(image, all, QColor(0x5d, 0x2c, 0x2e)));
+        // Your own row is striped cyan.
+        QVERIFY(hasColor(image, all, QColor(0x00, 0xd4, 0xff)));
+        QVERIFY(hasColor(image, all, QColor(0x0d, 0x4a, 0x58)));
+    }
+
+    void anOldRowGoesGreyWithAnAmberAgeAndNoTick()
+    {
+        const QFontMetrics fm = cardMetrics();
+        const auto drawOne = [&fm](bool old, bool hasPeak) {
+            RoundtableCardModel card = talkingCard(1);
+            card.rows[0].old = old;
+            card.rows[0].hasPeak = hasPeak;
+            const QRect pan(0, 0, 300, 200);
+            const RoundtableCardPlacement placed = placeRoundtableCard(card, pan, 10, {}, false, fm);
+            QImage image(300, 200, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            QPainter painter(&image);
+            paintRoundtableCard(painter, card, placed, QStringLiteral("dBm"), fm, false);
+            painter.end();
+            return std::pair<QImage, QRect>(image, placed.card);
+        };
+        const auto [fresh, freshRect] = drawOne(false, true);
+        const QRect meter = freshRect.adjusted(6, freshRect.height() - 10, -6, -4);
+        QVERIFY(hasColor(fresh, meter, QColor(0x4c, 0xaf, 0x6a)));
+        // The tick, at 0.85 over the track or bar: nearly white.
+        bool tick = false;
+        for (int y = meter.top(); y <= meter.bottom(); ++y) {
+            for (int x = meter.left(); x <= meter.right(); ++x) {
+                tick = tick || QColor(fresh.pixel(x, y)).lightness() > 180;
+            }
+        }
+        QVERIFY(tick);
+        const auto [old, oldRect] = drawOne(true, true);
+        QCOMPARE(oldRect, freshRect);
+        QVERIFY(hasColor(old, meter, QColor(0x60, 0x60, 0x66)));
+        QVERIFY(!hasColor(old, meter, QColor(0x4c, 0xaf, 0x6a)));
+        for (int y = meter.top(); y <= meter.bottom(); ++y) {
+            for (int x = meter.left(); x <= meter.right(); ++x) {
+                QVERIFY(QColor(old.pixel(x, y)).lightness() <= 180);
+            }
+        }
+        // The age is amber.
+        QVERIFY(hasColor(old, oldRect.adjusted(oldRect.width() - 40, 0, -2, 0), QColor(0xd8, 0xa5, 0x5f)));
+    }
+
+    void aFrozenCardDrawsNoLiveColor()
+    {
+        Pan pan;
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Frozen);
+        RoundtableCardModel card = talkingCard(3, RoundtableCardModel::Kind::Double);
+        card.frozen = true;
+        card.note = QStringLiteral("Offline since 14:32 UTC");
+        for (RoundtableCardRow& row : card.rows) { row.hasPeak = false; }
+        pan.widget.setRoundtableCard(card, QStringLiteral("frequency:lsb-7200000"));
+        const QImage image = pan.draw();
+        const auto* hit = cardHit(pan.widget);
+        QVERIFY(hit != nullptr);
+        QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), QStringLiteral("#606066"));
+        for (const QColor& live : {QColor(0xe0, 0x6c, 0x6e), QColor(0xc2, 0x5a, 0x5c), QColor(0x4c, 0xaf, 0x6a),
+                                   QColor(0x3a, 0x1a, 0x1b), QColor(0x5d, 0x2c, 0x2e), QColor(0x00, 0xd4, 0xff)}) {
+            QVERIFY2(!hasColor(image, hit->rect, live), qPrintable(live.name()));
+        }
+    }
+
+    void aDroppedLinkCardFromTheModelDrawsNoGreen()
+    {
+        CardRig rig;
+        const QJsonObject a = cardPerson("lsb-7184000", "a", "W1AW", 7185000, true);
+        rig.view(7185000, {cardTurn(5, "talking", 7185000, "lsb-7184000", rig.now - 4000, {a})}, {}, {a});
+        rig.state.applyStationValue("linkSince", rig.now - 1000);
+        rig.state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Offline));
+        const RoundtableCardModel card = rig.card(7185000);
+        QVERIFY(card.frozen);
+        Pan pan;
+        pan.widget.setRoundtableTags(roundtableTagsFor(&rig.model, {}, RoundtableModel::frequencyContextId(7185000, QStringLiteral("lsb"))),
+                                     roundtableTagDisplayFor(&rig.model));
+        pan.widget.setRoundtableCard(card, RoundtableModel::frequencyContextId(7185000, QStringLiteral("lsb")));
+        const QImage image = pan.draw();
+        const auto* hit = cardHit(pan.widget);
+        QVERIFY(hit != nullptr);
+        // Grey head and border, no green anywhere on it.
+        QVERIFY(!hasColor(image, hit->rect, QColor(0x4c, 0xaf, 0x6a)));
+    }
+
+    void aHiddenStationsCardDims()
+    {
+        Pan pan;
+        pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Dimmed);
+        RoundtableCardModel card = talkingCard();
+        card.note = QStringLiteral("You are hidden");
+        pan.widget.setRoundtableCard(card, QStringLiteral("frequency:lsb-7200000"));
+        const QImage image = pan.draw();
+        const auto* hit = cardHit(pan.widget);
+        QVERIFY(hit != nullptr);
+        QVERIFY(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name() != QStringLiteral("#4caf6a"));
+    }
+
+    void nobodyTalkingDrawsNoCardOnlyTheCompactTag()
+    {
+        Pan pan;
+        const QString room = QStringLiteral("frequency:lsb-7190000");
+        RoundtableTag tag = tagAt(room, 7190000);
+        tag.active = true;
+        tag.stations = {QJsonObject{{"callsign", "W1AW"}}, QJsonObject{{"callsign", "K4ABC"}}};
+        tag.members = 2;
+        tag.label = QStringLiteral("W1AW");
+        tag.state = static_cast<int>(RoundtableGlyph::Quiet);
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        RoundtableCardModel quiet;
+        quiet.hz = 7190000;
+        pan.widget.setRoundtableCard(quiet, room);
+        pan.draw();
+        QCOMPARE(cardHit(pan.widget), nullptr);
+        const auto* hit = hitFor(pan.widget, room);
+        QVERIFY(hit != nullptr);
+        QCOMPARE(hit->rect.height(), 22);
+        QCOMPARE(hit->kind, SpectrumWidget::RoundtableTagHit::Kind::Tag);
+        QCOMPARE(hit->hz, 7190000);
+    }
+
+    void bothPathsDrawTheSameHits()
+    {
+        Pan pan;
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        RoundtableTag other = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        other.stations = {QJsonObject{{"callsign", "K4ABC"}}};
+        pan.widget.setRoundtableTags({other}, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(talkingCard(), room);
+        pan.draw();
+        const QList<SpectrumWidget::RoundtableTagHit> cpu = pan.widget.roundtableTagHitsForTest();
+        QCOMPARE(cpu.size(), 2);
+#ifdef NEREUS_GPU_SPECTRUM
+        // The GPU path paints in its child, onto its overlay format.
+        QImage overlay(pan.widget.size(), QImage::Format_RGBA8888_Premultiplied);
+        overlay.fill(Qt::transparent);
+        QVERIFY(pan.widget.m_roundtableTagLayer != nullptr);
+        pan.widget.m_roundtableTagLayer->setUpdatesEnabled(true);
+        pan.widget.m_roundtableTagLayer->render(&overlay);
+        const QList<SpectrumWidget::RoundtableTagHit> gpu = pan.widget.roundtableTagHitsForTest();
+        QCOMPARE(gpu.size(), cpu.size());
+        for (qsizetype i = 0; i < cpu.size(); ++i) {
+            QCOMPARE(gpu.at(i).rect, cpu.at(i).rect);
+            QCOMPARE(gpu.at(i).kind, cpu.at(i).kind);
+            QCOMPARE(gpu.at(i).hz, cpu.at(i).hz);
+        }
+#endif
+    }
+
+    void cardValueUpdatesLeaveBothOverlaysClean()
+    {
+        Pan pan;
+        RoundtableCardModel card = talkingCard(4);
+        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Live);
+        int invalidations = 0;
+        for (int report = 0; report < 1000; ++report) {
+            pan.widget.clearOverlayStaticDirtyForTest();
+            pan.widget.clearOverlayDynamicDirtyForTest();
+            card.rows[0].dbm = -60.0 - report % 20;
+            card.clockMs += 200;
+            pan.widget.setRoundtableCard(card, QStringLiteral("frequency:lsb-7200000"));
+            if (pan.widget.overlayStaticDirtyForTest()) { ++invalidations; }
+#ifdef NEREUS_GPU_SPECTRUM
+            if (pan.widget.overlayDynamicDirtyForTest()) { ++invalidations; }
+#endif
+        }
+        QCOMPARE(invalidations, 0);
+    }
+
+    // ---- The compact tags (D20) ----
+
+    void aDoubleTagIsRedStripedAndNamesTwo()
+    {
+        Pan pan;
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        tag.state = static_cast<int>(RoundtableGlyph::Doubled);
+        tag.label = QStringLiteral("Double");
+        tag.keyed = {QStringLiteral("W1AW"), QStringLiteral("K4ABC"), QStringLiteral("N3XYZ")};
+        tag.stations = {QJsonObject{{"callsign", "W1AW"}, {"sourceRoom", "lsb-7150000"}}};
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        const QImage image = pan.draw();
+        const auto* hit = hitFor(pan.widget, tag.roomId);
+        QVERIFY(hit != nullptr);
+        QCOMPARE(hit->rect.height(), 22 + 2 * 16);
+        const QRect spec = pan.widget.roundtableTagSpectrumRectForTest();
+        QCOMPARE(hit->rect.bottom() + 1, spec.bottom() + 1 - pan.widget.bandPlanStripHeightForTest() - 8);
+        QCOMPARE(QColor(image.pixel(hit->rect.center().x(), hit->rect.top())).name(), QStringLiteral("#c25a5c"));
+        const QRect stripes(hit->rect.left() + 5, hit->rect.top() + 1, hit->rect.width() - 10, 2);
+        QVERIFY(hasColor(image, stripes, QColor(0xe0, 0x6c, 0x6e)));
+        QVERIFY(hasColor(image, stripes, QColor(0x3a, 0x1a, 0x1b)));
+        // Frozen: grey, and the stripes stop.
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Frozen);
+        const QImage frozen = pan.draw();
+        QVERIFY(!hasColor(frozen, hit->rect, QColor(0xe0, 0x6c, 0x6e)));
+        QVERIFY(!hasColor(frozen, hit->rect, QColor(0x3a, 0x1a, 0x1b)));
+    }
+
+    void aTagNamesItsTalkerAndPlusTheRest()
+    {
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        tag.stations = {QJsonObject{{"callsign", "K4ABC"}}};
+        tag.members = 1;
+        tag.label = QStringLiteral("K4ABC");
+        Pan pan;
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        const QImage alone = pan.draw();
+        const QRect rect = hitFor(pan.widget, tag.roomId)->rect;
+        QCOMPARE(rect.height(), 22);
+        tag.stations.append(QJsonObject{{"callsign", "W1AW"}});
+        tag.stations.append(QJsonObject{{"callsign", "N3XYZ"}});
+        tag.members = 3;
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        const QImage three = pan.draw();
+        QVERIFY(hitFor(pan.widget, tag.roomId)->rect.height() == 22);
+        QVERIFY2(alone.copy(rect) != three.copy(hitFor(pan.widget, tag.roomId)->rect), "+2 is drawn");
+        QCOMPARE(roundtableSignalText(-61.0, QStringLiteral("dBm")), QString(QChar(0x2212)) + QStringLiteral("61"));
+        QCOMPARE(roundtableSignalText(-61.0, QStringLiteral("S-units")), QStringLiteral("S9 +12"));
+        QCOMPARE(roundtableSignalText(-61.0, QStringLiteral("Both")),
+                 QStringLiteral("S9 +12 ") + QChar(0x2212) + QStringLiteral("61"));
+    }
+
+    void oneDoubleAcrossSeveralFrequenciesInOneRoomIsOneTag()
+    {
+        const auto doubleAt = [](qint64 hz, const QStringList& keyed, const QString& source) {
+            RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-%1").arg(hz), hz);
+            tag.state = static_cast<int>(RoundtableGlyph::Doubled);
+            tag.label = QStringLiteral("Double");
+            tag.keyed = keyed;
+            tag.stations = {QJsonObject{{"callsign", keyed.first()}, {"sourceRoom", source}}};
+            return tag;
+        };
+        const QStringList both{QStringLiteral("W1AW"), QStringLiteral("K4ABC")};
+        const QString room = QStringLiteral("lsb-7184000");
+        const QList<RoundtableTag> merged = roundtableMergeDoubleTags({
+            doubleAt(7185000, both, room), doubleAt(7185040, both, room), doubleAt(7185080, both, room),
+            // Another double in the same room, and one in another room, stay.
+            doubleAt(7187000, {QStringLiteral("N3XYZ"), QStringLiteral("W9ABC")}, room),
+            doubleAt(7185100, both, QStringLiteral("lsb-7186000"))});
+        QCOMPARE(merged.size(), 3);
+        QCOMPARE(merged.first().hz, 7185000);
+        QCOMPARE(merged.first().keyed, both);
+        QCOMPARE(merged.first().mergedHz, (QList<qint64>{7185040, 7185080}));
+        QCOMPARE(merged.first().members, 3);
+        // On the pan.
+        Pan pan;
+        pan.widget.setRoundtableTags({doubleAt(7150000, both, room), doubleAt(7150040, both, room)},
+                                     RoundtableTagDisplay::Live);
+        pan.draw();
+        QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 1);
+        QVERIFY(!pan.widget.roundtableTagHitsForTest().first().folded);
+        QCOMPARE(pan.widget.roundtableTags().size(), 2);
+    }
+
+    void aFrequencyAnotherSlicesFlagSpeaksForHasNoTag()
+    {
+        Pan pan;
+        VfoWidget* other = pan.widget.addVfoWidget(1);
+        other->setFrequency(7150000.0);
+        other->setActiveSlice(false);
+        pan.widget.updateVfoPositions();
+        const QString room = QStringLiteral("frequency:lsb-7150000");
+        RoundtableTag there = tagAt(room, 7150000);
+        there.stations = {QJsonObject{{"callsign", "K4ABC"}}};
+        RoundtableTag elsewhere = tagAt(QStringLiteral("frequency:lsb-7240000"), 7240000);
+        elsewhere.stations = {QJsonObject{{"callsign", "N3XYZ"}}};
+        pan.widget.setRoundtableTags({there, elsewhere}, RoundtableTagDisplay::Live);
+        pan.draw();
+        QCOMPARE(hitFor(pan.widget, room), nullptr);
+        QVERIFY(hitFor(pan.widget, elsewhere.roomId) != nullptr);
+    }
+
+    void aTagWithNoClearSpotIsLeftOffNeverOverlapping()
+    {
+        // The active flag and the card leave little of a narrow pan.
+        Pan pan;
+        pan.widget.resize(560, 760);
+        pan.widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
+        pan.widget.updateVfoPositions();
+        QList<RoundtableTag> tags;
+        for (int i = 0; i < 12; ++i) {
+            RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-%1").arg(7110000 + i * 15000), 7110000 + i * 15000);
+            tag.stations = {QJsonObject{{"callsign", QStringLiteral("K%1ABC").arg(i)}}};
+            tag.mine = true;  // never folds, so some must be left off
+            tags.append(tag);
+        }
+        pan.widget.setRoundtableTags(tags, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableCard(talkingCard(), QStringLiteral("frequency:lsb-7200000"));
+        pan.draw();
+        const auto& hits = pan.widget.roundtableTagHitsForTest();
+        QVERIFY(cardHit(pan.widget) != nullptr);
+        QVERIFY(hits.size() < 13);
+        const QRegion flags = pan.widget.receiverFlagRegion();
+        for (qsizetype i = 0; i < hits.size(); ++i) {
+            QVERIFY(!flags.intersects(hits.at(i).rect));
+            for (qsizetype j = i + 1; j < hits.size(); ++j) {
+                QVERIFY2(!hits.at(i).rect.intersects(hits.at(j).rect), "two things overlap on the pan");
+            }
+        }
+    }
+
+    // NEREUS_ROUNDTABLE_CARD_CAPTURES=<dir>: the card over a spectrum, by the CPU
+    // painter and the real flag chrome, offscreen.
+    void capturesForTheBoard_data()
+    {
+        QTest::addColumn<QString>("scene");
+        QTest::addColumn<int>("height");
+        QTest::newRow("talking") << QStringLiteral("talking") << 640;
+        QTest::newRow("double") << QStringLiteral("double") << 640;
+        QTest::newRow("frozen") << QStringLiteral("frozen") << 640;
+        QTest::newRow("reconnecting") << QStringLiteral("reconnecting") << 640;
+        QTest::newRow("short") << QStringLiteral("short") << 300;
+    }
+
+    void capturesForTheBoard()
+    {
+        const QString directory = qEnvironmentVariable("NEREUS_ROUNDTABLE_CARD_CAPTURES");
+        if (directory.isEmpty()) { return; }
+        QFETCH(QString, scene);
+        QFETCH(int, height);
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("Both"));
+        Pan pan(height);
+        RoundtableCardModel card = talkingCard(7);
+        RoundtableTagDisplay display = RoundtableTagDisplay::Live;
+        if (scene == QLatin1String("double") || scene == QLatin1String("short")) {
+            card = talkingCard(4, RoundtableCardModel::Kind::Double);
+            card.rows[1].you = true;
+        }
+        card.rows[2].old = card.rows.size() > 2;
+        if (scene == QLatin1String("frozen") || scene == QLatin1String("reconnecting")) {
+            card.frozen = true;
+            card.note = scene == QLatin1String("frozen") ? QStringLiteral("Offline since 14:32 UTC")
+                                                         : QStringLiteral("Reconnecting");
+            for (RoundtableCardRow& row : card.rows) { row.hasPeak = false; }
+            display = RoundtableTagDisplay::Frozen;
+        }
+        RoundtableTag dbl = tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000);
+        dbl.state = static_cast<int>(RoundtableGlyph::Doubled);
+        dbl.label = QStringLiteral("Double");
+        dbl.keyed = {QStringLiteral("KD8LMN"), QStringLiteral("AA4QQ")};
+        dbl.stations = {QJsonObject{{"callsign", "KD8LMN"}, {"sourceRoom", "lsb-7150000"}}};
+        RoundtableTag talk = tagAt(QStringLiteral("frequency:lsb-7125000"), 7125000);
+        talk.state = static_cast<int>(RoundtableGlyph::Talking);
+        talk.label = QStringLiteral("VE3XYZ");
+        talk.members = 3;
+        talk.stations = {QJsonObject{{"callsign", "VE3XYZ"}}, QJsonObject{{"callsign", "K1A"}}, QJsonObject{{"callsign", "K1B"}}};
+        RoundtableTag quiet = tagAt(QStringLiteral("frequency:lsb-7170000"), 7170000);
+        quiet.state = static_cast<int>(RoundtableGlyph::Quiet);
+        quiet.label = QStringLiteral("W9ABC");
+        quiet.members = 2;
+        quiet.stations = {QJsonObject{{"callsign", "W9ABC"}}, QJsonObject{{"callsign", "K1C"}}};
+        pan.widget.setRoundtableTags({talk, dbl, quiet}, display);
+        pan.widget.setRoundtableCard(card, QStringLiteral("frequency:lsb-7200000"));
+        AppSettings::instance().remove(QStringLiteral("Roundtable/SignalFormat"));
+
+        QImage product(pan.widget.size(), QImage::Format_ARGB32_Premultiplied);
+        product.fill(QColor(15, 15, 26));
+        QPainter painter(&product);
+        const QRect spectrum = pan.widget.roundtableTagSpectrumRectForTest();
+        QVector<float> fixture(spectrum.width(), -125.0f);
+        for (int x = 0; x < fixture.size(); ++x) {
+            fixture[x] += static_cast<float>(3 * std::sin(x * 0.23) + 58 * std::exp(-std::pow((x - 300) / 20.0, 2)));
+        }
+        pan.widget.setRenderedPixelsForTest(fixture);
+        pan.widget.drawFrequencyGridForTest(painter, spectrum);
+        pan.widget.drawSpectrumForTest(painter, spectrum);
+        pan.widget.drawFreqScaleForTest(painter, pan.widget.freqScaleRectForTest());
+        pan.widget.drawRoundtableTagsForTest(painter, spectrum);
+        for (QWidget* child : pan.widget.findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+            if (child->isVisible() && child != pan.widget.m_roundtableTagLayer) { child->render(&painter, child->pos()); }
+        }
+        painter.end();
+        const QRect crop(0, 0, pan.widget.width(), spectrum.bottom() + 1);
+        QVERIFY(product.copy(crop).save(directory + QLatin1Char('/') + scene + QStringLiteral(".png")));
     }
 
     void selectedCochannelKeepsTheOnlyFreeSlot()
@@ -1757,12 +2147,7 @@ private slots:
         const QPoint edge(doubled.center().x(), doubled.top());
         QCOMPARE(QColor(live.pixel(edge)).name(), QStringLiteral("#c25a5c"));
 
-        pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Stale);
-        const QImage stale = pan.draw();
-        QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 4);
-        QCOMPARE(QColor(stale.pixel(edge)).name(), QStringLiteral("#606066"));
-
-        // A dropped link draws the same: no live color (D7).
+        // A dropped link draws no live color (D7).
         pan.widget.setRoundtableTags(panTags(), RoundtableTagDisplay::Frozen);
         const QImage frozen = pan.draw();
         QCOMPARE(pan.widget.roundtableTagHitsForTest().size(), 4);
@@ -1807,8 +2192,9 @@ private slots:
         const QColor dimGlyph(dimmed.pixel(glyphCenter));
         QVERIFY2(dimGlyph.red() < liveGlyph.red() * 0.7, qPrintable(dimGlyph.name() + liveGlyph.name()));
         // The talker and count are drawn as when live.
-        const QRect text(glyphCenter.x() + 10, doubled.top() + 2, doubled.right() - glyphCenter.x() - 18,
-                         doubled.height() - 4);
+        // Below the double's striped top edge, which dims with the marking.
+        const QRect text(glyphCenter.x() + 10, doubled.top() + 3, doubled.right() - glyphCenter.x() - 18,
+                         doubled.height() - 5);
         QCOMPARE(dimmed.copy(text), live.copy(text));
 
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::roundtableRoomClicked);
@@ -1948,7 +2334,7 @@ private slots:
         auto tags = panTags();
         tags[0].label = QStringLiteral("Updated report");
         QVERIFY(expectPaint([&] {
-            widget.setRoundtableTags(tags, RoundtableTagDisplay::Stale);
+            widget.setRoundtableTags(tags, RoundtableTagDisplay::Frozen);
         }));
         QVERIFY(expectPaint([&] {
             widget.setRoundtableTags(tags, RoundtableTagDisplay::Hidden);

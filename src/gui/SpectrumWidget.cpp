@@ -10,6 +10,9 @@
 // Modification history (NereusSDR):
 //   2026-11-03: Preserve clock stacking and split geometry; keep tag-only refreshes out of static overlays.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-03: The live Roundtable card and the new tags, drawn on both paths
+//                 from the card model; the text-row card is gone. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-02: Schedule CPU tag repaints when no GPU child exists.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-01: The waterfall clock is a child label. Ticking the second
@@ -12662,7 +12665,10 @@ constexpr int kRoundtableTagFootGap = 8;      // tag bottom to band plan top
 constexpr int kRoundtableTagGap = 4;          // between tags and from the edges
 constexpr int kRoundtableTagMinWidth = 56;
 constexpr int kRoundtableTagMaxWidth = 128;
-constexpr int kRoundtableReportMinWidth = 208;
+constexpr int kRoundtableCardTopGap = 2;      // card top limit, under the pan's top edge
+constexpr int kRoundtableTagNameLine = 16;    // each name under a double's head
+constexpr int kRoundtableTagNameIndent = 14;  // a double's names, past the glyph
+constexpr int kRoundtableTagNames = 2;        // a double names up to two (D20)
 constexpr int kRoundtableTagPadLeft = 6;
 constexpr int kRoundtableTagPadRight = 7;
 constexpr int kRoundtableTagInnerGap = 5;     // glyph to text
@@ -12680,11 +12686,51 @@ bool roundtableTagsEqual(const QList<RoundtableTag>& a, const QList<RoundtableTa
         const RoundtableTag& y = b.at(i);
         if (x.roomId != y.roomId || x.hz != y.hz || x.state != y.state || x.label != y.label
             || x.members != y.members || x.mine != y.mine || x.active != y.active || x.mentionsMe != y.mentionsMe
-            || x.stations != y.stations || x.keyed != y.keyed || x.reportLines != y.reportLines) {
+            || x.stations != y.stations || x.keyed != y.keyed || x.reportLines != y.reportLines
+            || x.mergedHz != y.mergedHz) {
             return false;
         }
     }
     return true;
+}
+
+bool roundtableCardRowsEqual(const QVector<RoundtableCardRow>& a, const QVector<RoundtableCardRow>& b)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (qsizetype i = 0; i < a.size(); ++i) {
+        const RoundtableCardRow& x = a.at(i);
+        const RoundtableCardRow& y = b.at(i);
+        if (x.call != y.call || x.dbm != y.dbm || x.ageMs != y.ageMs || x.you != y.you || x.old != y.old
+            || x.peakDbm != y.peakDbm || x.hasPeak != y.hasPeak) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool roundtableCardsEqual(const RoundtableCardModel& a, const RoundtableCardModel& b)
+{
+    return a.kind == b.kind && a.hz == b.hz && a.keyed == b.keyed && a.keyedYou == b.keyedYou
+        && a.clockMs == b.clockMs && a.endedAgoMs == b.endedAgoMs && a.frozen == b.frozen && a.note == b.note
+        && roundtableCardRowsEqual(a.rows, b.rows);
+}
+
+// Beside a frequency tag's name, "+N" for the others there (D20). A legacy
+// room's tag keeps its member count.
+QString roundtableTagCountText(const RoundtableTag& tag)
+{
+    if (tag.stations.isEmpty()) {
+        return QString::number(tag.members);
+    }
+    return tag.members > 1 ? QStringLiteral("+%1").arg(tag.members - 1) : QString();
+}
+
+int roundtableTagNameLines(const RoundtableTag& tag)
+{
+    return tag.state == static_cast<int>(RoundtableGlyph::Doubled)
+        ? std::min(kRoundtableTagNames, static_cast<int>(tag.keyed.size())) : 0;
 }
 
 QColor roundtableTagBorder(int glyph)
@@ -12720,8 +12766,24 @@ void SpectrumWidget::setRoundtableTags(const QList<RoundtableTag>& tags, Roundta
         return;
     }
     m_roundtableTags = tags;
+    m_roundtablePanTags = roundtableMergeDoubleTags(tags);
     m_roundtableTagDisplay = display;
     // The child repaints the tags. The spectrum frame is left alone.
+    refreshRoundtableTagLayer();
+}
+
+void SpectrumWidget::setRoundtableCard(const RoundtableCardModel& card, const QString& roomId)
+{
+    const QString format = AppSettings::instance()
+        .value(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm")).toString();
+    if (roomId == m_roundtableCardRoom && format == m_roundtableCardFormat
+        && roundtableCardsEqual(card, m_roundtableCard)) {
+        return;
+    }
+    m_roundtableCard = card;
+    m_roundtableCardRoom = roomId;
+    m_roundtableCardFormat = format;
+    // As a tag: values update in the child, never in the static overlay (D14).
     refreshRoundtableTagLayer();
 }
 
@@ -12749,16 +12811,82 @@ QRect SpectrumWidget::roundtableTagSpectrumRectForTest() const
 void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
 {
     m_roundtableTagHits.clear();
-    if (m_roundtableTagDisplay == RoundtableTagDisplay::Hidden || m_roundtableTags.isEmpty()
+    const bool wantsCard = m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet;
+    if (m_roundtableTagDisplay == RoundtableTagDisplay::Hidden || (m_roundtablePanTags.isEmpty() && !wantsCard)
         || m_bandwidthHz <= 0.0 || specRect.width() <= 0) {
         return;
     }
     // A dropped link draws no live color (overlay design D7).
-    const bool stale = m_roundtableTagDisplay == RoundtableTagDisplay::Stale
-        || m_roundtableTagDisplay == RoundtableTagDisplay::Frozen;
+    const bool stale = m_roundtableTagDisplay == RoundtableTagDisplay::Frozen;
     // You are hidden: the rooms as when live, each state's marking dimmed
     // (roundtableDimmedColor, the workspace look's role).
     const bool dimmed = m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed;
+
+    const int bandTop = specRect.bottom() + 1 - bandPlanStripHeight(p.device());
+    const int top = bandTop - kRoundtableTagFootGap - kRoundtableTagHeight;
+    if (top < specRect.top()) {
+        return;
+    }
+
+    // Every flag, and the pan's toolbar down its left side, is kept clear.
+    QVector<QRect> controls;
+    for (const QRect& flag : m_receiverFlagRegion) {
+        controls.append(flag);
+    }
+    for (const QWidget* child : findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+        if (child->isVisible() && child->inherits("NereusSDR::SpectrumOverlayPanel")) {
+            controls.append(child->geometry());
+        }
+    }
+
+    // The card for the active slice's frequency (D16), when its dial is here.
+    RoundtableCardPlacement placed;
+    int dialX = 0;
+    const QFont cardNameFont = roundtableTagFont(p.device(), 12, QFont::Bold);
+    const QFontMetrics cardNameMetrics(cardNameFont, p.device());
+    if (wantsCard) {
+        dialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
+        if (dialX >= specRect.left() && dialX <= specRect.right()) {
+            // The flag whose dial this is says which side it hangs on.
+            bool flipped = false;
+            double nearest = -1.0;
+            for (const VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
+                const double off = std::abs(vfo->frequency() - static_cast<double>(m_roundtableCard.hz));
+                if (nearest < 0.0 || off < nearest) {
+                    nearest = off;
+                    flipped = vfo->geometry().center().x() < dialX;
+                }
+            }
+            const int panTop = specRect.top() + kRoundtableCardTopGap;
+            const QRect pan(specRect.left() + kRoundtableTagGap, panTop, specRect.width() - 2 * kRoundtableTagGap,
+                            bandTop - kRoundtableTagFootGap - panTop);
+            placed = placeRoundtableCard(m_roundtableCard, pan, dialX, controls, flipped, cardNameMetrics);
+        }
+    }
+    const bool hasCard = !placed.card.isNull();
+
+    // What the card or another slice's flag already says has no tag (D20).
+    const auto saidByAnotherFlag = [this](const RoundtableTag& tag) {
+        for (const VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
+            if (vfo->isActiveSlice()) {
+                continue;
+            }
+            const qint64 flagHz = std::llround(vfo->frequency());
+            if (flagHz == tag.hz || tag.mergedHz.contains(flagHz)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    QList<RoundtableTag> shown;
+    shown.reserve(m_roundtablePanTags.size());
+    for (const RoundtableTag& tag : std::as_const(m_roundtablePanTags)) {
+        if ((hasCard && (tag.active || tag.roomId == m_roundtableCardRoom)) || saidByAnotherFlag(tag)) {
+            continue;
+        }
+        shown.append(tag);
+    }
+
     const QFont labelFont = roundtableTagFont(p.device(), 11, QFont::Bold);
     const QFont countFont = roundtableTagFont(p.device(), 11, QFont::DemiBold);
     const QFontMetrics labelMetrics(labelFont, p.device());
@@ -12767,101 +12895,74 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     const int fixed = 2 + kRoundtableTagPadLeft + static_cast<int>(kRoundtableGlyphSize)
         + kRoundtableTagInnerGap + kRoundtableTagPadRight;
 
-    // One width for every tag and fold: the widest tag's, within bounds;
-    // a longer label is cut short.
+    // One width for every tag and fold: the widest tag's, within bounds; a
+    // longer label is cut short. The row is as tall as the tallest double.
     int natural = kRoundtableTagMinWidth;
-    for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
-        natural = std::max(natural, fixed + labelMetrics.horizontalAdvance(tag.label) + space
-                                        + countMetrics.horizontalAdvance(QString::number(tag.members)));
-    }
-    const bool hasReports = std::any_of(m_roundtableTags.cbegin(), m_roundtableTags.cend(),
-        [](const RoundtableTag& tag) { return tag.active && !tag.reportLines.isEmpty(); });
-    int tagWidth = hasReports ? kRoundtableReportMinWidth : std::min(natural, kRoundtableTagMaxWidth);
-
-    const int bandTop = specRect.bottom() + 1 - bandPlanStripHeight(p.device());
-    const int top = bandTop - kRoundtableTagFootGap - kRoundtableTagHeight;
-    if (top < specRect.top()) {
-        return;
-    }
-    // Where a flag, or the pan's toolbar down its left side, is over the
-    // tag row, the tags keep clear of it.
-    QList<RoundtableKeepOut> keepOut;
-    const int reportRowHeight = std::max(14, labelMetrics.height() + 2);
-    const int maximumRows = std::max(0, (top + kRoundtableTagHeight - specRect.top() - 8) / reportRowHeight);
-    QHash<QString, QStringList> contentRows;
     int stackHeight = kRoundtableTagHeight;
-    for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
-        const QStringList rows = !tag.active || tag.reportLines.isEmpty() ? QStringList{} : roundtableCochannelRows(tag, maximumRows);
-        contentRows.insert(tag.roomId, rows);
-        // Font metrics vary across platforms. Keep the compact minimum, but
-        // make room for every final row's identity, measurement and age.
-        for (const QString& text : rows) {
-            tagWidth = std::max(tagWidth, labelMetrics.horizontalAdvance(text) + 14);
+    for (const RoundtableTag& tag : std::as_const(shown)) {
+        // 2 px over: advances round, and a name must not elide at its own width.
+        natural = std::max(natural, fixed + labelMetrics.horizontalAdvance(tag.label) + space
+                                        + countMetrics.horizontalAdvance(roundtableTagCountText(tag)) + 2);
+        const int names = roundtableTagNameLines(tag);
+        for (int k = 0; k < names; ++k) {
+            natural = std::max(natural, 2 + kRoundtableTagPadLeft + kRoundtableTagNameIndent
+                                            + labelMetrics.horizontalAdvance(tag.keyed.at(k)) + kRoundtableTagPadRight);
         }
-        const int pixels = !tag.active || tag.reportLines.isEmpty() ? std::max(1, std::min(4, static_cast<int>(tag.stations.size()))) * kRoundtableTagHeight
-            : rows.size() * reportRowHeight + 8;
-        stackHeight = std::max(stackHeight, pixels);
+        stackHeight = std::max(stackHeight, kRoundtableTagHeight + names * kRoundtableTagNameLine);
     }
-    if (hasReports) {
-        tagWidth = std::min(tagWidth, std::max(kRoundtableReportMinWidth,
-                                             specRect.width() - 2 * kRoundtableTagGap));
-    }
-    const QRect row(specRect.left(), top + kRoundtableTagHeight - stackHeight,
-                    specRect.width(), stackHeight);
+    const int tagWidth = std::min(natural, kRoundtableTagMaxWidth);
+
+    // Tags keep clear of what is over their row, and of the card.
+    const QRect row(specRect.left(), top + kRoundtableTagHeight - stackHeight, specRect.width(), stackHeight);
+    QList<RoundtableKeepOut> keepOut;
     const auto keepClearOf = [&](const QRect& over) {
-        if (over.intersects(row)) {
-            keepOut.append(RoundtableKeepOut{static_cast<double>(over.left() - specRect.left()),
-                                             static_cast<double>(over.right() + 1 - specRect.left())});
-        }
+        keepOut.append(RoundtableKeepOut{static_cast<double>(over.left() - specRect.left()),
+                                         static_cast<double>(over.right() + 1 - specRect.left())});
     };
-    for (const QRect& flag : m_receiverFlagRegion) {
-        keepClearOf(flag);
-    }
-    for (const QWidget* child : findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
-        if (child->isVisible() && child->inherits("NereusSDR::SpectrumOverlayPanel")) {
-            keepClearOf(child->geometry());
+    for (const QRect& control : std::as_const(controls)) {
+        if (control.intersects(row)) {
+            keepClearOf(control);
         }
+    }
+    if (hasCard) {
+        keepClearOf(placed.card);
     }
 
     const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
     const double hzPerPixel = m_bandwidthHz / specRect.width();
-    QList<RoundtableTagPlacement> placements = layoutRoundtableTags(
-        m_roundtableTags, hzPerPixel, static_cast<qint64>(std::llround(lowHz)), specRect.width(), tagWidth,
+    const QList<RoundtableTagPlacement> placements = layoutRoundtableTags(
+        shown, hzPerPixel, static_cast<qint64>(std::llround(lowHz)), specRect.width(), tagWidth,
         kRoundtableTagGap, keepOut);
-    if (placements.isEmpty() && hasReports && tagWidth > kRoundtableReportMinWidth) {
-        // A narrow free strip must still offer Reports when the complete
-        // reading cannot fit beside the existing flags and toolbar.
-        tagWidth = kRoundtableReportMinWidth;
-        placements = layoutRoundtableTags(m_roundtableTags, hzPerPixel, static_cast<qint64>(std::llround(lowHz)),
-                                          specRect.width(), tagWidth, kRoundtableTagGap, keepOut);
-    }
-    if (placements.isEmpty()) {
-        return;
-    }
-    for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
-        if (tag.active && !tag.reportLines.isEmpty()) {
-            contentRows[tag.roomId] = roundtableCochannelRows(tag, maximumRows, &labelMetrics, tagWidth - 14);
-        }
-    }
 
     QHash<QString, const RoundtableTag*> byId;
-    for (const RoundtableTag& tag : std::as_const(m_roundtableTags)) {
+    for (const RoundtableTag& tag : std::as_const(shown)) {
         byId.insert(tag.roomId, &tag);
     }
 
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
+
+    if (hasCard) {
+        m_roundtableTagHits.append(RoundtableTagHit{placed.card,
+            m_roundtableCardRoom.isEmpty() ? QStringList{} : QStringList{m_roundtableCardRoom}, false,
+            RoundtableTagHit::Kind::Card, static_cast<qint64>(m_roundtableCard.hz)});
+        // A dashed tick joins the card to the dial (D16).
+        QColor tick = roundtableCardColor(m_roundtableCard);
+        tick.setAlphaF(tick.alphaF() * (dimmed ? 0.4 : 0.75));
+        p.setPen(QPen(tick, 1, Qt::DashLine));
+        p.drawLine(QPointF(dialX + 0.5, placed.card.bottom() + 1), QPointF(dialX + 0.5, bandTop - 1));
+        paintRoundtableCard(p, m_roundtableCard, placed, m_roundtableCardFormat, cardNameMetrics, dimmed);
+    }
+
     for (const RoundtableTagPlacement& placement : placements) {
-        const RoundtableTag* stackTag = byId.value(placement.roomIds.value(0));
-        const int lines = !placement.folded && stackTag
-            ? std::max(1, std::min(4, static_cast<int>(stackTag->stations.size()))) : 1;
-        const int bodyHeight = !placement.folded && stackTag && stackTag->active && !stackTag->reportLines.isEmpty()
-            ? contentRows.value(stackTag->roomId).size() * reportRowHeight + 8 : lines * kRoundtableTagHeight;
+        const RoundtableTag* first = byId.value(placement.roomIds.value(0));
+        const int names = !placement.folded && first ? roundtableTagNameLines(*first) : 0;
+        const int bodyHeight = kRoundtableTagHeight + names * kRoundtableTagNameLine;
         const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())),
                          top + kRoundtableTagHeight - bodyHeight, tagWidth, bodyHeight);
         if (rect.top() < specRect.top()) { continue; }
-        m_roundtableTagHits.append(RoundtableTagHit{rect, placement.roomIds, placement.folded});
-        const RoundtableTag* first = byId.value(placement.roomIds.value(0));
+        m_roundtableTagHits.append(RoundtableTagHit{rect, placement.roomIds, placement.folded,
+                                                    RoundtableTagHit::Kind::Tag, first ? first->hz : 0});
         if (first == nullptr) {
             continue;
         }
@@ -12898,14 +12999,14 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         p.setBrush(QColor(10, 10, 12, 224));
         p.drawRoundedRect(body, 4, 4);
 
-        const qreal midY = rect.top() + rect.height() / 2.0;
+        const qreal midY = rect.top() + kRoundtableTagHeight / 2.0;
         const QColor text = stale ? QColor(0xa6, 0xa6, 0xac) : QColor(0xec, 0xec, 0xf0);
         const QColor count = stale ? roundtableStaleColor() : QColor(0xa6, 0xa6, 0xac);
         if (placement.folded) {
             // The first rooms' glyphs, stacked, then +N.
-            const int shown = std::min<int>(kRoundtableFoldStackMax, placement.roomIds.size());
+            const int shownGlyphs = std::min<int>(kRoundtableFoldStackMax, placement.roomIds.size());
             qreal x = rect.left() + 1 + 5 + kRoundtableGlyphSize / 2.0;
-            for (int k = 0; k < shown; ++k) {
+            for (int k = 0; k < shownGlyphs; ++k) {
                 const RoundtableTag* tag = byId.value(placement.roomIds.at(k));
                 paintRoundtableGlyph(p, QPointF(x, midY), kRoundtableGlyphSize,
                                      tag != nullptr ? tag->state : 0, stale, dimmed);
@@ -12921,55 +13022,44 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
             continue;
         }
 
-        if (first->active && !first->reportLines.isEmpty()) {
-            const QStringList rows = contentRows.value(first->roomId);
-            p.setFont(labelFont);
-            for (int line = 0; line < rows.size(); ++line) {
-                p.setPen(line == 0 || line == rows.size() - 1 ? count : text);
-                p.drawText(QRect(rect.left() + 7, rect.top() + 4 + line * reportRowHeight, rect.width() - 14, reportRowHeight),
-                           Qt::AlignVCenter | Qt::AlignLeft,
-                           rows.at(line));
-            }
-            continue;
-        }
-        if (!first->stations.isEmpty()) {
-            for (int line = 0; line < lines; ++line) {
-                const QJsonObject station = first->stations.at(line).toObject();
-                QString label = station.value(QStringLiteral("callsign")).toString();
-                const int nth = station.value(QStringLiteral("nth")).toInt(1);
-                if (nth > 1) { label += QStringLiteral(" (%1)").arg(nth); }
-                if (line == lines - 1 && first->stations.size() > lines) {
-                    label += QStringLiteral(" +%1").arg(first->stations.size() - lines);
-                }
-                const qreal y = rect.top() + (line + 0.5) * kRoundtableTagHeight;
-                const int glyph = station.value(QStringLiteral("keyed")).toBool()
-                    ? static_cast<int>(RoundtableGlyph::Talking) : static_cast<int>(RoundtableGlyph::Quiet);
-                paintRoundtableGlyph(p, QPointF(rect.left() + 12, y), kRoundtableGlyphSize,
-                                     glyph, stale, dimmed);
-                p.setFont(labelFont);
-                p.setPen(text);
-                p.drawText(QRect(rect.left() + 24, rect.top() + line * kRoundtableTagHeight,
-                                 rect.width() - 28, kRoundtableTagHeight), Qt::AlignVCenter,
-                           labelMetrics.elidedText(label, Qt::ElideRight, rect.width() - 28));
-            }
-            continue;
+        const bool isDouble = first->state == static_cast<int>(RoundtableGlyph::Doubled);
+        if (isDouble && !stale) {
+            // A double's striped top edge, inside the border (D20).
+            QPainterPath inner;
+            inner.addRoundedRect(body, 4, 4);
+            p.save();
+            p.setClipPath(inner, Qt::IntersectClip);
+            paintRoundtableStripes(p, QRectF(rect.left() + 1, rect.top() + 1, rect.width() - 2, 2),
+                                   dimmed ? roundtableDimmedColor(first->state) : QColor(0xe0, 0x6c, 0x6e),
+                                   QColor(0x3a, 0x1a, 0x1b), 4.0, 3.0);
+            p.restore();
         }
         const qreal glyphX = rect.left() + 1 + kRoundtableTagPadLeft + kRoundtableGlyphSize / 2.0;
         paintRoundtableGlyph(p, QPointF(glyphX, midY), kRoundtableGlyphSize, first->state, stale, dimmed);
         const int textLeft = static_cast<int>(glyphX + kRoundtableGlyphSize / 2.0) + kRoundtableTagInnerGap;
         const int textRight = rect.right() - kRoundtableTagPadRight;
-        const QString members = QString::number(first->members);
+        const QString members = roundtableTagCountText(*first);
         const int countWidth = countMetrics.horizontalAdvance(members);
         const int labelRoom = std::max(0, textRight - textLeft - space - countWidth);
         const QString label = labelMetrics.elidedText(first->label, Qt::ElideRight, labelRoom);
         p.setFont(labelFont);
-        p.setPen(text);
-        p.drawText(QRect(textLeft, rect.top(), labelRoom, rect.height()), Qt::AlignVCenter | Qt::AlignLeft,
+        p.setPen(isDouble && !stale ? QColor(0xe0, 0x6c, 0x6e) : text);
+        p.drawText(QRect(textLeft, rect.top(), labelRoom, kRoundtableTagHeight), Qt::AlignVCenter | Qt::AlignLeft,
                    label);
+        if (names > 0) {
+            p.setPen(text);
+            for (int k = 0; k < names; ++k) {
+                const int nameLeft = rect.left() + 1 + kRoundtableTagPadLeft + kRoundtableTagNameIndent;
+                const int nameTop = rect.top() + kRoundtableTagHeight + k * kRoundtableTagNameLine - 2;
+                p.drawText(QRect(nameLeft, nameTop, std::max(0, textRight - nameLeft), kRoundtableTagNameLine),
+                           Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, first->keyed.at(k));
+            }
+            continue;
+        }
         p.setFont(countFont);
         p.setPen(count);
         const int countLeft = textLeft + labelMetrics.horizontalAdvance(label) + space;
-        p.drawText(QRect(countLeft, rect.top(), countWidth + 2, rect.height()), Qt::AlignVCenter | Qt::AlignLeft,
+        p.drawText(QRect(countLeft, rect.top(), countWidth + 2, kRoundtableTagHeight), Qt::AlignVCenter | Qt::AlignLeft,
                    members);
     }
     p.restore();
@@ -13000,8 +13090,7 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
         {
             QPainter gp(&glyph);
             paintRoundtableGlyph(gp, QPointF(6.0, 6.0), kRoundtableGlyphSize, tag.state,
-                                 m_roundtableTagDisplay == RoundtableTagDisplay::Stale
-                                     || m_roundtableTagDisplay == RoundtableTagDisplay::Frozen,
+                                 m_roundtableTagDisplay == RoundtableTagDisplay::Frozen,
                                  m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed);
         }
         const QString text = QStringLiteral("%1   %2   %3")
@@ -13527,7 +13616,8 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
     case QEvent::Resize:
     case QEvent::Show:
     case QEvent::Hide:
-        if (!m_roundtableTags.isEmpty() && obj->inherits("NereusSDR::SpectrumOverlayPanel")) {
+        if ((!m_roundtableTags.isEmpty() || m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet)
+            && obj->inherits("NereusSDR::SpectrumOverlayPanel")) {
             refreshRoundtableTagLayer();
         }
         break;
@@ -18065,7 +18155,8 @@ void SpectrumWidget::refreshReceiverFlagRegion()
         emit receiverFlagRegionChanged();
         // Roundtable keepouts belong to the tag child. The flag event
         // filter separately invalidates static marker geometry as needed.
-        if (m_roundtableTagDisplay != RoundtableTagDisplay::Hidden && !m_roundtableTags.isEmpty()) {
+        if (m_roundtableTagDisplay != RoundtableTagDisplay::Hidden
+            && (!m_roundtableTags.isEmpty() || m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet)) {
             refreshRoundtableTagLayer();
         }
     }

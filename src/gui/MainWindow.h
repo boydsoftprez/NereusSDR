@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: m_roundtablePeaks, the held peaks on the live card. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: wireDialRequests(): a dial's tuning, step, slice select and
 //               lock act on the slice they name, through vfoRequestSlice()
 //               (now any meter item). J.J. Boyd (KG4VCF), AI-assisted via
@@ -311,6 +313,7 @@
 #include "gui/RemoteReceiverAudioNote.h"
 #include "gui/DesktopStationController.h"
 #include "gui/NereusGuiExport.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 
 class QProgressDialog;
 class QSplitter;
@@ -2324,6 +2327,7 @@ private:
     bool m_roundtableRefreshPending{false};               // latest trailing sample
     QTimer* m_roundtableRefreshTimer{nullptr};
     QHash<QString, QString> m_roundtableRoomStructures;
+    RoundtablePeakTracker m_roundtablePeaks;              // overlay design D12
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};

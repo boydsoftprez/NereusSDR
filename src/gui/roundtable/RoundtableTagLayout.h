@@ -31,6 +31,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: The live card and tags on the pan: placeRoundtableCard,
+//               paintRoundtableCard, roundtableMergeDoubleTags (overlay design
+//               D10, D11, D13 to D16, D19, D20). The text-row card path and the
+//               Stale display are gone. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-03: Overlay redesign truth rules and structured card model:
 //               roundtableIsDouble, roundtableCardModelFor,
 //               RoundtablePeakTracker, roundtableMeterFraction and the Frozen
@@ -62,6 +67,7 @@
 #include <QJsonArray>
 #include <QList>
 #include <QPointF>
+#include <QRect>
 #include <QRectF>
 #include <QString>
 #include <QStringList>
@@ -100,16 +106,12 @@ struct RoundtableTag {
     bool mentionsMe = false; // a message there names you
     QJsonArray stations;     // unique scoped people at this exact context
     QStringList keyed;       // who is on the air here; a Double lists each current participant
-    QStringList reportLines; // matching last talker, attributed reporter rows, or Read reports
+    QStringList reportLines; // the active frequency's report, as plain text
+    QList<qint64> mergedHz;  // other exact frequencies roundtableMergeDoubleTags folded into this tag
 };
 
 /// The shared Roundtable panel/tag S-unit conversion.
 NEREUS_GUI_EXPORT QString roundtableSUnitText(double dbm);
-
-/// Final whole rows for the passive active-frequency card. A constrained
-/// card replaces omitted report rows with an explicit count and details.
-NEREUS_GUI_EXPORT QStringList roundtableCochannelRows(const RoundtableTag& tag, int maxRows,
-    const QFontMetrics* metrics = nullptr, int textWidth = 0);
 
 /// Supplied participants, using explicit current member key states for a
 /// live double; ended overlaps retain their historical participants.
@@ -160,12 +162,16 @@ NEREUS_GUI_EXPORT QList<RoundtableTagPlacement> layoutRoundtableTags(const QList
                                                                      double gap,
                                                                      const QList<RoundtableKeepOut>& keepOut);
 
-/// How a pan shows its tags (design 11.1, U4): offline greys them as last
-/// known, connecting hides them. Dimmed is live while you are hidden: the
-/// rooms and talkers as when live, the state marking dimmed.
-/// Frozen is a dropped link, Reconnecting or Offline (overlay design D7): last
-/// known, drawn grey as Stale is, with no live color.
-enum class RoundtableTagDisplay { Hidden, Live, Stale, Dimmed, Frozen };
+/// How a pan shows its tags (design 11.1, U4): connecting hides them. Dimmed is
+/// live while you are hidden: the rooms and talkers as when live, the state
+/// marking dimmed. Frozen is a dropped link, Reconnecting or Offline (overlay
+/// design D7): last known, drawn grey, with no live color.
+enum class RoundtableTagDisplay { Hidden, Live, Dimmed, Frozen };
+
+/// One double across several exact frequencies in one source room is one tag
+/// (overlay design D20). Doubled tags that share a source room and a keyed name
+/// become the first of them, with the others' frequencies in mergedHz.
+NEREUS_GUI_EXPORT QList<RoundtableTag> roundtableMergeDoubleTags(const QList<RoundtableTag>& tags);
 
 /// The tags for every room in `model`'s band list. `sliceIds` are this
 /// station's slices: their rooms are mine. Empty without a model.
@@ -202,6 +208,7 @@ struct RoundtableCardModel {
     Kind kind = Kind::Quiet;
     quint64 hz = 0;
     QStringList keyed;      // on the air, or every name for a LastDouble
+    QString keyedYou;       // which of keyed is this station, in a double
     QStringList people;     // the stations at this exact frequency
     qint64 clockMs = 0;     // how long a live turn has run; stops where a link dropped
     qint64 endedAgoMs = 0;  // how long ago a Last turn ended
@@ -209,6 +216,44 @@ struct RoundtableCardModel {
     bool frozen = false;    // Reconnecting or Offline (D7)
     QString note;           // the link's note, else "Double ended 3s ago" for 8 seconds
 };
+
+/// Where the card goes on the desktop pan (overlay design D16). card is null
+/// when no stretch of the pan has room. rows is how many reading rows fit, at
+/// most 5, and moreRows the rest (D19). beside is true when the far side of the
+/// flag had no room and the card came back on the near side.
+struct RoundtableCardPlacement {
+    QRect card;
+    int rows = 0;
+    int moreRows = 0;
+    bool beside = false;
+};
+
+/// Pure. `pan` is the area the card may use, its bottom the foot the card stands
+/// on; `dialX` is the active slice's dial; `flags` are every flag and control on
+/// the pan, each kept clear from pan top to foot. `fm` is the metrics of the
+/// card's name font (12 px bold). Only structure moves the card: signal values,
+/// ages and the clock change nothing here (D14).
+NEREUS_GUI_EXPORT RoundtableCardPlacement placeRoundtableCard(const RoundtableCardModel& card, const QRect& pan,
+                                                              int dialX, const QVector<QRect>& flags,
+                                                              bool flagFlipped, const QFontMetrics& fm);
+
+/// A reading in the chosen format: "dBm", "S-units" or "Both".
+NEREUS_GUI_EXPORT QString roundtableSignalText(double dbm, const QString& format);
+
+/// The card's state color, for its border and the tick to the dial (D15).
+NEREUS_GUI_EXPORT QColor roundtableCardColor(const RoundtableCardModel& card);
+
+/// Draws the card where `placed` says (D10, D11, D13, D15). `format` is the
+/// signal format, `fm` the metrics given to placeRoundtableCard, `dimmed` is
+/// true while you are hidden.
+NEREUS_GUI_EXPORT void paintRoundtableCard(QPainter& p, const RoundtableCardModel& card,
+                                           const RoundtableCardPlacement& placed, const QString& format,
+                                           const QFontMetrics& fm, bool dimmed);
+
+/// Fills `rect` with `on`/`off` stripes at 135 degrees, as the board's
+/// repeating gradients: `onWidth` and `offWidth` along the gradient, in pixels.
+NEREUS_GUI_EXPORT void paintRoundtableStripes(QPainter& p, const QRectF& rect, const QColor& on, const QColor& off,
+                                              qreal onWidth, qreal offWidth);
 
 /// The held peak for each listener (overlay design D12). Client side only:
 /// never persisted or sent. It rises at once, falls 2 dB a second and resets on
