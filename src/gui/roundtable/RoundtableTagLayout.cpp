@@ -2664,7 +2664,7 @@ RoundtableViewLayout runRoundtableView(QPainter* p, const RoundtableViewModel& v
         p->restore();
         // Rows below the cut say so with a fade (overlay.js renderIns).
         if (layout.total - layout.head - scrollY - bodyHeight > kViewFadeSlack && bodyHeight > 0) {
-            const int fade = std::min(kViewFade, bodyHeight);
+            const int fade = roundtableViewFadeHeight(bodyHeight);
             const QRect band(rect.left() + kCardBorder, bodyTop + bodyHeight - fade, rect.width() - 2 * kCardBorder, fade);
             QColor clear = kColorViewFade;
             clear.setAlpha(0);
@@ -2678,6 +2678,11 @@ RoundtableViewLayout runRoundtableView(QPainter* p, const RoundtableViewModel& v
 }
 
 } // namespace
+
+int roundtableViewFadeHeight(int bodyHeight)
+{
+    return std::min(kViewFade, bodyHeight / 2);
+}
 
 QString roundtableViewHeadText(const RoundtableCardModel& card)
 {
