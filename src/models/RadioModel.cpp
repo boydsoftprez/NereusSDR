@@ -30026,6 +30026,9 @@ void RadioModel::teardownConnection()
         setTune(false);
         completeTuneOff();
     }
+    // The hold on the band-power write never outlives the session, even if
+    // the restore above was cut short.
+    m_transmitModel.setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::Tune, false);
     // PA on-air gate branch review, Important 1: the two-tone test ends
     // here, at once. From Thetis console.cs:27473 [v2.10.3.15]:
     //   SetupForm.TestIMD = false;
@@ -32094,6 +32097,8 @@ void RadioModel::setTune(bool on)
         // Only the FIXED source sets PWR during TUNE, so only it saves and
         // restores PWR (m_tuneSetFixedPwr, set with the PWR push below).
         m_tuneSetFixedPwr = false;
+        // A latch a superseded off left set has no restore coming now.
+        m_transmitModel.setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::Tune, false);
         const bool tuneFixedSource =
             (m_transmitModel.tuneDrivePowerSource() == DrivePowerSource::Fixed);
         if (tuneFixedSource) {
@@ -32316,6 +32321,9 @@ void RadioModel::setTune(bool on)
             // CAT review X5: latched before the limit drops, so a start cut
             // short from here on still puts the limit and the power back.
             m_tuneSetFixedPwr = true;
+            // NereusSDR's own (Thetis has no timed save): the tune power is
+            // kept in power_by_band, but stays off disk until the restore.
+            m_transmitModel.setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::Tune, true);
             m_transmitModel.setPowerSliderLimitEnabled(false);
             if (!lifetime || !tuneCycleCurrent(serial)) { return; }
             m_transmitModel.setPower(tuneNewPwr);
@@ -33514,6 +33522,7 @@ void RadioModel::completeTuneOff()
         m_transmitModel.setPower(m_savedPowerPct);
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         m_tuneSetFixedPwr = false;
+        m_transmitModel.setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::Tune, false);
     }
     //
     // Codex P1 follow-up to PR #178 — route the restore through the

@@ -1888,8 +1888,10 @@ private slots:
             armFixedTwoToneAtTwenty(*model);
             startTwoTone(*model);
             QVERIFY(model->twoToneController()->isActive());
+            // The temporary power is in memory only; the store is held.
+            QCOMPARE(model->transmitModel().powerForBand(Band::Band80m), 60);
             QCOMPARE(AppSettings::instance().value(powerKey(Band::Band80m)).toString(),
-                     QStringLiteral("60"));
+                     QStringLiteral("20"));
             model.reset();
         }
         QCOMPARE(AppSettings::instance().value(powerKey(Band::Band80m)).toString(),
@@ -2051,6 +2053,280 @@ private slots:
         QCOMPARE(tx.powerForBand(Band::Band80m), 20);
         QCOMPARE(AppSettings::instance().value(powerKey(Band::Band80m)).toString(),
                  QStringLiteral("20"));
+    }
+
+    // The timed save writes about 2 s after a change, so a temporary FIXED
+    // power must not reach the store as the band's power. A crash during
+    // TUNE or two-tone would load it as that band's drive at the next launch.
+    // Memory still follows Thetis (power_by_band takes it and gets it back).
+    static void armFixedTuneAtTwenty(TransmitModel& tx)
+    {
+        tx.loadFromSettings(QStringLiteral("AABBCCDDEEFF"));
+        tx.setTuneDrivePowerSource(DrivePowerSource::Fixed);
+        tx.setTunePower(35);
+        tx.setPower(20);
+        pump();
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+    }
+    static QString storedPower(Band band)
+    {
+        return AppSettings::instance().value(powerKey(band)).toString();
+    }
+
+    void tuneFixed_theStoredBandPowerStaysTheOperators()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        armFixedTuneAtTwenty(tx);
+
+        model.setTune(true);
+        pump();
+        QVERIFY(model.isTune());
+        QCOMPARE(tx.power(), 35);
+        QCOMPARE(tx.powerForBand(Band::Band80m), 35);   // memory as Thetis
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        // The bulk save (disconnect's, among others) writes every band.
+        tx.persistToSettings(QStringLiteral("AABBCCDDEEFF"));
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        model.setTune(false);
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        QCOMPARE(tx.power(), 20);
+        QCOMPARE(tx.powerForBand(Band::Band80m), 20);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+    }
+
+    void tuneFixed_disconnectInTheMiddle_aLaterBandPowerChangeSaves()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        armFixedTuneAtTwenty(tx);
+
+        model.setTune(true);
+        pump();
+        QCOMPARE(tx.power(), 35);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        model.disconnectFromRadio();
+        QVERIFY(!model.isTune());
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+        QVERIFY(!tx.isBandPowerSaveHeld());
+
+        tx.setPowerForBand(Band::Band80m, 44);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("44"));
+        tx.setPowerForBand(Band::Band40m, 45);
+        QCOMPARE(storedPower(Band::Band40m), QStringLiteral("45"));
+    }
+
+    // A refused key ends the start through the TUN-off path at once.
+    void tuneFixed_aRefusedStart_leavesNoHold()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        armFixedTuneAtTwenty(tx);
+        bool sawTunePower = false;
+        connect(&tx, &TransmitModel::powerChanged, this,
+                [&sawTunePower](int power) { sawTunePower |= (power == 35); });
+        model.moxController()->setMoxCheck([] {
+            return safety::BandPlanGuard::MoxCheckResult{
+                false, QStringLiteral("refused for the test")};
+        });
+
+        model.setTune(true);
+        pump();
+        QVERIFY(sawTunePower);  // it got as far as the temporary power
+        QVERIFY(!model.isTune());
+        QCOMPARE(tx.power(), 20);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        tx.setPowerForBand(Band::Band80m, 44);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("44"));
+    }
+
+    // The radio link dropping ends TUNE through applyTxKeyBlock, the path
+    // TX inhibit and a PA trip share.
+    void tuneFixed_theLinkDropping_leavesNoHold()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        armFixedTuneAtTwenty(tx);
+
+        model.setTune(true);
+        pump();
+        QVERIFY(model.isTune());
+
+        model.onConnectionStateChangedForTest(ConnectionState::LinkLost);
+        QTRY_VERIFY(!model.isTune() && !model.tuneOffPendingForTest());
+        QCOMPARE(tx.power(), 20);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        tx.setPowerForBand(Band::Band80m, 44);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("44"));
+    }
+
+    // A change to another band during the hold is the operator's. It is in
+    // memory at once and reaches the store when the hold ends.
+    void tuneFixed_anotherBandChangedDuringTheHold_isSavedWhenItEnds()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        armFixedTuneAtTwenty(tx);
+
+        model.setTune(true);
+        pump();
+        tx.setPowerForBand(Band::Band40m, 33);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 33);
+
+        model.setTune(false);
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        QCOMPARE(tx.powerForBand(Band::Band40m), 33);
+        QCOMPARE(storedPower(Band::Band40m), QStringLiteral("33"));
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+    }
+
+    // PWR moved during a FIXED TUNE: TUN off sets PWR = PreviousPWR
+    // (console.cs:30180-30185 [v2.10.3.15]), which runs ptbPWR_Scroll and puts
+    // power_by_band back, so Thetis keeps the value from before TUNE. The
+    // store follows memory.
+    void tuneFixed_pwrMovedDuringTheHold_endsAtTheRestoredValue()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        armFixedTuneAtTwenty(tx);
+
+        model.setTune(true);
+        pump();
+        tx.setPower(50);
+        pump();
+        QCOMPARE(tx.powerForBand(Band::Band80m), 50);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        model.setTune(false);
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        QCOMPARE(tx.power(), 20);
+        QCOMPARE(tx.powerForBand(Band::Band80m), 20);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+    }
+
+    void twoToneFixed_theStoredBandPowerStaysTheOperators()
+    {
+        TxChannel txChannel{/*channelId=*/1};
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{
+            if (model.twoToneController()) {
+                model.twoToneController()->setTxChannel(nullptr);
+            }
+            model.injectConnectionForTest(nullptr);
+        });
+        attachTwoTone(model, txChannel);
+        armFixedTwoToneAtTwenty(model);
+        TransmitModel& tx = model.transmitModel();
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        startTwoTone(model);
+        QVERIFY(model.twoToneController()->isActive());
+        QCOMPARE(tx.powerForBand(Band::Band80m), 60);   // memory as Thetis
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        tx.persistToSettings(QStringLiteral("AABBCCDDEEFF"));
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        stopTwoTone(model);
+        verifyTwentyRestored(tx, Band::Band80m);
+
+        tx.setPowerForBand(Band::Band80m, 44);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("44"));
+    }
+
+    void twoToneFixed_disconnectInTheMiddle_aLaterBandPowerChangeSaves()
+    {
+        TxChannel txChannel{/*channelId=*/1};
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{
+            if (model.twoToneController()) {
+                model.twoToneController()->setTxChannel(nullptr);
+            }
+            model.injectConnectionForTest(nullptr);
+        });
+        attachTwoTone(model, txChannel);
+        armFixedTwoToneAtTwenty(model);
+        TransmitModel& tx = model.transmitModel();
+
+        startTwoTone(model);
+        QVERIFY(model.twoToneController()->isActive());
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+
+        model.disconnectFromRadio();
+        verifyTwentyRestored(tx, Band::Band80m);
+        QVERIFY(!tx.isBandPowerSaveHeld());
+
+        tx.setPowerForBand(Band::Band80m, 44);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("44"));
+    }
+
+    // Two-tone's refused key puts the power back through abandonUnkeyedStart.
+    void twoToneFixed_aRefusedStart_leavesNoHold()
+    {
+        TxChannel txChannel{/*channelId=*/1};
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{
+            if (model.twoToneController()) {
+                model.twoToneController()->setTxChannel(nullptr);
+            }
+            model.injectConnectionForTest(nullptr);
+        });
+        attachTwoTone(model, txChannel);
+        armFixedTwoToneAtTwenty(model);
+        TransmitModel& tx = model.transmitModel();
+        bool sawTestPower = false;
+        connect(&tx, &TransmitModel::powerChanged, this,
+                [&sawTestPower](int power) { sawTestPower |= (power == 60); });
+        model.moxController()->setMoxCheck([] {
+            return safety::BandPlanGuard::MoxCheckResult{
+                false, QStringLiteral("refused for the test")};
+        });
+
+        startTwoTone(model);
+        QVERIFY(sawTestPower);  // it got as far as the temporary power
+        QVERIFY(!model.twoToneController()->isActive());
+        verifyTwentyRestored(tx, Band::Band80m);
+
+        tx.setPowerForBand(Band::Band80m, 44);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("44"));
     }
 
     // Not FIXED: TUN neither sets nor restores PWR, so a PWR change made

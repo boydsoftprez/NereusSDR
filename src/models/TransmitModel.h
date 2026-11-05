@@ -567,6 +567,24 @@ public:
     /// (mirrors the per-MAC tx/ namespace pattern).
     void setPowerForBand(Band band, int watts);
 
+    /// Who holds a temporary FIXED power in PWR. TUNE and two-tone hold
+    /// separately, since a TUNE off can still be completing as two-tone starts.
+    enum class BandPowerSaveHolder : unsigned { Tune = 1U, TwoTone = 2U };
+
+    /// While any holder is set, setPowerForBand still changes memory and
+    /// signals, but the hardware/<mac>/powerByBand/<band> write waits, and the
+    /// bulk save skips a band with a write waiting. Ending the last hold
+    /// writes what memory then holds for those bands. Call it after the
+    /// power has been restored.
+    ///
+    /// NereusSDR's own, no Thetis equivalent: Thetis keeps power_by_band in
+    /// memory and writes it only at SaveState on a clean exit
+    /// (console.cs:3087-3093, 28241-28242 [v2.10.3.15]). The timed AppSettings save
+    /// would otherwise put a temporary power on disk, and a crash would load it
+    /// as the band's normal drive at the next launch.
+    void setBandPowerSaveHeld(BandPowerSaveHolder holder, bool held);
+    bool isBandPowerSaveHeld() const { return m_bandPowerSaveHolders != 0U; }
+
     // ── Per-band slider limits and FM TX offset (R-R3-49) ─────────────────
     //
     // The rest of the Thetis TXBand setter's power half
@@ -3006,6 +3024,9 @@ private:
     // the dBm compensator (Phase 3A scaffolding for #167 Phase 3C math
     // kernel).  Initialised in the constructor.
     std::array<int, static_cast<std::size_t>(kPerBandStateCount)> m_powerByBand{};  // per-band state slots (2 m at 14)
+    // setBandPowerSaveHeld: the holders set, and the bands with a write waiting.
+    unsigned m_bandPowerSaveHolders{0U};
+    std::array<bool, static_cast<std::size_t>(kPerBandStateCount)> m_powerByBandSaveWaiting{};
 
     // R-R3-49: per-band slider limits and FM TX offsets, and the current
     // slider limits and offset (see limitPowerForBand).  Filled in the

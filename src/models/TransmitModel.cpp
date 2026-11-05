@@ -1498,7 +1498,11 @@ void TransmitModel::setPowerForBand(Band band, int watts)
     }
     m_powerByBand[static_cast<std::size_t>(idx)] = clamped;
     // Auto-persist: hardware/<m_persistMac>/powerByBand/<bandKeyName>.
-    if (!m_persistMac.isEmpty()) {
+    // Held while TUNE or two-tone holds a temporary power; see
+    // setBandPowerSaveHeld.
+    if (isBandPowerSaveHeld()) {
+        m_powerByBandSaveWaiting[static_cast<std::size_t>(idx)] = true;
+    } else if (!m_persistMac.isEmpty()) {
         AppSettings::instance().setValue(
             QStringLiteral("hardware/%1/powerByBand/%2")
                 .arg(m_persistMac, bandKeyName(band)),
@@ -1506,6 +1510,34 @@ void TransmitModel::setPowerForBand(Band band, int watts)
     }
     emit powerByBandChanged(band, clamped);
     emit powerByBandJsonChanged(powerByBandJson());  // R-R3-49 (parity Task 5)
+}
+
+void TransmitModel::setBandPowerSaveHeld(BandPowerSaveHolder holder, bool held)
+{
+    const auto bit = static_cast<unsigned>(holder);
+    if (held) {
+        m_bandPowerSaveHolders |= bit;
+        return;
+    }
+    m_bandPowerSaveHolders &= ~bit;
+    if (m_bandPowerSaveHolders != 0U) {
+        return;
+    }
+    // AppSettings skips unchanged text, so a band back at its stored value
+    // writes nothing.
+    for (int i = 0; i < kBandCount; ++i) {
+        const auto slot = static_cast<std::size_t>(i);
+        if (!m_powerByBandSaveWaiting[slot]) {
+            continue;
+        }
+        m_powerByBandSaveWaiting[slot] = false;
+        if (!m_persistMac.isEmpty()) {
+            AppSettings::instance().setValue(
+                QStringLiteral("hardware/%1/powerByBand/%2")
+                    .arg(m_persistMac, bandKeyName(bandFromPerBandStateSlot(i))),
+                QString::number(m_powerByBand[slot]));
+        }
+    }
 }
 
 // ── Per-band slider limits and FM TX offset (R-R3-49) ───────────────────────
@@ -2724,6 +2756,7 @@ void TransmitModel::loadFromSettings(const QString& mac)
             // clamp.  We clamp here ourselves to keep AppSettings tampering
             // safe.
             m_powerByBand[static_cast<std::size_t>(i)] = std::clamp(v, 0, 100);
+            m_powerByBandSaveWaiting[static_cast<std::size_t>(i)] = false;
         }
         // R-R3-49 (parity Task 5): as for tunePowerByBand in load().
         emit powerByBandJsonChanged(powerByBandJson());
@@ -3037,6 +3070,11 @@ void TransmitModel::persistToSettings(const QString& mac) const
             QStringLiteral("hardware/%1/powerByBand/").arg(mac);
         for (int i = 0; i < kBandCount; ++i) {
             const Band band = bandFromPerBandStateSlot(i);
+            // A band with a held write may hold a temporary power; see
+            // setBandPowerSaveHeld.
+            if (m_powerByBandSaveWaiting[static_cast<std::size_t>(i)]) {
+                continue;
+            }
             s.setValue(powerPfx + bandKeyName(band),
                        QString::number(
                            m_powerByBand[static_cast<std::size_t>(i)]));
