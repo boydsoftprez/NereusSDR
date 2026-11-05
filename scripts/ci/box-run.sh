@@ -22,7 +22,11 @@
 # It runs as the runner's user, so every file it writes belongs to the
 # runner and the next checkout can clean it. HOME is /src/.box-home, inside
 # the checkout. Limits keep a job to its share of the machine: 10 processors
-# and 16 GB of memory.
+# and 16 GB of memory. /tmp is memory (--tmpfs): the test suite's scratch
+# settings and stores are saved with a disk sync, and a busy disk on this
+# shared machine made those saves slow enough to time out 49 tests (run
+# 41764912150; scripts/ci/box-linux.sh, test step). A sync on tmpfs costs
+# nothing. It counts against the 16 GB only for what is written.
 set -euo pipefail
 
 : "${GITHUB_WORKSPACE:?}" "${RUNNER_WORKSPACE:?}" "${GITHUB_RUN_ID:?}" "${RUNNER_NAME:?}"
@@ -75,6 +79,7 @@ case "${1:-}" in
             --label "org.nereussdr.ci.owner=$owner" \
             --user "$(id -u):$(id -g)" \
             --cpus 10 --memory 16g --shm-size 2g \
+            --tmpfs /tmp:rw,exec,size=6g,mode=1777 \
             --sysctl net.ipv6.conf.all.disable_ipv6=0 \
             --sysctl net.ipv6.conf.lo.disable_ipv6=0 \
             -v "$GITHUB_WORKSPACE:/src" \
