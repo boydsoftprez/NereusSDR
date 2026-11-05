@@ -1443,6 +1443,44 @@ private slots:
         QVERIFY(hitFor(pan.widget, room) == nullptr);
     }
 
+    // D34: the inspector stands in the card's place, so tags need not clear the hidden card.
+    void aCardTheInspectorHidesKeepsNoTagClear()
+    {
+        const QString room = QStringLiteral("frequency:lsb-7200000");
+        QRect card;
+        {
+            Pan pan;
+            pan.widget.setRoundtableTags({}, RoundtableTagDisplay::Live);
+            pan.widget.setRoundtableCard(talkingCard(), room);
+            pan.draw();
+            QVERIFY(cardHit(pan.widget) != nullptr);
+            card = cardHit(pan.widget)->rect;
+        }
+        // The inspector well away from the card, and clear of the tag row.
+        const QRect inspector(card.center().x() < 600 ? 900 : 20, 40, 280, 200);
+        QVERIFY(!card.intersects(inspector));
+        // A tag under the middle of where the card stands, placed with and with no card.
+        Pan bare;
+        const double low = bare.widget.centerFrequency() - bare.widget.bandwidth() / 2.0;
+        const QRect spec = bare.widget.roundtableTagSpectrumRectForTest();
+        const qint64 hz = std::llround(low + (card.center().x() - spec.left()) * bare.widget.bandwidth() / spec.width());
+        RoundtableTag tag = tagAt(QStringLiteral("frequency:lsb-%1").arg(hz), hz);
+        bare.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        bare.widget.setRoundtableInspectorRect(inspector);
+        bare.draw();
+        QVERIFY(hitFor(bare.widget, tag.roomId) != nullptr);
+        const QRect clear = hitFor(bare.widget, tag.roomId)->rect;
+        Pan pan;
+        pan.widget.setRoundtableCard(talkingCard(), room);
+        pan.widget.setRoundtableTags({tag}, RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableInspectorRect(inspector);
+        pan.widget.setRoundtableViewedRoom(tag.roomId);
+        pan.draw();
+        QVERIFY(cardHit(pan.widget) == nullptr);
+        QVERIFY(hitFor(pan.widget, tag.roomId) != nullptr);
+        QCOMPARE(hitFor(pan.widget, tag.roomId)->rect, clear);
+    }
+
     // D37: the spot needs no card or tag, follows the flag, and a pan without the
     // slice uses its own flag, or the clicked tag.
     void theInspectorsSpotNeedsNoCardAndFollowsTheFlag()

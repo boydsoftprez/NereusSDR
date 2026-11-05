@@ -12984,7 +12984,8 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
             keepClearOf(control);
         }
     }
-    if (hasCard) {
+    // The inspector stands in the card's place, so a card it hides keeps nothing clear.
+    if (hasCard && !inspecting) {
         keepClearOf(placed.card);
     }
     if (inspecting && m_roundtableInspectorRect.intersects(row)) {
