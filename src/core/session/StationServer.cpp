@@ -4189,14 +4189,14 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
             });
 
-    // JJ 2026-10-23: devices admitted to a Core inside a desktop window
-    // before its radio connected are placed once it has (after the other
+    // JJ 2026-10-23: devices admitted to a Core before its radio connected
+    // are placed once it has (after the other
     // Connected handlers, so the window's starting slice exists).
     if (m_radioModel) {
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,
                 [this](ConnectionState state) {
                     if (state != ConnectionState::Connected || m_placementAwaitingRadio.isEmpty()
-                        || m_radioModel.isNull() || m_radioModel->currentRadioMac().isEmpty()) {
+                        || m_radioModel.isNull()) {
                         return;
                     }
                     const QSet<QByteArray> waiting = std::exchange(m_placementAwaitingRadio, {});
@@ -12246,7 +12246,11 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     // device's letter from the saved layout, which it reads when the radio
     // connects (RadioModel::addStartingSlices). A device admitted before
     // that is placed when the radio connects, so it neither takes a letter
-    // kept for another device nor leaves the window without one. An older
+    // kept for another device nor leaves the window without one. A headless
+    // Core waits the same way: a device's saved slices are stored per radio,
+    // so with no radio it would get a new slice and not its own. A token
+    // window has no saved slices to wait for, and a connected radio with no
+    // MAC has no store to read, so those are placed now. An older
     // window (no sessionHolder) needs its slice at admission or it is
     // refused (olderWindowWithoutSliceReason), so it is placed now, as
     // before.
@@ -12257,8 +12261,10 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
             break;
         }
     }
-    if (holdsSessions && m_radioModel->hostsStationDevice()
-        && m_radioModel->currentRadioMac().isEmpty()) {
+    const bool waitsForItsLayout = m_radioModel->hostsStationDevice()
+        || (!deviceId.startsWith("token:")
+            && m_radioModel->connectionState() != ConnectionState::Connected);
+    if (holdsSessions && waitsForItsLayout && m_radioModel->currentRadioMac().isEmpty()) {
         m_placementAwaitingRadio.insert(deviceId);
         m_connectedDevices->refresh();
         return;

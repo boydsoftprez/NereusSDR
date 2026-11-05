@@ -749,6 +749,87 @@ private slots:
         QVERIFY(core.model->sliceOwnership()->heldFor(a.key.fingerprint()).isEmpty());
         QVERIFY(core.model->sliceById(b0) != nullptr);
     }
+
+    // Persistence audit: a device signing in to a headless Core with the
+    // radio off gets its saved slices when the radio connects, not a new
+    // slice now. A device with nothing saved gets its slice then too.
+    void aSignInWithTheRadioOffIsPlacedWhenTheRadioConnects()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kShares);
+        QVERIFY(admitted(appA));
+        const int a0 = onlySliceOf(core, a);
+        const QString mac = core.model->currentRadioMac();
+        SliceModel* slice = core.model->sliceById(a0);
+        slice->setFrequency(7074000.0);
+        slice->setStepHz(5000);
+        QVERIFY(accepted(core.invoke(appA, "session.leave")));
+        QTRY_VERIFY(core.model->sliceById(a0) == nullptr);
+        QCOMPARE(DeviceLayoutStore::load(AppSettings::instance(), mac, a.key.fingerprint()).size(),
+                 1);
+
+        core.model->setConnectionStateForTest(ConnectionState::Disconnected);
+        LoopbackTransport* backA = core.signIn(a, kShares);
+        LoopbackTransport* appB = core.signIn(b, kShares);
+        QVERIFY(admitted(backA) && admitted(appB));
+        QVERIFY(core.model->slices().isEmpty());
+        QCOMPARE(DeviceLayoutStore::load(AppSettings::instance(), mac, a.key.fingerprint()).size(),
+                 1);
+
+        core.model->setConnectionStateForTest(ConnectionState::Connected);
+        QTRY_COMPARE(core.model->sliceOwnership()->ownedBy(a.key.fingerprint()).size(), 1);
+        QTRY_COMPARE(core.model->sliceOwnership()->ownedBy(b.key.fingerprint()).size(), 1);
+        const SliceModel* restored = core.model->sliceById(onlySliceOf(core, a));
+        QVERIFY(restored != nullptr);
+        QCOMPARE(restored->frequency(), 7074000.0);
+        QCOMPARE(restored->stepHz(), 5000);
+        QVERIFY(DeviceLayoutStore::load(AppSettings::instance(), mac, a.key.fingerprint()).isEmpty());
+    }
+
+    // A radio with no MAC has no saved slices to read: a device is placed
+    // when it connects, and at once while it is connected.
+    void aRadioWithNoMacStillPlacesADevice()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        core.model->setConnectionStateForTest(ConnectionState::Disconnected);
+        core.model->setLastRadioInfoForTest(RadioInfo{});
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kShares);
+        QVERIFY(admitted(appA));
+        QVERIFY(core.model->sliceOwnership()->ownedBy(a.key.fingerprint()).isEmpty());
+
+        core.model->setConnectionStateForTest(ConnectionState::Connected);
+        QVERIFY(core.model->currentRadioMac().isEmpty());
+        QTRY_VERIFY(!core.model->sliceOwnership()->ownedBy(a.key.fingerprint()).isEmpty());
+
+        LoopbackTransport* appB = core.signIn(b, kShares);
+        QVERIFY(admitted(appB));
+        QVERIFY(!core.model->sliceOwnership()->ownedBy(b.key.fingerprint()).isEmpty());
+    }
+
+    // A window too old to hold a session with no slice is still placed at
+    // sign-in with the radio off, or it would be refused.
+    void anOlderWindowWithTheRadioOffIsStillPlacedAtSignIn()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        core.model->setConnectionStateForTest(ConnectionState::Disconnected);
+        Device a;
+        core.pair(a);
+        const QHash<QByteArray, int> older{{"deviceAuth", 1}};
+        LoopbackTransport* appA = core.signIn(a, older);
+        QVERIFY(admitted(appA));
+        QCOMPARE(core.model->sliceOwnership()->ownedBy(a.key.fingerprint()).size(), 1);
+    }
 };
 
 QTEST_MAIN(TstSliceClaimsExpiry)
