@@ -824,9 +824,9 @@ final class ConnectionFlow: ObservableObject {
             self?.inputs.yield(.network(path))
         }
         updateBrowsing()
-        if let resuming {
-            Task { [weak self] in await self?.dialOnOpen(resuming) }
-        }
+        // Not yet: the background modes mean iOS can start this process with
+        // nobody there. The first time the scene is active is what dials.
+        coreWaitingForScene = resuming
     }
 
     deinit {
@@ -900,6 +900,9 @@ final class ConnectionFlow: ObservableObject {
         return row
     }
 
+    /// The Core this launch will dial when the scene is first active.
+    private var coreWaitingForScene: CoreRow?
+
     private func dialOnOpen(_ row: CoreRow) async {
         // Cancel can come before this first turn on the main actor.
         guard connectingTo == row.id else { return }
@@ -914,6 +917,11 @@ final class ConnectionFlow: ObservableObject {
     /// tries at once. Nothing is waiting after Disconnect or Cancel, and
     /// offline a try could not succeed, so the hold stays.
     func sceneBecameActive() {
+        if let row = coreWaitingForScene {
+            coreWaitingForScene = nil
+            Task { [weak self] in await self?.dialOnOpen(row) }
+            return
+        }
         guard phase == .lost, online, !endingSession, !disconnecting,
               case .waitingToRetry = app.connection else {
             return
@@ -1704,7 +1712,14 @@ final class ConnectionFlow: ObservableObject {
         guard phase == .lost || (phase == .connecting && reachedReady) else {
             return
         }
-        guard await endSession() else { return }
+        // Cancel is leaving on purpose, as Disconnect is: the next launch opens
+        // on Your Cores. Reconnect, and reaching ready, keep the Core again.
+        let kept = phoneSettings.lastCore
+        phoneSettings.lastCore = nil
+        guard await endSession() else {
+            if phoneSettings.lastCore == nil { phoneSettings.lastCore = kept }
+            return
+        }
         phase = .stopped
         connectingTo = nil
         linkLost = LinkLost(attempt: linkLost?.attempt ?? lostAttempts, retryAt: nil, stopped: true,
@@ -1765,10 +1780,14 @@ final class ConnectionFlow: ObservableObject {
     /// retried, is cancelled. Nothing reconnects by itself afterwards; the
     /// operator connects again from Your Cores.
     func disconnect() async {
-        // On purpose, so the next launch opens on Your Cores. The sleep
+        guard !transmitting, !disconnecting else { return }
+        // On purpose, so the next launch opens on Your Cores, and before the
+        // leave's wait: a force close during it must not reconnect. The sleep
         // timer's leave below is not the operator's, and keeps the Core.
-        if await disconnectCurrent() {
-            phoneSettings.lastCore = nil
+        let kept = phoneSettings.lastCore
+        phoneSettings.lastCore = nil
+        if await !disconnectCurrent(), phoneSettings.lastCore == nil {
+            phoneSettings.lastCore = kept
         }
     }
 

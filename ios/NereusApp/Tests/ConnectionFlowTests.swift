@@ -345,9 +345,40 @@ struct ConnectionFlowTests {
         func close() { inner.close() }
     }
 
+    final class UnansweredLeaves: @unchecked Sendable {
+        private let lock = NSLock()
+        private var seen = 0
+        var count: Int { lock.withLock { seen } }
+        func note() { lock.withLock { seen += 1 } }
+    }
+
+    /// A Core that never hears `session.leave`, so the flow waits out the timeout.
+    final class LeaveDroppingTransport: LinkTransport, @unchecked Sendable {
+        let inner: any LinkTransport
+        let leaves: UnansweredLeaves
+        init(inner: any LinkTransport, leaves: UnansweredLeaves) {
+            self.inner = inner
+            self.leaves = leaves
+        }
+        func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
+            try await inner.open(onEvent: onEvent)
+        }
+        @discardableResult func send(_ text: String) -> Bool {
+            if let message = try? LinkCodec.decode(text), case .commandInvoke(let invoke) = message,
+               invoke.verb == "session.leave" {
+                leaves.note()
+                return true
+            }
+            return inner.send(text)
+        }
+        func ping() { inner.ping() }
+        func close() { inner.close() }
+    }
+
     final class DialCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var made = 0
+        var count: Int { lock.withLock { made } }
         func first() -> Bool {
             lock.withLock {
                 made += 1
@@ -654,9 +685,74 @@ struct ConnectionFlowTests {
                                        kept: kept, reconnectOnOpen: true)
         #expect(harness.flow.screen == .connectingOnOpen)
         #expect(harness.flow.connectingTo == station.identity.publicKey)
+        harness.flow.sceneBecameActive()
         #expect(await settle { harness.flow.screen == .band })
         #expect(harness.flow.connectingTo == nil)
         #expect(!harness.app.main.transmit.ptt.transmitting)
+        await harness.app.disconnect()
+    }
+
+    @Test("a launch iOS began in the background dials nothing until the scene is first active")
+    func backgroundLaunchWaitsForTheScene() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: station)
+        let dials = DialCounter()
+        let harness = try Self.harness(factory: { endpoint, trust in
+            _ = dials.first()
+            return station.transportFactory(endpoint, trust)
+        }, paired: [Self.paired(station)], kept: kept, reconnectOnOpen: true)
+        #expect(harness.flow.screen == .connectingOnOpen)
+        // Long enough for a dial to have begun, had it been going to.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(dials.count == 0)
+        #expect(harness.app.session == nil)
+        #expect(kept.lastCore != nil)
+
+        harness.flow.sceneBecameActive()
+        #expect(await settle { harness.flow.screen == .band })
+        let dialled = dials.count
+        #expect(dialled > 0)
+        // Coming back to the front later is not a second launch.
+        harness.flow.sceneBecameActive()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(dials.count == dialled)
+        await harness.app.disconnect()
+    }
+
+    @Test("Disconnect forgets the Core before it waits, so a force close during the leave stays on Your Cores")
+    func disconnectForgetsBeforeTheLeave() async throws {
+        let station = try FakeStation(fixture: "session-device-sign-in", additions: [.sessionLeave])
+        let unanswered = UnansweredLeaves()
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: { endpoint, trust in
+            LeaveDroppingTransport(inner: station.transportFactory(endpoint, trust), leaves: unanswered)
+        }, paired: [Self.paired(station)], kept: kept)
+        await harness.flow.connect(to: try #require(harness.flow.cores.first))
+        #expect(await settle { harness.flow.screen == .band && harness.app.connection == .connected })
+        #expect(kept.lastCore != nil)
+        let leaving = Task { await harness.flow.disconnect() }
+        // The Core has not answered, so the flow is in the leave's timeout: a
+        // force close now is what the kept Core has to survive.
+        #expect(await settle(seconds: 1) { unanswered.count == 1 })
+        #expect(harness.flow.disconnecting)
+        #expect(kept.lastCore == nil)
+        await leaving.value
+        #expect(harness.flow.screen == .cores)
+        #expect(kept.lastCore == nil)
+    }
+
+    @Test("Cancel on LINK LOST is leaving on purpose: the next launch stays on Your Cores, and Reconnect keeps it again")
+    func linkLostCancelForgets() async throws {
+        let (station, harness) = try await connectedToFake()
+        let encoded = Base64URL.encode(station.identity.publicKey)
+        #expect(harness.app.phoneSettings.lastCore == encoded)
+        await station.dropLink()
+        #expect(await settle { harness.flow.linkLost != nil })
+        await harness.flow.cancelReconnecting()
+        #expect(harness.app.phoneSettings.lastCore == nil)
+        #expect(harness.flow.linkLost?.stopped == true)
+        await harness.flow.reconnect()
+        #expect(await settle { harness.app.phoneSettings.lastCore == encoded })
         await harness.app.disconnect()
     }
 
@@ -763,6 +859,7 @@ struct ConnectionFlowTests {
         let kept = try keptSettings(lastCore: station)
         let harness = try Self.harness(factory: { _, _ in DeadTransport(error: .failed("no answer")) },
                                        paired: [Self.paired(station)], kept: kept, reconnectOnOpen: true)
+        harness.flow.sceneBecameActive()
         #expect(await settle { harness.flow.screen == .cores && harness.flow.trouble != nil })
         #expect(harness.flow.connectingTo == nil)
         #expect(kept.lastCore != nil)
@@ -775,6 +872,7 @@ struct ConnectionFlowTests {
         let harness = try Self.harness(factory: { _, _ in HangingTransport() }, paired: [Self.paired(station)],
                                        kept: kept, reconnectOnOpen: true)
         #expect(harness.flow.screen == .connectingOnOpen)
+        harness.flow.sceneBecameActive()
         await harness.flow.cancelConnecting()
         #expect(harness.flow.screen == .cores)
         #expect(harness.flow.connectingTo == nil)
