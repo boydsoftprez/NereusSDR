@@ -1505,6 +1505,8 @@ jobs:
         run: scripts/ci/box-run.sh run "$BOX build"
 
       - name: Test
+        env:
+          NEREUS_BOX_TMP_IN_MEMORY: 1
         run: scripts/ci/box-run.sh run "$BOX test"
 
       # This part's test times, for the next run's split. Only main's are
