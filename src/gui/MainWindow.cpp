@@ -6496,17 +6496,15 @@ void MainWindow::applyDecimationFromSettings()
                                .toString();
     bool ok = false;
     int decimation = stored.toInt(&ok);
-    // As for DisplayFftSize above: the default is used, and where this window
-    // owns the setting the key is put right. A remote window's key is its Core's.
+    // As for DisplayFftSize above: the default is used, and the key, this
+    // device's own, is put right.
     if (!ok || decimation < ControlRanges::kDisplayDecimationMin
         || decimation > ControlRanges::kDisplayDecimationMax) {
         decimation = ControlRanges::kDisplayDecimationDefault;
-        if (!remote) {
-            qCWarning(lcSpectrum) << "Stored" << ControlRanges::kDisplayDecimationKey << stored
-                                  << "is not a decimation; using" << decimation;
-            s.setValue(QLatin1String(ControlRanges::kDisplayDecimationKey),
-                       QString::number(decimation));
-        }
+        qCWarning(lcSpectrum) << "Stored" << ControlRanges::kDisplayDecimationKey << stored
+                              << "is not a decimation; using" << decimation;
+        s.setValue(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                   QString::number(decimation));
     }
     if (decimation != m_fftEnginePool->decimation()) {
         m_fftEnginePool->setDecimation(decimation);
@@ -8085,14 +8083,13 @@ void MainWindow::ensureOverlayPanels()
             if (m_fftEnginePool && sizingKey) {
                 applyFftSizingFromSettings(/*replan=*/false);
             }
-            // Decimation, the same way: the value the next request for each
-            // pan carries.
-            const bool decimationKey = key.isEmpty()
-                || key == QLatin1String(ControlRanges::kDisplayDecimationKey);
-            if (decimationKey) {
+            // Decimation is this device's own, so no Core value is followed. The
+            // whole snapshot is when a Core's control becomes reachable, and the
+            // value saved here is what the next request for each pan carries.
+            if (key.isEmpty()) {
                 applyDecimationFromSettings();
             }
-            if (sizingKey || decimationKey
+            if (sizingKey
                 || key == QLatin1String(ControlRanges::kDisplayFftWindowKey)
                 || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
                 refreshDisplayPillFftStates();

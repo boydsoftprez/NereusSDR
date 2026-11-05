@@ -615,8 +615,8 @@ private slots:
             << QStringLiteral("ContainerPanelHidden") << int(SettingsScope::OperatorLocal);
         QTest::newRow("FloatingPan_pan-1_Floating is OperatorLocal (this window's layout)")
             << QStringLiteral("FloatingPan_pan-1_Floating") << int(SettingsScope::OperatorLocal);
-        QTest::newRow("DisplayDecimation is Station (beside the other FFT knobs)")
-            << QStringLiteral("DisplayDecimation") << int(SettingsScope::Station);
+        QTest::newRow("DisplayDecimation is OperatorLocal (each device's own control)")
+            << QStringLiteral("DisplayDecimation") << int(SettingsScope::OperatorLocal);
         QTest::newRow("Pan_pan-1_OverlayCollapsed is OperatorLocal (this window's layout)")
             << QStringLiteral("Pan_pan-1_OverlayCollapsed") << int(SettingsScope::OperatorLocal);
         QTest::newRow("PanSplitter1Sizes is OperatorLocal (this window's layout)")

@@ -516,11 +516,12 @@ private slots:
             QVERIFY(pill);
             QCOMPARE(pill->fftState().decimation, 4);
 
-            // The key changing under the window, as a Core's value arrives.
+            // Each device has its own: another window's value on the Core
+            // does not move this one.
             s.setValue(key, QStringLiteral("6"));
             emit window.radioModel()->stationSettingChanged(key);
-            QCOMPARE(pool->decimation(), 6);
-            QCOMPARE(pool->engineForStream(pool->streams().first())->decimation(), 6);
+            QCOMPARE(pool->decimation(), 4);
+            s.setValue(key, QStringLiteral("4"));
         }
         for (const QString& bad : {QStringLiteral("99"), QStringLiteral("0"), QStringLiteral("many")}) {
             s.setValue(key, bad);
