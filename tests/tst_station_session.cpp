@@ -6283,7 +6283,7 @@ void TstStationSession::coreSendsRadioIdentityOnlyFromMinorEleven()
                              "mediaReplaceVersion", "controlSwitchVersion", "relayAllowed",
                              "supportBundleVersion", "mediaTunnelVersion",
                              "mediaRelayRoutingVersion", "remoteIqVersion", "txModMonitorVersion",
-                             "accessoryTxVersion"}) {
+                             "accessoryTxVersion", "txSsbModMonitorVersion"}) {
         QCOMPARE(updateIndexOf(older, name), -1);
     }
     // Byte for byte: the minor-11 descriptor without the thirty-three (and the
@@ -6304,7 +6304,7 @@ void TstStationSession::coreSendsRadioIdentityOnlyFromMinorEleven()
                              "mediaReplaceVersion", "controlSwitchVersion", "relayAllowed",
                              "supportBundleVersion", "mediaTunnelVersion",
                              "mediaRelayRoutingVersion", "remoteIqVersion", "txModMonitorVersion",
-                             "accessoryTxVersion"}) {
+                             "accessoryTxVersion", "txSsbModMonitorVersion"}) {
         stripped.removeAt(updateIndexOf(stripped, name));
     }
     QCOMPARE(SessionMessages::encode(SessionMessages::capabilities(stripped)),

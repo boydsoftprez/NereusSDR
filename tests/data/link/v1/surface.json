@@ -426,6 +426,11 @@
         },
         {
             "kind": "i64",
+            "name": "txSsbModMonitorVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
             "name": "remoteRotorControlVersion",
             "value": 1
         },
@@ -2688,6 +2693,19 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "txModMonitor.reset"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "source",
+                    "optional": false
+                }
+            ],
+            "capability": "txSsbModMonitorVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "txSsbModMonitor.reset"
         },
         {
             "arguments": [
@@ -9985,7 +10003,8 @@
             "RemoteMoxTimeOutEnabled",
             "RemoteMoxTimeOutSeconds",
             "RxOnly",
-            "ModMon/FbStream"
+            "ModMon/FbStream",
+            "SsbModMon/FbStream"
         ],
         "stationPrefixes": [
             "hardware/",

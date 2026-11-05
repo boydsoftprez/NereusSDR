@@ -1090,6 +1090,8 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // analyzer for a source, 0 TX I/Q or 1 PA feedback.
         {"txModMonitor.reset", {arg("source", kInt)}, "txModMonitorVersion", 1,
          kRadioIdentitySessionProtocolMinor},
+        {"txSsbModMonitor.reset", {arg("source", kInt)}, "txSsbModMonitorVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
         // The Core's radio (R-IOS-18, R-R3-49, parity Task 21).
         {"station.selectRadio", {arg("mac", kUtf8)}, "stationRadiosVersion", 1,
          kRadioIdentitySessionProtocolMinor},
@@ -1762,7 +1764,8 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         handleFilterResponse(invoke);
     } else if (invoke.commandVerb == "records.subscribe"
                || invoke.commandVerb == "records.unsubscribe"
-               || invoke.commandVerb == "txModMonitor.reset") {
+               || invoke.commandVerb == "txModMonitor.reset"
+               || invoke.commandVerb == "txSsbModMonitor.reset") {
         handleRecords(invoke);
     } else if (invoke.commandVerb == "station.selectRadio"
                || invoke.commandVerb == "station.rescanRadios"
@@ -4912,7 +4915,10 @@ void SessionCommandDispatcher::handleRecords(const SessionMessage& invoke)
                invoke.commandVerb == "txModMonitor.reset"
                    ? QStringLiteral("This Core does not send the modulation monitor. "
                                     "Updating the Core may help.")
-                   : QStringLiteral("This Core does not send its spots or console lines."),
+                   : invoke.commandVerb == "txSsbModMonitor.reset"
+                       ? QStringLiteral("This Core does not send the SSB modulation monitor. "
+                                        "Updating the Core may help.")
+                       : QStringLiteral("This Core does not send its spots or console lines."),
                {});
 }
 

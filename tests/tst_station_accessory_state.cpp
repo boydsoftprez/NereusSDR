@@ -699,6 +699,7 @@ private slots:
                     QByteArrayLiteral("remoteIqVersion"),
                     QByteArrayLiteral("txModMonitorVersion"),
                     QByteArrayLiteral("accessoryTxVersion"),
+                    QByteArrayLiteral("txSsbModMonitorVersion"),
                     // Rotor control plan Task 4b: the Core's rotor.
                     QByteArrayLiteral("remoteRotorControlVersion"),
                 };

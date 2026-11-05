@@ -206,6 +206,7 @@
         {"id": "session-verbs-freedv", "file": "sessions/verbs-freedv.json", "kind": "session", "requires": {"stationFreedvVersion": 1}},
         {"id": "session-verbs-two-tone-preset", "file": "sessions/verbs-two-tone-preset.json", "kind": "session", "requires": {"setupDescriptionVersion": 1}},
         {"id": "session-verbs-tx-mod-monitor", "file": "sessions/verbs-tx-mod-monitor.json", "kind": "session", "requires": {"txModMonitorVersion": 1}},
+        {"id": "session-verbs-ssb-mod-monitor", "file": "sessions/verbs-ssb-mod-monitor.json", "kind": "session", "requires": {"txSsbModMonitorVersion": 1}},
         {"id": "session-verbs-station-radios", "file": "sessions/verbs-station-radios.json", "kind": "session", "requires": {"stationRadiosVersion": 1}},
         {"id": "session-verbs-settings-hygiene", "file": "sessions/verbs-settings-hygiene.json", "kind": "session", "requires": {"settingsHygieneVersion": 1}},
         {"id": "session-settings-hygiene-token", "file": "sessions/settings-hygiene-token.json", "kind": "session", "requires": {"settingsHygieneVersion": 1}},

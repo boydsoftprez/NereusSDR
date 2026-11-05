@@ -260,7 +260,7 @@ QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
     static const QHash<QString, QString> aliases = {
         {"Rx","rx"},{"Display","Display"},{"Tx","TX"},{"PhoneCw","PHCW"},
         {"Rade","RADE"},{"Vax","vax"},{"PureSignal","pure_signal"},
-        {"ModMon","mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
+        {"ModMon","mod_monitor"},{"SsbModMon","ssb_mod_monitor"},{"Tci","tci"},{"ClientChain","tci_clients"},
         {"Cat","cat"},{"Cwx","cwx"},{"Amp","amp"},{"Tuner","tuner"},{"Rotor","rotor"},{"Roundtable","roundtable"},{"RfKit","RfKit"},
         {"SMeter","s_meter"}};
     return aliases.contains(id) ? QStringLiteral("applet:") + aliases.value(id) : QString();
@@ -446,6 +446,7 @@ QVector<ContentDescriptor> ContainerContentRegistry::descriptors() const {
     add(QStringLiteral("applet:vax"), QStringLiteral("VAX"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:pure_signal"), QStringLiteral("PureSignal"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:mod_monitor"), QStringLiteral("AM Mod Monitor"), ContentGroup::Panels, true);
+    add(QStringLiteral("applet:ssb_mod_monitor"), QStringLiteral("SSB Mod Monitor"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:cat"), QStringLiteral("CAT"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:cwx"), QStringLiteral("CWX"), ContentGroup::Panels, true);
     add(QStringLiteral("applet:tci"), QStringLiteral("TCI Server"), ContentGroup::Panels, true);
