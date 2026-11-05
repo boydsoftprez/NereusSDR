@@ -434,6 +434,15 @@ private slots:
     {
         saveLetterWithOffsets();
         if (QTest::currentTestFailed()) { return; }
+        // The file holds the old offsets, as a settings file does after the
+        // last session's save.
+        AppSettings::instance().save();
+        {
+            AppSettings before(AppSettings::instance().filePath());
+            before.load();
+            QCOMPARE(before.value(QStringLiteral("Slice0/XitEnabled")).toString(),
+                     QStringLiteral("True"));
+        }
         RadioModel radio;
         QVERIFY(radio.addSlice(QString(), false, /*newReceiver=*/true) >= 0);
         // The save the forget asked for reaches the settings file, as the
