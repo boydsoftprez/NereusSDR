@@ -1,4 +1,11 @@
 // no-port-check: test-only. Exercises SsbModulationAnalyzer.
+//
+// Modification history (NereusSDR):
+//   2026-11-04  Created for the SSB Mod Monitor. Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok.
+//   2026-11-05  Corrections for review findings. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//
 #include <QtTest>
 #include "core/SsbModulationAnalyzer.h"
 
@@ -22,14 +29,6 @@ std::vector<float> constantIq(double seconds, double i, double q)
         iq[static_cast<std::size_t>(2 * s + 1)] = static_cast<float>(q);
     }
     return iq;
-}
-
-void feed(SsbModulationAnalyzer& analyzer, const std::vector<float>& iq, int block = 64)
-{
-    const int frames = static_cast<int>(iq.size() / 2);
-    for (int off = 0; off + block <= frames; off += block) {
-        analyzer.pushIq(iq.data() + static_cast<std::size_t>(2 * off), block);
-    }
 }
 
 // One block is 1 ms of the analyzer's own clock, so these tests run on the
@@ -79,7 +78,7 @@ private slots:
     {
         SsbModulationAnalyzer analyzer;
         analyzer.setSampleRate(kFs);
-        feed(analyzer, constantIq(0.5, 0.0, 0.0));
+        feedClocked(analyzer, constantIq(0.5, 0.0, 0.0));
         const auto snap = analyzer.snapshot();
         QVERIFY(!snap.signalPresent);
         QCOMPARE(snap.peakPct, 0.0);
@@ -91,7 +90,7 @@ private slots:
         analyzer.setSampleRate(kFs);
         // Envelope 0.5 is 50% of full scale and -6.02 dBFS. A steady
         // tone has no crest.
-        feed(analyzer, constantIq(0.5, 0.5, 0.0));
+        feedClocked(analyzer, constantIq(0.5, 0.5, 0.0));
         const auto snap = analyzer.snapshot();
         QVERIFY(snap.signalPresent);
         QVERIFY2(std::fabs(snap.peakPct - 50.0) < 0.5, qPrintable(QString::number(snap.peakPct)));
@@ -108,7 +107,7 @@ private slots:
     {
         SsbModulationAnalyzer analyzer;
         analyzer.setSampleRate(kFs);
-        feed(analyzer, constantIq(0.5, 1.0, 0.0));
+        feedClocked(analyzer, constantIq(0.5, 1.0, 0.0));
         const auto snap = analyzer.snapshot();
         QVERIFY(snap.signalPresent);
         QVERIFY2(std::fabs(snap.peakPct - 100.0) < 0.5, qPrintable(QString::number(snap.peakPct)));
@@ -119,7 +118,7 @@ private slots:
     {
         SsbModulationAnalyzer analyzer;
         analyzer.setSampleRate(kFs);
-        feed(analyzer, constantIq(0.5, 0.8, 0.0));
+        feedClocked(analyzer, constantIq(0.5, 0.8, 0.0));
         QVERIFY(analyzer.snapshot().peakHoldPct > 70.0);
         analyzer.reset();
         const auto snap = analyzer.snapshot();
@@ -206,6 +205,57 @@ private slots:
         snap = analyzer.snapshot();
         QVERIFY(snap.signalPresent);
         QVERIFY2(std::fabs(snap.avgPct - 25.0) < 0.5, qPrintable(QString::number(snap.avgPct)));
+    }
+
+    // A pause on a real radio is noise, not digital zero: review finding.
+    void crest_noisyPauseDoesNotInflateIt()
+    {
+        SsbModulationAnalyzer analyzer;
+        analyzer.setSampleRate(kFs);
+        feedClocked(analyzer, constantIq(0.05, 0.5, 0.0));
+        feedClocked(analyzer, constantIq(0.25, 0.01, 0.0));
+        const auto crest = analyzer.snapshot().crestDb;
+        QVERIFY(crest.has_value());
+        QVERIFY2(std::fabs(*crest) < 0.1, qPrintable(QString::number(*crest)));
+    }
+
+    void crest_twoToneWithNoisyPausesStaysThreeDb()
+    {
+        SsbModulationAnalyzer analyzer;
+        analyzer.setSampleRate(kFs);
+        feedClocked(analyzer, twoToneIq(0.1, 0.5));
+        feedClocked(analyzer, constantIq(0.05, 0.01, 0.0));
+        feedClocked(analyzer, twoToneIq(0.1, 0.5));
+        const auto crest = analyzer.snapshot().crestDb;
+        QVERIFY(crest.has_value());
+        QVERIFY2(std::fabs(*crest - 3.01) < 0.1, qPrintable(QString::number(*crest)));
+    }
+
+    // Quieter syllables within 30 dB count; the noise between them does not.
+    void crest_speechLikeBurstsStaySensible()
+    {
+        SsbModulationAnalyzer analyzer;
+        analyzer.setSampleRate(kFs);
+        double low = 1000.0;
+        double high = -1000.0;
+        for (int cycle = 0; cycle < 8; ++cycle) {
+            const auto read = [&](int) {
+                if (cycle >= 2) {
+                    if (const auto crest = analyzer.snapshot().crestDb) {
+                        low = std::min(low, *crest);
+                        high = std::max(high, *crest);
+                    }
+                }
+            };
+            feedClocked(analyzer, constantIq(0.04, 0.5, 0.0), read);
+            feedClocked(analyzer, constantIq(0.06, 0.1, 0.0), read);
+            feedClocked(analyzer, constantIq(0.04, 0.25, 0.0), read);
+            feedClocked(analyzer, constantIq(0.06, 0.012, 0.0), read);
+        }
+        const QString seen = QStringLiteral("%1 to %2").arg(low).arg(high);
+        QVERIFY2(low > 2.5, qPrintable(seen));
+        // The worst window without the noise is 5.67 dB; with it, 6.67 dB.
+        QVERIFY2(high < 5.8, qPrintable(seen));
     }
 
     // The maintainer's crest: peak over RMS of the envelope, over one stretch.

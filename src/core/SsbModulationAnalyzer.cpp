@@ -6,7 +6,7 @@
 // Modification history (NereusSDR):
 //   2026-11-04 — Created for the SSB Mod Monitor. Brian Sutton (W4KZO),
 //                AI-assisted via xAI Grok.
-//   2026-11-05 — Corrections for review findings.
+//   2026-11-05 - Corrections for review findings.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include "core/SsbModulationAnalyzer.h"
@@ -83,6 +83,7 @@ void SsbModulationAnalyzer::rebuildScopeLocked()
     const std::size_t n = static_cast<std::size_t>(
         std::max(64.0, m_scopeSeconds * static_cast<double>(scopeRate)));
     m_scope.assign(n, 0.0f);
+    m_scopeCapacity.store(n, std::memory_order_relaxed);
     m_scopeHead = 0;
     m_scopeFilled = false;
     m_decimCount = 0;
@@ -135,6 +136,14 @@ double SsbModulationAnalyzer::decayedHoldPctLocked(clock::time_point now) const
     return std::max(0.0, m_holdPeak - (ms - m_peakHoldMs) * 0.1);
 }
 
+namespace {
+double crestPauseGate()
+{
+    static const double gate = std::pow(10.0, -SsbModulationAnalyzer::kCrestPauseGateDb / 20.0);
+    return gate;
+}
+} // namespace
+
 void SsbModulationAnalyzer::addCrestBlockLocked(clock::time_point now, double peak, double energy,
                                                 int frames)
 {
@@ -149,6 +158,14 @@ void SsbModulationAnalyzer::addCrestBlockLocked(clock::time_point now, double pe
         slot = CrestSlot{};
         slot.id = id;
     }
+    // Within one slot as well, so a pause's edge does not count.
+    if (slot.frames > 0 && peak < slot.peak * crestPauseGate()) {
+        return;
+    }
+    if (slot.frames > 0 && slot.peak < peak * crestPauseGate()) {
+        slot = CrestSlot{};
+        slot.id = id;
+    }
     slot.peak = std::max(slot.peak, peak);
     slot.energy += energy;
     slot.frames += frames;
@@ -158,12 +175,21 @@ std::optional<double> SsbModulationAnalyzer::crestDbLocked(clock::time_point now
 {
     const std::int64_t newest = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     now.time_since_epoch()).count() / kCrestSlotMs;
+    const auto inWindow = [newest](const CrestSlot& slot) {
+        return slot.frames > 0 && slot.id > newest - kCrestSlots && slot.id <= newest;
+    };
     double peak = 0.0;
+    for (const CrestSlot& slot : m_crest) {
+        if (inWindow(slot)) {
+            peak = std::max(peak, slot.peak);
+        }
+    }
     double energy = 0.0;
     std::int64_t frames = 0;
     for (const CrestSlot& slot : m_crest) {
-        if (slot.frames > 0 && slot.id > newest - kCrestSlots && slot.id <= newest) {
-            peak = std::max(peak, slot.peak);
+        // A pause on a real radio is noise, not zero: far under the window's
+        // peak, it is left out so it cannot inflate the ratio.
+        if (inWindow(slot) && slot.peak >= peak * crestPauseGate()) {
             energy += slot.energy;
             frames += slot.frames;
         }
@@ -261,8 +287,11 @@ void SsbModulationAnalyzer::pushIq(const float* interleaved, int frames)
 
 SsbModulationAnalyzer::Snapshot SsbModulationAnalyzer::snapshot()
 {
-    std::lock_guard<std::mutex> lock(m_mu);
+    // Allocated before the lock the transmit worker and the connection thread
+    // take. A sample rate change landing here is the one time it grows.
     Snapshot snap;
+    snap.scope.reserve(m_scopeCapacity.load(std::memory_order_relaxed));
+    std::lock_guard<std::mutex> lock(m_mu);
     snap.framesSeen = m_framesSeen;
 
     const auto now = nowLocked();

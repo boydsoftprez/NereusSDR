@@ -13,7 +13,8 @@
 //   average %    = slow average of the envelope, same scale
 //   crest dB     = highest envelope over the RMS of the envelope, both
 //                  from the same recent stretch of signal (kCrestWindowMs).
-//                  Blocks below the presence minimum are left out of both.
+//                  Blocks below the presence minimum, or kCrestPauseGateDb
+//                  under the window's peak, are left out of both.
 //   dBFS         = 20*log10(envelope)
 //
 // Two instances are owned by RadioModel: the TX I/Q that leaves WDSP,
@@ -27,7 +28,7 @@
 // Modification history (NereusSDR):
 //   2026-11-04 — Created for the SSB Mod Monitor. Brian Sutton (W4KZO),
 //                AI-assisted via xAI Grok.
-//   2026-11-05 — Corrections for review findings.
+//   2026-11-05 - Corrections for review findings.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
@@ -36,6 +37,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <vector>
@@ -89,6 +91,10 @@ public:
     static constexpr double kInputStaleMs = 200.0;
     /// The stretch of signal crest is measured over.
     static constexpr int kCrestWindowMs = 300;
+    /// A block more than this far under the window's peak counts as a pause
+    /// and is left out of the crest. A starting value, not measured on a radio:
+    /// it needs checking against a real radio's pause noise.
+    static constexpr double kCrestPauseGateDb = 30.0;
 
     /// Test only: stops the analyzer's clock, then moves it. Production never
     /// calls this and reads steady_clock.
@@ -145,6 +151,7 @@ private:
     int    m_decimCount{0};
     float  m_decimAcc{0.0f};
     std::vector<float> m_scope;
+    std::atomic<std::size_t> m_scopeCapacity{0};
     std::size_t m_scopeHead{0};
     bool   m_scopeFilled{false};
 
