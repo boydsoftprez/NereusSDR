@@ -2907,13 +2907,15 @@ public:
     /// a device coming back keeps its pins.
     void clearStreamCtunPinsAnchoredBy(const QByteArray& device);
 
-    /// Push a slice's just-restored per-band sample rate onto its DDC.
+    /// Push a slice's just-restored sample rate onto its DDC.
     ///
     /// Codex review round 7, PR #293. setSampleRateHz is a plain property
     /// setter: it moves the number the VFO menu displays and nothing else. The
     /// rate the receiver, codec and wire actually run at only changes through
     /// requestSliceSampleRate. addSliceImpl sets the property to the rate the
     /// slice should come back at, then calls this once the slice has its stream.
+    /// On a radio-wide rate (Protocol 1), or for a rate this radio does not have,
+    /// it asks for no change and puts the property back to the receiver's rate.
     void applyRestoredSampleRate(SliceModel* slice);
 
     /// Slice control plan Task 5: on a Remote model, true (and announced)
@@ -2949,6 +2951,18 @@ public:
     /// that offers the rate from a per-slice surface has to disclose the P1
     /// scope rather than imply a private rate. False when disconnected.
     bool sampleRateIsRadioWide() const;
+
+    /// True when this radio has `rateHz` on the ladder for its protocol. Asks
+    /// the board directly, so unlike allowedStreamSampleRates it also answers
+    /// before a connection exists, as Protocol 2.
+    bool sampleRateIsOnLadder(int rateHz) const;
+
+    /// True while slice `sliceId`'s Slice<N>/ keys must stay as they are: the
+    /// layout is still being admitted, or the saved layout still names the letter.
+    bool sliceKeysAreHeld(int sliceId) const
+    {
+        return m_receiveLayoutPendingAdmission || m_receiveLayoutKeptSliceIds.contains(sliceId);
+    }
 
     /// Sample rates the connected radio accepts, ascending; empty when
     /// disconnected.

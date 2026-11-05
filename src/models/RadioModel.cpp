@@ -14736,6 +14736,16 @@ QVector<int> RadioModel::allowedStreamSampleRates() const
         return {};
     }
     const NereusSDR::ProtocolVersion proto =
+bool RadioModel::sampleRateIsOnLadder(int rateHz) const
+{
+    const NereusSDR::ProtocolVersion proto =
+        sampleRateIsRadioWide() ? NereusSDR::ProtocolVersion::Protocol1
+                                : NereusSDR::ProtocolVersion::Protocol2;
+    const std::vector<int> allowed = NereusSDR::allowedSampleRates(
+        proto, boardCapabilities(), m_hardwareProfile.model);
+    return std::find(allowed.cbegin(), allowed.cend(), rateHz) != allowed.cend();
+}
+
         sampleRateIsRadioWide() ? NereusSDR::ProtocolVersion::Protocol1
                                 : NereusSDR::ProtocolVersion::Protocol2;
     const std::vector<int> allowed = NereusSDR::allowedSampleRates(
@@ -14793,6 +14803,17 @@ void RadioModel::applyRestoredSampleRate(SliceModel* slice)
         const QPointer<RadioModel> self(this);
         const QPointer<SliceModel> target(slice);
         const double frequencyHz = slice->frequency();
+    // One rate for the whole radio (Protocol 1), or a rate this radio does not
+    // have: a slice's saved preference asks for nothing. It would move every
+    // other receiver, or leave the wire saturated while WDSP and the display run
+    // at the asked rate. The slice shows the rate its receiver is running.
+    if (m_role == Role::Local && (sampleRateIsRadioWide() || !sampleRateIsOnLadder(restored))) {
+        if (effective > 0) {
+            slice->setSampleRateHz(effective);
+        }
+        return;
+    }
+
         slice->setSampleRateHz(effective);
         // The reset emits: an observer can retire, rebind, retune or re-rate the
         // slice. A newer change owns it rather than this saved preference.

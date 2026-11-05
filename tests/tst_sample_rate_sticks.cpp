@@ -318,6 +318,107 @@ private slots:
         settings.setValue(rateKey(kRadioMac, 0), 384000);
         QCOMPARE(model.sliceById(a)->savedSampleRateHz(), 384000);
     }
+    // Protocol 1 has one rate for the whole radio. A slice made again must not
+    // move it for every other receiver, nor rewrite the radio's saved rate, and
+    // it shows the rate it is really running.
+    void on_protocol1_a_slice_made_again_does_not_move_the_radio()
+    {
+        RadioModel model;
+        P1RadioConnection connection;
+        seedOnProtocol1(model, connection);
+        DetachConnection detach{&model};
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int streamA = model.sliceById(a)->streamIndex();
+        const quint8 wireBefore = static_cast<quint8>(connection.captureBank0ForTest().at(1));
+
+        auto& settings = AppSettings::instance();
+        settings.setValue(rateKey(kRadioMac, 1), 384000);
+        settings.setValue(radioWideRateKey(kRadioMac), kStartRateHz);
+        settings.setValue(QStringLiteral("Slice1/LastBand"), bandKeyName(Band::Band40m));
+
+        QSignalSpy rejected(&model, &RadioModel::sliceRetuneRejected);
+        SliceModel* again = makeAgain(model, 1, QStringLiteral("pan-1"), 7100000.0);
+        QVERIFY(again != nullptr);
+        QVERIFY2(again->streamIndex() != streamA,
+                 "precondition: the slice made again claimed a receiver of its own");
+        settleRateChange(model);
+
+        QCOMPARE(model.streamSampleRateHzForTest(streamA), kStartRateHz);
+        QCOMPARE(model.streamSampleRateHzForTest(again->streamIndex()), kStartRateHz);
+        QCOMPARE(again->sampleRateHz(), kStartRateHz);
+        QCOMPARE(static_cast<quint8>(connection.captureBank0ForTest().at(1)), wireBefore);
+        QCOMPARE(settings.value(radioWideRateKey(kRadioMac)).toInt(), kStartRateHz);
+        QCOMPARE(rejected.count(), 0);
+    }
+
+    // The same for a new slice seeded from another: the radio stays where it is
+    // and the slice shows the rate of the receiver it got.
+    void on_protocol1_a_new_slice_does_not_move_the_radio()
+    {
+        RadioModel model;
+        P1RadioConnection connection;
+        seedOnProtocol1(model, connection);
+        DetachConnection detach{&model};
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const quint8 wireBefore = static_cast<quint8>(connection.captureBank0ForTest().at(1));
+        // The next receiver claimed opens at a rate unlike the seed's.
+        model.setConnectionRateForTest(96000, 1);
+
+        QSignalSpy rejected(&model, &RadioModel::sliceRetuneRejected);
+        const int b = model.addSlice(QStringLiteral("pan-1"));
+        QVERIFY(b >= 0);
+        SliceModel* sliceB = model.sliceById(b);
+        settleRateChange(model);
+
+        QCOMPARE(model.streamSampleRateHzForTest(model.sliceById(a)->streamIndex()), kStartRateHz);
+        QCOMPARE(model.streamSampleRateHzForTest(sliceB->streamIndex()), 96000);
+        QCOMPARE(sliceB->sampleRateHz(), 96000);
+        QCOMPARE(static_cast<quint8>(connection.captureBank0ForTest().at(1)), wireBefore);
+        QCOMPARE(rejected.count(), 0);
+    }
+
+    // A rate the radio does not have is not asked for: the receiver stays, and
+    // the slice shows what the receiver runs. 200 kHz is on no board's ladder.
+    void a_slice_made_again_at_a_rate_the_radio_lacks_stays_put()
+    {
+        RadioModel model;
+        seed(model);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+
+        auto& settings = AppSettings::instance();
+        settings.setValue(rateKey(kRadioMac, 1), 200000);
+        settings.setValue(QStringLiteral("Slice1/LastBand"), bandKeyName(Band::Band40m));
+
+        SliceModel* again = makeAgain(model, 1, QStringLiteral("pan-1"), 7100000.0);
+        QVERIFY(again != nullptr);
+        QVERIFY(again->streamIndex() >= 0);
+        QCOMPARE(model.streamSampleRateHzForTest(again->streamIndex()), kStartRateHz);
+        QCOMPARE(again->sampleRateHz(), kStartRateHz);
+    }
+
+    void a_new_slice_seeded_with_a_rate_the_radio_lacks_stays_put()
+    {
+        RadioModel model;
+        seed(model);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        model.requestSliceSampleRate(a, 200000);
+        QCOMPARE(model.streamSampleRateHzForTest(model.sliceById(a)->streamIndex()), 200000);
+
+        const int b = model.addSlice(QStringLiteral("pan-1"));
+        QVERIFY(b >= 0);
+        SliceModel* sliceB = model.sliceById(b);
+        QVERIFY(sliceB->streamIndex() != model.sliceById(a)->streamIndex());
+        QCOMPARE(model.streamSampleRateHzForTest(sliceB->streamIndex()), kStartRateHz);
+        QCOMPARE(sliceB->sampleRateHz(), kStartRateHz);
+    }
     // One computer, several radios: each keeps its own rate on the same letter.
     void two_radios_keep_separate_rates_on_one_letter()
     {

@@ -1065,6 +1065,9 @@ private slots:
     void rejected_restored_rate_keeps_effective_rate_and_geometry()
     {
         RadioModel model;
+        // A real board: 192 kHz has to be on the ladder for the plan to be what
+        // refuses it. With no board known the ladder is 48 kHz alone.
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         WdspEngine* engine = model.wdspEngine();
         engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
 
