@@ -647,7 +647,8 @@ inline constexpr int kDisplayAvgTimePillPageMs = 25;
 
 // Decimation matches Thetis by JJ's 2026-09-27 ruling: 1 to 16, step 1,
 // starting at 1 (setup.designer.cs:33828-33853 [v2.10.3.15]). The desktop
-// keeps no setting for it: each window's engines hold it.
+// saves it beside the other FFT knobs; a window's engines hold what it says.
+inline constexpr const char* kDisplayDecimationKey = "DisplayDecimation";
 inline constexpr const char* kDisplayDecimationLabel = "Decimation";
 inline constexpr int kDisplayDecimationMin = 1;
 inline constexpr int kDisplayDecimationMax = 16;

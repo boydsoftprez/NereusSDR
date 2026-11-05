@@ -6457,6 +6457,39 @@ void MainWindow::refreshFftPoolConfig()
     cfg.fftSize = sizing.baseline();
     cfg.hzPerBinTarget = sizing.hzPerBinTarget;
     m_fftEnginePool->setConfigForNewStreams(cfg);
+    applyDecimationFromSettings();
+}
+
+void MainWindow::applyDecimationFromSettings()
+{
+    if (!m_fftEnginePool) { return; }
+    const bool remote = m_radioModel && !m_radioModel->ownsLocalDsp();
+    if (remote && !(m_stationClient && m_stationClient->spectrumDecimationAvailable())) {
+        return;
+    }
+    auto& s = AppSettings::instance();
+    const QString stored = s.value(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                                   QString::number(ControlRanges::kDisplayDecimationDefault))
+                               .toString();
+    bool ok = false;
+    int decimation = stored.toInt(&ok);
+    // As for DisplayFftSize above: the default is used, and where this window
+    // owns the setting the key is put right. A remote window's key is its Core's.
+    if (!ok || decimation < ControlRanges::kDisplayDecimationMin
+        || decimation > ControlRanges::kDisplayDecimationMax) {
+        decimation = ControlRanges::kDisplayDecimationDefault;
+        if (!remote) {
+            qCWarning(lcSpectrum) << "Stored" << ControlRanges::kDisplayDecimationKey << stored
+                                  << "is not a decimation; using" << decimation;
+            s.setValue(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                       QString::number(decimation));
+        }
+    }
+    if (decimation != m_fftEnginePool->decimation()) {
+        m_fftEnginePool->setDecimation(decimation);
+        // Each local pan's hold length follows its engine's decimation.
+        refreshLocalFftShapes();
+    }
 }
 
 // ── Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream ────────────────
@@ -7621,6 +7654,8 @@ void MainWindow::applyDisplayDecimation(int decimation)
     // decimation the Core runs when the Core's answer arrives
     // (SpectrumWidget::setRemoteDecimation, from the accepted context).
     m_fftEnginePool->setDecimation(decimation);
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                                     QString::number(decimation));
     // Each local pan's hold length follows its engine's decimation.
     refreshLocalFftShapes();
     emit stationFftSettingsChanged();
@@ -7646,7 +7681,7 @@ DisplayPillFftState MainWindow::displayPillFftState(const QString& panId) const
         static_cast<int>(WindowFunction::Count) - 1);
     // Above 0 in HzPerBin only.
     state.hzPerBinTarget = sizing.hzPerBinTarget;
-    // Decimation has no key: it is what the engines were last given.
+    // Decimation: what the engines hold, which is the saved value.
     state.decimation = m_fftEnginePool ? m_fftEnginePool->decimation()
                                        : ControlRanges::kDisplayDecimationDefault;
 
@@ -8024,7 +8059,14 @@ void MainWindow::ensureOverlayPanels()
             if (m_fftEnginePool && sizingKey) {
                 applyFftSizingFromSettings(/*replan=*/false);
             }
-            if (sizingKey
+            // Decimation, the same way: the value the next request for each
+            // pan carries.
+            const bool decimationKey = key.isEmpty()
+                || key == QLatin1String(ControlRanges::kDisplayDecimationKey);
+            if (decimationKey) {
+                applyDecimationFromSettings();
+            }
+            if (sizingKey || decimationKey
                 || key == QLatin1String(ControlRanges::kDisplayFftWindowKey)
                 || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
                 refreshDisplayPillFftStates();

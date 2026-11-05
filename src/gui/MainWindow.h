@@ -1394,6 +1394,10 @@ private:
     /// reasoning.
     void refreshFftPoolConfig();
 
+    /// Give the pool the saved Decimation, range checked. A Core with no
+    /// decimation control has nothing for this window to keep.
+    void applyDecimationFromSettings();
+
     /// The zoom slider under the pans shows the active pan's span. Only ever
     /// moves the thumb; the slider's own signal is blocked, so following
     /// never writes a span.

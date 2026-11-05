@@ -550,6 +550,8 @@ const Rule kWholeKeys[] = {
     // the target they choose between (ControlRanges.h).
     { "DisplayFftSizingMode", SettingsScope::Station },
     { "DisplayHzPerBinLastTarget", SettingsScope::Station },
+    // Rendering > Decimation, the fifth knob of the FFT row.
+    { "DisplayDecimation", SettingsScope::Station },
 
     // TX-side WDSP analyzer configuration. TxAnalyzer owns the detector,
     // averaging, normalization, FFT geometry and window applied before TX
