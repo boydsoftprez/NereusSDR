@@ -791,8 +791,8 @@ private slots:
         QVERIFY(pan.back()->geometry().bottom() < pan.tune()->geometry().top());
     }
 
-    // D19 on the view with no spot: the old floating place folds and scrolls the same.
-    void theFloatingPlaceStaysInsideThePan()
+    // D19 with no spot given yet: on a short pan the view folds and scrolls, inside the pan.
+    void withNoSpotAShortPanFoldsAndScrollsInsideIt()
     {
         Pan pan(240);
         RoundtableCardModel card = longTalker();

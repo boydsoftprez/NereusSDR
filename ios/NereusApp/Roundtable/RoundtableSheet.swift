@@ -39,8 +39,8 @@ import SwiftUI
 /// the TX line and every station's reading of you; on a frequency server it
 /// keeps the frequency view, with no TX line. With a tuning dial on, the sheet
 /// stops above the 92-point strip that keeps PTT at the left and the dial at
-/// the right; keyed with a dial on a legacy server, the box steps aside and
-/// its draft is kept.
+/// the right. Keyed with a dial, the box steps aside on any server; on a legacy
+/// server the sheet also says its draft is kept.
 /// Before the station's first answer the sheet asks it
 /// (``RoundtableFirstRunSheet``) at full height and sends nothing until then.
 struct RoundtableSheet: View {

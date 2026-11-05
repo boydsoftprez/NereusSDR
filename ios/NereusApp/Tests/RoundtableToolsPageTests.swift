@@ -855,7 +855,7 @@ struct RoundtableToolsPageTests {
         try await Task.sleep(for: .milliseconds(400))
         #expect(model.roundtable.readingRoomId == nil)
         #expect(RoundtableRoomView.appearsForTesting == appears, "the tune brought the view up new")
-        #expect(station.roundtableHistoryRequests.count - asks <= 1, "the view asked for history as well as the model")
+        #expect(station.roundtableHistoryRequests.count - asks <= 1, "more than one history ask after the tune")
         #expect(views(UITextField.self, in: window).first?.text == "W1A", "the tune lost a half-typed name")
         let after = longScroller()
         #expect(after === scroll, "the tune made a new scroll view")

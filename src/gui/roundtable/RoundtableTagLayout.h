@@ -264,6 +264,10 @@ NEREUS_GUI_EXPORT RoundtableCardPlacement placeRoundtableCard(const RoundtableCa
 inline constexpr int kRoundtableInspectorWidth = 300;
 inline constexpr int kRoundtableInspectorMinStretch = 260;
 
+/// How tall the fade over a cut body is: never more than half of it, so a short
+/// body's rows stay readable.
+NEREUS_GUI_EXPORT int roundtableViewFadeHeight(int bodyHeight);
+
 /// Where the inspector stands (overlay design D34, D37). Pure. `pan` is the
 /// spectrum from its top to the foot line, its bottom the foot. `height` is what
 /// the inspector wants, cut to the pan. `flags` and `flagFlipped` as
@@ -271,10 +275,6 @@ inline constexpr int kRoundtableInspectorMinStretch = 260;
 /// has room, narrower than 300 only in a stretch that is, and sits at the stretch's
 /// edge unless the dial lies inside it. With no stretch at least 260 wide it stays
 /// open at the pan's left edge, over the flag. Null only for an empty pan.
-/// How tall the fade over a cut body is: never more than half of it, so a short
-/// body's rows stay readable.
-NEREUS_GUI_EXPORT int roundtableViewFadeHeight(int bodyHeight);
-
 NEREUS_GUI_EXPORT QRect placeRoundtableInspector(const QRect& pan, int dialX, const QVector<QRect>& flags,
                                                  bool flagFlipped, int height);
 
