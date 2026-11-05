@@ -654,6 +654,7 @@ private slots:
         });
         const auto clickExpectingOneMoreDialog = [&]() {
             const int before = created;
+            QVERIFY(panelAuto->isEnabled());
             rightClick(panelAuto);
             QCOMPARE(created, before + 1);
             QVERIFY(dialog);

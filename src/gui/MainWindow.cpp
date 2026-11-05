@@ -11689,7 +11689,7 @@ void MainWindow::populateDefaultMeter()
     connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
         auto* dialog = createSetupDialog();
         if (dialog == nullptr) {
-            return;  // the gate refused and has already said why
+            return;
         }
         dialog->selectPage(QStringLiteral("AGC/ALC"));
         dialog->show();
