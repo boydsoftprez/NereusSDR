@@ -461,6 +461,100 @@ private slots:
         settings.setValue(rateKey(kRadioMac, 0), kChosenRateHz);
         QCOMPARE(slice.savedSampleRateHz(), 384000);
     }
+    // Two slices on one receiver have one rate between them. The highest saved
+    // wins: the rate the operator chose must not lose to an old default.
+    void slices_sharing_a_receiver_come_back_at_the_highest_saved_rate_data()
+    {
+        QTest::addColumn<int>("rateA");
+        QTest::addColumn<int>("rateB");
+        QTest::newRow("A chose it") << kChosenRateHz << kStartRateHz;
+        QTest::newRow("B chose it") << kStartRateHz << kChosenRateHz;
+    }
+
+    void slices_sharing_a_receiver_come_back_at_the_highest_saved_rate()
+    {
+        QFETCH(int, rateA);
+        QFETCH(int, rateB);
+        RadioModel model;
+        seed(model);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        QVERIFY(b >= 0);
+        model.sliceById(b)->setFrequency(14210000.0);
+        const int shared = model.sliceById(a)->streamIndex();
+        QCOMPARE(model.sliceById(b)->streamIndex(), shared);
+        model.flushPendingSettingsSave();
+
+        auto& settings = AppSettings::instance();
+        settings.setValue(rateKey(kRadioMac, a), rateA);
+        settings.setValue(rateKey(kRadioMac, b), rateB);
+
+        model.applySavedSliceSampleRates(model.savedSliceSampleRates(),
+                                         ProtocolVersion::Protocol2);
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        QCOMPARE(model.streamSampleRateHzForTest(shared), kChosenRateHz);
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), kChosenRateHz);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), kChosenRateHz);
+        model.flushPendingSettingsSave();
+        QCOMPARE(model.sliceById(a)->savedSampleRateHz(), kChosenRateHz);
+        QCOMPARE(model.sliceById(b)->savedSampleRateHz(), kChosenRateHz);
+    }
+
+    // Receivers of their own keep their own rates: one rate per receiver, not
+    // one for the radio.
+    void slices_on_their_own_receivers_come_back_at_their_own_rates()
+    {
+        RadioModel model;
+        seed(model);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice(QStringLiteral("pan-1"));
+        QVERIFY(b >= 0);
+        model.sliceById(b)->setFrequency(7100000.0);
+        QVERIFY(model.sliceById(a)->streamIndex() != model.sliceById(b)->streamIndex());
+
+        auto& settings = AppSettings::instance();
+        settings.setValue(rateKey(kRadioMac, a), kChosenRateHz);
+        settings.setValue(rateKey(kRadioMac, b), 384000);
+        model.applySavedSliceSampleRates(model.savedSliceSampleRates(),
+                                         ProtocolVersion::Protocol2);
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), kChosenRateHz);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), 384000);
+    }
+
+    // A slice pushed off a receiver the connect is narrowing still gets its
+    // saved rate on the receiver it lands on.
+    void a_slice_moved_by_a_saved_rate_gets_its_own_saved_rate_too()
+    {
+        RadioModel model;
+        seed(model);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        QVERIFY(b >= 0);
+        model.requestSliceSampleRate(a, kChosenRateHz);
+        model.sliceById(b)->setFrequency(14500000.0);
+        QCOMPARE(model.sliceById(b)->streamIndex(), model.sliceById(a)->streamIndex());
+
+        // Both saved lower than the receiver runs: the higher applies, and the
+        // slice it no longer covers moves, then takes its own.
+        QHash<int, int> saved;
+        saved.insert(a, 384000);
+        saved.insert(b, 96000);
+        model.applySavedSliceSampleRates(saved, ProtocolVersion::Protocol2);
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        QVERIFY(model.sliceById(a)->streamIndex() != model.sliceById(b)->streamIndex());
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), 384000);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), 96000);
+    }
 };
 
 QTEST_MAIN(TestSampleRateSticks)

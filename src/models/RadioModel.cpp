@@ -14857,34 +14857,66 @@ void RadioModel::applySavedSliceSampleRates(const QHash<int, int>& saved,
     }
     const std::vector<int> allowed = NereusSDR::allowedSampleRates(
         proto, boardCapabilities(), m_hardwareProfile.model);
-    const QList<SliceModel*> slices = m_slices;
-    for (SliceModel* slice : slices) {
-        if (slice == nullptr) {
+    QHash<int, int> usable;
+    for (const SliceModel* slice : std::as_const(m_slices)) {
+        if (slice == nullptr || slice->streamIndex() < 0) {
             continue;
         }
         const auto it = saved.constFind(slice->sliceIndex());
         if (it == saved.cend()) {
             continue;
         }
-        const int rate = it.value();
-        const int stream = slice->streamIndex();
-        if (stream < 0) {
-            continue;
-        }
-        if (std::find(allowed.cbegin(), allowed.cend(), rate) == allowed.cend()) {
+        if (std::find(allowed.cbegin(), allowed.cend(), it.value()) == allowed.cend()) {
             qCWarning(lcConnection) << "Slice" << slice->sliceIndex()
-                                    << "saved sample rate" << rate
+                                    << "saved sample rate" << it.value()
                                     << "is not supported by this radio; staying at"
-                                    << m_streamAllocator.streamSampleRateHz(stream);
+                                    << m_streamAllocator.streamSampleRateHz(slice->streamIndex());
             continue;
         }
-        if (m_streamAllocator.streamSampleRateHz(stream) == rate) {
-            continue;
+        usable.insert(slice->sliceIndex(), it.value());
+    }
+
+    // One rate per receiver: the highest saved among the slices on it, so the
+    // rate the operator chose cannot lose to an old default. Worked out again
+    // after each change, because narrowing a receiver can move a slice it no
+    // longer covers onto another one. Each receiver is asked for a rate once, so
+    // a refused change is not asked for again.
+    const QPointer<RadioModel> self(this);
+    QSet<QPair<int, int>> asked;
+    for (;;) {
+        struct Wanted {
+            int rateHz{0};
+            int sliceId{-1};
+        };
+        QMap<int, Wanted> wanted;
+        for (const SliceModel* slice : std::as_const(m_slices)) {
+            if (slice == nullptr || slice->streamIndex() < 0) {
+                continue;
+            }
+            const int rate = usable.value(slice->sliceIndex(), 0);
+            Wanted& entry = wanted[slice->streamIndex()];
+            if (rate > entry.rateHz) {
+                entry = {rate, slice->sliceIndex()};
+            }
         }
-        qCInfo(lcConnection) << "Slice" << slice->sliceIndex()
-                             << "comes back at its saved sample rate" << rate
-                             << "for" << bandLabel(slice->band());
-        requestSliceSampleRate(slice->sliceIndex(), rate);
+        bool changed = false;
+        for (auto it = wanted.cbegin(); it != wanted.cend() && !changed; ++it) {
+            const QPair<int, int> request(it.key(), it.value().rateHz);
+            if (it.value().rateHz <= 0
+                || m_streamAllocator.streamSampleRateHz(it.key()) == it.value().rateHz
+                || asked.contains(request)) {
+                continue;
+            }
+            asked.insert(request);
+            qCInfo(lcConnection) << "Receiver" << it.key()
+                                 << "comes back at its saved sample rate" << it.value().rateHz;
+            requestSliceSampleRate(it.value().sliceId, it.value().rateHz);
+            if (!self) { return; }
+            changed = true;
+        }
+        if (!changed) {
+            return;
+        }
     }
 }
 

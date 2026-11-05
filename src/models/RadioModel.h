@@ -2930,10 +2930,10 @@ public:
     /// later save would then write that over the saved one.
     QHash<int, int> savedSliceSampleRates() const;
 
-    /// R-R3-49: Protocol 2 only. Puts each bound slice's saved rate from
-    /// `saved` on its DDC through requestSliceSampleRate, the same path a
-    /// window's rate change takes (allocator, WDSP channel rate, DDC
-    /// assignment). A rate the board does not allow for `proto` is logged and
+    /// R-R3-49: Protocol 2 only. Puts each receiver's saved rate from `saved`
+    /// on its DDC through requestSliceSampleRate, the same path a window's rate
+    /// change takes (allocator, WDSP channel rate, DDC assignment). Slices
+    /// sharing a receiver give it the highest rate saved among them. A rate the board does not allow for `proto` is logged and
     /// skipped, leaving the slice at the connect rate, as resolveSampleRate
     /// does for the radio-wide key. Protocol 1 carries one rate for the whole
     /// radio, so it keeps the radio-wide key and this does nothing.
