@@ -8,6 +8,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QLocalSocket>
 #include <QLockFile>
 #include <QProcess>
 #include <QScopeGuard>
@@ -44,6 +45,17 @@ qint64 deadPid()
     if (!process.waitForStarted()) { return 0; }
     const qint64 pid = process.processId();
     return process.waitForFinished() ? pid : 0;
+}
+
+// The name QLockFile writes and compares. On Windows that is COMPUTERNAME, which
+// can differ from the DNS name QSysInfo gives.
+QString lockFileMachineName()
+{
+#ifdef Q_OS_WIN
+    return qEnvironmentVariable("COMPUTERNAME");
+#else
+    return QSysInfo::machineHostName();
+#endif
 }
 
 QByteArray lockLines(qint64 pid, const QByteArray& hostName, const QByteArray& machineId)
@@ -114,7 +126,7 @@ private slots:
     // machine id, so this also runs the id-less half of the table on CI.
     void ruleMatchesQtHere_data()
     {
-        const QByteArray ownHost = QSysInfo::machineHostName().toUtf8();
+        const QByteArray ownHost = lockFileMachineName().toUtf8();
         const QByteArray ownId = QSysInfo::machineUniqueId();
         QTest::addColumn<QByteArray>("hostName");
         QTest::addColumn<QByteArray>("machineId");
@@ -142,7 +154,7 @@ private slots:
         lock.setStaleLockTime(0);
         const bool qtTookIt = lock.tryLock(0);
         QCOMPARE(StationHandover::lockCameFromOtherComputer(lines, QSysInfo::machineUniqueId(),
-                                                            QSysInfo::machineHostName()),
+                                                            lockFileMachineName()),
                  !qtTookIt);
     }
 
@@ -242,7 +254,7 @@ private slots:
         // Windows shares its open file for reading, so this reads back there too.
         const QList<QByteArray> ownLock = readFile(ownership.lockPath()).split('\n');
         QCOMPARE(ownLock.value(0).toLongLong(), QCoreApplication::applicationPid());
-        QCOMPARE(QString::fromUtf8(ownLock.value(2)), QSysInfo::machineHostName());
+        QCOMPARE(QString::fromUtf8(ownLock.value(2)), lockFileMachineName());
         QCOMPARE(ownLock.value(3), QSysInfo::machineUniqueId());
 
         // And it goes away cleanly.
@@ -397,7 +409,7 @@ private slots:
         // Qt clears this one itself, wherever the folder is.
         ownership.setFolderIsOnThisComputerForTest(false);
         QVERIFY(writeFile(ownership.lockPath(),
-                          lockLines(pid, QSysInfo::machineHostName().toUtf8(),
+                          lockLines(pid, lockFileMachineName().toUtf8(),
                                     QSysInfo::machineUniqueId())));
         QString error;
         QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
@@ -474,8 +486,10 @@ private slots:
         QCOMPARE(readFile(onNetworkDrive.lockPath()), lines);
     }
 
-    // A wait is for a holder that can still leave, whatever the file says about
-    // where it came from. The helper exits on its own a moment after it is ready.
+    // On this computer's disk a wait is for a holder that can still leave, whether
+    // the file names this computer or another. A network drive's lock from another
+    // computer does not wait: see leftAloneOnANetworkDrive. The helper exits on its
+    // own a moment after it is ready.
     void waitStaysForAHolderThatCanLeave_data()
     {
         QTest::addColumn<bool>("namesAnotherComputer");
@@ -624,6 +638,50 @@ private slots:
             QCOMPARE(error, kCoreRefusal);
         }
     }
+
+    // A listener that takes the connection and never replies: the window stops
+    // at the bound it was given and says what it says when nothing answers.
+    void listenerThatNeverRepliesStopsAtTheBound()
+    {
+        QTemporaryDir socketDir(QStringLiteral("/tmp/nl-XXXXXX"));
+        QVERIFY(socketDir.isValid());
+        const QString socketPath = socketDir.filePath(QStringLiteral("c"));
+
+        QProcess core;
+        core.start(QCoreApplication::applicationFilePath(),
+                   {QStringLiteral("--control-helper"), m_profile, socketPath,
+                    QStringLiteral("silent")});
+        const auto stop = qScopeGuard([&] {
+            core.kill();
+            core.waitForFinished();
+        });
+        QVERIFY(core.waitForStarted());
+        QVERIFY(waitForReady(core));
+
+        StationHandover ownership(m_profile);
+        ownership.setFolderIsOnThisComputerForTest(false);
+        ownership.setControlSocketPathForTest(socketPath);
+        if (!readFile(ownership.lockPath()).isEmpty()) {
+            QSKIP("An account that can read anything cannot set this up.");
+        }
+
+        constexpr int kBoundMs = 1000;
+        QString error;
+        QElapsedTimer elapsed;
+        elapsed.start();
+        QVERIFY(!ownership.reclaimFromBackground(kBoundMs, &error));
+        const qint64 tookMs = elapsed.elapsed();
+        // Most of the bound was spent, so it really connected and waited for the
+        // reply. The upper limit leaves room for a loaded computer and is still
+        // far short of the 15 seconds a window normally allows.
+        QVERIFY2(tookMs >= kBoundMs - 200, qPrintable(QString::number(tookMs)));
+        QVERIFY2(tookMs < 5000, qPrintable(QString::number(tookMs)));
+        QVERIFY(!ownership.ownsProfile());
+        QVERIFY2(error.contains(QStringLiteral("this computer or on another computer")),
+                 qPrintable(error));
+        QVERIFY2(error.contains(ownership.lockPath()), qPrintable(error));
+        QVERIFY2(!error.contains(QStringLiteral("did not answer")), qPrintable(error));
+    }
 #endif
 
     void onlyKnownLocalDiskTypesCount_data()
@@ -673,12 +731,16 @@ int main(int argc, char* argv[])
         StationHandover lock(QString::fromLocal8Bit(argv[2]));
         if (!lock.acquire(0)) { return 3; }
         if (!QFile::setPermissions(lock.lockPath(), QFileDevice::Permissions{})) { return 4; }
-        const bool refuse = QString::fromLocal8Bit(argv[4]) == QLatin1String("refuse");
-        StationControlSocket control([&](const QStringList&) -> StationControlReply {
-            if (refuse) { return {false, kCoreRefusal}; }
-            lock.release();
-            return {true, QStringLiteral("The Core handed back the radio.")};
-        });
+        const QString mode = QString::fromLocal8Bit(argv[4]);
+        StationControlSocket control(
+            [&](const QStringList&) -> StationControlReply {
+                if (mode == QLatin1String("refuse")) { return {false, kCoreRefusal}; }
+                lock.release();
+                return {true, QStringLiteral("The Core handed back the radio.")};
+            },
+            nullptr,
+            // Keeps the request and never replies.
+            [&](const QStringList&, QLocalSocket*) { return mode == QLatin1String("silent"); });
         if (!control.listen(QString::fromLocal8Bit(argv[3]))) { return 5; }
         std::fputs("READY\n", stdout);
         std::fflush(stdout);

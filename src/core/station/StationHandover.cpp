@@ -199,9 +199,11 @@ bool StationHandover::lockCameFromOtherComputer(const QByteArray& lockBytes,
         return false;
     }
 
-    // The same answer QLockFile reaches, measured on Qt 6.8.2 and 6.11: the
-    // machine id decides when the file and this computer both have one, and the
-    // host name otherwise. A container often has no machine id at all.
+    // The answer QLockFile reaches, measured on Qt 6.8.2 on Linux and Qt 6.11 on
+    // macOS and not on Windows: the machine id decides when the file and this
+    // computer both have one, and the host name otherwise. A container often has
+    // no machine id at all. With no id, QLockFile on Windows compares COMPUTERNAME
+    // and not the name this is given, so the two can differ there.
     const QByteArray machineId = lines.value(kLockLineMachineId);
     if (!machineId.isEmpty() && !ownMachineId.isEmpty()) {
         return machineId != ownMachineId;
@@ -273,9 +275,11 @@ bool StationHandover::acquire(int timeoutMs, QString* error)
         }
     }
 
-    // Waiting is for a holder that can still leave. A lock only a person can
-    // settle will not change in the time a Core waits, so that Core says what to
-    // do right away.
+    // A Core does not wait on another computer's lock on a network drive. That
+    // lock can clear if the other computer's Core is quitting right now, but
+    // usually it is a leftover that only a person can settle, so this says what
+    // to do right away and a service restart looks again. Other locks keep the
+    // wait, because their holder may leave.
     if (m_otherComputerState != OtherComputerState::NeedsOperator && timeoutMs > 0
         && m_lock->tryLock(timeoutMs)) {
         m_otherComputerState = OtherComputerState::None;
@@ -330,9 +334,9 @@ bool StationHandover::reclaimFromBackground(int timeoutMs, QString* error)
     elapsed.start();
     if (acquire(0, error)) { return true; }
     if (m_lock->error() != QLockFile::LockFailedError) { return false; }
-    // No Core here can answer for a lock another computer wrote, and waiting
-    // would not change it. The operator hears about that lock right away. An
-    // unreadable lock could be a Core on this computer, so that one still asks.
+    // No Core here can answer for a lock naming another computer, so a window
+    // tells the operator right away and leaves any retry to them. An unreadable
+    // lock could be a Core on this computer, so that one still asks.
     const auto lockIsAnotherComputers = [this] {
         return m_otherComputerState == OtherComputerState::NeedsOperator
             || m_otherComputerState == OtherComputerState::CouldNotRemove;
@@ -344,9 +348,10 @@ bool StationHandover::reclaimFromBackground(int timeoutMs, QString* error)
     // the GUI intentionally does not search those other profiles.
     const StationControlReply reply = StationControlSocket::request(
         controlSocketPath(), {QStringLiteral("release")}, timeoutMs);
-    // Nothing here answered, which is not proof the holder is elsewhere: a Core
-    // may be unable to make its socket on this drive. The operator hears the
-    // words from acquire() right away, as for a lock read as another computer's.
+    // Nothing here answered, which is not proof the holder is elsewhere: on Mac
+    // and Linux a Core may be unable to make its socket on this drive. The operator
+    // hears the words from acquire() right away, as for a lock naming another
+    // computer.
     if (m_otherComputerState == OtherComputerState::UnreadableLock && !reply.answered) {
         return false;
     }

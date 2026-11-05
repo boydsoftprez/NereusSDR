@@ -110,6 +110,17 @@ bool controlSocketPresent(const QString& socketPath)
 #endif
 }
 
+// The name QLockFile writes and compares. On Windows that is COMPUTERNAME, which
+// can differ from the DNS name QSysInfo gives.
+QString lockFileMachineName()
+{
+#ifdef Q_OS_WIN
+    return qEnvironmentVariable("COMPUTERNAME");
+#else
+    return QSysInfo::machineHostName();
+#endif
+}
+
 QByteArray fileBytes(const QString& path)
 {
     QFile file(path);
@@ -144,8 +155,8 @@ private slots:
         QVERIFY(!error.isEmpty());
         QFile oldLock(competitor.lockPath());
 #ifdef Q_OS_WIN
-        // QLockFile on Windows opens its file with no sharing, so a live
-        // owner's lock cannot be opened, let alone aged, by anyone else.
+        // QLockFile on Windows shares its open file only for reading, so a live
+        // owner's lock cannot be opened for writing, let alone aged, by anyone else.
         QVERIFY(!oldLock.open(QIODevice::ReadWrite));
 #else
         QVERIFY(oldLock.open(QIODevice::ReadWrite));
@@ -231,7 +242,7 @@ private slots:
         // back there too.
         const QList<QByteArray> daemonLock = fileBytes(leftover.fileName()).split('\n');
         QCOMPARE(daemonLock.value(0).toLongLong(), daemon.processId());
-        QCOMPARE(QString::fromUtf8(daemonLock.value(2)), QSysInfo::machineHostName());
+        QCOMPARE(QString::fromUtf8(daemonLock.value(2)), lockFileMachineName());
         QCOMPARE(daemonLock.value(3), QSysInfo::machineUniqueId());
         QVERIFY(waitForText(daemon, "Old-MacBook.local"));
     }
