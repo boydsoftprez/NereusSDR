@@ -924,6 +924,29 @@ private slots:
         QCOMPARE(isModelOwnedDspSettingsKey(key), owned);
     }
 
+    // The rate a slice comes back at is the Core's. A device's settings write
+    // could otherwise set another device's, with no slice-owner check; a device
+    // changes a rate through requestSliceSampleRate.
+    void aSlicesSavedRateIsModelOwned_data()
+    {
+        QTest::addColumn<QString>("key");
+        QTest::addColumn<bool>("owned");
+        const QString mac = QStringLiteral("hardware/00:1C:2D:05:37:2A/");
+        QTest::newRow("rate") << mac + QStringLiteral("slices/1/SampleRate") << true;
+        QTest::newRow("any case") << mac + QStringLiteral("SLICES/1/samplerate") << true;
+        QTest::newRow("nnr still") << mac + QStringLiteral("slices/1/nnr/NnrAlpha") << true;
+        QTest::newRow("longer name") << mac + QStringLiteral("slices/1/SampleRateOld") << false;
+        QTest::newRow("deeper") << mac + QStringLiteral("slices/1/other/SampleRate") << false;
+        QTest::newRow("other field") << mac + QStringLiteral("slices/1/Other") << false;
+        QTest::newRow("radio's own") << mac + QStringLiteral("radioInfo/sampleRate") << false;
+    }
+    void aSlicesSavedRateIsModelOwned()
+    {
+        QFETCH(QString, key);
+        QFETCH(bool, owned);
+        QCOMPARE(isModelOwnedDspSettingsKey(key), owned);
+    }
+
     // ---- R-R3-21 / R-R3-23: ThisComputer pages write only this
     // computer's settings. A disconnected remote window leaves these
     // pages fully usable, so a Core key here would be changed while the

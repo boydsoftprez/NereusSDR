@@ -9490,8 +9490,9 @@ void StationServer::applyBandPlanSetting(const QString& key)
 QString StationServer::sliceSettingsRefusal(SessionTransport* transport, const QString& key) const
 {
     // Slice<N>/... is SliceModel's per-slice, per-band state (Station
-    // scope). A slice's NNR keys, hardware/<mac>/slices/<N>/nnr/..., are
-    // model-owned and refused to every writer already.
+    // scope). A slice's NNR keys, hardware/<mac>/slices/<N>/nnr/..., and its
+    // saved rate, hardware/<mac>/slices/<N>/SampleRate, are model-owned and
+    // refused to every writer already.
     static const QRegularExpression kSliceKey(QStringLiteral("^Slice(\\d+)/"));
     const QRegularExpressionMatch match = kSliceKey.match(key);
     if (!match.hasMatch() || m_radioModel.isNull()) {

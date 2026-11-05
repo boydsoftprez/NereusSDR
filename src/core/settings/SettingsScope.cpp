@@ -845,7 +845,11 @@ bool isModelOwnedDspSettingsKey(QStringView rawKey)
     const QStringList parts = key.split(QLatin1Char('/'));
     return (parts.size() >= 4 && parts[2] == QStringLiteral("puresignal"))
         || (parts.size() >= 6 && parts[2] == QStringLiteral("slices")
-            && parts[4] == QStringLiteral("nnr"));
+            && parts[4] == QStringLiteral("nnr"))
+        // The rate a slice comes back at: a device changes a rate through
+        // requestSliceSampleRate, which checks the slice's owner.
+        || (parts.size() == 5 && parts[2] == QStringLiteral("slices")
+            && parts[4] == QStringLiteral("samplerate"));
 }
 
 QList<SettingsScopeRule> settingsScopeRules()
