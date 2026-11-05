@@ -253,8 +253,9 @@ final class PhoneSettings: ObservableObject {
         set { setBool(newValue, for: Self.madeNewKeyKey) }
     }
 
-    /// What Reconnect automatically starts as until the operator sets it.
-    static let autoReconnectDefault = true
+    /// What Reconnect automatically starts as until the operator sets it: off,
+    /// JJ's ruling of 2026-11-05. A phone left alone opens on Your Cores.
+    static let autoReconnectDefault = false
 
     /// Opening the app connects to the last Core again, unless the operator
     /// left it with Disconnect or removed it.

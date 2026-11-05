@@ -669,10 +669,34 @@ struct ConnectionFlowTests {
 
     // MARK: Reconnect automatically
 
-    private func keptSettings(lastCore station: FakeStation?) throws -> PhoneSettings {
+    /// A phone with the switch turned on, as these tests need: it starts off.
+    private func keptSettings(lastCore station: FakeStation?, autoReconnect: Bool? = true) throws -> PhoneSettings {
         let settings = PhoneSettings(defaults: try #require(UserDefaults(suiteName: "ConnectionFlowTests-\(UUID().uuidString)")))
         settings.lastCore = station.map { Base64URL.encode($0.identity.publicKey) }
+        if let autoReconnect {
+            settings.autoReconnect = autoReconnect
+        }
         return settings
+    }
+
+    @Test("a phone that never touched the switch opens on Your Cores and dials nothing, even after the scene is active")
+    func reconnectUntouchedStaysOnYourCores() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: station, autoReconnect: nil)
+        let dials = DialCounter()
+        let harness = try Self.harness(factory: { endpoint, trust in
+            _ = dials.first()
+            return station.transportFactory(endpoint, trust)
+        }, paired: [Self.paired(station)], kept: kept, reconnectOnOpen: true)
+        #expect(harness.flow.screen == .cores)
+        harness.flow.sceneBecameActive()
+        await Task.yield()
+        #expect(harness.flow.screen == .cores)
+        #expect(harness.flow.connectingTo == nil)
+        #expect(dials.count == 0)
+        #expect(harness.app.session == nil)
+        // Nothing is forgotten by not dialing: turning it on later has a Core to go to.
+        #expect(kept.lastCore != nil)
     }
 
     @Test("on: a cold launch dials the last used Core, shows connecting and then the band, and never keys")

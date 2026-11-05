@@ -20,6 +20,8 @@ struct PhoneSettingsTests {
     func autoReconnect() throws {
         let defaults = try freshDefaults()
         let settings = PhoneSettings(defaults: defaults)
+        // JJ's ruling: off until the operator turns it on.
+        #expect(!PhoneSettings.autoReconnectDefault)
         #expect(settings.autoReconnect == PhoneSettings.autoReconnectDefault)
         settings.autoReconnect = !PhoneSettings.autoReconnectDefault
         #expect(PhoneSettings(defaults: defaults).autoReconnect != PhoneSettings.autoReconnectDefault)
