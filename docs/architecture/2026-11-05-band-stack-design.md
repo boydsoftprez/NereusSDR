@@ -82,8 +82,8 @@ and the cycle's core rules are ported under the attribution rules in section 10.
 - Duplicate protection on by default.
 - Region-based seeds. A region change asks first, clears unlocked entries and re-seeds.
 - Full-state recall. Today's per-band memory still restores what it holds, such as AGC, noise blanker
-  and diversity. It no longer holds the sample rate, which stays what you set on every band
-  (J.J.'s ruling, 2026-11-05; PR 747). A recall never changes the sample rate.
+  and diversity. The sample rate and the tune step stay what you set on every band (J.J.'s rulings,
+  2026-11-05; PR 747), so a recall changes neither.
 
 ## 4. Calls settled here, for J.J. to veto
 
@@ -187,9 +187,10 @@ place. A dwell save does not move your place and also skips a spot within 100 Hz
 1. Refuse if the slice is locked, transmitting, only listened to or another device's (section 11).
 2. Save the old band's per-band memory (`materializePendingBandSettings`, `saveToSettings`).
 3. Restore the new band's per-band memory with tuning left out (`restoreFromSettings(band, false)`,
-   which already skips frequency, mode, filter and sample rate). What else that memory holds, such as
-   tune step, follows the per-band memory's own rules and is not this feature's call. Do not call
-   `applyRestoredSampleRate`.
+   which already skips frequency, mode, filter and sample rate). Do not call
+   `applyRestoredSampleRate`. The slice's tune step stays as it is: J.J. ruled on 2026-11-05 that
+   there is one step per slice on every band, so a recall must not restore a step from per-band
+   memory, whichever order this and the settings audit land in.
 4. Set frequency first, then mode, then filter, in the order `onBandButtonClicked` documents.
 5. Apply the pan rule: alone on its pan, the slice brings back the entry's center and zoom, unless
    that would put the frequency off screen, in which case it centers on the frequency. On a shared
@@ -418,7 +419,7 @@ and reaches the same place.
 5. Seeds: row counts and sample rows per routine match the Thetis tables; WWV and US 60 m are locked;
    every NereusSDR region maps to a routine.
 6. Controller: recall restores AGC, noise blanker and diversity from per-band memory, applies the
-   entry's frequency, mode and filter, and leaves the sample rate unchanged.
+   entry's frequency, mode and filter, and leaves the sample rate and tune step unchanged.
 7. Controller: first run keeps slices where they are and makes their saved spots their places.
 8. Controller: dwell and expiry follow V5; undo restores the batch.
 9. Link: all verbs through `SessionCommandDispatcher` with refusals; `tst_link_surface_manifest` and
