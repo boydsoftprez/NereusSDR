@@ -371,6 +371,8 @@ warren@wpratt.com
 //                 and the AM monitor tap, all zeros; the gate, the run
 //                 sequence and rfGateOpened are untouched. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 //   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 // =================================================================

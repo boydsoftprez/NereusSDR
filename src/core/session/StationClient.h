@@ -505,6 +505,8 @@
 //               `roundtable` object, the room streams and the thirteen
 //               Roundtable requests. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/NereusCoreExport.h"

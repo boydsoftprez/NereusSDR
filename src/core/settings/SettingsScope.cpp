@@ -210,8 +210,6 @@
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-31 - Roundtable/SignalFormat is a local reporter-display
 //                preference. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
-//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
-//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/settings/SettingsScope.h"

@@ -347,6 +347,8 @@
 //                                    roundtable.* verbs, read here and
 //                                    answered by the station server.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/roundtable/RoundtableWire.h"

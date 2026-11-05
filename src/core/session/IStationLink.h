@@ -270,6 +270,8 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  dxOutputsUnavailableReason
 //                                    (radioHardwareVersion 14).
 //                                    AI-assisted: Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include <QString>

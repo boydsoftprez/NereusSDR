@@ -94,6 +94,8 @@
 //               through ScopedChildWidget instead of on the stack, so a
 //               host that dies during the drag no longer frees it twice.
 //               With AI-assisted transformation via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 #include "ContainerContentHost.h"
 #include "gui/ScopedChildWidget.h"
 #include "ContainerControlCatalog.h"

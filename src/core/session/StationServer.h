@@ -619,6 +619,8 @@
 //               answers remembered per session (their copies); the CW
 //               settings on `transmit` only to a peer that declared
 //               cwSettings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/NereusCoreExport.h"

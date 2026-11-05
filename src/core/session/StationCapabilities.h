@@ -265,6 +265,8 @@
 //   2026-10-26: CW transmit, remoteCwVersion (R-CW-49): the cw.* verbs,
 //               last in the remoteTx block for a peer that declared
 //               remoteCw 1. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include <QByteArray>

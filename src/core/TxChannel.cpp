@@ -406,6 +406,8 @@ warren@wpratt.com
 //                 section; setRfHold(on) waits for a block already in it,
 //                 as closeRfGate does. NereusSDR-original. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "TxChannel.h"  // brings in WdspTypes.h (DSPMode)

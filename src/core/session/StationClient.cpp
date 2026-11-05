@@ -608,6 +608,8 @@
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex. NereusSDR-original.
 
 #include <utility>

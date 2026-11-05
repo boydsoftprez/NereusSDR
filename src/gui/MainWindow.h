@@ -228,6 +228,8 @@
 //   2026-10-26 - Final review fix wave (M6): voxLineReason, one VOX
 //                 line reason for the container button and the applets.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 //=================================================================
