@@ -348,6 +348,21 @@ timed out 49 tests on the Linux self-hosted runners while tests that do not
 save kept their usual time (run 41764912150). Those runners keep test homes
 and scratch in memory for this reason (`scripts/ci/box-linux.sh`).
 
+**Those two are why the waits stay short.** `NEREUS_TRY_*` wait 15 s by default
+(`kNereusTryDefaultMs` in `tests/SessionWait.h`), up from 5 s. The shared key
+and the memory disk remove most of the slowness that passed 5 s, and a longer
+default has a cost: a wait only pays its limit when it fails, and with about
+940 call sites, four failing functions at 30 s used up ctest's 120 s limit
+where they had taken 24 s. `tests/MultiDeviceHarness.h` keeps 30 s only for the
+sign-in and `invoke()` waits that run measured passing their old limit, and
+its waits print a warning naming the step when they run out, so a test killed
+at the limit still says what stalled.
+
+**A stated time limit is not a wait.** The handover requirement of 15 s
+(`tst_station_handover_roundtrip`) fails only in the realtime entry
+`tst_station_handover_roundtrip_limit`, on an idle machine. The other entry
+runs everywhere and reports the time, with a warning when it is over.
+
 ## Where the settings file lives
 
 Tests redirect Qt's writable locations into a sandbox via

@@ -82,8 +82,11 @@ bool comparesAsQCompare(const Actual& actual, const Expected& expected)
 
 // The default upper bound of a positive wait. Each returns the moment its
 // condition holds. It was 5 s, which a busy Linux CI machine passed on a
-// working link (run 41764912150, tst_remote_peripherals).
-inline constexpr int kNereusTryDefaultMs = 30000;
+// working link (run 41764912150, tst_remote_peripherals). 15 s, not more: the
+// shared TLS key and the memory disk remove most of that slowness, and a
+// failing test pays this on every wait, so a test's failures have to fit
+// inside ctest's 120 s limit (at 30 s, four failing functions use it up).
+inline constexpr int kNereusTryDefaultMs = 15000;
 
 #define NEREUS_TRY_VERIFY_WITH_TIMEOUT(expr, timeoutMs)                                   \
     do {                                                                                  \

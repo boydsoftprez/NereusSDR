@@ -9792,6 +9792,16 @@ nereus_add_test(tst_daemon_app)
 nereus_add_test(tst_station_host fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_handover EXTRA_LABELS session)
 nereus_add_test(tst_station_handover_roundtrip EXTRA_LABELS session)
+# The 15 s handover requirement is measured against the wall clock, so only
+# this second entry fails on it, labeled realtime so it runs alone on an idle
+# machine (linux-realtime in ci.yml). The first entry reports the time and
+# keeps the rest of the test on every runner.
+if(TEST tst_station_handover_roundtrip)
+    nereus_split_test(tst_station_handover_roundtrip ENV NEREUS_HANDOVER_LIMIT GROUPS limit)
+    set_property(TEST tst_station_handover_roundtrip_limit APPEND PROPERTY LABELS "realtime")
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES "realtime")
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_realtime tst_station_handover_roundtrip)
+endif()
 nereus_add_test(tst_desktop_station_controller)
 nereus_add_test(tst_desktop_station_window)
 # TX rulings review: MainWindow::hostingSliceActionsForTest and

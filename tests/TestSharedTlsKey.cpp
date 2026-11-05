@@ -21,8 +21,10 @@
 //
 // The file is replaced whole (QSaveFile), so a test never reads half of one;
 // two tests that start together may each make a key, and the last one
-// written is the one later tests read. A missing or unreadable file costs
-// the old generation time and nothing more.
+// written is the one later tests read. A missing file is the normal first
+// run. An unusable one is replaced, and each process that finds one, or cannot
+// save the key, warns once, since every start would otherwise pay the old
+// generation time with nothing to say why.
 //
 // =================================================================
 // Modification history (NereusSDR):
@@ -34,6 +36,7 @@
 #include "core/security/CertificateStore.h"
 
 #include <QByteArray>
+#include <QDebug>
 #include <QFile>
 #include <QFileDevice>
 #include <QSaveFile>
@@ -67,21 +70,29 @@ QByteArray makeKeyPem()
 QByteArray loadOrMakeKeyPem()
 {
     const QString path = QStringLiteral(NEREUS_TEST_TLS_KEY_FILE);
-    {
+    if (QFile::exists(path)) {
         QFile existing(path);
         if (existing.open(QIODevice::ReadOnly)) {
             const QByteArray pem = existing.readAll();
-            if (!pem.isEmpty()) {
+            if (pem.contains("PRIVATE KEY")) {
                 return pem;
             }
         }
+        qWarning("TestSharedTlsKey: %s holds no usable key; replacing it",
+                 qPrintable(path));
     }
     const QByteArray pem = makeKeyPem();
-    if (!pem.isEmpty()) {
-        QSaveFile out(path);
-        if (out.open(QIODevice::WriteOnly) && out.write(pem) == pem.size() && out.commit()) {
-            QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-        }
+    if (pem.isEmpty()) {
+        qWarning("TestSharedTlsKey: could not make a key; each Core makes its own");
+        return pem;
+    }
+    QSaveFile out(path);
+    const bool saved = out.open(QIODevice::WriteOnly)
+        && out.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+        && out.write(pem) == pem.size() && out.commit();
+    if (!saved) {
+        qWarning("TestSharedTlsKey: could not save %s: %s; the next test makes its own key",
+                 qPrintable(path), qPrintable(out.errorString()));
     }
     return pem;
 }

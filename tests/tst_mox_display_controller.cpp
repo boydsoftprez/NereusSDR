@@ -546,11 +546,12 @@ class TstMoxDisplayController : public QObject {
     Q_OBJECT
 
 private slots:
-    // Each test function starts from empty shared settings. A window's
-    // RadioModel saves its slices to AppSettings::instance(), not to the
-    // window's own settings, 500 ms after an edit, and a later window's new
-    // slice restores that letter's saved XIT. So a test that ran long enough
-    // for the timer left its XIT on the transmit frequency of later tests.
+    // Each test function starts from empty shared settings, because anything
+    // in them lasts for the whole process and can reach a later test. A
+    // window's RadioModel saves its slices to AppSettings::instance(), not to
+    // the window's own settings, 500 ms after an edit. The case that showed
+    // this: a test that ran long enough for the timer left its XIT 700 Hz on
+    // the transmit frequency of later tests, through a new slice restoring it.
     void init()
     {
         AppSettings::instance().clear();

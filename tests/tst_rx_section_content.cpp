@@ -34,6 +34,9 @@
 //                 valid, which it was not on Windows while the widget was
 //                 not exported from the GUI DLL. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - aBandGridJumpsBetweenGroups spies by member pointer now that
+//                 BandButtonItem is exported. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1177,11 +1180,10 @@ private slots:
     {
         BandButtonItem grid;
         grid.setSliceBand(0, Band::Band20m);
-        // bandClicked is on BandButtonItem, which the GUI DLL does not
-        // export on Windows; the string form finds it through the object.
-        QSignalSpy bands(&grid, SIGNAL(bandClicked(int)));
-        QSignalSpy stacks(&grid, SIGNAL(bandStackRequested(int)));
+        QSignalSpy bands(&grid, &BandButtonItem::bandClicked);
+        QSignalSpy stacks(&grid, &BandButtonItem::bandStackRequested);
         QVERIFY(bands.isValid());
+        QVERIFY(stacks.isValid());
 
         grid.buttonClicked(14, Qt::LeftButton);  // SWL
         QCOMPARE(grid.shownGroup(), BandGroup::Gen);
