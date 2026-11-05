@@ -179,6 +179,97 @@ private slots:
         QCOMPARE(s.value(QStringLiteral("FloatingPan_pan-1_Floating")).toString(),
                  QStringLiteral("False"));
     }
+
+    // The slider under the pans shows the active pan's span, and following
+    // the pan never changes a span.
+    void zoomSliderFollowsTheActivePan()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        auto* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        stack->applyLayout(QStringLiteral("2v"), MainWindow::panIdsForLayout(QStringLiteral("2v")));
+        settle();
+        SpectrumWidget* first = stack->spectrum(QStringLiteral("pan-0"));
+        SpectrumWidget* second = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(first);
+        QVERIFY(second);
+        QSlider* bar = zoomBar(window);
+        QVERIFY(bar);
+        QCOMPARE(stack->activePanId(), QStringLiteral("pan-0"));
+
+        QSignalSpy firstAsked(first, &SpectrumWidget::bandwidthChangeRequested);
+        QSignalSpy secondAsked(second, &SpectrumWidget::bandwidthChangeRequested);
+
+        first->setFrequencyRange(14'100'000.0, 48'000.0);
+        QCOMPARE(bar->value(), 48);
+        // A pan that is not the active one moves nothing.
+        second->setFrequencyRange(7'100'000.0, 96'000.0);
+        QCOMPARE(bar->value(), 48);
+
+        stack->setActivePan(QStringLiteral("pan-1"));
+        QCOMPARE(bar->value(), 96);
+        QCOMPARE(first->bandwidth(), 48'000.0);
+        QCOMPARE(second->bandwidth(), 96'000.0);
+
+        // Wider than the slider's range: the thumb sits at the end and the
+        // span stays what it is.
+        second->setFrequencyRange(7'100'000.0, 2'000'000.0);
+        QCOMPARE(bar->value(), 768);
+        QCOMPARE(second->bandwidth(), 2'000'000.0);
+
+        stack->setActivePan(QStringLiteral("pan-0"));
+        QCOMPARE(bar->value(), 48);
+        QCOMPARE(first->bandwidth(), 48'000.0);
+        QCOMPARE(second->bandwidth(), 2'000'000.0);
+        QVERIFY(firstAsked.isEmpty());
+        QVERIFY(secondAsked.isEmpty());
+
+        // The slider still sets the active pan's span.
+        bar->setValue(100);
+        QCOMPARE(first->bandwidth(), 100'000.0);
+        QCOMPARE(second->bandwidth(), 2'000'000.0);
+        QCOMPARE(firstAsked.size(), 1);
+    }
+
+    // The wheel and the scale drag both end in setFrequencyRange; a transmit
+    // view swap writes the span directly and must be followed as well.
+    void zoomSliderFollowsATransmitViewSwap()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        auto* stack = window.findChild<PanadapterStack*>();
+        SpectrumWidget* pan = stack->spectrum(QStringLiteral("pan-0"));
+        QSlider* bar = zoomBar(window);
+        QVERIFY(bar);
+        pan->setFrequencyRange(14'100'000.0, 48'000.0);
+        QCOMPARE(bar->value(), 48);
+        pan->setFrequencyRange(14'100'000.0, 200'000.0);
+        pan->setMoxOverlay(true);
+        pan->setFrequencyRange(14'100'000.0, 24'000.0);
+        QCOMPARE(bar->value(), 24);
+        pan->setMoxOverlay(false);
+        QCOMPARE(pan->bandwidth(), 200'000.0);
+        QCOMPARE(bar->value(), 200);
+    }
+
+    // A restart: the saved span and the slider agree before anything is touched.
+    void zoomSliderShowsTheSavedSpanAfterARestart()
+    {
+        {
+            MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+            place(window);
+            auto* stack = window.findChild<PanadapterStack*>();
+            stack->spectrum(QStringLiteral("pan-0"))->setFrequencyRange(14'100'000.0, 48'000.0);
+            stack->spectrum(QStringLiteral("pan-0"))->saveSettings();
+        }
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        auto* stack = window.findChild<PanadapterStack*>();
+        QCOMPARE(stack->spectrum(QStringLiteral("pan-0"))->bandwidth(), 48'000.0);
+        QCOMPARE(zoomBar(window)->value(), 48);
+        QCOMPARE(stack->spectrum(QStringLiteral("pan-0"))->bandwidth(), 48'000.0);
+    }
 };
 
 QTEST_MAIN(TstWindowLayoutRestart)

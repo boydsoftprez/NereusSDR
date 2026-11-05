@@ -3197,6 +3197,10 @@ signals:
     void centerChanged(double centerHz);
     // Emitted when user scrolls to change bandwidth
     void bandwidthChangeRequested(double newBandwidthHz);
+    /// The span shown changed, however it changed: zoom, a clamp, a transmit
+    /// view swap. Tells; asks for nothing, where bandwidthChangeRequested
+    /// replans the FFT.
+    void viewSpanChanged(double bandwidthHz);
 
     /// Phase 3F Sub-Epic F Task 10: emitted when zoom-state or operator
     /// toggle changes extended-mode. Consumers (RadioModel via MainWindow)

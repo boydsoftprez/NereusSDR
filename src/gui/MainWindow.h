@@ -313,6 +313,7 @@
 #include "gui/NereusGuiExport.h"
 
 class QProgressDialog;
+class QSlider;
 class QSplitter;
 class QMenu;
 class QDialog;
@@ -1393,6 +1394,11 @@ private:
     /// reasoning.
     void refreshFftPoolConfig();
 
+    /// The zoom slider under the pans shows the active pan's span. Only ever
+    /// moves the thumb; the slider's own signal is blocked, so following
+    /// never writes a span.
+    void syncZoomBarToActivePan();
+
     /// The bottom bar's menu icon. Hidden or shown is saved at the click and
     /// comes back at startup, in both looks: the workspace look collapses the
     /// right strip, the classic look hides the splitter's right pane.
@@ -2122,6 +2128,7 @@ private:
     // System-CPU delta state (host_processor_info). Same reset rule as above.
     quint64 m_cpuSysPrevTotal{0};
     quint64 m_cpuSysPrevIdle{0};
+    QSlider* m_zoomBar{nullptr};             // the slider under the pans
     QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
     QLabel* m_panelToggleLabel{nullptr};     // the ☰ itself, dimmed while hidden
 

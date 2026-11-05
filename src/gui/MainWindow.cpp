@@ -6395,6 +6395,16 @@ void MainWindow::restoreContainerPanelHidden()
     applyContainerPanelHidden(true);
 }
 
+void MainWindow::syncZoomBarToActivePan()
+{
+    const SpectrumWidget* pan = activeSpectrumWidget();
+    if (!m_zoomBar || !pan) { return; }
+    const QSignalBlocker blocker(m_zoomBar);
+    // A span outside the slider's range pins the thumb at that end.
+    m_zoomBar->setValue(qBound(m_zoomBar->minimum(), qRound(pan->bandwidth() / 1000.0),
+                               m_zoomBar->maximum()));
+}
+
 void MainWindow::refreshFftPoolConfig()
 {
     if (!m_fftEnginePool) { return; }
@@ -8074,6 +8084,11 @@ void MainWindow::ensureOverlayPanels()
         connect(sw, &SpectrumWidget::bandwidthChangeRequested, this,
                 [this, panId](double) { replanFftForPan(panId); });
 
+        // The zoom slider under the pans follows the active pan's span.
+        connect(sw, &SpectrumWidget::viewSpanChanged, this, [this, sw](double) {
+            if (sw == activeSpectrumWidget()) { syncZoomBarToActivePan(); }
+        });
+
         // Parity Task 31 (A11): the keyed trace's calibration
         // (SpectrumWidget::displayCalOffsetDb; Thetis display.cs:4820-4850
         // [v2.10.3.15], RX1Offset): Setup > Calibration's TX Display Cal
@@ -9472,6 +9487,12 @@ void MainWindow::buildUI()
         activeSpectrumWidget()->setFrequencyRange(activeSpectrumWidget()->centerFrequency(), bwHz);
         emit activeSpectrumWidget()->bandwidthChangeRequested(bwHz);
     });
+    m_zoomBar = zoomBar;
+    connect(m_panStack, &PanadapterStack::activePanChanged, this,
+            [this](const QString&) { syncZoomBarToActivePan(); });
+    // After the saved span is in and the first wiring has judged it.
+    syncZoomBarToActivePan();
+    QTimer::singleShot(0, this, [this]() { syncZoomBarToActivePan(); });
 
     m_mainSplitter->addWidget(spectrumPane);
 
