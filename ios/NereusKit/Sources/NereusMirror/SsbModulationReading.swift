@@ -90,7 +90,8 @@ public struct SsbModulationReading: Sendable, Equatable {
             }
             return nil
         }
-        guard let peak = number("peakPct", Self.percentRange), let avg = number("avgPct", Self.percentRange),
+        guard let atMs = number("atMs", 0.0...Double.greatestFiniteMagnitude),
+              let peak = number("peakPct", Self.percentRange), let avg = number("avgPct", Self.percentRange),
               let hold = number("peakHoldPct", Self.percentRange), let peakDb = number("peakDbfs", Self.dbfsRange),
               let avgDb = number("avgDbfs", Self.dbfsRange), let holdDb = number("peakHoldDbfs", Self.dbfsRange),
               let rate = number("scopeRateHz", Self.scopeRateRange), rate == rate.rounded(),
@@ -105,10 +106,6 @@ public struct SsbModulationReading: Sendable, Equatable {
                 return nil
             }
             crest = value
-        }
-        var atMs = 0.0
-        if case .number(let value)? = fields["atMs"], value.isFinite {
-            atMs = value
         }
         self.init(atMs: atMs,
                   peakPct: peak, avgPct: avg, peakHoldPct: hold, peakDbfs: peakDb, avgDbfs: avgDb,

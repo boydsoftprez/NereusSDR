@@ -229,9 +229,9 @@ struct SsbModMonitorTests {
         #expect(monitor.paFeedbackReason == nil)
         monitor.choose(.paFeedback)
         #expect(monitor.source == .paFeedback)
-        // A new source's peaks start afresh, and only its stream is watched.
+        // Only its stream is watched. No reset: other devices may be reading.
         #expect(await ModMonitorTests.settle { rig.station.ssbModMonitorWatched == ["txSsbModulationFeedback"] })
-        #expect(await ModMonitorTests.settle { Self.resets(rig.station) == [1] })
+        #expect(Self.resets(rig.station).isEmpty)
         #expect(Self.unsubscribes(rig.station) == ["txSsbModulation"])
         #expect(monitor.note == nil)
         await rig.station.deliverSsbModMonitor(Self.reading(), stream: "txSsbModulationFeedback")

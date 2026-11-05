@@ -57,7 +57,7 @@ import Testing
     }
 
     @Test func aMissingRequiredFieldRefusesTheRecord() {
-        for name in ["peakPct", "avgPct", "peakHoldPct", "peakDbfs", "avgDbfs", "peakHoldDbfs", "signalPresent",
+        for name in ["atMs", "peakPct", "avgPct", "peakHoldPct", "peakDbfs", "avgDbfs", "peakHoldDbfs", "signalPresent",
                      "scopeRateHz", "scopePctTenths"] {
             var fields = Self.fields()
             fields[name] = nil
@@ -67,6 +67,7 @@ import Testing
 
     @Test func aMistypedOrOutOfRangeFieldRefusesTheRecord() {
         let bad: [(String, LinkJSON)] = [
+            ("atMs", .number(-1)), ("atMs", .string("1")),
             ("peakPct", .number(-0.1)), ("peakPct", .number(3276.8)), ("peakPct", .string("1")),
             ("avgPct", .number(-1)), ("avgPct", .number(4000)),
             ("peakHoldPct", .number(-1)), ("peakHoldPct", .number(4000)),

@@ -217,8 +217,8 @@ final class SsbModMonitorModel: ObservableObject {
     // MARK: Changing
 
     /// Watches `source`; PA FB only while PureSignal runs. A saved PA FB stays
-    /// chosen with PureSignal off and reads nothing, as on the desktop. A new
-    /// source starts its peaks afresh.
+    /// chosen with PureSignal off and reads nothing, as on the desktop. No
+    /// reset: that clears the source for every other device watching.
     func choose(_ source: Source) {
         guard enabled, source != self.source, source != .paFeedback || pureSignalRunning else {
             return
@@ -227,17 +227,10 @@ final class SsbModMonitorModel: ObservableObject {
         phone.setInteger(Int(source.rawValue), for: Self.sourceKey)
         reading = nil
         updateWatch()
-        reset(announce: false)
     }
 
     /// RESET: the Core starts the source's analyzer afresh for every device watching.
     func reset() {
-        reset(announce: true)
-    }
-
-    /// `announce` shows the Core's answer under the buttons; the reset a
-    /// new source starts with says nothing unless the Core refuses it.
-    private func reset(announce: Bool) {
         note = nil
         // Only a monitor on screen speaks to the Core, as on the desktop.
         guard enabled, shown, onScreen > 0, let commands else {
@@ -254,7 +247,7 @@ final class SsbModMonitorModel: ObservableObject {
                 }
                 if !result.accepted {
                     self.note = result.reason
-                } else if announce {
+                } else {
                     self.note = Self.clearedText
                 }
             } catch {
