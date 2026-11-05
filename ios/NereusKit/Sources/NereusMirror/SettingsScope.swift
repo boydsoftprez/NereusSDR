@@ -161,6 +161,9 @@ public enum SettingsScope: Sendable, Equatable {
         // Disable HF PA switches the Core's radio's PA off (link 6.3,
         // transmitSettingsVersion 11): the Core's setting.
         Rule(text: "DisableHfPa", scope: .station),
+        // Rendering > Decimation: each device has its own, so two windows on
+        // one Core do not move each other.
+        Rule(text: "DisplayDecimation", scope: .operatorLocal),
         Rule(text: "ExtendedTxAllowed", scope: .operatorLocal),
         // Prevent transmitting on a different band is the Core's General
         // row (transmitSettingsVersion 14): the Core refuses the key, so it

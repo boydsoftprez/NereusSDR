@@ -9923,6 +9923,7 @@
             }
         ],
         "operatorLocalKeys": [
+            "DisplayDecimation",
             "ExtendedTxAllowed"
         ],
         "operatorLocalPrefixes": [
