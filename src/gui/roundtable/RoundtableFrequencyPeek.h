@@ -8,8 +8,7 @@
 // is on a frequency and how each listener hears them, your own or another, without
 // tuning. Tune slice A here is the one thing in it that moves the radio.
 //
-// It stands on the foot line in your card's spot (showOwn, or showFor without a
-// point), or under a point on the pan (showFor with one). A short pan folds everyone
+// It stands on the foot line in your card's spot. A short pan folds everyone
 // not keyed to "Also here", and what still does not fit scrolls by the wheel between
 // the head and the buttons, which stay put.
 //
@@ -62,12 +61,9 @@ public:
     explicit RoundtableFrequencyPeek(QWidget* parent = nullptr);
     ~RoundtableFrequencyPeek() override;
 
-    /// Opens on `hz` in `family`, with its top left at `under` in the parent's
-    /// coordinates, kept inside the parent. Until refresh(), it shows the frequency
-    /// and no readings.
-    void showFor(quint64 hz, const QString& family, const QPoint& under);
     /// Opens on another frequency, standing on the foot line (D34). While open it
-    /// swaps in place, with no close and reopen.
+    /// swaps in place, with no close and reopen. Until refresh(), it shows the
+    /// frequency and no readings.
     void showFor(quint64 hz, const QString& family);
     /// The same on your own frequency: no Viewing line and no Your pan row, and Tune
     /// greyed with its reason (D22, D35).
@@ -146,8 +142,6 @@ private:
     QToolButton* m_close{nullptr};
     QToolButton* m_more{nullptr};
     QPushButton* m_back{nullptr};
-    QPoint m_under;
-    bool m_onFoot{false};
     QRect m_spotPan;
     int m_spotDialX{0};
     QVector<QRect> m_spotFlags;

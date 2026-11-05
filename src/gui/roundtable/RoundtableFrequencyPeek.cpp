@@ -142,22 +142,13 @@ RoundtableFrequencyPeek::RoundtableFrequencyPeek(QWidget* parent)
 
 RoundtableFrequencyPeek::~RoundtableFrequencyPeek() = default;
 
-void RoundtableFrequencyPeek::showFor(quint64 hz, const QString& family, const QPoint& under)
-{
-    m_under = under;
-    m_onFoot = false;
-    open(hz, family, false);
-}
-
 void RoundtableFrequencyPeek::showFor(quint64 hz, const QString& family)
 {
-    m_onFoot = true;
     open(hz, family, false);
 }
 
 void RoundtableFrequencyPeek::showOwn(quint64 hz, const QString& family)
 {
-    m_onFoot = true;
     open(hz, family, true);
 }
 
@@ -170,7 +161,7 @@ void RoundtableFrequencyPeek::setInspectorSpot(const QRect& pan, int dialX, cons
     m_spotDialX = dialX;
     m_spotFlags = flags;
     m_spotFlipped = flagFlipped;
-    if (m_open && m_onFoot) {
+    if (m_open) {
         if (m_listing) {
             fitList();
         } else {
@@ -184,7 +175,6 @@ void RoundtableFrequencyPeek::showFold(const QVector<RoundtableFoldRow>& rows)
     if (!m_listing) {
         m_scroll = 0;
     }
-    m_onFoot = true;
     m_listing = true;
     m_rows = rows;
     m_hoverRow = -1;
@@ -364,13 +354,11 @@ void RoundtableFrequencyPeek::fitToContents()
 {
     ++m_fits;
     const QWidget* host = parentWidget();
-    const int hostWidth = host != nullptr ? std::max(0, host->width() - 2 * kEdgeGap) : QWIDGETSIZE_MAX;
-    const int hostHeight = host != nullptr ? std::max(0, host->height() - 2 * kEdgeGap) : QWIDGETSIZE_MAX;
     // Until told the spot, the foot is the bottom of the pan.
     const QRect spot = m_spotPan.isEmpty() && host != nullptr ? host->rect().adjusted(kEdgeGap, kEdgeGap, -kEdgeGap, -kEdgeGap)
                                                               : m_spotPan;
-    const int room = m_onFoot ? spot.height() : hostHeight;
-    const int measureWidth = m_onFoot ? kWidth : std::min(kWidth, hostWidth);
+    const int room = spot.height();
+    const int measureWidth = kWidth;
 
     // Everyone not keyed folds first; what still does not fit scrolls (D19).
     m_fold = false;
@@ -383,19 +371,8 @@ void RoundtableFrequencyPeek::fitToContents()
     m_bodyHeight = std::max(0, height - m_layout.head - actionsHeight());
     m_scroll = std::clamp(m_scroll, 0, maxScrollForTest());
 
-    QRect wanted;
-    if (m_onFoot) {
-        const int dialX = m_spotPan.isEmpty() ? spot.center().x() : m_spotDialX;
-        wanted = placeRoundtableInspector(spot, dialX, m_spotFlags, m_spotFlipped, height);
-    } else {
-        int x = m_under.x();
-        int y = m_under.y();
-        if (host != nullptr) {
-            x = std::clamp(x, kEdgeGap, std::max(kEdgeGap, host->width() - measureWidth - kEdgeGap));
-            y = std::clamp(y, kEdgeGap, std::max(kEdgeGap, host->height() - height - kEdgeGap));
-        }
-        wanted = QRect(x, y, measureWidth, height);
-    }
+    const int dialX = m_spotPan.isEmpty() ? spot.center().x() : m_spotDialX;
+    const QRect wanted = placeRoundtableInspector(spot, dialX, m_spotFlags, m_spotFlipped, height);
     if (geometry() != wanted) {
         setGeometry(wanted);
     }

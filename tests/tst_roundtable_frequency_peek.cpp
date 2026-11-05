@@ -254,21 +254,22 @@ private slots:
         QCOMPARE(roundtableViewLinkText(card), QStringLiteral("You are hidden"));
     }
 
-    void itOpensUnderTheTagInsideThePanWithoutTakingAnything()
+    void itOpensInsideThePanWithoutTakingAnything()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(200, 300));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         QVERIFY(pan.peek->isOpen());
         QVERIFY(pan.peek->isVisible());
         QCOMPARE(pan.peek->parentWidget(), &pan.widget);
-        QCOMPARE(pan.peek->geometry().topLeft(), QPoint(200, 300));
         QCOMPARE(pan.peek->width(), 300);
+        QVERIFY(pan.widget.rect().contains(pan.peek->geometry()));
         // Not an overlay panel, so it is never a tag keep-out; no keyboard.
         QVERIFY(!pan.peek->inherits("NereusSDR::SpectrumOverlayPanel"));
         QCOMPARE(pan.peek->focusPolicy(), Qt::NoFocus);
         QCOMPARE(pan.tune()->focusPolicy(), Qt::NoFocus);
         QCOMPARE(pan.messages()->focusPolicy(), Qt::NoFocus);
         QCOMPARE(pan.close()->focusPolicy(), Qt::NoFocus);
+    }
 
         // Near an edge it stays inside, 4 px off.
         pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(1100, 630));
@@ -297,7 +298,7 @@ private slots:
         QCoreApplication::processEvents();
         pan.widget.clearOverlayStaticDirtyForTest();
         // Open right over the tag: the tag does not move for it.
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), before.topLeft());
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(doubled(), -71.0, false);
         pan.widget.setRoundtableViewedRoom(tag.roomId);
         QCoreApplication::processEvents();
@@ -336,7 +337,7 @@ private slots:
     void tuneIsDisabledWhileKeyedAndWhenAlreadyThereAndNeverHidden()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(talker(), std::nullopt, false);
         QCOMPARE(pan.tune()->text(), QStringLiteral("Tune slice A here"));
         QVERIFY(pan.tune()->isEnabled());
@@ -367,7 +368,7 @@ private slots:
     void messagesAsksForThisFrequency()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         QSignalSpy messages(pan.peek, &RoundtableFrequencyPeek::messagesRequested);
         pan.messages()->click();
         QCOMPARE(messages.size(), 1);
@@ -410,7 +411,7 @@ private slots:
     void aDoubleHasCombinedStripesAndNoPath()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(doubled(), -71.0, false);
         const QImage image = render(*pan.peek);
         const QRect rail(6, 1, pan.peek->width() - 12, 3);
@@ -424,7 +425,7 @@ private slots:
     void aFrozenViewDrawsNoLiveColor()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         RoundtableCardModel card = doubled();
         card.frozen = true;
         card.note = QStringLiteral("Reconnecting");
@@ -440,7 +441,7 @@ private slots:
     void valuesUpdateInPlaceAndOnlyStructureResizes()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(talker(), -71.0, false);
         const QRect geometry = pan.peek->geometry();
         const QRect tune = pan.tune()->geometry();
@@ -776,7 +777,7 @@ private slots:
     {
         Pan pan(240);
         RoundtableCardModel card = longTalker();
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(card, std::nullopt, false);
         QVERIFY(pan.peek->height() <= 240 - 8);
         QVERIFY(pan.peek->foldedForTest());
@@ -819,7 +820,7 @@ private slots:
     void escapeWaitsForItsOwnWindowToBeActive()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         QDialog dialog(&pan.widget);
         dialog.show();
         QTRY_VERIFY(QApplication::activeWindow() == &dialog);
@@ -841,7 +842,7 @@ private slots:
         QVERIFY(QTest::qWaitForWindowActive(&pan.widget));
         QSignalSpy closed(pan.peek, &RoundtableFrequencyPeek::closed);
 
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         QTest::keyClick(&pan.widget, Qt::Key_Escape);
         QVERIFY(!pan.peek->isOpen());
         QVERIFY(!pan.peek->isVisible());
@@ -851,7 +852,7 @@ private slots:
         pan.peek->closePeek();
         QCOMPARE(closed.size(), 1);
 
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.close()->click();
         QVERIFY(!pan.peek->isOpen());
         QCOMPARE(closed.size(), 2);
@@ -866,7 +867,7 @@ private slots:
     {
         Pan pan;
         pan.widget.setUpdatesEnabled(true);
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         pan.peek->refresh(talker(), std::nullopt, false);
         QSignalSpy tuned(&pan.widget, &SpectrumWidget::frequencyClicked);
         QTest::mouseClick(pan.peek, Qt::LeftButton, Qt::NoModifier, QPoint(20, 50));
@@ -1037,9 +1038,9 @@ private slots:
     void tuneGreysWhenItWouldWriteNothing()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("usb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("usb"));
         const auto tuneEnabled = [&pan](quint64 viewedHz, const char* viewedFamily, quint64 sliceHz, const char* sliceFamily) {
-            pan.peek->showFor(viewedHz, QString::fromLatin1(viewedFamily), QPoint(100, 100));
+            pan.peek->showFor(viewedHz, QString::fromLatin1(viewedFamily));
             pan.peek->setSlice(sliceHz, QString::fromLatin1(sliceFamily), QStringLiteral("A"));
             RoundtableCardModel card = talker();
             card.hz = viewedHz;
@@ -1056,7 +1057,7 @@ private slots:
         QVERIFY(tuneEnabled(7188000, "fdvu", 7190000, "usb"));
 
         // No slice this window controls: Tune is in view, greyed, and says no letter.
-        pan.peek->showFor(7188000, QStringLiteral("usb"), QPoint(100, 100));
+        pan.peek->showFor(7188000, QStringLiteral("usb"));
         pan.peek->setSlice(0, QString(), QString());
         pan.peek->refresh(talker(), std::nullopt, false);
         QVERIFY(pan.tune()->isVisible());
@@ -1069,7 +1070,7 @@ private slots:
     void aFrozenViewHasNoClock()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         const auto drawn = [&pan](qint64 clockMs, bool frozen) {
             RoundtableCardModel card = talker();
             card.clockMs = clockMs;
@@ -1086,7 +1087,7 @@ private slots:
     void aValueOnlyRefreshDoesNotResizeTheView()
     {
         Pan pan;
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(100, 100));
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
         RoundtableCardModel card = talker();
         pan.peek->refresh(card, -70.0, false);
         const int fits = pan.peek->fitsForTest();
@@ -1178,7 +1179,7 @@ private slots:
                 pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
             }
         } else {
-            pan.peek->showFor(kViewedHz, freedv ? QStringLiteral("fdvu") : QStringLiteral("lsb"), QPoint(40, 40));
+            pan.peek->showFor(kViewedHz, freedv ? QStringLiteral("fdvu") : QStringLiteral("lsb"));
         }
         pan.peek->refresh(card, level, false);
         if (fold) {

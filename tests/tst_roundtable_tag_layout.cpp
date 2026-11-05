@@ -2566,7 +2566,7 @@ private slots:
             pan.widget.setUpdatesEnabled(true);
             RoundtableFrequencyPeek peek(&pan.widget);
             peek.setSlice(7188600, QStringLiteral("lsb"), QStringLiteral("A"));
-            peek.showFor(7200000, QStringLiteral("lsb"), QPoint(40, 40));
+            peek.showFor(7200000, QStringLiteral("lsb"));
             peek.refresh(pending, std::nullopt, false);
             QVERIFY(peek.grab().save(captures + QStringLiteral("/pending-view-next-to-double.png")));
         }
@@ -2880,14 +2880,14 @@ private slots:
             QVERIFY(!tune->isEnabled());
             tune->trigger();
 
-            QMenu single;
-            widget.buildRoundtableFoldMenu({id}, single);
-            for (QAction* action : single.actions()) {
-                if (action->text().startsWith(QLatin1String("Tune"))) {
-                    QVERIFY(!action->isEnabled());
-                    action->trigger();
-                }
-            }
+            // A frequency's tag views while keyed, by the click a tag really takes.
+            QSignalSpy viewed(&widget, &SpectrumWidget::roundtableReadRequested);
+            const auto* viewedHit = hitFor(widget, id);
+            QVERIFY(viewedHit != nullptr);
+            QTest::mouseClick(&widget, Qt::LeftButton, Qt::NoModifier, viewedHit->rect.center());
+            QCOMPARE(viewed.size(), 1);
+            QCOMPARE(tuned.size(), 0);
+
             QMenu folded;
             widget.buildRoundtableFoldMenu({legacy.roomId, cochannel.roomId}, folded);
             for (QAction* action : folded.actions()) {
@@ -3319,30 +3319,23 @@ private slots:
         QCOMPARE(read.size(), 2);
         QCOMPARE(tuned.size(), 0);
         QCOMPARE(plainTune.size(), 0);
-        QMenu secondary;
-        pan.widget.buildRoundtableFoldMenu({tag.roomId}, secondary);
-        for (QAction* action : secondary.actions()) {
-            if (action->text() == QLatin1String("Tune slice A here")) {
-                QVERIFY(!action->isEnabled());
-                action->trigger();
-            }
+        // A fold of frequencies lists through its own signal, with no menu and no tune.
+        QList<RoundtableTag> crowd{tag};
+        for (const qint64 hz : {7185173, 7185223, 7185273, 7185323}) {
+            crowd.append(tagAt(QStringLiteral("frequency:lsb-%1").arg(hz), hz));
         }
+        pan.widget.setMoxOverlay(false);
+        pan.widget.setRoundtableTags(crowd, RoundtableTagDisplay::Live);
+        pan.draw();
+        const auto* fold = hitFor(pan.widget, tag.roomId);
+        QVERIFY(fold != nullptr && fold->folded);
+        pan.widget.setMoxOverlay(true);
+        QSignalSpy folds(&pan.widget, &SpectrumWidget::roundtableFoldClicked);
+        QTest::mouseClick(&pan.widget, Qt::LeftButton, Qt::NoModifier, fold->rect.center());
+        QCOMPARE(folds.size(), 1);
+        QCOMPARE(read.size(), 2);
         QCOMPARE(tuned.size(), 0);
-        RoundtableTag other = tagAt(QStringLiteral("frequency:lsb-7185500"), 7185500);
-        pan.widget.setRoundtableTags({tag, other}, RoundtableTagDisplay::Live);
-        QMenu folded;
-        pan.widget.buildRoundtableFoldMenu({tag.roomId, other.roomId}, folded);
-        int choices = 0;
-        for (QAction* action : folded.actions()) {
-            QVERIFY(action->menu() == nullptr);
-            if (action->isEnabled() && !action->isSeparator()) {
-                ++choices;
-                action->trigger();
-            }
-        }
-        QCOMPARE(choices, 2);
-        QCOMPARE(read.size(), 4);
-        QCOMPARE(tuned.size(), 0);
+        QVERIFY(pan.widget.findChild<QMenu*>(QStringLiteral("roundtableFoldMenu")) == nullptr);
     }
 
     void aTagClickTunesAndAFoldListsItsRooms()

@@ -13356,31 +13356,6 @@ void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& 
         const QString text = QStringLiteral("%1   %2   %3")
                                  .arg(roundtableFrequencyText(tag.hz), roundtableFoldWho(tag))
                                  .arg(tag.members);
-        const bool frequency = id.startsWith(QLatin1String("frequency:"));
-        if (frequency && roomIds.size() > 1) {
-            QAction* row = menu.addAction(QIcon(glyph), text);
-            row->setData(id);
-            connect(row, &QAction::triggered, this, [this, id] { emit roundtableReadRequested(id); });
-            continue;
-        }
-        if (frequency) {
-            QMenu* details = &menu;
-            for (const QJsonValue& value : tag.stations) {
-                const QJsonObject station = value.toObject();
-                QAction* person = details->addAction(QStringLiteral("%1 · slice %2 · %3")
-                    .arg(station.value(QStringLiteral("callsign")).toString())
-                    .arg(station.value(QStringLiteral("slice")).toInt())
-                    .arg(station.value(QStringLiteral("grid")).toString()));
-                person->setEnabled(false);
-            }
-            details->addAction(QStringLiteral("Read this frequency"), this,
-                               [this, id]() { emit roundtableReadRequested(id); });
-            const bool canTune = !roundtableKeyed() && !tag.active && !m_roundtableSliceName.isEmpty();
-            QAction* tune = details->addAction(roundtableTuneText(), this,
-                               [this, id]() { if (!roundtableKeyed()) { emit roundtableRoomClicked(id); } });
-            tune->setEnabled(canTune);
-            continue;
-        }
         if (!tag.stations.isEmpty()) {
             auto* details = menu.addMenu(QIcon(glyph), QStringLiteral("%1 · %2 cochannel")
                 .arg(roundtableFrequencyText(tag.hz)).arg(tag.stations.size()));
