@@ -78,8 +78,16 @@ struct SetupTab: View {
         }
         // Another page opening closes an open pad, sending nothing.
         .onChange(of: router.path) { _, _ in router.pads.close() }
+        // The place kept from last time, once the Core's pages say it exists.
+        .onChange(of: router.pendingRestore, initial: true) { _, _ in restorePlace() }
+        .onChange(of: pages.isCurrent) { _, _ in restorePlace() }
+        .onChange(of: pages.categories) { _, _ in restorePlace() }
         // A number row's typed value: its pad at the foot of the tab.
         .valuePads(router.pads)
+    }
+
+    private func restorePlace() {
+        router.applyRestore(tree: tree, known: pages.isCurrent)
     }
 
     /// An iPhone, or an iPad window shared narrowly: one list, and each page

@@ -204,7 +204,7 @@ struct IPadShotTests {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let station = try FakeStation(additions: .wideband)
-        let model = AppModel(mediaPeerFactory: station.mediaPeerFactory,
+        let model = AppModel(phoneSettings: PhoneSettings(defaults: defaults), mediaPeerFactory: station.mediaPeerFactory,
                              displaySettings: BandDisplaySettingsStore(defaults: defaults))
         model.main.panStack.allowsMorePans = true
         await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,

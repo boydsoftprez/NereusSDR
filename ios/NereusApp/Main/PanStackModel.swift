@@ -96,6 +96,8 @@ final class PanStackModel: ObservableObject {
     /// The device can show more than one pan: the iPad. Set by the main
     /// screen from the device; a test may set it.
     var allowsMorePans: Bool
+    /// Where the pans the operator leaves open are kept; nil keeps none.
+    var keptPans: PhoneSettings?
 
     /// The pans the radio allows.
     var limit: Int { PanLimits.panCount(capabilities: mirror.capabilities) }
@@ -123,6 +125,8 @@ final class PanStackModel: ObservableObject {
     private var watches: Set<AnyCancellable> = []
     private var refusalWatches: [PanIdentity: AnyCancellable] = [:]
     private var limitQueued = false
+    /// The pans have been opened from this snapshot.
+    private var reopened = false
     private static let logger = Logger(subsystem: "NereusSDR", category: "pan.stack")
 
     init(first: PanBand, mirror: MirrorStore, settings: SettingsProxyClient, commands: CommandClient?,
@@ -243,6 +247,7 @@ final class PanStackModel: ObservableObject {
         let already = controlled.filter { $0.panKey == pan.corePanKey }
         let spare = Self.spareSlice(controlled)
         openBand(pan)
+        keepOpenPans()
         lastTouched = pan
         let opened = "\(pan.title) opened below \(above.title)."
         if !already.isEmpty {
@@ -297,6 +302,7 @@ final class PanStackModel: ObservableObject {
         } else {
             // Nothing moved or added: the pan closes again, with the Core's words.
             retire(pan)
+            keepOpenPans()
             status = reason.isEmpty ? BandSlicesModel.refusedText : reason
         }
     }
@@ -358,6 +364,7 @@ final class PanStackModel: ObservableObject {
         let moving = band.slices.entries.filter { $0.panKey == pan.corePanKey && !$0.listening }
         let home = first.band.requestedView
         retire(pan)
+        keepOpenPans()
         // From src/models/RadioModel.cpp:35902-35925 (rehomeSlicesToPans: each slice off the live pans to the first)
         for entry in moving {
             Task { [weak self, mirror] in
@@ -403,9 +410,14 @@ final class PanStackModel: ObservableObject {
     /// nothing is written to their slices. Read only once the Core's
     /// snapshot is whole, so a reconnect's empty capabilities close nothing.
     private func checkLimit() {
-        guard mirror.isSnapshotComplete, !mirror.capabilities.isEmpty else {
+        guard mirror.isSnapshotComplete else {
+            reopened = false
             return
         }
+        guard !mirror.capabilities.isEmpty else {
+            return
+        }
+        reopenPans()
         let limit = self.limit
         guard open.count > limit else {
             return
@@ -417,6 +429,37 @@ final class PanStackModel: ObservableObject {
         let names = closing.count == 1 ? closing[0].title
             : "Pans " + RadioWords.list(closing.map { String($0.number) })
         status = RadioWords.panLimit(radio: radioName, limit: limit) + " " + names + " closed."
+    }
+
+    // MARK: Coming back
+
+    /// Once a snapshot is whole, an iPad opens the pans this device's slices
+    /// sit on (the Core gives the slices back on their pans) and the ones the
+    /// operator left open with nothing on them, up to the radio's limit. It
+    /// writes nothing to the Core, and a pan the limit leaves out keeps its
+    /// place in the list for a radio that can show it.
+    private func reopenPans() {
+        guard !reopened else {
+            return
+        }
+        reopened = true
+        guard allowsMorePans else {
+            return
+        }
+        everySlice.thisDeviceId = first.slices.thisDeviceId
+        everySlice.catchUp()
+        let holding = everySlice.entries.filter { !$0.listening }
+            .compactMap { $0.panKey.flatMap(PanIdentity.init(corePanKey:)) }
+        let kept = (keptPans?.openPans ?? []).filter { $0 > PanIdentity.first.number }.map(PanIdentity.init(number:))
+        let limit = self.limit
+        for pan in Set(holding + kept).subtracting(open).sorted() where open.count < limit {
+            openBand(pan)
+        }
+    }
+
+    /// The operator opened or closed a pan: this is the list from now on.
+    private func keepOpenPans() {
+        keptPans?.openPans = open.filter { $0 != .first }.map(\.number)
     }
 
     // MARK: The Core's media events
