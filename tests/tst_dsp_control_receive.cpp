@@ -608,6 +608,8 @@ private slots:
 
         SliceModel* slice = model.sliceById(id);
         QVERIFY(slice != nullptr);
+        // The saved rate is per radio, so a slice with no radio saves none.
+        slice->setSettingsRadioIdentity(QStringLiteral("00:1c:c0:a2:13:dd"));
         slice->saveToSettings(bandFromFrequency(slice->frequency()));
         QCOMPARE(slice->savedSampleRateHz(), kRateHz);
 
