@@ -781,6 +781,62 @@ private slots:
         QVERIFY(!s.contains(QStringLiteral("Slice2/LastBand")));
     }
 
+    // A record that cannot be read may name any letter, so a letter with saved
+    // keys waits for it. The receivers this run starts save their own, a +RX
+    // that takes a saved letter does not write over it by any path, and a
+    // letter with nothing saved saves normally.
+    void anUnreadableLayoutKeepsEveryLetterWithSavedKeys()
+    {
+        const QString invalid = QStringLiteral("{not valid json");
+        auto& s = AppSettings::instance();
+        s.setHardwareValue(AppSettings::normalizedRadioMac(kMacA), QLatin1String(kLayoutKey), invalid);
+        s.setValue(QStringLiteral("Slice0/LastBand"), bandKeyName(Band::Band20m));
+        s.setValue(QStringLiteral("Slice1/LastBand"), bandKeyName(Band::Band40m));
+        s.setValue(QStringLiteral("Slice1/AfGain"), 40);
+        s.setValue(QStringLiteral("Slice1/Band40m/Frequency"), 7'123'000.0);
+        s.setValue(QStringLiteral("Slice1/Band40m/DspMode"), static_cast<int>(DSPMode::LSB));
+        QVERIFY(s.save());
+        {
+            DaemonApp app;
+            app.primeBoardForTest(HPSDRHW::OrionMKII, kMacA);
+            QVERIFY(app.start(configWithCount(1)));
+            RadioModel* radio = model(app);
+            QCOMPARE(radio->receiveLayoutRestoreState(), QStringLiteral("invalid"));
+
+            // The receiver that is running saves its own keys.
+            radio->sliceById(0)->setAfGain(33);
+            radio->flushPendingSettingsSave();
+            QCOMPARE(s.value(QStringLiteral("Slice0/AfGain")).toString(), QStringLiteral("33"));
+
+            const int b = radio->addSlice();
+            QCOMPARE(b, 1);
+            radio->sliceById(b)->setAfGain(21);
+            radio->sliceById(b)->setFrequency(7'150'000.0);
+            radio->flushPendingSettingsSave();
+            QCOMPARE(s.value(QStringLiteral("Slice1/AfGain")).toString(), QStringLiteral("40"));
+            QCOMPARE(s.value(QStringLiteral("Slice1/Band40m/Frequency")).toDouble(), 7'123'000.0);
+
+            // A band button is a save too.
+            radio->setActiveSlice(b);
+            radio->onBandButtonClicked(Band::Band20m);
+            radio->flushPendingSettingsSave();
+            QCOMPARE(s.value(QStringLiteral("Slice1/LastBand")).toString(),
+                     bandKeyName(Band::Band40m));
+            QCOMPARE(s.value(QStringLiteral("Slice1/Band40m/Frequency")).toDouble(), 7'123'000.0);
+            QVERIFY(!s.contains(QStringLiteral("Slice1/Band20m/Frequency")));
+
+            const int c = radio->addSlice();
+            QCOMPARE(c, 2);
+            radio->sliceById(c)->setAfGain(11);
+            radio->flushPendingSettingsSave();
+            QCOMPARE(s.value(QStringLiteral("Slice2/AfGain")).toString(), QStringLiteral("11"));
+            app.stop();
+        }
+        QCOMPARE(rawLayoutFromDisk(kMacA), invalid);
+        reloadSingletonFromDisk();
+        QCOMPARE(s.value(QStringLiteral("Slice1/AfGain")).toString(), QStringLiteral("40"));
+    }
+
     void allUnsupportedIdsUseExplicitFallbackWithoutErasingSavedState()
     {
         QVERIFY(saveLayout(kMacA, {{4, "pan-3", 7200000, DSPMode::LSB}}));

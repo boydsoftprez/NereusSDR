@@ -20260,8 +20260,10 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     // mode, filter, AGC tuple, NB, step, antennas, etc.) before we
     // overwrite the slice. See SliceModel::saveToSettings for the exact
     // key set persisted.
-    materializePendingBandSettings(slice->sliceIndex());
-    slice->saveToSettings(current);
+    if (!sliceKeysAreHeld(slice->sliceIndex())) {
+        materializePendingBandSettings(slice->sliceIndex());
+        slice->saveToSettings(current);
+    }
 
     if (slice->hasSettingsFor(band)) {
         // Second+ visit: restore last-used state for the clicked band.
@@ -20293,7 +20295,9 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     // Alex switch earlier in the signal chain.
     slice->setFrequency(seed.frequencyHz);
     slice->setDspMode(seed.mode);
-    slice->saveToSettings(band);   // Bake seed for next visit.
+    if (!sliceKeysAreHeld(slice->sliceIndex())) {
+        slice->saveToSettings(band);   // Bake seed for next visit.
+    }
 }
 
 // --- Panadapter Management ---
@@ -29069,6 +29073,7 @@ void RadioModel::prepareReceiveLayout(const QString& radioMac)
         return;
     }
     m_receiveLayoutProtected = true;
+    m_receiveLayoutUnreadable = true;
     // The operator reads a plain sentence; the store's own reason is logged.
     qCWarning(lcConnection) << "Receive layout: saved layout not loaded:" << error;
     setReceiveLayoutRestoreStatus(QStringLiteral("invalid"),
@@ -29196,6 +29201,18 @@ void RadioModel::completeReceiveLayoutStartup()
         } else {
             m_sliceClosureNotice = notes.join(QLatin1Char(' '));
             setReceiveLayoutRestoreStatus(QStringLiteral("fallback"), m_sliceClosureNotice);
+        }
+    }
+    if (m_receiveLayoutUnreadable) {
+        // The record may name any letter and nothing can say which, so a letter
+        // with saved keys waits for it. The receivers this run started are
+        // running, and save their own, as they do beside a record that loaded.
+        for (int id = 0; id < WdspEngine::kMaxSliceChannels; ++id) {
+            if (sliceById(id) == nullptr
+                && AppSettings::instance().contains(
+                       QStringLiteral("Slice%1/LastBand").arg(id))) {
+                m_receiveLayoutKeptSliceIds.insert(id);
+            }
         }
     }
     m_receiveLayoutPendingAdmission = false;
@@ -29489,8 +29506,7 @@ void RadioModel::scheduleSettingsSave(SliceModel* slice)
     // A protected layout holds back its own record (flushPendingSettingsSave),
     // not the keys of the receivers that are running. Only a letter the
     // record still waits on keeps its keys as they are.
-    if (m_receiveLayoutPendingAdmission
-        || (slice && m_receiveLayoutKeptSliceIds.contains(slice->sliceIndex()))) {
+    if (m_receiveLayoutPendingAdmission || (slice && sliceKeysAreHeld(slice->sliceIndex()))) {
         if (m_stationHandoverTrackSuppressedReceiverEdits && !m_receiveLayoutHydrating) {
             m_stationHandoverSuppressedReceiverEdits = true;
         }

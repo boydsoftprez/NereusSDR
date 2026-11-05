@@ -9011,6 +9011,9 @@ private:
     // Their Slice<N>/ keys wait for them, so no slice that takes the same
     // letter this run writes over those keys.
     QSet<int> m_receiveLayoutKeptSliceIds;
+    // The saved record could not be read or applied, so which letters it names
+    // is unknown.
+    bool m_receiveLayoutUnreadable{false};
     QString m_receiveLayoutMac;
     std::optional<int> m_restoredRadeReceiveOwner;
     // RADE reason: each RADE slice's last failed decoder start, and the
