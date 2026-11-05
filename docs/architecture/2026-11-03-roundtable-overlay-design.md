@@ -253,7 +253,7 @@ constants. No ported code: new files carry `no-port-check: NereusSDR-original.`
 
 ## Changed during the build
 
-Three places where the build settled something the decisions above read differently. Each is
+Places where the build settled something the decisions above read differently. Each is
 JJ's to veto on the hardware run.
 
 * **D34, your own card.** The inspector hides your card while it shows your own frequency, so
@@ -263,6 +263,14 @@ JJ's to veto on the hardware run.
   frequency keeps it fixed, since there it is the action that counts.
 * **D36, iPad.** The ⋯ is on the floating panel and not in the column's applet, as the board
   draws it. Signal stays reachable from the column through the Tools page.
+* **D34 and D37, your own frequency while viewing another (desktop).** When your frequency has a
+  talker or last-talker card, the inspector hides the card and the card's rule also drops your
+  compact tag, so neither shows until the view closes. D37 keeps the compact tag only when your
+  frequency has no such card.
+* **D35, the Viewing line's words.** iPhone and iPad still read "Viewing, not tuned · −11.4 kHz
+  from slice A · LSB", which is what the board draws. The desktop reads "Viewing · +1.4 kHz".
+* **D22 and D38, keyed on your own sheet (iOS).** On a server with frequency reads, your own sheet
+  has no TX line and no "Draft kept" while keyed, where a legacy server's sheet has both.
 
 ## Settled from earlier choices
 
