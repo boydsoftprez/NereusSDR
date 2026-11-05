@@ -225,11 +225,14 @@ private slots:
         StationHandover competitor(profile);
         QVERIFY(!competitor.acquire(0));
         QVERIFY(!competitor.lockedByOtherComputer());
-#ifndef Q_OS_WIN
-        // QLockFile on Windows opens its file with no sharing, so a live
-        // owner's lock cannot be read back there.
-        QVERIFY(fileBytes(leftover.fileName()).contains(QSysInfo::machineUniqueId()));
-#endif
+        // The daemon's own lock now: its pid, this computer's name and id. An
+        // empty id would match anything, so each line is compared on its own.
+        // QLockFile on Windows shares its open file for reading, so this reads
+        // back there too.
+        const QList<QByteArray> daemonLock = fileBytes(leftover.fileName()).split('\n');
+        QCOMPARE(daemonLock.value(0).toLongLong(), daemon.processId());
+        QCOMPARE(QString::fromUtf8(daemonLock.value(2)), QSysInfo::machineHostName());
+        QCOMPARE(daemonLock.value(3), QSysInfo::machineUniqueId());
         QVERIFY(waitForText(daemon, "Old-MacBook.local"));
     }
 

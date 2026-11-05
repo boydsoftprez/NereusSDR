@@ -20,8 +20,8 @@ namespace NereusSDR {
 // that computer. So a profile folder that moved to a new computer after a crash
 // would stay locked forever. The rule here, decided by where the folder is:
 //
-//  - On a disk in or plugged into this computer, no other computer can be
-//    using it, so acquire() takes the lock and takeoverNote() says so.
+//  - On a disk in or plugged into this computer, acquire() takes the lock and
+//    takeoverNote() says so.
 //  - On a network drive or a disk type not on the list, the other computer
 //    could really still be using it, so nothing is taken without a person.
 //    lockedByOtherComputer() turns true and takeOverFromOtherComputer() is the
@@ -30,6 +30,13 @@ namespace NereusSDR {
 // Either way a program still holding the file blocks the takeover. Across a
 // network drive that block depends on the drive passing file locks along. It was
 // measured working over SMB and not measured on anything else.
+//
+// The limit of the first case: a folder on this computer's disk can still be in
+// use elsewhere. This computer may share it over NFS or SMB with another computer
+// running NereusSDR from the share, or a sync service may keep a copy on another
+// computer. Nothing here can see either one, and there is deliberately no
+// heartbeat or second lock to detect them, so the note tells the operator instead
+// of claiming that nothing else could be using the folder.
 class StationHandover {
 public:
     explicit StationHandover(const QString& profile);
@@ -46,6 +53,8 @@ public:
     bool ownsProfile() const;
     QString lockPath() const;
     QString controlSocketPath() const;
+    // A local socket's path has a short limit that a test profile can pass.
+    void setControlSocketPathForTest(const QString& path);
 
     // True after a failed attempt when the lock came from another computer and
     // this folder might be reachable from that computer too.
@@ -54,7 +63,8 @@ public:
     // attempt found its lock.
     QString otherComputerName() const;
     // Removes the lock the last attempt saw and takes the profile. Refuses if
-    // the file changed since then or a program still holds it.
+    // the file changed since then, a program still holds it, or the folder does
+    // not allow it.
     bool takeOverFromOtherComputer(QString* error = nullptr);
     // One sentence for the log when this process took another computer's lock.
     // The log opens only after the profile is owned, so the caller writes it.
@@ -78,13 +88,17 @@ private:
         QString computerName;
     };
 
-    enum class OtherComputerState { None, NeedsOperator, StillHeld };
+    // CouldNotRemove: a lock naming another computer that was not removed, for
+    // any reason. UnreadableLock: a lock on a network drive that could not be
+    // read, so it could be this computer's or another's.
+    enum class OtherComputerState { None, NeedsOperator, CouldNotRemove, UnreadableLock };
 
     bool folderIsOnThisComputer() const;
     std::optional<OtherComputerLock> readOtherComputerLock() const;
     bool removeLockFromOtherComputer(const QByteArray& seenBytes);
 
     QString m_directory;
+    QString m_controlSocketPathForTest;
     std::unique_ptr<QLockFile> m_lock;
     std::optional<bool> m_folderIsOnThisComputerForTest;
     OtherComputerState m_otherComputerState{OtherComputerState::None};

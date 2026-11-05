@@ -12,11 +12,14 @@
 #include <QProcess>
 #include <QScopeGuard>
 #include <QSysInfo>
+#include <QTemporaryDir>
+#include <QTimer>
 #include <QUuid>
 
 #include <cstdio>
 
 #include "core/AppSettings.h"
+#include "core/daemon/StationControlSocket.h"
 #include "core/station/StationHandover.h"
 
 using namespace NereusSDR;
@@ -25,6 +28,7 @@ namespace {
 
 const QByteArray kOtherMachineId("017FA02B-0000-5000-A000-000000000000");
 const QByteArray kOtherHostName("Old-MacBook.local");
+const QString kCoreRefusal = QStringLiteral("The Core is already handing back the radio.");
 
 QString profileName()
 {
@@ -60,6 +64,17 @@ QByteArray readFile(const QString& path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray{};
+}
+
+// The words after any failed removal: what happened, the way out, and no claim
+// about why it failed.
+bool saysCouldNotRemove(const QString& error, const QString& lockPath)
+{
+    return error.contains(QStringLiteral("could not remove"))
+        && error.contains(QStringLiteral("may still be holding"))
+        && error.contains(QStringLiteral("move this file aside"))
+        && error.contains(lockPath)
+        && !error.contains(QStringLiteral("is still holding"));
 }
 
 bool waitForReady(QProcess& process)
@@ -222,8 +237,15 @@ private slots:
                      qPrintable(ownership.takeoverNote()));
         }
 
-        // It is ours now, with this computer's id, and goes away cleanly.
-        QVERIFY(readFile(ownership.lockPath()).contains(QSysInfo::machineUniqueId()));
+        // It is ours now: this process, this computer's name and id. An empty id
+        // would match anything, so each line is compared on its own. QLockFile on
+        // Windows shares its open file for reading, so this reads back there too.
+        const QList<QByteArray> ownLock = readFile(ownership.lockPath()).split('\n');
+        QCOMPARE(ownLock.value(0).toLongLong(), QCoreApplication::applicationPid());
+        QCOMPARE(QString::fromUtf8(ownLock.value(2)), QSysInfo::machineHostName());
+        QCOMPARE(ownLock.value(3), QSysInfo::machineUniqueId());
+
+        // And it goes away cleanly.
         ownership.release();
         QVERIFY(!QFile::exists(ownership.lockPath()));
         QVERIFY(!QFile::exists(ownership.lockPath() + QStringLiteral(".rmlock")));
@@ -241,6 +263,26 @@ private slots:
         QString error;
         QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
         QVERIFY(!ownership.takeoverNote().isEmpty());
+        ownership.release();
+    }
+
+    // A folder on this disk can still be shared or synced to the other computer,
+    // and nothing here can see that, so the note must not promise otherwise.
+    void noteOnThisComputerStatesItsLimit()
+    {
+        QVERIFY(!prepareProfile().isEmpty());
+        const qint64 pid = deadPid();
+        QVERIFY(pid != 0);
+        StationHandover ownership(m_profile);
+        ownership.setFolderIsOnThisComputerForTest(true);
+        QVERIFY(writeFile(ownership.lockPath(), lockLines(pid, kOtherHostName, kOtherMachineId)));
+        QString error;
+        QVERIFY2(ownership.acquire(0, &error), qPrintable(error));
+        const QString note = ownership.takeoverNote();
+        QVERIFY2(note.contains(QStringLiteral("took it over")), qPrintable(note));
+        QVERIFY2(note.contains(QStringLiteral("network share")), qPrintable(note));
+        QVERIFY2(note.contains(QStringLiteral("sync service")), qPrintable(note));
+        QVERIFY2(!note.contains(QStringLiteral("nothing else")), qPrintable(note));
         ownership.release();
     }
 
@@ -264,6 +306,14 @@ private slots:
         QVERIFY2(error.contains(ownership.lockPath()), qPrintable(error));
         QVERIFY(ownership.takeoverNote().isEmpty());
         QCOMPARE(readFile(ownership.lockPath()), lines);
+
+        // Only a person can settle this, so a Core does not spend its wait on it.
+        QElapsedTimer coreWait;
+        coreWait.start();
+        QVERIFY(!ownership.acquire(15000, &error));
+        QVERIFY(coreWait.elapsed() < 5000);
+        QVERIFY(ownership.lockedByOtherComputer());
+        QVERIFY2(error.contains(ownership.lockPath()), qPrintable(error));
 
         // What a window does: no socket, no 15-second wait, no word of a Core.
         QElapsedTimer elapsed;
@@ -300,13 +350,42 @@ private slots:
         QVERIFY(writeFile(ownership.lockPath(), newer));
         QString error;
         QVERIFY(!ownership.takeOverFromOtherComputer(&error));
-        QVERIFY(!error.isEmpty());
+        QVERIFY2(saysCouldNotRemove(error, ownership.lockPath()), qPrintable(error));
         QVERIFY(!ownership.ownsProfile());
         QCOMPARE(readFile(ownership.lockPath()), newer);
 
         // The next look finds the newer computer and asks about that one.
         QVERIFY(!ownership.acquire(0));
         QCOMPARE(ownership.otherComputerName(), QStringLiteral("Third-Computer"));
+    }
+
+    // Another program is clearing the lock at this moment. Nothing is known to
+    // be holding the profile, so the words must not say so.
+    void busyRemovalIsNotCalledAProgramHoldingTheProfile()
+    {
+        QVERIFY(!prepareProfile().isEmpty());
+        const qint64 pid = deadPid();
+        QVERIFY(pid != 0);
+        const QByteArray lines = lockLines(pid, kOtherHostName, kOtherMachineId);
+        StationHandover onThisComputer(m_profile);
+        onThisComputer.setFolderIsOnThisComputerForTest(true);
+        QVERIFY(writeFile(onThisComputer.lockPath(), lines));
+        QLockFile removing(onThisComputer.lockPath() + QStringLiteral(".rmlock"));
+        QVERIFY(removing.tryLock(0));
+
+        QString error;
+        QVERIFY(!onThisComputer.acquire(0, &error));
+        QVERIFY2(saysCouldNotRemove(error, onThisComputer.lockPath()), qPrintable(error));
+        QVERIFY2(error.contains(QString::fromUtf8(kOtherHostName)), qPrintable(error));
+        QCOMPARE(readFile(onThisComputer.lockPath()), lines);
+
+        StationHandover onNetworkDrive(m_profile);
+        onNetworkDrive.setFolderIsOnThisComputerForTest(false);
+        QVERIFY(!onNetworkDrive.acquire(0));
+        QVERIFY(onNetworkDrive.lockedByOtherComputer());
+        QVERIFY(!onNetworkDrive.takeOverFromOtherComputer(&error));
+        QVERIFY2(saysCouldNotRemove(error, onNetworkDrive.lockPath()), qPrintable(error));
+        QCOMPARE(readFile(onNetworkDrive.lockPath()), lines);
     }
 
     void deadOwnerOnThisComputerIsNotAnotherComputer()
@@ -353,7 +432,7 @@ private slots:
 #ifndef Q_OS_WIN
     // A program that really holds the file blocks the takeover even when the
     // file says another computer, the way a container with its own machine id
-    // sharing this disk would look. Windows opens a live lock with no sharing,
+    // sharing this disk would look. Windows opens a live lock sharing only reads,
     // so nothing can rewrite it there to set this up.
     void programStillHoldingTheFileBlocksTheTakeover()
     {
@@ -377,7 +456,7 @@ private slots:
         QVERIFY(!onThisComputer.ownsProfile());
         QVERIFY(!onThisComputer.lockedByOtherComputer());
         QVERIFY2(error.contains(QString::fromUtf8(kOtherHostName)), qPrintable(error));
-        QVERIFY2(error.contains(QStringLiteral("still holding")), qPrintable(error));
+        QVERIFY2(saysCouldNotRemove(error, onThisComputer.lockPath()), qPrintable(error));
         QCOMPARE(readFile(onThisComputer.lockPath()), lines);
 
         // A window asks no Core and offers no takeover it cannot deliver.
@@ -391,13 +470,70 @@ private slots:
         QVERIFY(onNetworkDrive.lockedByOtherComputer());
         QVERIFY(!onNetworkDrive.takeOverFromOtherComputer(&error));
         QVERIFY(!onNetworkDrive.ownsProfile());
-        QVERIFY2(error.contains(QStringLiteral("still holding")), qPrintable(error));
+        QVERIFY2(saysCouldNotRemove(error, onNetworkDrive.lockPath()), qPrintable(error));
         QCOMPARE(readFile(onNetworkDrive.lockPath()), lines);
+    }
+
+    // A wait is for a holder that can still leave, whatever the file says about
+    // where it came from. The helper exits on its own a moment after it is ready.
+    void waitStaysForAHolderThatCanLeave_data()
+    {
+        QTest::addColumn<bool>("namesAnotherComputer");
+        QTest::newRow("this computer's lock") << false;
+        QTest::newRow("names another computer") << true;
+    }
+
+    void waitStaysForAHolderThatCanLeave()
+    {
+        QFETCH(bool, namesAnotherComputer);
+        QProcess holder;
+        holder.start(QCoreApplication::applicationFilePath(),
+                     {QStringLiteral("--lock-helper"), m_profile, QStringLiteral("1500")});
+        const auto stop = qScopeGuard([&] {
+            holder.kill();
+            holder.waitForFinished();
+        });
+        QVERIFY(holder.waitForStarted());
+        QVERIFY(waitForReady(holder));
+
+        StationHandover ownership(m_profile);
+        ownership.setFolderIsOnThisComputerForTest(true);
+        if (namesAnotherComputer) {
+            QVERIFY(writeFile(ownership.lockPath(),
+                              lockLines(holder.processId(), kOtherHostName, kOtherMachineId)));
+        }
+        // Real time on purpose: the helper's exit is what ends this wait, and the
+        // bound is the same one a Core uses.
+        QString error;
+        QVERIFY2(ownership.acquire(15000, &error), qPrintable(error));
+        ownership.release();
+    }
+
+    // No write permission on the lock: removal fails with nothing holding it.
+    void readOnlyLockIsNotCalledAProgramHoldingTheProfile()
+    {
+        QVERIFY(!prepareProfile().isEmpty());
+        const qint64 pid = deadPid();
+        QVERIFY(pid != 0);
+        StationHandover ownership(m_profile);
+        ownership.setFolderIsOnThisComputerForTest(true);
+        const QByteArray lines = lockLines(pid, kOtherHostName, kOtherMachineId);
+        QVERIFY(writeFile(ownership.lockPath(), lines));
+        QVERIFY(QFile::setPermissions(ownership.lockPath(), QFileDevice::ReadOwner));
+        if (QFile(ownership.lockPath()).open(QIODevice::WriteOnly | QIODevice::Append)) {
+            QSKIP("An account that can write anything cannot set this up.");
+        }
+
+        QString error;
+        QVERIFY(!ownership.acquire(0, &error));
+        QVERIFY2(saysCouldNotRemove(error, ownership.lockPath()), qPrintable(error));
+        QCOMPARE(readFile(ownership.lockPath()), lines);
     }
 
     // Over SMB, a program on another computer holding the lock stops this one
     // reading it at all. No read permission makes the file look the same here.
-    void unreadableLockOnANetworkDriveIsHeldElsewhere()
+    // Nothing shows whose lock it is, so the words name both computers.
+    void unreadableLockOnANetworkDriveCouldBeEitherComputers()
     {
         QVERIFY(!prepareProfile().isEmpty());
         StationHandover ownership(m_profile);
@@ -416,19 +552,77 @@ private slots:
         QString error;
         QVERIFY(!ownership.acquire(0, &error));
         QVERIFY(!ownership.lockedByOtherComputer());
-        QVERIFY2(error.contains(QStringLiteral("another computer")), qPrintable(error));
+        QVERIFY(ownership.otherComputerName().isEmpty());
+        QVERIFY2(error.contains(QStringLiteral("this computer or on another computer")),
+                 qPrintable(error));
+        QVERIFY2(error.contains(ownership.lockPath()), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("move this file aside")), qPrintable(error));
 
+        // No Core answers here, so a window hears the same words right away.
         QElapsedTimer elapsed;
         elapsed.start();
         QVERIFY(!ownership.reclaimFromBackground(15000, &error));
         QVERIFY(elapsed.elapsed() < 5000);
         QVERIFY2(!error.contains(QStringLiteral("No Core answered")), qPrintable(error));
+        QVERIFY2(error.contains(QStringLiteral("this computer or on another computer")),
+                 qPrintable(error));
 
         // On this computer's disk an unreadable lock is an ordinary owner.
         StationHandover onThisComputer(m_profile);
         onThisComputer.setFolderIsOnThisComputerForTest(true);
         QVERIFY(!onThisComputer.acquire(0, &error));
         QCOMPARE(error, QStringLiteral("Another Core owns this profile."));
+    }
+
+    // A Core on this computer whose lock cannot be read gets asked to release,
+    // and its answer decides. It really listens at the socket a window asks.
+    void coreHereAnswersForAnUnreadableLock_data()
+    {
+        QTest::addColumn<QString>("mode");
+        QTest::addColumn<int>("timeoutMs");
+        QTest::addColumn<bool>("taken");
+        QTest::newRow("releases") << QStringLiteral("release") << 15000 << true;
+        // The window spends the rest of its time waiting after a refusal, so this
+        // bound is what the case costs. It only has to leave room for the reply.
+        QTest::newRow("refuses") << QStringLiteral("refuse") << 3000 << false;
+    }
+
+    void coreHereAnswersForAnUnreadableLock()
+    {
+        QFETCH(QString, mode);
+        QFETCH(int, timeoutMs);
+        QFETCH(bool, taken);
+        // A short path: a local socket's name has a limit a test profile can pass.
+        QTemporaryDir socketDir(QStringLiteral("/tmp/nl-XXXXXX"));
+        QVERIFY(socketDir.isValid());
+        const QString socketPath = socketDir.filePath(QStringLiteral("c"));
+
+        QProcess core;
+        core.start(QCoreApplication::applicationFilePath(),
+                   {QStringLiteral("--control-helper"), m_profile, socketPath, mode});
+        const auto stop = qScopeGuard([&] {
+            core.kill();
+            core.waitForFinished();
+        });
+        QVERIFY(core.waitForStarted());
+        QVERIFY(waitForReady(core));
+
+        StationHandover ownership(m_profile);
+        ownership.setFolderIsOnThisComputerForTest(false);
+        ownership.setControlSocketPathForTest(socketPath);
+        if (!readFile(ownership.lockPath()).isEmpty()) {
+            QSKIP("An account that can read anything cannot set this up.");
+        }
+
+        QString error;
+        QCOMPARE(ownership.reclaimFromBackground(timeoutMs, &error), taken);
+        QCOMPARE(ownership.ownsProfile(), taken);
+        if (taken) {
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+            ownership.release();
+        } else {
+            QCOMPARE(error, kCoreRefusal);
+        }
     }
 #endif
 
@@ -464,6 +658,28 @@ int main(int argc, char* argv[])
         QCoreApplication app(argc, argv);
         StationHandover lock(QString::fromLocal8Bit(argv[2]));
         if (!lock.acquire(0)) { return 3; }
+        std::fputs("READY\n", stdout);
+        std::fflush(stdout);
+        if (argc > 3) {
+            QTimer::singleShot(QString::fromLocal8Bit(argv[3]).toInt(), &app,
+                               &QCoreApplication::quit);
+        }
+        return app.exec();
+    }
+    if (argc > 4 && QString::fromLocal8Bit(argv[1]) == QLatin1String("--control-helper")) {
+        // A Core on this computer, as far as a window can tell: it owns the
+        // profile, its lock cannot be read, and it answers on the control socket.
+        QCoreApplication app(argc, argv);
+        StationHandover lock(QString::fromLocal8Bit(argv[2]));
+        if (!lock.acquire(0)) { return 3; }
+        if (!QFile::setPermissions(lock.lockPath(), QFileDevice::Permissions{})) { return 4; }
+        const bool refuse = QString::fromLocal8Bit(argv[4]) == QLatin1String("refuse");
+        StationControlSocket control([&](const QStringList&) -> StationControlReply {
+            if (refuse) { return {false, kCoreRefusal}; }
+            lock.release();
+            return {true, QStringLiteral("The Core handed back the radio.")};
+        });
+        if (!control.listen(QString::fromLocal8Bit(argv[3]))) { return 5; }
         std::fputs("READY\n", stdout);
         std::fflush(stdout);
         return app.exec();

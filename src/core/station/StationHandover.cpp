@@ -38,9 +38,10 @@ QByteArray lockFileBytes(const QString& path)
     return file.open(QIODevice::ReadOnly) ? file.read(kLockFileMaxBytes) : QByteArray{};
 }
 
-// A program on another computer holding a file on a network drive can stop this
-// computer from even reading it. Measured over SMB: the size still shows and the
-// read comes back empty.
+// A program holding a file on a network drive can stop this computer from even
+// reading it, which says nothing about whose lock it is. Measured over SMB with
+// the holder on another computer: the size still shows and the read comes back
+// empty.
 bool lockFileIsUnreadable(const QString& path)
 {
     return QFileInfo(path).size() > 0 && lockFileBytes(path).isEmpty();
@@ -58,11 +59,27 @@ QString computerNameForOperator(const QString& hostName)
     return hostName;
 }
 
-QString stillHeldText(const QString& computerName)
+// Said after every failed removal, whatever stopped it, so it names each cause
+// only as a possibility. Moving the file aside is the way out of all of them.
+QString couldNotRemoveText(const QString& computerName, const QString& lockPath)
 {
-    return QStringLiteral("This profile is marked as in use on %1, and a program is still "
-                          "holding it. Close that program, then try again.")
-        .arg(computerName);
+    return QStringLiteral("This profile is marked as in use on %1, and NereusSDR could not "
+                          "remove that mark. A program may still be holding it, the mark may "
+                          "have just changed, or this folder may not allow the change. If "
+                          "NereusSDR is running on that computer, quit it and try again. If it "
+                          "is not, move this file aside and start NereusSDR again: %2")
+        .arg(computerName, lockPath);
+}
+
+QString unreadableLockText(const QString& lockPath)
+{
+    return QStringLiteral("This profile is marked as in use, and NereusSDR could not read by "
+                          "which computer. A program on this computer or on another computer "
+                          "may be holding it, and its folder is on a network drive or a kind of "
+                          "disk NereusSDR does not recognize. Quit NereusSDR wherever it is "
+                          "running, then try again. If it is not running anywhere, move this "
+                          "file aside and start NereusSDR again: %1")
+        .arg(lockPath);
 }
 
 } // namespace
@@ -83,8 +100,16 @@ QString StationHandover::lockPath() const
     return QDir(m_directory).filePath(QStringLiteral("station.lock"));
 }
 
+void StationHandover::setControlSocketPathForTest(const QString& path)
+{
+    m_controlSocketPathForTest = path;
+}
+
 QString StationHandover::controlSocketPath() const
 {
+    if (!m_controlSocketPathForTest.isEmpty()) {
+        return m_controlSocketPathForTest;
+    }
     return QDir(m_directory).filePath(
         QString::fromLatin1(StationControlSocket::kSocketName));
 }
@@ -234,20 +259,25 @@ bool StationHandover::acquire(int timeoutMs, QString* error)
             } else if (removeLockFromOtherComputer(other->bytes) && m_lock->tryLock(0)) {
                 m_otherComputerLock = {};
                 m_takeoverNote = QStringLiteral(
-                    "This profile was marked as in use on %1. Its folder is on this computer, "
-                    "so nothing else could be using it, and NereusSDR took it over.")
+                    "This profile was marked as in use on %1. Its folder is on a disk on this "
+                    "computer, so NereusSDR took it over. If that computer can still reach this "
+                    "folder through a network share or a sync service, quit NereusSDR there: two "
+                    "computers using one profile can overwrite each other's settings.")
                                      .arg(other->computerName);
                 return true;
             } else {
-                m_otherComputerState = OtherComputerState::StillHeld;
+                m_otherComputerState = OtherComputerState::CouldNotRemove;
             }
         } else if (lockFileIsUnreadable(lockPath()) && !folderIsOnThisComputer()) {
-            m_otherComputerLock.computerName = computerNameForOperator(QString{});
-            m_otherComputerState = OtherComputerState::StillHeld;
+            m_otherComputerState = OtherComputerState::UnreadableLock;
         }
     }
 
-    if (timeoutMs > 0 && m_lock->tryLock(timeoutMs)) {
+    // Waiting is for a holder that can still leave. A lock only a person can
+    // settle will not change in the time a Core waits, so that Core says what to
+    // do right away.
+    if (m_otherComputerState != OtherComputerState::NeedsOperator && timeoutMs > 0
+        && m_lock->tryLock(timeoutMs)) {
         m_otherComputerState = OtherComputerState::None;
         m_otherComputerLock = {};
         return true;
@@ -260,8 +290,10 @@ bool StationHandover::acquire(int timeoutMs, QString* error)
                 "that computer is still using it, and it was left alone. If NereusSDR is running "
                 "there, stop it. If it is not, move this file aside and start NereusSDR again: %2")
                          .arg(m_otherComputerLock.computerName, lockPath());
-        } else if (m_otherComputerState == OtherComputerState::StillHeld) {
-            *error = stillHeldText(m_otherComputerLock.computerName);
+        } else if (m_otherComputerState == OtherComputerState::CouldNotRemove) {
+            *error = couldNotRemoveText(m_otherComputerLock.computerName, lockPath());
+        } else if (m_otherComputerState == OtherComputerState::UnreadableLock) {
+            *error = unreadableLockText(lockPath());
         } else {
             *error = m_lock->error() == QLockFile::LockFailedError
                 ? QStringLiteral("Another Core owns this profile.")
@@ -287,8 +319,8 @@ bool StationHandover::takeOverFromOtherComputer(QString* error)
                              .arg(seen.computerName);
         return true;
     }
-    m_otherComputerState = OtherComputerState::StillHeld;
-    if (error) { *error = stillHeldText(seen.computerName); }
+    m_otherComputerState = OtherComputerState::CouldNotRemove;
+    if (error) { *error = couldNotRemoveText(seen.computerName, lockPath()); }
     return false;
 }
 
@@ -299,17 +331,28 @@ bool StationHandover::reclaimFromBackground(int timeoutMs, QString* error)
     if (acquire(0, error)) { return true; }
     if (m_lock->error() != QLockFile::LockFailedError) { return false; }
     // No Core here can answer for a lock another computer wrote, and waiting
-    // would not change it. The operator hears about that lock right away.
-    if (m_otherComputerState != OtherComputerState::None) { return false; }
+    // would not change it. The operator hears about that lock right away. An
+    // unreadable lock could be a Core on this computer, so that one still asks.
+    const auto lockIsAnotherComputers = [this] {
+        return m_otherComputerState == OtherComputerState::NeedsOperator
+            || m_otherComputerState == OtherComputerState::CouldNotRemove;
+    };
+    if (lockIsAnotherComputers()) { return false; }
 
     // This exact path can only name the Core using the selected profile.
     // A status/release command at a packaged Core uses candidatePathsFor;
     // the GUI intentionally does not search those other profiles.
     const StationControlReply reply = StationControlSocket::request(
         controlSocketPath(), {QStringLiteral("release")}, timeoutMs);
+    // Nothing here answered, which is not proof the holder is elsewhere: a Core
+    // may be unable to make its socket on this drive. The operator hears the
+    // words from acquire() right away, as for a lock read as another computer's.
+    if (m_otherComputerState == OtherComputerState::UnreadableLock && !reply.answered) {
+        return false;
+    }
     const int left = qMax(0, timeoutMs - int(elapsed.elapsed()));
     if (acquire(left, error)) { return true; }
-    if (m_otherComputerState != OtherComputerState::None) { return false; }
+    if (lockIsAnotherComputers()) { return false; }
     if (error && !reply.ok && !reply.text.isEmpty()) { *error = reply.text; }
     return false;
 }
