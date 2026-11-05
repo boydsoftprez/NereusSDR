@@ -15069,11 +15069,6 @@ QList<int> RadioModel::moveStreamWindowFor(int stream, double centreHz, int exem
     return unplaced;
 }
 
-// iPhone app Task 74 (ruling 6.6): a device that does not anchor its
-// receiver takes its pan, with its slices, to `stream` centred on
-// `centreHz`: claimed when free (the allocator's own-window path), and
-// each slice joined to it. False, with nothing moved, when a slice does not
-// fit the window there.
 int RadioModel::streamClaimRateHzFor(const QList<int>& sliceIds) const
 {
     int rateHz = 0;
@@ -15086,6 +15081,11 @@ int RadioModel::streamClaimRateHzFor(const QList<int>& sliceIds) const
     return rateHz > 0 ? rateHz : newStreamSampleRateHz();
 }
 
+// iPhone app Task 74 (ruling 6.6): a device that does not anchor its
+// receiver takes its pan, with its slices, to `stream` centred on
+// `centreHz`: claimed when free (the allocator's own-window path), and
+// each slice joined to it. False, with nothing moved, when a slice does not
+// fit the window there.
 bool RadioModel::moveSlicesToStream(const QList<int>& sliceIds, int stream, double centreHz)
 {
     if (m_role != Role::Local || sliceIds.isEmpty() || stream < 0
