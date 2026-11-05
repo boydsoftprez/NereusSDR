@@ -7334,6 +7334,12 @@ void MainWindow::refreshRoundtablePeek()
             closeRoundtablePeek();
             return;
         }
+        // Your own frequency stands on the pan your slice is on: never two boxes for it.
+        SpectrumWidget* holder = panHoldingRoundtableSlice(active->sliceIndex());
+        if (holder && holder != pan) {
+            showOwnRoundtableInspector(holder);
+            return;
+        }
         const QString context = RoundtableModel::frequencyContextId(activeHz, activeFamily);
         if (context != m_roundtablePeekContext) {
             m_roundtablePeekContext = context;

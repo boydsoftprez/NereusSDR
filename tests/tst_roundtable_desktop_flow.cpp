@@ -2590,6 +2590,63 @@ private slots:
         model->detach();
     }
 
+    // D34: your own frequency stands on your slice's pan: when the active slice moves
+    // to another, the inspector follows and no two boxes show it.
+    void yourOwnInspectorFollowsTheActiveSliceToItsPan()
+    {
+        ReadingLink link;
+        RoundtableState state;
+        Everything p;
+        SliceModel* slice = p.model()->sliceById(p.sliceId());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14200000);
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+        auto* stack = p.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack != nullptr);
+        SpectrumWidget* first = panOf(p.window());
+        QVERIFY(first != nullptr);
+        QVERIFY(stack->addPanadapter(QStringLiteral("pan-second")) != nullptr);
+        SpectrumWidget* second = stack->spectrum(QStringLiteral("pan-second"));
+        QVERIFY(second != nullptr && second != first);
+        settle();
+        const QList<VfoWidget*> flags = second->findChildren<VfoWidget*>();
+        QCOMPARE(flags.size(), 1);
+        const int otherId = flags.first()->sliceIndex();
+        QVERIFY(otherId != p.sliceId());
+        SliceModel* other = p.model()->sliceById(otherId);
+        QVERIFY(other);
+        other->setDspMode(DSPMode::USB);
+        other->setFrequency(14230000);
+        p.model()->setActiveSliceById(p.sliceId());
+        settle();
+        emit first->roundtableReadRequested(RoundtableModel::frequencyContextId(14200000, QStringLiteral("usb")));
+        auto* before = first->findChild<RoundtableFrequencyPeek*>();
+        QVERIFY(before != nullptr && before->showsOwn());
+        const QString beforeRoom = first->roundtableViewedRoom();
+        QVERIFY(!beforeRoom.isEmpty());
+
+        p.model()->setActiveSliceById(otherId);
+        QTRY_VERIFY_WITH_TIMEOUT(second->findChild<RoundtableFrequencyPeek*>() != nullptr
+                                     && second->findChild<RoundtableFrequencyPeek*>()->showsOwn(), kWaitMs);
+        auto* after = second->findChild<RoundtableFrequencyPeek*>();
+        QCOMPARE(after->hz(), quint64(14230000));
+        QCOMPARE(second->roundtableInspectorRect(), after->inspectorRect());
+        QVERIFY(first->roundtableInspectorRect().isNull());
+        QVERIFY(first->roundtableViewedRoom().isEmpty());
+        // The old one is closed, on its way out: one box.
+        const auto* left = first->findChild<RoundtableFrequencyPeek*>();
+        QVERIFY(left == nullptr || !left->isOpen());
+        after->closePeek();
+        stack->removePanadapter(QStringLiteral("pan-second"));
+        settle();
+        model->detach();
+    }
+
     // Tune's reason names the cause: a dropped radio is not a transmission.
     void aMissingRadioIsNotCalledTransmitting()
     {
