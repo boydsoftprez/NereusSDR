@@ -1,6 +1,8 @@
 # Hot keys: keyboard, MIDI, knobs and deck plugins
 
-Status: design, written 2026-11-05 at J.J. Boyd's word. Waiting for his review before the plan.
+Status: approved 2026-11-05 ("yes plan and build with crew and subagents"). Plan:
+[2026-11-05-hot-keys-plan.md](2026-11-05-hot-keys-plan.md). Where the plan's "Corrections to the spec" table
+differs from this document, the table is right, because it was checked against the code afterward.
 
 Mockup: [2026-11-05-hot-keys-design/hot-keys-mockup.html](2026-11-05-hot-keys-design/hot-keys-mockup.html).
 Open it in a browser. The Setup tab has the new pages; the Main window tab answers the keys.
