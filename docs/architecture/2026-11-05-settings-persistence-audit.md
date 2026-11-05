@@ -69,8 +69,8 @@ last Core, tab, page or panel, so it opened on Your Cores, waited for a tap, the
 showed Panadapter with everything closed. The settings themselves mostly did stick. The
 detail is under [iPhone and iPad](#iphone-and-ipad).
 
-The ruling, from JJ on 2026-11-05: an auto reconnect setting. On, a cold launch
-reconnects to the last used Core. Off, it opens on Your Cores. Either way, connecting
+The ruling, from JJ on 2026-11-05: an auto reconnect setting, off until the operator
+turns it on. On, a cold launch reconnects to the last used Core. Off, it opens on Your Cores. Either way, connecting
 returns you to your place. Whether a display element such as a panel was open is not
 persistent.
 
@@ -103,7 +103,7 @@ on a real radio or a real GPU.
 | A device leaving with the radio off loses its slices | The close deleted the keys with nowhere to save them | The slice is held for that device |
 | A sign-in to a headless Core with the radio off misses its saved slices | The wait applied only to a Core inside a window | Applies to a headless Core too, for paired devices |
 | Connecting turns a radio's Auto-connect back on | Both paths passed a fixed true | Set on first connect only; after that the saved choice stays |
-| iPhone opens on a baseline after the app has ended | Nothing about your place was saved | Reconnect automatically, plus tab, page, mute and layouts (JJ's ruling above). The reconnect waits until the app is on screen, and Disconnect or a LINK LOST Cancel forgets the Core |
+| iPhone opens on a baseline after the app has ended | Nothing about your place was saved | A Reconnect automatically switch, off by default, plus tab, page, mute and layouts on connecting (JJ's ruling above). The reconnect waits until the app is on screen, and Disconnect or a LINK LOST Cancel forgets the Core |
 | iPad open pans are lost | Never saved | Reopened from the slices and a saved list |
 | Play the band through is not kept | Memory only | Saved; an absent device falls back to iOS without losing the choice |
 | A background picture can vanish after an app update | Saved as an absolute path | Saved relative to Application Support |
