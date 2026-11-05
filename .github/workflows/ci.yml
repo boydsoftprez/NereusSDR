@@ -162,6 +162,12 @@ jobs:
         # crashes from the container title bar. Native shapes only.
         run: python3 scripts/verify-no-image-cursors.py
 
+      - name: Signals that cross a Windows DLL are on exported classes
+        # An unexported class's &Class::signal from another binary is MinGW's
+        # import thunk: QSignalSpy and connect() fail on Windows only, and
+        # Windows CI runs only its audio tests. Text parsing, no build.
+        run: python3 scripts/verify-dll-signal-exports.py
+
       # ------------------------------------------------------------------
       # Inline author-tag preservation (added 2026-04-21 after DH1KLM drop)
       # ------------------------------------------------------------------
