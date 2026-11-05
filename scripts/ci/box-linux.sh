@@ -72,10 +72,21 @@ case "${1:-}" in
         export QT_QPA_PLATFORM=xcb
         export QTEST_FUNCTION_TIMEOUT=240000
         export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
+        # Each test's home (settings, stores) and QTemporaryDir scratch go in
+        # /tmp, which is memory here (box-run.sh). A test saves settings with
+        # a disk sync: tst_cat_coverage about 2 per row, tst_confirm_step 11
+        # per function. Run 41764912150 ran 6 to 15 times slower on those
+        # tests while tests that do not save kept their usual time.
+        if [ ! -L build/tests/test-home ]; then
+            cp -a build/tests/test-home /tmp/nereus-test-home
+            rm -rf build/tests/test-home
+            ln -s /tmp/nereus-test-home build/tests/test-home
+        fi
         cd build
         status=0
         xvfb-run -a ctest -LE realtime -j8 --output-on-failure --no-tests=error || status=1
         cp Testing/Temporary/CTestCostData.txt "$cost_data" 2>/dev/null || true
+        df -h /tmp | tail -1
         exit "$status"
         ;;
 
