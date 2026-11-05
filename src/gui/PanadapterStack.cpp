@@ -772,9 +772,14 @@ void PanadapterStack::clearSplitters()
 
 // Phase 3F Sub-Epic D Task 6: persist splitter geometry across launches.
 // Storage layout: PanLayoutId + PanSplitter0Sizes (root) + PanSplitter1Sizes /
-// PanSplitter2Sizes (nested splitters for 12h / 2x2). Sub-Epic D ships only
-// root-splitter persistence; nested splitter persistence may be wired in
-// Sub-Epic H polish if bench feedback demands it.
+// PanSplitter2Sizes (the row splitters of 12h, 2h1, 2x2 and 3h2, in root order).
+static constexpr int kMaxNestedSplitters = 2;
+
+static QString nestedSplitterKey(int row)
+{
+    return QStringLiteral("PanSplitter%1Sizes").arg(row + 1);
+}
+
 void PanadapterStack::saveSplitterState()
 {
     if (!m_rootSplitter) { return; }
@@ -786,6 +791,21 @@ void PanadapterStack::saveSplitterState()
     }
     s.setValue(QStringLiteral("PanSplitter0Sizes"), parts.join(QStringLiteral(",")));
     s.setValue(QStringLiteral("PanLayoutId"), m_currentLayoutId);
+
+    // A row this layout does not have leaves no key behind for a later one.
+    const QList<QSplitter*> rows = nestedSplitters();
+    for (int row = 0; row < kMaxNestedSplitters; ++row) {
+        if (row < rows.size()) {
+            QStringList rowParts;
+            const QList<int> rowSizes = rows.at(row)->sizes();
+            for (int sz : rowSizes) {
+                rowParts << QString::number(sz);
+            }
+            s.setValue(nestedSplitterKey(row), rowParts.join(QStringLiteral(",")));
+        } else if (s.contains(nestedSplitterKey(row))) {
+            s.remove(nestedSplitterKey(row));
+        }
+    }
 }
 
 void PanadapterStack::restoreSplitterState()
@@ -793,14 +813,32 @@ void PanadapterStack::restoreSplitterState()
     if (!m_rootSplitter) { return; }
     auto& s = AppSettings::instance();
     const QString raw = s.value(QStringLiteral("PanSplitter0Sizes"), QString()).toString();
-    if (raw.isEmpty()) { return; }
-    QList<int> sizes;
-    const QStringList parts = raw.split(QStringLiteral(","), Qt::SkipEmptyParts);
-    for (const QString& part : parts) {
-        sizes << part.toInt();
+    if (!raw.isEmpty()) {
+        QList<int> sizes;
+        const QStringList parts = raw.split(QStringLiteral(","), Qt::SkipEmptyParts);
+        for (const QString& part : parts) {
+            sizes << part.toInt();
+        }
+        if (!sizes.isEmpty()) {
+            m_rootSplitter->setSizes(sizes);
+        }
     }
-    if (!sizes.isEmpty()) {
-        m_rootSplitter->setSizes(sizes);
+
+    // Each row, when what was saved fits it: a row saved with one of its pans
+    // floating, or by another layout, keeps its default split.
+    const QList<QSplitter*> rows = nestedSplitters();
+    for (int row = 0; row < rows.size() && row < kMaxNestedSplitters; ++row) {
+        QList<int> sizes;
+        int total = 0;
+        const QStringList parts = s.value(nestedSplitterKey(row), QString()).toString()
+                                      .split(QStringLiteral(","), Qt::SkipEmptyParts);
+        for (const QString& part : parts) {
+            sizes << part.toInt();
+            total += sizes.last();
+        }
+        if (sizes.size() == rows.at(row)->count() && total > 0) {
+            rows.at(row)->setSizes(sizes);
+        }
     }
 }
 
@@ -808,6 +846,36 @@ QList<int> PanadapterStack::rootSplitterSizes() const
 {
     if (!m_rootSplitter) { return {}; }
     return m_rootSplitter->sizes();
+}
+
+QList<QSplitter*> PanadapterStack::nestedSplitters() const
+{
+    QList<QSplitter*> rows;
+    if (!m_rootSplitter) { return rows; }
+    for (int i = 0; i < m_rootSplitter->count(); ++i) {
+        if (auto* row = qobject_cast<QSplitter*>(m_rootSplitter->widget(i))) {
+            rows << row;
+        }
+    }
+    return rows;
+}
+
+QList<QList<int>> PanadapterStack::nestedSplitterSizes() const
+{
+    QList<QList<int>> sizes;
+    const QList<QSplitter*> rows = nestedSplitters();
+    for (const QSplitter* row : rows) {
+        sizes << row->sizes();
+    }
+    return sizes;
+}
+
+void PanadapterStack::nestedSplitterSetSizesForTest(int row, const QList<int>& sizes)
+{
+    const QList<QSplitter*> rows = nestedSplitters();
+    if (row >= 0 && row < rows.size()) {
+        rows.at(row)->setSizes(sizes);
+    }
 }
 
 void PanadapterStack::restoreFloatingPans()

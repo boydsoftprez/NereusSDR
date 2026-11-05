@@ -1284,6 +1284,95 @@ private slots:
         stack.restoreFloatingPans();
         QVERIFY(!stack.isFloating(QStringLiteral("pan-1")));
     }
+
+    // Persistence audit 2026-11: the dividers inside a row come back too.
+    void nested_dividers_round_trip_data()
+    {
+        QTest::addColumn<QString>("layoutId");
+        QTest::addColumn<int>("rows");
+        QTest::newRow("12h") << QStringLiteral("12h") << 1;
+        QTest::newRow("2x2") << QStringLiteral("2x2") << 2;
+        QTest::newRow("2h1") << QStringLiteral("2h1") << 1;
+        QTest::newRow("3h2") << QStringLiteral("3h2") << 2;
+    }
+
+    void nested_dividers_round_trip()
+    {
+        QFETCH(QString, layoutId);
+        QFETCH(int, rows);
+        const QStringList ids = MainWindow::panIdsForLayout(layoutId);
+        const QSize kStackSize(1000, 800);
+
+        QList<QList<int>> saved;
+        {
+            PanadapterStack stack;
+            stack.resize(kStackSize);
+            stack.applyLayout(layoutId, ids);
+            stack.show();
+            QTest::qWait(10);
+            QCOMPARE(stack.nestedSplitterSizes().size(), rows);
+            for (int row = 0; row < rows; ++row) {
+                // The first pan of the row narrow, the rest sharing the remainder.
+                const int count = stack.nestedSplitterSizes().at(row).size();
+                QList<int> skewed{150};
+                for (int i = 1; i < count; ++i) { skewed << 700 / (count - 1); }
+                stack.nestedSplitterSetSizesForTest(row, skewed);
+            }
+            saved = stack.nestedSplitterSizes();
+            QVERIFY(saved.first().first() < saved.first().last());
+            stack.saveSplitterState();
+        }
+
+        // After a restart the sizes are applied before the window has been
+        // laid out, as MainWindow's buildUI applies them.
+        PanadapterStack restored;
+        restored.resize(kStackSize);
+        restored.applyLayout(layoutId, ids);
+        restored.restoreSplitterState();
+        restored.show();
+        QTest::qWait(10);
+        const QList<QList<int>> sizes = restored.nestedSplitterSizes();
+        QCOMPARE(sizes.size(), saved.size());
+        for (int row = 0; row < sizes.size(); ++row) {
+            QCOMPARE(sizes.at(row).size(), saved.at(row).size());
+            for (int i = 0; i < sizes.at(row).size(); ++i) {
+                QVERIFY2(qAbs(sizes.at(row).at(i) - saved.at(row).at(i)) <= 2,
+                         qPrintable(QStringLiteral("row %1 pan %2: %3 against %4").arg(row).arg(i)
+                                        .arg(sizes.at(row).at(i)).arg(saved.at(row).at(i))));
+            }
+        }
+    }
+
+    // A row key left by an earlier layout, or sizes that do not fit the row,
+    // are not applied.
+    void nested_dividers_ignore_what_does_not_fit()
+    {
+        auto& s = AppSettings::instance();
+        const QStringList quad = MainWindow::panIdsForLayout(QStringLiteral("2x2"));
+        {
+            PanadapterStack stack;
+            stack.resize(1000, 800);
+            stack.applyLayout(QStringLiteral("2x2"), quad);
+            stack.show();
+            QTest::qWait(10);
+            stack.saveSplitterState();
+            QVERIFY(!s.value(QStringLiteral("PanSplitter2Sizes")).toString().isEmpty());
+            stack.applyLayout(QStringLiteral("12h"), MainWindow::panIdsForLayout(QStringLiteral("12h")));
+            QTest::qWait(10);
+            stack.saveSplitterState();
+        }
+        QVERIFY(!s.contains(QStringLiteral("PanSplitter2Sizes")));
+
+        s.setValue(QStringLiteral("PanSplitter1Sizes"), QStringLiteral("100,200,300"));
+        PanadapterStack stack;
+        stack.resize(1000, 800);
+        stack.applyLayout(QStringLiteral("12h"), MainWindow::panIdsForLayout(QStringLiteral("12h")));
+        stack.show();
+        QTest::qWait(10);
+        const QList<int> before = stack.nestedSplitterSizes().first();
+        stack.restoreSplitterState();
+        QCOMPARE(stack.nestedSplitterSizes().first(), before);
+    }
 };
 
 // CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet
