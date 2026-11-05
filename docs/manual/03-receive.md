@@ -177,6 +177,14 @@ measurement** until then. **AUTO** acts on the slice the applet is showing,
 and each receiver keeps its own AUTO setting and offset on every band. A
 window signed in to a desktop Core shows a real noise-floor reading too.
 
+**AUTO** does not measure your own transmission. While the station is on the
+air, including TUNE, two-tone and CW with QSK, it stops measuring and leaves
+AGC-T where it was. After you unkey it measures again, using only signal
+received after the transmission ended, so the first update can take a moment. A
+window running its own radio keeps showing the held noise floor while you
+transmit. A window signed in to a Core shows **NF awaiting measurement** until
+the Core has a fresh reading.
+
 ## Set squelch without losing weak signals
 
 Open the flag's speaker tab or the RX applet, enable **SQL**, and adjust its

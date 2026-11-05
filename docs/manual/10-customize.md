@@ -233,6 +233,38 @@ specific operating procedure. **Presets…**, **Copy settings** and **Paste
 settings** from the earlier editor are hidden in this draft editor;
 choose its offered faces or duplicate a compatible ordinary object instead.
 
+### Choose Classic or Modern bar meters
+
+Bar meters in a container have two faces. **Classic** is the familiar bar and is
+the default. **Modern** draws the same reading on a rounded track, with a band up
+to the meter's high mark, an accent fill, a marker and ticks below, in the style
+of the PureSignal feedback meter. Switching changes only the drawing: the
+reading, label, scale, calibration and thresholds stay as they are, and a live
+reading and its history carry on without a reset. The choice applies to the
+ready-made bars and **Custom bar face**. Analog faces, composite meters and other
+objects are not affected. This is a desktop container setting, separate from the
+phone's **Meter Face** menu and from **Appearance > Meter Styles**.
+
+1. Open the container in **Container Settings** (**Containers > Edit Container**).
+2. Set **Meter face:** to **Classic** or **Modern** for this container.
+3. To make one meter different, select it under **Contents** and find **Face** at
+   the top of **Appearance and behavior**. Choose **Classic** or **Modern**, or
+   **Use container setting**, which names the container's current face in brackets.
+4. To clear the exceptions, select **Use for all meters**. Every bar in this
+   container then follows the container's setting.
+5. Check the preview, then select **Apply**. **Cancel** discards the changes.
+
+New bars you add follow the container's setting. Bars saved before these faces
+existed are set to **Classic** themselves, so changing **Meter face:** alone does
+not change them: select **Use for all meters**, or set each bar's **Face**. A bar
+copied or moved to another container keeps its own **Classic** or **Modern**
+choice; one that follows the container takes on the new container's setting.
+
+**Modern** honors the bar's existing appearance choices, such as its title, value
+readouts, history, marker, fill style and scale colors. In a narrow meter it
+drops scale captions that would collide and shortens values that do not fit, so
+read a small meter at the size you will use it.
+
 ### Work with the workspace look
 
 The workspace look is how the main window opens. Its container headers, Arrange mode and profiles are introduced in [chapter 2](02-desktop-window.md#arrange-the-workspace); this section covers what they change when you build containers.

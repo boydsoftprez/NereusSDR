@@ -17,6 +17,35 @@ identity for Max Bin. Phone 2026.10.1 build 9645 is in TestFlight testing;
 its version is independent of the desktop release. The
 [release summary](../MASTER-PLAN.md) records the scope and deferred work.
 
+### On main since 2026.11.0, not released
+
+As of `dfa9e1c29` (2026-11-05). The next version resolves to 2026.11.1 if it
+ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
+[CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]` has the operator wording.
+
+| Work | PRs | Verification so far |
+| --- | --- | --- |
+| Classic and Modern bar meter faces, with container setting, per-meter override and Use for all meters (desktop only) | 731, 739 | Focused tests and rendered captures; Classic captures byte-identical. |
+| Roundtable live reports on the desktop panadapter, doubles as combined RF | 739 | 179 desktop Roundtable cases per the PR. No live on-air check recorded here. |
+| Roundtable reports restored on remote desktops | 733 | Real loopback regression; overlay renders. |
+| Roundtable no longer rebuilds the panadapter overlay or panel per report | 732, 739 | Zero rebuilds under replay in tests; live smoothness not measured here. |
+| AUTO AGC holds through transmit, including QSK, on desktop and Core | 739 | Focused tests. No live-radio result; issue 720 open. Touches the core RX path. |
+| Graphic Legacy EQ Hz boxes visible and editable | 737, 739 | EQ layout test and a rendered check. |
+| PureSignal hardware peak follows the active protocol | 735 | Native WDSP regression; KC5L confirmed on ANAN-200D (P2) and ANAN-100 (P1); issue 734 closed. |
+| ANAN-G2E radio microphone controls shown, desktop and remote Setup | 736, 738 | Tests only. Microphone audio unconfirmed; issue 730 open. |
+| Roundtable website: helper Review link, Station settings wording | 728 | Server test suite. Station settings wording seen on the live site on 2026-11-05. |
+
+### Still to come before the next release
+
+Not on main as of `dfa9e1c29`, and not described as done anywhere in the docs:
+
+- Roundtable overlay redesign and frequency view (PR 741).
+- Station lock from another computer (PR 744).
+- SSB Mod Monitor (PR 742, Brian Sutton W4KZO).
+- Right-click AUTO to open AGC/ALC setup (PR 740, Brian Sutton W4KZO).
+- Hot keys, in design.
+- Band stacking, in design.
+
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
 out of date; use current source and feature verification packets for those facts.

@@ -72,16 +72,17 @@ checking its active name and curve mode.
 
 Open **Tools > TX Equalizer** or right-click the TX applet's **EQ** control and open the TX EQ editor. The **TX EQ** control enables or bypasses the equalizer stage; the editor's **Enable TX EQ** checkbox is the same master state. This is the transmit equalizer. **DSP > Equalizer** is explicitly unbuilt and is not an alternative receive or transmit EQ page.
 
-The candidate header offers **Graphic · Legacy** and **Parametric**. These
+The editor's header offers **Graphic · Legacy** and **Parametric**. These
 modes retain separate curves; changing mode applies that mode's stored settings.
-The older figure below uses a **Legacy EQ** checkbox for the same distinction.
 The mode choice is stored with the TX profile and follows the model in remote
 windows. Check the active mode and profile after recall.
 
 In **Graphic · Legacy**, **Pre** sets overall pre-gain from −12 to +15 dB.
-The ten band sliders have gain fields and editable center frequencies. Change
-one gain/frequency, compare the same phrase at the same input level, and read
-back the value. Positive boosts can require reducing Pre or another stage.
+The ten band sliders each have a dB box and, below it, a Hz box holding that
+band's center frequency, from 10 to 22000 Hz. Type a frequency or use the box's
+step arrows. Change one gain/frequency, compare the same phrase at the same
+input level, and read back the value. Positive boosts can require reducing Pre
+or another stage.
 **Reset curve** resets the graphic gains/pre-gain; use Undo or the saved profile
 when the prior curve is needed. Expand **Advanced** for **Nc**, **Mp**,
 **Cutoff** and **Wintype**. Nc is the filter coefficient count (32–8192), Mp
@@ -119,7 +120,7 @@ EQ state and the controlled audio evidence described above.
 
 [![Desktop TX Equalizer showing Graphic · Legacy mode, pre-gain, band gains and center frequencies](images/desktop-tx-eq-workspace-original.png)](images/desktop-tx-eq-workspace-original.png)
 
-*TX EQ editor in the workspace look: Graphic · Legacy is selected, Parametric is the other mode button, and Enable TX EQ is off. Undo and Redo and the Advanced section are at the top. The curve shown is the capture's illustrative curve, not a recommendation. Check the enable state separately from the visible curve; record a working profile before editing. Captured from the offscreen preview window with no radio connected, without curve changes; the Parametric mode is not pictured.*
+*TX EQ editor in the workspace look: Graphic · Legacy is selected, Parametric is the other mode button, and Enable TX EQ is off. Undo and Redo and the Advanced section are at the top. The curve shown is the capture's illustrative curve, not a recommendation. Check the enable state separately from the visible curve; record a working profile before editing. Captured from the offscreen preview window with no radio connected, without curve changes; the Parametric mode is not pictured. This capture predates the step arrows now on the Hz boxes.*
 
 ### Set TX EQ from iPhone or iPad
 
@@ -291,8 +292,7 @@ is not ready to key, record settings and defer the audible comparison.
    editing, change one band; compare the same phrases and read back the band
    values. Save a named copy before changing the parametric EQ editor’s
    5/10/18-band layout: applying a requested count resets its band points.
-   **Graphic · Legacy / Parametric** chooses the candidate EQ mode; the
-   older development figure uses a **Legacy EQ** switch. Save the accepted
+   **Graphic · Legacy / Parametric** chooses the EQ mode. Save the accepted
    chain under a descriptive name.
 8. If investigating Phase Rotator, CFC, or CESSB, test one stage at a time
    against the saved chain. Save a named copy before changing the CFC

@@ -88,3 +88,40 @@ When several labels overlap at one frequency on desktop, a `+N` badge represents
 | Remove/clear spots | Right-click one overlay label and **Remove Spot**; **Clear** empties just the table; **Display > Clear All Spots** clears the shared set | **Show on the band** source pills or **Spots** hide local labels; **Clear all** is station-wide | Phone visibility controls do not remove spots from the Core list. Shared clear affects every connected device and does not stop the feed. |
 
 For FreeDV station status, filtering, messages and QSY, use [Chapter 15](15-rade-freedv.md). A reporter's incoming station list is distinct from the spot marker overlay described here.
+
+## Read live Roundtable reports
+
+<!-- PENDING PR 741: the Roundtable overlay redesign and frequency view will change this section. Revise it against the code once that lands, and remove this comment at the cut. -->
+
+Roundtable is a public list of who is on each frequency and how each station hears the talker. This section covers starting it on the desktop and reading its live reports on the panadapter.
+
+### Start Roundtable
+
+Open **Tools > Spot Hub**, select the **Roundtable** tab and select **Start**. The Core holds this connection. The first time, **Roundtable is public** lists what your station will share. Choose **Go live**, or **Stay hidden** to keep reading while your station and your readings are not sent. Other stations can still hear you when you talk, and may name you. The status line reads **Connected as** and your callsign once it is up. **Hide my station from Roundtable** changes that choice later, and **Auto-Start** starts the connection with the Core. On iPhone or iPad, use **Tools > Roundtable**, which has its own **Start** and **Stop**.
+
+### Read the card on your frequency
+
+On a pan, each frequency with stations has a tag along the foot of the display. Tags that would overlap fold into one `+N` tag; click it to list the frequencies it holds.
+
+On the frequency your active slice is tuned to in the current mode, the tag opens into a card by itself, with nothing to click. The card shows the frequency, then who is talking, then a **Heard by** list with each listener's callsign, signal and age. Listeners are listed nearest first. If the card cannot fit every row, its last line counts what is left out, such as **+2 reports · details ›**.
+
+| The card says | What it means |
+| --- | --- |
+| **Talking:** and a callsign | One known station is on the air. The rows are that station's reports. |
+| **Last talker:** and a callsign | The turn has ended. The reports stay, with their ages. |
+| **Double:** and two or more callsigns | Stations are keyed together. The rows are headed **Combined RF**: each reading measures the signals together, not any one station, and the keyed stations are left out of the list. |
+| **Last double:** and the callsigns | The overlap has ended. When one station keeps talking, its new turn uses only readings taken after the overlap. |
+| **Double** with **updating** or **unavailable** beside the names | A double is on the air and its callsigns are still arriving or are not available. |
+| **Unattributed signal** | A turn is on the air that cannot be matched to one callsign. |
+| **Unknown signal** or **Last unknown signal** | Listeners are hearing a signal nobody has been identified on. Roundtable does not guess who it is. |
+| **No matching reports** | Nobody has a report for this turn yet. It is not a reading of zero. |
+
+An age past 20 seconds is marked **stale**. Each row keeps its own age, so read a report alongside its age rather than assuming it is current. While Roundtable is offline the tags turn gray, and while it is connecting they are hidden. While it is reconnecting, the slice's flag says **Reconnecting** and the card keeps its last state, so a heading such as **Talking:** may be out of date.
+
+To change the units, open the **Roundtable** tab in Spot Hub and set **Signal format:** to **dBm**, **S-units** or **Both**. The choice applies to this computer only.
+
+### Open the details without tuning
+
+Click a tag or the card to read that frequency in the **Roundtable** applet. This does not tune your radio. **Tune A here** in the applet tunes the slice, and **Back to my slice** returns the applet to the frequency you are on. Clicking the band itself still tunes as usual. You can read a frequency while you are transmitting.
+
+A desktop signed in to a Core over the network shows the same reports.

@@ -2,6 +2,102 @@
 
 ## [Unreleased]
 
+<!-- DRAFT, NOT RELEASED. The release workflow publishes this section as the
+GitHub release notes once the heading names the version, so this text is both
+the changelog entry and the operator notes. Written against main at dfa9e1c29.
+At the cut: rename the heading, delete this comment and the "Still to come"
+block, settle the CONFIRM comments, then re-check main against the tag. -->
+
+Changes since desktop/Core 2026.11.0. Update the Core and desktop together.
+The iPhone and iPad app is delivered separately; nothing here needs a new phone
+build.
+<!-- CONFIRM at the cut: hot keys, band stacking and PR 741 may touch the phone. -->
+
+[Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
+
+### Meters
+
+- **Classic and Modern bar meters.** Bar meters in a container can now use a
+  **Modern** face: a rounded track with a band up to the meter's high mark, an
+  accent fill and a marker, in the style of the PureSignal feedback meter. Set
+  **Meter face** for the whole container, set **Face** on a single meter, and
+  use **Use for all meters** to clear the exceptions. **Classic** stays the
+  default and your existing bars keep it until you change them. Only the
+  drawing changes: readings, scales and calibration stay the same. Thanks to
+  Brian Sutton (W4KZO), whose original proposal this is built on.
+  ([#731](https://github.com/boydsoftprez/NereusSDR/pull/731),
+  [#739](https://github.com/boydsoftprez/NereusSDR/pull/739))
+
+### Roundtable
+
+- **Live reports on the spectrum.** On the frequency your active slice is
+  tuned to, a card on the panadapter now shows who is talking and each
+  listener's signal report with its age, with nothing to open. When two
+  stations key together it shows **Double** with both callsigns and labels the
+  readings **Combined RF**, because they measure the two signals together and
+  not either station alone. Click the card to read the details without tuning.
+  ([#739](https://github.com/boydsoftprez/NereusSDR/pull/739))
+- **Reports are back on remote desktops.** A desktop signed in to a Core over
+  the network showed who was on a frequency but lost the received reports and
+  frequency messages. They now arrive and keep updating.
+  ([#733](https://github.com/boydsoftprez/NereusSDR/pull/733))
+- **Less work for the panadapter.** Incoming reports and the waterfall clock's
+  tick no longer redraw the panadapter's overlay or rebuild the Roundtable
+  panel, which removes a cause of hitching on a busy frequency. Thanks to Brian
+  Sutton (W4KZO).
+  ([#732](https://github.com/boydsoftprez/NereusSDR/pull/732),
+  [#739](https://github.com/boydsoftprez/NereusSDR/pull/739))
+- **Roundtable website.** Helpers can now find **Review** from every page, and
+  signed-in stations get **Station settings** with clearer wording about keys.
+  This is on the website and is not part of the download.
+  ([#728](https://github.com/boydsoftprez/NereusSDR/pull/728))
+
+### Receive
+
+<!-- CONFIRM: no live-radio result yet. Issue 720 is still open. Keep "not yet
+confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
+- **AUTO AGC holds through transmit.** While the station is on the air,
+  including TUNE, two-tone and CW with QSK, AUTO stops measuring the noise floor
+  and leaves AGC-T where it was. After you unkey, it measures again only from
+  signal received entirely after the transmission. This addresses loud audio on
+  the return to receive, reported by rsaue (LB2EG). It has not yet been confirmed
+  on the air.
+  ([#739](https://github.com/boydsoftprez/NereusSDR/pull/739), issue
+  [#720](https://github.com/boydsoftprez/NereusSDR/issues/720))
+
+### Transmit
+
+- **Graphic Legacy EQ frequencies.** The Hz boxes under the band sliders show
+  their frequency again and accept a typed value. They now have step arrows and
+  are wide enough for five digits. Thanks to Brian Sutton (W4KZO).
+  ([#737](https://github.com/boydsoftprez/NereusSDR/pull/737),
+  [#739](https://github.com/boydsoftprez/NereusSDR/pull/739))
+- **PureSignal on ANAN-100 and ANAN-200D.** PureSignal could stay in collecting
+  forever because its hardware peak was zero or belonged to the other protocol.
+  The default now follows the protocol in use, a value you set yourself is kept,
+  and an invalid peak is refused. Thanks to KC5L, who reported this and confirmed
+  feedback working on an ANAN-200D (Protocol 2) and an ANAN-100 (Protocol 1).
+  ([#735](https://github.com/boydsoftprez/NereusSDR/pull/735))
+- **ANAN-G2E microphone controls.** The radio microphone controls now appear in
+  Setup for the G2E, on the desktop and on clients connected to the Core,
+  including the phone. This only makes the controls available; we have not yet
+  confirmed microphone audio on a G2E. Reported by lb5va.
+  ([#736](https://github.com/boydsoftprez/NereusSDR/pull/736),
+  [#738](https://github.com/boydsoftprez/NereusSDR/pull/738), issue
+  [#730](https://github.com/boydsoftprez/NereusSDR/issues/730))
+
+<!-- Still to come. Delete this block at the cut. None of these are on main at
+dfa9e1c29. Write each one up above only after it lands, checked against the
+code, and credit Brian Sutton (W4KZO) on 742 and 740.
+- Roundtable overlay redesign and frequency view: PR 741. The Roundtable entries
+  above and chapter 16 will need revising when it lands.
+- Station lock from another computer: PR 744.
+- SSB Mod Monitor: PR 742, Brian Sutton (W4KZO).
+- Right-click AUTO to open AGC/ALC setup: PR 740, Brian Sutton (W4KZO).
+- Hot keys: in design.
+- Band stacking: in design.
+-->
+
 ## [2026.11.0] - 2026-11-01
 
 This is the combined desktop and Core release for 2026.11.0. See the [bench checklist](https://github.com/boydsoftprez/NereusSDR/blob/v2026.11.0/docs/guides/bench-2026.11.0.md) for operating checks and recorded acceptance.
