@@ -617,6 +617,8 @@ private slots:
             << QStringLiteral("FloatingPan_pan-1_Floating") << int(SettingsScope::OperatorLocal);
         QTest::newRow("DisplayDecimation is Station (beside the other FFT knobs)")
             << QStringLiteral("DisplayDecimation") << int(SettingsScope::Station);
+        QTest::newRow("Pan_pan-1_OverlayCollapsed is OperatorLocal (this window's layout)")
+            << QStringLiteral("Pan_pan-1_OverlayCollapsed") << int(SettingsScope::OperatorLocal);
         QTest::newRow("DisplayNoiseFloorColor is OperatorLocal (rendering)")
             << QStringLiteral("DisplayNoiseFloorColor") << int(SettingsScope::OperatorLocal);
         QTest::newRow("ClarityEnabled is OperatorLocal (client-display master toggle)")
