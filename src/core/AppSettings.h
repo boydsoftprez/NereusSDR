@@ -123,6 +123,8 @@
 #include <memory>
 #include <optional>
 
+class QTimer;
+
 namespace NereusSDR {
 
 class ISettingsBackend;
@@ -192,6 +194,35 @@ public:
     // save, before it decides whether a later save has replaced it. Waits
     // for the writer thread to finish what it has before changing the hook.
     void setBackgroundSaveStartHookForTesting(std::function<void()> hook);
+
+    // The timed save: a value that changed reaches the disk about
+    // kTimedSaveDelayMs after the last change, through saveInBackground(),
+    // with nobody asking. setValue(), remove() and the station values arm
+    // it, in every role, so a crash or a Core's power cut loses at most that
+    // last moment. A write that changes nothing does not arm it, and any
+    // save() or saveInBackground() answers for it. A write from another
+    // thread arms it on the application's thread.
+    static constexpr int kTimedSaveDelayMs = 2000;
+    // Saves now if a changed value has not reached the disk; otherwise does
+    // nothing and reports success. For a stop that ends before its own save.
+    bool flushTimedSave(QString* error = nullptr);
+    // While one of these lives, writes do not arm the timed save: load(),
+    // the schema migrations and a restored layout's hydration establish
+    // state rather than change it. Those writes reach the disk with the
+    // next save, as they always have.
+    class TimedSaveHold {
+    public:
+        explicit TimedSaveHold(AppSettings& settings) : m_settings(settings)
+        {
+            ++m_settings.m_timedSaveHolds;
+        }
+        ~TimedSaveHold() { --m_settings.m_timedSaveHolds; }
+        TimedSaveHold(const TimedSaveHold&) = delete;
+        TimedSaveHold& operator=(const TimedSaveHold&) = delete;
+
+    private:
+        AppSettings& m_settings;
+    };
 
     // Exact local store, independent of any installed SettingsProxy. The
     // importer replaces the whole store only after its owner has stopped
@@ -965,6 +996,16 @@ private:
         std::make_shared<BackgroundSaveState>()};
     // True for instance() only.
     bool m_isInstance{false};
+    // See kTimedSaveDelayMs. The timer lives on the application's thread.
+    void noteValueChanged();
+    void armTimedSave();
+    void runTimedSave();
+    void cancelTimedSave();
+    static void stopInstanceTimedSave();
+    std::atomic<bool> m_timedSaveDirty{false};
+    std::atomic<int> m_timedSaveHolds{0};
+    quint64 m_timedSaveTicket{0};
+    std::unique_ptr<QTimer> m_timedSaveTimer;
     // Declared last: destroyed first, which waits for the writer thread
     // while the rest of this store is still whole.
     std::unique_ptr<SettingsFileWriter> m_fileWriter;

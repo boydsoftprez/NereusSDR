@@ -608,6 +608,12 @@ void DaemonApp::stop()
     if (!m_radioModel) {
         m_stepAttController.reset();
         m_stepAttControllerConfigured = false;
+        // No model teardown and no final save below, and a window or phone
+        // may have written a value the timed save has not reached yet.
+        QString error;
+        if (!AppSettings::instance().flushTimedSave(&error)) {
+            qCWarning(lcApp) << "DaemonApp: settings not saved at stop:" << error;
+        }
         return;
     }
 

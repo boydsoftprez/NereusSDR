@@ -125,6 +125,9 @@
 #include <QFileInfo>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QScopeGuard>
+#include <QThread>
+#include <QTimer>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QBuffer>
@@ -689,6 +692,11 @@ void logLoadedSummary(const QMap<QString, QString>& settings,
 
 void AppSettings::load()
 {
+    // Reading the file establishes state; nothing here is an edit to save,
+    // and the file now answers for whatever was waiting.
+    const TimedSaveHold timedSaveHold(*this);
+    const auto noTimedSave = qScopeGuard([this] { cancelTimedSave(); });
+
     // Reset diagnostic state at the top of every load() so wasCorruptedOnLoad()
     // / preservedCorruptFilePath() / recoveredFromBackup() always reflect THIS
     // load attempt rather than a previous instance's history.
@@ -943,14 +951,21 @@ bool AppSettings::save(QString* error)
     // writer thread would write, so that one is dropped (it sees a newer
     // save and reports nothing). One already writing finishes first.
     ++m_backgroundSave->newestSave;
+    cancelTimedSave();
     QMutexLocker lock(&settingsFileMutex());
-    return writeSettingsFile(m_filePath, localXml, error);
+    const bool written = writeSettingsFile(m_filePath, localXml, error);
+    if (!written) {
+        // Still not on the disk: the next write or a stop's flush tries again.
+        m_timedSaveDirty = true;
+    }
+    return written;
 }
 
 quint64 AppSettings::saveInBackground()
 {
     SettingsFileWriter* const writer = backgroundSaveNotifier();
     const quint64 ticket = ++m_backgroundSave->newestSave;
+    cancelTimedSave();
     if (m_savesHeldUntilRestart) {
         // As save(): nothing is written, and that is success.
         QMetaObject::invokeMethod(writer, [writer, ticket] {
@@ -983,6 +998,98 @@ quint64 AppSettings::saveInBackground()
         writer->report(ticket, saved, error);
     });
     return ticket;
+}
+
+bool AppSettings::flushTimedSave(QString* error)
+{
+    if (error) {
+        error->clear();
+    }
+    if (!m_timedSaveDirty.load()) {
+        return true;
+    }
+    return save(error);
+}
+
+void AppSettings::noteValueChanged()
+{
+    // A store with no file (the radio-only export) has nowhere to save to.
+    if (m_timedSaveHolds.load() > 0 || m_filePath.isEmpty()) {
+        return;
+    }
+    QCoreApplication* const app = QCoreApplication::instance();
+    if (app == nullptr) {
+        return;
+    }
+    m_timedSaveDirty = true;
+    if (QThread::currentThread() == app->thread()) {
+        armTimedSave();
+        return;
+    }
+    // The timer and saveInBackground() belong to the application's thread.
+    QMetaObject::invokeMethod(app,
+        [this, alive = std::weak_ptr<BackgroundSaveState>(m_backgroundSave)] {
+            if (alive.lock()) {
+                armTimedSave();
+            }
+        },
+        Qt::QueuedConnection);
+}
+
+void AppSettings::armTimedSave()
+{
+    if (!m_timedSaveDirty.load() || m_savesHeldUntilRestart) {
+        return;
+    }
+    if (!m_timedSaveTimer) {
+        m_timedSaveTimer = std::make_unique<QTimer>();
+        m_timedSaveTimer->setSingleShot(true);
+        m_timedSaveTimer->setInterval(kTimedSaveDelayMs);
+        QObject::connect(m_timedSaveTimer.get(), &QTimer::timeout, m_timedSaveTimer.get(),
+                         [this] { runTimedSave(); });
+        if (m_isInstance) {
+            qAddPostRoutine(&AppSettings::stopInstanceTimedSave);
+        }
+    }
+    m_timedSaveTimer->start();
+}
+
+void AppSettings::runTimedSave()
+{
+    if (!m_timedSaveDirty.load() || m_savesHeldUntilRestart) {
+        return;
+    }
+    if (m_timedSaveTicket == 0) {
+        // First timed save of this store: the writer exists from here on.
+        QObject::connect(backgroundSaveNotifier(), &SettingsFileWriter::finished,
+                         m_timedSaveTimer.get(),
+                         [this](quint64 ticket, bool saved, const QString& error) {
+                             if (ticket != m_timedSaveTicket || saved) {
+                                 return;
+                             }
+                             // The values stay in the store: the next write
+                             // or a stop's flush tries again.
+                             qCWarning(lcApp) << "Timed settings save failed:" << error;
+                             m_timedSaveDirty = true;
+                         });
+    }
+    m_timedSaveTicket = saveInBackground();
+}
+
+void AppSettings::cancelTimedSave()
+{
+    m_timedSaveDirty = false;
+    if (m_timedSaveTimer && m_timedSaveTimer->thread() == QThread::currentThread()) {
+        m_timedSaveTimer->stop();
+    }
+}
+
+void AppSettings::stopInstanceTimedSave()
+{
+    // A timer must not outlive its application. A value still waiting here
+    // has had its owner's quit or stop save, or stays as an unclean stop
+    // leaves it.
+    instance().m_timedSaveTimer.reset();
 }
 
 SettingsFileWriter* AppSettings::backgroundSaveNotifier()
@@ -1062,6 +1169,7 @@ bool AppSettings::importLocalXml(const QByteArray& input, QString* error)
     m_settings.swap(settings);
     m_stationSettings.swap(stationSettings);
     m_stationName.swap(stationName);
+    cancelTimedSave();
     return true;
 }
 
@@ -1141,7 +1249,13 @@ void AppSettings::setValue(const QString& key, const QVariant& val)
         m_remoteBackend->setValue(key, val);
         return;
     }
-    m_settings.insert(key, val.toString());
+    const QString text = val.toString();
+    const auto existing = m_settings.constFind(key);
+    const bool changed = existing == m_settings.constEnd() || existing.value() != text;
+    m_settings.insert(key, text);
+    if (changed) {
+        noteValueChanged();
+    }
     if (m_changeHook) {
         m_changeHook(key);
     }
@@ -1193,10 +1307,14 @@ void AppSettings::remove(const QString& key)
         // this delegated branch's existing contract (see value()'s own
         // comment: "does not touch m_settings and does not fire
         // m_changeHook") for anything reads/writes through this branch.
-        m_settings.remove(key);
+        if (m_settings.remove(key) > 0) {
+            noteValueChanged();
+        }
         return;
     }
-    m_settings.remove(key);
+    if (m_settings.remove(key) > 0) {
+        noteValueChanged();
+    }
     if (m_changeHook) {
         m_changeHook(key);
     }
@@ -1264,8 +1382,10 @@ void AppSettings::clear()
     // Deliberately does not fire the change hook -- see the doc comment
     // on setChangeHook() (AppSettings.h): a bulk test-isolation wipe has
     // no single key to report, and is not one of the ten operations the
-    // R2 Task 13 brief lists as required to fire.
+    // R2 Task 13 brief lists as required to fire. A wipe is not an edit
+    // either, so a timed save still waiting does not carry it to the disk.
     m_settings.clear();
+    cancelTimedSave();
 }
 
 void AppSettings::setChangeHook(std::function<void(const QString& key)> hook)
@@ -1325,7 +1445,13 @@ QVariant AppSettings::stationValue(const QString& key, const QVariant& defaultVa
 
 void AppSettings::setStationValue(const QString& key, const QVariant& val)
 {
-    m_stationSettings.insert(key, val.toString());
+    const QString text = val.toString();
+    const auto existing = m_stationSettings.constFind(key);
+    const bool changed = existing == m_stationSettings.constEnd() || existing.value() != text;
+    m_stationSettings.insert(key, text);
+    if (changed) {
+        noteValueChanged();
+    }
 }
 
 QString AppSettings::stationName() const
@@ -1335,7 +1461,11 @@ QString AppSettings::stationName() const
 
 void AppSettings::setStationName(const QString& name)
 {
+    if (m_stationName == name) {
+        return;
+    }
     m_stationName = name;
+    noteValueChanged();
 }
 
 // ---------------------------------------------------------------------------
@@ -2071,6 +2201,7 @@ void AppSettings::clearUncalibratedClarityFloors(AppSettings& settings)
 
 void AppSettings::ensureSettingsAtVersion(int currentVersion)
 {
+    const TimedSaveHold timedSaveHold(*this);
     const QString versionKey = QStringLiteral("SettingsSchemaVersion");
     const int storedVersion = value(versionKey, QStringLiteral("0")).toString().toInt();
 

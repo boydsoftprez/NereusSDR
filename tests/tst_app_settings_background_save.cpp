@@ -187,6 +187,133 @@ private slots:
         QCOMPARE(savedValue(path, QStringLiteral("Dial")), QStringLiteral("imported"));
     }
 
+    // ── The timed save ──────────────────────────────────────────────────
+
+    void aWrittenValueReachesTheDiskWithNoSaveAsked()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        AppSettings settings(path);
+        settings.setValue(QStringLiteral("Timed"), QStringLiteral("one"));
+        // Not at once: the save waits for the writes to stop.
+        QCOMPARE(savedValue(path, QStringLiteral("Timed")), QStringLiteral("<missing>"));
+        QTRY_COMPARE_WITH_TIMEOUT(savedValue(path, QStringLiteral("Timed")),
+                                  QStringLiteral("one"), 15000);
+
+        settings.remove(QStringLiteral("Timed"));
+        QTRY_COMPARE_WITH_TIMEOUT(savedValue(path, QStringLiteral("Timed")),
+                                  QStringLiteral("<missing>"), 15000);
+
+        settings.setStationValue(QStringLiteral("StationTimed"), QStringLiteral("two"));
+        const auto stationValueOnDisk = [&path] {
+            AppSettings onDisk(path);
+            onDisk.load();
+            return onDisk.stationValue(QStringLiteral("StationTimed"),
+                                       QStringLiteral("<missing>")).toString();
+        };
+        QTRY_COMPARE_WITH_TIMEOUT(stationValueOnDisk(), QStringLiteral("two"), 15000);
+    }
+
+    void aWriteFromAnotherThreadReachesTheDiskToo()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        AppSettings settings(path);
+        std::unique_ptr<QThread> writer(QThread::create([&settings] {
+            settings.setValue(QStringLiteral("Timed"), QStringLiteral("other thread"));
+        }));
+        writer->start();
+        QVERIFY(writer->wait(10000));
+        QTRY_COMPARE_WITH_TIMEOUT(savedValue(path, QStringLiteral("Timed")),
+                                  QStringLiteral("other thread"), 15000);
+    }
+
+    void aWriteThatChangesNothingSavesNothing()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        AppSettings settings(path);
+        settings.setValue(QStringLiteral("Timed"), QStringLiteral("one"));
+        QVERIFY(settings.save());
+        QSignalSpy finished(settings.backgroundSaveNotifier(), &SettingsFileWriter::finished);
+
+        settings.setValue(QStringLiteral("Timed"), QStringLiteral("one"));
+        settings.remove(QStringLiteral("NeverThere"));
+        QTest::qWait(AppSettings::kTimedSaveDelayMs + 1000);
+        QCOMPARE(finished.count(), 0);
+    }
+
+    void anExplicitSaveAnswersForThePendingTimedSave()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        AppSettings settings(path);
+        QSignalSpy finished(settings.backgroundSaveNotifier(), &SettingsFileWriter::finished);
+        settings.setValue(QStringLiteral("Timed"), QStringLiteral("one"));
+        QVERIFY(settings.save());
+        QTest::qWait(AppSettings::kTimedSaveDelayMs + 1000);
+        QCOMPARE(finished.count(), 0);
+    }
+
+    void loadingAndMigratingDoNotArmIt()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        {
+            AppSettings seed(path);
+            seed.setValue(QStringLiteral("Timed"), QStringLiteral("one"));
+            QVERIFY(seed.save());
+        }
+        AppSettings settings(path);
+        settings.load();
+        settings.ensureSettingsAtVersion(3);
+        // The migration wrote its version: that is not an edit of anyone's.
+        QVERIFY(settings.contains(QStringLiteral("SettingsSchemaVersion")));
+        QSignalSpy finished(settings.backgroundSaveNotifier(), &SettingsFileWriter::finished);
+        QTest::qWait(AppSettings::kTimedSaveDelayMs + 1000);
+        QCOMPARE(finished.count(), 0);
+    }
+
+    void anImportHoldsTheTimedSaveBack()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        const QString importPath = dir.filePath(QStringLiteral("import.settings"));
+        {
+            AppSettings source(importPath);
+            source.setValue(QStringLiteral("Timed"), QStringLiteral("imported"));
+            QVERIFY(source.save());
+        }
+        AppSettings settings(path);
+        settings.setValue(QStringLiteral("Timed"), QStringLiteral("running"));
+        QVERIFY(settings.importFileForNextLaunch(importPath));
+        settings.setValue(QStringLiteral("Timed"), QStringLiteral("running again"));
+        QTest::qWait(AppSettings::kTimedSaveDelayMs + 1000);
+        QCOMPARE(savedValue(path, QStringLiteral("Timed")), QStringLiteral("imported"));
+    }
+
+    void aStoreWithNoFileIsLeftAlone()
+    {
+        // The radio-only export serializes a store that has no path.
+        AppSettings settings{QString{}};
+        settings.setValue(QStringLiteral("Timed"), QStringLiteral("one"));
+        QSignalSpy finished(settings.backgroundSaveNotifier(), &SettingsFileWriter::finished);
+        QTest::qWait(AppSettings::kTimedSaveDelayMs + 1000);
+        QCOMPARE(finished.count(), 0);
+    }
+
+    void flushWritesOnlyWhatIsPending()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        AppSettings settings(path);
+        QVERIFY(settings.flushTimedSave());
+        QVERIFY(!QFileInfo::exists(path));
+        settings.setValue(QStringLiteral("Timed"), QStringLiteral("one"));
+        QVERIFY(settings.flushTimedSave());
+        QCOMPARE(savedValue(path, QStringLiteral("Timed")), QStringLiteral("one"));
+    }
+
     void aSaveStillWritingAsTheProcessEndsReachesTheDisk()
     {
         // instance() is a static in the Core library. On Windows a DLL's

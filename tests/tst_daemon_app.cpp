@@ -373,6 +373,25 @@ private slots:
     // iPhone app plan Task 34: remote_transmit deny installs the persistent
     // receive-only policy before station startup, as every Core did before;
     // allow (the default) leaves transmit to the station transmit gate.
+    // A stop with no radio model has no model teardown to save on its way,
+    // and a value written before the timed save ran is still only in memory.
+    void aStopWithNoRadioModelSavesWhatIsPending()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("DaemonStopProbe"), QStringLiteral("before"));
+        QVERIFY(s.save());
+        s.setValue(QStringLiteral("DaemonStopProbe"), QStringLiteral("after"));
+
+        DaemonApp app;
+        QVERIFY(app.m_radioModel == nullptr);
+        app.stop();
+
+        AppSettings onDisk(s.filePath());
+        onDisk.load();
+        QCOMPARE(onDisk.value(QStringLiteral("DaemonStopProbe")).toString(),
+                 QStringLiteral("after"));
+    }
+
     void installsReceiveOnlyPolicyBeforeStationStartup()
     {
         DaemonConfig cfg = testCoreConfig();

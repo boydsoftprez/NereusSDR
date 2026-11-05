@@ -29220,6 +29220,8 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     const QPointer<RadioModel> self(this);
     m_pendingBandSettings.clear();
     m_receiveLayoutHydrating = true;
+    // Hydration establishes state from the store; it is nobody's edit.
+    const AppSettings::TimedSaveHold timedSaveHold(AppSettings::instance());
     const auto finishHydration = qScopeGuard([self] {
         if (self) { self->m_receiveLayoutHydrating = false; }
     });
