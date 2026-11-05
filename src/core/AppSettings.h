@@ -588,6 +588,9 @@ public:
     // Save (or update) a radio entry. Overwrites if macKey already exists.
     // Does NOT call save() — caller must save() or rely on shutdown flush.
     void saveRadio(const RadioInfo& info, bool pinToMac, bool autoConnect);
+    // Saves a radio the operator is connecting to. Its first connect turns
+    // Auto-connect on; after that the saved Auto-connect and pin choices stay.
+    void saveRadioOnConnect(const RadioInfo& info);
     // R-R3-21: changes only a saved radio's auto-connect flag (saveRadio
     // would also rewrite its other fields and its lastSeen time). No-op for
     // a radio that is not saved.

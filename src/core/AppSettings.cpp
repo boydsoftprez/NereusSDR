@@ -1527,6 +1527,18 @@ void AppSettings::saveRadio(const RadioInfo& info, bool pinToMac, bool autoConne
     }
 }
 
+void AppSettings::saveRadioOnConnect(const RadioInfo& info)
+{
+    const QString macKey = info.macAddress.isEmpty()
+        ? QStringLiteral("manual-%1-%2")
+              .arg(info.address.toString())
+              .arg(info.port)
+        : info.macAddress;
+    const auto existing = savedRadio(macKey);
+    saveRadio(info, existing ? existing->pinToMac : false,
+              existing ? existing->autoConnect : true);
+}
+
 void AppSettings::setRadioAutoConnect(const QString& macKey, bool autoConnect)
 {
     const QString prefix = radioKeyPrefix(macKey);
