@@ -7169,11 +7169,13 @@ void MainWindow::toggleRoundtableInspector(SpectrumWidget* pan, qint64 hz, const
 void MainWindow::toggleRoundtableFold(SpectrumWidget* pan, const QStringList& roomIds)
 {
     if (!pan || roomIds.isEmpty()) { return; }
-    // Opening the list re-lays the tags, so the same fold can come back with other
-    // members: any room in common is the same fold (D37).
+    // Opening the list re-lays the tags, so the same fold can come back with fewer or
+    // more members. Measured against the fold as opened: part of it, or all of it and
+    // more, is the same fold; one that only shares a room is another (D37).
     const auto sameFold = [this, &roomIds]() {
-        return std::any_of(roomIds.cbegin(), roomIds.cend(),
-                           [this](const QString& id) { return m_roundtablePeekFold.contains(id); });
+        const QSet<QString> opened(m_roundtablePeekFold.cbegin(), m_roundtablePeekFold.cend());
+        const QSet<QString> clicked(roomIds.cbegin(), roomIds.cend());
+        return opened.contains(clicked) || clicked.contains(opened);
     };
     if (m_roundtablePeek && m_roundtablePeek->showsFold() && m_roundtablePeek->parentWidget() == pan && sameFold()) {
         closeRoundtablePeek();

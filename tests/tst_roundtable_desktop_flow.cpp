@@ -2275,13 +2275,18 @@ private slots:
         QVERIFY(click(foldRooms.first()));
         QVERIFY(!open());
         // The list re-lays the tags, so the same fold can come back with other members:
-        // a room in common still closes it; a fold with none in common swaps in place.
+        // what it held as opened, or all of that, still closes it; a fold with none swaps.
         emit pan->roundtableFoldClicked(foldRooms);
         QVERIFY(peek()->showsFold());
         emit pan->roundtableFoldClicked(foldRooms.mid(1));
         QVERIFY(!open());
         emit pan->roundtableFoldClicked(foldRooms);
         QVERIFY(peek()->showsFold());
+        // Only the same fold closes it: another that shares one room lists instead.
+        emit pan->roundtableFoldClicked(QStringList{foldRooms.first(), viewed});
+        QVERIFY(open());
+        QVERIFY(peek()->showsFold());
+        QCOMPARE(peek()->foldRowsForTest().size(), 2);
         emit pan->roundtableFoldClicked(QStringList{viewed, other});
         QVERIFY(open());
         QVERIFY(peek()->showsFold());
