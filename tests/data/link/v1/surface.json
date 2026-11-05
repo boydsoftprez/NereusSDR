@@ -426,11 +426,6 @@
         },
         {
             "kind": "i64",
-            "name": "txSsbModMonitorVersion",
-            "value": 1
-        },
-        {
-            "kind": "i64",
             "name": "remoteRotorControlVersion",
             "value": 1
         },
@@ -597,6 +592,11 @@
         {
             "kind": "i64",
             "name": "nnrLoadWarningVersion",
+            "value": 1
+        },
+        {
+            "kind": "i64",
+            "name": "txSsbModMonitorVersion",
             "value": 1
         },
         {
@@ -10003,8 +10003,7 @@
             "RemoteMoxTimeOutEnabled",
             "RemoteMoxTimeOutSeconds",
             "RxOnly",
-            "ModMon/FbStream",
-            "SsbModMon/FbStream"
+            "ModMon/FbStream"
         ],
         "stationPrefixes": [
             "hardware/",

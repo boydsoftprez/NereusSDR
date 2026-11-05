@@ -1303,6 +1303,7 @@ table.
 | `displayCodecVersion` | 2 |
 | `stationRoundtableVersion` | 2 |
 | `nnrLoadWarningVersion` | 1 |
+| `txSsbModMonitorVersion` | 1 |
 
 <!-- /surface -->
 
@@ -2236,6 +2237,17 @@ When a feature is off, its version is 0:
   blank; with no Core connected it says "Connect to the Core to see the
   modulation monitor.".
 
+- `txSsbModMonitorVersion`: sent at 1 after every other entry and before
+  `coreBuildInfo`, only in the minor-11 block, whenever `recordStreamVersion`
+  is at least 1 (the Core runs its own SSB modulation analyzers); omitted
+  otherwise. At 1 the Core sends the SSB Mod Monitor's readings on the
+  `txSsbModulation` and `txSsbModulationFeedback` record streams (section
+  7.7) and takes `txSsbModMonitor.reset` (section 9.1). A window subscribes
+  to one of the two streams only while its SSB Mod Monitor is shown; the
+  panel starts off, so a default window sends nothing. With 0 or no entry a
+  window shows the panel disabled with "This Core does not send the SSB
+  modulation monitor. Updating the Core may help.".
+
 - `mediaTunnelVersion` (Task 29 step 2b): 1 when media is on, after every
   previously emitted minor-11 entry (including conditional transmit
   readings). This unpublished field was ordered here at trunk integration
@@ -2751,7 +2763,8 @@ older window sees only the values it was built for.
 | 117 | `displayCodecVersion` | `i64` |
 | 118 | `stationRoundtableVersion` | `i64` |
 | 119 | `nnrLoadWarningVersion` | `i64` |
-| 120 | `coreBuildInfo` | `utf8` |
+| 120 | `txSsbModMonitorVersion` | `i64` |
+| 121 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -5952,6 +5965,8 @@ the Core keeps:
 | `vaxLevels` | 1 | With `vaxVersion` 1: the VAX meters of the computer the Core runs on, one record, `id` `"0"`: `ch1Level` to `ch4Level` and `txLevel` (numbers, 0 to 1, each rounded to a thousandth, as the applet's meters read them: `AudioEngine::vaxRxLevel` and `vaxTxLevel`) and `atMs` (number, the Core's clock in milliseconds when it read them). The Core reads the meters 5 times a second, only while at least one peer subscribes (a device with its VAX tool open), and sends a record only when a meter moved |
 | `txAmModulation` | 1 | With `txModMonitorVersion` 1: the AM Mod Monitor's readings of the transmit I/Q the Core sends its radio (its TX tap, `AmModulationAnalyzer`), one record, `id` `0`, present only while the radio is keyed in AM, SAM or DSB (the transmit slice's mode) and a peer subscribes: `atMs` (number, the Core's clock in ms since the epoch when it read them), `posPeakPct` and `negPeakPct` (numbers, the positive and negative peak modulation in percent since the Core's previous record: the largest of the reads it merged), `posHoldPct` and `negHoldPct` (numbers, the peaks held 1.5 s, then falling as the Core's analyzer lets them fall), `carrierLevel` (number, the carrier in linear envelope units, 0 to 1 at the radio's full scale), `carrierDbfs` (number, that in dB, -120 with no carrier), `carrierPresent`, `carrierLow` and `carrierHigh` (booleans: a carrier is measured, below 0.05, above 0.98), `scopeRateHz` (number, the rate of the scope's points) and `scopePctTenths` (string: the envelope trace, oldest first, each point's percent modulation in tenths as a little-endian int16, in base64; at most 512 points, a longer trace reduced by keeping the largest-magnitude point of each group). Asymmetry is `posHoldPct` minus `negHoldPct` |
 | `txAmModulationFeedback` | 1 | With `txModMonitorVersion` 1: the same record for the PureSignal feedback receiver (the PA's output as the radio samples it), on the receiver `ModMon/FbStream` names (section 8.1); present under the same rule, and measured only while PureSignal's feedback runs on the Core's radio |
+| `txSsbModulation` | 1 | With `txSsbModMonitorVersion` 1: the SSB Mod Monitor's readings of the transmit I/Q the Core sends its radio, one record, `id` `0`, present only while the radio is keyed in USB or LSB (the transmit slice's mode; DIGU and DIGL are not) and a peer subscribes: `atMs` (number, the Core's clock in ms since the epoch), `peakPct`, `avgPct` and `peakHoldPct` (numbers, the envelope in percent of full scale, 0 to 3276.7: the largest window peak of the reads since the last record, the slow average, and the peak held 1.5 s then falling 100 percent per second), `peakDbfs`, `avgDbfs` and `peakHoldDbfs` (numbers, the same in dB, -120 to 71), `crestDb` (number, -200 to 200, peak over RMS of the envelope over the last 300 ms of signal, leaving out blocks below the presence minimum; absent while that window holds no signal), `signalPresent` (boolean), `scopeRateHz` (whole number, 0 to 1536000) and `scopePctTenths` (string: the envelope trace, oldest first, each point's percent in tenths as a non-negative little-endian int16, in base64; at most 512 points, a longer trace keeping the largest point of each group). A window refuses a record with a field missing, mistyped or out of range |
+| `txSsbModulationFeedback` | 1 | With `txSsbModMonitorVersion` 1: the same record for the samples PureSignal's feedback path delivers (the PA's output as the radio samples it); present under the same rule, and only while PureSignal runs on the Core's radio. A window with PureSignal off shows its PA FB source disabled with the reason |
 | `roundtableRooms` | 500 | With `stationRoundtableVersion` 1: one Roundtable room in the band list, `id` the room id: `record` (string, `room`) and the room's summary as Roundtable's band list carries it ([Roundtable version 1](2026-10-23-roundtable-v1.md)) |
 | `roundtableRoom:<id>` | 400 | With `stationRoundtableVersion` 1: one room in view, a record per part, its kind in `record` (a turn has a `kind` of its own): `member:<ref>` a member (`seq` its place in joining order), `reading:<ref>` that member's latest reading (`ref` the member), `turn:<id>` a turn (`end` null while it is open), `name:<turn id>:<name>` a name heard in a turn (`turn`, `name`, `count`), `message:<id>` a message (the last 50) |
 
@@ -6555,6 +6570,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `spots.sendCommand` | `source` utf8, `text` utf8 | `recordStreamVersion` | 1 | 11 |
 | `spots.clearAll` | none | `recordStreamVersion` | 1 | 11 |
 | `txModMonitor.reset` | `source` i64 | `txModMonitorVersion` | 1 | 11 |
+| `txSsbModMonitor.reset` | `source` i64 | `txSsbModMonitorVersion` | 1 | 11 |
 | `station.selectRadio` | `mac` utf8 | `stationRadiosVersion` | 1 | 11 |
 | `station.rescanRadios` | none | `stationRadiosVersion` | 1 | 11 |
 | `station.setRadioModel` | `mac` utf8, `model` i64 | `stationRadiosVersion` | 1 | 11 |

@@ -213,6 +213,8 @@
 //   2026-10-08 - Rotor control plan Task 4b: remoteRotorControlVersion,
 //                after accessoryTxVersion, when it is not 0. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationCapabilities.h"
@@ -459,11 +461,6 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
             updates.append(intEntry("miniDisplayVersion", miniDisplayVersion));
         }
         updates.append(intEntry("accessoryTxVersion", accessoryTxVersion));
-        // SSB Mod Monitor. Omitted at 0 so the capability list an older
-        // peer already knows stays the same length.
-        if (txSsbModMonitorVersion > 0) {
-            updates.append(intEntry("txSsbModMonitorVersion", txSsbModMonitorVersion));
-        }
         // Rotor control plan Task 4b: the Core's rotor, on a Core that owns
         // one (absent reads as 0).
         if (remoteRotorControlVersion > 0) {
@@ -655,6 +652,12 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     }
     if (nnrLoadWarningVersion > 0) {
         updates.append(intEntry("nnrLoadWarningVersion", nnrLoadWarningVersion));
+    }
+    // SSB Mod Monitor: after every other entry and before coreBuildInfo
+    // (which stays last), so no entry a peer already reads moves. Omitted at
+    // 0, and sent only in the minor-11 block.
+    if (radioIdentityEntries && txSsbModMonitorVersion > 0) {
+        updates.append(intEntry("txSsbModMonitorVersion", txSsbModMonitorVersion));
     }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();

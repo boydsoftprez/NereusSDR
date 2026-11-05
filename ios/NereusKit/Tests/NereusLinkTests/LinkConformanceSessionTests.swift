@@ -36,7 +36,9 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 90)
+        #expect(fixtures.count == 91)
+        // The SSB Mod Monitor's subscribe and reset.
+        #expect(fixtures.contains { $0.id == "session-verbs-ssb-mod-monitor" })
         // Roundtable's thirteen verbs (stationRoundtableVersion 1), now the
         // app also exercises frequency chat with roundtable 2.
         #expect(fixtures.contains { $0.id == "session-verbs-roundtable" })
