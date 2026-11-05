@@ -43,6 +43,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: 30 s bound on a helper's next line. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-09-27: Cover code-only reconnect and in-flight device revocation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-27: Diagnose helper startup failures without changing deadlines.
@@ -273,7 +275,9 @@ private:
     QJsonObject readLine()
     {
         while (!m_process.canReadLine()) {
-            if (!m_process.waitForReadyRead(10000)) {
+            // 10 s was passed on a busy Linux CI machine by a helper still
+            // starting its Core (run 41764912150). Returns when a line arrives.
+            if (!m_process.waitForReadyRead(30000)) {
                 return {};
             }
         }

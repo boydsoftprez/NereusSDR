@@ -332,6 +332,22 @@ directory pays the planning; the rest take a few seconds. Delete the file
 to measure a cold run. A new test that starts WDSP another way should use
 one of those names, or add its own to the rule.
 
+**A test's TLS key comes from one file.** A `StationServer` makes a TLS
+certificate on first start, and its 3072-bit RSA key took about a second, and
+over 8 s on a busy machine. Each test now takes that key from
+`build/tests/test-tls-key.pem` (`tests/TestSharedTlsKey.cpp`, linked by
+`nereus_add_test()`): the first test to need it makes it, and each certificate
+still has its own serial and fingerprint. A test about the key itself
+registers with `OWN_TLS_KEYS`.
+
+**Disk syncs are the other shared cost.** `AppSettings::save()` and the
+security stores write through `QSaveFile`, which syncs the disk. A `RadioModel`
+test saves often: `tst_cat_coverage` syncs about twice per row. With a 50 ms
+sync delay added on a Mac it went from 13 s to 104 s, which is how a busy disk
+timed out 49 tests on the Linux self-hosted runners while tests that do not
+save kept their usual time (run 41764912150). Those runners keep test homes
+and scratch in memory for this reason (`scripts/ci/box-linux.sh`).
+
 ## Where the settings file lives
 
 Tests redirect Qt's writable locations into a sandbox via

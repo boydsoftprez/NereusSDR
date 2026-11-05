@@ -10,7 +10,7 @@
 // full step whether the answer landed after 1 ms or 49; a case with dozens
 // of them spends most of its time asleep, and a loaded machine stretches the
 // run past ctest's limit. NEREUS_TRY_* wait on the same condition with the
-// same 5 s default through QTest::qWaitFor, which checks it after every
+// same kind of bound (kNereusTryDefaultMs) through QTest::qWaitFor, which checks it after every
 // event-loop pass, and then assert it exactly as QVERIFY / QCOMPARE do.
 //
 // "Nothing happens" checks on a window-to-Core link: a check that something
@@ -24,6 +24,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05  J.J. Boyd / KG4VCF  kNereusTryDefaultMs: positive waits
+//                                    survive a slow CI machine.
+//                                    AI-assisted via Anthropic Claude Code.
 //   2026-09-29  J.J. Boyd / KG4VCF  Load finding: waits that wake on the
 //                                    answer, and one named wait for the
 //                                    session tests' nothing-happens checks.
@@ -77,17 +80,23 @@ bool comparesAsQCompare(const Actual& actual, const Expected& expected)
     }
 }
 
+// The default upper bound of a positive wait. Each returns the moment its
+// condition holds. It was 5 s, which a busy Linux CI machine passed on a
+// working link (run 41764912150, tst_remote_peripherals).
+inline constexpr int kNereusTryDefaultMs = 30000;
+
 #define NEREUS_TRY_VERIFY_WITH_TIMEOUT(expr, timeoutMs)                                   \
     do {                                                                                  \
         (void)QTest::qWaitFor([&]() { return static_cast<bool>(expr); }, (timeoutMs));    \
         QVERIFY(expr);                                                                    \
     } while (false)
 
-#define NEREUS_TRY_VERIFY(expr) NEREUS_TRY_VERIFY_WITH_TIMEOUT(expr, 5000)
+#define NEREUS_TRY_VERIFY(expr) NEREUS_TRY_VERIFY_WITH_TIMEOUT(expr, NereusSDR::Test::kNereusTryDefaultMs)
 
 #define NEREUS_TRY_VERIFY2(expr, message)                                                 \
     do {                                                                                  \
-        (void)QTest::qWaitFor([&]() { return static_cast<bool>(expr); }, 5000);           \
+        (void)QTest::qWaitFor([&]() { return static_cast<bool>(expr); },                \
+                              NereusSDR::Test::kNereusTryDefaultMs);                   \
         QVERIFY2(expr, message);                                                          \
     } while (false)
 
@@ -99,7 +108,7 @@ bool comparesAsQCompare(const Actual& actual, const Expected& expected)
         QCOMPARE(actual, expected);                                                       \
     } while (false)
 
-#define NEREUS_TRY_COMPARE(actual, expected) NEREUS_TRY_COMPARE_WITH_TIMEOUT(actual, expected, 5000)
+#define NEREUS_TRY_COMPARE(actual, expected) NEREUS_TRY_COMPARE_WITH_TIMEOUT(actual, expected, NereusSDR::Test::kNereusTryDefaultMs)
 
 /// Runs what is already queued, and what that queues in turn, to a depth
 /// no link exchange here exceeds.

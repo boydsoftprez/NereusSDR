@@ -14,6 +14,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: kHarnessWaitMs: waits survive a slow CI machine. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: F3: optional model factory after scratch AppSettings is
 //               bound, for controlled CWX time. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -94,6 +96,12 @@ const QString kCoreFull = QStringLiteral("The Core already has four devices conn
 const QString kSameDevice = QStringLiteral("This device connected again.");
 const QString kUnknownVerb =
     QStringLiteral("The Core does not know this request. Updating the Core may help.");
+
+// How long a wait for something the test expects to arrive may take. Each
+// returns as soon as it arrives, so this is only an upper bound. It was 5 s:
+// in Linux CI run 41764912150 these tests ran 7 times slower than usual, a
+// sign-in passed 5 s, and admitted() and invoke() failed on a working Core.
+constexpr int kHarnessWaitMs = 30000;
 
 const QHash<QByteArray, int> kHolder{{"deviceAuth", 1}, {"sessionHolder", 1}};
 
@@ -296,7 +304,7 @@ struct Core {
         station->linkTo(app);
         clients.append(app);
         server->acceptTransport(station);
-        const bool greeted = QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, 5000);
+        const bool greeted = QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, kHarnessWaitMs);
         Q_UNUSED(greeted);
         return app;
     }
@@ -316,7 +324,7 @@ struct Core {
                     || app->receivedKinds().contains(QByteArrayLiteral("session.held"))
                     || !app->isOpen();
             },
-            5000);
+            kHarnessWaitMs);
         Q_UNUSED(settled);
     }
 
@@ -360,7 +368,7 @@ struct Core {
             }
             return QJsonObject{};
         };
-        const bool answered = QTest::qWaitFor([&find]() { return !find().isEmpty(); }, 5000);
+        const bool answered = QTest::qWaitFor([&find]() { return !find().isEmpty(); }, kHarnessWaitMs);
         Q_UNUSED(answered);
         return find();
     }
@@ -374,7 +382,7 @@ bool admitted(const LoopbackTransport* app)
 
 QJsonObject endOf(LoopbackTransport* app)
 {
-    const bool closed = QTest::qWaitFor([app]() { return !app->isOpen(); }, 5000);
+    const bool closed = QTest::qWaitFor([app]() { return !app->isOpen(); }, kHarnessWaitMs);
     Q_UNUSED(closed);
     return firstOfType(app->received(), QStringLiteral("session.end"));
 }
@@ -416,7 +424,7 @@ void verifyHeld(LoopbackTransport* app, QJsonObject* out = nullptr)
 // Waits until `app`'s latest connectedDevices list satisfies `test`.
 bool waitForList(const LoopbackTransport* app, const std::function<bool(const QJsonArray&)>& test)
 {
-    return QTest::qWaitFor([app, &test]() { return test(connectedList(app)); }, 5000);
+    return QTest::qWaitFor([app, &test]() { return test(connectedList(app)); }, kHarnessWaitMs);
 }
 
 QStringList idsOf(const QJsonArray& list)

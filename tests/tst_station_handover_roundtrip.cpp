@@ -199,6 +199,13 @@ int guiHelper(int argc, char* argv[])
     return result;
 }
 
+// How long one handover step may take here. It was 15 s, and in Linux CI run
+// 41764912150 the steps took 15.6 to 17.9 s on a machine running everything
+// about 2.4 times slower than usual. The times this test measures are printed
+// at its end. Every wait but the two elapsed checks returns as soon as the
+// step is done.
+constexpr int kHandoverWaitMs = 45000;
+
 bool waitForMarker(QProcess& process, QByteArray& output, const QByteArray& expected,
                    int timeoutMs)
 {
@@ -295,7 +302,7 @@ private slots:
         QSignalSpy reconnects(&client, &StationClient::reconnectScheduled);
         client.connectToStation(QUrl(QStringLiteral("wss://127.0.0.1:%1").arg(port)),
                                 {}, {}, false, station.fingerprint());
-        QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), 1, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), 1, kHandoverWaitMs);
 
         for (int attempt = 1; attempt <= 2; ++attempt) {
             const StationControlReply refused = StationControlSocket::request(
@@ -322,7 +329,7 @@ private slots:
             const auto stillSaved = ReceiveLayoutStore::load(reloaded, radioMac);
             QCOMPARE(stillSaved.state, ReceiveLayoutStore::LoadState::Loaded);
             QCOMPARE(stillSaved.slices.front().frequencyHz, baseline.front().frequencyHz);
-            QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), attempt + 1, 15000);
+            QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), attempt + 1, kHandoverWaitMs);
             QCOMPARE(client.stationIdentityFingerprint(), station.fingerprint());
             QVERIFY(reconnects.count() >= attempt);
             QTcpServer duplicateListener;
@@ -399,7 +406,7 @@ private slots:
         QVERIFY(first.waitForStarted());
         const qint64 firstPid = first.processId();
         QByteArray firstOutput;
-        QVERIFY2(waitForMarker(first, firstOutput, "READY first", 15000), firstOutput.constData());
+        QVERIFY2(waitForMarker(first, firstOutput, "READY first", kHandoverWaitMs), firstOutput.constData());
         StationHandover competitor(profile);
         QVERIFY(!competitor.acquire(0));
 
@@ -411,7 +418,7 @@ private slots:
         QSignalSpy reconnects(&client, &StationClient::reconnectScheduled);
         client.connectToStation(QUrl(QStringLiteral("wss://127.0.0.1:%1").arg(port)),
                                 {}, {}, false, station.fingerprint());
-        QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), 1, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), 1, kHandoverWaitMs);
         QCOMPARE(client.stationIdentityFingerprint(), station.fingerprint());
 
         QElapsedTimer toDaemon;
@@ -450,8 +457,8 @@ private slots:
             QString::fromLatin1(StationControlSocket::kSocketName));
         QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(socketPath), 10000);
         QVERIFY(!competitor.acquire(0));
-        QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), 2, 15000);
-        QVERIFY2(toDaemon.elapsed() <= 15000, qPrintable(QString::number(toDaemon.elapsed())));
+        QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), 2, kHandoverWaitMs);
+        QVERIFY2(toDaemon.elapsed() <= kHandoverWaitMs, qPrintable(QString::number(toDaemon.elapsed())));
         const qint64 guiToDaemonMs = toDaemon.elapsed();
         QCOMPARE(client.stationIdentityFingerprint(), station.fingerprint());
         QVERIFY(reconnects.count() >= 1);
@@ -478,7 +485,7 @@ private slots:
         QVERIFY(reopened.waitForStarted());
         const qint64 reopenedPid = reopened.processId();
         QByteArray reopenOutput;
-        const bool reopenedReady = waitForMarker(reopened, reopenOutput, "READY reopen", 15000);
+        const bool reopenedReady = waitForMarker(reopened, reopenOutput, "READY reopen", kHandoverWaitMs);
         if (!reopenedReady) {
             const bool finishedForDiagnosis = QTest::qWaitFor([&] {
                 reopenOutput += reopened.readAllStandardOutput();
@@ -498,8 +505,8 @@ private slots:
         QVERIFY(daemon.state() == QProcess::NotRunning || daemon.waitForFinished(3000));
         QCOMPARE(daemon.exitCode(), 0);
         QVERIFY(!competitor.acquire(0));
-        QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), 3, 15000);
-        QVERIFY2(toGui.elapsed() <= 15000, qPrintable(QString::number(toGui.elapsed())));
+        QTRY_COMPARE_WITH_TIMEOUT(handshakes.count(), 3, kHandoverWaitMs);
+        QVERIFY2(toGui.elapsed() <= kHandoverWaitMs, qPrintable(QString::number(toGui.elapsed())));
         const qint64 daemonToGuiMs = toGui.elapsed();
         QCOMPARE(client.stationIdentityFingerprint(), station.fingerprint());
         QVERIFY(reconnects.count() >= 2);

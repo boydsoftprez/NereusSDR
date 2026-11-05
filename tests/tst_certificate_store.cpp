@@ -62,6 +62,8 @@ struct PermissionRestorer {
 
 } // namespace
 
+static QByteArray s_sourceKeyPem;
+
 class TstCertificateStore : public QObject {
     Q_OBJECT
 private slots:
@@ -403,6 +405,41 @@ private slots:
               "best-effort by CertificateStore but not meaningfully "
               "assertable here.");
 #endif
+    }
+
+    // The test seam (tests/TestSharedTlsKey.cpp): a store takes the source's
+    // key but still makes a certificate of its own, so two Cores in a test
+    // have different pins. A source with nothing usable falls back.
+    void aKeySourceGivesItsKeyAndACertificateOfItsOwn()
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        CertificateStore first(tmp.filePath(QStringLiteral("first")));
+        QVERIFY2(first.isValid(), qPrintable(first.lastError()));
+        QFile firstKey(first.privateKeyPath());
+        QVERIFY(firstKey.open(QIODevice::ReadOnly));
+        s_sourceKeyPem = firstKey.readAll();
+
+        const auto resetSource = qScopeGuard([] {
+            CertificateStore::setKeySourceForTest(nullptr);
+        });
+        CertificateStore::setKeySourceForTest([]() { return s_sourceKeyPem; });
+
+        CertificateStore second(tmp.filePath(QStringLiteral("second")));
+        QVERIFY2(second.isValid(), qPrintable(second.lastError()));
+        QCOMPARE(second.privateKey().toPem(), first.privateKey().toPem());
+        QVERIFY(second.fingerprintSha256() != first.fingerprintSha256());
+
+        s_sourceKeyPem = QByteArrayLiteral("not a key");
+        CertificateStore unusable(tmp.filePath(QStringLiteral("unusable")));
+        QVERIFY2(unusable.isValid(), qPrintable(unusable.lastError()));
+        QVERIFY(unusable.privateKey().toPem() != first.privateKey().toPem());
+
+        CertificateStore::setKeySourceForTest(nullptr);
+        s_sourceKeyPem.clear();
+        CertificateStore generated(tmp.filePath(QStringLiteral("generated")));
+        QVERIFY2(generated.isValid(), qPrintable(generated.lastError()));
+        QVERIFY(generated.privateKey().toPem() != first.privateKey().toPem());
     }
 
     // LINK minor 6: a private key loosened on disk after it was written is

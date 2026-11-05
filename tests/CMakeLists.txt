@@ -187,6 +187,18 @@ if(FFTW3_FOUND)
         NEREUS_TEST_FFTW_WISDOM_FILE="${CMAKE_CURRENT_BINARY_DIR}/test-fftw-wisdom")
 endif()
 
+# ── One TLS key for the tests (2026-11-05) ─────────────────────────────
+# TestSharedTlsKey.cpp: every test's CertificateStore takes its RSA key from
+# one file per build directory instead of generating one, which cost about a
+# second a Core and several under load. An OBJECT library for the same reason
+# as nereus_test_sandbox: it is all static constructor. Only nereus_add_test
+# tests and the helpers that start a Core link it. A test about the key itself
+# opts out with OWN_TLS_KEYS.
+add_library(nereus_test_shared_tls_key OBJECT EXCLUDE_FROM_ALL TestSharedTlsKey.cpp)
+target_link_libraries(nereus_test_shared_tls_key PRIVATE NereusCore)
+target_compile_definitions(nereus_test_shared_tls_key PRIVATE
+    NEREUS_TEST_TLS_KEY_FILE="${CMAKE_CURRENT_BINARY_DIR}/test-tls-key.pem")
+
 function(nereus_add_test name)
     # EXTRA_LABELS <label...> for the handful of tests whose subject
     # cannot be derived from their own #include lines. Guard tests are
@@ -223,7 +235,7 @@ function(nereus_add_test name)
     # (tests/RealtimeTestLoad.h).
     # DEPENDENCY_ISOLATED compiles a production module with test dependency
     # doubles, without application linkage, settings helpers or the app PCH.
-    cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME;DEPENDENCY_ISOLATED" "" "EXTRA_LABELS" ${ARGN})
+    cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME;DEPENDENCY_ISOLATED;OWN_TLS_KEYS" "" "EXTRA_LABELS" ${ARGN})
     set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
 
     # all_tests and the per-label targets are built from the list once,
@@ -301,6 +313,9 @@ function(nereus_add_test name)
     else()
         add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox>
             $<TARGET_OBJECTS:nereus_test_home_guard> ${_extra_sources})
+    endif()
+    if(NOT _nat_DEPENDENCY_ISOLATED AND NOT _nat_OWN_TLS_KEYS)
+        target_sources(${name} PRIVATE $<TARGET_OBJECTS:nereus_test_shared_tls_key>)
     endif()
     # R-R3-49 parity mini-round: a test that starts WDSP without its wisdom
     # step gets the shared FFTW wisdom cache (nereus_test_fftw_wisdom above).
@@ -9918,7 +9933,7 @@ nereus_add_test(tst_notch_visual_does_not_perturb_noise_floor_or_maxbin)
 # against. A prior revision gated this on OPENSSL_FOUND, which the review
 # flagged as losing both the class AND its only test with no signal on a
 # runner that happened to lack OpenSSL.
-nereus_add_test(tst_certificate_store)
+nereus_add_test(tst_certificate_store OWN_TLS_KEYS)
 
 # iPhone app Task 12 (R-IOS-08, R-IOS-02): the Core's identity key (created
 # once, mode 0600, reused), its label rules, and the paired-device store
@@ -10441,7 +10456,8 @@ nereus_add_test(tst_spake_exchange EXTRA_LABELS core)
 # sets of tools here when the two meet.
 add_executable(nereus_pairing_peer EXCLUDE_FROM_ALL
     tools/nereus_pairing_peer.cpp
-    $<TARGET_OBJECTS:nereus_test_sandbox>)
+    $<TARGET_OBJECTS:nereus_test_sandbox>
+    $<TARGET_OBJECTS:nereus_test_shared_tls_key>)
 target_link_libraries(nereus_pairing_peer PRIVATE NereusCore)
 set_target_properties(nereus_pairing_peer PROPERTIES AUTOMOC ON)
 set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS nereus_pairing_peer)
