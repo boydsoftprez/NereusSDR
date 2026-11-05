@@ -23,6 +23,9 @@ import XCTest
 // and writes each press and release the hold makes in `pttHoldLog`, so a
 // swipe or a drag that keyed, or a release that never came, shows there.
 final class RoundtableUITests: XCTestCase {
+    /// Slice A's frequency in the fixture.
+    private static let ownRoom = "lsb-7236400"
+
     override func setUp() {
         continueAfterFailure = false
     }
@@ -108,9 +111,9 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(signal.waitForNonExistence(timeout: 10))
     }
 
-    /// D27, D38: a drag on the band tunes and leaves the sheet open on what it shows.
+    /// D27, D38: a drag on the slice's flag tunes and leaves the sheet open on what it shows.
     @MainActor
-    func testDraggingTheBandLeavesTheSheetOpen() throws {
+    func testDraggingTheSlicesFlagLeavesTheSheetOpen() throws {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
         let app = launch(frequency: true)
         let flag = app.descendants(matching: .any)["flagA"]
@@ -131,6 +134,37 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(back.exists, "the drag ended the view")
         XCTAssertEqual(holdLog(app), "none")
         try save("roundtable-ui-drag-keeps-sheet")
+    }
+
+    /// D27, D38: a drag on the empty band moves the band and leaves the sheet open on a view.
+    @MainActor
+    func testDraggingTheEmptyBandLeavesTheSheetOpenOnAView() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 30))
+        tag.tap()
+        let sheet = app.descendants(matching: .any)["roundtableSheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let back = app.descendants(matching: .any)["roundtableBackToSlice"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        try dragTheEmptyBand(app, under: sheet, shot: "roundtable-ui-band-drag-view")
+        XCTAssertTrue(back.exists, "the drag ended the view")
+    }
+
+    /// D27, D38: the same on your own frequency, where the sheet has no view to end.
+    @MainActor
+    func testDraggingTheEmptyBandLeavesTheSheetOpenOnYourOwn() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        let own = app.descendants(matching: .any)["roundtableTag.\(Self.ownRoom)"]
+        XCTAssertTrue(own.waitForExistence(timeout: 30))
+        own.tap()
+        let sheet = app.descendants(matching: .any)["roundtableSheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableViewHead"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableBackToSlice"].exists)
+        try dragTheEmptyBand(app, under: sheet, shot: "roundtable-ui-band-drag-own")
     }
 
     /// U2: with the sheet open PTT is press and hold beside the box, and
@@ -270,6 +304,29 @@ final class RoundtableUITests: XCTestCase {
             ok.tap()
         }
         return sheet
+    }
+
+    /// A drag across open band, clear of the flag, the tags and the sheet: the band moves
+    /// under its flag, nothing tunes and the sheet stays up.
+    @MainActor
+    private func dragTheEmptyBand(_ app: XCUIApplication, under sheet: XCUIElement, shot: String) throws {
+        let surface = app.descendants(matching: .any)["bandSurface"]
+        let flag = app.descendants(matching: .any)["flagA"]
+        XCTAssertTrue(surface.waitForExistence(timeout: 10))
+        XCTAssertTrue(flag.waitForExistence(timeout: 10))
+        let label = flag.label
+        let before = flag.frame.minX
+        let band = surface.frame
+        let y = (flag.frame.maxY + sheet.frame.minY) / 2
+        func at(_ x: CGFloat) -> XCUICoordinate {
+            surface.coordinate(withNormalizedOffset: CGVector(dx: x, dy: (y - band.minY) / band.height))
+        }
+        at(0.75).press(forDuration: 0.05, thenDragTo: at(0.55))
+        waitUntil("the drag did not move the band") { abs(flag.frame.minX - before) > 20 }
+        XCTAssertEqual(flag.label, label, "a drag on open band tuned the slice")
+        XCTAssertTrue(sheet.exists, "the drag closed the sheet")
+        XCTAssertEqual(holdLog(app), "none")
+        try save(shot)
     }
 
     @MainActor
