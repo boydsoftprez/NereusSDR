@@ -2051,6 +2051,7 @@ private:
         }
         return holdForListener();
     }
+    QString sampleRateSettingsKey() const;
     QString m_settingsRadioMac;
     QString m_nnrLastError;
     QString m_nnrLoadWarning;

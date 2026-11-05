@@ -164,6 +164,9 @@
 //                a shared receiver keep theirs; a radio-wide change saves on
 //                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-05 - The saved rate moves to hardware/<mac>/slices/<N>/SampleRate,
+//                one for each radio. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-09-28 - Slice control and shared listening plan Task 5: the
 //                read-only listener mark; every setter of a property a
 //                remote window writes to the Core (MirrorPolicy
@@ -3507,13 +3510,26 @@ bool SliceModel::hasSettingsFor(Band band) const
     return s.contains(bandPrefix(m_sliceIndex, band) + QStringLiteral("DspMode"));
 }
 
+QString SliceModel::sampleRateSettingsKey() const
+{
+    // Per radio, beside the NNR keys: one computer can run several radios, and
+    // each has its own rates. With no radio known there is no key.
+    if (m_settingsRadioMac.isEmpty() || m_sliceIndex < 0) {
+        return {};
+    }
+    return QStringLiteral("hardware/%1/slices/%2/SampleRate")
+        .arg(m_settingsRadioMac)
+        .arg(m_sliceIndex);
+}
+
 int SliceModel::savedSampleRateHz() const
 {
     auto& s = AppSettings::instance();
-    QString key = slicePrefix(m_sliceIndex) + QStringLiteral("SampleRate");
-    if (!s.contains(key)) {
+    QString key = sampleRateSettingsKey();
+    if (key.isEmpty() || !s.contains(key)) {
         // Saved before a receiver had one rate: the rate from the band it was
-        // last on. The first save replaces this with the key above.
+        // last on. The first save with a radio known replaces this with the
+        // key above.
         const auto lastBand = loadLastBandFromSettings(m_sliceIndex);
         if (!lastBand) {
             return 0;
@@ -3568,7 +3584,11 @@ QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
     // (JJ's ruling, 2026-11-05: it used to be per band, which put an old rate
     // back on each band change). NereusSDR-original: Thetis has only Setup's
     // rate, and a band change leaves it alone (setup.cs:7066 [v2.10.3.15]).
-    values.append({slicePrefix(m_sliceIndex) + QStringLiteral("SampleRate"), m_sampleRateHz});
+    // Saved for each radio (hardware/<mac>/slices/<N>/SampleRate); with no radio
+    // known it is not saved.
+    if (const QString rateKey = sampleRateSettingsKey(); !rateKey.isEmpty()) {
+        values.append({rateKey, m_sampleRateHz});
+    }
 
     // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. The 8-memory
     // slots (T3) + direction-finding fields (T11) join this block when they

@@ -18,6 +18,10 @@
 #include <QtTest/QtTest>
 
 #include "core/AppSettings.h"
+#include "core/P1RadioConnection.h"
+#include "core/RadioDiscovery.h"
+#include "core/WdspEngine.h"
+#include "core/session/ReceiverPlanner.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -28,6 +32,27 @@ namespace {
 
 constexpr int kStartRateHz = 192000;
 constexpr int kChosenRateHz = 1536000;
+const QString kRadioMac = QStringLiteral("AA:BB:CC:DD:EE:51");
+const QString kOtherRadioMac = QStringLiteral("AA:BB:CC:DD:EE:52");
+
+QString rateKey(const QString& mac, int sliceId)
+{
+    return QStringLiteral("hardware/%1/slices/%2/SampleRate")
+        .arg(AppSettings::normalizedRadioMac(mac))
+        .arg(sliceId);
+}
+
+QString radioWideRateKey(const QString& mac)
+{
+    return QStringLiteral("hardware/%1/radioInfo/sampleRate")
+        .arg(AppSettings::normalizedRadioMac(mac));
+}
+
+// Leaves the model with no connection before the connection on the stack goes.
+struct DetachConnection {
+    RadioModel* model;
+    ~DetachConnection() { model->injectConnectionForTest(nullptr); }
+};
 
 } // namespace
 
@@ -36,10 +61,57 @@ class TestSampleRateSticks : public QObject
     Q_OBJECT
 
 private:
+    static void identify(RadioModel& model, const QString& mac = kRadioMac)
+    {
+        RadioInfo info;
+        info.macAddress = mac;
+        model.setLastRadioInfoForTest(info);
+    }
+
     static void seed(RadioModel& model)
     {
+        identify(model);
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         model.configureStreamPool(/*userDdcCount*/ 4, /*maxSlices*/ 4, kStartRateHz);
+    }
+
+    // A Protocol 1 radio whose rate change can really happen: WDSP counts as up,
+    // so nothing but the guard under test stops a change reaching the wire.
+    static void seedOnProtocol1(RadioModel& model, P1RadioConnection& connection)
+    {
+        identify(model);
+        model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+        model.injectConnectionForTest(&connection);
+        model.wdspEngine()->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+        connection.restartStreamWithRate(kStartRateHz);
+        model.setConnectionRateForTest(kStartRateHz, 1);
+        model.configureStreamPool(/*userDdcCount*/ 2, /*maxSlices*/ 2, kStartRateHz);
+    }
+
+    static void settleRateChange(RadioModel& model)
+    {
+        QVERIFY(model.waitForReceiveLaneForTest());
+        // The wire write is queued to the connection, which is on this thread.
+        QCoreApplication::processEvents();
+    }
+
+    // Makes slice `id` again from its saved keys, as a Core does for a device
+    // coming back. Returns the restored slice.
+    static SliceModel* makeAgain(RadioModel& model, int id, const QString& panKey,
+                                 double frequencyHz)
+    {
+        ReceiveSliceState saved;
+        saved.id = id;
+        saved.panKey = panKey;
+        saved.frequencyHz = frequencyHz;
+        saved.dspMode = DSPMode::USB;
+        QString reason;
+        const int restored = model.restoreSliceFor(QByteArrayLiteral("phone"), id, saved, &reason);
+        if (restored != id) {
+            qWarning() << "restoreSliceFor refused:" << reason;
+            return nullptr;
+        }
+        return model.sliceById(restored);
     }
 
 private slots:
@@ -242,8 +314,51 @@ private slots:
         QVERIFY(a >= 0);
         QCOMPARE(model.sliceById(a)->savedSampleRateHz(), kChosenRateHz);
 
-        settings.setValue(QStringLiteral("Slice0/SampleRate"), 384000);
+        // A value saved under the radio's own key wins from then on.
+        settings.setValue(rateKey(kRadioMac, 0), 384000);
         QCOMPARE(model.sliceById(a)->savedSampleRateHz(), 384000);
+    }
+    // One computer, several radios: each keeps its own rate on the same letter.
+    void two_radios_keep_separate_rates_on_one_letter()
+    {
+        SliceModel onFirst;
+        onFirst.setSliceIndex(0);
+        onFirst.setSettingsRadioIdentity(kRadioMac);
+        onFirst.setSampleRateHz(kChosenRateHz);
+        onFirst.saveToSettings(Band::Band20m);
+
+        SliceModel onSecond;
+        onSecond.setSliceIndex(0);
+        onSecond.setSettingsRadioIdentity(kOtherRadioMac);
+        onSecond.setSampleRateHz(kStartRateHz);
+        onSecond.saveToSettings(Band::Band20m);
+
+        QCOMPARE(onFirst.savedSampleRateHz(), kChosenRateHz);
+        QCOMPARE(onSecond.savedSampleRateHz(), kStartRateHz);
+        auto& settings = AppSettings::instance();
+        QCOMPARE(settings.value(rateKey(kRadioMac, 0)).toInt(), kChosenRateHz);
+        QCOMPARE(settings.value(rateKey(kOtherRadioMac, 0)).toInt(), kStartRateHz);
+        QVERIFY(!settings.contains(QStringLiteral("Slice0/SampleRate")));
+    }
+
+    // With no radio known the rate has nowhere to go, so it is not saved, and
+    // only a rate from an older build can be read.
+    void with_no_radio_known_the_rate_is_not_saved()
+    {
+        SliceModel slice;
+        slice.setSliceIndex(0);
+        slice.setSampleRateHz(kChosenRateHz);
+        slice.saveToSettings(Band::Band20m);
+
+        auto& settings = AppSettings::instance();
+        QVERIFY(!settings.contains(QStringLiteral("Slice0/SampleRate")));
+        QVERIFY(!settings.contains(QStringLiteral("Slice0/Band20m/SampleRate")));
+        QCOMPARE(slice.savedSampleRateHz(), 0);
+
+        settings.setValue(QStringLiteral("Slice0/Band20m/SampleRate"), 384000);
+        QCOMPARE(slice.savedSampleRateHz(), 384000);
+        settings.setValue(rateKey(kRadioMac, 0), kChosenRateHz);
+        QCOMPARE(slice.savedSampleRateHz(), 384000);
     }
 };
 

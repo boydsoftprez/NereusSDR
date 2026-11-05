@@ -148,9 +148,13 @@ double settledPeakFromATone(RxChannel* rx, int rateHz,
 
 namespace {
 
+const QString kSavedRateMac = QStringLiteral("AA:BB:CC:DD:EE:53");
+
 QString savedRateKey(int sliceId)
 {
-    return QStringLiteral("Slice%1/SampleRate").arg(sliceId);
+    return QStringLiteral("hardware/%1/slices/%2/SampleRate")
+        .arg(AppSettings::normalizedRadioMac(kSavedRateMac))
+        .arg(sliceId);
 }
 
 // The codec is declared first so it outlives the model that points at it.
@@ -381,6 +385,9 @@ private:
 
     static void restartOnP2(RestartedP2& r, int savedRateHz)
     {
+        RadioInfo info;
+        info.macAddress = kSavedRateMac;
+        r.model.setLastRadioInfoForTest(info);
         r.model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         r.model.receiverManager()->setP2Codec(&r.codec);
         r.engine = r.model.wdspEngine();
