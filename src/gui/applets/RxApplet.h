@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - openSetupRequested is the right-click on the AGC-T slider
+//                 or the AUTO button. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-24 - Review fixes for the container copies: a preview copy
 //                 is inert; the section classes are forward-declared.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -347,6 +349,8 @@ signals:
     void autoAgcToggled(bool on);
     // The applet shows another slice (or none).
     void sliceChanged();
+    // Right-click on the AGC-T slider or the AUTO button, on this panel or
+    // on an RX AGC copy. MainWindow opens Setup on the AGC/ALC page.
     void openSetupRequested();
     // Phase 3F (Bug 3): a slice tab was clicked; MainWindow routes this to
     // RadioModel::setActiveSlice. Mirrors AetherSDR
