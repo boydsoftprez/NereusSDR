@@ -61,6 +61,8 @@
 //                 there from the RF gate, and the poll reads the status the
 //                 lane caches. AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -193,6 +195,9 @@ public:
     // PSEnabled transitions (Auto Cal, Single Cal, restore, and teardown),
     // unlike isAutoCalEnabled(), which is only the user's auto-cal preference.
     bool isPsEnabled() const noexcept { return m_psEnabled; }
+    // The rate the feedback samples arrive at: the board's, else Thetis's.
+    int feedbackSampleRateHz() const noexcept
+    { return m_caps.psSampleRate > 0 ? m_caps.psSampleRate : 192000; }
 
     // Wire the PS-A state into a StepAttenuatorController's key-down
     // "force 31 dB when PS is off" gate (setPsActive), then push the current
@@ -325,6 +330,7 @@ public:
     // Production code populates m_calCount via pollTimerTick from WDSP's
     // info[5] — tests don't have WDSP available so they bump it directly.
     void setCalCountForTest(int n) { m_calCount.store(n); }
+    void setPsEnabledForTest(bool on) { setPsEnabledWithFanOut(on); }
     void setAttemptCountForTest(int n) { m_calAttempts.store(n); }
 #endif
 

@@ -8,8 +8,10 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
-//   2026-11-04  J.J. Boyd / KG4VCF  Created for the SSB Mod Monitor.
-//                                    AI-assisted via xAI Grok.
+//   2026-11-04  Created for the SSB Mod Monitor. Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok.
+//   2026-11-05  Corrections for review findings.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/SsbModMonitorPublisher.h"
@@ -17,7 +19,6 @@
 #include "core/session/SsbModMonitorRecord.h"
 #include "core/session/RecordStream.h"
 #include "models/RadioModel.h"
-#include "models/SliceModel.h"
 
 #include <QDateTime>
 
@@ -42,11 +43,6 @@ SsbModMonitorPublisher::SsbModMonitorPublisher(RadioModel* radio, RecordStream* 
 }
 
 SsbModMonitorPublisher::~SsbModMonitorPublisher() = default;
-
-bool SsbModMonitorPublisher::isSsbVoice(DSPMode mode)
-{
-    return mode == DSPMode::USB || mode == DSPMode::LSB;
-}
 
 RecordStream* SsbModMonitorPublisher::stream(int source) const
 {
@@ -91,15 +87,6 @@ bool SsbModMonitorPublisher::resetSource(int source)
     return true;
 }
 
-bool SsbModMonitorPublisher::keyedInSsb() const
-{
-    if (!m_radio || !m_radio->isTransmitting()) {
-        return false;
-    }
-    const SliceModel* slice = m_radio->txBoundSlice();
-    return slice != nullptr && isSsbVoice(slice->dspMode());
-}
-
 void SsbModMonitorPublisher::setOpen(int source, bool open)
 {
     const auto index = static_cast<std::size_t>(source);
@@ -109,12 +96,6 @@ void SsbModMonitorPublisher::setOpen(int source, bool open)
         if (changed && open) {
             if (SsbModulationAnalyzer* analyzer = m_radio->ssbModulationAnalyzer(source)) {
                 analyzer->reset();
-                if (source == 1) {
-                    const int fs = m_radio->streamSampleRateHz(m_radio->ssbModFeedbackStream());
-                    if (fs > 0) {
-                        analyzer->setSampleRate(fs);
-                    }
-                }
             }
         }
         // Re-applied every read. A one-time set was left off if the
@@ -142,12 +123,13 @@ void SsbModMonitorPublisher::setOpen(int source, bool open)
 
 void SsbModMonitorPublisher::tick()
 {
-    const bool keyed = keyedInSsb();
+    const bool keyed = m_radio && m_radio->ssbTxActive();
+    const bool feedback = m_radio && m_radio->ssbModFeedbackInUse();
     bool published = false;
     for (int source = 0; source < 2; ++source) {
         RecordStream* s = stream(source);
         const bool watched = s != nullptr && s->subscriberCount() > 0;
-        setOpen(source, watched && keyed);
+        setOpen(source, watched && keyed && (source == 0 || feedback));
         if (!m_open[static_cast<std::size_t>(source)] || !m_radio) {
             continue;
         }
@@ -159,7 +141,9 @@ void SsbModMonitorPublisher::tick()
         auto& unsent = m_unsent[static_cast<std::size_t>(source)];
         if (unsent) {
             snap.peakPct = std::max(snap.peakPct, unsent->peakPct);
-            snap.crestDb = std::max(snap.crestDb, unsent->crestDb);
+            if (!snap.crestDb) {
+                snap.crestDb = unsent->crestDb;
+            }
             snap.signalPresent = snap.signalPresent || unsent->signalPresent;
         }
         unsent = snap;

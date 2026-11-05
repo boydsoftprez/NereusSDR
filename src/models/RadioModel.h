@@ -940,6 +940,8 @@
 //                 carried this Longpath code; the entry describes Longpath
 //                 only. Trunk's cwPitchHz()/setCwPitchHz()/cwPitchChanged
 //                 are its own (R-CW-02).]
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -4295,25 +4297,26 @@ public:
     void clearStationModMonitor();
 
     // ── SSB Mod Monitor (NereusSDR-original) ──────────────────────────────
-    /// source 0 = TX I/Q leaving WDSP, 1 = PureSignal feedback receiver.
-    /// Fed only while the TX slice is USB or LSB.
+    /// source 0 = TX I/Q leaving WDSP, 1 = PureSignal's feedback samples.
+    /// Fed only while ssbTxActive(), and only for a source that is wanted.
     SsbModulationAnalyzer* ssbModulationAnalyzer(int source) const;
-    void setSsbModFeedbackStream(int streamIndex);
-    int  ssbModFeedbackStream() const { return m_ssbModFbStream.load(); }
     void setSsbModFeedbackWanted(bool wanted);
     bool ssbModFeedbackWanted() const { return m_ssbModFbWanted.load(); }
-    /// The Core turns this off until a device watches the SSB monitor.
-    /// A local window leaves it on and refreshSsbModulationTap attaches
-    /// the tap only while transmitting USB or LSB.
+    /// Off until a shown panel or a watching device asks for it. The tap is
+    /// attached only while this is on and ssbTxActive(), so the transmit
+    /// worker takes no extra lock otherwise.
     void setSsbModTxTapEnabled(bool enabled);
     bool ssbModTxTapEnabled() const { return m_ssbModTxTapEnabled.load(); }
-    /// Attach or detach the TX tap from the current mode and MOX state.
+    /// Attach or detach the TX tap and the feedback feed from the current
+    /// state. Runs on keying, TX slice, mode and PureSignal changes.
     void refreshSsbModulationTap();
-    /// Transmitting, and the TX slice is USB or LSB.
+    /// The one definition of "SSB voice keyed": transmitting, and the TX
+    /// slice is USB or LSB. DIGU and DIGL are not.
     bool ssbTxActive() const;
-    /// A window's SsbModMon/FbStream, or its removal (rx1). Ignores every
-    /// other key.
-    void applySsbModMonitorSetting(const QString& key, const QVariant& value);
+    /// PureSignal is running on this radio (a remote window: on the Core's),
+    /// so a key will carry a feedback stream.
+    bool ssbModFeedbackInUse() const;
+    void feedSsbModFeedbackForTest(const QVector<float>& samples) { feedSsbModFeedback(samples); }
     std::optional<SsbModulationAnalyzer::Snapshot> stationSsbModMonitorSnapshot(int source) const;
     void clearStationSsbModMonitor();
 
@@ -6725,6 +6728,8 @@ signals:
     void rfKitEnabledChanged(bool enabled);
     // R-R3-49: isTransmitting() changed.
     void transmittingChanged(bool transmitting);
+    // ssbModFeedbackInUse() changed.
+    void ssbModFeedbackInUseChanged(bool inUse);
     // RADE end-of-over callsigns: endOfOverTailActive() changed.
     void endOfOverTailChanged(bool active);
     // R-R3-49 (parity Task 1): isCoreOnAir() changed.
@@ -9379,11 +9384,14 @@ private:
     // SSB Mod Monitor analyzers: [0] TX I/Q tap, [1] PS feedback receiver.
     std::unique_ptr<SsbModulationAnalyzer> m_ssbModTx;
     std::unique_ptr<SsbModulationAnalyzer> m_ssbModFb;
-    std::atomic<int>  m_ssbModFbStream{1};
+    void feedSsbModFeedback(const QVector<float>& samples);
     std::atomic<bool> m_ssbModFbWanted{false};
-    std::atomic<bool> m_ssbModMoxOn{false};
-    std::atomic<bool> m_ssbModTxTapEnabled{true};
-    std::atomic<bool> m_ssbModActive{false};
+    std::atomic<bool> m_ssbModTxTapEnabled{false};
+    // Read on the connection thread. The rest of this state is the main
+    // thread's.
+    std::atomic<bool> m_ssbModFbFeed{false};
+    bool m_ssbModWasActive{false};
+    bool m_ssbModFbInUseAnnounced{false};
     std::array<std::optional<SsbModulationAnalyzer::Snapshot>, 2> m_stationSsbModMonitor;
 
     // TX mic source — strategy interface for silence (3M-1a) or real mic (3M-1b).

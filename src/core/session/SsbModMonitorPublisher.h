@@ -10,15 +10,17 @@
 //
 // The Core runs its two SSB modulation analyzers only for devices that
 // watch them, and only while the radio is keyed in USB or LSB. With no
-// subscriber the timer is stopped and neither analyzer is fed.
+// subscriber the timer is stopped and neither analyzer is fed. The feedback
+// source also needs PureSignal running on the Core's radio.
 //
 // Modification history (NereusSDR):
-//   2026-11-04  J.J. Boyd / KG4VCF  Created for the SSB Mod Monitor.
-//                                    AI-assisted via xAI Grok.
+//   2026-11-04  Created for the SSB Mod Monitor. Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok.
+//   2026-11-05  Corrections for review findings.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/SsbModulationAnalyzer.h"
-#include "core/WdspTypes.h"
 
 #include <QObject>
 #include <QPointer>
@@ -41,8 +43,6 @@ public:
                            std::function<void()> scheduleFlush, QObject* parent = nullptr);
     ~SsbModMonitorPublisher() override;
 
-    static bool isSsbVoice(DSPMode mode);
-
     void subscriptionsChanged();
     void flushed();
     bool resetSource(int source);
@@ -53,7 +53,6 @@ public:
 
 private:
     void tick();
-    bool keyedInSsb() const;
     RecordStream* stream(int source) const;
     void setOpen(int source, bool open);
 

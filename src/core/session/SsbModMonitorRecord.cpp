@@ -8,8 +8,10 @@
 // =================================================================
 //
 // Modification history (NereusSDR):
-//   2026-11-04  J.J. Boyd / KG4VCF  Created for the SSB Mod Monitor.
-//                                    AI-assisted via xAI Grok.
+//   2026-11-04  Created for the SSB Mod Monitor. Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok.
+//   2026-11-05  Corrections for review findings.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/SsbModMonitorRecord.h"
@@ -41,6 +43,21 @@ const QString kScope = QStringLiteral("scopePctTenths");
 double finiteOr(double value, double fallback)
 {
     return std::isfinite(value) ? value : fallback;
+}
+
+double wirePct(double value)
+{
+    return std::clamp(finiteOr(value, 0.0), 0.0, kMaxPct);
+}
+
+double wireDbfs(double value)
+{
+    return std::clamp(finiteOr(value, kMinDbfs), kMinDbfs, kMaxDbfs);
+}
+
+bool inRange(double value, double low, double high)
+{
+    return value >= low && value <= high;
 }
 
 } // namespace
@@ -111,7 +128,11 @@ bool decodeScope(const QString& text, std::vector<float>* pct)
         const auto bits = static_cast<std::uint16_t>(
             static_cast<std::uint8_t>(bytes[i])
             | (static_cast<std::uint16_t>(static_cast<std::uint8_t>(bytes[i + 1])) << 8));
-        out.push_back(static_cast<float>(static_cast<std::int16_t>(bits)) / 10.0f);
+        const auto tenths = static_cast<std::int16_t>(bits);
+        if (tenths < 0) {
+            return false;
+        }
+        out.push_back(static_cast<float>(tenths) / 10.0f);
     }
     if (pct != nullptr) {
         *pct = std::move(out);
@@ -123,28 +144,45 @@ QJsonObject toFields(const SsbModulationAnalyzer::Snapshot& s, qint64 atMs)
 {
     int reducedBy = 1;
     const QString scope = encodeScope(s.scope, &reducedBy);
-    return QJsonObject{
+    QJsonObject fields{
         {kAtMs, static_cast<double>(atMs)},
-        {kPeakPct, finiteOr(s.peakPct, 0.0)},
-        {kAvgPct, finiteOr(s.avgPct, 0.0)},
-        {kPeakHoldPct, finiteOr(s.peakHoldPct, 0.0)},
-        {kPeakDbfs, finiteOr(s.peakDbfs, -120.0)},
-        {kAvgDbfs, finiteOr(s.avgDbfs, -120.0)},
-        {kPeakHoldDbfs, finiteOr(s.peakHoldDbfs, -120.0)},
-        {kCrestDb, finiteOr(s.crestDb, 0.0)},
+        {kPeakPct, wirePct(s.peakPct)},
+        {kAvgPct, wirePct(s.avgPct)},
+        {kPeakHoldPct, wirePct(s.peakHoldPct)},
+        {kPeakDbfs, wireDbfs(s.peakDbfs)},
+        {kAvgDbfs, wireDbfs(s.avgDbfs)},
+        {kPeakHoldDbfs, wireDbfs(s.peakHoldDbfs)},
         {kSignalPresent, s.signalPresent},
         {kScopeRate, reducedBy > 0 ? s.scopeRateHz / reducedBy : s.scopeRateHz},
         {kScope, scope},
     };
+    if (s.crestDb && std::isfinite(*s.crestDb)) {
+        fields.insert(kCrestDb, std::clamp(*s.crestDb, -kMaxCrestDb, kMaxCrestDb));
+    }
+    return fields;
 }
 
 std::optional<SsbModulationAnalyzer::Snapshot> fromFields(const QJsonObject& f)
 {
-    for (const QString& key : {kPeakPct, kAvgPct, kPeakHoldPct, kPeakDbfs, kAvgDbfs,
-                               kPeakHoldDbfs, kCrestDb, kScopeRate}) {
-        if (!f.value(key).isDouble()) {
+    for (const QString& key : {kPeakPct, kAvgPct, kPeakHoldPct}) {
+        if (!f.value(key).isDouble() || !inRange(f.value(key).toDouble(), 0.0, kMaxPct)) {
             return std::nullopt;
         }
+    }
+    for (const QString& key : {kPeakDbfs, kAvgDbfs, kPeakHoldDbfs}) {
+        if (!f.value(key).isDouble() || !inRange(f.value(key).toDouble(), kMinDbfs, kMaxDbfs)) {
+            return std::nullopt;
+        }
+    }
+    // toInt() answers -1 for a number that is not a whole one.
+    const int scopeRate = f.value(kScopeRate).toInt(-1);
+    if (!inRange(scopeRate, 0, kMaxScopeRateHz)) {
+        return std::nullopt;
+    }
+    const QJsonValue crest = f.value(kCrestDb);
+    if (!crest.isUndefined()
+        && (!crest.isDouble() || !inRange(crest.toDouble(), -kMaxCrestDb, kMaxCrestDb))) {
+        return std::nullopt;
     }
     if (!f.value(kSignalPresent).isBool() || !f.value(kScope).isString()) {
         return std::nullopt;
@@ -156,9 +194,11 @@ std::optional<SsbModulationAnalyzer::Snapshot> fromFields(const QJsonObject& f)
     s.peakDbfs = f.value(kPeakDbfs).toDouble();
     s.avgDbfs = f.value(kAvgDbfs).toDouble();
     s.peakHoldDbfs = f.value(kPeakHoldDbfs).toDouble();
-    s.crestDb = f.value(kCrestDb).toDouble();
+    if (crest.isDouble()) {
+        s.crestDb = crest.toDouble();
+    }
     s.signalPresent = f.value(kSignalPresent).toBool();
-    s.scopeRateHz = f.value(kScopeRate).toInt();
+    s.scopeRateHz = scopeRate;
     if (!decodeScope(f.value(kScope).toString(), &s.scope)) {
         return std::nullopt;
     }

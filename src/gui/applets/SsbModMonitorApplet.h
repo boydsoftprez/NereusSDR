@@ -7,15 +7,18 @@
 // SSB Modulation Monitor. Envelope level of a USB or LSB transmission,
 // as percent of full scale and dBFS, with peak hold, crest factor, an
 // over-threshold flasher and an envelope trace. The analyzer is
-// SsbModulationAnalyzer. Readings are live only while the TX slice is
-// USB or LSB.
+// SsbModulationAnalyzer. Readings are live only while keyed in USB or LSB.
+// The panel starts off; nothing is measured or watched until it is shown.
 //
 // Sources match the AM Mod Monitor: the TX I/Q NereusSDR sends, or the
-// PureSignal feedback receiver. A remote window shows the Core's
-// readings from txSsbModulation / txSsbModulationFeedback.
+// PureSignal feedback, which needs PureSignal running: without it PA FB is
+// disabled with the reason. A remote window shows the Core's readings from
+// txSsbModulation / txSsbModulationFeedback.
 //
 // Modification history (NereusSDR):
-//   2026-11-04 — Created. J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//   2026-11-04 — Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-05 — Corrections for review findings.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -47,6 +50,7 @@ public:
     /// The AM monitor's green screen: 10 columns by 6 rows, with the
     /// envelope drawn across it.
     void setVintage(bool on);
+    std::size_t tracePoints() const { return m_trace.size(); }
     QSize sizeHint() const override { return {240, 140}; }
     QSize minimumSizeHint() const override { return {120, 120}; }
 protected:
@@ -77,8 +81,13 @@ public:
     bool monitorAvailableForTest() const { return m_available; }
     QString unavailableReasonForTest() const;
     QString lampTextForTest() const;
+    QString crestTextForTest() const;
+    bool paFeedbackEnabledForTest() const;
+    QString paFeedbackToolTipForTest() const;
+    std::size_t scopePointsForTest() const;
 
     static QString notConnectedReason();
+    static QString paFeedbackOffReason();
 
 public slots:
     void setSource(Source s);
@@ -96,7 +105,8 @@ private:
     void tick();
     void applySnapshot(const SsbModulationAnalyzer::Snapshot& s);
     bool isRemoteWindow() const;
-    bool txIsSsbVoice() const;
+    void updatePaFeedbackAvailability();
+    void syncLocalMeasuring(bool shown);
     void updateRemoteAvailability();
     void watchOnCore(int source);
     void setLamp(QLabel* lamp, const QString& text, const char* bg, const char* fg, const char* border);
@@ -110,7 +120,6 @@ private:
     QPushButton* m_srcFbBtn{nullptr};
     QPushButton* m_resetBtn{nullptr};
     QPushButton* m_vuBtn{nullptr};
-    QSpinBox*    m_fbStreamSpin{nullptr};
     QStackedWidget* m_meterStack{nullptr};
     HGauge*      m_peakGauge{nullptr};
     HGauge*      m_avgGauge{nullptr};

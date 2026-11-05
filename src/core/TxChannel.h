@@ -371,6 +371,8 @@ warren@wpratt.com
 //                 and the AM monitor tap, all zeros; the gate, the run
 //                 sequence and rfGateOpened are untouched. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -2099,6 +2101,8 @@ public:
     /// worker thread. nullptr detaches. The owner attaches it only while
     /// transmitting USB or LSB.
     void setSsbModulationTap(class SsbModulationAnalyzer* tap);
+    class SsbModulationAnalyzer* ssbModulationTapForTest() const
+    { return m_ssbModTap.load(std::memory_order_acquire); }
 
     /// CESSB (osctrl) run gate.  Wraps SetTXAosctrlRun(channel, on ? 1 : 0).
     ///

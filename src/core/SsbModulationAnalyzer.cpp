@@ -4,8 +4,10 @@
 // no-port-check: NereusSDR-original file. See the header for the design.
 //
 // Modification history (NereusSDR):
-//   2026-11-04 — Created for the SSB Mod Monitor. J.J. Boyd (KG4VCF),
+//   2026-11-04 — Created for the SSB Mod Monitor. Brian Sutton (W4KZO),
 //                AI-assisted via xAI Grok.
+//   2026-11-05 — Corrections for review findings.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include "core/SsbModulationAnalyzer.h"
 
@@ -13,6 +15,16 @@
 #include <cmath>
 
 namespace NereusSDR {
+
+namespace {
+
+// The one definition of crest: peak over RMS of the envelope, in dB.
+double crestDbFromPeakAndRms(double peak, double rms) noexcept
+{
+    return 20.0 * std::log10(peak / rms);
+}
+
+} // namespace
 
 SsbModulationAnalyzer::SsbModulationAnalyzer()
 {
@@ -80,17 +92,86 @@ void SsbModulationAnalyzer::rebuildScopeLocked()
 void SsbModulationAnalyzer::reset()
 {
     std::lock_guard<std::mutex> lock(m_mu);
+    forgetInputLocked();
+    m_holdPeak = 0.0;
+    m_holdAt = clock::time_point{};
+    m_framesSeen = 0;
+}
+
+void SsbModulationAnalyzer::forgetInputLocked()
+{
     m_avg = 0.0;
     m_avgSeeded = false;
     m_seedSum = 0.0;
     m_seedCount = 0;
     m_winMax = 0.0;
     m_winValid = false;
-    m_holdPeak = 0.0;
-    m_holdPct = 0.0;
-    m_holdAt = clock::time_point{};
-    m_framesSeen = 0;
+    m_inputLive = false;
+    m_crest.fill(CrestSlot{});
     rebuildScopeLocked();
+}
+
+void SsbModulationAnalyzer::advanceClockForTest(std::chrono::milliseconds step)
+{
+    std::lock_guard<std::mutex> lock(m_mu);
+    m_nowForTest = m_nowForTest.value_or(clock::now()) + step;
+}
+
+SsbModulationAnalyzer::clock::time_point SsbModulationAnalyzer::nowLocked() const
+{
+    return m_nowForTest ? *m_nowForTest : clock::now();
+}
+
+double SsbModulationAnalyzer::decayedHoldPctLocked(clock::time_point now) const
+{
+    if (m_holdPeak <= 0.0) {
+        return 0.0;
+    }
+    const double ms = std::chrono::duration<double, std::milli>(now - m_holdAt).count();
+    if (ms <= m_peakHoldMs) {
+        return m_holdPeak;
+    }
+    // 100 percent per second after the hold, from the original peak.
+    return std::max(0.0, m_holdPeak - (ms - m_peakHoldMs) * 0.1);
+}
+
+void SsbModulationAnalyzer::addCrestBlockLocked(clock::time_point now, double peak, double energy,
+                                                int frames)
+{
+    // A pause is left out, so it cannot inflate the ratio.
+    if (peak <= m_presentMin) {
+        return;
+    }
+    const std::int64_t id = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                now.time_since_epoch()).count() / kCrestSlotMs;
+    CrestSlot& slot = m_crest[static_cast<std::size_t>(id % kCrestSlots)];
+    if (slot.id != id) {
+        slot = CrestSlot{};
+        slot.id = id;
+    }
+    slot.peak = std::max(slot.peak, peak);
+    slot.energy += energy;
+    slot.frames += frames;
+}
+
+std::optional<double> SsbModulationAnalyzer::crestDbLocked(clock::time_point now) const
+{
+    const std::int64_t newest = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    now.time_since_epoch()).count() / kCrestSlotMs;
+    double peak = 0.0;
+    double energy = 0.0;
+    std::int64_t frames = 0;
+    for (const CrestSlot& slot : m_crest) {
+        if (slot.frames > 0 && slot.id > newest - kCrestSlots && slot.id <= newest) {
+            peak = std::max(peak, slot.peak);
+            energy += slot.energy;
+            frames += slot.frames;
+        }
+    }
+    if (frames == 0) {
+        return std::nullopt;
+    }
+    return crestDbFromPeakAndRms(peak, std::sqrt(energy / static_cast<double>(frames)));
 }
 
 void SsbModulationAnalyzer::pushScopeLocked(float pct)
@@ -127,12 +208,15 @@ void SsbModulationAnalyzer::pushIq(const float* interleaved, int frames)
     std::lock_guard<std::mutex> lock(m_mu);
 
     double sum = 0.0;
+    double energy = 0.0;
     double blockMax = 0.0;
     for (int i = 0; i < frames; ++i) {
         const double re = interleaved[2 * i];
         const double im = interleaved[2 * i + 1];
-        const double env = std::sqrt(re * re + im * im);
+        const double power = re * re + im * im;
+        const double env = std::sqrt(power);
         sum += env;
+        energy += power;
         blockMax = std::max(blockMax, env);
         pushScopeLocked(static_cast<float>(toPct(env)));
     }
@@ -159,11 +243,17 @@ void SsbModulationAnalyzer::pushIq(const float* interleaved, int frames)
         m_winMax = std::max(m_winMax, blockMax);
     }
 
+    const auto now = nowLocked();
+    m_lastPushAt = now;
+    m_inputLive = true;
+    addCrestBlockLocked(now, blockMax, energy, frames);
+
+    // Against the hold as it stands now. A peak lower than the one that
+    // started the hold still takes over once the hold has decayed to it.
     const double blockPct = toPct(blockMax);
-    if (blockPct >= m_holdPeak) {
+    if (blockPct >= decayedHoldPctLocked(now)) {
         m_holdPeak = blockPct;
-        m_holdPct = blockPct;
-        m_holdAt = clock::now();
+        m_holdAt = now;
     }
 
     m_framesSeen += static_cast<std::uint64_t>(frames);
@@ -174,6 +264,14 @@ SsbModulationAnalyzer::Snapshot SsbModulationAnalyzer::snapshot()
     std::lock_guard<std::mutex> lock(m_mu);
     Snapshot snap;
     snap.framesSeen = m_framesSeen;
+
+    const auto now = nowLocked();
+    // Samples stopped: nothing here is live any more. The hold is not part
+    // of this and finishes its decay below.
+    if (m_inputLive
+        && std::chrono::duration<double, std::milli>(now - m_lastPushAt).count() > kInputStaleMs) {
+        forgetInputLocked();
+    }
 
     const bool rf = m_avgSeeded && (m_avg > m_presentMin || (m_winValid && m_winMax > m_presentMin));
     snap.signalPresent = rf;
@@ -187,24 +285,13 @@ SsbModulationAnalyzer::Snapshot SsbModulationAnalyzer::snapshot()
     }
     m_winValid = false;
 
-    const auto now = clock::now();
-    if (m_holdPeak > 0.0) {
-        const double ms = std::chrono::duration<double, std::milli>(now - m_holdAt).count();
-        if (ms <= m_peakHoldMs) {
-            m_holdPct = m_holdPeak;
-        } else {
-            // 100 percent per second after the hold, from the original peak.
-            m_holdPct = std::max(0.0, m_holdPeak - (ms - m_peakHoldMs) * 0.1);
-            if (m_holdPct <= 0.0) {
-                m_holdPeak = 0.0;
-            }
-        }
+    const double holdPct = decayedHoldPctLocked(now);
+    if (holdPct <= 0.0) {
+        m_holdPeak = 0.0;
     }
-    snap.peakHoldPct = m_holdPct;
-    snap.peakHoldDbfs = m_holdPct > 0.0 ? toDbfs(m_holdPct / 100.0 * kFullScale) : -120.0;
-    if (rf && m_avg > m_presentMin && m_holdPct > 0.0) {
-        snap.crestDb = 20.0 * std::log10((m_holdPct / 100.0 * kFullScale) / m_avg);
-    }
+    snap.peakHoldPct = holdPct;
+    snap.peakHoldDbfs = holdPct > 0.0 ? toDbfs(holdPct / 100.0 * kFullScale) : -120.0;
+    snap.crestDb = crestDbLocked(now);
 
     snap.scopeRateHz = m_fs / std::max(1, m_decim);
     if (m_scopeFilled) {

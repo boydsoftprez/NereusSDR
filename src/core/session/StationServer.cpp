@@ -1179,6 +1179,8 @@
 //               the taker through it: on a Core no desktop hosts the
 //               Core's own position was named with nothing. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -9602,7 +9604,6 @@ bool StationServer::applySettingsWrite(SessionTransport* transport, const Sessio
         // R-IOS-13 / R-R3-49 (txModMonitorVersion 1): the Mod Monitor's
         // feedback receiver reaches the Core's feedback analyzer at once.
         m_radioModel->applyModMonitorSetting(key, m_settings.value(key));
-        m_radioModel->applySsbModMonitorSetting(key, m_settings.value(key));
         // Parity ruling C12: a band's grid dB max or min reaches the Core's
         // pans at once; on that band the new range goes to every window.
         m_radioModel->applyPanGridSetting(key);
@@ -9756,7 +9757,6 @@ void StationServer::applySettingsRemove(const SessionMessage& message)
         m_radioModel->applyRemoteTxDisplaySetting(key);
         // R-IOS-13 / R-R3-49: the Mod Monitor's feedback receiver, rx1.
         m_radioModel->applyModMonitorSetting(key, QVariant());
-        m_radioModel->applySsbModMonitorSetting(key, QVariant());
         // Parity ruling C12: the band's default grid range.
         m_radioModel->applyPanGridSetting(key);
         // Level Cal: the radio's default meter or display calibration.
@@ -16445,8 +16445,6 @@ void StationServer::setUpSsbModMonitorStreams()
         streams[static_cast<std::size_t>(source)] = stream.get();
         m_recordStreams.emplace(name, std::move(stream));
     }
-    m_radioModel->applySsbModMonitorSetting(QStringLiteral("SsbModMon/FbStream"),
-                                            m_settings.value(QStringLiteral("SsbModMon/FbStream")));
     m_ssbModMonitor = std::make_unique<SsbModMonitorPublisher>(
         m_radioModel.data(), streams[0], streams[1], [this]() { scheduleRecordFlush(); });
 }

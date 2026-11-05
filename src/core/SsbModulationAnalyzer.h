@@ -11,25 +11,33 @@
 //   envelope     = sqrt(I^2 + Q^2)
 //   peak %       = envelope / full scale * 100
 //   average %    = slow average of the envelope, same scale
-//   crest dB     = peak-hold relative to that average
+//   crest dB     = highest envelope over the RMS of the envelope, both
+//                  from the same recent stretch of signal (kCrestWindowMs).
+//                  Blocks below the presence minimum are left out of both.
 //   dBFS         = 20*log10(envelope)
 //
 // Two instances are owned by RadioModel: the TX I/Q that leaves WDSP,
 // and the PureSignal feedback receiver. pushIq() runs on the DSP or
 // connection thread. snapshot() runs on the GUI. Readings are produced
 // only from samples the caller feeds, and the caller feeds them only
-// while the radio is transmitting USB or LSB.
+// while the radio is transmitting USB or LSB. When samples stop, within
+// kInputStaleMs the snapshot says no signal, average 0 and an empty scope;
+// the peak hold finishes its decay.
 //
 // Modification history (NereusSDR):
-//   2026-11-04 — Created for the SSB Mod Monitor. J.J. Boyd (KG4VCF),
+//   2026-11-04 — Created for the SSB Mod Monitor. Brian Sutton (W4KZO),
 //                AI-assisted via xAI Grok.
+//   2026-11-05 — Corrections for review findings.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace NereusSDR {
@@ -43,7 +51,9 @@ public:
         double peakDbfs{-120.0};   // window peak
         double avgDbfs{-120.0};    // slow average
         double peakHoldDbfs{-120.0};
-        double crestDb{0.0};       // peak-hold above the slow average
+        // Peak over RMS of the envelope over kCrestWindowMs. No value while
+        // that window holds no signal.
+        std::optional<double> crestDb;
         bool   signalPresent{false};
         std::vector<float> scope;  // percent of full scale, oldest -> newest
         int    scopeRateHz{0};
@@ -67,7 +77,7 @@ public:
     /// Forget the average, peaks, hold and scope.
     void reset();
 
-    /// Feed interleaved I/Q floats. Thread-safe.
+    /// Feed interleaved I/Q floats. Thread-safe. One block is one call.
     void pushIq(const float* interleaved, int frames);
 
     /// Read the current measurements. Consumes the per-window peak.
@@ -75,12 +85,25 @@ public:
 
     /// Linear amplitude that is 100% and 0 dBFS.
     static constexpr double kFullScale = 1.0;
+    /// How long after the last samples the snapshot still reads them.
+    static constexpr double kInputStaleMs = 200.0;
+    /// The stretch of signal crest is measured over.
+    static constexpr int kCrestWindowMs = 300;
+
+    /// Test only: stops the analyzer's clock, then moves it. Production never
+    /// calls this and reads steady_clock.
+    void advanceClockForTest(std::chrono::milliseconds step);
 
 private:
     using clock = std::chrono::steady_clock;
 
     void rebuildScopeLocked();
     void pushScopeLocked(float pct);
+    void forgetInputLocked();
+    clock::time_point nowLocked() const;
+    double decayedHoldPctLocked(clock::time_point now) const;
+    void addCrestBlockLocked(clock::time_point now, double peak, double energy, int frames);
+    std::optional<double> crestDbLocked(clock::time_point now) const;
     static double toPct(double env) noexcept;
     static double toDbfs(double env) noexcept;
 
@@ -101,8 +124,22 @@ private:
     bool   m_winValid{false};
 
     double m_holdPeak{0.0};   // undecayed peak that started the hold
-    double m_holdPct{0.0};    // hold after decay
     clock::time_point m_holdAt{};
+
+    bool m_inputLive{false};  // samples have arrived since the last forget
+    clock::time_point m_lastPushAt{};
+    std::optional<clock::time_point> m_nowForTest;
+
+    // Fixed slots, so the transmit worker never allocates to measure crest.
+    static constexpr int kCrestSlotMs = 10;
+    static constexpr int kCrestSlots = kCrestWindowMs / kCrestSlotMs;
+    struct CrestSlot {
+        std::int64_t id{-1};
+        double peak{0.0};
+        double energy{0.0};   // sum of I^2 + Q^2
+        std::int64_t frames{0};
+    };
+    std::array<CrestSlot, kCrestSlots> m_crest{};
 
     int    m_decim{6};
     int    m_decimCount{0};

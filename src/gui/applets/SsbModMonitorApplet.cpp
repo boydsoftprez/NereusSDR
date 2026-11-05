@@ -4,19 +4,19 @@
 // no-port-check: NereusSDR-original file. See the header.
 //
 // Modification history (NereusSDR):
-//   2026-11-04 — Created. J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
+//   2026-11-04 — Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
+//   2026-11-05 — Corrections for review findings.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include "gui/applets/SsbModMonitorApplet.h"
 
 #include "core/AppSettings.h"
-#include "core/WdspTypes.h"
 #include "core/session/IStationLink.h"
 #include "gui/HGauge.h"
 #include "gui/StyleConstants.h"
 #include "gui/VintageModMeterWidget.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "models/RadioModel.h"
-#include "models/SliceModel.h"
 
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -38,10 +38,14 @@ namespace NereusSDR {
 namespace {
 constexpr auto kKeySource   = "SsbModMon/Source";
 constexpr auto kKeyOverDb   = "SsbModMon/OverDb";
-constexpr auto kKeyFbStream = "SsbModMon/FbStream";
 constexpr auto kKeyVintage  = "SsbModMon/VintageMeters";
 constexpr int  kRefreshMs   = 33;
 constexpr double kScopeMax  = 120.0;
+
+QString paFeedbackToolTip()
+{
+    return QStringLiteral("Measure the PA output through PureSignal's feedback.");
+}
 
 double percentForDbfs(double dbfs)
 {
@@ -196,6 +200,11 @@ SsbModMonitorApplet::SsbModMonitorApplet(RadioModel* model, QWidget* parent)
                 this, &SsbModMonitorApplet::updateRemoteAvailability);
         updateRemoteAvailability();
     }
+    if (m_model) {
+        connect(m_model, &RadioModel::ssbModFeedbackInUseChanged,
+                this, &SsbModMonitorApplet::updatePaFeedbackAvailability);
+    }
+    updatePaFeedbackAvailability();
 }
 
 bool SsbModMonitorApplet::isRemoteWindow() const
@@ -203,17 +212,27 @@ bool SsbModMonitorApplet::isRemoteWindow() const
     return m_model && m_model->role() == RadioModel::Role::Remote;
 }
 
-bool SsbModMonitorApplet::txIsSsbVoice() const
+void SsbModMonitorApplet::updatePaFeedbackAvailability()
 {
-    if (!m_model) {
-        return false;
+    const bool inUse = m_model && m_model->ssbModFeedbackInUse();
+    // Disabled, not hidden, and a saved PA FB choice stays chosen: it reads
+    // nothing until PureSignal runs.
+    m_srcFbBtn->setEnabled(inUse);
+    m_srcFbBtn->setToolTip(inUse ? paFeedbackToolTip() : paFeedbackOffReason());
+}
+
+QString SsbModMonitorApplet::paFeedbackOffReason()
+{
+    return QStringLiteral("PA FB needs PureSignal. Turn PureSignal on to measure the PA output.");
+}
+
+void SsbModMonitorApplet::syncLocalMeasuring(bool shown)
+{
+    if (!m_model || isRemoteWindow()) {
+        return;
     }
-    const SliceModel* slice = m_model->txBoundSlice();
-    if (slice == nullptr) {
-        return false;
-    }
-    const DSPMode mode = slice->dspMode();
-    return mode == DSPMode::USB || mode == DSPMode::LSB;
+    m_model->setSsbModTxTapEnabled(shown && m_source == Source::TxIq);
+    m_model->setSsbModFeedbackWanted(shown && m_source == Source::PaFeedback);
 }
 
 QString SsbModMonitorApplet::notConnectedReason()
@@ -229,6 +248,26 @@ QString SsbModMonitorApplet::unavailableReasonForTest() const
 QString SsbModMonitorApplet::lampTextForTest() const
 {
     return m_lamp ? m_lamp->text() : QString();
+}
+
+QString SsbModMonitorApplet::crestTextForTest() const
+{
+    return m_crestValue ? m_crestValue->text() : QString();
+}
+
+bool SsbModMonitorApplet::paFeedbackEnabledForTest() const
+{
+    return m_srcFbBtn && m_srcFbBtn->isEnabled();
+}
+
+QString SsbModMonitorApplet::paFeedbackToolTipForTest() const
+{
+    return m_srcFbBtn ? m_srcFbBtn->toolTip() : QString();
+}
+
+std::size_t SsbModMonitorApplet::scopePointsForTest() const
+{
+    return m_scope ? m_scope->tracePoints() : 0;
 }
 
 double SsbModMonitorApplet::overThresholdDbfs() const
@@ -296,15 +335,6 @@ void SsbModMonitorApplet::buildUI()
         "Measure the USB or LSB envelope NereusSDR generates "
         "(the I/Q sent to the radio)."));
     m_srcFbBtn = blueToggle(QStringLiteral("PA FB"), 52);
-    m_srcFbBtn->setToolTip(QStringLiteral(
-        "Measure the PA output via the PureSignal feedback receiver."));
-    m_fbStreamSpin = new QSpinBox(body);
-    m_fbStreamSpin->setRange(0, 4);
-    m_fbStreamSpin->setPrefix(QStringLiteral("rx"));
-    m_fbStreamSpin->setToolTip(QStringLiteral(
-        "Receiver stream carrying the PureSignal feedback. Hermes Lite 2: rx1."));
-    m_fbStreamSpin->setStyleSheet(QString::fromLatin1(Style::kSpinBoxStyle));
-    m_fbStreamSpin->setFixedWidth(46);
     m_resetBtn = styledButton(QStringLiteral("RESET"), 52);
     m_resetBtn->setToolTip(QStringLiteral("Clear peak-hold and the flasher."));
     m_vuBtn = amberToggle(QStringLiteral("VU"), 34);
@@ -312,7 +342,6 @@ void SsbModMonitorApplet::buildUI()
         "Illuminated analog gauges, the same faces as the AM Mod Monitor."));
     srcRow->addWidget(m_srcTxBtn);
     srcRow->addWidget(m_srcFbBtn);
-    srcRow->addWidget(m_fbStreamSpin);
     srcRow->addStretch(1);
     srcRow->addWidget(m_vuBtn);
     srcRow->addWidget(m_resetBtn);
@@ -322,12 +351,6 @@ void SsbModMonitorApplet::buildUI()
     connect(m_srcTxBtn, &QPushButton::clicked, this, [this]() { setSource(Source::TxIq); });
     connect(m_srcFbBtn, &QPushButton::clicked, this, [this]() { setSource(Source::PaFeedback); });
     connect(m_resetBtn, &QPushButton::clicked, this, &SsbModMonitorApplet::resetPeaks);
-    connect(m_fbStreamSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
-        AppSettings::instance().setValue(QString::fromLatin1(kKeyFbStream), QString::number(v));
-        if (m_model) {
-            m_model->setSsbModFeedbackStream(v);
-        }
-    });
 
     m_peakGauge = new HGauge(body);
     m_peakGauge->setRange(0.0, 120.0);
@@ -386,6 +409,11 @@ void SsbModMonitorApplet::buildUI()
     m_peakValue  = insetValue(QStringLiteral("--"), 52);
     m_avgValue   = insetValue(QStringLiteral("--"), 52);
     m_crestValue = insetValue(QStringLiteral("--"), 46);
+    const QString crestTip = QStringLiteral(
+        "Peak over RMS of the envelope, over the last %1 ms of signal. Pauses are left out.")
+        .arg(SsbModulationAnalyzer::kCrestWindowMs);
+    lblCrest->setToolTip(crestTip);
+    m_crestValue->setToolTip(crestTip);
     m_pctValue   = insetValue(QStringLiteral("--"), 46);
     grid->addWidget(lblPeak,  0, 0); grid->addWidget(m_peakValue,  0, 1);
     grid->addWidget(lblAvg,   0, 2); grid->addWidget(m_avgValue,   0, 3);
@@ -434,19 +462,13 @@ void SsbModMonitorApplet::loadSettings()
     auto& s = AppSettings::instance();
     const int src = s.value(QString::fromLatin1(kKeySource), QStringLiteral("0")).toInt();
     const int over = s.value(QString::fromLatin1(kKeyOverDb), QStringLiteral("-1")).toInt();
-    const int fb = s.value(QString::fromLatin1(kKeyFbStream), QStringLiteral("1")).toInt();
     const bool vu = s.value(QString::fromLatin1(kKeyVintage), QStringLiteral("True")).toString()
                     != QLatin1String("False");
     {
         const QSignalBlocker b1(m_overSpin);
-        const QSignalBlocker b2(m_fbStreamSpin);
         m_overSpin->setValue(over);
-        m_fbStreamSpin->setValue(fb);
     }
     m_scope->setOverThresholdPct(percentForDbfs(over));
-    if (m_model) {
-        m_model->setSsbModFeedbackStream(fb);
-    }
     setSource(src == 1 ? Source::PaFeedback : Source::TxIq);
     {
         const QSignalBlocker block(m_vuBtn);
@@ -479,8 +501,8 @@ void SsbModMonitorApplet::setSource(Source src)
         if (isVisible()) {
             watchOnCore(static_cast<int>(src));
         }
-    } else if (m_model) {
-        m_model->setSsbModFeedbackWanted(src == Source::PaFeedback);
+    } else {
+        syncLocalMeasuring(isVisible());
     }
     resetPeaks();
 }
@@ -521,12 +543,14 @@ void SsbModMonitorApplet::showEvent(QShowEvent* e)
     AppletWidget::showEvent(e);
     m_timer.start();
     watchOnCore(static_cast<int>(m_source));
+    syncLocalMeasuring(true);
 }
 
 void SsbModMonitorApplet::hideEvent(QHideEvent* e)
 {
     m_timer.stop();
     watchOnCore(-1);
+    syncLocalMeasuring(false);
     AppletWidget::hideEvent(e);
 }
 
@@ -564,7 +588,7 @@ void SsbModMonitorApplet::setLamp(QLabel* lamp, const QString& text,
 
 void SsbModMonitorApplet::applySnapshot(const SsbModulationAnalyzer::Snapshot& s)
 {
-    const bool live = s.signalPresent || s.peakPct > 0.5 || s.scope.size() >= 2;
+    const bool live = s.signalPresent;
     const double peak = live ? std::max(s.peakPct, s.peakHoldPct) : 0.0;
     const double avg = live ? s.avgPct : 0.0;
     m_peakGauge->setValue(peak);
@@ -583,7 +607,8 @@ void SsbModMonitorApplet::applySnapshot(const SsbModulationAnalyzer::Snapshot& s
     if (live) {
         m_peakValue->setText(QStringLiteral("%1").arg(s.peakHoldDbfs, 0, 'f', 1));
         m_avgValue->setText(QStringLiteral("%1").arg(s.avgDbfs, 0, 'f', 1));
-        m_crestValue->setText(QStringLiteral("%1").arg(s.crestDb, 0, 'f', 1));
+        m_crestValue->setText(s.crestDb ? QStringLiteral("%1").arg(*s.crestDb, 0, 'f', 1)
+                                        : QStringLiteral("--"));
         m_pctValue->setText(QStringLiteral("%1").arg(s.peakHoldPct, 0, 'f', 0));
     } else {
         m_peakValue->setText(QStringLiteral("--"));
