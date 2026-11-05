@@ -2929,8 +2929,12 @@ public:
     /// The rows a fold's list holds: a heading, then one row per room in
     /// `roomIds` (by frequency), each emitting roundtableRoomClicked.
     void buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu);
-    /// The short menu's disabled form, for a slice with no frequency to open: greyed, not gone.
-    static void buildRoundtableUnavailableMenu(const QString& heading, QMenu& menu);
+    /// The short menu's Signal row: cycles the format, then calls `cycled`, on `context`.
+    static void addRoundtableSignalRow(QMenu& menu, QObject* context, std::function<void()> cycled);
+    /// The short menu's form for a slice with no frequency to open: greyed, not gone.
+    /// Signal is a display choice and still works.
+    static void buildRoundtableUnavailableMenu(const QString& heading, QMenu& menu, QObject* context,
+                                               std::function<void()> signalCycled);
     /// The spectrum rectangle the tags are drawn against, and the band
     /// plan strip's height at its foot.
     QRect roundtableTagSpectrumRectForTest() const;

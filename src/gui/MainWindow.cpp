@@ -7242,11 +7242,16 @@ void MainWindow::openRoundtableMenuForSlice(int sliceId, const QPoint& at)
         openRoundtableMenu(pan, RoundtableModel::frequencyContextId(std::llround(slice->frequency()), family), at, false);
         return;
     }
-    // A mode with no Roundtable frequency: the same menu, greyed.
+    // A mode with no Roundtable frequency: the same menu, greyed, but for Signal,
+    // which is a display choice and needs no frequency.
     auto* menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("roundtableShortMenu"));
     menu->setAttribute(Qt::WA_DeleteOnClose);
-    SpectrumWidget::buildRoundtableUnavailableMenu(QStringLiteral("Roundtable"), *menu);
+    SpectrumWidget::buildRoundtableUnavailableMenu(QStringLiteral("Roundtable"), *menu, this, [this]() {
+        if (RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr) {
+            model->noteSettingChanged(QStringLiteral("Roundtable/SignalFormat"));
+        }
+    });
     menu->popup(at);
 }
 

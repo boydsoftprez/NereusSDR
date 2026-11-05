@@ -2811,15 +2811,27 @@ private slots:
         emit flag->roundtableLineMenuRequested(p.window()->mapToGlobal(QPoint(200, 200)));
         const QList<QMenu*> menus = p.window()->findChildren<QMenu*>(QStringLiteral("roundtableShortMenu"), Qt::FindDirectChildrenOnly);
         QCOMPARE(menus.size(), 1);
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm"));
+        const auto restore = qScopeGuard([] { AppSettings::instance().remove(QStringLiteral("Roundtable/SignalFormat")); });
+        QAction* signal = menus.first()->findChild<QAction*>(QStringLiteral("roundtableMenuSignal"));
+        QVERIFY(signal != nullptr);
         QStringList rows;
         for (QAction* row : menus.first()->actions()) {
             if (!row->isSeparator()) {
-                QVERIFY(!row->isEnabled());
-                rows.append(row->text());
+                QVERIFY(row == signal ? row->isEnabled() : !row->isEnabled());
+                if (row != signal) { rows.append(row->text()); }
             }
         }
         QCOMPARE(rows, (QStringList{QStringLiteral("Roundtable"), QStringLiteral("Open inspector"),
                                     QStringLiteral("Tune slice here"), QStringLiteral("Messages")}));
+        QCOMPARE(menus.first()->actions().constLast(), signal);
+        // Signal is a display choice, so it still works in a mode with no frequency.
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        QSignalSpy noted(model, &RoundtableModel::settingChanged);
+        signal->trigger();
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Roundtable/SignalFormat")).toString(), QStringLiteral("S-units"));
+        QVERIFY(!noted.isEmpty());
         menus.first()->close();
     }
 

@@ -13317,17 +13317,10 @@ void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, boo
     QAction* messages = menu.addAction(QStringLiteral("Messages"), this, [this, room]() { emit roundtableMessagesRequested(room); });
     messages->setObjectName(QStringLiteral("roundtableMenuMessages"));
 
-    const QString format = AppSettings::instance()
-        .value(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm")).toString();
-    QAction* signal = menu.addAction(QStringLiteral("Signal: %1 \u00b7 Change").arg(format), this, [this, format]() {
-        // The panel's order, and its key.
-        AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"),
-            format == QLatin1String("dBm") ? QStringLiteral("S-units")
-            : format == QLatin1String("S-units") ? QStringLiteral("Both") : QStringLiteral("dBm"));
+    addRoundtableSignalRow(menu, this, [this]() {
         setRoundtableCard(m_roundtableCard, m_roundtableCardRoom);
         emit roundtableSignalFormatCycled();
     });
-    signal->setObjectName(QStringLiteral("roundtableMenuSignal"));
 
     if (options.fromInspector) {
         QAction* read = menu.addAction(QStringLiteral("Read reports"), this, [this]() { emit roundtableReportsRequested(); });
@@ -13335,7 +13328,22 @@ void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, boo
     }
 }
 
-void SpectrumWidget::buildRoundtableUnavailableMenu(const QString& heading, QMenu& menu)
+void SpectrumWidget::addRoundtableSignalRow(QMenu& menu, QObject* context, std::function<void()> cycled)
+{
+    const QString format = AppSettings::instance()
+        .value(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm")).toString();
+    QAction* signal = menu.addAction(QStringLiteral("Signal: %1 \u00b7 Change").arg(format), context, [format, cycled]() {
+        // The panel's order, and its key.
+        AppSettings::instance().setValue(QStringLiteral("Roundtable/SignalFormat"),
+            format == QLatin1String("dBm") ? QStringLiteral("S-units")
+            : format == QLatin1String("S-units") ? QStringLiteral("Both") : QStringLiteral("dBm"));
+        cycled();
+    });
+    signal->setObjectName(QStringLiteral("roundtableMenuSignal"));
+}
+
+void SpectrumWidget::buildRoundtableUnavailableMenu(const QString& heading, QMenu& menu, QObject* context,
+                                                    std::function<void()> signalCycled)
 {
     menu.setStyleSheet(roundtableMenuStyle());
     menu.setToolTipsVisible(true);
@@ -13346,6 +13354,7 @@ void SpectrumWidget::buildRoundtableUnavailableMenu(const QString& heading, QMen
         action->setEnabled(false);
         action->setToolTip(QStringLiteral("Not available in this mode"));
     }
+    addRoundtableSignalRow(menu, context, std::move(signalCycled));
 }
 
 void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu)
