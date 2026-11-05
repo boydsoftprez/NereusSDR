@@ -251,6 +251,19 @@ constants. No ported code: new files carry `no-port-check: NereusSDR-original.`
 | D39 to D41 | `tst_vfo_level_bar`, flag position and menu tests, remote and local; a capture looked at |
 | Real radios, a real Core, a real double over the air, iPad portrait | **Pending JJ's hardware.** Not claimed by any automated check |
 
+## Changed during the build
+
+Three places where the build settled something the decisions above read differently. Each is
+JJ's to veto on the hardware run.
+
+* **D34, your own card.** The inspector hides your card while it shows your own frequency, so
+  there is no card to click again. Your flag line, the close button or Escape closes it.
+* **D35, iPhone sideways.** On your own frequency, Tune scrolls with the reports instead of
+  standing at the foot, because a foot left under 100 points for the reports. Viewing another
+  frequency keeps it fixed, since there it is the action that counts.
+* **D36, iPad.** The ⋯ is on the floating panel and not in the column's applet, as the board
+  draws it. Signal stays reachable from the column through the Tools page.
+
 ## Settled from earlier choices
 
 These follow from what JJ chose or have one sensible answer. Each is his to veto.
