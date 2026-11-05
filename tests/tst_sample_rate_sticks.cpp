@@ -555,6 +555,83 @@ private slots:
         QCOMPARE(model.sliceById(a)->sampleRateHz(), 384000);
         QCOMPARE(model.sliceById(b)->sampleRateHz(), 96000);
     }
+    // JJ's ruling: a slice leaving a shared receiver keeps its rate, when a
+    // narrower rate on that receiver pushes it off.
+    void a_slice_pushed_off_a_narrowed_receiver_keeps_its_rate()
+    {
+        RadioModel model;
+        seed(model);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        QVERIFY(b >= 0);
+        SliceModel* sliceB = model.sliceById(b);
+        const int shared = sliceB->streamIndex();
+        model.requestSliceSampleRate(a, kChosenRateHz);
+        sliceB->setFrequency(14500000.0);
+        QCOMPARE(sliceB->streamIndex(), shared);
+
+        model.requestSliceSampleRate(a, kStartRateHz);
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        QCOMPARE(model.streamSampleRateHzForTest(shared), kStartRateHz);
+        QVERIFY2(sliceB->streamIndex() != shared,
+                 "precondition: the narrower window no longer covers slice B");
+        QCOMPARE(model.streamSampleRateHzForTest(sliceB->streamIndex()), kChosenRateHz);
+        QCOMPARE(sliceB->sampleRateHz(), kChosenRateHz);
+        model.flushPendingSettingsSave();
+        QCOMPARE(sliceB->savedSampleRateHz(), kChosenRateHz);
+    }
+
+    // A pan moved to a free receiver opens it at the rate it was running, and
+    // the window that decides what fits is that rate's window.
+    void a_pan_moved_to_a_free_receiver_keeps_its_rate()
+    {
+        RadioModel model;
+        seed(model);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        QVERIFY(b >= 0);
+        model.sliceById(b)->setFrequency(14210000.0);
+        const int shared = model.sliceById(a)->streamIndex();
+        model.requestSliceSampleRate(a, kChosenRateHz);
+        QCOMPARE(model.sliceById(b)->streamIndex(), shared);
+        const int freeStream = shared == 0 ? 1 : 0;
+        QVERIFY(!model.streamActive(freeStream));
+
+        // 300 kHz off the new centre: outside 192 kHz, inside 1536 kHz.
+        constexpr double kCentreHz = 13900000.0;
+        QVERIFY(model.moveSlicesToStream({a}, freeStream, kCentreHz));
+
+        QCOMPARE(model.sliceById(a)->streamIndex(), freeStream);
+        QCOMPARE(model.streamSampleRateHzForTest(freeStream), kChosenRateHz);
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), kChosenRateHz);
+    }
+
+    // What the confirmation asks must agree with what the move does.
+    void the_pan_move_planner_uses_the_rate_the_pan_keeps()
+    {
+        RadioModel model;
+        seed(model);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int stream = model.sliceById(a)->streamIndex();
+        const int b = model.addSlice(QStringLiteral("pan-1"));
+        QVERIFY(b >= 0);
+        model.sliceById(b)->setFrequency(7100000.0);
+        const int streamB = model.sliceById(b)->streamIndex();
+        QVERIFY(streamB != stream);
+        model.requestSliceSampleRate(a, kChosenRateHz);
+
+        // Slice B's receiver is taken for slice A: it closes, then A moves on.
+        constexpr double kCentreHz = 13900000.0;
+        const ReceiverPlanner planner(model, {});
+        QVERIFY(planner.panMoveFitsAfterClosing(streamB, kCentreHz, {a}, {b}));
+    }
 };
 
 QTEST_MAIN(TestSampleRateSticks)

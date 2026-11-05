@@ -971,6 +971,14 @@
 //                a shared receiver keep theirs; a radio-wide change saves on
 //                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-05 - A slice's saved rate asks for nothing on a radio-wide rate or
+//                off the radio's ladder (sampleRateIsOnLadder); slices sharing
+//                a receiver bring it back at the highest saved; a slice leaving
+//                a receiver keeps its rate on every path (streamClaimRateHzFor);
+//                an unreadable layout keeps every letter with saved keys, and a
+//                band button respects a kept letter (sliceKeysAreHeld).
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-09-27 - iPhone plan Task 22 / parity Task 20 (R-IOS-26, R-R3-49,
 //                B7.3, B7.4): FreeDV Reporter runs through the spot source
 //                host (the Core's own start, a remote window's requests to
@@ -15066,6 +15074,18 @@ QList<int> RadioModel::moveStreamWindowFor(int stream, double centreHz, int exem
 // `centreHz`: claimed when free (the allocator's own-window path), and
 // each slice joined to it. False, with nothing moved, when a slice does not
 // fit the window there.
+int RadioModel::streamClaimRateHzFor(const QList<int>& sliceIds) const
+{
+    int rateHz = 0;
+    for (const int id : sliceIds) {
+        const SliceModel* slice = sliceById(id);
+        if (slice != nullptr && slice->streamIndex() >= 0) {
+            rateHz = std::max(rateHz, m_streamAllocator.streamSampleRateHz(slice->streamIndex()));
+        }
+    }
+    return rateHz > 0 ? rateHz : newStreamSampleRateHz();
+}
+
 bool RadioModel::moveSlicesToStream(const QList<int>& sliceIds, int stream, double centreHz)
 {
     if (m_role != Role::Local || sliceIds.isEmpty() || stream < 0
@@ -15075,7 +15095,7 @@ bool RadioModel::moveSlicesToStream(const QList<int>& sliceIds, int stream, doub
     }
     const bool wasActive = m_streamAllocator.isStreamActive(stream);
     const int rateHz = wasActive ? m_streamAllocator.streamSampleRateHz(stream)
-                                 : newStreamSampleRateHz();
+                                 : streamClaimRateHzFor(sliceIds);
     const double halfWindow = static_cast<double>(rateHz) / 2.0;
     const double centre = wasActive ? m_streamAllocator.streamCentreHz(stream) : centreHz;
     for (const int id : sliceIds) {
@@ -15089,7 +15109,8 @@ bool RadioModel::moveSlicesToStream(const QList<int>& sliceIds, int stream, doub
         }
     }
     if (!wasActive) {
-        activateStreamAt(stream, centreHz);
+        // Slices leaving a receiver keep their rate (JJ's ruling 2026-11-05).
+        activateStreamAt(stream, centreHz, rateHz);
     }
     bool all = true;
     for (const int id : sliceIds) {
@@ -15373,9 +15394,12 @@ RadioModel::planStreamSampleRateChange(int streamIndex, int rateHz,
                     ? rateHz
                     : ((streamAlreadyLive && existingRateHz > 0)
                            ? existingRateHz
-                           : (m_connectionSampleRateHz > 0
-                                  ? m_connectionSampleRateHz
-                                  : m_streamDefaultRateHz));
+                           // A slice pushed off a receiver keeps the rate it
+                           // was running (JJ's ruling 2026-11-05); the live
+                           // allocator still holds it.
+                           : (m_streamAllocator.streamSampleRateHz(previousStream) > 0
+                                  ? m_streamAllocator.streamSampleRateHz(previousStream)
+                                  : newStreamSampleRateHz()));
             plan.allocator.activateStream(
                 placement.streamIndex, placement.newStreamCentreHz,
                 rateForStream);

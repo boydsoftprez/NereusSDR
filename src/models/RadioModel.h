@@ -8124,6 +8124,10 @@ public:
     int newStreamSampleRateHz() const {
         return m_connectionSampleRateHz > 0 ? m_connectionSampleRateHz : m_streamDefaultRateHz;
     }
+    /// Rate a free DDC opens at for these slices moving onto it: the highest
+    /// they are running now, since a slice leaving a receiver keeps its rate.
+    /// newStreamSampleRateHz for slices with no receiver.
+    int streamClaimRateHzFor(const QList<int>& sliceIds) const;
     bool streamActive(int streamIndex) const {
         return m_streamAllocator.isStreamActive(streamIndex);
     }

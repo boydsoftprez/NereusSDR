@@ -1631,9 +1631,9 @@ private slots:
         QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
     }
 
-    // A slice evicted by a narrowing lands on a different stream at that
-    // stream's own rate, so its mirror must follow the migration rather than
-    // keep reporting the rate of the window it just left.
+    // A slice evicted by a narrowing lands on a different stream and keeps the
+    // rate it was running (JJ's ruling 2026-11-05), and its mirror reports what
+    // that stream runs.
     void an_evicted_slice_reports_its_new_streams_rate()
     {
         RadioModel model;
@@ -1647,14 +1647,14 @@ private slots:
         model.sliceById(b)->setFrequency(14400000.0);
         QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
 
-        // Narrowing to +-96 kHz evicts B onto its own DDC, which was never
-        // widened and still carries the pool default.
+        // Narrowing to +-96 kHz evicts B onto a DDC of its own, at B's rate.
         model.requestSliceSampleRate(a, 192000);
 
         QVERIFY(model.sliceById(b)->streamIndex()
                 != model.sliceById(a)->streamIndex());
         QCOMPARE(model.sliceById(a)->sampleRateHz(), 192000);
-        QCOMPARE(model.sliceById(b)->sampleRateHz(), 192000);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), 768000);
+        QCOMPARE(model.streamSampleRateHzForTest(model.sliceById(b)->streamIndex()), 768000);
     }
 
     void a_rate_request_for_an_unknown_slice_is_ignored()
