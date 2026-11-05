@@ -165,7 +165,7 @@ struct AppletColumn: View {
         case .tx:
             TxPanel(transmit: transmit, accessories: main.accessories, micLevel: main.micLevel, modes: main.modes,
                     meters: main.band.catalog?.meters, openRadio: openRadio, width: nil, scrolls: false,
-                    modMonitor: main.modMonitor, take: main.take, openSettings: openSettings)
+                    modMonitor: main.modMonitor, ssbModMonitor: main.ssbModMonitor, take: main.take, openSettings: openSettings)
         }
     }
 

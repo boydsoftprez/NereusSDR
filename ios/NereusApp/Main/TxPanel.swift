@@ -34,6 +34,9 @@ struct TxPanel: View {
     /// The AM Mod Monitor, below the usual controls while the transmitting
     /// slice is in AM, SAM or DSB (D102).
     var modMonitor: ModMonitorModel?
+    /// The SSB Mod Monitor, in the same place while the transmitting slice
+    /// is in USB or LSB.
+    var ssbModMonitor: SsbModMonitorModel? = nil
     /// Take transmit, under the holder's line while another device holds
     /// transmit, as the desktop's TX applet offers it.
     var take: TransmitTakeModel? = nil
@@ -245,6 +248,10 @@ struct TxPanel: View {
             }
             if let modMonitor {
                 ModMonitorSlot(model: modMonitor)
+                    .padding(.horizontal, -10)
+            }
+            if let ssbModMonitor {
+                SsbModMonitorSlot(model: ssbModMonitor)
                     .padding(.horizontal, -10)
             }
         }

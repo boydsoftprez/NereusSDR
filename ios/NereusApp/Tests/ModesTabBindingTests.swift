@@ -1673,6 +1673,9 @@ struct ModesTabBindingTests {
         // Those ticks are uneven, so no range and step says them plainly.
         let notRadioLists: Set<String> = ["[30, 60, 120, 180, 300, 600, 900, 1200, 1800]", "[0.0, 0.5, 1.0]",
                                           "[0, 50, 100, 125, 160]",
+                                          // The SSB Mod Monitor's ticks, percent of full scale under
+                                          // its bars (TX panel, the desktop's gauges), the same on every radio.
+                                          "[0, 50, 100, 120]",
                                           // The TX EQ curve's Bands choices (the desktop's 5, 10 and
                                           // 18-band) and its drawing's Hz scale steps.
                                           "[5, 10, 18]", "[50.0, 100, 200, 250, 500, 1000, 2000, 2500, 5000]",
@@ -1690,6 +1693,7 @@ struct ModesTabBindingTests {
                                           "[0, 1000, 2000, 5000, 10000, 25000, 50000, 100000]"]
         #expect(TransmitTimeOutModel.choices == [30, 60, 120, 180, 300, 600, 900, 1200, 1800])
         #expect(ModMonitorModel.posScale.ticks == [0, 50, 100, 125, 160])
+        #expect(SsbModMonitorModel.scale.ticks == [0, 50, 100, 120])
         #expect(TxEqualizerModel.curveCounts == [5, 10, 18])
         #expect(FlagControls.stepLadder == [1, 10, 100, 500, 1000, 10000])
         #expect(CatControlModel.baudRates == [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200])

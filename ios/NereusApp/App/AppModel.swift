@@ -322,6 +322,9 @@ final class AppModel: ObservableObject {
         // The TX panel's AM Mod Monitor (D102), on the Core's record streams.
         main.modMonitor = ModMonitorModel(mirror: mirror, commands: commands, records: records, settings: settings,
                                           slices: main.slices, phone: phoneSettings)
+        // The TX panel's SSB Mod Monitor, the same way.
+        main.ssbModMonitor = SsbModMonitorModel(mirror: mirror, commands: commands, records: records,
+                                                slices: main.slices, phone: phoneSettings)
         spots = SpotsModel(records: records, mirror: mirror, commands: commands, settings: settings,
                            slices: main.slices, catalogFeed: main.catalogFeed, phone: phoneSettings,
                            rotor: main.rotor)
