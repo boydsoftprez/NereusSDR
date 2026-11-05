@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//                letter used before too; a restored receiver keeps its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -17057,6 +17061,8 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // Fresh creation restores receiver preferences after its creator seed
     // below, without applying stale tuning, mode, filter or DDC rate from a reused
     // numeric letter (and without temporarily starting that saved RADE mode).
+    // 2026-11-05: JJ's ruling, RIT and XIT are tuning here too. A new receiver
+    // starts with both off, so it transmits on its dial.
     bool restoredSavedState = false;
     const auto savedLetterBand = SliceModel::loadLastBandFromSettings(index);
     if (!restoreSeed && role() == Role::Local && restoreSavedState) {
@@ -17166,6 +17172,17 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             // cannot leave the new device on the constructor frequency.
             slice->restoreFromSettings(*savedLetterBand, false);
             if (!currentAdded()) { return -1; }
+            // The window's starting slice comes through here but is a
+            // restored receiver, on every start and not only when
+            // loadSliceState follows. Any other receiver made here is new,
+            // and the letter's old offsets must not return on it at the next
+            // start, even if it saves nothing of its own.
+            if (m_addingStartingSlice) {
+                slice->restoreRitXitFromSettings();
+                if (!currentAdded()) { return -1; }
+            } else {
+                slice->forgetSavedRitXit();
+            }
         }
         if (seedFrom && seedFrom != slice) {
             slice->copyNoiseReductionFrom(*seedFrom);
@@ -19792,7 +19809,11 @@ int RadioModel::addStartingSlices(const QString& radioMac)
     const int unkept = m_deviceSliceReservations.isEmpty()
         ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
     m_windowSliceId = unkept >= 0 ? unkept : 0;
-    const int id = addSlice();
+    int id = -1;
+    {
+        const QScopedValueRollback<bool> startingSlice(m_addingStartingSlice, true);
+        id = addSlice();
+    }
     SliceModel* slice = sliceById(id);
     if (!slice) {
         return -1;

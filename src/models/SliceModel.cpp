@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//                letter used before too; a restored receiver keeps its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
 //   2026-10-29 - Restore receiver preferences separately from fresh-slice
 //                VFO seeding; skip saved frequency, mode, filter and rate when
 //                restoreTuning is false. NereusSDR-original. J.J. Boyd
@@ -3712,6 +3716,34 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("LastBand"), bandKeyName(band));
 }
 
+void SliceModel::restoreRitXitFromSettings()
+{
+    auto& s = AppSettings::instance();
+    const QString sp = slicePrefix(m_sliceIndex);
+    if (s.contains(sp + QStringLiteral("RitEnabled"))) {
+        setRitEnabled(s.value(sp + QStringLiteral("RitEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("RitHz"))) {
+        setRitHz(s.value(sp + QStringLiteral("RitHz")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("XitEnabled"))) {
+        setXitEnabled(s.value(sp + QStringLiteral("XitEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("XitHz"))) {
+        setXitHz(s.value(sp + QStringLiteral("XitHz")).toInt());
+    }
+}
+
+void SliceModel::forgetSavedRitXit()
+{
+    auto& s = AppSettings::instance();
+    const QString sp = slicePrefix(m_sliceIndex);
+    s.remove(sp + QStringLiteral("RitEnabled"));
+    s.remove(sp + QStringLiteral("RitHz"));
+    s.remove(sp + QStringLiteral("XitEnabled"));
+    s.remove(sp + QStringLiteral("XitHz"));
+}
+
 void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
 {
     // Slice control plan Task 5: a band's saved state is a change a
@@ -4096,17 +4128,8 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
     if (s.contains(sp + QStringLiteral("Muted"))) {
         setMuted(s.value(sp + QStringLiteral("Muted")).toString() == QLatin1String("True"));
     }
-    if (s.contains(sp + QStringLiteral("RitEnabled"))) {
-        setRitEnabled(s.value(sp + QStringLiteral("RitEnabled")).toString() == QLatin1String("True"));
-    }
-    if (s.contains(sp + QStringLiteral("RitHz"))) {
-        setRitHz(s.value(sp + QStringLiteral("RitHz")).toInt());
-    }
-    if (s.contains(sp + QStringLiteral("XitEnabled"))) {
-        setXitEnabled(s.value(sp + QStringLiteral("XitEnabled")).toString() == QLatin1String("True"));
-    }
-    if (s.contains(sp + QStringLiteral("XitHz"))) {
-        setXitHz(s.value(sp + QStringLiteral("XitHz")).toInt());
+    if (restoreTuning) {
+        restoreRitXitFromSettings();
     }
     if (s.contains(sp + QStringLiteral("AfGain"))) {
         setAfGain(s.value(sp + QStringLiteral("AfGain")).toInt());

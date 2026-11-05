@@ -15,6 +15,10 @@
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//                letter used before too; a restored receiver keeps its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
 //   2026-10-28 - A new slice takes the open slice's noise reduction,
 //                including NNR suppression. NereusSDR-original. J.J. Boyd
 //                (KG4VCF), AI-assisted via xAI Grok.
@@ -8979,6 +8983,9 @@ private:
     QHash<int, QMap<QString, QString>> m_deviceLetterSnapshot;
     // windowSliceId.
     int m_windowSliceId{0};
+    // True while addStartingSlices makes the window's slice: addSliceImpl
+    // treats it as restored for RIT and XIT, not as a new receiver.
+    bool m_addingStartingSlice{false};
     bool m_receiveLayoutOverridesCount{false};
     // Slice ids the saved layout hydrated, until admission completes: a
     // slice refused at admission is "restored" only if its id is here.
