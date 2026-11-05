@@ -88,28 +88,29 @@ on a real radio or a real GPU.
 | --- | --- | --- |
 | Sample rate drops on a band change | Rate saved per slice per band | One rate per receiver (`hardware/<mac>/slices/<N>/SampleRate`); a band change leaves it alone. Older per-band values still supply the rate of the last band |
 | New slice with its own receiver opens at 192 kHz | New receiver takes the radio-wide rate | Opens at the rate of the slice it was seeded from |
-| Window or phone back on a Core loses its rate | `restoreSliceFor` skipped the rate, then the next save overwrote it | Comes back at its saved rate, unless that would move a receiver someone else is on |
+| Window or phone back on a Core loses its rate | `restoreSliceFor` skipped the rate, then the next save overwrote it | Comes back at its saved rate, unless that would move a receiver someone else is on. On Protocol 1, or for a rate this radio does not have, it takes the rate in use and moves nothing |
+| A stale request could put a radio on a rate it does not have | The Core's slice rate request had no ladder check | Refused, as the radio-wide request already was |
 | Setup's rate undone at the next connect | Not saved on the slices | Saved on each slice |
 | Two radios overwrite each other's rate | One key for a slice letter across all radios | Each radio keeps its own, `hardware/<mac>/slices/<N>/SampleRate`, as `CLAUDE.md` asks |
 | Two slices sharing a receiver fight at connect, and 192 kHz wins over 1536 kHz | Each slice applied its own saved rate in turn | One rate per receiver: the highest saved on it |
 | A slice leaving a shared receiver drops to 192 kHz (tuned out, moved with its pan, or pushed off when the rate changes) | Same radio-wide rate | Keeps its rate on all three paths |
 | A change is lost on a crash, kill or power cut | Most writes reached disk only at the next unrelated save or a clean stop | `AppSettings` saves about 2 s after the first unsaved change, on every role. Values handed to it only at close are still lost on a crash or SIGKILL (see Not fixed) |
 | A locked slice comes back on 14.225 MHz and damages the 20 m memory | The restore used the setter the lock blocks | The restore assigns past the lock |
-| A Core stops saving receiver settings for its whole run | A kept (protected) layout blocked every slice save | Only the layout record is held back; letters refused at admission keep their keys |
+| A Core stops saving receiver settings for its whole run | A kept (protected) layout blocked every slice save | Only the layout record is held back; letters refused at admission keep their keys, a band button leaves them alone, and if the record could not be read, every letter with saved keys and no running receiver is kept |
 | A custom TX filter is lost going through RADE | Entry overwrote it with nothing kept | The filter from before RADE comes back, across a restart too |
 | Diversity phase, gain and fine null can be lost at quit | No save scheduled for them | Scheduled |
 | A crash during Fixed-source TUNE or two-tone would leave the temporary power on disk as that band's drive | An old in-memory path, exposed by the timed save above | The band-power write is held while a temporary power is active. Memory and on-air behavior are unchanged |
 | A device leaving with the radio off loses its slices | The close deleted the keys with nowhere to save them | The slice is held for that device |
 | A sign-in to a headless Core with the radio off misses its saved slices | The wait applied only to a Core inside a window | Applies to a headless Core too, for paired devices |
 | Connecting turns a radio's Auto-connect back on | Both paths passed a fixed true | Set on first connect only; after that the saved choice stays |
-| iPhone opens on a baseline after the app has ended | Nothing about your place was saved | Reconnect automatically, plus tab, page, mute and layouts (JJ's ruling above) |
+| iPhone opens on a baseline after the app has ended | Nothing about your place was saved | Reconnect automatically, plus tab, page, mute and layouts (JJ's ruling above). The reconnect waits until the app is on screen, and Disconnect or a LINK LOST Cancel forgets the Core |
 | iPad open pans are lost | Never saved | Reopened from the slices and a saved list |
 | Play the band through is not kept | Memory only | Saved; an absent device falls back to iOS without losing the choice |
 | A background picture can vanish after an app update | Saved as an absolute path | Saved relative to Application Support |
 | The panel hidden with the bottom bar's icon comes back | Only held in memory | Saved at the click and restored, in both looks |
 | A pan floated onto a second monitor comes back docked | Geometry was saved, the fact it floated was not | Floats again after a restart; an absent screen falls back as the geometry code already does |
 | Zoom slider sits at full right while the span is narrow, and the first touch jumps | The slider did not follow the span | Follows the active pan's span |
-| FFT decimation returns to 1 at every launch | No key | Saved, and restored with a range check |
+| FFT decimation returns to 1 at every launch | No key | Saved for each device, and restored with a range check |
 | A pan's overlay strip collapse is lost | No key | Saved for each pan |
 | The dividers inside a pan row are lost (12h, 2h1, 2x2, 3h2) | Only the top-to-bottom split was saved | Each row saves and restores; sizes that no longer fit are ignored |
 | Spots off in Spot Hub still draws spots on the second pan | Saved settings reached only the first pan | Reach every pan, and a pan opened later |
@@ -141,6 +142,13 @@ The tables below still show these as found.
 - **Values handed to the store only at close** (`PanLayoutId`, splitter sizes, window
   geometry) are lost on a crash or SIGKILL, because no handler runs. Writing them as they
   change is a larger change to the window and was not made here.
+- **A band change within about 130 ms of TUNE off** keeps the tune power on the old band, in
+  memory and then on disk (`RadioModel.cpp:8532-8580`). Thetis does the same
+  (`console.cs:17533-17537` [v2.10.3.15]), so it is left alone. Marked for the maintainer, since a
+  high tune power could become that band's drive.
+- **A Live Activity Cancel in a process iOS started for that intent** leaves the last Core set, and
+  **a launch before the phone's first unlock** may not reconnect. Both inferred from reading, not
+  seen on a device.
 - **Unknown rows stay unknown.** Rows marked unknown in the tables were not settled by reading
   the code, and nothing here was run on a real radio.
 
