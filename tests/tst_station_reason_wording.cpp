@@ -58,6 +58,10 @@
 // cwQskUnavailableReason is placed. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
 //
+// 2026-11-05: The SSB Mod Monitor's ssbModMonitorUnavailableReason is
+// placed. Corrections for review findings. J.J. Boyd (KG4VCF), AI-assisted
+// via Anthropic Claude Code.
+//
 //   2026-10-11  J.J. Boyd / KG4VCF  Band filters that combine: RadioModel's
 //                                    sharedLnaReason is scanned, and the
 //                                    note it gives the filter label
@@ -2261,6 +2265,8 @@ const QList<AppSideReason>& appSideReasons()
          "a remote window's own reason when its Core cannot repair settings"},
         {"src/core/session/IStationLink.h", "modMonitorUnavailableReason",
          "a remote window's own fallback when its Core cannot send modulation readings"},
+        {"src/core/session/IStationLink.h", "ssbModMonitorUnavailableReason",
+         "a remote window's own fallback when its Core cannot send SSB modulation readings"},
         // iPhone app plan Task 25 (This Core in a remote window): the
         // Core's paired devices.
         {"src/core/session/IStationLink.h", "deviceAdminUnavailableReason",
