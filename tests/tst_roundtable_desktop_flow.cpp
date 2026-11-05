@@ -2622,6 +2622,25 @@ private slots:
         model->detach();
     }
 
+    // The flag bar follows the analog meter's choice, on the window's real selector.
+    void theFlagsSourceFollowsTheMeterChoice()
+    {
+        Everything p;
+        SliceMeterPump* pump = p.core()->sliceMeterPump();
+        QVERIFY(pump != nullptr);
+        auto* meter = p.window()->findChild<SMeterWidget*>();
+        QVERIFY(meter != nullptr);
+        const auto source = [&](const char* mode) {
+            meter->setRxMode(QString::fromLatin1(mode));
+            return pump->selectedSourceForTest();
+        };
+        QCOMPARE(source("S-Meter"), std::optional(SliceMeterPump::MeterSource::SignalPeak));
+        QCOMPARE(source("S-Meter Peak"), std::optional(SliceMeterPump::MeterSource::SignalPeak));
+        QCOMPARE(source("Sig Avg"), std::optional(SliceMeterPump::MeterSource::SignalAverage));
+        QCOMPARE(source("Max Bin"), std::optional(SliceMeterPump::MeterSource::MaxBin));
+        meter->setRxMode(QStringLiteral("S-Meter"));
+    }
+
     // D37: a pan that does not hold the active slice places it by its own slice's flag.
     void aPanWithoutTheActiveSlicePlacesByItsOwnFlag()
     {
