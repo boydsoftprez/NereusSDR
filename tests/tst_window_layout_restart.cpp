@@ -322,6 +322,55 @@ private slots:
         QCOMPARE(stack->spectrum(QStringLiteral("pan-1"))->spotFontSizeForTest(), 19);
         hub->close();
     }
+
+    // A quit that never ran closeEvent still hands the layout, the floating
+    // place and the pending display save to AppSettings.
+    void aboutToQuitSavesWhatCloseEventSaves()
+    {
+        auto& s = AppSettings::instance();
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        auto* stack = window.findChild<PanadapterStack*>();
+        stack->applyLayout(QStringLiteral("2v"), MainWindow::panIdsForLayout(QStringLiteral("2v")));
+        settle();
+        stack->spectrum(QStringLiteral("pan-0"))->setFrequencyRange(14'100'000.0, 48'000.0);
+        stack->floatPanadapter(QStringLiteral("pan-1"));
+        settle();
+
+        const QString geometryKey = QStringLiteral("FloatingPan_pan-1_Geometry");
+        s.remove(geometryKey);
+        s.remove(QStringLiteral("PanLayoutId"));
+        s.remove(QStringLiteral("PanSplitter0Sizes"));
+        const QString spanKey = PanDisplayKeys::panKey(u"DisplayBandwidth", 0);
+        s.setValue(spanKey, QStringLiteral("1"));
+
+        QVERIFY(QMetaObject::invokeMethod(qApp, "aboutToQuit"));
+
+        QCOMPARE(s.value(QStringLiteral("PanLayoutId")).toString(), QStringLiteral("2v"));
+        QVERIFY(!s.value(QStringLiteral("PanSplitter0Sizes")).toString().isEmpty());
+        QVERIFY(!s.value(geometryKey).toString().isEmpty());
+        QCOMPARE(s.value(spanKey).toString().toDouble(), 48'000.0);
+        stack->dockPanadapter(QStringLiteral("pan-1"));
+        settle();
+    }
+
+    // After closeEvent the window is hidden and the radio is gone; what
+    // closeEvent saved stands.
+    void aboutToQuitAfterCloseEventLeavesItsSavesAlone()
+    {
+        auto& s = AppSettings::instance();
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        window.close();
+        QCOMPARE(s.value(QStringLiteral("PanLayoutId")).toString(), QStringLiteral("1"));
+
+        s.setValue(QStringLiteral("PanLayoutId"), QStringLiteral("marker"));
+        const QString spanKey = PanDisplayKeys::panKey(u"DisplayBandwidth", 0);
+        s.setValue(spanKey, QStringLiteral("1"));
+        QVERIFY(QMetaObject::invokeMethod(qApp, "aboutToQuit"));
+        QCOMPARE(s.value(QStringLiteral("PanLayoutId")).toString(), QStringLiteral("marker"));
+        QCOMPARE(s.value(spanKey).toString(), QStringLiteral("1"));
+    }
 };
 
 QTEST_MAIN(TstWindowLayoutRestart)

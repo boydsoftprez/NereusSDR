@@ -2036,6 +2036,10 @@ private:
     // stop flag and runs a fresh ~5 s NIC walk on the main thread mid-
     // close. Symptom: ⌘Q beach-balls for the full SafeDefault scan time.
     bool m_shuttingDown{false};
+    // closeEvent has handed the layout and display values to AppSettings. By
+    // the aboutToQuit that follows the window is hidden and the radio gone,
+    // so that handler leaves them as they were.
+    bool m_closeSavesDone{false};
 
     // Container infrastructure (Phase 3G-1)
     ContainerManager* m_containerManager{nullptr};

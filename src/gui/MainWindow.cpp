@@ -2322,6 +2322,17 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         m_shuttingDown = true;
         if (m_clarityRegistry) { m_clarityRegistry->retireAll(); }
         if (m_desktopStationController) { m_desktopStationController->stop(); }
+        // What the pans show, read before the disconnect as closeEvent reads
+        // it; a save only writes the in-memory map, so the stop frame below
+        // is not held up. A pending 500 ms display save would otherwise be
+        // dropped here.
+        if (!m_closeSavesDone && m_panStack) {
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                if (applet && applet->spectrumWidget()) {
+                    applet->spectrumWidget()->saveSettings();
+                }
+            }
+        }
         // 2026-05-22 bench-finding: graceful radio disconnect MUST happen
         // before the process tears down so the SendStop frame (run=0
         // CmdHighPriority) actually reaches the wire.  Without this,
@@ -2336,6 +2347,10 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         }
         if (m_containerManager) {
             m_containerManager->saveState();
+        }
+        if (!m_closeSavesDone && m_panStack) {
+            m_panStack->saveSplitterState();
+            m_panStack->saveFloatingGeometry();
         }
         // Issue #206 — also flush window geometry on signal-based
         // shutdown (SIGTERM / force-quit). Idempotent with the
@@ -21543,6 +21558,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         // never reached the disk. Codex, PR #318.
         m_panStack->saveFloatingGeometry();
     }
+    m_closeSavesDone = true;
 
     // Issue #206 — persist window geometry + maximized/fullscreen
     // state. Captured BEFORE close so the saved blob reflects the
