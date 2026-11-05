@@ -2679,6 +2679,34 @@ private slots:
         model->detach();
     }
 
+    // Disabled, never hidden: a flag line's right click in a mode with no Roundtable
+    // frequency shows the short menu, greyed.
+    void aFlagLineWithNoFrequencyShowsTheMenuGreyed()
+    {
+        Everything p;
+        SliceModel* slice = p.model()->sliceById(p.sliceId());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::SPEC);
+        settle();
+        SpectrumWidget* pan = panOf(p.window());
+        QVERIFY(pan != nullptr);
+        VfoWidget* flag = pan->vfoWidget(p.sliceId());
+        QVERIFY(flag != nullptr);
+        emit flag->roundtableLineMenuRequested(p.window()->mapToGlobal(QPoint(200, 200)));
+        const QList<QMenu*> menus = p.window()->findChildren<QMenu*>(QStringLiteral("roundtableShortMenu"), Qt::FindDirectChildrenOnly);
+        QCOMPARE(menus.size(), 1);
+        QStringList rows;
+        for (QAction* row : menus.first()->actions()) {
+            if (!row->isSeparator()) {
+                QVERIFY(!row->isEnabled());
+                rows.append(row->text());
+            }
+        }
+        QCOMPARE(rows, (QStringList{QStringLiteral("Roundtable"), QStringLiteral("Open inspector"),
+                                    QStringLiteral("Tune slice here"), QStringLiteral("Messages")}));
+        menus.first()->close();
+    }
+
     // The flag bar follows the analog meter's choice, on the window's real selector.
     void theFlagsSourceFollowsTheMeterChoice()
     {

@@ -2929,6 +2929,8 @@ public:
     /// The rows a fold's list holds: a heading, then one row per room in
     /// `roomIds` (by frequency), each emitting roundtableRoomClicked.
     void buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu);
+    /// The short menu's disabled form, for a slice with no frequency to open: greyed, not gone.
+    static void buildRoundtableUnavailableMenu(const QString& heading, QMenu& menu);
     /// The spectrum rectangle the tags are drawn against, and the band
     /// plan strip's height at its foot.
     QRect roundtableTagSpectrumRectForTest() const;

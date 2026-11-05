@@ -7231,11 +7231,19 @@ void MainWindow::openRoundtableMenu(SpectrumWidget* pan, const QString& context,
 void MainWindow::openRoundtableMenuForSlice(int sliceId, const QPoint& at)
 {
     const SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
+    if (!slice) { return; }
     const QString family = familyOfSlice(slice);
     SpectrumWidget* pan = panHoldingRoundtableSlice(sliceId);
-    if (slice && pan && !family.isEmpty()) {
+    if (pan && !family.isEmpty()) {
         openRoundtableMenu(pan, RoundtableModel::frequencyContextId(std::llround(slice->frequency()), family), at, false);
+        return;
     }
+    // A mode with no Roundtable frequency: the same menu, greyed.
+    auto* menu = new QMenu(this);
+    menu->setObjectName(QStringLiteral("roundtableShortMenu"));
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    SpectrumWidget::buildRoundtableUnavailableMenu(QStringLiteral("Roundtable"), *menu);
+    menu->popup(at);
 }
 
 void MainWindow::openRoundtableMessages(const QString& context)

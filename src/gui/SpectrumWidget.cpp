@@ -13335,6 +13335,19 @@ void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, boo
     }
 }
 
+void SpectrumWidget::buildRoundtableUnavailableMenu(const QString& heading, QMenu& menu)
+{
+    menu.setStyleSheet(roundtableMenuStyle());
+    menu.setToolTipsVisible(true);
+    menu.addAction(heading)->setEnabled(false);
+    menu.addSeparator();
+    for (const QString& text : {QStringLiteral("Open inspector"), QStringLiteral("Tune slice here"), QStringLiteral("Messages")}) {
+        QAction* action = menu.addAction(text);
+        action->setEnabled(false);
+        action->setToolTip(QStringLiteral("Not available in this mode"));
+    }
+}
+
 void SpectrumWidget::buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu)
 {
     menu.setStyleSheet(roundtableMenuStyle());
