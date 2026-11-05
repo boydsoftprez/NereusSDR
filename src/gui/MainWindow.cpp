@@ -2376,6 +2376,9 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         AppSettings::instance().save();
     }, this);
 
+    // The status bar's ☰ and the panel it hides both exist by now.
+    restoreContainerPanelHidden();
+
     // Issue #206 — restore last session's window position, size, and
     // maximized/fullscreen state. The 1280×800 set in buildUI() stays as the
     // first-launch fallback; restoreMainWindowGeometry() returns false
@@ -6302,6 +6305,94 @@ void MainWindow::refreshAutoAgcVisuals(RadioModel* model, SliceModel* slice,
         applet->updateAgcAutoVisuals(slice->autoAgcEnabled(), floor,
                                        slice->autoAgcOffset(), valid);
     }
+}
+
+namespace {
+
+// The bottom bar's menu icon: whether the container panel is hidden, and in
+// the classic look the splitter sizes to show it at again. The workspace look
+// keeps its width in the arrangement while the strip is collapsed; a hidden
+// pane's width saves as 0 in the classic look, so it needs its own record.
+constexpr auto kContainerPanelHiddenKey = "ContainerPanelHidden";
+constexpr auto kContainerPanelSizesKey = "ContainerPanelSizesBeforeHide";
+
+} // namespace
+
+bool MainWindow::containerPanelHidden() const
+{
+    if (m_edgeDockArea) {
+        return m_edgeDockArea->userCollapsed(DockEdge::Right);
+    }
+    return m_mainSplitter && m_mainSplitter->count() >= 2
+        && m_mainSplitter->widget(1)->isHidden();
+}
+
+void MainWindow::applyContainerPanelHidden(bool hidden)
+{
+    if (m_edgeDockArea) {
+        // Workspace preview: collapse the right strip, keep its contents.
+        m_edgeDockArea->setUserCollapsed(DockEdge::Right, hidden);
+    } else {
+        // Toggle QSplitter right pane (index 1) visibility.
+        if (!m_mainSplitter || m_mainSplitter->count() < 2) { return; }
+        QWidget* rightPane = m_mainSplitter->widget(1);
+        if (hidden) {
+            rightPane->hide();
+        } else {
+            // Show: restore saved sizes (or default 80/20 if none saved)
+            rightPane->show();
+            if (!m_splitterSizesBeforeHide.isEmpty()) {
+                m_mainSplitter->setSizes(m_splitterSizesBeforeHide);
+            } else {
+                m_mainSplitter->setSizes({1024, 256});
+            }
+        }
+    }
+    if (m_panelToggleLabel) {
+        m_panelToggleLabel->setStyleSheet(hidden
+            ? QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 16px; }")
+            : QStringLiteral("QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
+    }
+}
+
+void MainWindow::toggleContainerPanel()
+{
+    const bool hidden = !containerPanelHidden();
+    auto& s = AppSettings::instance();
+    if (hidden && !m_edgeDockArea && m_mainSplitter) {
+        // Hide: save current sizes, then collapse right to 0
+        m_splitterSizesBeforeHide = m_mainSplitter->sizes();
+        QStringList parts;
+        for (int size : std::as_const(m_splitterSizesBeforeHide)) {
+            parts << QString::number(size);
+        }
+        s.setValue(QLatin1String(kContainerPanelSizesKey), parts.join(QLatin1Char(',')));
+    }
+    applyContainerPanelHidden(hidden);
+    s.setValue(QLatin1String(kContainerPanelHiddenKey),
+               hidden ? QStringLiteral("True") : QStringLiteral("False"));
+}
+
+void MainWindow::restoreContainerPanelHidden()
+{
+    auto& s = AppSettings::instance();
+    if (s.value(QLatin1String(kContainerPanelHiddenKey), QStringLiteral("False")).toString()
+        != QStringLiteral("True")) {
+        return;
+    }
+    if (!m_edgeDockArea && m_mainSplitter) {
+        const QStringList parts = s.value(QLatin1String(kContainerPanelSizesKey), QString())
+                                      .toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+        QVector<int> sizes;
+        for (const QString& part : parts) {
+            sizes << part.toInt();
+        }
+        // None usable: showing it falls back to the default split.
+        if (sizes.size() == m_mainSplitter->count() && sizes.last() > 0) {
+            m_splitterSizesBeforeHide = sizes;
+        }
+    }
+    applyContainerPanelHidden(true);
 }
 
 void MainWindow::refreshFftPoolConfig()
@@ -14218,6 +14309,7 @@ void MainWindow::buildStatusBar()
     // We need to store the label pointer to recognise it in eventFilter.
     // Use a property to mark it.
     panelToggleLabel->setProperty("isPanelToggle", true);
+    m_panelToggleLabel = panelToggleLabel;
 
     // TNF light. Click toggles every notch at once; colour and tooltip follow
     // NotchModel::globalEnabled.
@@ -17939,38 +18031,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::MouseButtonPress) {
         auto* label = qobject_cast<QLabel*>(watched);
         if (label && label->property("isPanelToggle").toBool()) {
-            if (m_edgeDockArea) {
-                // Workspace preview: collapse the right strip, keep its contents.
-                const bool collapse = !m_edgeDockArea->userCollapsed(DockEdge::Right);
-                m_edgeDockArea->setUserCollapsed(DockEdge::Right, collapse);
-                label->setStyleSheet(collapse
-                    ? QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 16px; }")
-                    : QStringLiteral("QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
-                return true;
-            }
-            // Toggle QSplitter right pane (index 1) visibility.
-            // Save/restore sizes so spectrum expands when panel is hidden.
-            if (!m_mainSplitter || m_mainSplitter->count() < 2) {
+            if (!m_edgeDockArea && (!m_mainSplitter || m_mainSplitter->count() < 2)) {
                 return QMainWindow::eventFilter(watched, event);
             }
-            QWidget* rightPane = m_mainSplitter->widget(1);
-            if (rightPane->isVisible()) {
-                // Hide: save current sizes, then collapse right to 0
-                m_splitterSizesBeforeHide = m_mainSplitter->sizes();
-                rightPane->hide();
-                label->setStyleSheet(QStringLiteral(
-                    "QLabel { color: #404858; font-weight: bold; font-size: 16px; }"));
-            } else {
-                // Show: restore saved sizes (or default 80/20 if none saved)
-                rightPane->show();
-                if (!m_splitterSizesBeforeHide.isEmpty()) {
-                    m_mainSplitter->setSizes(m_splitterSizesBeforeHide);
-                } else {
-                    m_mainSplitter->setSizes({1024, 256});
-                }
-                label->setStyleSheet(QStringLiteral(
-                    "QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
-            }
+            toggleContainerPanel();
             return true;  // event consumed
         }
     }

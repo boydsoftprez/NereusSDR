@@ -1393,6 +1393,14 @@ private:
     /// reasoning.
     void refreshFftPoolConfig();
 
+    /// The bottom bar's menu icon. Hidden or shown is saved at the click and
+    /// comes back at startup, in both looks: the workspace look collapses the
+    /// right strip, the classic look hides the splitter's right pane.
+    bool containerPanelHidden() const;
+    void applyContainerPanelHidden(bool hidden);
+    void toggleContainerPanel();
+    void restoreContainerPanelHidden();
+
 
     /// R1 Task 6: wires a pool-provided engine into MainWindow's other
     /// subsystems the first time streamIndex is seen -- the raw I/Q feed
@@ -2115,6 +2123,7 @@ private:
     quint64 m_cpuSysPrevTotal{0};
     quint64 m_cpuSysPrevIdle{0};
     QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
+    QLabel* m_panelToggleLabel{nullptr};     // the ☰ itself, dimmed while hidden
 
     // Status bar safety indicators (Phase 3M-0 Task 14 / sub-PR-8 restyle;
     // reserved safety slots added per design §4.5).

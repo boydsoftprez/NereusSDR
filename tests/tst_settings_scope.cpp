@@ -611,6 +611,8 @@ private slots:
         // Brief-mandated worked examples.
         QTest::newRow("DisplayFftSize is Station (FftPoolConfig)")
             << QStringLiteral("DisplayFftSize") << int(SettingsScope::Station);
+        QTest::newRow("ContainerPanelHidden is OperatorLocal (this window's layout)")
+            << QStringLiteral("ContainerPanelHidden") << int(SettingsScope::OperatorLocal);
         QTest::newRow("DisplayNoiseFloorColor is OperatorLocal (rendering)")
             << QStringLiteral("DisplayNoiseFloorColor") << int(SettingsScope::OperatorLocal);
         QTest::newRow("ClarityEnabled is OperatorLocal (client-display master toggle)")
