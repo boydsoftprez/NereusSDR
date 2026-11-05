@@ -8986,6 +8986,10 @@ private:
     // admission step does not report an accepted restore over it.
     QString m_sliceClosureNotice;
     bool m_receiveLayoutProtected{false};
+    // Receivers the saved layout still names but this run refused or closed.
+    // Their Slice<N>/ keys wait for them, so no slice that takes the same
+    // letter this run writes over those keys.
+    QSet<int> m_receiveLayoutKeptSliceIds;
     QString m_receiveLayoutMac;
     std::optional<int> m_restoredRadeReceiveOwner;
     // RADE reason: each RADE slice's last failed decoder start, and the

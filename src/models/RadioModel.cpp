@@ -13871,6 +13871,10 @@ void RadioModel::closeSlicesPastChannelLimit()
     // A saved layout is a per-radio record a temporary limit must not erase.
     if (m_receiveLayoutManaged && m_receiveLayoutOverridesCount) {
         m_receiveLayoutProtected = true;
+        // The record still names these receivers, so their keys wait for them.
+        for (const int id : std::as_const(ids)) {
+            m_receiveLayoutKeptSliceIds.insert(id);
+        }
     }
     for (const QPointer<SliceModel>& victim : std::as_const(victims)) {
         if (!victim || sliceById(victim->sliceIndex()) != victim.data()) { continue; }
@@ -14024,6 +14028,10 @@ void RadioModel::bindReceiveLayoutSlices()
     // would only lose the slices that remain.
     if (fromSavedLayout) {
         m_receiveLayoutProtected = true;
+        // The record still names these receivers, so their keys wait for them.
+        for (const int id : std::as_const(refusedIds)) {
+            m_receiveLayoutKeptSliceIds.insert(id);
+        }
     }
     const bool allRefused = refusedIds.size() == m_slices.size();
     if (allRefused) {
@@ -29371,14 +29379,18 @@ void RadioModel::scheduleSettingsSave(SliceModel* slice)
     if (role() != Role::Local) {
         return;
     }
-    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
+    if (!slice) {
+        slice = m_activeSlice;
+    }
+    // A protected layout holds back its own record (flushPendingSettingsSave),
+    // not the keys of the receivers that are running. Only a letter the
+    // record still waits on keeps its keys as they are.
+    if (m_receiveLayoutPendingAdmission
+        || (slice && m_receiveLayoutKeptSliceIds.contains(slice->sliceIndex()))) {
         if (m_stationHandoverTrackSuppressedReceiverEdits && !m_receiveLayoutHydrating) {
             m_stationHandoverSuppressedReceiverEdits = true;
         }
         return;
-    }
-    if (!slice) {
-        slice = m_activeSlice;
     }
     if (slice) {
         const int id = slice->sliceIndex();
@@ -29418,7 +29430,8 @@ void RadioModel::beginStationHandoverEditTracking()
 void RadioModel::noteOfflineReceiverPropertyEdit()
 {
     if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
-        scheduleSettingsSave();
+        // The edited slice, which need not be the active one.
+        scheduleSettingsSave(qobject_cast<SliceModel*>(sender()));
     }
 }
 
@@ -29461,7 +29474,7 @@ void RadioModel::flushPendingSettingsSave(SettingsSaveMode mode)
         }
         return;
     }
-    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected || !m_settingsSaveScheduled) {
+    if (m_receiveLayoutPendingAdmission || !m_settingsSaveScheduled) {
         return;
     }
     m_settingsSaveScheduled = false;
@@ -29476,7 +29489,9 @@ void RadioModel::flushPendingSettingsSave(SettingsSaveMode mode)
         saveSliceState(nullptr);
     }
     QString error;
-    bool saved = captureReceiveLayout(&error);
+    // A saved layout a temporary limit must not erase stays as it is; the
+    // slice keys above and the rest of the store still go to the file.
+    bool saved = m_receiveLayoutProtected || captureReceiveLayout(&error);
     if (saved && mode == SettingsSaveMode::Background) {
         // The file's result comes later; the reason shown stays as it is
         // until then.
@@ -29554,6 +29569,11 @@ bool RadioModel::saveForStationHandover(QString* error)
             }
             return false;
         }
+        // Protected alone: the receivers' own keys are saved now, so what is
+        // waiting goes to the store first. The layout record stays as it is.
+        if (!m_receiveLayoutPendingAdmission) {
+            flushPendingSettingsSave();
+        }
         if (m_stationHandoverSuppressedReceiverEdits || m_settingsSaveScheduled
             || !m_dirtySettingsSliceIds.isEmpty() || m_alexControllerDirty) {
             if (error) {
@@ -29610,7 +29630,7 @@ void RadioModel::applyStationSettingsSaveError(const QString& reason)
 // them through a failed file write and the existing background/retry path.
 void RadioModel::materializePendingBandSettings(int sliceId)
 {
-    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
+    if (m_receiveLayoutPendingAdmission) {
         return;
     }
     const QMap<QString, QVariant> pending = m_pendingBandSettings.take(sliceId);
@@ -29643,10 +29663,10 @@ void RadioModel::onSettingsKeyWritten(const QString& key)
 // see the antennaChanged / blockTxChanged handlers in wireSliceSignals.
 void RadioModel::saveSliceState(SliceModel* slice)
 {
-    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
+    if (m_receiveLayoutPendingAdmission) {
         return;
     }
-    if (slice) {
+    if (slice && !m_receiveLayoutKeptSliceIds.contains(slice->sliceIndex())) {
         materializePendingBandSettings(slice->sliceIndex());
         slice->saveToSettings(bandFromFrequency(slice->frequency()));
     }

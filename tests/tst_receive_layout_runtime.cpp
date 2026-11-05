@@ -731,6 +731,56 @@ private slots:
         QCOMPARE(rawLayoutFromDisk(kMacA), rock);
     }
 
+    // A kept layout holds back the layout record, not what the receivers
+    // that did start are told to do. Before this the whole run's slice edits
+    // were dropped.
+    void aKeptLayoutStillSavesLiveReceiversAndLeavesRefusedOnes()
+    {
+        const QList<ReceiveSliceState> oversizedForHermesII{
+            {0, QStringLiteral("pan-0"), 14'293'200.0, DSPMode::USB},
+            {1, QStringLiteral("pan-1"), 7'200'000.0, DSPMode::LSB},
+            {2, QStringLiteral("pan-2"), 10'100'000.0, DSPMode::AM},
+        };
+        QVERIFY(saveLayout(kMacA, oversizedForHermesII));
+        AppSettings::instance().setValue(QStringLiteral("Slice1/AfGain"), 40);
+        AppSettings::instance().setValue(QStringLiteral("Slice2/AfGain"), 17);
+        AppSettings::instance().setValue(QStringLiteral("Slice2/Band30m/DspMode"),
+                                         SliceModel::modeName(DSPMode::AM));
+        QVERIFY(AppSettings::instance().save());
+        const QString original = rawLayoutFromDisk(kMacA);
+        {
+            DaemonApp app;
+            app.primeBoardForTest(HPSDRHW::HermesII, kMacA);
+            QVERIFY(app.start(configWithCount(1)));
+            RadioModel* radio = model(app);
+            QCOMPARE(radio->receiveLayoutRestoreState(), QStringLiteral("degraded"));
+            QVERIFY(radio->sliceById(1));
+            QVERIFY(!radio->sliceById(2));
+
+            // Slice B is not the active slice: the edit is saved under its
+            // own letter.
+            radio->sliceById(1)->setAfGain(33);
+            radio->sliceById(1)->setFrequency(7'150'000.0);
+            radio->flushPendingSettingsSave();
+            auto& s = AppSettings::instance();
+            QCOMPARE(s.value(QStringLiteral("Slice1/AfGain")).toString(), QStringLiteral("33"));
+            QCOMPARE(s.value(QStringLiteral("Slice1/Band40m/Frequency")).toDouble(), 7'150'000.0);
+            // The record itself stays as it was.
+            QCOMPARE(s.hardwareValue(AppSettings::normalizedRadioMac(kMacA),
+                                     QLatin1String(kLayoutKey)).toString(), original);
+            app.stop();
+        }
+        QCOMPARE(rawLayoutFromDisk(kMacA), original);
+        reloadSingletonFromDisk();
+        auto& s = AppSettings::instance();
+        QCOMPARE(s.value(QStringLiteral("Slice1/AfGain")).toString(), QStringLiteral("33"));
+        // Receiver C was refused: its keys wait for it.
+        QCOMPARE(s.value(QStringLiteral("Slice2/AfGain")).toString(), QStringLiteral("17"));
+        QCOMPARE(s.value(QStringLiteral("Slice2/Band30m/DspMode")).toString(),
+                 SliceModel::modeName(DSPMode::AM));
+        QVERIFY(!s.contains(QStringLiteral("Slice2/LastBand")));
+    }
+
     void allUnsupportedIdsUseExplicitFallbackWithoutErasingSavedState()
     {
         QVERIFY(saveLayout(kMacA, {{4, "pan-3", 7200000, DSPMode::LSB}}));
