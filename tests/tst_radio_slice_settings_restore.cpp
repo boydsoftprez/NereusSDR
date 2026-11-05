@@ -286,6 +286,41 @@ private slots:
                  qPrintable(path));
     }
 
+    // ── Lock on at quit ─────────────────────────────────────────────────
+
+    // A desktop's starting slice is restored twice: addSlice() brings back
+    // its preferences, Locked included, with no tuning, and loadSliceState
+    // then restores the last band. The lock from the first must not veto
+    // the frequency in the second, or the slice comes back on the
+    // constructor's 14.225 MHz and the next save damages the 20 m slot.
+    void aLockedSliceComesBackOnItsSavedFrequency()
+    {
+        auto& s = AppSettings::instance();
+        {
+            SliceModel slice;
+            slice.setSliceIndex(0);
+            slice.setFrequency(7'074'000.0);
+            slice.setDspMode(DSPMode::LSB);
+            slice.setLocked(true);
+            slice.saveToSettings(Band::Band40m);
+        }
+        QVERIFY(s.contains(QStringLiteral("Slice0/Band40m/Frequency")));
+
+        RadioModel radio;
+        SliceModel slice;
+        slice.setSliceIndex(0);
+        slice.restoreFromSettings(Band::Band40m, false);
+        QVERIFY(slice.locked());
+        QCOMPARE_NE(slice.frequency(), 7'074'000.0);
+        radio.loadSliceStateForTest(&slice);
+
+        QCOMPARE(slice.frequency(), 7'074'000.0);
+        QVERIFY(slice.locked());
+        // And a lock still stops a tune.
+        slice.setFrequency(7'100'000.0);
+        QCOMPARE(slice.frequency(), 7'074'000.0);
+    }
+
     // ── A restored slice runs on what it shows ──────────────────────────
 
     // Slice B is restored while it has no WDSP channel (as the Core's

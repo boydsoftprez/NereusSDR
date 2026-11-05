@@ -3742,7 +3742,14 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
     // Each key: if absent, leave the current SliceModel default unchanged.
 
     if (restoreTuning && s.contains(bp + QStringLiteral("Frequency"))) {
-        setFrequency(s.value(bp + QStringLiteral("Frequency")).toDouble());
+        // A restore is not a tune. The Lock an earlier restore of this slice
+        // brought back must not veto its saved frequency (restoreReceiveState
+        // above assigns past it for the same reason). A band change on a
+        // locked slice never reaches here: RadioModel refuses it first.
+        const double savedFrequency = s.value(bp + QStringLiteral("Frequency")).toDouble();
+        if (!holdsListenerWrite(frequency(), savedFrequency)) {
+            applyFrequency(savedFrequency);
+        }
     }
     if (s.contains(bp + QStringLiteral("AgcThreshold"))) {
         setAgcThreshold(s.value(bp + QStringLiteral("AgcThreshold")).toInt());
