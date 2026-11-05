@@ -12350,6 +12350,17 @@ bool StationServer::closeSliceFor(int sliceId, const QByteArray& saveFor, SavedS
     saved.frequencyHz = slice->frequency();
     saved.dspMode = slice->dspMode();
     const QString mac = m_radioModel->currentRadioMac();
+    // Persistence audit: with no radio connected there is no layout store to
+    // save in (as saveTakenSlicesFor), so the slice of a device that can come
+    // back stays, with its keys, held for it. Its next admission returns it,
+    // and the end of its next away period saves it. A device that was removed
+    // has nothing to come back to, so its slice closes.
+    if (unclaimed && !saveFor.isEmpty() && mac.isEmpty() && m_devices->find(saveFor)) {
+        m_radioModel->sliceOwnership()->hold(sliceId, saveFor);
+        if (!self || !m_radioModel) return false;
+        m_radioModel->requestSettingsSave();
+        return false;
+    }
     // Removing saves the slice's own settings to its keys first.
     if (unclaimed) {
         m_radioModel->closeUnclaimedSlice(sliceId);

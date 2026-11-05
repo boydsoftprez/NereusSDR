@@ -644,6 +644,111 @@ private slots:
         QCOMPARE(again->stepHz(), 5000);
         QVERIFY(again->autoAgcEnabled());
     }
+
+    // Persistence audit: a device that leaves while the radio is off has no
+    // layout store to save in, so the Core keeps its slice and the slice's
+    // keys for it. Back on the Core the slice is its own again, and the end
+    // of its next away period with the radio on saves it as usual.
+    void aDeviceLeavingWithTheRadioOffKeepsItsSliceForItsReturn()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kShares);
+        LoopbackTransport* appB = core.signIn(b, kShares);
+        QVERIFY(admitted(appA) && admitted(appB));
+        const int a0 = onlySliceOf(core, a);
+        const QString mac = core.model->currentRadioMac();
+        SliceModel* slice = core.model->sliceById(a0);
+        slice->setFrequency(7074000.0);
+        slice->setStepHz(5000);
+        slice->saveToSettings(slice->band());
+        const QMap<QString, QString> keys =
+            DeviceLayoutStore::captureSliceSettings(AppSettings::instance(), mac, a0);
+        QVERIFY(!keys.isEmpty());
+
+        core.model->setConnectionStateForTest(ConnectionState::Disconnected);
+        QVERIFY(core.model->currentRadioMac().isEmpty());
+        SliceOwnership* ownership = core.model->sliceOwnership();
+        QVERIFY(accepted(core.invoke(appA, "session.leave")));
+        QTRY_COMPARE(ownership->heldFor(a.key.fingerprint()), QList<int>{a0});
+        QCOMPARE(core.model->sliceById(a0), slice);
+        QCOMPARE(DeviceLayoutStore::captureSliceSettings(AppSettings::instance(), mac, a0), keys);
+
+        LoopbackTransport* back = core.signIn(a, kShares);
+        QVERIFY(admitted(back));
+        QCOMPARE(ownership->ownedBy(a.key.fingerprint()), QList<int>{a0});
+        QCOMPARE(core.model->sliceById(a0), slice);
+
+        core.model->setConnectionStateForTest(ConnectionState::Connected);
+        core.now = 0;
+        drop(core, back, a);
+        core.now = DeviceSessionRegistry::kGraceMs;
+        QCOMPARE(core.sessions().expireAway().size(), 1);
+        QTRY_VERIFY(core.model->sliceById(a0) == nullptr);
+        const QList<SavedSlice> saved =
+            DeviceLayoutStore::load(AppSettings::instance(), mac, a.key.fingerprint());
+        QCOMPARE(saved.size(), 1);
+        QCOMPARE(saved.first().frequencyHz, 7074000.0);
+    }
+
+    // The same at the end of a dropped device's 180 s.
+    void aDroppedDevicesEndOf180SecondsWithTheRadioOffKeepsItsSlice()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kShares);
+        QVERIFY(admitted(appA));
+        const int a0 = onlySliceOf(core, a);
+        SliceModel* slice = core.model->sliceById(a0);
+
+        core.model->setConnectionStateForTest(ConnectionState::Disconnected);
+        core.now = 0;
+        drop(core, appA, a);
+        core.now = DeviceSessionRegistry::kGraceMs;
+        QCOMPARE(core.sessions().expireAway().size(), 1);
+        QCOMPARE(core.model->sliceById(a0), slice);
+        QCOMPARE(core.model->sliceOwnership()->heldFor(a.key.fingerprint()), QList<int>{a0});
+    }
+
+    // Keeping a slice is for a device that can come back. Removing a device
+    // still closes its slices with the radio off, and a slice's own close
+    // button still closes it.
+    void removingADeviceOrClosingASliceWithTheRadioOffStillCloses()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        Device a;
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(a);
+        core.pair(b);
+        LoopbackTransport* appA = core.signIn(a, kShares);
+        LoopbackTransport* appB = core.signIn(b, kShares);
+        QVERIFY(admitted(appA) && admitted(appB));
+        const int a0 = onlySliceOf(core, a);
+        const int b0 = onlySliceOf(core, b);
+        int bExtra = -1;
+        {
+            const SliceOwnership::CreatorScope creator(core.model->sliceOwnership(),
+                                                       b.key.fingerprint());
+            bExtra = core.model->addSlice(QStringLiteral("pan-0"));
+        }
+        QVERIFY(bExtra >= 0);
+
+        core.model->setConnectionStateForTest(ConnectionState::Disconnected);
+        QVERIFY(accepted(core.invoke(appB, "removeSlice", {int64("sliceId", bExtra)})));
+        QTRY_VERIFY(core.model->sliceById(bExtra) == nullptr);
+
+        QVERIFY(core.server->deviceStore()->remove(a.key.fingerprint()));
+        QTRY_VERIFY(core.model->sliceById(a0) == nullptr);
+        QVERIFY(core.model->sliceOwnership()->heldFor(a.key.fingerprint()).isEmpty());
+        QVERIFY(core.model->sliceById(b0) != nullptr);
+    }
 };
 
 QTEST_MAIN(TstSliceClaimsExpiry)
