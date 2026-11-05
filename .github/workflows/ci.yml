@@ -1267,6 +1267,8 @@ jobs:
             export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
             status=0
             xvfb-run -a ctest -LE realtime -j"$(nproc)" --output-on-failure --no-tests=error || status=1
+            # Before the next pass, which writes its own LastTest.log.
+            "$GITHUB_WORKSPACE/scripts/ci/warn-handover-over-limit.sh" || true
             xvfb-run -a ctest -L realtime --output-on-failure --no-tests=ignore || status=1
             exit "$status"
           elif [ "${{ runner.os }}" = "Windows" ]; then
@@ -1452,7 +1454,9 @@ jobs:
   # when no times are saved, still goes by name hash. The realtime tests (572 s, one at a
   # time) do not run here: other runs' jobs share this machine, so they run
   # in linux-realtime on an idle GitHub-hosted runner, as on the hosted
-  # path. Every test runs exactly once, as on the hosted legs.
+  # path. Every test entry runs exactly once, as on the hosted legs; a binary
+  # with two entries, like tst_station_handover_roundtrip and its realtime
+  # _limit entry, runs once for each.
   #
   # Time to green on this path, estimated with warm caches: about 13
   # minutes for these two jobs (a 4 minute build and 8 to 9 of tests) and

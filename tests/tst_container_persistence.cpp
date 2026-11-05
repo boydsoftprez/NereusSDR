@@ -642,9 +642,7 @@ private slots:
         QVERIFY2(blue > 80, qPrintable(QStringLiteral("selected pixels %1").arg(blue)));
 
         NereusBandButtonItem clicks;
-        // bandClicked lives on BandButtonItem, which is not exported from the
-        // GUI DLL, so a spy on it is a null signal on Windows. The button
-        // box signal is exported and is what the band handler listens to.
+        // The button box signal is what the band handler listens to.
         QSignalSpy buttonClick(&clicks, &ButtonBoxItem::buttonClicked);
         const QPointF hit(40, 40);
         QMouseEvent press(QEvent::MouseButtonPress, hit, hit, Qt::LeftButton,

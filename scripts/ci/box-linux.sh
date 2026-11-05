@@ -89,9 +89,11 @@ case "${1:-}" in
         # The most /tmp held, sampled every 5 s, to check against its 6 GB cap.
         ( while sleep 5; do df -k --output=used /tmp | tail -1; done ) > /tmp/nereus-tmp-use.txt &
         sampler=$!
+        warn_over_limit="$PWD/scripts/ci/warn-handover-over-limit.sh"
         cd build
         status=0
         xvfb-run -a ctest -LE realtime -j8 --output-on-failure --no-tests=error || status=1
+        "$warn_over_limit" || true
         cp Testing/Temporary/CTestCostData.txt "$cost_data" 2>/dev/null || true
         kill "$sampler" 2>/dev/null || true
         peak_kb="$(sort -n /tmp/nereus-tmp-use.txt | tail -1)"

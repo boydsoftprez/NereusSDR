@@ -71,6 +71,18 @@ if has_staged_match ACMRD \
     fi
 fi
 
+# A signal's address taken in another binary on an unexported class is not
+# valid on Windows, and only Windows sees it. Fast: text parsing only.
+if has_staged_match ACMRD \
+     '^(src|tests)/.*\.(h|cpp|mm)$|^CMakeLists\.txt$|^scripts/verify-dll-signal-exports\.py$'; then
+    echo "[pre-commit] verify-dll-signal-exports.py"
+    if ! python3 scripts/verify-dll-signal-exports.py; then
+        echo
+        echo "[pre-commit] BLOCKED: export the class that declares the signal, or correct a macro that names the wrong DLL."
+        exit 1
+    fi
+fi
+
 # Skip if no source files are staged — these hooks only care about
 # source / docs provenance.
 if ! has_staged_match ACMR \
@@ -195,18 +207,6 @@ if ! python3 scripts/verify-no-image-cursors.py; then
     echo "             'native-cursor-ok: <reason>' on the line."
     echo "             See scripts/verify-no-image-cursors.py."
     exit 1
-fi
-
-# A signal's address taken in another binary on an unexported class is not
-# valid on Windows, and only Windows sees it. Fast: text parsing only.
-if has_staged_match ACMRD \
-     '^(src|tests)/.*\.(h|cpp|mm)$|^scripts/verify-dll-signal-exports\.py$'; then
-    echo "[pre-commit] verify-dll-signal-exports.py"
-    if ! python3 scripts/verify-dll-signal-exports.py; then
-        echo
-        echo "[pre-commit] BLOCKED: export the class that declares the signal."
-        exit 1
-    fi
 fi
 
 echo "[pre-commit] verify-inline-tag-preservation.py (author-tag check)"
