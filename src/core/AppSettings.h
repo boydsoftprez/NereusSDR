@@ -196,7 +196,7 @@ public:
     void setBackgroundSaveStartHookForTesting(std::function<void()> hook);
 
     // The timed save: a value that changed reaches the disk about
-    // kTimedSaveDelayMs after the last change, through saveInBackground(),
+    // kTimedSaveDelayMs after the first unsaved change, through saveInBackground(),
     // with nobody asking. setValue(), remove() and the station values arm
     // it, in every role, so a crash or a Core's power cut loses at most that
     // last moment. A write that changes nothing does not arm it, and any

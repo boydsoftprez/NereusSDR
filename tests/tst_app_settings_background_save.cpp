@@ -214,6 +214,27 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(stationValueOnDisk(), QStringLiteral("two"), 15000);
     }
 
+    // A writer steadier than the delay must not hold the save off for ever:
+    // the value reaches the disk about the delay after the first unsaved write.
+    void aSteadyWriterStillReachesTheDisk()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("NereusSDR.settings"));
+        AppSettings settings(path);
+        QElapsedTimer elapsed;
+        elapsed.start();
+        int written = 0;
+        settings.setValue(QStringLiteral("Steady"), QString::number(written));
+        constexpr qint64 kPatienceMs = AppSettings::kTimedSaveDelayMs * 4;
+        while (savedValue(path, QStringLiteral("Steady")) == QStringLiteral("<missing>")
+               && elapsed.elapsed() < kPatienceMs) {
+            QTest::qWait(500);
+            settings.setValue(QStringLiteral("Steady"), QString::number(++written));
+        }
+        QVERIFY2(savedValue(path, QStringLiteral("Steady")) != QStringLiteral("<missing>"),
+                 "writes every 500 ms held the timed save off");
+    }
+
     void aWriteFromAnotherThreadReachesTheDiskToo()
     {
         QTemporaryDir dir;

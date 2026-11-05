@@ -1051,7 +1051,11 @@ void AppSettings::armTimedSave()
             qAddPostRoutine(&AppSettings::stopInstanceTimedSave);
         }
     }
-    m_timedSaveTimer->start();
+    // Not restarted by a later write: a writer steadier than the delay would
+    // hold the save off for ever.
+    if (!m_timedSaveTimer->isActive()) {
+        m_timedSaveTimer->start();
+    }
 }
 
 void AppSettings::runTimedSave()
