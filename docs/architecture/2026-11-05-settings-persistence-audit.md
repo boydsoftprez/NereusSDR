@@ -76,23 +76,29 @@ persistent.
 
 ## Findings and fixes
 
-Commits are on this document's branch. "Fixed" means a test failed before the change and
-passes after, unless the row says otherwise.
+Commits are on this document's branch. A row under Fixed has a test that failed before the
+change and passes after, with these exceptions: the iPhone Main screen layout wiring and the
+Connection panel path have no test of their own; `aPanLeftFloatingFloatsAgainWhenTheWindowOpens`
+was written after its fix (its stack-level sibling was seen failing first). Nothing here was run
+on a real radio or a real GPU.
 
 ### Fixed
 
 | What the user saw | Cause | Fix |
 | --- | --- | --- |
-| Sample rate drops on a band change | Rate saved per slice per band | One rate per receiver (`Slice<N>/SampleRate`); a band change leaves it alone. Older per-band values still supply the rate of the last band |
+| Sample rate drops on a band change | Rate saved per slice per band | One rate per receiver (`hardware/<mac>/slices/<N>/SampleRate`); a band change leaves it alone. Older per-band values still supply the rate of the last band |
 | New slice with its own receiver opens at 192 kHz | New receiver takes the radio-wide rate | Opens at the rate of the slice it was seeded from |
 | Window or phone back on a Core loses its rate | `restoreSliceFor` skipped the rate, then the next save overwrote it | Comes back at its saved rate, unless that would move a receiver someone else is on |
 | Setup's rate undone at the next connect | Not saved on the slices | Saved on each slice |
-| A slice tuning out of a shared receiver drops to 192 kHz | Same radio-wide rate | Keeps its rate |
-| A change is lost on a crash, kill or power cut | Most writes reached disk only at the next unrelated save or a clean stop | `AppSettings` saves about 2 s after any changed value, on every role |
+| Two radios overwrite each other's rate | One key for a slice letter across all radios | Each radio keeps its own, `hardware/<mac>/slices/<N>/SampleRate`, as `CLAUDE.md` asks |
+| Two slices sharing a receiver fight at connect, and 192 kHz wins over 1536 kHz | Each slice applied its own saved rate in turn | One rate per receiver: the highest saved on it |
+| A slice leaving a shared receiver drops to 192 kHz (tuned out, moved with its pan, or pushed off when the rate changes) | Same radio-wide rate | Keeps its rate on all three paths |
+| A change is lost on a crash, kill or power cut | Most writes reached disk only at the next unrelated save or a clean stop | `AppSettings` saves about 2 s after the first unsaved change, on every role. Values handed to it only at close are still lost on a crash or SIGKILL (see Not fixed) |
 | A locked slice comes back on 14.225 MHz and damages the 20 m memory | The restore used the setter the lock blocks | The restore assigns past the lock |
 | A Core stops saving receiver settings for its whole run | A kept (protected) layout blocked every slice save | Only the layout record is held back; letters refused at admission keep their keys |
 | A custom TX filter is lost going through RADE | Entry overwrote it with nothing kept | The filter from before RADE comes back, across a restart too |
 | Diversity phase, gain and fine null can be lost at quit | No save scheduled for them | Scheduled |
+| A crash during Fixed-source TUNE or two-tone would leave the temporary power on disk as that band's drive | An old in-memory path, exposed by the timed save above | The band-power write is held while a temporary power is active. Memory and on-air behavior are unchanged |
 | A device leaving with the radio off loses its slices | The close deleted the keys with nowhere to save them | The slice is held for that device |
 | A sign-in to a headless Core with the radio off misses its saved slices | The wait applied only to a Core inside a window | Applies to a headless Core too, for paired devices |
 | Connecting turns a radio's Auto-connect back on | Both paths passed a fixed true | Set on first connect only; after that the saved choice stays |
@@ -107,7 +113,7 @@ passes after, unless the row says otherwise.
 | A pan's overlay strip collapse is lost | No key | Saved for each pan |
 | The dividers inside a pan row are lost (12h, 2h1, 2x2, 3h2) | Only the top-to-bottom split was saved | Each row saves and restores; sizes that no longer fit are ignored |
 | Spots off in Spot Hub still draws spots on the second pan | Saved settings reached only the first pan | Reach every pan, and a pan opened later |
-| A kill or signal quit loses the layout, even where the store is saved | Layout written only by closeEvent | The quit path writes the same values once |
+| A signal quit (SIGTERM, a session logout) loses the layout | Layout written only by closeEvent | The quit path writes the same values once. A crash or SIGKILL runs no handler, so this does not help there |
 
 ### Sweep findings that were wrong when checked
 
@@ -117,6 +123,9 @@ The tables below still show these as found.
   (`MainWindow.cpp:9995`). A test now pins that.
 - **`LineInGain` never loaded.** It is deliberately derived from line-in boost
   (commit `f8cc4a379`).
+- **`CLAUDE.md` against the code on antennas, TX power, ADC attenuation and preamp.** Three
+  design calls below say the rule calls these never persisted. It does not: the rule says they
+  are saved and sent on connect, which is what the code does. Nothing to decide.
 
 ### Not fixed, and why
 
@@ -129,16 +138,32 @@ The tables below still show these as found.
   (`TransmitModel.cpp:2288`), and `loadFromSettings` then overwrites every field at connect.
   Not confirmed: which transmit controls are live with no radio. If they are all disabled
   offline this shrinks to mic source, which already has its own fix.
+- **Values handed to the store only at close** (`PanLayoutId`, splitter sizes, window
+  geometry) are lost on a crash or SIGKILL, because no handler runs. Writing them as they
+  change is a larger change to the window and was not made here.
 - **Unknown rows stay unknown.** Rows marked unknown in the tables were not settled by reading
   the code, and nothing here was run on a real radio.
 
-### Open questions in the rules
+### Reverts rows waiting on a design call
 
-`CLAUDE.md` says antennas, TX power, ADC attenuation and preamp are radio-authoritative and
-never persisted. The code persists them per radio on purpose (`SettingsScope.cpp:748-776`,
-`TransmitModel.cpp:1484-1505`, `AlexController.cpp:613-615`), citing Thetis and a bench
-report. The rule should change to say what is meant, or a future audit will read working
-persistence as a bug. This audit measured against the code and did not change the rule.
+These are behaviors to choose, not defects, so they stay as they are until the maintainer
+rules.
+
+| Row | What happens now | Design call |
+| --- | --- | --- |
+| Tune step (desktop and Core) | Kept per slice and band, so it changes on a band change. Thetis keeps one | Models 3 |
+| Extra slices on a desktop with no Core | One slice plus one per empty pan comes back; a Core brings back all | Models 2 |
+| Which slice transmits | Follows the extra slices above: falls back when its slice is not restored | Models 2 |
+| What a new slice inherits | A copy of defaults and the seed, then a reused letter's values | Models 1 |
+| The open tab on a VFO flag | None at each launch | Main window 1 |
+| iPhone band pan position | Back to the slice at each connect | iPhone DC6 |
+| iPhone Setup's Display page scope and chosen band | Reset at each launch | Not raised separately |
+| iPhone slice shown on this phone only, and its return slice | Reset when the session ends | Not raised separately |
+| iPhone volume on a listened slice | Ends with the listening claim | Not raised separately |
+
+The maintainer ruled that open panels and sheets are not persistent, so those rows stay
+**reverts** in the tables and are as intended. Waterfall history on the phone is not kept, which
+the phone's design call 8 recommends leaving.
 
 
 ## Desktop: Setup dialog
@@ -773,3 +798,404 @@ to disk on its own schedule, so a crash in that window could lose a change. A no
 | Band | Band display while away | Unsubscribed | memory | n/a | On return | n/a | n/a | n/a | n/a | n/a | reverts | by design | `SessionPolicy.swift:12-14`, `BandSubscriber.swift:135-140`; a setting turns it off |
 | Connect | Session after Disconnect | Nothing dials | memory | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | by design | `ConnectionFlow.swift:1705-1707`, `:1805-1806` |
 | Sessions | Sleep countdown | Memory | memory | n/a | Starts at connect | reverts | sticks | sticks | n/a | n/a | sticks | by design | `SessionController.swift:213-223`, `:255-257` say a new intent starts its own deadline |
+
+
+## Bugs and design calls as found
+
+The tables cite these by number, as each sweep wrote them against `dfa9e1c29`. Their status now is under [Findings and fixes](#findings-and-fixes).
+
+
+### Desktop: Setup dialog
+
+#### Clear bugs
+
+##### 1. Multimeter polling delay does nothing after a relaunch until the page is opened (certain)
+
+Scenario, local window: Setup > Display > Multimeter, set polling delay to 500 ms, quit, relaunch. Meters update at 100 ms, while the saved value is still 500. Open that Setup page and they jump to 500. A reconnect does not help either; only opening the page does.
+
+Cause: `MeterPoller` starts at 100 ms (src/gui/meters/MeterPoller.cpp:219). Its only setters are the page's load and change handlers (src/gui/setup/MultimeterPage.cpp:345, :383-386). `MultimeterPage::applyPersistedMeterInterval` (:263-275) has one caller, MainWindow.cpp:5064, inside the `SettingsProxy` block, so it runs only in a remote window. The comment at MainWindow.cpp:5061 says the poller "read it at startup", and the comment at MultimeterPage.cpp:270 says it applied only on page open; no local startup call exists. Lazy page building since #272/#301 is what makes this reachable.
+
+Why a bug: the value is saved and displayed yet not applied, and the remote window path shows the intended behavior.
+
+##### 2. Setup edits are not written to disk when made, so an unclean stop loses them (certain for the code path; likely for how often it shows)
+
+Scenario, remote window: change a raw Station setting (for example `SwrProtectionLimit`, `BandPlanRegion`, `DspOptions*`, a Display FFT key), then the Core loses power or is killed without SIGTERM. After restart the setting is back. A phone or second window saw the new value in between. Same shape in a local window for pages that call `setValue` with no `save()`, on a crash.
+
+Cause: `StationServer::applySettingsWrite` (src/core/session/StationServer.cpp:9527-9609) calls `applyInboundWrite` and live apply hooks, and has no save call. A grep of StationServer.cpp and core/session finds none for this path. `AppSettings::setValue` is memory only (AppSettings.cpp:1133-1149). The Core reaches disk only if something else schedules a save (`RadioModel::scheduleSettingsSave`, :29345, a slice edit) or at `DaemonApp::stop` (src/core/daemon/DaemonApp.cpp:663). Also `stop()` returns before that save when there is no radio model (DaemonApp.cpp:608-611), so an edit taken with no model is not saved even on clean SIGTERM. Whether a window can reach Setup in that state was not checked.
+
+Why a bug: other Core-side setting writers do flush in the background (StationAccessoryData.cpp:141, StationRotorController.cpp:806, StationTciController.cpp:214, RadioModel.cpp:7486), so the raw path is the odd one out. A Pi is often just unplugged.
+
+##### 3. Editing radio settings before a radio has connected is silently dropped (likely)
+
+Scenario, local window with no radio: open Setup > Transmit > Power, Audio > Microphone, DSP > CW or Test > Two-Tone, or Hardware > Radio Info, and change a value. The control shows it. Connect: it is back to the saved value or the default. No message.
+
+Cause, transmit side: `TransmitModel::persistOne` returns when `m_persistMac` is empty (src/models/TransmitModel.cpp:2288-2290), `m_persistMac` is first set by `loadFromSettings` (:2298), which then overwrites every field from the store (:2296-2849, called at RadioModel.cpp:20997). Hardware side: `HardwarePage::onTabSettingChanged` returns on empty MAC (src/gui/setup/HardwarePage.cpp:300), and `applySavedBoardTabs` knows the saved radio yet leaves the MAC empty on purpose (:405-408).
+
+Marked likely because I did not read every page's enabled state with no radio. `SetupDialog` itself gates on remote and receive-only, not on connection state.
+
+##### 4. `LineInGain` is saved and never loaded (likely, low exposure)
+
+`TransmitModel::setLineInGain` persists `hardware/<mac>/tx/LineInGain` (src/models/TransmitModel.cpp:810, :2869), but `loadFromSettings` (:2296-2849) has no read, so it returns to 23 (TransmitModel.h:3125) each connect. A mic profile carries `Mic_LineInGain` (MicProfileManager.cpp:1338). I found no desktop Setup page calling this setter; Microphone uses `setLineInBoost`, which round-trips. The caller list was not exhausted, and the SD's "Line In Gain" row (SetupDescriptionService.h, version 24) was not traced to this property.
+
+#### Design calls
+
+1. **CLAUDE.md says TX power and antenna selection are never persisted; the code persists them per radio.** `hardware/<mac>/tunePowerByBand/*` (TransmitModel.cpp:2244-2266), `hardware/<mac>/alex/antenna/*` (SettingsScope.cpp:764-776), and step attenuator and preamp under `hardware/<mac>/options/` (SettingsScope.cpp:748-762). Comments cite Thetis for these. Recommendation: keep the behavior, since Thetis does it, and rewrite the CLAUDE.md rule to say what is actually meant, so future audits stop reading it as a bug.
+
+2. **`DisplaySpectrumFps` means two things on one key.** It sets the Core's FFT rate and the window's own paint rate, so two windows cannot paint at different rates (SettingsScope.cpp:67-88, already marked unresolved). A window setting its rate changes it for everyone. Recommendation: a window-local `DisplayPaintFps`, as that comment suggests.
+
+3. **AGC values in Setup > DSP > AGC follow the band while NR and NB tuning follow the slice.** Change AGC slope on 20 m, go to 40 m, and the page shows 40 m's value. To a user that can look like a revert, and the page does not say it is per band. `AgcSlope` uses the band prefix (SliceModel.cpp:3524), `Nr2TrainT1` and `MnrAlpha` the slice prefix (:3591, :3618). Recommendation: keep the storage, and add a small note on that page naming the band being edited.
+
+4. **Hidden unbuilt controls have saves with no restore.** OC extras write with no reader at all and never restore to their own controls (OcOutputsHfTab.cpp:346-405, :481), so they will revert the day `OcExtras` is built. Recommendation: nothing now; add a restore as part of building that feature. Audio > Advanced and Multimeter holds do restore to their controls.
+
+5. **Controls that save and restore but change nothing.** `Antenna_ConflictPolicy` (visible, and stored per window on a Core page) and `MultimeterSignalHistoryEnabled` (visible). The project's rule for an unbuilt feature is to hide it (UnbuiltFeatureList.h). Recommendation: hide both until they do something, or wire them. Your call, since it changes what is shown.
+
+6. **Setup writes a Display value and clears every pan's own override, by rule** (PanDisplayKeys.h). A user with a pan-specific color who changes the Setup default loses the pan's color at once, including pans not open. That is the approved rule, noted here because it reads as a revert. Recommendation: keep it.
+
+7. **Flush policy for Setup in a local window.** Most pages rely on close or the next slice save; Hardware, Audio Outputs and VAX save at once. A single timed flush on any `AppSettings` write would close bug 2 for both local and Core at one site. Recommendation: do it there, in the write observer path (AppSettings.cpp:1288), debounced, rather than page by page.
+
+
+### Desktop: main window, display and layout
+
+#### Clear bugs
+
+Most often hit first.
+
+1. **The panel hide is forgotten. Certain.** Scenario: click the menu icon in the bottom bar to hide the container panel, quit, reopen. The panel is back. Cause: `EdgeDockArea::setUserCollapsed` only sets `m_collapsed` (src/gui/containers/EdgeDockStrip.cpp:679-682), the legacy look only calls `rightPane->hide()` (src/gui/MainWindow.cpp:17956-17960), and neither reaches `captureArrangement` or a key. Why a bug: layout is client-authoritative and persisted under CLAUDE.md "Settings", and the rest of the arrangement is saved.
+
+2. **A popped-out pan comes back docked. Certain.** Scenario: float a pan onto a second monitor, quit, reopen. The pan is in the main window and its window is gone. Cause: `FloatingPan_<id>_Geometry` is saved (src/gui/PanFloatingWindow.cpp:155-162), but nothing records that the pan was floating. `floatPanadapter` has three callers: the grown layout, the pan's menu and the View menu (src/gui/MainWindow.cpp:2731, 8435, 12893), none at startup. src/gui/PanadapterStack.cpp:656 notes "Nereus has no canvas/restore marker". Why a bug: the geometry is kept with care for this case (src/gui/PanadapterStack.cpp:704-708 calls quitting with a pan floating "the ordinary way to end a session"), and applets and floating containers both reopen in their windows.
+
+3. **The zoom slider does not show the span. Certain.** Scenario: zoom to 48 kHz, quit, reopen. The span is right, but the slider under the pans sits at full right. The slider runs 1 to 768 kHz and sets the span directly, so the first touch jumps the span to wherever the thumb lands, far from the 48 kHz in use. It also does not follow the wheel or the scale drag during a session, and it stays put when the active pan changes. Cause: `zoomBar` is a local set to 768 once, with one outgoing connect and nothing coming back (src/gui/MainWindow.cpp:9359-9376). Why a bug: the stored value and the control disagree, and CLAUDE.md's GUI to model sync rule expects the control to follow the model.
+
+4. **FFT decimation is lost at every launch. Certain.** Scenario: set Decimation in the display pill or Setup, quit, reopen. It is 1 again. Cause: `applyDisplayDecimation` only calls `m_fftEnginePool->setDecimation` and writes no key (src/gui/MainWindow.cpp:7507-7526), `refreshFftPoolConfig` does not read one (6310-6355), and the code says so (7550 "Decimation has no key"). The other four FFT knobs beside it are saved and Station scoped, so this one needs a key added to `SettingsScope` as well. Why a bug: DSP and display settings are client-authoritative and persisted, and nothing marks this one as meant to reset.
+
+5. **The overlay strip's collapse is lost. Certain.** Scenario: collapse the strip on a pan with its arrow, quit, reopen. It is expanded. Cause: `SpectrumOverlayPanel::toggle` flips `m_expanded` and emits `collapsed`, with no key and no listener found in src/gui/*.cpp (src/gui/SpectrumOverlayPanel.cpp:845-853, src/gui/SpectrumOverlayPanel.h:393). Why a bug: same rule as bug 1. Its sibling, the pill's last tab, is saved.
+
+6. **Inner pan dividers are lost. Certain.** Scenario: use a 2x2, 12h, 2h1 or 3h2 layout, drag a divider inside a row, quit, reopen. Only the top-to-bottom split returns. Cause: only `m_rootSplitter->sizes()` is saved (src/gui/PanadapterStack.cpp:758-768), and the comment at 753-757 says the nested ones were left for later polish. Why a bug: the key names were planned and the code admits the gap.
+
+7. **Saved spot settings do not reach any pan but the first. Certain for the read, likely for what the user sees.** Scenario: turn Spots off in Spot Hub, use a two-pan layout, quit, reopen, click the second pan so it becomes active. Spots draw there. Cause: `loadSpotDisplaySettings` runs at startup for `activeSpectrumWidget()` only (src/gui/MainWindow.cpp:2233-2237), the Spot Hub's settings change also reaches only that pan (19937-19941, 19953), new pans never call it (wireSpectrumForPan at 7193 does not), and `m_showSpots` defaults to true (src/gui/SpectrumWidget.h:4580). Only Spot Hub's own switch reaches every pan (src/gui/containers/ContainerButtonDispatcher.cpp:595-601). Font, level and color settings have the same gap. Why a bug: the keys are global and the switch path already treats them as every pan's.
+
+8. **Close-only values are lost on a kill, crash or signal quit. Likely.** Scenario: change the pan layout, drag the pan divider or move the main window, then the app crashes, or it is ended with SIGTERM. Old layout on the next launch. Cause: `PanLayoutId`, `PanSplitter0Sizes` and floating geometry are handed to AppSettings only in `closeEvent` and the session-end save (src/gui/MainWindow.cpp:21399-21405, 2371-2374). The `aboutToQuit` handler calls itself the "Same flush as closeEvent" but does not call `saveSplitterState`, `saveFloatingGeometry` or any `SpectrumWidget::saveSettings` (2320-2347), so a pending 500 ms display save is also dropped there. main.cpp turns SIGTERM and SIGINT into a queued quit (src/main.cpp:161-176). Why likely and not certain: the comment at 2316 says closeEvent does not run on a signal, but whether Qt's quit closes windows first is outside this tree and I did not test it. The missing calls in that handler are certain. A crash loses these either way, since the other saves in a session write only what has already reached AppSettings.
+
+#### Design calls
+
+1. **The open tab on a VFO flag.** It resets to none at every launch and for each new flag (src/gui/widgets/VfoWidget.cpp:1020), while the flag's fold is saved per receiver. Recommendation: leave it. A flag that opens with a tab showing covers the spectrum, and nothing suggests anyone wants that back. If the maintainer does want it, store it beside `ReceiverFlag_<n>_Collapsed`.
+
+2. **A saved clamp replaces the operator's zoom.** When a lower sample rate or a removed wideband source narrows the span, the clamp is what gets saved (src/gui/MainWindow.cpp:6510, 10477; src/gui/SpectrumWidget.cpp:10048-10058). Going back to the higher rate does not bring the old span back. Recommendation: keep it. It is simple and visible, and the comments only defend staying inside the ceiling. Storing a wanted span apart from the shown one is the fix if it annoys.
+
+3. **One layout and look for every radio and Core.** `PanLayoutId`, per-pan display keys and the workspace document have no radio or Core in the key. A restored layout is not checked against the radio's limit at startup (src/gui/MainWindow.cpp:9221-9230 against 20456); on a Core it leaves empty pans, because restoring never creates station slices (20379-20381). Recommendation: keep one set, since operators expect their window to look the same, and treat a saved layout larger than the radio's limit as its own small fix.
+
+4. **Remote paint rate.** `DisplaySpectrumFps` is both the Core's production rate and this window's paint rate, a straddle `SettingsScope.cpp` records as accepted and unresolved. I did not establish what the window paints at before the proxy's first snapshot, so that case is unknown. Recommendation: the separate local key that file suggests, if a remote operator ever wants their own rate.
+
+5. **Closed pans keep their look.** Per-pan overrides stay after a pan closes, so reopening `pan-1` brings back the old look (`writeDefault` in src/core/settings/PanDisplayKeys.cpp treats closed pans as still holding keys; only reset clears them). Recommendation: keep it, as the operator's own values are not thrown away.
+
+6. **What a workspace profile holds.** Containers and screens only. Pan layout, window size and display look are not in it (src/gui/containers/WorkspaceProfiles.h). The live arrangement goes back into the active profile only on Save or on switching away (src/gui/containers/WorkspaceProfiles.cpp:481-535), though restart keeps it through the live document. Recommendation: add pan layout to profiles if the maintainer sees them as whole-window setups, otherwise label them as container arrangements.
+
+7. **Things that can look like a revert but are deliberate.** A corrupt workspace, or one written by a newer build, leaves the whole layout read-only with a notice, and every change is refused (src/gui/containers/ContainerWorkspaceStore.cpp load and commit). Someone moving between builds could meet this. And setting `NEREUS_WORKSPACE_PREVIEW=0` switches to a separate document (`ContainerWorkspace` instead of `ContainerWorkspacePreview`, same file lines 30-33), so a layout seems to change. Recommendation: keep both, and check the log line "Container workspace remains read-only" first when a layout will not stick.
+
+
+### Receiver and transmit state (desktop and Core)
+
+#### Clear bugs
+
+##### 1. Lock on at quit: a desktop comes back on 14.225 MHz. Certain.
+
+Scenario: on a desktop connected straight to the radio, tune Slice A to 7.074 MHz LSB, turn Lock on, quit, relaunch and connect. The VFO shows 14.225 MHz in LSB, locked, with the pan on 14.225.
+
+Cause: the starting slice is made with `addSlice()` (`RadioModel.cpp:19795`). With a saved letter that runs `restoreFromSettings(band, false)` (`RadioModel.cpp:17167`), which sets `m_locked` true (`SliceModel.cpp:4093-4094`) and skips the frequency. Next, `loadSliceState` (`RadioModel.cpp:21104`, `26830`) calls `restoreFromSettings(band)`, whose frequency restore uses `setFrequency` (`SliceModel.cpp:3727-3728`). That setter returns at once when locked (`SliceModel.cpp:460`). The constructor frequency stays (`SliceModel.h:1924`), while mode, filter and AGC come from the 40 m slot. `RadioModel.cpp:26848` then centers the pan there. The next save writes 14.225 and LSB into the slice's 20 m slot and sets `LastBand` to 20 m, so the 20 m memory is damaged too.
+
+Why a bug: nothing could want this. The Core path and the seed path already guard against the same trap, per their comments (`SliceModel.cpp:3447-3449`, `RadioModel.cpp:17165-17166`). The guard arrived with commit 7515380f3 on 2026-10-29, which also put this restore ahead of `loadSliceState`.
+
+Fix belongs in `restoreFromSettings` at `SliceModel.cpp:3727`, not at the other session's lines: a restore should assign the saved frequency past the lock, as `restoreReceiveState` does.
+
+##### 2. A Core whose layout is "kept" stops saving every receiver setting, for as long as it runs. Certain as code; how often it is hit depends on the station.
+
+Scenario: a Core restarts and one saved receiver cannot start, for example the radio has too few free receivers, or the saved RADE audio owner cannot start its decoder. The connection panel says "Your saved layout is kept." You then retune, change mode, AGC, volume, anything, on the receivers that did start. They work. Restart the Core and every one of those changes is gone. If the same refusal happens at each start, the Core can never save receiver settings again.
+
+Cause: `m_receiveLayoutProtected` is set at `RadioModel.cpp:13866`, `14019`, `22562`, `28937`, `29032` and `29060` and is never cleared; it defaults false at `RadioModel.h:8990`. `scheduleSettingsSave` returns on it (`RadioModel.cpp:29350`), as do `flushPendingSettingsSave` (`29440`), `materializePendingBandSettings` (`29589`) and `saveSliceState` (`29622`). Disconnect and stop go through the same gate, so the flush at `29890` does nothing. A Core with a saved layout that fails to parse is protected from the start (`28937`). TX keys and Alex are unaffected, as they save outside this gate (`29913-29927`).
+
+Why a bug: the comments give the purpose as protecting the per-radio layout record (`RadioModel.cpp:13864`, `14014-14015`). `Slice<N>/...` keys are not that record. The status sentence says only that the layout is kept and nothing says edits are being dropped.
+
+Recommended fix: hold back only `captureReceiveLayout` while protected, and keep writing the slice keys. The maintainer should confirm one point: a slice that was refused keeps its keys untouched, since it is not in the live list, so this looks safe, but it was not tested.
+
+##### 3. A reused letter brings another band's AGC, NB and step onto a new slice, then saves them over this band's memory. Certain. Owned by the session at `RadioModel.cpp:17167`; no change proposed here.
+
+Scenario: Slice B last ran on 40 m with AGC Slow and a 1 kHz step, and was closed. Later, on 20 m, press +RX. New B opens on 20 m (correct) with AGC Slow and 1 kHz, taken from 40 m. B's own 20 m values are never read. Half a second later they are overwritten.
+
+Cause: `restoreFromSettings(*savedLetterBand, false)` at `RadioModel.cpp:17167` reads per-band keys from the letter's `LastBand`, after the frequency seed moved the slice to another band. The save then captures under the slice's current band (`RadioModel.cpp:29366-29367`, `SliceModel.cpp:3515-3543`).
+
+Related, same block: the seed's `setDspMode` at `RadioModel.cpp:17161` is a no-change call when the seed is USB, because a new slice is already USB (`SliceModel.h:1960`, `SliceModel.cpp:712`). It takes the "keep cutoffs" branch, so the slice keeps 100 to 3000 even where the letter has a remembered USB filter for that band. Any other seed mode reads the remembered pair. The next save then writes 100 to 3000 over the remembered one.
+
+##### 4. A custom TX filter is lost after any trip through RADE. Certain.
+
+Scenario: set the TX filter to 200 to 2800 in USB. Switch the transmit slice to RADE, then back to USB. TX filter reads 100 to 3900. Your 200 to 2800 is gone, on disk too.
+
+Cause: entering RADE writes 650 and 2350 through the persisting setters (`RadioModel.cpp:25672-25674`, `TransmitModel.cpp:4534-4556`). Nothing keeps the earlier value. Leaving RADE sees 650 and 2350 and writes the fixed 100 and 3900 (`RadioModel.cpp:25675-25680`). The comment there says "preserve custom voice bandwidths", which only covers a filter edited while in RADE.
+
+Why a bug: the stated intent is to preserve the voice bandwidth. Also 100 to 3900 is not even the load default, which is 100 to 2900 (`TransmitModel.cpp:2689-2692`). This is NereusSDR-original code, so no Thetis behavior is at stake.
+
+##### 5. Diversity phase, gain and fine null can be lost at quit. Certain.
+
+Scenario: open Diversity, tune phase and gain to a null, touch nothing else, quit. They come back at their old values.
+
+Cause: the values are saved as part of `captureBandSettings` (`SliceModel.cpp:3561-3564`), but no signal schedules a save for them. `blendChanged` only reconfigures and publishes (`RadioModel.cpp:38451-38459`). My signal comparison over `wireSliceSignals` found no save connected to `diversityPhaseDegChanged`, `diversityGainDbChanged` or `diversityFineNullEnabledChanged`. With nothing scheduled, the teardown flush does nothing (`RadioModel.cpp:29440`). Any other slice edit or a band change saves them by luck.
+
+Why a bug: the same class of gap was fixed for step, lock and RIT, per the comment at `RadioModel.cpp:26598-26606`.
+
+##### 6. TX edits on a Core can stay memory-only until something else saves. Likely.
+
+Scenario: from a window, change mic gain or EQ on the Core and touch no receiver control. A clean Core stop keeps it (`DaemonApp.cpp:663`). A power cut or a kill does not.
+
+Cause: TransmitModel setters write memory only (`TransmitModel.cpp:2286-2294`, `2253-2258`). The comment at `SessionCommandDispatcher.cpp:1555-1557` says exactly this and asks for a flush for two-tone frequencies only. I did not read all the other `requestSettingsSave` sites (`SessionCommandDispatcher.cpp:4450`, `4493`, `4593`, `StationServer.cpp:9240`, `12304`, `12378`, `12425`), so another path may cover some properties. That is why this is "likely". Same on a desktop for a crash, where close is the only flush if no slice control moves.
+
+##### 7. TX edits made before the first connect of a run are thrown away. Likely.
+
+Scenario: launch, change mic gain or EQ in a TX control with no radio connected, then connect. The stored value replaces yours.
+
+Cause: `persistOne` does nothing while `m_persistMac` is empty (`TransmitModel.cpp:2288`), and `loadFromSettings` overwrites all fields at connect (`TransmitModel.cpp:2298` onward). Mic source alone got a fix (`tx/preconnect/Mic_Source`, `2461-2482`, `3659-3674`), so the problem is known for one control.
+
+"Likely" because I did not check which TX controls are live while disconnected. If they are all disabled offline, this shrinks to mic source and is not a bug.
+
+#### Design calls
+
+##### 1. What a new slice should inherit (JJ's named complaint)
+
+Today a new slice copies frequency, mode and noise reduction from the slice you are on and gets the rest from defaults or from what its letter last held, as the table above shows. So the same +RX press gives different results depending on the letter's history, which reads as "settings reverting". A letter's memory also opens muted or locked.
+
+Recommendation: a new receiver is a copy of the slice you are on: filter, AGC, NB, NR, squelch, step and AF gain. RIT and XIT stay off by the existing ruling, and lock and mute start off. A letter's saved state is used only by a true restore (startup, a device returning). That removes Clear bug 3 at its root. The code is in the block the other session owns, so this is a decision to hand them, not a change from this sweep.
+
+##### 2. Should a desktop bring back extra slices at restart?
+
+A Core restores every slice from its layout. A desktop with no Core restores one slice plus one per empty pan, so a second slice on a pan is gone after relaunch (`RadioModel.cpp:29097-29100`), and so is TX if it was on that slice. The commit message for 3813bc07f treats operator-made slices as fresh, so this may have been deliberate at the time.
+
+Recommendation: restore them the same way as the Core, using the same layout record per radio. One behavior everywhere is easier to explain, and JJ's complaint is about restored slices.
+
+##### 3. Tune step per band
+
+Step is stored per slice and band (`SliceModel.cpp:3543`), so it changes when you change band. Thetis keeps one saved wheel step (`console.cs:3205` `wheel_tune_index`) with a by-mode table (`console.cs:1988`), not per band.
+
+Recommendation: make it per slice, no band part, unless JJ likes per-band step on purpose. Band stacking may touch this, so check with that session.
+
+##### 4. CLAUDE.md says antennas and TX power are never persisted, and the code persists both
+
+The Settings section lists them as radio-authoritative, never persisted. Antennas are stored per band and per radio (`AlexController.cpp:613-615`), with comments citing Thetis and a bench bug that asked for it (`RadioModel.cpp:2678-2684`). TX power is stored per band, citing Thetis `power_by_band` (`TransmitModel.cpp:1484-1505`).
+
+Recommendation: keep the code, correct CLAUDE.md. As written, the rule invites someone to "fix" working persistence. ADC attenuation and preamp were outside this area, so another sweep should check them against the same sentence.
+
+##### 5. PureSignal armed after restart
+
+Armed state is not saved, on purpose (`TransmitModel.cpp:2350-2365`). The comment says a profile recall flips it, but connect never recalls the profile: it only sets the scope and reads the name (`RadioModel.cpp:8050-8056`). So a profile saved with PureSignal on still starts off, while its name is shown as active.
+
+Recommendation: keep it off at start, which fits "connecting never keys", and correct the comment so nobody reads it as a promise.
+
+##### 6. CTUN off-center position
+
+Zoom and the CTUN preference are saved. The pan center is not, and restart puts the VFO back at center (`RadioModel.cpp:26848`). Someone parked off-center sees the pan move.
+
+Recommendation: leave it. The comment at `SpectrumWidget.cpp:1491-1493` treats this as settled and it is low cost to the user. I did not check what Thetis does here, so JJ should say if parity matters.
+
+
+### Core, stations and connect lists
+
+#### Clear bugs
+
+##### 1. A device that leaves while the Core's radio is off loses its slices (certain)
+
+What the user does: turns the radio off, or the radio drops. Then closes the window, or leaves the phone away for 3 minutes. Later turns the radio on and connects.
+
+What they see: Slices B and C are gone. Slice A is a new one with default settings, and every band's memory for those letters is gone.
+
+Cause: `closeSliceFor` reads `currentRadioMac()`, which is empty unless the state is Connected (RadioModel.cpp:10232-10234). With no MAC it skips the copy and the save (StationServer.cpp:12364-12369) and still closes the slice and deletes its keys (StationServer.cpp:12377). `releaseDeviceClaims` calls it with no check (StationServer.cpp:12475-12479).
+
+Why it is a bug: the sibling `saveTakenSlicesFor` guards this exact case. It says "With no radio connected there is no layout store to save in" and keeps the slices (StationServer.cpp:12406-12413). The documented rule is that a device's slices are saved for its return (DeviceLayoutStore.h:7-19).
+
+##### 2. A setting changed from a window or phone is not written to the Core's disk (certain)
+
+What the user does: changes a Setup value on a Core, such as FFT size, SWR protection or a DX cluster host, and does not tune anything. The Core then crashes or loses power.
+
+What they see: the old value after the restart. A clean `systemctl restart` keeps it.
+
+Cause: `applySettingsWrite` and `applySettingsRemove` change the store and apply the value but never ask for a save (StationServer.cpp:9526-9610, 9725-9727; SettingsProxyServer.cpp:342). There is no timer on the Core that saves regardless.
+
+Why it is a bug: property writes ask for a save in the same file (StationServer.cpp:9232-9241), and `applyRemoteFreedvSetting` saves on its own (RadioModel.cpp:7486). The operator is told the value was accepted while it exists only in memory.
+
+##### 3. Connect turns a radio's auto-connect tick back on (certain)
+
+What the user does: unticks Auto-connect for a radio, then connects to it by hand.
+
+What they see: next launch it connects by itself. With two radios used this way, a toast warns that several are marked.
+
+Cause: both connect paths pass a fixed `true` to `saveRadio` (ConnectionPanel.cpp:1216, GuiConnectionController.cpp:948). They keep `pinToMac` from the saved entry but not `autoConnect`. `tryAutoReconnect` reads the flag (MainWindow.cpp:21015).
+
+Why it is a bug: the checkbox writes the value (ConnectionPanel.cpp:519-523) and the editor dialog writes it (ConnectionPanel.cpp:1328), so the choice is offered and then thrown away. The comment at ConnectionPanel.cpp:1205 shows the overwrite was deliberate in Phase 3I, before those controls existed. See Design calls 1.
+
+##### 4. A device signing in to a headless Core with the radio off does not get its saved slices (certain for the restore; likely for the default slice)
+
+What the user does: closes the window with the radio on, so its slices are saved. Connects again while the Core's radio is off, then turns the radio on.
+
+What they see: the saved slices do not come back. They reappear only at some later sign-in, beside whatever exists by then.
+
+Cause: the restore needs a MAC (StationServer.cpp:12276-12278). The hold and retry for this case runs only when `hostsStationDevice()` is true (StationServer.cpp:12259-12264, 4198), and only a desktop-hosted Core sets that (StationHost.cpp:164, 177). DaemonApp never passes a hosting device. Step 4 then tries a default slice (StationServer.cpp:12319-12326). I did not read whether `addSlice` succeeds with the radio off.
+
+Why it is a bug: the JJ 2026-10-23 comment fixed this for a Core inside a desktop window, with no reason given for leaving nereusd out.
+
+##### 5. A protected layout stops every slice save for the rest of the Core's run (certain mechanism; the layout protection itself is deliberate)
+
+What the user does: starts a Core whose saved layout could not be fully admitted, for example a receiver refused or the layout invalid. Tunes and changes slice settings for hours, then restarts the Core.
+
+What they see: the old frequencies, modes and settings. The status line says only "Your saved layout is kept." (RadioModel.cpp:13683-13686).
+
+Cause: `m_receiveLayoutProtected` is only ever set true (RadioModel.cpp:13866, 14019, 22562, 28937, 29032, 29060). It makes `scheduleSettingsSave`, `flushPendingSettingsSave`, `materializePendingBandSettings` and `saveSliceState` return early (RadioModel.cpp:29350, 29440, 29589, 29622). `saveSliceState` returns before the antenna and tune power flushes too (RadioModel.cpp:29634, 29643).
+
+Why it is a bug: the stated purpose is that a temporary limit must not erase the layout record (RadioModel.cpp:13864). That needs only `captureReceiveLayout` held back, not each slice's own keys. The latch itself is intentional. It is listed as a bug because it reaches further than its stated purpose and the operator is not told.
+
+##### 6. Transmit settings changed before the radio first connects are lost (likely)
+
+What the user does: starts a Core with the radio off, changes a transmit setting from a window, then turns the radio on.
+
+What they see: the setting returns to its saved value.
+
+Cause: `persistOne` does nothing while `m_persistMac` is empty (TransmitModel.cpp:2286-2290). It is first set by `loadFromSettings(mac)` at connect, which loads the saved values (TransmitModel.cpp:2296-2298, RadioModel.cpp:20997).
+
+Why "likely": I did not confirm that the Core accepts a transmit write with no radio connected.
+
+#### Design calls
+
+1. **Should Connect imply auto-connect?** Today it does, for every radio ever connected. Recommendation: a first connect may set it, but after that Connect keeps the saved value, as it already does for `pinToMac`. This is the fix for bug 3 if you agree.
+
+2. **Direct use and Core use keep separate memories.** The same window has one set of Station values in its own file for direct connect and reads the Core's when on a Core (AppSettings.cpp:1123-1125). Moving between them looks like settings reverting. Recommendation: keep them separate, because a Core is shared and the two setups can differ. Say so in the UI or the docs, since this may explain some of the reports.
+
+3. **The CLAUDE.md rule and the code disagree on ATT, preamp and antennas.** The rule says radio-authoritative and never persisted. The code persists them per MAC, on purpose: `hardware/<mac>/options/{stepAtt,autoAtt,preamp}/...` and `hardware/<mac>/alex/antenna/...` (SettingsScope.cpp:748-776, RadioModel.cpp:2681 area, with a comment citing a KG4VCF bench report about ANT2 on 20m). Recommendation: update the rule to match, and audit against the code.
+
+4. **Mirrored edits made with the link down.** Setup values get a toast when dropped (W10). Applet and slice properties revert with no word (W11). Recommendation: the same toast for both, or disable the controls while the link is down. Your call since it changes what the user sees.
+
+5. **A window on a Core has no timed save of its own file.** The 500 ms save returns at once for a remote model (RadioModel.cpp:29347), so window keys wait for a close or for SpectrumWidget's own save. A force-quit or crash loses the others. Recommendation: a timed save in the remote role too, using `addWriteObserver` for keys that stay local.
+
+6. **`DisplaySpectrumFps` means two things.** It sets the Core's FFT rate and each window's paint rate, so one device's change moves all of them. The code calls this unresolved (SettingsScope.cpp:85-88). Recommendation: a separate local key for the paint rate, as that comment suggests.
+
+7. **Editing `radio_mac` in nereusd.conf does nothing once a radio has been chosen.** The saved `StationRadioChoice` wins (DaemonApp.cpp:288-292), with no log line, unlike the sample rate and audio device (DaemonApp.cpp:975-979, 1008-1011). Recommendation: keep the rule and add the log line.
+
+8. **The settings snapshot merges and never removes.** A key removed on the Core while this window was away stays in its cache until the window is replaced (SettingsProxy.cpp:175-219). Recommendation: leave it unless it shows up in practice. A live removal is handled (SettingsProxy.cpp:306-319), so only the away case is affected.
+
+
+### iPhone and iPad
+
+#### Clear bugs
+
+##### 1. iPad open pans are gone after a relaunch (certain)
+
+- **Scenario:** on an iPad, open Pan 2 from the Pan sheet. Force quit, or install a new build, then open and connect.
+  Only Pan 1 shows. The slice that was on Pan 2 is back from the Core with its pan key, but is drawn on Pan 1's band.
+- **Cause:** `open` starts as `[.first]` and is never saved (`NereusApp/Main/PanStackModel.swift:70`). The only caller
+  of `openBand` is `addPan` (`PanStackModel.swift:231`, `:245`). The Core gives the slice back on its pan
+  (`src/core/session/StationServer.cpp:12293`), and with Pan 1 alone every slice is drawn there
+  (`PanStackModel.swift:51-52`).
+- **Why a bug:** CLAUDE.md lists layout as client-authoritative and persisted. The pan's own display values are
+  deliberately kept for when it opens again (`NereusKit/Sources/NereusBand/BandDisplaySettingsStore.swift:327-346`),
+  so the pan's look survives while the pan does not. The phone and the Core also disagree about the layout.
+- **Note:** opening the pans a device's slices already sit on, once the snapshot is whole, would need no new key. How
+  to do it is a design question for the fix.
+
+##### 2. Play the band through is not kept, though Setup marks it This phone (certain)
+
+- **Scenario:** Setup, Audio, On this phone, choose a route. Quit and reopen, then connect. The choice is back to
+  whatever iOS picks.
+- **Cause:** the choice is only `@Published private(set) var chosen` (`NereusApp/Audio/AudioSessionController.swift:127`),
+  set by `select` (`:337-339`) from Setup and the Sound panel (`NereusApp/Setup/AudioOnThisPhonePage.swift:77`,
+  `NereusApp/Audio/SoundPanel.swift:89`). `AppModel` restores the microphone and the while-transmitting choices at
+  launch, but not the route (`NereusApp/App/AppModel.swift:428-430`).
+- **Why a bug:** the page carries the This phone tag (`AudioOnThisPhonePage.swift:162`), and `PhoneSettings` says
+  settings marked that way are kept on the phone (`NereusApp/App/PhoneSettings.swift:38-39`). Its two neighbors on the
+  same page stick.
+- **Care in the fix:** a saved Bluetooth or wired route may not be connected at launch, so it needs a fallback.
+
+##### 3. A background picture can vanish after an app update or a new install (likely)
+
+- **Scenario:** import a background picture, then install a newer build. The band may draw no picture, while the
+  setting still reads as having one.
+- **Cause:** the import saves an absolute path (`NereusApp/Setup/DescribedPage.swift:480`), and the renderer opens
+  exactly that path (`NereusKit/Sources/NereusBand/BandRenderer.swift:1275-1280`). A failed load draws nothing, with
+  no message (`BandRenderer.swift:1283`).
+- **Why only likely:** the code above I read. That iOS changes the app's container path across an update is platform
+  behavior I did not test here. It needs one check on a real device. Saving the name relative to Application Support
+  would fix it.
+
+#### Design calls
+
+##### DC1. Connect to the last Core on open
+
+This is the biggest part of JJ's complaint.
+
+- **Today:** Your Cores, then a tap (`NereusApp/Connect/ConnectionFlow.swift:744`).
+- **Recommendation:** yes, as a Setup switch that is on by default. Save the last Core's identity key when a session
+  reaches ready. Clear it on Disconnect and on Remove Core. At launch, when the key is present and that Core does not
+  need pairing, dial it and show the connecting state with Cancel rather than the list. An explicit Disconnect still
+  opens on Your Cores, which keeps the rule that nothing reconnects by itself after Disconnect
+  (`ConnectionFlow.swift:1705-1707`).
+- **Also:** connecting never keys, so the known ruling holds. Put the last used Core first or highlight it, since
+  today the highlighted Connect is simply the Core paired first (`YourStationsScreen.swift:73`,
+  `NereusKit/Sources/NereusLink/PairedStationStore.swift:21`).
+- **Sub-question:** after the sleep timer ends a session, should the next open reconnect? I recommend yes. The timer
+  ended it, not the operator, and opening the app says they want it back.
+
+##### DC2. Return to the last tab
+
+- **Recommendation:** yes. Save the tab in `PhoneSettings`, for example `phone.nav.tab`, and read it in `RootView`.
+- **Why not `@SceneStorage`:** as I understand it, iOS discards scene storage after a force quit, and a force quit is
+  one of the main cases here.
+
+##### DC3. Return to the last Setup, Tools and Radio page
+
+- **Recommendation:** yes for Setup and Tools, using the tab's approach, and fall back to the list when a page is
+  gone, because a described page may not exist on another Core. `SetupTree.Route` and `ToolsTab.Page` would need to be
+  saved in a stable form. Do Radio last.
+- **Exception:** a Roundtable room falls back to Roundtable's list. Its title and room are live.
+
+##### DC4. Panels, sheets and iPad column state
+
+- **Recommendation:** split by how transient each is.
+- Restore: the Display pill's last tab, iPad applet column shown or hidden, and folded button columns. These are
+  layout, and CLAUDE.md lists layout as persisted.
+- Do not restore: RX, TX and Sound panels, Pan, Display and Slices sheets, menus, wide Roundtable. On an iPhone they
+  cover the band, so opening on one reads as a surprise, not a return. JJ may see the RX and TX panels differently,
+  which is why I flag it.
+
+##### DC5. Mute this phone
+
+- **Today:** a mute carries across connections but resets at launch (`NereusApp/App/AppModel.swift:49`, `:373-374`).
+- **Recommendation:** keep it, as `phone.audio.muted`. Someone who muted in a quiet room should not get sound on
+  reopening, and the toolbar's speaker already shows muted (`NereusApp/Main/Toolbar.swift:218`).
+- **The other side:** a silent app could look broken on a later day. The toolbar is the answer to that.
+
+##### DC6. The band's pan position
+
+- **Today:** zoom sticks, while the center returns to the slice (`NereusApp/Main/BandSubscriber.swift:544-545`).
+- **Recommendation:** keep it this way at first, and do it last if at all. Under CTUN, a saved offset from the slice
+  could be restored, but it may not fit the receiver's window after the Core has moved, and centering on the slice is
+  a sane place to start. After the bigger items land, ask JJ if he still notices it.
+- **Related:** there is one zoom per pan across all bands (`NereusKit/Sources/NereusBand/BandDisplaySettings.swift:370`),
+  not one per band. That sits close to band stacking, so I record it and do not design it.
+
+##### DC7. Redial at once on return to the foreground
+
+- **Today:** a dead link waits for its timer, up to 60 s, with LINK LOST showing (`NereusKit/Sources/NereusLink/ReconnectPolicy.swift:8`).
+  `AppModel.retryNow()` exists (`NereusApp/App/AppModel.swift:1037-1042`), but nothing calls it for a scene change.
+- **Recommendation:** yes, call it when the scene becomes active while the session is waiting. This is small and it is
+  what JJ's phrase "open it back up" feels like when the process survived. It is not strictly persistence. It changes
+  connection behavior, so it needs his yes.
+
+##### DC8. Things I recommend staying as they are
+
+- **Waterfall history:** too big to save, and stale after an absence.
+- **Sleep countdown:** a new listening session means a new deadline (`NereusApp/Session/SessionController.swift:213-223`).
+- **Jump to another slice and listened slices:** the Core drops those claims when the device's absence ends
+  (`src/core/session/StationServer.cpp:12459`), so restoring them would mean new claims on other devices' slices.
+- **Setup's Display scope:** the page already picks a sensible default when opened.
+- **PTT:** connecting never keys, and a held PTT is released on leaving (`NereusApp/Main/TransmitModel.swift:937-941`).
+
+##### DC9. Key naming on the phone
+
+- `SetupFilterPresetsMode`, `SetupPaTempUnit` and `display/showPaValuesPage` skip the `phone.` prefix that
+  `PhoneSettings.swift:38-41` describes. They work, so this is tidiness and not a bug. Moving them would need a
+  migration, so I recommend leaving them unless the new navigation keys bring a cleanup anyway.
+- The CLAUDE.md rule of `AppSettings` and PascalCase keys is about the C++ app. The phone uses UserDefaults with
+  dotted keys throughout, and I did not count that as a violation.
