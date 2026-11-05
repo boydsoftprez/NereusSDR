@@ -1394,6 +1394,10 @@ private:
     /// reasoning.
     void refreshFftPoolConfig();
 
+    /// The spot settings are global, so every pan reads them again, as the
+    /// Spot Hub's own Spots switch already has every pan do.
+    void reloadSpotDisplaySettingsOnAllPans();
+
     /// Give the pool the saved Decimation, range checked. A Core with no
     /// decimation control has nothing for this window to keep.
     void applyDecimationFromSettings();

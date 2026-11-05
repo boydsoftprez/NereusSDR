@@ -2231,9 +2231,7 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
     // inside openSpotHub() is now a defensive guard kept for the case
     // where the spectrum widget races construction; see lines below.
     QTimer::singleShot(0, this, [this] {
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->loadSpotDisplaySettings();
-        }
+        reloadSpotDisplaySettingsOnAllPans();
         if (m_radioModel) {
             m_radioModel->restoreSpotClientAutoStartState();
         }
@@ -6405,6 +6403,16 @@ void MainWindow::syncZoomBarToActivePan()
                                m_zoomBar->maximum()));
 }
 
+void MainWindow::reloadSpotDisplaySettingsOnAllPans()
+{
+    if (!m_panStack) { return; }
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (applet && applet->spectrumWidget()) {
+            applet->spectrumWidget()->loadSpotDisplaySettings();
+        }
+    }
+}
+
 void MainWindow::refreshFftPoolConfig()
 {
     if (!m_fftEnginePool) { return; }
@@ -7327,6 +7335,9 @@ void MainWindow::onPanTakeTransmitRequested(const QString& panId)
 void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
 {
     if (!sw || !m_radioModel) { return; }
+
+    // A new pan starts from the saved spot settings, not the widget's defaults.
+    sw->loadSpotDisplaySettings();
 
     // iPhone app plan Task 78: other devices' slices on this pan, and what a
     // click on one's label says.
@@ -20068,11 +20079,7 @@ void MainWindow::openSpotHub()
         // NereusSDR shape lives on the widget so the test seam is local
         // (see tst_spothub_display_knobs).
         connect(m_spotHubDialog.data(), &SpotHubDialog::settingsChanged,
-                this, [this] {
-                    if (activeSpectrumWidget()) {
-                        activeSpectrumWidget()->loadSpotDisplaySettings();
-                    }
-                });
+                this, [this] { reloadSpotDisplaySettingsOnAllPans(); });
         // Defensive re-seed.  The primary seed runs at MainWindow startup
         // (see the QTimer::singleShot(0, ...) lambda earlier in this file
         // that pairs loadSpotDisplaySettings + restoreSpotClientAutoStartState),
@@ -20083,9 +20090,7 @@ void MainWindow::openSpotHub()
         // is now -- loadSpotDisplaySettings re-reads AppSettings and the
         // setter is no-op when the value is unchanged, so the cost is
         // bounded and the behaviour is correct either way.
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->loadSpotDisplaySettings();
-        }
+        reloadSpotDisplaySettingsOnAllPans();
 
         // Phase 3R K-bench (bench feedback): wire the FreeDV tab's
         // Start / Stop button signals to the actual client lifecycle.

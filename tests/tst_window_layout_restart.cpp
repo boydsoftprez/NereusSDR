@@ -270,6 +270,58 @@ private slots:
         QCOMPARE(zoomBar(window)->value(), 48);
         QCOMPARE(stack->spectrum(QStringLiteral("pan-0"))->bandwidth(), 48'000.0);
     }
+
+    // Saved spot settings reach every pan at startup, not only the active one.
+    void savedSpotSettingsReachEveryPanAtStartup()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("PanLayoutId"), QStringLiteral("2v"));
+        s.setValue(QStringLiteral("IsSpotsEnabled"), QStringLiteral("False"));
+        s.setValue(QStringLiteral("SpotFontSize"), QStringLiteral("22"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        auto* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        for (const QString& id : {QStringLiteral("pan-0"), QStringLiteral("pan-1")}) {
+            SpectrumWidget* pan = stack->spectrum(id);
+            QVERIFY(pan);
+            QVERIFY2(!pan->showSpots(), qPrintable(id));
+            QCOMPARE(pan->spotFontSizeForTest(), 22);
+        }
+    }
+
+    // A pan made later loads them too.
+    void aNewPanLoadsTheSavedSpotSettings()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("IsSpotsEnabled"), QStringLiteral("False"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        auto* stack = window.findChild<PanadapterStack*>();
+        stack->applyLayout(QStringLiteral("2v"), MainWindow::panIdsForLayout(QStringLiteral("2v")));
+        settle();
+        SpectrumWidget* added = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(added);
+        QVERIFY(!added->showSpots());
+    }
+
+    // A change in the Spot Hub reaches every pan, as its Spots switch does.
+    void aSpotHubChangeReachesEveryPan()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("PanLayoutId"), QStringLiteral("2v"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        auto* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(QMetaObject::invokeMethod(&window, "openSpotHub"));
+        auto* hub = window.findChild<SpotHubDialog*>();
+        QVERIFY(hub);
+        s.setValue(QStringLiteral("SpotFontSize"), QStringLiteral("19"));
+        emit hub->settingsChanged();
+        QCOMPARE(stack->spectrum(QStringLiteral("pan-0"))->spotFontSizeForTest(), 19);
+        QCOMPARE(stack->spectrum(QStringLiteral("pan-1"))->spotFontSizeForTest(), 19);
+        hub->close();
+    }
 };
 
 QTEST_MAIN(TstWindowLayoutRestart)
