@@ -1631,13 +1631,13 @@ public:
     // preferences, including Locked, still restore; the lock cannot veto
     // the seed because it is restored afterwards. Existing callers retain
     // full tuning restoration, including layout hydration. RIT and XIT
-    // count as tuning: a new receiver starts with them off, and only a full
-    // restore brings them back.
+    // restore only with full tuning: fresh creation decides them itself
+    // (RadioModel::addSliceImpl).
     void restoreFromSettings(NereusSDR::Band band, bool restoreTuning = true);
 
-    // The RIT and XIT half of a full restore, for the window's starting
-    // slice at connect, which is a restored receiver made through the
-    // fresh-creation path.
+    // The RIT and XIT half of a full restore, for fresh creation that is not
+    // a new receiver: the window's starting slice at connect, and any other
+    // caller that did not say the slice is new.
     void restoreRitXitFromSettings();
 
     // Removes this letter's saved RIT and XIT, so a new receiver on a used

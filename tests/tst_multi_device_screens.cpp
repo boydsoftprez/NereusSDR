@@ -50,6 +50,9 @@
 //               of emoji text. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
 // =================================================================
+//   2026-11-05: A hosting window's fill keeps a receiver's RIT and XIT; a
+//               new one starts off. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude.
 
 #include "MultiDeviceHarness.h"
 
@@ -729,6 +732,82 @@ private slots:
         }
         QVERIFY(onNewPan);
         delete dialog;
+    }
+
+    // JJ's ruling 2026-11-05: a new receiver starts with RIT and XIT off, a
+    // restored one keeps its own. A hosting window's fill at connect restores
+    // the saved layout's receivers; its fill after a layout change, and its
+    // +RX, make new ones. What decides it is whether the operator asked.
+    void aHostingWindowsFill_data()
+    {
+        QTest::addColumn<bool>("operatorRequested");
+        QTest::newRow("at connect, not asked for") << false;
+        QTest::newRow("after a layout change, asked for") << true;
+    }
+
+    void aHostingWindowsFill()
+    {
+        QFETCH(bool, operatorRequested);
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        const QByteArray& station = SliceOwnership::stationDevice();
+        core.server->deviceSessions()->registerHostingDevice(station, QStringLiteral("Mac"),
+                                                              QStringLiteral("Mac"));
+        core.server->setStationDeviceWords(QStringLiteral("Mac"), QStringLiteral("Mac"));
+        SliceOwnership* ownership = core.model->sliceOwnership();
+        ownership->adoptUnowned(station);
+        hostingFillSeedsSavedOffsets();
+        const int sliceCount = core.model->slices().size();
+
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      operatorRequested, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), sliceCount + 1);
+        SliceModel* added = core.model->slices().last();
+        const QString saved = QStringLiteral("Slice%1/XitHz").arg(added->sliceIndex());
+        if (operatorRequested) {
+            QVERIFY(!added->ritEnabled());
+            QCOMPARE(added->ritHz(), 0);
+            QVERIFY(!added->xitEnabled());
+            QCOMPARE(added->xitHz(), 0);
+            QVERIFY(!AppSettings::instance().contains(saved));
+        } else {
+            QVERIFY(added->ritEnabled());
+            QCOMPARE(added->ritHz(), 250);
+            QVERIFY(added->xitEnabled());
+            QCOMPARE(added->xitHz(), 700);
+            QCOMPARE(AppSettings::instance().value(saved).toInt(), 700);
+        }
+        AppSettings::instance().clear();
+    }
+
+    // The fill's argument is the station device's alone. A device that sends
+    // it over the link still gets a new receiver.
+    void aRemoteDeviceCannotAskForTheRestoredFill()
+    {
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        Device b(QStringLiteral("iPad"), QStringLiteral("tablet"), QStringLiteral("iPad"));
+        core.pair(b);
+        LoopbackTransport* appB = core.signIn(
+            b, {{"deviceAuth", 1}, {"sessionHolder", 1}, {"sliceAccess", 1}});
+        QVERIFY(admitted(appB));
+        hostingFillSeedsSavedOffsets();
+        const int sliceCount = core.model->slices().size();
+
+        appB->sendText(SessionMessages::encode(SessionMessages::commandInvoke(
+            "addSliceOnPan", 7301,
+            {MirrorUpdate{0, "panId", MirrorWireKind::Utf8,
+                          QVariant(QStringLiteral("pan-device-2"))},
+             MirrorUpdate{0, "restoredFill", MirrorWireKind::Bool, QVariant(true)}})));
+        QTRY_COMPARE(core.model->slices().size(), sliceCount + 1);
+        SliceModel* added = core.model->slices().last();
+        QVERIFY(!added->ritEnabled());
+        QVERIFY(!added->xitEnabled());
+        QCOMPARE(added->xitHz(), 0);
+        QVERIFY(!AppSettings::instance().contains(
+            QStringLiteral("Slice%1/XitHz").arg(added->sliceIndex())));
+        AppSettings::instance().clear();
     }
 
     // Slice control plan Task 11: a hosting window filling its empty pans
@@ -1574,6 +1653,22 @@ private slots:
             }
         }
         saveShot(&connected, QStringLiteral("connected-list"), false);
+    }
+
+private:
+    static void hostingFillSeedsSavedOffsets()
+    {
+        for (int letter = 0; letter < 5; ++letter) {
+            const QString prefix = QStringLiteral("Slice%1/").arg(letter);
+            AppSettings::instance().setValue(prefix + QStringLiteral("LastBand"),
+                                             QStringLiteral("20m"));
+            AppSettings::instance().setValue(prefix + QStringLiteral("RitEnabled"),
+                                             QStringLiteral("True"));
+            AppSettings::instance().setValue(prefix + QStringLiteral("RitHz"), 250);
+            AppSettings::instance().setValue(prefix + QStringLiteral("XitEnabled"),
+                                             QStringLiteral("True"));
+            AppSettings::instance().setValue(prefix + QStringLiteral("XitHz"), 700);
+        }
     }
 };
 

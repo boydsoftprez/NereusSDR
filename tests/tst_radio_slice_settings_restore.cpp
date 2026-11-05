@@ -381,36 +381,30 @@ private slots:
     {
         saveLetterWithOffsets();
         if (QTest::currentTestFailed()) { return; }
-        {
-            RadioModel radio;
-            SliceModel* slice = radio.sliceById(radio.addSlice());
-            QVERIFY(slice);
-            QCOMPARE(slice->sliceIndex(), 0);
-            QVERIFY(!slice->ritEnabled());
-            QCOMPARE(slice->ritHz(), 0);
-            QVERIFY(!slice->xitEnabled());
-            QCOMPARE(slice->xitHz(), 0);
-            QCOMPARE(radio.txFrequencyForSlice(slice),
-                     static_cast<quint64>(slice->frequency()));
-            // Only RIT and XIT start over: the letter's preferences still come.
-            QCOMPARE(slice->afGain(), kSavedAfGain);
-            // Turning XIT on later cannot jump to the old offset.
-            slice->setXitEnabled(true);
-            QCOMPARE(radio.txFrequencyForSlice(slice),
-                     static_cast<quint64>(slice->frequency()));
-            slice->setXitEnabled(false);
-        }
+        RadioModel radio;
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->sliceIndex(), 0);
+        QVERIFY(!slice->ritEnabled());
+        QCOMPARE(slice->ritHz(), 0);
+        QVERIFY(!slice->xitEnabled());
+        QCOMPARE(slice->xitHz(), 0);
+        QCOMPARE(radio.txFrequencyForSlice(slice), static_cast<quint64>(slice->frequency()));
+        // Only RIT and XIT start over: the letter's preferences still come.
+        QCOMPARE(slice->afGain(), kSavedAfGain);
+        // Turning XIT on later cannot jump to the old offset.
+        slice->setXitEnabled(true);
+        QCOMPARE(radio.txFrequencyForSlice(slice), static_cast<quint64>(slice->frequency()));
     }
 
     void newReceiverAddedOnAPanStartsWithRitAndXitOff()
     {
-        // The other way an operator asks: +RX on a pan with the default,
-        // not the startup restore.
         saveLetterWithOffsets();
         if (QTest::currentTestFailed()) { return; }
         RadioModel radio;
-        const int id = radio.addSlice(QStringLiteral("pan-0"), /*restoreSavedState=*/false);
-        SliceModel* slice = radio.sliceById(id);
+        radio.addSliceOnPan(QStringLiteral("pan-0"), /*restoreSavedState=*/false,
+                            /*newReceiver=*/true);
+        SliceModel* slice = radio.sliceById(0);
         QVERIFY(slice);
         QVERIFY(!slice->ritEnabled());
         QVERIFY(!slice->xitEnabled());
@@ -424,7 +418,7 @@ private slots:
         if (QTest::currentTestFailed()) { return; }
         {
             RadioModel radio;
-            QVERIFY(radio.addSlice() >= 0);
+            QVERIFY(radio.addSlice(QString(), false, /*newReceiver=*/true) >= 0);
         }
         RadioModel restarted;
         SliceModel* slice = restarted.sliceById(
@@ -434,6 +428,63 @@ private slots:
         QCOMPARE(slice->ritHz(), 0);
         QVERIFY(!slice->xitEnabled());
         QCOMPARE(slice->xitHz(), 0);
+    }
+
+    void newReceiverSchedulesASaveSoACrashCannotBringOffsetsBack()
+    {
+        saveLetterWithOffsets();
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel radio;
+        QVERIFY(radio.addSlice(QString(), false, /*newReceiver=*/true) >= 0);
+        // The save the forget asked for reaches the settings file, as the
+        // 500 ms timer's would.
+        radio.flushPendingSettingsSave();
+        AppSettings onDisk(AppSettings::instance().filePath());
+        onDisk.load();
+        QVERIFY(onDisk.value(QStringLiteral("Slice0/XitEnabled")).toString()
+                != QStringLiteral("True"));
+        QVERIFY(onDisk.value(QStringLiteral("Slice0/RitEnabled")).toString()
+                != QStringLiteral("True"));
+        QCOMPARE(onDisk.value(QStringLiteral("Slice0/XitHz"), 0).toInt(), 0);
+    }
+
+    void removingAReceiverThenAddingItAgainStartsWithRitAndXitOff()
+    {
+        RadioModel radio;
+        radio.configureStreamPool(2, 2, kRateHz);
+        QVERIFY(radio.addSlice() >= 0);
+        const int id = radio.addSlice();
+        SliceModel* first = radio.sliceById(id);
+        QVERIFY(first);
+        first->setXitHz(700);
+        first->setXitEnabled(true);
+        first->setRitHz(250);
+        first->setRitEnabled(true);
+        radio.flushPendingSettingsSave();
+        radio.removeSlice(id);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QVERIFY(radio.sliceById(id) == nullptr);
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Slice%1/XitHz").arg(id)).toInt(), 700);
+
+        const int again = radio.addSlice(QString(), false, /*newReceiver=*/true);
+        QCOMPARE(again, id);
+        SliceModel* second = radio.sliceById(again);
+        QVERIFY(second);
+        QVERIFY(!second->ritEnabled());
+        QCOMPARE(second->ritHz(), 0);
+        QVERIFY(!second->xitEnabled());
+        QCOMPARE(second->xitHz(), 0);
+    }
+
+    void aPathThatDoesNotSayNewKeepsTheLettersRitAndXit()
+    {
+        // The default: a caller nobody thought about loses nothing.
+        saveLetterWithOffsets();
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel radio;
+        verifyOffsetsKept(radio, radio.sliceById(radio.addSlice()));
+        if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("Slice0/XitHz")).toInt(), 700);
     }
 
     void startupRestoreOfALetterKeepsItsRitAndXit()
@@ -483,9 +534,10 @@ private slots:
         verifyOffsetsKept(radio, radio.sliceById(id));
     }
 
-    void bandRestoreKeepsAReceiversRitAndXit()
+    void bandRestoreReadsRitAndXitFromTheStore()
     {
-        // A band change on a live receiver reads the same keys it just saved.
+        // The values must come from the store: the live ones change between
+        // the save and the restore.
         RadioModel radio;
         SliceModel* slice = radio.sliceById(radio.addSlice());
         QVERIFY(slice);
@@ -495,16 +547,46 @@ private slots:
         slice->setXitHz(700);
         slice->setXitEnabled(true);
         slice->saveToSettings(Band::Band20m);
-        slice->setFrequency(7'100'000.0);
-        slice->saveToSettings(Band::Band40m);
+        slice->setRitEnabled(false);
+        slice->setRitHz(0);
+        slice->setXitEnabled(false);
+        slice->setXitHz(0);
         slice->restoreFromSettings(Band::Band20m);
         verifyOffsetsKept(radio, slice);
     }
 
-    void neverUsedLetterIsUnchanged()
+    void aBandChangeKeepsAReceiversRitAndXit()
     {
+        // The real band button: saves the slice, then moves and back.
         RadioModel radio;
         SliceModel* slice = radio.sliceById(radio.addSlice());
+        QVERIFY(slice);
+        slice->setFrequency(14'200'000.0);
+        slice->setRitHz(250);
+        slice->setRitEnabled(true);
+        slice->setXitHz(700);
+        slice->setXitEnabled(true);
+        radio.onBandButtonClicked(slice, Band::Band40m);
+        QVERIFY(slice->frequency() < 8'000'000.0);
+        verifyOffsetsKept(radio, slice);
+        if (QTest::currentTestFailed()) { return; }
+        radio.onBandButtonClicked(slice, Band::Band20m);
+        QCOMPARE(slice->frequency(), 14'200'000.0);
+        verifyOffsetsKept(radio, slice);
+    }
+
+    void neverUsedLetterIsUnchanged_data()
+    {
+        QTest::addColumn<bool>("newReceiver");
+        QTest::newRow("new receiver") << true;
+        QTest::newRow("other path") << false;
+    }
+
+    void neverUsedLetterIsUnchanged()
+    {
+        QFETCH(bool, newReceiver);
+        RadioModel radio;
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, newReceiver));
         QVERIFY(slice);
         QVERIFY(!slice->ritEnabled());
         QCOMPARE(slice->ritHz(), 0);
