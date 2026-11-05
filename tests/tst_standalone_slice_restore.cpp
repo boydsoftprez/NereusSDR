@@ -315,7 +315,7 @@ private slots:
     void explicitStartupRestoredSampleRateReachesTheDdc()
     {
         saveSliceB();
-        AppSettings::instance().setValue(QStringLiteral("Slice1/Band40m/SampleRate"), 384000);
+        AppSettings::instance().setValue(QStringLiteral("Slice1/SampleRate"), 384000);
         RadioModel model;
         model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
         model.configureStreamPool(2, 2, kRateHz);
@@ -360,7 +360,7 @@ private slots:
         settings.setValue(QStringLiteral("Slice1/Locked"), QStringLiteral("True"));
         settings.setValue(QStringLiteral("Slice1/Band40m/DspMode"),
                           static_cast<int>(DSPMode::RADE_U));
-        settings.setValue(QStringLiteral("Slice1/Band40m/SampleRate"), 384000);
+        settings.setValue(QStringLiteral("Slice1/SampleRate"), 384000);
         const QString mac = core.model->currentRadioMac();
         QVERIFY(!mac.isEmpty());
         QVERIFY(DeviceLayoutStore::load(settings, mac, incoming.key.fingerprint()).isEmpty());
@@ -397,7 +397,7 @@ private slots:
         settings.setValue(QStringLiteral("Slice2/LastBand"), bandKeyName(Band::Band40m));
         settings.setValue(QStringLiteral("Slice2/Band40m/Frequency"), kSliceBFreqHz);
         settings.setValue(QStringLiteral("Slice2/Band40m/DspMode"), static_cast<int>(DSPMode::LSB));
-        settings.setValue(QStringLiteral("Slice2/Band40m/SampleRate"), 384000);
+        settings.setValue(QStringLiteral("Slice2/SampleRate"), 384000);
         QVERIFY(core.invoke(app, "addSlice", {utf8("initialPanId", QString())})
                     .value(QStringLiteral("accepted")).toBool());
         SliceModel* c = core.model->sliceById(2);

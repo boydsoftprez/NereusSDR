@@ -964,6 +964,13 @@
 //                applySavedSliceSampleRates), and a rate change saves it.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-11-05 - One sample rate per receiver on every band, so a band
+//                change leaves the rate alone (JJ's ruling). A new slice with
+//                a receiver of its own opens at the rate of the slice it was
+//                seeded from; a device's slice made again and a slice leaving
+//                a shared receiver keep theirs; a radio-wide change saves on
+//                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-09-27 - iPhone plan Task 22 / parity Task 20 (R-IOS-26, R-R3-49,
 //                B7.3, B7.4): FreeDV Reporter runs through the spot source
 //                host (the Core's own start, a remote window's requests to
@@ -14802,7 +14809,7 @@ QHash<int, int> RadioModel::savedSliceSampleRates() const
         if (slice == nullptr) {
             continue;
         }
-        const int rate = slice->savedSampleRateHz(slice->band());
+        const int rate = slice->savedSampleRateHz();
         if (rate > 0) {
             saved.insert(slice->sliceIndex(), rate);
         }
@@ -15578,7 +15585,7 @@ void RadioModel::syncReceiverToStream(int streamIndex, bool live)
 // already live) and centres it on `centreHz`: the NewStream and
 // RetunedStream arm of bindSliceToStream, which calls it, and the arm a
 // confirmed pan move to a free receiver uses (moveSlicesToStream).
-void RadioModel::activateStreamAt(int streamIndex, double centreHz)
+void RadioModel::activateStreamAt(int streamIndex, double centreHz, int claimRateHz)
 {
     const QPointer<RadioModel> self(this);
     // Claim or move the DDC, then centre it on the slice.
@@ -15596,7 +15603,7 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
     const int rateForStream =
         (streamAlreadyLive && existingRateHz > 0)
             ? existingRateHz
-            : newStreamSampleRateHz();
+            : (claimRateHz > 0 ? claimRateHz : newStreamSampleRateHz());
 
     if (!streamAlreadyLive) {
         claimStreamEpoch(streamIndex);
@@ -15979,7 +15986,10 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
 
     if (placement.outcome == Outcome::NewStream
         || placement.outcome == Outcome::RetunedStream) {
-        activateStreamAt(placement.streamIndex, placement.newStreamCentreHz);
+        // A slice leaving a shared receiver for one of its own keeps its rate
+        // (a receiver's rate stays what was set, JJ's ruling 2026-11-05).
+        activateStreamAt(placement.streamIndex, placement.newStreamCentreHz,
+                         previousStream >= 0 ? slice->sampleRateHz() : 0);
         if (!current()) { return false; }
     }
 
@@ -17226,7 +17236,19 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // Binding makes the property describe the effective DDC rate. Keep the
     // restored preference separately until the ordinary rate transaction
     // below can apply it to the bound receiver.
-    const int restoredSampleRateHz = restoredSavedState ? slice->sampleRateHz() : 0;
+    const int restoredSampleRateHz = restoredSavedState ? slice->savedSampleRateHz() : 0;
+    // A device's slice made again keeps the rate saved for it. A new slice
+    // takes the rate of the slice it was seeded from, as it takes that slice's
+    // frequency and mode. Without these, a receiver claimed for either opens
+    // at the radio-wide connect rate, and the next save writes that over what
+    // the operator chose.
+    const int madeAgainSampleRateHz =
+        (restoreSeed && bindRestored) ? slice->savedSampleRateHz() : 0;
+    const int seedSampleRateHz =
+        (!restoreSeed && !restoredSavedState && seedFrom != nullptr && seedFrom != slice
+         && m_slices.contains(seedFrom))
+        ? m_streamAllocator.streamSampleRateHz(seedFrom->streamIndex())
+        : 0;
     // Review fix round 1, finding 1(c): `&& role() == Role::Local` is a
     // second, independent guard against the same destructive interaction
     // documented on bindSliceToStream's role check above -- if this
@@ -17634,11 +17656,20 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             scheduleSettingsSave(slice);
         }
     });
-    if (restoredSavedState) {
-        // And put the restored rate on the DDC, not just on the menu, as
-        // loadSliceState does for slice A. No-op when the slice has no
-        // stream or its stream already runs at that rate.
+    if (restoredSampleRateHz > 0) {
+        // And put the restored rate on the DDC, not just on the menu. No-op
+        // when the slice has no stream or its stream already runs at that rate.
         slice->setSampleRateHz(restoredSampleRateHz);
+        if (!currentAdded()) { return -1; }
+        applyRestoredSampleRate(slice);
+        if (!currentAdded()) { return -1; }
+    } else if (const int preferredRateHz = madeAgainSampleRateHz > 0 ? madeAgainSampleRateHz
+                                                                     : seedSampleRateHz;
+               preferredRateHz > 0 && slice->streamIndex() >= 0
+               && slicesOnStream(slice->streamIndex()).size() == 1) {
+        // On a receiver of its own only. A slice joining a receiver takes that
+        // receiver's rate, and must not move it for whoever else is on it.
+        slice->setSampleRateHz(preferredRateHz);
         if (!currentAdded()) { return -1; }
         applyRestoredSampleRate(slice);
         if (!currentAdded()) { return -1; }
@@ -20150,10 +20181,6 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     if (slice->hasSettingsFor(band)) {
         // Second+ visit: restore last-used state for the clicked band.
         slice->restoreFromSettings(band);
-        // And put the restored rate on the DDC, not just on the menu.
-        // Codex review round 7, PR #293: restoreFromSettings sets the
-        // display property; this is the half that reaches the radio.
-        applyRestoredSampleRate(slice);
         return;
     }
 
@@ -26833,11 +26860,6 @@ void RadioModel::loadSliceState(SliceModel* slice)
     // slice used to restore a saved label of its own here and write it
     // over that band's row of the table when the radio connected again.
     refreshSliceAntennasFromAlex(slice);
-
-    // And put the restored rate on the DDC, not just on the menu. Codex
-    // review round 7, PR #293. Same call as the band-change path: this is
-    // the launch-time restore, and it was equally display-only.
-    applyRestoredSampleRate(slice);
 
     // Push restored frequency to the panadapter so the spectrum display
     // lands on the same band as the slice. Without this the panadapter
@@ -35510,6 +35532,13 @@ void RadioModel::finishSampleRateChange(int newRateHz, bool reconcileDiversity,
             m_lastRadioInfo.macAddress,
             QStringLiteral("radioInfo/sampleRate"),
             newRateHz);
+    }
+    // And on each slice, or a saved per-band rate from before this change puts
+    // the old rate back at the next connect (applySavedSliceSampleRates).
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (slice != nullptr && slice->streamIndex() >= 0) {
+            scheduleSettingsSave(slice);
+        }
     }
 
     qCInfo(lcConnection) << "setSampleRateLive: done in" << elapsedMs << "ms";

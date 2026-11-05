@@ -127,6 +127,13 @@
 //   2026-09-27 - R-R3-49: savedSampleRateHz, the rate saved for a band,
 //                read at connect. NereusSDR-original. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - One sample rate per receiver on every band, so a band
+//                change leaves the rate alone (JJ's ruling). A new slice with
+//                a receiver of its own opens at the rate of the slice it was
+//                seeded from; a device's slice made again and a slice leaving
+//                a shared receiver keep theirs; a radio-wide change saves on
+//                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-09-28 - Slice control and shared listening plan Task 5: a remote
 //                window's read-only listener mark (isReadOnlyListener), set
 //                by SliceAccessMirror; a setter that would send a change
@@ -549,9 +556,9 @@ private:
     // to the stream. Writing the property directly moves the display only, and
     // the next bind or rate change overwrites it.
     //
-    // Default = SampleRateCatalog::kDefaultSampleRate (192 kHz). Persisted
-    // per-band per-slice; on reload the persisted value is a display seed that
-    // the first bind replaces with the stream's actual rate.
+    // Default = SampleRateCatalog::kDefaultSampleRate (192 kHz). Persisted once
+    // per slice, for every band (savedSampleRateHz); RadioModel puts the saved
+    // rate on the slice's stream at connect and when the slice is restored.
     Q_PROPERTY(int sampleRateHz READ sampleRateHz WRITE setSampleRateHz NOTIFY sampleRateHzChanged)
     // Phase 3F: diversity mode flag. Slice-A-only, gated on BoardCapabilities.hasDiversityReceiver.
     // When true, DDC migration to DDC0+DDC1 sync pair handled by codec on next applyDdcAssignment.
@@ -1610,12 +1617,12 @@ public:
     // band click should seed defaults or restore last-used state.
     bool hasSettingsFor(Band band) const;
 
-    // R-R3-49: the sample rate saved for `band` (the per-band SampleRate
-    // key saveToSettings writes), or 0 when none is saved or the saved
-    // value is not a positive integer. Reads settings only; changes
-    // nothing. RadioModel reads it at connect, before a bind makes the
-    // slice adopt its stream's rate.
-    int savedSampleRateHz(Band band) const;
+    // R-R3-49: the sample rate saved for this receiver, on every band, or 0
+    // when none is saved or the saved value is not a positive integer. Settings
+    // from before it had one rate supply the rate of the band it was last on.
+    // Reads settings only; changes nothing. RadioModel reads it before a bind
+    // makes the slice adopt its stream's rate.
+    int savedSampleRateHz() const;
 
     // Immutable per-band values, in save order; excludes session/NNR state.
     // RadioModel retains these until its existing coalesced save runs.

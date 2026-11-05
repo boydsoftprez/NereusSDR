@@ -157,6 +157,13 @@
 //   2026-09-27 - R-R3-49: savedSampleRateHz, the rate saved for a band,
 //                read at connect. NereusSDR-original. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - One sample rate per receiver on every band, so a band
+//                change leaves the rate alone (JJ's ruling). A new slice with
+//                a receiver of its own opens at the rate of the slice it was
+//                seeded from; a device's slice made again and a slice leaving
+//                a shared receiver keep theirs; a radio-wide change saves on
+//                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-09-28 - Slice control and shared listening plan Task 5: the
 //                read-only listener mark; every setter of a property a
 //                remote window writes to the Core (MirrorPolicy
@@ -3500,12 +3507,21 @@ bool SliceModel::hasSettingsFor(Band band) const
     return s.contains(bandPrefix(m_sliceIndex, band) + QStringLiteral("DspMode"));
 }
 
-int SliceModel::savedSampleRateHz(Band band) const
+int SliceModel::savedSampleRateHz() const
 {
     auto& s = AppSettings::instance();
-    const QString key = bandPrefix(m_sliceIndex, band) + QStringLiteral("SampleRate");
+    QString key = slicePrefix(m_sliceIndex) + QStringLiteral("SampleRate");
     if (!s.contains(key)) {
-        return 0;
+        // Saved before a receiver had one rate: the rate from the band it was
+        // last on. The first save replaces this with the key above.
+        const auto lastBand = loadLastBandFromSettings(m_sliceIndex);
+        if (!lastBand) {
+            return 0;
+        }
+        key = bandPrefix(m_sliceIndex, *lastBand) + QStringLiteral("SampleRate");
+        if (!s.contains(key)) {
+            return 0;
+        }
     }
     bool ok = false;
     const int rate = s.value(key).toInt(&ok);
@@ -3548,10 +3564,11 @@ QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
     // SliceModel.h for the 2026-04-22 removal note.
     values.append({bp + QStringLiteral("NbMode"), static_cast<int>(m_nbMode)});
 
-    // Phase 3F: per-slice DDC sample rate, persisted per-band so each band
-    // can independently remember its preferred rate (e.g. 192 kHz on 40m,
-    // 1536 kHz on 10m for a wider pan). NereusSDR-original (no Thetis cite).
-    values.append({bp + QStringLiteral("SampleRate"), m_sampleRateHz});
+    // Phase 3F: per-slice DDC sample rate. One rate per receiver, on every band
+    // (JJ's ruling, 2026-11-05: it used to be per band, which put an old rate
+    // back on each band change). NereusSDR-original: Thetis has only Setup's
+    // rate, and a band change leaves it alone (setup.cs:7066 [v2.10.3.15]).
+    values.append({slicePrefix(m_sliceIndex) + QStringLiteral("SampleRate"), m_sampleRateHz});
 
     // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. The 8-memory
     // slots (T3) + direction-finding fields (T11) join this block when they
@@ -3847,12 +3864,6 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
     if (s.contains(bp + QStringLiteral("NbMode"))) {
         setNbMode(static_cast<NereusSDR::NbMode>(
             s.value(bp + QStringLiteral("NbMode")).toInt()));
-    }
-
-    // Phase 3F: per-slice DDC sample rate (per-band). Default 192000 when key
-    // absent (new install or pre-3F settings file).
-    if (restoreTuning && s.contains(bp + QStringLiteral("SampleRate"))) {
-        setSampleRateHz(s.value(bp + QStringLiteral("SampleRate")).toInt());
     }
 
     // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. Defaults match

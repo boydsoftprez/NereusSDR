@@ -527,6 +527,13 @@
 //                applySavedSliceSampleRates), and a rate change saves it.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-11-05 - One sample rate per receiver on every band, so a band
+//                change leaves the rate alone (JJ's ruling). A new slice with
+//                a receiver of its own opens at the rate of the slice it was
+//                seeded from; a device's slice made again and a slice leaving
+//                a shared receiver keep theirs; a radio-wide change saves on
+//                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-09-27 - iPhone plan Task 22 / parity Task 20 (R-IOS-26):
 //                clearStationFreedv(). NereusSDR-original. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2902,20 +2909,11 @@ public:
 
     /// Push a slice's just-restored per-band sample rate onto its DDC.
     ///
-    /// Codex review round 7, PR #293. SliceModel::restoreFromSettings reads
-    /// the persisted per-band SampleRate and calls setSampleRateHz, which is
-    /// a plain property setter: it moves the number the VFO menu displays
-    /// and nothing else. The rate the receiver, codec and wire actually run
-    /// at only changes through requestSliceSampleRate. So returning to a
-    /// band you had left at 384 kHz showed 384 kHz while the DDC stayed on
-    /// whatever the previous band was using, and the saved preference was in
-    /// effect never restored.
-    ///
-    /// Called after restoreFromSettings rather than inside it: the restore
-    /// sets the frequency first, which completes the allocator rebind, and
-    /// the rate transaction has to run against the stream the slice ended up
-    /// on. SliceModel also holds no RadioModel handle by design, and the
-    /// rate is a stream-wide transaction rather than a slice property.
+    /// Codex review round 7, PR #293. setSampleRateHz is a plain property
+    /// setter: it moves the number the VFO menu displays and nothing else. The
+    /// rate the receiver, codec and wire actually run at only changes through
+    /// requestSliceSampleRate. addSliceImpl sets the property to the rate the
+    /// slice should come back at, then calls this once the slice has its stream.
     void applyRestoredSampleRate(SliceModel* slice);
 
     /// Slice control plan Task 5: on a Remote model, true (and announced)
@@ -2923,8 +2921,8 @@ public:
     /// request for it is held back instead of sent.
     bool holdSliceRequestForListener(int sliceId);
 
-    /// R-R3-49: each slice's saved per-band sample rate for the band it is
-    /// on (SliceModel::savedSampleRateHz), keyed by slice id; slices with
+    /// R-R3-49: each slice's saved sample rate
+    /// (SliceModel::savedSampleRateHz), keyed by slice id; slices with
     /// none saved are left out. connectToRadio reads it before it binds the
     /// slices, because a bind makes a slice adopt its stream's rate and a
     /// later save would then write that over the saved one.
@@ -7992,7 +7990,7 @@ public:
     void retireStream(int streamIndex);
     // iPhone app Task 74: claim a stream, or move a live one, centred on
     // `centreHz` (bindSliceToStream's NewStream / RetunedStream arm).
-    void activateStreamAt(int streamIndex, double centreHz);
+    void activateStreamAt(int streamIndex, double centreHz, int claimRateHz = 0);
 
     /// Emit ddcAssignmentRequested and drive the per-board codec recompute.
     void requestDdcAssignment();

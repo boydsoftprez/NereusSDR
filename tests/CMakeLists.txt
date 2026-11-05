@@ -8542,6 +8542,11 @@ target_compile_definitions(tst_spectrum_widget_cal_offset PRIVATE
 # codec and wire stayed on the previous band's.
 nereus_add_test(tst_restored_sample_rate_reaches_the_ddc)
 
+# The sample rate an operator chose has to stick: a new slice on its own
+# receiver opens at the rate in use, and a device's slice made again on a
+# running Core comes back at its saved rate.
+nereus_add_test(tst_sample_rate_sticks)
+
 # Codex review round 6, PR #293: Phase 3F gave TCI more slices than TCI ever
 # agreed to talk about. tx_frequency must come from the slice TxSliceArbiter
 # bound TX to rather than from receiver 0, and tagged frames must stop at the
