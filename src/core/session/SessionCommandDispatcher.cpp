@@ -2865,6 +2865,18 @@ void SessionCommandDispatcher::handleRequestSliceSampleRate(const SessionMessage
         return;
     }
 
+    // A rate off the radio's ladder is refused here, as handleSetRadioSampleRate
+    // refuses it. Taken, a stale or hand-made request moves the radio off its
+    // ladder: the wire saturates at the board's top rate while WDSP and the
+    // display run at the rate asked for. With no radio connected there is no
+    // ladder and no wire to move: the change is the model's, as before.
+    const QVector<int> allowed = m_radioModel->allowedStreamSampleRates();
+    if (!allowed.isEmpty() && !allowed.contains(rateHz)) {
+        emitResult(invoke.commandVerb, invoke.commandId, false,
+                   QStringLiteral("This radio cannot run at that sample rate."), {});
+        return;
+    }
+
     // Deferred to a LATER turn of RadioModel's own event loop -- see the
     // class comment for why this is the one verb that cannot run inline.
     // self/radioModel are QPointer copies so the daemon tearing either one
