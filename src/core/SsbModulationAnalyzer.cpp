@@ -99,14 +99,19 @@ void SsbModulationAnalyzer::reset()
     m_framesSeen = 0;
 }
 
+void SsbModulationAnalyzer::restartWindow(Consumer consumer)
+{
+    std::lock_guard<std::mutex> lock(m_mu);
+    m_window[static_cast<std::size_t>(consumer)] = WindowPeak{};
+}
+
 void SsbModulationAnalyzer::forgetInputLocked()
 {
     m_avg = 0.0;
     m_avgSeeded = false;
     m_seedSum = 0.0;
     m_seedCount = 0;
-    m_winMax = 0.0;
-    m_winValid = false;
+    m_window.fill(WindowPeak{});
     m_inputLive = false;
     m_crest.fill(CrestSlot{});
     rebuildScopeLocked();
@@ -262,11 +267,9 @@ void SsbModulationAnalyzer::pushIq(const float* interleaved, int frames)
         m_avg += (mean - m_avg) * a;
     }
 
-    if (!m_winValid) {
-        m_winMax = blockMax;
-        m_winValid = true;
-    } else {
-        m_winMax = std::max(m_winMax, blockMax);
+    for (WindowPeak& window : m_window) {
+        window.max = window.valid ? std::max(window.max, blockMax) : blockMax;
+        window.valid = true;
     }
 
     const auto now = nowLocked();
@@ -285,7 +288,7 @@ void SsbModulationAnalyzer::pushIq(const float* interleaved, int frames)
     m_framesSeen += static_cast<std::uint64_t>(frames);
 }
 
-SsbModulationAnalyzer::Snapshot SsbModulationAnalyzer::snapshot()
+SsbModulationAnalyzer::Snapshot SsbModulationAnalyzer::snapshot(Consumer consumer)
 {
     // Allocated before the lock the transmit worker and the connection thread
     // take. A sample rate change landing here is the one time it grows.
@@ -302,17 +305,18 @@ SsbModulationAnalyzer::Snapshot SsbModulationAnalyzer::snapshot()
         forgetInputLocked();
     }
 
-    const bool rf = m_avgSeeded && (m_avg > m_presentMin || (m_winValid && m_winMax > m_presentMin));
+    WindowPeak& window = m_window[static_cast<std::size_t>(consumer)];
+    const bool rf = m_avgSeeded && (m_avg > m_presentMin || (window.valid && window.max > m_presentMin));
     snap.signalPresent = rf;
-    if (rf && m_winValid) {
-        snap.peakPct = toPct(m_winMax);
-        snap.peakDbfs = toDbfs(m_winMax);
+    if (rf && window.valid) {
+        snap.peakPct = toPct(window.max);
+        snap.peakDbfs = toDbfs(window.max);
     }
     if (rf) {
         snap.avgPct = toPct(m_avg);
         snap.avgDbfs = toDbfs(m_avg);
     }
-    m_winValid = false;
+    window.valid = false;
 
     const double holdPct = decayedHoldPctLocked(now);
     if (holdPct <= 0.0) {

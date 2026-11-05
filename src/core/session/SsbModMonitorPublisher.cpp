@@ -97,8 +97,9 @@ void SsbModMonitorPublisher::setOpen(int source, bool open)
     m_open[index] = open;
     if (m_radio) {
         if (changed && open) {
+            // Its own window only: a panel on this model may be mid-over.
             if (SsbModulationAnalyzer* analyzer = m_radio->ssbModulationAnalyzer(source)) {
-                analyzer->reset();
+                analyzer->restartWindow(SsbModulationAnalyzer::Consumer::Core);
             }
         }
         // Re-applied every read. A one-time set was left off if the
@@ -136,7 +137,7 @@ void SsbModMonitorPublisher::tick()
         if (analyzer == nullptr) {
             continue;
         }
-        SsbModulationAnalyzer::Snapshot snap = analyzer->snapshot();
+        SsbModulationAnalyzer::Snapshot snap = analyzer->snapshot(SsbModulationAnalyzer::Consumer::Core);
         auto& unsent = m_unsent[static_cast<std::size_t>(source)];
         if (unsent) {
             snap.peakPct = std::max(snap.peakPct, unsent->peakPct);

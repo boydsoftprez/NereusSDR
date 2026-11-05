@@ -498,14 +498,23 @@ void SsbModMonitorApplet::setSource(Source src)
     AppSettings::instance().setValue(QString::fromLatin1(kKeySource),
                                      QString::number(static_cast<int>(src)));
     if (isRemoteWindow()) {
-        // Nothing reaches the Core until the panel is shown.
+        // Nothing reaches the Core until the panel is shown. No reset either:
+        // it would clear the source for every other reader of the Core.
         if (isVisible()) {
             watchOnCore(static_cast<int>(src));
-            resetPeaks();
         }
     } else {
         syncLocalMeasuring(isVisible());
-        resetPeaks();
+        restartLocalWindow();
+    }
+}
+
+void SsbModMonitorApplet::restartLocalWindow()
+{
+    if (m_model) {
+        if (auto* analyzer = m_model->ssbModulationAnalyzer(static_cast<int>(m_source))) {
+            analyzer->restartWindow(SsbModulationAnalyzer::Consumer::Panel);
+        }
     }
 }
 
@@ -546,6 +555,9 @@ void SsbModMonitorApplet::showEvent(QShowEvent* e)
     m_timer.start();
     watchOnCore(static_cast<int>(m_source));
     syncLocalMeasuring(true);
+    if (!isRemoteWindow()) {
+        restartLocalWindow();
+    }
 }
 
 void SsbModMonitorApplet::hideEvent(QHideEvent* e)
@@ -575,7 +587,7 @@ void SsbModMonitorApplet::tick()
     if (!analyzer) {
         return;
     }
-    applySnapshot(analyzer->snapshot());
+    applySnapshot(analyzer->snapshot(SsbModulationAnalyzer::Consumer::Panel));
 }
 
 void SsbModMonitorApplet::setLamp(QLabel* lamp, const QString& text,

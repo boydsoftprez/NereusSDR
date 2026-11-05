@@ -109,6 +109,7 @@ private:
     bool isRemoteWindow() const;
     void updatePaFeedbackAvailability();
     void syncLocalMeasuring(bool shown);
+    void restartLocalWindow();
     void updateRemoteAvailability();
     void watchOnCore(int source);
     void setLamp(QLabel* lamp, const QString& text, const char* bg, const char* fg, const char* border);

@@ -618,6 +618,61 @@ private slots:
         QVERIFY(!core->ssbModTxTapEnabled());
     }
 
+    void aPublisherOpeningMidOverLeavesThePanelAlone()
+    {
+        std::unique_ptr<RadioModel> core = makeCore();
+        txSlice(*core)->setDspMode(DSPMode::USB);
+        Session s(core.get(), m_securityDir.path(), this);
+        QVERIFY(s.connect());
+        SsbModMonitorApplet local(core.get());
+        local.show();
+        QVERIFY(keyCore(*core));
+        SsbModulationAnalyzer* tx = core->ssbModulationAnalyzer(0);
+        feedSteady(*tx, 0.3, 0.8f);
+        const std::uint64_t frames = tx->snapshot().framesSeen;
+        QVERIFY(frames > 0);
+
+        SsbModMonitorApplet device(&s.window);
+        device.show();
+        QTRY_VERIFY(s.publisher()->sourceOpen(0));
+        s.publisher()->tickForTest();
+        const SsbModulationAnalyzer::Snapshot after = tx->snapshot();
+        QVERIFY2(after.peakHoldPct > 79.0, qPrintable(QString::number(after.peakHoldPct)));
+        QCOMPARE(after.framesSeen, frames);
+        QVERIFY(!after.scope.empty());
+        QVERIFY(after.signalPresent);
+        unkeyCore(*core);
+        QTRY_VERIFY(!core->isTransmitting());
+    }
+
+    void aDeviceChangingSourceLeavesThePanelsHoldAlone()
+    {
+        std::unique_ptr<RadioModel> core = makeCore();
+        txSlice(*core)->setDspMode(DSPMode::USB);
+        PureSignal* ps = core->installPureSignalForTest(nullptr);
+        ps->setPsEnabledForTest(true);
+        Session s(core.get(), m_securityDir.path(), this);
+        QVERIFY(s.connect());
+        SsbModMonitorApplet local(core.get());
+        local.show();
+        SsbModMonitorApplet device(&s.window);
+        device.setSource(SsbModMonitorApplet::Source::PaFeedback);
+        device.show();
+        QTRY_COMPARE(s.stream(1)->subscriberCount(), 1);
+        QVERIFY(keyCore(*core));
+        SsbModulationAnalyzer* tx = core->ssbModulationAnalyzer(0);
+        feedSteady(*tx, 0.3, 0.8f);
+
+        device.setSource(SsbModMonitorApplet::Source::TxIq);
+        QTRY_COMPARE(s.stream(0)->subscriberCount(), 1);
+        QVERIFY2(tx->snapshot().peakHoldPct > 79.0, qPrintable(QString::number(tx->snapshot().peakHoldPct)));
+        for (const QByteArray& wire : s.coreEnd->received()) {
+            QVERIFY2(!wire.contains("txSsbModMonitor.reset"), wire.constData());
+        }
+        unkeyCore(*core);
+        QTRY_VERIFY(!core->isTransmitting());
+    }
+
     void aPublisherLeavingTakesItsWantsWithIt()
     {
         std::unique_ptr<RadioModel> core = makeCore();

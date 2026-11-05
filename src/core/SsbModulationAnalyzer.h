@@ -83,7 +83,14 @@ public:
     void pushIq(const float* interleaved, int frames);
 
     /// Read the current measurements. Consumes the per-window peak.
-    Snapshot snapshot();
+    /// Each reader has its own window peak: a read takes only what that
+    /// reader has seen, so the panel and the Core's publisher do not take from
+    /// each other. Everything else a snapshot carries is shared.
+    enum class Consumer { Panel = 0, Core = 1 };
+    Snapshot snapshot(Consumer consumer = Consumer::Panel);
+    /// Starts this reader's window peak afresh. The hold, the average and the
+    /// scope are left alone, so another reader's view does not change.
+    void restartWindow(Consumer consumer);
 
     /// Linear amplitude that is 100% and 0 dBFS.
     static constexpr double kFullScale = 1.0;
@@ -126,8 +133,12 @@ private:
     double m_seedSum{0.0};
     long   m_seedCount{0};
 
-    double m_winMax{0.0};
-    bool   m_winValid{false};
+    struct WindowPeak {
+        double max{0.0};
+        bool   valid{false};
+    };
+    static constexpr std::size_t kConsumers = 2;
+    std::array<WindowPeak, kConsumers> m_window{};
 
     double m_holdPeak{0.0};   // undecayed peak that started the hold
     clock::time_point m_holdAt{};

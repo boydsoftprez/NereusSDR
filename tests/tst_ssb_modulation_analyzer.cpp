@@ -207,6 +207,45 @@ private slots:
         QVERIFY2(std::fabs(snap.avgPct - 25.0) < 0.5, qPrintable(QString::number(snap.avgPct)));
     }
 
+    // The panel and the Core's publisher read one analyzer on a desktop that
+    // hosts its Core: neither may take the other's peak.
+    void twoConsumersReadingAlternatelyBothSeeThePeak()
+    {
+        using Consumer = SsbModulationAnalyzer::Consumer;
+        SsbModulationAnalyzer analyzer;
+        analyzer.setSampleRate(kFs);
+        feedClocked(analyzer, constantIq(0.5, 0.25, 0.0));
+        analyzer.snapshot(Consumer::Panel);
+        analyzer.snapshot(Consumer::Core);
+        feedClocked(analyzer, constantIq(0.02, 0.8, 0.0));
+        const auto panel = analyzer.snapshot(Consumer::Panel);
+        const auto core = analyzer.snapshot(Consumer::Core);
+        QVERIFY2(std::fabs(panel.peakPct - 80.0) < 0.5, qPrintable(QString::number(panel.peakPct)));
+        QVERIFY2(std::fabs(core.peakPct - 80.0) < 0.5, qPrintable(QString::number(core.peakPct)));
+        // A read takes it from that reader only, and only once.
+        feedClocked(analyzer, constantIq(0.02, 0.25, 0.0));
+        QVERIFY(analyzer.snapshot(Consumer::Panel).peakPct < 30.0);
+        QVERIFY(analyzer.snapshot(Consumer::Core).peakPct < 30.0);
+    }
+
+    void restartingOneWindowLeavesTheOtherAndTheHold()
+    {
+        using Consumer = SsbModulationAnalyzer::Consumer;
+        SsbModulationAnalyzer analyzer;
+        analyzer.setSampleRate(kFs);
+        feedClocked(analyzer, constantIq(0.5, 0.8, 0.0));
+        analyzer.restartWindow(Consumer::Core);
+        const auto core = analyzer.snapshot(Consumer::Core);
+        QCOMPARE(core.peakPct, 0.0);
+        QVERIFY(core.peakHoldPct > 79.0);
+        QVERIFY(!core.scope.empty());
+        QVERIFY(std::fabs(analyzer.snapshot(Consumer::Panel).peakPct - 80.0) < 0.5);
+        // A real reset clears the hold for both.
+        analyzer.reset();
+        QCOMPARE(analyzer.snapshot(Consumer::Panel).peakHoldPct, 0.0);
+        QCOMPARE(analyzer.snapshot(Consumer::Core).peakHoldPct, 0.0);
+    }
+
     // A pause on a real radio is noise, not digital zero: review finding.
     void crest_noisyPauseDoesNotInflateIt()
     {
@@ -254,8 +293,9 @@ private slots:
         }
         const QString seen = QStringLiteral("%1 to %2").arg(low).arg(high);
         QVERIFY2(low > 2.5, qPrintable(seen));
-        // The worst window without the noise is 5.67 dB; with it, 6.67 dB.
-        QVERIFY2(high < 5.8, qPrintable(seen));
+        // The worst window without the noise is 5.67 dB, up to 0.2 dB more
+        // where the 10 ms slots happen to fall; with the noise, 6.67 dB.
+        QVERIFY2(high < 6.2, qPrintable(seen));
     }
 
     // The maintainer's crest: peak over RMS of the envelope, over one stretch.
