@@ -1302,6 +1302,28 @@ void ContainerSettingsDialog::buildContainerPropertiesSection(QVBoxLayout* paren
         m_anchorCombo=new QComboBox(bar);m_anchorCombo->setObjectName("containerAnchor");
         const QStringList anchors{tr("Left"),tr("Top left"),tr("Top"),tr("Top right"),tr("Right"),tr("Bottom right"),tr("Bottom"),tr("Bottom left")};
         for(int i=0;i<anchors.size();++i) {m_anchorCombo->addItem(anchors[i],i);}modes->addWidget(m_anchorCombo);modes->addStretch();
+        modes->insertWidget(modes->count()-1,new QLabel(tr("Meter face:"),bar));
+        m_meterFaceCombo=new QComboBox(bar); m_meterFaceCombo->setObjectName("containerMeterFace");
+        m_meterFaceCombo->addItem(tr("Classic"),"Classic"); m_meterFaceCombo->addItem(tr("Modern"),"Instrument");
+        applyComboStyle(m_meterFaceCombo); modes->insertWidget(modes->count()-1,m_meterFaceCombo);
+        auto* useFaceForAll=makeBtn(tr("Use for all meters"),bar); useFaceForAll->setObjectName("containerUseFaceForAll");
+        useFaceForAll->setToolTip(tr("Make every bar in this container follow the container's face setting."));
+        modes->insertWidget(modes->count()-1,useFaceForAll);
+        connect(m_meterFaceCombo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{updatePreview();});
+        connect(useFaceForAll,&QPushButton::clicked,this,[this]{
+            if(!m_editSession || m_loadingDraft) {return;}
+            saveCurrentDraft(); auto draft=m_editSession->draft();
+            for(auto& container:draft.containers) {
+                if(container.id!=m_selectedId) {continue;}
+                for(auto& entry:container.contents) {
+                    const auto item=draftMeterItem(entry);
+                    if(!qobject_cast<BarPresetItem*>(item.get())) {continue;}
+                    auto properties=entry.config.value("properties").toObject(); properties["face"]="Container";
+                    entry.config["properties"]=properties;
+                }
+            }
+            m_editSession->setDraft(draft); updatePreview(); onItemSelectionChanged();
+        });
         for(auto* combo:{m_headerCombo,m_layoutCombo,m_placementCombo,m_anchorCombo}) {applyComboStyle(combo);connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this]{updatePreview();});}
     } else {row2->addWidget(m_hideTitleCheck);}
     row2->addWidget(m_minimisesCheck);
@@ -2786,6 +2808,13 @@ void ContainerSettingsDialog::loadCurrentDraft()
             const int headerIndex=m_headerCombo->findData(int(c.header));
             m_headerCombo->setCurrentIndex(headerIndex>=0 ? headerIndex : m_headerCombo->findData(int(HeaderMode::Hidden)));
         }
+        if(m_meterFaceCombo) {
+            while(m_meterFaceCombo->count()>2) {m_meterFaceCombo->removeItem(2);}
+            const QString face=c.config.value("meterFace").toString("Classic");
+            int index=m_meterFaceCombo->findData(face);
+            if(index<0) {m_meterFaceCombo->addItem(tr("Stored value %1").arg(face),face);index=m_meterFaceCombo->count()-1;}
+            m_meterFaceCombo->setCurrentIndex(index);
+        }
         if(m_layoutCombo) {m_layoutCombo->setCurrentIndex(m_layoutCombo->findData(int(c.layout)));}
         if(m_anchorCombo) {m_anchorCombo->setCurrentIndex(m_anchorCombo->findData(int(c.anchor)));}
         if(m_placementCombo) {m_placementCombo->setCurrentIndex(m_placementCombo->findData(int(c.dockMode)));}
@@ -2849,6 +2878,7 @@ void ContainerSettingsDialog::saveCurrentDraft()
             const auto setBool=[&](const QString& key,bool value,bool defaultValue=false) {
                 if(d.config.value(key).toBool(defaultValue)!=value) { d.config[key]=value; }
             };
+            if(m_meterFaceCombo && d.config.value("meterFace").toString("Classic")!=m_meterFaceCombo->currentData().toString()) {d.config["meterFace"]=m_meterFaceCombo->currentData().toString();}
             const QString background=m_bgColorBtn->property("draftColor").toString();
             if(!background.isEmpty() && background!=d.config.value("backgroundColor").toString("#0f0f1a")) {d.config["backgroundColor"]=background;}
             d.name=m_titleEdit->text(); setBool("border",m_borderCheck->isChecked(),true);

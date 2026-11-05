@@ -129,6 +129,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
                     item->setProperty("containerUnsupportedSource",true);
                     item->setProperty("unsupportedSourceReason",QStringLiteral("This legacy canvas contains different slice sources; move this entry to a stack to read its source"));
                 }
+                if(auto* bar=qobject_cast<BarPresetItem*>(item.get())) {bar->setContainerFace(document.config.value("meterFace").toString("Classic"));}
                 canvas->addItem(item.release()); m_views[entry.id]=canvas; continue;
             }
         }
@@ -161,6 +162,7 @@ void ContainerPreviewWidget::setDocument(const ContainerDocument& document)
         if (auto* meter=qobject_cast<MeterWidget*>(view)) {
             int height=document.layout==ContentLayout::VerticalStack ? 72 : 80;QSize minimum(24,24);
             for (auto* item : meter->items()) {
+                if(auto* bar=qobject_cast<BarPresetItem*>(item); bar && bar->setContainerFace(document.config.value("meterFace").toString("Classic"))) {meter->invalidatePresentation(bar);}
                 if (isSingleContainerControl(item)) { height=singleContainerControlSize().height(); minimum=singleContainerControlMinimum(); }
                 const QSize stackSize=document.layout==ContentLayout::VerticalStack ? containerStackButtonSize(item) : QSize();
                 item->setProperty("containerStackGrid",!stackSize.isEmpty());

@@ -48,6 +48,7 @@
 #include "core/AppSettings.h"
 #include "core/CwTypes.h"
 #include "core/MoxController.h"
+#include "core/NoiseFloorTracker.h"
 #include "core/RadioConnection.h"
 #include "core/RadioDiscovery.h"
 #include "core/SmartSdrApiListener.h"
@@ -698,6 +699,43 @@ private slots:
     }
 
     // ── R-CW-10: the TX time-out on QSK key-out ──────────────────────────
+    void qskHoldsAutoAcquisitionWithMoxFalseThroughExistingSendingGap()
+    {
+        Rig rig;
+        rig.model.setConnectionStateForTest(ConnectionState::Connected);
+        rig.model.setLastRadioInfoForTest(radioInfo(ProtocolVersion::Protocol2, HPSDRHW::Saturn, 10));
+        rig.model.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Qsk));
+        rig.model.setCwQskGapManualForTest(true);
+        pump();
+        QCOMPARE(rig.keyer()->effectiveBreakInMode(), CwBreakInMode::Qsk);
+        NoiseFloorTracker tracker;
+        rig.model.setNoiseFloorTracker(&tracker);
+        for (int i = 0; i < 70; ++i) { tracker.feed(QVector<float>(4096, -85.0f), 33.0f); }
+        QVERIFY(tracker.isGood());
+        rig.slice->setAutoAgcEnabled(true);
+        rig.model.runAutoAgcTickForTest();
+        const int threshold = rig.slice->agcThreshold();
+        rig.key(true, false, true);
+        QVERIFY(!rig.model.mox());
+        QVERIFY(!rig.model.transmitModel().isMox());
+        QVERIFY(rig.model.autoAgcAcquisitionInhibited());
+        tracker.feedForEpoch(QVector<float>(4096, -115.0f), 2000.0f,
+                             rig.model.autoAgcAcquisitionEpoch());
+        rig.model.runAutoAgcTickForTest();
+        QCOMPARE(tracker.noiseFloor(), -85.0f);
+        QCOMPARE(rig.slice->agcThreshold(), threshold);
+        rig.key(false, false, false);
+        QVERIFY(rig.model.autoAgcAcquisitionInhibited());
+        rig.model.endCwQskGapForTest();
+        QVERIFY(!rig.model.autoAgcAcquisitionInhibited());
+        QVERIFY(!tracker.acquisitionCurrent());
+        tracker.feedForEpoch(QVector<float>(4096, -85.0f), 33.0f,
+                             rig.model.autoAgcAcquisitionEpoch());
+        rig.model.runAutoAgcTickForTest();
+        QCOMPARE(rig.slice->agcThreshold(), threshold);
+        rig.model.setNoiseFloorTracker(nullptr);
+    }
+
     void qskKeyOutRunsTheTimeOutAndItsExpiryLatches()
     {
         Rig rig;

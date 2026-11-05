@@ -1,3 +1,7 @@
+// Modification history (NereusSDR):
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // =================================================================
 // src/core/daemon/DaemonAgcSource.h  (NereusSDR)
 // =================================================================
@@ -47,7 +51,7 @@ private slots:
     void onStreamsSuspended(const QVector<int>& streamIndices, const QString& reason);
     void onStreamAdcRoutingChanged();
     void onConnectionStateChanged(NereusSDR::ConnectionState state);
-    void onMoxChanged(bool mox);
+    void onAcquisitionChanged(quint64 epoch);
 
 private:
     struct StreamState;

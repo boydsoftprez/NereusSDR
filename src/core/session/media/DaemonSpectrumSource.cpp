@@ -5,6 +5,9 @@
 // =================================================================
 
 // Modification history (NereusSDR):
+//   2026-11-03: #720 review: AUTO sources retain the activation's receiving
+//               epoch and reject stale stamped ingress before queueing.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // 2026-09-27: Use the approved shared decimation bounds.
 // J.J. Boyd (KG4VCF), AI-assisted implementation via OpenAI Codex.
 // 2026-09-30: Frames can carry their bins in dBm, converted on the engine
@@ -258,6 +261,9 @@ bool DaemonSpectrumSource::update(const MediaSourceKey& key,
     bool resetInputHistory = false;
     {
         QMutexLocker lock(&it->state->mutex);
+        // The input signal connection is fixed at activation. Changing its
+        // AUTO epoch or switching input modes requires retire/activate.
+        if (config.autoAgcEpoch != it->state->config.autoAgcEpoch) { return false; }
         const quint64 previous = it->state->generation;
         if (centerMove == DaemonSpectrumCenterMove::Relabel
             && it->state->active && !it->state->configurationPending
@@ -571,7 +577,8 @@ void DaemonSpectrumSource::submitIq(int streamIndex,
     }
     for (auto it = m_sources.cbegin(); it != m_sources.cend(); ++it) {
         const SourceEntry& entry = it.value();
-        if (!entry.engine || it.key().streamIndex != streamIndex) {
+        if (!entry.engine || it.key().streamIndex != streamIndex
+            || entry.state->config.autoAgcEpoch.has_value()) {
             continue;
         }
         enqueueIq(entry.engine, entry.state, interleavedIq);
@@ -582,6 +589,7 @@ bool DaemonSpectrumSource::isValidConfig(
     const MediaSourceKey& key, const DaemonSpectrumSourceConfig& config)
 {
     if (key.streamIndex < 0
+        || (config.autoAgcEpoch.has_value() && (*config.autoAgcEpoch & 1U) != 0)
         || (key.tier != FftTier::Wide && key.tier != FftTier::Fine)
         || !std::isfinite(config.centreHz)
         || !(config.sampleRateHz > 0.0) || !std::isfinite(config.sampleRateHz)) {
@@ -861,14 +869,30 @@ void DaemonSpectrumSource::attachRadioIq(SourceEntry& entry)
         return;
     }
     const int streamIndex = entry.key.streamIndex;
-    entry.iqConnection = connect(
-        m_radioModel, &RadioModel::rawIqDataForStream, entry.engine,
-        [engine = entry.engine, state = entry.state,
-         streamIndex](int receivedStream, const QVector<float>& samples) {
-            if (receivedStream == streamIndex) {
-                enqueueIq(engine, state, samples);
-            }
-        }, Qt::DirectConnection);
+    const std::optional<quint64> autoEpoch = entry.state->config.autoAgcEpoch;
+    if (autoEpoch.has_value()) {
+        // The activation owns one receiving epoch. Never reinterpret input
+        // captured during TX (or a previous RX interval) as that new epoch.
+        entry.iqConnection = connect(
+            m_radioModel, &RadioModel::rawIqDataForAutoAgc, entry.engine,
+            [engine = entry.engine, state = entry.state, streamIndex,
+             expectedEpoch = *autoEpoch](int receivedStream, const QVector<float>& samples,
+                                         quint64 epoch) {
+                if (receivedStream == streamIndex && (epoch & 1U) == 0
+                    && epoch == expectedEpoch) {
+                    enqueueIq(engine, state, samples);
+                }
+            }, Qt::DirectConnection);
+    } else {
+        entry.iqConnection = connect(
+            m_radioModel, &RadioModel::rawIqDataForStream, entry.engine,
+            [engine = entry.engine, state = entry.state,
+             streamIndex](int receivedStream, const QVector<float>& samples) {
+                if (receivedStream == streamIndex) {
+                    enqueueIq(engine, state, samples);
+                }
+            }, Qt::DirectConnection);
+    }
     // A lost I/Q packet on this stream (-1: every stream). NereusSDR,
     // 2026-10-22, after Longpath PR 62: the window in progress is dropped
     // so the jump at the seam does not paint a line across the spectrum.
@@ -951,6 +975,7 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
         }
         state->latest.source = key;
         state->latest.generation = state->generation;
+        state->latest.autoAgcEpoch = state->config.autoAgcEpoch;
         state->latest.centreHz = state->config.centreHz;
         state->latest.sampleRateHz = state->config.sampleRateHz;
         state->latest.producedAtNs = producedAtNs;
@@ -990,6 +1015,7 @@ bool DaemonSpectrumSource::publishFrameForTest(const MediaSourceKey& key,
         }
         state->latest.source = key;
         state->latest.generation = state->generation;
+        state->latest.autoAgcEpoch = state->config.autoAgcEpoch;
         state->latest.centreHz = state->config.centreHz;
         state->latest.sampleRateHz = state->config.sampleRateHz;
         state->latest.producedAtNs = producedAtNs;
@@ -1065,6 +1091,7 @@ void DaemonSpectrumSource::publishFrame(
         }
         state->latest.source = key;
         state->latest.generation = state->generation;
+        state->latest.autoAgcEpoch = state->config.autoAgcEpoch;
         state->latest.centreHz = state->config.centreHz;
         state->latest.sampleRateHz = state->config.sampleRateHz;
         // 2026-10-21: the time of the frame's samples, not of this publish.

@@ -72,3 +72,18 @@ talker's report. Presence is not transmitting. A participant's multiple
 slices must not fabricate a double. Changing report values must retain
 focus/action identity and leave the spectrum's static caches clean. Active
 reports must not silently stop when another detail view is opened.
+
+## Desktop delivery boundary, 2026-11-03
+
+The desktop performance, subscription and passive-report tasks are implemented.
+The independent combined review's desktop live-participant finding and the
+PR732 scheduling/clock/repaint findings have been corrected. The latest four
+focused desktop targets pass 179 cases, including actual child paint delivery.
+This desktop integration commit does not include the separate uncommitted
+iPhone or web/server work. Their remaining review findings and browser-suite
+failures still require their own completion and delivery.
+
+The next Mac package combines this desktop source with current main's
+PureSignal/G2E corrections and the reviewed Classic/Modern container controls.
+Required final native validation and full-feature packaging remain pending
+until that exact combined source is built.

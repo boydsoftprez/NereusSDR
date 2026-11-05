@@ -1,5 +1,9 @@
 // Ported from Thetis MeterManager.cs [v2.10.3.15].
 // Modification history (NereusSDR):
+//   2026-11-03 - Optional Instrument face on existing bar records, adapting
+//                 Brian Sutton's PR #731 proposal; keep calibration, live
+//                 dynamics and editor settings. J.J. Boyd (KG4VCF), with
+//                 OpenAI Codex.
 //   2026-10-26 - Colours at their defaults follow the workspace look when
 //                 drawn (ItemColourLook.h); saved colours are unchanged.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -100,6 +104,7 @@ mw0lge@grange-lane.co.uk
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "BarPresetItem.h"
+#include "gui/InstrumentBarDrawing.h"
 #include "gui/meters/ItemColourLook.h"
 #include "PresetGeometry.h"
 #include "CompositePresetItem.h"
@@ -256,6 +261,7 @@ bool BarPresetItem::configureVariant(const QString& flavor) {
 }
 void BarPresetItem::applyNewItemDefaults() {
     MeterItem::applyNewItemDefaults();
+    m_face=QStringLiteral("Container");
     for(const BarPresetThetisDefaults& d:kBarPresetThetisDefaults) {
         if(m_flavor!=QLatin1String(d.flavor)) { continue; }
         m_marker=QColor::fromRgba(d.markerColour); m_historyColor=QColor::fromRgba(d.historyColour);
@@ -390,7 +396,9 @@ double BarPresetItem::calibratedPosition(double value) const {
 bool BarPresetItem::participatesIn(Layer layer) const { return layer==Layer::Background || layer==Layer::OverlayDynamic; }
 void BarPresetItem::paint(QPainter& painter,int width,int height) { paintForLayer(painter,width,height,Layer::Background); paintForLayer(painter,width,height,Layer::OverlayDynamic); }
 void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) {
-    const PresetGeometry g(pixelRect(width,height));
+    PresetGeometry g(pixelRect(width,height));
+    const bool instrument=resolvedFace()==QLatin1String("Instrument");
+    if(instrument) { g.baseline=g.top+12*g.scale; g.bottom=g.baseline+3*g.scale; }
     const auto pos=[&](double value) { return g.left+g.width*calibratedPosition(value); };
     p.save(); p.setClipRect(g.face); p.setRenderHint(QPainter::Antialiasing,false);
     QFont font=WorkspacePreview::readableFont(p.font(), p.device()); font.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1,qRound(13*g.scale)))); p.setFont(font);
@@ -403,10 +411,18 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
         // From Thetis MeterManager.cs:28312 [v2.10.3.15] — scaleItem.ShowType.
         if(m_showTitle) { drawObjectTextElided(p,QRectF(g.left+g.width*start,g.face.top()+2*g.scale,g.width*(end-start),22*g.scale),m_label,16*g.scale); }
     } else if(layer==Layer::OverlayDynamic) {
+        if(instrument) {
+            const QRectF track(g.left,g.top,g.width*.99,12*g.scale);
+            const QColor low=ItemColourLook::effective("BarPreset.lowColor",m_scaleLow,this);
+            p.save(); p.setRenderHint(QPainter::Antialiasing);
+            InstrumentBarDrawing::track(p,track,ItemColourLook::effective("BarPreset.backdropColor",m_background,this).lighter(160),
+                QRectF(g.left,g.top,qMax(0.0,pos(m_redThreshold)-g.left),track.height()),QColor(low.red(),low.green(),low.blue(),65));
+            p.restore();
+        }
         // From Thetis MeterManager.cs:37424-37674 [v2.10.3.15]
         // History precedes the secondary marker; PostDrawItem redraws primary last.
         if(m_showHistory && m_primary.hasReading()) { p.fillRect(QRectF(pos(m_primary.minHistory()),g.top,pos(m_primary.maxHistory())-pos(m_primary.minHistory()),g.baseline-g.top),ItemColourLook::effective("BarPreset.historyColor",m_historyColor,this)); }
-        const auto marker=[&](double value,QColor color,int thickness) { p.setPen(QPen(color,thickness)); p.drawLine(QPointF(pos(value),g.top),QPointF(pos(value),g.bottom)); };
+        const auto marker=[&](double value,QColor color,int thickness) { InstrumentBarDrawing::marker(p,QPointF(pos(value),g.top),QPointF(pos(value),g.bottom),color,thickness); };
         // From Thetis MeterManager.cs:28288-28289 [v2.10.3.15] — the sub bar's
         // MarkerColour and ShowMarker.
         //igs.SubMarkerColour = bi.SubMarkerColour; [original inline comment from MeterManager.cs:28290]
@@ -421,8 +437,13 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
             const QColor low=m_segLowColor.isValid() ? ItemColourLook::effective("BarPreset.segLowColor",m_segLowColor,this) : m_flavor=="Custom" ? ItemColourLook::effective("BarPreset.barColor",m_marker,this) : ItemColourLook::effective("BarPreset.segLowColor",m_lowFill,this);
             const QColor highFill=ItemColourLook::effective("BarPreset.segHighColor",m_segHighColor.isValid() ? m_segHighColor : QColor(Qt::red),this);
             const auto fill=[&](double start,double stop) {
-                if(start<transition) { p.fillRect(QRectF(start,g.top,qMax(0.0,qMin(stop,transition)-start),g.baseline-g.top),low); }
-                if(stop>transition) { p.fillRect(QRectF(qMax(start,transition),g.top,stop-qMax(start,transition),g.baseline-g.top),highFill); }
+                const auto part=[&](double left,double right,const QColor& color) {
+                    if(right<=left) { return; }
+                    if(instrument) { InstrumentBarDrawing::fill(p,QRectF(left,g.top+4*g.scale,right-left,4*g.scale),color); }
+                    else { p.fillRect(QRectF(left,g.top,right-left,g.baseline-g.top),color); }
+                };
+                if(start<transition) { part(start,qMin(stop,transition),low); }
+                if(stop>transition) { part(qMax(start,transition),stop,highFill); }
             };
             if(m_style=="Solid") { fill(g.left,end); }
             else {
@@ -449,22 +470,38 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
             scale.setPen(QPen(scaleHigh,2)); scale.drawLine(QPointF(pos(high),g.baseline),QPointF(g.left+g.width*.99,g.baseline));
             const QList<double> minor=m_flavor=="Custom" ? QList<double>{} : m_minor;
             const QList<double> major=m_flavor=="Custom" ? QList<double>{m_minimum,(m_minimum+m_maximum)/2,m_maximum} : m_major;
-            for(double value:minor) { scale.setPen(QPen(value>high ? scaleHigh : scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-6*g.scale)); }
+            for(double value:minor) { scale.setPen(QPen(value>high ? scaleHigh : scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline+(instrument?3:0)*g.scale),QPointF(pos(value),g.baseline+(instrument?5:-6)*g.scale)); }
+            double previousLabelRight=g.left-4;
             for(double value:major) {
-                scale.setPen(QPen(value>high ? scaleHigh : scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline),QPointF(pos(value),g.baseline-12*g.scale));
+                scale.setPen(QPen(value>high ? scaleHigh : scaleLow,2)); scale.drawLine(QPointF(pos(value),g.baseline+(instrument?3:0)*g.scale),QPointF(pos(value),g.baseline+(instrument?7:-12)*g.scale));
                 const double x=pos(value);
                 const int index=major.indexOf(value);
                 const double before=index==0?g.left:pos(major[index-1]);
                 const double after=index+1==major.size()?g.left+g.width:pos(major[index+1]);
                 const double labelWidth=qMin(44*g.scale,qMax(0.0,qMin(index==0?after-x:2*(x-before),index+1==major.size()?x-before:2*(after-x))*.48));
-                QRectF text(x-labelWidth/2,g.baseline-32*g.scale,labelWidth,18*g.scale);
+                QRectF text(x-labelWidth/2,g.baseline+(instrument?8:-32)*g.scale,labelWidth,18*g.scale);
                 if(text.left()<g.left) { text.moveLeft(g.left); }
                 if(text.right()>g.left+g.width) { text.moveRight(g.left+g.width); }
                 // From Thetis MeterManager.cs:33528-33535 [v2.10.3.15] — power labels in
                 // mW below 1 W, the top one with "+".
                 const double milli=effectivePowerLimit()<=1.0 ? 1000.0 : 1.0;
                 const QString label=isPowerFlavor() ? tidyPower(value*milli)+(index+1==major.size() ? QStringLiteral("+") : QString()) : QString::number(value,'g',4);
-                drawObjectText(scale,text,label,13*g.scale,value==m_maximum ? Qt::AlignRight|Qt::AlignVCenter : Qt::AlignCenter);
+                if(instrument) {
+                    QFont tickFont=font;
+                    tickFont.setPixelSize(WorkspacePreview::readableTextPixelSize(qMax(1,qRound(11*g.scale))));
+                    const QFontMetricsF metrics(tickFont,scale.device());
+                    const double textWidth=metrics.horizontalAdvance(label)+1;
+                    // Keep complete endpoint captions and omit intermediate
+                    // captions that collide at the current readable font size.
+                    const QString lastLabel=isPowerFlavor() ? tidyPower(major.back()*milli)+QStringLiteral("+") : QString::number(major.back(),'g',4);
+                    const double lastLeft=g.left+g.width-metrics.horizontalAdvance(lastLabel)-1;
+                    text=QRectF(x-textWidth/2,g.baseline+8*g.scale,textWidth,18*g.scale);
+                    if(text.left()<g.left) { text.moveLeft(g.left); }
+                    if(text.right()>g.left+g.width) { text.moveRight(g.left+g.width); }
+                    if(text.width()>g.width || text.left()<previousLabelRight+4 || (index>0 && index+1<major.size() && text.right()>lastLeft-4)) { continue; }
+                    scale.setFont(tickFont); scale.drawText(text,Qt::AlignCenter,label);
+                    previousLabelRight=text.right();
+                } else { drawObjectText(scale,text,label,13*g.scale,value==m_maximum ? Qt::AlignRight|Qt::AlignVCenter : Qt::AlignCenter); }
             }
         }
         p.drawImage(g.face.topLeft(),m_scaleCache);
@@ -474,15 +511,26 @@ void BarPresetItem::paintForLayer(QPainter& p,int width,int height,Layer layer) 
         p.setFont(font);
         const auto formatted=[&](double value) { if(m_flavor.startsWith("Signal")) { return CompositePresetItem::formatSignalReading(value,m_unitMode,m_aboveS9,m_showDecimal); } if(m_flavor=="PbSnr" && m_unitMode==MeterUnit::S) { return QStringLiteral("S%1").arg(value/6,0,'f',1); } return QString::number(value,'f',1)+(m_units.isEmpty()?QString():m_units.startsWith(QLatin1Char(':'))?m_units:QStringLiteral(" ")+m_units); };
         p.setPen(ItemColourLook::effective("BarPreset.barColor",m_marker,this));
-        if(m_showValue) { drawObjectText(p,QRectF(g.left,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.value()):QStringLiteral("--"),16*g.scale,Qt::AlignLeft|Qt::AlignVCenter); }
+        if(m_showValue) {
+            const QRectF box(g.left,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale);
+            const QString text=m_primary.hasReading()?formatted(m_primary.value()):QStringLiteral("--");
+            if(instrument) { drawObjectTextElided(p,box,text,16*g.scale,Qt::AlignLeft|Qt::AlignVCenter); }
+            else { drawObjectText(p,box,text,16*g.scale,Qt::AlignLeft|Qt::AlignVCenter); }
+        }
         // From Thetis MeterManager.cs:28278 [v2.10.3.15] — PeakValueColour.
         p.setPen(ItemColourLook::effective("BarPreset.peakValueColor",m_peakValueColor.isValid() ? m_peakValueColor : QColor(Qt::red),this));
-        if(m_showPeakValue) { drawObjectText(p,QRectF(g.left+g.width*.68+2*g.scale,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale),m_primary.hasReading()?formatted(m_primary.maxHistory()):QStringLiteral("--"),16*g.scale,Qt::AlignRight|Qt::AlignVCenter); }
+        if(m_showPeakValue) {
+            const QRectF box(g.left+g.width*.68+2*g.scale,g.face.top()+2*g.scale,g.width*.32-2*g.scale,22*g.scale);
+            const QString text=m_primary.hasReading()?formatted(m_primary.maxHistory()):QStringLiteral("--");
+            if(instrument) { drawObjectTextElided(p,box,text,16*g.scale,Qt::AlignRight|Qt::AlignVCenter); }
+            else { drawObjectText(p,box,text,16*g.scale,Qt::AlignRight|Qt::AlignVCenter); }
+        }
     }
     p.restore();
 }
 QJsonObject BarPresetItem::configuration() const {
     QJsonObject c=m_unknown;
+    c["face"]=m_face;
     c["kind"]="BarPreset"; c["flavor"]=m_flavor; c["label"]=m_label;
     c["x"]=x(); c["y"]=y(); c["w"]=itemWidth(); c["h"]=itemHeight();
     c["bindingId"]=bindingId(); c["secondaryBindingId"]=m_secondary;
@@ -500,14 +548,31 @@ QJsonObject BarPresetItem::configuration() const {
     if(isPowerFlavor()) { c["powerLimitW"]=m_powerLimitW; } else { c.remove(QStringLiteral("powerLimitW")); }
     return c;
 }
+bool BarPresetItem::setContainerFace(const QString& face) {
+    const QString previous=resolvedFace();
+    m_containerFace=face==QLatin1String("Instrument") ? QStringLiteral("Instrument") : QStringLiteral("Classic");
+    if(previous==resolvedFace()) { return false; }
+    m_scaleCache={}; m_staticDirty=true; return true;
+}
 bool BarPresetItem::applyConfiguration(const QJsonObject& c) {
     QJsonObject merged=configuration(); for(auto it=c.begin();it!=c.end();++it) { merged[it.key()]=it.value(); }
+    // A presentation-only edit must not reconfigure/reset either recurrence.
+    const QJsonValue face=merged.value("face");
+    if(!face.isString() || (face.toString()!="Classic" && face.toString()!="Instrument" && face.toString()!="Container")) { return false; }
+    QJsonObject current=configuration(), next=merged;
+    current.remove("face"); next.remove("face");
+    if(current==next) {
+        if(m_face!=face.toString()) { m_face=face.toString(); m_scaleCache={}; m_staticDirty=true; }
+        return true;
+    }
     return deserialize(QString::fromUtf8(QJsonDocument(merged).toJson(QJsonDocument::Compact)));
 }
 QString BarPresetItem::serialize() const { return QString::fromUtf8(QJsonDocument(configuration()).toJson(QJsonDocument::Compact)); }
 bool BarPresetItem::deserialize(const QString& data) {
     const QJsonDocument document=QJsonDocument::fromJson(data.toUtf8()); if(!document.isObject()) { return false; }
     const QJsonObject c=document.object(); if(c.value("kind")!="BarPreset") { return false; }
+    const QString face=c.value("face").toString("Classic");
+    if((c.contains("face") && !c["face"].isString()) || (face!="Classic" && face!="Instrument" && face!="Container")) { return false; }
     const QString flavor=c.value("flavor").toString(); if(flavor!="Mic" && flavor!="Alc" && flavor!="Custom" && !variants().contains(flavor)) { return false; }
     for(const QString& key:{QStringLiteral("x"),QStringLiteral("y"),QStringLiteral("w"),QStringLiteral("h"),QStringLiteral("minValue"),QStringLiteral("maxValue"),QStringLiteral("bindingId")}) { if(!c.value(key).isDouble() || !std::isfinite(c.value(key).toDouble())) { return false; } }
     if(c["maxValue"].toDouble()<=c["minValue"].toDouble()) { return false; }
@@ -533,6 +598,7 @@ bool BarPresetItem::deserialize(const QString& data) {
     const int interval=c.value("updateIntervalMs").toInt(100);
     if(interval<1 || c.value("historyMs").toInt(2000)<interval || c.value("ignoreHistoryMs").toInt(2000)<0 || c.value("rowHeight").toInt(72)<72) { return false; }
     if(flavor=="Mic") { configureAsMic(); } else if(flavor=="Alc") { configureAsAlc(); } else if(flavor=="Custom") { configureAsCustom(c["bindingId"].toInt(),c["minValue"].toDouble(),c["maxValue"].toDouble(),c["label"].toString()); } else { configureVariant(flavor); }
+    m_face=face;
     m_unknown=c; setRect(c["x"].toDouble(),c["y"].toDouble(),c["w"].toDouble(),c["h"].toDouble());
     setBindingId(c["bindingId"].toInt()); m_secondary=c.value("secondaryBindingId").toInt(m_secondary);
     m_label=c.value("label").toString(m_label); m_minimum=c["minValue"].toDouble(); m_maximum=c["maxValue"].toDouble();

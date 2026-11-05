@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -279,6 +282,9 @@ public slots:
     // Format: [I0, Q0, I1, Q1, ...] as float pairs.
     // Accumulates until fftSize samples are collected, then runs FFT.
     void feedIQ(const QVector<float>& interleavedIQ);
+    // AUTO-only input metadata, captured before queued FFT processing.
+    // Samples, display history and display inputGeneration are unchanged.
+    void feedIQForAutoAgc(const QVector<float>& interleavedIQ, quint64 epoch);
 
     // From Longpath src/core/FFTEngine.h:196-211 [@383f058] (PR 62).
     /// Das angefangene Fenster verwerfen — nach einem Loch im Datenstrom.
@@ -408,6 +414,8 @@ signals:
     // binsDbm contains fftSize float values (full FFT-shifted bins, neg-freq
     // first then pos-freq), representing power in dBm at each frequency bin.
     void fftReady(int receiverId, const QVector<float>& binsDbm);
+    // Same computed bins, only for a full window of one receiving epoch.
+    void autoAgcFrameReady(int receiverId, const QVector<float>& binsDbm, quint64 epoch);
 
     // Linear-power side-channel for the Thetis-faithful display pipeline.
     //
@@ -457,6 +465,9 @@ signals:
     void fftSizeBaselineChanged(int size);
 
 private:
+    void feedIQWithAutoAgcEpoch(const QVector<float>& interleavedIQ, quint64 epoch);
+    quint64 m_autoAgcInputEpoch{1};
+    int m_autoAgcCleanSamples{0};
     void replanFft();
     void computeWindow();
     void processFrame();
