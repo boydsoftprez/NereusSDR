@@ -120,6 +120,17 @@ protected:
     }
 };
 
+// Whether this pan was floating when the session ended, beside its
+// FloatingPan_<id>_Geometry. Set when the pan floats and cleared only when the
+// operator or a layout brings it back: quitting with a pan floating is the
+// ordinary way to end a session, and neither the quit's close sweep
+// (PanFloatingWindow::closeEvent) nor prepareShutdown comes through here.
+static void rememberPanFloating(const QString& panId, bool floating)
+{
+    AppSettings::instance().setValue(QStringLiteral("FloatingPan_%1_Floating").arg(panId),
+                                     floating ? QStringLiteral("True") : QStringLiteral("False"));
+}
+
 // Re-realize a SpectrumWidget's render context against whatever window it
 // now lives in.
 //
@@ -231,6 +242,7 @@ void PanadapterStack::removePanadapter(const QString& panId)
     // Close floating window if this pan is floating
     if (auto* fw = m_floating.take(panId)) {
         fw->saveWindowGeometry();
+        rememberPanFloating(panId, false);
         // Don't takeApplet — the applet will be deleted below
         // just disconnect and hide the window
         QObject::disconnect(fw, &PanFloatingWindow::dockRequested,
@@ -283,6 +295,11 @@ void PanadapterStack::applyLayout(const QString& layoutId, const QStringList& pa
     // re-shown. Every other applet keeps its top-level across this rebuild
     // and must be left alone.
     const auto returnedFromFloat = dockAllFloatingPans();
+    // A layout change is the operator's. MainWindow floats again any pan a
+    // grown layout keeps out (floatPanadapter sets this back).
+    for (const QPointer<PanadapterApplet>& applet : returnedFromFloat) {
+        if (applet) { rememberPanFloating(applet->panId(), false); }
+    }
     clearSplitters();
 
     // Retire orphan pans not referenced by the new layout. Without this,
@@ -503,6 +520,7 @@ void PanadapterStack::floatPanadapter(const QString& panId)
     floater->adoptApplet(applet);       // straight from splitter to window
     applet->setFloatingState(true);     // title strip + Dock button appear
     m_floating[panId] = floater;
+    rememberPanFloating(panId, true);
 
     // Both ways back -- the window's close box and the strip's Dock button --
     // land on the same slot, so they cannot drift apart.
@@ -541,6 +559,7 @@ void PanadapterStack::dockPanadapter(const QString& panId)
     if (!floater) { return; }
 
     floater->saveWindowGeometry();
+    rememberPanFloating(panId, false);
 
     PanadapterApplet* applet = floater->applet();
     SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
@@ -653,7 +672,8 @@ void PanadapterStack::retireFloatingWindow(PanFloatingWindow* window,
 }
 
 // Adapted from AetherSDR src/gui/PanadapterStack.cpp:1167-1221 [@0dea0dd7].
-// Nereus has no canvas/restore marker. Retain its own geometry persistence and
+// Nereus has no canvas marker; restoreFloatingPans brings a floating pan back
+// from FloatingPan_<id>_Floating. Retain its own geometry persistence and
 // include outgoing windows held across an unfinished render-context transfer.
 void PanadapterStack::prepareShutdown()
 {
@@ -788,6 +808,18 @@ QList<int> PanadapterStack::rootSplitterSizes() const
 {
     if (!m_rootSplitter) { return {}; }
     return m_rootSplitter->sizes();
+}
+
+void PanadapterStack::restoreFloatingPans()
+{
+    auto& s = AppSettings::instance();
+    const QList<QString> ids = m_pans.keys();
+    for (const QString& id : ids) {
+        if (s.value(QStringLiteral("FloatingPan_%1_Floating").arg(id), QStringLiteral("False"))
+                .toString() == QStringLiteral("True")) {
+            floatPanadapter(id);
+        }
+    }
 }
 
 void PanadapterStack::rootSplitterSetSizesForTest(const QList<int>& sizes)

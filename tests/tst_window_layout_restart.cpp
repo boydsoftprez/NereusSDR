@@ -157,6 +157,28 @@ private slots:
             QVERIFY(!panelHidden(window));
         }
     }
+
+    // The window floats a pan again by itself when it opens. Docked again
+    // before the window goes: the offscreen platform's backing store crashes
+    // tearing down a main window with a visible floating child
+    // (QOffscreenBackingStore::clearHash), which is the test platform, not this.
+    void aPanLeftFloatingFloatsAgainWhenTheWindowOpens()
+    {
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("PanLayoutId"), QStringLiteral("2v"));
+        s.setValue(QStringLiteral("FloatingPan_pan-1_Floating"), QStringLiteral("True"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        place(window);
+        auto* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        QVERIFY(stack->isFloating(QStringLiteral("pan-1")));
+        QVERIFY(!stack->isFloating(QStringLiteral("pan-0")));
+        QVERIFY(stack->floatingWindowForTest(QStringLiteral("pan-1"))->isVisible());
+        stack->dockPanadapter(QStringLiteral("pan-1"));
+        settle();
+        QCOMPARE(s.value(QStringLiteral("FloatingPan_pan-1_Floating")).toString(),
+                 QStringLiteral("False"));
+    }
 };
 
 QTEST_MAIN(TstWindowLayoutRestart)

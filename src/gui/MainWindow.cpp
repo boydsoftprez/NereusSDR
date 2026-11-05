@@ -9320,6 +9320,13 @@ void MainWindow::buildUI()
         m_panStack->applyLayout(restoredLayout, panIdsForLayout(restoredLayout));
         m_panStack->restoreSplitterState();
 
+        // Pans left floating last session go back out, a tick later so the
+        // main window they are parented to is up first, as it is for every
+        // float made from a menu.
+        QTimer::singleShot(0, this, [this]() {
+            if (m_panStack && !m_shuttingDown) { m_panStack->restoreFloatingPans(); }
+        });
+
         // ...and finish the job once there IS a radio. Skipping the slice
         // add-loop above is right, but nothing used to pick it up afterwards,
         // so a persisted 2v layout came back with pan-1 permanently dead: no

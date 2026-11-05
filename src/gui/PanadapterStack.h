@@ -240,6 +240,12 @@ public:
     void prepareShutdown();
     void restoreSplitterState();
 
+    /// Float again every pan that was floating when the last session ended,
+    /// each at its saved place (PanFloatingWindow::restoreWindowGeometry, so a
+    /// screen that has gone falls back as any floated pan does). Run once at
+    /// startup, after the layout exists and the main window is up.
+    void restoreFloatingPans();
+
     /// Phase 3F Sub-Epic D Task 6 test seam: read the root splitter's current
     /// sizes (used by tests and saveSplitterState).
     QList<int> rootSplitterSizes() const;

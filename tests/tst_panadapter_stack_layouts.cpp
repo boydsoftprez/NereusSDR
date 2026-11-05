@@ -1212,6 +1212,78 @@ private slots:
                  "saveFloatingGeometry wrote nothing while the pan was still "
                  "floating, so closeEvent's flush would miss it");
     }
+
+    // Persistence audit 2026-11: a pan left floating comes back floating, in
+    // its own place; one the operator docked, or a layout change docked, stays
+    // in the main window.
+    void floating_pan_comes_back_floating_after_a_restart()
+    {
+        const QStringList ids = MainWindow::panIdsForLayout(QStringLiteral("2v"));
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("2v"), ids);
+            stack.floatPanadapter(QStringLiteral("pan-1"));
+            PanFloatingWindow* floater = stack.floatingWindowForTest(QStringLiteral("pan-1"));
+            QVERIFY(floater);
+            floater->resize(640, 360);
+            stack.saveFloatingGeometry();
+        }   // the teardown a quit ends in
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"), ids);
+        QVERIFY(!stack.isFloating(QStringLiteral("pan-1")));
+        stack.restoreFloatingPans();
+        QVERIFY(stack.isFloating(QStringLiteral("pan-1")));
+        QVERIFY(!stack.isFloating(QStringLiteral("pan-0")));
+        QCOMPARE(stack.floatingWindowForTest(QStringLiteral("pan-1"))->size(), QSize(640, 360));
+    }
+
+    // The close sweep of an application quit reaches the floating window with
+    // a close that is not spontaneous. It hides the window; the pan was still
+    // floating when the session ended.
+    void quit_close_sweep_keeps_the_pan_floating_after_a_restart()
+    {
+        const QStringList ids = MainWindow::panIdsForLayout(QStringLiteral("2v"));
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("2v"), ids);
+            stack.floatPanadapter(QStringLiteral("pan-1"));
+            stack.floatingWindowForTest(QStringLiteral("pan-1"))->close();
+        }
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"), ids);
+        stack.restoreFloatingPans();
+        QVERIFY(stack.isFloating(QStringLiteral("pan-1")));
+    }
+
+    void docked_pan_stays_docked_after_a_restart_data()
+    {
+        QTest::addColumn<int>("how");
+        QTest::newRow("Dock button or close box") << 0;
+        QTest::newRow("a layout that keeps the pan") << 1;
+        QTest::newRow("a layout that retires the pan") << 2;
+        QTest::newRow("the pan removed") << 3;
+    }
+
+    void docked_pan_stays_docked_after_a_restart()
+    {
+        QFETCH(int, how);
+        const QStringList ids = MainWindow::panIdsForLayout(QStringLiteral("2v"));
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("2v"), ids);
+            stack.floatPanadapter(QStringLiteral("pan-1"));
+            switch (how) {
+            case 0: stack.dockPanadapter(QStringLiteral("pan-1")); break;
+            case 1: stack.applyLayout(QStringLiteral("2h"), ids); break;
+            case 2: stack.applyLayout(QStringLiteral("1"), {QStringLiteral("pan-0")}); break;
+            default: stack.removePanadapter(QStringLiteral("pan-1")); break;
+            }
+        }
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"), ids);
+        stack.restoreFloatingPans();
+        QVERIFY(!stack.isFloating(QStringLiteral("pan-1")));
+    }
 };
 
 // CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet
