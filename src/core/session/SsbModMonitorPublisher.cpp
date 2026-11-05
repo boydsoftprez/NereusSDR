@@ -36,13 +36,16 @@ SsbModMonitorPublisher::SsbModMonitorPublisher(RadioModel* radio, RecordStream* 
 {
     m_timer.setInterval(SsbModMonitorRecord::kPublishIntervalMs);
     connect(&m_timer, &QTimer::timeout, this, &SsbModMonitorPublisher::tick);
-    if (m_radio) {
-        m_radio->setSsbModTxTapEnabled(false);
-        m_radio->setSsbModFeedbackWanted(false);
-    }
 }
 
-SsbModMonitorPublisher::~SsbModMonitorPublisher() = default;
+SsbModMonitorPublisher::~SsbModMonitorPublisher()
+{
+    // Only its own: a panel on the same model keeps what it asked for.
+    if (m_radio) {
+        m_radio->setSsbModCoreWanted(0, false);
+        m_radio->setSsbModCoreWanted(1, false);
+    }
+}
 
 RecordStream* SsbModMonitorPublisher::stream(int source) const
 {
@@ -100,11 +103,7 @@ void SsbModMonitorPublisher::setOpen(int source, bool open)
         }
         // Re-applied every read. A one-time set was left off if the
         // feedback flag was cleared while this source stayed open.
-        if (source == 0) {
-            m_radio->setSsbModTxTapEnabled(open);
-        } else {
-            m_radio->setSsbModFeedbackWanted(open);
-        }
+        m_radio->setSsbModCoreWanted(source, open);
     }
     if (!changed) {
         return;

@@ -53,6 +53,7 @@
 #include "core/session/StationServer.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
+#include "fakes/QuietRadioConnection.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "fakes/UpgradedCoreToken.h"
 #include "gui/applets/SsbModMonitorApplet.h"
@@ -263,6 +264,8 @@ private slots:
     {
         QTest::addColumn<QString>("key");
         QTest::addColumn<QJsonValue>("value");
+        QTest::newRow("clock as text") << "atMs" << QJsonValue(QStringLiteral("1"));
+        QTest::newRow("clock negative") << "atMs" << QJsonValue(-1.0);
         QTest::newRow("present as a number") << "signalPresent" << QJsonValue(1);
         QTest::newRow("peak as text") << "peakPct" << QJsonValue(QStringLiteral("9"));
         QTest::newRow("peak negative") << "peakPct" << QJsonValue(-0.1);
@@ -300,7 +303,7 @@ private slots:
     void aMissingFieldIsNoRecord_data()
     {
         QTest::addColumn<QString>("key");
-        for (const char* key : {"peakPct", "avgPct", "peakHoldPct", "peakDbfs", "avgDbfs",
+        for (const char* key : {"atMs", "peakPct", "avgPct", "peakHoldPct", "peakDbfs", "avgDbfs",
                                 "peakHoldDbfs", "signalPresent", "scopeRateHz", "scopePctTenths"}) {
             QTest::newRow(key) << QString::fromLatin1(key);
         }
@@ -444,7 +447,6 @@ private slots:
         QCOMPARE(inUse.count(), 1);
         QVERIFY(core->ssbModFeedbackInUse());
         QVERIFY(fed());
-        QCOMPARE(fb->sampleRate(), ps->feedbackSampleRateHz());
 
         // Another mode, then not wanted, then off: each stops it.
         txSlice(*core)->setDspMode(DSPMode::AM);
@@ -464,6 +466,77 @@ private slots:
         unkeyCore(*core);
         QTRY_VERIFY(!core->isTransmitting());
         QVERIFY(!fed());
+    }
+
+    void feedbackIsMeasuredAtTheRateItArrivesAt_data()
+    {
+        QTest::addColumn<int>("board");
+        QTest::addColumn<int>("protocol");
+        QTest::addColumn<int>("wireRate");
+        QTest::addColumn<int>("expected");
+        const int hl2 = static_cast<int>(HPSDRHW::HermesLite);
+        const int hermes = static_cast<int>(HPSDRHW::Hermes);
+        const int saturn = static_cast<int>(HPSDRHW::Saturn);
+        // Protocol 1 has one wire rate for every DDC, the pair included.
+        QTest::newRow("HL2 P1 48k") << hl2 << 1 << 48000 << 48000;
+        QTest::newRow("HL2 P1 384k") << hl2 << 1 << 384000 << 384000;
+        QTest::newRow("Hermes P1 96k") << hermes << 1 << 96000 << 96000;
+        // Protocol 2 runs the pair at 192 kHz whatever the receivers do.
+        QTest::newRow("Saturn P2 48k") << saturn << 2 << 48000 << 192000;
+        QTest::newRow("Saturn P2 384k") << saturn << 2 << 384000 << 192000;
+    }
+
+    void feedbackIsMeasuredAtTheRateItArrivesAt()
+    {
+        QFETCH(int, board);
+        QFETCH(int, protocol);
+        QFETCH(int, wireRate);
+        QFETCH(int, expected);
+        std::unique_ptr<RadioModel> core = makeCore();
+        core->setBoardForTest(static_cast<HPSDRHW>(board));
+        RadioInfo info;
+        info.macAddress = QStringLiteral("AA:BB:CC:DD:EE:42");
+        info.boardType = static_cast<HPSDRHW>(board);
+        info.protocol = protocol == 2 ? ProtocolVersion::Protocol2 : ProtocolVersion::Protocol1;
+        core->setLastRadioInfoForTest(info);
+        core->setConnectionRateForTest(wireRate, 1);
+        txSlice(*core)->setDspMode(DSPMode::USB);
+        PureSignal* ps = core->installPureSignalForTest(nullptr);
+        ps->setPsEnabledForTest(true);
+        core->setSsbModFeedbackWanted(true);
+        QVERIFY(keyCore(*core));
+        QCOMPARE(core->ssbModulationAnalyzer(1)->sampleRate(), expected);
+        unkeyCore(*core);
+        QTRY_VERIFY(!core->isTransmitting());
+    }
+
+    void feedbackComesThroughTheConnectionsPairedSignal()
+    {
+        // Outlives the model, which holds it.
+        NereusSDR::Test::QuietRadioConnection connection;
+        std::unique_ptr<RadioModel> core = makeCore();
+        txSlice(*core)->setDspMode(DSPMode::USB);
+        PureSignal* ps = core->installPureSignalForTest(nullptr);
+        ps->setPsEnabledForTest(true);
+        core->setSsbModFeedbackWanted(true);
+        core->injectConnectionForTest(&connection);
+        core->wireSsbModFeedbackForTest();
+        core->setConnectionRateForTest(48000, 1);
+        QVERIFY(keyCore(*core));
+
+        // The first of the pair is the feedback, the second the reference.
+        const QVector<float> feedback = tone(4800, 0.5f);
+        const QVector<float> reference = tone(4800, 0.1f);
+        emit connection.psPairedIqDataReceived(2, feedback, 3, reference);
+        const SsbModulationAnalyzer::Snapshot snap = core->ssbModulationAnalyzer(1)->snapshot();
+        QCOMPARE(snap.framesSeen, std::uint64_t(4800));
+        QVERIFY2(std::fabs(snap.peakPct - 50.0) < 0.5, qPrintable(QString::number(snap.peakPct)));
+
+        unkeyCore(*core);
+        QTRY_VERIFY(!core->isTransmitting());
+        emit connection.psPairedIqDataReceived(2, feedback, 3, reference);
+        QCOMPARE(core->ssbModulationAnalyzer(1)->snapshot().framesSeen, std::uint64_t(4800));
+        core->injectConnectionForTest(nullptr);
     }
 
     void eachOverStartsFresh()
@@ -486,6 +559,84 @@ private slots:
     }
 
     // ── The publisher ─────────────────────────────────────────────────────
+
+    void aHostedCoreLeavesTheLocalPanelMeasuring()
+    {
+        std::unique_ptr<RadioModel> core = makeCore();
+        InjectedChannel channel(*core);
+        txSlice(*core)->setDspMode(DSPMode::USB);
+        PureSignal* ps = core->installPureSignalForTest(nullptr);
+        ps->setPsEnabledForTest(true);
+        SsbModMonitorApplet local(core.get());
+        local.show();
+        QVERIFY(core->ssbModTxTapEnabled());
+
+        auto session = std::make_unique<Session>(core.get(), m_securityDir.path(), this);
+        // Hosting starts: the shown panel keeps measuring.
+        QVERIFY(core->ssbModTxTapEnabled());
+        QVERIFY(session->connect());
+        session->publisher()->tickForTest();
+        QVERIFY(core->ssbModTxTapEnabled());
+        QVERIFY(keyCore(*core));
+        session->publisher()->tickForTest();
+        QCOMPARE(channel.tx.ssbModulationTapForTest(), core->ssbModulationAnalyzer(0));
+        unkeyCore(*core);
+        QTRY_VERIFY(!core->isTransmitting());
+
+        // The panel on PA FB while a device watches TX I/Q: both stay on,
+        // through the publisher's reads.
+        local.setSource(SsbModMonitorApplet::Source::PaFeedback);
+        QVERIFY(!core->ssbModTxTapEnabled());
+        auto device = std::make_unique<SsbModMonitorApplet>(&session->window);
+        // Both panels read one saved choice here; the device's is its own.
+        device->setSource(SsbModMonitorApplet::Source::TxIq);
+        device->show();
+        QTRY_COMPARE(session->stream(0)->subscriberCount(), 1);
+        QVERIFY(keyCore(*core));
+        QTRY_VERIFY(session->publisher()->sourceOpen(0));
+        session->publisher()->tickForTest();
+        session->publisher()->tickForTest();
+        QVERIFY(core->ssbModFeedbackWanted());
+        QVERIFY(core->ssbModTxTapEnabled());
+        QCOMPARE(channel.tx.ssbModulationTapForTest(), core->ssbModulationAnalyzer(0));
+
+        // The device leaves: only what the panel wants stays.
+        device->hide();
+        QTRY_COMPARE(session->stream(0)->subscriberCount(), 0);
+        QTRY_VERIFY(!session->publisher()->sourceOpen(0));
+        QVERIFY(core->ssbModFeedbackWanted());
+        QVERIFY(!core->ssbModTxTapEnabled());
+        QCOMPARE(channel.tx.ssbModulationTapForTest(), nullptr);
+        unkeyCore(*core);
+        QTRY_VERIFY(!core->isTransmitting());
+        device.reset();
+
+        // A panel that is hidden stops only its own wants.
+        local.hide();
+        QVERIFY(!core->ssbModFeedbackWanted());
+        session.reset();
+        QVERIFY(!core->ssbModTxTapEnabled());
+    }
+
+    void aPublisherLeavingTakesItsWantsWithIt()
+    {
+        std::unique_ptr<RadioModel> core = makeCore();
+        txSlice(*core)->setDspMode(DSPMode::USB);
+        auto session = std::make_unique<Session>(core.get(), m_securityDir.path(), this);
+        QVERIFY(session->connect());
+        auto device = std::make_unique<SsbModMonitorApplet>(&session->window);
+        device->show();
+        QTRY_COMPARE(session->stream(0)->subscriberCount(), 1);
+        QVERIFY(keyCore(*core));
+        QTRY_VERIFY(session->publisher()->sourceOpen(0));
+        QVERIFY(core->ssbModTxTapEnabled());
+        device.reset();
+        session.reset();
+        QVERIFY(!core->ssbModTxTapEnabled());
+        QVERIFY(!core->ssbModFeedbackWanted());
+        unkeyCore(*core);
+        QTRY_VERIFY(!core->isTransmitting());
+    }
 
     void thePublisherSendsOnlyKeyedInUsbOrLsbAndWatched()
     {
@@ -706,6 +857,12 @@ private slots:
         QCOMPARE(applet.paFeedbackToolTipForTest(), SsbModMonitorApplet::paFeedbackOffReason());
     }
 
+    void thePanelStartsOffInTheWindowsList()
+    {
+        // MainWindow registers the panel with this value.
+        QVERIFY(!SsbModMonitorApplet::kShownByDefault);
+    }
+
     void aPanelNotShownMeasuresNothingLocally()
     {
         std::unique_ptr<RadioModel> core = makeCore();
@@ -741,7 +898,8 @@ private slots:
         QVERIFY(!core->ssbModTxTapEnabled());
         QVERIFY(!core->ssbModFeedbackWanted());
         for (const QByteArray& wire : s.coreEnd->received()) {
-            QVERIFY2(!wire.contains("txSsbModulation"), wire.constData());
+            QVERIFY2(!wire.contains("txSsbModulation") && !wire.contains("txSsbModMonitor"),
+                     wire.constData());
         }
         unkeyCore(*core);
         QTRY_VERIFY(!core->isTransmitting());

@@ -1,6 +1,8 @@
 // Verify AppletVisibilityController state, persistence, and signal emission.
 // no-port-check: NereusSDR-original — no Thetis source.
 
+#include "gui/applets/SsbModMonitorApplet.h"
+
 #include <QtTest/QtTest>
 #include <QSignalSpy>
 #include "gui/applets/AppletVisibilityController.h"
@@ -274,7 +276,8 @@ void TstAppletVisibilityController::ssb_panel_starts_off_under_the_am_panel_in_a
     ContainerContentRegistry registry;
     AppletVisibilityController c;
     c.setWorkspaceAdapter(&store, &registry);
-    c.registerApplet(QStringLiteral("SsbModMon"), QStringLiteral("SSB Mod Monitor"), false);
+    c.registerApplet(QStringLiteral("SsbModMon"), QStringLiteral("SSB Mod Monitor"),
+                     SsbModMonitorApplet::kShownByDefault);
 
     QString container;
     int index = -1;
@@ -309,7 +312,8 @@ void TstAppletVisibilityController::ssb_panel_saved_visible_stays_visible()
     ContainerContentRegistry registry;
     AppletVisibilityController c;
     c.setWorkspaceAdapter(&store, &registry);
-    c.registerApplet(QStringLiteral("SsbModMon"), QStringLiteral("SSB Mod Monitor"), false);
+    c.registerApplet(QStringLiteral("SsbModMon"), QStringLiteral("SSB Mod Monitor"),
+                     SsbModMonitorApplet::kShownByDefault);
     QVERIFY(c.isVisible(QStringLiteral("SsbModMon")));
     QVERIFY(findType(store.snapshot(), QStringLiteral("applet:ssb_mod_monitor"))->visible);
 }

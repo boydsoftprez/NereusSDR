@@ -164,6 +164,9 @@ QJsonObject toFields(const SsbModulationAnalyzer::Snapshot& s, qint64 atMs)
 
 std::optional<SsbModulationAnalyzer::Snapshot> fromFields(const QJsonObject& f)
 {
+    if (!f.value(kAtMs).isDouble() || f.value(kAtMs).toDouble() < 0.0) {
+        return std::nullopt;
+    }
     for (const QString& key : {kPeakPct, kAvgPct, kPeakHoldPct}) {
         if (!f.value(key).isDouble() || !inRange(f.value(key).toDouble(), 0.0, kMaxPct)) {
             return std::nullopt;

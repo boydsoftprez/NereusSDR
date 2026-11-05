@@ -195,8 +195,10 @@ public:
     // PSEnabled transitions (Auto Cal, Single Cal, restore, and teardown),
     // unlike isAutoCalEnabled(), which is only the user's auto-cal preference.
     bool isPsEnabled() const noexcept { return m_psEnabled; }
-    // The rate the feedback samples arrive at: the board's, else Thetis's.
-    int feedbackSampleRateHz() const noexcept
+    // calcc's clock: the board's, else Thetis's. On Protocol 2 the feedback
+    // samples arrive at this rate too. On Protocol 1 they do not: they share
+    // the wire rate of every DDC.
+    int calccSampleRateHz() const noexcept
     { return m_caps.psSampleRate > 0 ? m_caps.psSampleRate : 192000; }
 
     // Wire the PS-A state into a StepAttenuatorController's key-down

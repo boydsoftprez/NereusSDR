@@ -1913,6 +1913,8 @@ mw0lge@grange-lane.co.uk
 //                 only. Trunk's CW pitch property (R-CW-02) and its pitch
 //                 follow (applyCwPitchChange, the APF centre from
 //                 cwPitchHz) are its own.]
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 //   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -22982,15 +22984,7 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                                          txMonDdc, txMonSamples);
         }
     });
-    // SSB Mod Monitor's PA FB: the same feedback samples PureSignal corrects
-    // from, the only place they arrive. No logical stream carries them: at
-    // PureSignal + MOX the pair is outside every streamDdc entry (P1CodecHl2,
-    // P1CodecStandard, P2CodecHermes, P2CodecOrionMkII applyDdcAssignment).
-    // On the connection thread, one atomic read when the monitor is not fed.
-    connect(m_connection, &RadioConnection::psPairedIqDataReceived,
-            this, [this](int, const QVector<float>& psFbSamples, int, const QVector<float>&) {
-        feedSsbModFeedback(psFbSamples);
-    }, Qt::DirectConnection);
+    connectSsbModFeedback();
 
     // Protocol 2 codec injection remains live for ReceiverManager's
     // ddcConfigChanged observation consumers (notably PsccPump). The P2 wire
@@ -27056,6 +27050,13 @@ void RadioModel::setSsbModTxTapEnabled(bool enabled)
     refreshSsbModulationTap();
 }
 
+void RadioModel::setSsbModCoreWanted(int source, bool wanted)
+{
+    (source == 1 ? m_ssbModFbCoreWanted : m_ssbModTxTapCoreWanted)
+        .store(wanted, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
 void RadioModel::refreshSsbModulationTap()
 {
     const bool active = ssbTxActive();
@@ -27067,12 +27068,19 @@ void RadioModel::refreshSsbModulationTap()
     m_ssbModWasActive = active;
     if (m_txChannel) {
         m_txChannel->setSsbModulationTap(
-            active && m_ssbModTxTapEnabled.load() && m_ssbModTx ? m_ssbModTx.get() : nullptr);
+            active && ssbModTxTapEnabled() && m_ssbModTx ? m_ssbModTx.get() : nullptr);
     }
     const bool inUse = ssbModFeedbackInUse();
-    const bool feed = active && inUse && m_ssbModFbWanted.load();
+    const bool feed = active && inUse && ssbModFeedbackWanted();
     if (feed && !m_ssbModFbFeed.load() && m_ssbModFb && m_pureSignal) {
-        m_ssbModFb->setSampleRate(m_pureSignal->feedbackSampleRateHz());
+        // Protocol 1 has one wire rate for all DDCs, the pair included.
+        // Protocol 2 runs the pair at PureSignal's own clock.
+        const int rate = m_lastRadioInfo.protocol == ProtocolVersion::Protocol1
+            ? connectionSampleRateHz()
+            : m_pureSignal->calccSampleRateHz();
+        if (rate > 0) {
+            m_ssbModFb->setSampleRate(rate);
+        }
     }
     m_ssbModFbFeed.store(feed, std::memory_order_release);
     if (inUse != m_ssbModFbInUseAnnounced) {
@@ -27089,6 +27097,19 @@ bool RadioModel::ssbModFeedbackInUse() const
     // The same fact that picks the DDC assignment (currentCodecContext's
     // puresignalRun) on both protocols.
     return m_pureSignal != nullptr && m_pureSignal->isPsEnabled();
+}
+
+void RadioModel::connectSsbModFeedback()
+{
+    // SSB Mod Monitor's PA FB: the same feedback samples PureSignal corrects
+    // from, the only place they arrive. No logical stream carries them: at
+    // PureSignal + MOX the pair is outside every streamDdc entry (P1CodecHl2,
+    // P1CodecStandard, P2CodecHermes, P2CodecOrionMkII applyDdcAssignment).
+    // On the connection thread, one atomic read when the monitor is not fed.
+    connect(m_connection, &RadioConnection::psPairedIqDataReceived,
+            this, [this](int, const QVector<float>& psFbSamples, int, const QVector<float>&) {
+        feedSsbModFeedback(psFbSamples);
+    }, Qt::DirectConnection);
 }
 
 void RadioModel::feedSsbModFeedback(const QVector<float>& samples)

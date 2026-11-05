@@ -17,7 +17,7 @@
 //
 // Modification history (NereusSDR):
 //   2026-11-04 — Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
-//   2026-11-05 — Corrections for review findings.
+//   2026-11-05 - Corrections for review findings.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
@@ -65,6 +65,8 @@ class SsbModMonitorApplet : public AppletWidget {
     Q_OBJECT
 public:
     enum class Source { TxIq = 0, PaFeedback = 1 };
+    /// In the window's panels list, for a profile with no saved choice.
+    static constexpr bool kShownByDefault = false;
 
     explicit SsbModMonitorApplet(RadioModel* model, QWidget* parent = nullptr);
 

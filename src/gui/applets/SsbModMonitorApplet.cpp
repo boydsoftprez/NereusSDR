@@ -5,7 +5,7 @@
 //
 // Modification history (NereusSDR):
 //   2026-11-04 — Created. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
-//   2026-11-05 — Corrections for review findings.
+//   2026-11-05 - Corrections for review findings.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 #include "gui/applets/SsbModMonitorApplet.h"
@@ -223,7 +223,7 @@ void SsbModMonitorApplet::updatePaFeedbackAvailability()
 
 QString SsbModMonitorApplet::paFeedbackOffReason()
 {
-    return QStringLiteral("PA FB needs PureSignal. Turn PureSignal on to measure the PA output.");
+    return QStringLiteral("PA FB reads PureSignal's feedback. PureSignal is off, or this radio does not have it.");
 }
 
 void SsbModMonitorApplet::syncLocalMeasuring(bool shown)
@@ -498,13 +498,15 @@ void SsbModMonitorApplet::setSource(Source src)
     AppSettings::instance().setValue(QString::fromLatin1(kKeySource),
                                      QString::number(static_cast<int>(src)));
     if (isRemoteWindow()) {
+        // Nothing reaches the Core until the panel is shown.
         if (isVisible()) {
             watchOnCore(static_cast<int>(src));
+            resetPeaks();
         }
     } else {
         syncLocalMeasuring(isVisible());
+        resetPeaks();
     }
-    resetPeaks();
 }
 
 void SsbModMonitorApplet::resetPeaks()
