@@ -206,7 +206,12 @@ void VfoLevelBar::paintEvent(QPaintEvent*) {
         tagFont.setBold(true);
         p.setFont(tagFont);
         p.setPen(QColor(0xdc, 0xdc, 0xe1));
-        p.drawText(sourceTagRect(), Qt::AlignVCenter | Qt::AlignLeft, m_sourceTag);
+        // Clipped because a glyph can draw outside its box on some fonts,
+        // and the tag must change nothing beyond its own box.
+        const QRect tagRect = sourceTagRect();
+        p.setClipRect(tagRect);
+        p.drawText(tagRect, Qt::AlignVCenter | Qt::AlignLeft, m_sourceTag);
+        p.setClipping(false);
     }
 
     // ── dBm text to the right of the bar ──────────────────────────────
