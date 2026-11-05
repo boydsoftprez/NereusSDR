@@ -26673,6 +26673,11 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     connect(slice, &SliceModel::ritHzChanged,     this, [this, slice](int) { scheduleSettingsSave(slice); });
     connect(slice, &SliceModel::xitEnabledChanged, this, [this, slice](bool) { scheduleSettingsSave(slice); });
     connect(slice, &SliceModel::xitHzChanged,     this, [this, slice](int) { scheduleSettingsSave(slice); });
+    // Diversity's blend is saved with the band (captureBandSettings), and its
+    // own connects (blendChanged) reconfigure and publish only.
+    connect(slice, &SliceModel::diversityPhaseDegChanged, this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::diversityGainDbChanged,   this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::diversityFineNullEnabledChanged, this, [this, slice]() { scheduleSettingsSave(slice); });
     // The FM, DIG offset and RTTY values had no handler that saved them
     // (settings restore audit 2026-10-11): the DIG and RTTY connects above
     // push the shift and the filter only, and nothing listened to the FM

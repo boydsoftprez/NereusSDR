@@ -148,6 +148,10 @@ private slots:
         row("diguOffsetHz",   -1200,  "DiguOffsetHz",   "-1200");
         row("rttyMarkHz",     2125,   "RttyMarkHz",     "2125");
         row("rttyShiftHz",    850,    "RttyShiftHz",    "850");
+        // Diversity's blend scheduled no save either.
+        row("diversityPhaseDeg", 73.0, "Band20m/DiversityPhaseDeg", "73");
+        row("diversityGainDb",   -6.5, "Band20m/DiversityGainDb",   "-6.5");
+        row("diversityFineNullEnabled", true, "Band20m/DiversityFineNullEnabled", "True");
     }
 
     void aChangeToANonActiveSliceIsSavedUnderThatSlice()
