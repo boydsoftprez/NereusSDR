@@ -281,7 +281,9 @@ struct RoundtableSheet: View {
                                                                close()
                                                            })),
                                showsEarlier: !viewing && detent == .full, viewing: viewing)
-                .id(room.id)
+                // Your own frequency's id changes with every tune step, and its received
+                // messages do not: the view keeps its scroll, seen state and typed name.
+                .id(viewing ? room.id : RoundtableFrequencyView.ownViewId)
         } else if let room {
             RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
                                keyedSince: PttButton.keyedSince(transmit.ptt),

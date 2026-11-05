@@ -811,6 +811,102 @@ struct RoundtableToolsPageTests {
         return (model, station)
     }
 
+    /// Tunes 100 Hz under your own frequency's open view: it keeps its typed name and
+    /// its scroll, comes up once, and only the model's one refresh for a new frequency asks the Core.
+    private func tuneUnderOwnFrequency(_ model: AppModel, _ station: FakeStation, window: UIWindow, box: String,
+                                       toFull: Bool) async throws {
+        func element(_ id: String) -> NSObject? { SetupTypedEntryTests.element(id, in: window) }
+        func activate(_ id: String) async -> Bool {
+            var found: NSObject?
+            let ok = await settle { found = element(id); return found != nil }
+            return ok && found?.accessibilityActivate() == true
+        }
+        func views<V: UIView>(_ type: V.Type, in view: UIView) -> [V] {
+            (view as? V).map { [$0] } ?? [] + view.subviews.flatMap { views(type, in: $0) }
+        }
+        #expect(await activate("roundtableTag.\(Self.sliceRoom)"))
+        #expect(await settle { element(box) != nil })
+        if toFull {
+            #expect(await activate("roundtableHandle"))
+        }
+        #expect(await activate("roundtableName-77"))
+        var found: UITextField?
+        #expect(await settle { found = views(UITextField.self, in: window).first; return found != nil })
+        let field = try #require(found)
+        field.insertText("W1A")
+        let sheet = try #require(element(box)).accessibilityFrame
+        var scroller: UIScrollView?
+        func longScroller() -> UIScrollView? {
+            views(UIScrollView.self, in: window).first {
+                $0.contentSize.height > $0.bounds.height + 100 && $0.convert($0.bounds, to: nil).intersects(sheet)
+                    && !$0.isKind(of: UITextView.self)
+            }
+        }
+        #expect(await settle { scroller = longScroller(); return scroller != nil })
+        let scroll = try #require(scroller)
+        scroll.setContentOffset(CGPoint(x: 0, y: 40), animated: false)
+        try await Task.sleep(for: .milliseconds(300))
+
+        let appears = RoundtableRoomView.appearsForTesting
+        let asks = station.roundtableHistoryRequests.count
+        let next = "lsb-7236500"
+        await station.deliver(.delta(.init(key: "slice:0", properties: [.init(name: "frequency", value: .f64(7_236_500))])))
+        #expect(await settle { model.roundtable.room?.id == next })
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(model.roundtable.readingRoomId == nil)
+        #expect(RoundtableRoomView.appearsForTesting == appears, "the tune brought the view up new")
+        #expect(station.roundtableHistoryRequests.count - asks <= 1, "the view asked for history as well as the model")
+        #expect(views(UITextField.self, in: window).first?.text == "W1A", "the tune lost a half-typed name")
+        let after = longScroller()
+        #expect(after === scroll, "the tune made a new scroll view")
+        #expect((after?.contentOffset.y ?? 0) > 0, "the tune lost the scroll")
+    }
+
+    /// Both frequencies carry the turn to name, as a nearby turn does, and the messages to scroll.
+    private func nameableStation() async throws -> (AppModel, FakeStation) {
+        let (model, station) = try await viewStation()
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let turn = FakeStation.roundtableTurn(id: 77, start: now - 120_000, end: now - 60_000)
+        let messages = (0 ..< 30).map { index -> LinkMessage.RecordBatch.Record in
+            var record = FakeStation.roundtableMessage(id: Int64(600 + index), t: now - 200_000 + Int64(index),
+                                                       callsign: "W1AW", text: "Message \(index)")
+            record.fields["hz"] = .number(7_236_400)
+            record.fields["family"] = .string("lsb")
+            return record
+        }
+        await station.deliverRoundtableRoom(Self.sliceRoom, upserts: [turn] + messages)
+        await station.deliverRoundtableRoom("lsb-7236500", upserts: [turn])
+        #expect(await settle { model.roundtable.receivedMessages.count >= 30 })
+        return (model, station)
+    }
+
+    @Test("D27, D38: tuning under your own sheet keeps its scroll and typed name and adds no history ask")
+    func tuneKeepsOwnSheetState() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await nameableStation()
+        let (window, _) = try host(BandShotRoot(model: model))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        try await tuneUnderOwnFrequency(model, station, window: window, box: "roundtableSheet", toFull: true)
+    }
+
+    @Test("D38: tuning under your own panel on an iPad keeps its scroll and typed name too")
+    func tuneKeepsOwnPanelState() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await nameableStation()
+        let (window, _) = try host(ViewShotRoot(model: model, columnShown: false, wide: false),
+                                   size: CGSize(width: 1376, height: 1032))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        try await tuneUnderOwnFrequency(model, station, window: window, box: "roundtableFrequencyPopover", toFull: false)
+    }
+
     private final class Viewed {
         var ids: [String] = []
         var tuned: [Int64] = []

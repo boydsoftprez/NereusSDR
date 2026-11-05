@@ -541,6 +541,8 @@ struct RoundtableRoomView: View {
     /// Each pass of a room's body (the tests: a scroll of the iPad's column
     /// must not redraw the room per frame).
     static var passesForTesting = 0
+    /// Each time the view comes up new, which also asks the Core for history at full height.
+    static var appearsForTesting = 0
     #endif
 
     var body: some View {
@@ -588,6 +590,9 @@ struct RoundtableRoomView: View {
                 }
             }
             .onAppear {
+                #if DEBUG
+                Self.appearsForTesting += 1
+                #endif
                 if full { roundtable.refreshReceivedHistory() }
                 if firstSeen == nil {
                     firstSeen = Set(room.messages.map(\.id))

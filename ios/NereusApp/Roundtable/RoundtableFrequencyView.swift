@@ -99,6 +99,10 @@ enum RoundtableFrequencyText {
 /// `viewing` false, and its Tune is greyed, never hidden, with the reason shown
 /// (overlay design D22, D28; overlay.js peekBody).
 struct RoundtableFrequencyView: View {
+    /// The room view's identity on your own frequency, whichever frequency that is.
+    /// A view of another frequency takes that room's own id: it is another place.
+    static let ownViewId = "roundtableOwnFrequency"
+
     let data: RoundtableCardData
     let viewing: Bool
     let canTune: Bool
@@ -561,7 +565,8 @@ struct RoundtableFrequencyPopover: View {
                                                                    viewing: viewing, keyed: keyed, linkUp: linkUp,
                                                                    onTune: onTune)),
                                        showsEarlier: !viewing, viewing: viewing)
-                        .id(room.id)
+                        // As the sheet: your own frequency's id changes with every tune step.
+                        .id(viewing ? room.id : RoundtableFrequencyView.ownViewId)
                     if !viewing {
                         // Your own frequency keeps its message box. PTT stays on the band beside the panel.
                         RoundtableComposer(roundtable: roundtable) { EmptyView() }
