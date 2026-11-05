@@ -36,6 +36,7 @@
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "models/TransmitModel.h"
 
 using namespace NereusSDR;
 
@@ -319,6 +320,119 @@ private slots:
         // And a lock still stops a tune.
         slice.setFrequency(7'100'000.0);
         QCOMPARE(slice.frequency(), 7'074'000.0);
+    }
+
+    // ── The transmit filter through RADE ────────────────────────────────
+
+    void theTransmitFilterComesBackAfterRade()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:dd:ee:01");
+        RadioModel radio;
+        TransmitModel& tx = radio.transmitModel();
+        tx.loadFromSettings(mac);
+        tx.setFilterLow(200);
+        tx.setFilterHigh(2800);
+
+        radio.snapTransmitFilterForModeForTest(DSPMode::RADE_U);
+        QCOMPARE(tx.filterLow(), 650);
+        QCOMPARE(tx.filterHigh(), 2350);
+
+        radio.snapTransmitFilterForModeForTest(DSPMode::USB);
+        QCOMPARE(tx.filterLow(), 200);
+        QCOMPARE(tx.filterHigh(), 2800);
+        // And on the disk's side too; nothing is left waiting.
+        TransmitModel reloaded;
+        reloaded.loadFromSettings(mac);
+        QCOMPARE(reloaded.filterLow(), 200);
+        QCOMPARE(reloaded.filterHigh(), 2800);
+        QVERIFY(!reloaded.filterBeforeRade().has_value());
+    }
+
+    void theFilterBeforeRadeSurvivesARestartInRade()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:dd:ee:02");
+        {
+            RadioModel radio;
+            TransmitModel& tx = radio.transmitModel();
+            tx.loadFromSettings(mac);
+            tx.setFilterLow(200);
+            tx.setFilterHigh(2800);
+            radio.snapTransmitFilterForModeForTest(DSPMode::RADE_U);
+        }
+        RadioModel restarted;
+        TransmitModel& tx = restarted.transmitModel();
+        tx.loadFromSettings(mac);
+        QCOMPARE(tx.filterLow(), 650);
+        QCOMPARE(tx.filterHigh(), 2350);
+        // A slice restored in RADE snaps once more at connect, and that must
+        // not replace the kept filter with RADE's own passband.
+        restarted.snapTransmitFilterForModeForTest(DSPMode::RADE_U);
+        restarted.snapTransmitFilterForModeForTest(DSPMode::USB);
+        QCOMPARE(tx.filterLow(), 200);
+        QCOMPARE(tx.filterHigh(), 2800);
+    }
+
+    void aFilterEditedInRadeStaysAfterLeaving()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:dd:ee:03");
+        RadioModel radio;
+        TransmitModel& tx = radio.transmitModel();
+        tx.loadFromSettings(mac);
+        tx.setFilterLow(200);
+        tx.setFilterHigh(2800);
+        radio.snapTransmitFilterForModeForTest(DSPMode::RADE_U);
+        tx.setFilterLow(700);
+        tx.setFilterHigh(2200);
+
+        radio.snapTransmitFilterForModeForTest(DSPMode::USB);
+        QCOMPARE(tx.filterLow(), 700);
+        QCOMPARE(tx.filterHigh(), 2200);
+        TransmitModel reloaded;
+        reloaded.loadFromSettings(mac);
+        QVERIFY(!reloaded.filterBeforeRade().has_value());
+    }
+
+    void aFilterAboveThePassbandComesBackWhole()
+    {
+        // setFilterLow swaps when it would pass the current high, so 2400 to
+        // 2900 put back over 650 to 2350 must not come out as 2350 to 2900,
+        // and 100 to 500 entering RADE must not come out as 500 to 2350.
+        const QString mac = QStringLiteral("aa:bb:cc:dd:ee:04");
+        RadioModel radio;
+        TransmitModel& tx = radio.transmitModel();
+        tx.loadFromSettings(mac);
+        tx.setFilterHigh(2900);
+        tx.setFilterLow(2400);
+        radio.snapTransmitFilterForModeForTest(DSPMode::RADE_U);
+        radio.snapTransmitFilterForModeForTest(DSPMode::USB);
+        QCOMPARE(tx.filterLow(), 2400);
+        QCOMPARE(tx.filterHigh(), 2900);
+
+        tx.setFilterLow(100);
+        tx.setFilterHigh(500);
+        radio.snapTransmitFilterForModeForTest(DSPMode::RADE_U);
+        QCOMPARE(tx.filterLow(), 650);
+        QCOMPARE(tx.filterHigh(), 2350);
+        radio.snapTransmitFilterForModeForTest(DSPMode::USB);
+        QCOMPARE(tx.filterLow(), 100);
+        QCOMPARE(tx.filterHigh(), 500);
+    }
+
+    // A filter already at the passband with nothing kept (saved before the
+    // filter was kept, or the operator's own) leaves as it always has.
+    void aPassbandWithNothingKeptLeavesAsBefore()
+    {
+        const QString mac = QStringLiteral("aa:bb:cc:dd:ee:05");
+        RadioModel radio;
+        TransmitModel& tx = radio.transmitModel();
+        tx.loadFromSettings(mac);
+        tx.setFilterLow(650);
+        tx.setFilterHigh(2350);
+        radio.snapTransmitFilterForModeForTest(DSPMode::RADE_U);
+        QVERIFY(!tx.filterBeforeRade().has_value());
+        radio.snapTransmitFilterForModeForTest(DSPMode::USB);
+        QCOMPARE(tx.filterLow(), 100);
+        QCOMPARE(tx.filterHigh(), 3900);
     }
 
     // ── A restored slice runs on what it shows ──────────────────────────

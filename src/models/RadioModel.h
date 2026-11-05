@@ -5501,6 +5501,7 @@ public:
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
     void wireSliceSignalsForTest() { wireSliceSignals(m_activeSlice); }
+    void snapTransmitFilterForModeForTest(DSPMode mode) { snapTransmitFilterForMode(mode); }
     // The connect-time restore of a slice's last band, for the antenna
     // table tests (a radio switched off and on again).
     void loadSliceStateForTest(SliceModel* slice) { loadSliceState(slice); }
@@ -7391,10 +7392,12 @@ private:
     QList<QByteArray> devicesListeningThroughRelay(const SliceModel* tuner) const;
     void wireBandTrackingForTest(SliceModel* slice);
 
-    /// The transmitter's RADE passband snap: entering RADE_U/RADE_L sets the
-    /// transmit filter to 650..2350 Hz; leaving RADE restores 100..3900 Hz
-    /// only when the filter is still exactly the RADE passband. Callers own
-    /// the "is this the TX-bound slice" check.
+    /// The transmitter's RADE passband snap: entering RADE_U/RADE_L keeps the
+    /// operator's filter (TransmitModel::filterBeforeRade) and sets the
+    /// transmit filter to 650..2350 Hz; leaving RADE puts the kept filter
+    /// back, or 100..3900 Hz with none kept, only when the filter is still
+    /// exactly the RADE passband. Callers own the "is this the TX-bound
+    /// slice" check.
     void snapTransmitFilterForMode(DSPMode mode);
 
     /// Connect NotchModel's mutation signals to the per-channel WDSP

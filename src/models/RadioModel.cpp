@@ -25705,14 +25705,36 @@ void RadioModel::snapTransmitFilterForMode(DSPMode mode)
 {
     // 2026-05-12 bench fix (PR #238): snap TX BW to the RADE modem
     // audio passband only when the transmitter's mode changes.
+    const auto applyFilter = [this](int low, int high) {
+        // setFilterLow swaps with the high edge when it would pass it, so the
+        // edge that would cross the other goes second.
+        if (low > m_transmitModel.filterHigh()) {
+            m_transmitModel.setFilterHigh(high);
+            m_transmitModel.setFilterLow(low);
+        } else {
+            m_transmitModel.setFilterLow(low);
+            m_transmitModel.setFilterHigh(high);
+        }
+    };
+    const bool atRadePassband = m_transmitModel.filterLow() == 650
+        && m_transmitModel.filterHigh() == 2350;
     if (isRadeDspMode(mode)) {
-        m_transmitModel.setFilterLow(650);
-        m_transmitModel.setFilterHigh(2350);
-    } else if (m_transmitModel.filterLow() == 650
-               && m_transmitModel.filterHigh() == 2350) {
+        // Keep the operator's filter to put back on leaving. One already at
+        // the passband is RADE's own: this snap repeated, or a slice restored
+        // in RADE, whose kept filter (if any) came back from the store.
+        if (!atRadePassband && !m_transmitModel.filterBeforeRade()) {
+            m_transmitModel.setFilterBeforeRade(
+                std::make_pair(m_transmitModel.filterLow(), m_transmitModel.filterHigh()));
+        }
+        applyFilter(650, 2350);
+    } else if (atRadePassband) {
         // Leaving RADE: preserve custom voice bandwidths.
-        m_transmitModel.setFilterLow(100);
-        m_transmitModel.setFilterHigh(3900);
+        const auto before = m_transmitModel.filterBeforeRade();
+        m_transmitModel.setFilterBeforeRade(std::nullopt);
+        applyFilter(before ? before->first : 100, before ? before->second : 3900);
+    } else {
+        // A filter edited while in RADE stays, and nothing is left to put back.
+        m_transmitModel.setFilterBeforeRade(std::nullopt);
     }
 }
 

@@ -2690,6 +2690,21 @@ void TransmitModel::loadFromSettings(const QString& mac)
                           QStringLiteral("100")).toInt());
     setFilterHigh(s.value(pfx + QLatin1String("FilterHigh"),
                            QStringLiteral("2900")).toInt());
+    // The filter kept while in RADE (snapTransmitFilterForMode). NereusSDR-original.
+    {
+        const QString keptLow = pfx + QLatin1String("FilterLowBeforeRade");
+        const QString keptHigh = pfx + QLatin1String("FilterHighBeforeRade");
+        m_filterBeforeRade = std::nullopt;
+        if (s.contains(keptLow) && s.contains(keptHigh)) {
+            bool lowOk = false;
+            bool highOk = false;
+            const int low = s.value(keptLow).toInt(&lowOk);
+            const int high = s.value(keptHigh).toInt(&highOk);
+            if (lowOk && highOk && low <= high) {
+                m_filterBeforeRade = std::make_pair(low, high);
+            }
+        }
+    }
 
     // ── PA-cal hotfix scaffolding (#167 Phase 3A) ─────────────────────────
     //
@@ -3005,6 +3020,15 @@ void TransmitModel::persistToSettings(const QString& mac) const
     // ── TX filter bandwidth (Plan 4 D1) ───────────────────────────────────
     s.setValue(pfx + QLatin1String("FilterLow"),  QString::number(m_filterLow));
     s.setValue(pfx + QLatin1String("FilterHigh"), QString::number(m_filterHigh));
+    if (m_filterBeforeRade) {
+        s.setValue(pfx + QLatin1String("FilterLowBeforeRade"),
+                   QString::number(m_filterBeforeRade->first));
+        s.setValue(pfx + QLatin1String("FilterHighBeforeRade"),
+                   QString::number(m_filterBeforeRade->second));
+    } else {
+        s.remove(pfx + QLatin1String("FilterLowBeforeRade"));
+        s.remove(pfx + QLatin1String("FilterHighBeforeRade"));
+    }
 
     // ── PA-cal hotfix scaffolding (#167 Phase 3A) ─────────────────────────
     // Per-band normal-mode power array — separate top-level scope.
@@ -4555,6 +4579,23 @@ void TransmitModel::setFilterHigh(int hz)
     m_filterHigh = hz;
     persistOne(QStringLiteral("FilterHigh"), QString::number(m_filterHigh));
     emit filterChanged(m_filterLow, m_filterHigh);
+}
+
+void TransmitModel::setFilterBeforeRade(std::optional<std::pair<int, int>> filter)
+{
+    if (m_filterBeforeRade == filter) { return; }
+    m_filterBeforeRade = filter;
+    if (m_persistMac.isEmpty()) {
+        return;
+    }
+    if (filter) {
+        persistOne(QStringLiteral("FilterLowBeforeRade"), QString::number(filter->first));
+        persistOne(QStringLiteral("FilterHighBeforeRade"), QString::number(filter->second));
+    } else {
+        const QString pfx = QStringLiteral("hardware/%1/tx/").arg(m_persistMac);
+        AppSettings::instance().remove(pfx + QLatin1String("FilterLowBeforeRade"));
+        AppSettings::instance().remove(pfx + QLatin1String("FilterHighBeforeRade"));
+    }
 }
 
 QString TransmitModel::filterDisplayText(DSPMode mode) const

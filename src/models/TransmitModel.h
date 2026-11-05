@@ -367,6 +367,8 @@
 #include <QStringList>
 #include <QVariant>
 #include <array>
+#include <optional>
+#include <utility>
 #include <atomic>
 #include <cmath>
 
@@ -2470,6 +2472,12 @@ public slots:
     int filterLow()  const noexcept { return m_filterLow; }
     int filterHigh() const noexcept { return m_filterHigh; }
 
+    /// The filter the operator had before RADE's passband replaced it, kept
+    /// beside the filter's own keys so it survives a restart while in RADE.
+    /// RadioModel::snapTransmitFilterForMode sets and clears it.
+    std::optional<std::pair<int, int>> filterBeforeRade() const { return m_filterBeforeRade; }
+    void setFilterBeforeRade(std::optional<std::pair<int, int>> filter);
+
     void setFilterLow(int hz);
     void setFilterHigh(int hz);
 
@@ -2953,6 +2961,7 @@ private:
     // spec §Task 2). Persisted under hardware/<mac>/tx/FilterLow and FilterHigh.
     int m_filterLow{100};
     int m_filterHigh{2900};
+    std::optional<std::pair<int, int>> m_filterBeforeRade;
     float m_micGain{0.0f};
     bool m_pureSigEnabled{false};
     // SWR-foldback multiplier; default 1.0 = no foldback.  Clamped 0..1
