@@ -49,6 +49,10 @@
 //   restarted (TX watch follow-up): it runs in the turn it came due in,
 //   whatever order the event loop gives timers due together, so a
 //   device's keepalives on every turn cannot put it off.
+// - A keepalive heard past the cut (or past a hold's bound below) renews
+//   nothing and stops nothing itself. The check, already due, judges the
+//   watch after its one turn, so a release read behind that keepalive ends
+//   the key normally, and a dead link is still cut by that check.
 // - The hold: more than 400 ms without one while keyed: hold(id, true)
 //   and holdStarted. The key stays on and nothing is stopped; the Core
 //   sends silence in place of the device's audio. A device watched only for
@@ -126,6 +130,9 @@
 //               keepalives behind a lagging main thread cannot hold a key
 //               forever. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-11-05: a keepalive heard past the cut leaves the stop to the
+//               check. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 #pragma once
 

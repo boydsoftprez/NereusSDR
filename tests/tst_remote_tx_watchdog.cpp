@@ -58,6 +58,10 @@
 //               hold a key past heldSinceMs + 2600 ms, on time or with
 //               every check late; a fresh one still ends such a hold. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a keepalive read past the cut renews nothing and leaves the
+//               stop to the check, so a release read behind it is no lost
+//               link. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -245,6 +249,9 @@ private slots:
     void copiesAndOvertakenKeepalivesDoNotCount();
     void lateKeepaliveCannotRescueExpiredWatch_data();
     void lateKeepaliveCannotRescueExpiredWatch();
+    void aReleaseBehindAnExpiredKeepaliveEndsTheKeyWithNoStop();
+    void expiredKeepalivesOnEveryTurnCannotPutOffTheCut();
+    void aKeepaliveHeardInTimeBehindAnExpiredOneKeepsTheKey();
     void anOlderEpochDoesNotCount();
     void aKeyTheDeviceWasNeverAnsweredForTakesAnyEpoch();
     void theDevicesReleaseEndsTheWatchAtOnce();
@@ -895,17 +902,100 @@ void TestRemoteTxWatchdog::lateKeepaliveCannotRescueExpiredWatch()
     const bool withinDeadline = gapMs <= RemoteTxWatchdog::kLinkCutMs;
     QCOMPARE(accepted, withinDeadline);
     QCOMPARE(heard.count(), withinDeadline ? 1 : 0);
-    QCOMPARE(rig.stops.size(), withinDeadline ? size_t(0) : size_t(1));
-    QCOMPARE(rig.watchdog.isWatching(kPhone), withinDeadline);
+    QCOMPARE(rig.watchdog.isWatching(kPhone), true);
     if (!withinDeadline) {
+        // It renewed nothing, and the stop is the check's: what was read
+        // behind this keepalive goes first, as for any late check.
+        QVERIFY(rig.stops.empty());
+        QVERIFY(rig.timerDue.has_value());
+        QVERIFY(*rig.timerDue <= rig.nowMs);
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();   // late: its one turn
+        QVERIFY(rig.stops.empty());
+        QVERIFY(rig.timerDue.has_value());
+        QVERIFY(*rig.timerDue <= rig.nowMs);
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();   // judged
+        QCOMPARE(rig.stops.size(), size_t(1));
+        QVERIFY(!rig.watchdog.isWatching(kPhone));
         QCOMPARE(tripped.count(), 1);
         QCOMPARE(tripped.at(0).at(1).toBool(), false);
         QCOMPARE(tripped.at(0).at(2).toLongLong(), gapMs);
         QVERIFY(!rig.timerDue.has_value());
-        rig.watchdog.onTimer();
         QVERIFY(!rig.watchdog.keepalive(kPhone, 7, 4, RemoteTxWatchdog::Path::Session));
         QCOMPARE(rig.stops.size(), size_t(1));
+    } else {
+        QVERIFY(rig.stops.empty());
     }
+}
+
+// A stall past the cut, and the device released during it: the session read
+// after the stall gives a keepalive the device sent before its release, then
+// the release. The keepalive stops nothing, so the release ends the key with
+// no lost link recorded, whichever way the overdue check falls around them.
+void TestRemoteTxWatchdog::aReleaseBehindAnExpiredKeepaliveEndsTheKeyWithNoStop()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::TxChannel));
+    QSignalSpy tripped(&rig.watchdog, &RemoteTxWatchdog::tripped);
+
+    rig.nowMs = 3700;
+    QVERIFY(!rig.watchdog.keepalive(kPhone, 6, 4, RemoteTxWatchdog::Path::Session));
+    QCOMPARE(tripped.count(), 0);
+    rig.watchdog.setKeyed(kPhone, false);
+    QVERIFY(!rig.watchdog.isWatching(kPhone));
+    rig.watchdog.onTimer();
+    QCOMPARE(tripped.count(), 0);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(!rig.timerDue.has_value());
+}
+
+// The cut stays bounded: an expired keepalive read between every check (the
+// link's backlog, or a device still sending into a dead watch) never renews
+// the watch and never earns another turn, so the second check stops it.
+void TestRemoteTxWatchdog::expiredKeepalivesOnEveryTurnCannotPutOffTheCut()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::Session));
+    quint64 sequence = 5;
+    rig.nowMs = 3700;
+    int checks = 0;
+    while (rig.watchdog.isWatching(kPhone) && checks < 10) {
+        QVERIFY(!rig.watchdog.keepalive(kPhone, ++sequence, 4, RemoteTxWatchdog::Path::Session));
+        ++rig.nowMs;
+        QVERIFY(rig.timerDue.has_value());
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+        ++checks;
+    }
+    QCOMPARE(checks, 2);
+    QCOMPARE(rig.stops.size(), size_t(1));
+}
+
+// A stall past the cut on a live link: the session's copy, with no receipt
+// time, is read first and reads as past the cut. The "tx" channel's copies,
+// timed at their receipt during the stall, show the link was never quiet, so
+// the key stays and nothing is stopped.
+void TestRemoteTxWatchdog::aKeepaliveHeardInTimeBehindAnExpiredOneKeepsTheKey()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::TxChannel));
+
+    rig.nowMs = 3700;
+    QVERIFY(!rig.watchdog.keepalive(kPhone, 6, 4, RemoteTxWatchdog::Path::Session));
+    // Sequence 6 again: the expired copy did not count, so its twin does.
+    QVERIFY(rig.watchdog.keepalive(kPhone, 6, 4, RemoteTxWatchdog::Path::TxChannel, 2500));
+    QVERIFY(rig.watchdog.keepalive(kPhone, 7, 4, RemoteTxWatchdog::Path::TxChannel, 0));
+    rig.watchdog.onTimer();
+    rig.advanceTo(3800);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.watchdog.isWatching(kPhone));
 }
 
 // TX mic thread: the Core's event loop stalls 420 ms while the phone's

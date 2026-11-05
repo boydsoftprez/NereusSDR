@@ -114,6 +114,12 @@
 //               and one that never delivers moves nothing; the cut's lower
 //               edge allows a 250 ms late read. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a release read after the cut gains a row that forces a
+//               session keepalive to wait ahead of the release, the order
+//               that failed on hosted Linux by chance. The test runs the
+//               pump's block its rig lacks, so a long first key cannot leave
+//               the next one no room. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/TransmitHolder.h"
@@ -135,6 +141,7 @@
 #include "core/session/TransmitStateFacade.h"
 #include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/LibDataChannelMediaTransport.h"
+#include "core/session/media/RemoteMicReceiver.h"
 #include "gui/RemoteMediaController.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -1364,8 +1371,21 @@ private slots:
     // first, and records nothing: one MOX-off edge, no link-lost stop, the
     // window never told linkLost, VOX untouched, the connection's cut
     // cleared, and the next key reaches the connection.
+    // Second row: a session keepalive the window sent before its release
+    // waits ahead of it on the same link, so the Core reads that keepalive,
+    // past the cut, before the release. It says nothing about the release,
+    // and the stop is the watchdog's check's to make, after the release was
+    // read. (A keepalive in flight when the hold began gave the first row
+    // this order by chance: hosted Linux, run 41203885532.)
+    void aReleaseReadAfterTheCutIsNotALostLink_data()
+    {
+        QTest::addColumn<bool>("keepaliveAhead");
+        QTest::newRow("the release alone") << false;
+        QTest::newRow("a keepalive waiting ahead of it") << true;
+    }
     void aReleaseReadAfterTheCutIsNotALostLink()
     {
+        QFETCH(bool, keepaliveAhead);
         CutRig rig;
         QVERIFY(rig.keyOnTheTxChannel());
         Test::RemoteAudioSessionHarness& h = rig.h;
@@ -1380,6 +1400,16 @@ private slots:
         // The release leaves the window and waits on the link, as it does
         // behind a stalled Core's socket.
         windowEnd->setHoldsOutgoing(true);
+        if (keepaliveAhead) {
+            // The window sends one more on the session, which waits too. Its
+            // copy on the "tx" channel still reaches the Core, so the wait
+            // starts with nothing held.
+            RemoteTransmitClient* const transmit = h.client.remoteTransmit();
+            QVERIFY(transmit != nullptr);
+            const quint64 sentBefore = transmit->sessionKeepalivesSent();
+            QTRY_VERIFY_WITH_TIMEOUT(transmit->sessionKeepalivesSent() > sentBefore, 1000);
+        }
+        const qsizetype readBeforeRelease = h.stationLink->received().size();
         h.remote.setMoxFromButton(false);
         std::this_thread::sleep_for(std::chrono::milliseconds(3500));
         // Before the main thread runs anything again.
@@ -1395,6 +1425,24 @@ private slots:
                                  5000);
         QTRY_VERIFY_WITH_TIMEOUT(!rig.conn.transmitCut(), 3000);
         QTRY_VERIFY(!h.client.transmitState()->keyed());
+        if (keepaliveAhead) {
+            // The order this row is for: the keepalive was read first.
+            bool keepaliveSeen = false;
+            bool releaseSeen = false;
+            const QList<QByteArray> read = h.stationLink->received().mid(readBeforeRelease);
+            for (const QByteArray& wire : read) {
+                const QJsonObject o = QJsonDocument::fromJson(wire).object();
+                const QString verb = o.value(QStringLiteral("verb")).toString();
+                if (verb == QLatin1String("tx.keepalive") && !releaseSeen) {
+                    keepaliveSeen = true;
+                }
+                if (verb == QLatin1String("tx.unkey")) {
+                    releaseSeen = true;
+                }
+            }
+            QVERIFY(keepaliveSeen);
+            QVERIFY(releaseSeen);
+        }
 
         // A second later: nothing recorded as a lost link.
         QTest::qWait(1000);
@@ -1411,6 +1459,16 @@ private slots:
         // tripped == 0 carries the VOX property: VOX is disarmed only by the
         // watchdog's stop.
         QVERIFY(!rig.conn.transmitCut());
+
+        // Nothing pumps the microphone's feed here (no TX worker), so a key
+        // held past the input ring's 682 ms leaves it full and the next key
+        // never fills its buffer. The pump's block after the key's end, as
+        // on a station, drops what was waiting.
+        RemoteMicFeed* const feed = h.station.remoteMicFeed();
+        QVERIFY(feed != nullptr);
+        QTRY_VERIFY(!feed->inUse());
+        std::vector<float> pumpBlock(static_cast<std::size_t>(RemoteMicConfig::kPumpBlockFrames) * 2);
+        QVERIFY(!feed->pull(pumpBlock.data(), RemoteMicConfig::kPumpBlockFrames));
 
         // The next key reaches the connection.
         const std::size_t beforeKey = rig.conn.count();
