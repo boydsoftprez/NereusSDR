@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -59,6 +64,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "gui/NereusGuiExport.h"
 class QMouseEvent;
 class QWheelEvent;
 
@@ -71,7 +77,7 @@ namespace NereusSDR {
 // display group, step the display group, or step the units of the topmost
 // item under the box that has units. A copy outside a widget, or in another
 // widget, acts on nothing else.
-class ClickBoxItem : public MeterItem {
+class NEREUS_GUI_EXPORT ClickBoxItem : public MeterItem {
     Q_OBJECT
 public:
     // Thetis keeps GotoGroup (> 0 wins), ChangesGroup and PerformsIncDec
