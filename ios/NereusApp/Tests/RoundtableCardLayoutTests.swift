@@ -102,6 +102,7 @@ struct RoundtableCardLayoutTests {
     @Test("the real iPhone 17 on its side: the card stands beside the flag's side buttons, never under them")
     func realSidewaysGeometry() {
         // From the band on its side: the button column, the round buttons, the flags and the scale's arrows.
+        // These rects are copied from one reading; sidewaysCardClearsTheRealBand measures the real band.
         let column = CGRect(x: 6, y: 6, width: 162, height: 130)
         let arrows = CGRect(x: 835, y: 0, width: 39, height: 52)
         let cases: [(buttons: CGRect, flag: CGRect, other: CGRect, dial: CGFloat)] = [
