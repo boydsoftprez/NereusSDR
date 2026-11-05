@@ -2749,8 +2749,21 @@ private slots:
         settle();
         QVERIFY(second->vfoWidget(p.sliceId()) == nullptr);
         const QList<VfoWidget*> flags = second->findChildren<VfoWidget*>();
-        QVERIFY(!flags.isEmpty());
+        QCOMPARE(flags.size(), 1);
         p.model()->setActiveSliceById(p.sliceId());
+        settle();
+        // The dial is this pan's own flag: it moves with that flag, and with neither
+        // the active slice on the other pan nor the frequency the tag asked for.
+        second->setFrequencyRange(14200000.0, 100000.0);
+        flags.first()->setFrequency(14180000.0);
+        const int atFirst = second->roundtableInspectorSpot(p.sliceId(), 14230000).dialX;
+        flags.first()->setFrequency(14220000.0);
+        const int atSecond = second->roundtableInspectorSpot(p.sliceId(), 14230000).dialX;
+        QVERIFY(atSecond > atFirst);
+        QCOMPARE(second->roundtableInspectorSpot(p.sliceId(), 14190000).dialX, atSecond);
+        slice->setFrequency(14205000);
+        QCOMPARE(second->roundtableInspectorSpot(p.sliceId(), 14230000).dialX, atSecond);
+        slice->setFrequency(14200000);
         settle();
         emit second->roundtableReadRequested(RoundtableModel::frequencyContextId(14230000, QStringLiteral("usb")));
         auto* peek = second->findChild<RoundtableFrequencyPeek*>();

@@ -893,6 +893,27 @@ struct RoundtableToolsPageTests {
         try await tuneUnderOwnFrequency(model, station, window: window, box: "roundtableSheet", toFull: true)
     }
 
+    @Test("the real iPhone 17 band on its side: your card stands clear of the flag, its round buttons and the column")
+    func sidewaysCardClearsTheRealBand() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, _) = try await viewStation()
+        let (window, _) = try host(BandShotRoot(model: model), size: CGSize(width: 874, height: 402))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        func frame(_ id: String) -> CGRect? { SetupTypedEntryTests.element(id, in: window)?.accessibilityFrame }
+        let tag = "roundtableTag.\(Self.sliceRoom)"
+        #expect(await settle { frame(tag) != nil && frame("flagA") != nil && frame("bandColumn") != nil })
+        let card = try #require(frame(tag))
+        #expect(card.width > 0 && card.height > 0)
+        for id in ["flagA", "flagCloseA", "flagLockA", "flagMoreA", "bandColumn"] {
+            let block = try #require(frame(id), "\(id) is not on the band")
+            #expect(!card.intersects(block), "\(card) meets \(id) \(block)")
+        }
+    }
+
     @Test("D38: tuning under your own panel on an iPad keeps its scroll and typed name too")
     func tuneKeepsOwnPanelState() async throws {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
