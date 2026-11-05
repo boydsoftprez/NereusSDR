@@ -584,6 +584,39 @@ private slots:
         QCOMPARE(sliceB->savedSampleRateHz(), kChosenRateHz);
     }
 
+    // A saved rate the plan refuses: narrowing the only receiver would leave a
+    // slice with nowhere to go. The loop asks once and finishes, and the
+    // receiver stays where it is. Asked again each pass, connect would never end.
+    void a_saved_rate_the_plan_refuses_is_asked_once_and_the_receiver_stays()
+    {
+        RadioModel model;
+        identify(model);
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        model.configureStreamPool(/*userDdcCount*/ 1, /*maxSlices*/ 4, kStartRateHz);
+        const int a = model.addSlice();
+        QVERIFY(a >= 0);
+        model.sliceById(a)->setFrequency(14200000.0);
+        const int b = model.addSlice();
+        QVERIFY(b >= 0);
+        model.requestSliceSampleRate(a, kChosenRateHz);
+        model.sliceById(b)->setFrequency(14500000.0);
+        const int shared = model.sliceById(a)->streamIndex();
+        QCOMPARE(model.sliceById(b)->streamIndex(), shared);
+
+        QHash<int, int> saved;
+        saved.insert(a, kStartRateHz);
+        QSignalSpy rejected(&model, &RadioModel::sliceRetuneRejected);
+        model.applySavedSliceSampleRates(saved, ProtocolVersion::Protocol2);
+        QVERIFY(model.waitForReceiveLaneForTest());
+
+        QCOMPARE(rejected.count(), 1);
+        QCOMPARE(model.streamSampleRateHzForTest(shared), kChosenRateHz);
+        QCOMPARE(model.sliceById(a)->streamIndex(), shared);
+        QCOMPARE(model.sliceById(b)->streamIndex(), shared);
+        QCOMPARE(model.sliceById(a)->sampleRateHz(), kChosenRateHz);
+        QCOMPARE(model.sliceById(b)->sampleRateHz(), kChosenRateHz);
+    }
+
     // A pan moved to a free receiver opens it at the rate it was running, and
     // the window that decides what fits is that rate's window.
     void a_pan_moved_to_a_free_receiver_keeps_its_rate()
