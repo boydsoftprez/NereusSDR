@@ -12956,7 +12956,7 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         }
         // While it shows your own frequency your compact tag goes; while it shows
         // another, the compact tag stays and a click on it goes to your own (D37).
-        if (inspecting && tag.active && tag.roomId == m_roundtableViewedRoom) {
+        if (inspecting && !m_roundtableViewedIsFold && tag.active && tag.roomId == m_roundtableViewedRoom) {
             continue;
         }
         shown.append(tag);
@@ -13008,7 +13008,8 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     if (inspecting) {
         // On your own frequency the inspector keeps the card's tick to the dial.
         const int inspectorDialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
-        if (m_roundtableCard.hz > 0 && !m_roundtableCardRoom.isEmpty() && m_roundtableViewedRoom == m_roundtableCardRoom
+        if (m_roundtableCard.hz > 0 && !m_roundtableCardRoom.isEmpty() && !m_roundtableViewedIsFold
+            && m_roundtableViewedRoom == m_roundtableCardRoom
             && inspectorDialX >= specRect.left() && inspectorDialX <= specRect.right()) {
             QColor tick = wantsCard ? roundtableCardColor(m_roundtableCard)
                                     : roundtableTagBorder(static_cast<int>(RoundtableGlyph::Quiet));
@@ -13264,12 +13265,13 @@ QVector<RoundtableFoldRow> SpectrumWidget::roundtableFoldRows(const QStringList&
     return rows;
 }
 
-void SpectrumWidget::setRoundtableViewedRoom(const QString& room)
+void SpectrumWidget::setRoundtableViewedRoom(const QString& room, bool fold)
 {
-    if (room == m_roundtableViewedRoom) {
+    if (room == m_roundtableViewedRoom && fold == m_roundtableViewedIsFold) {
         return;
     }
     m_roundtableViewedRoom = room;
+    m_roundtableViewedIsFold = fold;
     refreshRoundtableTagLayer();
 }
 

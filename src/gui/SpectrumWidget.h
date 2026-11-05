@@ -2897,8 +2897,9 @@ public:
     /// A fold's rooms as the inspector lists them.
     QVector<RoundtableFoldRow> roundtableFoldRows(const QStringList& roomIds) const;
     /// The tag of the frequency being viewed gets an outline. Empty for none. Set to
-    /// your own frequency, your compact tag goes (D37).
-    void setRoundtableViewedRoom(const QString& room);
+    /// your own frequency, your compact tag goes (D37). `fold` says the inspector lists
+    /// a fold holding this room: the fold's tag takes the outline and every tag stays.
+    void setRoundtableViewedRoom(const QString& room, bool fold = false);
     const QString& roundtableViewedRoom() const { return m_roundtableViewedRoom; }
     /// The active slice's letter, for "Tune slice A here".
     void setRoundtableActiveSliceName(const QString& name) { m_roundtableSliceName = name; }
@@ -4677,6 +4678,7 @@ private:
     bool m_roundtableCardPlacedValid = false;
     int m_roundtableCardPlacements = 0;
     QString m_roundtableViewedRoom;
+    bool m_roundtableViewedIsFold{false};
     QString m_roundtableSliceName{QStringLiteral("A")};
     QVector<QRect> roundtableControlRects() const;
     QRect m_roundtableInspectorRect;

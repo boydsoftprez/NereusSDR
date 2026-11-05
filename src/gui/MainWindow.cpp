@@ -7167,8 +7167,13 @@ void MainWindow::toggleRoundtableInspector(SpectrumWidget* pan, qint64 hz, const
 void MainWindow::toggleRoundtableFold(SpectrumWidget* pan, const QStringList& roomIds)
 {
     if (!pan || roomIds.isEmpty()) { return; }
-    if (m_roundtablePeek && m_roundtablePeek->showsFold() && m_roundtablePeek->parentWidget() == pan
-        && m_roundtablePeekFold == roomIds) {
+    // Opening the list re-lays the tags, so the same fold can come back with other
+    // members: any room in common is the same fold (D37).
+    const auto sameFold = [this, &roomIds]() {
+        return std::any_of(roomIds.cbegin(), roomIds.cend(),
+                           [this](const QString& id) { return m_roundtablePeekFold.contains(id); });
+    };
+    if (m_roundtablePeek && m_roundtablePeek->showsFold() && m_roundtablePeek->parentWidget() == pan && sameFold()) {
         closeRoundtablePeek();
         return;
     }
@@ -7183,8 +7188,8 @@ void MainWindow::toggleRoundtableFold(SpectrumWidget* pan, const QStringList& ro
     if (m_roundtablePeekTimer) { m_roundtablePeekTimer->stop(); }
     updateRoundtableInspectorSpot();
     m_roundtablePeek->showFold(rows);
-    // The fold's tag takes the outline.
-    pan->setRoundtableViewedRoom(roomIds.first());
+    // The fold's tag takes the outline. Your compact tag stays, even when its room is first.
+    pan->setRoundtableViewedRoom(roomIds.first(), true);
     updateRoundtableInspectorSpot();
     refreshRoundtableLineOpenStates();
 }

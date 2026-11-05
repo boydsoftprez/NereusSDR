@@ -2274,6 +2274,27 @@ private slots:
         capture("fold-list");
         QVERIFY(click(foldRooms.first()));
         QVERIFY(!open());
+        // The list re-lays the tags, so the same fold can come back with other members:
+        // a room in common still closes it; a fold with none in common swaps in place.
+        emit pan->roundtableFoldClicked(foldRooms);
+        QVERIFY(peek()->showsFold());
+        emit pan->roundtableFoldClicked(foldRooms.mid(1));
+        QVERIFY(!open());
+        emit pan->roundtableFoldClicked(foldRooms);
+        QVERIFY(peek()->showsFold());
+        emit pan->roundtableFoldClicked(QStringList{viewed, other});
+        QVERIFY(open());
+        QVERIFY(peek()->showsFold());
+        QCOMPARE(peek()->foldRowsForTest().size(), 2);
+        peek()->closePeek();
+        QVERIFY(!open());
+        // Your own room leading a fold leaves your compact tag in place.
+        emit pan->roundtableFoldClicked(QStringList{mine, viewed});
+        QVERIFY(peek()->showsFold());
+        SpectrumWidget::RoundtableTagHit ownHit;
+        QVERIFY(hitOf(mine, &ownHit));
+        peek()->closePeek();
+        QVERIFY(!open());
         QVERIFY(click(foldRooms.first()));
         QVERIFY(peek()->showsFold());
         const qsizetype beforeRow = closed.size();

@@ -1424,6 +1424,25 @@ private slots:
         QVERIFY(hitFor(pan.widget, other.roomId) != nullptr);
     }
 
+    // D37: a fold's list outlines its tag and hides none, even when your room leads it.
+    void aFoldsListKeepsYourCompactTag()
+    {
+        Pan pan;
+        const QString room = QStringLiteral("frequency:lsb-7180000");
+        RoundtableTag mine = tagAt(room, 7180000);
+        mine.active = true;
+        pan.widget.setRoundtableTags({mine, tagAt(QStringLiteral("frequency:lsb-7150000"), 7150000)},
+                                     RoundtableTagDisplay::Live);
+        pan.widget.setRoundtableInspectorRect(QRect(900, 200, 280, 200));
+        pan.widget.setRoundtableViewedRoom(room, true);
+        pan.draw();
+        QVERIFY(hitFor(pan.widget, room) != nullptr);
+        // Your own frequency in the inspector still takes it away.
+        pan.widget.setRoundtableViewedRoom(room);
+        pan.draw();
+        QVERIFY(hitFor(pan.widget, room) == nullptr);
+    }
+
     // D37: the spot needs no card or tag, follows the flag, and a pan without the
     // slice uses its own flag, or the clicked tag.
     void theInspectorsSpotNeedsNoCardAndFollowsTheFlag()
