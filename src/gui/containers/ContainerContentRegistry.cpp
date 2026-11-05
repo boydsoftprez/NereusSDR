@@ -97,6 +97,8 @@
 //                 AI-assisted via OpenAI Codex.
 //   2026-10-02 — Mixed container ownership, persistence and source routing by
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include "ContainerContentRegistry.h"
 #include "ContentFade.h"
 #include "gui/instruments/LongpathContent.h"
@@ -255,6 +257,44 @@ ContainerContentRegistry::~ContainerContentRegistry()
     }
     delete m_parking;
 }
+// The Main Panel's first-launch order: the S-Meter first, the Mod Monitor
+// second at the time it is placed, the SSB Mod Monitor directly under it,
+// every other applet after the ones already there. The first launch and
+// Reset Default Layout both place through this, so a reset draws what a
+// first launch draws.
+void ContainerContentRegistry::placeFirstLaunchApplet(QVector<ContentEntry>& contents,
+                                                      const ContentEntry& entry)
+{
+    if (entry.typeId == QLatin1String("applet:s_meter")) {
+        contents.prepend(entry);
+    } else if (entry.typeId == QLatin1String("applet:mod_monitor")) {
+        contents.insert(qMin(1, contents.size()), entry);
+    } else if (entry.typeId == QLatin1String("applet:ssb_mod_monitor")) {
+        for (int i = 0; i < contents.size(); ++i) {
+            if (contents[i].typeId == QLatin1String("applet:mod_monitor")) {
+                contents.insert(i + 1, entry);
+                return;
+            }
+        }
+        contents.append(entry);
+    } else {
+        contents.append(entry);
+    }
+}
+
+// CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
+// (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
+// says. The SSB Mod Monitor starts off and is one click away in the panels
+// list. Every other applet keeps its first-launch state.
+ContentEntry ContainerContentRegistry::firstLaunchEntry(ContentEntry entry)
+{
+    if (entry.typeId == QLatin1String("applet:cwx")
+        || entry.typeId == QLatin1String("applet:ssb_mod_monitor")) {
+        entry.visible = false;
+    }
+    return entry;
+}
+
 QString ContainerContentRegistry::appletTypeForVisibilityId(const QString& id)
 {
     static const QHash<QString, QString> aliases = {
