@@ -7135,6 +7135,8 @@ void MainWindow::showOwnRoundtableInspector(SpectrumWidget* pan)
     const QString family = familyOfSlice(active);
     if (!pan || !active || family.isEmpty()) { return; }
     adoptRoundtablePeek(pan);
+    // It stands where it was opened, and follows only when your slice changes pans.
+    m_roundtablePeekSlicePan = panHoldingRoundtableSlice(active->sliceIndex());
     // Your own room needs no read of its own: the panel's readRoom would call
     // backToSlice for it. Only a view's read has to end, with no close (D34).
     releaseRoundtablePeekRead();
@@ -7342,9 +7344,12 @@ void MainWindow::refreshRoundtablePeek()
             closeRoundtablePeek();
             return;
         }
-        // Your own frequency stands on the pan your slice is on: never two boxes for it.
+        // It follows your slice to another pan, and only then: opened on a pan without
+        // your slice, it stays, so its tag closes it and Back stays in place (D34, D35).
         SpectrumWidget* holder = panHoldingRoundtableSlice(active->sliceIndex());
-        if (holder && holder != pan) {
+        const bool sliceChangedPans = holder != m_roundtablePeekSlicePan;
+        m_roundtablePeekSlicePan = holder;
+        if (sliceChangedPans && holder && holder != pan) {
             showOwnRoundtableInspector(holder);
             return;
         }
@@ -7397,6 +7402,7 @@ void MainWindow::onRoundtablePeekClosed()
     const QString context = m_roundtablePeekContext;
     m_roundtablePeekContext.clear();
     m_roundtablePeekFold.clear();
+    m_roundtablePeekSlicePan = nullptr;
     m_roundtablePeekAnchorHz = 0;
     // After Messages the panel stays on this frequency until Back to my slice.
     RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;

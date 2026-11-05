@@ -256,6 +256,9 @@ constants. No ported code: new files carry `no-port-check: NereusSDR-original.`
 Places where the build settled something the decisions above read differently. Each is
 JJ's to veto on the hardware run.
 
+* **D34, two pans.** Opened on a pan without your slice, your own inspector stays there, so its tag
+  closes it and Back stays in place. Your slice's own pan keeps its card meanwhile, so that frequency
+  shows in two boxes, one on each pan. The inspector moves only when your slice changes pans.
 * **D34, your own card.** The inspector hides your card while it shows your own frequency, so
   there is no card to click again. Your flag line, the close button or Escape closes it.
 * **D35, iPhone sideways.** On your own frequency, Tune scrolls with the reports instead of

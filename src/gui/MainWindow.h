@@ -2376,6 +2376,7 @@ private:
     bool m_roundtablePeekMessages{false};                 // the panel keeps reading after a close
     bool m_roundtablePeekOpening{false};
     QStringList m_roundtablePeekFold;                     // the fold listed, D37
+    QPointer<SpectrumWidget> m_roundtablePeekSlicePan;    // where your slice stood at the last look, D34
     qint64 m_roundtablePeekAnchorHz{0};                   // the clicked tag: a pan with no slice's spot
     bool m_roundtablePeekJustLost{false};                 // a refusal's message follows its close
 

@@ -2647,6 +2647,117 @@ private slots:
         model->detach();
     }
 
+    // D34, D35: the inspector stays on the pan where you opened it. The same tag closes
+    // it there and Back stays in place, though your slice is on another pan.
+    void theInspectorStaysOnThePanWhereYouOpenedIt()
+    {
+        ReadingLink link;
+        RoundtableState state;
+        Everything p;
+        SliceModel* slice = p.model()->sliceById(p.sliceId());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14200000);
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+        auto* stack = p.window()->findChild<PanadapterStack*>();
+        QVERIFY(stack != nullptr);
+        SpectrumWidget* first = panOf(p.window());
+        QVERIFY(first != nullptr);
+        QVERIFY(stack->addPanadapter(QStringLiteral("pan-second")) != nullptr);
+        SpectrumWidget* second = stack->spectrum(QStringLiteral("pan-second"));
+        QVERIFY(second != nullptr && second != first);
+        settle();
+        const QList<VfoWidget*> flags = second->findChildren<VfoWidget*>();
+        QCOMPARE(flags.size(), 1);
+        const int otherId = flags.first()->sliceIndex();
+        SliceModel* other = p.model()->sliceById(otherId);
+        QVERIFY(other);
+        other->setDspMode(DSPMode::USB);
+        other->setFrequency(14230000);
+        p.model()->setActiveSliceById(p.sliceId());
+        settle();
+        const QString mine = RoundtableModel::frequencyContextId(14200000, QStringLiteral("usb"));
+        const auto openOn = [](SpectrumWidget* pan) {
+            auto* peek = pan->findChild<RoundtableFrequencyPeek*>();
+            return peek != nullptr && peek->isOpen() ? peek : nullptr;
+        };
+        // Long enough for the view's timer to have refreshed it more than once.
+        const auto ticks = []() { QTest::qWait(600); };
+
+        // Your compact tag on the pan without your slice: it opens there and stays.
+        emit second->roundtableReadRequested(mine);
+        ticks();
+        QVERIFY(openOn(second) != nullptr);
+        QVERIFY(openOn(second)->showsOwn());
+        QVERIFY(openOn(first) == nullptr);
+        QCOMPARE(second->roundtableViewedRoom(), mine);
+
+        // That tag's right click says it is open.
+        emit second->roundtableTagMenuRequested(mine, p.window()->mapToGlobal(QPoint(200, 200)));
+        QMenu* menu = nullptr;
+        for (QMenu* found : p.window()->findChildren<QMenu*>(QStringLiteral("roundtableShortMenu"), Qt::FindDirectChildrenOnly)) {
+            if (found->isVisible()) { menu = found; }
+        }
+        QVERIFY(menu != nullptr);
+        QCOMPARE(menu->findChild<QAction*>(QStringLiteral("roundtableMenuInspector"))->text(), QStringLiteral("Close inspector"));
+        menu->close();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        // The same tag closes it, with nothing left open on either pan.
+        emit second->roundtableReadRequested(mine);
+        ticks();
+        QVERIFY(openOn(second) == nullptr);
+        QVERIFY(openOn(first) == nullptr);
+
+        // Back to my slice from a view on that pan is your own frequency, in place.
+        emit second->roundtableReadRequested(RoundtableModel::frequencyContextId(14250000, QStringLiteral("usb")));
+        ticks();
+        RoundtableFrequencyPeek* viewing = openOn(second);
+        QVERIFY(viewing != nullptr);
+        QVERIFY(!viewing->showsOwn());
+        emit viewing->backRequested();
+        ticks();
+        QCOMPARE(openOn(second), viewing);
+        QVERIFY(viewing->showsOwn());
+        QCOMPARE(viewing->hz(), quint64(14200000));
+        QVERIFY(openOn(first) == nullptr);
+
+        // Your slice's own pan keeps its card, since the inspector is not standing there.
+        const QJsonObject actor{{"sourceRoom", "usb-14200000"}, {"ref", "tx"}, {"callsign", "W1AW"},
+                                {"hz", 14200000}, {"family", "usb"}, {"keyed", true}};
+        const QJsonObject turn{{"id", 1}, {"kind", "talking"}, {"sourceRoom", "usb-14200000"}, {"hz", 14200000},
+                               {"start", g_now - 1000}, {"end", QJsonValue::Null}, {"talkers", QJsonArray{actor}}};
+        model->applyRoom(QJsonObject{{"id", "usb-14200000"}, {"view", "frequency"}, {"family", "usb"}, {"hz", 14200000},
+                                     {"now", QJsonArray{turn}}, {"members", QJsonArray{actor}}});
+        settle();
+        first->setFrequencyRange(14200000.0, 200000.0);
+        QImage image(first->size(), QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::black);
+        QPainter painter(&image);
+        first->drawRoundtableTagsForTest(painter, first->roundtableTagSpectrumRectForTest());
+        bool cardOnFirst = false;
+        for (const SpectrumWidget::RoundtableTagHit& hit : first->roundtableTagHitsForTest()) {
+            cardOnFirst = cardOnFirst || (hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card && hit.roomIds.contains(mine));
+        }
+        QVERIFY(cardOnFirst);
+        QVERIFY(first->roundtableInspectorRect().isNull());
+
+        // The active slice moving to the pan it already stands on is nothing to follow.
+        p.model()->setActiveSliceById(otherId);
+        ticks();
+        QCOMPARE(openOn(second), viewing);
+        QCOMPARE(viewing->hz(), quint64(14230000));
+
+        viewing->closePeek();
+        stack->removePanadapter(QStringLiteral("pan-second"));
+        settle();
+        model->detach();
+    }
+
     // Tune's reason names the cause: a dropped radio is not a transmission.
     void aMissingRadioIsNotCalledTransmitting()
     {
