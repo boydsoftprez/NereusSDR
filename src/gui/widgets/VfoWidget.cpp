@@ -3811,7 +3811,6 @@ void VfoWidget::buildFloatingButtons()
         m_closeBtn->setToolTip(tr("Stop listening"));
     }
 
-    // Record button: checkable, disabled (no consumer yet)
     // The ⋯ button (overlay design D39): the same list as a right-click. It
     // stays live on a listened flag, whose menu says itself what is held.
     m_moreBtn = makeBtn(QString(QChar(0x22ef)), kFloatingBtnMore);

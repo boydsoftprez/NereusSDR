@@ -35,10 +35,12 @@ import SwiftUI
 /// in one scroll. The message box is pinned at its foot with PTT beside
 /// it, smaller and 24 points clear, press and hold with a dashed ring.
 ///
-/// Keyed, the sheet drops below the keyed gauges and shows the TX line and
-/// every station's reading of you. With a tuning dial on, the sheet stops
-/// above the 92-point strip that keeps PTT at the left and the dial at the
-/// right; keyed with a dial, the box steps aside and its draft is kept.
+/// Keyed, the sheet drops below the keyed gauges. On a legacy server it shows
+/// the TX line and every station's reading of you; on a frequency server it
+/// keeps the frequency view, with no TX line. With a tuning dial on, the sheet
+/// stops above the 92-point strip that keeps PTT at the left and the dial at
+/// the right; keyed with a dial on a legacy server, the box steps aside and
+/// its draft is kept.
 /// Before the station's first answer the sheet asks it
 /// (``RoundtableFirstRunSheet``) at full height and sends nothing until then.
 struct RoundtableSheet: View {
@@ -103,7 +105,7 @@ struct RoundtableSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Keyed, the sheet below the gauges is the TX line and the readings of you, as the board draws it.
+            // Keyed, the sheet stands below the gauges at its one height: no handle.
             if !keyed && !compactLandscape {
                 handle
             }

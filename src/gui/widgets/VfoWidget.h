@@ -669,7 +669,7 @@ public:
     void raiseAboveSiblings();
 
     // --- Test seam for floating-button z-order (Bench 2026-07-28, Sub-Epic J) ---
-    // The four buttons are otherwise anonymous QPushButtons among the
+    // The floating buttons are otherwise anonymous QPushButtons among the
     // SpectrumWidget's children, so a z-order test has no way to name "this
     // flag's close button" without this. Exposed read-only, same pattern as
     // the SNR-row seams below.
