@@ -15,8 +15,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - The RX AGC AUTO button says that a right-click opens the
-//                 AGC/ALC setup page. Brian Sutton, AI-assisted via xAI Grok.
+//                 AGC/ALC setup page. Brian Sutton (W4KZO), AI-assisted via
+//                 xAI Grok.
 //   2026-10-26 - Each section but Mode registers its parts (SectionParts);
 //                 RX Filter's hideTop and hideBottom are the hide keys of
 //                 its top and bottom parts, and its preset grid is a part

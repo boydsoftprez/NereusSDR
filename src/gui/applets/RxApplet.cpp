@@ -9,9 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - Right-click on the AUTO button, on this panel and on an
 //                 RX AGC copy, opens Setup on the AGC/ALC page. The slider
-//                 already did. Brian Sutton, AI-assisted via xAI Grok.
+//                 already did. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-10-26 - The dynamic shows and hides of a copy's antenna buttons,
 //                 preamp check box and AGC info line go through the copy's
 //                 parts, so a container copy that hides one keeps it
