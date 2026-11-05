@@ -67,7 +67,7 @@ and the cycle's core rules are ported under the attribution rules in section 10.
 | New spots | Go in frequency order, as Thetis. The new spot becomes your place, so the next press goes to the next higher one. On a dragged list it goes just before the first higher spot. Dwell saves do the same. |
 | A press that would move a shared receiver | Asks first, with the existing "Confirm the change" dialog. A device that does not anchor takes a free receiver with no question. |
 | Leaving a spot another slice is on | Does not save over it. Keeping the new frequency takes a deliberate save. |
-| Keys (with the hot keys work) | M and N are the default keys for next and previous entry, plain keys so text fields keep them. Add and open/close panel have no default key. |
+| Keys (with the hot keys work) | M and N are the default keys for next and previous entry, plain keys so text fields keep them. Shift+M adds an entry and Shift+N opens the panel. A focused panel keeps its own keys. |
 | Region change prompt | Not drawn, at J.J.'s direction ("use your judgment for that one"). Settled as designed in April; see V1. |
 
 ### April decisions that still stand
@@ -93,7 +93,9 @@ them is cheap until the matching task runs.
 - **V1. Region change.** When you change region in Setup on any device and that Core has band
   stacks, the device that made the change asks: "You changed the region to %1. Replace the unlocked
   entries with the defaults for %1? Your locked entries stay." with **Keep my entries** (default)
-  and **Replace**. The region itself has already changed either way. Replace removes unlocked
+  and **Replace**. A device knows it made the change because it marks its own region edit, and asks
+  when the document's `region` next changes (within 65 seconds, covering the 60 second question a
+  region edit can raise). The region itself has already changed either way. Replace removes unlocked
   entries and seed entries you have not changed, then loads the new region's seeds. No slice moves.
   A slice whose place was removed has no place on that band until its next press. Other devices
   are not asked.
@@ -126,6 +128,18 @@ them is cheap until the matching task runs.
 - **V12. Transverter bands** are not stacked in this version and keep today's refusal, because
   XVTR has no seeds or frequency range in NereusSDR yet.
 - **V13. Stack size.** No fixed limit. A list of a few hundred entries stays one small document.
+- **V14. Pans without click tune.** A pan without click tune always sits on its slice, which is how
+  tuning works today, so a recall centers it there. "Pan stays" and bringing back a saved center apply
+  with click tune on. Zoom comes back on any pan the slice has to itself.
+- **V15. The hosting desktop asks too.** Its own tuning does not ask today; it moves to a free receiver
+  or is rolled back. A stack press from it goes through the Core's question, as J.J. chose. Its other
+  tuning is not changed by this work.
+- **V16. LMF seed rows go under GEN.** Thetis has an LMF band and NereusSDR does not.
+- **V17. Spectrum ticks.** Right-click on a tick opens that entry's menu. A slice's marker line wins
+  over a tick under it, so dragging still works.
+- **V18. Phone's spectrum switch** is in the Display pill's "On this phone" and in the older Display
+  sheet's "On the band", because a newer Core shows the pill and never that sheet. The phone's Setup
+  page sits under General, after Options.
 
 ## 5. Behavior
 
@@ -192,9 +206,10 @@ place. A dwell save does not move your place and also skips a spot within 100 Hz
    there is one step per slice on every band, so a recall must not restore a step from per-band
    memory, whichever order this and the settings audit land in.
 4. Set frequency first, then mode, then filter, in the order `onBandButtonClicked` documents.
-5. Apply the pan rule: alone on its pan, the slice brings back the entry's center and zoom, unless
-   that would put the frequency off screen, in which case it centers on the frequency. On a shared
-   pan the view stays if the frequency is on screen, otherwise it follows as a band change does.
+5. Apply the pan rule (V14): alone on its pan, the slice brings back the entry's zoom, and with click
+   tune on its center too, unless that would put the frequency off screen, in which case it centers
+   on the frequency. On a shared pan with click tune on, the view stays if the frequency is on screen,
+   otherwise it follows as a band change does.
 6. Move the slice's place, update the entry's last-used time, and report "40m: 7.185 LSB, 5 of 6".
 
 ### 5.6 Shared receivers
@@ -261,10 +276,31 @@ One versioned JSON document, `hardware/<mac>/bandstack/Document`, in Station sco
 A document that fails to parse is logged with `qCWarning`, set aside under `Document.bad`, and
 replaced by fresh seeds.
 
-Entry fields: `id` (UUID), `band`, `frequencyHz` (int64), `mode`, `filterLowHz`, `filterHighHz`,
-`centerHz`, `spanHz`, `locked`, `seeded`, `name`, `lastUsedMs`. Per band: entry order, `returnMode`,
-`specificId`. Per slice letter: place per band. Options: `dupeProtection` (default true),
-`expiryMinutes` (0, 5, 15, 30, 60; default 0), `dwellSeconds` (0, 10, 30, 60; default 0).
+The document, with bands named by `bandKeyName`:
+
+```json
+{
+  "schema": 1,
+  "region": "United States",
+  "options": {"dupeProtection": true, "expiryMinutes": 0, "dwellSeconds": 0},
+  "bands": {"40m": {"order": ["<id>"], "returnMode": "current", "specificId": ""}},
+  "entries": [{"id": "<uuid>", "band": "40m", "frequencyHz": 7185000, "mode": "LSB",
+               "filterLowHz": -2800, "filterHighHz": -100, "centerHz": 7185000, "spanHz": 192000,
+               "locked": false, "seeded": true, "name": "", "lastUsedMs": 0}],
+  "places": {"A": {"40m": "<id>"}},
+  "lastExpiry": {"batchId": "", "count": 0},
+  "lastRecall": {"seq": 0, "sliceId": -1, "applyView": false, "centerHz": 0, "spanHz": 0}
+}
+```
+
+`returnMode` is `current`, `lastUsed` or `specific`. `expiryMinutes` is 0, 5, 15, 30 or 60 and
+`dwellSeconds` is 0, 10, 30 or 60; both default to 0, and `dupeProtection` defaults to true. `spanHz` 0
+means no saved zoom. `lastExpiry` and `lastRecall` are published but not saved. A slice's last frequency
+per band comes from its existing per-band memory.
+
+The Core has no pan object: a pan's view belongs to each window. So a device sends its own view with a
+press, and the Core decides and publishes the outcome in `lastRecall`. The window or phone controlling
+that slice applies it to its own view and every other device ignores it.
 
 Seed rows name a filter as F1 to F10 as Thetis does. They resolve to low and high Hz through
 NereusSDR's per-mode preset table when the seeds load.
@@ -277,11 +313,11 @@ in the document, so every device can draw every slice's marker.
 
 | Verb | Arguments | Notes |
 |---|---|---|
-| `bandStack.press` | `sliceId`, `band`, `direction` (next, previous) | Runs 5.1. May be held by 5.6. |
-| `bandStack.step` | `sliceId`, `direction` | Next or previous on the slice's own band. May be held. |
-| `bandStack.goTo` | `sliceId`, `entryId` | Row or tick. May be held. |
-| `bandStack.add` | `sliceId` | Add current spot. |
-| `bandStack.saveHere` | `sliceId`, `entryId` | Deliberate save. |
+| `bandStack.press` | `sliceId`, `band` (key), `direction` (next, previous), view | Runs 5.1. May be held by 5.6. |
+| `bandStack.step` | `sliceId`, `direction`, view | Next or previous on the slice's own band. May be held. |
+| `bandStack.goTo` | `sliceId`, `entryId`, view | Row or tick. May be held. |
+| `bandStack.add` | `sliceId`, view | Add current spot. |
+| `bandStack.saveHere` | `sliceId`, `entryId`, view | Deliberate save. |
 | `bandStack.edit` | `entryId`, optional `name`, `locked` | |
 | `bandStack.delete` | `entryId` | |
 | `bandStack.reorder` | `band`, `ids` | Ids must be exactly that band's entries. |
@@ -291,6 +327,9 @@ in the document, so every device can draw every slice's marker.
 | `bandStack.options` | any of `dupeProtection`, `expiryMinutes`, `dwellSeconds` | |
 | `bandStack.restoreExpired` | `batchId` | Undo. Valid for 5 seconds after the batch. |
 
+"view" is the optional `viewCenterHz` and `viewSpanHz`. Where they are missing (a dwell save, an older
+path), the entry keeps its stored values.
+
 Results and refusals use `commandResult`. Expired-entry notes reach devices through the document's
 `lastExpiry` field (`batchId`, `count`), so every device can show it. Slice-owning verbs use
 `changeRefusal` and `mayChange`. `freezeRefusalFor` covers the on-air case.
@@ -298,8 +337,11 @@ Results and refusals use `commandResult`. Expired-entry notes reach devices thro
 `slice.selectBand` is unchanged. It is what an older client uses.
 
 The shared-receiver question uses `checkPanMove`, `askPanMove` and the `panMove` confirm kind. A
-recall works out its target frequency first without changing the store, and only proceeds once the
-check says apply or the question comes back confirmed.
+recall works out its target frequency first without changing the store (`planRecall`), and only
+proceeds once the check says apply or the question comes back confirmed. It is rechecked at proceed, so a
+changed stack gets a fresh target. A retune the allocator refuses leaves the store unchanged.
+
+The hosting desktop reaches the same check through `kHostVerbs` and `HostingSliceActions`.
 
 The verb and capability tables in
 [2026-09-23-station-link-v1.md](2026-09-23-station-link-v1.md) are generated; section 6.3 of that
@@ -345,7 +387,7 @@ Mockup: [desktop.html](2026-11-05-band-stack-design/desktop.html).
 - **Container buttons.** `BandButtonItem` right-click opens the popup. `VfoDisplayItem` long press
   opens the popup. STACK+ and STACK- step.
 - **Actions for hot keys.** `bandStackNext`, `bandStackPrevious`, `bandStackAdd`, `bandStackPanel` are
-  public entry points on `MainWindow`. The hot keys work binds M and N to them.
+  public entry points on `MainWindow`. The hot keys work binds M, N, Shift+M and Shift+N to them.
 
 A disabled control stays visible, with the reason as its tooltip. Slice names in strings are "Slice A",
 never RX1.
