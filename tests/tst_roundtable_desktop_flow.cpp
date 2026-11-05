@@ -2569,6 +2569,38 @@ private slots:
         model->detach();
     }
 
+    // Tune's reason names the cause: a dropped radio is not a transmission.
+    void aMissingRadioIsNotCalledTransmitting()
+    {
+        ReadingLink link;
+        RoundtableState state;
+        Everything p;
+        SliceModel* slice = p.model()->sliceById(p.sliceId());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14200000);
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{}}});
+        SpectrumWidget* pan = panOf(p.window());
+        QVERIFY(pan != nullptr);
+        settle();
+        emit pan->roundtableReadRequested(RoundtableModel::frequencyContextId(14230000, QStringLiteral("usb")));
+        auto* peek = pan->findChild<RoundtableFrequencyPeek*>();
+        QVERIFY(peek != nullptr && peek->isOpen());
+        auto* tune = peek->findChild<QAbstractButton*>(QStringLiteral("roundtablePeekTune"));
+        QVERIFY(tune != nullptr);
+        QTRY_VERIFY_WITH_TIMEOUT(tune->isEnabled(), kWaitMs);
+        p.model()->setConnectionStateForTest(ConnectionState::Disconnected);
+        QTRY_VERIFY_WITH_TIMEOUT(!tune->isEnabled(), kWaitMs);
+        QCOMPARE(tune->toolTip(), QStringLiteral("No radio connected"));
+        QVERIFY(!p.model()->isTransmitting());
+        peek->closePeek();
+        model->detach();
+    }
+
     // D37: a pan that does not hold the active slice places it by its own slice's flag.
     void aPanWithoutTheActiveSlicePlacesByItsOwnFlag()
     {

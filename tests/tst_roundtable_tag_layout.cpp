@@ -1223,10 +1223,17 @@ private slots:
         pan.widget.setMoxOverlay(false);
         // What only the window knows: another device keying, no radio.
         SpectrumWidget::RoundtableMenuOptions waiting;
-        waiting.tuneAllowed = false;
+        waiting.transmitting = true;
         QMenu remote;
         pan.widget.buildRoundtableCardMenu(room, 7180000, false, remote, waiting);
         QVERIFY(!action(remote, "roundtableMenuTune")->isEnabled());
+        QCOMPARE(action(remote, "roundtableMenuTune")->toolTip(), QStringLiteral("Not while you transmit"));
+        SpectrumWidget::RoundtableMenuOptions noRadio;
+        noRadio.connected = false;
+        QMenu disconnected;
+        pan.widget.buildRoundtableCardMenu(room, 7180000, false, disconnected, noRadio);
+        QVERIFY(!action(disconnected, "roundtableMenuTune")->isEnabled());
+        QCOMPARE(action(disconnected, "roundtableMenuTune")->toolTip(), QStringLiteral("No radio connected"));
 
         // Another slice's letter, and no slice at all.
         pan.widget.setRoundtableActiveSliceName(QStringLiteral("B"));

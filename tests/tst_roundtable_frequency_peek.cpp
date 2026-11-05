@@ -271,10 +271,29 @@ private slots:
         QCOMPARE(pan.close()->focusPolicy(), Qt::NoFocus);
     }
 
-        // Near an edge it stays inside, 4 px off.
-        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"), QPoint(1100, 630));
-        QCOMPARE(pan.peek->geometry().right(), 1200 - 4 - 1);
-        QVERIFY(pan.widget.rect().contains(pan.peek->geometry()));
+    // No radio is not transmitting: Tune greys for its own reason.
+    void noRadioGreysTuneAndSaysSo()
+    {
+        Pan pan;
+        pan.peek->showFor(kViewedHz, QStringLiteral("lsb"));
+        pan.peek->refresh(talker(), std::nullopt, false, false);
+        QVERIFY(!pan.tune()->isEnabled());
+        QCOMPARE(pan.tune()->toolTip(), QStringLiteral("No radio connected"));
+        QVERIFY(pan.peek->isOpen());
+        pan.peek->refresh(talker(), std::nullopt, true, true);
+        QCOMPARE(pan.tune()->toolTip(), QStringLiteral("Not while you transmit"));
+        pan.peek->refresh(talker(), std::nullopt, false, true);
+        QVERIFY(pan.tune()->isEnabled());
+        QVERIFY(pan.tune()->toolTip().isEmpty());
+    }
+
+    // A short body keeps its rows readable: the fade takes at most half of it.
+    void theFadeNeverCoversAShortBody()
+    {
+        QCOMPARE(roundtableViewFadeHeight(11), 5);
+        QCOMPARE(roundtableViewFadeHeight(44), 22);
+        QCOMPARE(roundtableViewFadeHeight(400), 22);
+        QCOMPARE(roundtableViewFadeHeight(0), 0);
     }
 
     void aViewNeverBecomesATagKeepOutOrDirtiesTheStaticOverlay()

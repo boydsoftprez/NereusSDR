@@ -2912,7 +2912,8 @@ public:
     struct RoundtableMenuOptions {
         bool inspectorOpen = false;  // says Close inspector, not Open inspector
         bool fromInspector = false;  // the inspector's own ⋯: Read reports, no Open or Close
-        bool tuneAllowed = true;     // what only the window knows: keyed remotely, no radio
+        bool transmitting = false;   // what only the window knows: keyed on another pan or device
+        bool connected = true;       // what only the window knows: there is a radio to tune
     };
     /// Open or Close inspector, Tune, Messages and Signal for `room`. `alreadyThere`
     /// greys Tune as keying does, as the inspector's button does: never hidden.

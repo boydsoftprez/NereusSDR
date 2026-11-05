@@ -7211,7 +7211,8 @@ void MainWindow::openRoundtableMenu(SpectrumWidget* pan, const QString& context,
     options.inspectorOpen = m_roundtablePeek && m_roundtablePeek->isOpen() && m_roundtablePeek->parentWidget() == pan
         && m_roundtablePeekContext == context;
     // What the inspector's own button waits on (refreshRoundtablePeek).
-    options.tuneAllowed = !m_radioModel->isTransmitting() && m_radioModel->isConnected();
+    options.transmitting = m_radioModel->isTransmitting();
+    options.connected = m_radioModel->isConnected();
     const bool alreadyThere = active
         && roundtableTuneWritesNothing(hz, family, std::llround(active->frequency()), familyOfSlice(active));
     // On the top level window: a pan's native window cannot be a popup's transient parent.
@@ -7357,7 +7358,7 @@ void MainWindow::refreshRoundtablePeek()
     m_roundtablePeek->refresh(roundtableCardModelFor(roundtable, sliceIds, m_roundtablePeekContext, hz, &m_roundtablePeaks),
                               transmitting ? std::nullopt : m_roundtablePeekPanDbm,
                               // Tune also waits on the radio itself, whatever Roundtable's link is doing.
-                              transmitting || !m_radioModel->isConnected());
+                              transmitting, m_radioModel->isConnected());
     // A change of who is listed can change its height.
     if (pan) { pan->setRoundtableInspectorRect(m_roundtablePeek->inspectorRect()); }
 }

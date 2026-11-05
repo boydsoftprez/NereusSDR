@@ -80,8 +80,9 @@ public:
     /// The station's distance and bearing preferences.
     void setPathPreferences(bool miles, bool bearing);
     /// The latest of the viewed frequency. `panDbm` is this client's own pan
-    /// (D23). `keyed` disables Tune at once and leaves the view open.
-    void refresh(const RoundtableCardModel& model, std::optional<double> panDbm, bool keyed);
+    /// (D23). `keyed` disables Tune at once and leaves the view open; so does no
+    /// `connected` radio, with its own reason.
+    void refresh(const RoundtableCardModel& model, std::optional<double> panDbm, bool keyed, bool connected = true);
     /// Closes, once: closed() follows only if it was open.
     void closePeek();
 
@@ -151,6 +152,7 @@ private:
     int m_scroll{0};
     int m_bodyHeight{0};
     bool m_keyed{false};
+    bool m_connected{true};
     bool m_open{false};
     bool m_listing{false};
     QVector<RoundtableFoldRow> m_rows;

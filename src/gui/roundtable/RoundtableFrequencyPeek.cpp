@@ -245,7 +245,7 @@ void RoundtableFrequencyPeek::setPathPreferences(bool miles, bool bearing)
     m_view.bearing = bearing;
 }
 
-void RoundtableFrequencyPeek::refresh(const RoundtableCardModel& model, std::optional<double> panDbm, bool keyed)
+void RoundtableFrequencyPeek::refresh(const RoundtableCardModel& model, std::optional<double> panDbm, bool keyed, bool connected)
 {
     if (!m_open || m_listing) {
         return;
@@ -264,6 +264,7 @@ void RoundtableFrequencyPeek::refresh(const RoundtableCardModel& model, std::opt
                         .value(QStringLiteral("Roundtable/SignalFormat"), QStringLiteral("dBm"))
                         .toString();
     m_keyed = keyed;
+    m_connected = connected;
     updateTuneButton();
     if (!sameShape || previousFormat != m_view.format) {
         fitToContents();
@@ -296,10 +297,12 @@ void RoundtableFrequencyPeek::updateTuneButton()
     const bool alreadyThere = m_view.mine
         || roundtableTuneWritesNothing(static_cast<qint64>(m_view.card.hz), m_view.family,
                                        static_cast<qint64>(m_view.sliceHz), m_view.sliceFamily);
-    m_tune->setEnabled(!m_keyed && !noSlice && !alreadyThere);
+    m_tune->setEnabled(!m_keyed && m_connected && !noSlice && !alreadyThere);
     QString reason;
     if (!noSlice && alreadyThere) {
         reason = QStringLiteral("Slice %1 is already here").arg(m_view.sliceName);
+    } else if (!noSlice && !m_connected) {
+        reason = QStringLiteral("No radio connected");
     } else if (!noSlice && m_keyed) {
         reason = QStringLiteral("Not while you transmit");
     }

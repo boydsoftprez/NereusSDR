@@ -13296,8 +13296,8 @@ void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, boo
     }
 
     // The same gates and the same reasons as the inspector's button (D36).
-    const bool keyed = roundtableKeyed();
-    const bool canTune = !keyed && options.tuneAllowed && !room.isEmpty() && !alreadyThere && !m_roundtableSliceName.isEmpty();
+    const bool keyed = roundtableKeyed() || options.transmitting;
+    const bool canTune = !keyed && options.connected && !room.isEmpty() && !alreadyThere && !m_roundtableSliceName.isEmpty();
     QAction* tune = menu.addAction(roundtableTuneText(), this, [this, room]() {
         if (!roundtableKeyed() && !room.isEmpty()) { emit roundtableRoomClicked(room); }
     });
@@ -13305,7 +13305,9 @@ void SpectrumWidget::buildRoundtableCardMenu(const QString& room, qint64 hz, boo
     tune->setEnabled(canTune);
     if (!m_roundtableSliceName.isEmpty() && alreadyThere) {
         tune->setToolTip(QStringLiteral("Slice %1 is already here").arg(m_roundtableSliceName));
-    } else if (!m_roundtableSliceName.isEmpty() && (keyed || !options.tuneAllowed)) {
+    } else if (!m_roundtableSliceName.isEmpty() && !options.connected) {
+        tune->setToolTip(QStringLiteral("No radio connected"));
+    } else if (!m_roundtableSliceName.isEmpty() && keyed) {
         tune->setToolTip(QStringLiteral("Not while you transmit"));
     }
 
