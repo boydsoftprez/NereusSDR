@@ -100,7 +100,7 @@ public:
     void setAction(Action action) { m_action = action; }
     Action action() const { return m_action; }
     // The group GoToGroup shows (Thetis GotoGroup); 0 shows every group.
-    void setGoToGroup(int group) { m_goToGroup = qBound(0, group, kMaxDisplayGroup); }
+    void setGoToGroup(int group) { m_goToGroup = qBound(0, group, int(kMaxDisplayGroup)); }
     int goToGroup() const { return m_goToGroup; }
 
     // The highest group the item editors offer (BaseItemEditor).
