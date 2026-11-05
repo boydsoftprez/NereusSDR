@@ -24,8 +24,8 @@ namespace NereusSDR {
 
 namespace {
 
-// The lock file's lines, as QLockFile writes them on Qt 6.11. Measured against
-// QLockFile itself by tests/tst_station_foreign_lock.cpp.
+// The lock file's lines, as QLockFile writes them. Checked against QLockFile
+// itself by tests/tst_station_foreign_lock.cpp.
 constexpr int kLockLinePid = 0;
 constexpr int kLockLineHostName = 2;
 constexpr int kLockLineMachineId = 3;
@@ -158,31 +158,41 @@ bool StationHandover::folderIsOnThisComputer() const
 #endif
 }
 
-std::optional<StationHandover::OtherComputerLock> StationHandover::readOtherComputerLock() const
+bool StationHandover::lockCameFromOtherComputer(const QByteArray& lockBytes,
+                                                const QByteArray& ownMachineId,
+                                                const QString& ownHostName)
 {
-    const QByteArray bytes = lockFileBytes(lockPath());
-    const QList<QByteArray> lines = bytes.split('\n');
+    const QList<QByteArray> lines = lockBytes.split('\n');
     // A file a starting program has not finished writing, or anything else that
     // is not a lock, says nothing about another computer.
     if (lines.size() < kLockLinesRequired) {
-        return std::nullopt;
+        return false;
     }
     bool pidIsNumber = false;
     lines.at(kLockLinePid).toLongLong(&pidIsNumber);
     if (!pidIsNumber) {
-        return std::nullopt;
+        return false;
     }
 
-    // The same test QLockFile makes: the machine id decides when the file has
-    // one, and the host name only when it does not.
-    const QString hostName = QString::fromUtf8(lines.at(kLockLineHostName));
+    // The same answer QLockFile reaches, measured on Qt 6.8.2 and 6.11: the
+    // machine id decides when the file and this computer both have one, and the
+    // host name otherwise. A container often has no machine id at all.
     const QByteArray machineId = lines.value(kLockLineMachineId);
-    const bool fromOtherComputer = machineId.isEmpty()
-        ? (!hostName.isEmpty() && hostName != QSysInfo::machineHostName())
-        : machineId != QSysInfo::machineUniqueId();
-    if (!fromOtherComputer) {
+    if (!machineId.isEmpty() && !ownMachineId.isEmpty()) {
+        return machineId != ownMachineId;
+    }
+    const QString hostName = QString::fromUtf8(lines.at(kLockLineHostName));
+    return !hostName.isEmpty() && hostName != ownHostName;
+}
+
+std::optional<StationHandover::OtherComputerLock> StationHandover::readOtherComputerLock() const
+{
+    const QByteArray bytes = lockFileBytes(lockPath());
+    if (!lockCameFromOtherComputer(bytes, QSysInfo::machineUniqueId(),
+                                   QSysInfo::machineHostName())) {
         return std::nullopt;
     }
+    const QString hostName = QString::fromUtf8(bytes.split('\n').at(kLockLineHostName));
     return OtherComputerLock{bytes, computerNameForOperator(hostName)};
 }
 

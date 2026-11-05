@@ -93,28 +93,86 @@ private slots:
 
     void cleanup() { QDir(AppSettings::resolveConfigDir(m_profile)).removeRecursively(); }
 
-    // Pins the two facts this fix stands on, so a Qt upgrade that changes either
-    // one fails here and not on an operator's computer.
-    void qtStillRefusesAnotherComputersLock()
+    // What Qt itself does with each kind of lock on whatever computer this runs
+    // on, against the rule StationHandover uses. A Qt upgrade that changes it
+    // fails here and not on an operator's computer. Containers usually have no
+    // machine id, so this also runs the id-less half of the table on CI.
+    void ruleMatchesQtHere_data()
     {
+        const QByteArray ownHost = QSysInfo::machineHostName().toUtf8();
+        const QByteArray ownId = QSysInfo::machineUniqueId();
+        QTest::addColumn<QByteArray>("hostName");
+        QTest::addColumn<QByteArray>("machineId");
+        QTest::newRow("this name, this id") << ownHost << ownId;
+        QTest::newRow("other name, this id") << kOtherHostName << ownId;
+        QTest::newRow("this name, other id") << ownHost << kOtherMachineId;
+        QTest::newRow("other name, other id") << kOtherHostName << kOtherMachineId;
+        QTest::newRow("other name, no id") << kOtherHostName << QByteArray{};
+        QTest::newRow("this name, no id") << ownHost << QByteArray{};
+    }
+
+    void ruleMatchesQtHere()
+    {
+        QFETCH(QByteArray, hostName);
+        QFETCH(QByteArray, machineId);
         const QString directory = prepareProfile();
         QVERIFY(!directory.isEmpty());
         const QString path = QDir(directory).filePath(QStringLiteral("station.lock"));
         const qint64 pid = deadPid();
         QVERIFY(pid != 0);
+        const QByteArray lines = lockLines(pid, hostName, machineId);
+        QVERIFY(writeFile(path, lines));
 
-        QVERIFY(writeFile(path, lockLines(pid, kOtherHostName, kOtherMachineId)));
-        QLockFile foreign(path);
-        foreign.setStaleLockTime(0);
-        QVERIFY(!foreign.tryLock(0));
-        QCOMPARE(foreign.error(), QLockFile::LockFailedError);
+        QLockFile lock(path);
+        lock.setStaleLockTime(0);
+        const bool qtTookIt = lock.tryLock(0);
+        QCOMPARE(StationHandover::lockCameFromOtherComputer(lines, QSysInfo::machineUniqueId(),
+                                                            QSysInfo::machineHostName()),
+                 !qtTookIt);
+    }
 
-        // The scratch copy that proved the cause: the same lines with this
-        // computer's id are taken at once.
-        QVERIFY(writeFile(path, lockLines(pid, kOtherHostName, QSysInfo::machineUniqueId())));
-        QLockFile local(path);
-        local.setStaleLockTime(0);
-        QVERIFY(local.tryLock(0));
+    // The same table with both kinds of computer, wherever this runs. Each row
+    // was measured against real QLockFile on Qt 6.8.2 on Linux, with the machine
+    // id visible and hidden, using a dead pid.
+    void ruleTable_data()
+    {
+        const QByteArray own("OWN-ID");
+        const QByteArray other("OTHER-ID");
+        QTest::addColumn<QByteArray>("hostName");
+        QTest::addColumn<QByteArray>("machineId");
+        QTest::addColumn<QByteArray>("ownMachineId");
+        QTest::addColumn<bool>("fromOtherComputer");
+        QTest::newRow("has id: this name, this id") << QByteArray("me") << own << own << false;
+        QTest::newRow("has id: other name, this id") << QByteArray("them") << own << own << false;
+        QTest::newRow("has id: this name, other id") << QByteArray("me") << other << own << true;
+        QTest::newRow("has id: other name, other id") << QByteArray("them") << other << own << true;
+        QTest::newRow("has id: other name, no id") << QByteArray("them") << QByteArray{} << own << true;
+        QTest::newRow("has id: this name, no id") << QByteArray("me") << QByteArray{} << own << false;
+        QTest::newRow("no id: this name, an id") << QByteArray("me") << own << QByteArray{} << false;
+        QTest::newRow("no id: other name, an id") << QByteArray("them") << own << QByteArray{} << true;
+        QTest::newRow("no id: other name, no id") << QByteArray("them") << QByteArray{} << QByteArray{} << true;
+        QTest::newRow("no id: this name, no id") << QByteArray("me") << QByteArray{} << QByteArray{} << false;
+    }
+
+    void ruleTable()
+    {
+        QFETCH(QByteArray, hostName);
+        QFETCH(QByteArray, machineId);
+        QFETCH(QByteArray, ownMachineId);
+        QFETCH(bool, fromOtherComputer);
+        QCOMPARE(StationHandover::lockCameFromOtherComputer(lockLines(4242, hostName, machineId),
+                                                            ownMachineId, QStringLiteral("me")),
+                 fromOtherComputer);
+    }
+
+    void notALockSaysNothingAboutAnotherComputer()
+    {
+        const QByteArray own("OWN-ID");
+        const QString me = QStringLiteral("me");
+        QVERIFY(!StationHandover::lockCameFromOtherComputer(QByteArray{}, own, me));
+        QVERIFY(!StationHandover::lockCameFromOtherComputer("4242\n", own, me));
+        QVERIFY(!StationHandover::lockCameFromOtherComputer("4242\nNereusSDR\n", own, me));
+        QVERIFY(!StationHandover::lockCameFromOtherComputer("not a pid\nx\nthem\nOTHER\n", own, me));
     }
 
     void takenOnThisComputerWithoutWaiting_data()
@@ -137,6 +195,12 @@ private slots:
         QFETCH(QByteArray, hostName);
         QFETCH(QByteArray, machineId);
         QFETCH(QString, namedAs);
+        // Without a machine id here, Qt goes by the name and takes this one
+        // itself, so nothing was taken over from anyone. See ruleTable.
+        if (hostName == QSysInfo::machineHostName().toUtf8()
+            && QSysInfo::machineUniqueId().isEmpty()) {
+            namedAs.clear();
+        }
         QVERIFY(!prepareProfile().isEmpty());
         const qint64 pid = deadPid();
         QVERIFY(pid != 0);
@@ -151,8 +215,12 @@ private slots:
         QVERIFY(elapsed.elapsed() < 5000);
         QVERIFY(ownership.ownsProfile());
         QVERIFY(!ownership.lockedByOtherComputer());
-        QVERIFY2(ownership.takeoverNote().contains(namedAs),
-                 qPrintable(ownership.takeoverNote()));
+        if (namedAs.isEmpty()) {
+            QVERIFY(ownership.takeoverNote().isEmpty());
+        } else {
+            QVERIFY2(ownership.takeoverNote().contains(namedAs),
+                     qPrintable(ownership.takeoverNote()));
+        }
 
         // It is ours now, with this computer's id, and goes away cleanly.
         QVERIFY(readFile(ownership.lockPath()).contains(QSysInfo::machineUniqueId()));

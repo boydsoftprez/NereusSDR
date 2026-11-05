@@ -64,6 +64,12 @@ public:
     // of known local types, so anything unrecognized gets the careful path.
     static bool diskTypeIsOnThisComputer(const QByteArray& diskType);
 
+    // Whether a lock file's contents were written on another computer, by the
+    // same test QLockFile makes before it refuses one.
+    static bool lockCameFromOtherComputer(const QByteArray& lockBytes,
+                                          const QByteArray& ownMachineId,
+                                          const QString& ownHostName);
+
     void setFolderIsOnThisComputerForTest(bool onThisComputer);
 
 private:
