@@ -389,11 +389,8 @@ private slots:
         // takes 2 s of 33 ms frames to settle: the same paced feed as
         // tst_daemon_agc_source's warm().
         for (int frame = 0; frame < 150 && !core.slice->stationAutoAgcNoiseFloorValid(); ++frame) {
-            const bool invoked = QMetaObject::invokeMethod(
-                &core.radio, "rawIqDataForStream", Qt::DirectConnection,
-                Q_ARG(int, core.slice->streamIndex()),
-                Q_ARG(QVector<float>, coreNoise.pairs(4096, kAmplitude)));
-            QVERIFY(invoked);
+            core.radio.forkIqToTapsForTest(core.slice->streamIndex(),
+                                         coreNoise.pairs(4096, kAmplitude));
             QTest::qWait(35);
         }
         QVERIFY(core.slice->stationAutoAgcNoiseFloorValid());

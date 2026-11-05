@@ -436,9 +436,7 @@ private slots:
         QTRY_VERIFY(source.activeStreamCount() >= 1);
         const QVector<float> noise = pseudoNoise();
         for (int frame = 0; frame < 90 && !slice->stationAutoAgcNoiseFloorValid(); ++frame) {
-            QVERIFY(QMetaObject::invokeMethod(&radio, "rawIqDataForStream", Qt::DirectConnection,
-                                              Q_ARG(int, slice->streamIndex()),
-                                              Q_ARG(QVector<float>, noise)));
+            radio.forkIqToTapsForTest(slice->streamIndex(), noise);
             QTest::qWait(35);
         }
         QVERIFY(slice->stationAutoAgcNoiseFloorValid());

@@ -20,6 +20,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-29 - Keep fresh creation on its creator/station VFO seed while
 //                restoring saved receiver preferences. Explicit startup
 //                restoration keeps its own NR; fresh +RX inherits NR.
@@ -2337,7 +2340,13 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // Keying marks the published Auto AGC noise floor stale at once, as the
     // headless Core's source does, not up to a tick later.
     connect(&m_transmitModel, &TransmitModel::moxChanged, this,
-            [this](bool) { publishStationAutoAgcNoiseFloors(); });
+            [this](bool) { refreshAutoAgcAcquisition(); });
+    connect(this, &RadioModel::transmittingChanged, this,
+            [this](bool) { refreshAutoAgcAcquisition(); });
+    connect(this, &RadioModel::coreOnAirChanged, this,
+            [this](bool) { refreshAutoAgcAcquisition(); });
+    connect(this, &RadioModel::connectionStateChanged, this,
+            [this]() { refreshAutoAgcAcquisition(); });
     // Ship default 2026-04-30: Clarity ON for fresh installs. Auto-tuning
     // the noise floor is the better first-launch experience than asking
     // the user to find and toggle the setting themselves.
@@ -3167,6 +3176,11 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
         connect(m_moxController, &MoxController::moxStateChanged, this,
                 [this](bool) { refreshRadioStatusPtt(); });
     }
+
+    connect(m_moxController, &MoxController::stateChanged, this,
+            [this](MoxState) { refreshAutoAgcAcquisition(); });
+    connect(m_moxController, &MoxController::moxStateChanged, this,
+            [this](bool) { refreshAutoAgcAcquisition(); });
 
     // R-R3-49 (parity Task 1): isCoreOnAir() follows the radio's
     // `transmitting`, the transmit model's TUNE and PureSignal's two-tone.
@@ -5504,6 +5518,9 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
 
 RadioModel::~RadioModel()
 {
+    // A retained ingress handle stays alive, inhibited, after this model.
+    m_autoAgcRetiring = true;
+    m_autoAgcAcquisitionEpoch->fetch_or(1U);
     // CW transmit: the CWX sender stops, lets go of the key line and joins
     // its thread first; then the keyer controller goes, so nothing the
     // teardown below signals re-evaluates it or pushes to a connection
@@ -28665,6 +28682,44 @@ namespace {
 constexpr double kStaleAutoAgcNoiseFloorDbm = -200.0;
 } // namespace
 
+// NereusSDR-original ownership/freshness adaptation. Thetis globally
+// inhibits AUTO writes on MOX (console.cs:46136-46138 [v2.10.3.15]) and
+// inhibits local TX noise-floor acquisition (display.cs:5387-5391,
+// 6629-6633 [v2.10.3.15]). Our station has several streams and hardware
+// QSK can transmit without MOX, so its existing sending stretch also holds
+// every AUTO estimator. No display stream or estimator state is reset.
+void RadioModel::refreshAutoAgcAcquisition()
+{
+    const bool cw = m_cwTxSliceInCw && m_cwKeyerController
+        && (m_cwKeyerController->radioKeyOut() || m_cwQskStretch);
+    const bool inhibit = m_autoAgcRetiring || !ownsLocalDsp() || !isConnected()
+        || isTransmitting() || mox() || isCoreOnAir() || cw;
+    const quint64 previous = autoAgcAcquisitionEpoch();
+    if (((previous & 1U) != 0) == inhibit) { return; }
+    const quint64 epoch = previous + 1;
+    m_autoAgcAcquisitionEpoch->store(epoch);
+    if (m_noiseFloorTracker) { m_noiseFloorTracker->setAcquisitionEpoch(epoch); }
+    for (NoiseFloorTracker* tracker : std::as_const(m_streamNoiseFloors)) {
+        if (tracker) { tracker->setAcquisitionEpoch(epoch); }
+    }
+    publishStationAutoAgcNoiseFloors();
+    emit autoAgcAcquisitionChanged(epoch);
+}
+
+void RadioModel::setNoiseFloorTracker(NoiseFloorTracker* tracker)
+{
+    m_noiseFloorTracker = tracker;
+    if (tracker) { tracker->setAcquisitionEpoch(autoAgcAcquisitionEpoch()); }
+}
+
+void RadioModel::setStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* tracker)
+{
+    if (tracker) {
+        tracker->setAcquisitionEpoch(autoAgcAcquisitionEpoch());
+        m_streamNoiseFloors.insert(streamIndex, tracker);
+    }
+}
+
 // A desktop window acting as Core: each slice's station noise floor, the
 // value a signed-in window or phone shows beside AUTO, from the same tracker
 // this window's own flag reads. The headless Core's DaemonAgcSource writes
@@ -28677,7 +28732,7 @@ void RadioModel::publishStationAutoAgcNoiseFloors()
     // Not valid by the headless Core's conditions
     // (DaemonAgcSource::canReceiveFromStream): radio down, transmitting, or
     // the slice's stream suspended or not running.
-    const bool receiving = isConnected() && !m_transmitModel.isMox();
+    const bool receiving = isConnected() && !autoAgcAcquisitionInhibited();
     for (SliceModel* slice : std::as_const(m_slices)) {
         if (!slice) {
             continue;
@@ -28687,7 +28742,7 @@ void RadioModel::publishStationAutoAgcNoiseFloors()
             || (!m_suspendedStreams.contains(stream) && streamActive(stream));
         const NoiseFloorTracker* tracker = noiseFloorTrackerForSlice(slice);
         const quint64 generation = slice->stationAutoAgcNoiseFloorGeneration();
-        if (receiving && streamReceives && tracker && tracker->isGood()) {
+        if (receiving && streamReceives && tracker && tracker->isGood() && tracker->acquisitionCurrent()) {
             slice->setStationAutoAgcNoiseFloor(
                 static_cast<double>(tracker->noiseFloor()), true, generation);
         } else if (slice->stationAutoAgcNoiseFloorValid()) {
@@ -28703,6 +28758,7 @@ void RadioModel::publishStationAutoAgcNoiseFloors()
 // Source selection is registered separately; there is no GUI dependency.
 void RadioModel::updateAutoAgc()
 {
+    refreshAutoAgcAcquisition();
     // Before the guards: a dropped radio has to mark the floor stale.
     publishStationAutoAgcNoiseFloors();
 
@@ -28711,7 +28767,7 @@ void RadioModel::updateAutoAgc()
         return;
     }
     // From Thetis v2.10.3.13 console.cs:46059 — if (!chkPower.Checked || _mox) return;
-    if (m_transmitModel.isMox()) {
+    if (autoAgcAcquisitionInhibited()) {
         return;
     }
 
@@ -28727,7 +28783,7 @@ void RadioModel::updateAutoAgc()
         // This slice's OWN stream noise floor. A shared tracker (stream 0's)
         // would set a 20m slice's threshold from 40m's noise floor.
         NoiseFloorTracker* nfTracker = noiseFloorTrackerForSlice(slice);
-        if (!nfTracker || !nfTracker->isGood()) {
+        if (!nfTracker || !nfTracker->isGood() || !nfTracker->acquisitionCurrent()) {
             continue;
         }
 
@@ -34219,6 +34275,7 @@ void RadioModel::endCwQskGap()
     m_cwQskGapPending = false;
     m_cwQskStretch = false;
     updateCwQskTimeOut();
+    refreshAutoAgcAcquisition();
 }
 
 // R-CW-10: the TX time-out counts while MOX is on and, in QSK, while the
@@ -34261,6 +34318,7 @@ void RadioModel::updateCwQskTimeOut()
             m_cwQskStretch = false;
         }
     }
+    refreshAutoAgcAcquisition();
     // CW transmit, Task 5: one time-out per stretch. Once it has fired, the
     // count stays off until the stretch ends.
     if (!m_cwQskStretch) {
@@ -39758,6 +39816,9 @@ void RadioModel::publishDdcAssignment(const NereusSDR::DdcAssignment& assignment
 // Codex review round 7, PR #293. See RadioModel.h.
 void RadioModel::forkIqToTaps(int receiverIndex, const QVector<float>& samples)
 {
+    // Capture at ingress, before fan-out can queue or re-enter a consumer.
+    const quint64 autoAgcEpoch = m_autoAgcAcquisitionEpoch->load();
+    emit rawIqDataForAutoAgc(receiverIndex, samples, autoAgcEpoch);
     // The untagged tap is stream zero and nothing else.
     //
     // It predates multi-stream and its only subscriber, TciServer, still

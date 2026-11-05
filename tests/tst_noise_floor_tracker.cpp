@@ -74,6 +74,32 @@ using namespace NereusSDR;
 class TestNoiseFloorTracker : public QObject {
     Q_OBJECT
 private slots:
+    void transmitHoldsBothFloorsAndAcquisitionTime()
+    {
+        NoiseFloorTracker t;
+        t.setAcquisitionEpoch(2);
+        t.feedForEpoch(QVector<float>(4096, -85.0f), 33.0f, 2);
+        t.feedForEpoch(QVector<float>(4096, -85.0f), 500.0f, 2);
+        QVERIFY(!t.isGood());
+        t.setAcquisitionEpoch(3);
+        for (int i = 0; i < 200; ++i) {
+            t.feedForEpoch(QVector<float>(4096, -115.0f), 33.0f, 3);
+        }
+        QCOMPARE(t.noiseFloor(), -85.0f);
+        QCOMPARE(t.agcNoiseFloor(), -85.0f);
+        QVERIFY(!t.isGood());
+        QVERIFY(!t.acquisitionCurrent());
+        t.setAcquisitionEpoch(4);
+        t.feedForEpoch(QVector<float>(4096, -115.0f), 2000.0f, 2);
+        QVERIFY(!t.acquisitionCurrent());
+        t.feedForEpoch(QVector<float>(4096, -85.0f), 500.0f, 4);
+        QVERIFY(t.acquisitionCurrent());
+        QVERIFY(!t.isGood());
+        t.feedForEpoch(QVector<float>(4096, -85.0f), 1000.0f, 4);
+        QVERIFY(t.isGood());
+        QCOMPARE(t.agcNoiseFloor(), -85.0f);
+    }
+
 
     void defaultsAreCorrect()
     {

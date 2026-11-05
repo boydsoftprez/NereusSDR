@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-28 - A new slice takes the open slice's noise reduction,
 //                including NNR suppression. NereusSDR-original. J.J. Boyd
 //                (KG4VCF), AI-assisted via xAI Grok.
@@ -3672,16 +3675,21 @@ public:
     /// Remote window only: the Core's latest figures, or all absent.
     void applyCoreHl2LinkFigures(const Hl2LinkFigures& figures);
     NoiseFloorTracker* noiseFloorTracker() const { return m_noiseFloorTracker; }
-    void setNoiseFloorTracker(NoiseFloorTracker* t) { m_noiseFloorTracker = t; }
+    void setNoiseFloorTracker(NoiseFloorTracker* t);
+    // Shared lifetime handle used by tests. Production forkIqToTaps reads
+    // the atomic directly. Odd epochs inhibit AUTO; even epochs receive.
+    std::shared_ptr<const std::atomic<quint64>> autoAgcAcquisitionHandle() const {
+        return m_autoAgcAcquisitionEpoch;
+    }
+    quint64 autoAgcAcquisitionEpoch() const { return m_autoAgcAcquisitionEpoch->load(); }
+    bool autoAgcAcquisitionInhibited() const { return (autoAgcAcquisitionEpoch() & 1U) != 0; }
 
     /// Register the tracker measuring one DDC stream's band.
     ///
     /// Auto AGC-T derives its threshold from the noise floor, so a slice has
     /// to measure the band it is on. With one shared tracker (stream 0's), a
     /// 20m slice would take its threshold from 40m's noise floor.
-    void setStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* t) {
-        if (t) { m_streamNoiseFloors.insert(streamIndex, t); }
-    }
+    void setStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* t);
     void clearStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* expected) {
         if (m_streamNoiseFloors.value(streamIndex, nullptr) == expected) {
             m_streamNoiseFloors.remove(streamIndex);
@@ -6697,6 +6705,7 @@ signals:
     void endOfOverTailChanged(bool active);
     // R-R3-49 (parity Task 1): isCoreOnAir() changed.
     void coreOnAirChanged(bool onAir);
+    void autoAgcAcquisitionChanged(quint64 epoch);
     // R-R3-49: the Core's transmit band (Thetis _tx_band, m_txBand) changed
     // or became known or unknown. It holds while keyed, so paOnAirBandIndex
     // follows this, not a slice's band.
@@ -6933,6 +6942,9 @@ signals:
     // reach its own engine (and from there its own panadapter).
     // Emitted from the same Connection-thread fork as rawIqData.
     void rawIqDataForStream(int streamIndex, const QVector<float>& samples);
+    // Same I/Q and stream, with AUTO metadata sampled on the publishing
+    // connection thread before any queued spectrum work.
+    void rawIqDataForAutoAgc(int streamIndex, const QVector<float>& samples, quint64 epoch);
 
     // An I/Q sequence gap on this stream (-1: every stream), emitted from
     // the same Connection-thread path as rawIqDataForStream and before the
@@ -9110,6 +9122,10 @@ private:
     // From Thetis v2.10.3.13 console.cs:46057 — tmrAutoAGC (500ms interval)
     QTimer* m_autoAgcTimer{nullptr};
     bool m_autoAgcFloorPublishedBySource{false};
+    std::shared_ptr<std::atomic<quint64>> m_autoAgcAcquisitionEpoch{
+        std::make_shared<std::atomic<quint64>>(1)};
+    bool m_autoAgcRetiring{false};
+    void refreshAutoAgcAcquisition();
     NoiseFloorTracker* m_noiseFloorTracker{nullptr};
     QMap<int, NoiseFloorTracker*> m_streamNoiseFloors;
     // Task 3.1 view hook — non-owning, set by MainWindow.

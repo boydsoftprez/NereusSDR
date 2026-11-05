@@ -7,6 +7,8 @@
 // transport policy.
 //
 // Modification history (NereusSDR):
+//   2026-11-03: #720 review: optional immutable AUTO ingress epoch and
+//               frame stamp. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-15: Display send thread: setFrameWake(), a published frame
 //               wakes the display thread instead of queueing frameAvailable
 //               to the main thread; currentGeneration(), so a frame held
@@ -71,6 +73,10 @@ struct DaemonSpectrumSourceConfig {
     /// only every Nth I/Q pair reaches the FFT. A change renews the input
     /// history, as the FFT size does.
     int decimation{1};
+    /// AUTO-only ingress: accept the stamped companion tap only for this
+    /// receiving epoch. Immutable until deactivation; display sources leave
+    /// this empty and retain their ordinary I/Q route.
+    std::optional<quint64> autoAgcEpoch;
 };
 
 /// What DaemonSpectrumSource::update() does with a change of the center alone.
@@ -106,6 +112,8 @@ struct DaemonSpectrumSourceUpdate {
 struct DaemonSpectrumFrame {
     MediaSourceKey source;
     quint64 generation{0};
+    /// AUTO source's accepted ingress epoch, never a consumption-time stamp.
+    std::optional<quint64> autoAgcEpoch;
     double centreHz{0.0};
     double sampleRateHz{0.0};
     qint64 producedAtNs{0};
@@ -258,10 +266,10 @@ public:
     /// inside the wake it replaced.
     void setFrameWake(std::function<void()> wake);
 
-    /// Test and non-RadioModel ingress.  Real daemon production uses
-    /// RadioModel::rawIqDataForStream.  This is queued to the engine thread
-    /// and intentionally has the same input-backlog characteristic as that
-    /// production route.
+    /// Untagged test/non-RadioModel ingress for ordinary display sources.
+    /// AUTO epoch sources reject this entry point and use the stamped tap.
+    /// This queues to the engine thread with the same bounded input backlog
+    /// as ordinary RadioModel::rawIqDataForStream production.
     void submitIq(int streamIndex, const QVector<float>& interleavedIq);
 
     /// Test seam: publishes one frame for an active source as its engine
