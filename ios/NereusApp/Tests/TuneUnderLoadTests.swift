@@ -131,15 +131,22 @@ struct TuneUnderLoadTests {
         /// of 0.75 ms per draw, about 13 ms of this work per ms of encode.
         /// The fastest of 52 2D and 3D scenes in 26 CI runs (2026-10-28 to
         /// 11-04) has an encode of 1.25 ms, so 16 ms. The slowest has 2.57 ms,
-        /// about 33 ms. CI's own reading of this work is an estimate until a
-        /// CI run prints it.
+        /// about 33 ms. One run's reading of this work on GitHub's hosted Mac
+        /// (PR 745, run 41937480842, 2026-11-05, four iPhone scenes): 17.69 to
+        /// 19.17 ms, so a factor of 1.11 to 1.20 and a limit of 166 to 180 ms,
+        /// with medians of 63 (nothing drawn), 104 (main held 15 ms a frame),
+        /// 102 (2D) and 95 ms (3D), all within.
         static let referenceMs = 16.0
-        /// The most a slow runner can raise the limit: to 202.5 ms. In those
-        /// 26 CI runs the slowest median of any scene is 168 ms. Each write
-        /// waits on the fake Core's 60 ms answer, so a regression that holds
-        /// the main thread 150 ms per write spaces them at least 210 ms apart
-        /// on any runner, however slow, and fails at this cap.
-        static let maxFactor = 1.35
+        /// The most a slow runner can raise the limit: to 180 ms. In those
+        /// 26 CI runs the slowest median of any scene is 168 ms, so this still
+        /// clears it. A hold on the main thread that runs alongside the fake
+        /// Core's 60 ms answer, which sleeps in its own task, does not add to
+        /// it: writes space at about the larger of the two. A hold between the
+        /// answer and the next write does add. Injected here, 2026-11-04, a
+        /// 150 ms hold per write gave medians of 154-168 ms alongside the
+        /// answer and 211-215 ms after it. So this cap always catches the
+        /// second, and the first only on a runner whose limit is under them.
+        static let maxFactor = 1.2
         static let samples = 16
         static let iterations = 200_000
 
