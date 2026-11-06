@@ -395,7 +395,7 @@ BandStackAccess* RadioModel::bandStack() const;
 `LocalBandStackAccess::setInvoker(std::function<void(const SessionMessage&)>)` routes through the server when hosting.
 
 **Acceptance:**
-- Reasons exact: `"This Core does not have band stacks yet. Updating the Core adds them."` and `"Connect to a radio to use band stacks."`.
+- Reasons exact: `"This Core does not have band stacks. Updating the Core may help."` and `"Connect to a radio to use band stacks."`.
 - Remote window on a Core without the capability: `state()` is `NeedsNewerCore`, `press` does nothing and `refused` fires the reason. Band buttons continue through `onBandButtonClicked`.
 - Remote sends the verbs of Task 4 with `band` as a key, carrying view values when present. `needsConfirmation` is not a refusal; the existing question path shows it.
 - Local without peers: direct controller call, with `refused` on refusal.
@@ -657,7 +657,7 @@ extension MirrorStore { public var bandStack: BandStack? { get } }
 - Verbs and arguments match Task 4 exactly, including `viewCenterHz` and `viewSpanHz` from the pan.
 - `needsConfirmation` sets no note (guard with `SeveralDevices.waitsForConfirmation`, `SeveralDevices.swift:49`). The sheet appears through `ConfirmationLayer`; Cancel changes nothing.
 - A refusal's words appear unchanged in `note`.
-- Availability strings: `"This Core does not have band stacks yet. Updating the Core adds them."`, `"Connect to a radio to use band stacks."`.
+- Availability strings: `"This Core does not have band stacks. Updating the Core may help."`, `"Connect to a radio to use band stacks."`.
 - `lastRecall` for this phone's slice applies its view once per `seq`; others ignored.
 
 **Verification:** Unit with the fake station. Build-for-testing on a temporary device, then `ios/scripts/sim-test.sh NereusBS-iPhone "$DD" -only-testing:NereusSDRTests/BandStackModelTests`.

@@ -353,7 +353,7 @@ document gets a prose entry, and `tests/data/link/v1/surface.json` is regenerate
 |---|---|---|
 | New | New | Everything here. |
 | New | Older | `slice.selectBand` as today. Its changes update last frequency used, and its slice's place does not move. |
-| Older | New | Band buttons as today. Panel, popup, dots, overlay and phone block are visible and greyed with "This Core does not have band stacks yet. Updating the Core adds them." |
+| Older | New | Band buttons as today. Panel, popup, dots, overlay and phone block are visible and greyed with "This Core does not have band stacks. Updating the Core may help." |
 | None (not connected) | New | Greyed: "Connect to a radio to use band stacks." |
 
 ## 7. Desktop
