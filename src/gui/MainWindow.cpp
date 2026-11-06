@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: The wire-rate signal also updates every pan and the cached
+//               stream windows, so a live Setup change reaches inactive pans,
+//               a later slice switch and Clarity's source, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-05: On Protocol 2 the FFT engines and the active pan take each
 //               stream's own rate from the wire-rate signal, issue 701.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -6400,8 +6404,8 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
     // DisplayHzPerBinTarget): it is per-stream and radio-connection-driven,
     // not a Setup -> Display setting, so it stays here. 768 kHz is the P2
     // default; RadioModel::wireSampleRateChanged and the streamCentreChanged
-    // handler below update it to the actual wire rate on each connect
-    // (P1=192k, P2=768k).
+    // handler below replace it on each connect: with the wire rate on
+    // Protocol 1, and with this stream's allocator rate on Protocol 2.
     engine->setSampleRate(768000.0);
 
     // Raw I/Q for this stream -> this engine.  The context object is the
@@ -10411,7 +10415,8 @@ void MainWindow::buildUI()
 
     // Create the FFT engine pool (spectrum thread from architecture).
     // Sample rate starts at P2 default (768k); RadioModel::wireSampleRateChanged
-    // updates it to the actual wire rate on each connect (P1=192k, P2=768k).
+    // updates it on each connect: to the wire rate on Protocol 1, and to each
+    // stream's allocator rate on Protocol 2.
     //
     // R1 Task 6: per-stream engine lifecycle, the four global display
     // AppSettings keys, and the shared FFT thread now live in FftEnginePool
@@ -10477,29 +10482,57 @@ void MainWindow::buildUI()
                 });
             }
         }
-        if (activeSpectrumWidget()) {
-            const int shownStream = m_panStack
-                ? m_panShownStream.value(m_panStack->activePanId(), -1) : -1;
-            activeSpectrumWidget()->setSampleRate(rateForStream(shownStream));
-            // Phase 3G-12: preserve the user's current zoom level across
-            // sample rate changes. Only reset the visible span if the
-            // current bandwidth would now exceed the new DDC sample rate
-            // (in which case we clamp to full-span).
-            // Against the EXTENDED ceiling, not the DDC rate.
-            //
-            // A span past the DDC rate is a legitimate state now: it is the
-            // one and only trigger for extended mode. Clamping to rateHz here
-            // meant any reconnect or rate change silently collapsed an
-            // extended view back onto the DDC, and the operator's zoom was
-            // gone with no wings and no explanation. setDisplayWindowClamped
-            // reads the DDC rate when extended view is switched off, so the
-            // ordinary case is unchanged. Codex, PR #318. That is the rate
-            // the widget was just given, so the ceiling follows the stream
-            // this pan shows, not the wire.
-            activeSpectrumWidget()->setDisplayWindowClamped(
-                activeSpectrumWidget()->centerFrequency(),
-                activeSpectrumWidget()->bandwidth());
+        // A live Setup change moves the allocator and publishes no
+        // streamCentreChanged (RadioModel::startSampleRateChange), so this
+        // handler is the only news of it. The cached windows take the rate
+        // too: showOwnStreamOnPan replays them when a pan changes stream and
+        // Clarity's source reads them.
+        for (auto window = m_streamWindows.begin(); window != m_streamWindows.end(); ++window) {
+            window->sampleRateHz = static_cast<int>(rateForStream(window.key()));
         }
+        // Every pan, not just the active one: each display follows its own
+        // receiver's rate.
+        //   From Thetis console.cs:19918,19959 [v2.10.3.15]
+        //     Display.SampleRateRX1 = value; ... Display.SampleRateRX2 = value;
+        // A pan nothing picks a stream for (showOwnStreamOnPan) still draws
+        // the streams it carries, and took its window from the last of them.
+        // A pan carrying none has no bins to scale. The active one takes the
+        // wire rate as it always has; the others keep their view until a
+        // stream reaches them.
+        if (m_panStack) {
+            const QString activePan = m_panStack->activePanId();
+            const QList<SpectrumSubscription> subscriptions = m_topology.subscriptions();
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
+                if (!sw) { continue; }
+                const QString panId = applet->panId();
+                int stream = m_panShownStream.value(panId, -1);
+                if (stream < 0) {
+                    for (const SpectrumSubscription& sub : subscriptions) {
+                        if (sub.consumerId == panId) { stream = sub.streamIndex; }
+                    }
+                }
+                if (stream < 0 && panId != activePan) { continue; }
+                sw->setSampleRate(rateForStream(stream));
+                // Phase 3G-12: preserve the user's current zoom level across
+                // sample rate changes. Only reset the visible span if the
+                // current bandwidth would now exceed the new DDC sample rate
+                // (in which case we clamp to full-span).
+                // Against the EXTENDED ceiling, not the DDC rate.
+                //
+                // A span past the DDC rate is a legitimate state now: it is the
+                // one and only trigger for extended mode. Clamping to rateHz here
+                // meant any reconnect or rate change silently collapsed an
+                // extended view back onto the DDC, and the operator's zoom was
+                // gone with no wings and no explanation. setDisplayWindowClamped
+                // reads the DDC rate when extended view is switched off, so the
+                // ordinary case is unchanged. Codex, PR #318. That is the rate
+                // the widget was just given, so the ceiling follows the stream
+                // this pan shows, not the wire.
+                sw->setDisplayWindowClamped(sw->centerFrequency(), sw->bandwidth());
+            }
+        }
+        reconcileClarityBindings();
     });
     // Spectrum/waterfall FPS — load persisted value (default 30), apply to
     // BOTH the FFT engine (row production cadence) and the SpectrumWidget

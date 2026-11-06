@@ -11,22 +11,35 @@
 // rate of its own; both take the wire rate. Runs a real MainWindow and fires
 // the real signal.
 //
+// Limits: the signal is fired by hand rather than through connectToRadio or
+// setSampleRateLive, and a null connection stands in for Protocol 2. A live
+// change is staged by moveAllocatorQuietly, which leaves the state
+// startSampleRateChange leaves. tst_desktop_station_window has the hosted row,
+// a pan nothing picks a stream for.
+//
 // Modification history (NereusSDR):
+//   2026-11-06: Live Setup change rows: inactive pans, the cached stream
+//               windows, Clarity's source, the clamp, and Protocol 1.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-05: Created. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 
 #include <QLoggingCategory>
+#include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QThread>
 
 #include "core/AppSettings.h"
 #include "core/FFTEngine.h"
+#include "core/FFTRouter.h"
 #include "core/HpsdrModel.h"
 #include "core/P1RadioConnection.h"
 #include "core/spectrum/FftEnginePool.h"
 #include "fakes/MainWindowTestSettings.h"
 #include "gui/MainWindow.h"
+#include "gui/PanClarityRegistry.h"
+#include "gui/PanadapterApplet.h"
 #include "gui/PanadapterStack.h"
 #include "gui/SpectrumWidget.h"
 #include "models/RadioModel.h"
@@ -78,6 +91,39 @@ class TestPanRateFollowsStream : public QObject {
         QVERIFY(stack);
         QTRY_COMPARE(stack->spectrum(QStringLiteral("pan-0"))->sampleRate(),
                      static_cast<double>(kStreamRateHz));
+    }
+
+    // What a live Setup change leaves (RadioModel::startSampleRateChange):
+    // the allocator on the new rate, nothing published.
+    static void moveAllocatorQuietly(RadioModel* model, const QList<int>& streams, int rateHz)
+    {
+        const QSignalBlocker quiet(model);
+        for (int stream : streams) {
+            QVERIFY(model->setStreamSampleRate(stream, rateHz));
+            QCOMPARE(model->streamSampleRateHzForTest(stream), rateHz);
+        }
+    }
+
+    // bringUp, then a second pan with its own slice on its own stream.
+    // Returns that stream through secondStream; pan-0 is left active.
+    static void bringUpTwoPans(MainWindow& window, int& secondStream)
+    {
+        bringUp(window);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("2v"))));
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        SpectrumWidget* secondary = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(secondary);
+        QTRY_VERIFY(secondary->vfoWidget(1));
+        const SliceModel* second = model->sliceById(1);
+        QVERIFY(second);
+        secondStream = second->streamIndex();
+        QVERIFY(secondStream > 0);
+        QTRY_COMPARE(secondary->sampleRate(), static_cast<double>(kStreamRateHz));
+        stack->setActivePan(QStringLiteral("pan-0"));
+        QCOMPARE(stack->activePanId(), QStringLiteral("pan-0"));
     }
 
 private slots:
@@ -174,6 +220,7 @@ private slots:
 
         emit window.radioModel()->wireSampleRateChanged(kWireRateHz);
 
+        QCOMPARE(sw->sampleRate(), static_cast<double>(kStreamRateHz));
         QCOMPARE(sw->bandwidth(), zoomedSpanHz);
         QCOMPARE(sw->centerFrequency(), centreHz);
     }
@@ -222,6 +269,117 @@ private slots:
         QCOMPARE(secondary->bandwidth(), static_cast<double>(kSecondRateHz));
     }
 
+    // Live Setup change, two pans on two streams: the inactive pan moves with
+    // the active one, at once and not only when it is clicked.
+    void liveChangeReachesTheInactivePan()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpTwoPans(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        SpectrumWidget* primary = stack->spectrum(QStringLiteral("pan-0"));
+        SpectrumWidget* secondary = stack->spectrum(QStringLiteral("pan-1"));
+        constexpr int kNewRateHz = 1536000;
+        moveAllocatorQuietly(model, {0, stream}, kNewRateHz);
+        if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(secondary->sampleRate(), static_cast<double>(kStreamRateHz));
+
+        emit model->wireSampleRateChanged(kNewRateHz);
+
+        QCOMPARE(primary->sampleRate(), static_cast<double>(kNewRateHz));
+        QCOMPARE(secondary->sampleRate(), static_cast<double>(kNewRateHz));
+        stack->setActivePan(QStringLiteral("pan-1"));
+        QCOMPARE(secondary->sampleRate(), static_cast<double>(kNewRateHz));
+    }
+
+    // Live Setup change down, extended view off: the inactive pan's span comes
+    // in to the new rate as the active pan's does.
+    void liveChangeClampsTheInactivePan()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpTwoPans(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        SpectrumWidget* secondary =
+            window.findChild<PanadapterStack*>()->spectrum(QStringLiteral("pan-1"));
+        constexpr int kHighRateHz = 768000;
+        QVERIFY(model->setStreamSampleRate(stream, kHighRateHz));
+        QTRY_COMPARE(secondary->sampleRate(), static_cast<double>(kHighRateHz));
+        secondary->setExtendedViewAllowed(false);
+        secondary->setFrequencyRange(secondary->centerFrequency(), kHighRateHz);
+        moveAllocatorQuietly(model, {0, stream}, kStreamRateHz);
+        if (QTest::currentTestFailed()) { return; }
+
+        emit model->wireSampleRateChanged(kStreamRateHz);
+
+        QCOMPARE(secondary->sampleRate(), static_cast<double>(kStreamRateHz));
+        QCOMPARE(secondary->bandwidth(), static_cast<double>(kStreamRateHz));
+    }
+
+    // Live Setup change, one pan with slices A and B on two streams: selecting
+    // B afterwards replays the cached window, which has to hold the new rate.
+    void liveChangeReachesTheCachedWindowOfTheOtherSlice()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        bringUp(window);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        SpectrumWidget* sw = stack->spectrum(QStringLiteral("pan-0"));
+        PanadapterApplet* applet = stack->panadapter(QStringLiteral("pan-0"));
+        QVERIFY(applet);
+        const int aId = model->slices().first()->sliceIndex();
+        const int bId = model->addSlice(QStringLiteral("pan-0"));
+        QVERIFY(bId >= 0);
+        SliceModel* a = model->sliceById(aId);
+        SliceModel* b = model->sliceById(bId);
+        QVERIFY(a && b);
+        b->setFrequency(a->frequency() + 2'000'000.0);
+        const int aStream = a->streamIndex();
+        const int bStream = b->streamIndex();
+        QVERIFY(aStream >= 0 && bStream >= 0 && aStream != bStream);
+        applet->setActiveSliceIndex(aId);
+        constexpr int kNewRateHz = 1536000;
+        moveAllocatorQuietly(model, {aStream, bStream}, kNewRateHz);
+        if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(b->streamIndex(), bStream);
+
+        emit model->wireSampleRateChanged(kNewRateHz);
+        QCOMPARE(sw->sampleRate(), static_cast<double>(kNewRateHz));
+
+        applet->setActiveSliceIndex(bId);
+
+        QCOMPARE(applet->activeSliceIndex(), bId);
+        QCOMPARE(sw->sampleRate(), static_cast<double>(kNewRateHz));
+    }
+
+    // Clarity's source is the cached window, so it hears of a live change too.
+    void liveChangeReachesClaritysSource()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        bringUp(window);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        auto* registry = window.findChild<PanClarityRegistry*>();
+        QVERIFY(registry);
+        const QString pan = QStringLiteral("pan-0");
+        QVERIFY(registry->sourceForPanForTest(pan).has_value());
+        QCOMPARE(registry->sourceForPanForTest(pan)->sampleRateHz,
+                 static_cast<double>(kStreamRateHz));
+        constexpr int kNewRateHz = 1536000;
+        moveAllocatorQuietly(model, {0}, kNewRateHz);
+        if (QTest::currentTestFailed()) { return; }
+
+        emit model->wireSampleRateChanged(kNewRateHz);
+
+        QVERIFY(registry->sourceForPanForTest(pan).has_value());
+        QCOMPARE(registry->sourceForPanForTest(pan)->sampleRateHz,
+                 static_cast<double>(kNewRateHz));
+    }
+
     // Protocol 1 carries one rate for the radio: the wire rate wins even with
     // the allocator holding another.
     void p1FollowsTheWire()
@@ -245,6 +403,49 @@ private slots:
 
         QCOMPARE(engine->sampleRate(), kP1WireRateHz);
         QCOMPARE(sw->sampleRate(), kP1WireRateHz);
+    }
+
+    // Protocol 1, two pans: the inactive pan takes the wire rate as well.
+    void p1InactivePanFollowsTheWire()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpTwoPans(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        P1RadioConnection connection;
+        DetachConnection detach{model};
+        model->injectConnectionForTest(&connection);
+        QVERIFY(model->sampleRateIsRadioWide());
+        SpectrumWidget* secondary =
+            window.findChild<PanadapterStack*>()->spectrum(QStringLiteral("pan-1"));
+        constexpr double kP1WireRateHz = 384000.0;
+
+        emit model->wireSampleRateChanged(kP1WireRateHz);
+
+        QCOMPARE(secondary->sampleRate(), kP1WireRateHz);
+    }
+
+    // An inactive pan carrying no stream has no bins to scale: it keeps its
+    // view until a stream reaches it. The active pan is the wire-rate case.
+    void inactivePanWithNoStreamKeepsItsView()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpTwoPans(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        SpectrumWidget* secondary =
+            window.findChild<PanadapterStack*>()->spectrum(QStringLiteral("pan-1"));
+        model->removeSlice(1);
+        QTRY_VERIFY(!model->sliceById(1));
+        QTRY_VERIFY(!model->fftRouter()->receiversForPan(QStringLiteral("pan-1")).contains(stream));
+        constexpr double kLeftRateHz = 384000.0;
+        secondary->setSampleRate(kLeftRateHz);
+
+        emit model->wireSampleRateChanged(kWireRateHz);
+
+        QCOMPARE(secondary->sampleRate(), kLeftRateHz);
     }
 
     // A stream the allocator holds no active DDC for has no rate of its own.

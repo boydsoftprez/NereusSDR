@@ -27,6 +27,9 @@
 //     final review fix wave (I1): a container VFO display's TX box in a
 //     hosting window asks for transmit as the flags do, refused with the
 //     reason while another device holds it; nothing keys.
+//   2026-11-06, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//     issue 701: a hosted pan nothing picks a stream for keeps the rate of
+//     the stream it carries when the wire rate is published.
 
 #include "UnusedLoopbackPort.h"
 #include "gui/HostingSliceActions.h"
@@ -2099,6 +2102,62 @@ private slots:
         QVERIFY(edgeMarkerPixels(f.remaining, f.bId, true) > 0);
     }
 
+    // Issue 701. Another device's slice on this window's pan, not listened to:
+    // nothing picks a stream for the pan (streamShownOnPan), and it still
+    // carries that slice's stream and draws its frames. A reconnect brings the
+    // stream back at its saved rate, and the wire rate must not stretch it.
+    void aPanNothingPicksAStreamForKeepsTheRateOfTheStreamItCarries()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        RadioModel* model = window.radioModel();
+        model->setBoardForTest(HPSDRHW::Saturn);
+        model->configureStreamPool(5, 5, 192000);
+        model->setConnectionStateForTest(ConnectionState::Connected);
+        const int aId = model->addSlice(QStringLiteral("pan-0"));
+        const int bId = model->addSlice(QStringLiteral("pan-1"));
+        QVERIFY(applyLayout(window, QStringLiteral("2v")));
+        auto* stack = window.findChild<PanadapterStack*>();
+        QVERIFY(stack);
+        SpectrumWidget* pan = stack->spectrum(QStringLiteral("pan-1"));
+        QVERIFY(pan);
+        SliceModel* b = model->sliceById(bId);
+        QVERIFY(b);
+        b->setFrequency(model->sliceById(aId)->frequency() + 1'000'000.0);
+        const int stream = b->streamIndex();
+        QVERIFY(stream >= 0 && stream != model->sliceById(aId)->streamIndex());
+        DesktopStationController controller(model, optionsFor(settings, directory.path()));
+        window.setDesktopStationController(&controller);
+        QVERIFY(controller.start(true));
+        QVERIFY(controller.server());
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(*controller.server(), phoneSession,
+                                            QByteArrayLiteral("phone-device-id-for-pan-rate-01"))
+                                     .deviceId;
+        QVERIFY(!phone.isEmpty());
+        SliceOwnership* ownership = model->sliceOwnership();
+        ownership->setOwner(bId, phone);
+        QVERIFY(ownership->leave(SliceOwnership::stationDevice(), bId));
+
+        constexpr int kStreamRateHz = 96000;
+        QVERIFY(model->setStreamSampleRate(stream, kStreamRateHz));
+        // A VFO tick runs the routing pass, which sees that nothing picks.
+        b->setFrequency(b->frequency() + 100.0);
+        QCOMPARE(b->streamIndex(), stream);
+        QTRY_COMPARE(pan->sampleRate(), static_cast<double>(kStreamRateHz));
+        QVERIFY(model->fftRouter()->receiversForPan(QStringLiteral("pan-1")).contains(stream));
+        stack->setActivePan(QStringLiteral("pan-1"));
+        QCOMPARE(stack->activePanId(), QStringLiteral("pan-1"));
+
+        emit model->wireSampleRateChanged(1536000.0);
+
+        QCOMPARE(pan->sampleRate(), static_cast<double>(kStreamRateHz));
+        controller.stop();
+    }
+
     void aRevealStillCentresThePanItOpensOnTheSlice()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
@@ -3339,6 +3398,7 @@ int main(int argc, char** argv)
            QStringLiteral("hostVoxFollowsTheTransmitHolder")}},
          {QStringLiteral("layout"),
           {QStringLiteral("layoutChangeKeepsListeningToASliceOnARemainingPan"),
+           QStringLiteral("aPanNothingPicksAStreamForKeepsTheRateOfTheStreamItCarries"),
            QStringLiteral("aRevealStillCentresThePanItOpensOnTheSlice"),
            QStringLiteral("aRevealGrowDocksASliceKeyedToThePanItMakes"),
            QStringLiteral("aPlacedListenedSliceIsNeverTheRemainingPansActiveSlice"),

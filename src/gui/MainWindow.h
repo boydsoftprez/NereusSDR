@@ -1906,7 +1906,8 @@ private:
     // (FFTEngine for RX, TxAnalyzer for TX).  See TxAnalyzer.h header.
     TxAnalyzer*         m_txAnalyzer{nullptr};
 
-    /// Last centre + sample rate RadioModel published for each stream, kept
+    /// Last centre + sample rate RadioModel published for each stream (the
+    /// wire-rate handler keeps the rate current on a live change), kept
     /// so a pan that subscribes AFTER the stream was centred still learns
     /// where its bins sit. RadioModel::bindSliceToStream emits
     /// streamCentreChanged BEFORE SliceModel::streamIndex is updated and
