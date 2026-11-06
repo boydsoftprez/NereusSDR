@@ -1,8 +1,9 @@
 # Band Stack Design
 
 **Date:** 2026-11-05
-**Status:** Design settled with J.J. Boyd (KG4VCF) on the mockups; implementation planned in
-[2026-11-05-band-stack-plan.md](2026-11-05-band-stack-plan.md).
+**Status:** Built, and awaiting the hardware run
+([hardware run list](2026-11-05-band-stack-hardware-run.md)). Design settled with J.J. Boyd (KG4VCF)
+on the mockups; implementation planned in [2026-11-05-band-stack-plan.md](2026-11-05-band-stack-plan.md).
 **Replaces:** the April draft (`docs/architecture/bandstack-design.md` at commit `4e85a5328`,
 never on main). Its decisions stand unless section 3 says otherwise.
 **Mockups:** [desktop](2026-11-05-band-stack-design/desktop.html),
