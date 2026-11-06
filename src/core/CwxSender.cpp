@@ -1753,7 +1753,16 @@ bool CwxSender::sendTextWithEpoch(const QString& text, quint32 epoch, const Remo
         element.remoteEpoch = epoch;
     }
     if (m_keyHeld) {
-        releaseKeyHeldLocked();
+        if (epoch != 0 && m_heldEpoch == epoch) {
+            // The same activity goes on as this text, as the paddle's does below.
+            // finishing the epoch here would cancel the text just admitted to it.
+            m_heldEpoch = 0;
+            setKeyHeldStateLocked(false);
+            setKeyLocked(false);
+            setPttLocked(false);
+        } else {
+            releaseKeyHeldLocked();
+        }
     }
     if (paddleHeldLocked()) {
         if (m_heldEpoch == epoch) {
@@ -1905,11 +1914,12 @@ bool CwxSender::holdRemoteKey(quint32 epoch, RemoteAdmission admit)
 }
 
 // R-HK-13: the same path as holdRemoteKey, with the soft bits in place of the
-// CWX bit and PTT. Only a press renews the deadline: a message that just lets
-// go of one key while another stays down is not one.
-bool CwxSender::holdRemotePaddle(quint32 epoch, bool dot, bool dash, RemoteAdmission admit)
+// CWX bit and PTT. Only a press renews the deadline, and only the key pressed goes
+// down: a message that says the same again, or that just lets go of one key,
+// is not a press, so no peer can hold a key past "3 s after the last press."
+bool CwxSender::holdRemotePaddle(quint32 epoch, PaddleKeys keys, PaddleKeys rose, RemoteAdmission admit)
 {
-    if (epoch == 0 || (!dot && !dash)) {
+    if (epoch == 0 || !keys.any()) {
         return false;
     }
     const QString words = gateWords();
@@ -1919,6 +1929,9 @@ bool CwxSender::holdRemotePaddle(quint32 epoch, bool dot, bool dash, RemoteAdmis
     }
     const std::lock_guard<std::mutex> lock(m_mutex);
     const bool continues = paddleHeldLocked() && m_heldEpoch == epoch;
+    if (!continues && !rose.any()) {
+        return true;
+    }
     if (!admitRemoteLocked(epoch, admit, !continues)) {
         return false;
     }
@@ -1932,14 +1945,12 @@ bool CwxSender::holdRemotePaddle(quint32 epoch, bool dot, bool dash, RemoteAdmis
             QMetaObject::invokeMethod(this, [this]() { emit emptied(); }, Qt::QueuedConnection);
         }
     }
-    const bool onlyLetsGo = continues && (!dot || m_paddleDot) && (!dash || m_paddleDash)
-        && (dot != m_paddleDot || dash != m_paddleDash);
-    if (!onlyLetsGo) {
+    if (rose.any()) {
         m_keyDeadline = m_clock() + std::chrono::milliseconds(kKeyWatchdogMs);
     }
     m_heldEpoch = epoch;
-    m_paddleDot = dot;
-    m_paddleDash = dash;
+    m_paddleDot = rose.dot || (continues && m_paddleDot && keys.dot);
+    m_paddleDash = rose.dash || (continues && m_paddleDash && keys.dash);
     applyLineLocked();
     setSendingLocked(true);
     m_wake.store(true, std::memory_order_release);

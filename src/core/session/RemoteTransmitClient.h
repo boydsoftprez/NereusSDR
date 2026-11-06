@@ -46,6 +46,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: First-look fixes: a key's release ends only what that key
+//               started; cwActivityEnded. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
 //   2026-11-05: Hot keys (R-HK-13), remote dot and dash: setCwPaddle.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
@@ -110,6 +113,7 @@
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QTimer>
 
@@ -319,6 +323,9 @@ signals:
     void micSourceChanged(RemoteMicSource accepted, bool settled, const QString& reason);
     /// CW transmit (R-CW-48): the Core refused a cw.* request, in its words.
     void cwRefused(const QString& reason, const QString& code, const QString& fix);
+    /// This window's CW activity is over: stopped here, ended by the Core, or
+    /// the session retired. A key still held needs a fresh press.
+    void cwActivityEnded();
 
 private:
     enum class Phase { Idle, Waiting, On };
@@ -330,7 +337,10 @@ private:
         /// A program key asked with ",tci": it brings its own audio.
         bool programAudio{false};
     };
-    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource, Cw };
+    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource, Cw, CwRelease };
+    // What started the CW activity now running, so a release ends only its own.
+    enum class CwOwner { None, Message, Key, Paddle };
+    void endCwActivityOf(CwOwner key);
     struct Pending {
         Kind kind;
         QByteArray verb;
@@ -360,6 +370,8 @@ private:
     bool m_cwPaddleAvailable{false};
     bool m_cwReleaseAvailable{false};
     bool m_cwPending{false};
+    CwOwner m_cwOwner{CwOwner::None};
+    QPair<bool, bool> m_cwPaddleReported{false, false};    // dot, dash, as last sent
     quint32 m_cwEpoch{0};
     quint32 m_cwRetiredEpoch{0};
     quint64 m_cwGeneration{0};

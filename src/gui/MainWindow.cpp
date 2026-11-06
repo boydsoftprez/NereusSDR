@@ -4591,6 +4591,14 @@ void MainWindow::ensureRemoteSession()
         }
 
         m_stationClient = new StationClient(m_radioModel, proxy, this);
+        // Hot keys: the dot and dash this window reported end with its CW.
+        if (RemoteTransmitClient* const remote = m_stationClient->remoteTransmit()) {
+            connect(remote, &RemoteTransmitClient::cwActivityEnded, this, [this] {
+                if (m_hotKeyTargets) {
+                    m_hotKeyTargets->onRemoteCwEnded();
+                }
+            });
+        }
         // CW transmit (R-CW-49): the CWX applet hears the Core's refusals.
         bindRemoteCwx();
         connect(m_radioModel, &RadioModel::remoteMicSourceStateChanged,

@@ -4716,9 +4716,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId,
                                                        false, TxRefusals::notReady().text, {});
             }
+            // R-HK-13: only a key that rises raises a key. With none rising and no
+            // paddle down, the message is a release: the key it reports down
+            // was ended (the deadline, a stop) and needs a fresh press.
+            CwxSender::PaddleKeys paddleRose;
+            bool paddleGoesOn = false;
+            if (request.kind == Kind::Paddle) {
+                const QPair<bool, bool> last = m_cwPaddleReported.value(requester);
+                paddleRose = {request.dot && !last.first, request.dash && !last.second};
+                m_cwPaddleReported.insert(requester, {request.dot, request.dash});
+                paddleGoesOn = (request.dot || request.dash)
+                    && m_radioModel->cwxSendingFor() == requester
+                    && m_radioModel->cwxSender()->isRemotePaddleHeld();
+            }
             const bool engages = request.kind == Kind::Send || request.kind == Kind::Memory
                 || (request.kind == Kind::Key && request.down)
-                || (request.kind == Kind::Paddle && (request.dot || request.dash));
+                || (request.kind == Kind::Paddle && (paddleRose.any() || paddleGoesOn));
             TxRefusal refusal;
             if (engages) {
                 // The session's own gate first, then the holder's: sending
@@ -4734,8 +4747,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     }
                 }
                 if (refusal.isEmpty()) {
-                    const auto start = [&request](CwxSender& sender, quint32 epoch,
-                                                  const std::function<bool()>& admit) {
+                    const auto start = [&request, paddleRose](CwxSender& sender, quint32 epoch,
+                                                              const std::function<bool()>& admit) {
                         switch (request.kind) {
                         case Kind::Send:
                             return sender.sendRemoteText(epoch, request.text, admit);
@@ -4744,7 +4757,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                         case Kind::Key:
                             return sender.holdRemoteKey(epoch, admit);
                         case Kind::Paddle:
-                            return sender.holdRemotePaddle(epoch, request.dot, request.dash, admit);
+                            return sender.holdRemotePaddle(epoch, {request.dot, request.dash}, paddleRose, admit);
                         case Kind::Stop:
                             break;
                         }
@@ -4753,11 +4766,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     // A change while this device's paddle is down stays in its
                     // activity: a replacement would lift the key that stays
                     // down and fence the wire for a frame, mid-element.
-                    const bool samePaddle = request.kind == Kind::Paddle
-                        && m_radioModel->cwxSendingFor() == requester
-                        && m_radioModel->cwxSender()->isRemotePaddleHeld();
                     refusal = m_radioModel->requestRemoteCwxFor(
-                        requester, request.kind != Kind::Send && !samePaddle, start);
+                        requester, request.kind != Kind::Send && !paddleGoesOn, start);
                 }
                 // A refused press is no reason to leave the other key down.
                 if (!refusal.isEmpty() && request.kind == Kind::Paddle
@@ -4765,7 +4775,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     m_radioModel->cwxSender()->setPaddleHeld(false, false);
                 }
             } else {
-                // A release (cw.stop, cw.key up, cw.paddle with both up) is always taken: it ends
+                // A release (cw.stop, cw.key up, cw.paddle with no key rising and
+                // none held) is always taken: it ends
                 // only what the sender runs for this device, so it never
                 // touches another device's CW or the station's own.
                 if (m_radioModel->cwxSendingFor() == requester) {
@@ -6127,6 +6138,8 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
             // for ends with its session, at once rather than at the Key's
             // 3 s watchdog.
             m_radioModel->stopCwxFor(sessionDevice);
+            // R-HK-13: the next session's first press is a press.
+            m_cwPaddleReported.remove(sessionDevice);
             if (!self) { return; }
         }
         if (leaving || sessionDevice.startsWith("token:")) {
@@ -7510,6 +7523,7 @@ void StationServer::admit(SessionTransport* transport, const QString& name,
             if (m_radioModel) {
                 // CW transmit (R-CW-49): the older session's CWX ends too.
                 m_radioModel->stopCwxFor(device.deviceId);
+                m_cwPaddleReported.remove(device.deviceId);
                 if (!self) { return; }
             }
             m_transmitHolder->holderDropped(device.deviceId,

@@ -60,6 +60,13 @@ public:
     // else the window's active pan.
     SpectrumWidget* zoomTarget(const QWidget* activeWindow) const;
 
+    // The Core ended this window's CW, or its session retired: the dot and dash
+    // it reported are forgotten, and a key still held needs a fresh press.
+    void onRemoteCwEnded();
+    // A hosted take this hold's key was waiting on was not granted. True when
+    // that hold had a claim on the key, which is gone now.
+    bool onHostKeyTakeNotGranted();
+
     // Band stack is reached by slot name, so these keys stay disabled with a
     // reason until `window` has the slots.
     static QString bandStackReason(const QObject* window, const QString& id);

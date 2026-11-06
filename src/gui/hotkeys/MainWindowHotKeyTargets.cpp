@@ -564,6 +564,8 @@ void MainWindowHotKeyTargets::runCwMessage(const QString& id)
     const bool local = model->ownsLocalDsp();
     if (id == QLatin1String("cw.stop")) {
         if (local) {
+            // As a remote stop: a key still held comes back only with a fresh press.
+            model->cwSoftPaddle()->releaseKeys();
             if (CwxSender* const sender = model->cwxSender()) {
                 sender->stop();
             }
@@ -681,6 +683,26 @@ void MainWindowHotKeyTargets::setRemotePaddleKey(bool isDot, bool down)
         key = false;
         toast(remotePaddleReason());
     }
+}
+
+// The session or the activity is gone, so what this window reported is too. Lifting
+// one key later must not tell the Core the other is down. With the session still
+// there the Core hears both up, so its record agrees and the next press is a press.
+void MainWindowHotKeyTargets::onRemoteCwEnded()
+{
+    const bool anyDown = std::exchange(m_remoteDot, false);
+    const bool dashDown = std::exchange(m_remoteDash, false);
+    if (anyDown || dashDown) {
+        if (RemoteTransmitClient* const remote = remoteCwClient()) {
+            remote->setCwPaddle(false, false);
+        }
+    }
+}
+
+bool MainWindowHotKeyTargets::onHostKeyTakeNotGranted()
+{
+    m_hostTakeNotGranted = true;
+    return std::exchange(m_holdThroughHost, false);
 }
 
 void MainWindowHotKeyTargets::setStraightKeyDown(bool down)

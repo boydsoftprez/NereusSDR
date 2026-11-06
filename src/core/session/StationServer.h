@@ -3074,6 +3074,9 @@ private:
     // CW transmit (R-CW-49): each session's cw.* answers by command id, so
     // the copies of one command are answered alike and the Core acts once.
     QHash<QString, QHash<quint32, QPair<QByteArray, SessionMessage>>> m_cwReplies;
+    // Hot keys (R-HK-13): the last dot and dash each device reported, for its
+    // session. A key rises against this, whatever ended the keys since.
+    QHash<QByteArray, QPair<bool, bool>> m_cwPaddleReported;   // dot, dash
     static constexpr int kRememberedCwCommands = 32;
     QPointer<SessionTransport> m_dispatchingTransport;
     InvokeFrame* m_invokeFrame = nullptr;

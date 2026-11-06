@@ -34333,7 +34333,9 @@ void RadioModel::cwAutoModeTick()
 {
     // A dot or dash still down: Thetis restarts the wait every 1 ms while
     // one is (update_for_auto_mode_return from the poll).
-    if (m_cwRadioPaddleDown || (m_cwSerialKey && m_cwSerialKey->paddleDown())) {
+    // Hot keys (R-HK-13): comma and period too, as the serial paddles.
+    if (m_cwRadioPaddleDown || (m_cwSerialKey && m_cwSerialKey->paddleDown())
+        || (m_cwSoftPaddle && m_cwSoftPaddle->isKeying())) {
         if (m_cwAutoModeTimer) {
             m_cwAutoModeTimer->start(m_transmitModel.cwAutoModeReturnMs());
         }

@@ -66,6 +66,8 @@ public:
         setState(ConnectionState::Connected);
     }
 
+    void reportKey(bool dot, bool dash, bool keyOut) { emit radioKeyStatus(dot, dash, keyOut); }
+
     void init() override {}
     void connectToRadio(const NereusSDR::RadioInfo&) override {}
     void disconnect() override {}
@@ -496,6 +498,69 @@ private slots:
         w.release(kDash);
     }
 
+    // First-look fixes, item 14: nothing from the radio. Its report of a key
+    // down is what lets the keyer's latch shut the gate, so with none the gate
+    // stays open and only the stop's own release can lift the bits.
+    void aKeyedStopReleasesWithTheRadioSayingNothing()
+    {
+        LocalWindow w;
+        w.press(kDash);
+        QVERIFY(w.line->dash());
+        w.model->stopAllTx(QStringLiteral("Stopped."));
+        QVERIFY(w.model->cwKeyerController()->keyerAllowed());
+        QVERIFY(!w.model->cwSoftPaddle()->isKeying());
+        QCOMPARE(w.bits(), 0);
+        w.release(kDash);
+        w.press(kDash);
+        QVERIFY(w.line->dash());
+        w.release(kDash);
+    }
+
+    // First-look fixes, item 6: as a remote window's stop.
+    void aLocalStopLetsGoOfTheKeysUntilAFreshPress()
+    {
+        LocalWindow w;
+        w.press(kDot);
+        w.press(kDash);
+        QVERIFY(w.line->dot() && w.line->dash());
+        w.press(kStop);
+        QCOMPARE(w.bits(), 0);
+        // A key that goes on being held comes back only with a new press.
+        w.model->cwSoftPaddle()->setDot(true);
+        QCOMPARE(w.bits(), 0);
+        w.release(kDot);
+        QCOMPARE(w.bits(), 0);
+        w.press(kDot);
+        QVERIFY(w.line->dot());
+        w.release(kDot);
+        w.release(kDash);
+    }
+
+    // First-look fixes, item 12: the soft paddle counts as a key still down
+    // when the auto mode return's wait ends.
+    void theAutoModeReturnWaitsForTheSoftPaddle()
+    {
+        LocalWindow w;
+        TransmitModel& tx = w.model->transmitModel();
+        tx.setCwAutoModeSwitch(true);
+        tx.setCwAutoModeReturn(true);
+        tx.setCwAutoModeReturnMs(10);
+        w.slice->setDspMode(DSPMode::USB);
+        pump();
+        // The radio's own paddle switches the mode and starts the wait.
+        w.connection.reportKey(true, false, false);
+        pump();
+        QTRY_COMPARE(w.slice->dspMode(), DSPMode::CWU);
+        w.press(kDot);
+        QVERIFY(w.line->dot());
+        w.connection.reportKey(false, false, false);
+        QTest::qWait(120);
+        QCOMPARE(w.slice->dspMode(), DSPMode::CWU);
+        QVERIFY(w.line->dot());
+        w.release(kDot);
+        QTRY_COMPARE(w.slice->dspMode(), DSPMode::USB);
+    }
+
     void aTransmitCutsCatchUpReleases()
     {
         LocalWindow w;
@@ -762,6 +827,84 @@ private slots:
         QVERIFY(!core.cwxSender()->isKeyHeld());
         QTRY_VERIFY(!remote->keepaliveRunning());
         QVERIFY(refused.isEmpty());
+    }
+
+    // First-look fixes, item 3: the window forgets its keys when the activity
+    // ends, so lifting one reports nothing that reads as a press.
+    void remoteLiftingAKeyAfterItsActivityEndedKeysNothing()
+    {
+        RemoteWindowHarness::Options options;
+        options.sliceAccess = true;
+        RemoteWindowHarness h(options);
+        QVERIFY(connectRemote(h, DSPMode::CWU));
+        FakeConnection radio;
+        RadioModel& core = h.station();
+        core.setCapsForTest(/*hasAlex=*/false);
+        core.setBoardForTest(HPSDRHW::Saturn);
+        core.injectConnectionForTest(&radio);
+        const auto letGoOfRadio = qScopeGuard([&core] { core.injectConnectionForTest(nullptr); });
+        core.slices().first()->setFrequency(14'050'000.0);
+        core.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+        core.setLastRadioInfoForTest(saturn());
+        core.wireCwKeyerConnectionForTest();
+        pump();
+        StationClient* const client = h.client();
+        QTRY_VERIFY(client->remoteCwPaddleAvailable());
+        RemoteTransmitClient* const remote = client->remoteTransmit();
+        QTRY_VERIFY(remote->cwPaddleAvailable());
+        QVERIFY(client->requestTakeTransmit(false, 0, false) != 0);
+        QTRY_VERIFY(client->holdsTransmitHere());
+        HotKeyDispatcher* const keys = h.window()->hotKeyDispatcher();
+        CwKeyLine* const line = radio.cwKeyLine().get();
+        const auto bothUpAndStaysUp = [&line]() {
+            pump();
+            QTest::qWait(50);
+            pump();
+            return !line->dot() && !line->dash();
+        };
+
+        // cw.stop with both down: nothing comes back when one is lifted.
+        keys->press(kDot, kKeyboard);
+        keys->press(kDash, kKeyboard);
+        QTRY_VERIFY(line->dot() && line->dash());
+        keys->press(kStop, kKeyboard);
+        QTRY_VERIFY(!line->dot() && !line->dash());
+        QTRY_VERIFY(!remote->keepaliveRunning());
+        keys->release(kDot, kKeyboard);
+        QVERIFY(bothUpAndStaysUp());
+        keys->release(kDash, kKeyboard);
+        QVERIFY(bothUpAndStaysUp());
+        // A real both-up: the first press keys.
+        keys->press(kDot, kKeyboard);
+        QTRY_VERIFY(line->dot());
+
+        // The Core ends the activity under a key, and the other key's tap
+        // does not bring the first one back.
+        core.stopCwxFor(core.cwxSendingFor());
+        QTRY_VERIFY(!line->dot());
+        QTRY_COMPARE(remote->remoteCwEpoch(), 0u);
+        pump();
+        keys->press(kDash, kKeyboard);
+        QTRY_VERIFY(line->dash());
+        QVERIFY(!line->dot());
+        keys->release(kDash, kKeyboard);
+        QTRY_VERIFY(!line->dash());
+        QVERIFY(bothUpAndStaysUp());
+        keys->release(kDot, kKeyboard);
+        QVERIFY(bothUpAndStaysUp());
+
+        // The session retires with both down. Lifting one sends nothing
+        // that could read as a press on the session that follows.
+        keys->press(kDot, kKeyboard);
+        keys->press(kDash, kKeyboard);
+        QTRY_VERIFY(line->dot() && line->dash());
+        h.dropLink();
+        QTRY_VERIFY(!line->dot() && !line->dash());
+        QTRY_VERIFY(!remote->cwPaddleAvailable());
+        keys->release(kDot, kKeyboard);
+        QVERIFY(bothUpAndStaysUp());
+        keys->release(kDash, kKeyboard);
+        QVERIFY(bothUpAndStaysUp());
     }
 
     // A Core's refusal is a toast with the CWX applet closed or open, and one.

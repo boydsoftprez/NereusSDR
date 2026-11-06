@@ -272,7 +272,12 @@ private slots:
         QCOMPARE(valueOf(unheld, QStringLiteral("refusalCode")), QStringLiteral("notHolder"));
         QVERIFY(rig.bitsUp());
 
+        // Taking transmit does not bring a refused press back: the key held
+        // through it says the same again, and that is no press.
         QVERIFY(accepted(rig.core.invoke(appA, "tx.take")));
+        QVERIFY(accepted(rig.paddle(appA, true, false)));
+        QVERIFY(rig.bitsUp());
+        QVERIFY(accepted(rig.paddle(appA, false, false)));
         QVERIFY(accepted(rig.paddle(appA, true, false)));
         QVERIFY(rig.line()->dot());
         const QJsonObject other = rig.paddle(appB, false, true);
@@ -597,6 +602,277 @@ private slots:
         QVERIFY(!accepted(refused));
         QVERIFY(rig.bitsUp());
         QVERIFY(!rig.cwx()->isRemotePaddleHeld());
+    }
+
+    // ---- First-look fixes: only a key that rises (items 3 and 8) ----
+
+    void resendingTheSameStateDoesNotRenewTheDeadline()
+    {
+        PaddleCore rig;
+        Device mac(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(mac);
+        LoopbackTransport* app = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(app));
+        QVERIFY(accepted(rig.core.invoke(app, "tx.take")));
+        QVERIFY(accepted(rig.paddle(app, true, false)));
+        rig.time.advanceTo(2000);
+        QVERIFY(accepted(rig.paddle(app, true, false))); // no press: a new id, the same state
+        QVERIFY(rig.line()->dot());
+        rig.time.advanceTo(CwxSender::kKeyWatchdogMs);
+        QTRY_VERIFY(!rig.line()->dot());
+        QVERIFY(rig.bitsUp());
+    }
+
+    void liftingOneKeyAfterTheDeadlineKeysNothing()
+    {
+        PaddleCore rig;
+        Device mac(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(mac);
+        LoopbackTransport* app = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(app));
+        QVERIFY(accepted(rig.core.invoke(app, "tx.take")));
+        QVERIFY(accepted(rig.paddle(app, true, true)));
+        rig.time.advanceTo(CwxSender::kKeyWatchdogMs);
+        QTRY_VERIFY(rig.bitsUp());
+        QTRY_COMPARE(rig.epoch(), 0u);
+
+        const QJsonObject lifted = rig.paddle(app, true, false);
+        QVERIFY2(accepted(lifted), qPrintable(reasonOf(lifted)));
+        QVERIFY(rig.bitsUp());
+        QVERIFY(!rig.cwx()->isRemotePaddleHeld());
+        QCOMPARE(rig.epoch(), 0u);
+
+        // The first press after a real both-up keys.
+        QVERIFY(accepted(rig.paddle(app, false, false)));
+        QVERIFY(rig.bitsUp());
+        QVERIFY(accepted(rig.paddle(app, true, false)));
+        QVERIFY(rig.line()->dot());
+        QVERIFY(accepted(rig.paddle(app, false, false)));
+    }
+
+    void liftingOneKeyAfterAStopKeysNothing()
+    {
+        PaddleCore rig;
+        Device mac(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(mac);
+        LoopbackTransport* app = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(app));
+        QVERIFY(accepted(rig.core.invoke(app, "tx.take")));
+        QVERIFY(accepted(rig.paddle(app, true, true)));
+        QVERIFY(accepted(rig.core.invoke(app, "cw.stop")));
+        QVERIFY(rig.bitsUp());
+        QVERIFY(accepted(rig.paddle(app, false, true)));
+        QVERIFY(rig.bitsUp());
+        QVERIFY(!rig.cwx()->isRemotePaddleHeld());
+    }
+
+    void tappingTheOtherKeyDoesNotBringBackAKeyPastItsDeadline()
+    {
+        PaddleCore rig;
+        Device mac(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(mac);
+        LoopbackTransport* app = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(app));
+        QVERIFY(accepted(rig.core.invoke(app, "tx.take")));
+        QVERIFY(accepted(rig.paddle(app, true, false)));
+        rig.time.advanceTo(CwxSender::kKeyWatchdogMs);
+        QTRY_VERIFY(rig.bitsUp());
+        QTRY_COMPARE(rig.epoch(), 0u);
+
+        // Dash rises; only dash goes down.
+        QVERIFY(accepted(rig.paddle(app, true, true)));
+        QVERIFY(rig.line()->dash());
+        QVERIFY(!rig.line()->dot());
+        // Dash lifts with dot still reported down: a release.
+        QVERIFY(accepted(rig.paddle(app, true, false)));
+        QVERIFY(rig.bitsUp());
+        QVERIFY(!rig.cwx()->isRemotePaddleHeld());
+    }
+
+    void addingTheOtherKeyKeepsTheFirstDown()
+    {
+        PaddleCore rig;
+        Device mac(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(mac);
+        LoopbackTransport* app = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(app));
+        QVERIFY(accepted(rig.core.invoke(app, "tx.take")));
+        QVERIFY(accepted(rig.paddle(app, true, false)));
+        QVERIFY(accepted(rig.paddle(app, true, true)));
+        QVERIFY(rig.line()->dot() && rig.line()->dash());
+        // One key rises while the other lifts, in one message.
+        QVERIFY(accepted(rig.paddle(app, false, true)));
+        QVERIFY(accepted(rig.paddle(app, true, false)));
+        QVERIFY(rig.line()->dot());
+        QVERIFY(!rig.line()->dash());
+        QVERIFY(accepted(rig.paddle(app, false, false)));
+        QVERIFY(rig.bitsUp());
+    }
+
+    // The last pair is the session's: the next session's first press keys.
+    void aNewSessionsFirstPressKeysWhateverTheLastSessionReported()
+    {
+        PaddleCore rig;
+        Device mac(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(mac);
+        LoopbackTransport* app = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(app));
+        QVERIFY(accepted(rig.core.invoke(app, "tx.take")));
+        QVERIFY(accepted(rig.paddle(app, true, true)));
+        QVERIFY(rig.line()->dot() && rig.line()->dash());
+        app->closeLink(QStringLiteral("network lost"));
+        QTRY_VERIFY(rig.bitsUp());
+
+        LoopbackTransport* again = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(again));
+        QVERIFY(accepted(rig.core.invoke(again, "tx.take")));
+        const QJsonObject press = rig.paddle(again, true, false);
+        QVERIFY2(accepted(press), qPrintable(reasonOf(press)));
+        QVERIFY(rig.line()->dot());
+        QVERIFY(accepted(rig.paddle(again, false, false)));
+    }
+
+    // ---- First-look fixes, item 10: a key down, then text, from one device ----
+
+    void textAfterTheKeyPlaysInTheKeysActivity()
+    {
+        PaddleCore rig;
+        Device mac(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(mac);
+        LoopbackTransport* app = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(app));
+        QVERIFY(accepted(rig.core.invoke(app, "tx.take")));
+        QVERIFY(accepted(rig.core.invoke(app, "cw.key",
+                                         {MirrorUpdate{0, "down", MirrorWireKind::Bool, QVariant(true)}})));
+        QVERIFY(rig.line()->cwx());
+        const quint32 epoch = rig.epoch();
+        QVERIFY(epoch != 0);
+
+        const QJsonObject sent = rig.core.invoke(app, "cw.send", {utf8("text", QStringLiteral("CQ"))});
+        QVERIFY2(accepted(sent), qPrintable(reasonOf(sent)));
+        // Queued work, whatever ends the key, runs before this is read.
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        QVERIFY(!rig.cwx()->isKeyHeld());
+        QCOMPARE(rig.epoch(), epoch);
+        QVERIFY(rig.cwx()->isSending());
+        QVERIFY(rig.core.model->cwxActiveFor(mac.key.fingerprint()));
+        QCOMPARE(rig.cwx()->acceptedRemoteEpoch(), epoch);
+        QVERIFY(rig.cwx()->queuedCharacters() > 0);
+
+        // Letting go of the key does not end it.
+        QVERIFY(accepted(rig.core.invoke(app, "cw.key",
+                                         {MirrorUpdate{0, "down", MirrorWireKind::Bool, QVariant(false)}})));
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.epoch(), epoch);
+        QVERIFY(rig.cwx()->isSending());
+        QVERIFY(accepted(rig.core.invoke(app, "cw.stop")));
+        QVERIFY(rig.bitsUp());
+    }
+
+    // It is still the holder's rule: a key another device's take ended lets no
+    // text through.
+    void textAfterTheKeyStillNeedsTheHolder()
+    {
+        PaddleCore rig;
+        Device mac(QStringLiteral("iPhone"), QStringLiteral("phone"));
+        rig.core.pair(mac);
+        LoopbackTransport* app = rig.core.signIn(mac, peerDeclaring(3));
+        QVERIFY(admitted(app));
+        QVERIFY(accepted(rig.core.invoke(app, "tx.take")));
+        QVERIFY(accepted(rig.core.invoke(app, "cw.key",
+                                         {MirrorUpdate{0, "down", MirrorWireKind::Bool, QVariant(true)}})));
+        QVERIFY(rig.line()->cwx());
+        rig.core.model->sliceById(0)->setDspMode(DSPMode::USB);
+        QCoreApplication::processEvents();
+        const QJsonObject sent = rig.core.invoke(app, "cw.send", {utf8("text", QStringLiteral("CQ"))});
+        QVERIFY(!accepted(sent));
+        QCOMPARE(rig.cwx()->queuedCharacters(), 0);
+        QVERIFY(accepted(rig.core.invoke(app, "cw.stop")));
+        QVERIFY(rig.bitsUp());
+    }
+
+    // ---- First-look fixes, item 7: a release ends only what its key started ----
+
+    void aReleaseLeavesAMessageThatReplacedTheKey()
+    {
+        QList<QByteArray> sent;
+        quint32 nextId = 1;
+        RemoteTransmitClient client([&](const QByteArray& verb, const QList<MirrorUpdate>&) {
+            sent.append(verb);
+            return nextId++;
+        });
+        client.setAvailable(true);
+        client.setCwAvailable(true);
+        client.setCwReleaseAvailable(true);
+        client.setCwPaddleAvailable(true);
+        const auto answer = [&client](quint32 id, const QByteArray& verb, qint64 epoch) {
+            client.commandFinished(id, verb, true, {},
+                                   {{0, "cwEpoch", MirrorWireKind::Int64, epoch},
+                                    {1, "cwActive", MirrorWireKind::Bool, true}});
+        };
+
+        // The straight key, then a memory answered before the release.
+        const quint32 key = client.setCwKey(true);
+        answer(key, "cw.key", 11);
+        QCOMPARE(client.remoteCwEpoch(), 11u);
+        const quint32 memory = client.sendCwMemory(1);
+        answer(memory, "cw.memory", 12);
+        const quint32 up = client.setCwKey(false);
+        QVERIFY(up != 0);
+        QCOMPARE(sent.last(), QByteArray("cw.key"));
+        QCOMPARE(client.remoteCwEpoch(), 12u);
+        QVERIFY(client.keepaliveRunning());
+        client.commandFinished(up, "cw.key", true, {}, {});
+        QCOMPARE(client.remoteCwEpoch(), 12u);
+        QVERIFY(client.keepaliveRunning());
+        client.setRemoteCwActivity(12, false);
+        QVERIFY(!client.keepaliveRunning());
+
+        // The paddle, then a memory still unanswered at the release.
+        const quint32 paddle = client.setCwPaddle(true, false);
+        answer(paddle, "cw.paddle", 13);
+        const quint32 pending = client.sendCwMemory(2);
+        const quint32 lifted = client.setCwPaddle(false, false);
+        QVERIFY(lifted != 0);
+        QVERIFY(client.keepaliveRunning());
+        // The release's answer, first or last, leaves the memory's coming.
+        client.commandFinished(lifted, "cw.paddle", true, {}, {});
+        QVERIFY(client.keepaliveRunning());
+        answer(pending, "cw.memory", 14);
+        QCOMPARE(client.remoteCwEpoch(), 14u);
+        QVERIFY(client.keepaliveRunning());
+        client.setRemoteCwActivity(14, false);
+        QVERIFY(!client.keepaliveRunning());
+
+        // Both keys, a memory, then one key lifts and then the other.
+        answer(client.setCwPaddle(true, true), "cw.paddle", 15);
+        answer(client.sendCwMemory(3), "cw.memory", 16);
+        const quint32 one = client.setCwPaddle(false, true);
+        QVERIFY(one != 0);
+        client.commandFinished(one, "cw.paddle", true, {}, {});
+        QCOMPARE(client.remoteCwEpoch(), 16u);
+        QVERIFY(client.keepaliveRunning());
+        QVERIFY(client.setCwPaddle(false, false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 16u);
+        QVERIFY(client.keepaliveRunning());
+        client.setRemoteCwActivity(16, false);
+
+        // The paddle takes over from the key: the key's release leaves it.
+        answer(client.setCwKey(true), "cw.key", 17);
+        answer(client.setCwPaddle(true, false), "cw.paddle", 18);
+        QVERIFY(client.setCwKey(false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 18u);
+        QVERIFY(client.keepaliveRunning());
+
+        // A release of what the key did start still ends it.
+        QVERIFY(client.setCwPaddle(false, false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 0u);
+        QVERIFY(!client.keepaliveRunning());
+        answer(client.setCwKey(true), "cw.key", 19);
+        QVERIFY(client.setCwKey(false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 0u);
+        QVERIFY(!client.keepaliveRunning());
     }
 
     // ---- The client ----

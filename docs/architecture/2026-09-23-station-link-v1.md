@@ -9402,24 +9402,37 @@ sender runs for the holder is the holder's key, as VOX is (section 18.6).
   `cw.stop {}`: ends what the sender runs for this device and clears it.
 - `cw.paddle {dot, dash}` (both `bool`, the state of both keys on each
   change): dot and dash on the radio's own keyer, which does the timing and
-  break-in, as for serial paddles. The Core writes no CWX bit and no PTT. It
-  lets go 3 s after the last press, a message that only lets go of one key
-  is not a press. A change while the paddle is down keeps its activity epoch;
-  the first press is a replacement, ending what the sender ran. Under a link
-  hold both keys read up on the wire and the activity behaves as a held
-  `cw.key`: the deadline keeps running, and recovery puts down what is still
-  held inside it. A refused change lets go of the keys.
-- `cw.send`, `cw.memory`, `cw.key {down: true}` and `cw.paddle` with a key
-  down need the session's own
+  break-in, as for serial paddles. The Core writes no CWX bit and no PTT. The
+  Core keeps the last pair each device reported, for as long as its session
+  lasts, whatever has ended the keys since. A key rises when it is down in
+  this message and was up in that pair, and only a key that rises goes down
+  and renews the deadline: the Core lets go 3 s after the last rise, so
+  sending the same state again, or a message that only lets go of one key, is
+  not a press. A key past its deadline or ended by `cw.stop` stays up until it
+  has been reported up and rises again. With no key rising and no paddle
+  down, the message is a release and keys nothing. A change while the paddle
+  is down keeps its activity epoch; the first press is a replacement, ending
+  what the sender ran. Under a link hold both keys read up on the wire and
+  the activity behaves as a held `cw.key`: the deadline keeps running, and
+  recovery puts down what is still held inside it. A refused change lets go
+  of the keys.
+- `cw.send`, `cw.memory`, `cw.key {down: true}`, and `cw.paddle` with a key
+  rising or with its paddle still down need the session's own
   gate (section 18.1) and transmit held by this device: from another
   device while one holds it they are refused "<holder> has the
   transmitter." (`otherDeviceHolds`, `takeTransmit`), with transmit unheld
   "Take transmit on this device first." (`notHolder`, `takeTransmit`).
   The sender's own refusals are `notReady` (section 18.3), and the CW
   keyer's are its own (for example the break-in sentences).
-- `cw.stop`, `cw.key {down: false}` and `cw.paddle` with both up are always taken: they end only
+- `cw.stop`, `cw.key {down: false}` and `cw.paddle` with both up, or with no
+  key rising and no paddle down, are always taken: they end only
   what the sender runs for this device, never another device's CW or the
-  station's own.
+  station's own. A window's release ends only the activity its key started:
+  text or a memory that took over from the key plays on, and the window's
+  keepalives with it.
+- A window forgets the keys it reported when its session retires or the
+  activity ends, and tells the Core both are up if the session is still
+  there.
 - A refusal carries `refusalCode` and `refusalFix` in its `values`, as
   section 18.3 says. An accepted start/append (version 2 or later) returns `cwEpoch`
   (`i64`, 1 through UINT32_MAX) and `cwActive` (`bool`). An append keeps

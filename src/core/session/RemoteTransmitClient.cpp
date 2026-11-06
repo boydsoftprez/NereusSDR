@@ -72,6 +72,9 @@
 //               AI-assisted via Grok.
 //   2026-11-05: hot keys plan Task 4: screenKeyDownChanged. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06: first-look fixes: a key's release ends only the activity
+//               that key started; cwActivityEnded. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -293,6 +296,8 @@ void RemoteTransmitClient::retireSession()
     m_cwRetiredEpoch = 0;
     m_cwEpoch = 0;
     m_cwPending = false;
+    m_cwOwner = CwOwner::None;
+    m_cwPaddleReported = {};
     ++m_cwGeneration;
     // The Core unkeys a device whose link drops and never keys it
     // again by itself; nothing here survives.
@@ -301,7 +306,10 @@ void RemoteTransmitClient::retireSession()
     m_channelKeepalives = 0;
     m_sessionKeepalives = 0;
     m_auxiliaryKeepalives = 0;
+    const QPointer<RemoteTransmitClient> self(this);
     reset();
+    if (!self) { return; }
+    emit cwActivityEnded();
 }
 
 quint32 RemoteTransmitClient::send(const QByteArray& verb, const QList<MirrorUpdate>& arguments,
@@ -364,7 +372,11 @@ void RemoteTransmitClient::setRemoteCwActivity(quint32 epoch, bool active)
         if (m_cwEpoch != epoch) { return; }
         m_cwEpoch = 0;
         m_cwPending = false;
+        m_cwOwner = CwOwner::None;
         ++m_cwGeneration;
+        const QPointer<RemoteTransmitClient> self(this);
+        emit cwActivityEnded();
+        if (!self) { return; }
     }
     refreshKeepalive();
 }
@@ -375,8 +387,9 @@ quint32 RemoteTransmitClient::sendCwText(const QString& text)
     ++m_cwGeneration;
     m_cwPending = true;
     refreshKeepalive();
+    const CwOwner before = std::exchange(m_cwOwner, CwOwner::Message);
     const quint32 id = send("cw.send", {utf8Argument("text", text)}, Kind::Cw);
-    if (id == 0) { m_cwPending = false; refreshKeepalive(); }
+    if (id == 0) { m_cwOwner = before; m_cwPending = false; refreshKeepalive(); }
     return id;
 }
 
@@ -386,8 +399,9 @@ quint32 RemoteTransmitClient::sendCwMemory(int number)
     ++m_cwGeneration;
     m_cwPending = true;
     refreshKeepalive();
+    const CwOwner before = std::exchange(m_cwOwner, CwOwner::Message);
     const quint32 id = send("cw.memory", {int64Argument("number", number)}, Kind::Cw);
-    if (id == 0) { m_cwPending = false; refreshKeepalive(); }
+    if (id == 0) { m_cwOwner = before; m_cwPending = false; refreshKeepalive(); }
     return id;
 }
 
@@ -396,21 +410,40 @@ quint32 RemoteTransmitClient::stopCw()
     ++m_cwGeneration;
     m_cwEpoch = 0;
     m_cwPending = false;
+    m_cwOwner = CwOwner::None;
     refreshKeepalive();
-    return m_available && m_cwReleaseAvailable ? send("cw.stop", {}, Kind::Cw) : 0;
+    const QPointer<RemoteTransmitClient> self(this);
+    const quint32 id = m_available && m_cwReleaseAvailable ? send("cw.stop", {}, Kind::Cw) : 0;
+    if (!self) { return 0; }
+    emit cwActivityEnded();
+    return id;
+}
+
+// A key's release ends what that key started, and only that: a message or the other
+// kind of key that took over goes on, with its keepalives and its answer still due.
+void RemoteTransmitClient::endCwActivityOf(CwOwner key)
+{
+    if (m_cwOwner == key) {
+        ++m_cwGeneration;
+        m_cwEpoch = 0;
+        m_cwPending = false;
+        m_cwOwner = CwOwner::None;
+        refreshKeepalive();
+    }
 }
 
 quint32 RemoteTransmitClient::setCwKey(bool down)
 {
     if (!down) {
-        ++m_cwGeneration; m_cwEpoch = 0; m_cwPending = false; refreshKeepalive();
+        endCwActivityOf(CwOwner::Key);
         return m_available && m_cwReleaseAvailable
-            ? send("cw.key", {boolArgument("down", false)}, Kind::Cw) : 0;
+            ? send("cw.key", {boolArgument("down", false)}, Kind::CwRelease) : 0;
     }
     if (!cwAvailable()) { return 0; }
     ++m_cwGeneration; m_cwPending = true; refreshKeepalive();
+    const CwOwner before = std::exchange(m_cwOwner, CwOwner::Key);
     const quint32 id = send("cw.key", {boolArgument("down", true)}, Kind::Cw);
-    if (id == 0) { m_cwPending = false; refreshKeepalive(); }
+    if (id == 0) { m_cwOwner = before; m_cwPending = false; refreshKeepalive(); }
     return id;
 }
 
@@ -418,14 +451,29 @@ quint32 RemoteTransmitClient::setCwPaddle(bool dot, bool dash)
 {
     const QList<MirrorUpdate> arguments{{0, "dot", MirrorWireKind::Bool, QVariant(dot)},
                                         {1, "dash", MirrorWireKind::Bool, QVariant(dash)}};
+    const bool rises = (dot && !m_cwPaddleReported.first) || (dash && !m_cwPaddleReported.second);
+    const QPair<bool, bool> before = std::exchange(m_cwPaddleReported, QPair<bool, bool>(dot, dash));
     if (!dot && !dash) {
-        ++m_cwGeneration; m_cwEpoch = 0; m_cwPending = false; refreshKeepalive();
-        return cwPaddleAvailable() ? send("cw.paddle", arguments, Kind::Cw) : 0;
+        endCwActivityOf(CwOwner::Paddle);
+        return cwPaddleAvailable() ? send("cw.paddle", arguments, Kind::CwRelease) : 0;
     }
-    if (!cwPaddleAvailable()) { return 0; }
+    if (!cwPaddleAvailable()) {
+        m_cwPaddleReported = before;
+        return 0;
+    }
+    // One key lifting while a message plays: a release too, ending nothing.
+    if (!rises && m_cwOwner != CwOwner::Paddle) {
+        return send("cw.paddle", arguments, Kind::CwRelease);
+    }
     ++m_cwGeneration; m_cwPending = true; refreshKeepalive();
+    const CwOwner owner = std::exchange(m_cwOwner, CwOwner::Paddle);
     const quint32 id = send("cw.paddle", arguments, Kind::Cw);
-    if (id == 0) { m_cwPending = false; refreshKeepalive(); }
+    if (id == 0) {
+        m_cwOwner = owner;
+        m_cwPaddleReported = before;
+        m_cwPending = false;
+        refreshKeepalive();
+    }
     return id;
 }
 
@@ -747,6 +795,12 @@ void RemoteTransmitClient::commandFinished(quint32 commandId, const QByteArray& 
                                        << (accepted ? "accepted" : "refused:") << reason;
 
     switch (kind) {
+    case Kind::CwRelease:
+        // Its answer starts nothing and must not settle an answer still due.
+        if (!accepted && command.cwGeneration == m_cwGeneration) {
+            emit cwRefused(shown, code, fix);
+        }
+        return;
     case Kind::Cw:
         if (command.cwGeneration != m_cwGeneration) { return; }
         if (accepted && m_cwPending) {

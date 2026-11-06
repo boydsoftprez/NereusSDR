@@ -387,9 +387,18 @@ public:
     // paddle is a held Key under the remote CW hold: its own activity, down
     // only while that activity may key, kKeyWatchdogMs after its last press.
     // What the sender runs stops first. Keeping the epoch of a paddle already
-    // down changes the keys without touching that activity. Nothing is done
-    // and false returned with both keys up: setPaddleHeld takes those.
-    bool holdRemotePaddle(quint32 epoch, bool dot, bool dash, RemoteAdmission admit);
+    // down changes the keys without touching that activity. `keys` is the state
+    // reported and `rose` which of them are newly down: only a key that rose
+    // goes down, and only a rise renews the deadline. A key reported down that
+    // isn't down stays up. Nothing is done and false returned with both keys up:
+    // setPaddleHeld takes those. With nothing rising and no paddle left (its
+    // deadline just ended), nothing is done and true returned.
+    struct PaddleKeys {
+        bool dot{false};
+        bool dash{false};
+        bool any() const { return dot || dash; }
+    };
+    bool holdRemotePaddle(quint32 epoch, PaddleKeys keys, PaddleKeys rose, RemoteAdmission admit);
     // Lets go of each key that is false; both up ends the activity. Never
     // raises a key: only holdRemotePaddle, behind its gate, does.
     void setPaddleHeld(bool dot, bool dash);
