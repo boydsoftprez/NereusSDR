@@ -884,6 +884,103 @@ private slots:
         QVERIFY(rig.line()->dot());
     }
 
+    void aTakeoverStopsTheTakenOverDevicesCwAtOnce_data()
+    {
+        QTest::addColumn<QByteArray>("verb");
+        QTest::addColumn<bool>("paused");
+        QTest::newRow("paddle") << QByteArray("cw.paddle") << false;
+        QTest::newRow("paddle in a link hold") << QByteArray("cw.paddle") << true;
+        QTest::newRow("straight key") << QByteArray("cw.key") << false;
+        QTest::newRow("text") << QByteArray("cw.send") << false;
+    }
+
+    void aTakeoverStopsTheTakenOverDevicesCwAtOnce()
+    {
+        QFETCH(QByteArray, verb);
+        QFETCH(bool, paused);
+        PaddleCore rig;
+        Device devices[5];
+        for (Device& device : devices) {
+            rig.core.pair(device);
+        }
+        QList<LoopbackTransport*> apps;
+        for (int i = 0; i < 4; ++i) {
+            apps.append(rig.core.signIn(devices[i], peerDeclaring(3)));
+            QVERIFY(admitted(apps.last()));
+        }
+        QVERIFY(accepted(rig.core.invoke(apps[0], "tx.take")));
+        if (verb == "cw.paddle") {
+            QVERIFY(accepted(rig.paddle(apps[0], true, false)));
+            QVERIFY(rig.line()->dot());
+        } else if (verb == "cw.key") {
+            QVERIFY(accepted(rig.core.invoke(apps[0], "cw.key",
+                                             {MirrorUpdate{0, "down", MirrorWireKind::Bool, QVariant(true)}})));
+            QVERIFY(rig.line()->cwx());
+        } else {
+            QVERIFY(accepted(rig.core.invoke(apps[0], "cw.send", {utf8("text", QStringLiteral("CQ CQ"))})));
+            QVERIFY(rig.cwx()->isSending());
+        }
+        const quint32 epoch = rig.epoch();
+        QVERIFY(epoch != 0);
+        if (paused) {
+            QVERIFY(rig.core.model->pauseRemoteCw(epoch));
+        }
+
+        LoopbackTransport* fifth = rig.core.signIn(devices[4], peerDeclaring(3));
+        QJsonObject held;
+        verifyHeld(fifth, &held);
+        fifth->sendText(SessionMessages::encode(SessionMessages::sessionTakeover(
+            devices[0].id(), static_cast<quint32>(held.value(QStringLiteral("revision")).toInteger()))));
+        QTRY_VERIFY(admitted(fifth));
+
+        // The fake clock has not moved, so no deadline did this.
+        QVERIFY(rig.bitsUp());
+        QVERIFY(!rig.cwx()->isRemotePaddleHeld());
+        QVERIFY(!rig.cwx()->isKeyHeld());
+        QVERIFY(!rig.cwx()->isSending());
+        QCOMPARE(rig.epoch(), 0u);
+        QVERIFY(!rig.core.model->resumeRemoteCw(epoch));
+
+        // The same device comes back clean: its first press is a press.
+        rig.core.invoke(apps[1], "session.leave");
+        LoopbackTransport* back = rig.core.signIn(devices[0], peerDeclaring(3));
+        QVERIFY(admitted(back));
+        QVERIFY(rig.bitsUp());
+        QVERIFY(accepted(rig.core.invoke(back, "tx.take")));
+        QVERIFY(accepted(rig.paddle(back, true, false)));
+        QVERIFY(rig.line()->dot());
+    }
+
+    void aTakeoverLeavesAnotherDevicesKeyDown()
+    {
+        PaddleCore rig;
+        Device devices[5];
+        for (Device& device : devices) {
+            rig.core.pair(device);
+        }
+        QList<LoopbackTransport*> apps;
+        for (int i = 0; i < 4; ++i) {
+            apps.append(rig.core.signIn(devices[i], peerDeclaring(3)));
+            QVERIFY(admitted(apps.last()));
+        }
+        // Device 1 is on the air; device 0 is the one taken over.
+        QVERIFY(accepted(rig.core.invoke(apps[1], "tx.take")));
+        QVERIFY(accepted(rig.paddle(apps[1], true, false)));
+        QVERIFY(rig.line()->dot());
+        const quint32 epoch = rig.epoch();
+
+        LoopbackTransport* fifth = rig.core.signIn(devices[4], peerDeclaring(3));
+        QJsonObject held;
+        verifyHeld(fifth, &held);
+        fifth->sendText(SessionMessages::encode(SessionMessages::sessionTakeover(
+            devices[0].id(), static_cast<quint32>(held.value(QStringLiteral("revision")).toInteger()))));
+        QTRY_VERIFY(admitted(fifth));
+
+        QVERIFY(rig.line()->dot());
+        QVERIFY(rig.cwx()->isRemotePaddleHeld());
+        QCOMPARE(rig.epoch(), epoch);
+    }
+
     void aReleaseLeavesAMessageThatReplacedTheKey()
     {
         QList<QByteArray> sent;
