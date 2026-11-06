@@ -1096,6 +1096,10 @@
 //               click recalls on the pan's slice and a right-click opens the
 //               row menu. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-11-06 - Band stack plan Task 12: the status bar's stack number, the pan
+//               rule a recall applies on the window controlling the slice, and
+//               the region prompt. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-11-06 - Band stack plan Task 10: openBandStackPopup, from a flyout
 //               button's right-click, a container band button's and the VFO
 //               display's long press; it replaces the container's stopgap of
@@ -2701,13 +2705,32 @@ void MainWindow::bindBandStackAccess(BandStackAccess* access)
         m_bandStackTickRows->setAccess(access);
     }
     m_bandStackExpiryBatch.clear();
+    m_bandStackRecallSeq.reset();
+    m_bandStackRegion.clear();
+    m_bandStackRegionEdit.reset();
+    if (m_bandStackRegionPrompt) {
+        m_bandStackRegionPrompt->close();
+    }
     if (access) {
         // A note already there when this access arrives is not news.
         m_bandStackExpiryBatch = access->document()
                                      .value(QStringLiteral("lastExpiry")).toObject()
                                      .value(QStringLiteral("batchId")).toString();
+        // Nor is a recall or a region it already carries.
+        const QJsonObject document = access->document();
+        if (!document.isEmpty()) {
+            m_bandStackRecallSeq = document.value(QStringLiteral("lastRecall")).toObject()
+                                       .value(QStringLiteral("seq")).toInteger();
+            m_bandStackRegion = document.value(QStringLiteral("region")).toString();
+        }
         connect(access, &BandStackAccess::documentChanged,
                 this, &MainWindow::showBandStackExpiryNote);
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::applyBandStackRecall);
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::followBandStackRegion);
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::refreshBandStackNumber);
         connect(access, &BandStackAccess::documentChanged,
                 this, &MainWindow::refreshBandStackTicks);
         connect(access, &BandStackAccess::stateChanged,
@@ -2720,6 +2743,190 @@ void MainWindow::bindBandStackAccess(BandStackAccess* access)
         });
     }
     refreshBandStackAvailability();
+}
+
+void MainWindow::applyBandStackRecall()
+{
+    if (m_shuttingDown || !m_bandStackAccess || !m_radioModel) {
+        return;
+    }
+    const QJsonObject document = m_bandStackAccess->document();
+    if (document.isEmpty()) {
+        m_bandStackRecallSeq.reset();
+        return;
+    }
+    const QJsonObject recall = document.value(QStringLiteral("lastRecall")).toObject();
+    const qint64 seq = recall.value(QStringLiteral("seq")).toInteger();
+    // The first document says what has already happened, not what just did.
+    const bool isNew = m_bandStackRecallSeq.has_value() && *m_bandStackRecallSeq != seq;
+    m_bandStackRecallSeq = seq;
+    if (!isNew || !recall.value(QStringLiteral("applyView")).toBool()) {
+        return;
+    }
+    const int sliceId = recall.value(QStringLiteral("sliceId")).toInt(-1);
+    SliceModel* slice = m_radioModel->sliceById(sliceId);
+    // A pan's view belongs to each window: only the one controlling the slice
+    // applies this.
+    if (!slice || !windowControlsSlice(sliceId)) {
+        return;
+    }
+    const bool local = m_radioModel->ownsLocalDsp();
+    // A remote record publishes the slice before its pan key, and the pane it
+    // borrows until then is not its own (frequencyChanged's rule).
+    if (!local && slice->panKey().isEmpty()) {
+        return;
+    }
+    SpectrumWidget* host = spectrumForSlice(slice);
+    // The pan keeps its own slice's view when this slice's stream is another
+    // band's, as a band change leaves it.
+    if (!host || sliceIsOffPanStream(panIdOfSpectrum(host), slice)) {
+        return;
+    }
+
+    // The 1 kHz floor of the operator's zoom controls, and their ceiling.
+    constexpr double kMinimumSpanHz = 1000.0;
+    const double hz = slice->frequency();
+    const double savedSpanHz = static_cast<double>(recall.value(QStringLiteral("spanHz")).toInteger());
+    double spanHz = host->bandwidth();
+    if (savedSpanHz > 0.0) {
+        spanHz = std::max(savedSpanHz, kMinimumSpanHz);
+        const double ceilingHz = host->maxZoomOutBandwidthHz();
+        if (ceilingHz > 0.0) {
+            spanHz = std::min(spanHz, ceilingHz);
+        }
+    }
+    const bool zoomChanged = !qFuzzyCompare(spanHz, host->bandwidth());
+
+    // V14: a pan without click tune always sits on its slice. With click tune
+    // the saved center comes back, unless the frequency would be off screen.
+    const bool clickTune = host->ctunEnabled();
+    double viewHz = hz;
+    if (clickTune) {
+        const double savedCenterHz =
+            static_cast<double>(recall.value(QStringLiteral("centerHz")).toInteger());
+        if (savedCenterHz > 0.0 && std::abs(hz - savedCenterHz) <= spanHz / 2.0) {
+            viewHz = savedCenterHz;
+        }
+    }
+
+    m_handlingBandJump = true;
+    if (!local) {
+        // Core alone moves the DDC; this is the window's own view, as
+        // followRemoteSliceFrequency moves it.
+        host->setDisplayWindowPreservingHistory(viewHz, spanHz);
+    } else if (!clickTune) {
+        host->setDisplayWindowClamped(viewHz, spanHz);
+    } else if (m_radioModel->requestStreamCentre(sliceId, std::round(viewHz))) {
+        host->setDisplayWindowClamped(viewHz, spanHz);
+        host->setDdcCenterFrequency(m_radioModel->streamCentreHz(slice->streamIndex()));
+    } else {
+        // Refused: another slice on the stream would leave the moved window. The
+        // DDC stays, and the view follows only as far as the DDC has data, as a
+        // refused move past the view does in frequencyChanged's rule.
+        const double ddcHz = host->ddcCenterFrequency();
+        m_radioModel->applySliceStreamCentre(slice, ddcHz);
+        const double halfWindow = m_radioModel->streamSampleRateHz(slice->streamIndex()) / 2.0;
+        const double halfView = spanHz / 2.0;
+        double keptHz = ddcHz;
+        if (halfWindow > 0.0 && halfView < halfWindow) {
+            keptHz = std::clamp(viewHz, ddcHz - halfWindow + halfView, ddcHz + halfWindow - halfView);
+        }
+        host->setDisplayWindowClamped(keptHz, spanHz);
+    }
+    host->setVfoFrequency(hz);
+    m_handlingBandJump = false;
+    if (zoomChanged) {
+        emit host->bandwidthChangeRequested(host->bandwidth());
+    }
+}
+
+void MainWindow::noteBandStackRegionEdit(std::chrono::milliseconds window)
+{
+    // No band stacks on this Core, so nothing to ask about.
+    if (m_bandStackAccess && m_bandStackAccess->state() == BandStackAccess::State::Ready) {
+        m_bandStackRegionEdit = QDeadlineTimer(window);
+    } else {
+        m_bandStackRegionEdit.reset();
+    }
+}
+
+void MainWindow::followBandStackRegion()
+{
+    if (m_shuttingDown || !m_bandStackAccess) {
+        return;
+    }
+    const QString region = m_bandStackAccess->document().value(QStringLiteral("region")).toString();
+    const QString before = m_bandStackRegion;
+    m_bandStackRegion = region;
+    if (m_bandStackRegionEdit.has_value() && m_bandStackRegionEdit->hasExpired()) {
+        m_bandStackRegionEdit.reset();
+    }
+    if (region.isEmpty() || before.isEmpty() || region == before) {
+        return;
+    }
+    const bool edited = m_bandStackRegionEdit.has_value();
+    m_bandStackRegionEdit.reset();
+    if (edited && m_bandStackAccess->state() == BandStackAccess::State::Ready) {
+        askBandStackRegion(region);
+    }
+}
+
+void MainWindow::askBandStackRegion(const QString& region)
+{
+    // A newer answer is the one that counts: the older question's region is gone.
+    if (m_bandStackRegionPrompt) {
+        m_bandStackRegionPrompt->close();
+    }
+    auto* dialog = new QDialog(this);
+    m_bandStackRegionPrompt = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setObjectName(QStringLiteral("bandStackRegionPrompt"));
+    dialog->setWindowTitle(QStringLiteral("Band stack"));
+    dialog->setWindowModality(Qt::ApplicationModal);
+    // BandStackPanel::confirm's look, which asks the same thing from its menu.
+    dialog->setStyleSheet(WorkspacePreview::lookQss(QStringLiteral(
+        "#bandStackRegionPrompt { background: #0f0f1a; }"
+        "QLabel { color: #c8d8e8; font-size: 13px; }"
+        "QPushButton { color: #c8d8e8; background: #1a2a3a; border: 1px solid #304050;"
+        " border-radius: 4px; padding: 4px 12px; font-size: 12px; font-weight: 600; }"
+        "#bandStackRegionReplace { color: #f0dcdc; background: #7a2c2e; border-color: #a86b6d; }"),
+        dialog));
+    auto* layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setSpacing(14);
+    auto* message = new QLabel(
+        QStringLiteral("You changed the region to %1. Replace the unlocked entries with the "
+                       "defaults for %1? Your locked entries stay.").arg(region),
+        dialog);
+    message->setObjectName(QStringLiteral("bandStackRegionPromptText"));
+    message->setWordWrap(true);
+    message->setMinimumWidth(388);
+    layout->addWidget(message);
+    auto* buttons = new QHBoxLayout;
+    buttons->setSpacing(6);
+    buttons->addStretch(1);
+    auto* keep = new QPushButton(QStringLiteral("Keep my entries"), dialog);
+    keep->setObjectName(QStringLiteral("bandStackRegionKeep"));
+    keep->setDefault(true);
+    connect(keep, &QPushButton::clicked, dialog, &QDialog::reject);
+    buttons->addWidget(keep);
+    auto* replace = new QPushButton(QStringLiteral("Replace"), dialog);
+    replace->setObjectName(QStringLiteral("bandStackRegionReplace"));
+    replace->setAutoDefault(false);
+    connect(replace, &QPushButton::clicked, dialog, &QDialog::accept);
+    buttons->addWidget(replace);
+    layout->addLayout(buttons);
+    connect(dialog, &QDialog::accepted, this, [this] {
+        if (m_bandStackAccess && m_bandStackAccess->state() == BandStackAccess::State::Ready) {
+            m_bandStackAccess->reseed();
+        } else {
+            showToast(bandStackReason(), ToastSeverity::Warning, 3000);
+        }
+    });
+    // Not exec(): this runs inside the document's own change signal.
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 void MainWindow::showBandStackExpiryNote()
@@ -2842,6 +3049,12 @@ void MainWindow::watchBandStackSlice(SliceModel* slice)
     }
     connect(slice, &SliceModel::frequencyChanged, this, &MainWindow::refreshBandStackRows);
     connect(slice, &SliceModel::lockedChanged, this, &MainWindow::refreshBandStackRows);
+    connect(slice, &SliceModel::frequencyChanged, this, [this, slice](double hz) {
+        if (slice == activeSliceForWindow()
+            && m_bandStackNumberBand != BandDefaults::bandGridBandFromFrequency(hz)) {
+            refreshBandStackNumber();
+        }
+    });
 }
 
 void MainWindow::refreshBandStackAvailability()
@@ -3035,10 +3248,109 @@ void MainWindow::renameBandStackTick(const QString& entryId)
 
 void MainWindow::refreshBandStackSlice()
 {
-    if (m_shuttingDown || !m_bandStackPanel) {
+    if (m_shuttingDown) {
         return;
     }
-    m_bandStackPanel->setSlice(activeSliceForWindow());
+    refreshBandStackNumber();
+    if (m_bandStackPanel) {
+        m_bandStackPanel->setSlice(activeSliceForWindow());
+    }
+}
+
+namespace {
+
+// desktop.html's #sBand: the band in bold green, the number small beside it. With
+// no usable stack it is the band alone, dimmed.
+QString bandStackNumberMarkup(const QString& band, const QString& number)
+{
+    if (number.isEmpty()) {
+        return QStringLiteral("<span style=\"color:%1;font-size:13px;font-weight:700;\">%2</span>")
+            .arg(WorkspacePreview::roleColourName("#404858", "text-inactive"), band);
+    }
+    return QStringLiteral("<span style=\"color:%1;font-size:13px;font-weight:700;\">%2</span>"
+                          " <span style=\"color:%3;font-size:11px;font-weight:600;\">%4</span>")
+        .arg(WorkspacePreview::roleColourName("#4caf6a", "ok"), band,
+             WorkspacePreview::roleColourName("#a6a6ac", "text-secondary"), number);
+}
+
+// The ids on `band` in the order its rows show: its own list, then any entry the
+// list does not name.
+QStringList bandStackIdsOn(const QJsonObject& document, const QString& band)
+{
+    QStringList onBand;
+    const QJsonArray entries = document.value(QStringLiteral("entries")).toArray();
+    for (const QJsonValue& value : entries) {
+        const QJsonObject entry = value.toObject();
+        if (entry.value(QStringLiteral("band")).toString() == band) {
+            onBand.append(entry.value(QStringLiteral("id")).toString());
+        }
+    }
+    QStringList ids;
+    const QJsonArray order = document.value(QStringLiteral("bands")).toObject()
+                                 .value(band).toObject()
+                                 .value(QStringLiteral("order")).toArray();
+    for (const QJsonValue& id : order) {
+        if (onBand.contains(id.toString())) {
+            ids.append(id.toString());
+        }
+    }
+    for (const QString& id : std::as_const(onBand)) {
+        if (!ids.contains(id)) {
+            ids.append(id);
+        }
+    }
+    return ids;
+}
+
+} // namespace
+
+void MainWindow::refreshBandStackNumber()
+{
+    if (m_shuttingDown || !m_bandStackNumber) {
+        return;
+    }
+    const SliceModel* slice = activeSliceForWindow();
+    const QString reason = bandStackReason();
+    QString shown = QStringLiteral("-");
+    QString number;
+    QString tip = reason;
+    m_bandStackNumberBand.reset();
+    if (slice) {
+        const Band band = BandDefaults::bandGridBandFromFrequency(slice->frequency());
+        m_bandStackNumberBand = band;
+        const QString key = bandKeyName(band);
+        shown = key;
+        if (reason.isEmpty()) {
+            const QJsonObject document = m_bandStackAccess->document();
+            const QStringList ids = bandStackIdsOn(document, key);
+            const QString place = document.value(QStringLiteral("places")).toObject()
+                                      .value(QString(slice->sliceLetter())).toObject()
+                                      .value(key).toString();
+            const int index = ids.indexOf(place);
+            number = QStringLiteral("%1/%2")
+                         .arg(index < 0 ? QStringLiteral("-") : QString::number(index + 1))
+                         .arg(ids.size());
+            tip = index < 0
+                ? QStringLiteral("Slice %1 has no place among the %2 saved on %3.")
+                      .arg(slice->sliceLetter()).arg(ids.size()).arg(key)
+                : QStringLiteral("Slice %1 is on %2 of %3 saved on %4.")
+                      .arg(slice->sliceLetter()).arg(index + 1).arg(ids.size()).arg(key);
+        }
+    } else if (reason.isEmpty()) {
+        tip = QStringLiteral("Select a slice first.");
+    }
+    const bool usable = slice != nullptr && reason.isEmpty();
+    m_bandStackNumber->setEnabled(usable);
+    m_bandStackNumber->setText(bandStackNumberMarkup(shown, number));
+    m_bandStackNumber->setToolTip(tip);
+    m_bandStackNumber->setAccessibleName(number.isEmpty() ? shown : shown + u' ' + number);
+    // A very long list can outgrow the width kept for it.
+    if (m_chromeBar && m_chromeBarWidget) {
+        m_chromeBar->setNaturalWidth(m_bandStackNumber,
+                                     std::max(m_bandStackNumber->sizeHint().width(),
+                                              m_bandStackNumber->minimumWidth()));
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    }
 }
 
 void MainWindow::refreshBandStackDots()
@@ -14733,6 +15045,16 @@ void MainWindow::buildStatusBar()
     hbox->addWidget(panBtn);
     m_addPanButton = panBtn;
     m_bandStackLabel = bandStackLabel;
+
+    // The stack number after +PAN, where desktop.html has it. Its width is kept
+    // for the widest usual reading so the bar does not shift on a press, and
+    // refreshBandStackNumber fills it once the bar's items are registered.
+    m_bandStackNumber = new QLabel(barWidget);
+    m_bandStackNumber->setObjectName(QStringLiteral("statusBandStackNumber"));
+    m_bandStackNumber->setTextFormat(Qt::RichText);
+    m_bandStackNumber->setText(bandStackNumberMarkup(QStringLiteral("160m"), QStringLiteral("88/88")));
+    m_bandStackNumber->setMinimumWidth(m_bandStackNumber->sizeHint().width());
+    hbox->addWidget(m_bandStackNumber);
     updateAddPanButtonState();
 
     // Phase 3F Sub-Epic D Task 11: per-chain (ADC) BPF state indicators
@@ -15521,12 +15843,14 @@ void MainWindow::buildStatusBar()
     bar.placeholderGroup = m_placeholderGroup;
     bar.placeholderSep   = m_placeholderSep;
     bar.bandStackLabel   = m_bandStackLabel;
+    bar.bandStackNumber  = m_bandStackNumber;
     bar.tnfLabel         = m_tnfLabel;
     for (int rung = 5; rung <= 9; ++rung) {
         bar.pillByRung[rung] = m_rxDashboard->badgeForRung(rung);
     }
 
     registerChromeBarItems(*m_chromeBar, bar);
+    refreshBandStackNumber();
 
     // registerChromeBarItems just measured w.rxDashRow's raw sizeHint(),
     // which at this point in construction happens to equal tag + mode +
@@ -17473,6 +17797,9 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
     // Task 3.6: CPU meter rate live-apply.
     connect(dialog, &SetupDialog::cpuMeterRateChanged,
             this,   &MainWindow::setCpuTimerIntervalHz);
+    // Band stack plan Task 12: design V1.
+    connect(dialog, &SetupDialog::bandStackRegionEdited, this,
+            [this] { noteBandStackRegionEdit(); });
     connect(dialog, &SetupDialog::hideFeedbackLevelChanged, this, [this](bool hidden) {
         if (m_psaIndicator) { m_psaIndicator->setHideFeedback(hidden); }
     });

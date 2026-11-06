@@ -25,6 +25,9 @@
 //   2026-11-06: the rows' context and the expiry note's Undo (band stack
 //               plan Task 9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-11-06: the status bar's stack number, the pan rule a recall applies,
+//               and the region prompt (band stack plan Task 12). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06: refreshBandStackTicks() and the spectrum ticks' click and menu
 //               (band stack plan Task 11). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -299,8 +302,10 @@
 
 #include "gui/widgets/CpuRowCycler.h"
 #include "models/Band.h"
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <map>
 #include <utility>
 #include <QMainWindow>
@@ -309,6 +314,7 @@
 #include <QActionGroup>
 #include <QKeySequence>
 #include <QPointer>
+#include <QDeadlineTimer>
 #include <QTimer>
 #include <QHash>
 #include <QSet>
@@ -492,6 +498,14 @@ public:
     BandStackView viewForSlice(SliceModel* slice) const;
     /// One band's rows for `slice` at the pointer, or the reason there are none.
     void openBandStackPopup(SliceModel* slice, Band band, const QPoint& globalPos);
+    /// How long after a region edit the Core's new region still counts as that
+    /// edit's: 60 seconds for the question a region edit can raise, and 5 more
+    /// (band stack design V1).
+    static constexpr std::chrono::milliseconds kBandStackRegionEditWindow{65000};
+    /// This window changed the region in Setup. The document's next new region
+    /// within `window` asks whether to load its defaults. A change from another
+    /// device arrives without this, so it does not ask.
+    void noteBandStackRegionEdit(std::chrono::milliseconds window = kBandStackRegionEditWindow);
     // Display pill plan Task 9: the window's per-band pan models.
     PanModels* panModels() const { return m_panModels; }
 
@@ -2015,6 +2029,7 @@ private:
     // Band-stack dots. Head of the bar positionally, ahead of +PAN, but
     // registered at rung 10 so they fold with the other stubs.
     QWidget*    m_bandStackLabel{nullptr};
+    QLabel*     m_bandStackNumber{nullptr};
     QLabel*     m_placeholderSep{nullptr};
 
     // Right-side strip items — captured so they can be registered with
@@ -2088,6 +2103,21 @@ private:
     void bindBandStackAccess(BandStackAccess* access);
     void refreshBandStackSlice();
     void refreshBandStackDots();
+    /// "40m 5/6" for the selected slice (design section 7).
+    void refreshBandStackNumber();
+    /// The band the number was last worked out for: tuning inside it changes
+    /// nothing, so a tune does not read the document.
+    std::optional<Band> m_bandStackNumberBand;
+    /// Design section 5.5 step 5 and V14, once per lastRecall.seq, on the window
+    /// controlling the slice.
+    void applyBandStackRecall();
+    std::optional<qint64> m_bandStackRecallSeq;
+    /// Design V1.
+    void followBandStackRegion();
+    void askBandStackRegion(const QString& region);
+    QString m_bandStackRegion;
+    std::optional<QDeadlineTimer> m_bandStackRegionEdit;
+    QPointer<QDialog> m_bandStackRegionPrompt;
     // Band stack plan Task 11: what every pan's spectrum ticks show.
     void refreshBandStackTicks();
     void recallBandStackTick(const QString& panId, const QString& entryId);

@@ -10595,7 +10595,9 @@ nereus_add_test(tst_bandstack_panel
 # Band stack plan Task 8: every band press through MainWindow::pressBand, on a
 # real MainWindow offscreen with a fake access.
 nereus_add_test(tst_bandstack_router
-    fakes/FakeBandStackAccess.h)
+    fakes/FakeBandStackAccess.h
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_bandstack_router PRIVATE NEREUS_BUILD_TESTS)
 
 # Band stack plan Task 11: the spectrum ticks, at the widget and on a real
 # MainWindow offscreen with a fake access.

@@ -96,6 +96,9 @@
 //   2026-10-26 - CW transmit, the Region combo reports its write
 //                 (reportTransmitGateSettingChanged), so the CW keyer gate
 //                 follows it. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06 - Band stack plan Task 12: the Region combo marks its edit, for
+//                 the band stack's region prompt. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -671,6 +674,7 @@ void GeneralOptionsPage::buildHardwareConfigGroup()
             refreshRegionAvailability();
             return;
         }
+        emit bandStackRegionEdited();
         AppSettings::instance().setValue(QStringLiteral("BandPlanRegion"), QString::number(index));
         // CW transmit (R-CW-06): the CW keyer gate follows the region.
         if (RadioModel* radio = model()) {

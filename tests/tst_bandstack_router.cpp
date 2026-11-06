@@ -17,8 +17,12 @@
 // ran past 120 s on Linux CI. A case that fails, or one that leaves the window
 // unusable, gets a new window for the case after it.
 //
-// NEREUS_BANDSTACK_CAPTURE_DIR, when set, saves the popup in each look there, to
-// read by eye.
+// Then the status bar's number, the view a recall brings back and the question a
+// region edit asks: on the same window with a fake document, and in a remote
+// window, built last because it needs the shared window gone.
+//
+// NEREUS_BANDSTACK_CAPTURE_DIR, when set, saves the popup, the number and the
+// region question in each look there, to read by eye.
 //
 // Design: docs/architecture/2026-11-05-band-stack-design.md, sections 5.1 and 7.
 //
@@ -31,12 +35,16 @@
 //   2026-11-06 - One window for every case; the fixture's container no longer
 //                 covers the flyout. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-06 - The stack number, the pan rule and the region prompt (band stack
+//                 plan Task 12). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QDir>
 #include <QGridLayout>
@@ -57,7 +65,11 @@
 #include <memory>
 
 #include "core/RadioDiscovery.h"
+#include "core/session/SliceAccessMirror.h"
+#include "core/session/StationClient.h"
 #include "fakes/FakeBandStackAccess.h"
+#include "fakes/RemoteWindowHarness.h"
+#include "gui/SetupDialog.h"
 #include "gui/MainWindow.h"
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
@@ -70,12 +82,14 @@
 #include "gui/meters/VfoDisplayItem.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/setup/GeneralOptionsPage.h"
 #include "gui/widgets/StatusToast.h"
 #include "models/BandDefaults.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
+using NereusSDR::Test::RemoteWindowHarness;
 
 namespace {
 
@@ -214,6 +228,36 @@ QJsonObject popupDocument(int extra40m = 0)
          QJsonObject{{QStringLiteral("batchId"), QString()}, {QStringLiteral("count"), 0}}}};
 }
 
+// popupDocument with a recall published on it.
+QJsonObject recallDocument(qint64 seq, int sliceId, bool applyView, qint64 centerHz, qint64 spanHz)
+{
+    QJsonObject document = popupDocument();
+    document.insert(QStringLiteral("lastRecall"),
+                    QJsonObject{{QStringLiteral("seq"), seq},
+                                {QStringLiteral("sliceId"), sliceId},
+                                {QStringLiteral("applyView"), applyView},
+                                {QStringLiteral("centerHz"), centerHz},
+                                {QStringLiteral("spanHz"), spanHz}});
+    return document;
+}
+
+QJsonObject regionDocument(const QString& region)
+{
+    QJsonObject document = popupDocument();
+    document.insert(QStringLiteral("region"), region);
+    return document;
+}
+
+QLabel* stackNumber(MainWindow& window)
+{
+    return window.findChild<QLabel*>(QStringLiteral("statusBandStackNumber"));
+}
+
+QDialog* regionPrompt(MainWindow& window)
+{
+    return window.findChild<QDialog*>(QStringLiteral("bandStackRegionPrompt"));
+}
+
 QPushButton* flyoutButton(SpectrumOverlayPanel& overlay, const QString& text)
 {
     for (QPushButton* button : overlay.parentWidget()->findChildren<QPushButton*>()) {
@@ -302,6 +346,9 @@ struct RouterFixture {
         if (auto* popup = window->findChild<BandStackPopup*>()) {
             popup->close();
         }
+        // No edit carries over from the case before, and no question.
+        window->noteBandStackRegionEdit(std::chrono::milliseconds(0));
+        delete regionPrompt(*window);
         // The BAND button toggles, so it closes a flyout a case left open.
         if (flyoutButton(*overlay, QStringLiteral("20"))) {
             openBandFlyout(*overlay);
@@ -338,15 +385,31 @@ private:
         return m_fixture->build();
     }
 
+    // The pan's start: wide, on Slice A, with click tune as the case asks.
+    SpectrumWidget* panOnSliceA(RouterFixture& f, bool clickTune)
+    {
+        SpectrumWidget* spectrum = f.window->spectrumForSlice(f.a);
+        if (spectrum) {
+            spectrum->setCtunEnabled(clickTune);
+            spectrum->setFrequencyRange(kOn20mHz, 96'000.0);
+        }
+        return spectrum;
+    }
+
     std::unique_ptr<RouterFixture> m_fixture;
     bool m_rebuild{false};
 
 private slots:
-    void initTestCase() { QVERIFY(buildFixture()); }
+    void initTestCase()
+    {
+        // The remote case's harness needs this before any window is built.
+        QVERIFY(RemoteWindowHarness::useIsolatedProfile(QStringLiteral("bandstack-router")));
+        QVERIFY(buildFixture());
+    }
 
     void init()
     {
-        if (m_rebuild) {
+        if (!m_fixture || m_rebuild) {
             QVERIFY(buildFixture());
         } else {
             m_fixture->reset();
@@ -1036,6 +1099,323 @@ private slots:
         f.fake.setState(BandStackAccess::State::NotConnected, BandStackAccess::notConnectedReason());
         f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
         save(*popup, "not-connected");
+        popup->close();
+
+        // The status bar's number, in each state, and the question.
+        QLabel* number = stackNumber(*f.window);
+        QVERIFY(number);
+        const auto saveBar = [&](const char* name) {
+            settle();
+            QVERIFY(number->parentWidget()->grab().save(QDir(directory).filePath(
+                QStringLiteral("%1-number-%2.png").arg(look, QString::fromLatin1(name)))));
+        };
+        saveBar("not-connected");
+        f.fake.setState(BandStackAccess::State::NeedsNewerCore,
+                        QStringLiteral("This Core does not have band stacks. Updating the Core may help."));
+        saveBar("older-core");
+        f.fake.setState(BandStackAccess::State::Ready);
+        f.model->setActiveSlice(1);
+        saveBar("on-a-place");
+        f.model->setActiveSlice(0);
+        saveBar("no-place");
+        f.window->noteBandStackRegionEdit();
+        f.fake.setDocument(regionDocument(QStringLiteral("Japan")));
+        QDialog* prompt = regionPrompt(*f.window);
+        QVERIFY(prompt);
+        settle();
+        QVERIFY(prompt->grab().save(QDir(directory).filePath(
+            QStringLiteral("%1-region-prompt.png").arg(look))));
+        prompt->close();
+    }
+
+    // ── The status bar's number ──────────────────────────────────────────────
+    void numberReadsThePlaceOfTheSelectedSlice()
+    {
+        RouterFixture& f = *m_fixture;
+        QLabel* number = stackNumber(*f.window);
+        QVERIFY(number);
+        QVERIFY(number->isVisible());
+        f.fake.setDocument(popupDocument());
+
+        // Slice A is on 20m with no place there; B has the first of three on 40m.
+        QVERIFY(number->isEnabled());
+        QCOMPARE(number->accessibleName(), QStringLiteral("20m -/1"));
+        f.model->setActiveSlice(1);
+        QCOMPARE(number->accessibleName(), QStringLiteral("40m 1/3"));
+        QVERIFY2(number->text().contains(QStringLiteral(">40m<")), qPrintable(number->text()));
+        QVERIFY2(number->text().contains(QStringLiteral(">1/3<")), qPrintable(number->text()));
+
+        // The place moves, in the band's own order.
+        QJsonObject document = popupDocument();
+        document.insert(QStringLiteral("places"),
+                        QJsonObject{{QStringLiteral("B"),
+                                     QJsonObject{{QStringLiteral("40m"), QStringLiteral("dx")}}}});
+        f.fake.setDocument(document);
+        QCOMPARE(number->accessibleName(), QStringLiteral("40m 3/3"));
+        // A place that names nothing is no place.
+        document.insert(QStringLiteral("places"),
+                        QJsonObject{{QStringLiteral("B"),
+                                     QJsonObject{{QStringLiteral("40m"), QStringLiteral("gone")}}}});
+        f.fake.setDocument(document);
+        QCOMPARE(number->accessibleName(), QStringLiteral("40m -/3"));
+
+        // Tuning to another band: that band's count, and the slice's place there.
+        f.fake.setDocument(popupDocument());
+        f.b->setFrequency(kOn20mHz);
+        QCOMPARE(number->accessibleName(), QStringLiteral("20m -/1"));
+        f.b->setFrequency(kOn40mHz);
+        QCOMPARE(number->accessibleName(), QStringLiteral("40m 1/3"));
+        // A slice that is not the selected one changes nothing.
+        f.a->setFrequency(kOn40mHz);
+        QCOMPARE(number->accessibleName(), QStringLiteral("40m 1/3"));
+    }
+
+    void numberIsDisabledWithTheReason_data()
+    {
+        QTest::addColumn<int>("state");
+        QTest::addColumn<QString>("reason");
+        QTest::newRow("older Core") << int(BandStackAccess::State::NeedsNewerCore)
+                                    << BandStackAccess::needsNewerCoreReason();
+        QTest::newRow("not connected") << int(BandStackAccess::State::NotConnected)
+                                       << BandStackAccess::notConnectedReason();
+    }
+
+    void numberIsDisabledWithTheReason()
+    {
+        QFETCH(int, state);
+        QFETCH(QString, reason);
+        RouterFixture& f = *m_fixture;
+        QLabel* number = stackNumber(*f.window);
+        QVERIFY(number);
+        f.fake.setDocument(popupDocument());
+
+        f.fake.setState(static_cast<BandStackAccess::State>(state), reason);
+        QVERIFY(number->isVisible());
+        QVERIFY(!number->isEnabled());
+        QCOMPARE(number->toolTip(), reason);
+        QCOMPARE(number->accessibleName(), QStringLiteral("20m"));
+
+        f.fake.setState(BandStackAccess::State::Ready);
+        QVERIFY(number->isEnabled());
+        QCOMPARE(number->accessibleName(), QStringLiteral("20m -/1"));
+        QVERIFY(number->toolTip() != reason);
+    }
+
+    // ── The view a recall brings back ────────────────────────────────────────
+    void recallBringsBackTheViewOnce()
+    {
+        RouterFixture& f = *m_fixture;
+        SpectrumWidget* spectrum = panOnSliceA(f, true);
+        QVERIFY(spectrum);
+        constexpr qint64 kCenter = 14'080'000;
+        f.fake.setDocument(recallDocument(4, kSliceA, false, 0, 0));
+        // What the first document says had already happened.
+        QCOMPARE(spectrum->bandwidth(), 96'000.0);
+
+        f.fake.setDocument(recallDocument(5, kSliceA, true, kCenter, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 48'000.0);
+        QCOMPARE(spectrum->centerFrequency(), double(kCenter));
+        QCOMPARE(spectrum->ddcCenterFrequency(), double(kCenter));
+        QCOMPARE(f.model->streamCentreHz(f.a->streamIndex()), double(kCenter));
+        // The slice stays where the recall put it.
+        QCOMPARE(f.a->frequency(), kOn20mHz);
+
+        // The same seq again, as any later change to the document carries it.
+        spectrum->setFrequencyRange(kOn20mHz, 96'000.0);
+        f.fake.setDocument(recallDocument(5, kSliceA, true, kCenter, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 96'000.0);
+        QCOMPARE(spectrum->centerFrequency(), kOn20mHz);
+        // Not a higher seq only: a Core that restarted counts from the start.
+        f.fake.setDocument(recallDocument(1, kSliceA, true, kCenter, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 48'000.0);
+    }
+
+    void recallLeavesAViewItDoesNotName()
+    {
+        RouterFixture& f = *m_fixture;
+        SpectrumWidget* spectrum = panOnSliceA(f, true);
+        QVERIFY(spectrum);
+        f.fake.setDocument(recallDocument(0, kSliceA, false, 0, 0));
+
+        // applyView false: the Core says this view stays.
+        f.fake.setDocument(recallDocument(1, kSliceA, false, 14'080'000, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 96'000.0);
+        QCOMPARE(spectrum->centerFrequency(), kOn20mHz);
+
+        // No saved zoom: the span stays and the center comes back.
+        f.fake.setDocument(recallDocument(2, kSliceA, true, 14'080'000, 0));
+        QCOMPARE(spectrum->bandwidth(), 96'000.0);
+        QCOMPARE(spectrum->centerFrequency(), 14'080'000.0);
+
+        // No such slice.
+        spectrum->setFrequencyRange(kOn20mHz, 96'000.0);
+        f.fake.setDocument(recallDocument(3, 3, true, 14'080'000, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 96'000.0);
+        QCOMPARE(spectrum->centerFrequency(), kOn20mHz);
+    }
+
+    void recallWithTheFrequencyOffScreenCentersOnIt()
+    {
+        RouterFixture& f = *m_fixture;
+        SpectrumWidget* spectrum = panOnSliceA(f, true);
+        QVERIFY(spectrum);
+        f.fake.setDocument(recallDocument(0, kSliceA, false, 0, 0));
+
+        // 30 kHz off a 48 kHz span's center puts the slice outside the view.
+        f.fake.setDocument(recallDocument(1, kSliceA, true, 14'104'000, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 48'000.0);
+        QCOMPARE(spectrum->centerFrequency(), kOn20mHz);
+        QCOMPARE(f.a->frequency(), kOn20mHz);
+    }
+
+    void recallWithoutClickTuneSitsOnTheSlice()
+    {
+        RouterFixture& f = *m_fixture;
+        SpectrumWidget* spectrum = panOnSliceA(f, false);
+        QVERIFY(spectrum);
+        const auto restore = qScopeGuard([spectrum] { spectrum->setCtunEnabled(true); });
+        f.fake.setDocument(recallDocument(0, kSliceA, false, 0, 0));
+
+        f.fake.setDocument(recallDocument(1, kSliceA, true, 14'080'000, 48'000));
+        // V14: the zoom comes back, and the pan stays on its slice.
+        QCOMPARE(spectrum->bandwidth(), 48'000.0);
+        QCOMPARE(spectrum->centerFrequency(), kOn20mHz);
+        QCOMPARE(f.a->frequency(), kOn20mHz);
+    }
+
+    // Slice B is on another band's stream. The pan shows A's and keeps A's view.
+    void recallOfASliceOnAnotherStreamLeavesThePan()
+    {
+        RouterFixture& f = *m_fixture;
+        SpectrumWidget* spectrum = panOnSliceA(f, true);
+        QVERIFY(spectrum);
+        QCOMPARE(f.window->spectrumForSlice(f.b), spectrum);
+        QVERIFY(f.b->streamIndex() != f.a->streamIndex());
+        f.fake.setDocument(recallDocument(0, kSliceB, false, 0, 0));
+        const double streamB = f.model->streamCentreHz(f.b->streamIndex());
+
+        f.fake.setDocument(recallDocument(1, kSliceB, true, 7'080'000, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 96'000.0);
+        QCOMPARE(spectrum->centerFrequency(), kOn20mHz);
+        QCOMPARE(f.model->streamCentreHz(f.b->streamIndex()), streamB);
+    }
+
+    // ── The question a region edit asks ──────────────────────────────────────
+    void regionEditAsksWhenTheRegionChanges()
+    {
+        RouterFixture& f = *m_fixture;
+        f.fake.setDocument(regionDocument(QStringLiteral("United States")));
+        f.window->noteBandStackRegionEdit();
+        // A document that does not change the region does not use up the edit.
+        f.fake.setDocument(regionDocument(QStringLiteral("United States")));
+        QVERIFY(!regionPrompt(*f.window));
+
+        f.fake.setDocument(regionDocument(QStringLiteral("Japan")));
+        QDialog* prompt = regionPrompt(*f.window);
+        QVERIFY(prompt);
+        QVERIFY(prompt->isVisible());
+        auto* text = prompt->findChild<QLabel*>(QStringLiteral("bandStackRegionPromptText"));
+        auto* keep = prompt->findChild<QPushButton*>(QStringLiteral("bandStackRegionKeep"));
+        auto* replace = prompt->findChild<QPushButton*>(QStringLiteral("bandStackRegionReplace"));
+        QVERIFY(text && keep && replace);
+        QCOMPARE(text->text(),
+                 QStringLiteral("You changed the region to Japan. Replace the unlocked entries "
+                                "with the defaults for Japan? Your locked entries stay."));
+        QCOMPARE(keep->text(), QStringLiteral("Keep my entries"));
+        QCOMPARE(replace->text(), QStringLiteral("Replace"));
+        QVERIFY(keep->isDefault());
+        QVERIFY(!replace->isDefault());
+
+        // Keep: nothing goes to the Core.
+        QTest::mouseClick(keep, Qt::LeftButton);
+        QTRY_VERIFY(!regionPrompt(*f.window));
+        QVERIFY(f.fake.calls.isEmpty());
+
+        // The edit is used up: the next region is another device's.
+        f.fake.setDocument(regionDocument(QStringLiteral("Spain")));
+        QVERIFY(!regionPrompt(*f.window));
+
+        // A second edit while the question is up: the question names the new
+        // region, and only one is left to answer.
+        f.window->noteBandStackRegionEdit();
+        f.fake.setDocument(regionDocument(QStringLiteral("Japan")));
+        QDialog* first = regionPrompt(*f.window);
+        QVERIFY(first);
+        f.window->noteBandStackRegionEdit();
+        f.fake.setDocument(regionDocument(QStringLiteral("Spain")));
+        QTRY_COMPARE(f.window->findChildren<QDialog*>(QStringLiteral("bandStackRegionPrompt")).size(), 1);
+        QVERIFY(regionPrompt(*f.window)->findChild<QLabel*>(QStringLiteral("bandStackRegionPromptText"))
+                    ->text().contains(QStringLiteral("Spain")));
+        regionPrompt(*f.window)->close();
+        QTRY_VERIFY(!regionPrompt(*f.window));
+        QVERIFY(f.fake.calls.isEmpty());
+
+        // Replace: the one call the design names.
+        f.window->noteBandStackRegionEdit();
+        f.fake.setDocument(regionDocument(QStringLiteral("Japan")));
+        prompt = regionPrompt(*f.window);
+        QVERIFY(prompt);
+        QTest::mouseClick(prompt->findChild<QPushButton*>(QStringLiteral("bandStackRegionReplace")),
+                          Qt::LeftButton);
+        QTRY_VERIFY(!regionPrompt(*f.window));
+        QCOMPARE(f.fake.calls.size(), 1);
+        QCOMPARE(f.fake.calls.first().verb, QStringLiteral("reseed"));
+    }
+
+    void regionDoesNotAskWithoutThisWindowsEdit()
+    {
+        RouterFixture& f = *m_fixture;
+        f.fake.setDocument(regionDocument(QStringLiteral("United States")));
+
+        // Another device changed it.
+        f.fake.setDocument(regionDocument(QStringLiteral("Japan")));
+        QVERIFY(!regionPrompt(*f.window));
+
+        // This window's edit, past its time.
+        f.window->noteBandStackRegionEdit(std::chrono::milliseconds(0));
+        f.fake.setDocument(regionDocument(QStringLiteral("Spain")));
+        QVERIFY(!regionPrompt(*f.window));
+
+        // No document yet: the first one's region is news to nobody.
+        f.fake.setDocument(QJsonObject{});
+        f.window->noteBandStackRegionEdit();
+        f.fake.setDocument(regionDocument(QStringLiteral("Japan")));
+        QVERIFY(!regionPrompt(*f.window));
+        f.window->noteBandStackRegionEdit(std::chrono::milliseconds(0));
+
+        // A Core with no band stacks: the edit marks nothing.
+        f.fake.setState(BandStackAccess::State::NeedsNewerCore,
+                        BandStackAccess::needsNewerCoreReason());
+        f.window->noteBandStackRegionEdit();
+        f.fake.setState(BandStackAccess::State::Ready);
+        f.fake.setDocument(regionDocument(QStringLiteral("Spain")));
+        QVERIFY(!regionPrompt(*f.window));
+        QVERIFY(f.fake.calls.isEmpty());
+    }
+
+    void setupsRegionComboMarksTheEdit()
+    {
+        RouterFixture& f = *m_fixture;
+        f.fake.setDocument(regionDocument(QStringLiteral("United States")));
+        const QVariant saved = AppSettings::instance().value(QStringLiteral("BandPlanRegion"));
+        QVERIFY(QMetaObject::invokeMethod(f.window.get(), "openSetupAtPage",
+                                          Q_ARG(QString, QStringLiteral("Options"))));
+        auto* dialog = f.window->findChild<SetupDialog*>();
+        QVERIFY(dialog);
+        const auto closeSetup = qScopeGuard([&] {
+            delete dialog;
+            AppSettings::instance().setValue(QStringLiteral("BandPlanRegion"), saved);
+        });
+        auto* page = dialog->findChild<GeneralOptionsPage*>();
+        QVERIFY(page);
+        auto* combo = page->findChild<QComboBox*>(QStringLiteral("comboFRSRegion"));
+        QVERIFY(combo);
+        QVERIFY(combo->isEnabled());
+
+        combo->setCurrentIndex(combo->currentIndex() == 0 ? 1 : 0);
+        QVERIFY(!regionPrompt(*f.window));
+        f.fake.setDocument(regionDocument(QStringLiteral("Japan")));
+        QVERIFY(regionPrompt(*f.window));
     }
 
     // ── What comes back ──────────────────────────────────────────────────────
@@ -1048,6 +1428,63 @@ private slots:
         emit f.fake.reported(report);
         QCOMPARE(toastCount(*f.window, refusal), 1);
         QCOMPARE(toastCount(*f.window, report), 1);
+    }
+
+    // ── A remote window ──────────────────────────────────────────────────────
+    // Last, because a harness takes over the settings backend for its lifetime
+    // and so the shared window goes first. A view is only this window's own: the
+    // Core alone moves the DDC.
+    void remoteWindowAppliesTheRecallItControls()
+    {
+        m_fixture.reset();
+        RemoteWindowHarness::Options options;
+        options.sliceAccess = true;
+        RemoteWindowHarness h(options);
+        QVERIFY(h.start());
+        SliceModel* onCore = h.station().sliceById(0);
+        QVERIFY(onCore);
+        onCore->setFrequency(kOn20mHz);
+        h.startStartupConnection();
+        QTRY_VERIFY(h.client()->stationLinkReady());
+        RadioModel* model = h.remoteModel();
+        SliceModel* slice = model->sliceById(0);
+        QVERIFY(slice);
+        QTRY_COMPARE(slice->frequency(), kOn20mHz);
+        QTRY_VERIFY(!slice->panKey().isEmpty());
+        SpectrumWidget* spectrum = h.window()->spectrumForSlice(slice);
+        QVERIFY(spectrum);
+        const double ddcOnCore = h.station().streamCentreHz(onCore->streamIndex());
+
+        FakeBandStackAccess fake;
+        h.window()->setBandStackAccessForTest(&fake);
+        const auto restore = qScopeGuard([&] { h.window()->setBandStackAccessForTest(model->bandStack()); });
+        spectrum->setCtunEnabled(true);
+        fake.setDocument(recallDocument(0, 0, false, 0, 0));
+
+        spectrum->setDisplayWindowPreservingHistory(kOn20mHz, 96'000.0);
+        fake.setDocument(recallDocument(1, 0, true, 14'080'000, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 48'000.0);
+        QCOMPARE(spectrum->centerFrequency(), 14'080'000.0);
+        QCOMPARE(slice->frequency(), kOn20mHz);
+        QCOMPARE(h.station().streamCentreHz(onCore->streamIndex()), ddcOnCore);
+
+        // Off screen: on the frequency.
+        fake.setDocument(recallDocument(2, 0, true, 14'104'000, 24'000));
+        QCOMPARE(spectrum->bandwidth(), 24'000.0);
+        QCOMPARE(spectrum->centerFrequency(), kOn20mHz);
+
+        // Another device controls the slice now: its view is its own.
+        const QByteArray other = QByteArrayLiteral("token:other");
+        h.station().sliceOwnership()->setOwner(0, other);
+        QTRY_VERIFY([&] {
+            const SliceAccessMirror* access = h.client()->sliceAccess();
+            const auto entry = access ? access->entry(0) : std::nullopt;
+            return entry && entry->controllerDeviceId == other;
+        }());
+        spectrum->setDisplayWindowPreservingHistory(kOn20mHz, 96'000.0);
+        fake.setDocument(recallDocument(3, 0, true, 14'080'000, 48'000));
+        QCOMPARE(spectrum->bandwidth(), 96'000.0);
+        QCOMPARE(spectrum->centerFrequency(), kOn20mHz);
     }
 };
 
