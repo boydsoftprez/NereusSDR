@@ -2306,8 +2306,10 @@ set(GUI_SOURCES
 # Resources
 # --------------------------------------------------------------------------
 if(APPLE)
-    list(APPEND GUI_SOURCES src/gui/QtCocoaAccessibilityOwnershipGuard.mm)
+    list(APPEND GUI_SOURCES src/gui/QtCocoaAccessibilityOwnershipGuard.mm
+        src/gui/hotkeys/MacMenuTrackingWatch.mm)
     set_source_files_properties(src/gui/QtCocoaAccessibilityOwnershipGuard.mm
+        src/gui/hotkeys/MacMenuTrackingWatch.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 qt_add_resources(RESOURCES resources.qrc)

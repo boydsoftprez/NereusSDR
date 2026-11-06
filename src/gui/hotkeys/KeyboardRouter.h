@@ -54,6 +54,7 @@ private:
     bool handlePress(QWidget* receiver, QKeyEvent* event);
     bool handleRelease(const QKeyEvent* event);
     bool handlePressOfKeyDown(QWidget* receiver, QKeyEvent* event, QHash<qint64, QString>::iterator down);
+    static bool pressAfterLostRelease(const QKeyEvent* event, const QString& heldId);
     void noteFocusIn(QWidget* widget, Qt::FocusReason reason);
     void watchMenuBar(const QMenuBar* bar);
     void watchMenu(const QAction* action);

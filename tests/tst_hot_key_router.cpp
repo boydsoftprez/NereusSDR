@@ -63,6 +63,9 @@
 #include "gui/containers/FreeCanvasSurface.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
 #include "gui/hotkeys/KeyboardRouter.h"
+#ifdef Q_OS_MAC
+#include "gui/hotkeys/MacMenuTrackingWatch.h"
+#endif
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableWindow.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -1204,11 +1207,59 @@ private slots:
         sendKey(&w.window, QEvent::KeyRelease, Qt::Key_F9, Qt::ShiftModifier, false, kNative);
         rig.targets.ran.clear();
 
-        // A Press action is one press too.
+        // A Press action is one press too, where a repeat can look like a press.
         sendKey(&w.window, QEvent::KeyPress, Qt::Key_F10, Qt::NoModifier, false, 102);
         sendKey(&w.window, QEvent::KeyPress, Qt::Key_F10, Qt::NoModifier, false, 102);
         sendKey(&w.window, QEvent::KeyRelease, Qt::Key_F10, Qt::NoModifier, false, 102);
+#ifdef Q_OS_MAC
+        QCOMPARE(rig.targets.ran, (QStringList{QStringLiteral("filter.next"), QStringLiteral("filter.next")}));
+#else
         QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("filter.next")});
+#endif
+    }
+
+    // A key-up can go missing under Cmd. Mac repeats are marked, so a press that
+    // isn't one is a new press. Qt's Control is the Mac's Cmd.
+    void aSecondPressOfACommandKeyRunsOnAMac()
+    {
+        Bench w;
+        QVERIFY(w.ready());
+        constexpr quint32 kNative = 103;
+        const Qt::KeyboardModifiers chord = Qt::ControlModifier | Qt::ShiftModifier;
+
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_M, chord, false, kNative);
+        QTRY_VERIFY(w.mox->isMox());
+        // A marked repeat is never a press, anywhere.
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_M, chord, true, kNative);
+        QCoreApplication::processEvents();
+        QVERIFY(w.mox->isMox());
+
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_M, chord, false, kNative);
+        QCoreApplication::processEvents();
+#ifdef Q_OS_MAC
+        QTRY_VERIFY(!w.mox->isMox());
+        sendKey(&w.window, QEvent::KeyRelease, Qt::Key_M, chord, false, kNative);
+#else
+        QVERIFY(w.mox->isMox());
+        sendKey(&w.window, QEvent::KeyRelease, Qt::Key_M, chord, false, kNative);
+        tap(&w.window, Qt::Key_M, chord);
+        QTRY_VERIFY(!w.mox->isMox());
+#endif
+    }
+
+    void aHoldChordDownTwiceHoldsOnce()
+    {
+        Bench w;
+        QVERIFY(w.ready());
+        Rig rig(&w.window);
+        QCOMPARE(rig.bindings.bind(QStringLiteral("cw.straight"), QStringLiteral("Ctrl+F9"), true).result, HotKeyBindResult::Bound);
+        constexpr quint32 kNative = 104;
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::ControlModifier, false, kNative);
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::ControlModifier, false, kNative);
+        QCOMPARE(rig.targets.cwKeys, (QList<QPair<QString, bool>>{{QStringLiteral("cw.straight"), true}}));
+        sendKey(&w.window, QEvent::KeyRelease, Qt::Key_F9, Qt::ControlModifier, false, kNative);
+        QCOMPARE(rig.targets.cwKeys, (QList<QPair<QString, bool>>{{QStringLiteral("cw.straight"), true},
+                                                                  {QStringLiteral("cw.straight"), false}}));
     }
 
     // Holding Right and adding Shift goes on tuning, in tens. A tune never
@@ -1315,6 +1366,42 @@ private slots:
         w.keys->press(QStringLiteral("tx.mox"), keyboard);
         QTRY_VERIFY(!w.mox->isMox());
     }
+
+#ifdef Q_OS_MAC
+    // Posted by hand. The real Apple menu is for the hardware run.
+    void aNativeMenuTrackingDropsTheHoldAndLeavesMox()
+    {
+        const HotKeySource keyboard{HotKeySourceKind::Keyboard, QString()};
+        Bench w;
+        QVERIFY(w.ready());
+
+        down(&w.window, Qt::Key_Space);
+        QTRY_VERIFY(w.mox->isMox());
+        MacMenuTrackingWatch::postForTest();
+        QTRY_VERIFY(!w.mox->isMox());
+        up(&w.window, Qt::Key_Space);
+
+        // MOX stays.
+        w.keys->press(QStringLiteral("tx.mox"), keyboard);
+        QTRY_VERIFY(w.mox->isMox());
+        MacMenuTrackingWatch::postForTest();
+        QCoreApplication::processEvents();
+        QVERIFY(w.mox->isMox());
+        w.keys->press(QStringLiteral("tx.mox"), keyboard);
+        QTRY_VERIFY(!w.mox->isMox());
+
+        // A router gone is no longer called.
+        {
+            Rig rig(&w.window);
+            QCOMPARE(rig.bindings.bind(QStringLiteral("cw.straight"), QStringLiteral("F9"), true).result, HotKeyBindResult::Bound);
+            sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier, false, 105);
+            QCOMPARE(rig.targets.cwKeys.size(), 1);
+            MacMenuTrackingWatch::postForTest();
+            QCOMPARE(rig.targets.cwKeys.last(), qMakePair(QStringLiteral("cw.straight"), false));
+        }
+        MacMenuTrackingWatch::postForTest();
+    }
+#endif
 
     void aMenuBarMenuOpeningDropsTheHoldAndLeavesMox()
     {

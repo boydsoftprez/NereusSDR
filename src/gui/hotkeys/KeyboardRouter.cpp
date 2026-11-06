@@ -17,6 +17,9 @@
 #include "gui/containers/FloatingContainer.h"
 #include "gui/containers/FreeCanvasSurface.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
+#ifdef Q_OS_MAC
+#include "gui/hotkeys/MacMenuTrackingWatch.h"
+#endif
 #include "gui/widgets/StatusToast.h"
 
 #include <QAbstractSpinBox>
@@ -126,6 +129,11 @@ KeyboardRouter::KeyboardRouter(HotKeyDispatcher* dispatcher, HotKeyBindings* bin
     // release after wake finds no entry, and one lost in sleep can't eat the next press.
     connect(m_dispatcher, &HotKeyDispatcher::holdsDroppedBySleep, this, [this] { m_down.clear(); });
     qApp->installEventFilter(this);
+#ifdef Q_OS_MAC
+    // Every native menu, the Apple menu included, which has no QMenu. A menu with
+    // a QMenu drops twice, and the second finds nothing left to drop. Parented here.
+    new MacMenuTrackingWatch([this] { dropHolds(); }, this);
+#endif
     // A menu can hold on to the key-up, natively on a Mac. Menus added later
     // arrive as ActionAdded, in the filter.
     for (const QMenuBar* const bar : m_window->findChildren<QMenuBar*>()) {
@@ -229,7 +237,10 @@ bool KeyboardRouter::handlePress(QWidget* receiver, QKeyEvent* event)
     }
     const auto down = m_down.find(physicalKey(event));
     if (down != m_down.end()) {
-        return handlePressOfKeyDown(receiver, event, down);
+        if (!pressAfterLostRelease(event, down.value())) {
+            return handlePressOfKeyDown(receiver, event, down);
+        }
+        m_down.erase(down);
     }
     const QString chord = chordFromEvent(event);
     if (chord.isEmpty()) {
@@ -257,6 +268,23 @@ bool KeyboardRouter::handlePress(QWidget* receiver, QKeyEvent* event)
         m_dispatcher->releaseAll(keyboardSource());
     }
     return true;
+}
+
+// On a Mac a repeat is marked, so an unmarked press of a Press action means its
+// release went missing and the operator pressed again. Cocoa is known to lose
+// key-ups for key equivalents; Qt forwards them to its windows
+// (qtbase qcocoaapplication.mm [6.11], qt_maybeSendKeyEquivalentUpEvent), and this
+// is for any that still go. A hold never presses again, on any platform.
+bool KeyboardRouter::pressAfterLostRelease(const QKeyEvent* event, const QString& heldId)
+{
+#ifdef Q_OS_MAC
+    const HotKeyAction* const held = HotKeyActionList::find(heldId);
+    return !event->isAutoRepeat() && held != nullptr && held->gesture == HotKeyGesture::Press;
+#else
+    Q_UNUSED(event);
+    Q_UNUSED(heldId);
+    return false;
+#endif
 }
 
 // Another press of a key still down, marked as a repeat or not (Windows can send
