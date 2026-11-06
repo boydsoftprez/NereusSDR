@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-11-06: a display with no frame in its session moves nothing on a
+//               direct path during a speaker fault, so that path has no
+//               restart loop either. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-05: a speaker failure says nothing about display, so a display
 //               that stops during one still moves a direct path to the tunnel
 //               and, on its own clock lastDisplayMs, once per outage, still
@@ -2223,13 +2227,17 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // stream can keep running beside it. The next session has no frame,
         // so this restarts the session once per outage, not on every fault.
         if (d->audioStoppedForSpeaker) {
-            if (!d->displayExpected()) {
+            // A display with no frame in this session has nothing to have
+            // stopped. On a direct path it would otherwise move media, then
+            // recover, then the same in the next session, for as long as the
+            // fault lasts.
+            if (!d->displayExpected() || d->lastDisplayMs < 0) {
                 d->restartSilenceClocks();
                 return;
             }
             d->lastAudio.restart();
             const qint64 displaySilentMs = d->allocationClock() - d->lastDisplayMs;
-            if (slowPath && d->lastDisplayMs >= 0 && displaySilentMs > kMediaStallMs) {
+            if (slowPath && displaySilentMs > kMediaStallMs) {
                 qCInfo(lcRemoteMedia) << "No display from the Core for" << displaySilentMs
                                       << "ms on a relayed path; starting audio and display again";
                 d->lastAudio.invalidate();

@@ -1592,6 +1592,36 @@ private slots:
         s.h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-11-06: a display with no frame in this session has nothing to have
+    // stopped, so it moves nothing on a direct path. Otherwise the move, the
+    // recovery after it, and the same again in the next session would repeat
+    // for as long as the fault lasts. The test's Core answers a display only
+    // from a frame, so a test mark stands in for its answer.
+    void aDisplayWithNoFrameMovesNothingDuringASpeakerFault()
+    {
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(s.remoteMedia.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        const QString firstId = s.remoteMedia.mediaConnectionId();
+        QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.activeEndpointCount() == 1, 5000);
+        s.remoteMedia.markDisplaysAcceptedForTest();
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QTest::qWait(RemoteMediaController::kDirectMediaSilenceFallbackMs + 1000);
+        QVERIFY(s.frames.isEmpty());
+        QVERIFY(!s.remoteMedia.replacingConnection());
+        QCOMPARE(s.remoteMedia.mediaConnectionId(), firstId);
+        QVERIFY(s.recovery.isEmpty());
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // 2026-11-05: nor is a display being closed for the budget, which the
     // Core stops sending. Real time: a real session on its clock.
     void aSuspendingDisplayIsNotExpectedDuringASpeakerFault()
