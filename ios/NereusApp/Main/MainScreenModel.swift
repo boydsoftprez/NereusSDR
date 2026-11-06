@@ -443,7 +443,9 @@ final class MainScreenModel: ObservableObject {
                 return firstControls
             }
             let made = PanControls(band: shown, tuning: tuning, flagControls: flagControls, sheet: self.pan,
-                                   display: display, bandScale: bandScale)
+                                   display: display, bandScale: bandScale,
+                                   bandStack: BandStackModel(store: mirror, slices: shown.slices, commands: commands,
+                                                             band: shown.band))
             firstControls = made
             return made
         }
@@ -470,7 +472,9 @@ final class MainScreenModel: ObservableObject {
                                         bandScale: scale, changeDisplay: change)
         display.focusPan = { [weak self] in self?.displayEditScope = .pan(key) }
         let made = PanControls(band: shown, tuning: tuning, flagControls: flags, sheet: sheet, display: display,
-                               bandScale: scale)
+                               bandScale: scale,
+                               bandStack: BandStackModel(store: mirror, slices: shown.slices, commands: commands,
+                                                         band: shown.band))
         otherControls[key] = made
         return made
     }
