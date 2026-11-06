@@ -15,8 +15,9 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-05: kHarnessWaitMs: waits survive a slow CI machine; a wait that
-//               runs out says which step stalled. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//               runs out says which step stalled. beginSignIn(), a sign-in
+//               that does not wait. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-27: F3: optional model factory after scratch AppSettings is
 //               bound, for controlled CWX time. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -103,7 +104,10 @@ const QString kUnknownVerb =
 // How long a sign-in or an invoke() may take. Each returns as soon as it
 // arrives, so this is only an upper bound. It was 5 s: in Linux CI run
 // 41764912150 these tests ran 7 times slower than usual, a sign-in passed 5 s,
-// and admitted() and invoke() failed on a working Core.
+// and admitted() and invoke() failed on a working Core. It is as long as the
+// Core's own deadline for finishing a connection (kStationHandshakeDeadlineMs):
+// a sign-in that cannot finish until its caller returns, inside a direct signal
+// from the Core, has to use beginSignIn(), or the two race.
 constexpr int kHarnessWaitMs = 30000;
 
 // The harness's other waits (a greeting, a close, a device list). That run
@@ -318,15 +322,21 @@ struct Core {
         return app;
     }
 
-    // Hello at `minor` declaring `features`, then `auth`; waits for the end
-    // of the connect sequence or the close.
-    static void send(LoopbackTransport* app, const SessionMessage& auth, quint16 minor,
-                     const QHash<QByteArray, int>& features)
+    // Hello at `minor` declaring `features`, then `auth`.
+    static void sendHelloAndAuth(LoopbackTransport* app, const SessionMessage& auth, quint16 minor,
+                                 const QHash<QByteArray, int>& features)
     {
         app->sendText(SessionMessages::encode(SessionMessages::hello(
             kSessionProtocolMajor, minor, 0, QStringLiteral("NereusSDR iPhone"),
             {kSessionProtocolMajor}, features)));
         app->sendText(SessionMessages::encode(auth));
+    }
+
+    // Hello and `auth`; waits for the end of the connect sequence or the close.
+    static void send(LoopbackTransport* app, const SessionMessage& auth, quint16 minor,
+                     const QHash<QByteArray, int>& features)
+    {
+        sendHelloAndAuth(app, auth, minor, features);
         const bool settled = QTest::qWaitFor(
             [app]() {
                 return app->receivedKinds().contains(QByteArrayLiteral("snapshot.complete"))
@@ -359,6 +369,16 @@ struct Core {
     {
         LoopbackTransport* app = open();
         send(app, deviceAuth(app, device), minor, features);
+        return app;
+    }
+
+    // A device's sign-in sent and not waited for: for a caller the Core is
+    // still waiting on, where signIn() would hold the Core's event loop up
+    // for the whole wait and past the sign-in's own deadline.
+    LoopbackTransport* beginSignIn(const Device& device)
+    {
+        LoopbackTransport* app = open();
+        sendHelloAndAuth(app, deviceAuth(app, device), kSessionProtocolMinor, kHolder);
         return app;
     }
 
