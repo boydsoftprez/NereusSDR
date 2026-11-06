@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: setCwPaddle.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25 - Created for the desktop remote window's transmit
@@ -286,6 +288,7 @@ void RemoteTransmitClient::retireSession()
 {
     m_available = false;
     m_cwAvailable = false;
+    m_cwPaddleAvailable = false;
     m_cwReleaseAvailable = false;
     m_cwRetiredEpoch = 0;
     m_cwEpoch = 0;
@@ -407,6 +410,21 @@ quint32 RemoteTransmitClient::setCwKey(bool down)
     if (!cwAvailable()) { return 0; }
     ++m_cwGeneration; m_cwPending = true; refreshKeepalive();
     const quint32 id = send("cw.key", {boolArgument("down", true)}, Kind::Cw);
+    if (id == 0) { m_cwPending = false; refreshKeepalive(); }
+    return id;
+}
+
+quint32 RemoteTransmitClient::setCwPaddle(bool dot, bool dash)
+{
+    const QList<MirrorUpdate> arguments{{0, "dot", MirrorWireKind::Bool, QVariant(dot)},
+                                        {1, "dash", MirrorWireKind::Bool, QVariant(dash)}};
+    if (!dot && !dash) {
+        ++m_cwGeneration; m_cwEpoch = 0; m_cwPending = false; refreshKeepalive();
+        return cwPaddleAvailable() ? send("cw.paddle", arguments, Kind::Cw) : 0;
+    }
+    if (!cwPaddleAvailable()) { return 0; }
+    ++m_cwGeneration; m_cwPending = true; refreshKeepalive();
+    const quint32 id = send("cw.paddle", arguments, Kind::Cw);
     if (id == 0) { m_cwPending = false; refreshKeepalive(); }
     return id;
 }

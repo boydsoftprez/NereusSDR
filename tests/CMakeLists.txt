@@ -1246,6 +1246,9 @@ nereus_add_test(tst_tci_cw REALTIME)
 # remoteCwVersion capability and the CW settings' peer gate. The Key's 3 s
 # watchdog runs on the wall clock, hence REALTIME.
 nereus_add_test(tst_remote_cw fakes/LoopbackTransport.cpp REALTIME)
+# Hot keys (R-HK-13): the remote dot and dash verb on a test Core with a fake
+# connection, its watchdog on an injected clock.
+nereus_add_test(tst_remote_cw_paddle fakes/LoopbackTransport.cpp)
 
 # CW transmit Task 10 (R-CW-04, R-CW-36): the serial key reader on an
 # injected line source (paddles, the key and PTT lines, the gate, stops,

@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: holdRemotePaddle, setPaddleHeld.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-30: Use Qt's durable Linux semaphore wait to avoid timed
 //               libstdc++ backoff for J.J. Boyd (KG4VCF), AI-assisted via
 //               OpenAI Codex.
@@ -762,6 +764,7 @@ bool CwxSender::pauseRemoteLocked(quint32 epoch)
             setKeyLocked(false);
             // QSK may drop the host CWX PTT; no synthetic PC PTT is added.
             setPttLocked(false);
+            applyLineLocked(); // The paddle's soft bits, which neither setter wrote.
         }
     }
     return true;
@@ -819,6 +822,13 @@ bool CwxSender::resumeRemoteActivity(quint32 epoch)
         }
         setPttLocked(true);
         setKeyLocked(true);
+    }
+    if (m_heldEpoch == epoch && paddleHeldLocked()) {
+        if (m_clock() >= m_keyDeadline) {
+            cancelRemoteLocked(epoch);
+            return false;
+        }
+        applyLineLocked();
     }
     wakeWorker();
     return true;
@@ -1014,20 +1024,21 @@ void CwxSender::run()
 #endif
     while (!m_quit) {
         consumeRemoteRequestsLocked();
-        if ((!m_ticking && !m_keyHeld) || (m_remotePaused && m_heldEpoch == 0)) {
+        const bool held = m_keyHeld || paddleHeldLocked();
+        if ((!m_ticking && !held) || (m_remotePaused && m_heldEpoch == 0)) {
             lock.unlock();
             parkWorker({}, false);
             lock.lock();
             continue;
         }
-        const TimePoint deadline = m_keyHeld ? m_keyDeadline : m_nextTick;
+        const TimePoint deadline = held ? m_keyDeadline : m_nextTick;
         if (m_clock() < deadline) {
             lock.unlock();
             m_sleeper(deadline);
             lock.lock();
             continue;
         }
-        if (m_keyHeld) {
+        if (held) {
             // The Key's watchdog: no press for kKeyWatchdogMs.
             releaseKeyHeldLocked();
             continue;
@@ -1345,7 +1356,7 @@ void CwxSender::finishIfIdleLocked()
         m_messageQueued = false;
         QMetaObject::invokeMethod(this, [this]() { emit emptied(); }, Qt::QueuedConnection);
     }
-    if (!m_keyHeld) {
+    if (!m_keyHeld && !paddleHeldLocked()) {
         setSendingLocked(false);
     }
 }
@@ -1390,6 +1401,8 @@ void CwxSender::abortLocked()
     m_repeatText.clear();
     m_repeatMarker = false;
     setKeyHeldStateLocked(false);
+    m_paddleDot = false;
+    m_paddleDash = false;
     m_handKey = false;
     setKeyLocked(false); //[2.10.3]MW0LGE swap
     setPttLocked(false);
@@ -1453,7 +1466,22 @@ void CwxSender::applyLineLocked()
     if (!m_line) {
         m_lineKey = false;
         m_linePtt = false;
+        m_lineDot = false;
+        m_lineDash = false;
         return;
+    }
+    // R-HK-13: the paddle answers to the remote hold, not to break-in or MOX:
+    // the radio's keyer applies those, as it does for serial paddles.
+    const bool paddleSafe = m_heldEpoch != 0 && !m_remotePaused && remoteMayKeyLocked(m_heldEpoch);
+    const bool lineDot = m_paddleDot && paddleSafe;
+    const bool lineDash = m_paddleDash && paddleSafe;
+    if (lineDot != m_lineDot) {
+        m_line->setSoftDot(lineDot);
+        m_lineDot = lineDot;
+    }
+    if (lineDash != m_lineDash) {
+        m_line->setSoftDash(lineDash);
+        m_lineDash = lineDash;
     }
     if (ptt && !m_linePtt) {
         m_line->setCwxPtt(true);
@@ -1484,6 +1512,9 @@ void CwxSender::releaseKeyHeldLocked()
     m_heldEpoch = 0;
     finishRemoteLocked(ended);
     setKeyHeldStateLocked(false);
+    m_paddleDot = false;
+    m_paddleDash = false;
+    applyLineLocked();
     setKeyLocked(false);
     setPttLocked(false);
     if (!m_ticking) {
@@ -1724,6 +1755,17 @@ bool CwxSender::sendTextWithEpoch(const QString& text, quint32 epoch, const Remo
     if (m_keyHeld) {
         releaseKeyHeldLocked();
     }
+    if (paddleHeldLocked()) {
+        if (m_heldEpoch == epoch) {
+            // The same activity goes on as this text.
+            m_paddleDot = false;
+            m_paddleDash = false;
+            m_heldEpoch = 0;
+            applyLineLocked();
+        } else {
+            releaseKeyHeldLocked();
+        }
+    }
     // Typed text after a repeating memory ends the repeat: the memory
     // finishes, then the text goes.
     m_repeatText.clear();
@@ -1862,6 +1904,72 @@ bool CwxSender::holdRemoteKey(quint32 epoch, RemoteAdmission admit)
     return true;
 }
 
+// R-HK-13: the same path as holdRemoteKey, with the soft bits in place of the
+// CWX bit and PTT. Only a press renews the deadline: a message that just lets
+// go of one key while another stays down is not one.
+bool CwxSender::holdRemotePaddle(quint32 epoch, bool dot, bool dash, RemoteAdmission admit)
+{
+    if (epoch == 0 || (!dot && !dash)) {
+        return false;
+    }
+    const QString words = gateWords();
+    if (!words.isEmpty()) {
+        emit refused(words);
+        return false;
+    }
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    const bool continues = paddleHeldLocked() && m_heldEpoch == epoch;
+    if (!admitRemoteLocked(epoch, admit, !continues)) {
+        return false;
+    }
+    if (!continues) {
+        // What the sender runs stops, without retiring the admitted epoch.
+        const quint32 accepted = m_acceptedRemoteEpoch.exchange(0, std::memory_order_acq_rel);
+        abortLocked();
+        m_acceptedRemoteEpoch.store(accepted, std::memory_order_release);
+        if (m_messageQueued) {
+            m_messageQueued = false;
+            QMetaObject::invokeMethod(this, [this]() { emit emptied(); }, Qt::QueuedConnection);
+        }
+    }
+    const bool onlyLetsGo = continues && (!dot || m_paddleDot) && (!dash || m_paddleDash)
+        && (dot != m_paddleDot || dash != m_paddleDash);
+    if (!onlyLetsGo) {
+        m_keyDeadline = m_clock() + std::chrono::milliseconds(kKeyWatchdogMs);
+    }
+    m_heldEpoch = epoch;
+    m_paddleDot = dot;
+    m_paddleDash = dash;
+    applyLineLocked();
+    setSendingLocked(true);
+    m_wake.store(true, std::memory_order_release);
+    wakeWorker();
+    return true;
+}
+
+void CwxSender::setPaddleHeld(bool dot, bool dash)
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    if (!paddleHeldLocked()) {
+        return;
+    }
+    m_paddleDot = m_paddleDot && dot;
+    m_paddleDash = m_paddleDash && dash;
+    if (paddleHeldLocked()) {
+        applyLineLocked();
+        return;
+    }
+    releaseKeyHeldLocked();
+    m_wake.store(true, std::memory_order_release);
+    wakeWorker();
+}
+
+bool CwxSender::isRemotePaddleHeld() const
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    return paddleHeldLocked();
+}
+
 void CwxSender::setKeyHeld(bool down)
 {
     if (!down) {
@@ -1887,7 +1995,7 @@ void CwxSender::setKeyHeld(bool down)
     {
         const std::lock_guard<std::mutex> lock(m_mutex);
         if (!m_keyHeld) {
-            if (m_ticking || !m_queue.empty()) {
+            if (m_ticking || !m_queue.empty() || paddleHeldLocked()) {
                 abortLocked();
                 if (m_messageQueued) {
                     m_messageQueued = false;
@@ -1949,7 +2057,7 @@ bool CwxSender::setHandKey(bool down)
     if (m_handKey) {
         return true;
     }
-    if (m_ticking || !m_queue.empty() || m_keyHeld) {
+    if (m_ticking || !m_queue.empty() || m_keyHeld || paddleHeldLocked()) {
         return false;
     }
     m_handKey = true;
@@ -1988,6 +2096,8 @@ void CwxSender::setKeyLine(std::shared_ptr<CwKeyLine> line)
         m_line = std::move(line);
         m_lineKey = false;
         m_linePtt = false;
+        m_lineDot = false;
+        m_lineDash = false;
         m_wake.store(true, std::memory_order_release);
     }
     wakeWorker();

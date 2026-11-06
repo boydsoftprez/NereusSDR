@@ -182,6 +182,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCwVersion 3.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-30: Negotiate frequency chat only with version2 peers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion(),
@@ -1655,7 +1657,8 @@ public:
     /// CW transmit (R-CW-49): 1: cw.send, cw.memory, cw.stop and cw.key
     /// from the device that holds transmit, on the Core's CWX sender, for a
     /// peer at minor 11 whose hello declared remoteTx 1 and remoteCw 1.
-    int remoteCwVersion() const { return m_radioModel.isNull() ? 0 : 2; }
+    /// 2: on-air starts need it. 3 (hot keys, R-HK-13): cw.paddle.
+    int remoteCwVersion() const { return m_radioModel.isNull() ? 0 : 3; }
     /// Task 35: keying from a remote device; null without a Local model.
     RemoteKeying* remoteKeying() const { return m_remoteKeying.get(); }
     /// Task 37 (R-IOS-13; remote design section 12.1): the transmit

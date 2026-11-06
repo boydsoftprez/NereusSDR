@@ -33894,6 +33894,9 @@ TxRefusal RadioModel::requestRemoteCwxFor(const QByteArray& device, bool replace
             safety->invalidate(previous);
             m_connection->cwKeyLine()->setCwx(false);
             m_connection->cwKeyLine()->setCwxPtt(false);
+            // R-HK-13: a remote paddle's intent is host intent too.
+            m_connection->cwKeyLine()->setSoftDot(false);
+            m_connection->cwKeyLine()->setSoftDash(false);
             m_connection->finishRemoteCw(previous);
         }
         m_remoteCwActivity = {device, epoch};

@@ -913,6 +913,10 @@ Core's CWX sender with `cw.send`, `cw.memory`, `cw.stop` and `cw.key`
 verbs; any other peer sees exactly the wire it was built for, and a cw.*
 verb from it is refused "Update this app to send CW through this Core."
 The station does not declare it. The desktop's remote window declares it.
+At 3 the client also sends `cw.paddle` (section 18.10). A peer that declared
+less is still sent the Core's version, and nothing it uses changes; a
+`cw.paddle` start from it is refused "Update this app to send dot and dash
+through this Core."
 
 **`cwSettings` 1** (R-CW-03, R-CW-48, `transmitSettingsVersion` 16): the
 client reads and changes the CW settings on `transmit` (section 7.1). A
@@ -1261,7 +1265,7 @@ table.
 | `txWatchPathVersion` | not advertised by this fixture |
 | `txStateVersion` | 2 |
 | `txReadingsVersion` | 4 |
-| `remoteCwVersion` | 2 |
+| `remoteCwVersion` | 3 |
 | `mediaTunnelVersion` | 1 |
 | `mediaRelayRoutingVersion` | 1 |
 | `settingsHygieneVersion` | 2 |
@@ -2334,7 +2338,9 @@ When a feature is off, its version is 0:
   own radio model: the Core takes `cw.send`, `cw.memory`, `cw.stop` and
   `cw.key` (section 18.10). A window that is sent no entry shows its CWX
   applet's Send, Stop, Key, memories and KB to CW disabled with "Sending
-  CW from a remote window needs a newer Core.", never hidden.
+  CW from a remote window needs a newer Core.", never hidden. 3: the Core
+  also takes `cw.paddle`; below 3 a window's dot and dash actions are
+  unavailable with "Dot and dash need a newer Core."
 
 `txPermitted` (iPhone app plan Task 34) is true only for a session the
 station transmit gate permits (section 18.1): false until
@@ -6539,6 +6545,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `cw.memory` | `number` i64 | `remoteCwVersion` | 1 | 11 |
 | `cw.stop` | none | `remoteCwVersion` | 1 | 11 |
 | `cw.key` | `down` bool | `remoteCwVersion` | 1 | 11 |
+| `cw.paddle` | `dot` bool, `dash` bool | `remoteCwVersion` | 3 | 11 |
 | `setAlexTxAntenna` | `band` i64, `antenna` i64 | `radioHardwareVersion` | 6 | 11 |
 | `setAlexTxAntennaForRadio` | `mac` utf8, `band` i64, `antenna` i64 | `radioAntennaRowsVersion` | 1 | 11 |
 | `requestIoBoardI2c` | `bus` i64, `address` i64, `register` i64, `write` bool, `value` i64 | `radioHardwareVersion` | 7 | 11 |
@@ -8383,7 +8390,7 @@ same on every machine.
 | `foreign-write-refused` | This device holds slice 0 and another device slice 1: a `property.write` to `slice:1` and to `marker:1`, and `removeSlice` and `setActiveSliceById` naming slice 1, are refused "That slice belongs to Other device 1. It can be changed only there.", with no value sent back and nothing changed; its own slice it may make active |
 | `held-for-device` | Another device, alone on the Core, leaves with `session.leave`: nobody else is on its slice, so the slice closes and is saved for it (the Core has no slice). This device, let in meanwhile, gets a slice of its own; the other device signs in again and its saved slice is restored under the lowest free letter, which this device sees as a marker with `ownerAway` false |
 | `verbs-tx-set-tx-slice` | On a Core with `remote_transmit` allow (stationSetup `remoteTransmit`), a device that declares `remoteTx` is sent `txPermitted` false in its first `capabilities` and true in the `capabilities` sent again after `snapshot.complete`, each with `remoteTxVersion` 1 and the `txRefusal` entries (`notReady` first, empty once permitted); `tx.setTxSlice` with an argument it does not take is refused "The Core could not read this request."; with `sliceId` while nobody holds transmit it is refused "Take transmit on this device first." with the values `refusalCode` `notHolder` and `refusalFix` `takeTransmit`. Runs on the station alone |
-| `verbs-cw` | `remoteCwVersion` 1 (the client declares `remoteTx` 1 and `remoteCw` 1, section 18.10): `remoteCwVersion` right after `txReadingsVersion` in both `capabilities`; `cw.send`, `cw.memory` and `cw.key` each with a misnamed argument refused "The Core could not read this request.", and with their own arguments while nobody holds transmit refused "Take transmit on this device first." with `refusalCode` `notHolder` and `refusalFix` `takeTransmit`; `cw.key {down: false}` and `cw.stop` taken. Nothing keys. |
+| `verbs-cw` | `remoteCwVersion` 1 (the client declares `remoteTx` 1 and `remoteCw` 1, section 18.10): `remoteCwVersion` right after `txReadingsVersion` in both `capabilities`; `cw.send`, `cw.memory` and `cw.key` each with a misnamed argument refused "The Core could not read this request.", and with their own arguments while nobody holds transmit refused "Take transmit on this device first." with `refusalCode` `notHolder` and `refusalFix` `takeTransmit`; `cw.key {down: false}` and `cw.stop` taken. A `remoteCw` 2 client's `cw.paddle` with a misnamed argument is refused the same way, a start is refused "Update this app to send dot and dash through this Core.", and both up is taken. Nothing keys. |
 | `unheld-key` | On a Core with `remote_transmit` allow whose radio can key (stationSetup `transmitReady`) and whose device's media carries a microphone line (stationSetup `microphoneLine`), one device that declares `remoteTx`: each keying verb with an argument it does not take is refused "The Core could not read this request."; a program's `tx.key {trigger:"tci"}` on unheld transmit is refused `programNeedsTransmit` and nobody takes transmit; a person's `tx.key {trigger:"screen"}` takes it and keys (epoch 1; `transmitting` true, the device's entry transmitting); `tx.unkey {epoch:1}` unkeys; the same program's key then keys (epoch 2) and `tx.unkey {epoch:2}` unkeys; `tx.tune {on:true}` tunes (epoch 3, `transmit`'s `tune` true) and `{on:false}` ends it; `tx.twoTone {on:true}` on a radio with no transmit channel is refused "The two-tone test could not start on the Core." Each key and unkey also moves `txState` (section 18.8): `keyed`, who keyed and how (`keyedTrigger` `screen`, `tci`, `tune`), `keyedSinceMs` on the runner's virtual clock and 180 s left for the phone. Runs on the station and the app |
 | `key-without-microphone` | On the same Core as `unheld-key` but with no microphone line for the device (stationSetup `microphoneLine` absent): a person's `tx.key {trigger:"screen"}` is refused `micNotReady`, "This device's microphone is not connected to the Core. Wait a moment and try again.", and nothing keys; a program's key on unheld transmit is still refused `programNeedsTransmit` first. Runs on the station and the app |
 | `tx-keepalive` | On the same Core as `unheld-key`: `tx.keepalive` with an argument it does not take is refused "The Core could not read this request."; a keepalive while nothing of the device's is watched is accepted and changes nothing; the device keys (epoch 1) and sends keepalives 50 ms after the key and then 300 ms apart (sequences 2 to 4, epoch 1), each accepted, and the key stays on; then none: about 400 ms after the last one the watchdog holds the key's RF (`rfHeld` true, `rfHeldReason` `link`, still keyed), and 3000 ms after it stops transmitting (`transmitting` false, the device's entry no longer transmitting). `txState` follows the key (180 s left, then 179, 178 and 177 a second apart), and the watchdog's stop is its stop: `stopReason` `linkLost`, `stopSerial` 1, "The link to Conformance device went quiet, so the Core stopped transmitting.", with the hold ended in the same delta (`rfHeld` false, `rfHoldSerial` 1, `rfLastHoldMs` 2600). Runs on the station and the app |
@@ -9379,9 +9386,10 @@ transmit unheld "Take transmit on this device first.". A carrier action
 
 ### 18.10 CW (`cw.*`)
 
-R-CW-48, R-CW-49 (`remoteCwVersion` 2, negotiated down to 1 for a
+R-CW-48, R-CW-49, R-HK-13 (`remoteCwVersion` 3, negotiated down to 1 for a
 peer that declared `remoteCw` 1). Remote on-air starts (`cw.send`,
-`cw.memory`, and `cw.key {down:true}`) require version 2. Version 1
+`cw.memory`, and `cw.key {down:true}`) require version 2, and a `cw.paddle`
+start requires version 3 and a peer that declared `remoteCw` 3. Version 1
 continues to support owner-scoped Stop/key-up; its preceding capability
 and property ordinals remain unchanged. The Core's CWX sender sends CW for the device that holds
 transmit, through the Core's own keying gate: the radio's CW key while the
@@ -9392,18 +9400,28 @@ sender runs for the holder is the holder's key, as VOX is (section 18.6).
   `cwxMemory<number>`. `cw.key {down}` (`bool`): the hand key, down
   while held; the Core lets go 3 s after the last `down` with no `up`.
   `cw.stop {}`: ends what the sender runs for this device and clears it.
-- `cw.send`, `cw.memory` and `cw.key {down: true}` need the session's own
+- `cw.paddle {dot, dash}` (both `bool`, the state of both keys on each
+  change): dot and dash on the radio's own keyer, which does the timing and
+  break-in, as for serial paddles. The Core writes no CWX bit and no PTT. It
+  lets go 3 s after the last press, a message that only lets go of one key
+  is not a press. A change while the paddle is down keeps its activity epoch;
+  the first press is a replacement, ending what the sender ran. Under a link
+  hold both keys read up on the wire and the activity behaves as a held
+  `cw.key`: the deadline keeps running, and recovery puts down what is still
+  held inside it. A refused change lets go of the keys.
+- `cw.send`, `cw.memory`, `cw.key {down: true}` and `cw.paddle` with a key
+  down need the session's own
   gate (section 18.1) and transmit held by this device: from another
   device while one holds it they are refused "<holder> has the
   transmitter." (`otherDeviceHolds`, `takeTransmit`), with transmit unheld
   "Take transmit on this device first." (`notHolder`, `takeTransmit`).
   The sender's own refusals are `notReady` (section 18.3), and the CW
   keyer's are its own (for example the break-in sentences).
-- `cw.stop` and `cw.key {down: false}` are always taken: they end only
+- `cw.stop`, `cw.key {down: false}` and `cw.paddle` with both up are always taken: they end only
   what the sender runs for this device, never another device's CW or the
   station's own.
 - A refusal carries `refusalCode` and `refusalFix` in its `values`, as
-  section 18.3 says. A version-2 accepted start/append returns `cwEpoch`
+  section 18.3 says. An accepted start/append (version 2 or later) returns `cwEpoch`
   (`i64`, 1 through UINT32_MAX) and `cwActive` (`bool`). An append keeps
   its activity epoch; a replacement uses a fresh one. Stop/refusal invents
   no new activity epoch.

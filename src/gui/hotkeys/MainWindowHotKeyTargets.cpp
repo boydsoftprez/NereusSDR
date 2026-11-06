@@ -87,7 +87,7 @@ const QString& voiceNotBuiltReason()
     return kReason;
 }
 
-// Until the remote window has its own verb for them.
+// A Core below remoteCwVersion 3 has no verb for them.
 const QString& remotePaddleReason()
 {
     static const QString kReason = QStringLiteral("Dot and dash need a newer Core.");
@@ -318,7 +318,8 @@ QString MainWindowHotKeyTargets::unavailableReason(const QString& id) const
     // Only in CW: in a voice mode these keys do nothing and say nothing.
     if ((id == QLatin1String("cw.dot") || id == QLatin1String("cw.dash"))
         && m_window->m_radioModel != nullptr && !m_window->m_radioModel->ownsLocalDsp()
-        && transmitSliceInCw()) {
+        && transmitSliceInCw()
+        && (m_window->m_stationClient == nullptr || !m_window->m_stationClient->remoteCwPaddleAvailable())) {
         return remotePaddleReason();
     }
     return bandStackReason(m_window, id);
@@ -565,8 +566,10 @@ void MainWindowHotKeyTargets::setCwKeyDown(const QString& id, bool down)
         // Whatever has changed since the press, letting go always works.
         if (isDot) {
             model->cwSoftPaddle()->setDot(false);
+            setRemotePaddleKey(true, false);
         } else if (isDash) {
             model->cwSoftPaddle()->setDash(false);
+            setRemotePaddleKey(false, false);
         } else {
             setStraightKeyDown(false);
         }
@@ -581,8 +584,9 @@ void MainWindowHotKeyTargets::setCwKeyDown(const QString& id, bool down)
         setStraightKeyDown(true);
         return;
     }
-    // A remote window's dot and dash are refused before this (unavailableReason).
+    // Below remoteCwVersion 3 the press is refused before this (unavailableReason).
     if (!model->ownsLocalDsp()) {
+        setRemotePaddleKey(isDot, true);
         return;
     }
     const QString holder = model->cwxHolderRefusal(QByteArray());
@@ -592,6 +596,34 @@ void MainWindowHotKeyTargets::setCwKeyDown(const QString& id, bool down)
         model->cwSoftPaddle()->setDot(true);
     } else {
         model->cwSoftPaddle()->setDash(true);
+    }
+}
+
+// R-HK-13: the Core is told the state of both keys on each change. Letting go
+// always goes out, as the straight key's does; a key it never heard of goes
+// nowhere. The Core's own refusal arrives as cwRefused, which the window toasts.
+void MainWindowHotKeyTargets::setRemotePaddleKey(bool isDot, bool down)
+{
+    bool& key = isDot ? m_remoteDot : m_remoteDash;
+    if (!down) {
+        if (!std::exchange(key, false)) {
+            return;
+        }
+        if (RemoteTransmitClient* const remote = remoteCwClient()) {
+            remote->setCwPaddle(m_remoteDot, m_remoteDash);
+        }
+        return;
+    }
+    const QString refusal = remoteCwRefusal();
+    if (!refusal.isEmpty()) {
+        toast(refusal);
+        return;
+    }
+    key = true;
+    RemoteTransmitClient* const remote = remoteCwClient();
+    if (remote == nullptr || remote->setCwPaddle(m_remoteDot, m_remoteDash) == 0) {
+        key = false;
+        toast(remotePaddleReason());
     }
 }
 

@@ -1,6 +1,8 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: cw.paddle, remoteCwVersion 3.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-31: Strip legacy Roundtable fields by record type, preserving RF kind.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -4715,7 +4717,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                                                        false, TxRefusals::notReady().text, {});
             }
             const bool engages = request.kind == Kind::Send || request.kind == Kind::Memory
-                || (request.kind == Kind::Key && request.down);
+                || (request.kind == Kind::Key && request.down)
+                || (request.kind == Kind::Paddle && (request.dot || request.dash));
             TxRefusal refusal;
             if (engages) {
                 // The session's own gate first, then the holder's: sending
@@ -4740,21 +4743,36 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                             return sender.sendRemoteMemory(epoch, request.number, admit);
                         case Kind::Key:
                             return sender.holdRemoteKey(epoch, admit);
+                        case Kind::Paddle:
+                            return sender.holdRemotePaddle(epoch, request.dot, request.dash, admit);
                         case Kind::Stop:
                             break;
                         }
                         return false;
                     };
+                    // A change while this device's paddle is down stays in its
+                    // activity: a replacement would lift the key that stays
+                    // down and fence the wire for a frame, mid-element.
+                    const bool samePaddle = request.kind == Kind::Paddle
+                        && m_radioModel->cwxSendingFor() == requester
+                        && m_radioModel->cwxSender()->isRemotePaddleHeld();
                     refusal = m_radioModel->requestRemoteCwxFor(
-                        requester, request.kind != Kind::Send, start);
+                        requester, request.kind != Kind::Send && !samePaddle, start);
+                }
+                // A refused press is no reason to leave the other key down.
+                if (!refusal.isEmpty() && request.kind == Kind::Paddle
+                    && m_radioModel->cwxSendingFor() == requester) {
+                    m_radioModel->cwxSender()->setPaddleHeld(false, false);
                 }
             } else {
-                // A release (cw.stop, cw.key up) is always taken: it ends
+                // A release (cw.stop, cw.key up, cw.paddle with both up) is always taken: it ends
                 // only what the sender runs for this device, so it never
                 // touches another device's CW or the station's own.
                 if (m_radioModel->cwxSendingFor() == requester) {
                     if (request.kind == Kind::Stop) {
                         m_radioModel->stopCwxFor(requester);
+                    } else if (request.kind == Kind::Paddle) {
+                        m_radioModel->cwxSender()->setPaddleHeld(false, false);
                     } else {
                         m_radioModel->cwxSender()->setKeyHeld(false);
                     }
@@ -6868,6 +6886,25 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
             send(transport, SessionMessages::commandResult(
                 message.commandVerb, message.commandId, false,
                 QStringLiteral("Update this app to send CW through this Core."), {}));
+            break;
+        }
+        // Hot keys (R-HK-13): dot and dash came with remoteCwVersion 3. Both up
+        // is a release, and a release is always taken.
+        bool paddleStarts = false;
+        if (message.commandVerb == "cw.paddle") {
+            for (const MirrorUpdate& argument : message.arguments) {
+                if ((argument.name == "dot" || argument.name == "dash") && argument.value.toBool()) {
+                    paddleStarts = true;
+                }
+            }
+        }
+        if (paddleStarts
+            && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
+                || !peerDeclares(transport, QByteArrayLiteral("remoteTx"), 1)
+                || !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 3))) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                QStringLiteral("Update this app to send dot and dash through this Core."), {}));
             break;
         }
         }

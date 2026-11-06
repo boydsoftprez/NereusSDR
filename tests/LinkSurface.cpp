@@ -834,7 +834,7 @@ QJsonArray captureCapabilities()
     caps.remoteTxEntry = true;
     // CW transmit (R-CW-48): sent inside it to a peer that declared remoteCw.
     caps.remoteCwEntry = true;
-    caps.remoteCwVersion = 2; // StationServer::remoteCwVersion(), StationServer.h:1656.
+    caps.remoteCwVersion = 3; // StationServer::remoteCwVersion(), StationServer.h:1656.
     // Declaration version 1: StationCapabilities.h:731-733 and
     // StationServer.cpp:13156-13157. This is not a sampled live value.
     caps.txWatchPathVersion = 1;

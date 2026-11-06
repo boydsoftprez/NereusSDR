@@ -46,6 +46,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: setCwPaddle.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25 - Created for the desktop remote window's transmit
@@ -159,6 +161,7 @@ public:
     quint32 remoteCwEpoch() const { return m_cwEpoch; }
     void setRemoteCwActivity(quint32 epoch, bool active);
     void setCwReleaseAvailable(bool available) { m_cwReleaseAvailable = available; }
+    void setCwPaddleAvailable(bool available) { m_cwPaddleAvailable = available; }
     using KeepaliveSender = std::function<bool(quint64 sequence, quint32 epoch)>;
     /// How often a keepalive goes (RemoteTxWatchdog::kKeepaliveIntervalMs).
     static constexpr int kKeepaliveIntervalMs = 100;
@@ -235,6 +238,8 @@ public:
     bool cwAvailable() const { return m_available && m_cwAvailable; }
     /// Stop and key-up remain available with remoteCwVersion 1.
     bool cwReleaseAvailable() const { return m_available && m_cwReleaseAvailable; }
+    /// Dot and dash can go now (remote transmit and remoteCwVersion 3).
+    bool cwPaddleAvailable() const { return m_available && m_cwPaddleAvailable; }
     /// cw.send {text}, cw.memory {number} (1..8), cw.stop {} and cw.key
     /// {down}, each kCopies times under one id. They return the id, or 0
     /// when nothing could be sent. A refusal arrives as cwRefused.
@@ -242,6 +247,10 @@ public:
     quint32 sendCwMemory(int number);
     quint32 stopCw();
     quint32 setCwKey(bool down);
+    /// Hot keys (R-HK-13): cw.paddle {dot, dash}, the state of both keys on
+    /// each change, kCopies times under one id, with keepalives while either
+    /// is down. Returns the id, or 0 when nothing could be sent.
+    quint32 setCwPaddle(bool dot, bool dash);
 
     // ---- A program through this window's TCI server ("tci") ----
     /// programAudio: the program's trx carried ",tci", so its own audio
@@ -348,6 +357,7 @@ private:
     Sender m_sender;
     bool m_available{false};
     bool m_cwAvailable{false};
+    bool m_cwPaddleAvailable{false};
     bool m_cwReleaseAvailable{false};
     bool m_cwPending{false};
     quint32 m_cwEpoch{0};

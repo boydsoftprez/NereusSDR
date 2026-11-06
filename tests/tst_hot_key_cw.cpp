@@ -34,6 +34,7 @@
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/DesktopStationController.h"
 #include "gui/MainWindow.h"
+#include "gui/applets/CwxApplet.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 #include "gui/widgets/StatusToast.h"
@@ -624,6 +625,15 @@ private slots:
         RemoteWindowHarness h(options);
         QVERIFY(connectRemote(h, DSPMode::CWU));
         MainWindowHotKeyTargets targets(h.window());
+        QTRY_VERIFY(h.client()->remoteCwPaddleAvailable());
+        QVERIFY(targets.unavailableReason(kDot).isEmpty());
+        QVERIFY(targets.unavailableReason(kDash).isEmpty());
+        StationCapabilities older = h.server().buildCapabilities();
+        older.txPermitted = true;
+        older.remoteCwVersion = 2;
+        h.pushCapabilities(older);
+        QTRY_VERIFY(!h.client()->remoteCwPaddleAvailable());
+        QVERIFY(h.client()->remoteCwAvailable());
         const QString reason = QStringLiteral("Dot and dash need a newer Core.");
         QCOMPARE(targets.unavailableReason(kDot), reason);
         QCOMPARE(targets.unavailableReason(kDash), reason);
@@ -696,6 +706,111 @@ private slots:
         keys->release(kStraight, kKeyboard);
         QTRY_VERIFY(!coreCwx->isKeyHeld());
         QVERIFY(refused.isEmpty());
+    }
+
+    void remoteDotAndDashReachTheCoresKeyLine()
+    {
+        RemoteWindowHarness::Options options;
+        options.sliceAccess = true;
+        RemoteWindowHarness h(options);
+        QVERIFY(connectRemote(h, DSPMode::CWU));
+        FakeConnection radio;
+        RadioModel& core = h.station();
+        core.setCapsForTest(/*hasAlex=*/false);
+        core.setBoardForTest(HPSDRHW::Saturn);
+        core.injectConnectionForTest(&radio);
+        const auto letGoOfRadio = qScopeGuard([&core] { core.injectConnectionForTest(nullptr); });
+        core.slices().first()->setFrequency(14'050'000.0);
+        core.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+        core.setLastRadioInfoForTest(saturn());
+        core.wireCwKeyerConnectionForTest();
+        pump();
+        StationClient* const client = h.client();
+        QTRY_VERIFY(client->remoteCwPaddleAvailable());
+        RemoteTransmitClient* const remote = client->remoteTransmit();
+        QTRY_VERIFY(remote->cwPaddleAvailable());
+        HotKeyDispatcher* const keys = h.window()->hotKeyDispatcher();
+        CwKeyLine* const line = radio.cwKeyLine().get();
+
+        // Nobody holds transmit: the holder's words, and nothing goes out.
+        keys->press(kDot, kKeyboard);
+        QVERIFY(toastShown(*h.window(), client->otherHolderReason().isEmpty()
+                                            ? TxRefusals::notHolder().text
+                                            : client->otherHolderReason()));
+        keys->release(kDot, kKeyboard);
+        pump();
+        QVERIFY(!line->dot());
+
+        QVERIFY(client->requestTakeTransmit(false, 0, false) != 0);
+        QTRY_VERIFY(client->holdsTransmitHere());
+        QSignalSpy refused(remote, &RemoteTransmitClient::cwRefused);
+
+        keys->press(kDot, kKeyboard);
+        QTRY_VERIFY(line->dot());
+        QVERIFY(remote->keepaliveRunning());
+        QVERIFY(!line->dash());
+        keys->press(kDash, kKeyboard);
+        QTRY_VERIFY(line->dash());
+        QVERIFY(line->dot());
+        keys->release(kDot, kKeyboard);
+        QTRY_VERIFY(!line->dot());
+        QVERIFY(line->dash());
+        keys->release(kDash, kKeyboard);
+        QTRY_VERIFY(!line->dash());
+        QVERIFY(!line->cwx());
+        QVERIFY(!line->cwxPtt());
+        QVERIFY(!core.cwxSender()->isKeyHeld());
+        QTRY_VERIFY(!remote->keepaliveRunning());
+        QVERIFY(refused.isEmpty());
+    }
+
+    // A Core's refusal is a toast with the CWX applet closed or open, and one.
+    void aCoresRefusalIsOneToastWithTheAppletClosedOrOpen()
+    {
+        RemoteWindowHarness::Options options;
+        options.sliceAccess = true;
+        RemoteWindowHarness h(options);
+        QVERIFY(connectRemote(h, DSPMode::CWU));
+        FakeConnection radio;
+        RadioModel& core = h.station();
+        core.setCapsForTest(/*hasAlex=*/false);
+        core.setBoardForTest(HPSDRHW::Saturn);
+        core.injectConnectionForTest(&radio);
+        const auto letGoOfRadio = qScopeGuard([&core] { core.injectConnectionForTest(nullptr); });
+        core.slices().first()->setFrequency(14'050'000.0);
+        core.transmitModel().setCwBreakInMode(static_cast<int>(CwBreakInMode::Semi));
+        core.setLastRadioInfoForTest(saturn());
+        core.wireCwKeyerConnectionForTest();
+        pump();
+        StationClient* const client = h.client();
+        QTRY_VERIFY(client->remoteCwAvailable());
+        RemoteTransmitClient* const remote = client->remoteTransmit();
+        QTRY_VERIFY(remote->cwAvailable());
+        QVERIFY(client->requestTakeTransmit(false, 0, false) != 0);
+        QTRY_VERIFY(client->holdsTransmitHere());
+        auto* const applet = h.window()->findChild<CwxApplet*>();
+        QVERIFY(applet != nullptr);
+        HotKeyDispatcher* const keys = h.window()->hotKeyDispatcher();
+        QSignalSpy refused(remote, &RemoteTransmitClient::cwRefused);
+        const auto toastsSaying = [&h](const QString& words) {
+            int count = 0;
+            for (StatusToast* toast : h.window()->findChildren<StatusToast*>()) {
+                count += toast->message() == words ? 1 : 0;
+            }
+            return count;
+        };
+
+        applet->setVisible(false);
+        keys->press(QStringLiteral("cw.msg5"), kKeyboard);
+        QTRY_COMPARE(refused.size(), 1);
+        pump();
+        QCOMPARE(toastsSaying(QString::fromLatin1(kCwxMemoryEmptyText).arg(5)), 1);
+
+        applet->setVisible(true);
+        keys->press(QStringLiteral("cw.msg6"), kKeyboard);
+        QTRY_COMPARE(refused.size(), 2);
+        pump();
+        QCOMPARE(toastsSaying(QString::fromLatin1(kCwxMemoryEmptyText).arg(6)), 1);
     }
 
     void remoteOnAVoiceModeTheKeysSendNothing()

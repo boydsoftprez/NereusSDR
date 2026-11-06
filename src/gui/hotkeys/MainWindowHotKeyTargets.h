@@ -73,6 +73,7 @@ private:
     bool transmitSliceInCw() const;
     RemoteTransmitClient* remoteCwClient() const;
     QString remoteCwRefusal() const;
+    void setRemotePaddleKey(bool isDot, bool down);
     void setStraightKeyDown(bool down);
 
     MainWindow* m_window;
@@ -83,6 +84,9 @@ private:
     // with no press must not lift the serial reader's straight key, nor send
     // the Core a key-up.
     bool m_straightDown{false};
+    // Dot and dash a remote window has told its Core are down (cw.paddle).
+    bool m_remoteDot{false};
+    bool m_remoteDash{false};
     QElapsedTimer m_clock;
 };
 
