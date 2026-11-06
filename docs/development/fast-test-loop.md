@@ -176,6 +176,27 @@ To add a test to the group, register it with
 up with the wall clock, not for one that merely waits with a generous
 timeout.
 
+## When CI runs the full battery
+
+Test the work you're doing here, with the single tests that cover it. The full
+battery runs once, right before a pull request goes to main:
+
+| Event | What runs |
+| --- | --- |
+| Push to a draft pull request | Compliance, rendezvous and Roundtable only |
+| Marking a draft ready, or a push once it's ready | Everything, with the required checks |
+| Push to main | No tests; builds that keep the hosted compiler caches warm |
+| By hand, from the Actions tab | Everything; on main this also refreshes the saved test times |
+
+A draft that reads green has passed only the quick jobs. Its required `Build`
+checks don't report until it's marked ready, so nothing can merge without the
+full run. A draft also has no build artifacts.
+
+Nothing runs the tests on the merged result. Two pull requests that each pass
+can still break main together, and only a run by hand on main would catch that.
+Release builds configure with tests off, so they don't. Run CI and iOS by hand
+on main before cutting a release.
+
 ## Test windows
 
 Tests run without windows by default. Every test registered through

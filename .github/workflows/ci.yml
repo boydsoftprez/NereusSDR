@@ -1,8 +1,25 @@
 name: CI
 
+# The full battery runs once, right before a pull request goes to main:
+#
+#   draft pull request        the quick jobs only (compliance, rendezvous,
+#                             Roundtable). The build jobs do not start, so the
+#                             required checks stay "expected" rather than green.
+#   ready pull request        everything. Marking a draft ready starts it, and
+#                             so does a push to a pull request that is ready.
+#   push to main              no tests. It builds what keeps the hosted compiler
+#                             caches warm, since a pull request can only restore
+#                             a cache main saved.
+#   by hand (Actions tab)     everything, on any branch. Run on main, it also
+#                             refreshes the saved test times.
+#
+# Asked for by J.J. Boyd, 2026-11-06.
 on:
   pull_request:
     branches: [main]
+    # ready_for_review is what starts the full run when a draft is marked
+    # ready. Naming any types replaces the default three, so they are listed.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   # Run by hand from the Actions tab; the traversal harness runs only then.
@@ -522,8 +539,17 @@ jobs:
   # hosted, macOS and Windows only for self-hosted, where the linux-box,
   # linux-realtime, build-notests and linux-report jobs take the Linux
   # legs' place.
+  #
+  # On a draft pull request this job is skipped, and with it every job that
+  # needs it. This is on purpose different from documentation-only, where the
+  # build jobs run and pass as no-ops: a draft's no-op pass would stay on the
+  # commit when it is marked ready, so the required checks would read green
+  # until the real run reached them, and for good if that run's first job
+  # failed. Not reporting at all means only a real run can turn them green.
+  # A draft cannot merge, so the missing checks block nothing.
   # --------------------------------------------------------------------
   changes:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     name: Change scope
     outputs:
@@ -625,8 +651,8 @@ jobs:
     # report: the first step then fails the job instead of skipping it.
     # (When the job failed before it chose the legs, the matrix cannot
     # expand and the required checks stay pending, which blocks a merge
-    # just the same.)
-    if: ${{ !cancelled() }}
+    # just the same.) Not on a draft: see the changes job.
+    if: ${{ !cancelled() && !github.event.pull_request.draft }}
     strategy:
       fail-fast: false
       matrix:
@@ -1211,7 +1237,8 @@ jobs:
       # Test
       # ------------------------------------------------------------------
       - name: Test
-        if: env.HEAVY == 'true'
+        # Not on a push to main: the pull request ran these before it merged.
+        if: env.HEAVY == 'true' && github.event_name != 'push'
         working-directory: build
         shell: bash
         # 2026-05-12 (PR #238 review P1 #4): drop --no-tests=ignore so
@@ -1281,7 +1308,7 @@ jobs:
           fi
 
       - name: Preserve Windows audio test diagnostics
-        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && env.HEAVY == 'true' && github.event_name != 'push' && runner.os == 'Windows' && steps.build.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-audio-tests-pr${{ github.event.number || github.run_id }}
@@ -1462,11 +1489,14 @@ jobs:
   # minutes for these two jobs (a 4 minute build and 8 to 9 of tests) and
   # about 18 for linux-realtime (setup, a 4-core build, 10 minutes of
   # realtime tests), so about 18 in all, set by linux-realtime.
+  #
+  # Not on a push to main: its compiler cache lives on the machine and every
+  # pull request's run fills it, so main has nothing to keep warm here.
   # --------------------------------------------------------------------
   linux-box:
     needs: changes
     # Never a fork's pull request, whatever the changes job says.
-    if: needs.changes.outputs.route == 'box' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.changes.outputs.route == 'box' && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, nereus-linux]
     name: Linux on the self-hosted runners (${{ matrix.part }})
     timeout-minutes: 90
@@ -1561,9 +1591,13 @@ jobs:
   # split the next run's tests by. Only from a run whose tests all passed,
   # so a hung or failed test does not skew the split. The prune-caches job
   # keeps the newest. CI speed round, 2026-10-17.
+  #
+  # A push to main no longer runs the tests, so only a run by hand on main
+  # refreshes these. Old times only make the two parts less even; a test with
+  # no time still goes by name hash, and every test still runs.
   box-test-times:
     needs: [changes, linux-box]
-    if: ${{ !cancelled() && needs.linux-box.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ !cancelled() && needs.linux-box.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     name: Save the self-hosted test times
     steps:
@@ -1689,8 +1723,10 @@ jobs:
         id: build
         run: cmake --build build -j"$(nproc)" --target all tests_realtime
 
-      # The build job's Test step, realtime pass only.
+      # The build job's Test step, realtime pass only. Not on a push to main,
+      # where this job only keeps its compiler cache warm.
       - name: Test
+        if: github.event_name != 'push'
         working-directory: build
         run: |
           # Permit the existing audio/CWX FIFO request (rtMax - 1), only
@@ -1749,11 +1785,12 @@ jobs:
   # under those names: each passes only if both linux-box jobs,
   # linux-realtime and the build with tests off all passed. On the hosted
   # path this job is skipped and the build job's Linux legs report under
-  # the same names (shard 1/4 runs the build with tests off there).
+  # the same names (shard 1/4 runs the build with tests off there). Not on a
+  # push to main, where linux-box does not run and nothing requires these.
   # --------------------------------------------------------------------
   linux-report:
     needs: [changes, linux-box, linux-realtime, build-notests]
-    if: ${{ !cancelled() && needs.changes.outputs.route == 'box' }}
+    if: ${{ !cancelled() && needs.changes.outputs.route == 'box' && github.event_name != 'push' }}
     runs-on: ubuntu-24.04
     name: Build (${{ matrix.name }})
     strategy:
