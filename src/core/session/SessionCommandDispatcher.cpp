@@ -6,6 +6,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: The station device's fill at connect restores the receiver, on its
+//                own frequency, mode, filter and sample rate.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-11-05: A new receiver asks for RIT and XIT off; the station device's fill does not.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -2807,9 +2810,10 @@ void SessionCommandDispatcher::handleAddSliceOnPan(const SessionMessage& invoke)
 
     // A requested slice is a new receiver: RIT and XIT off. The exception is
     // the station device's own window filling its pans at connect, which
-    // brings back a saved layout's receiver (HostingSliceActions::addOnPan).
-    // Any other device's request is new whatever it sends, so a device on the
-    // link cannot keep a letter's offsets this way.
+    // brings back a saved layout's receiver (HostingSliceActions::addOnPan) on
+    // its own frequency, mode, filter and sample rate, as a window without a
+    // Core does. Any other device's request is new whatever it sends, so a
+    // device on the link cannot take a letter back this way.
     QVariant restoredFillArg;
     const bool restoredFill = m_requester == SliceOwnership::stationDevice()
         && findArgument(invoke.arguments, "restoredFill", &restoredFillArg)
@@ -2817,7 +2821,7 @@ void SessionCommandDispatcher::handleAddSliceOnPan(const SessionMessage& invoke)
     {
         // iPhone app Task 73: the new slice is the requesting device's.
         const SliceOwnership::CreatorScope creator(m_radioModel->sliceOwnership(), m_requester);
-        m_radioModel->addSliceOnPan(panIdArg.toString(), /*restoreSavedState=*/false,
+        m_radioModel->addSliceOnPan(panIdArg.toString(), /*restoreSavedState=*/restoredFill,
                                     /*newReceiver=*/!restoredFill);
     }
 

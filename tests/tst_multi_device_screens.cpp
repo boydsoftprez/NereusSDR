@@ -60,6 +60,7 @@
 #include <QDir>
 #include <QImage>
 #include <QListWidget>
+#include <QScopeGuard>
 #include <QPainter>
 #include <QPushButton>
 #include <QSlider>
@@ -81,6 +82,7 @@
 #include "core/session/StationClient.h"
 #include "core/session/TransmitStateFacade.h"
 #include "core/settings/SettingsProxy.h"
+#include "core/RadioConnection.h"
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
 #include "gui/PanadapterApplet.h"
@@ -211,6 +213,44 @@ void setTx(TransmitState& tx, const char* name, const QVariant& value)
 }
 
 } // namespace
+
+// Records where transmit goes. File scope: moc needs external linkage.
+class TxFrequencyRecorder final : public RadioConnection {
+    Q_OBJECT
+public:
+    QList<quint64> txFrequencies;
+
+    explicit TxFrequencyRecorder(QObject* parent = nullptr) : RadioConnection(parent)
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void init() override {}
+    void connectToRadio(const NereusSDR::RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64 hz) override { txFrequencies.append(hz); }
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void setMox(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setAlexRxBpf(AlexRxBpf) override {}
+    void setWatchdogEnabled(bool enabled) override { m_watchdogEnabled = enabled; }
+    void sendTxIq(const float*, int) override {}
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
 
 class TstMultiDeviceScreens : public QObject {
     Q_OBJECT
@@ -781,6 +821,127 @@ private slots:
         AppSettings::instance().clear();
     }
 
+    // JJ's ruling 2026-11-05: with Run Core on, a restored receiver comes back
+    // on its own frequency and mode, with its filter and sample rate too. A
+    // saved on 14.200 USB, B on 7.074 DIGU with XIT +700, transmit on B.
+    void aHostingWindowsRestoredReceiverComesBackOnItsOwnFrequency()
+    {
+        saveReceiverB();
+        if (QTest::currentTestFailed()) { return; }
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        SliceModel* a = core.model->sliceById(0);
+        a->setFrequency(14'200'000.0);
+        a->setDspMode(DSPMode::USB);
+        TxFrequencyRecorder recorder;
+        core.model->injectConnectionForTest(&recorder);
+        const auto detach = qScopeGuard([&] { core.model->injectConnectionForTest(nullptr); });
+
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      false, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        SliceModel* b = core.model->sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), kReceiverBHz);
+        QCOMPARE(b->dspMode(), DSPMode::DIGU);
+        QVERIFY(b->xitEnabled());
+        QCOMPARE(b->xitHz(), 700);
+        QCOMPARE(b->filterLow(), kReceiverBFilterLow);
+        QCOMPARE(b->filterHigh(), kReceiverBFilterHigh);
+        // The rate is on the DDC, not only on the menu.
+        QVERIFY(b->streamIndex() >= 0);
+        QCOMPARE(b->sampleRateHz(), kReceiverBRate);
+        QCOMPARE(core.model->streamSampleRateHzForTest(b->streamIndex()),
+                 kReceiverBRate);
+        // A is left alone.
+        QCOMPARE(a->frequency(), 14'200'000.0);
+        QCOMPARE(a->dspMode(), DSPMode::USB);
+
+        // Where transmit goes, with transmit bound to B.
+        recorder.txFrequencies.clear();
+        QVERIFY(core.model->txSliceArbiter()->requestHandoff(1));
+        QCOMPARE(core.model->txBoundSlice(), b);
+        QVERIFY(!recorder.txFrequencies.isEmpty());
+        QCOMPARE(recorder.txFrequencies.last(), quint64(7'074'700));
+        AppSettings::instance().clear();
+    }
+
+    void aHostingWindowsFillWithNothingSavedOpensOnTheActiveSlice()
+    {
+        AppSettings::instance().clear();
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        SliceModel* a = core.model->sliceById(0);
+        a->setFrequency(14'200'000.0);
+        a->setDspMode(DSPMode::USB);
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      false, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        SliceModel* b = core.model->sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), 14'200'000.0);
+        QCOMPARE(b->dspMode(), DSPMode::USB);
+        QVERIFY(!b->xitEnabled());
+        AppSettings::instance().clear();
+    }
+
+    void aHostingWindowsPlusRxIsSeededFromTheActiveSliceWithOffsetsOff()
+    {
+        saveReceiverB();
+        if (QTest::currentTestFailed()) { return; }
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        SliceModel* a = core.model->sliceById(0);
+        a->setFrequency(14'200'000.0);
+        a->setDspMode(DSPMode::USB);
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      true, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        SliceModel* b = core.model->sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), 14'200'000.0);
+        QCOMPARE(b->dspMode(), DSPMode::USB);
+        QVERIFY(!b->ritEnabled());
+        QVERIFY(!b->xitEnabled());
+        QCOMPARE(b->xitHz(), 0);
+        AppSettings::instance().clear();
+    }
+
+    void aHostingWindowsFillWritesNothingOverAHeldLetter()
+    {
+        saveReceiverB();
+        if (QTest::currentTestFailed()) { return; }
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        const auto letter = [] {
+            QVariantMap values;
+            auto& settings = AppSettings::instance();
+            for (const QString& key : settings.allKeys()) {
+                if (key.startsWith(QStringLiteral("Slice1/"))) {
+                    values.insert(key, settings.value(key));
+                }
+            }
+            return values;
+        };
+        const QVariantMap before = letter();
+        QVERIFY(!before.isEmpty());
+        core.model->setReceiveLayoutHoldForTest(/*isProtected=*/true, /*pendingAdmission=*/false);
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      false, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        core.model->flushPendingSettingsSave();
+        QCOMPARE(letter(), before);
+        AppSettings::instance().clear();
+    }
+
     // The fill's argument is the station device's alone. A device that sends
     // it over the link still gets a new receiver.
     void aRemoteDeviceCannotAskForTheRestoredFill()
@@ -793,6 +954,10 @@ private slots:
             b, {{"deviceAuth", 1}, {"sessionHolder", 1}, {"sliceAccess", 1}});
         QVERIFY(admitted(appB));
         hostingFillSeedsSavedOffsets();
+        for (int letter = 0; letter < 5; ++letter) {
+            AppSettings::instance().setValue(
+                QStringLiteral("Slice%1/Band20m/Frequency").arg(letter), kReceiverBHz);
+        }
         const int sliceCount = core.model->slices().size();
 
         appB->sendText(SessionMessages::encode(SessionMessages::commandInvoke(
@@ -805,6 +970,9 @@ private slots:
         QVERIFY(!added->ritEnabled());
         QVERIFY(!added->xitEnabled());
         QCOMPARE(added->xitHz(), 0);
+        // Nor does it get the letter's frequency: LastBand and a saved
+        // frequency were there to be taken.
+        QVERIFY(added->frequency() != kReceiverBHz);
         QVERIFY(!AppSettings::instance().contains(
             QStringLiteral("Slice%1/XitHz").arg(added->sliceIndex())));
         AppSettings::instance().clear();
@@ -1656,6 +1824,40 @@ private slots:
     }
 
 private:
+    static constexpr double kReceiverBHz = 7'074'000.0;
+    static constexpr int kReceiverBFilterLow = 200;
+    static constexpr int kReceiverBFilterHigh = 2800;
+    static constexpr int kReceiverBRate = 96000;
+
+    // Saves receiver B through the model's own save, so this holds wherever
+    // the keys live.
+    static void saveReceiverB()
+    {
+        AppSettings::instance().clear();
+        RadioModel seed;
+        seed.configureStreamPool(4, 5, 192000);
+        QVERIFY(seed.addSlice() == 0);
+        SliceModel* b = seed.sliceById(seed.addSlice());
+        QVERIFY(b);
+        QCOMPARE(b->sliceIndex(), 1);
+        b->setFrequency(kReceiverBHz);
+        b->setDspMode(DSPMode::DIGU);
+        b->setFilter(kReceiverBFilterLow, kReceiverBFilterHigh);
+        b->setXitHz(700);
+        b->setXitEnabled(true);
+        b->setSampleRateHz(kReceiverBRate);
+        b->saveToSettings(Band::Band40m);
+    }
+
+    static void becomeHostingStation(Core& core)
+    {
+        const QByteArray& station = SliceOwnership::stationDevice();
+        core.server->deviceSessions()->registerHostingDevice(station, QStringLiteral("Mac"),
+                                                              QStringLiteral("Mac"));
+        core.server->setStationDeviceWords(QStringLiteral("Mac"), QStringLiteral("Mac"));
+        core.model->sliceOwnership()->adoptUnowned(station);
+    }
+
     static void hostingFillSeedsSavedOffsets()
     {
         for (int letter = 0; letter < 5; ++letter) {
