@@ -20,6 +20,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: the `bandStack` facade, bound to the controller on the Core.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -2085,6 +2087,7 @@ mw0lge@grange-lane.co.uk
 #include "models/RotorModel.h"
 #include "models/RoundtableModel.h"
 #include "core/roundtable/RoundtableState.h"
+#include "core/session/BandStackFacade.h"
 #include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
@@ -3522,6 +3525,7 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
                 [this](const NereusSDR::RadioInfo& info) {
                     if (!m_bandStackController && !info.macAddress.isEmpty()) {
                         m_bandStackController = std::make_unique<BandStackController>(this);
+                        m_bandStackFacade->bind(m_bandStackController.get());
                     }
                 });
     }
@@ -3986,6 +3990,8 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // screens' model, in every placement (wireRoundtable binds them here;
     // StationClient feeds them in a remote window).
     m_roundtableState = new RoundtableState(this);
+    // Band stack plan Task 4: the `bandStack` object, in every placement.
+    m_bandStackFacade = new BandStackFacade(this);
     m_roundtableModel = new RoundtableModel(this);
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.

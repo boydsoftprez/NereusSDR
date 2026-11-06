@@ -182,6 +182,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: peerGetsBandStack.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Negotiate frequency chat only with version2 peers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: Roundtable plan Task 11: stationRoundtableVersion(),
@@ -2157,6 +2159,9 @@ private:
     /// R-R3-49 / R-IOS-18: paProfileVersion 1 reaches `transport` (minor 11,
     /// a Core with its own PA profile bank, and paProfiles 1 declared).
     bool peerGetsPaProfiles(SessionTransport* transport) const;
+    /// Band stack plan Task 4: bandStackVersion 1 reaches `transport` (minor 11,
+    /// a Core that runs the stack, and bandStack 1 declared).
+    bool peerGetsBandStack(SessionTransport* transport) const;
     /// The refusal a PA profile change from `transport` meets, the one the
     /// settings path gives the desktop's own hardware/<mac>/pa/... writes
     /// (receive-only refusal unless transmit settings were offered; the

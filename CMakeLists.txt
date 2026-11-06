@@ -1628,6 +1628,7 @@ list(APPEND CORE_SOURCES
     src/core/session/RxOnlyLinkFit.cpp
     # R-R3-49 / R-IOS-18: the Core's PA Gain profiles for a phone.
     src/core/session/PaProfilesFacade.cpp
+    src/core/session/BandStackFacade.cpp
     # iPhone app Task 25 (D41): the unbuilt features list the catalogue's
     # tools read (the desktop's hide helpers stay in src/gui).
     src/core/UnbuiltFeatureList.cpp

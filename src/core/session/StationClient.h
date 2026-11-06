@@ -208,6 +208,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-02: Track active and detail frequency record streams separately.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -1432,6 +1434,9 @@ public:
     static QString station2mUnavailableReason();
     QString band2mUnavailableReason() const override;
     CommandOutcome requestSelectBand(int sliceId, int band) override;
+    // Band stack plan Task 4: see IStationLink.
+    bool bandStackAvailable() const override;
+    CommandOutcome sendBandStackCommand(const QString& verb, const QJsonObject& arguments) override;
     // Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): listen
     // to, stop listening to, take control of and release a slice. The
     // answers arrive on deviceCommandFinished; the access objects follow.

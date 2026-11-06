@@ -10577,6 +10577,12 @@ nereus_add_test(tst_slice_select_band
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 
+# Band stack plan Task 4: the band stack through a loopback link: the facade,
+# the feature gate and every bandStack.* verb.
+nereus_add_test(tst_bandstack_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
 # R-IOS-27, R-IOS-06: notch.addAtSlice, the desktop's +TNF for a device's
 # slice on the Core (notchControlVersion 2), with notch.add's refusals.
 # Loopback only, no RF, no audio device.

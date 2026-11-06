@@ -59,6 +59,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: bandStackVersion, for a peer that declared bandStack.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25: merge of main: stationRoundtableVersion moves after main's
 //               displayCodecVersion. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -950,6 +952,12 @@ struct StationCapabilities {
     int nnrVersion = 0;
     // Optional minor-11 feature: separate measured input-pressure warning.
     int nnrLoadWarningVersion = 0;
+    /// Band stack plan Task 4: 1 means the Core mirrors its band stack document
+    /// as the read-only `bandStack` object and takes the bandStack.* verbs. Sent
+    /// after nnrLoadWarningVersion and before coreBuildInfo, only to a peer at
+    /// minor 11 whose hello declared `bandStack` 1. 0 (absent): band buttons
+    /// work through slice.selectBand as they did.
+    int bandStackVersion = 0;
     int psAlgorithmVersion = 0;
     int propertyResultVersion = 0;
     int dspAssetVersion = 0;

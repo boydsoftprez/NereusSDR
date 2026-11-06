@@ -86,6 +86,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send,
@@ -282,6 +284,8 @@ class StationRadios;
 
 /// One named argument of a command verb, as dispatch() reads it: the name,
 /// the wire kind it must carry, and whether it may be left out.
+struct BandStackRecallRequest;
+
 struct CommandArgumentSpec {
     QByteArray name;
     MirrorWireKind kind = MirrorWireKind::Unsupported;
@@ -669,6 +673,15 @@ private:
     // does not hold transmit and another device does. True when it answered.
     bool refusedForTheHolder(const QByteArray& verb, quint32 commandId);
     void handlePaProfile(const NereusSDR::SessionMessage& invoke);
+    /// Band stack plan Task 4: every bandStack.* verb (bandStackVersion 1).
+    void handleBandStack(const NereusSDR::SessionMessage& invoke);
+    /// Runs a parsed recall and answers it. The arguments have been read and the
+    /// slice check passed. The shared-receiver hold goes in front of this call.
+    void proceedBandStackRecall(const NereusSDR::SessionMessage& invoke,
+                                const NereusSDR::BandStackRecallRequest& request);
+    /// Who may act on a slice through the band stack: the listener's words or
+    /// the Core's changeRefusal text. Empty when the requester may.
+    QString bandStackSliceRefusal(int sliceId) const;
     void handleRadeResetVocoder(const NereusSDR::SessionMessage& invoke);
     // R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     // txEq.resetCurve, through TxEqCurveAccess.

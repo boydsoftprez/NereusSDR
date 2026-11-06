@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: bandStack declared, the `bandStack` mirror and
+//               sendBandStackCommand.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-02: Keep independent active/detail frequency streams acknowledged.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -661,6 +664,7 @@
 #include "models/AccessorySettingsModel.h"
 #include "models/RoundtableModel.h"
 #include "core/roundtable/RoundtableState.h"
+#include "core/session/BandStackFacade.h"
 #include "core/session/RecordStream.h"
 
 #include <QAuthenticator>
@@ -1046,6 +1050,9 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // `roundtable` object, its room streams and the roundtable.* verbs;
     // stationRoundtableVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("roundtable"), 2);
+    // Band stack plan Task 4: this window shows the Core's band stack (the
+    // `bandStack` object and the bandStack.* verbs; bandStackVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("bandStack"), 1);
     // R-R3-46 / R-R3-11: this window shows and sets the other ADC's own
     // attenuator for the slices on it (stepAtt rx2AttenuationDb,
     // rx2SliceMask; adcAttenuatorVersion 1).
@@ -2663,6 +2670,8 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
             if (RoundtableModel* rooms = m_radioModel->roundtableModel()) {
                 rooms->clearStationRooms();
             }
+            // Band stack plan Task 4: so does the Core's band stack.
+            m_radioModel->bandStackFacade()->clearStationValues();
         }
     }
     m_roundtableStreams.clear();
@@ -4164,6 +4173,20 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         }
     }
 
+    // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack, read
+    // only; never written back. Against a Core that does not offer it the key
+    // is not held.
+    if (m_radioModel->role() == RadioModel::Role::Remote) {
+        BandStackFacade* bandStack = m_radioModel->bandStackFacade();
+        if (m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+            && m_capabilities.bandStackVersion >= 1) {
+            m_objects.insert(QByteArrayLiteral("bandStack"), bandStack);
+        } else {
+            m_objects.remove(QByteArrayLiteral("bandStack"));
+            bandStack->clearStationValues();
+        }
+    }
+
     // Parity Task 19 (recordStreamVersion 1): the Core's spot sources, read
     // only; never written back. Against a Core that does not send them the
     // key is not held and the station's sources read off.
@@ -5494,6 +5517,12 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
         auto* roundtable = qobject_cast<RoundtableState*>(target);
         return roundtable != nullptr && roundtable->applyStationValue(propertyName, native);
     }
+    // Band stack plan Task 4: a plain state apply; changes only by the
+    // bandStack.* verbs.
+    if (className == "BandStackFacade") {
+        auto* bandStack = qobject_cast<BandStackFacade*>(target);
+        return bandStack != nullptr && bandStack->applyStationValue(propertyName, native);
+    }
     if (className != "SliceModel") {
         return false;
     }
@@ -5966,6 +5995,49 @@ StationClient::CommandOutcome StationClient::requestSelectBand(int sliceId, int 
     return sendCommand("slice.selectBand", sliceId,
                        { intArgument("sliceId", sliceId), intArgument("band", band) },
                        QStringLiteral("the band change"));
+}
+
+bool StationClient::bandStackAvailable() const
+{
+    // Band stack plan Task 4: the Core sends bandStackVersion only to a window
+    // that declared bandStack.
+    return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && m_capabilities.bandStackVersion >= 1;
+}
+
+StationClient::CommandOutcome StationClient::sendBandStackCommand(const QString& verb,
+                                                                  const QJsonObject& arguments)
+{
+    if (!bandStackAvailable()) {
+        return IStationLink::sendBandStackCommand(verb, arguments);
+    }
+    const QString notSent = QStringLiteral("The band stack change could not be sent.");
+    if (!verb.startsWith(QLatin1String("bandStack."))) {
+        return {false, notSent};
+    }
+    QList<MirrorUpdate> wire;
+    int sliceId = -1;
+    for (auto it = arguments.constBegin(); it != arguments.constEnd(); ++it) {
+        const QByteArray name = it.key().toUtf8();
+        const QJsonValue value = it.value();
+        if (value.isString()) {
+            wire.append(stringArgument(name, value.toString()));
+        } else if (value.isBool()) {
+            wire.append(boolArgument(name, value.toBool()));
+        } else if (value.isDouble()) {
+            wire.append(MirrorUpdate{0, name, MirrorWireKind::Int64,
+                                     QVariant(static_cast<qlonglong>(value.toInteger()))});
+            if (name == "sliceId") {
+                sliceId = value.toInt(-1);
+            }
+        } else if (value.isArray()) {
+            wire.append(stringArgument(name, QString::fromUtf8(QJsonDocument(value.toArray())
+                                                                   .toJson(QJsonDocument::Compact))));
+        } else {
+            return {false, notSent};
+        }
+    }
+    return sendCommand(verb.toUtf8(), sliceId, wire, QStringLiteral("the band stack change"));
 }
 
 bool StationClient::remoteSliceAccessAvailable() const

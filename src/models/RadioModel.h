@@ -866,6 +866,8 @@
 //                implementation via Anthropic Claude Code.
 //   2026-11-05 - bandStackController, retuneRefusalFor, saveBandMemory.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - bandStackFacade, the `bandStack` object in every placement.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1173,6 +1175,7 @@ class StationRfKitController;
 class StationRotorController;
 namespace RotorLink { class RotorModel; }
 class RoundtableState;
+class BandStackFacade;
 class RoundtableModel;
 class StationTciController;
 class StationTciModel;
@@ -3485,6 +3488,9 @@ public:
     // The band stack (docs/architecture/2026-11-05-band-stack-design.md).
     // Null on a Role::Remote model, and until a radio is known on a local one.
     BandStackController* bandStackController() const { return m_bandStackController.get(); }
+    /// The `bandStack` object: it follows the controller on the Core and reads
+    /// the mirror in a remote window. Never null.
+    BandStackFacade* bandStackFacade() const { return m_bandStackFacade; }
 
     /// Why retuning `slice` to `frequencyHz` would be refused, in the words the
     /// rollback in wireSliceSignals uses, or empty when it would not be. Asks
@@ -9739,6 +9745,7 @@ private:
     std::unique_ptr<StationTciController> m_stationTci;
     std::unique_ptr<RfKitBandFollow>      m_rfKitBandFollow;
     std::unique_ptr<BandStackController>  m_bandStackController;
+    BandStackFacade*                      m_bandStackFacade{nullptr};
     // CAT setup from a connected desktop: the `stationCat` object and, on
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};

@@ -28,6 +28,10 @@
 // NeedKeyframe asks once and recovers, as before.
 //
 // Modification history (NereusSDR):
+//   2026-11-05  J.J. Boyd / KG4VCF  Band stack plan Task 4: a window's
+//                                    bandStackVersion may come last before
+//                                    coreBuildInfo. AI-assisted via Claude
+//                                    Code.
 //   2026-10-26  J.J. Boyd / KG4VCF  The entry after displayCodecVersion
 //                                    is checked by name to be
 //                                    stationRoundtableVersion when it is
@@ -489,7 +493,12 @@ private slots:
         if (nnrWarning) {
             QCOMPARE(names.at(field + (roundtable ? 2 : 1)), QStringLiteral("nnrLoadWarningVersion"));
         }
-        QCOMPARE(field + (roundtable ? 3 : 2) + (nnrWarning ? 1 : 0), names.size());
+        const bool bandStack = names.contains(QStringLiteral("bandStackVersion"));
+        if (bandStack) {
+            QCOMPARE(names.at(names.size() - 2), QStringLiteral("bandStackVersion"));
+        }
+        QCOMPARE(field + (roundtable ? 3 : 2) + (nnrWarning ? 1 : 0) + (bandStack ? 1 : 0),
+                 names.size());
         QVERIFY(h.server.displayCodecV2Available(h.server.mediaSessionEpoch()));
         QVERIFY(h.startWith(2));
         QTRY_VERIFY_WITH_TIMEOUT(!h.mediaTransport.isNull(), 10'000);
@@ -746,14 +755,20 @@ private slots:
             // Optional Roundtable and NNR warning capabilities precede build info.
             const bool roundtable = names.contains(QStringLiteral("stationRoundtableVersion"));
             const bool nnrWarning = names.contains(QStringLiteral("nnrLoadWarningVersion"));
+            const bool bandStack = names.contains(QStringLiteral("bandStackVersion"));
+            const qsizetype later = bandStack ? 1 : 0;
+            if (bandStack) {
+                QCOMPARE(names.at(names.size() - 2), QStringLiteral("bandStackVersion"));
+            }
             if (nnrWarning) {
-                QCOMPARE(names.at(names.size() - 2), QStringLiteral("nnrLoadWarningVersion"));
+                QCOMPARE(names.at(names.size() - 2 - later), QStringLiteral("nnrLoadWarningVersion"));
             }
             if (roundtable) {
-                QCOMPARE(names.at(names.size() - 2 - (nnrWarning ? 1 : 0)),
+                QCOMPARE(names.at(names.size() - 2 - later - (nnrWarning ? 1 : 0)),
                          QStringLiteral("stationRoundtableVersion"));
             }
-            QCOMPARE(names.at(names.size() - (roundtable ? 3 : 2) - (nnrWarning ? 1 : 0)), kField);
+            QCOMPARE(names.at(names.size() - later - (roundtable ? 3 : 2) - (nnrWarning ? 1 : 0)),
+                     kField);
         }
         const QJsonObject start = lastOp(outbound, QStringLiteral("start"));
         QVERIFY(!start.isEmpty());
