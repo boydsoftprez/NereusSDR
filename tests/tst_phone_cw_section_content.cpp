@@ -8,22 +8,42 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - The Phone/CW panel copy's hide toggles, page choice and
 //                 live wiring. Brian Sutton, AI-assisted via xAI Grok.
+//   2026-11-06 - PR 757 corrections: every row's hide, show and page switch
+//                 asked of the row's own wrapper, heights as rows hide, the
+//                 docked panel held still, Advanced bindings, the compression
+//                 gauge's reason, the DEXP marker, the iambic memory and the
+//                 remote window's gates. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
+#include <QAbstractSlider>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QCoreApplication>
+#include <QGroupBox>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLoggingCategory>
+#include <QMap>
 #include <QPushButton>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QVBoxLayout>
 
+#include <memory>
+
+#include "core/AppSettings.h"
+#include "core/CwTypes.h"
 #include "gui/HGauge.h"
 #include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/PhoneCwSectionContent.h"
 #include "gui/applets/SectionParts.h"
 #include "gui/containers/ContainerContentRegistry.h"
+#include "gui/containers/ContentPropertyEditor.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
@@ -50,11 +70,157 @@ HGauge* gaugeNamed(QWidget* root, const QString& name)
     return nullptr;
 }
 
+const QStringList kPhoneRows = {
+    QStringLiteral("level"), QStringLiteral("compression"), QStringLiteral("profile"),
+    QStringLiteral("mic"), QStringLiteral("proc"), QStringLiteral("dexp"),
+    QStringLiteral("amCarrier")};
+const QStringList kCwRows = {
+    QStringLiteral("cwDelay"), QStringLiteral("cwSpeed"), QStringLiteral("cwSidetone"),
+    QStringLiteral("cwPan"), QStringLiteral("cwKeying"), QStringLiteral("cwLamps"),
+    QStringLiteral("cwStatus")};
+const QString kPageButtons = QStringLiteral("pageButtons");
+
+// A toggle hides the row's wrapper, not the controls inside it, and
+// isHidden() answers only for the widget it is asked of.
+QWidget* rowOf(const PhoneCwApplet* copy, const QString& id)
+{
+    const QList<QWidget*> widgets = copy->containerParts()->widgets(id);
+    return widgets.size() == 1 ? widgets.first() : nullptr;
+}
+
+QJsonObject hiding(const QStringList& ids, const QString& page = QString())
+{
+    QJsonObject config;
+    for (const QString& id : ids) {
+        config.insert(SectionParts::hideKey(id), true);
+    }
+    if (!page.isEmpty()) {
+        config.insert(QStringLiteral("page"), page);
+    }
+    return config;
+}
+
+QStringList allBut(const QStringList& rows, const QString& kept)
+{
+    QStringList others = rows;
+    others.removeAll(kept);
+    return others;
+}
+
+QStackedWidget* stackOf(QWidget* applet)
+{
+    return applet->findChild<QStackedWidget*>();
+}
+
+// A window that lays the panel out the way a container's stack does: one
+// column, the panel at its own height, spare room under it.
+struct Column {
+    QWidget window;
+    QVBoxLayout* layout = nullptr;
+
+    Column()
+    {
+        window.resize(320, 900);
+        layout = new QVBoxLayout(&window);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+    }
+
+    void hold(QWidget* panel)
+    {
+        layout->addWidget(panel);
+        layout->addStretch();
+        window.show();
+        settle();
+    }
+
+    void settle()
+    {
+        // Each level's layout request reaches its parent on the next pass.
+        for (int pass = 0; pass < 6; ++pass) {
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+            layout->activate();
+        }
+    }
+};
+
+// Every control a person can reach, by its accessible name.
+struct ControlState {
+    bool enabled = false;
+    QString toolTip;
+    bool operator==(const ControlState& other) const
+    {
+        return enabled == other.enabled && toolTip == other.toolTip;
+    }
+};
+
+QMap<QString, ControlState> controlsOf(QWidget* root)
+{
+    QMap<QString, ControlState> controls;
+    const auto record = [&controls](QWidget* control) {
+        if (!control->accessibleName().isEmpty()) {
+            controls.insert(control->accessibleName(), {control->isEnabled(), control->toolTip()});
+        }
+    };
+    for (QPushButton* control : root->findChildren<QPushButton*>()) { record(control); }
+    for (QAbstractSlider* control : root->findChildren<QAbstractSlider*>()) { record(control); }
+    for (QComboBox* control : root->findChildren<QComboBox*>()) { record(control); }
+    return controls;
+}
+
+bool sameGates(QWidget* docked, QWidget* copy, QString* difference)
+{
+    const QMap<QString, ControlState> expected = controlsOf(docked);
+    const QMap<QString, ControlState> actual = controlsOf(copy);
+    if (expected.keys() != actual.keys()) {
+        *difference = QStringLiteral("different controls");
+        return false;
+    }
+    for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
+        if (!(actual.value(it.key()) == it.value())) {
+            *difference = it.key() + QStringLiteral(": docked ")
+                + (it.value().enabled ? QStringLiteral("enabled") : QStringLiteral("disabled"))
+                + QStringLiteral(" \"") + it.value().toolTip + QStringLiteral("\", copy ")
+                + (actual.value(it.key()).enabled ? QStringLiteral("enabled") : QStringLiteral("disabled"))
+                + QStringLiteral(" \"") + actual.value(it.key()).toolTip + QStringLiteral("\"");
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 class TstPhoneCwSectionContent : public QObject {
     Q_OBJECT
+    static inline QtMessageHandler s_previousHandler = nullptr;
+
 private slots:
+    void initTestCase()
+    {
+        // A slice made with no radio connected says so; these tests have none.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
+        // The offscreen platform answers every shown window's size hints with
+        // this one line. It says nothing about the panel.
+        s_previousHandler = qInstallMessageHandler(
+            [](QtMsgType type, const QMessageLogContext& context, const QString& message) {
+                if (message != QLatin1String("This plugin does not support propagateSizeHints()")
+                    && s_previousHandler) {
+                    s_previousHandler(type, context, message);
+                }
+            });
+    }
+
+    void cleanupTestCase()
+    {
+        qInstallMessageHandler(s_previousHandler);
+    }
+
+    void init()
+    {
+        AppSettings::instance().remove(QStringLiteral("PhoneCw/DexpThresholdMarkerDb"));
+    }
+
     void copyHidesRowsTheAppletKeeps()
     {
         RadioModel radio;
@@ -74,14 +240,16 @@ private slots:
         HGauge* appletLevel = gaugeNamed(&applet, QStringLiteral("Microphone level gauge"));
         QVERIFY(copyLevel);
         QVERIFY(appletLevel);
-        QVERIFY(copyLevel->isHidden());
+        // The toggle hides the row's wrapper around the gauge.
+        QVERIFY(copyLevel->parentWidget()->isHidden());
+        QVERIFY(!copyLevel->isHidden());
         QVERIFY(!appletLevel->isHidden());
 
         QPushButton* copyPhone = buttonNamed(copy, QStringLiteral("Phone"));
         QPushButton* appletPhone = buttonNamed(&applet, QStringLiteral("Phone"));
         QVERIFY(copyPhone);
         QVERIFY(appletPhone);
-        QVERIFY(copyPhone->isHidden());
+        QVERIFY(copyPhone->parentWidget()->isHidden());
         QVERIFY(!appletPhone->isHidden());
 
         auto* delay = copy->findChild<QSlider*>(QStringLiteral("cwDelaySlider"));
@@ -109,7 +277,7 @@ private slots:
         auto* appletProc = applet.findChild<QPushButton*>(QStringLiteral("PhoneCwProcButton"));
         QVERIFY(appletProc->isChecked());
 
-        auto* preview = applet.createPanelCopy(nullptr, true);
+        const std::unique_ptr<PhoneCwApplet> preview(applet.createPanelCopy(nullptr, true));
         QVERIFY(preview);
         QVERIFY(!preview->isEnabled());
         auto* previewProc = preview->findChild<QPushButton*>(QStringLiteral("PhoneCwProcButton"));
@@ -117,7 +285,6 @@ private slots:
         previewProc->setChecked(true);
         previewProc->setChecked(false);
         QVERIFY(radio.transmitModel().cpdrOn());
-        delete preview;
     }
 
     void propertiesNameThePageAndEachHideToggle()
@@ -149,7 +316,9 @@ private slots:
         QVERIFY(labels.contains(QStringLiteral("Hide compression gauge")));
         QVERIFY(labels.contains(QStringLiteral("Hide mic profile")));
         QVERIFY(labels.contains(QStringLiteral("Hide mic source and gain")));
-        QVERIFY(labels.contains(QStringLiteral("Hide PROC")));
+        // The PROC row also holds VAX, so the toggle says so.
+        QVERIFY(labels.contains(QStringLiteral("Hide PROC and VAX")));
+        QVERIFY(!labels.contains(QStringLiteral("Hide PROC")));
         QVERIFY(labels.contains(QStringLiteral("Hide DEXP")));
         QVERIFY(labels.contains(QStringLiteral("Hide AM carrier")));
         QVERIFY(labels.contains(QStringLiteral("Hide CW delay")));
@@ -160,6 +329,596 @@ private slots:
         QVERIFY(labels.contains(QStringLiteral("Hide KEY, TX and keyer lamps")));
         QVERIFY(labels.contains(QStringLiteral("Hide keyer status")));
         QVERIFY(!labels.contains(QStringLiteral("Hide MON")));
+    }
+
+    // The rows the copy offers, each with its one wrapper.
+    void theCopyNamesEachRow()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        QWidget host;
+        auto* copy = applet.createPanelCopy(&host, false);
+        QCOMPARE(copy->containerParts()->ids(),
+                 QStringList{kPageButtons} + kPhoneRows + kCwRows);
+        for (const QString& id : copy->containerParts()->ids()) {
+            QVERIFY2(rowOf(copy, id), qPrintable(id));
+        }
+        // The docked panel has no rows to hide.
+        QVERIFY(!applet.containerParts());
+    }
+
+    void eachHideKeyHidesExactlyItsRow()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        QWidget host;
+        auto* plain = applet.createPanelCopy(&host, false);
+        const QStringList ids = plain->containerParts()->ids();
+        for (const QString& id : ids) {
+            auto* copy = applet.createPanelCopy(&host, false);
+            copy->applyContainerConfig(hiding({id}));
+            const SectionParts* parts = copy->containerParts();
+            for (const QString& other : ids) {
+                QCOMPARE(parts->isHidden(other), other == id);
+                const QList<QWidget*> mine = parts->widgets(other);
+                const QList<QWidget*> theirs = plain->containerParts()->widgets(other);
+                QCOMPARE(mine.size(), theirs.size());
+                QVERIFY(!mine.isEmpty());
+                for (int i = 0; i < mine.size(); ++i) {
+                    if (other == id) {
+                        QVERIFY2(mine.at(i)->isHidden(), qPrintable(id));
+                    } else {
+                        QCOMPARE(mine.at(i)->isHidden(), theirs.at(i)->isHidden());
+                    }
+                }
+            }
+        }
+    }
+
+    // Through the factory, a saved entry's config brings each hide and the
+    // page back.
+    void aSavedEntryRestoresItsHidesAndPage()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        ContainerContentRegistry registry;
+        registerPhoneCwSectionContent(registry, &applet);
+        QWidget host;
+        for (const QString& id : QStringList{kPageButtons} + kPhoneRows + kCwRows) {
+            ContentEntry entry = registry.makeEntry(QStringLiteral("phcw.panel"));
+            entry.config.insert(SectionParts::hideKey(id), true);
+            entry.config.insert(QStringLiteral("page"), QStringLiteral("cw"));
+            auto* copy = qobject_cast<PhoneCwApplet*>(registry.createWidget(entry, &host));
+            QVERIFY2(copy, qPrintable(id));
+            QVERIFY2(rowOf(copy, id)->isHidden(), qPrintable(id));
+            QCOMPARE(stackOf(copy)->currentIndex(), 1);
+        }
+        auto* plain = qobject_cast<PhoneCwApplet*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("phcw.panel")), &host));
+        QVERIFY(plain);
+        QCOMPARE(stackOf(plain)->currentIndex(), 0);
+    }
+
+    // A hidden row stays hidden through a page switch, the docked panel's
+    // mode change, a sync and the same config again; clearing the key shows
+    // it; the copy stays on its page.
+    void aHiddenRowStaysHiddenAndAClearedOneShows_data()
+    {
+        QTest::addColumn<QString>("row");
+        QTest::addColumn<QString>("page");
+        QTest::addColumn<int>("pageIndex");
+        QTest::newRow("pageButtons on phone") << kPageButtons << QStringLiteral("phone") << 0;
+        QTest::newRow("pageButtons on cw") << kPageButtons << QStringLiteral("cw") << 1;
+        for (const QString& id : kPhoneRows) {
+            QTest::newRow(qPrintable(id)) << id << QStringLiteral("phone") << 0;
+        }
+        for (const QString& id : kCwRows) {
+            QTest::newRow(qPrintable(id)) << id << QStringLiteral("cw") << 1;
+        }
+    }
+
+    void aHiddenRowStaysHiddenAndAClearedOneShows()
+    {
+        QFETCH(QString, row);
+        QFETCH(QString, page);
+        QFETCH(int, pageIndex);
+
+        RadioModel radio;
+        SliceModel* slice = radio.sliceById(radio.addSlice());
+        QVERIFY(slice);
+        PhoneCwApplet applet(&radio);
+        Column column;
+        auto* copy = applet.createPanelCopy(&column.window, false);
+        const QJsonObject config = hiding({row}, page);
+        copy->applyContainerConfig(config);
+        column.hold(copy);
+
+        const auto rowsShowAsConfigured = [&]() {
+            const QStringList rows = QStringList{kPageButtons} + kPhoneRows + kCwRows;
+            for (const QString& id : rows) {
+                if (rowOf(copy, id)->isHidden() != (id == row)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        QVERIFY(rowsShowAsConfigured());
+        QVERIFY(!rowOf(copy, row)->isVisible());
+        QCOMPARE(stackOf(copy)->currentIndex(), pageIndex);
+
+        // What MainWindow does on a slice mode change reaches the docked
+        // panel only. The copy keeps its page and its hides.
+        for (DSPMode mode : {DSPMode::CWU, DSPMode::USB, DSPMode::FM, DSPMode::CWL, DSPMode::LSB}) {
+            slice->setDspMode(mode);
+            applet.showPage(mode == DSPMode::CWU || mode == DSPMode::CWL ? 1
+                            : mode == DSPMode::FM ? 2 : 0);
+            applet.syncFromModel();
+            column.settle();
+            QVERIFY(rowsShowAsConfigured());
+            QCOMPARE(stackOf(copy)->currentIndex(), pageIndex);
+        }
+
+        // Its own page buttons still turn the page, and no hide moves.
+        auto* other = buttonNamed(copy, pageIndex == 0 ? QStringLiteral("CW") : QStringLiteral("Phone"));
+        QVERIFY(other);
+        other->click();
+        column.settle();
+        QCOMPARE(stackOf(copy)->currentIndex(), pageIndex == 0 ? 1 : 0);
+        QVERIFY(rowsShowAsConfigured());
+        QVERIFY(!rowOf(copy, row)->isVisible());
+        copy->showPage(pageIndex);
+        column.settle();
+        QVERIFY(rowsShowAsConfigured());
+
+        // The config again: nothing changes.
+        copy->applyContainerConfig(config);
+        column.settle();
+        QVERIFY(rowsShowAsConfigured());
+        QCOMPARE(stackOf(copy)->currentIndex(), pageIndex);
+
+        // A config without the key shows the row on its page.
+        QJsonObject shown;
+        shown.insert(QStringLiteral("page"), page);
+        copy->applyContainerConfig(shown);
+        column.settle();
+        QVERIFY(!rowOf(copy, row)->isHidden());
+        QVERIFY(rowOf(copy, row)->isVisible());
+    }
+
+    // ── Heights ──────────────────────────────────────────────────────────
+
+    void aCopyGetsShorterAsRowsHide_data()
+    {
+        QTest::addColumn<QString>("page");
+        QTest::addColumn<QStringList>("rows");
+        QTest::newRow("phone") << QStringLiteral("phone") << kPhoneRows;
+        QTest::newRow("cw") << QStringLiteral("cw") << kCwRows;
+    }
+
+    void aCopyGetsShorterAsRowsHide()
+    {
+        QFETCH(QString, page);
+        QFETCH(QStringList, rows);
+
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        Column column;
+        auto* copy = applet.createPanelCopy(&column.window, false);
+        column.hold(copy);
+        copy->applyContainerConfig(hiding({}, page));
+        column.settle();
+
+        QStringList hidden;
+        int height = copy->height();
+        for (auto it = rows.crbegin(); it != rows.crend(); ++it) {
+            hidden << *it;
+            copy->applyContainerConfig(hiding(hidden, page));
+            column.settle();
+            QVERIFY2(copy->height() < height,
+                     qPrintable(QStringLiteral("hiding %1 left %2 px, was %3 px")
+                                    .arg(*it).arg(copy->height()).arg(height)));
+            height = copy->height();
+        }
+    }
+
+    // One row left, page buttons gone too: the block is that row and its
+    // page's margins, with no gap above or below.
+    void aLoneRowLeavesNoGaps_data()
+    {
+        QTest::addColumn<QString>("row");
+        QTest::addColumn<QString>("page");
+        for (const QString& id : kPhoneRows) {
+            QTest::newRow(qPrintable(id)) << id << QStringLiteral("phone");
+        }
+        for (const QString& id : kCwRows) {
+            QTest::newRow(qPrintable(id)) << id << QStringLiteral("cw");
+        }
+    }
+
+    void aLoneRowLeavesNoGaps()
+    {
+        QFETCH(QString, row);
+        QFETCH(QString, page);
+
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        Column column;
+        auto* copy = applet.createPanelCopy(&column.window, false);
+        column.hold(copy);
+        const QStringList rows = page == QLatin1String("phone") ? kPhoneRows : kCwRows;
+        copy->applyContainerConfig(hiding(QStringList{kPageButtons} + allBut(rows, row), page));
+        column.settle();
+
+        QWidget* kept = rowOf(copy, row);
+        QVERIFY(kept->isVisible());
+        const QMargins margins = kept->parentWidget()->layout()->contentsMargins();
+        QCOMPARE(kept->y(), margins.top());
+        QCOMPARE(copy->height(), margins.top() + kept->height() + margins.bottom());
+    }
+
+    // With the page buttons kept, the block is the buttons and the page.
+    void thePageButtonsAddOnlyTheirOwnHeight()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        Column column;
+        auto* copy = applet.createPanelCopy(&column.window, false);
+        column.hold(copy);
+        copy->applyContainerConfig(hiding(allBut(kPhoneRows, QStringLiteral("mic"))));
+        column.settle();
+
+        QWidget* mic = rowOf(copy, QStringLiteral("mic"));
+        const QMargins margins = mic->parentWidget()->layout()->contentsMargins();
+        QCOMPARE(copy->height(), rowOf(copy, kPageButtons)->height()
+                                     + margins.top() + mic->height() + margins.bottom());
+    }
+
+    // The gap under the compression gauge goes with the gauge.
+    void theGapAfterCompressionGoesWithIt()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        Column column;
+        auto* copy = applet.createPanelCopy(&column.window, false);
+        column.hold(copy);
+        QWidget* level = rowOf(copy, QStringLiteral("level"));
+        QWidget* profile = rowOf(copy, QStringLiteral("profile"));
+        const auto* page = level->parentWidget();
+        const int spacing = qobject_cast<QBoxLayout*>(page->layout())->spacing();
+
+        // All shown: the gauges sit 4 px further from the controls, as the
+        // docked panel draws them.
+        auto* gauge = gaugeNamed(copy, QStringLiteral("Compression gauge"));
+        const int gaugeBottom = gauge->mapTo(page, QPoint(0, gauge->height())).y();
+        QCOMPARE(profile->y() - gaugeBottom, spacing + 4);
+
+        copy->applyContainerConfig(hiding({QStringLiteral("compression")}));
+        column.settle();
+        QCOMPARE(profile->y() - (level->y() + level->height()), spacing);
+
+        copy->applyContainerConfig(hiding({QStringLiteral("level"), QStringLiteral("compression")}));
+        column.settle();
+        QCOMPARE(profile->y(), page->layout()->contentsMargins().top());
+    }
+
+    // A free canvas can give the copy more than it asks for. The rows stay
+    // together at the top, on either page.
+    void spareRoomGoesBelowTheRows_data()
+    {
+        QTest::addColumn<QString>("page");
+        QTest::addColumn<QStringList>("rows");
+        QTest::newRow("phone") << QStringLiteral("phone") << kPhoneRows;
+        QTest::newRow("cw") << QStringLiteral("cw") << kCwRows;
+    }
+
+    void spareRoomGoesBelowTheRows()
+    {
+        QFETCH(QString, page);
+        QFETCH(QStringList, rows);
+
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        QWidget host;
+        host.resize(320, 900);
+        auto* copy = applet.createPanelCopy(&host, false);
+        copy->applyContainerConfig(hiding({rows.at(1)}, page));
+        copy->resize(320, copy->sizeHint().height());
+        host.show();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        copy->layout()->activate();
+        stackOf(copy)->currentWidget()->layout()->activate();
+
+        QMap<QString, int> tops;
+        for (const QString& id : rows) {
+            tops.insert(id, rowOf(copy, id)->y());
+        }
+        copy->resize(320, copy->height() + 150);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        copy->layout()->activate();
+        stackOf(copy)->currentWidget()->layout()->activate();
+        for (const QString& id : rows) {
+            if (id != rows.at(1)) {
+                QCOMPARE(rowOf(copy, id)->y(), tops.value(id));
+            }
+        }
+    }
+
+    // The block follows the page its own buttons turn to.
+    void theHeightFollowsThePage()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        Column column;
+        auto* copy = applet.createPanelCopy(&column.window, false);
+        column.hold(copy);
+        copy->applyContainerConfig(hiding(allBut(kPhoneRows, QStringLiteral("mic"))));
+        column.settle();
+        const int phone = copy->height();
+
+        buttonNamed(copy, QStringLiteral("CW"))->click();
+        column.settle();
+        const int cw = copy->height();
+        QVERIFY2(cw > phone, qPrintable(QStringLiteral("phone %1 px, cw %2 px").arg(phone).arg(cw)));
+        QVERIFY(rowOf(copy, QStringLiteral("cwDelay"))->isVisible());
+
+        buttonNamed(copy, QStringLiteral("Phone"))->click();
+        column.settle();
+        QCOMPARE(copy->height(), phone);
+    }
+
+    // The docked panel keeps every row and the layout it always had: its
+    // height holds on every page, whatever a copy does, and none of the
+    // copy's layout changes reach it.
+    void theDockedPanelsLayoutDoesNotChange()
+    {
+        RadioModel radio;
+        Column column;
+        auto* applet = new PhoneCwApplet(&radio, &column.window);
+        column.hold(applet);
+        QStackedWidget* stack = stackOf(applet);
+        QCOMPARE(stack->count(), 3);
+        const int height = applet->height();
+
+        const auto pagesKeepTheirPolicy = [stack]() {
+            for (int i = 0; i < stack->count(); ++i) {
+                if (stack->widget(i)->sizePolicy().verticalPolicy() != QSizePolicy::Preferred) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        QVERIFY(pagesKeepTheirPolicy());
+        for (int index : {1, 0}) {
+            applet->showPage(index);
+            column.settle();
+            QCOMPARE(applet->height(), height);
+            QVERIFY(pagesKeepTheirPolicy());
+        }
+
+        // The rows sit directly on the page, unwrapped, with the 4 px spacer
+        // after the gauges and no stretch below the last row.
+        QWidget* phonePage = stack->widget(0);
+        QCOMPARE(gaugeNamed(applet, QStringLiteral("Compression gauge"))->parentWidget(), phonePage);
+        QLayout* phoneColumn = phonePage->layout();
+        int spacers = 0;
+        for (int i = 0; i < phoneColumn->count(); ++i) {
+            if (QSpacerItem* spacer = phoneColumn->itemAt(i)->spacerItem()) {
+                ++spacers;
+                QCOMPARE(spacer->sizeHint().height(), 4);
+                QVERIFY(i < phoneColumn->count() - 1);
+            }
+        }
+        QCOMPARE(spacers, 1);
+
+        auto* copy = applet->createPanelCopy(&column.window, false);
+        copy->applyContainerConfig(hiding(kPhoneRows));
+        copy->show();
+        column.settle();
+        QCOMPARE(applet->height(), height);
+        QVERIFY(!gaugeNamed(applet, QStringLiteral("Compression gauge"))->isHidden());
+        QVERIFY(pagesKeepTheirPolicy());
+    }
+
+    // ── Editor ───────────────────────────────────────────────────────────
+
+    void advancedBindingsSaysTheCopyHasNoSource()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        ContainerContentRegistry registry;
+        registerPhoneCwSectionContent(registry, &applet);
+
+        ContentPropertyEditor editor(registry);
+        editor.setEntry(registry.makeEntry(QStringLiteral("phcw.panel")));
+        QGroupBox* advanced = nullptr;
+        for (QGroupBox* group : editor.findChildren<QGroupBox*>()) {
+            if (group->title() == QStringLiteral("Advanced bindings")) {
+                advanced = group;
+            }
+        }
+        QVERIFY(advanced);
+        QVERIFY(!advanced->isEnabled());
+        QCOMPARE(advanced->toolTip(), QStringLiteral(
+            "These controls follow the Phone/CW panel; they have no source of their own."));
+        auto* source = editor.findChild<QComboBox*>(QStringLiteral("contentSlice"));
+        QVERIFY(source);
+        QVERIFY(!source->isEnabled());
+
+        // The toggles and the page stay live beside it.
+        auto* toggle = editor.findChild<QCheckBox*>(
+            QStringLiteral("property_") + SectionParts::hideKey(QStringLiteral("level")));
+        QVERIFY(toggle);
+        QVERIFY(toggle->isEnabled());
+    }
+
+    // ── Staying in step with the docked panel ────────────────────────────
+
+    // A reading must not wipe the docked gauge's reason: a copy made after
+    // MOX off on an older Core would draw live with no reason.
+    void aReadingKeepsTheCompressionReason()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        QWidget host;
+        const QString reason = QStringLiteral("This Core does not send this reading.");
+        applet.setCompressionUnavailable(reason);
+        radio.transmitModel().setMox(true);
+        radio.transmitModel().setMox(false);
+        applet.setCompressionReading(-30.0);
+
+        HGauge* docked = gaugeNamed(&applet, QStringLiteral("Compression gauge"));
+        QVERIFY(docked->isUnavailable());
+
+        auto* copy = applet.createPanelCopy(&host, false);
+        HGauge* gauge = gaugeNamed(copy, QStringLiteral("Compression gauge"));
+        QVERIFY(gauge->isUnavailable());
+        QCOMPARE(gauge->toolTip(), reason);
+        QCOMPARE(gauge->accessibleDescription(), reason);
+
+        // Made available again, the next copy is live with its own tooltip.
+        applet.setCompressionUnavailable(QString());
+        QVERIFY(!gauge->isUnavailable());
+        auto* next = applet.createPanelCopy(&host, false);
+        HGauge* nextGauge = gaugeNamed(next, QStringLiteral("Compression gauge"));
+        QVERIFY(!nextGauge->isUnavailable());
+        QCOMPARE(nextGauge->toolTip(), docked->toolTip());
+    }
+
+    // The DEXP marker lives in no model, so the panels pass it on directly.
+    void theDexpMarkerStaysInStepEverywhere()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        QWidget host;
+        auto* first = applet.createPanelCopy(&host, false);
+        auto* second = applet.createPanelCopy(&host, false);
+        const QString name = QStringLiteral("PhoneCwDexpThresholdSlider");
+        auto* docked = applet.findChild<QSlider*>(name);
+        auto* one = first->findChild<QSlider*>(name);
+        auto* two = second->findChild<QSlider*>(name);
+        QVERIFY(docked);
+        QVERIFY(one);
+        QVERIFY(two);
+        const QString key = QStringLiteral("PhoneCw/DexpThresholdMarkerDb");
+
+        one->setValue(-77);
+        QCOMPARE(docked->value(), -77);
+        QCOMPARE(two->value(), -77);
+        QCOMPARE(AppSettings::instance().value(key).toInt(), -77);
+
+        docked->setValue(-33);
+        QCOMPARE(one->value(), -33);
+        QCOMPARE(two->value(), -33);
+        QCOMPARE(AppSettings::instance().value(key).toInt(), -33);
+
+        // A copy made now starts at the same value; a removed copy is out
+        // of the chain.
+        auto* third = applet.createPanelCopy(&host, false);
+        auto* three = third->findChild<QSlider*>(name);
+        QCOMPARE(three->value(), -33);
+        delete second;
+        three->setValue(-12);
+        QCOMPARE(docked->value(), -12);
+        QCOMPARE(one->value(), -12);
+        QCOMPARE(AppSettings::instance().value(key).toInt(), -12);
+    }
+
+    // A copy built in straight-key mode brings back the iambic letter the
+    // docked panel would.
+    void aCopyRestoresTheDockedPanelsIambicMode()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        QWidget host;
+        TransmitModel& tx = radio.transmitModel();
+        tx.setCwKeyerMode(static_cast<int>(CwKeyerMode::IambicA));
+        tx.setCwKeyerMode(static_cast<int>(CwKeyerMode::Straight));
+
+        auto* copy = applet.createPanelCopy(&host, false);
+        auto* iambic = copy->findChild<QPushButton*>(QStringLiteral("cwIambicButton"));
+        QVERIFY(iambic);
+        QVERIFY(!iambic->isChecked());
+        iambic->click();
+        QCOMPARE(tx.cwKeyerMode(), static_cast<int>(CwKeyerMode::IambicA));
+        auto* dockedIambic = applet.findChild<QPushButton*>(QStringLiteral("cwIambicButton"));
+        QVERIFY(dockedIambic->isChecked());
+    }
+
+    // Removing a copy while the setting moves: the other copy still follows.
+    void removingACopyLeavesTheOtherFollowing()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        QWidget host;
+        auto* kept = applet.createPanelCopy(&host, false);
+        auto* removed = applet.createPanelCopy(&host, false);
+        const QString name = QStringLiteral("Microphone gain");
+        const auto gainOf = [&name](QWidget* panel) -> QSlider* {
+            for (QSlider* slider : panel->findChildren<QSlider*>()) {
+                if (slider->accessibleName() == name) {
+                    return slider;
+                }
+            }
+            return nullptr;
+        };
+        TransmitModel& tx = radio.transmitModel();
+        tx.setMicGainDb(-3);
+        QCOMPARE(gainOf(kept)->value(), gainOf(&applet)->value());
+        QCOMPARE(gainOf(removed)->value(), gainOf(&applet)->value());
+
+        delete removed;
+        tx.setMicGainDb(5);
+        QCOMPARE(gainOf(kept)->value(), gainOf(&applet)->value());
+        applet.setCompressionReading(-10.0);
+        applet.setCompressionUnavailable(QStringLiteral("no reading"));
+        QVERIFY(gaugeNamed(kept, QStringLiteral("Compression gauge"))->isUnavailable());
+        applet.syncFromModel();
+    }
+
+    // ── A remote window ──────────────────────────────────────────────────
+
+    void aCopyOnARemoteWindowIsGatedLikeTheDockedPanel()
+    {
+        RadioModel remote(RadioModel::Role::Remote);
+        PhoneCwApplet applet(&remote);
+        QWidget host;
+        QString difference;
+
+        // As the window opens: everything the Core has not allowed is shut.
+        auto* opening = applet.createPanelCopy(&host, false);
+        QVERIFY2(sameGates(&applet, opening, &difference), qPrintable(difference));
+        const QString proc = QStringLiteral("PhoneCwProcButton");
+        QVERIFY(!applet.findChild<QPushButton*>(proc)->isEnabled());
+        QVERIFY(!opening->findChild<QPushButton*>(proc)->isEnabled());
+        QVERIFY(!opening->findChild<QSlider*>(QStringLiteral("cwSpeedSlider"))->isEnabled());
+
+        // The docked panel's reasons reach a copy already there and a copy
+        // made afterward.
+        const QString transmitWhy = QStringLiteral("transmit reason");
+        const QString settingsWhy = QStringLiteral("settings reason");
+        const QString profileWhy = QStringLiteral("profile reason");
+        const QString cwWhy = QStringLiteral("CW reason");
+        applet.setTransmitPermitted(false, transmitWhy);
+        applet.setTransmitSettingsPermitted(false, settingsWhy);
+        applet.setTxProfilePermitted(false, profileWhy);
+        applet.setCwSettingsPermitted(false, cwWhy);
+        QVERIFY2(sameGates(&applet, opening, &difference), qPrintable(difference));
+        auto* later = applet.createPanelCopy(&host, false);
+        QVERIFY2(sameGates(&applet, later, &difference), qPrintable(difference));
+        QCOMPARE(later->findChild<QPushButton*>(proc)->toolTip(), settingsWhy);
+        QCOMPARE(later->findChild<QSlider*>(QStringLiteral("cwSpeedSlider"))->toolTip(), cwWhy);
+
+        // Opened by the Core: the same again, and a new copy opens with it.
+        applet.setTransmitPermitted(true);
+        applet.setTransmitSettingsPermitted(true);
+        applet.setTxProfilePermitted(true);
+        applet.setCwSettingsPermitted(true);
+        QVERIFY(applet.findChild<QPushButton*>(proc)->isEnabled());
+        QVERIFY2(sameGates(&applet, opening, &difference), qPrintable(difference));
+        QVERIFY2(sameGates(&applet, later, &difference), qPrintable(difference));
+        auto* opened = applet.createPanelCopy(&host, false);
+        QVERIFY2(sameGates(&applet, opened, &difference), qPrintable(difference));
+        QVERIFY(opened->findChild<QPushButton*>(proc)->isEnabled());
     }
 };
 
