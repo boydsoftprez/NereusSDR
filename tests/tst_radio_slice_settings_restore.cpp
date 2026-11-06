@@ -41,6 +41,7 @@
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
+#include "core/SliceOwnership.h"
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
@@ -543,8 +544,8 @@ private slots:
         QVERIFY(!slice->xitEnabled());
         QCOMPARE(slice->xitHz(), 0);
         QCOMPARE(radio.txFrequencyForSlice(slice), static_cast<quint64>(slice->frequency()));
-        // Only RIT and XIT start over: the letter's preferences still come.
-        QCOMPARE(slice->afGain(), kSavedAfGain);
+        // With no slice to copy, it opens on defaults, not the letter's.
+        QCOMPARE(slice->afGain(), kDefaultAfGain);
         // Turning XIT on later cannot jump to the old offset.
         slice->setXitEnabled(true);
         QCOMPARE(radio.txFrequencyForSlice(slice), static_cast<quint64>(slice->frequency()));
@@ -667,6 +668,16 @@ private slots:
         settings.setValue(prefix + QStringLiteral("RitHz"), 250);
         settings.setValue(prefix + QStringLiteral("XitEnabled"), QStringLiteral("True"));
         settings.setValue(prefix + QStringLiteral("XitHz"), 700);
+        // The default mode's memory on the band the seed is on, which the
+        // seed's mode change used to write the constructor's filter over.
+        SliceModel* openSlice = radio.sliceById(a);
+        QVERIFY(openSlice);
+        openSlice->setDspMode(DSPMode::CWU);
+        const QString filterLowBefore = prefix
+            + QStringLiteral("Band%1/Mode%2/FilterLow")
+                  .arg(bandKeyName(bandFromFrequency(openSlice->frequency())),
+                       SliceModel::modeName(DSPMode::USB));
+        settings.setValue(filterLowBefore, 1234);
 
         QSignalSpy rejected(&radio, &RadioModel::sliceAddRejected);
         radio.addSliceOnPan(QStringLiteral("pan-b"), /*restoreSavedState=*/false,
@@ -680,6 +691,8 @@ private slots:
                  QStringLiteral("True"));
         QCOMPARE(settings.value(prefix + QStringLiteral("XitHz")).toInt(), 700);
         QVERIFY(!radio.hasPendingBandSettingsForTest(refusedId));
+        // Nor did the attempt write the letter's per-mode filter memory.
+        QCOMPARE(settings.value(filterLowBefore).toInt(), 1234);
     }
 
     void removingAReceiverThenAddingItAgainStartsWithRitAndXitOff()
@@ -716,8 +729,10 @@ private slots:
         saveLetterWithOffsets();
         if (QTest::currentTestFailed()) { return; }
         RadioModel radio;
-        verifyOffsetsKept(radio, radio.sliceById(radio.addSlice()));
+        SliceModel* slice = radio.sliceById(radio.addSlice());
+        verifyOffsetsKept(radio, slice);
         if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(slice->afGain(), kSavedAfGain);
         QCOMPARE(AppSettings::instance().value(QStringLiteral("Slice0/XitHz")).toInt(), 700);
     }
 
@@ -809,6 +824,329 @@ private slots:
         verifyOffsetsKept(radio, slice);
     }
 
+    // ── +RX: a new slice is a copy of the slice you are on (JJ, 2026-11-05) ──
+
+    void aNewReceiverCopiesEachValueFromTheSliceYouAreOn()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QVERIFY(slice != seed);
+        verifyCopyOfSeedValues(*slice);
+        if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(slice->frequency(), seed->frequency());
+        QCOMPARE(slice->dspMode(), seed->dspMode());
+    }
+
+    void aNewReceiverLeavesTheSeedAsItWas()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        const double frequency = seed->frequency();
+        QVERIFY(radio.addSlice(QString(), false, /*newReceiver=*/true) >= 0);
+        radio.flushPendingSettingsSave();
+        verifyCopyOfSeedValues(*seed);
+        if (QTest::currentTestFailed()) { return; }
+        QCOMPARE(seed->frequency(), frequency);
+        QVERIFY(seed->locked());
+        QVERIFY(seed->muted());
+        QVERIFY(seed->ritEnabled());
+        QCOMPARE(seed->ritHz(), 300);
+        QVERIFY(seed->xitEnabled());
+        QCOMPARE(seed->xitHz(), 400);
+    }
+
+    void aNewReceiverDoesNotCopyLockMuteRitOrXit()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        setSeedValues(*seed);
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QVERIFY(!slice->locked());
+        QVERIFY(!slice->muted());
+        QVERIFY(!slice->ritEnabled());
+        QCOMPARE(slice->ritHz(), 0);
+        QVERIFY(!slice->xitEnabled());
+        QCOMPARE(slice->xitHz(), 0);
+    }
+
+    void aReusedLetterBringsNoneOfItsOwnSettings()
+    {
+        saveLetterCOn20m();
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel radio;
+        SliceModel* seed = openSeedOn40m(radio);
+        QVERIFY(seed);
+        const int c = radio.addSlice(QString(), false, /*newReceiver=*/true);
+        QCOMPARE(c, 2);
+        SliceModel* slice = radio.sliceById(c);
+        QVERIFY(slice);
+        verifyCopyOfSeedValues(*slice);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(!slice->locked());
+        QVERIFY(!slice->muted());
+        QVERIFY(!slice->ritEnabled());
+        QVERIFY(!slice->xitEnabled());
+        QCOMPARE(slice->frequency(), seed->frequency());
+    }
+
+    void aReusedLettersBandMemorySurvivesTheCopysSave()
+    {
+        saveLetterCOn20m();
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel radio;
+        QVERIFY(openSeedOn40m(radio));
+        QCOMPARE(radio.addSlice(QString(), false, /*newReceiver=*/true), 2);
+        radio.flushPendingSettingsSave();
+        auto& settings = AppSettings::instance();
+        const auto band20m = [](const char* key) {
+            return QStringLiteral("Slice2/Band20m/") + QLatin1String(key);
+        };
+        QCOMPARE(settings.value(band20m("Frequency")).toDouble(), kLetterFrequencyHz);
+        QCOMPARE(settings.value(band20m("AgcThreshold")).toInt(), kLetterAgcThreshold);
+        QCOMPARE(settings.value(band20m("AgcHang")).toInt(), kLetterAgcHang);
+        QCOMPARE(settings.value(band20m("AgcMode")).toInt(), static_cast<int>(AGCMode::Long));
+        QCOMPARE(settings.value(band20m("NbMode")).toInt(), static_cast<int>(NbMode::NB2));
+        // The copy saved under its own band, on its own letter.
+        QCOMPARE(settings.value(QStringLiteral("Slice2/LastBand")).toString(),
+                 QStringLiteral("40m"));
+        QCOMPARE(settings.value(QStringLiteral("Slice2/Band40m/AgcThreshold")).toInt(),
+                 kSeedAgcThreshold);
+        // The letter's 20 m comes back when the operator goes there, and the
+        // copy's lock and mute (off) stay.
+        SliceModel* slice = radio.sliceById(2);
+        QVERIFY(slice);
+        radio.onBandButtonClicked(slice, Band::Band20m);
+        QCOMPARE(slice->frequency(), kLetterFrequencyHz);
+        QCOMPARE(slice->agcThreshold(), kLetterAgcThreshold);
+        QCOMPARE(slice->nbMode(), NbMode::NB2);
+        QVERIFY(!slice->locked());
+        QVERIFY(!slice->muted());
+    }
+
+    void anOperatorChangeAfterTheCopySavesInTheNormalWay()
+    {
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        seed->setFrequency(7'100'000.0);
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        slice->setAgcThreshold(-37);
+        slice->saveToSettings(Band::Band40m);
+        const QString own = QStringLiteral("Slice%1/Band40m/AgcThreshold").arg(slice->sliceIndex());
+        QCOMPARE(AppSettings::instance().value(own).toInt(), -37);
+        QVERIFY(seed->agcThreshold() != -37);
+        const QString seedOwn = QStringLiteral("Slice%1/Band40m/AgcThreshold").arg(seed->sliceIndex());
+        QVERIFY(AppSettings::instance().value(seedOwn, 0).toInt() != -37);
+    }
+
+    void aTrueRestoreStillBringsTheLetterBack()
+    {
+        saveLetterCOn20m();
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel radio;
+        QVERIFY(openSeedOn40m(radio));
+        const int c = radio.addSlice(QString(), /*restoreSavedState=*/true);
+        QCOMPARE(c, 2);
+        SliceModel* slice = radio.sliceById(c);
+        QVERIFY(slice);
+        QCOMPARE(slice->frequency(), kLetterFrequencyHz);
+        QCOMPARE(slice->agcThreshold(), kLetterAgcThreshold);
+        QCOMPARE(slice->nbMode(), NbMode::NB2);
+        QCOMPARE(slice->stepHz(), kLetterStepHz);
+        QCOMPARE(slice->afGain(), kLetterAfGain);
+        QVERIFY(slice->locked());
+        QVERIFY(slice->muted());
+        QVERIFY(slice->ritEnabled());
+        QCOMPARE(slice->ritHz(), 250);
+        QVERIFY(slice->xitEnabled());
+        QCOMPARE(slice->xitHz(), 700);
+    }
+
+    void aNewReceiverComesBackAtARestartWithWhatItHad()
+    {
+        saveLetterCOn20m();
+        if (QTest::currentTestFailed()) { return; }
+        {
+            RadioModel radio;
+            QVERIFY(openSeedOn40m(radio));
+            QCOMPARE(radio.addSlice(QString(), false, /*newReceiver=*/true), 2);
+            radio.flushPendingSettingsSave();
+        }
+        // The file, not the store this run still holds.
+        QVERIFY(AppSettings::instance().save());
+        AppSettings::instance().clear();
+        AppSettings::instance().load();
+        RadioModel radio;
+        QVERIFY(radio.addSlice(QString(), true) >= 0);
+        QVERIFY(radio.addSlice(QString(), true) >= 0);
+        const int c = radio.addSlice(QString(), /*restoreSavedState=*/true);
+        QCOMPARE(c, 2);
+        SliceModel* slice = radio.sliceById(c);
+        QVERIFY(slice);
+        QCOMPARE(slice->frequency(), kSeedFrequencyHz);
+        verifyCopyOfSeedValues(*slice);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(!slice->locked());
+        QVERIFY(!slice->muted());
+        QVERIFY(!slice->ritEnabled());
+        QVERIFY(!slice->xitEnabled());
+    }
+
+    void aModeChangeOnTheCopyBehavesAsItWouldOnTheSeed()
+    {
+        auto& settings = AppSettings::instance();
+        // Letter C's own per-mode memory on the seed's band, from another life.
+        settings.setValue(QStringLiteral("Slice2/Band40m/ModeCWU/FilterLow"), 1500);
+        settings.setValue(QStringLiteral("Slice2/Band40m/ModeCWU/FilterHigh"), 1700);
+        settings.setValue(QStringLiteral("Slice2/Band40m/ModeAM/FilterLow"), -1000);
+        settings.setValue(QStringLiteral("Slice2/Band40m/ModeAM/FilterHigh"), 1000);
+        // And on another band, which is not touched.
+        settings.setValue(QStringLiteral("Slice2/Band20m/ModeCWU/FilterLow"), 1500);
+        settings.setValue(QStringLiteral("Slice2/Band20m/ModeCWU/FilterHigh"), 1700);
+
+        RadioModel radio;
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        QVERIFY(seed);
+        QVERIFY(radio.addSlice() == 1);
+        seed->setFrequency(kSeedFrequencyHz);
+        seed->setDspMode(DSPMode::CWU);
+        seed->setFilter(400, 900);
+        seed->setDspMode(DSPMode::LSB);  // remembers 400..900 for CW on this band
+        seed->setFilter(-2400, -300);
+
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->sliceIndex(), 2);
+        QCOMPARE(slice->dspMode(), DSPMode::LSB);
+        QCOMPARE(slice->filterLow(), -2400);
+        QCOMPARE(slice->filterHigh(), -300);
+
+        // A mode the seed remembers: the seed's filter.
+        slice->setDspMode(DSPMode::CWU);
+        QCOMPARE(slice->filterLow(), 400);
+        QCOMPARE(slice->filterHigh(), 900);
+        // A mode the seed has no memory of: the mode's default, as on the seed.
+        slice->setDspMode(DSPMode::LSB);
+        slice->setDspMode(DSPMode::AM);
+        seed->setDspMode(DSPMode::AM);
+        QCOMPARE(slice->filterLow(), seed->filterLow());
+        QCOMPARE(slice->filterHigh(), seed->filterHigh());
+
+        // The other band's memory is the letter's still.
+        QCOMPARE(settings.value(QStringLiteral("Slice2/Band20m/ModeCWU/FilterLow")).toInt(), 1500);
+        QCOMPARE(settings.value(QStringLiteral("Slice2/Band20m/ModeCWU/FilterHigh")).toInt(), 1700);
+    }
+
+    void aDevicesNewReceiverCopiesThatDevicesOwnSlice()
+    {
+        // The slice "you are on" is the asking device's, not the station's.
+        RadioModel radio;
+        SliceModel* station = radio.sliceById(radio.addSlice());
+        QVERIFY(station);
+        station->setAgcThreshold(-11);
+        const QByteArray device("device-under-test");
+        int own = -1;
+        {
+            const SliceOwnership::CreatorScope creator(radio.sliceOwnership(), device);
+            own = radio.addSlice(QString(), false, /*newReceiver=*/true);
+        }
+        QVERIFY(own >= 0);
+        radio.sliceOwnership()->setActive(device, own);
+        radio.sliceById(own)->setAgcThreshold(-44);
+        SliceModel* made = nullptr;
+        {
+            const SliceOwnership::CreatorScope creator(radio.sliceOwnership(), device);
+            made = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        }
+        QVERIFY(made);
+        QCOMPARE(made->agcThreshold(), -44);
+    }
+
+    void withNoSeedAReusedLetterOpensOnDefaultsAndKeepsItsMemory()
+    {
+        saveLetterCOn20m();
+        if (QTest::currentTestFailed()) { return; }
+        // The first slice of a session, so nothing to copy: letter A, given
+        // what saveLetterCOn20m left on C.
+        auto& settings = AppSettings::instance();
+        const QString lastBand = settings.value(QStringLiteral("Slice2/LastBand")).toString();
+        for (const char* key : {"LastBand", "Locked", "Muted", "AfGain", "StepHz", "AgcAutoEnabled"}) {
+            settings.setValue(QStringLiteral("Slice0/") + QLatin1String(key),
+                              settings.value(QStringLiteral("Slice2/") + QLatin1String(key)));
+        }
+        settings.setValue(QStringLiteral("Slice0/Band20m/AgcThreshold"), kLetterAgcThreshold);
+        settings.setValue(QStringLiteral("Slice0/Band20m/NbMode"), static_cast<int>(NbMode::NB2));
+        settings.setValue(QStringLiteral("Slice0/NrActive"), static_cast<int>(NrSlot::NR2));
+
+        RadioModel radio;
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->sliceIndex(), 0);
+        const SliceModel defaults;
+        QVERIFY(!slice->locked());
+        QVERIFY(!slice->muted());
+        QCOMPARE(slice->afGain(), defaults.afGain());
+        QCOMPARE(slice->stepHz(), defaults.stepHz());
+        QCOMPARE(slice->agcThreshold(), defaults.agcThreshold());
+        QCOMPARE(slice->nbMode(), defaults.nbMode());
+        QCOMPARE(slice->activeNr(), defaults.activeNr());
+        QCOMPARE(slice->autoAgcEnabled(), defaults.autoAgcEnabled());
+        radio.flushPendingSettingsSave();
+        // Nothing to copy, and its constructor values are not the operator's.
+        QCOMPARE(settings.value(QStringLiteral("Slice0/Band20m/AgcThreshold")).toInt(),
+                 kLetterAgcThreshold);
+        QCOMPARE(settings.value(QStringLiteral("Slice0/LastBand")).toString(), lastBand);
+    }
+
+    void aNewReceiverLeavesTheRouteAndVaxChannelAsTheyWere()
+    {
+        // Not part of the copy, and read as they are for any slice.
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("Slice1/VaxChannel"), QStringLiteral("3"));
+        settings.setValue(QStringLiteral("Slice1/OutputRoute"), QStringLiteral("Headphones"));
+        RadioModel radio;
+        QVERIFY(radio.addSlice() == 0);
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QCOMPARE(slice->vaxChannel(), 3);
+        QCOMPARE(slice->outputRoute(), SliceModel::OutputRoute::Headphones);
+    }
+
+    void aNewReceiverWhileALayoutIsHeldWritesNothingOverTheLetter()
+    {
+        saveLetterCOn20m();
+        if (QTest::currentTestFailed()) { return; }
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("Slice2/Band40m/ModeUSB/FilterLow"), 1234);
+        RadioModel radio;
+        SliceModel* seed = openSeedOn40m(radio);
+        QVERIFY(seed);
+        radio.flushPendingSettingsSave();
+        // A layout waiting for admission holds every slice key. One only protected
+        // holds its own record, not the keys of a receiver that is running.
+        radio.setReceiveLayoutHoldForTest(/*isProtected=*/true, /*pendingAdmission=*/true);
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        // The slice is still the copy; only the store waits.
+        verifyCopyOfSeedValues(*slice);
+        if (QTest::currentTestFailed()) { return; }
+        radio.flushPendingSettingsSave();
+        QCOMPARE(settings.value(QStringLiteral("Slice2/XitHz")).toInt(), 700);
+        QCOMPARE(settings.value(QStringLiteral("Slice2/Locked")).toString(), QStringLiteral("True"));
+        QCOMPARE(settings.value(QStringLiteral("Slice2/LastBand")).toString(), QStringLiteral("20m"));
+        QCOMPARE(settings.value(QStringLiteral("Slice2/Band40m/ModeUSB/FilterLow")).toInt(), 1234);
+        QVERIFY(!settings.contains(QStringLiteral("Slice2/Band40m/AgcThreshold")));
+    }
+
     void neverUsedLetterIsUnchanged_data()
     {
         QTest::addColumn<bool>("newReceiver");
@@ -845,6 +1183,140 @@ private slots:
 
 private:
     static constexpr int kSavedAfGain = 37;
+    static constexpr int kDefaultAfGain = 50;
+
+    static constexpr double kSeedFrequencyHz = 7'100'000.0;
+    static constexpr int kSeedAgcThreshold = -33;
+
+    static constexpr double kLetterFrequencyHz = 14'250'000.0;
+    static constexpr int kLetterAgcThreshold = -71;
+    static constexpr int kLetterAgcHang = 777;
+    static constexpr int kLetterStepHz = 2500;
+    static constexpr int kLetterAfGain = 19;
+
+    // Every value the ruling names, none of them a default.
+    static void setSeedValues(SliceModel& seed)
+    {
+        seed.setFrequency(kSeedFrequencyHz);
+        seed.setDspMode(DSPMode::LSB);
+        seed.setFilter(-2750, -250);
+        seed.setAgcThreshold(kSeedAgcThreshold);
+        seed.setAgcHang(444);
+        seed.setAgcSlope(3);
+        seed.setAgcAttack(5);
+        seed.setAgcDecay(555);
+        seed.setAgcFixedGain(33);
+        seed.setAgcHangThreshold(44);
+        seed.setAgcMaxGain(77);
+        seed.setAgcMode(AGCMode::Slow);
+        seed.setRfGain(66);
+        seed.setAutoAgcEnabled(true);
+        seed.setAutoAgcOffset(12.5);
+        seed.setNbMode(NbMode::NB);
+        seed.setNb1Threshold(45);
+        seed.setNb1TransitionMs(0.03);
+        seed.setNb1LeadMs(0.04);
+        seed.setNb1LagMs(0.05);
+        seed.setNb2Mode(2);
+        seed.setSnbEnabled(true);
+        seed.setSnbK1(9.0);
+        seed.setSnbK2(21.0);
+        seed.setSnbOutputBandwidthHz(5000);
+        seed.setActiveNr(NrSlot::NR2);
+        seed.setNr2TrainT1(0.7);
+        seed.setSsqlThresh(25.0);
+        seed.setSsqlEnabled(true);
+        seed.setAmsqThresh(-99.0);
+        seed.setAmsqEnabled(true);
+        seed.setFmsqThresh(-20.0);
+        seed.setFmsqEnabled(true);
+        seed.setStepHz(5000);
+        seed.setAfGain(23);
+        // The ones a new receiver does not take.
+        seed.setRitHz(300);
+        seed.setRitEnabled(true);
+        seed.setXitHz(400);
+        seed.setXitEnabled(true);
+        seed.setMuted(true);
+        seed.setLocked(true);
+    }
+
+    static void verifyCopyOfSeedValues(const SliceModel& slice)
+    {
+        QCOMPARE(slice.dspMode(), DSPMode::LSB);
+        QCOMPARE(slice.filterLow(), -2750);
+        QCOMPARE(slice.filterHigh(), -250);
+        QCOMPARE(slice.agcThreshold(), kSeedAgcThreshold);
+        QCOMPARE(slice.agcHang(), 444);
+        QCOMPARE(slice.agcSlope(), 3);
+        QCOMPARE(slice.agcAttack(), 5);
+        QCOMPARE(slice.agcDecay(), 555);
+        QCOMPARE(slice.agcFixedGain(), 33);
+        QCOMPARE(slice.agcHangThreshold(), 44);
+        QCOMPARE(slice.agcMaxGain(), 77);
+        QCOMPARE(slice.agcMode(), AGCMode::Slow);
+        QCOMPARE(slice.rfGain(), 66);
+        QVERIFY(slice.autoAgcEnabled());
+        QCOMPARE(slice.autoAgcOffset(), 12.5);
+        QCOMPARE(slice.nbMode(), NbMode::NB);
+        QCOMPARE(slice.nb1Threshold(), 45);
+        QCOMPARE(slice.nb1TransitionMs(), 0.03);
+        QCOMPARE(slice.nb1LeadMs(), 0.04);
+        QCOMPARE(slice.nb1LagMs(), 0.05);
+        QCOMPARE(slice.nb2Mode(), 2);
+        QVERIFY(slice.snbEnabled());
+        QCOMPARE(slice.snbK1(), 9.0);
+        QCOMPARE(slice.snbK2(), 21.0);
+        QCOMPARE(slice.snbOutputBandwidthHz(), 5000);
+        QCOMPARE(slice.activeNr(), NrSlot::NR2);
+        QCOMPARE(slice.nr2TrainT1(), 0.7);
+        QVERIFY(slice.ssqlEnabled());
+        QCOMPARE(slice.ssqlThresh(), 25.0);
+        QVERIFY(slice.amsqEnabled());
+        QCOMPARE(slice.amsqThresh(), -99.0);
+        QVERIFY(slice.fmsqEnabled());
+        QCOMPARE(slice.fmsqThresh(), -20.0);
+        QCOMPARE(slice.stepHz(), 5000);
+        QCOMPARE(slice.afGain(), 23);
+    }
+
+    // A, then B, with A set up as the slice you are on, on 40 m. C is next.
+    static SliceModel* openSeedOn40m(RadioModel& radio)
+    {
+        SliceModel* seed = radio.sliceById(radio.addSlice());
+        if (!seed || radio.addSlice() != 1) {
+            return nullptr;
+        }
+        setSeedValues(*seed);
+        return seed;
+    }
+
+    // Letter C as a session left it: on 20 m, locked, muted, its own AGC, NB
+    // and step, RIT and XIT on.
+    static void saveLetterCOn20m()
+    {
+        RadioModel radio;
+        QVERIFY(radio.addSlice() == 0);
+        QVERIFY(radio.addSlice() == 1);
+        SliceModel* slice = radio.sliceById(radio.addSlice());
+        QVERIFY(slice);
+        QCOMPARE(slice->sliceIndex(), 2);
+        slice->setFrequency(kLetterFrequencyHz);
+        slice->setAgcThreshold(kLetterAgcThreshold);
+        slice->setAgcHang(kLetterAgcHang);
+        slice->setAgcMode(AGCMode::Long);
+        slice->setNbMode(NbMode::NB2);
+        slice->setStepHz(kLetterStepHz);
+        slice->setAfGain(kLetterAfGain);
+        slice->setRitHz(250);
+        slice->setRitEnabled(true);
+        slice->setXitHz(700);
+        slice->setXitEnabled(true);
+        slice->setMuted(true);
+        slice->setLocked(true);
+        slice->saveToSettings(Band::Band20m);
+        radio.flushPendingSettingsSave();
+    }
 
     // Saves letter A with RIT and XIT on, and AF gain as a preference that a
     // new receiver still takes, through the slice's own save.

@@ -154,10 +154,10 @@ private slots:
         QCOMPARE(b->autoAgcOffset(), 20.0);
     }
 
-    // +RX and a layout change pass restoreSavedState false. A saved letter
-    // still comes back, Auto AGC included.
-    // 2026-10-29: receiver preferences come back; the active VFO seeds +RX.
-    void aSliceTheOperatorAddsComesBackAsItWasSaved()
+    // +RX and a layout change ask for a new receiver. JJ's ruling, 2026-11-05:
+    // it is a copy of the slice the operator is on, and the letter's saved
+    // AF gain, mute and Auto AGC stay out of it.
+    void aSliceTheOperatorAddsIsACopyOfTheOpenSlice()
     {
         saveSliceB();
 
@@ -167,13 +167,20 @@ private slots:
         QVERIFY(a);
         a->setPanKey(QStringLiteral("pan-0"));
         a->setFrequency(kSliceAFreqHz);
+        a->setAfGain(41);
 
         MainWindow::populatePanSlices(&model,
                                       {QStringLiteral("pan-0"), QStringLiteral("pan-1")},
                                       true, false);
 
         SliceModel* b = model.sliceById(1);
-        QVERIFY(expectSliceBRestored(b, kSliceAFreqHz, a->dspMode()));
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), kSliceAFreqHz);
+        QCOMPARE(b->dspMode(), a->dspMode());
+        QCOMPARE(b->afGain(), 41);
+        QVERIFY(!b->muted());
+        QVERIFY(!b->autoAgcEnabled());
+        QCOMPARE(b->autoAgcOffset(), 20.0);
         QCOMPARE(a->frequency(), kSliceAFreqHz);
     }
 
@@ -231,10 +238,9 @@ private slots:
         QCOMPARE(a->activeNr(), NrSlot::NNR);
     }
 
-    // A saved letter keeps its receiver state and still takes the open
-    // slice's NNR suppression.
+    // A used letter takes the open slice's NNR suppression too.
     // 2026-10-29: this operator-created slice inherits NR and VFO together.
-    void aRestoredLetterTakesTheOpenSlicesNoiseReduction()
+    void aUsedLetterTakesTheOpenSlicesNoiseReduction()
     {
         saveSliceB();
 
@@ -252,7 +258,9 @@ private slots:
                                       true, false);
 
         SliceModel* b = model.sliceById(1);
-        QVERIFY(expectSliceBRestored(b, kSliceAFreqHz, a->dspMode()));
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), kSliceAFreqHz);
+        QCOMPARE(b->dspMode(), a->dspMode());
         QCOMPARE(b->nnrMaskFloorDb(), -31.25);
         QCOMPARE(b->activeNr(), NrSlot::NNR);
         QCOMPARE(a->frequency(), kSliceAFreqHz);
@@ -360,9 +368,9 @@ private slots:
 
         saveSliceB();
         auto& settings = AppSettings::instance();
-        // A stale lock must survive as a receiver preference without
-        // vetoing the initial station VFO seed. A stale RADE mode must
-        // never start a decoder as an intermediate step of fresh creation.
+        // A stale lock stays out of a new receiver (JJ's ruling, 2026-11-05).
+        // A stale RADE mode must never start a decoder as an intermediate
+        // step of fresh creation.
         settings.setValue(QStringLiteral("Slice1/Locked"), QStringLiteral("True"));
         settings.setValue(QStringLiteral("Slice1/Band40m/DspMode"),
                           static_cast<int>(DSPMode::RADE_U));
@@ -374,8 +382,12 @@ private slots:
         LoopbackTransport* app = core.signIn(incoming);
         QVERIFY(admitted(app));
         SliceModel* b = core.model->sliceById(1);
-        QVERIFY(expectSliceBRestored(b, kSliceAFreqHz, DSPMode::USB));
-        QVERIFY(b->locked());
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), kSliceAFreqHz);
+        QCOMPARE(b->dspMode(), DSPMode::USB);
+        QCOMPARE(b->afGain(), a->afGain());
+        QVERIFY(!b->muted());
+        QVERIFY(!b->locked());
         QCOMPARE(b->streamIndex(), a->streamIndex());
         QCOMPARE(b->sampleRateHz(), kRateHz);
         QCOMPARE(a->sampleRateHz(), kRateHz);
@@ -384,12 +396,15 @@ private slots:
         QCOMPARE(core.model->sliceOwnership()->mark(1).owner, incoming.key.fingerprint());
         QVERIFY(core.model->wdspEngine()->radeChannel(1) == nullptr);
         QVERIFY(b->filterLow() >= 0);
+        // What the copy has reaches the file, over what the letter held.
         core.model->flushPendingSettingsSave();
         settings.clear();
         settings.load();
         QCOMPARE(settings.value(QStringLiteral("Slice1/AgcAutoEnabled")).toString(),
-                 QStringLiteral("True"));
-        QCOMPARE(settings.value(QStringLiteral("Slice1/AgcAutoOffset")).toDouble(), 12.5);
+                 QStringLiteral("False"));
+        QCOMPARE(settings.value(QStringLiteral("Slice1/AgcAutoOffset")).toDouble(), 20.0);
+        QCOMPARE(settings.value(QStringLiteral("Slice1/Locked")).toString(),
+                 QStringLiteral("False"));
 
         // The next +RX uses this device's active slice even when the
         // station-level active slice belongs to another operator.

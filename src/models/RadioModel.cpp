@@ -17099,7 +17099,13 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // follow-up) and, R-R3-45, speakers or headphones, all before the
         // first block reaches AudioEngine so the receiver starts on its own
         // output and VAX channel.
-        slice->loadFromSettings();
+        // A new receiver does not take its letter's NR selection (JJ's
+        // ruling, 2026-11-05); its VAX channel and output route stay as here.
+        if (newReceiver && !restoreSavedState) {
+            slice->loadAudioRoutingFromSettings();
+        } else {
+            slice->loadFromSettings();
+        }
         if (!self || !added) { return -1; }
         wireNnrSettings(slice);
         if (!self || !added) { return -1; }
@@ -17184,6 +17190,8 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // numeric letter (and without temporarily starting that saved RADE mode).
     // 2026-11-05: JJ's ruling, a new receiver (newReceiver) starts with RIT
     // and XIT off, so it transmits on its dial. Any other path keeps them.
+    // 2026-11-05, JJ's ruling: a new receiver is a copy of the slice you are
+    // on, and a letter's saved settings are for a true restore only.
     bool restoredSavedState = false;
     const auto savedLetterBand = SliceModel::loadLastBandFromSettings(index);
     if (!restoreSeed && role() == Role::Local && restoreSavedState) {
@@ -17271,8 +17279,9 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             seedFrom = mine;
         }
     }
-    bool forgetLetterRitXit = false;
-    if (!restoreSeed && !restoredSavedState) {
+    const bool hasSeed = seedFrom && seedFrom != slice;
+    const bool isFreshCreation = !restoreSeed && !restoredSavedState;
+    if (isFreshCreation) {
         // A letter with nothing saved opens on this slice's frequency and
         // mode. Either way the new slice takes this slice's noise
         // reduction: which reducer is on, and that family's knobs, NNR
@@ -17281,31 +17290,42 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // operator had open.
         // 2026-10-29 correction: this is fresh creation only. Explicit
         // startup restoration retains the letter's independent reducer.
-        if (seedFrom && seedFrom != slice) {
+        if (hasSeed) {
             const double seedFrequency = seedFrom->frequency();
             const DSPMode seedMode = seedFrom->dspMode();
             slice->setFrequency(seedFrequency);
             if (!currentAdded()) { return -1; }
-            slice->setDspMode(seedMode);
+            if (newReceiver) {
+                slice->setDspModeForNewReceiver(seedMode);
+            } else {
+                slice->setDspMode(seedMode);
+            }
             if (!currentAdded()) { return -1; }
         }
-        if (role() == Role::Local && savedLetterBand) {
-            // Restore Locked only after the seed, so a stale saved lock
-            // cannot leave the new device on the constructor frequency.
-            slice->restoreFromSettings(*savedLetterBand, false);
-            if (!currentAdded()) { return -1; }
-            // Only a caller that says the slice is new loses the letter's
-            // RIT and XIT, so a path nobody thought about keeps them.
-            if (!newReceiver) {
+        if (newReceiver) {
+            // The copy (JJ's ruling, 2026-11-05). The letter's saved values
+            // are not read: a reused letter used to bring another band's AGC,
+            // NB and step, open locked or muted, and then save them over this
+            // band's memory. With no slice to copy it stays on defaults.
+            if (hasSeed) {
+                slice->copyReceiverSettingsFrom(*seedFrom);
+                if (!currentAdded()) { return -1; }
+            }
+        } else {
+            if (role() == Role::Local && savedLetterBand) {
+                // Restore Locked only after the seed, so a stale saved lock
+                // cannot leave the new device on the constructor frequency.
+                slice->restoreFromSettings(*savedLetterBand, false);
+                if (!currentAdded()) { return -1; }
+                // Only a caller that says the slice is new loses the letter's
+                // RIT and XIT, so a path nobody thought about keeps them.
                 slice->restoreRitXitFromSettings();
                 if (!currentAdded()) { return -1; }
-            } else {
-                forgetLetterRitXit = true;
             }
-        }
-        if (seedFrom && seedFrom != slice) {
-            slice->copyNoiseReductionFrom(*seedFrom);
-            if (!currentAdded()) { return -1; }
+            if (hasSeed) {
+                slice->copyNoiseReductionFrom(*seedFrom);
+                if (!currentAdded()) { return -1; }
+            }
         }
     }
 
@@ -17437,13 +17457,27 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // like every other save: the refusal text sends the operator to +RX in
     // just that state, and the held letter must keep its values.
     //
-    // The save names no slice, and this runs before a first slice becomes
-    // active. It writes the removal without writing this slice's band values:
-    // before connect it sits on the constructor's frequency, which must not
-    // replace the letter's band memory or the band connect restores.
-    if (forgetLetterRitXit && !m_receiveLayoutPendingAdmission && !m_receiveLayoutProtected) {
-        slice->forgetSavedRitXit();
-        scheduleSettingsSave();
+    // With no slice to copy, the save names no slice, and this runs before a
+    // first slice becomes active. It writes the removal without writing this
+    // slice's band values: before connect it sits on the constructor's
+    // frequency, which must not replace the letter's band memory or the band
+    // connect restores.
+    //
+    // A copy saves under its own keys now, so what it took reaches the disk,
+    // and a band change or a restart cannot bring back the letter's lock, mute
+    // or anything else. Only the band it opens on is written; the letter's
+    // memory on every other band stays until the operator goes there.
+    if (isFreshCreation && newReceiver && role() == Role::Local
+        && !sliceKeysAreHeld(index) && !m_receiveLayoutProtected) {
+        if (savedLetterBand) {
+            slice->forgetSavedRitXit();
+        }
+        if (hasSeed) {
+            slice->copyFilterMemoryFrom(*seedFrom, bandFromFrequency(slice->frequency()));
+            scheduleSettingsSave(slice);
+        } else if (savedLetterBand) {
+            scheduleSettingsSave();
+        }
     }
 
     // Retuning re-runs the allocator: the slice may stay on its stream

@@ -3364,9 +3364,11 @@ public:
     // active slice's frequency and mode.
     //
     // `newReceiver` is for a slice someone asked for (+RX, a device's
-    // request). It starts with RIT and XIT off and removes the letter's saved
-    // values, unless a saved layout is held. Without it a letter's RIT and
-    // XIT come back. The remote client only sends the verb; the Core mints
+    // request). It is a copy of the slice the operator is on, with lock,
+    // mute, RIT and XIT off, and reads nothing the letter saved; with no
+    // slice to copy it opens on defaults. The letter's saved RIT and XIT are
+    // removed, unless a saved layout is held. Without it a letter's
+    // preferences, RIT and XIT come back. The remote client only sends the verb; the Core mints
     // the slice and mirrors it back.
     Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false,
                                    bool newReceiver = false);

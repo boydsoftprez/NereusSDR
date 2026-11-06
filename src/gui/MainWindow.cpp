@@ -20589,8 +20589,8 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
         // station device's, asked for the way its +RX asks.
         // Not asked for is the fill at connect, which brings back a saved
         // layout's receiver and keeps its RIT and XIT. Asked for is a new
-        // receiver: the letter's preferences come back, RIT and XIT start off.
-        // A letter with nothing saved still opens on the active slice.
+        // receiver: a copy of the slice the operator is on, with RIT and XIT
+        // off and nothing from the letter.
         if (hosting) {
             hosting->addOnPan(emptyPan, !operatorRequested);
         } else {

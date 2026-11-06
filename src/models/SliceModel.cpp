@@ -13,6 +13,11 @@
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude.
+//   2026-11-06 - A new receiver is a copy of the slice the operator is on:
+//                copyReceiverSettingsFrom, copyFilterMemoryFrom,
+//                setDspModeForNewReceiver, loadAudioRoutingFromSettings.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
 //   2026-10-29 - Restore receiver preferences separately from fresh-slice
 //                VFO seeding; skip saved frequency, mode, filter and rate when
 //                restoreTuning is false. NereusSDR-original. J.J. Boyd
@@ -718,6 +723,12 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     }
 }
 
+void SliceModel::setDspModeForNewReceiver(DSPMode mode)
+{
+    const QScopedValueRollback<bool> skip(m_skipFilterMemory, true);
+    setDspMode(mode);
+}
+
 void SliceModel::setDspMode(DSPMode mode)
 {
     if (isRade2DspMode(mode) && !(m_stationApplyProbe && m_stationApplyProbe())) {
@@ -773,7 +784,11 @@ void SliceModel::setDspMode(DSPMode mode)
     // shouldn't block on disk I/O.
     auto& s = AppSettings::instance();
     int low = 0, high = 0;
-    if (modeChanged) {
+    if (modeChanged && m_skipFilterMemory) {
+        const auto pair = defaultFilterForMode(mode);
+        low  = pair.first;
+        high = pair.second;
+    } else if (modeChanged) {
         const Band currentBand = bandFromFrequency(m_frequency);
         // 1. Save current filter under (currentBand, OLD mode)
         const QString oldPrefix =
@@ -2395,6 +2410,47 @@ void SliceModel::copyNoiseReductionFrom(const SliceModel& source)
     setActiveNr(source.activeNr());
 }
 
+void SliceModel::copyReceiverSettingsFrom(const SliceModel& source)
+{
+    if (this == &source) {
+        return;
+    }
+    setFilter(source.filterLow(), source.filterHigh());
+    // Same order as restoreFromSettings: the threshold before AGC-T AUTO.
+    setAgcThreshold(source.agcThreshold());
+    setAgcHang(source.agcHang());
+    setAgcSlope(source.agcSlope());
+    setAgcAttack(source.agcAttack());
+    setAgcDecay(source.agcDecay());
+    setAutoAgcEnabled(source.autoAgcEnabled());
+    setAutoAgcOffset(source.autoAgcOffset());
+    setAgcFixedGain(source.agcFixedGain());
+    setAgcHangThreshold(source.agcHangThreshold());
+    setAgcMaxGain(source.agcMaxGain());
+    setAgcMode(source.agcMode());
+    // rfGain is the AGC-T, the WDSP AGC top (setRfGain).
+    setRfGain(source.rfGain());
+    setStepHz(source.stepHz());
+    setAfGain(source.afGain());
+    setNbMode(source.nbMode());
+    setNb1Threshold(source.nb1Threshold());
+    setNb1TransitionMs(source.nb1TransitionMs());
+    setNb1LeadMs(source.nb1LeadMs());
+    setNb1LagMs(source.nb1LagMs());
+    setNb2Mode(source.nb2Mode());
+    setSnbK1(source.snbK1());
+    setSnbK2(source.snbK2());
+    setSnbOutputBandwidthHz(source.snbOutputBandwidthHz());
+    // Each threshold before its enable, as restoreFromSettings does.
+    setSsqlThresh(source.ssqlThresh());
+    setSsqlEnabled(source.ssqlEnabled());
+    setAmsqThresh(source.amsqThresh());
+    setAmsqEnabled(source.amsqEnabled());
+    setFmsqThresh(source.fmsqThresh());
+    setFmsqEnabled(source.fmsqEnabled());
+    copyNoiseReductionFrom(source);
+}
+
 // NR1
 void SliceModel::setNr1Taps(int v)
 {
@@ -3785,6 +3841,26 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("LastBand"), bandKeyName(band));
 }
 
+void SliceModel::copyFilterMemoryFrom(const SliceModel& source, Band band)
+{
+    if (this == &source) {
+        return;
+    }
+    auto& s = AppSettings::instance();
+    for (int m = static_cast<int>(DSPMode::LSB); m <= static_cast<int>(DSPMode::RADE2_L); ++m) {
+        const DSPMode mode = static_cast<DSPMode>(m);
+        const QString from = bandModePrefix(source.m_sliceIndex, band, mode);
+        const QString to = bandModePrefix(m_sliceIndex, band, mode);
+        for (const QString& edge : {QStringLiteral("FilterLow"), QStringLiteral("FilterHigh")}) {
+            if (s.contains(from + edge)) {
+                s.setValue(to + edge, s.value(from + edge));
+            } else {
+                s.remove(to + edge);
+            }
+        }
+    }
+}
+
 void SliceModel::restoreRitXitFromSettings()
 {
     auto& s = AppSettings::instance();
@@ -4548,6 +4624,11 @@ void SliceModel::setLastRadeRxCallsign(const QString& callsign)
 void SliceModel::loadFromSettings()
 {
     restoreNnrSettings();
+    loadAudioRoutingFromSettings();
+}
+
+void SliceModel::loadAudioRoutingFromSettings()
+{
     auto& s = AppSettings::instance();
 
     // ── VAX channel (Phase 3O) ────────────────────────────────────────────────

@@ -13,6 +13,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-11-06 - copyReceiverSettingsFrom, copyFilterMemoryFrom,
+//              setDspModeForNewReceiver and loadAudioRoutingFromSettings: a
+//              new receiver is a copy of the slice the operator is on, not of
+//              what its letter held. NereusSDR-original. J.J. Boyd (KG4VCF),
+//              AI-assisted via Anthropic Claude.
 // 2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //              letter used before too; a restored receiver keeps its own.
 //              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -850,6 +855,10 @@ public:
     // Sets mode AND applies the default filter for that mode.
     // Emits dspModeChanged + filterChanged.
     void setDspMode(DSPMode mode);
+    // setDspMode for a slice being made as a copy: neither reads nor writes
+    // the letter's per-mode filter memory. The filter is the mode's default
+    // until copyReceiverSettingsFrom sets the seed's.
+    void setDspModeForNewReceiver(DSPMode mode);
 
     // ---- Bandpass filter ----
 
@@ -1373,6 +1382,17 @@ public:
     /// Copy the noise-reduction setup (which reducer is on, and that
     /// family's knobs, including NNR suppression) from `source`.
     void copyNoiseReductionFrom(const SliceModel& source);
+    /// A new receiver's copy of `source` (JJ's ruling, 2026-11-05): filter,
+    /// AGC with Auto AGC and its offset, noise blanker, noise reduction,
+    /// squelch, tune step and AF gain. Frequency and mode are the caller's,
+    /// set first so the filter is taken for the right mode. Lock, mute, RIT
+    /// and XIT are not copied. Writes nothing to the store.
+    void copyReceiverSettingsFrom(const SliceModel& source);
+    /// Makes this slice's per-mode filter memory on `band` what `source` has
+    /// there, so the first mode change gives the filter it would on `source`.
+    /// A mode `source` has no memory of loses this slice's too, and gets the
+    /// mode's default as it would on `source`. Other bands are left alone.
+    void copyFilterMemoryFrom(const SliceModel& source, NereusSDR::Band band);
 
 
     // NR1
@@ -1643,7 +1663,8 @@ public:
     // RadioModel retains these until its existing coalesced save runs.
     QList<QPair<QString, QVariant>> captureBandSettings(Band band) const;
     void saveToSettings(NereusSDR::Band band);
-    // Fresh creation passes false after its creator/station VFO seed:
+    // Fresh creation that is not a new receiver passes false after its
+    // creator/station VFO seed (a new receiver does not come here at all):
     // frequency, DSP mode, filter and sample rate stay with that seed and
     // its effective DDC. Receiver
     // preferences, including Locked, still restore; the lock cannot veto
@@ -1689,6 +1710,8 @@ public:
     // Called on startup when no specific band context is needed. Does NOT
     // restore per-band DSP state — use restoreFromSettings(band) for that.
     void loadFromSettings();
+    // The VAX channel and output route half of loadFromSettings.
+    void loadAudioRoutingFromSettings();
 
     // ── Phase 3O VAX routing ──────────────────────────────────────────────────
     // VAX routing (Phase 3O) — 0=Off, 1..4=VAX channel.
@@ -1995,6 +2018,8 @@ private:
     // From Thetis console.cs:7516 [v2.10.3.15]:
     //   private bool m_bLimitFiltersToSidebands = false;    //MW0LGE_21k9
     bool    m_limitFiltersToSidebands{false};
+    // True only inside setDspModeForNewReceiver.
+    bool    m_skipFilterMemory{false};
     int     m_filterLow{100};            // USB default from Thetis F5
     int     m_filterHigh{3000};
     AGCMode m_agcMode{AGCMode::Med};
