@@ -12,6 +12,8 @@ SUBSYSTEM=="input", ATTRS{idVendor}=="077d", ATTRS{idProduct}=="04aa", TAG+="uac
 # Contour ShuttleXpress and ShuttlePro v2
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b33", ATTRS{idProduct}=="0020", TAG+="uaccess"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b33", ATTRS{idProduct}=="0030", TAG+="uaccess"
+# FlexControl, which shows up as a serial port
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2192", ATTRS{idProduct}=="0010", TAG+="uaccess"
 # ELAD TMate 2
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1721", ATTRS{idProduct}=="0614", TAG+="uaccess"
 # Elgato Stream Deck+

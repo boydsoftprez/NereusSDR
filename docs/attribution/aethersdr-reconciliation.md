@@ -1580,3 +1580,12 @@ NereusSDR adds attribution and its existing producer annotation.
 | `src/gui/hotkeys/devices/DeviceOutput.h` | `src/core/HidEncoderManager.cpp:648-761`, `src/gui/MainWindow_Controllers.cpp:1111-1197` [@1e0718ad] | Output builders, returning bytes. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/devices/DeviceOutput.cpp` | `src/core/HidEncoderManager.cpp:13-38,105-136,282-294,299-314,533-549,648-761`, `src/core/HidEncoderManager.h:93-95`, `src/gui/MainWindow_Controllers.cpp:1111-1197` [@1e0718ad] | Digit table, frame fields, packet layouts, JPEG settings. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/ControllerHost.cpp` | `src/gui/MainWindow_Controllers.cpp:1291` [@1e0718ad] | A key's idle color, a fact with its cite. |
+
+## November 6, 2026 FlexControl (hot keys plan Task 15)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/FlexControlParser.h` | `src/core/FlexControlManager.h:14-27` [@1e0718ad] | The token list as a class. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/FlexControlParser.cpp` | `src/core/FlexControlManager.cpp:249-344` [@1e0718ad] | Token grammar, buffer cap, light report, comments verbatim. Returns events. Direction follows upstream's code, not its header. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/FlexControlInput.h` | `src/core/FlexControlManager.h:16,57-70` [@1e0718ad] | The ids and retry bounds. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/FlexControlInput.cpp` | `src/core/FlexControlManager.cpp:11-247,312-344` [@1e0718ad] | Detect, open, recovery, lights, comments verbatim. Behind a seam, and it looks for the device from launch. Recorded in AETHERSDR-PROVENANCE.md. |

@@ -1923,6 +1923,8 @@ set(GUI_SOURCES
     src/gui/hotkeys/HotKeyStateFeed.cpp
     src/gui/hotkeys/devices/DeviceInput.cpp
     src/gui/hotkeys/devices/DeviceOutput.cpp
+    src/gui/hotkeys/devices/FlexControlInput.cpp
+    src/gui/hotkeys/devices/FlexControlParser.cpp
     src/gui/hotkeys/devices/GestureEngine.cpp
     src/gui/hotkeys/devices/PowerMateLinuxInput.cpp
     src/gui/hotkeys/devices/PowerMateParser.cpp

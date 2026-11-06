@@ -6,6 +6,8 @@
 //                and device routing. AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 14: displays and lit keys from
 //                the state feed. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 15: the FlexControl on the USB
+//                worker. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/ControllerHost.h"
 
@@ -17,6 +19,7 @@
 #include "gui/hotkeys/HotKeyStateFeed.h"
 #include "gui/hotkeys/devices/DeviceInput.h"
 #include "gui/hotkeys/devices/DeviceOutput.h"
+#include "gui/hotkeys/devices/FlexControlInput.h"
 #include "gui/hotkeys/midi/MidiInput.h"
 
 #include <QColor>
@@ -65,6 +68,7 @@ ControllerHost::ControllerHost(HotKeyDispatcher* dispatcher, HotKeyBindings* bin
     , m_dispatcher(dispatcher)
     , m_midi(new MidiInput)     // no parent: it moves to its own thread, finished deletes it
     , m_usb(new DeviceInput)    // the same
+    , m_flex(new FlexControlInput)  // the same
     , m_deviceBindings(std::make_unique<HotKeyDeviceBindings>())
 {
     m_midiThread.setObjectName(QStringLiteral("NereusMidi"));
@@ -100,6 +104,11 @@ ControllerHost::ControllerHost(HotKeyDispatcher* dispatcher, HotKeyBindings* bin
     connect(&m_usbThread, &QThread::finished, m_usb, &QObject::deleteLater);
     connect(m_usb, &DeviceInput::deviceEvent, this, &ControllerHost::onDeviceEvent, Qt::QueuedConnection);
     connect(m_usb, &DeviceInput::deviceStateChanged, this, &ControllerHost::onDeviceStateChanged, Qt::QueuedConnection);
+    m_flex->moveToThread(&m_usbThread);
+    connect(&m_usbThread, &QThread::finished, m_flex, &QObject::deleteLater);
+    connect(m_flex, &FlexControlInput::deviceEvent, this, &ControllerHost::onDeviceEvent, Qt::QueuedConnection);
+    connect(m_flex, &FlexControlInput::deviceStateChanged, this, &ControllerHost::onDeviceStateChanged,
+            Qt::QueuedConnection);
 
     m_deviceClockStart.start();
     m_deviceClock = [this] { return m_deviceClockStart.elapsed(); };
@@ -114,6 +123,7 @@ ControllerHost::ControllerHost(HotKeyDispatcher* dispatcher, HotKeyBindings* bin
     m_midiThread.start();
     m_usbThread.start();
     QMetaObject::invokeMethod(m_usb, &DeviceInput::start, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(m_flex, &FlexControlInput::start, Qt::QueuedConnection);
 
     const QString active = MidiProfile::activeName();
     if (!active.isEmpty()) {

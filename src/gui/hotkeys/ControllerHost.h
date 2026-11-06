@@ -6,6 +6,8 @@
 //                and device routing. AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 14: displays and lit keys from
 //                the state feed. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 15: the FlexControl on the USB
+//                worker. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // Owns the controller workers and turns what they report into dispatcher calls.
 // Lives on the main thread with the dispatcher. MidiInput lives on the MIDI worker,
@@ -38,6 +40,7 @@ namespace NereusSDR {
 
 class HotKeyBindings;
 class DeviceInput;
+class FlexControlInput;
 class HotKeyDispatcher;
 class HotKeyStateFeed;
 class MidiInput;
@@ -62,6 +65,7 @@ public:
 
     MidiInput* midi() const { return m_midi; }
     DeviceInput* usb() const { return m_usb; }
+    FlexControlInput* flex() const { return m_flex; }
     HotKeyDeviceBindings* deviceBindings() const { return m_deviceBindings.get(); }
 
     // A binding a knob can't run is left out, with midiBindingRefused.
@@ -148,6 +152,7 @@ private:
 
     QThread m_usbThread;
     DeviceInput* m_usb;  // deleted on its own thread as that thread ends
+    FlexControlInput* m_flex;   // the same
     std::unique_ptr<HotKeyDeviceBindings> m_deviceBindings;
     QHash<DeviceId, DeviceState> m_deviceStates;
     QHash<DeviceId, GestureEngine> m_gestures;
