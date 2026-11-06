@@ -1834,6 +1834,7 @@ nereus_add_test(tst_band_link_fit EXTRA_LABELS session)
 nereus_add_test(tst_slice_has_settings_for)
 nereus_add_test(tst_band_defaults)
 nereus_add_test(tst_bandstack_seeds)
+nereus_add_test(tst_bandstack_store)
 nereus_add_test(tst_radio_model_band_click)
 
 # ── About dialog ─────────────────────────────────────────────────────────
