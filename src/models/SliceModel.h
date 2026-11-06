@@ -134,6 +134,11 @@
 //                a shared receiver keep theirs; a radio-wide change saves on
 //                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-05 - One tune step per slice on every band, saved at
+//                Slice<N>/StepHz (JJ's ruling); a band change leaves it alone.
+//                Settings from before this supply the step of the band the
+//                slice was last on. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-09-28 - Slice control and shared listening plan Task 5: a remote
 //                window's read-only listener mark (isReadOnlyListener), set
 //                by SliceAccessMirror; a setter that would send a change
@@ -1624,6 +1629,12 @@ public:
     // makes the slice adopt its stream's rate.
     int savedSampleRateHz() const;
 
+    // A band change's restore: everything restoreFromSettings brings back,
+    // except the tune step. One step per slice on every band (JJ's ruling,
+    // 2026-11-05), so a band change leaves the step the slice is on, even when
+    // a newer step has not reached the settings yet.
+    void restoreFromSettingsForBandChange(NereusSDR::Band band);
+
     // Immutable per-band values, in save order; excludes session/NNR state.
     // RadioModel retains these until its existing coalesced save runs.
     QList<QPair<QString, QVariant>> captureBandSettings(Band band) const;
@@ -2052,6 +2063,8 @@ private:
         return holdForListener();
     }
     QString sampleRateSettingsKey() const;
+    // Reads Slice<N>/StepHz, or an older per-band step when that is absent.
+    void restoreStepFromSettings(NereusSDR::Band band);
     QString m_settingsRadioMac;
     QString m_nnrLastError;
     QString m_nnrLoadWarning;
@@ -2218,6 +2231,8 @@ private:
     // (RadioModel::activateRestoredRadeReceiveOwner) runs later, so
     // applyRadeModeChange creates no decoder while this is set.
     bool m_radeStartDeferredToAdmission{false};
+    // Set by restoreFromSettingsForBandChange: restoreFromSettings skips the step.
+    bool m_keepStepOnRestore{false};
 };
 
 } // namespace NereusSDR

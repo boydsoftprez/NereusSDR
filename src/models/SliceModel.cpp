@@ -167,6 +167,11 @@
 //   2026-11-05 - The saved rate moves to hardware/<mac>/slices/<N>/SampleRate,
 //                one for each radio. NereusSDR-original. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - One tune step per slice on every band, saved at
+//                Slice<N>/StepHz (JJ's ruling); a band change leaves it alone.
+//                Settings from before this supply the step of the band the
+//                slice was last on. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-09-28 - Slice control and shared listening plan Task 5: the
 //                read-only listener mark; every setter of a property a
 //                remote window writes to the Core (MirrorPolicy
@@ -3544,6 +3549,28 @@ int SliceModel::savedSampleRateHz() const
     return ok && rate > 0 ? rate : 0;
 }
 
+void SliceModel::restoreFromSettingsForBandChange(Band band)
+{
+    const QScopedValueRollback<bool> keepStep(m_keepStepOnRestore, true);
+    restoreFromSettings(band);
+}
+
+void SliceModel::restoreStepFromSettings(Band band)
+{
+    auto& s = AppSettings::instance();
+    QString key = slicePrefix(m_sliceIndex) + QStringLiteral("StepHz");
+    if (!s.contains(key)) {
+        // Saved before a slice had one step: the step of the band it was last
+        // on, or with no LastBand in the file, of the band being restored. The
+        // first save writes the key above; the older values stay on disk.
+        const Band olderBand = loadLastBandFromSettings(m_sliceIndex).value_or(band);
+        key = bandPrefix(m_sliceIndex, olderBand) + QStringLiteral("StepHz");
+    }
+    if (s.contains(key)) {
+        setStepHz(s.value(key).toInt());
+    }
+}
+
 QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
 {
     QList<QPair<QString, QVariant>> values;
@@ -3572,7 +3599,12 @@ QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
     }
     values.append({bp + QStringLiteral("DspMode"),      static_cast<int>(m_dspMode)});
     values.append({bp + QStringLiteral("AgcMode"),      static_cast<int>(m_agcMode)});
-    values.append({bp + QStringLiteral("StepHz"),       m_stepHz});
+    // One step per slice, on every band (JJ's ruling, 2026-11-05), like the
+    // sample rate below. Here, not with the session keys in saveToSettings, so
+    // a coalesced save keeps the step it was scheduled for. Thetis keeps one
+    // step as well: tune_step_index (console.cs:1984 [v2.10.3.15]), saved as
+    // wheel_tune_index (console.cs:3205 [v2.10.3.15]).
+    values.append({slicePrefix(m_sliceIndex) + QStringLiteral("StepHz"), m_stepHz});
 
     // Noise-blanker mode (per-band). Tri-state Off/NB/NB2 mirrors Thetis
     // chkNB state per-receiver. NB TUNING (threshold / tau / lag / lead) is
@@ -3880,8 +3912,8 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
         setAgcMode(static_cast<AGCMode>(
             s.value(bp + QStringLiteral("AgcMode")).toInt()));
     }
-    if (s.contains(bp + QStringLiteral("StepHz"))) {
-        setStepHz(s.value(bp + QStringLiteral("StepHz")).toInt());
+    if (!m_keepStepOnRestore) {
+        restoreStepFromSettings(band);
     }
 
     // Noise blanker mode (per-band). Tuning keys (NbThreshold/NbTauMs/
@@ -4299,8 +4331,9 @@ void SliceModel::migrateLegacyKeys()
         s.setValue(bp + QStringLiteral("AgcMode"),
                    s.value(QStringLiteral("VfoAgcMode")));
     }
+    // The step has no band part (2026-11-05).
     if (s.contains(QStringLiteral("VfoStepHz"))) {
-        s.setValue(bp + QStringLiteral("StepHz"),
+        s.setValue(sp + QStringLiteral("StepHz"),
                    s.value(QStringLiteral("VfoStepHz")));
     }
 

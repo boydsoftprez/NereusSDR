@@ -654,7 +654,10 @@ public:
     //   Slice<N>/Band<key>/FilterHigh     — int Hz
     //   Slice<N>/Band<key>/DspMode        — int (DSPMode enum)
     //   Slice<N>/Band<key>/AgcMode        — int (AGCMode enum)
-    //   Slice<N>/Band<key>/StepHz         — int Hz
+    //   Slice<N>/StepHz                   : int Hz, one per slice on every band,
+    //                                       not restored on band change. An older
+    //                                       Slice<N>/Band<key>/StepHz is read only
+    //                                       when this is absent.
     //   Slice<N>/Band<key>/NbMode         — int  (0=Off, 1=NB, 2=NB2)  — default 0
     //   Slice<N>/Band<key>/NbThreshold    — double                       — default 30.0
     //   Slice<N>/Band<key>/NbTauMs        — double                       — default 0.1 ms

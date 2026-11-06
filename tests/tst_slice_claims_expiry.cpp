@@ -634,6 +634,7 @@ private slots:
         const QList<SavedSlice> saved = DeviceLayoutStore::load(
             AppSettings::instance(), core.model->currentRadioMac(), a.key.fingerprint());
         QCOMPARE(saved.size(), 1);
+        QCOMPARE(saved.first().settings.value(QStringLiteral("Slice/StepHz")).toInt(), 5000);
 
         LoopbackTransport* back = core.signIn(a, kShares);
         QVERIFY(admitted(back));
@@ -643,6 +644,39 @@ private slots:
         QCOMPARE(again->frequency(), 7074000.0);
         QCOMPARE(again->stepHz(), 5000);
         QVERIFY(again->autoAgcEnabled());
+    }
+
+    // A record an older Core saved has the step only on the band the slice
+    // was last on. The device's slice comes back with that step.
+    void aReturningDevicesOlderRecordKeepsItsPerBandStep()
+    {
+        Core core;
+        core.model->configureStreamPool(5, 5, 192000);
+        Device a;
+        core.pair(a);
+        LoopbackTransport* appA = core.signIn(a, kShares);
+        QVERIFY(admitted(appA));
+        const int a0 = onlySliceOf(core, a);
+        QVERIFY(a0 >= 0);
+        SliceModel* slice = core.model->sliceById(a0);
+        slice->setFrequency(7074000.0);
+
+        QVERIFY(accepted(core.invoke(appA, "session.leave")));
+        QTRY_VERIFY(core.model->sliceById(a0) == nullptr);
+        auto& s = AppSettings::instance();
+        const QString mac = core.model->currentRadioMac();
+        QList<SavedSlice> saved = DeviceLayoutStore::load(s, mac, a.key.fingerprint());
+        QCOMPARE(saved.size(), 1);
+        saved[0].settings.remove(QStringLiteral("Slice/StepHz"));
+        saved[0].settings.insert(QStringLiteral("Slice/LastBand"), QStringLiteral("40m"));
+        saved[0].settings.insert(QStringLiteral("Slice/Band40m/StepHz"), QStringLiteral("5000"));
+        QVERIFY(DeviceLayoutStore::replace(s, mac, a.key.fingerprint(), saved, 5));
+
+        LoopbackTransport* back = core.signIn(a, kShares);
+        QVERIFY(admitted(back));
+        const int restored = onlySliceOf(core, a);
+        QVERIFY(restored >= 0);
+        QCOMPARE(core.model->sliceById(restored)->stepHz(), 5000);
     }
 
     // Persistence audit: a device that leaves while the radio is off has no

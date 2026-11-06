@@ -23,6 +23,9 @@
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-05 - A band change leaves the slice's tune step alone (JJ's
+//                ruling). NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-29 - Keep fresh creation on its creator/station VFO seed while
 //                restoring saved receiver preferences. Explicit startup
 //                restoration keeps its own NR; fresh +RX inherits NR.
@@ -20266,8 +20269,9 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     }
 
     if (slice->hasSettingsFor(band)) {
-        // Second+ visit: restore last-used state for the clicked band.
-        slice->restoreFromSettings(band);
+        // Second+ visit: restore last-used state for the clicked band. The
+        // step is one per slice and stays what it is.
+        slice->restoreFromSettingsForBandChange(band);
         return;
     }
 
