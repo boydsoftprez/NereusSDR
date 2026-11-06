@@ -36,6 +36,9 @@
 #include <QTreeWidget>
 #include <QWindow>
 
+#include <QMenu>
+#include <QMenuBar>
+
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -63,6 +66,7 @@
 #include "gui/roundtable/RoundtablePanel.h"
 #include "gui/roundtable/RoundtableWindow.h"
 #include "gui/styles/WorkspacePreview.h"
+#include "gui/widgets/StatusToast.h"
 #include "models/RadioModel.h"
 #include "models/RoundtableModel.h"
 #include "models/SliceModel.h"
@@ -1143,15 +1147,189 @@ private slots:
         Rig rig(&w.window);
         down(&w.window, Qt::Key_Space);
 
-        // StatusToast's flags and attribute. The offscreen plugin activates it anyway.
-        QWidget toast(&w.window, Qt::FramelessWindowHint | Qt::Tool);
-        toast.setAttribute(Qt::WA_ShowWithoutActivating);
-        toast.show();
-        QVERIFY(waitActive(&toast));
+        // The offscreen plugin activates it, whatever it asks.
+        auto* const toast = new StatusToast(QStringLiteral("A toast"), ToastSeverity::Info, 5000, &w.window);
+        toast->show();
+        QVERIFY(waitActive(toast));
         QCOMPARE(rig.targets.keyHolds, QList<bool>{true});
 
         up(&w.window, Qt::Key_Space);
         QCOMPARE(rig.targets.keyHolds, (QList<bool>{true, false}));
+    }
+
+    // ---- A key already down (first-look fixes, items 1, 4, 5, 13) ----
+
+    // Whatever later events on a key still down say, its hold ends with its
+    // release, and nothing else runs.
+    void aRepeatWithAChangedModifierKeepsTheHoldItsKeyStarted()
+    {
+        Bench w;
+        QVERIFY(w.ready());
+        Rig rig(&w.window);
+        QCOMPARE(rig.bindings.bind(QStringLiteral("tx.hold"), QStringLiteral("F9"), true).result, HotKeyBindResult::Bound);
+        QCOMPARE(rig.bindings.bind(QStringLiteral("tx.mox"), QStringLiteral("Shift+F9"), true).result, HotKeyBindResult::Bound);
+        constexpr quint32 kNative = 101;
+
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier, false, kNative);
+        QCOMPARE(rig.targets.keyHolds, QList<bool>{true});
+        // Shift goes down while F9 repeats.
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::ShiftModifier, true, kNative);
+        // F9 comes up.
+        sendKey(&w.window, QEvent::KeyRelease, Qt::Key_F9, Qt::ShiftModifier, false, kNative);
+        QCOMPARE(rig.targets.keyHolds, (QList<bool>{true, false}));
+        QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("tx.hold")});
+    }
+
+    // Windows can send a repeat with changed modifiers as a fresh press.
+    void aFreshPressOnAKeyAlreadyDownRunsNothing()
+    {
+        Bench w;
+        QVERIFY(w.ready());
+        Rig rig(&w.window);
+        QCOMPARE(rig.bindings.bind(QStringLiteral("cw.straight"), QStringLiteral("F9"), true).result, HotKeyBindResult::Bound);
+        QCOMPARE(rig.bindings.bind(QStringLiteral("tx.mox"), QStringLiteral("Shift+F9"), true).result, HotKeyBindResult::Bound);
+        QCOMPARE(rig.bindings.bind(QStringLiteral("filter.next"), QStringLiteral("F10"), true).result, HotKeyBindResult::Bound);
+        constexpr quint32 kNative = 101;
+
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier, false, kNative);
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::ShiftModifier, false, kNative);
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::NoModifier, false, kNative);
+        QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("cw.straight")});
+        sendKey(&w.window, QEvent::KeyRelease, Qt::Key_F9, Qt::NoModifier, false, kNative);
+        QCOMPARE(rig.targets.cwKeys, (QList<QPair<QString, bool>>{{QStringLiteral("cw.straight"), true},
+                                                                  {QStringLiteral("cw.straight"), false}}));
+        // Up means up: the next press is a press.
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F9, Qt::ShiftModifier, false, kNative);
+        QCOMPARE(rig.targets.ran, (QStringList{QStringLiteral("cw.straight"), QStringLiteral("tx.mox")}));
+        sendKey(&w.window, QEvent::KeyRelease, Qt::Key_F9, Qt::ShiftModifier, false, kNative);
+        rig.targets.ran.clear();
+
+        // A Press action is one press too.
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F10, Qt::NoModifier, false, 102);
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_F10, Qt::NoModifier, false, 102);
+        sendKey(&w.window, QEvent::KeyRelease, Qt::Key_F10, Qt::NoModifier, false, 102);
+        QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("filter.next")});
+    }
+
+    // Holding Right and adding Shift goes on tuning, in tens. A tune never
+    // turns into anything else.
+    void aHeldTuneKeyMayChangeItsStepAndNothingElse()
+    {
+        Bench w;
+        QVERIFY(w.ready());
+        Rig rig(&w.window);
+        QCOMPARE(rig.bindings.bind(QStringLiteral("tx.mox"), QStringLiteral("Ctrl+Right"), true).result, HotKeyBindResult::Bound);
+        constexpr quint32 kNative = 124;
+
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier, false, kNative);
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_Right, Qt::ShiftModifier, true, kNative);
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_Right, Qt::ControlModifier, true, kNative);
+        sendKey(&w.window, QEvent::KeyRelease, Qt::Key_Right, Qt::NoModifier, false, kNative);
+        QCOMPARE(rig.targets.ran, (QStringList{QStringLiteral("tune.up"), QStringLiteral("tune.up10")}));
+    }
+
+    void onLinuxAPressAndItsReleasePairByTheScanCode()
+    {
+        // X11 and Wayland report a Shift-dependent key sym as the virtual key
+        // and the same keycode as the scan code whatever the level.
+        constexpr quint32 kCommaKeycode = 59;
+        constexpr quint32 kSymLess = 0x3c;
+        constexpr quint32 kSymComma = 0x2c;
+        const qint64 pressed = KeyboardRouter::physicalKeyOf(kCommaKeycode, kSymLess, Qt::Key_Less, true);
+        const qint64 released = KeyboardRouter::physicalKeyOf(kCommaKeycode, kSymComma, Qt::Key_Comma, true);
+        QCOMPARE(pressed, released);
+        // Another key is another key, and no scan code falls back in order.
+        QVERIFY(KeyboardRouter::physicalKeyOf(60, kSymComma, Qt::Key_Comma, true) != released);
+        QCOMPARE(KeyboardRouter::physicalKeyOf(0, kSymComma, Qt::Key_Comma, true),
+                 KeyboardRouter::physicalKeyOf(0, kSymComma, Qt::Key_Less, true));
+        QVERIFY(KeyboardRouter::physicalKeyOf(0, 0, Qt::Key_Comma, true)
+                != KeyboardRouter::physicalKeyOf(0, 0, Qt::Key_Less, true));
+        // A scan code and a virtual key of the same number are different keys.
+        QVERIFY(KeyboardRouter::physicalKeyOf(kSymComma, 0, Qt::Key_A, true)
+                != KeyboardRouter::physicalKeyOf(0, kSymComma, Qt::Key_A, true));
+        // macOS and Windows go on pairing by the virtual key.
+        QVERIFY(KeyboardRouter::physicalKeyOf(kCommaKeycode, kSymLess, Qt::Key_Less, false)
+                != KeyboardRouter::physicalKeyOf(kCommaKeycode, kSymComma, Qt::Key_Comma, false));
+        QCOMPARE(KeyboardRouter::physicalKeyOf(1, kSymComma, Qt::Key_Less, false),
+                 KeyboardRouter::physicalKeyOf(2, kSymComma, Qt::Key_Comma, false));
+    }
+
+#ifdef Q_OS_LINUX
+    void onLinuxLiftingShiftFirstStillReleases()
+    {
+        Bench w;
+        QVERIFY(w.ready());
+        Rig rig(&w.window);
+        QCOMPARE(rig.bindings.bind(QStringLiteral("cw.dot"), QStringLiteral("Shift+<"), true).result, HotKeyBindResult::Bound);
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_Less, Qt::ShiftModifier, 59, 0x3c, 0, QStringLiteral("<"));
+        QCoreApplication::sendEvent(&w.window, &press);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_Comma, Qt::NoModifier, 59, 0x2c, 0, QStringLiteral(","));
+        QCoreApplication::sendEvent(&w.window, &release);
+        QCOMPARE(rig.targets.cwKeys, (QList<QPair<QString, bool>>{{QStringLiteral("cw.dot"), true},
+                                                                  {QStringLiteral("cw.dot"), false}}));
+    }
+#endif
+
+    void aMenuBarMenuOpeningDropsTheHoldAndLeavesMox()
+    {
+        const HotKeySource keyboard{HotKeySourceKind::Keyboard, QString()};
+        Bench w;
+        QVERIFY(w.ready());
+
+        // A hold's key drops. No key-up has to arrive for it.
+        // The title bar holds the window's menu bar, so ask for it by type.
+        QMenuBar* bar = nullptr;
+        QMenu* opened = nullptr;
+        for (QMenuBar* const candidate : w.window.findChildren<QMenuBar*>()) {
+            for (QAction* const action : candidate->actions()) {
+                if (opened == nullptr && action->menu() != nullptr) {
+                    bar = candidate;
+                    opened = action->menu();
+                }
+            }
+        }
+        QVERIFY(opened != nullptr);
+        down(&w.window, Qt::Key_Space);
+        QTRY_VERIFY(w.mox->isMox());
+        emit opened->aboutToShow();
+        QTRY_VERIFY(!w.mox->isMox());
+        up(&w.window, Qt::Key_Space);
+
+        // A menu added later counts.
+        QMenu* const later = bar->addMenu(QStringLiteral("Later"));
+        down(&w.window, Qt::Key_Space);
+        QTRY_VERIFY(w.mox->isMox());
+        emit later->aboutToShow();
+        QTRY_VERIFY(!w.mox->isMox());
+        up(&w.window, Qt::Key_Space);
+
+        // A latched MOX stays, with a hold down over it and a menu opening.
+        w.keys->press(QStringLiteral("tx.mox"), keyboard);
+        QTRY_VERIFY(w.mox->isMox());
+        down(&w.window, Qt::Key_Space);
+        emit opened->aboutToShow();
+        up(&w.window, Qt::Key_Space);
+        QVERIFY(w.mox->isMox());
+        w.keys->press(QStringLiteral("tx.mox"), keyboard);
+        QTRY_VERIFY(!w.mox->isMox());
+    }
+
+    // Only a real status toast is excused. Asking not to activate does not
+    // excuse a window that has taken the keyboard.
+    void anotherWindowAskingNotToActivateStillDropsAHold()
+    {
+        Bench w;
+        QVERIFY(w.ready());
+        Rig rig(&w.window);
+        down(&w.window, Qt::Key_Space);
+        QCOMPARE(rig.targets.keyHolds, QList<bool>{true});
+
+        QWidget other(&w.window, Qt::FramelessWindowHint | Qt::Tool);
+        other.setAttribute(Qt::WA_ShowWithoutActivating);
+        other.show();
+        QVERIFY(waitActive(&other));
+        QCOMPARE(rig.targets.keyHolds, (QList<bool>{true, false}));
+        up(&w.window, Qt::Key_Space);
     }
 
     // ---- The off switch ----

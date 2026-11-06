@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 7.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: a key already down, the
+//                Linux pairing, menu bar menus. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // Turns key presses into hot key actions: an application event filter, because
 // a hold must see its release and a QShortcut has no release signal. It applies
@@ -20,7 +22,9 @@
 #include <QPointer>
 #include <QString>
 
+class QAction;
 class QKeyEvent;
+class QMenuBar;
 class QWidget;
 
 namespace NereusSDR {
@@ -39,13 +43,20 @@ public:
     // portable name. Num comes off the arrows, which macOS reports as keypad keys.
     static QString chordFromEvent(const QKeyEvent* event);
 
+    // What pairs a press with its release: one physical key, whatever its
+    // modifiers did in between. `preferScanCode` is true on Linux.
+    static qint64 physicalKeyOf(quint32 nativeScanCode, quint32 nativeVirtualKey, int key, bool preferScanCode);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     bool handlePress(QWidget* receiver, QKeyEvent* event);
     bool handleRelease(const QKeyEvent* event);
+    bool handlePressOfKeyDown(QWidget* receiver, QKeyEvent* event, QHash<qint64, QString>::iterator down);
     void noteFocusIn(QWidget* widget, Qt::FocusReason reason);
+    void watchMenuBar(const QMenuBar* bar);
+    void watchMenu(const QAction* action);
     void dropHolds();
     bool windowTakesKeys(const QWidget* receiver) const;
     bool focusKeeps(int key) const;

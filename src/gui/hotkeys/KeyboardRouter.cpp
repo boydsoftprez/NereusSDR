@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 7.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: a key already down, the
+//                Linux pairing, menu bar menus. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/KeyboardRouter.h"
 
@@ -15,13 +17,18 @@
 #include "gui/containers/FloatingContainer.h"
 #include "gui/containers/FreeCanvasSurface.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
+#include "gui/widgets/StatusToast.h"
 
 #include <QAbstractSpinBox>
+#include <QAction>
+#include <QActionEvent>
 #include <QApplication>
 #include <QComboBox>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QTextEdit>
 
@@ -76,12 +83,33 @@ bool takesTypedText(const QWidget* widget)
 // comes first. It is zero when the platform gives none (and for A on a Mac).
 qint64 physicalKey(const QKeyEvent* event)
 {
-    constexpr qint64 kNativeKeyTag = qint64{1} << 32;
-    const quint32 native = event->nativeVirtualKey();
-    return native != 0 ? kNativeKeyTag + native : qint64{event->key()};
+#ifdef Q_OS_LINUX
+    constexpr bool kPreferScanCode = true;
+#else
+    constexpr bool kPreferScanCode = false;
+#endif
+    return KeyboardRouter::physicalKeyOf(event->nativeScanCode(), event->nativeVirtualKey(), event->key(),
+                                         kPreferScanCode);
 }
 
 } // namespace
+
+// Linux reports the key sym as the virtual key, and that moves with Shift. Its
+// scan code is the keycode, which does not:
+// From Qt qtbase src/plugins/platforms/xcb/qxcbkeyboard.cpp [6.11], handleKeyEvent:
+//   xkb_state_key_get_one_sym(xkbState, code), passed as (code, sym) to
+//   handleExtendedKeyEvent's (nativeScanCode, nativeVirtualKey).
+// From Qt qtbase src/plugins/platforms/wayland/qwaylandinputdevice.cpp [6.11],
+//   keyboard_key: the same, with code = key + 8.
+qint64 KeyboardRouter::physicalKeyOf(quint32 nativeScanCode, quint32 nativeVirtualKey, int key, bool preferScanCode)
+{
+    constexpr qint64 kNativeKeyTag = qint64{1} << 32;
+    constexpr qint64 kScanCodeTag = qint64{2} << 32;
+    if (preferScanCode && nativeScanCode != 0) {
+        return kScanCodeTag + nativeScanCode;
+    }
+    return nativeVirtualKey != 0 ? kNativeKeyTag + nativeVirtualKey : qint64{key};
+}
 
 KeyboardRouter::KeyboardRouter(HotKeyDispatcher* dispatcher, HotKeyBindings* bindings, MainWindow* window)
     : m_dispatcher(dispatcher)
@@ -95,6 +123,26 @@ KeyboardRouter::KeyboardRouter(HotKeyDispatcher* dispatcher, HotKeyBindings* bin
         }
     });
     qApp->installEventFilter(this);
+    // A menu can hold on to the key-up, natively on a Mac. Menus added later
+    // arrive as ActionAdded, in the filter.
+    for (const QMenuBar* const bar : m_window->findChildren<QMenuBar*>()) {
+        watchMenuBar(bar);
+    }
+}
+
+void KeyboardRouter::watchMenuBar(const QMenuBar* bar)
+{
+    const QList<QAction*> actions = bar->actions();
+    for (const QAction* const action : actions) {
+        watchMenu(action);
+    }
+}
+
+void KeyboardRouter::watchMenu(const QAction* action)
+{
+    if (auto* const menu = action->menu<QMenu*>()) {
+        connect(menu, &QMenu::aboutToShow, this, &KeyboardRouter::dropHolds, Qt::UniqueConnection);
+    }
 }
 
 QString KeyboardRouter::chordFromEvent(const QKeyEvent* event)
@@ -133,6 +181,13 @@ bool KeyboardRouter::eventFilter(QObject* watched, QEvent* event)
     case QEvent::KeyRelease:
         // No rule applies to letting go. It can arrive anywhere, and it must work.
         return handleRelease(static_cast<QKeyEvent*>(event));
+    case QEvent::ActionAdded:
+    case QEvent::ActionChanged:
+        // A menu goes into the bar as an action, and setMenu can come later.
+        if (const auto* const bar = qobject_cast<const QMenuBar*>(watched); bar != nullptr && bar->window() == m_window) {
+            watchMenu(static_cast<QActionEvent*>(event)->action());
+        }
+        return false;
     case QEvent::FocusIn:
         if (watched->isWidgetType()) {
             noteFocusIn(static_cast<QWidget*>(watched), static_cast<QFocusEvent*>(event)->reason());
@@ -143,7 +198,7 @@ bool KeyboardRouter::eventFilter(QObject* watched, QEvent* event)
         // A status toast asks not to take the keyboard, so its showing is no
         // change of window, even where the platform reports one (offscreen does).
         const QWidget* const active = QApplication::activeWindow();
-        if (active == nullptr || !active->testAttribute(Qt::WA_ShowWithoutActivating)) {
+        if (qobject_cast<const StatusToast*>(active) == nullptr) {
             dropHolds();
         }
         return false;
@@ -169,6 +224,10 @@ bool KeyboardRouter::handlePress(QWidget* receiver, QKeyEvent* event)
     if (!m_bindings->enabled()) {
         return false;
     }
+    const auto down = m_down.find(physicalKey(event));
+    if (down != m_down.end()) {
+        return handlePressOfKeyDown(receiver, event, down);
+    }
     const QString chord = chordFromEvent(event);
     if (chord.isEmpty()) {
         return false;
@@ -181,7 +240,8 @@ bool KeyboardRouter::handlePress(QWidget* receiver, QKeyEvent* event)
 
     m_down.insert(physicalKey(event), id);
     event->accept();
-    // Design 7.6: repeat adds to a tune or a level. It never presses anything else again.
+    // Design 7.6: repeat adds to a tune or a level. It never presses anything
+    // else again. A repeat of a key not in m_down lost its press to a failsafe.
     if (event->isAutoRepeat() && action->gesture != HotKeyGesture::Turn) {
         return true;
     }
@@ -193,6 +253,31 @@ bool KeyboardRouter::handlePress(QWidget* receiver, QKeyEvent* event)
     if (m_dropCount != dropsBefore) {
         m_dispatcher->releaseAll(keyboardSource());
     }
+    return true;
+}
+
+// Another press of a key still down, marked as a repeat or not (Windows can send
+// a repeat with changed modifiers as a fresh press), under whatever chord its
+// modifiers make now. What the key went down as stays until its release, so a
+// hold's release can't go astray and nothing presses twice. Only tuning and
+// levels go on, as the chord now says: hold Right, add Shift for tens.
+bool KeyboardRouter::handlePressOfKeyDown(QWidget* receiver, QKeyEvent* event,
+                                          QHash<qint64, QString>::iterator down)
+{
+    // Focus can have moved under the held key. Typed text still keeps its keys.
+    if (!windowTakesKeys(receiver) || focusKeeps(event->key())) {
+        return false;
+    }
+    event->accept();
+    const HotKeyAction* const held = HotKeyActionList::find(down.value());
+    const QString id = m_bindings->actionForChord(chordFromEvent(event));
+    const HotKeyAction* const now = HotKeyActionList::find(id);
+    if (held == nullptr || now == nullptr || held->gesture != HotKeyGesture::Turn
+        || now->gesture != HotKeyGesture::Turn) {
+        return true;
+    }
+    down.value() = id;
+    m_dispatcher->press(id, keyboardSource());
     return true;
 }
 
