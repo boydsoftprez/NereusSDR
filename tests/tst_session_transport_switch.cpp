@@ -33,6 +33,9 @@
 //               at the same moment cannot reorder messages or let a close
 //               overtake data (Windows). J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05: a message reports its wait through the switchable, and one a
+//               move held reports none. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -419,6 +422,45 @@ private slots:
         QCOMPARE(pair.client->inner(), static_cast<SessionTransport*>(pair.newClient));
         QVERIFY(pair.station->isOpen());
         QVERIFY(pair.client->isOpen());
+    }
+
+    // A message read through the switchable reports its wait. One a move
+    // held on the new connection reports none, so a session keepalive among
+    // them counts as heard when read.
+    void aMessageReportsItsWaitExceptOneAMoveHeld()
+    {
+        auto* oldCore = new LoopbackTransport(QStringLiteral("old core end"));
+        LoopbackTransport oldDevice(QStringLiteral("old device end"));
+        oldCore->linkTo(&oldDevice);
+        auto* newCore = new LoopbackTransport(QStringLiteral("new core end"));
+        LoopbackTransport newDevice(QStringLiteral("new device end"));
+        newCore->linkTo(&newDevice);
+        oldCore->setMeasuresReceipt(true);
+        newCore->setMeasuresReceipt(true);
+        SwitchableTransport core(oldCore, SwitchableTransport::Side::Station, 1024 * 1024);
+        QList<std::optional<qint64>> waits;
+        QObject::connect(&core, &SessionTransport::textReceived, &core,
+                         [&](const QByteArray&) { waits.append(core.deliveringMessageWaitUs()); });
+
+        constexpr int kWaitMs = 100;
+        oldDevice.sendText(QByteArrayLiteral("read through"));
+        QTest::qSleep(kWaitMs);
+        QTRY_COMPARE(waits.size(), 1);
+        QVERIFY(waits.at(0).has_value());
+        QVERIFY2(*waits.at(0) >= qint64(kWaitMs) * 1000, qPrintable(QString::number(*waits.at(0))));
+        QVERIFY(!core.deliveringMessageWaitUs().has_value());
+
+        QVERIFY(core.beginStationSwitch(newCore));
+        newDevice.sendText(QByteArrayLiteral("held by the move"));
+        QTest::qWait(50);
+        QCOMPARE(waits.size(), 1);
+        oldDevice.sendText(SessionMessages::encode(SessionMessages::pathSwitch()));
+        QTRY_COMPARE(waits.size(), 2);
+        QVERIFY(!waits.at(1).has_value());
+
+        newDevice.sendText(QByteArrayLiteral("after the move"));
+        QTRY_COMPARE(waits.size(), 3);
+        QVERIFY(waits.at(2).has_value());
     }
 
     // The old connection dies before the device's barrier reaches the
