@@ -2489,6 +2489,14 @@ public:
     // Inert model-owned CAT service; policy-ready lifecycle callers start it.
     CatService* catService() const { return m_catService; }
     TransmitModel&    transmitModel()    { return m_transmitModel; }
+    // Startup is done: from here a transmit edit with no radio is kept for the
+    // next radio. A remote window's model only mirrors the Core, and holds nothing.
+    void keepTransmitEditsWithoutRadio()
+    {
+        if (m_role == Role::Local) {
+            m_transmitModel.setKeepsEditsWithoutRadio(true);
+        }
+    }
 
     // Slice management (client-side — radio has no slice concept)
     QList<SliceModel*> slices() const { return m_slices; }

@@ -343,6 +343,10 @@
 //                 (transmitSettingsVersion 16, R-CW-03), with their ranges,
 //                 defaults and hardware/<mac>/tx/ keys. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-05 - Transmit edits made with no radio are kept in a held area
+//                 for the next radio (JJ's ruling): setKeepsEditsWithoutRadio,
+//                 heldEditsPrefix, HeldEditPause. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-27 - CW transmit final fix wave F2: cwQskUnavailableReason,
 //                 the Core's reason QSK is not offered (empty while it is),
 //                 outbound only, declared last; a write of QSK while it is
@@ -995,6 +999,37 @@ public:
     /// start at their safety defaults regardless of any stored value.
     /// micGainDb defaults to -6 on first run (plan §0 row 11).
     void loadFromSettings(const QString& mac);
+
+    // ── Edits made before any radio has connected ─────────────────────────
+    //
+    // JJ's ruling, 2026-11-05: a transmit value set before any radio has
+    // connected in this run stays, replaces the saved value of whichever
+    // radio connects next, and is saved for that radio. It waits on disk under
+    // heldEditsPrefix(), keeping its path relative to hardware/<mac>/, and
+    // load() and loadFromSettings() move it there before they read.
+    //
+    // A setter also runs from code, and a held write nobody made would
+    // replace a radio's saved value, its drive included. So nothing is held
+    // until the owner says startup is done, a remote window's mirror is never
+    // told, and code that derives a setting from something else takes a
+    // HeldEditPause.
+    void setKeepsEditsWithoutRadio(bool keep) { m_keepsEditsWithoutRadio = keep; }
+    bool keepsEditsWithoutRadio() const { return m_keepsEditsWithoutRadio; }
+    static QString heldEditsPrefix();
+
+    class HeldEditPause {
+    public:
+        explicit HeldEditPause(TransmitModel& model) : m_model(model)
+        {
+            ++m_model.m_heldEditPauses;
+        }
+        ~HeldEditPause() { --m_model.m_heldEditPauses; }
+        HeldEditPause(const HeldEditPause&) = delete;
+        HeldEditPause& operator=(const HeldEditPause&) = delete;
+
+    private:
+        TransmitModel& m_model;
+    };
 
     /// Bulk-write all 15 persisted mic/VOX/MON properties to AppSettings.
     /// (Excluding voxEnabled, monEnabled, micMute — never persisted.)
@@ -3113,13 +3148,18 @@ private:
     QString m_mac;
 
     // Per-MAC scope for mic/VOX/MON auto-persist (L.2).
-    // Empty until loadFromSettings(mac) is called; setters no-op their
-    // persistOne() call when this is empty.
+    // Empty until loadFromSettings(mac) is called.
     QString m_persistMac;
 
+    bool m_keepsEditsWithoutRadio{false};
+    int m_heldEditPauses{0};
+
     /// Write a single key under hardware/<m_persistMac>/tx/<key> to AppSettings.
-    /// No-op when m_persistMac is empty (before loadFromSettings is called).
     void persistOne(const QString& key, const QVariant& value) const;
+    /// hardware/<m_persistMac>/<relativeKey>; with no radio bound yet, the
+    /// held area if edits are being kept, otherwise nowhere.
+    void writeForRadio(const QString& relativeKey, const QString& text) const;
+    void moveHeldEditsToRadio(const QString& mac);
 
     // Requests validate before applying. A trusted per-radio restore must
     // retain an unplugged selection, without re-persisting it or temporarily

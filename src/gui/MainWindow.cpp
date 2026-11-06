@@ -2425,6 +2425,12 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 
     ensureRemoteSession();
     if (startup == ConnectionStartup::Automatic) { startInitialConnection(); }
+
+    // Queued so it runs after show() and after the zero timers above: all of
+    // startup, and none of it counts as an operator's edit.
+    QTimer::singleShot(0, this, [this] {
+        if (m_radioModel) { m_radioModel->keepTransmitEditsWithoutRadio(); }
+    });
 }
 
 MainWindow::~MainWindow()

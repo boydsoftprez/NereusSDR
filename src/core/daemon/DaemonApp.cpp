@@ -520,6 +520,9 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     // edits must be tracked even if layout writeback awaits radio admission.
     m_radioModel->beginStationHandoverEditTracking();
     m_stationHost->start();
+    // Startup is done: a client's transmit write from here is an edit, kept
+    // for the radio if none has connected yet.
+    m_radioModel->keepTransmitEditsWithoutRadio();
     const QPointer<DaemonApp> catStartSelf(this);
     const QPointer<RadioModel> catStartModel(m_radioModel.get());
     m_radioModel->catService()->startConfigured();

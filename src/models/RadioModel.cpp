@@ -25788,6 +25788,9 @@ void RadioModel::pushTxFrequencyFromTxSlice()
 // Snap the transmit filter for a transmitter entering or leaving RADE mode.
 void RadioModel::snapTransmitFilterForMode(DSPMode mode)
 {
+    // Follows the slice's mode: not an edit of the transmit filter, so with no
+    // radio it must not replace the filter the next radio has saved.
+    const TransmitModel::HeldEditPause notAnEdit(m_transmitModel);
     // 2026-05-12 bench fix (PR #238): snap TX BW to the RADE modem
     // audio passband only when the transmitter's mode changes.
     const auto applyFilter = [this](int low, int high) {
@@ -34561,6 +34564,8 @@ void RadioModel::syncCwKeying()
     // writes, as applyCwPitchChange's ownsSettings rule says.
     const bool ownsSettings = m_role != Role::Remote;
     if (inCw != m_cwTxSliceInCw) {
+        // Follows the slice's mode: not an edit of the break-in setting.
+        const TransmitModel::HeldEditPause notAnEdit(tm);
         m_cwTxSliceInCw = inCw;
         if (!ownsSettings) {
             // Nothing to remember or select: the Core does both.
