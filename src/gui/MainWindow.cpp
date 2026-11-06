@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: On Protocol 2 the FFT engines and the active pan take each
+//               stream's own rate from the wire-rate signal, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Prioritize passive reports at the selected listening context.
@@ -10447,20 +10450,37 @@ void MainWindow::buildUI()
 
     connect(m_radioModel, &RadioModel::wireSampleRateChanged,
             this, [this](double rateHz) {
-        // Every stream on a P1 radio shares the wire rate, and on P2 the
-        // per-stream rate published by streamCentreChanged is derived from
-        // the same value, so the whole pool follows this signal.
+        // Every stream on a P1 radio shares the wire rate. On P2 each DDC
+        // runs at its allocator rate, which applySavedSliceSampleRates can
+        // move off the wire rate (R-R3-49: a band's saved slice rate), and
+        // that is the rate the DDC assignment sends the radio. Pushing the
+        // wire rate there mapped 192 kHz of bins across a 1536 kHz scale.
+        const auto rateForStream = [this, rateHz](int streamIndex) -> double {
+            if (m_radioModel && !m_radioModel->sampleRateIsRadioWide()) {
+                const auto& allocator = m_radioModel->streamAllocator();
+                if (allocator.isStreamActive(streamIndex)) {
+                    const int streamRate = allocator.streamSampleRateHz(streamIndex);
+                    if (streamRate > 0) {
+                        return static_cast<double>(streamRate);
+                    }
+                }
+            }
+            return rateHz;
+        };
         if (m_fftEnginePool) {
             for (int streamIndex : m_fftEnginePool->streams()) {
                 FFTEngine* engine = m_fftEnginePool->engineForStream(streamIndex);
                 if (!engine) { continue; }
-                QMetaObject::invokeMethod(engine, [engine, rateHz]() {
-                    engine->setSampleRate(rateHz);
+                const double engineRate = rateForStream(streamIndex);
+                QMetaObject::invokeMethod(engine, [engine, engineRate]() {
+                    engine->setSampleRate(engineRate);
                 });
             }
         }
         if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->setSampleRate(rateHz);
+            const int shownStream = m_panStack
+                ? m_panShownStream.value(m_panStack->activePanId(), -1) : -1;
+            activeSpectrumWidget()->setSampleRate(rateForStream(shownStream));
             // Phase 3G-12: preserve the user's current zoom level across
             // sample rate changes. Only reset the visible span if the
             // current bandwidth would now exceed the new DDC sample rate
@@ -10473,7 +10493,9 @@ void MainWindow::buildUI()
             // extended view back onto the DDC, and the operator's zoom was
             // gone with no wings and no explanation. setDisplayWindowClamped
             // reads the DDC rate when extended view is switched off, so the
-            // ordinary case is unchanged. Codex, PR #318.
+            // ordinary case is unchanged. Codex, PR #318. That is the rate
+            // the widget was just given, so the ceiling follows the stream
+            // this pan shows, not the wire.
             activeSpectrumWidget()->setDisplayWindowClamped(
                 activeSpectrumWidget()->centerFrequency(),
                 activeSpectrumWidget()->bandwidth());
