@@ -559,7 +559,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
 
     // ── Control 7: PROC + Control 8: PROC slider + Control 9: VAX ───────────
     {
-        QWidget* procParent = sections.parentFor("proc", QStringLiteral("PROC"));
+        QWidget* procParent = sections.parentFor("proc", QStringLiteral("PROC and VAX"));
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
