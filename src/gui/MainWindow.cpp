@@ -11190,15 +11190,21 @@ void MainWindow::buildUI()
     // that status from its station wiring; this is the same notice through
     // the same toast for a window with no Core, so a closure is never silent.
     if (!m_station.isRemote()) {
+        // The status is read when it changes and shown a turn later: read then,
+        // a closure was replaced by a "stays saved" of the same connect, and the
+        // operator saw only the second.
         connect(m_radioModel, &RadioModel::receiveLayoutRestoreStatusChanged, this,
                 [this] {
-            const QString toast = m_receiveLayoutNotices.toastFor(
-                m_radioModel->receiveLayoutRestoreState(),
-                m_radioModel->receiveLayoutRestoreMessage(), /*viaCore*/ false);
-            if (!toast.isEmpty()) {
-                showToast(toast, ToastSeverity::Warning, 10000);
-            }
-        }, Qt::QueuedConnection);
+            const QString state = m_radioModel->receiveLayoutRestoreState();
+            const QString message = m_radioModel->receiveLayoutRestoreMessage();
+            QMetaObject::invokeMethod(this, [this, state, message] {
+                const QString toast =
+                    m_receiveLayoutNotices.toastFor(state, message, /*viaCore*/ false);
+                if (!toast.isEmpty()) {
+                    showToast(toast, ToastSeverity::Warning, 10000);
+                }
+            }, Qt::QueuedConnection);
+        });
         // Each connect is told its own closures, even one worded exactly as
         // the last connect's.
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,

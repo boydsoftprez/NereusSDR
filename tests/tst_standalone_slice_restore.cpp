@@ -44,6 +44,7 @@
 #include "core/MoxController.h"
 #include "core/TxSliceArbiter.h"
 #include "gui/ReceiveLayoutNotices.h"
+#include "gui/widgets/StatusToast.h"
 
 using namespace NereusSDR;
 
@@ -1304,6 +1305,28 @@ private slots:
         QVERIFY(!after.sliceById(2));
         after.flushPendingSettingsSave();
         QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+    }
+
+    // Two notices within one connect, before the first toast's turn comes: a
+    // closure is not replaced by "stays saved". Both reach the operator.
+    void bothNoticesOfOneConnectReachTheOperator()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        window.show();
+        RadioModel* model = window.radioModel();
+        const QString closure = QStringLiteral("Receiver C was closed.");
+        const QString saved = QStringLiteral("Receiver D stays saved.");
+        model->setReceiveLayoutRestoreStatus(QStringLiteral("degraded"), closure);
+        model->setReceiveLayoutRestoreStatus(QStringLiteral("degraded"), saved);
+        const auto shown = [&window] {
+            QStringList messages;
+            for (const StatusToast* toast : window.findChildren<StatusToast*>()) {
+                messages.append(toast->message());
+            }
+            return messages;
+        };
+        QTRY_VERIFY(shown().contains(saved));
+        QVERIFY2(shown().contains(closure), qPrintable(shown().join(QLatin1Char('|'))));
     }
 };
 
