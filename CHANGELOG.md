@@ -87,15 +87,18 @@ confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
   [#730](https://github.com/boydsoftprez/NereusSDR/issues/730))
 
 <!-- Still to come. Delete this block at the cut. None of these are on main at
-dfa9e1c29. Write each one up above only after it lands, checked against the
-code, and credit Brian Sutton (W4KZO) on 742 and 740.
+6e35668e6. Write each one up above only after it lands, checked against the
+code, and credit Brian Sutton (W4KZO) on his work: 752 carries 742, 746 carries
+740, and 757 is his.
 - Roundtable overlay redesign and frequency view: PR 741. The Roundtable entries
   above and chapter 16 will need revising when it lands.
 - Station lock from another computer: PR 744.
-- SSB Mod Monitor: PR 742, Brian Sutton (W4KZO).
-- Right-click AUTO to open AGC/ALC setup: PR 740, Brian Sutton (W4KZO).
-- Hot keys: in design.
-- Band stacking: in design.
+- SSB Mod Monitor: PR 752, from Brian Sutton's PR 742.
+- Right-click AUTO to open AGC/ALC setup: PR 746, from Brian Sutton's PR 740.
+- Hot keys: PR 759.
+- Band stacks: PR 748.
+- Also open, not yet read for the notes: 747, 750, 751, 753, 754, 755, 756, 757, 758.
+No note needed, on main: 749 and 745 (tests, CI, Windows exports).
 -->
 
 ## [2026.11.0] - 2026-11-01

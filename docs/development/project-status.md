@@ -19,7 +19,7 @@ its version is independent of the desktop release. The
 
 ### On main since 2026.11.0, not released
 
-As of `dfa9e1c29` (2026-11-05). The next version resolves to 2026.11.1 if it
+As of `6e35668e6` (2026-11-06). The next version resolves to 2026.11.1 if it
 ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 [CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]` has the operator wording.
 
@@ -35,16 +35,30 @@ ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 | ANAN-G2E radio microphone controls shown, desktop and remote Setup | 736, 738 | Tests only. Microphone audio unconfirmed; issue 730 open. |
 | Roundtable website: helper Review link, Station settings wording | 728 | Server test suite. Station settings wording seen on the live site on 2026-11-05. |
 
+Also on main, with no operator-facing change and so no release note: PR 749
+(test debts, CI and Windows DLL exports) and PR 745 (iOS drag pace test scaling).
+PR 749's exports reach no production connection across a DLL, and its certificate
+key seam has no production caller, so Windows and Core behavior stay as they were.
+The Windows signal fix still needs a Windows test run; PR 749 names it.
+
 ### Still to come before the next release
 
-Not on main as of `dfa9e1c29`, and not described as done anywhere in the docs:
+Open and not on main as of `6e35668e6`, and not described as done anywhere in the
+docs. Being open does not put a PR in the release; J.J. Boyd decides scope.
 
-- Roundtable overlay redesign and frequency view (PR 741).
-- Station lock from another computer (PR 744).
-- SSB Mod Monitor (PR 742, Brian Sutton W4KZO).
-- Right-click AUTO to open AGC/ALC setup (PR 740, Brian Sutton W4KZO).
-- Hot keys, in design.
-- Band stacking, in design.
+- Roundtable overlay redesign and frequency view (PR 741, draft).
+- Station lock from another computer (PR 744, draft).
+- SSB Mod Monitor (PR 752, draft: Brian Sutton W4KZO's PR 742 with review corrections).
+- Right-click AUTO to open AGC/ALC setup (PR 746, draft: Brian Sutton W4KZO's PR 740, corrected).
+- Hot keys (PR 759, draft).
+- Band stacks (PR 748, draft).
+
+Also open, listed by PR title and not yet read for the notes: 747 (settings that
+revert), 750 (new receivers start with RIT and XIT off), 751 (FFT and pan on the
+stream's rate on Protocol 2), 753 (Cinnamon file choosers), 754 (container dialog
+when adding a meter), 755 (iPad Roundtable sheet), 756 (a release during a Core
+stall), 757 (hide rows of a Phone/CW container copy, Brian Sutton W4KZO), 758 (a
+failed speaker or an unmute).
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
