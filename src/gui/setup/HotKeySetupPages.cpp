@@ -2,6 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: what the MIDI page
+//                shares moved to HotKeySetupCommon.h.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/setup/HotKeySetupPages.h"
 
@@ -10,6 +13,7 @@
 #include "core/hotkeys/HotKeyBindings.h"
 #include "gui/StyleConstants.h"
 #include "gui/hotkeys/KeyboardRouter.h"
+#include "gui/setup/HotKeySetupCommon.h"
 #include "gui/setup/KeyboardMapWidget.h"
 
 #include <QApplication>
@@ -44,6 +48,8 @@
 
 namespace NereusSDR {
 
+using namespace HotKeySetup;
+
 namespace {
 
 constexpr int kColumnAction = 0;
@@ -64,58 +70,6 @@ QString noBindingsReason()
     return QStringLiteral("Shortcuts belong to a radio window, and this page has none.");
 }
 
-QString switchedOffReason()
-{
-    return QStringLiteral("Use shortcuts is off.");
-}
-
-QString fixedTargetReason(HotKeyScope scope)
-{
-    switch (scope) {
-    case HotKeyScope::TransmitSlice:
-        return QStringLiteral("Transmit actions always use the transmit slice.");
-    case HotKeyScope::Pan:
-        return QStringLiteral("Zoom always acts on the panadapter you are using.");
-    case HotKeyScope::Window:
-        return QStringLiteral("This action always acts on the window you are using.");
-    case HotKeyScope::Slice:
-        break;
-    }
-    return {};
-}
-
-QString fixedTargetName(HotKeyScope scope)
-{
-    switch (scope) {
-    case HotKeyScope::TransmitSlice:
-        return QStringLiteral("Transmit slice");
-    case HotKeyScope::Pan:
-        return QStringLiteral("This panadapter");
-    case HotKeyScope::Window:
-        return QStringLiteral("This window");
-    case HotKeyScope::Slice:
-        break;
-    }
-    return {};
-}
-
-void setReason(QWidget* widget, const QString& reason)
-{
-    widget->setToolTip(reason);
-    widget->setAccessibleDescription(reason);
-}
-
-QStringList groupsInOrder()
-{
-    QStringList groups;
-    for (const HotKeyAction& action : HotKeyActionList::all()) {
-        if (!groups.contains(action.group)) {
-            groups.append(action.group);
-        }
-    }
-    return groups;
-}
-
 // The map's order for its legend, as the mockup has it.
 QStringList legendGroups()
 {
@@ -132,17 +86,6 @@ QIcon swatch(const QColor& color)
     return QIcon(pixmap);
 }
 
-QString smallButtonStyle()
-{
-    return QStringLiteral(
-        "QPushButton { background: #1a2a3a; border: 1px solid #304050; border-radius: 3px;"
-        " color: #c8d8e8; font-size: 11px; padding: 2px 7px; }"
-        "QPushButton:hover { background: #203040; }"
-        "QPushButton:pressed { background: #00b4d8; color: #0f0f1a; }"
-        "QPushButton:checked { background: #00b4d8; color: #0f0f1a; border-color: #00b4d8; }"
-        "QPushButton:disabled { background: #141a22; color: #5a6a7a; border-color: #243240; }");
-}
-
 QString chipStyle()
 {
     return QStringLiteral(
@@ -151,24 +94,6 @@ QString chipStyle()
         "QPushButton:hover { background: #1a2a3a; }"
         "QPushButton:checked { border-color: #ffffff; }"
         "QPushButton:disabled { color: #5a6a7a; }");
-}
-
-QString comboStyle()
-{
-    return QString::fromLatin1(Style::kComboStyle)
-        + QStringLiteral("QComboBox:disabled { background: #141a22; color: #5a6a7a; border-color: #243240; }");
-}
-
-// A table's cell shows the row's color through it, selected or not.
-void makeCellClear(QWidget* cell)
-{
-    cell->setObjectName(QStringLiteral("hotKeyCell"));
-    cell->setStyleSheet(QStringLiteral("QWidget#hotKeyCell { background: transparent; }"));
-}
-
-QString lineEditStyle()
-{
-    return QString::fromLatin1(Style::kLineEditStyle);
 }
 
 } // namespace

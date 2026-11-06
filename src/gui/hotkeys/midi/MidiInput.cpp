@@ -309,7 +309,15 @@ void MidiInput::cancelLearn()
 
 void MidiInput::setRelativeControls(const QStringList& controlKeys)
 {
-    m_relative = QSet<QString>(controlKeys.cbegin(), controlKeys.cend());
+    const QSet<QString> relative(controlKeys.cbegin(), controlKeys.cend());
+    // A control whose kind was corrected starts fresh: a value from before would
+    // read as one big turn.
+    const QSet<QString> changed = (relative - m_relative) + (m_relative - relative);
+    for (const QString& key : changed) {
+        m_lastValue.remove(key);
+        m_encoding.remove(key);
+    }
+    m_relative = relative;
 }
 
 void MidiInput::checkPorts()

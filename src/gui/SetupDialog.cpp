@@ -218,6 +218,8 @@
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: Keys and controllers > Keyboard replaces Keyboard > Shortcuts.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: Keys and controllers > MIDI replaces CAT & Network > MIDI Control.
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupDialog.h"
@@ -284,6 +286,7 @@
 #include "setup/RotorSetupPage.h"
 // Keys and controllers
 #include "setup/HotKeySetupPages.h"
+#include "setup/MidiSetupPage.h"
 // Diagnostics
 #include "setup/DiagnosticsSetupPages.h"
 #include "diagnostics/RadioStatusPage.h"
@@ -557,6 +560,14 @@ void SetupDialog::refreshHotKeyAvailability()
     if (m_keyboardPage) {
         m_keyboardPage->refreshAvailability();
     }
+    if (m_midiPage) {
+        m_midiPage->refreshAvailability();
+    }
+}
+
+void SetupDialog::setControllerHost(ControllerHost* host)
+{
+    m_controllerHost = host;
 }
 
 void SetupDialog::selectPage(const QString& label)
@@ -2333,10 +2344,6 @@ void SetupDialog::buildTree()
         });
         registerPage(cat, "CAT PTT", SetupScope::Core, [this] { return new CatPttSetupPage(m_model); });
     }
-    if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Midi)) {
-        registerPage(cat, "MIDI Control", SetupScope::ThisComputer,
-                     [] { return new CatMidiControlPage; });
-    }
 
     tick("CAT & Network");
 
@@ -2346,6 +2353,12 @@ void SetupDialog::buildTree()
         auto* page = new KeyboardPage(m_hotKeyBindings);
         page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
         m_keyboardPage = page;
+        return page;
+    });
+    registerPage(keysAndControllers, "MIDI", SetupScope::ThisComputer, [this]() -> QWidget* {
+        auto* page = new MidiSetupPage(m_controllerHost, m_hotKeyBindings);
+        page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
+        m_midiPage = page;
         return page;
     });
 

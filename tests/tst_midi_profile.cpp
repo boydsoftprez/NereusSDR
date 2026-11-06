@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "core/AppSettings.h"
+#include "core/hotkeys/HotKeyActionList.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "fakes/FakeMidiBackend.h"
 #include "gui/hotkeys/ControllerHost.h"
@@ -311,6 +312,79 @@ private slots:
         MidiProfile loaded(QStringLiteral("Desk"));
         loaded.load();
         QVERIFY(loaded.bindings().isEmpty());
+    }
+
+    void profile_aChangedBindingKeepsItsPlace()
+    {
+        MidiProfile profile(QStringLiteral("Test"));
+        QVERIFY(profile.bind(button(kNote60, QStringLiteral("tune.up"))).isEmpty());
+        QVERIFY(profile.bind(button(kNote61, QStringLiteral("tune.down"))).isEmpty());
+        QVERIFY(profile.bind(relativeKnob(kNote60, QStringLiteral("zoom.in"), QStringLiteral("zoom.out"))).isEmpty());
+        QCOMPARE(profile.bindings().size(), 2);
+        QCOMPARE(profile.bindings().at(0).controlKey, kNote60);
+        QCOMPARE(profile.bindings().at(0).actionId, QStringLiteral("zoom.in"));
+        QCOMPARE(profile.bindings().at(0).kind, MidiControlKind::RelativeKnob);
+    }
+
+    void profile_otherDirectionPairsBothWays_data()
+    {
+        QTest::addColumn<QString>("id");
+        QTest::addColumn<QString>("other");
+        QTest::newRow("tune") << QStringLiteral("tune.up") << QStringLiteral("tune.down");
+        QTest::newRow("tune 10") << QStringLiteral("tune.up10") << QStringLiteral("tune.down10");
+        QTest::newRow("step") << QStringLiteral("step.larger") << QStringLiteral("step.smaller");
+        QTest::newRow("filter") << QStringLiteral("filter.next") << QStringLiteral("filter.previous");
+        QTest::newRow("volume") << QStringLiteral("volume.up") << QStringLiteral("volume.down");
+        QTest::newRow("band stack") << QStringLiteral("bandstack.next") << QStringLiteral("bandstack.previous");
+        QTest::newRow("band") << QStringLiteral("band.next") << QStringLiteral("band.previous");
+        QTest::newRow("mode") << QStringLiteral("mode.next") << QStringLiteral("mode.previous");
+        QTest::newRow("zoom") << QStringLiteral("zoom.in") << QStringLiteral("zoom.out");
+    }
+
+    void profile_otherDirectionPairsBothWays()
+    {
+        QFETCH(QString, id);
+        QFETCH(QString, other);
+        QVERIFY(HotKeyActionList::find(id) != nullptr);
+        QVERIFY(HotKeyActionList::find(other) != nullptr);
+        QCOMPARE(MidiProfile::otherDirection(id), other);
+        QCOMPARE(MidiProfile::otherDirection(other), id);
+    }
+
+    void profile_anActionWithNoOppositeHasNoOtherDirection()
+    {
+        QVERIFY(MidiProfile::otherDirection(QStringLiteral("nr.toggle")).isEmpty());
+        QVERIFY(MidiProfile::otherDirection(QString()).isEmpty());
+    }
+
+    // The operator corrects a fader that first sent 1 from relative to absolute.
+    void input_aCorrectedKindStartsWithoutAJump()
+    {
+        MidiInput input;
+        QSignalSpy events(&input, &MidiInput::controlEvent);
+        input.setRelativeControls({kFader});
+        input.handleMessage(MidiMessage{0xB0, 7, 1});
+        input.setRelativeControls({});
+        events.clear();
+        input.handleMessage(MidiMessage{0xB0, 7, 80});
+        QCOMPARE(events.size(), 1);
+        QCOMPARE(events.first().at(3).toInt(), 0);
+    }
+
+    void input_aControlCorrectedBackStartsWithoutAJump()
+    {
+        MidiInput input;
+        QSignalSpy events(&input, &MidiInput::controlEvent);
+        // ch1.cc7 as absolute, leaving a last value behind.
+        input.handleMessage(MidiMessage{0xB0, 7, 10});
+        input.setRelativeControls({kFader});
+        input.handleMessage(MidiMessage{0xB0, 7, 1});
+        input.setRelativeControls({});
+        events.clear();
+        input.handleMessage(MidiMessage{0xB0, 7, 90});
+        QCOMPARE(events.first().at(3).toInt(), 0);
+        input.handleMessage(MidiMessage{0xB0, 7, 92});
+        QCOMPARE(events.last().at(3).toInt(), 2);
     }
 
     void profile_oneBindingPerControl()

@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 10.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: otherDirection, and a
+//                changed binding keeps its row. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/midi/MidiProfile.h"
 
@@ -9,6 +11,7 @@
 #include "core/LogCategories.h"
 #include "core/hotkeys/HotKeyActionList.h"
 
+#include <QPair>
 #include <QSet>
 #include <QUrl>
 
@@ -112,6 +115,30 @@ QString MidiProfile::refusalFor(MidiControlKind kind, const QString& actionId, c
     return knobRefusal(actionIdDown);
 }
 
+QString MidiProfile::otherDirection(const QString& actionId)
+{
+    static const QList<QPair<QString, QString>> kPairs = {
+        {QStringLiteral("tune.up"), QStringLiteral("tune.down")},
+        {QStringLiteral("tune.up10"), QStringLiteral("tune.down10")},
+        {QStringLiteral("step.larger"), QStringLiteral("step.smaller")},
+        {QStringLiteral("filter.next"), QStringLiteral("filter.previous")},
+        {QStringLiteral("volume.up"), QStringLiteral("volume.down")},
+        {QStringLiteral("bandstack.next"), QStringLiteral("bandstack.previous")},
+        {QStringLiteral("band.next"), QStringLiteral("band.previous")},
+        {QStringLiteral("mode.next"), QStringLiteral("mode.previous")},
+        {QStringLiteral("zoom.in"), QStringLiteral("zoom.out")},
+    };
+    for (const QPair<QString, QString>& pair : kPairs) {
+        if (pair.first == actionId) {
+            return pair.second;
+        }
+        if (pair.second == actionId) {
+            return pair.first;
+        }
+    }
+    return {};
+}
+
 QString MidiProfile::bind(const MidiBinding& binding)
 {
     if (binding.controlKey.isEmpty()) {
@@ -121,7 +148,12 @@ QString MidiProfile::bind(const MidiBinding& binding)
     if (!reason.isEmpty()) {
         return reason;
     }
-    clearControl(binding.controlKey);
+    for (MidiBinding& existing : m_bindings) {
+        if (existing.controlKey == binding.controlKey) {
+            existing = binding;
+            return {};
+        }
+    }
     m_bindings.append(binding);
     return {};
 }

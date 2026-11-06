@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 10.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: otherDirection, and a
+//                changed binding keeps its row. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // A named list of MIDI bindings, kept in AppSettings under
 // HotKeys/Midi/Profiles/<name>/ (design V7). A controller starts empty: its
@@ -41,8 +43,12 @@ public:
     // it. A Button may run anything.
     static QString refusalFor(MidiControlKind kind, const QString& actionId, const QString& actionIdDown);
 
-    // Empty when bound, replacing any binding on the same control. Otherwise the
-    // reason, and nothing is stored.
+    // The action a knob's other direction runs when this one is picked; empty when
+    // it has no opposite.
+    static QString otherDirection(const QString& actionId);
+
+    // Empty when bound, replacing any binding on the same control in its place in
+    // the list. Otherwise the reason, and nothing is stored.
     QString bind(const MidiBinding& binding);
     void clearControl(const QString& controlKey);
 

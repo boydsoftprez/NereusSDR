@@ -62,8 +62,6 @@ const QList<Entry>& all()
         {F::Cat, QStringLiteral("cat"),
          QStringLiteral("Tools > CAT Control; Setup > Serial Ports and TCP/IP CAT; "
                         "CAT on the status bar")},
-        {F::Midi, QStringLiteral("midi"),
-         QStringLiteral("Tools > MIDI Mapping; Setup > MIDI Control")},
         {F::Help, QStringLiteral("help"),
          QStringLiteral("Help > Getting Started, Help, Data Modes")},
         {F::Acc, QStringLiteral("acc"),

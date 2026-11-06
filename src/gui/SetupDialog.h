@@ -32,8 +32,10 @@
 
 namespace NereusSDR {
 
+class ControllerHost;
 class HotKeyBindings;
 class KeyboardPage;
+class MidiSetupPage;
 class RadioModel;
 class SliceModel;
 class DspReceiverSelection;
@@ -103,6 +105,9 @@ public:
     // is first visited. With none, the page says so and stays disabled.
     void setHotKeyContext(HotKeyBindings* bindings, std::function<QString(const QString&)> unavailableReason);
     void refreshHotKeyAvailability();
+    // Hot keys plan Task 11: what the MIDI page drives. With none, it says so and
+    // stays disabled.
+    void setControllerHost(ControllerHost* host);
 
     // Display pill plan Task 20 (D22, D26; R-DSP-33): how Setup's FFT
     // controls change the station's FFT settings. One handler per control;
@@ -463,6 +468,8 @@ private:
     HotKeyBindings* m_hotKeyBindings{nullptr};
     std::function<QString(const QString&)> m_hotKeyUnavailableReason;
     QPointer<KeyboardPage> m_keyboardPage;
+    ControllerHost* m_controllerHost{nullptr};
+    QPointer<MidiSetupPage> m_midiPage;
     int m_displayPanIndex{-1};
     QWidget* m_displaySourceHost{nullptr};
     QHash<QString, SetupPage*> m_displaySourcePages;

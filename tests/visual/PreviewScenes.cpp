@@ -299,6 +299,7 @@
 //                 dialog-setup-cw--scrolled steps DSP > CW.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: dialog-setup-keyboard-full.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: dialog-setup-midi-rows.
 //                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
@@ -398,6 +399,8 @@
 #include "ControlsSheet.h"
 #include "PreviewData.h"
 #include "core/AppSettings.h"
+#include "gui/hotkeys/midi/MidiInput.h"
+#include "gui/hotkeys/midi/MidiProfile.h"
 #include "core/ControlRanges.h"
 #include "core/RadioDiscovery.h"
 #include "core/audio/VirtualCableDetector.h"
@@ -11386,6 +11389,14 @@ struct SetupFullSpec {
     QString name;
 };
 
+// A device layer with one port that never opens, for a MIDI page with a device.
+class PreviewMidiBackend : public MidiPortBackend {
+public:
+    QStringList portNames() override { return {QStringLiteral("X-TOUCH MINI")}; }
+    bool open(const QString&, MessageHandler, QString*) override { return false; }
+    void close() override {}
+};
+
 QVector<SetupFullSpec> setupFullSpecs()
 {
     return {
@@ -11927,6 +11938,38 @@ QVector<Scene> setupPageScenes(MainWindow* window)
                     {QStringLiteral("from"), QJsonArray{start.width(), start.height()}},
                     {QStringLiteral("to"), QJsonArray{d->width(), d->height()}}};
             }
+        }});
+    }
+    if (leafByStem.contains(QStringLiteral("midi"))) {
+        const SetupLeaf leaf = leafByStem.value(QStringLiteral("midi"));
+        const QString name = QStringLiteral("dialog-setup-midi-rows");
+        const QString title = where(leaf, {});
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, title](SceneContext& ctx) {
+            // A device and a learned profile, in this process's throwaway test profile.
+            MidiInput::setBackendFactoryForTest([] { return std::make_unique<PreviewMidiBackend>(); });
+            MidiProfile profile(QStringLiteral("Default"));
+            const QChar noPin;
+            profile.bind({QStringLiteral("ch1.cc16"), MidiControlKind::RelativeKnob, QStringLiteral("tune.up"),
+                          QStringLiteral("tune.down"), noPin});
+            profile.bind({QStringLiteral("ch1.cc7"), MidiControlKind::AbsoluteKnob, QStringLiteral("volume.up"),
+                          QStringLiteral("volume.down"), QLatin1Char('B')});
+            profile.bind({QStringLiteral("ch1.note8"), MidiControlKind::Button, QStringLiteral("tx.hold"),
+                          QString(), noPin});
+            profile.bind({QStringLiteral("ch1.note9"), MidiControlKind::Button, QStringLiteral("nr.toggle"),
+                          QString(), noPin});
+            profile.save();
+            MidiProfile::setActiveName(profile.name());
+            AppSettings::instance().setValue(QStringLiteral("HotKeys/Midi/Device"), QStringLiteral("X-TOUCH MINI"));
+            SetupDialog* d = openSetupPageScene(ctx, leaf.index);
+            if (d != nullptr) {
+                ctx.notes.append(QStringLiteral("%1 (registry index %2), a device and four learned controls")
+                                     .arg(title).arg(leaf.index));
+                captureDialog(ctx, d, name);
+            }
+            MidiInput::setBackendFactoryForTest(nullptr);
+            MidiProfile::removeSaved(profile.name());
+            MidiProfile::setActiveName({});
+            AppSettings::instance().remove(QStringLiteral("HotKeys/Midi/Device"));
         }});
     }
     if (leafByStem.contains(QStringLiteral("tx-profile"))) {

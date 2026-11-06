@@ -1094,6 +1094,8 @@
 //                 AI-assisted via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: Use Shortcuts and Keyboard Shortcuts in View, bindings saved on change.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: Tools > MIDI Mapping opens Setup's MIDI page.
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -13860,9 +13862,8 @@ void MainWindow::buildMenuBar()
     }
     {
         QAction* midiAction = toolsMenu->addAction(QStringLiteral("&MIDI Mapping..."));
-        midiAction->setEnabled(false);
-        // R-R3-49: hidden until MIDI control is built.
-        UnbuiltFeatures::hideUnlessBuilt(midiAction, UnbuiltFeature::Midi);
+        midiAction->setToolTip(QStringLiteral("Open Setup > Keys and controllers > MIDI"));
+        connect(midiAction, &QAction::triggered, this, [this]() { openSetupAtPage(QStringLiteral("MIDI")); });
     }
 
     toolsMenu->addSeparator();
@@ -18252,6 +18253,7 @@ SetupDialog* MainWindow::createSetupDialog()
     dialog->setHotKeyContext(m_hotKeyBindings.get(), [this](const QString& id) {
         return m_hotKeyTargets->setupUnavailableReason(id);
     });
+    dialog->setControllerHost(m_controllerHost.get());
     dialog->setReceiverSelector([this] { return activeSliceForWindow(); },
                                 [this] { return desktopHosting(); });
     if (m_radioModel && m_radioModel->sliceOwnership()) {

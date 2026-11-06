@@ -42,6 +42,9 @@
 //                Keys and controllers > Keyboard and View > Keyboard Shortcuts
 //                are built. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-06 - Hot keys plan Task 11: Midi leaves the list; Setup > Keys and
+//                controllers > MIDI and Tools > MIDI Mapping are built. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -63,7 +66,6 @@ enum class UnbuiltFeature {
     Cwx,              // Tools > CWX; Phone/CW applet CW page; CW keyer settings; CWX on the status bar
     Memories,         // Tools > Memory Manager; the Spot Hub Memories option
     Cat,              // Tools > CAT Control; Setup > Serial Ports, TCP/IP CAT; CAT on the status bar
-    Midi,             // Tools > MIDI Mapping; Setup > MIDI Control
     Help,             // Help > Getting Started, NereusSDR Help, Understanding Data Modes
     Acc,              // Phone/CW applet +ACC and the microphone source ACC item
     PhoneMon,         // Phone/CW applet MON and its level

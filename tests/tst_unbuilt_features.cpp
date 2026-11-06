@@ -630,7 +630,6 @@ QMap<F, QList<Surface>> surfaces()
                         spot(QStringLiteral("displayMemoriesToggle"))};
     map[F::Cat] = {menu(QStringLiteral("&CAT Control...")), setupPage(QStringLiteral("Serial Ports")),
                    setupPage(QStringLiteral("TCP/IP CAT")), setupPage(QStringLiteral("CAT Options")), setupPage(QStringLiteral("CAT PTT")), status(QStringLiteral("statusCatIndicator"))};
-    map[F::Midi] = {menu(QStringLiteral("&MIDI Mapping...")), setupPage(QStringLiteral("MIDI Control"))};
     map[F::Help] = {menu(QStringLiteral("&Getting Started")), menu(QStringLiteral("&NereusSDR Help")),
                     menu(QStringLiteral("Understanding &Data Modes"))};
     map[F::Acc] = {
@@ -1501,6 +1500,20 @@ private slots:
     // Performance checkboxes went, holds only the logging groups, hidden
     // until logging is built. It is not in the tree, selectPage() does not
     // find it, and no registered page or category is empty, local or remote.
+    void midiSurfacesAreAlwaysShown()
+    {
+        GuiSessionCoordinator sessions;
+        for (bool remote : {false, true}) {
+            const QString where = remote ? QStringLiteral("remote: ") : QStringLiteral("local: ");
+            Hosts hosts(sessions, remote);
+            QVERIFY(hosts.window() != nullptr);
+            QVERIFY2(actionShown(hosts.window(), QStringLiteral("&MIDI Mapping...")), qPrintable(where));
+            QVERIFY2(hosts.pageRegistered(QStringLiteral("MIDI")), qPrintable(where));
+            // The old leaf is gone, not hidden.
+            QVERIFY2(!hosts.pageRegistered(QStringLiteral("MIDI Control")), qPrintable(where));
+        }
+    }
+
     void keyboardSurfacesAreAlwaysShown()
     {
         GuiSessionCoordinator sessions;
