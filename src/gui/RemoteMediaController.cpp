@@ -1,9 +1,11 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
-//   2026-11-05: a speaker failure says nothing about display, so a direct
-//               path whose display stops during one still moves to the
-//               tunnel. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
-//               Code.
+//   2026-11-05: a speaker failure says nothing about display, so a display
+//               that stops during one still moves a direct path to the tunnel
+//               and, on its own clock lastDisplayMs, once per outage, still
+//               takes the stall rule's recovery on a relayed path.
+//               setDisplaysSuspendingForTest, markDisplaysAcceptedForTest.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: the unmute restarts the silence rules' clocks, so a long mute
 //               on a relayed path no longer ends the session at the next
 //               tick; restartSilenceClocks is the one place that restarts
@@ -1401,6 +1403,10 @@ struct RemoteMediaController::Private {
     bool replacementFallback = false;
     qint64 fallbackFinishedMs = -1;
     bool txSilenceSuppressed = false;
+    // 2026-11-06: when a display frame last came in this session
+    // (allocationClock; -1 before the first). Other streams don't feed it, so
+    // it can judge a display while the speakers' audio is off.
+    qint64 lastDisplayMs = -1;
     // 2026-11-05: silence this window expected is over (it was muted, keyed,
     // its radio was down, or it stopped its own audio for a speaker failure),
     // so the silence rules count from now, each with its full wait.
@@ -1409,6 +1415,7 @@ struct RemoteMediaController::Private {
         const qint64 now = allocationClock();
         if (lastAudio.isValid()) { lastAudio.restart(); }
         if (lastMediaMs >= 0) { lastMediaMs = now; }
+        if (lastDisplayMs >= 0) { lastDisplayMs = now; }
         if (fallbackFinishedMs >= 0) { fallbackFinishedMs = now; }
     }
     // 2026-11-05: a display the Core has accepted and is sending, so its
@@ -2209,14 +2216,27 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // failed speaker is this computer's, not the path's. Both rules count
         // from the end of the stop, so a retry that reaches a dead path still
         // gets their full wait and no less. A display the Core is sending
-        // still counts on a direct path: a fault can last the whole session,
-        // and waiting it out would leave that display frozen.
+        // still counts: a fault can last the whole session, and waiting it
+        // out would leave that display frozen. On a relayed path a display
+        // that delivered in this session and then stopped takes the stall
+        // rule's recovery, on its own clock, since headphones or a receiver
+        // stream can keep running beside it. The next session has no frame,
+        // so this restarts the session once per outage, not on every fault.
         if (d->audioStoppedForSpeaker) {
             if (!d->displayExpected()) {
                 d->restartSilenceClocks();
                 return;
             }
             d->lastAudio.restart();
+            const qint64 displaySilentMs = d->allocationClock() - d->lastDisplayMs;
+            if (slowPath && d->lastDisplayMs >= 0 && displaySilentMs > kMediaStallMs) {
+                qCInfo(lcRemoteMedia) << "No display from the Core for" << displaySilentMs
+                                      << "ms on a relayed path; starting audio and display again";
+                d->lastAudio.invalidate();
+                requestRecovery(d->epoch, QStringLiteral("The display from the Core stopped. "
+                                                         "Starting audio and display again."));
+                return;
+            }
             checkMediaSilence();
             return;
         }
@@ -2367,7 +2387,11 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         }
         d->audioEnabled = false;
         d->audio->stop();
-        d->audioStoppedForSpeaker = true;
+        // 2026-11-06: a display can be frozen, or just resumed, as the fault
+        // begins. With no fault nothing was judging it, so its wait starts now.
+        if (!std::exchange(d->audioStoppedForSpeaker, true) && d->lastDisplayMs >= 0) {
+            d->lastDisplayMs = d->allocationClock();
+        }
         // A restart waiting on its backoff step ends here (the disable below
         // moves the revision on, so it could never run); the failure's own
         // retry, below, takes the next step.
@@ -4204,6 +4228,7 @@ void RemoteMediaController::stop()
     }
     d->directUpgradeStep = 0;
     d->lastMediaMs = -1;
+    d->lastDisplayMs = -1;
     d->currentRouted = false;
     d->replacementRouted = false;
     d->replacementDirect = false;
@@ -4723,6 +4748,7 @@ void RemoteMediaController::promoteReplacement()
     d->replacementDirect = false;
     d->replacementMoveFolded = false;
     d->lastMediaMs = d->allocationClock();
+    if (d->lastDisplayMs >= 0) { d->lastDisplayMs = d->lastMediaMs; }
     // The fix wave: a finished fallback waits one window for media; the
     // tunnel's stall rule counts from here too, not from the old silence.
     if (std::exchange(d->replacementFallback, false)) {
@@ -5171,6 +5197,22 @@ void RemoteMediaController::raiseAudioRestartForTest(RemoteAudioReceiver::Fault 
 {
     emit d->audio->restartRequested(QStringLiteral("Remote audio restart raised by a test"),
                                     fault);
+}
+
+void RemoteMediaController::setDisplaysSuspendingForTest(bool suspending)
+{
+    for (auto& [id, binding] : d->bindings) {
+        Q_UNUSED(id);
+        binding.suspending = suspending && binding.accepted;
+    }
+}
+
+void RemoteMediaController::markDisplaysAcceptedForTest()
+{
+    for (auto& [id, binding] : d->bindings) {
+        Q_UNUSED(id);
+        binding.accepted = true;
+    }
 }
 
 void RemoteMediaController::raiseAudioFailureForTest(RemoteAudioReceiver::Fault fault)
@@ -8689,6 +8731,7 @@ void RemoteMediaController::receiveDisplay(const QByteArray& packet)
     // before any plane can reach the renderer.
     if (packet.size() < 42 || packet.size() > DisplayCodecEncoder::kMaxEncodedBytes
         || packet.first(4) != QByteArrayLiteral("NSDC")) { return; }
+    d->lastDisplayMs = d->allocationClock();
     const quint32 id = qFromBigEndian<quint32>(packet.constData() + 8);
     const quint32 generation = qFromBigEndian<quint32>(packet.constData() + 12);
     auto it = d->bindings.find(id);
