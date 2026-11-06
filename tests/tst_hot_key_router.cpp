@@ -1758,18 +1758,16 @@ private slots:
         QVERIFY(minimal != nullptr);
         QSignalSpy triggered(minimal, &QAction::triggered);
 
-        // How a real press starts: Qt offers it to the shortcut map first. Minimal
-        // Mode isn't built, so its item is disabled and its key does nothing, but
-        // the key is still the menu's: MOX doesn't take it.
+        // Minimal Mode isn't built, so its item is disabled and its key does nothing,
+        // but the key is still the menu's: MOX doesn't take it. keyClick is how a real
+        // press starts: it offers the key to the shortcut map first.
         QVERIFY(!minimal->isEnabled());
-        QTest::sendKeyEvent(QTest::Shortcut, &w.window, Qt::Key_M, QString(), Qt::ControlModifier);
+        QTest::keyClick(&w.window, Qt::Key_M, Qt::ControlModifier);
         QCOMPARE(triggered.count(), 0);
         QVERIFY(!w.mox->isMox());
 
-#ifndef Q_OS_MAC
-        // A live item's key reaches it. On a Mac the native menu takes its shortcuts
-        // before any window hears the key, and Qt's shortcut map skips menu items,
-        // so only hardware can show it.
+        // A live item's key reaches it through Qt's shortcut map. A real Mac's native
+        // menu takes the key before that, which stays a hardware check.
         const QKeySequence ctrlShiftN(QStringLiteral("Ctrl+Shift+N"), QKeySequence::PortableText);
         QAction* tnf = nullptr;
         for (QAction* const action : w.window.findChildren<QAction*>()) {
@@ -1780,11 +1778,9 @@ private slots:
         QVERIFY(tnf != nullptr);
         QVERIFY(tnf->isEnabled());
         QSignalSpy tnfTriggered(tnf, &QAction::triggered);
-        QTest::sendKeyEvent(QTest::Shortcut, &w.window, Qt::Key_N, QString(),
-                            Qt::ControlModifier | Qt::ShiftModifier);
+        QTest::keyClick(&w.window, Qt::Key_N, Qt::ControlModifier | Qt::ShiftModifier);
         QCOMPARE(tnfTriggered.count(), 1);
         QVERIFY(!w.mox->isMox());
-#endif
 
         // And the router lets the key itself by.
         KeySeen seen(&w.window);
