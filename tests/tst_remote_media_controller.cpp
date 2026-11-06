@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-11-06  J.J. Boyd / KG4VCF  A remote listener's wide view: the Core raises no
+//               wideband, the span collapses to the receiver's rate, and control
+//               returning reopens it. AI-assisted via Claude Code.
 //   2026-10-30  J.J. Boyd / KG4VCF  R-R3-21: observe every retry decision,
 //               including canceled startup steps, and test the hold boundary.
 //               AI-assisted via OpenAI Codex.
@@ -3785,6 +3788,150 @@ private slots:
         QVERIFY(clarity->isPaused());
         QCOMPARE(clarity->lastLow(),retainedLow); QCOMPARE(clarity->smoothedFloor(),retainedFloor);
         client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // JJ: "No, controlling only". The Core gives a device that only listens no
+    // wideband, so the filter stays in. For now the window adopts the receiver's
+    // crop the Core sends, so its span collapses to the receiver's rate. The Core
+    // still holds the wide request, so control returning reopens the wide view
+    // with nothing asked of the window. Keeping the span is its own PR, which
+    // changes what this row pins.
+    void aListeningWindowsSpanCollapsesToTheReceiverAndControlReopensIt()
+    {
+        constexpr double kCentreHz = 50'300'000.0;
+        constexpr double kSpanHz = 768'000.0;
+        const QByteArray kDevice = QByteArrayLiteral("token:1");
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        P2RadioConnection p2;
+        IsolatedRadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        SliceModel* slice = station.sliceById(sliceId);
+        QVERIFY(slice);
+        slice->setFrequency(kCentreHz);
+        p2.setBoardForTest(HPSDRHW::Saturn);
+        station.injectConnectionForTest(&p2);
+        RadioInfo info;
+        info.protocol = ProtocolVersion::Protocol2;
+        station.setLastRadioInfoForTest(info);
+        station.wireWidebandConnectionForTest();
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QVERIFY(station.sliceOwnership()->join(kDevice, sliceId));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("pan"));
+        stack.setActivePan(QStringLiteral("pan"));
+        pan->addSlice(sliceId);
+        pan->setActiveSliceIndex(sliceId);
+        auto* widget = pan->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(kCentreHz, 96'000.0);
+        widget->setVfoFrequency(kCentreHz);
+        widget->setConnectionState(ConnectionState::Connected);
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        QSignalSpy frames(&gui, &RemoteMediaController::displayFrameReceived);
+        QSignalSpy windowControls(&client, &StationClient::mediaControlReceived);
+        int subscribes = 0;
+        connect(&server, &StationServer::mediaControlReceived, &station,
+                [&subscribes](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) == QLatin1String("subscribe")) { ++subscribes; }
+        });
+        int wideLocks = 0;
+        connect(&station.alexController(), &AlexController::bpfStateChanged, &station,
+                [&wideLocks](int, const AlexController::AlexAdcState& state) {
+            if (state.effective == AlexController::BpfEffective::WidebandLocked) { ++wideLocks; }
+        });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_VERIFY(remote.sliceById(sliceId));
+        QVERIFY(client.remoteWidebandAvailable());
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&] {
+            for (int block = 0; block < kFeedBlocksPerPoll; ++block) {
+                QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                    Q_ARG(int, slice->streamIndex()), Q_ARG(QVector<float>, iq));
+            }
+        };
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() >= 3), 10000);
+        QVERIFY(widget->remoteWidebandAvailable());
+
+        const double receiverRateHz = station.streamSampleRateHz(slice->streamIndex());
+        const auto refusals = [&windowControls] {
+            int count = 0;
+            for (const auto& call : windowControls) {
+                if (call.at(0).toJsonObject().value(QStringLiteral("op"))
+                        == QLatin1String("rejected")) { ++count; }
+            }
+            return count;
+        };
+
+        widget->setDisplayWindowPreservingHistory(kCentreHz, kSpanHz);
+        QCOMPARE(widget->bandwidth(), kSpanHz);
+        gui.planNowForTest();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), qFuzzyCompare(widget->bandwidth(), receiverRateHz)),
+                                 10000);
+        QCOMPARE(wideLocks, 0);
+        QCOMPARE(p2.wbEnableMask(), quint8(0));
+        QVERIFY(widget->extendedViewAllowed());
+        QVERIFY(widget->remoteWidebandAvailable());
+        QVERIFY(!widget->remoteWidebandActive());
+
+        // Drawing goes on with the request settled, and nothing was refused.
+        int framesBefore = frames.count();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() >= framesBefore + 3), 10000);
+        QTest::qWait(300);
+        const int asked = subscribes;
+        framesBefore = frames.count();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() >= framesBefore + 5), 10000);
+        gui.planNowForTest();
+        QCOMPARE(subscribes, asked);
+        QCOMPARE(refusals(), 0);
+
+        // Control arrives: the wide view reopens, with nothing asked of the window.
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_COMPARE(p2.wbEnableMask(), quint8(1));
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), qFuzzyCompare(widget->bandwidth(), kSpanHz)), 10000);
+        QVERIFY(wideLocks > 0);
+
+        // Control goes, and this window still listens: the demand goes and the
+        // span collapses again, with nothing asked of the window.
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QVERIFY(station.sliceOwnership()->isListening(kDevice, sliceId));
+        QTRY_COMPARE(p2.wbEnableMask(), quint8(0));
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->remoteWidebandActive()), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), qFuzzyCompare(widget->bandwidth(), receiverRateHz)),
+                                 10000);
+        QVERIFY(widget->extendedViewAllowed());
+        QCOMPARE(refusals(), 0);
     }
 
     // A slice that shares its receiver and changes band is put on another

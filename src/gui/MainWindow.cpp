@@ -14,6 +14,8 @@
 //   2026-11-06: A pan raises the wideband flag only for a slice this window
 //               controls, not one it only listens to, JJ's decision.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: Wings go to the floor when capture on their ADC ends.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06: A pan going away lowers its wideband flag while the widgets are
 //               whole, the CH labels are held rather than searched for, and a
 //               wing click retunes only a slice this window controls. Hosting
@@ -5485,8 +5487,6 @@ std::function<void()> MainWindow::wireWidebandExtensionForTest(
     if (SliceOwnership* ownership = model->sliceOwnership()) {
         connect(ownership, &SliceOwnership::markChanged, spectrum,
                 [reconcile](int, const QByteArray&, const QByteArray&) { reconcile(); });
-        connect(ownership, &SliceOwnership::listenersChanged, spectrum,
-                [reconcile](int) { reconcile(); });
     }
     const auto watchSlice = [modelRef, spectrumRef, reconcile](int sliceId) {
         if (!modelRef || !spectrumRef) { return; }
@@ -8030,10 +8030,8 @@ void MainWindow::ensureOverlayPanels()
             sw, m_radioModel, m_panStack, panId,
             [this](int sliceId) {
                 // Only the window controlling a receiver may bypass its filter
-                // (JJ: "No, controlling only"). Never while quitting: that
-                // would bypass it and start wideband just before the radio is
-                // told to stop.
-                return !m_shuttingDown && !markerOnlyPlacement(sliceId)
+                // (JJ: "No, controlling only").
+                return !markerOnlyPlacement(sliceId)
                     && windowControlsSlice(sliceId);
             },
             [this](int sliceId) { return !desktopHosting() || windowControlsSlice(sliceId); });
@@ -10468,6 +10466,16 @@ void MainWindow::buildUI()
     connect(m_radioModel, &RadioModel::widebandSpectrumReady, this,
             [this](int adcIdx, const QVector<float>& dbmBins) {
         fanWidebandBinsForTest(m_panStack, adcIdx, dbmBins);
+    });
+    // Capture on an ADC ending leaves no source for it. Drop the pans' stored bins
+    // so the wings go to the floor rather than freeze on the last frame and look
+    // live. A source being replaced keeps them, and so does another demand holding
+    // this capture, which never ends it. A restart shows the floor until its first
+    // frame, never the old level.
+    connect(m_radioModel, &RadioModel::widebandSourceChanged, this, [this](int adcIdx) {
+        if (!m_radioModel->widebandSourceDescriptor(adcIdx)) {
+            fanWidebandBinsForTest(m_panStack, adcIdx, {});
+        }
     });
 
     // Create the FFT engine pool (spectrum thread from architecture).

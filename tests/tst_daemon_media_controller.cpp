@@ -6,6 +6,9 @@
 // production reaches the source exclusively through RadioModel's tagged tap.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: Wideband demand counts only for the device controlling the
+//               slice, and follows a change of control. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-26: CI load round: five ctest entries, each function in one by
 //               its place in the list (the whole file took 110 s of ctest's
 //               120 s on a quiet Linux runner), and the gap test drives the
@@ -852,6 +855,8 @@ private slots:
     void unkeyEventLinesPlaceTheOversDropouts();
     void extendedPermissionFirstCaptureAndSharedEndpointLifetimes();
     void widebandSourceReplacementAndSessionRetirement();
+    void aListenersWideViewRaisesNoWidebandDemand();
+    void aControlChangeMovesWidebandDemandWithNoNewRequest();
     void olderPeerKeepsLegacyContextAndCannotAcquireWideband();
     void minorSevenPeerReceivesLegacyAudioContexts();
     void minorEightAudioContextsCarryEncoderOrReason();
@@ -4812,6 +4817,96 @@ void TstDaemonMediaController::extendedPermissionFirstCaptureAndSharedEndpointLi
     QCOMPARE(h.p2.wbEnableMask(), quint8(0));
     QVERIFY(!h.radio.widebandSourceDescriptor(0));
     h.finish();
+}
+
+// JJ: "No, controlling only". A device that sees a slice without controlling it
+// gets its wide view with no demand: the filter stays in, the context says wideband
+// is available and inactive, and the geometry is the receiver's.
+void TstDaemonMediaController::aListenersWideViewRaisesNoWidebandDemand()
+{
+    Harness h;
+    h.enableWidebandSource();
+    h.establishSession();
+    h.startReadyPeer();
+    const QByteArray device = h.server.mediaSessionDevice(h.server.mediaSessionEpoch());
+    QVERIFY(!device.isEmpty());
+    SliceOwnership* ownership = h.radio.sliceOwnership();
+    ownership->setOwner(h.sliceId, SliceOwnership::stationDevice());
+    QVERIFY(ownership->join(device, h.sliceId));
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    const double rate = h.radio.streamSampleRateHz(h.streamIndex);
+    auto request = subscription(21, 1, h.sliceId, centre);
+    request.insert(QStringLiteral("extendedView"), true);
+    request.insert(QStringLiteral("spanHz"), 1'000'000.0);
+    QVERIFY(h.client.sendMediaControl(request, h.client.sessionEpoch()));
+    QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
+    QTRY_VERIFY(([&] {
+        h.feedRadio();
+        return !messageFor(controls, QStringLiteral("context"), 21).isEmpty();
+    })());
+
+    const auto context = messageFor(controls, QStringLiteral("context"), 21);
+    const auto wideband =
+        WidebandDisplayContext::fromJson(context.value(QStringLiteral("wideband")).toObject());
+    QVERIFY(wideband && wideband->available && !wideband->active);
+    QVERIFY(context.value(QStringLiteral("spanHz")).toDouble() <= rate);
+    QCOMPARE(h.p2.wbEnableMask(), quint8(0));
+    QVERIFY(!h.radio.widebandActiveForChain(h.radio.sliceChainIndex(h.sliceId)));
+}
+
+// A change of control moves the demand with no other trigger: no new request
+// from the device, in both directions, and a listener leaving ends its display.
+void TstDaemonMediaController::aControlChangeMovesWidebandDemandWithNoNewRequest()
+{
+    Harness h;
+    h.enableWidebandSource();
+    h.establishSession();
+    h.startReadyPeer();
+    const QByteArray device = h.server.mediaSessionDevice(h.server.mediaSessionEpoch());
+    QVERIFY(!device.isEmpty());
+    SliceOwnership* ownership = h.radio.sliceOwnership();
+    ownership->setOwner(h.sliceId, SliceOwnership::stationDevice());
+    QVERIFY(ownership->join(device, h.sliceId));
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    auto request = subscription(21, 1, h.sliceId, centre);
+    request.insert(QStringLiteral("extendedView"), true);
+    request.insert(QStringLiteral("spanHz"), 1'000'000.0);
+    QVERIFY(h.client.sendMediaControl(request, h.client.sessionEpoch()));
+    QTRY_COMPARE(h.controller.activeEndpointCount(), 1);
+    QTRY_VERIFY(([&] {
+        h.feedRadio();
+        return !messageFor(controls, QStringLiteral("context"), 21).isEmpty();
+    })());
+    QCOMPARE(h.p2.wbEnableMask(), quint8(0));
+    const auto contextActive = [&] {
+        const auto wideband = WidebandDisplayContext::fromJson(
+            messageFor(controls, QStringLiteral("context"), 21)
+                .value(QStringLiteral("wideband")).toObject());
+        return wideband && wideband->active;
+    };
+
+    // This device takes control.
+    ownership->setOwner(h.sliceId, device);
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(1));
+    QTRY_VERIFY(([&] { h.feedRadio(); return contextActive(); })());
+
+    // Taken over: it goes on listening, and the demand goes.
+    ownership->setOwner(h.sliceId, SliceOwnership::stationDevice());
+    QVERIFY(ownership->isListening(device, h.sliceId));
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(0));
+    QTRY_VERIFY(([&] { h.feedRadio(); return !contextActive(); })());
+    QCOMPARE(h.controller.activeEndpointCount(), 1);
+
+    // And back, then away for good: a listener leaving ends its display.
+    ownership->setOwner(h.sliceId, device);
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(1));
+    ownership->setOwner(h.sliceId, SliceOwnership::stationDevice());
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(0));
+    QVERIFY(ownership->leave(device, h.sliceId));
+    QTRY_COMPARE(h.controller.activeEndpointCount(), 0);
+    QCOMPARE(h.p2.wbEnableMask(), quint8(0));
 }
 
 void TstDaemonMediaController::widebandSourceReplacementAndSessionRetirement()

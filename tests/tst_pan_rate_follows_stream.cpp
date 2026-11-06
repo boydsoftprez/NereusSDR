@@ -21,7 +21,8 @@
 //   2026-11-06: Live Setup change rows: inactive pans, the cached stream
 //               windows, Clarity's source, the clamp, Protocol 1, and the
 //               extended view that keeps a chain's filter bypassed. A pan going
-//               away with the flag up, and the wing click.
+//               away with the flag up, the wing click, and wings when capture
+//               ends.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-05: Created. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
@@ -38,6 +39,7 @@
 #include "core/FFTRouter.h"
 #include "core/HpsdrModel.h"
 #include "core/P1RadioConnection.h"
+#include "core/P2RadioConnection.h"
 #include "core/spectrum/FftEnginePool.h"
 #include "fakes/MainWindowTestSettings.h"
 #include "gui/MainWindow.h"
@@ -477,6 +479,65 @@ private slots:
         bringUpInactivePanExtended(window, stream);
         if (QTest::currentTestFailed()) { return; }
         QVERIFY(window.radioModel()->widebandActiveForChain(0));
+    }
+
+    // Capture ending on an ADC while a pan stays extended: the wings must not go
+    // on showing the last frame as if it were live. Another demand holding that
+    // capture keeps them, and a restart shows the floor until a new frame comes.
+    void wingsGoToTheFloorWhenCaptureEndsAndNotBefore()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpInactivePanExtended(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        P2RadioConnection p2;
+        p2.setBoardForTest(HPSDRHW::Saturn);
+        DetachConnection detach{model};
+        model->injectConnectionForTest(&p2);
+        model->wireWidebandConnectionForTest();
+        SpectrumWidget* secondary =
+            window.findChild<PanadapterStack*>()->spectrum(QStringLiteral("pan-1"));
+        SliceModel* second = model->sliceById(1);
+        const QVector<float> bins(4096, -90.0f);
+        const auto capturing = [&] { return (p2.wbEnableMask() & 1) != 0; };
+        const auto startCapture = [&] {
+            second->setWidebandExtensionRequested(false);
+            second->setWidebandExtensionRequested(true);
+            QTRY_VERIFY(capturing());
+            QTRY_VERIFY(model->widebandSourceDescriptor(0).has_value());
+        };
+        startCapture();
+        if (QTest::currentTestFailed()) { return; }
+        emit model->widebandSpectrumReady(0, bins);
+        QCOMPARE(secondary->widebandBinsForTest(0).size(), bins.size());
+
+        // Another demand on the same ADC holds capture: the wings stay live.
+        const auto token = model->acquireWidebandDemand(1);
+        QVERIFY(token != 0);
+        QVERIFY(model->setWidebandDemandActive(token, true));
+        second->setWidebandExtensionRequested(false);
+        QVERIFY(capturing());
+        QCoreApplication::processEvents();
+        QCOMPARE(secondary->widebandBinsForTest(0).size(), bins.size());
+
+        // The last demand goes: capture ends, the pan stays extended.
+        QVERIFY(model->setWidebandDemandActive(token, false));
+        model->releaseWidebandDemand(token);
+        QTRY_VERIFY(!capturing());
+        QVERIFY(secondary->extendedMode());
+        QTRY_VERIFY(secondary->widebandBinsForTest(0).isEmpty());
+
+        // A restart shows the floor, not the old level, until a new frame comes.
+        startCapture();
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(secondary->widebandBinsForTest(0).isEmpty());
+        emit model->widebandSpectrumReady(0, bins);
+        QCOMPARE(secondary->widebandBinsForTest(0).size(), bins.size());
+
+        // Capture on the other ADC ending leaves this one alone.
+        emit model->widebandSourceChanged(1);
+        QCOMPARE(secondary->widebandBinsForTest(0).size(), bins.size());
     }
 
     // Not hosting: a short click in a wing moves this pan's slice, as it did.
