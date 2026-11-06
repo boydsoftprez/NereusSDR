@@ -791,7 +791,7 @@ private slots:
         PhoneCwApplet applet(&radio);
         QWidget host;
         auto* first = applet.createPanelCopy(&host, false);
-        auto* second = applet.createPanelCopy(&host, false);
+        std::unique_ptr<PhoneCwApplet> second(applet.createPanelCopy(nullptr, false));
         const QString name = QStringLiteral("PhoneCwDexpThresholdSlider");
         auto* docked = applet.findChild<QSlider*>(name);
         auto* one = first->findChild<QSlider*>(name);
@@ -816,7 +816,7 @@ private slots:
         auto* third = applet.createPanelCopy(&host, false);
         auto* three = third->findChild<QSlider*>(name);
         QCOMPARE(three->value(), -33);
-        delete second;
+        second.reset();
         three->setValue(-12);
         QCOMPARE(docked->value(), -12);
         QCOMPARE(one->value(), -12);
@@ -851,7 +851,7 @@ private slots:
         PhoneCwApplet applet(&radio);
         QWidget host;
         auto* kept = applet.createPanelCopy(&host, false);
-        auto* removed = applet.createPanelCopy(&host, false);
+        std::unique_ptr<PhoneCwApplet> removed(applet.createPanelCopy(nullptr, false));
         const QString name = QStringLiteral("Microphone gain");
         const auto gainOf = [&name](QWidget* panel) -> QSlider* {
             for (QSlider* slider : panel->findChildren<QSlider*>()) {
@@ -864,9 +864,9 @@ private slots:
         TransmitModel& tx = radio.transmitModel();
         tx.setMicGainDb(-3);
         QCOMPARE(gainOf(kept)->value(), gainOf(&applet)->value());
-        QCOMPARE(gainOf(removed)->value(), gainOf(&applet)->value());
+        QCOMPARE(gainOf(removed.get())->value(), gainOf(&applet)->value());
 
-        delete removed;
+        removed.reset();
         tx.setMicGainDb(5);
         QCOMPARE(gainOf(kept)->value(), gainOf(&applet)->value());
         applet.setCompressionReading(-10.0);
