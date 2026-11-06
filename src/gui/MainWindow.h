@@ -22,6 +22,9 @@
 //               bandStackNext(), bandStackPrevious(), bandStackAdd(),
 //               viewForSlice() (band stack plan Task 8). J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-06: the rows' context and the expiry note's Undo (band stack
+//               plan Task 9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
 //               display's clicks, wheel and keys act on the slice they
 //               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
@@ -2073,6 +2076,13 @@ private:
     void bindBandStackAccess(BandStackAccess* access);
     void refreshBandStackSlice();
     void refreshBandStackDots();
+    void wireBandStackRows();
+    void watchBandStackSlice(SliceModel* slice);
+    /// Why a recall on this slice will be refused, for the rows to show.
+    QString bandStackBlockedReason(int sliceId) const;
+    /// "Removed N expired entries" with Undo, once per batch.
+    void showBandStackExpiryNote();
+    QString m_bandStackExpiryBatch;
     /// bandStackNext, bandStackPrevious and a container's STACK+ and STACK-.
     void stepBandStack(SliceModel* slice, BandStackDirection direction);
 

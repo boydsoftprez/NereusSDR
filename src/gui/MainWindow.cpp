@@ -1088,6 +1088,9 @@
 //               column, the dots and menu entry open it, refusals and reports
 //               toast, the placeholder is gone. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 9: the rows' context (view, slices, band
+//                 plan colour, blocked reason) and the expiry note's Undo.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06 - Band stack plan Task 8: pressBand routes every band press in
 //               the window, the flyout stays open across presses, and the
 //               four hot key entry points. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1329,6 +1332,7 @@ warren@wpratt.com
 #include "gui/multidevice/NoticeCard.h"
 #include "gui/HostingSliceActions.h"
 #include "gui/bandstack/BandStackPanel.h"
+#include "gui/bandstack/BandStackRowList.h"
 #include "models/bandstack/LocalBandStackAccess.h"
 #include "gui/LevelCalGridFollowGuard.h"
 #include "core/session/RemoteDevicesState.h"
@@ -2648,7 +2652,14 @@ void MainWindow::bindBandStackAccess(BandStackAccess* access)
     if (m_bandStackPanel) {
         m_bandStackPanel->setAccess(access);
     }
+    m_bandStackExpiryBatch.clear();
     if (access) {
+        // A note already there when this access arrives is not news.
+        m_bandStackExpiryBatch = access->document()
+                                     .value(QStringLiteral("lastExpiry")).toObject()
+                                     .value(QStringLiteral("batchId")).toString();
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::showBandStackExpiryNote);
         connect(access, &BandStackAccess::stateChanged,
                 this, &MainWindow::refreshBandStackAvailability);
         connect(access, &BandStackAccess::refused, this, [this](const QString& reason) {
@@ -2659,6 +2670,111 @@ void MainWindow::bindBandStackAccess(BandStackAccess* access)
         });
     }
     refreshBandStackAvailability();
+}
+
+void MainWindow::showBandStackExpiryNote()
+{
+    if (!m_bandStackAccess) {
+        return;
+    }
+    const QJsonObject note =
+        m_bandStackAccess->document().value(QStringLiteral("lastExpiry")).toObject();
+    const QString batchId = note.value(QStringLiteral("batchId")).toString();
+    if (batchId == m_bandStackExpiryBatch) {
+        return;
+    }
+    m_bandStackExpiryBatch = batchId;
+    const int count = note.value(QStringLiteral("count")).toInt();
+    if (batchId.isEmpty() || count <= 0) {
+        return;
+    }
+    // Design V5: the undo is on the device that shows the note, for 5 seconds.
+    constexpr int kUndoMs = 5000;
+    const QString text = count == 1 ? QStringLiteral("Removed 1 expired entry")
+                                    : QStringLiteral("Removed %1 expired entries").arg(count);
+    if (StatusToast* toast = showToast(text, ToastSeverity::Info, kUndoMs)) {
+        toast->setAction(QStringLiteral("Undo"), [this, batchId] {
+            if (m_bandStackAccess) {
+                m_bandStackAccess->restoreExpired(batchId);
+            }
+        });
+    }
+}
+
+QString MainWindow::bandStackBlockedReason(int sliceId) const
+{
+    SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
+    if (!slice) {
+        return {};
+    }
+    if (slice->isReadOnlyListener()) {
+        return slice->readOnlyListenerReason();
+    }
+    if (desktopListensTo(sliceId)) {
+        return QStringLiteral("You are only listening to Slice %1. Take control of it to change "
+                              "its band.").arg(slice->sliceLetter());
+    }
+    if (slice->locked()) {
+        return QStringLiteral("Slice %1 is locked. Unlock it to change bands.")
+            .arg(slice->sliceLetter());
+    }
+    return {};
+}
+
+void MainWindow::wireBandStackRows()
+{
+    BandStackRowContext context;
+    context.viewForSlice = [this](int sliceId) {
+        return viewForSlice(m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr);
+    };
+    context.slices = [this] {
+        QList<BandStackSliceInfo> slices;
+        if (m_radioModel) {
+            for (const SliceModel* slice : m_radioModel->slices()) {
+                if (slice) {
+                    slices.append({slice->sliceIndex(), slice->sliceLetter(), slice->frequency()});
+                }
+            }
+        }
+        return slices;
+    };
+    context.planColourAt = [this](qint64 frequencyHz) {
+        const double mhz = frequencyHz / 1.0e6;
+        for (const BandSegment& segment : m_radioModel->bandPlanManager().segments()) {
+            if (mhz >= segment.lowMhz && mhz <= segment.highMhz) {
+                return segment.color;
+            }
+        }
+        return QColor();
+    };
+    context.blockedReason = [this](int sliceId) { return bandStackBlockedReason(sliceId); };
+    m_bandStackPanel->rows()->setContext(std::move(context));
+
+    connect(&m_radioModel->bandPlanManagerMutable(), &BandPlanManager::planChanged, this,
+            [this] { m_bandStackPanel->rows()->refreshSlices(); });
+    for (SliceModel* slice : m_radioModel->slices()) {
+        watchBandStackSlice(slice);
+    }
+    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int sliceId) {
+        watchBandStackSlice(m_radioModel->sliceById(sliceId));
+        m_bandStackPanel->rows()->refreshSlices();
+    });
+    connect(m_radioModel, &RadioModel::sliceRemoved, this,
+            [this] { m_bandStackPanel->rows()->refreshSlices(); });
+}
+
+void MainWindow::watchBandStackSlice(SliceModel* slice)
+{
+    if (!slice) {
+        return;
+    }
+    const auto refresh = [this] {
+        if (!m_shuttingDown && m_bandStackPanel) {
+            m_bandStackPanel->rows()->refreshSlices();
+        }
+    };
+    connect(slice, &SliceModel::frequencyChanged, this, refresh);
+    connect(slice, &SliceModel::lockedChanged, this, refresh);
 }
 
 void MainWindow::refreshBandStackAvailability()
@@ -9189,6 +9305,7 @@ void MainWindow::buildUI()
             [this] { m_bandStackPanel->setOpen(false); });
     connect(m_bandStackPanel, &BandStackPanel::openChanged, this,
             [this] { refreshBandStackDots(); });
+    wireBandStackRows();
     m_panColumn = new QWidget(spectrumPane);
     m_panColumn->setObjectName(QStringLiteral("panColumn"));
     m_panColumn->setMinimumWidth(400);

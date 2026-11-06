@@ -9,21 +9,32 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-06 - The rows, the band menu and the panel menu (band stack plan
+//                 Task 9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "gui/bandstack/BandStackPanel.h"
 
+#include <QAction>
+#include <QDialog>
 #include <QEasingCurve>
 #include <QEvent>
 #include <QHBoxLayout>
+#include <QJsonObject>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QVariantAnimation>
 
 #include "core/AppSettings.h"
+#include "gui/ScopedChildWidget.h"
+#include "gui/bandstack/BandStackRowList.h"
+#include "gui/styles/PopupMenuStyle.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/Band.h"
@@ -125,6 +136,9 @@ BandStackPanel::BandStackPanel(BandStackAccess* access, QWidget* parent)
     m_menuButton->setToolTip(QStringLiteral("Band stack options"));
     m_menuButton->setAutoRaise(true);
     connect(m_menuButton, &QToolButton::clicked, this, &BandStackPanel::menuRequested);
+    connect(this, &BandStackPanel::menuRequested, this, [this] {
+        showPanelMenu(m_menuButton->mapToGlobal(m_menuButton->rect().bottomLeft()));
+    });
     headerLayout->addWidget(m_menuButton);
     m_closeButton = new QToolButton(header);
     m_closeButton->setObjectName(QStringLiteral("bandStackPanelClose"));
@@ -170,6 +184,18 @@ BandStackPanel::BandStackPanel(BandStackAccess* access, QWidget* parent)
     m_rowsLayout->setContentsMargins(3, 2, 3, 8);
     m_rowsLayout->setSpacing(0);
     m_rowsLayout->setAlignment(Qt::AlignTop);
+    m_rows = new BandStackRowList(access, rowsHost);
+    m_rows->setGrouped(groupByBand());
+    m_rowsLayout->addWidget(m_rows);
+    connect(m_rows, &BandStackRowList::bandContextRequested, this, &BandStackPanel::showBandMenu);
+    connect(m_rows, &BandStackRowList::panelContextRequested, this, &BandStackPanel::showPanelMenu);
+    connect(m_rows, &BandStackRowList::closeRequested, this, &BandStackPanel::closeRequested);
+    connect(m_rows, &BandStackRowList::currentBandChanged, this, &BandStackPanel::refreshOnBand);
+    // The empty part of the list below the last row.
+    rowsHost->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(rowsHost, &QWidget::customContextMenuRequested, this, [this, rowsHost](const QPoint& pos) {
+        showPanelMenu(rowsHost->mapToGlobal(pos));
+    });
     m_rowsScroll->setWidget(rowsHost);
     contentLayout->addWidget(m_rowsScroll, 1);
 
@@ -210,6 +236,7 @@ SliceModel* BandStackPanel::slice() const
 void BandStackPanel::setAccess(BandStackAccess* access)
 {
     m_access = access;
+    m_rows->setAccess(access);
 }
 
 void BandStackPanel::applyStyle()
@@ -261,7 +288,9 @@ void BandStackPanel::refreshHeader()
             "QLabel { border: 1px solid %1; border-radius: 3px; color: %1;"
             " font-size: 11px; font-weight: 700; }")
             .arg(colourName(QColor(0x40, 0x48, 0x58), "text-inactive")));
-        m_onBand->setText(QStringLiteral("No slice"));
+        m_rows->setSliceId(-1);
+        m_rows->setSliceFrequency(std::nullopt);
+        refreshOnBand();
         return;
     }
     const QChar letter = m_slice->sliceLetter();
@@ -272,7 +301,201 @@ void BandStackPanel::refreshHeader()
     m_chip->setStyleSheet(QStringLiteral(
         "QLabel { background: %1; border-radius: 3px; color: #ffffff;"
         " font-size: 11px; font-weight: 700; }").arg(flag.name()));
-    m_onBand->setText(QStringLiteral("on %1").arg(bandLabel(bandFromFrequency(m_slice->frequency()))));
+    m_rows->setSliceId(m_slice->sliceIndex());
+    m_rows->setSliceFrequency(m_slice->frequency());
+    refreshOnBand();
+}
+
+void BandStackPanel::refreshOnBand()
+{
+    const std::optional<Band> band = m_rows->currentBand();
+    m_onBand->setText(band.has_value() ? QStringLiteral("on %1").arg(bandLabel(*band))
+                                       : QStringLiteral("No slice"));
+}
+
+void BandStackPanel::fillBandMenu(QMenu& menu, Band band)
+{
+    menu.setStyleSheet(WorkspacePreview::lookQss(QString::fromLatin1(kPopupMenu), &menu));
+    menu.setToolTipsVisible(true);
+    const BandStackReturnMode mode = m_rows->returnMode(band);
+
+    QMenu* returnTo = menu.addMenu(QStringLiteral("Return to"));
+    returnTo->setToolTipsVisible(true);
+    const auto addReturn = [&](const QString& text, BandStackReturnMode target) {
+        QAction* action = returnTo->addAction(text);
+        action->setCheckable(true);
+        action->setChecked(mode == target);
+        return action;
+    };
+    connect(addReturn(QStringLiteral("Current entry"), BandStackReturnMode::Current),
+            &QAction::triggered, this, [this, band] {
+                if (m_access) {
+                    m_access->setReturn(band, BandStackReturnMode::Current, QString());
+                }
+            });
+    connect(addReturn(QStringLiteral("Last frequency used"), BandStackReturnMode::LastUsed),
+            &QAction::triggered, this, [this, band] {
+                if (m_access) {
+                    m_access->setReturn(band, BandStackReturnMode::LastUsed, QString());
+                }
+            });
+    QAction* specific = addReturn(QStringLiteral("Specific entry"), BandStackReturnMode::Specific);
+    if (m_rows->entryCount(band) == 0) {
+        specific->setEnabled(false);
+        specific->setToolTip(QStringLiteral("This band has no entries."));
+    }
+    connect(specific, &QAction::triggered, this, [this, band] {
+        if (m_access) {
+            m_access->setReturn(band, BandStackReturnMode::Specific,
+                                m_rows->defaultSpecificEntry(band));
+        }
+    });
+
+    const bool open = m_rows->isBandOpen(band);
+    connect(menu.addAction(open ? QStringLiteral("Collapse") : QStringLiteral("Expand")),
+            &QAction::triggered, this, [this, band, open] { m_rows->setBandOpen(band, !open); });
+    menu.addSeparator();
+
+    const QString label = bandLabel(band);
+    connect(menu.addAction(QStringLiteral("Clear unlocked %1 entries").arg(label)),
+            &QAction::triggered, this, [this, band, label] {
+                if (confirm(QStringLiteral("Clear the unlocked entries on %1?").arg(label),
+                            QStringLiteral("Clear"))
+                    && m_access) {
+                    m_access->clear(band);
+                }
+            });
+}
+
+void BandStackPanel::fillPanelMenu(QMenu& menu)
+{
+    menu.setStyleSheet(WorkspacePreview::lookQss(QString::fromLatin1(kPopupMenu), &menu));
+    menu.setToolTipsVisible(true);
+    const QJsonObject document = m_access ? m_access->document() : QJsonObject{};
+    const QJsonObject options = document.value(QStringLiteral("options")).toObject();
+
+    QAction* group = menu.addAction(QStringLiteral("Group by band"));
+    group->setCheckable(true);
+    group->setChecked(groupByBand());
+    connect(group, &QAction::triggered, this, [this](bool on) { setGroupByBand(on); });
+    menu.addSeparator();
+
+    QMenu* expiry = menu.addMenu(QStringLiteral("Auto-expiry"));
+    const int expiryNow = options.value(QStringLiteral("expiryMinutes")).toInt();
+    // The values the document allows (design section 6.2).
+    for (const int minutes : {0, 5, 15, 30, 60}) {
+        QAction* action = expiry->addAction(minutes == 0 ? QStringLiteral("Off")
+                                                         : QStringLiteral("%1 min").arg(minutes));
+        action->setCheckable(true);
+        action->setChecked(minutes == expiryNow);
+        connect(action, &QAction::triggered, this, [this, minutes] {
+            if (m_access) {
+                m_access->options(std::nullopt, minutes, std::nullopt);
+            }
+        });
+    }
+    QMenu* dwell = menu.addMenu(QStringLiteral("Auto-save dwell"));
+    const int dwellNow = options.value(QStringLiteral("dwellSeconds")).toInt();
+    for (const int seconds : {0, 10, 30, 60}) {
+        QAction* action = dwell->addAction(seconds == 0 ? QStringLiteral("Off")
+                                                        : QStringLiteral("%1 sec").arg(seconds));
+        action->setCheckable(true);
+        action->setChecked(seconds == dwellNow);
+        connect(action, &QAction::triggered, this, [this, seconds] {
+            if (m_access) {
+                m_access->options(std::nullopt, std::nullopt, seconds);
+            }
+        });
+    }
+    menu.addSeparator();
+
+    QAction* dupes = menu.addAction(QStringLiteral("Don't save over a frequency already here"));
+    dupes->setCheckable(true);
+    dupes->setChecked(options.value(QStringLiteral("dupeProtection")).toBool(true));
+    connect(dupes, &QAction::triggered, this, [this](bool on) {
+        if (m_access) {
+            m_access->options(on, std::nullopt, std::nullopt);
+        }
+    });
+    QAction* spectrum = menu.addAction(QStringLiteral("Show on the spectrum"));
+    spectrum->setCheckable(true);
+    spectrum->setChecked(showOnSpectrum());
+    connect(spectrum, &QAction::triggered, this, [this](bool on) { setShowOnSpectrum(on); });
+    menu.addSeparator();
+
+    const QString region = document.value(QStringLiteral("region")).toString();
+    connect(menu.addAction(QStringLiteral("Reset to region defaults...")), &QAction::triggered, this,
+            [this, region] {
+                if (confirm(QStringLiteral("Replace the unlocked entries with the defaults for %1? "
+                                           "Your locked entries stay.").arg(region),
+                            QStringLiteral("Reset"))
+                    && m_access) {
+                    m_access->reseed();
+                }
+            });
+    connect(menu.addAction(QStringLiteral("Clear unlocked entries...")), &QAction::triggered, this,
+            [this] {
+                if (confirm(QStringLiteral("Clear every unlocked entry on every band? Locked "
+                                           "entries stay."),
+                            QStringLiteral("Clear"))
+                    && m_access) {
+                    m_access->clear(std::nullopt);
+                }
+            });
+}
+
+void BandStackPanel::showBandMenu(Band band, const QPoint& globalPos)
+{
+    ScopedChildWidget<QMenu> menuOwner(this);
+    QMenu& menu = *menuOwner.get();
+    fillBandMenu(menu, band);
+    menu.exec(globalPos);
+}
+
+void BandStackPanel::showPanelMenu(const QPoint& globalPos)
+{
+    ScopedChildWidget<QMenu> menuOwner(this);
+    QMenu& menu = *menuOwner.get();
+    fillPanelMenu(menu);
+    menu.exec(globalPos);
+}
+
+bool BandStackPanel::confirm(const QString& text, const QString& verb)
+{
+    ScopedChildWidget<QDialog> dialogOwner(this);
+    QDialog& dialog = *dialogOwner.get();
+    dialog.setObjectName(QStringLiteral("bandStackConfirm"));
+    dialog.setWindowTitle(QStringLiteral("Band stack"));
+    dialog.setStyleSheet(WorkspacePreview::lookQss(QStringLiteral(
+        "#bandStackConfirm { background: #0f0f1a; }"
+        "QLabel { color: #c8d8e8; font-size: 13px; }"
+        "QPushButton { color: #c8d8e8; background: #1a2a3a; border: 1px solid #304050;"
+        " border-radius: 4px; padding: 4px 12px; font-size: 12px; font-weight: 600; }"
+        "#bandStackConfirmAccept { color: #f0dcdc; background: #7a2c2e; border-color: #a86b6d; }"),
+        &dialog));
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setSpacing(14);
+    auto* message = new QLabel(text, &dialog);
+    message->setObjectName(QStringLiteral("bandStackConfirmText"));
+    message->setWordWrap(true);
+    message->setMinimumWidth(388);
+    layout->addWidget(message);
+    auto* buttons = new QHBoxLayout;
+    buttons->setSpacing(6);
+    buttons->addStretch(1);
+    auto* cancel = new QPushButton(QStringLiteral("Cancel"), &dialog);
+    cancel->setObjectName(QStringLiteral("bandStackConfirmCancel"));
+    cancel->setDefault(true);
+    connect(cancel, &QPushButton::clicked, &dialog, &QDialog::reject);
+    buttons->addWidget(cancel);
+    auto* accept = new QPushButton(verb, &dialog);
+    accept->setObjectName(QStringLiteral("bandStackConfirmAccept"));
+    accept->setAutoDefault(false);
+    connect(accept, &QPushButton::clicked, &dialog, &QDialog::accept);
+    buttons->addWidget(accept);
+    layout->addLayout(buttons);
+    return dialog.exec() == QDialog::Accepted;
 }
 
 void BandStackPanel::setUnavailableReason(const QString& reason)
@@ -297,6 +520,9 @@ void BandStackPanel::setOpen(bool open, bool animated)
         m_open = open;
         saveSetting(kOpenKey, settingText(open));
         emit openChanged(open);
+        if (open) {
+            m_rows->setFocus(Qt::OtherFocusReason);
+        }
     }
     const int target = m_open ? m_panelWidth : 0;
     m_slide->stop();
@@ -339,6 +565,7 @@ bool BandStackPanel::groupByBand() const
 void BandStackPanel::setGroupByBand(bool on)
 {
     saveSetting(kGroupByBandKey, settingText(on));
+    m_rows->setGrouped(on);
 }
 
 bool BandStackPanel::showOnSpectrum() const

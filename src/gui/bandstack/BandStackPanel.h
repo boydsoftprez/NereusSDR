@@ -5,7 +5,7 @@
 // =================================================================
 //
 // The panel left of the pans that shows the Core's band stack for the window's
-// selected slice. This is the shell: header, the place for the rows, the greyed
+// selected slice: the header, the rows, the band and panel menus, the greyed
 // state and the slide. The panel keeps its own width, open state and view
 // options on this device (design V6). It is a child of the spectrum pane and
 // never of a splitter, so saved splitter sizes do not see it.
@@ -15,6 +15,9 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-06 - The rows, the band menu and the panel menu (band stack plan
+//                 Task 9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QPointer>
@@ -24,8 +27,10 @@
 #include <optional>
 
 #include "gui/NereusGuiExport.h"
+#include "models/Band.h"
 
 class QLabel;
+class QMenu;
 class QScrollArea;
 class QToolButton;
 class QVBoxLayout;
@@ -34,6 +39,7 @@ class QVariantAnimation;
 namespace NereusSDR {
 
 class BandStackAccess;
+class BandStackRowList;
 class SliceModel;
 
 class NEREUS_GUI_EXPORT BandStackPanel : public QWidget {
@@ -67,6 +73,12 @@ public:
 
     /// Where the rows go.
     QVBoxLayout* rowsLayout() const { return m_rowsLayout; }
+    BandStackRowList* rows() const { return m_rows; }
+
+    /// The menu a band's header opens, into an empty menu.
+    void fillBandMenu(QMenu& menu, Band band);
+    /// The "..." menu, into an empty menu.
+    void fillPanelMenu(QMenu& menu);
 
     bool isOpen() const { return m_open; }
     /// Slides over kSlideMs, or at once when animated is false or the system
@@ -99,6 +111,11 @@ private:
     void applyShownWidth(int width);
     void placeChildren();
     void refreshHeader();
+    void refreshOnBand();
+    void showBandMenu(Band band, const QPoint& globalPos);
+    void showPanelMenu(const QPoint& globalPos);
+    /// Asks with desktop.html's dialog: the words, Cancel and a red `verb`.
+    bool confirm(const QString& text, const QString& verb);
 
     QPointer<BandStackAccess> m_access;
     QPointer<SliceModel> m_slice;
@@ -120,6 +137,7 @@ private:
     QToolButton* m_closeButton{nullptr};
     QScrollArea* m_rowsScroll{nullptr};
     QVBoxLayout* m_rowsLayout{nullptr};
+    BandStackRowList* m_rows{nullptr};
     QVariantAnimation* m_slide{nullptr};
 };
 
