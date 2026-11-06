@@ -1913,6 +1913,9 @@ mw0lge@grange-lane.co.uk
 //                 only. Trunk's CW pitch property (R-CW-02) and its pitch
 //                 follow (applyCwPitchChange, the APF centre from
 //                 cwPitchHz) are its own.]
+//   2026-11-05 - Hot keys plan Task 4: setHoldToTalk, reportRemoteKeyWentOff,
+//                transmitKeyWentOff. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -3175,6 +3178,15 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
         // The Radio Status page's PTT source follows the key itself.
         connect(m_moxController, &MoxController::moxStateChanged, this,
                 [this](bool) { refreshRadioStatusPtt(); });
+        // moxChanging, not moxChanged: moxChanged waits for the TX to RX walk,
+        // and a key pressed during the walk would be taken for the old one.
+        // The keyer still names the key going off while this is emitted.
+        connect(m_moxController, &MoxController::moxChanging, this,
+                [this](int, bool oldMox, bool newMox) {
+            if (oldMox && !newMox && m_moxController->currentKeyer().isStation()) {
+                emit transmitKeyWentOff();
+            }
+        });
     }
 
     connect(m_moxController, &MoxController::stateChanged, this,
@@ -32522,6 +32534,35 @@ void RadioModel::setTwoTone(bool on)
     if (m_twoToneController) {
         m_twoToneController->setActive(on);
     }
+}
+
+void RadioModel::reportRemoteKeyWentOff()
+{
+    emit transmitKeyWentOff();
+}
+
+void RadioModel::setHoldToTalk(bool down)
+{
+    if (remoteTransmitRouted()) {
+        RemoteTransmitClient* remote = m_station->remoteTransmit();
+        // setScreenKey(false) at idle releases any epoch of this device
+        // (a VOX key, say), which a hold's release must not touch.
+        if (down || remote->screenKeyDown()) {
+            remote->setScreenKey(down);
+        }
+        return;
+    }
+    // A remote window's own controller never keys.
+    if (m_role == Role::Remote || m_moxController == nullptr) {
+        return;
+    }
+    // As setMoxFromButton (Task 7 fix wave, M9): a TUN-off still completing
+    // finishes first, so the key is checked against the restored mode and the
+    // tune tone does not run on under it.
+    if (down && m_pendingTuneOff) {
+        completeTuneOff();
+    }
+    m_moxController->onSpacePtt(down);
 }
 
 bool RadioModel::moxPressAsksOn(bool toggledOn) const

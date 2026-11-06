@@ -11808,6 +11808,12 @@ nereus_add_test(tst_hot_key_dispatcher)
 nereus_add_test(tst_hot_key_window_actions)
 nereus_add_test(tst_hot_key_remote_actions fakes/RemoteWindowHarness.cpp)
 target_compile_definitions(tst_hot_key_remote_actions PRIVATE NEREUS_BUILD_TESTS)
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_hot_key_transmit
+        fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
+    target_compile_definitions(tst_hot_key_transmit PRIVATE NEREUS_BUILD_TESTS)
+    target_link_libraries(tst_hot_key_transmit PRIVATE Qt6::WebSockets)
+endif()
 nereus_add_test(tst_cat_settings CORE_ONLY)
 nereus_add_test(tst_cat_headless CORE_ONLY)
 

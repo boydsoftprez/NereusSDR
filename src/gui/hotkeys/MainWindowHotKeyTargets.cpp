@@ -2,20 +2,28 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 4: the transmit keys.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 
 #include "core/ControlRanges.h"
 #include "core/LogCategories.h"
+#include "core/MoxController.h"
 #include "core/UnbuiltFeatureList.h"
 #include "core/WdspTypes.h"
+#include "core/safety/TxRefusal.h"
 #include "core/session/IStationLink.h"
+#include "core/session/RemoteTransmitClient.h"
+#include "gui/DesktopStationController.h"
 #include "gui/MainWindow.h"
 #include "gui/PanFloatingWindow.h"
 #include "gui/PanadapterStack.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/containers/ContainerButtonDispatcher.h"
 #include "gui/containers/ContainerWidget.h"
+#include "gui/multidevice/TakeTransmitDialog.h"
+#include "gui/applets/TxApplet.h"
 #include "gui/widgets/StatusToast.h"
 #include "gui/widgets/VfoWidget.h"
 #include "models/Band.h"
@@ -29,6 +37,7 @@
 #include <QList>
 #include <QMetaObject>
 #include <QPair>
+#include <QPointer>
 
 #include <algorithm>
 #include <array>
@@ -116,6 +125,21 @@ std::optional<OtherButtonItem::ButtonId> containerButtonFor(const QString& id)
     }
     if (id == QLatin1String("xit.toggle")) {
         return Id::Xit;
+    }
+    return std::nullopt;
+}
+
+std::optional<OtherButtonItem::ButtonId> transmitButtonFor(const QString& id)
+{
+    using Id = OtherButtonItem::ButtonId;
+    if (id == QLatin1String("tx.mox")) {
+        return Id::Mox;
+    }
+    if (id == QLatin1String("tx.tune")) {
+        return Id::Tun;
+    }
+    if (id == QLatin1String("tx.twotone")) {
+        return Id::TwoTon;
     }
     return std::nullopt;
 }
@@ -281,23 +305,140 @@ QString MainWindowHotKeyTargets::unavailableReason(const QString& id) const
     return bandStackReason(m_window, id);
 }
 
+bool MainWindowHotKeyTargets::moxOn() const
+{
+    RadioModel* const model = m_window->m_radioModel;
+    if (model == nullptr || !m_window->m_containerButtons) {
+        return false;
+    }
+    // What the button lights, read as its next press would: for a moment after
+    // a remote window's release the Core's value is still the old key, and a
+    // press then is a new key (RadioModel::moxPressAsksOn).
+    const bool lit = m_window->m_containerButtons
+                         ->stateOf(OtherButtonItem::ButtonId::Mox, ContainerWidget::kFirstRxSource).on;
+    return !model->moxPressAsksOn(!lit);
+}
+
 bool MainWindowHotKeyTargets::transmitting() const
 {
-    return false;
+    return moxOn() || tuneOrTwoToneOn();
 }
 
 bool MainWindowHotKeyTargets::tuneOrTwoToneOn() const
 {
-    return false;
+    RadioModel* const model = m_window->m_radioModel;
+    if (model == nullptr || !m_window->m_containerButtons) {
+        return false;
+    }
+    using Id = OtherButtonItem::ButtonId;
+    const ContainerButtonDispatcher& buttons = *m_window->m_containerButtons;
+    const int source = ContainerWidget::kFirstRxSource;
+    return !model->tunePressAsksOn(!buttons.stateOf(Id::Tun, source).on)
+        || buttons.stateOf(Id::TwoTon, source).on;
 }
 
-bool MainWindowHotKeyTargets::keyHold(bool /*down*/)
+bool MainWindowHotKeyTargets::keyHold(bool down)
 {
-    return false;
+    RadioModel* const model = m_window->m_radioModel;
+    if (model == nullptr) {
+        return false;
+    }
+    if (!down) {
+        const bool throughHost = std::exchange(m_holdThroughHost, false);
+        if (throughHost && m_window->desktopHosting()) {
+            keyHoldThroughHost(false);
+        } else {
+            model->setHoldToTalk(false);
+        }
+        return false;
+    }
+    if (m_window->m_shuttingDown || !m_window->m_containerButtons) {
+        return false;
+    }
+    if (!m_window->transmitControlsPermitted()) {
+        toast(m_window->remoteTransmitReason());
+        return false;
+    }
+    // The MOX button's refusals, but for those the controller makes itself with
+    // moxRejected's toast: receive only and TX inhibit, on a window that keys
+    // its own controller.
+    const ContainerButtonDispatcher::State mox = m_window->m_containerButtons->stateOf(
+        OtherButtonItem::ButtonId::Mox, ContainerWidget::kFirstRxSource);
+    const bool controllerRefuses = model->ownsLocalDsp() && !model->transmitLinkDown()
+        && model->transmitButtonsLocked();
+    if (!mox.available && !controllerRefuses) {
+        toast(mox.reason);
+        return false;
+    }
+    if (m_window->desktopHosting()) {
+        m_holdThroughHost = keyHoldThroughHost(true);
+        return m_holdThroughHost;
+    }
+    model->setHoldToTalk(true);
+    if (model->ownsLocalDsp()) {
+        return model->moxController() != nullptr && model->moxController()->isMox();
+    }
+    IStationLink* const link = model->stationLink();
+    RemoteTransmitClient* const remote = link != nullptr ? link->remoteTransmit() : nullptr;
+    return remote != nullptr && remote->screenKeyDown();
 }
 
-void MainWindowHotKeyTargets::runTransmitAction(const QString& /*id*/)
+bool MainWindowHotKeyTargets::keyHoldThroughHost(bool down)
 {
+    // As MainWindow::requestDesktopKey, but another device holding transmit is
+    // a toast and not the take question: a hold is over too soon to answer it.
+    using RequestState = DesktopStationController::RequestState;
+    const QPointer<MainWindow> window(m_window);
+    if (m_window->m_desktopTakeDialog) {
+        m_window->m_desktopTakeDialog->close();
+    }
+    if (!window || !m_window->desktopHosting()) {
+        return false;
+    }
+    const QPointer<DesktopStationController> controller(m_window->m_desktopStationController);
+    const DesktopStationController::RequestResult result = controller->requestMox(down);
+    if (!window || !controller || controller != m_window->m_desktopStationController) {
+        return false;
+    }
+    bool keyed = false;
+    if (result.state == RequestState::Ask) {
+        const QString name = result.question && !result.question->holderName.isEmpty()
+            ? result.question->holderName
+            : QStringLiteral("Another device");
+        toast(TxRefusals::otherDeviceHolds(name).text);
+    } else if (result.state == RequestState::Refused) {
+        m_window->handleDesktopTakeResult(result);
+        if (!window) {
+            return false;
+        }
+    } else if (result.state == RequestState::Pending) {
+        // Transmit is held already and it did not key: the controller refused,
+        // and moxRejected has said why. A take still running keys when it ends.
+        const MoxController* const mox = m_window->m_radioModel->moxController();
+        keyed = !m_window->desktopOwnsTransmit() || (mox != nullptr && mox->isMox());
+    }
+    if (m_window->m_txApplet) {
+        m_window->m_txApplet->syncDesktopKeyState();
+    }
+    m_window->refreshContainerControls();
+    return keyed;
+}
+
+void MainWindowHotKeyTargets::runTransmitAction(const QString& id)
+{
+    if (m_window->m_shuttingDown || !m_window->m_containerButtons) {
+        return;
+    }
+    const std::optional<OtherButtonItem::ButtonId> button = transmitButtonFor(id);
+    if (!button.has_value()) {
+        qCWarning(lcHotKeys) << "No transmit action for:" << id;
+        return;
+    }
+    // The transmit buttons take no slice; the source is any valid one.
+    const QString reason = m_window->m_containerButtons->click(*button, ContainerWidget::kFirstRxSource);
+    if (!reason.isEmpty()) {
+        toast(reason);
+    }
 }
 
 void MainWindowHotKeyTargets::runCwMessage(const QString& /*id*/)

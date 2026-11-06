@@ -605,6 +605,9 @@
 //   2026-10-26: CW transmit, a refused CWPitch write settles the window's
 //               cwPitchHz on the Core's value (R-CW-02). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-05: hot keys plan Task 4: this window's MOX key ending reaches
+//               the model. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -1264,6 +1267,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
         connect(m_remoteTransmit, &RemoteTransmitClient::refused, this,
                 [model](const QString& reason, const QString&, const QString&) {
                     if (model) { model->reportRemoteTransmitRefused(reason); }
+                });
+        connect(m_remoteTransmit, &RemoteTransmitClient::screenKeyDownChanged, this,
+                [model](bool down) {
+                    if (!down && model) { model->reportRemoteKeyWentOff(); }
                 });
     }
 

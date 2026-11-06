@@ -68,6 +68,8 @@
 //   2026-10-25: keepaliveTick sends the session copy even after the "tx"
 //               channel accepts the same sequence. J.J. Boyd (KG4VCF),
 //               AI-assisted via Grok.
+//   2026-11-05: hot keys plan Task 4: screenKeyDownChanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteTransmitClient.h"
@@ -964,6 +966,12 @@ void RemoteTransmitClient::reset()
 void RemoteTransmitClient::publish()
 {
     const QPointer<RemoteTransmitClient> self(this);
+    const bool screenDown = screenKeyDown();
+    if (screenDown != m_publishedScreenDown) {
+        m_publishedScreenDown = screenDown;
+        emit screenKeyDownChanged(screenDown);
+        if (!self) { return; }
+    }
     const bool down = micKeyDown();
     if (down != m_publishedKeyDown) {
         m_publishedKeyDown = down;

@@ -99,6 +99,8 @@
 //               session, same sequence. A relay drop of the channel copy
 //               was a quiet link: VOX turned off mid-transmission.
 //               J.J. Boyd (KG4VCF), AI-assisted via Grok.
+//   2026-11-05: hot keys plan Task 4: screenKeyDownChanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -296,6 +298,9 @@ signals:
     /// The Core refused the operator's press (or a release), in its words.
     void refused(const QString& reason, const QString& code, const QString& fix);
     void micKeyDownChanged(bool down);
+    /// screenKeyDown() changed. Emitted from publish(), as micKeyDownChanged,
+    /// which a program key on the same device can keep from changing.
+    void screenKeyDownChanged(bool down);
     /// 2026-10-15: programAudioKey() changed. Emitted from publish(), on
     /// this object's thread, before the call that changed it returns
     /// (keyForProgram, unkeyForProgram, an answer, a stop, a reset), also
@@ -391,6 +396,7 @@ private:
     quint32 m_coreStopSerial{0};   // fix wave M7
     bool m_coreTransmitting{false};
     bool m_publishedKeyDown{false};
+    bool m_publishedScreenDown{false};
     bool m_publishedProgramAudio{false};
     bool m_publishedHolds{false};
 };

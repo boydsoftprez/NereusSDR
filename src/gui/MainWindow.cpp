@@ -9764,6 +9764,10 @@ void MainWindow::buildUI()
     m_hotKeyBindings->load();
     m_hotKeyTargets = std::make_unique<MainWindowHotKeyTargets>(this);
     m_hotKeyDispatcher = std::make_unique<HotKeyDispatcher>(m_hotKeyBindings.get(), m_hotKeyTargets.get());
+    // A key off by any route ends the hold's claim on it, so letting go later
+    // can't drop a key made since.
+    connect(m_radioModel, &RadioModel::transmitKeyWentOff,
+            m_hotKeyDispatcher.get(), &HotKeyDispatcher::onTransmitWentOff);
 
     connect(m_containerManager, &ContainerManager::containerAdded, this,
             [this](const QString& id) {

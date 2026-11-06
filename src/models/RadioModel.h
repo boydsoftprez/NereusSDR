@@ -940,6 +940,9 @@
 //                 carried this Longpath code; the entry describes Longpath
 //                 only. Trunk's cwPitchHz()/setCwPitchHz()/cwPitchChanged
 //                 are its own (R-CW-02).]
+//   2026-11-05 - Hot keys plan Task 4: setHoldToTalk, reportRemoteKeyWentOff,
+//                transmitKeyWentOff. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -6243,6 +6246,12 @@ public slots:
     /// (first, keeping the manual key until their own ends; see the .cpp).
     void setMoxFromButton(bool on);
 
+    /// Hold to talk from a hot key. A remote window keys the Core with the
+    /// MOX button's screen key; otherwise the Space PTT source keys and
+    /// releases, so no PollPTT pass ends it. Callers release only a key this
+    /// hold made (HotKeyDispatcher's ledger).
+    void setHoldToTalk(bool down);
+
     /// TX rulings (JJ, 2026-09-30, item 1): what a press of the MOX button
     /// asks, given the way the button toggled (`toggledOn`). A local window
     /// asks what the button shows. A remote window toggles against its own
@@ -6266,6 +6275,10 @@ public slots:
 
     /// The Core refused this remote window's press, in the Core's words.
     void reportRemoteTransmitRefused(const QString& reason);
+
+    /// This remote window's MOX key ended (released, refused, or stopped by
+    /// the Core or the link).
+    void reportRemoteKeyWentOff();
 
     /// Query MOX (PTT).  Returns the current MOX latch state.
     /// From Thetis TCIServer.cs:3555-3558 [v2.10.3.13] — sendMOX.
@@ -7048,6 +7061,10 @@ signals:
     /// refused a MOX, TUNE or two-tone press from this remote window (or its
     /// release). Shown as a local refusal is; the buttons follow the Core.
     void remoteTransmitRefused(const QString& reason);
+    /// This station's own key went off, by any route: at the moment the
+    /// controller commits the unkey here, or when a remote window's MOX key
+    /// ends. Another device's key going off does not count.
+    void transmitKeyWentOff();
     void remoteMicSourceStateChanged();
     // Native audio plan Task 20 (R-AUD-24): pcMicStatus() changed.
     void pcMicStatusChanged();
