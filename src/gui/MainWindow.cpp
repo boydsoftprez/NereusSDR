@@ -11,6 +11,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: A window's fill at connect keeps a receiver's RIT and XIT.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Prioritize passive reports at the selected listening context.
@@ -4179,7 +4181,7 @@ void MainWindow::addSliceForWindow(const QString& panId)
         actions->addOnPan(panId);
         return;
     }
-    m_radioModel->addSliceOnPan(panId);
+    m_radioModel->addSliceOnPan(panId, /*restoreSavedState=*/false, /*newReceiver=*/true);
 }
 
 void MainWindow::closeSliceForWindow(int sliceId)
@@ -4302,7 +4304,7 @@ void MainWindow::runSliceChooserAction(SliceChooserAction action, int sliceId)
         if (m_panStack) {
             addSliceForWindow(m_panStack->activePanId());
         } else {
-            m_radioModel->addSlice(QString());
+            m_radioModel->addSlice(QString(), /*restoreSavedState=*/false, /*newReceiver=*/true);
         }
         return;
     }
@@ -20282,7 +20284,8 @@ void MainWindow::applyPanLayout(const QString& layoutId)
                 if (HostingSliceActions* hosting = hostingSlices()) {
                     hosting->addOnPan(emptyPan);
                 } else {
-                    m_radioModel->addSliceOnPan(emptyPan);
+                    m_radioModel->addSliceOnPan(emptyPan, /*restoreSavedState=*/false,
+                                                /*newReceiver=*/true);
                 }
             }
         }
@@ -20382,13 +20385,14 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
     for (const QString& emptyPan : model->pansWithoutSlices(panIds)) {
         // Slice control plan Task 11: a hosting window's new slice is the
         // station device's, asked for the way its +RX asks.
+        // Not asked for is the fill at connect, which brings back a saved
+        // layout's receiver and keeps its RIT and XIT. Asked for is a new
+        // receiver: the letter's preferences come back, RIT and XIT start off.
+        // A letter with nothing saved still opens on the active slice.
         if (hosting) {
-            hosting->addOnPan(emptyPan);
+            hosting->addOnPan(emptyPan, !operatorRequested);
         } else {
-            // A saved letter comes back whether or not the operator asked
-            // for the slice. addSliceImpl restores it. A letter with
-            // nothing saved still opens on the active slice.
-            model->addSliceOnPan(emptyPan, !operatorRequested);
+            model->addSliceOnPan(emptyPan, !operatorRequested, operatorRequested);
         }
     }
 }

@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//                letter used before too; a restored receiver keeps its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -16743,7 +16747,7 @@ bool RadioModel::requestTxHandoffToSlice(int sliceId)
     return true;
 }
 
-int RadioModel::addSlice(const QString& initialPanId, bool restoreSavedState)
+int RadioModel::addSlice(const QString& initialPanId, bool restoreSavedState, bool newReceiver)
 {
     // Remote-daemon R2: a remote client must not mint a slice id. Ids are
     // the STATION's (addSliceWithStationId's comment has the full reason),
@@ -16802,7 +16806,7 @@ int RadioModel::addSlice(const QString& initialPanId, bool restoreSavedState)
     // it does now. The body moved to addSliceImpl so a remote client can
     // reproduce the STATION's ids verbatim (addSliceWithStationId); no
     // behaviour changed on this path.
-    return addSliceImpl(-1, initialPanId, nullptr, false, restoreSavedState);
+    return addSliceImpl(-1, initialPanId, nullptr, false, restoreSavedState, newReceiver);
 }
 
 QString RadioModel::sliceCapReason(int cap) const
@@ -16862,7 +16866,7 @@ void RadioModel::publishReadySlices(int id)
 
 int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
                              const ReceiveSliceState* restoreSeed, bool bindRestored,
-                             bool restoreSavedState)
+                             bool restoreSavedState, bool newReceiver)
 {
     // iPhone app Task 73: `bindRestored` makes a device's saved slice again
     // while the radio runs (restoreSliceFor). It restores `restoreSeed`'s
@@ -17041,10 +17045,11 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         if (!self || !added) { return -1; }
         if (!restored) { delete slice; return -1; }
     }
-    // A letter that has been saved comes back on every local mint, before
+    // With restoreSavedState, a letter that has been saved comes back before
     // the slice binds and before a Core saves it. Same restore as
     // loadSliceState: the band the slice was last saved on, then that
-    // band's stored state, frequency and mode included.
+    // band's stored state, frequency and mode included. Without it, the
+    // letter's preferences come back below, after the creator's seed.
     //
     // Callers that pass restoreSavedState false (+RX, a layout change, the
     // session verbs) and a Core that manages the receive layout used to
@@ -17057,6 +17062,8 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // Fresh creation restores receiver preferences after its creator seed
     // below, without applying stale tuning, mode, filter or DDC rate from a reused
     // numeric letter (and without temporarily starting that saved RADE mode).
+    // 2026-11-05: JJ's ruling, a new receiver (newReceiver) starts with RIT
+    // and XIT off, so it transmits on its dial. Any other path keeps them.
     bool restoredSavedState = false;
     const auto savedLetterBand = SliceModel::loadLastBandFromSettings(index);
     if (!restoreSeed && role() == Role::Local && restoreSavedState) {
@@ -17144,6 +17151,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             seedFrom = mine;
         }
     }
+    bool forgetLetterRitXit = false;
     if (!restoreSeed && !restoredSavedState) {
         // A letter with nothing saved opens on this slice's frequency and
         // mode. Either way the new slice takes this slice's noise
@@ -17166,6 +17174,14 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             // cannot leave the new device on the constructor frequency.
             slice->restoreFromSettings(*savedLetterBand, false);
             if (!currentAdded()) { return -1; }
+            // Only a caller that says the slice is new loses the letter's
+            // RIT and XIT, so a path nobody thought about keeps them.
+            if (!newReceiver) {
+                slice->restoreRitXitFromSettings();
+                if (!currentAdded()) { return -1; }
+            } else {
+                forgetLetterRitXit = true;
+            }
         }
         if (seedFrom && seedFrom != slice) {
             slice->copyNoiseReductionFrom(*seedFrom);
@@ -17280,6 +17296,22 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         }
         delete slice;
         return -1;
+    }
+
+    // A new receiver on a used letter: the old offsets must not return at the
+    // next start, even on a receiver that saves nothing of its own. After the
+    // rollback above, because a refused add made no receiver and the letter
+    // loses nothing. While a saved layout is held the store stays as it is,
+    // like every other save: the refusal text sends the operator to +RX in
+    // just that state, and the held letter must keep its values.
+    //
+    // The save names no slice, and this runs before a first slice becomes
+    // active. It writes the removal without writing this slice's band values:
+    // before connect it sits on the constructor's frequency, which must not
+    // replace the letter's band memory or the band connect restores.
+    if (forgetLetterRitXit && !m_receiveLayoutPendingAdmission && !m_receiveLayoutProtected) {
+        slice->forgetSavedRitXit();
+        scheduleSettingsSave();
     }
 
     // Retuning re-runs the allocator: the slice may stay on its stream
@@ -18026,7 +18058,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
 // Phase 3F Sub-Epic C Task 7: AetherSDR-faithful +RX entry point.
 // Pattern from AetherSDR MainWindow.cpp:6849-6859 [@0cd4559a]
 // (+RX button handler).
-void RadioModel::addSliceOnPan(const QString& panId, bool restoreSavedState)
+void RadioModel::addSliceOnPan(const QString& panId, bool restoreSavedState, bool newReceiver)
 {
     // Remote-daemon R2: sent as its own verb rather than falling through
     // to addSlice's Role::Remote branch, because the two are not the same
@@ -18077,7 +18109,7 @@ void RadioModel::addSliceOnPan(const QString& panId, bool restoreSavedState)
     // pan", so it must not assert either answer: passing a bare `true` here
     // is what made ordinary +RX slices demand a third DDC and get refused on
     // a 2-DDC HL2 (Codex P1, PR #311).
-    addSlice(panId, restoreSavedState);
+    addSlice(panId, restoreSavedState, newReceiver);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
