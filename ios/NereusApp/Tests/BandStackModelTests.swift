@@ -381,4 +381,260 @@ struct BandStackModelTests {
         #expect(await Eventually.holds { secondModel.availability == .ready })
         await rig.close()
     }
+
+    // MARK: The block's readings and the band buttons
+
+    /// A Core with bands and the given additions, its catalogue delivered, slice A on `band`.
+    private func withBands(_ additions: FakeStation.Additions = [.all, .bandStack], band: Int = 3) async throws -> Rig {
+        let rig = try await connected(additions: additions)
+        let json = try #require(MainScreenTests.catalogueJSON())
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(rig.station.catalogue(json))),
+            .init(ordinal: 1, name: "revision", value: .i64(2)),
+        ])))
+        #expect(await Eventually.holds { rig.band.catalog != nil && rig.app.main.pan.canSelectBand })
+        await setBand(rig, slice: 0, band)
+        return rig
+    }
+
+    private func setBand(_ rig: Rig, slice: Int, _ band: Int) async {
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:\(slice)", properties: [
+            .init(ordinal: 14, name: "band", value: .enumeration(Int64(band))),
+        ])))
+        #expect(await Eventually.holds { rig.slices.entries.first { $0.id == slice }?.band == band })
+    }
+
+    private func selectBands(_ station: FakeStation) -> [LinkMessage.CommandInvoke] {
+        station.messages.compactMap {
+            if case .commandInvoke(let invoke) = $0, invoke.verb == PanSheetModel.selectBandVerb {
+                return invoke
+            }
+            return nil
+        }
+    }
+
+    @Test("the grid's labels and the slice's band numbers are the Core's band keys")
+    func bandKeys() {
+        #expect(BandStackModel.bandKey(label: "40") == "40m")
+        #expect(BandStackModel.bandKey(label: "2") == "2m")
+        #expect(BandStackModel.bandKey(label: "WWV") == "WWV")
+        let bands = [(id: 3, label: "40"), (id: 27, label: "2"), (id: 12, label: "WWV")]
+        #expect(BandStackModel.bandKey(id: 3, bands: bands) == "40m")
+        #expect(BandStackModel.bandKey(id: 27, bands: bands) == "2m")
+        #expect(BandStackModel.bandKey(id: 11, bands: bands) == "GEN")
+        #expect(BandStackModel.bandKey(id: 13, bands: bands) == "XVTR")
+        #expect(BandStackModel.bandKey(id: 99, bands: bands) == nil)
+        #expect(BandStackModel.bandKey(id: nil, bands: bands) == nil)
+    }
+
+    @Test("with the capability a band's press goes through the stack, lit or not, and a menu showing it stays open")
+    func pressThroughTheStack() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        let pan = rig.app.main.pan
+        #expect(await Eventually.holds { stack.availability == .ready && stack.currentBand == "40m" })
+        #expect(pan.pressBand(3, stack: stack))
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 1 })
+        var sent = rig.station.bandStackCommands[0]
+        #expect(sent.verb == "bandStack.press")
+        #expect(args(sent)["band"] == .utf8("40m"))
+        #expect(args(sent)["direction"] == .utf8("next"))
+        #expect(pan.pressBand(5, stack: stack))
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 2 })
+        sent = rig.station.bandStackCommands[1]
+        #expect(args(sent)["band"] == .utf8("20m"))
+        #expect(args(sent)["direction"] == .utf8("next"))
+        #expect(selectBands(rig.station).isEmpty)
+        await rig.close()
+    }
+
+    @Test("without the capability a band's press opens it as today, and a menu closes on it")
+    func pressOnAnOlderCore() async throws {
+        let rig = try await withBands(.all)
+        let stack = rig.stack
+        let pan = rig.app.main.pan
+        #expect(await Eventually.holds { stack.availability == .needsNewerCore })
+        #expect(!pan.pressBand(5, stack: stack))
+        #expect(await Eventually.holds { selectBands(rig.station).count == 1 })
+        #expect(selectBands(rig.station)[0].args == [.init(name: "sliceId", value: .i64(0)),
+                                                     .init(name: "band", value: .i64(5))])
+        #expect(rig.station.bandStackCommands.isEmpty)
+        #expect(stack.unavailableReason == BandStackModel.needsNewerCoreText)
+        await rig.close()
+    }
+
+    @Test("the list shown is the slice's band until another is picked, and the slice getting there ends the view")
+    func viewingAnotherBand() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.currentBand == "40m" && stack.availability == .ready })
+        #expect(stack.shownBand == "40m")
+        #expect(!stack.isViewingAnotherBand)
+        // Picking its own band is no view at all, and a pick sends nothing.
+        stack.showBand("40m")
+        #expect(!stack.isViewingAnotherBand)
+        stack.showBand("20m")
+        #expect(stack.shownBand == "20m")
+        #expect(stack.isViewingAnotherBand)
+        #expect(rig.station.bandStackCommands.isEmpty)
+        // A press goes back to the slice's list.
+        stack.press(bandKey: "40m", .next)
+        #expect(!stack.isViewingAnotherBand)
+        // The slice reaching the list being read ends the view.
+        stack.showBand("20m")
+        await setBand(rig, slice: 0, 5)
+        #expect(await Eventually.holds { stack.currentBand == "20m" && !stack.isViewingAnotherBand })
+        #expect(stack.shownBand == "20m")
+        await rig.close()
+    }
+
+    @Test("another active slice ends the view: the list follows the controls")
+    func activeSliceEndsTheView() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.currentBand == "40m" })
+        stack.showBand("20m")
+        #expect(stack.isViewingAnotherBand)
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 11, name: "active", value: .bool(false)),
+        ])))
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+            .init(ordinal: 11, name: "active", value: .bool(true)),
+        ])))
+        #expect(await Eventually.holds { rig.slices.activeSliceId == 1 && !stack.isViewingAnotherBand })
+        await rig.close()
+    }
+
+    @Test("the count reads the slice's place in the list, a dash with none, and what is saved on another band")
+    func countText() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.currentBand == "40m" && stack.stack != nil })
+        #expect(stack.countText(band: "40m") == "1 of 2")
+        #expect(stack.countText(band: "20m") == "1 saved")
+        #expect(stack.countText(band: "6m") == "0 saved")
+        #expect(stack.activeSlicePlace(band: "40m") == "40m-net")
+        await setBand(rig, slice: 0, 1)
+        // The sample has A on no 80 m entry.
+        #expect(await Eventually.holds { stack.currentBand == "80m" })
+        #expect(stack.countText(band: "80m") == "- of 1")
+        await rig.close()
+    }
+
+    @Test("the picker lists the Core's grid in its order, then any other band the stack or the slice is on")
+    func pickerBands() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.currentBand == "40m" && stack.stack != nil })
+        let grid = FakeStation.bands.map { BandStackModel.bandKey(label: $0.label) }
+        #expect(stack.pickerBands == grid)
+        await setBand(rig, slice: 0, 11)
+        #expect(await Eventually.holds { stack.currentBand == "GEN" })
+        #expect(stack.pickerBands == grid + ["GEN"])
+        await rig.close()
+    }
+
+    @Test("a row shows another slice standing on it, and not the active slice or one on another band")
+    func otherSlicesOnARow() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.stack != nil && stack.currentBand == "40m" })
+        let entry = try #require(stack.stack?.entries(band: "20m").first)
+        #expect(stack.otherSlices(on: entry).isEmpty)
+        await setBand(rig, slice: 1, 5)
+        #expect(await Eventually.holds { stack.otherSlices(on: entry).map(\.letter) == ["B"] })
+        let own = try #require(stack.stack?.entries(band: "40m").first)
+        #expect(stack.otherSlices(on: own).isEmpty)
+        await rig.close()
+    }
+
+    @Test("a row's tint is the segment of the plan the band's strip shows")
+    func tintFromTheBandsPlan() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        let plan = try #require(rig.band.shownPlan)
+        let segment = try #require(plan.segments.first { $0.highHz > $0.lowHz })
+        let inside = Int64((segment.lowHz + segment.highHz) / 2)
+        #expect(stack.tintColour(hz: inside) == plan.segments.first { $0.lowHz <= Double(inside) && Double(inside) <= $0.highHz }?.colour)
+        #expect(stack.tintColour(hz: inside) != nil)
+        #expect(stack.tintColour(hz: 1) == nil)
+        await rig.close()
+    }
+
+    @Test("Done sends every id: the order made here, less what went, with what came at the foot")
+    func reorderSendsEveryId() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.stack != nil })
+        #expect(stack.reorderIds(working: ["40m-ssb", "40m-net"], band: "40m") == ["40m-ssb", "40m-net"])
+        #expect(stack.reorderIds(working: ["gone", "40m-ssb"], band: "40m") == ["40m-ssb", "40m-net"])
+        stack.reorder(bandKey: "40m", ids: stack.reorderIds(working: ["40m-ssb", "40m-net"], band: "40m"))
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 1 })
+        let sent = rig.station.bandStackCommands[0]
+        #expect(args(sent)["band"] == .utf8("40m"))
+        #expect(args(sent)["ids"] == .utf8("[\"40m-ssb\",\"40m-net\"]"))
+        await rig.close()
+    }
+
+    @Test("Reorder is a mode on the list on show: moves send nothing, Done sends every id, leaving the list ends it")
+    func reorderMode() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.stack != nil && stack.currentBand == "40m" })
+        stack.toggleReorder()
+        #expect(stack.reorder == BandStackModel.Reorder(band: "40m", ids: ["40m-net", "40m-ssb"]))
+        stack.moveInReorder("40m-net", by: 5)
+        #expect(stack.reorder?.ids == ["40m-ssb", "40m-net"])
+        stack.moveInReorder("40m-net", by: -9)
+        #expect(stack.reorder?.ids == ["40m-net", "40m-ssb"])
+        stack.moveInReorder("40m-net", by: 1)
+        #expect(rig.station.bandStackCommands.isEmpty)
+        // Looking at another band ends the mode, with nothing sent.
+        stack.showBand("20m")
+        #expect(stack.reorder == nil)
+        stack.showBand(nil)
+        stack.toggleReorder()
+        stack.moveInReorder("40m-net", by: 1)
+        stack.toggleReorder()
+        #expect(stack.reorder == nil)
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 1 })
+        #expect(args(rig.station.bandStackCommands[0])["ids"] == .utf8("[\"40m-ssb\",\"40m-net\"]"))
+        // Closing the sheet ends the view and the mode.
+        stack.showBand("20m")
+        stack.toggleReorder()
+        #expect(stack.reorder?.band == "20m")
+        stack.endViewing()
+        #expect(stack.reorder == nil && !stack.isViewingAnotherBand)
+        await rig.close()
+    }
+
+    @Test("Rename sends the typed name once, trimmed, and nothing when it has not changed")
+    func rename() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.stack != nil })
+        let net = try #require(stack.stack?.entries(band: "40m").first { $0.id == "40m-net" })
+        stack.startRename(net)
+        #expect(stack.renaming == "40m-net" && stack.renameDraft == "Evening net")
+        stack.finishRename()
+        #expect(stack.renaming == nil)
+        stack.startRename(net)
+        stack.renameDraft = "  Morning net "
+        stack.finishRename()
+        stack.finishRename()
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 1 })
+        #expect(args(rig.station.bandStackCommands[0]) == ["entryId": .utf8("40m-net"), "name": .utf8("Morning net")])
+        // Leaving the list drops what was typed.
+        stack.startRename(net)
+        stack.showBand("20m")
+        #expect(stack.renaming == nil)
+        await rig.close()
+    }
+
+    @Test("a row's frequency drops hertz of zero and keeps any others")
+    func rowFrequency() {
+        #expect(BandStackBlock.frequencyText(7_185_000) == "7.185")
+        #expect(BandStackBlock.frequencyText(7_185_250) == "7.185.250")
+        #expect(BandStackBlock.frequencyText(14_074_000) == "14.074")
+    }
 }

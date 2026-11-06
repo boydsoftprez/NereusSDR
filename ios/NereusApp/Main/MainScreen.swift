@@ -964,7 +964,7 @@ struct MainScreen: View {
             // The pan last touched's sheet, with Add a pan and Close this pan.
             let controls = main.controls(for: main.toolbarPan)
             PanSheet(model: controls.sheet, sliceColour: main.sliceColour, pan: controls.pan, stack: main.panStack,
-                     slices: controls.band.slices)
+                     slices: controls.band.slices, bandStack: controls.bandStack)
         case .display:
             if let source = main.displayPillSource {
                 DisplayDropSheet(pages: source.pages, source: source, main: main, tab: $displayTab,

@@ -39,6 +39,53 @@ final class BandStackModel: ObservableObject {
     /// The Core's words for what it last refused, as sent, until closed or
     /// until the Core answers the next verb.
     @Published var note: String?
+    /// The band whose list this device is reading, when it is not the active
+    /// slice's: this device's own, and never sent. Set from "40m \u{25BE}" or a
+    /// hold on a band button; it ends when the slice gets there.
+    @Published private(set) var viewedBand: String?
+    /// The active slice's band key, nil with no active slice or a band the
+    /// Core has not said.
+    @Published private(set) var currentBand: String?
+    /// There is an active slice for a verb to act on.
+    @Published private(set) var hasActiveSlice = false
+    /// This pan's slices and the bands they are on, for a row's letters.
+    @Published private(set) var slicesOnBands: [SliceOnBand] = []
+
+    /// Reorder's working order, which nothing sends until Done; nil out of the
+    /// mode. It is held here because the sheets redraw the block when it
+    /// starts to scroll, and the mode outlives that.
+    @Published private(set) var reorder: Reorder?
+
+    /// The entry whose name is being typed in its row, and what is typed. Held
+    /// here for the same reason as ``reorder``.
+    @Published private(set) var renaming: String?
+    @Published var renameDraft = ""
+
+    struct Reorder: Equatable {
+        let band: String
+        var ids: [String]
+    }
+
+    /// A slice of this pan's and where it is.
+    struct SliceOnBand: Equatable {
+        let id: Int
+        let letter: String
+        let colour: String
+        let bandKey: String?
+    }
+
+    /// How long a hold on a band button takes to open its list.
+    static let holdSeconds = 0.5
+
+    /// The list on show: the one picked, else the active slice's band.
+    var shownBand: String? {
+        viewedBand ?? currentBand
+    }
+
+    /// The list on show is not the slice's own, so the arrows and add wait.
+    var isViewingAnotherBand: Bool {
+        viewedBand != nil
+    }
 
     /// Why the stack is greyed; nil while it is ready.
     var unavailableReason: String? {
@@ -63,6 +110,8 @@ final class BandStackModel: ObservableObject {
     /// The last `lastRecall.seq` read; nil until a document says what has
     /// already happened, which is not news.
     private var seenRecallSeq: Int?
+    private var sliceReadQueued = false
+    private var lastActiveSliceId: Int?
     /// The newest verb sent: an older one's answer does not replace its note.
     private var touches: UInt64 = 0
     private static let logger = Logger(subsystem: "NereusSDR", category: "band.stack")
@@ -90,7 +139,196 @@ final class BandStackModel: ObservableObject {
         store.$objectKeys.dropFirst().sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &watches)
+        // A slice's reading moves often and a document is costly to read, so
+        // these read only the slices, once per turn of the main queue.
+        slices.$entries.dropFirst().sink { [weak self] _ in
+            self?.queueSliceRead()
+        }.store(in: &watches)
+        slices.$activeSliceId.dropFirst().sink { [weak self] _ in
+            self?.queueSliceRead()
+        }.store(in: &watches)
+        band?.$catalog.dropFirst().sink { [weak self] _ in
+            self?.objectWillChange.send()
+            self?.queueSliceRead()
+        }.store(in: &watches)
+        band?.$stationPlanName.dropFirst().sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &watches)
+        readSlices()
         refresh()
+    }
+
+    // MARK: What the block shows
+
+    /// The Core's key for a band button's label: the grid's "40" is the
+    /// stack's "40m", and "WWV" is itself
+    /// (src/models/BandGrid.h:56-72, its two label columns).
+    static func bandKey(label: String) -> String {
+        !label.isEmpty && label.allSatisfy(\.isNumber) ? label + "m" : label
+    }
+
+    /// A band number outside the grid that a slice can still stand on.
+    // From src/models/Band.h:119-133 (enum class Band: GEN 11, XVTR 13)
+    private static let offGridBandKeys = [11: "GEN", 13: "XVTR"]
+
+    /// The Core's key for a slice's band number, nil for one this phone cannot name.
+    static func bandKey(id: Int?, bands: [(id: Int, label: String)]) -> String? {
+        guard let id else {
+            return nil
+        }
+        return bands.first { $0.id == id }.map { bandKey(label: $0.label) } ?? offGridBandKeys[id]
+    }
+
+    /// The bands "40m \u{25BE}" lists: the Core's grid in its order, then any
+    /// other band the stack or the slice is on.
+    var pickerBands: [String] {
+        var keys = band?.catalog?.bands?.map { Self.bandKey(label: $0.label) } ?? []
+        for key in (stack?.entries.map(\.band) ?? []) + [currentBand].compactMap({ $0 }) where !keys.contains(key) {
+            keys.append(key)
+        }
+        return keys
+    }
+
+    /// The active slice's place in a band's list: "6 of 6", with a dash where
+    /// it has none, or how many are saved on a band it is not on.
+    func countText(band key: String) -> String {
+        let entries = stack?.entries(band: key) ?? []
+        guard key == currentBand else {
+            return "\(entries.count) saved"
+        }
+        if let id = activeSlicePlace(band: key), let index = entries.firstIndex(where: { $0.id == id }) {
+            return "\(index + 1) of \(entries.count)"
+        }
+        return "- of \(entries.count)"
+    }
+
+    /// The entry the active slice stands on in a band.
+    func activeSlicePlace(band key: String) -> String? {
+        guard let id = slices.activeSliceId else {
+            return nil
+        }
+        return stack?.place(slice: BandSlice.letter(forIndex: id), band: key)
+    }
+
+    /// The letters of this pan's other slices standing on an entry.
+    func otherSlices(on entry: BandStack.Entry) -> [SliceOnBand] {
+        slicesOnBands.filter { slice in
+            slice.id != slices.activeSliceId && slice.bandKey == entry.band
+                && stack?.place(slice: slice.letter, band: entry.band) == entry.id
+        }
+    }
+
+    /// The colour of the band plan's segment at a frequency: the same plan the
+    /// band's strip draws (``BandModel/shownPlan``).
+    func tintColour(hz: Int64) -> String? {
+        band?.shownPlan?.segments.first { $0.lowHz <= Double(hz) && Double(hz) <= $0.highHz }?.colour
+    }
+
+    /// Shows a band's list, the slice's own being no view at all.
+    func showBand(_ key: String?) {
+        viewedBand = key == currentBand ? nil : key
+        renaming = nil
+        endReorderIfElsewhere()
+    }
+
+    /// The sheet or menu showing the block has closed.
+    func endViewing() {
+        viewedBand = nil
+        reorder = nil
+        renaming = nil
+    }
+
+    /// Rename: the row takes the entry's name to edit.
+    func startRename(_ entry: BandStack.Entry) {
+        renameDraft = entry.name
+        renaming = entry.id
+    }
+
+    /// Ends Rename, sending the name only when it has changed. An empty name clears it.
+    func finishRename() {
+        guard let id = renaming else {
+            return
+        }
+        renaming = nil
+        let name = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if stack?.entries.first(where: { $0.id == id })?.name != name {
+            edit(id, name: name, locked: nil)
+        }
+    }
+
+    /// Reorder's button: into the mode for the list on show, or Done, which
+    /// sends every id.
+    func toggleReorder() {
+        if let reorder {
+            self.reorder = nil
+            self.reorder(bandKey: reorder.band, ids: reorderIds(working: reorder.ids, band: reorder.band))
+        } else if let band = shownBand {
+            reorder = Reorder(band: band, ids: stack?.entries(band: band).map(\.id) ?? [])
+        }
+    }
+
+    /// Moves a row in Reorder's working order, within the list's ends.
+    func moveInReorder(_ id: String, by places: Int) {
+        guard var ids = reorder?.ids, let from = ids.firstIndex(of: id) else {
+            return
+        }
+        ids.remove(at: from)
+        ids.insert(id, at: max(0, min(ids.count, from + places)))
+        reorder?.ids = ids
+    }
+
+    /// The list on show changed or went: the mode ends and nothing is sent.
+    private func endReorderIfElsewhere() {
+        if let reorder, reorder.band != shownBand || availability != .ready {
+            self.reorder = nil
+        }
+    }
+
+    /// What Done sends: the order made here, without what has gone since and
+    /// with what has come since at the foot, since the Core takes a band's
+    /// whole list and only that.
+    func reorderIds(working: [String], band key: String) -> [String] {
+        let current = stack?.entries(band: key).map(\.id) ?? []
+        return working.filter(current.contains) + current.filter { !working.contains($0) }
+    }
+
+    private func queueSliceRead() {
+        guard !sliceReadQueued else {
+            return
+        }
+        sliceReadQueued = true
+        Task { @MainActor [weak self] in
+            self?.sliceReadQueued = false
+            self?.readSlices()
+        }
+    }
+
+    private func readSlices() {
+        let bands = band?.catalog?.bands?.map { (id: $0.id, label: $0.label) } ?? []
+        let activeId = slices.activeSliceId
+        if activeId != lastActiveSliceId {
+            lastActiveSliceId = activeId
+            viewedBand = nil
+        }
+        let on = slices.entries.map { entry in
+            SliceOnBand(id: entry.id, letter: BandSlice.letter(forIndex: entry.id), colour: entry.slice.colour,
+                        bandKey: Self.bandKey(id: entry.band, bands: bands))
+        }
+        if on != slicesOnBands {
+            slicesOnBands = on
+        }
+        let current = activeId == nil ? nil : on.first { $0.id == activeId }?.bandKey
+        if current != currentBand {
+            currentBand = current
+        }
+        if hasActiveSlice != (activeId != nil) {
+            hasActiveSlice = activeId != nil
+        }
+        // The slice has got to the list being read.
+        if viewedBand != nil, viewedBand == currentBand {
+            viewedBand = nil
+        }
+        endReorderIfElsewhere()
     }
 
     // MARK: The verbs
@@ -98,6 +336,8 @@ final class BandStackModel: ObservableObject {
     /// A band button: on another band the Core saves and leaves, and on this
     /// band it steps.
     func press(bandKey: String, _ direction: Direction) {
+        viewedBand = nil
+        endReorderIfElsewhere()
         sendOnSlice("bandStack.press", [text("band", bandKey), text("direction", direction.rawValue)])
     }
 
@@ -317,6 +557,7 @@ final class BandStackModel: ObservableObject {
         if state != availability {
             availability = state
         }
+        endReorderIfElsewhere()
         follow(next?.lastRecall)
     }
 

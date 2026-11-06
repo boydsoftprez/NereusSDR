@@ -7,6 +7,8 @@
 // the swipes' never-key tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable fix wave: the hold record names a quick tap's
 // unkey. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-06: band stack plan Task 15, a Core with a band stack for the UI
+// tests of the stack block. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #if DEBUG
 import Combine
@@ -51,6 +53,16 @@ enum UITestBand {
     /// Core, and the keyed meters show while keyed. The app keeps no
     /// microphone with it, so nothing asks iOS for one.
     static let keyedArgument = "-NereusKeyedFixture"
+    /// Beside ``bandMenuArgument`` and ``bandStackEnvironment``: a Core with a
+    /// band stack that opens bands. Each `bandStack.*` verb and
+    /// `slice.selectBand` is refused with its own arguments in the reason, so
+    /// the UI test reads what was sent.
+    static let bandStackArgument = "-NereusBandStackFixture"
+    /// Beside ``bandMenuArgument``: a Core that opens bands and has no band
+    /// stack, with `slice.selectBand` answered as ``bandStackArgument`` does.
+    static let bandSelectArgument = "-NereusBandSelectFixture"
+    /// The file holding the band stack's document (the shared sample).
+    static let bandStackEnvironment = "NEREUS_UITEST_BANDSTACK"
 
     /// Whether the launch arguments ask for ``keyedArgument``.
     static func keyed(_ arguments: [String]) -> Bool {
@@ -115,6 +127,10 @@ enum UITestBand {
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         }
         let roundtable = arguments.contains(roundtableArgument)
+        let bandStack = arguments.contains(bandStackArgument) ? environment[bandStackEnvironment].flatMap { path in
+            FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
+        } : nil
+        let bandSelect = bandStack != nil || arguments.contains(bandSelectArgument)
         app.useBandFixturePropertySender { [weak mirror] write in
             guard write.properties.count == 1, let entry = write.properties.first,
                   write.key == "slice:0" && entry.name == "afGain"
@@ -145,7 +161,16 @@ enum UITestBand {
           + (twoPans ? [.init(ordinal: 9, name: "effectiveMaxSlices", value: .i64(4)),
                         .init(ordinal: 10, name: "userDdcCount", value: .i64(2))] : [])
           + (keyed ? [.init(ordinal: 11, name: "txPermitted", value: .bool(true))] : [])
-          + (roundtable ? [.init(ordinal: 12, name: RoundtableModel.capabilityName, value: .i64(1))] : []))))
+          + (roundtable ? [.init(ordinal: 12, name: RoundtableModel.capabilityName, value: .i64(1))] : [])
+          + (bandSelect ? [.init(ordinal: 13, name: PanSheetModel.bandSelectCapability, value: .i64(1))] : [])
+          + (bandStack == nil ? [] : [.init(ordinal: 14, name: BandStack.capability, value: .i64(1))]))))
+        if let bandStack {
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: BandStack.objectKey, className: "BandStackFacade",
+                                                               properties: [
+                .init(ordinal: 0, name: "json", value: .utf8(bandStack)),
+                .init(ordinal: 1, name: "revision", value: .i64(1)),
+            ])))
+        }
         if let display {
             mirror.apply(.schema(.init(className: "SetupDescription", fields: [
                 .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "display", kind: .utf8),
@@ -309,6 +334,7 @@ enum UITestBand {
         let notchVerb = PanSheetModel.addNotchAtVerb
         let sliceVerb = PanSheetModel.addSliceVerb
         let notchAtSliceVerb = PanSheetModel.addNotchVerb
+        let selectBandVerb = PanSheetModel.selectBandVerb
         app.useBandFixtureCommandSender { [weak settings] message in
             switch message {
             case .settingsWrite(let write):
@@ -328,7 +354,8 @@ enum UITestBand {
                 }
             case .commandInvoke(let invoke) where keyed && invoke.verb == "tx.keepalive":
                 break
-            case .commandInvoke(let invoke) where [notchVerb, sliceVerb, notchAtSliceVerb].contains(invoke.verb):
+            case .commandInvoke(let invoke) where [notchVerb, sliceVerb, notchAtSliceVerb, selectBandVerb]
+                .contains(invoke.verb) || invoke.verb.hasPrefix("bandStack."):
                 let reason = "UI fixture: " + (invoke.verb == notchVerb ? notchText(invoke.args)
                                                                         : argumentsText(invoke.verb, invoke.args))
                 Task {

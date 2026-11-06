@@ -1,0 +1,327 @@
+// NereusSDR for iOS: the band stack block under a finger: a hold on a band, its picker, its menus, Reorder, and the BAND menu staying open
+// SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
+
+import XCTest
+
+// UI tests drive the running app through XCUIApplication, which only
+// XCTest provides; swift-testing has no UI testing.
+//
+// The fixture's Core refuses each verb with its arguments in the reason, so
+// what was sent reads back in the block's note, and no note means no command.
+final class BandStackUITests: XCTestCase {
+    override func setUp() {
+        continueAfterFailure = false
+    }
+
+    override func tearDown() {
+        MainActor.assumeIsolated {
+            XCUIDevice.shared.orientation = .portrait
+        }
+    }
+
+    /// The gesture pairing on `PanelButton`: a half-second hold on a band shows
+    /// its list and sends nothing, and the finger's lift is not a tap. A tap
+    /// after it still presses, and "40m" is the visible way to the same list.
+    @MainActor
+    func testHoldOnABandOpensItsListAndSendsNothing() throws {
+        let app = launchOnPanSheet()
+        let block = app.descendants(matching: .any)["bandStackBlock"]
+        XCTAssertTrue(block.waitForExistence(timeout: 10), "The Pan sheet has no stack block")
+        let count = element(app, "bandStackCount")
+        XCTAssertTrue(waitUntil { count.exists && count.label == "1 of 2" }, "40m reads \(count.label)")
+        save("band-stack-pan-sheet")
+
+        let twenty = app.buttons["bandGrid.20"]
+        twenty.press(forDuration: 0.8)
+        XCTAssertTrue(waitUntil { count.label == "1 saved" }, "The hold did not show 20m's list: \(count.label)")
+        XCTAssertTrue(element(app, "bandStackRow.20m-ft8").waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["bandStackPrevious"].isEnabled, "The arrows act while viewing another band")
+        XCTAssertFalse(app.buttons["bandStackNext"].isEnabled)
+        XCTAssertFalse(app.buttons["bandStackAdd"].isEnabled, "Add acts while viewing another band")
+        XCTAssertTrue(element(app, "bandStackReason").exists, "The grey arrows carry no reason")
+        settle()
+        XCTAssertFalse(element(app, "bandStackNote").exists, "The hold sent a command")
+        save("band-stack-viewing-another")
+
+        // A hold's flag does not swallow the next tap, and a short tap is no hold.
+        twenty.tap()
+        let note = element(app, "bandStackNote")
+        XCTAssertTrue(note.waitForExistence(timeout: 10), "The tap after a hold sent nothing")
+        XCTAssertTrue(note.label.contains("bandStack.press"), note.label)
+        XCTAssertTrue(note.label.contains("band 20m"), note.label)
+        XCTAssertTrue(note.label.contains("direction next"), note.label)
+        // A press goes back to the slice's list.
+        XCTAssertTrue(waitUntil { count.label == "1 of 2" })
+
+        // A hold that slides off the button before lifting leaves the next tap alone.
+        let from = twenty.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        from.press(forDuration: 0.8, thenDragTo: from.withOffset(CGVector(dx: 0, dy: 200)))
+        XCTAssertTrue(waitUntil { count.label == "1 saved" }, "The hold and slide did not show 20m's list")
+        app.buttons["bandGrid.40"].tap()
+        XCTAssertTrue(waitUntil { note.exists && note.label.contains("band 40m") },
+                      "The tap after a slid hold was swallowed: \(note.exists ? note.label : "no note")")
+        XCTAssertTrue(waitUntil { count.label == "1 of 2" })
+
+        // The visible way to the same list.
+        app.buttons["bandStackNoteClose"].tap()
+        XCTAssertTrue(note.waitForNonExistence(timeout: 5), "The note did not close")
+        app.buttons["bandStackPicker"].tap()
+        XCTAssertTrue(app.staticTexts["Show the stack for"].waitForExistence(timeout: 5), "The picker has no heading")
+        save("band-stack-picker")
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "80m")).firstMatch.tap()
+        XCTAssertTrue(waitUntil { count.label == "1 saved" }, "The picker did not show 80m's list")
+        XCTAssertTrue(element(app, "bandStackRow.80m-low").waitForExistence(timeout: 5))
+        settle()
+        XCTAssertFalse(note.exists, "The picker sent a command")
+    }
+
+    /// Spec section 8: the row's five items and the band's return and clear,
+    /// each sending its verb.
+    @MainActor
+    func testRowAndBandMenus() throws {
+        let app = launchOnPanSheet()
+        let note = element(app, "bandStackNote")
+        let rowMenu = app.buttons["bandStackRowMenu.40m-ssb"]
+        XCTAssertTrue(rowMenu.waitForExistence(timeout: 10))
+        rowMenu.tap()
+        for item in ["Save this spot here", "Rename", "Lock", "Always return here", "Delete"] {
+            XCTAssertTrue(choice(app, item).waitForExistence(timeout: 5), "The row's menu has no \(item)")
+        }
+        save("band-stack-row-menu")
+        choice(app, "Always return here").tap()
+        XCTAssertTrue(waitUntil { note.exists && note.label.contains("bandStack.setReturn") },
+                      "Always return here sent nothing")
+        XCTAssertTrue(note.label.contains("mode specific") && note.label.contains("entryId 40m-ssb"), note.label)
+
+        // The net is locked: Unlock in place of Lock, and nothing saved over it.
+        let lockedMenu = app.buttons["bandStackRowMenu.40m-net"]
+        lockedMenu.tap()
+        XCTAssertTrue(choice(app, "Unlock").waitForExistence(timeout: 5), "A locked row offers no Unlock")
+        XCTAssertFalse(choice(app, "Save this spot here").isEnabled, "A locked row can be saved over")
+        choice(app, "Unlock").tap()
+        XCTAssertTrue(waitUntil { note.label.contains("bandStack.edit") && note.label.contains("entryId 40m-net") },
+                      note.label)
+
+        rowMenu.tap()
+        choice(app, "Rename").tap()
+        let field = app.textFields["bandStackRenameField"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Rename has no field")
+        save("band-stack-rename")
+        field.typeText("Rag chew\n")
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "Return did not end Rename")
+        XCTAssertTrue(waitUntil { note.label.contains("name Rag chew") }, note.label)
+
+        app.buttons["bandStackBandMenu"].tap()
+        for item in ["Current entry", "Last frequency used", "Specific entry", "Clear unlocked 40m entries"] {
+            XCTAssertTrue(choice(app, item).waitForExistence(timeout: 5), "The band's menu has no \(item)")
+        }
+        save("band-stack-band-menu")
+        choice(app, "Last frequency used").tap()
+        XCTAssertTrue(waitUntil { note.label.contains("mode lastUsed") }, note.label)
+        app.buttons["bandStackBandMenu"].tap()
+        choice(app, "Clear unlocked 40m entries").tap()
+        let clear = app.buttons["Clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 5), "Clear asks nothing")
+        save("band-stack-clear")
+        clear.tap()
+        XCTAssertTrue(waitUntil { note.label.contains("bandStack.clear") && note.label.contains("band 40m") }, note.label)
+
+        // The arrows and add, on the slice's own band.
+        app.buttons["bandStackNext"].tap()
+        XCTAssertTrue(waitUntil { note.label.contains("bandStack.step") && note.label.contains("direction next") }, note.label)
+        app.buttons["bandStackPrevious"].tap()
+        XCTAssertTrue(waitUntil { note.label.contains("direction previous") }, note.label)
+        app.buttons["bandStackAdd"].tap()
+        XCTAssertTrue(waitUntil { note.label.contains("bandStack.add") }, note.label)
+        // A row's tap goes there.
+        app.buttons["bandStackRow.40m-ssb"].tap()
+        XCTAssertTrue(waitUntil { note.label.contains("bandStack.goTo") && note.label.contains("entryId 40m-ssb") }, note.label)
+    }
+
+    /// Grips only in the mode, a drag and the grip's tap each moving a row, and
+    /// every id sent on Done.
+    @MainActor
+    func testReorderIsAModeThatSendsEveryIdOnDone() throws {
+        let app = launchOnPanSheet()
+        let reorder = app.buttons["bandStackReorder"]
+        XCTAssertTrue(reorder.waitForExistence(timeout: 10))
+        XCTAssertEqual(reorder.label, "Reorder")
+        let gripNet = element(app, "bandStackGrip.40m-net")
+        let gripSsb = element(app, "bandStackGrip.40m-ssb")
+        XCTAssertFalse(gripNet.exists, "A grip shows out of the mode")
+        reorder.tap()
+        XCTAssertTrue(gripNet.waitForExistence(timeout: 5), "The mode has no grips")
+        XCTAssertFalse(app.buttons["bandStackRowMenu.40m-net"].exists, "A row's menu shows in the mode")
+        XCTAssertEqual(reorder.label, "Done")
+        save("band-stack-reorder")
+
+        // Nothing goes yet: a drag moves the net below the other row.
+        gripNet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: gripSsb.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)))
+        XCTAssertTrue(waitUntil { gripSsb.frame.minY < gripNet.frame.minY }, "The drag moved nothing")
+        settle()
+        XCTAssertFalse(element(app, "bandStackNote").exists, "A move sent a command")
+
+        // The way with no drag: the grip's tap, Move up.
+        gripNet.tap()
+        let up = app.buttons["Move up"]
+        XCTAssertTrue(up.waitForExistence(timeout: 5), "The grip's tap offers no Move up")
+        save("band-stack-reorder-move")
+        up.tap()
+        XCTAssertTrue(waitUntil { gripNet.frame.minY < gripSsb.frame.minY }, "Move up moved nothing")
+        // And back down, for the order to be read on Done.
+        gripNet.tap()
+        XCTAssertTrue(app.buttons["Move down"].waitForExistence(timeout: 5))
+        app.buttons["Move down"].tap()
+        XCTAssertTrue(waitUntil { gripSsb.frame.minY < gripNet.frame.minY }, "Move down moved nothing")
+
+        reorder.tap()
+        let note = element(app, "bandStackNote")
+        XCTAssertTrue(note.waitForExistence(timeout: 10), "Done sent nothing")
+        XCTAssertTrue(note.label.contains("bandStack.reorder"), note.label)
+        XCTAssertTrue(note.label.contains("band 40m"), note.label)
+        XCTAssertTrue(note.label.contains(#"ids ["40m-ssb","40m-net"]"#), note.label)
+        XCTAssertTrue(gripNet.waitForNonExistence(timeout: 5), "The grips stayed after Done")
+        XCTAssertEqual(reorder.label, "Reorder")
+    }
+
+    /// The BAND menu sideways: two panels beside the column, staying open on a
+    /// press, clear of the PTT.
+    @MainActor
+    func testBandMenuSidewaysStaysOpenOnAPressAndKeepsThePttClear() throws {
+        let app = launch(stack: true)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let band = app.buttons["bandColumn.band"]
+        XCTAssertTrue(band.waitForExistence(timeout: 30), "The phone on its side has no band column")
+        band.tap()
+        let menu = element(app, "bandColumnMenu.band")
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        let grid = app.buttons["bandGrid.20"]
+        let block = element(app, "bandStackBlock")
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        XCTAssertTrue(block.waitForExistence(timeout: 5))
+        XCTAssertLessThan(grid.frame.maxX, block.frame.minX + 1, "The grid and the stack are not side by side")
+        // The header fits a panel's width with the band's name whole.
+        XCTAssertGreaterThan(app.buttons["bandStackPicker"].frame.width, 44, "The picker is squeezed")
+        let ptt = app.buttons["ptt"]
+        XCTAssertTrue(waitUntil { !menu.frame.intersects(ptt.frame) }, "The BAND menu covers the PTT")
+        save("band-stack-menu-sideways")
+
+        grid.tap()
+        let note = element(app, "bandStackNote")
+        XCTAssertTrue(note.waitForExistence(timeout: 10), "The press sent nothing")
+        XCTAssertTrue(note.label.contains("bandStack.press"), note.label)
+        XCTAssertTrue(menu.exists, "The BAND menu closed on a press with the capability")
+        save("band-stack-menu-sideways-note")
+        // The block's foot can be reached on a short band.
+        let reorder = app.buttons["bandStackReorder"]
+        if !reorder.isHittable {
+            block.swipeUp()
+        }
+        XCTAssertTrue(waitUntil { reorder.isHittable }, "The stack's foot cannot be reached sideways")
+        save("band-stack-menu-sideways-foot")
+    }
+
+    /// The older Core: the grid opens bands as today, the BAND menu closes on a
+    /// press, and the block is one greyed row with its reason.
+    @MainActor
+    func testOlderCore() throws {
+        let app = launch(stack: false)
+        let pan = app.buttons["pan"]
+        XCTAssertTrue(pan.waitForExistence(timeout: 30))
+        pan.tap()
+        let row = app.buttons["bandStackUnavailable"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "An older Core shows no greyed row")
+        XCTAssertEqual(row.label, "Needs a newer Core")
+        XCTAssertFalse(row.isEnabled)
+        XCTAssertEqual(element(app, "bandStackUnavailableReason").label,
+                       "This Core does not have band stacks. Updating the Core may help.")
+        save("band-stack-older-core")
+        // A hold on a band there is nothing but a long tap: it opens the band.
+        app.buttons["bandGrid.20"].press(forDuration: 0.8)
+        let panNote = element(app, "panSheetNote")
+        XCTAssertTrue(panNote.waitForExistence(timeout: 10), "A long press on an older Core opened nothing")
+        XCTAssertTrue(panNote.label.contains("slice.selectBand"), panNote.label)
+        app.buttons["Close the sheet"].firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.9)).tap()
+        XCTAssertTrue(element(app, "panSheet").waitForNonExistence(timeout: 10))
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let band = app.buttons["bandColumn.band"]
+        XCTAssertTrue(band.waitForExistence(timeout: 30))
+        band.tap()
+        let menu = element(app, "bandColumnMenu.band")
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        save("band-stack-older-core-sideways")
+        app.buttons["bandGrid.20"].tap()
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 10), "An older Core's BAND menu stayed open on a press")
+    }
+
+    // MARK: Helpers
+
+    @MainActor
+    private func launchOnPanSheet() -> XCUIApplication {
+        let app = launch(stack: true)
+        let pan = app.buttons["pan"]
+        XCTAssertTrue(pan.waitForExistence(timeout: 30))
+        pan.tap()
+        XCTAssertTrue(element(app, "panSheet").waitForExistence(timeout: 10))
+        return app
+    }
+
+    @MainActor
+    private func launch(stack: Bool) -> XCUIApplication {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        // The band with slice A on 40 m and a Core, with none (a debug build's launch arguments).
+        app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusBandMenuFixture",
+                               stack ? "-NereusBandStackFixture" : "-NereusBandSelectFixture"]
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
+            .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
+        app.launchEnvironment["NEREUS_UITEST_BANDSTACK"] = root
+            .appendingPathComponent("tests/data/bandstack/facade-document.json").path
+        app.launchFresh()
+        return app
+    }
+
+    @MainActor
+    private func element(_ app: XCUIApplication, _ id: String) -> XCUIElement {
+        app.descendants(matching: .any)[id]
+    }
+
+    /// A menu item whose label starts with `title` (a reason may follow it).
+    @MainActor
+    private func choice(_ app: XCUIApplication, _ title: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+    }
+
+    @MainActor
+    private func waitUntil(_ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            if condition() {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        return condition()
+    }
+
+    /// Time for a command, had one been sent, to come back as a note.
+    @MainActor
+    private func settle() {
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+    }
+
+    @MainActor
+    private func save(_ name: String) {
+        guard let directory = ProcessInfo.processInfo.environment["NEREUS_CONNECT_SHOTS"], !directory.isEmpty else {
+            return
+        }
+        let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")
+        try? XCUIScreen.main.screenshot().pngRepresentation.write(to: url)
+        print("Wrote \(url.path)")
+    }
+}
