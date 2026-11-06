@@ -127,6 +127,56 @@ struct IPadShotTests {
         await model.disconnect()
     }
 
+    /// The Band Stack applet (band stack spec section 8): upright under the
+    /// S-meter in the first column, on its side in the column, and the BAND
+    /// menu beside it; then a Core with no band stacks, where it stays, greyed.
+    @Test("the Band Stack applet upright and on its side, on a Core with band stacks and an older one",
+          .enabled("The iPad's screens are drawn on an iPad simulator") {
+              await MainActor.run { UIDevice.current.userInterfaceIdiom == .pad }
+          },
+          .timeLimit(.minutes(10)))
+    func bandStackAppletShots() async throws {
+        for older in [false, true] {
+            let suite = "IPadShotTests-stack-\(UUID().uuidString)"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let model = AppModel(displaySettings: BandDisplaySettingsStore(defaults: defaults))
+            let additions: FakeStation.Additions = older ? [.bands, .bandSelect, .notchAtSlice]
+                : [.bands, .bandSelect, .notchAtSlice, .bandStack]
+            let station = try FakeStation(additions: additions)
+            let stack = model.main.controls(for: .first).bandStack
+            await model.connect(to: station.endpoint, trust: station.trust, authenticator: station.authenticator,
+                                transportFactory: station.transportFactory)
+            #expect(await station.waitUntilLive())
+            try await MainScreenShotTests.fill(station)
+            #expect(await settle(seconds: 30) { model.main.slices.entries.count == 2 && model.main.coreName != nil })
+            let band = model.main.band
+            band.endpointId = 1
+            band.receive(.context(try #require(BandFlagShotTests.context())))
+            let json = try #require(MainScreenTests.catalogueJSON())
+            await station.deliver(.delta(LinkMessage.Delta(key: "catalog", properties: [
+                .init(ordinal: 0, name: "json", value: .utf8(station.catalogue(json))),
+                .init(ordinal: 1, name: "revision", value: .i64(2)),
+            ])))
+            await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+                .init(ordinal: 14, name: "band", value: .enumeration(3)),
+            ])))
+            #expect(await settle(seconds: 30) {
+                older ? stack.availability == .needsNewerCore : stack.currentBand == "40m" && stack.stack != nil
+            })
+            let tag = older ? "-older-core" : ""
+            try await shoot(Screen(name: "ipad-upright-band-stack\(tag)", onItsSide: false, columnShown: true),
+                            model: model)
+            try await shoot(Screen(name: "ipad-column-band-stack\(tag)", onItsSide: true, columnShown: true),
+                            model: model)
+            if !older {
+                try await shoot(Screen(name: "ipad-upright-band-stack-band-menu", onItsSide: false, columnShown: true,
+                                       columnMenu: .band), model: model)
+            }
+            await model.disconnect()
+        }
+    }
+
     /// R-IOS-59, DC9, DC10: two pans on the iPad, Pan 1 on top and Pan 2
     /// below sharing the band's height, each with its own column; Pan 1's
     /// pill open, then Pan 2's, the toolbar naming the pan last touched;

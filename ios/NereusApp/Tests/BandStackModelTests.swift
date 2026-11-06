@@ -631,6 +631,72 @@ struct BandStackModelTests {
         await rig.close()
     }
 
+    @Test("the iPad's two blocks on one model: closing a sheet ends only what the sheet started, and one block types a name")
+    func twoSurfaces() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.stack != nil })
+        let net = try #require(stack.stack?.entries(band: "40m").first { $0.id == "40m-net" })
+
+        // What the applet started outlives the sheet closing.
+        stack.toggleReorder(from: .applet)
+        stack.showBand("20m", from: .applet)
+        #expect(stack.reorder == nil, "Reorder ended with the list it was on")
+        stack.showBand("40m", from: .applet)
+        stack.toggleReorder(from: .applet)
+        stack.endViewing()
+        #expect(stack.reorder?.band == "40m")
+        stack.toggleReorder(from: .applet)
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 1 })
+
+        stack.showBand("20m", from: .applet)
+        stack.endViewing()
+        #expect(stack.viewedBand == "20m")
+        // A band held in the sheet goes when the sheet does.
+        stack.showBand("80m")
+        stack.endViewing()
+        #expect(!stack.isViewingAnotherBand)
+
+        // The name field is in the block that asked for it, and survives the other closing.
+        stack.startRename(net, from: .applet)
+        #expect(stack.isRenaming("40m-net", on: .applet) && !stack.isRenaming("40m-net", on: .sheet))
+        stack.endViewing()
+        #expect(stack.renaming == "40m-net")
+        stack.renameDraft = "Morning net"
+        // Starting another saves what was typed.
+        let ssb = try #require(stack.stack?.entries(band: "40m").first { $0.id == "40m-ssb" })
+        stack.startRename(ssb)
+        #expect(stack.isRenaming("40m-ssb", on: .sheet) && stack.renameDraft == ssb.name)
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 2 })
+        #expect(args(rig.station.bandStackCommands[1]) == ["entryId": .utf8("40m-net"), "name": .utf8("Morning net")])
+        stack.endViewing()
+        #expect(stack.renaming == nil)
+        await rig.close()
+    }
+
+    @Test("the applet's letters act on the pan's slices and follow the active one")
+    func appletLetters() async throws {
+        let rig = try await withBands()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.activeSliceId == 0 && stack.slicesOnBands.count == 2 })
+        stack.activate(sliceId: 1)
+        let verb = BandSlicesModel.activateVerb
+        let sent = await rig.station.waitForMessage(within: .seconds(30)) { message in
+            if case .commandInvoke(let invoke) = message {
+                return invoke.verb == verb && invoke.args.first?.value == .i64(1)
+            }
+            return false
+        }
+        #expect(sent != nil, "The letter sent no change of slice")
+        for (slice, active) in [(0, false), (1, true)] {
+            await rig.station.deliver(.delta(LinkMessage.Delta(key: "slice:\(slice)", properties: [
+                .init(ordinal: 11, name: "active", value: .bool(active)),
+            ])))
+        }
+        #expect(await Eventually.holds { stack.activeSliceId == 1 })
+        await rig.close()
+    }
+
     @Test("a row's frequency drops hertz of zero and keeps any others")
     func rowFrequency() {
         #expect(BandStackBlock.frequencyText(7_185_000) == "7.185")

@@ -24,6 +24,7 @@ final class BandStackUITests: XCTestCase {
     /// after it still presses, and "40m" is the visible way to the same list.
     @MainActor
     func testHoldOnABandOpensItsListAndSendsNothing() throws {
+        try skipOnIPad()
         let app = launchOnPanSheet()
         let block = app.descendants(matching: .any)["bandStackBlock"]
         XCTAssertTrue(block.waitForExistence(timeout: 10), "The Pan sheet has no stack block")
@@ -79,6 +80,7 @@ final class BandStackUITests: XCTestCase {
     /// each sending its verb.
     @MainActor
     func testRowAndBandMenus() throws {
+        try skipOnIPad()
         let app = launchOnPanSheet()
         let note = element(app, "bandStackNote")
         let rowMenu = app.buttons["bandStackRowMenu.40m-ssb"]
@@ -142,6 +144,7 @@ final class BandStackUITests: XCTestCase {
     /// every id sent on Done.
     @MainActor
     func testReorderIsAModeThatSendsEveryIdOnDone() throws {
+        try skipOnIPad()
         let app = launchOnPanSheet()
         let reorder = app.buttons["bandStackReorder"]
         XCTAssertTrue(reorder.waitForExistence(timeout: 10))
@@ -189,6 +192,7 @@ final class BandStackUITests: XCTestCase {
     /// press, clear of the PTT.
     @MainActor
     func testBandMenuSidewaysStaysOpenOnAPressAndKeepsThePttClear() throws {
+        try skipOnIPad()
         let app = launch(stack: true)
         XCUIDevice.shared.orientation = .landscapeLeft
         let band = app.buttons["bandColumn.band"]
@@ -226,6 +230,7 @@ final class BandStackUITests: XCTestCase {
     /// press, and the block is one greyed row with its reason.
     @MainActor
     func testOlderCore() throws {
+        try skipOnIPad()
         let app = launch(stack: false)
         let pan = app.buttons["pan"]
         XCTAssertTrue(pan.waitForExistence(timeout: 30))
@@ -256,7 +261,150 @@ final class BandStackUITests: XCTestCase {
         XCTAssertTrue(menu.waitForNonExistence(timeout: 10), "An older Core's BAND menu stayed open on a press")
     }
 
+    // MARK: The iPad's applet
+
+    /// Spec section 8: upright the applet sits under the S-meter in the first
+    /// column, its controls send their verbs, and its menus and question show.
+    @MainActor
+    func testIPadAppletUprightUnderTheSMeter() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "The Band Stack applet is the iPad's")
+        let app = launch(stack: true)
+        let applet = element(app, "bandStackApplet")
+        XCTAssertTrue(applet.waitForExistence(timeout: 30), "The iPad upright has no Band Stack applet")
+        let panel = element(app, "frontPanel")
+        let meter = element(app, "analogSMeter")
+        XCTAssertEqual(applet.frame.minX, panel.frame.minX, accuracy: 1, "The applet is not in the first column")
+        XCTAssertEqual(applet.frame.width, 278, accuracy: 1, "The applet is not the column's width")
+        XCTAssertGreaterThanOrEqual(applet.frame.minY, meter.frame.maxY - 1, "The applet is not under the S-meter")
+        XCTAssertEqual(applet.frame.maxY, panel.frame.maxY, accuracy: 1, "The applet does not reach the panel's foot")
+        XCTAssertTrue(applet.staticTexts["Band Stack"].exists)
+        let count = element(app, "bandStackCount")
+        XCTAssertTrue(waitUntil { count.exists && count.label == "1 of 2" }, "40m reads \(count.label)")
+        XCTAssertTrue(applet.buttons["bandStackAppletSlice.A"].exists, "The title has no slice letters")
+        save("band-stack-ipad-upright")
+
+        let note = element(app, "bandStackNote")
+        applet.buttons["bandStackRow.40m-ssb"].tap()
+        XCTAssertTrue(waitUntil { note.exists && note.label.contains("bandStack.goTo") }, "A row's tap sent nothing")
+        applet.buttons["bandStackNoteClose"].tap()
+        XCTAssertTrue(note.waitForNonExistence(timeout: 5))
+
+        applet.buttons["bandStackRowMenu.40m-ssb"].tap()
+        for item in ["Save this spot here", "Rename", "Lock", "Always return here", "Delete"] {
+            XCTAssertTrue(choice(app, item).waitForExistence(timeout: 5), "The row's menu has no \(item)")
+        }
+        save("band-stack-ipad-row-menu")
+        choice(app, "Rename").tap()
+        let field = app.textFields["bandStackRenameField"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Rename has no field")
+        XCTAssertTrue(waitUntil { field.isHittable }, "The name field is behind something")
+        save("band-stack-ipad-rename")
+        field.typeText("Rag chew\n")
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5), "Return did not end Rename")
+        XCTAssertTrue(waitUntil { note.exists && note.label.contains("name Rag chew") }, "The name was not sent")
+        applet.buttons["bandStackNoteClose"].tap()
+        XCTAssertTrue(note.waitForNonExistence(timeout: 5))
+
+        // Clear's question: on an iPad a popover with no Cancel, and a tap outside it says no.
+        applet.buttons["bandStackBandMenu"].tap()
+        XCTAssertTrue(choice(app, "Current entry").waitForExistence(timeout: 5))
+        save("band-stack-ipad-band-menu")
+        choice(app, "Clear unlocked 40m entries").tap()
+        let clear = app.buttons["Clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 5), "Clear unlocked asks nothing")
+        save("band-stack-ipad-clear")
+        element(app, "analogSMeter").tap()
+        XCTAssertTrue(clear.waitForNonExistence(timeout: 5), "A tap outside did not close the question")
+        settle()
+        XCTAssertFalse(note.exists, "Saying no sent a command")
+        applet.buttons["bandStackBandMenu"].tap()
+        choice(app, "Clear unlocked 40m entries").tap()
+        XCTAssertTrue(clear.waitForExistence(timeout: 5))
+        clear.tap()
+        XCTAssertTrue(waitUntil { note.exists && note.label.contains("bandStack.clear") }, "Clear sent nothing")
+    }
+
+    /// The applet and the BAND menu are two blocks on one model: a name is
+    /// typed in one field, and closing the menu leaves what the applet started.
+    @MainActor
+    func testIPadAppletBesideTheBandMenu() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "The Band Stack applet is the iPad's")
+        let app = launch(stack: true)
+        let applet = element(app, "bandStackApplet")
+        XCTAssertTrue(applet.waitForExistence(timeout: 30))
+        let band = app.buttons["bandColumn.band"]
+        XCTAssertTrue(band.waitForExistence(timeout: 10))
+        band.tap()
+        let menu = element(app, "bandColumnMenu.band")
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        save("band-stack-ipad-band-column-menu")
+
+        menu.buttons["bandStackRowMenu.40m-ssb"].tap()
+        choice(app, "Rename").tap()
+        let fields = app.textFields.matching(identifier: "bandStackRenameField")
+        XCTAssertTrue(fields.firstMatch.waitForExistence(timeout: 5), "Rename has no field")
+        settle()
+        XCTAssertEqual(fields.count, 1, "Two blocks each drew the name field")
+        XCTAssertTrue(menu.textFields["bandStackRenameField"].exists, "The field is not where Rename was asked for")
+        fields.firstMatch.typeText("Net\n")
+        XCTAssertTrue(fields.firstMatch.waitForNonExistence(timeout: 5), "Return did not end Rename")
+        let note = menu.descendants(matching: .any)["bandStackNote"]
+        XCTAssertTrue(waitUntil { note.exists && note.label.contains("name Net") }, "The name was not sent")
+
+        // Reorder from the applet outlives the menu.
+        let reorder = applet.buttons["bandStackReorder"]
+        reorder.tap()
+        XCTAssertTrue(waitUntil { reorder.label == "Done" }, "Reorder did not start")
+        XCTAssertTrue(applet.descendants(matching: .any)["bandStackGrip.40m-ssb"].waitForExistence(timeout: 5))
+        band.tap()
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 10), "The BAND menu did not close")
+        XCTAssertEqual(reorder.label, "Done", "Closing the BAND menu ended the applet's Reorder")
+
+        // On its side it is in the column, the mode still on.
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let column = element(app, "appletColumn")
+        XCTAssertTrue(column.waitForExistence(timeout: 20))
+        let sideways = column.descendants(matching: .any)["bandStackApplet"]
+        XCTAssertTrue(sideways.waitForExistence(timeout: 10), "The column has no Band Stack applet")
+        XCTAssertEqual(sideways.frame.width, 320, accuracy: 1)
+        XCTAssertGreaterThanOrEqual(sideways.frame.minY, element(app, "analogSMeter").frame.maxY - 1)
+        XCTAssertLessThan(sideways.frame.minY, element(app, "rxPanelDrawer").frame.minY)
+        XCTAssertEqual(sideways.buttons["bandStackReorder"].label, "Done")
+        save("band-stack-ipad-column-reorder")
+    }
+
+    /// An older Core: the applet stays, greyed, with the reason, either way up.
+    @MainActor
+    func testIPadAppletOnAnOlderCore() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "The Band Stack applet is the iPad's")
+        let app = launch(stack: false)
+        let applet = element(app, "bandStackApplet")
+        XCTAssertTrue(applet.waitForExistence(timeout: 30), "An older Core has no Band Stack applet")
+        let row = applet.buttons["bandStackUnavailable"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "An older Core's applet has no greyed row")
+        XCTAssertEqual(row.label, "Needs a newer Core")
+        XCTAssertFalse(row.isEnabled)
+        XCTAssertEqual(applet.descendants(matching: .any)["bandStackUnavailableReason"].label,
+                       "This Core does not have band stacks. Updating the Core may help.")
+        save("band-stack-ipad-older-core")
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let column = element(app, "appletColumn")
+        XCTAssertTrue(column.waitForExistence(timeout: 20))
+        let sideways = column.buttons["bandStackUnavailable"]
+        XCTAssertTrue(sideways.waitForExistence(timeout: 10), "The column drops the applet on an older Core")
+        XCTAssertFalse(sideways.isEnabled)
+        save("band-stack-ipad-older-core-column")
+    }
+
     // MARK: Helpers
+
+    /// These look a block's controls up by name, and an iPad draws a second
+    /// block in its applet. The iPad's own tests above name which block.
+    @MainActor
+    private func skipOnIPad() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "These are the phone's one block")
+    }
 
     @MainActor
     private func launchOnPanSheet() -> XCUIApplication {

@@ -145,6 +145,7 @@ struct MainScreen: View {
     @State private var txPanelEntry = Edge.trailing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
+    @Environment(\.keyboardRoom) private var keyboardRoom
 
     /// `rxPanelOpen` and `txPanelOpen` open the screen with that panel out,
     /// `sheet` with that sheet open.
@@ -184,8 +185,8 @@ struct MainScreen: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let sideways = proxy.size.width > proxy.size.height
-            let layout = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size)
+            let layout = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size, keyboardRoom: keyboardRoom)
+            let sideways = proxy.size.width > proxy.size.height + keyboardRoom
             Group {
                 switch layout {
                 case .phone:

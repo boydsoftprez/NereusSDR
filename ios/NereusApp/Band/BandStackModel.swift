@@ -26,6 +26,14 @@ final class BandStackModel: ObservableObject {
         case next, previous
     }
 
+    /// Where a block is drawn. An iPad can show one pan's stack twice, in the
+    /// Pan sheet or BAND menu and in its applet, on this one model, so a
+    /// transient state remembers which it was started from: closing a sheet
+    /// ends only the sheet's, and only that block types a name.
+    enum Surface {
+        case sheet, applet
+    }
+
     /// Why the stack is greyed on a Core without band stacks.
     static let needsNewerCoreText = "This Core does not have band stacks. Updating the Core may help."
     /// Why the stack is greyed with no radio to read it from.
@@ -48,6 +56,8 @@ final class BandStackModel: ObservableObject {
     @Published private(set) var currentBand: String?
     /// There is an active slice for a verb to act on.
     @Published private(set) var hasActiveSlice = false
+    /// The pan's active slice, for the applet's letters.
+    @Published private(set) var activeSliceId: Int?
     /// This pan's slices and the bands they are on, for a row's letters.
     @Published private(set) var slicesOnBands: [SliceOnBand] = []
 
@@ -60,6 +70,12 @@ final class BandStackModel: ObservableObject {
     /// here for the same reason as ``reorder``.
     @Published private(set) var renaming: String?
     @Published var renameDraft = ""
+    /// The block whose row has the name field.
+    @Published private(set) var renamingSurface = Surface.sheet
+    /// The block that picked ``viewedBand``.
+    private var viewedSurface = Surface.sheet
+    /// The block that started ``reorder``.
+    private var reorderSurface = Surface.sheet
 
     struct Reorder: Equatable {
         let band: String
@@ -225,23 +241,39 @@ final class BandStackModel: ObservableObject {
     }
 
     /// Shows a band's list, the slice's own being no view at all.
-    func showBand(_ key: String?) {
+    func showBand(_ key: String?, from surface: Surface = .sheet) {
         viewedBand = key == currentBand ? nil : key
+        viewedSurface = surface
         renaming = nil
         endReorderIfElsewhere()
     }
 
-    /// The sheet or menu showing the block has closed.
-    func endViewing() {
-        viewedBand = nil
-        reorder = nil
-        renaming = nil
+    /// The sheet or menu showing the block has closed. What the applet
+    /// started stays, since the applet is still there.
+    func endViewing(on surface: Surface = .sheet) {
+        if viewedSurface == surface {
+            viewedBand = nil
+        }
+        if reorderSurface == surface {
+            reorder = nil
+        }
+        if renamingSurface == surface {
+            renaming = nil
+        }
     }
 
-    /// Rename: the row takes the entry's name to edit.
-    func startRename(_ entry: BandStack.Entry) {
+    /// Rename: the row takes the entry's name to edit. A name still being
+    /// typed in another row is saved first.
+    func startRename(_ entry: BandStack.Entry, from surface: Surface = .sheet) {
+        finishRename()
         renameDraft = entry.name
+        renamingSurface = surface
         renaming = entry.id
+    }
+
+    /// The name field for an entry belongs in `surface`'s row.
+    func isRenaming(_ entryId: String, on surface: Surface) -> Bool {
+        renaming == entryId && renamingSurface == surface
     }
 
     /// Ends Rename, sending the name only when it has changed. An empty name clears it.
@@ -258,11 +290,12 @@ final class BandStackModel: ObservableObject {
 
     /// Reorder's button: into the mode for the list on show, or Done, which
     /// sends every id.
-    func toggleReorder() {
+    func toggleReorder(from surface: Surface = .sheet) {
         if let reorder {
             self.reorder = nil
             self.reorder(bandKey: reorder.band, ids: reorderIds(working: reorder.ids, band: reorder.band))
         } else if let band = shownBand {
+            reorderSurface = surface
             reorder = Reorder(band: band, ids: stack?.entries(band: band).map(\.id) ?? [])
         }
     }
@@ -324,11 +357,19 @@ final class BandStackModel: ObservableObject {
         if hasActiveSlice != (activeId != nil) {
             hasActiveSlice = activeId != nil
         }
+        if activeSliceId != activeId {
+            activeSliceId = activeId
+        }
         // The slice has got to the list being read.
         if viewedBand != nil, viewedBand == currentBand {
             viewedBand = nil
         }
         endReorderIfElsewhere()
+    }
+
+    /// Makes one of this pan's slices the one the stack acts on (the applet's letters).
+    func activate(sliceId: Int) {
+        slices.activate(sliceId)
     }
 
     // MARK: The verbs

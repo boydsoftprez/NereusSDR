@@ -39,6 +39,22 @@ import Testing
         #expect(IPadLayout.arrangement(horizontal: nil, size: Self.onItsSide) == .phone)
     }
 
+    @Test("a keyboard taking the height leaves the arrangement as it was, either way up")
+    func keyboardKeepsTheArrangement() {
+        // The keyboard's room off an upright iPad leaves it wider than tall,
+        // and off one on its side leaves too little for an iPad's layout.
+        let uprightTyping = CGSize(width: 834, height: 760)
+        let sidewaysTyping = CGSize(width: 1210, height: 400)
+        #expect(IPadLayout.arrangement(horizontal: .regular, size: uprightTyping) == .column)
+        #expect(IPadLayout.arrangement(horizontal: .regular, size: sidewaysTyping) == .phone)
+        #expect(IPadLayout.arrangement(horizontal: .regular, size: uprightTyping, keyboardRoom: 356) == .frontPanel)
+        #expect(IPadLayout.arrangement(horizontal: .regular, size: sidewaysTyping, keyboardRoom: 340) == .column)
+        // A home indicator is no keyboard, and a phone stays a phone.
+        #expect(IPadLayout.keyboardRoom(bottomInset: 34) == 0)
+        #expect(IPadLayout.keyboardRoom(bottomInset: 356) == 356)
+        #expect(IPadLayout.arrangement(horizontal: .compact, size: Self.phoneUpright, keyboardRoom: 300) == .phone)
+    }
+
     @Test("the column's corner button shows only on its side; the Core's name shows either way up")
     func toolbar() {
         #expect(IPadLayout.column.hasColumnButton)

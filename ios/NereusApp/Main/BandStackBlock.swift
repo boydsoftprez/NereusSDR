@@ -15,6 +15,8 @@ struct BandStackBlock: View {
     @ObservedObject var model: BandStackModel
     /// The block's width, which the BAND menu's narrower rows follow.
     let width: CGFloat
+    /// Where this block is drawn, for what it starts on the shared model.
+    let surface: BandStackModel.Surface
 
     /// The row whose grip is under a finger.
     @State private var dragged: String?
@@ -40,14 +42,18 @@ struct BandStackBlock: View {
     private static let more = "\u{22EF}"
     private static let dot = " \u{00B7} "
 
-    init(model: BandStackModel, width: CGFloat) {
+    init(model: BandStackModel, width: CGFloat, surface: BandStackModel.Surface = .sheet) {
         self.model = model
         self.width = width
+        self.surface = surface
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Rectangle().fill(ChromeColours.sheetBorder).frame(height: 1).padding(.bottom, 8)
+            // The applet's title bar already draws this line.
+            if surface == .sheet {
+                Rectangle().fill(ChromeColours.sheetBorder).frame(height: 1).padding(.bottom, 8)
+            }
             if let reason = model.unavailableReason {
                 unavailable(reason)
             } else {
@@ -171,7 +177,7 @@ struct BandStackBlock: View {
             Section("Show the stack for") {
                 ForEach(model.pickerBands, id: \.self) { key in
                     Button {
-                        model.showBand(key)
+                        model.showBand(key, from: surface)
                     } label: {
                         let count = model.stack?.entries(band: key).count ?? 0
                         if key == band {
@@ -276,7 +282,7 @@ struct BandStackBlock: View {
         let active = model.activeSlicePlace(band: entry.band) == entry.id
         let inReorder = model.reorder != nil
         return HStack(spacing: 0) {
-            if model.renaming == entry.id {
+            if model.isRenaming(entry.id, on: surface) {
                 renameFace(entry, active: active)
             } else {
                 Button {
@@ -463,7 +469,7 @@ struct BandStackBlock: View {
             }
             .disabled(saveReason != nil)
             Button("Rename") {
-                model.startRename(entry)
+                model.startRename(entry, from: surface)
             }
             Button(entry.locked ? "Unlock" : "Lock") {
                 model.edit(entry.id, name: nil, locked: !entry.locked)
@@ -567,7 +573,7 @@ struct BandStackBlock: View {
             .accessibilityIdentifier("bandStackAdd")
             PanelButton(label: model.reorder == nil ? "Reorder" : "Done", lit: model.reorder != nil, style: .blue,
                         disabled: empty) {
-                model.toggleReorder()
+                model.toggleReorder(from: surface)
             }
             .frame(width: 92)
             .accessibilityHint(empty ? "This band has no entries." : "")
