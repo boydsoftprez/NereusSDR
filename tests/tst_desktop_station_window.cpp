@@ -93,6 +93,8 @@
 #include <QApplication>
 #include <QSslSocket>
 #include <QTcpServer>
+#include <QDir>
+#include <QFileInfo>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -541,6 +543,17 @@ private slots:
     {
         if (AppSettings::instance().filePath() == m_isolatedSettingsPath) {
             AppSettings::instance().clear();
+        }
+    }
+
+    // A row that quits saves the settings, which leaves this profile's folder.
+    void cleanupTestCase()
+    {
+        const QFileInfo settingsFile(m_isolatedSettingsPath);
+        QDir profile = settingsFile.dir();
+        if (QStandardPaths::isTestModeEnabled()
+            && profile.path().contains(QStringLiteral("/profiles/desktop-station-window-"))) {
+            profile.removeRecursively();
         }
     }
 
@@ -2477,6 +2490,39 @@ private slots:
         QVERIFY(!f.slice->widebandExtensionRequested());
     }
 
+    // Taking a slice that was only a marker on this pan: the flag rises. The
+    // placement clears after the pan's own markChanged recheck, so it is the
+    // set of devices on the slice changing that gets the pan to look again.
+    void takingAMarkerOnlySliceRaisesItsPansWidebandFlag()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        PlacedListen f;
+        prepareListenedSlice(f, false);
+        if (QTest::currentTestFailed()) { return; }
+        RadioInfo info;
+        info.boardType = HPSDRHW::Saturn;
+        info.protocol = ProtocolVersion::Protocol2;
+        f.model->setLastRadioInfoForTest(info);
+        placeListenedSlice(f);
+        if (QTest::currentTestFailed()) { return; }
+        PanadapterApplet* applet = f.stack->panadapter(QStringLiteral("pan-0"));
+        QVERIFY(applet);
+        applet->setActiveSliceIndex(f.bId);
+        QCOMPARE(applet->activeSliceIndex(), f.bId);
+        f.remaining->setFrequencyRange(f.remaining->centerFrequency(), 768000.0);
+        QVERIFY(f.remaining->extendedMode());
+        QVERIFY(!f.model->sliceById(f.bId)->widebandExtensionRequested());
+        // With no other slice of this window's to move to, the pan stays on it.
+        f.model->removeSlice(f.aId);
+        applet->setActiveSliceIndex(f.bId);
+        QVERIFY(!f.model->sliceById(f.bId)->widebandExtensionRequested());
+
+        f.model->sliceOwnership()->setOwner(f.bId, SliceOwnership::stationDevice());
+
+        QCOMPARE(applet->activeSliceIndex(), f.bId);
+        QVERIFY(f.model->sliceById(f.bId)->widebandExtensionRequested());
+    }
+
     void aRevealStillCentresThePanItOpensOnTheSlice()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
@@ -3728,6 +3774,7 @@ int main(int argc, char** argv)
            QStringLiteral("aListeningWindowKeepsItsWideSpanWithNoFlag"),
            QStringLiteral("hostingEndingRaisesAHeldDownWidebandFlag"),
            QStringLiteral("aMarkerOnlySliceNeverRaisesWideband"),
+           QStringLiteral("takingAMarkerOnlySliceRaisesItsPansWidebandFlag"),
            QStringLiteral("quittingWhileHostingDoesNotRaiseAHeldDownWidebandFlag"),
            QStringLiteral("aWingClickNeverRetunesAnotherDevicesSlice"),
            QStringLiteral("aWingClickNeverRetunesAListenedSlice"),

@@ -5487,6 +5487,11 @@ std::function<void()> MainWindow::wireWidebandExtensionForTest(
     if (SliceOwnership* ownership = model->sliceOwnership()) {
         connect(ownership, &SliceOwnership::markChanged, spectrum,
                 [reconcile](int, const QByteArray&, const QByteArray&) { reconcile(); });
+        // On a take the marker-only placement clears after this pan's markChanged
+        // recheck; the take also reorders the slice's devices, and that is the
+        // recheck that sees it clear.
+        connect(ownership, &SliceOwnership::listenersChanged, spectrum,
+                [reconcile](int) { reconcile(); });
     }
     const auto watchSlice = [modelRef, spectrumRef, reconcile](int sliceId) {
         if (!modelRef || !spectrumRef) { return; }

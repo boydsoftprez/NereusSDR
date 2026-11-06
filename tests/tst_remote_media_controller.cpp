@@ -3932,6 +3932,31 @@ private slots:
                                  10000);
         QVERIFY(widget->extendedViewAllowed());
         QCOMPARE(refusals(), 0);
+
+        // Control again, the view dragged so the receiver is off it, and control
+        // goes: nothing can be drawn, so the pan gets its status line, once, and
+        // does not sit on its last frame looking live.
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        widget->setDisplayWindowPreservingHistory(kCentreHz + 700'000.0, kSpanHz);
+        gui.planNowForTest();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), qFuzzyCompare(widget->centerFrequency(),
+                                                        kCentreHz + 700'000.0)), 10000);
+        QTest::qWait(100);
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QTRY_COMPARE_WITH_TIMEOUT(gui.panDisplayState(pan->panId()).phase,
+                                  PanDisplayState::Phase::Refused, 10000);
+        QVERIFY(!widget->remoteWidebandActive());
+        QCOMPARE(p2.wbEnableMask(), quint8(0));
+        QCOMPARE(refusals(), 1);
+        const int askedAfter = subscribes;
+        for (int i = 0; i < 5; ++i) {
+            feed();
+            gui.planNowForTest();
+            QTest::qWait(30);
+        }
+        QCOMPARE(refusals(), 1);
+        QCOMPARE(subscribes, askedAfter);
     }
 
     // A slice that shares its receiver and changes band is put on another

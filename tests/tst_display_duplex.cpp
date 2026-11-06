@@ -25,6 +25,8 @@
 // receive-only pre-check lifted, against no hardware. No audio device.
 //
 // Modification history (NereusSDR):
+//   2026-11-06 : The fall rechecks wideband demand for a slice taken while keyed.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-09-27 : Created for remote-window parity Task 31 by J.J. Boyd
 //                 (KG4VCF). AI-assisted implementation via Anthropic
 //                 Claude Code.
@@ -33,6 +35,7 @@
 #include <QtTest>
 
 #include <QPointer>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
@@ -50,6 +53,8 @@
 #include "core/MoxController.h"
 #include "core/StepAttenuatorController.h"
 #include "core/TxAnalyzer.h"
+#include "core/P2RadioConnection.h"
+#include "core/SliceOwnership.h"
 #include "core/TxDisplayFeed.h"
 #include "core/WdspTypes.h"
 #include "core/session/StationClient.h"
@@ -552,6 +557,51 @@ private slots:
         QVERIFY(!window.radio.transmitDisplayDuplex());
         window.radio.setTransmitHolder({});
         QVERIFY(window.radio.transmitDisplayDuplex());
+    }
+
+    // This device keyed, its other endpoint sharing the transmit pan and holding
+    // wideband, and a phone takes that slice while keyed. Keyed endpoints are not
+    // rechecked, so the fall has to do it: the filter must not stay bypassed.
+    void theFallDropsWidebandDemandForASliceTakenWhileKeyed()
+    {
+        RemoteWindow window(/*withAnalyzer=*/true);
+        P2RadioConnection p2;
+        p2.setBoardForTest(HPSDRHW::Saturn);
+        window.station.injectConnectionForTest(&p2);
+        const auto detach = qScopeGuard([&window] { window.station.injectConnectionForTest(nullptr); });
+        RadioInfo info;
+        info.protocol = ProtocolVersion::Protocol2;
+        window.station.setLastRadioInfoForTest(info);
+        window.station.wireWidebandConnectionForTest();
+        window.station.sliceById(window.otherSliceId)->setPanKey(QStringLiteral("two"));
+        QVERIFY(window.connect());
+        const QByteArray device = window.server->mediaSessionDevice(
+            window.server->mediaSessionEpoch());
+        QVERIFY(!device.isEmpty());
+        window.station.sliceOwnership()->setOwner(window.txSliceId, device);
+        window.station.sliceOwnership()->setOwner(window.otherSliceId, device);
+        QVERIFY(window.client->remoteWidebandAvailable());
+        SpectrumWidget* other = window.pan(QStringLiteral("one"));
+        QVERIFY(other);
+        QTRY_VERIFY_WITH_TIMEOUT((window.feed(), other->remoteWidebandAvailable()), 5000);
+        other->setDisplayWindowPreservingHistory(other->centerFrequency(), 768000.0);
+        window.gui->planNowForTest();
+        QTRY_COMPARE_WITH_TIMEOUT(p2.wbEnableMask(), quint8(1), 5000);
+
+        window.key(true);
+        if (QTest::currentTestFailed()) { return; }
+        MoxController* const mox = window.station.moxController();
+        QTRY_VERIFY(mox->state() == MoxState::Tx);
+        QTest::qWait(50);
+        window.station.sliceOwnership()->setOwner(window.otherSliceId,
+                                                  QByteArrayLiteral("phone-device"));
+        QCoreApplication::processEvents();
+        QCOMPARE(p2.wbEnableMask(), quint8(1));
+
+        window.key(false);
+        if (QTest::currentTestFailed()) { return; }
+
+        QTRY_COMPARE_WITH_TIMEOUT(p2.wbEnableMask(), quint8(0), 5000);
     }
 
     // The window's DUP reaches the Core's RadioModel as its device's
