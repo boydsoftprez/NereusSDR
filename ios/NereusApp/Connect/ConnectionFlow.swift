@@ -1971,6 +1971,9 @@ final class ConnectionFlow: ObservableObject {
         if phoneSettings.lastCore == encoded {
             phoneSettings.lastCore = nil
         }
+        if phoneSettings.lastUsedCore == encoded {
+            phoneSettings.lastUsedCore = nil
+        }
         if needing.isEmpty {
             phoneSettings.madeNewKey = false
             madeNewKey = false
@@ -2507,6 +2510,8 @@ final class ConnectionFlow: ObservableObject {
         attempt.end(dialIndex, as: .connected)
         if let current {
             phoneSettings.lastCore = Base64URL.encode(current.identityKey)
+            phoneSettings.lastUsedCore = Base64URL.encode(current.identityKey)
+            keepLastUsedFirst()
         }
         rememberReached()
         rememberControlChannel()
@@ -3644,7 +3649,19 @@ final class ConnectionFlow: ObservableObject {
         cores = stations.map { station in
             CoreRow(station: station, needsPairing: baseNeedsPairing(station))
         }
+        keepLastUsedFirst()
         relist()
+    }
+
+    /// The last Core used leads Your Cores, and so has the highlighted
+    /// Connect; the rest stay in the order they were paired. A kept identity
+    /// that matches no row changes nothing.
+    private func keepLastUsedFirst() {
+        guard let lastUsed = phoneSettings.lastUsedCore.flatMap(Base64URL.decode),
+              let index = cores.firstIndex(where: { $0.id == lastUsed }), index != 0 else {
+            return
+        }
+        cores.insert(cores.remove(at: index), at: 0)
     }
 
     /// This phone must pair again: its key can't be read, or the Core removed

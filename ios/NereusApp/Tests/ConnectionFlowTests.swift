@@ -858,6 +858,117 @@ struct ConnectionFlowTests {
         #expect(kept.lastCore == nil)
     }
 
+    // MARK: The last Core used comes first on Your Cores
+
+    /// A Core that is listed but never dialed in these tests.
+    private static func listedCore(_ label: String) -> PairedStation {
+        PairedStation(identityKey: P256.Signing.PrivateKey().publicKey.derRepresentation, label: label,
+                      endpoints: [StationEndpoint(host: "192.0.2.9", port: 4_000)])
+    }
+
+    @Test("reaching ready puts that Core first, where the highlighted Connect is, and the rest keep their order")
+    func lastUsedMovesToTheTop() async throws {
+        let station = try FakeStation()
+        let before = Self.listedCore("Attic")
+        let after = Self.listedCore("Field")
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: station.transportFactory,
+                                       paired: [before, Self.paired(station), after], kept: kept)
+        #expect(harness.flow.cores.map(\.id) == [before.identityKey, station.identity.publicKey, after.identityKey])
+        let row = try #require(harness.flow.cores.first { $0.id == station.identity.publicKey })
+        await harness.flow.connect(to: row)
+        #expect(await settle { harness.flow.screen == .band })
+        #expect(kept.lastUsedCore == Base64URL.encode(station.identity.publicKey))
+        #expect(harness.flow.cores.map(\.id) == [station.identity.publicKey, before.identityKey, after.identityKey])
+    }
+
+    @Test("the last Core used stays first after Disconnect and at the next launch, and nothing dials because of it")
+    func lastUsedSurvivesDisconnect() async throws {
+        let station = try FakeStation()
+        let other = Self.listedCore("Attic")
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: station.transportFactory,
+                                       paired: [other, Self.paired(station)], kept: kept)
+        let row = try #require(harness.flow.cores.first { $0.id == station.identity.publicKey })
+        await harness.flow.connect(to: row)
+        #expect(await settle { harness.flow.screen == .band })
+        await harness.flow.disconnect()
+        #expect(harness.flow.screen == .cores)
+        #expect(kept.lastCore == nil)
+        #expect(kept.lastUsedCore == Base64URL.encode(station.identity.publicKey))
+        #expect(harness.flow.cores.map(\.id) == [station.identity.publicKey, other.identityKey])
+
+        let dials = DialCounter()
+        let again = try Self.harness(factory: { endpoint, trust in
+            _ = dials.first()
+            return station.transportFactory(endpoint, trust)
+        }, paired: [other, Self.paired(station)], kept: kept, reconnectOnOpen: true)
+        again.flow.sceneBecameActive()
+        await Self.flowSettled(again)
+        #expect(again.flow.screen == .cores)
+        #expect(again.flow.connectingTo == nil)
+        #expect(dials.count == 0)
+        #expect(again.flow.cores.map(\.id) == [station.identity.publicKey, other.identityKey])
+    }
+
+    @Test("removing the last Core used puts the list back in paired order; removing another does not clear it")
+    func lastUsedRemovedFallsBack() async throws {
+        let station = try FakeStation()
+        let first = Self.listedCore("Attic")
+        let second = Self.listedCore("Field")
+        let third = Self.listedCore("Mobile")
+        let kept = try keptSettings(lastCore: nil)
+        kept.lastUsedCore = Base64URL.encode(station.identity.publicKey)
+        let harness = try Self.harness(factory: station.transportFactory,
+                                       paired: [first, second, Self.paired(station), third], kept: kept)
+        #expect(harness.flow.cores.first?.id == station.identity.publicKey)
+        #expect(await harness.flow.removeCore(identityKey: third.identityKey))
+        #expect(kept.lastUsedCore == Base64URL.encode(station.identity.publicKey))
+        #expect(harness.flow.cores.map(\.id) == [station.identity.publicKey, first.identityKey, second.identityKey])
+        #expect(await harness.flow.removeCore(identityKey: station.identity.publicKey))
+        #expect(kept.lastUsedCore == nil)
+        #expect(harness.flow.cores.map(\.id) == [first.identityKey, second.identityKey])
+    }
+
+    @Test("with no last Core used, the list is in paired order")
+    func noLastUsedKeepsPairedOrder() async throws {
+        let station = try FakeStation()
+        let first = Self.listedCore("Attic")
+        let second = Self.listedCore("Field")
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: station.transportFactory, paired: [first, second], kept: kept)
+        #expect(kept.lastUsedCore == nil)
+        #expect(harness.flow.cores.map(\.id) == [first.identityKey, second.identityKey])
+    }
+
+    @Test("a last Core used that isn't on the list, or can't be read, leaves paired order", arguments: [
+        Base64URL.encode(Data(repeating: 7, count: 91)),
+        "not a key!",
+    ])
+    func staleLastUsedKeepsPairedOrder(stale: String) async throws {
+        let station = try FakeStation()
+        let first = Self.listedCore("Attic")
+        let second = Self.listedCore("Field")
+        let kept = try keptSettings(lastCore: nil)
+        kept.lastUsedCore = stale
+        let harness = try Self.harness(factory: station.transportFactory, paired: [first, second], kept: kept)
+        #expect(harness.flow.cores.map(\.id) == [first.identityKey, second.identityKey])
+    }
+
+    @Test("a connect that never reaches ready leaves the order and the last Core used alone")
+    func failedConnectIsNotLastUsed() async throws {
+        let station = try FakeStation()
+        let other = Self.listedCore("Attic")
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: { _, _ in DeadTransport(error: .failed("no answer")) },
+                                       paired: [other, Self.paired(station)], kept: kept)
+        let row = try #require(harness.flow.cores.first { $0.id == station.identity.publicKey })
+        await harness.flow.connect(to: row)
+        #expect(await settle { harness.flow.screen == .cores && harness.flow.trouble != nil })
+        #expect(kept.lastUsedCore == nil)
+        #expect(harness.flow.cores.map(\.id) == [other.identityKey, station.identity.publicKey])
+    }
+
     @Test("a last Core that needs pairing, or a Keychain that can't be read, stays off the air")
     func pairingAndKeychainStay() async throws {
         let station = try FakeStation()

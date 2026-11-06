@@ -31,6 +31,12 @@ struct PhoneSettingsTests {
         #expect(PhoneSettings(defaults: defaults).lastCore == "abc")
         settings.lastCore = nil
         #expect(defaults.object(forKey: "phone.connect.lastCore") == nil)
+        #expect(settings.lastUsedCore == nil)
+        settings.lastUsedCore = "abc"
+        #expect(PhoneSettings(defaults: defaults).lastUsedCore == "abc")
+        #expect(defaults.object(forKey: "phone.connect.lastCore") == nil)
+        settings.lastUsedCore = nil
+        #expect(defaults.object(forKey: "phone.connect.lastUsedCore") == nil)
     }
 
     @Test("the band screen's layout is kept: pill tab, applet column, folded columns")

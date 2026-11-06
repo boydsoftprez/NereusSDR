@@ -277,8 +277,24 @@ final class PhoneSettings: ObservableObject {
         }
     }
 
+    /// The Core a session last reached ready on, by its identity key in
+    /// base64url, for the top of Your Cores. It is not ``lastCore``: leaving
+    /// with Disconnect keeps this, and only Remove Core clears it. Nothing
+    /// dials because of it.
+    var lastUsedCore: String? {
+        get { defaults.string(forKey: Self.keyPrefix + Self.lastUsedCoreKey) }
+        set {
+            if let newValue {
+                setString(newValue, for: Self.lastUsedCoreKey)
+            } else {
+                reset(Self.lastUsedCoreKey)
+            }
+        }
+    }
+
     static let autoReconnectKey = "connect.autoReconnect"
     static let lastCoreKey = "connect.lastCore"
+    static let lastUsedCoreKey = "connect.lastUsedCore"
 
     static let deviceNameKey = "connect.deviceName"
     static let coresNeedingPairingKey = "connect.coresNeedingPairing"
