@@ -1049,6 +1049,9 @@ set(CORE_SOURCES
     src/core/VoltsAmpsLog.cpp
     src/core/SkuUiProfile.cpp
     src/core/HardwareProfile.cpp
+    src/core/hotkeys/HotKeyActionList.cpp
+    src/core/hotkeys/HotKeyBindings.cpp
+    src/core/hotkeys/HotKeyChord.cpp
     src/core/LogCategories.cpp
     # Remote-window parity Task 22 (R-R3-49): the log sink no logging
     # thread waits on, and the zip archive the support bundle travels in.
