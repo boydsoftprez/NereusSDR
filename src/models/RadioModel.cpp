@@ -13898,6 +13898,15 @@ int RadioModel::sliceChannelLimit() const
 QString RadioModel::closedSliceSentence(const SliceModel* slice, int channelLimit) const
 {
     const QString mhz = QString::number(slice->frequency() / 1.0e6, 'f', 4);
+    // A desktop keeps the letter in its record and brings it back by itself
+    // (closeSlicesPastChannelLimit).
+    if (desktopLayoutSaves()) {
+        return tr("Receiver %1 (%2\u00A0MHz %3) was closed because this radio supports "
+                  "only %4. It stays saved and comes back on a later connect when there "
+                  "is room.")
+            .arg(QString(slice->sliceLetter()), mhz, SliceModel::modeName(slice->dspMode()),
+                 supportedReceivers(channelLimit));
+    }
     return tr("Receiver %1 (%2\u00A0MHz %3) was closed because this radio supports "
               "only %4. Add it again with +RX after closing another receiver.")
         .arg(QString(slice->sliceLetter()), mhz, SliceModel::modeName(slice->dspMode()),
@@ -13967,6 +13976,7 @@ void RadioModel::closeSlicesPastChannelLimit()
             const SliceOwnership::Mark mark = m_sliceOwnership->mark(slice->sliceIndex());
             keep.prepend({slice->sliceIndex(), slice->panKey(), slice->frequency(),
                           slice->dspMode(), mark.owner, mark.heldFor});
+            m_desktopLayoutToldClosed.insert(slice->sliceIndex());
         }
     }
     const bool allClosed = past.size() == m_slices.size();
@@ -20345,6 +20355,7 @@ bool RadioModel::desktopLayoutSaves() const
 void RadioModel::prepareDesktopLayout(const QString& radioMac, bool liveSlices)
 {
     const QString mac = AppSettings::normalizedRadioMac(radioMac);
+    m_desktopLayoutToldClosed.clear();
     // Connecting again to this radio keeps the slices on screen, and tries
     // again for what had no room. It does not read the record back: that
     // would reopen a slice closed while the radio was off.
@@ -20448,11 +20459,15 @@ bool RadioModel::restoreDesktopLayoutSlices(const QStringList& panIds)
         applySavedSliceSampleRates(savedSliceSampleRates(), m_lastRadioInfo.protocol);
         if (!self) { return true; }
     }
-    if (!unplaced.isEmpty()) {
-        QStringList letters;
-        for (const ReceiveSliceState& state : std::as_const(unplaced)) {
+    // A letter this connect's closure named has already been told it stays saved.
+    QStringList letters;
+    for (const ReceiveSliceState& state : std::as_const(unplaced)) {
+        if (!m_desktopLayoutToldClosed.contains(state.id)) {
             letters.append(QString(receiverLetter(state.id)));
         }
+    }
+    m_desktopLayoutToldClosed.clear();
+    if (!letters.isEmpty()) {
         setReceiveLayoutRestoreStatus(QStringLiteral("degraded"),
             letters.size() == 1
                 ? tr("Receiver %1 stays saved because this radio has no room for it now. "

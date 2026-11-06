@@ -149,6 +149,17 @@ QString closedSentence(QChar letter, double frequencyHz, DSPMode mode)
         .arg(SliceModel::modeName(mode));
 }
 
+// On a desktop that saves a layout, where the letter stays in the record.
+QString closedSentenceOnADesktop(QChar letter, double frequencyHz, DSPMode mode)
+{
+    return QStringLiteral("Receiver %1 (%2\u00A0MHz %3) was closed because this radio "
+                          "supports only receivers A and B. It stays saved and comes back on "
+                          "a later connect when there is room.")
+        .arg(letter)
+        .arg(QString::number(frequencyHz / 1.0e6, 'f', 4))
+        .arg(SliceModel::modeName(mode));
+}
+
 } // namespace
 
 class TestSliceCapEveryPath : public QObject {
@@ -507,8 +518,8 @@ private slots:
                 return model.connectionState() == ConnectionState::Connected;
             }, 10000);
         };
-        const QString expected = closedSentence(QLatin1Char('C'), freqC, modeC)
-            + QLatin1Char(' ') + closedSentence(QLatin1Char('D'), freqD, modeD);
+        const QString expected = closedSentenceOnADesktop(QLatin1Char('C'), freqC, modeC)
+            + QLatin1Char(' ') + closedSentenceOnADesktop(QLatin1Char('D'), freqD, modeD);
 
         for (int round = 1; round <= 2; ++round) {
             QVERIFY2(fillToFourSlices(), qPrintable(QString::number(round)));

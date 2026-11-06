@@ -9085,6 +9085,8 @@ private:
     // for the one run of admission that reports them. Kept so a later
     // admission step does not report an accepted restore over it.
     QString m_sliceClosureNotice;
+    // A desktop's letters this connect's closure notice already said stay saved.
+    QSet<int> m_desktopLayoutToldClosed;
     bool m_receiveLayoutProtected{false};
     // Receivers the saved layout still names but this run refused or closed.
     // Their Slice<N>/ keys wait for them, so no slice that takes the same

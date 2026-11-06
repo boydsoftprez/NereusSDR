@@ -1117,10 +1117,17 @@ private slots:
 
         QCOMPARE(model.addStartingSlices(kDesktopMac), -1);
         model.configureStreamPool(3, 2, kRateHz);
+        const QString closedC = model.sliceById(2) ? QStringLiteral(
+            "Receiver C (3.6000\u00A0MHz %1) was closed because this radio supports only "
+            "receivers A and B. It stays saved and comes back on a later connect when there "
+            "is room.").arg(SliceModel::modeName(model.sliceById(2)->dspMode())) : QString();
         model.bindUnboundSlices();
         QVERIFY(!model.sliceById(2));
+        QCOMPARE(model.receiveLayoutRestoreMessage(), closedC);
         MainWindow::populatePanSlices(&model, {kPan0, kPan1, kPan2}, false, false);
         QVERIFY(!model.sliceById(2));
+        // Told once: that sentence already says it stays saved.
+        QCOMPARE(model.receiveLayoutRestoreMessage(), closedC);
         model.flushPendingSettingsSave();
         QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
 
