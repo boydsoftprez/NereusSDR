@@ -2193,6 +2193,14 @@ void PhoneCwApplet::reportFreeCanvasSize()
     if (!m_parts || !m_stack) {
         return;
     }
+    // The host reads this before the copy is first shown, when a page's
+    // layouts still hold old heights (the hidden MON row's, for one).
+    for (int i = 0; i < m_stack->count(); ++i) {
+        QLayout* column = m_stack->widget(i)->layout();
+        column->invalidate();
+        column->activate();
+    }
+    m_stack->updateGeometry();
     QSize hint = sizeHint();
     QSize minimum = minimumSizeHint();
     const QList<QWidget*> buttons = m_parts->widgets(QStringLiteral("pageButtons"));

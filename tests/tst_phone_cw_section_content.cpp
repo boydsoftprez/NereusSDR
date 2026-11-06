@@ -834,6 +834,12 @@ private slots:
         const std::unique_ptr<QWidget> shortView(registry.createPreview(noButtons, &host));
         QVERIFY(shortView);
         QCOMPARE(shortView->property("freeCanvasHint").toSize().height(), shortView->sizeHint().height());
+        // Exactly the row and its page's margins, read before the copy is
+        // ever shown: the MON row's stale height doesn't count.
+        QWidget* mic = rowOf(qobject_cast<PhoneCwApplet*>(shortView.get()), QStringLiteral("mic"));
+        const QMargins margins = mic->parentWidget()->layout()->contentsMargins();
+        QCOMPARE(shortView->property("freeCanvasHint").toSize().height(),
+                 margins.top() + mic->sizeHint().height() + margins.bottom());
         QCOMPARE(shortView->property("freeCanvasMinimum").toSizeF().height(),
                  qreal(shortView->minimumSizeHint().height()));
 
