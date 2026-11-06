@@ -2139,6 +2139,9 @@ PhoneCwApplet* PhoneCwApplet::createPanelCopy(QWidget* parent, bool preview)
     copy->setTransmitSettingsPermitted(m_transmitSettingsPermitted, m_transmitSettingsReason);
     copy->setTxProfilePermitted(m_txProfilePermitted, m_txProfileReason);
     copy->setCwSettingsPermitted(m_cwSettingsPermitted, m_cwSettingsReason);
+    // Iambic turns back on to the letter this panel would pick, even when
+    // the copy is built in straight-key mode.
+    copy->m_cwLastIambicMode = m_cwLastIambicMode;
     if (m_compressionUnavailable) {
         copy->setCompressionUnavailable(m_compressionReason);
     } else if (m_compressionSeen) {
