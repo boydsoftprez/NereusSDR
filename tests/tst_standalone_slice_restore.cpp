@@ -150,6 +150,29 @@ void connectDesktop(RadioModel& model, int ddcs, int maxSlices, const QStringLis
     expectNoCaptureForAnotherBand(model);
 }
 
+void connectDesktopP1(RadioModel& model, int ddcs, int maxSlices, const QStringList& pans)
+{
+    RadioInfo info;
+    info.macAddress = kDesktopMac;
+    info.protocol = ProtocolVersion::Protocol1;
+    model.setLastRadioInfoForTest(info);
+    model.setHpsdrModelForTest(HPSDRModel::HERMESLITE);
+    model.setBoardForTest(HPSDRHW::HermesLite);
+    const int start = model.addStartingSlices(kDesktopMac);
+    if (SliceModel* slice = model.sliceById(start)) {
+        model.setActiveSlice(static_cast<int>(model.slices().indexOf(slice)));
+        model.loadSliceState(slice);
+    }
+    model.configureStreamPool(ddcs, maxSlices, 48000);
+    model.bindUnboundSlices();
+    TxSliceArbiter* arbiter = model.txSliceArbiter();
+    arbiter->setMacAddress(kDesktopMac);
+    arbiter->load();
+    MainWindow::populatePanSlices(&model, pans, false, false);
+    arbiter->finishRestore();
+    expectNoCaptureForAnotherBand(model);
+}
+
 // Letter A was last on 40 m, and 20 m and 40 m's USB filter have values of their
 // own that a connect must leave alone.
 void saveLetterAOn40WithOwn20()
@@ -1231,6 +1254,56 @@ private slots:
         model.bindUnboundSlices();
         MainWindow::populatePanSlices(&model, {kPan0, kPan1}, false, false);
         QCOMPARE(model.activeSlice(), model.sliceById(0));
+    }
+
+    // Built live on a 2 DDC radio: C is on B's pan but inside A's receiver. No
+    // receiver of its own pan covers it and none is free, and A's covers it, as
+    // the live path found when it was tuned there.
+    void aSliceSharingAnotherPansReceiverComesBackOnASmallRadio()
+    {
+        {
+            RadioModel before;
+            connectDesktopP1(before, 2, 5, {kPan0, kPan1});
+            before.sliceById(0)->setFrequency(kSliceAFreqHz);
+            before.sliceById(1)->setFrequency(kSliceBFreqHz);
+            QVERIFY(before.setActiveSliceById(0));
+            before.addSliceOnPan(kPan1, false, true);
+            QVERIFY(before.sliceById(2));
+            before.sliceById(2)->setFrequency(kSliceAFreqHz + 5000.0);
+            QCOMPARE(before.sliceById(2)->panKey(), kPan1);
+            QCOMPARE(before.sliceById(2)->streamIndex(), before.sliceById(0)->streamIndex());
+            before.flushPendingSettingsSave();
+        }
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+        RadioModel after;
+        connectDesktopP1(after, 2, 5, {kPan0, kPan1});
+        QCOMPARE(after.slices().size(), 3);
+        SliceModel* c = after.sliceById(2);
+        QVERIFY(c);
+        QCOMPARE(c->panKey(), kPan1);
+        QCOMPARE(c->frequency(), kSliceAFreqHz + 5000.0);
+        QCOMPARE(c->streamIndex(), after.sliceById(0)->streamIndex());
+        QVERIFY(after.sliceById(1)->streamIndex() != after.sliceById(0)->streamIndex());
+    }
+
+    // Nothing covers it and no receiver is free: only then does it wait.
+    void aSliceNoReceiverCoversStaysSavedOnASmallRadio()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 3, 5, {kPan0, kPan1, kPan2});
+            before.sliceById(0)->setFrequency(kSliceAFreqHz);
+            before.sliceById(1)->setFrequency(kSliceBFreqHz);
+            before.sliceById(2)->setFrequency(3600000.0);
+            before.flushPendingSettingsSave();
+        }
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+        RadioModel after;
+        connectDesktopP1(after, 2, 5, {kPan0, kPan1, kPan2});
+        QCOMPARE(after.slices().size(), 2);
+        QVERIFY(!after.sliceById(2));
+        after.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
     }
 };
 

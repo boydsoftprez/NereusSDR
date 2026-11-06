@@ -17455,11 +17455,18 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         }
         panCovering = panStreamCovering(m_streamAllocator, panStreams, slice->frequency());
     }
+    // No receiver of its own pan covers it and none is free: it joins any that
+    // covers it, as placeSlice does for a live slice without preferOwnStream.
+    // Without this, a layout built on a small radio with a slice inside another
+    // pan's receiver was refused at every start.
+    const bool noneOfItsOwn = placedByPan && panCovering < 0
+        && m_streamAllocator.placeSlice(slice->frequency(), /*preferOwnStream=*/true).outcome
+            == SliceStreamAllocator::Outcome::Rejected;
     const bool bound = !placementAttempted
         || (panCovering >= 0
                 ? bindSliceToStream(slice, slice->frequency(), false, panCovering)
                 : bindSliceToStream(slice, slice->frequency(),
-                                    placedByPan || openingANewPan));
+                                    (placedByPan && !noneOfItsOwn) || openingANewPan));
     if (!currentAdded()) { return -1; }
     if (!bound && poolReady && role() == Role::Local) {
         // bindSliceToStream already emitted sliceAddRejected with the
