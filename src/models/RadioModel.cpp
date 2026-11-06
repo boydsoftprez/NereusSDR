@@ -13900,7 +13900,7 @@ QString RadioModel::closedSliceSentence(const SliceModel* slice, int channelLimi
     const QString mhz = QString::number(slice->frequency() / 1.0e6, 'f', 4);
     // A desktop keeps the letter in its record and brings it back by itself
     // (closeSlicesPastChannelLimit).
-    if (desktopLayoutSaves()) {
+    if (desktopLayoutKeepsClosedLetters()) {
         return tr("Receiver %1 (%2\u00A0MHz %3) was closed because this radio supports "
                   "only %4. It stays saved and comes back on a later connect when there "
                   "is room.")
@@ -13968,8 +13968,9 @@ void RadioModel::closeSlicesPastChannelLimit()
     }
     // JJ's ruling: on a desktop, extras that do not fit stay saved and come back
     // on a later connect with room. A restore still to run tries them and keeps
-    // them; with none to come they are kept now.
-    if (desktopLayoutSaves()) {
+    // them; with none to come they are kept now. Another radio's letters are not
+    // this radio's to keep: its record would promise them at every connect.
+    if (desktopLayoutKeepsClosedLetters()) {
         QList<ReceiveSliceState>& keep =
             m_desktopLayoutRestorePending ? m_desktopLayoutWaiting : m_desktopLayoutKept;
         for (const SliceModel* slice : std::as_const(past)) {
@@ -20352,6 +20353,11 @@ bool RadioModel::desktopLayoutSaves() const
         && !m_desktopLayoutMac.isEmpty();
 }
 
+bool RadioModel::desktopLayoutKeepsClosedLetters() const
+{
+    return desktopLayoutSaves() && !m_desktopLayoutSlicesFromElsewhere;
+}
+
 void RadioModel::prepareDesktopLayout(const QString& radioMac, bool liveSlices)
 {
     const QString mac = AppSettings::normalizedRadioMac(radioMac);
@@ -20374,6 +20380,7 @@ void RadioModel::prepareDesktopLayout(const QString& radioMac, bool liveSlices)
     m_desktopLayoutWaiting.clear();
     m_desktopLayoutRuled = false;
     m_desktopLayoutRestorePending = false;
+    m_desktopLayoutSlicesFromElsewhere = false;
     m_desktopLayoutActiveId = -1;
     if (mac.isEmpty()) {
         return;
@@ -20406,6 +20413,7 @@ void RadioModel::prepareDesktopLayout(const QString& radioMac, bool liveSlices)
     m_desktopLayoutWaiting = waiting;
     m_desktopLayoutRuled = !waiting.isEmpty();
     m_desktopLayoutRestorePending = true;
+    m_desktopLayoutSlicesFromElsewhere = liveSlices;
     // Slices already on screen keep the one they are on.
     m_desktopLayoutActiveId = liveSlices
         ? -1 : AppSettings::instance().value(desktopActiveSliceKey(mac), -1).toInt();
@@ -20452,6 +20460,7 @@ bool RadioModel::restoreDesktopLayoutSlices(const QStringList& panIds)
     m_desktopLayoutRestoring = false;
     m_desktopLayoutKept = unplaced;
     m_desktopLayoutRestorePending = false;
+    m_desktopLayoutSlicesFromElsewhere = false;
     // One rate per receiver, the highest saved among the slices on it. The
     // connect's own pass ran with only the starting slice there. Protocol 1
     // moves nothing, and a rate off the ladder asks for nothing.

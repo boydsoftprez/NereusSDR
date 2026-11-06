@@ -8348,6 +8348,9 @@ private:
     // A desktop's use of the record (restoreDesktopLayoutSlices). True when
     // this run's slices are saved under a radio's record.
     bool desktopLayoutSaves() const;
+    // Saves, and the slices on screen are this radio's own: a letter closed for
+    // want of room stays in its record.
+    bool desktopLayoutKeepsClosedLetters() const;
     // addStartingSlices: reads the record for this connect.
     void prepareDesktopLayout(const QString& radioMac, bool liveSlices);
     bool captureDesktopReceiveLayout();
@@ -9074,6 +9077,9 @@ private:
     int m_startingSliceAwaitingLoad{-1};
     // From the connect's start until the restore has run, no layout is saved.
     bool m_desktopLayoutRestorePending{false};
+    // prepareDesktopLayout to restoreDesktopLayoutSlices: this radio took on
+    // slices another radio left on screen, and has no record of its own.
+    bool m_desktopLayoutSlicesFromElsewhere{false};
     // A saved layout decides the slices, so empty pans are not filled.
     bool m_desktopLayoutRuled{false};
     bool m_desktopLayoutRestoring{false};

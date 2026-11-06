@@ -209,15 +209,41 @@ void expectLetterAMemoriesKept()
     QCOMPARE(settings.value(QStringLiteral("Slice0/LastBand")).toString(), QStringLiteral("40m"));
 }
 
-QList<int> slicesInRecord()
+QList<int> slicesInRecord(const QString& mac = kDesktopMac)
 {
     QList<int> ids;
-    const auto layout = ReceiveLayoutStore::load(AppSettings::instance(), kDesktopMac);
+    const auto layout = ReceiveLayoutStore::load(AppSettings::instance(), mac);
     for (const ReceiveSliceState& state : layout.slices) {
         ids.append(state.id);
     }
     std::sort(ids.begin(), ids.end());
     return ids;
+}
+
+// A connect to another radio, up to sizing its stream pool. With slices on screen
+// there is no starting slice; a model with none gets one, as a first connect does.
+void connectLiveTo(RadioModel& model, const QString& mac, bool startSlice = false)
+{
+    RadioInfo info;
+    info.macAddress = mac;
+    info.protocol = ProtocolVersion::Protocol2;
+    model.setLastRadioInfoForTest(info);
+    model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+    const int start = model.addStartingSlices(mac);
+    QCOMPARE(start >= 0, startSlice);
+    if (SliceModel* slice = model.sliceById(start)) {
+        model.setActiveSlice(static_cast<int>(model.slices().indexOf(slice)));
+        model.loadSliceState(slice);
+    }
+}
+
+// The closure's words where the letter is not kept.
+QString closedWithRxWords(const SliceModel* slice)
+{
+    return QStringLiteral("Receiver C (3.6000\u00A0MHz %1) was closed because this radio "
+                          "supports only receivers A and B. Add it again with +RX after "
+                          "closing another receiver.")
+        .arg(SliceModel::modeName(slice->dspMode()));
 }
 
 } // namespace
@@ -1262,6 +1288,105 @@ private slots:
         model.bindUnboundSlices();
         MainWindow::populatePanSlices(&model, {kPan0, kPan1}, false, false);
         QCOMPARE(model.activeSlice(), model.sliceById(0));
+    }
+
+    // A, B and C on screen from a 3-receiver radio, then a 2-receiver radio with
+    // no record of its own. C is none of its letters: the record it starts must
+    // not promise C at every connect, which it could never keep there. The
+    // second row is a connect that dropped before its restore ran.
+    void anotherRadiosSliceStaysOutOfASmallRadiosRecord_data()
+    {
+        QTest::addColumn<bool>("droppedFirst");
+        QTest::newRow("oneConnect") << false;
+        QTest::newRow("droppedConnectFirst") << true;
+    }
+    void anotherRadiosSliceStaysOutOfASmallRadiosRecord()
+    {
+        QFETCH(bool, droppedFirst);
+        const QString other = QStringLiteral("AA:BB:CC:DD:EE:42");
+        {
+            RadioModel model;
+            connectDesktop(model, 3, 5, {kPan0, kPan1, kPan2});
+            model.sliceById(2)->setFrequency(3600000.0);
+            model.flushPendingSettingsSave();
+            connectLiveTo(model, other);
+            if (droppedFirst) {
+                QCOMPARE(model.addStartingSlices(other), -1);
+            }
+            model.configureStreamPool(2, 2, kRateHz);
+            const QString closedC = closedWithRxWords(model.sliceById(2));
+            model.bindUnboundSlices();
+            QVERIFY(!model.sliceById(2));
+            QCOMPARE(model.receiveLayoutRestoreMessage(), closedC);
+            MainWindow::populatePanSlices(&model, {kPan0, kPan1, kPan2}, false, false);
+            QCOMPARE(model.receiveLayoutRestoreMessage(), closedC);
+            model.flushPendingSettingsSave();
+        }
+        QCOMPARE(slicesInRecord(other), QList<int>({0, 1}));
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+
+        RadioModel after;
+        connectLiveTo(after, other, /*startSlice=*/true);
+        after.configureStreamPool(2, 2, kRateHz);
+        after.bindUnboundSlices();
+        MainWindow::populatePanSlices(&after, {kPan0, kPan1, kPan2}, false, false);
+        QVERIFY(after.receiveLayoutRestoreMessage().isEmpty());
+        after.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(other), QList<int>({0, 1}));
+    }
+
+    // That radio has a record of its own: it is neither applied over the slices
+    // on screen nor replaced by them, and C is not added to it.
+    void anotherRadiosSliceStaysOutOfARecordOfItsOwn()
+    {
+        const QString other = QStringLiteral("AA:BB:CC:DD:EE:42");
+        {
+            RadioModel first;
+            connectLiveTo(first, other, /*startSlice=*/true);
+            first.configureStreamPool(2, 2, kRateHz);
+            first.bindUnboundSlices();
+            MainWindow::populatePanSlices(&first, {kPan0, kPan1}, false, false);
+            first.flushPendingSettingsSave();
+        }
+        QCOMPARE(slicesInRecord(other), QList<int>({0, 1}));
+        RadioModel model;
+        connectDesktop(model, 3, 5, {kPan0, kPan1, kPan2});
+        model.sliceById(2)->setFrequency(3600000.0);
+        model.flushPendingSettingsSave();
+        connectLiveTo(model, other);
+        model.configureStreamPool(2, 2, kRateHz);
+        const QString closedC = closedWithRxWords(model.sliceById(2));
+        model.bindUnboundSlices();
+        QVERIFY(!model.sliceById(2));
+        QCOMPARE(model.receiveLayoutRestoreMessage(), closedC);
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1, kPan2}, false, false);
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(other), QList<int>({0, 1}));
+    }
+
+    // Once its restore has run, the slices a radio took on are its own: a limit
+    // that drops on its next connect keeps the letter, as for any other record.
+    void aRadioThatTookTheSlicesOnKeepsTheLetterOnItsNextConnect()
+    {
+        const QString other = QStringLiteral("AA:BB:CC:DD:EE:42");
+        RadioModel model;
+        connectDesktop(model, 3, 5, {kPan0, kPan1, kPan2});
+        connectLiveTo(model, other);
+        model.configureStreamPool(3, 5, kRateHz);
+        model.bindUnboundSlices();
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1, kPan2}, false, false);
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(other), QList<int>({0, 1, 2}));
+
+        QCOMPARE(model.addStartingSlices(other), -1);
+        model.configureStreamPool(2, 2, kRateHz);
+        model.bindUnboundSlices();
+        QVERIFY(!model.sliceById(2));
+        QVERIFY2(model.receiveLayoutRestoreMessage().contains(QStringLiteral("stays saved")),
+                 qPrintable(model.receiveLayoutRestoreMessage()));
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1, kPan2}, false, false);
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(other), QList<int>({0, 1, 2}));
     }
 
     // Built live on a 2 DDC radio: C is on B's pan but inside A's receiver. No
