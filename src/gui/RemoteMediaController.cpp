@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-11-05: the unmute restarts the silence rules' clocks, so a long mute
+//               on a relayed path no longer ends the session at the next
+//               tick; restartSilenceClocks is the one place that restarts
+//               them. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-11-05: silence the window caused by stopping its own audio for a
 //               speaker failure no longer moves the media connection or ends
 //               the session; the silence rules count from the end of that
@@ -1392,6 +1397,16 @@ struct RemoteMediaController::Private {
     bool replacementFallback = false;
     qint64 fallbackFinishedMs = -1;
     bool txSilenceSuppressed = false;
+    // 2026-11-05: silence this window expected is over (it was muted, keyed,
+    // its radio was down, or it stopped its own audio for a speaker failure),
+    // so the silence rules count from now, each with its full wait.
+    void restartSilenceClocks()
+    {
+        const qint64 now = allocationClock();
+        if (lastAudio.isValid()) { lastAudio.restart(); }
+        if (lastMediaMs >= 0) { lastMediaMs = now; }
+        if (fallbackFinishedMs >= 0) { fallbackFinishedMs = now; }
+    }
     bool coreTransmitting() const
     {
         if (!client || client->capabilities().txStateVersion < 1) { return false; }
@@ -2182,10 +2197,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // from the end of the stop, so a retry that reaches a dead path still
         // gets their full wait and no less.
         if (d->audioStoppedForSpeaker) {
-            const qint64 now = d->allocationClock();
-            d->lastAudio.restart();
-            if (d->lastMediaMs >= 0) { d->lastMediaMs = now; }
-            if (d->fallbackFinishedMs >= 0) { d->fallbackFinishedMs = now; }
+            d->restartSilenceClocks();
             return;
         }
         if (slowPath && d->lastAudio.elapsed() > kMediaStallMs) {
@@ -2367,7 +2379,9 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         d->audio->stop();
         // 2026-11-05: the speaker was not what stopped this one, so what the
         // silence rules see from here is the path's again.
-        d->audioStoppedForSpeaker = false;
+        if (std::exchange(d->audioStoppedForSpeaker, false)) {
+            d->restartSilenceClocks();
+        }
         // R-R3-21, R-R3-51: while the Core transmits it sends this device no
         // receive audio, so running out of packets is expected silence, not
         // an outage (nor a lossless link interruption). Nothing is asked
@@ -2392,8 +2406,14 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         scheduleAudioRetry();
         refreshAudioStatus();
     });
-    connect(model->audioEngine(), &AudioEngine::masterMutedChanged,
-            this, &RemoteMediaController::requestAudio);
+    connect(model->audioEngine(), &AudioEngine::masterMutedChanged, this, [this](bool muted) {
+        // 2026-11-05: a muted window asks the Core for nothing and the
+        // silence rules wait, but their clocks kept running, so the unmute
+        // found them expired and the next tick ended the session unless the
+        // first packet got there first.
+        if (!muted) { d->restartSilenceClocks(); }
+        requestAudio();
+    });
     // R-R3-45: the headphones mix plays on this computer's headphones with
     // its own receiver and rate matcher. A failure there stops only it.
     d->headphones = std::make_unique<RemoteAudioReceiver>(model->audioEngine(),
@@ -2533,16 +2553,11 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             d->txSilenceSuppressed = onAir;
             // Only the actual TX-to-RX transition restarts a clock already
             // armed by RTP. Periodic txState fields cannot defer recovery.
-            if (returningToRx && d->lastAudio.isValid()) {
-                d->lastAudio.restart();
-            }
             // The direct media ladder: the silence while keyed is expected,
             // so the silence fallback's clock (and a finished fallback's
             // wait) restarts on the return to receive too.
             if (returningToRx) {
-                const qint64 now = d->allocationClock();
-                if (d->lastMediaMs >= 0) { d->lastMediaMs = now; }
-                if (d->fallbackFinishedMs >= 0) { d->fallbackFinishedMs = now; }
+                d->restartSilenceClocks();
                 // R-R3-51: streams the transmit silence stopped are asked
                 // for again now, not at a backoff step.
                 resumeAudioAfterTransmit();
@@ -2718,10 +2733,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             // was down, and the radio's first audio can come after this
             // news does. The silence rules count from the radio's return,
             // as they do from the return to receive.
-            const qint64 now = d->allocationClock();
-            if (d->lastAudio.isValid()) { d->lastAudio.restart(); }
-            if (d->lastMediaMs >= 0) { d->lastMediaMs = now; }
-            if (d->fallbackFinishedMs >= 0) { d->fallbackFinishedMs = now; }
+            d->restartSilenceClocks();
             refreshSubscriptions();
             requestAudio();
         }

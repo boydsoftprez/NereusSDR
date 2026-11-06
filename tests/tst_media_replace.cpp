@@ -1439,6 +1439,98 @@ private slots:
         g.core.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-11-05: a muted window asks the Core for nothing, so the silence
+    // while muted says nothing about the path. Before, the clock kept running
+    // and the unmute found it long expired: the next tick, at most 500 ms
+    // later, ended the session unless the first packet got there first. The
+    // Core here sends nothing after the unmute, so the rule still fires, a
+    // full wait from the unmute. The stall tick runs on its own 500 ms timer
+    // and wall clock, as in the test above.
+    void theStallRuleCountsFromTheUnmute()
+    {
+        GuiHarness g;
+        g.giveTheWindowASpeaker();
+        QVERIFY(g.connect(tunnelShimPath()));
+        QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
+        g.feeding = false;
+        g.audioOn(0);
+        AudioEngine* const audio = g.core.remote.audioEngine();
+        audio->setMasterMuted(true);
+        QTest::qWait(RemoteMediaController::kMediaStallMs + 600);
+        QVERIFY(recovery.isEmpty());
+        QElapsedTimer back;
+        audio->setMasterMuted(false);
+        back.start();
+        QTRY_COMPARE_WITH_TIMEOUT(recovery.size(), 1,
+                                  RemoteMediaController::kMediaStallMs + 1500);
+        QVERIFY2(back.elapsed() >= RemoteMediaController::kMediaStallMs - 50,
+                 qPrintable(QStringLiteral("%1 ms after the unmute").arg(back.elapsed())));
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: the same for the direct path's 5 s rule, on the test's
+    // clock: a long mute moves nothing at the unmute, and a Core still silent
+    // falls back a full wait after it.
+    void theDirectSilenceRuleCountsFromTheUnmute()
+    {
+        GuiHarness g;
+        g.giveTheWindowASpeaker();
+        QVERIFY(g.connect(tunnelShimPath()));
+        MediaIcePath hostPath;
+        hostPath.remoteAddress = QStringLiteral("127.0.0.1");
+        g.feeding = false;
+        g.guiTransports.first()->path = hostPath;
+        g.audioOn(0);
+        AudioEngine* const audio = g.core.remote.audioEngine();
+        audio->setMasterMuted(true);
+        g.now += 2 * RemoteMediaController::kDirectMediaSilenceFallbackMs;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        audio->setMasterMuted(false);
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        g.now += RemoteMediaController::kDirectMediaSilenceFallbackMs - 1;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        g.now += 1;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 2);
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: and for the wait after a fallback finished, whose expiry
+    // asks for recovery.
+    void aFinishedFallbacksWaitCountsFromTheUnmute()
+    {
+        GuiHarness g;
+        g.giveTheWindowASpeaker();
+        QVERIFY(g.connect(tunnelShimPath()));
+        QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
+        MediaIcePath hostPath;
+        hostPath.remoteAddress = QStringLiteral("127.0.0.1");
+        g.feeding = false;
+        g.guiTransports.first()->path = hostPath;
+        g.audioOn(0);
+        g.now += RemoteMediaController::kDirectMediaSilenceFallbackMs;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 2);
+        g.guiTransports.at(1)->close();
+        QVERIFY(!g.gui->replacingConnection());
+        AudioEngine* const audio = g.core.remote.audioEngine();
+        audio->setMasterMuted(true);
+        g.now += 2 * RemoteMediaController::kDirectMediaSilenceFallbackMs;
+        audio->setMasterMuted(false);
+        g.gui->checkMediaSilence();
+        QVERIFY(recovery.isEmpty());
+        g.now += RemoteMediaController::kDirectMediaSilenceFallbackMs - 1;
+        g.gui->checkMediaSilence();
+        QVERIFY(recovery.isEmpty());
+        g.now += 1;
+        g.gui->checkMediaSilence();
+        QCOMPARE(recovery.size(), 1);
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // Silence while the Core is keyed is expected: back on receive, the
     // silence clock starts again rather than counting the keyed time.
     void theReturnToReceiveRestartsTheSilenceClock()
