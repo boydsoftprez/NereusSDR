@@ -11804,6 +11804,7 @@ nereus_add_test(tst_cat_parser CORE_ONLY)
 
 nereus_add_test(tst_cat_bindings CORE_ONLY)
 nereus_add_test(tst_hot_key_bindings CORE_ONLY)
+nereus_add_test(tst_hot_key_dispatcher)
 nereus_add_test(tst_cat_settings CORE_ONLY)
 nereus_add_test(tst_cat_headless CORE_ONLY)
 
