@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-11-05 - Issue 743: a hidden QRhiWidget gives the dialog its RHI
+//                 surface from the first show on Linux, so the first meter
+//                 added does not replace the dialog's native window.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26 - Availability of a meter entry is judged on the entry (a
 //                 stored BarPreset ADC maximum bar shows unavailable with its
 //                 reason). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
@@ -43,6 +47,9 @@
 #include "gui/meters/presets/CompositePresetItem.h"
 #include "gui/meters/presets/BarPresetItem.h"
 #include "gui/meters/WaveformMeterItem.h"
+#if defined(NEREUS_GPU_SPECTRUM) && !defined(Q_OS_MAC) && !defined(Q_OS_WIN)
+#include <QRhiWidget>
+#endif
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QSet>
@@ -54,6 +61,20 @@ ContainerPreviewWidget::ContainerPreviewWidget(ContainerContentRegistry& registr
     setObjectName("containerDraftPreview"); setMinimumHeight(180);
     m_layout->setContentsMargins(0,0,0,0); m_layout->setSpacing(0);
     m_layout->setSizeConstraint(QLayout::SetMinimumSize);
+#if defined(NEREUS_GPU_SPECTRUM) && !defined(Q_OS_MAC) && !defined(Q_OS_WIN)
+    // Issue 743: here a MeterWidget is not a native window of its own, so the
+    // first one parented into a shown raster dialog makes Qt destroy and
+    // recreate the dialog's native window to get an RHI surface (QWidget::
+    // setParent, Qt 6.11 qwidget.cpp:10943-10990), in the middle of exec().
+    // Qt looks for a child's RHI config without regard to visibility
+    // (q_evaluateRhiConfigRecursive, qwidget.cpp:1110), so this hidden child
+    // gives the dialog that surface when its window is first created. It is a
+    // plain QRhiWidget, not a MeterWidget, so nothing counts it as a meter; it
+    // stays out of the layout, m_surfaces and m_views, and paints nothing.
+    auto* rhiAnchor=new QRhiWidget(this);
+    rhiAnchor->setObjectName("containerPreviewRhiAnchor");
+    rhiAnchor->hide();
+#endif
     m_canvas=new FreeCanvasSurface(this);m_canvas->hide();
     connect(m_canvas,&FreeCanvasSurface::entrySelected,this,&ContainerPreviewWidget::entrySelected);
     connect(m_canvas,&FreeCanvasSurface::geometryEdited,this,[this](const QString& id,const QRectF& rect){

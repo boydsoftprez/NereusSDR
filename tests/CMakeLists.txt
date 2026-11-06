@@ -864,6 +864,8 @@ nereus_add_test(tst_container_edit_session)
 nereus_add_test(tst_container_exchange)
 nereus_add_test(tst_container_settings_workflow NATIVE_WINDOW)
 nereus_add_test(tst_container_preview NATIVE_WINDOW)
+# Issue 743: adding the first meter keeps the container dialog's native window.
+nereus_add_test(tst_container_dialog_keeps_window)
 # Item settings paste between compatible bar meters (Thetis canPasteSettings).
 nereus_add_test(tst_container_copy_paste)
 nereus_add_test(tst_free_canvas NATIVE_WINDOW)
