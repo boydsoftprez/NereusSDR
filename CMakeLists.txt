@@ -1916,6 +1916,9 @@ set(GUI_SOURCES
     src/gui/hotkeys/HotKeyDispatcher.cpp
     src/gui/hotkeys/KeyboardRouter.cpp
     src/gui/hotkeys/MainWindowHotKeyTargets.cpp
+    src/gui/hotkeys/ControllerHost.cpp
+    src/gui/hotkeys/midi/MidiInput.cpp
+    src/gui/hotkeys/midi/MidiProfile.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
     src/gui/PanFloatingWindow.cpp
@@ -2311,6 +2314,20 @@ if(APPLE)
     set_source_files_properties(src/gui/QtCocoaAccessibilityOwnershipGuard.mm
         src/gui/hotkeys/MacMenuTrackingWatch.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
+# RtMidi: desktop only, never NereusCore or nereusd (R-HK-18). On Linux it needs
+# ALSA (found above); without it the build has no MIDI support and the device
+# stays listed and disabled, with the reason.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ALSA_FOUND)
+    set(NEREUS_RTMIDI_AVAILABLE TRUE)
+    list(APPEND GUI_SOURCES third_party/rtmidi/RtMidi.cpp)
+    set_source_files_properties(third_party/rtmidi/RtMidi.cpp PROPERTIES
+        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+        SKIP_PRECOMPILE_HEADERS ON
+        SKIP_AUTOGEN ON)
+else()
+    set(NEREUS_RTMIDI_AVAILABLE FALSE)
+    message(STATUS "ALSA not found: this build has no MIDI support")
 endif()
 qt_add_resources(RESOURCES resources.qrc)
 
@@ -2877,6 +2894,25 @@ function(nereus_apply_gui_deps target)
     target_link_libraries(${target} PUBLIC
         Qt6::Svg
     )
+    if(NEREUS_RTMIDI_AVAILABLE)
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_RTMIDI)
+        target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/rtmidi)
+        if(APPLE)
+            target_compile_definitions(${target} PRIVATE __MACOSX_CORE__)
+            target_link_libraries(${target} PUBLIC
+                "-framework CoreMIDI" "-framework CoreAudio" "-framework CoreFoundation")
+        elseif(WIN32)
+            # The number RtMidi adds to a Windows name by default is the port's
+            # place in the list, and it moves when another device comes or goes:
+            # that would read as an unplug (third_party/rtmidi/RtMidi.cpp:2975-2983).
+            target_compile_definitions(${target} PRIVATE
+                __WINDOWS_MM__ RTMIDI_DO_NOT_ENSURE_UNIQUE_PORTNAMES)
+            target_link_libraries(${target} PUBLIC winmm)
+        else()
+            target_compile_definitions(${target} PRIVATE __LINUX_ALSA__)
+            target_link_libraries(${target} PUBLIC ALSA::ALSA)
+        endif()
+    endif()
 
     nereus_apply_warnings(${target})
 endfunction()

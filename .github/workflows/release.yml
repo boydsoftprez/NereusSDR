@@ -533,6 +533,7 @@ jobs:
           cd ..
           LD_LIBRARY_PATH="$PWD/$LIBDIR" ldd debroot/usr/bin/nereusd > package-ldd.txt
           ! grep -q 'not found' package-ldd.txt
+          ! grep -Eqi 'rtmidi|hidapi' package-ldd.txt
           DEBIAN_VERSION=$(python3 scripts/release-version.py debian-version "$VERSION")
           sed -e "s/@VERSION@/$DEBIAN_VERSION/g" -e "s/@ARCH@/$ARCH/g" \
             -e "s/@DEPENDS@/$DEPS/g" \

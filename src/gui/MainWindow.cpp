@@ -1426,6 +1426,7 @@ warren@wpratt.com
 #include "containers/ContainerWidget.h"
 #include "containers/ContainerButtonDispatcher.h"
 #include "core/hotkeys/HotKeyBindings.h"
+#include "gui/hotkeys/ControllerHost.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
 #include "gui/hotkeys/KeyboardRouter.h"
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
@@ -9444,6 +9445,7 @@ void MainWindow::buildUI()
     // filter first, and that filter must see each key before the router eats it.
     m_keyboardRouter = std::make_unique<KeyboardRouter>(
         m_hotKeyDispatcher.get(), m_hotKeyBindings.get(), this);
+    m_controllerHost = std::make_unique<ControllerHost>(m_hotKeyDispatcher.get(), m_hotKeyBindings.get());
     if (WorkspacePreview::enabled()) {
         // Workspace preview: the header source menu enables the open slices.
         m_containerManager->setSliceAvailability(

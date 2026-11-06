@@ -40,6 +40,7 @@
 #include <QFile>
 #include <QRegularExpression>
 #include <QSet>
+#include <QProcess>
 #include <QTextStream>
 
 namespace {
@@ -238,6 +239,41 @@ QString rejectionReason(const QString& header)
     return {};
 }
 
+/// Device libraries belong to the desktop app alone (R-HK-18): nereusd links
+/// NereusCore, so a header or a source here would put them in the Core.
+bool namesDeviceLibrary(const QString& header)
+{
+    const QString lower = header.toLower();
+    return lower.contains(QStringLiteral("rtmidi")) || lower.contains(QStringLiteral("hidapi"))
+        || lower.section(QLatin1Char('/'), -1) == QStringLiteral("hid.h");
+}
+
+/// Every line a CMake file lists in CORE_SOURCES or MODEL_SOURCES, the two lists
+/// NereusCore compiles. Line by line with comments off, as one may hold a ")".
+QStringList coreSourceLines(const QString& cmakeText)
+{
+    static const QRegularExpression kOpener(
+        QStringLiteral("^\\s*(set|list)\\s*\\(\\s*(APPEND\\s+)?(CORE|MODEL)_SOURCES\\b(.*)$"));
+    QStringList listed;
+    bool inside = false;
+    const QStringList lines = cmakeText.split(QLatin1Char('\n'));
+    for (const QString& rawLine : lines) {
+        const QString line = rawLine.section(QLatin1Char('#'), 0, 0).trimmed();
+        if (!inside) {
+            const auto opener = kOpener.match(line);
+            if (opener.hasMatch()) {
+                const QString rest = opener.captured(4);
+                listed << rest;
+                inside = !rest.endsWith(QLatin1Char(')'));
+            }
+            continue;
+        }
+        listed << line;
+        inside = !line.endsWith(QLatin1Char(')'));
+    }
+    return listed;
+}
+
 }  // namespace
 
 class TstCoreHasNoGuiIncludes : public QObject {
@@ -291,6 +327,119 @@ private slots:
                  qPrintable(QString("only %1 files scanned, NEREUS_SOURCE_DIR is probably wrong")
                                 .arg(scanned)));
         QCOMPARE(offenders.size(), 0);
+    }
+
+    // R-HK-18: no device library in src/core or src/models, by include.
+    void coreNeverIncludesDeviceLibraries()
+    {
+        const QString root = QStringLiteral(NEREUS_SOURCE_DIR);
+        QStringList offenders;
+        int scanned = 0;
+        for (const QString& sub : {QStringLiteral("/src/core"), QStringLiteral("/src/models")}) {
+            QDirIterator it(root + sub, {"*.h", "*.hpp", "*.c", "*.cpp", "*.mm"},
+                            QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                const QString path = it.next();
+                QFile f(path);
+                if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) { continue; }
+                ++scanned;
+                QTextStream ts(&f);
+                while (!ts.atEnd()) {
+                    const auto m = includeLineRe().match(ts.readLine());
+                    if (m.hasMatch() && namesDeviceLibrary(m.captured(1))) {
+                        offenders << path + QLatin1Char(' ') + m.captured(1);
+                    }
+                }
+            }
+        }
+        QVERIFY2(scanned > 100, qPrintable(QStringLiteral("only %1 files scanned").arg(scanned)));
+        QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QStringLiteral(", "))));
+    }
+
+    void deviceLibraryRule_data()
+    {
+        QTest::addColumn<QString>("header");
+        QTest::addColumn<bool>("rejected");
+        QTest::newRow("rtmidi")      << "RtMidi.h"                     << true;
+        QTest::newRow("rtmidi path") << "third_party/rtmidi/RtMidi.h"  << true;
+        QTest::newRow("hidapi")      << "hidapi/hidapi.h"              << true;
+        QTest::newRow("hid")         << "hid.h"                        << true;
+        QTest::newRow("hid path")    << "libusb/hid.h"                 << true;
+        QTest::newRow("not hid")     << "core/SomeHid.h"               << false;
+        QTest::newRow("qstring")     << "QString"                      << false;
+    }
+
+    void deviceLibraryRule()
+    {
+        QFETCH(QString, header);
+        QFETCH(bool, rejected);
+        QCOMPARE(namesDeviceLibrary(header), rejected);
+    }
+
+    // R-HK-18: no device library in the lists NereusCore compiles.
+    void coreSourcesListNoDeviceLibrary()
+    {
+        QFile f(QStringLiteral(NEREUS_SOURCE_DIR) + QStringLiteral("/CMakeLists.txt"));
+        QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QStringList listed = coreSourceLines(QString::fromUtf8(f.readAll()));
+        // Finding the lists is the point: a parse that finds nothing would pass.
+        QVERIFY2(listed.size() > 100, qPrintable(QStringLiteral("only %1 lines found").arg(listed.size())));
+        for (const QString& line : listed) {
+            QVERIFY2(!line.contains(QStringLiteral("third_party/rtmidi"))
+                         && !line.contains(QStringLiteral("third_party/hidapi")),
+                     qPrintable(line));
+        }
+    }
+
+    void coreSourceLinesSeesEverySpelling()
+    {
+        const QStringList listed = coreSourceLines(QStringLiteral(
+            "set(CORE_SOURCES\n"
+            "    a.cpp  # a comment (with a bracket)\n"
+            "    b.cpp\n"
+            ")\n"
+            "list(APPEND CORE_SOURCES c.cpp)\n"
+            "list(APPEND CORE_SOURCES\n"
+            "    d.cpp)\n"
+            "set(GUI_SOURCES\n"
+            "    e.cpp\n"
+            ")\n"
+            "list(APPEND MODEL_SOURCES f.cpp)\n"));
+        const QString joined = listed.join(QLatin1Char(' '));
+        for (const char* const name : {"a.cpp", "b.cpp", "c.cpp", "d.cpp", "f.cpp"}) {
+            QVERIFY2(joined.contains(QLatin1String(name)), name);
+        }
+        QVERIFY(!joined.contains(QStringLiteral("e.cpp")));
+    }
+
+    // R-HK-18, the link: what nereusd loads, when this build has one.
+    void nereusdLinksNoDeviceLibrary()
+    {
+#if defined(Q_OS_MAC)
+        const QString tool = QStringLiteral("otool");
+        const QStringList toolArgs = {QStringLiteral("-L")};
+#elif defined(Q_OS_LINUX)
+        const QString tool = QStringLiteral("ldd");
+        const QStringList toolArgs;
+#else
+        QSKIP("otool and ldd are macOS and Linux tools");
+#endif
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+        const QString daemon = QStringLiteral(NEREUS_BINARY_DIR) + QStringLiteral("/nereusd");
+        if (!QFile::exists(daemon)) {
+            QSKIP("nereusd is not built in this tree");
+        }
+        QProcess process;
+        process.start(tool, QStringList(toolArgs) << daemon);
+        if (!process.waitForFinished(60000) || process.exitCode() != 0) {
+            QSKIP("could not run the link tool");
+        }
+        const QString linked = QString::fromLocal8Bit(process.readAllStandardOutput());
+        QVERIFY2(linked.contains(QStringLiteral("NereusCore")), qPrintable(linked));
+        static const QRegularExpression kDevice(QStringLiteral("rtmidi|hidapi|coremidi|NereusSDRLib"),
+                                                QRegularExpression::CaseInsensitiveOption);
+        QVERIFY2(!kDevice.match(linked).hasMatch(), qPrintable(linked));
+#endif
     }
 
     // The rules themselves, so a future edit that guts one of them fails

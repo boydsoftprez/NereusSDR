@@ -1540,3 +1540,11 @@ NereusSDR adds attribution and its existing producer annotation.
 | NereusSDR file | AetherSDR source | Notes |
 |---|---|---|
 | `src/gui/ScopedChildWidget.h` | `src/gui/ScopedChildWidget.h:15-19` [@9befcd2] | The forwarding constructor of the scoped owner, so stack dialogs and one QDrag are built through it. The rest of the file is Longpath's (LONGPATH-PROVENANCE.md), itself from AetherSDR [@b9e96a94]. Recorded in AETHERSDR-PROVENANCE.md. |
+
+## November 6, 2026 MIDI input (hot keys plan Task 10)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/midi/MidiRelativeDecoder.h` | `src/core/MidiRelativeCcDecoder.h:7-76` [@1e0718ad] | The relative CC decoder whole, comments verbatim; only the namespace differs. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/midi/MidiInput.h` | `src/core/MidiControlManager.cpp:325` [@1e0718ad] | The value ranges. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/midi/MidiInput.cpp` | `src/core/MidiControlManager.cpp:99-101, 112-121, 139-142, 271-298, 313-325, 345-375` [@1e0718ad] | RtMidi open sequence, callback hand-off, name match, message decoding and learn, on a worker thread with a port list comparison for unplug. Recorded in AETHERSDR-PROVENANCE.md. |

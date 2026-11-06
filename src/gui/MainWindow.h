@@ -226,6 +226,7 @@
 //                applyRemoteRigctldSettings. AI-assisted via Anthropic
 //                Claude Code.
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3: hotKeyDispatcher, hotKeyBindings, windowSliceTabs.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 10: controllerHost. AI-assisted via Anthropic Claude Code.
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 7: keyboard router, containerManager.
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (M6): voxLineReason, one VOX
@@ -333,6 +334,7 @@ class VfoDisplayItem;
 class DialItem;
 class ContainerButtonDispatcher;
 class HotKeyBindings;
+class ControllerHost;
 class HotKeyDispatcher;
 class KeyboardRouter;
 class MainWindowHotKeyTargets;
@@ -527,6 +529,7 @@ public:
     // Hot keys: the one place every source runs an action, and the user's keys.
     HotKeyDispatcher* hotKeyDispatcher() const { return m_hotKeyDispatcher.get(); }
     HotKeyBindings* hotKeyBindings() const { return m_hotKeyBindings.get(); }
+    ControllerHost* controllerHost() const { return m_controllerHost.get(); }
     ContainerManager* containerManager() const { return m_containerManager; }
     // Slice control plan Task 15 fix round 1: drops the hosting slice
     // requests so a test reaches selectSliceForWindow's fallback path.
@@ -1760,6 +1763,8 @@ private:
     std::unique_ptr<HotKeyDispatcher> m_hotKeyDispatcher;
     // Declared after what it calls, so it stops watching events before they go.
     std::unique_ptr<KeyboardRouter> m_keyboardRouter;
+    // Declared after the dispatcher, so its worker has stopped before that goes.
+    std::unique_ptr<ControllerHost> m_controllerHost;
     // TX safety fix round 4 (2026-09-30): a local window's Radio >
     // Disconnect is available while a link is Connected or the lost-link
     // lock holds (the operator's way to lift it and stop recovery).

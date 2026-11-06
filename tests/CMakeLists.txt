@@ -6589,7 +6589,8 @@ nereus_add_test(tst_clarity_smooth_defaults)
 # one test guarding the core boundary.
 nereus_add_test(tst_core_has_no_gui_includes EXTRA_LABELS core)
 target_compile_definitions(tst_core_has_no_gui_includes PRIVATE
-    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_BINARY_DIR="${CMAKE_BINARY_DIR}")
 
 # Phase 1B verification -- exhaustive sweep of every detector x averaging
 # combination through SpectrumWidget::updateSpectrumLinear():
@@ -11806,6 +11807,8 @@ nereus_add_test(tst_cat_catalog CORE_ONLY)
 nereus_add_test(tst_cat_parser CORE_ONLY)
 
 nereus_add_test(tst_cat_bindings CORE_ONLY)
+nereus_add_test(tst_midi_decoder)
+nereus_add_test(tst_midi_profile)
 nereus_add_test(tst_hot_key_bindings CORE_ONLY)
 nereus_add_test(tst_hot_key_dispatcher)
 nereus_add_test(tst_hot_key_window_actions)

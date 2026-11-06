@@ -32,6 +32,7 @@ directory alongside NereusSDR's own `LICENSE`.
 | OpenSSL 3 | certificate, DTLS, and application cryptography | Apache-2.0 | `openssl.txt` | `Apache-2.0.txt` |
 | Opus | audio codec (RADE on the desktop; receive audio and the microphone in the iPhone and iPad app) | BSD-3-Clause | `opus.txt` | `opus.txt` |
 | Mbed TLS 3.6.7 | DTLS and SRTP cryptography for the media connection in the iPhone and iPad app (not in the desktop) | Apache-2.0 (dual Apache-2.0 OR GPL-2.0-or-later, taken under Apache-2.0) | `mbedtls.txt` | `Apache-2.0.txt` |
+| RtMidi 6.0.0 | MIDI controller input in the desktop app (not in the Core); changed by one patch that lets CoreMIDI errors propagate, listed in `rtmidi.txt` | MIT | `rtmidi.txt` | `rtmidi.txt` |
 | libsodium 1.0.22 | the cryptography under the pairing code's key exchange (password hashing, the exchange's curve arithmetic, the confirmation boxes), in the desktop, the Core, and the iPhone and iPad app | ISC | `libsodium.txt`, `libsodium-notices.txt` | `libsodium.txt` |
 | SPAKE2+EE (spake2-ee fd3ea61f) | the pairing code's key exchange, in the desktop, the Core, and the iPhone and iPad app | BSD-2-Clause | `spake2-ee.txt` | `spake2-ee.txt` |
 
@@ -74,6 +75,7 @@ directory, or when a text file here is named by no row.
 | libsodium | FetchContent `nereus_libsodium` in `cmake/NereusPairing.cmake`: the release archive `libsodium-1.0.22.tar.gz` of tag 1.0.22-RELEASE, pinned by SHA-256; the iPhone and iPad app vendors the same archive | 1.0.22 (1.0.22-RELEASE) | desktop packages, the Core, and the iPhone and iPad app | `libsodium.txt`, `libsodium-notices.txt` |
 | SPAKE2+EE (spake2-ee) | FetchContent `nereus_spake2ee` in `cmake/NereusPairing.cmake`, the commit's archive pinned by SHA-256; the iPhone and iPad app vendors the same commit | fd3ea61f27a75ff63b0f192c9e619b5a494d048e | desktop packages, the Core, and the iPhone and iPad app | `spake2-ee.txt` |
 | OpenSSL 3 | vcpkg on Windows; Homebrew, or 3.0.21 built from source for Intel, on macOS; system package on Linux | the release workflow's OpenSSL | desktop packages and the Core | `openssl.txt` |
+| RtMidi | `third_party/rtmidi`, tag 6.0.0's `RtMidi.h`, `RtMidi.cpp` and `LICENSE` (hashes in `third_party/rtmidi/VERSION.txt`), with `RtMidi.cpp` changed by AetherSDR commit `5769f480`'s hunks, which remove `throw()` from the CoreMIDI client singleton | 1e5b49925aa60065db52de44c366d446a902547b (6.0.0) | desktop packages | `rtmidi.txt` |
 | libASPL | FetchContent `libASPL` in `hal-plugin/CMakeLists.txt` | v3.1.2 | the macOS audio driver package | `libaspl.txt` |
 | Opus (iPhone and iPad app) | `ios/NereusKit/Sources/COpus`, written by `ios/scripts/vendor-sources.sh opus` | 940d4e5af64351ca8ba8390df3f555484c567fbb | the iPhone and iPad app | `opus.txt`, `opus-notices.txt` |
 | libdatachannel (iPhone and iPad app) | `ios/NereusKit/Sources/CDataChannel`, written by `ios/scripts/vendor-sources.sh libdatachannel`, patched by the five numbered patches in `ios/patches/libdatachannel/` (Mbed TLS fingerprint checks, C API gathering/fingerprint access, bounded agent retirement, candidate-resource lifetime, and deferred DTLS startup) | v0.24.5 | the iPhone and iPad app | `libdatachannel.txt`, `libdatachannel-notices.txt` |
@@ -275,6 +277,7 @@ the §6(b) fallback.
 - `nlohmann-json.txt`   nlohmann json full MIT notice
 - `zlib.txt`            zlib full notice
 - `libaspl.txt`         libASPL full MIT notice
+- `rtmidi.txt`          RtMidi full MIT-style notice and the one change made to it
 - `fftw3-notices.txt`   notices in the FFTW header NereusSDR compiles
 - `wdsp-notices.txt`    notices in the WDSP sources NereusSDR compiles
 - `rade-notices.txt`    notices in the RADE sources NereusSDR compiles
