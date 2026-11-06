@@ -34,6 +34,7 @@
 #include "models/SliceModel.h"
 
 #include <QTest>
+#include <QtGlobal>
 
 namespace NereusSDR::Test {
 
@@ -41,20 +42,35 @@ namespace NereusSDR::Test {
 // refresh. A poll's own refresh rarely lands in the moment before the read,
 // and QTest::qWaitFor gives the lane time to run it before the next attempt.
 // False if no attempt matched within timeoutMs: the slice's stamp never named
-// the refresh the channel holds. A clear stamps with the clock, not a refresh,
-// so a slice with no reading never matches.
+// the refresh the channel holds, and the last two stamps are printed. A clear
+// that changes a reading stamps with the clock, not a refresh, so it does not
+// match. A clear that changes nothing keeps the slice's last stamp, and that
+// can still match, so this alone does not say the slice holds a reading: the
+// caller that needs one checks its values. Nor does a match say the refresh
+// is newer than some event. A poll that returns early on a lost link asks for
+// no refresh, so the first poll after it publishes the cache from before the
+// loss; a caller that must rule that out compares meterReadingNs with the
+// clear's stamp.
 [[nodiscard]] inline bool pollUntilPumpWroteSnapshot(SliceMeterPump& pump, const RxChannel& channel,
                                                      const SliceModel& slice,
                                                      RxChannel::MeterReadings& snapshot,
                                                      int timeoutMs = kNereusTryDefaultMs)
 {
-    return QTest::qWaitFor(
+    const bool matched = QTest::qWaitFor(
         [&]() {
             pump.poll();
             snapshot = channel.meterReadings();
             return snapshot.readNs > 0 && snapshot.readNs == slice.meterReadingNs();
         },
         timeoutMs);
+    if (!matched) {
+        qWarning("pollUntilPumpWroteSnapshot: no match in %d ms: slice meterReadingNs %lld, "
+                 "channel readNs %lld, meterReadingReady %d, slice ADC peak %f",
+                 timeoutMs, static_cast<long long>(slice.meterReadingNs()),
+                 static_cast<long long>(snapshot.readNs), channel.meterReadingReady() ? 1 : 0,
+                 slice.adcPeakDbfs());
+    }
+    return matched;
 }
 
 } // namespace NereusSDR::Test

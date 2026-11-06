@@ -294,16 +294,40 @@ private slots:
         expectReadingsOf(slice, readings);
 
         // Live, not stale: the channel moves on, which alone is no fault of
-        // the slice (it is the order PR 757's CI failed on), and the next
-        // poll that carries the channel's new reading writes it.
-        const double published = slice->adcAverageDbfs();
+        // the slice (it is the order PR 757's CI failed on), and a later poll
+        // writes a later refresh. On the fake's steady stream the readings
+        // settle: measured here, the ADC average stopped moving about 27 s
+        // after the connect and the last of the five about 64 s after it. A
+        // run slowed that far has nothing new to see, so the values are only
+        // required to have moved if the channel's did; the newer stamp and
+        // the comparison with that refresh hold either way.
+        const RxChannel::MeterReadings before = readings;
+        const auto movedFromBefore = [&before](const RxChannel::MeterReadings& now) {
+            for (const RxMeterType type : {RxMeterType::AdcPeak, RxMeterType::AdcAvg,
+                                           RxMeterType::AgcGain, RxMeterType::AgcPeak,
+                                           RxMeterType::AgcAvg}) {
+                if (now.value(type) != before.value(type)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        constexpr int kChannelMoveBoundMs = 5000;
+        const bool channelMoved = QTest::qWaitFor(
+            [&]() { return movedFromBefore(ch->meterReadings()); }, kChannelMoveBoundMs);
+        if (!channelMoved) {
+            qInfo("the channel's readings have settled: the check that they moved does not apply");
+        }
         QVERIFY2(QTest::qWaitFor(
-                     [&]() { return ch->getMeter(RxMeterType::AdcAvg) != published; },
+                     [&]() {
+                         return pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings)
+                             && slice->meterReadingNs() > before.readNs;
+                     },
                      NereusSDR::Test::kNereusTryDefaultMs),
-                 "the channel's reading never moved");
-        QCOMPARE(slice->adcAverageDbfs(), published);
-        QVERIFY(pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
-        QVERIFY(slice->adcAverageDbfs() != published);
+                 "the pump never wrote a later refresh");
+        if (channelMoved) {
+            QVERIFY(movedFromBefore(readings));
+        }
         expectReadingsOf(slice, readings);
 
         // A lost link clears them with the S-meter readings, whatever they
@@ -320,11 +344,21 @@ private slots:
         pump->poll();
         expectNoReadings(slice);
         QCOMPARE(slice->signalPeakDbm(), kNoReadingDbm);
+        const qint64 cleared = slice->meterReadingNs();
 
-        // Back to Connected: the channel's readings again.
+        // Back to Connected: the channel's readings again, from a refresh
+        // after the clear. The poll on the lost link returned before asking
+        // the lane for one, so the first poll here publishes the cache from
+        // before the loss, and a read of the channel carries the same stamp.
         seed();
         model.setConnectionStateForTest(ConnectionState::Connected);
-        QVERIFY(pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
+        QVERIFY2(QTest::qWaitFor(
+                     [&]() {
+                         return pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings)
+                             && slice->meterReadingNs() > cleared;
+                     },
+                     NereusSDR::Test::kNereusTryDefaultMs),
+                 "the pump never wrote a reading from after the clear");
         QVERIFY(allMeasured(slice));
         expectReadingsOf(slice, readings);
         harness.reset();

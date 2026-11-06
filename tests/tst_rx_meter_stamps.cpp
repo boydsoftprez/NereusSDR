@@ -27,17 +27,21 @@
 //   2026-10-22 - Written for NereusSDR by J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - The pump's snapshot comes from MeterPumpSnapshot.h, bounded
-//                by time, not attempts. J.J. Boyd (KG4VCF), with AI-assisted
+//                by time, not attempts; meterReadings() is compared with
+//                getMeter() slot by slot. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "MeterPumpSnapshot.h"
 #include "MultiDeviceHarness.h"
 
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QSignalSpy>
 
 #include <cmath>
 
+#include "core/DspControlThread.h"
 #include "core/RxChannel.h"
 #include "core/WdspEngine.h"
 #include "core/meters/SliceMeterPump.h"
@@ -199,6 +203,56 @@ private slots:
         QTRY_COMPARE(latest(appB->received(), keyB, QStringLiteral("agcGainDb")).toDouble(), -12.0);
         QTest::qWait(100);
         QVERIFY(!sawProperty(appB, QStringLiteral("meterReadingNs")));
+    }
+
+    // meterReadings() and getMeter() are two ways to read one cache, and every
+    // pump comparison takes both of its sides from meterReadings(), so this is
+    // what ties a MeterReadings slot to its meter. A slot read as another
+    // meter's fails here. With the lane held no refresh can land between reads.
+    void meterReadingsHoldEachTypeGetMeterHolds()
+    {
+        std::unique_ptr<NereusSDR::Test::ConnectableRadioModel> harness =
+            NereusSDR::Test::ConnectableRadioModel::create(
+                10000, RadioModel::Role::Local, [](RadioModel& m) {
+                    if (SliceMeterPump* p = m.sliceMeterPump()) {
+                        p->stop();
+                    }
+                });
+        QVERIFY(harness != nullptr);
+        RadioModel& model = harness->model();
+        RxChannel* ch = model.wdspEngine()->rxChannel(model.sliceById(0)->sliceIndex());
+        QVERIFY(ch != nullptr);
+        // A slot read as its neighbor's could not show while the two held one
+        // value, so wait for readings that differ. AGC gain differs from the
+        // ADC average and the AGC peak from a running channel's first blocks
+        // and stays so once the stream has settled; other neighbors end up
+        // equal on the fake's steady stream.
+        const auto separated = [ch]() {
+            const RxChannel::MeterReadings r = ch->meterReadings();
+            return r.value(RxMeterType::AdcAvg) != r.value(RxMeterType::AgcGain)
+                && r.value(RxMeterType::AgcGain) != r.value(RxMeterType::AgcPeak);
+        };
+        QVERIFY2(QTest::qWaitFor(separated, NereusSDR::Test::kNereusTryDefaultMs),
+                 "the readings never separated");
+
+        QSemaphore entered;
+        QSemaphore release;
+        // The barrier's job holds these semaphores: they outlive it even when
+        // a comparison below returns early.
+        const auto releaseLane = qScopeGuard([&release, &model]() {
+            release.release();
+            (void)model.waitForReceiveLaneForTest();
+        });
+        model.receiveLane()->postBarrier([&entered, &release]() {
+            entered.release();
+            release.acquire();
+        });
+        QVERIFY(entered.tryAcquire(1, 30000));
+        const RxChannel::MeterReadings readings = ch->meterReadings();
+        for (int index = 0; index < RxChannel::MeterReadings::kCount; ++index) {
+            const auto type = static_cast<RxMeterType>(index);
+            QCOMPARE(readings.value(type), ch->getMeter(type));
+        }
     }
 
     // The pump's readings come from one lane refresh, stamped with the time
