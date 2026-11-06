@@ -115,6 +115,16 @@ on a real radio or a real GPU.
 | The dividers inside a pan row are lost (12h, 2h1, 2x2, 3h2) | Only the top-to-bottom split was saved | Each row saves and restores; sizes that no longer fit are ignored |
 | Spots off in Spot Hub still draws spots on the second pan | Saved settings reached only the first pan | Reach every pan, and a pan opened later |
 | A signal quit (SIGTERM, a session logout) loses the layout | Layout written only by closeEvent | The quit path writes the same values once. A crash or SIGKILL runs no handler, so this does not help there |
+| The tune step changes on a band change | Saved per slice and band | One step per slice, on every band, `Slice<N>/StepHz` (JJ's ruling). Older per-band values still supply the step of the last band |
+| A transmit edit with no radio is dropped at connect | `persistOne` did nothing with no radio, and the load replaced the value | Held in `tx/heldForNextRadio/`, and it replaces the saved value of whichever radio connects next (JJ's ruling). Drive and tune power with no slice go to the band the radio comes up on. A write nobody made holds nothing: startup, a remote window, a mode's filter snap. A CAT or TCI write is dropped as before. VOX switched on with no radio is off at the first connect |
+| A band change just after TUNE or two-tone off makes the temporary power that band's drive | The band setter saves PWR, and PWR still holds it for about 130 ms (TUNE) or 200 ms (two-tone). Thetis shares the bug (`console.cs:17533-17537` [v2.10.3.15]) | Each band keeps its own power, and ours differs from Thetis on purpose with a note at the line. TUNE pressed again in that time keys at the tune drive |
+| Your Cores highlights the first Core paired, not the last you used | Paired order | The last used Core leads, with the highlighted Connect (JJ's ruling). It has its own key, because Disconnect clears the one that reconnects |
+| A change on a window on a Core, made with the link down, snaps back with no word | Only Setup's values were counted | The message Setup shows now covers applets and slices (JJ's ruling). It appears when the link returns and the value is replaced. Controls stay usable |
+| One window's FPS moves every window and phone | `DisplaySpectrumFps` was both the shared value and each device's paint rate | The Display pill's FPS is this window's or phone's own, `DisplayPaintFps` (JJ's ruling). Setup's rate stays the shared value for a device with none of its own. No Core reads this rate to run its engines: each device asks for its own |
+| +RX opens differently depending on what its letter last held, and saves another band's AGC, NB and step over that band's memory | A new slice read its letter's saved settings | A new slice is a copy of the slice you are on: filter, AGC, NB, NR, squelch, step, AF gain, and the settings that go with its mode. RIT, XIT, lock and mute off. Only a true restore reads a letter (JJ's ruling) |
+| A desktop brings back one slice per pan, and the transmit slice can fall back | Nothing recorded the rest | Every slice, its pan, the transmit slice and the active slice return from the same per-radio record as a Core (JJ's ruling). Slices that don't fit stay saved and the window says so; another radio's slices do not enter this radio's record. Connecting never keys. The Core's managed mode stays off on a desktop |
+| A slice sharing another pan's receiver comes back refused on a 2 DDC radio | Restore asked only for its own receiver | Asks for its own first, then joins any receiver that covers it, as the live path does, taking that receiver's rate and moving nothing |
+| Editing `radio_mac` in `nereusd.conf` does nothing once a radio was chosen, with no word | The saved choice wins silently | The rule stands and the log now says so |
 
 ### Sweep findings that were wrong when checked
 
@@ -130,39 +140,22 @@ The tables below still show these as found.
 
 ### Not fixed, and why
 
-- **A reused slice letter brings another band's AGC, NB and step onto a new slice, then saves
-  them over that band's memory** (`RadioModel.cpp:17167`). Certain. Left alone here because
-  that block is being changed for the new-receiver RIT and XIT work, and because the fix
-  depends on the open question of what a new slice inherits.
-- **Transmit edits made before the first connect of a run are dropped.** Likely, on a desktop
-  and on a Core. `TransmitModel::persistOne` does nothing while `m_persistMac` is empty
-  (`TransmitModel.cpp:2288`), and `loadFromSettings` then overwrites every field at connect.
-  Not confirmed: which transmit controls are live with no radio. If they are all disabled
-  offline this shrinks to mic source, which already has its own fix.
 - **Values handed to the store only at close** (`PanLayoutId`, splitter sizes, window
   geometry) are lost on a crash or SIGKILL, because no handler runs. Writing them as they
   change is a larger change to the window and was not made here.
-- **A band change within about 130 ms of TUNE off** keeps the tune power on the old band, in
-  memory and then on disk (`RadioModel.cpp:8532-8580`). Thetis does the same
-  (`console.cs:17533-17537` [v2.10.3.15]), so it is left alone. Marked for the maintainer, since a
-  high tune power could become that band's drive.
 - **A Live Activity Cancel in a process iOS started for that intent** leaves the last Core set, and
   **a launch before the phone's first unlock** may not reconnect. Both inferred from reading, not
   seen on a device.
 - **Unknown rows stay unknown.** Rows marked unknown in the tables were not settled by reading
   the code, and nothing here was run on a real radio.
 
-### Reverts rows waiting on a design call
+### Reverts rows left as they are
 
-These are behaviors to choose, not defects, so they stay as they are until the maintainer
-rules.
+These are behaviors, not defects. Each is left alone on a recommendation, listed for the
+maintainer's veto.
 
-| Row | What happens now | Design call |
+| Row | What happens now | Where it was raised |
 | --- | --- | --- |
-| Tune step (desktop and Core) | Kept per slice and band, so it changes on a band change. Thetis keeps one | Models 3 |
-| Extra slices on a desktop with no Core | One slice plus one per empty pan comes back; a Core brings back all | Models 2 |
-| Which slice transmits | Follows the extra slices above: falls back when its slice is not restored | Models 2 |
-| What a new slice inherits | A copy of defaults and the seed, then a reused letter's values | Models 1 |
 | The open tab on a VFO flag | None at each launch | Main window 1 |
 | iPhone band pan position | Back to the slice at each connect | iPhone DC6 |
 | iPhone Setup's Display page scope and chosen band | Reset at each launch | Not raised separately |
