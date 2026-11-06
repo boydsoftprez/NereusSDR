@@ -2417,6 +2417,7 @@ private:
 
 
 
+    void showOfflineEditsToast(int count);
     /// Show a transient notice without disturbing the bottom bar.
     /// Repeats of a message already on screen restart that toast's
     /// countdown instead of stacking a duplicate beneath it.
@@ -2424,7 +2425,6 @@ private:
     /// Returns the toast so a caller whose condition can end early can
     /// dismiss it rather than leaving a stale notice up for its full
     /// timeout. Hold it by QPointer: it deletes itself on close.
-    void showOfflineEditsToast(int count);
     StatusToast* showToast(const QString& message,
                            ToastSeverity severity,
                            int timeoutMs);
