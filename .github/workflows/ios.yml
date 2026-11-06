@@ -19,11 +19,13 @@
 # The jobs run once, right before a pull request goes to main, as in ci.yml:
 # not on a draft, then on marking it ready and on each push once it's ready.
 # A push to main runs nothing here: this workflow keeps no compiler cache,
-# and ci.yml saves the dependency downloads the interop job restores. So the
-# app job runs on every ready pull request that reaches this workflow,
-# including one that changes only the Core's media, pairing or console code,
-# whose app run used to come after the merge. Run this by hand from the
-# Actions tab to test main itself. Asked for by J.J. Boyd, 2026-11-06.
+# and ci.yml saves the dependency downloads the interop job restores. The
+# app's UI tests (part 2 of the app job) run only when the pull request
+# changes the app, the conformance fixtures or this workflow; a change to
+# only the Core's media, pairing or console code runs the package and
+# interop jobs and part 1. Run this by hand from the Actions tab for the
+# full run on main before a release. J.J. Boyd's rule, 2026-11-06
+# (docs/development/fast-test-loop.md).
 name: iOS
 
 on:
@@ -56,6 +58,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    # Decides the app job's parts. Part 2, the UI tests, holds a macOS runner
+    # for over half an hour, so it runs only when the pull request changes
+    # the app, the conformance fixtures or this workflow. A run by hand runs
+    # both. Fails closed: if the diff can't be read, both run.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    name: Which iOS jobs run
+    outputs:
+      parts: ${{ steps.scope.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          # The merge commit and its first parent, the base, give the
+          # pull request's own diff.
+          fetch-depth: 2
+
+      - name: Check what the pull request changes
+        id: scope
+        shell: bash
+        run: |
+          parts='[1,2]'
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            if files=$(git diff --name-only HEAD^1 HEAD); then
+              # A here-string, not a pipe: under pipefail, grep -q quitting
+              # early kills printf on a long list and would read as no match.
+              if ! grep -qE '^(ios/|tests/data/link/|\.github/workflows/ios\.yml$)' <<<"$files"; then
+                parts='[1]'
+              fi
+            else
+              echo "Could not read the pull request's diff; running every part." >&2
+            fi
+          fi
+          echo "App job parts: $parts"
+          echo "parts=$parts" >> "$GITHUB_OUTPUT"
+
   package:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-26
@@ -136,7 +175,7 @@ jobs:
         run: ios/scripts/interop-test.sh
 
   app:
-    if: ${{ !github.event.pull_request.draft }}
+    needs: scope
     # Xcode 27 is on its own hosted image; macos-26 carries Xcode 26.
     # https://github.com/actions/runner-images/issues/14404
     runs-on: xcode-27
@@ -162,7 +201,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2]
+        part: ${{ fromJSON(needs.scope.outputs.parts) }}
     steps:
       - uses: actions/checkout@v4
 
