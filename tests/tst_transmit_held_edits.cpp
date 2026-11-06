@@ -851,6 +851,7 @@ private slots:
         QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
         QCOMPARE(radio.transmitModel().power(), powerOnAir);
         QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QStringLiteral("71"));
+        QCOMPARE(connection.drives, QList<int>{});
         radio.moxController()->setMox(false);
         settle();
     }
