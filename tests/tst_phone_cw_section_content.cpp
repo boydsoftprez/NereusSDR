@@ -33,9 +33,11 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTemporaryDir>
+#include <QStyle>
 #include <QVBoxLayout>
 
 #include <memory>
+#include <optional>
 
 #include "core/AppSettings.h"
 #include "core/CwTypes.h"
@@ -50,6 +52,8 @@
 #include "gui/containers/ContainerSettingsDialog.h"
 #include "gui/containers/ContainerWorkspaceStore.h"
 #include "gui/meters/MeterPoller.h"
+#include "gui/styles/AppTheme.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContentPropertyEditor.h"
 #include "models/RadioModel.h"
@@ -154,8 +158,51 @@ struct Column {
     }
 };
 
+// The look users get, set up as main.cpp sets it up, with the live theming
+// filter. ctest starts every test in the classic look, so without this the
+// suite can't see a size that only comes up short here. Undone at the end of
+// the slot, since the filter stays but does nothing with the look off.
+class ShippingLook {
+public:
+    ShippingLook()
+        : m_wasEnabled(WorkspacePreview::enabled())
+        , m_palette(QApplication::palette())
+        , m_sheet(qApp->styleSheet())
+        , m_style(QApplication::style()->name())
+    {
+        WorkspacePreview::setEnabledForTest(true);
+        QApplication::setStyle(QStringLiteral("Fusion"));
+        applyDarkPalette(*qApp);
+        applyAppBaselineQss(*qApp);
+        applyWorkspacePalette(*qApp);
+    }
+    ~ShippingLook()
+    {
+        WorkspacePreview::setEnabledForTest(m_wasEnabled);
+        qApp->setStyleSheet(m_sheet);
+        QApplication::setPalette(m_palette);
+        QApplication::setStyle(m_style);
+    }
+    ShippingLook(const ShippingLook&) = delete;
+    ShippingLook& operator=(const ShippingLook&) = delete;
+
+private:
+    bool m_wasEnabled;
+    QPalette m_palette;
+    QString m_sheet;
+    QString m_style;
+};
+
+void addLookRows()
+{
+    QTest::addColumn<bool>("shipping");
+    QTest::newRow("classic look") << false;
+    QTest::newRow("shipping look") << true;
+}
+
 void settleCopy(PhoneCwApplet* copy)
 {
+    QCoreApplication::processEvents();
     for (int pass = 0; pass < 6; ++pass) {
         QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
         copy->layout()->activate();
@@ -240,11 +287,13 @@ private slots:
     {
         // A slice made with no radio connected says so; these tests have none.
         QLoggingCategory::setFilterRules(QStringLiteral("nereus.connection.warning=false"));
-        // The offscreen platform answers every shown window's size hints with
-        // this one line. It says nothing about the panel.
+        // The offscreen platform answers shown windows with these lines, and
+        // a meter's QRhiWidget finds no QRhi there. They say nothing about
+        // the panel.
         s_previousHandler = qInstallMessageHandler(
             [](QtMsgType type, const QMessageLogContext& context, const QString& message) {
-                if (message != QLatin1String("This plugin does not support propagateSizeHints()")
+                if (!message.startsWith(QLatin1String("This plugin does not support "))
+                    && !message.startsWith(QLatin1String("QRhiWidget: "))
                     && s_previousHandler) {
                     s_previousHandler(type, context, message);
                 }
@@ -778,23 +827,35 @@ private slots:
     {
         QTest::addColumn<QString>("page");
         QTest::addColumn<QStringList>("hidden");
-        QTest::newRow("phone, mic only") << QStringLiteral("phone")
-                                         << allBut(kPhoneRows, QStringLiteral("mic"));
-        // A guard: this one passes without the fix too.
-        QTest::newRow("guard: phone, nothing hidden") << QStringLiteral("phone") << QStringList{};
-        QTest::newRow("cw, nothing hidden") << QStringLiteral("cw") << QStringList{};
-        QTest::newRow("cw, delay only") << QStringLiteral("cw")
-                                        << allBut(kCwRows, QStringLiteral("cwDelay"));
-        // A guard as well.
-        QTest::newRow("guard: one row on each") << QStringLiteral("phone")
-                                         << allBut(kPhoneRows, QStringLiteral("level"))
-                                                + allBut(kCwRows, QStringLiteral("cwPan"));
+        QTest::addColumn<bool>("shipping");
+        for (const bool shipping : {false, true}) {
+            const auto row = [shipping](const char* name) -> QTestData& {
+                return QTest::addRow("%s, %s", shipping ? "shipping" : "classic", name);
+            };
+            row("phone, mic only") << QStringLiteral("phone")
+                                   << allBut(kPhoneRows, QStringLiteral("mic")) << shipping;
+            // A guard in the classic look: it passes without that fix too.
+            row("guard: phone, nothing hidden") << QStringLiteral("phone") << QStringList{} << shipping;
+            row("cw, nothing hidden") << QStringLiteral("cw") << QStringList{} << shipping;
+            row("cw, delay only") << QStringLiteral("cw")
+                                  << allBut(kCwRows, QStringLiteral("cwDelay")) << shipping;
+            // A guard as well.
+            row("guard: one row on each") << QStringLiteral("phone")
+                                          << allBut(kPhoneRows, QStringLiteral("level"))
+                                                 + allBut(kCwRows, QStringLiteral("cwPan"))
+                                          << shipping;
+        }
     }
 
     void aFreeCanvasCopyFitsEitherPage()
     {
         QFETCH(QString, page);
         QFETCH(QStringList, hidden);
+        QFETCH(bool, shipping);
+        std::optional<ShippingLook> look;
+        if (shipping) {
+            look.emplace();
+        }
 
         RadioModel radio;
         PhoneCwApplet applet(&radio);
@@ -833,9 +894,17 @@ private slots:
         QVERIFY2(everyRowFits(copy, &problem), qPrintable(problem));
     }
 
-    // Page buttons hidden, Page set to CW: the rect holds the CW page.
+    // Page buttons hidden, Page set to CW, and Phone cut to one row so it's
+    // the shorter page: a hint wrongly taken from Phone is too short to pass.
+    void aFreeCanvasCopyWithoutButtonsFitsItsPage_data() { addLookRows(); }
+
     void aFreeCanvasCopyWithoutButtonsFitsItsPage()
     {
+        QFETCH(bool, shipping);
+        std::optional<ShippingLook> look;
+        if (shipping) {
+            look.emplace();
+        }
         RadioModel radio;
         PhoneCwApplet applet(&radio);
         ContainerContentRegistry registry;
@@ -848,7 +917,8 @@ private slots:
         document.layout = ContentLayout::FreeCanvas;
         ContentEntry entry = registry.makeEntry(QStringLiteral("phcw.panel"));
         entry.id = QStringLiteral("copy");
-        entry.config = hiding({kPageButtons}, QStringLiteral("cw"));
+        entry.config = hiding(QStringList{kPageButtons} + allBut(kPhoneRows, QStringLiteral("mic")),
+                              QStringLiteral("cw"));
         document.contents = {entry};
         host.reconcile(document);
         auto* copy = qobject_cast<PhoneCwApplet*>(host.entryRows().first().widget.data());
@@ -859,13 +929,22 @@ private slots:
         QString problem;
         QVERIFY2(everyRowFits(copy, &problem), qPrintable(problem));
         QVERIFY(rowOf(copy, QStringLiteral("cwDelay"))->isVisible());
+        QCOMPARE(copy->property("freeCanvasHint").toSize().height(),
+                 stackOf(copy)->widget(1)->sizeHint().height());
     }
 
     // The way a person adds one: the settings dialog saves a rect straight
     // away, which a free canvas prefers over any hint. The rect comes from
     // the copy's reported height; other content keeps the usual 160 px.
+    void anAddedCopyFitsAndItsRectSurvivesAReload_data() { addLookRows(); }
+
     void anAddedCopyFitsAndItsRectSurvivesAReload()
     {
+        QFETCH(bool, shipping);
+        std::optional<ShippingLook> look;
+        if (shipping) {
+            look.emplace();
+        }
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
         ContainerWorkspaceStore store(settings);
@@ -965,6 +1044,79 @@ private slots:
         QVERIFY(resized);
         settleCopy(resized);
         QCOMPARE(resized->height(), 100);
+    }
+
+    // A stack switched to a free canvas with no saved rects: the copy's stack
+    // height covers one page, so its rect takes the measured height and what's
+    // below it moves down by the difference.
+    void aSeededCopyGetsItsMeasuredRectAndPushesTheMeterDown_data() { addLookRows(); }
+
+    void aSeededCopyGetsItsMeasuredRectAndPushesTheMeterDown()
+    {
+        QFETCH(bool, shipping);
+        std::optional<ShippingLook> look;
+        if (shipping) {
+            look.emplace();
+        }
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
+        ContainerWorkspaceStore store(settings);
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        ContainerContentRegistry registry;
+        registerPhoneCwSectionContent(registry, &applet);
+        MeterPoller poller;
+        QWidget root;
+        QSplitter splitter(&root);
+        ContainerManager manager(&root, &splitter);
+        manager.setWorkspaceAdapter(&store, &registry);
+        manager.setPreviewPoller(&poller);
+        ContentEntry copyEntry = registry.makeEntry(QStringLiteral("phcw.panel"));
+        copyEntry.config = hiding(allBut(kPhoneRows, QStringLiteral("mic")));
+        const ContentEntry meterEntry = registry.makeEntry(QStringLiteral("meter.clock"));
+        ContainerDocument container;
+        container.id = QStringLiteral("A");
+        container.layout = ContentLayout::VerticalStack;
+        container.contents = {copyEntry, meterEntry};
+        WorkspaceDocument workspace;
+        workspace.mainContainerId = container.id;
+        workspace.containers = {container};
+        QCOMPARE(manager.commitWorkspace(workspace, 0).status, CommitStatus::Saved);
+        root.show();
+
+        ContainerSettingsDialog dialog(manager.container(container.id), nullptr, &manager);
+        dialog.resize(1300, 1000);
+        dialog.show();
+        QCoreApplication::processEvents();
+        auto* seed = dialog.findChild<QPushButton*>(QStringLiteral("seedFreeCanvas"));
+        QVERIFY(seed);
+        seed->click();
+        WorkspaceDocument draft = dialog.editSession()->draft();
+        const ContainerDocument& seeded = draft.containers[0];
+        QCOMPARE(seeded.layout, ContentLayout::FreeCanvas);
+        QVERIFY(seeded.contents[0].freeCanvasRect().has_value());
+        QVERIFY(seeded.contents[1].freeCanvasRect().has_value());
+        const QRectF copyRect = seeded.contents[0].freeCanvasRect().value();
+        const QRectF meterRect = seeded.contents[1].freeCanvasRect().value();
+        QCOMPARE(qRound(copyRect.height()), applet.freeCanvasSizeFor(copyEntry.config).height());
+        QVERIFY2(meterRect.top() >= copyRect.bottom(),
+                 qPrintable(QStringLiteral("the meter starts at %1, the copy ends at %2")
+                                .arg(meterRect.top()).arg(copyRect.bottom())));
+        QVERIFY(seeded.freeCanvasExtent().height() >= meterRect.bottom());
+
+        dialog.reject();
+        draft.revision = store.snapshot().revision;
+        QCOMPARE(manager.commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+        auto* host = manager.contentHost(container.id);
+        QVERIFY(host);
+        auto* copy = qobject_cast<PhoneCwApplet*>(host->entryRows().first().widget.data());
+        QVERIFY(copy);
+        QString problem;
+        for (const QString& page : {QStringLiteral("CW"), QStringLiteral("Phone")}) {
+            buttonNamed(copy, page)->click();
+            settleCopy(copy);
+            QVERIFY2(everyRowFits(copy, &problem), qPrintable(problem));
+        }
     }
 
     // With the page buttons hidden the page can't change, so the copy asks
