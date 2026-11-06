@@ -205,6 +205,7 @@ struct MainScreen: View {
                             band(sideways: true, leadingInset: 0, trailingInset: 0, column: true)
                             if columnShown {
                                 AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                             openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) },
                                              roundtable: roundtable.available ? appletConfig : nil)
                                     .transition(.move(edge: .trailing))
                             }
@@ -216,7 +217,8 @@ struct MainScreen: View {
                         toolbar(sideways: false, layout: layout)
                         ConnectionSummaryRow(app: app)
                         band(sideways: false, leadingInset: 0, trailingInset: 0, column: true)
-                        FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings)
+                        FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                          openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) })
                             .frame(height: IPadLayout.frontPanelHeight(underToolbar: proxy.size.height - Toolbar.height))
                     }
                 }
@@ -966,7 +968,10 @@ struct MainScreen: View {
             // The pan last touched's sheet, with Add a pan and Close this pan.
             let controls = main.controls(for: main.toolbarPan)
             PanSheet(model: controls.sheet, sliceColour: main.sliceColour, pan: controls.pan, stack: main.panStack,
-                     slices: controls.band.slices, bandStack: controls.bandStack)
+                     slices: controls.band.slices, bandStack: controls.bandStack, openBandStackSetup: {
+                sheet = nil
+                app.phoneNavigation?.openPage(.bandStack)
+            })
         case .display:
             if let source = main.displayPillSource {
                 DisplayDropSheet(pages: source.pages, source: source, main: main, tab: $displayTab,

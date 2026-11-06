@@ -27,6 +27,8 @@ struct AppletColumn: View {
     /// Opens the Radio tab, where an amplifier or tuner is set up.
     var openRadio: () -> Void = {}
     var openSettings: () -> Void = {}
+    /// Opens Setup's Band Stack page.
+    var openBandStackSetup: () -> Void = {}
     /// Roundtable's applet; nil leaves it out.
     let roundtable: RoundtableAppletConfig?
 
@@ -42,12 +44,13 @@ struct AppletColumn: View {
     @State private var footHeight: CGFloat = 0
 
     init(main: MainScreenModel, openRadio: @escaping () -> Void = {}, openSettings: @escaping () -> Void = {},
-         roundtable: RoundtableAppletConfig? = nil) {
+         openBandStackSetup: @escaping () -> Void = {}, roundtable: RoundtableAppletConfig? = nil) {
         self.main = main
         rx = main.rx
         transmit = main.transmit
         self.openRadio = openRadio
         self.openSettings = openSettings
+        self.openBandStackSetup = openBandStackSetup
         self.roundtable = roundtable
         _roundtablePosition = State(initialValue: roundtable?.settings.roundtableAppletPosition
                                     ?? AppletOrder.roundtableDefault)
@@ -161,7 +164,8 @@ struct AppletColumn: View {
                     }
             }
         case .bandStack:
-            BandStackApplet(model: main.controls(for: main.toolbarPan).bandStack, width: Self.width, scrolls: false)
+            BandStackApplet(model: main.controls(for: main.toolbarPan).bandStack, width: Self.width, scrolls: false,
+                            openSetup: openBandStackSetup)
         case .rx:
             RxPanel(model: rx, sliceColour: main.sliceColour, width: nil, scrolls: false)
         case .tx:

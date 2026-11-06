@@ -433,8 +433,10 @@ final class BandStackModel: ObservableObject {
         send("bandStack.clear", bandKey.map { [text("band", $0)] } ?? [])
     }
 
-    func reseed() {
-        send("bandStack.reseed", [])
+    /// Loads the region's defaults; `answered` gets why it did not, nil when
+    /// it did or the Core holds it for a question.
+    func reseed(answered: (@MainActor (String?) -> Void)? = nil) {
+        send("bandStack.reseed", [], answered: answered)
     }
 
     /// Nothing is sent when no option is given.
@@ -555,10 +557,12 @@ final class BandStackModel: ObservableObject {
         send(verb, [CommandArgument(name: "sliceId", value: .int(Int64(sliceId)))] + arguments + viewArguments)
     }
 
-    private func send(_ verb: String, _ arguments: [CommandArgument]) {
+    private func send(_ verb: String, _ arguments: [CommandArgument],
+                      answered done: (@MainActor (String?) -> Void)? = nil) {
         refresh()
         guard availability == .ready, let commands else {
             note = unavailableReason
+            done?(unavailableReason)
             return
         }
         touches &+= 1
@@ -567,11 +571,13 @@ final class BandStackModel: ObservableObject {
             do {
                 let result = try await commands.invoke(verb, arguments: arguments, timeout: Self.commandTimeout)
                 self?.answered(result, touch: touch, verb: verb)
+                done?(result.accepted || SeveralDevices.waitsForConfirmation(result) ? nil : Self.refusalWords(result))
             } catch {
                 Self.logger.info("\(verb, privacy: .public) did not reach the Core: \(String(describing: error), privacy: .public)")
                 if self?.touches == touch {
                     self?.note = SeveralDevicesClient.noAnswerText
                 }
+                done?(SeveralDevicesClient.noAnswerText)
             }
         }
     }
@@ -584,8 +590,12 @@ final class BandStackModel: ObservableObject {
             note = nil
         } else {
             Self.logger.info("The Core refused \(verb, privacy: .public): \(result.reason, privacy: .private)")
-            note = result.reason.isEmpty ? BandSlicesModel.refusedText : result.reason
+            note = Self.refusalWords(result)
         }
+    }
+
+    private static func refusalWords(_ result: CommandResult) -> String {
+        result.reason.isEmpty ? BandSlicesModel.refusedText : result.reason
     }
 
     private func refresh() {

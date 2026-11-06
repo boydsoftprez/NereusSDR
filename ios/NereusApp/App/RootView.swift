@@ -79,6 +79,10 @@ struct RootView: View {
             return true
         }
         navigation.followDisplayPan = { pan in setupRouter.followPill(shown(pan)) }
+        navigation.openPage = { page in
+            setupRouter.open(page)
+            selectSetup()
+        }
         return navigation
     }
 

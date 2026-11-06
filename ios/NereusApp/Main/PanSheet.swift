@@ -22,6 +22,8 @@ struct PanSheet: View {
     var slices: BandSlicesModel?
     /// This pan's band stack, under the grid on every device.
     @ObservedObject var bandStack: BandStackModel
+    /// Closes the sheet and opens Setup's Band Stack page.
+    var openBandStackSetup: () -> Void = {}
 
     /// The sheet's inner width, which the block's row sizes follow.
     @State private var contentWidth: CGFloat = 382
@@ -76,6 +78,17 @@ struct PanSheet: View {
                 SheetNote(note)
                     .accessibilityIdentifier("panSheetNote")
             }
+            Button(action: openBandStackSetup) {
+                Text("Band stack settings in Setup \u{203A}")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(ChromeColours.accentText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                    .padding(.bottom, 2)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("bandStackSetupLink")
         }
         // Out here: the sheet's own redraw when it starts to scroll is no closing.
         .onDisappear {

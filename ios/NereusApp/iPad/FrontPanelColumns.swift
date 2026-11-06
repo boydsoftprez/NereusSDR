@@ -14,6 +14,8 @@ struct FrontPanelColumns: View {
     /// Opens the Radio tab, where an amplifier or tuner is set up.
     var openRadio: () -> Void = {}
     var openSettings: () -> Void = {}
+    /// Opens Setup's Band Stack page.
+    var openBandStackSetup: () -> Void = {}
 
     /// The three columns, in the board's order.
     enum Column: CaseIterable {
@@ -34,7 +36,8 @@ struct FrontPanelColumns: View {
             HStack(spacing: 0) {
                 VStack(spacing: 0) {
                     AnalogSMeter(model: main.sMeter)
-                    BandStackApplet(model: main.controls(for: main.toolbarPan).bandStack, width: column)
+                    BandStackApplet(model: main.controls(for: main.toolbarPan).bandStack, width: column,
+                                    openSetup: openBandStackSetup)
                         .frame(maxHeight: .infinity, alignment: .top)
                 }
                 .frame(width: column)

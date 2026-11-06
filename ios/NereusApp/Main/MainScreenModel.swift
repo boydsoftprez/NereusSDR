@@ -437,6 +437,10 @@ final class MainScreenModel: ObservableObject {
 
     // MARK: The pans
 
+    /// The question after this device's region edit (spec V1). The options
+    /// and defaults are the Core's, so Pan 1's stack speaks for all of them.
+    lazy var bandStackRegion = BandStackRegionPrompt(model: controls(for: .first).bandStack)
+
     /// `pan`'s controls: Pan 1's are the main screen's own models; an open
     /// pan below it has its own, made the first time it is asked for and
     /// kept while it stays open. A pan not open gets Pan 1's.

@@ -489,6 +489,235 @@ final class BandStackUITests: XCTestCase {
         save("band-stack-markers-older-pill")
     }
 
+    // MARK: Setup
+
+    /// Spec section 8: the Pan sheet's link opens Setup's page, whose rows
+    /// show the Core's options and send its verbs, and each question asks
+    /// with both its buttons.
+    @MainActor
+    func testSetupPageFromThePanSheet() throws {
+        try skipOnIPad()
+        let app = launchOnPanSheet()
+        let link = app.buttons["bandStackSetupLink"]
+        for _ in 0..<6 where !(link.exists && link.isHittable) {
+            element(app, "panSheet").swipeUp()
+        }
+        XCTAssertEqual(link.label, "Band stack settings in Setup \u{203A}")
+        save("band-stack-setup-link")
+        link.tap()
+        let off = app.buttons["bandStackSetup.autoSave.0"]
+        XCTAssertTrue(off.waitForExistence(timeout: 10), "The link did not open the Band Stack page")
+        XCTAssertTrue(element(app, "panSheet").waitForNonExistence(timeout: 5), "The link left the sheet open")
+        XCTAssertTrue(app.otherElements["Sections"].buttons["Setup"].isSelected, "The link did not go to the Setup tab")
+        XCTAssertTrue(app.navigationBars.staticTexts["Band Stack"].exists || app.staticTexts["Band Stack"].exists)
+        XCTAssertTrue(app.buttons["bandStackSetup.autoSave.30"].isSelected, "Auto-save does not show the Core's 30 seconds")
+        XCTAssertFalse(off.isSelected)
+        save("band-stack-setup")
+
+        let close = app.buttons["bandStackSetup.noteClose"]
+        app.buttons["bandStackSetup.autoSave.60"].tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 10), "Auto-save sent nothing")
+        XCTAssertTrue(close.label.contains("bandStack.options") && close.label.contains("dwellSeconds 60"), close.label)
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+
+        let expiry = app.buttons["bandStackSetup.autoExpiry.15"]
+        XCTAssertTrue(expiry.isSelected, "Auto-expiry does not show the Core's 15 minutes")
+        app.buttons["bandStackSetup.autoExpiry.5"].tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 10), "Auto-expiry sent nothing")
+        XCTAssertTrue(close.label.contains("expiryMinutes 5"), close.label)
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+
+        let reset = app.buttons["bandStackSetup.reset"]
+        for _ in 0..<4 where !reset.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(reset.label.contains("United States. Locked entries you made stay."), reset.label)
+        save("band-stack-setup-foot")
+        let duplicates = element(app, "bandStackSetup.duplicates")
+        XCTAssertTrue(duplicates.exists, "The page has no duplicate protection switch")
+        // On the switch itself, at the row's right.
+        duplicates.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 10), "The switch sent nothing")
+        XCTAssertTrue(close.label.contains("dupeProtection"), close.label)
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        for _ in 0..<4 where !reset.isHittable {
+            app.swipeUp()
+        }
+
+        // Reset's question, with Cancel, which sends nothing.
+        reset.tap()
+        let question = app.alerts.firstMatch
+        XCTAssertTrue(question.waitForExistence(timeout: 5), "Reset asks nothing")
+        XCTAssertTrue(question.staticTexts["Replace the unlocked entries with the defaults for United States? Your locked entries stay."].exists,
+                      "Reset asks in other words")
+        XCTAssertTrue(question.buttons["Cancel"].exists && question.buttons["Reset"].exists, "Reset's buttons are not both there")
+        save("band-stack-setup-reset")
+        question.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(question.waitForNonExistence(timeout: 5))
+        settle()
+        XCTAssertFalse(close.exists, "Cancel sent a command")
+        reset.tap()
+        XCTAssertTrue(question.waitForExistence(timeout: 5))
+        question.buttons["Reset"].firstMatch.tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 10), "Reset sent nothing")
+        XCTAssertTrue(close.label.contains("bandStack.reseed"), close.label)
+        close.tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        for _ in 0..<4 where !app.buttons["bandStackSetup.clear"].isHittable {
+            app.swipeUp()
+        }
+
+        // Clear's question, for every band: no band goes with it.
+        app.buttons["bandStackSetup.clear"].tap()
+        XCTAssertTrue(question.waitForExistence(timeout: 5), "Clear asks nothing")
+        XCTAssertTrue(question.staticTexts["Clear every unlocked entry on every band? Locked entries stay."].exists)
+        XCTAssertTrue(question.buttons["Cancel"].exists && question.buttons["Clear"].exists, "Clear's buttons are not both there")
+        save("band-stack-setup-clear")
+        question.buttons["Clear"].firstMatch.tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 10), "Clear sent nothing")
+        XCTAssertTrue(close.label.contains("bandStack.clear") && !close.label.contains("band "), close.label)
+    }
+
+    /// Spec section 8: an older Core lists the page and every row stays, greyed, with the reason.
+    @MainActor
+    func testOlderCoreGreysTheSetupPage() throws {
+        try skipOnIPad()
+        let app = launch(stack: false)
+        openBandStackPage(app)
+        let reason = element(app, "bandStackSetup.reason")
+        XCTAssertTrue(reason.waitForExistence(timeout: 10), "The older Core's page has no reason")
+        XCTAssertEqual(reason.label, "This Core does not have band stacks. Updating the Core may help.")
+        for id in ["bandStackSetup.autoSave.0", "bandStackSetup.autoSave.30", "bandStackSetup.autoExpiry.15"] {
+            XCTAssertTrue(app.buttons[id].exists, "\(id) is gone on an older Core")
+            XCTAssertFalse(app.buttons[id].isEnabled, "\(id) can be pressed on an older Core")
+            XCTAssertFalse(app.buttons[id].isSelected, "\(id) shows a choice an older Core does not have")
+        }
+        save("band-stack-setup-older")
+        for id in ["bandStackSetup.reset", "bandStackSetup.clear"] {
+            XCTAssertTrue(app.buttons[id].exists, "\(id) is gone on an older Core")
+            XCTAssertFalse(app.buttons[id].isEnabled, "\(id) can be pressed on an older Core")
+        }
+    }
+
+    /// Spec V1: this device's region edit asks with the desktop's words and
+    /// both buttons, Keep sends nothing, Replace sends `reseed`, a tap outside
+    /// keeps, and a refused edit asks nothing.
+    @MainActor
+    func testRegionEditAsks() throws {
+        try skipOnIPad()
+        let app = launch(stack: true, general: true)
+        let tabs = app.otherElements["Sections"]
+        XCTAssertTrue(tabs.waitForExistence(timeout: 30))
+        tabs.buttons["Setup"].tap()
+        let general = app.buttons["General"]
+        XCTAssertTrue(general.waitForExistence(timeout: 10))
+        general.tap()
+        let options = app.buttons["Options"]
+        XCTAssertTrue(options.waitForExistence(timeout: 10), "General has no Options page")
+        options.tap()
+
+        let keep = app.buttons["bandStackRegionKeep"]
+        let replace = app.buttons["bandStackRegionReplace"]
+        chooseRegion(app, "Europe")
+        XCTAssertTrue(keep.waitForExistence(timeout: 10), "The region edit asked nothing")
+        XCTAssertTrue(replace.exists, "The question has no Replace")
+        XCTAssertTrue(keep.isHittable && replace.isHittable, "A button of the question cannot be reached")
+        XCTAssertEqual(keep.label, "Keep my entries")
+        XCTAssertEqual(replace.label, "Replace")
+        XCTAssertEqual(element(app, "bandStackRegionText").label,
+                       "You changed the region to Europe. Replace the unlocked entries with the defaults for Europe? Your locked entries stay.")
+        save("band-stack-region-prompt")
+        keep.tap()
+        XCTAssertTrue(keep.waitForNonExistence(timeout: 5), "Keep did not close the question")
+        settle()
+        XCTAssertFalse(element(app, "confirmationRefused").exists, "Keep sent a command")
+
+        // Replace: the fixture refuses it with what was sent, and the question stays with those words.
+        chooseRegion(app, "Italy")
+        XCTAssertTrue(replace.waitForExistence(timeout: 10), "The second region edit asked nothing")
+        let secondText = element(app, "bandStackRegionText")
+        let secondSeen = waitUntil { secondText.label.contains("region to Italy") }
+        save("band-stack-region-second")
+        XCTAssertTrue(secondSeen, "The second question reads: \(secondText.label)")
+        replace.tap()
+        let refused = element(app, "confirmationRefused")
+        XCTAssertTrue(refused.waitForExistence(timeout: 10), "Replace sent nothing")
+        XCTAssertTrue(refused.label.contains("bandStack.reseed"), refused.label)
+        save("band-stack-region-refused")
+        keep.tap()
+        XCTAssertTrue(keep.waitForNonExistence(timeout: 5))
+
+        // A tap outside keeps.
+        chooseRegion(app, "India")
+        XCTAssertTrue(keep.waitForExistence(timeout: 10), "The third region edit asked nothing")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+        XCTAssertTrue(keep.waitForNonExistence(timeout: 5), "A tap outside did not close the question")
+
+        // A refused edit: its words under the row, and no question.
+        chooseRegion(app, "Japan")
+        XCTAssertTrue(app.staticTexts["UI fixture: this region is refused"].waitForExistence(timeout: 10),
+                      "The refused edit shows no reason")
+        settle()
+        XCTAssertFalse(keep.exists, "A refused edit asked")
+    }
+
+    /// The mockup's title bar menu leads to the same page.
+    @MainActor
+    func testIPadAppletMenuOpensTheSetupPage() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "The Band Stack applet is the iPad's")
+        let app = launch(stack: true)
+        let menu = app.buttons["bandStackAppletMenu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 30), "The applet's title bar has no menu")
+        XCTAssertEqual(menu.label, "Band stack settings in Setup")
+        menu.tap()
+        XCTAssertTrue(app.buttons["bandStackSetup.autoSave.0"].waitForExistence(timeout: 10),
+                      "The applet's menu did not open the Band Stack page")
+        save("band-stack-setup-ipad")
+    }
+
+    /// Setup, General, Band Stack, from the tab bar.
+    @MainActor
+    private func openBandStackPage(_ app: XCUIApplication) {
+        let tabs = app.otherElements["Sections"]
+        XCTAssertTrue(tabs.waitForExistence(timeout: 30))
+        tabs.buttons["Setup"].tap()
+        let general = app.buttons["General"]
+        XCTAssertTrue(general.waitForExistence(timeout: 10))
+        general.tap()
+        let page = app.buttons["Band Stack"]
+        XCTAssertTrue(page.waitForExistence(timeout: 10), "General has no Band Stack page")
+        page.tap()
+    }
+
+    /// The Options page's region menu, set to `region`.
+    @MainActor
+    private func chooseRegion(_ app: XCUIApplication, _ region: String) {
+        let menu = app.buttons["general.options.region"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10), "Options has no region menu")
+        XCTAssertTrue(waitUntil { menu.isEnabled && menu.isHittable }, "The region menu cannot be used")
+        // The list is long and opens scrolled to the region set, so an item
+        // can start off its ends. A tap as the page settles can open nothing.
+        let item = app.buttons[region]
+        let list = app.collectionViews.firstMatch
+        if !list.exists {
+            menu.tap()
+        }
+        XCTAssertTrue(waitUntil { list.exists || item.exists }, "The region menu did not open")
+        save("band-stack-region-menu")
+        for swipe in 0..<6 where !(item.exists && item.isHittable) {
+            if swipe < 3 {
+                list.swipeDown()
+            } else {
+                list.swipeUp()
+            }
+        }
+        XCTAssertTrue(item.exists, "The region menu has no \(region)")
+        item.tap()
+    }
+
     // MARK: Helpers
 
     /// The sheet draws only the rows on show, so the switch is there once scrolled to.
@@ -549,7 +778,8 @@ final class BandStackUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(stack: Bool, pill: Bool = false, keyed: Bool = false, document: String = "facade-document") -> XCUIApplication {
+    private func launch(stack: Bool, pill: Bool = false, keyed: Bool = false, general: Bool = false,
+                        document: String = "facade-document") -> XCUIApplication {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
         // The band with slice A on 40 m and a Core, with none (a debug build's launch arguments).
@@ -566,6 +796,10 @@ final class BandStackUITests: XCTestCase {
         if pill {
             // The Core's Display description, so Display opens the pill.
             app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
+        }
+        if general {
+            // The Core's General description, for the Options page's region menu.
+            app.launchEnvironment["NEREUS_UITEST_GENERAL"] = root.appendingPathComponent("resources/setup/general.json").path
         }
         app.launchFresh()
         return app

@@ -14,6 +14,8 @@ struct BandStackApplet: View {
     /// The applet's width, which the block's narrower rows follow.
     let width: CGFloat
     var scrolls = true
+    /// The title's menu button: Setup's Band Stack page.
+    var openSetup: () -> Void = {}
 
     static let id = "bandStackApplet"
     private static let sidePadding: CGFloat = 5
@@ -54,6 +56,7 @@ struct BandStackApplet: View {
             ForEach(model.slicesOnBands, id: \.id) { slice in
                 sliceLetter(slice)
             }
+            menuButton
         }
         .padding(.leading, 8)
         .padding(.trailing, 4)
@@ -65,6 +68,20 @@ struct BandStackApplet: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(ChromeColours.titleBorder).frame(height: 1)
         }
+    }
+
+    /// The mockup's title bar menu: it leads to the stack's settings.
+    private var menuButton: some View {
+        Button(action: openSetup) {
+            Text("\u{2261}")
+                .font(.system(size: 15))
+                .foregroundStyle(ChromeColours.icon)
+                .frame(width: 30, height: AnalogSMeter.titleHeight)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Band stack settings in Setup")
+        .accessibilityIdentifier("bandStackAppletMenu")
     }
 
     private func sliceLetter(_ slice: BandStackModel.SliceOnBand) -> some View {

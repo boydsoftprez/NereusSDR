@@ -194,6 +194,8 @@ struct SetupTab: View {
             NavigationPage(settings: app.phoneSettings)
         case .batteryAndSessions:
             BatteryAndSessionsPage(settings: app.phoneSettings, sleepTimer: app.longSession.sleepTimer)
+        case .bandStack:
+            BandStackSetupPage(model: main.controls(for: .first).bandStack)
         case .audioOnThisPhone:
             AudioOnThisPhonePage(settings: app.phoneSettings, audio: app.audio, quality: app.audioQuality)
         case .displayOnThisPhone:
