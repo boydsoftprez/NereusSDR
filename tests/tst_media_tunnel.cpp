@@ -20,9 +20,10 @@
 // Modification history (NereusSDR):
 //   2026-11-05: aTunnelThatStallsAfterASpeakerFaultIsFoundAtTheStallRule,
 //               and a display on the tunnel during a speaker fault: one
-//               restart per outage, only display counting, and the full wait
-//               from any silence the window expected. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//               restart per outage, only display frames counting, a repeat
+//               failure not restarting the wait, and the full wait from any
+//               silence the window expected. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 interop (display codec v2, Task 6): media started
 //               through the tunnel agrees display codec v2, and the display
 //               frames it delivers are version 2 (DisplayVersionTap).
@@ -98,6 +99,9 @@ namespace {
 // What the window says when a display stops during a speaker fault.
 const QString kDisplayStoppedReason = QStringLiteral(
     "The display from the Core stopped. Starting audio and display again.");
+// And when the audio stall rule ends it instead.
+const QString kAudioStoppedReason = QStringLiteral(
+    "Audio from the Core stopped. Starting audio and display again.");
 
 // Counts the binary messages (tunnel datagrams) a link end sends.
 struct BinaryCount {
@@ -1085,12 +1089,77 @@ private slots:
         s.h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-11-06: a repeat failure while the hold already stands is the same
+    // outage, so it doesn't start the display's wait over. Otherwise a speaker
+    // that keeps failing to open could put the rule off for good.
+    void aRepeatSpeakerFailureDoesNotRestartTheDisplaysWait()
+    {
+        IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.display.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(!s.frames.isEmpty(),
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QElapsedTimer dark;
+        dark.start();
+        s.display.stop();
+        QTest::qWait(RemoteMediaController::kMediaStallMs - 500);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        // A restart of the wait there could fire no sooner than 5.5 s.
+        QTRY_COMPARE_WITH_TIMEOUT(s.recovery.size(), 1, 10000);
+        QVERIFY2(dark.elapsed() < 5000, qPrintable(QString::number(dark.elapsed())));
+        QCOMPARE(s.recovery.constFirst().at(1).toString(), kDisplayStoppedReason);
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-06: PureSignal and extras packets ride the display channel but
+    // aren't frames, so they can't hold off a display that stopped.
+    void packetsThatAreNotFramesDoNotHoldOffTheDisplayRule()
+    {
+        IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.display.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(!s.frames.isEmpty(),
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        s.display.stop();
+        QTimer others;
+        others.setInterval(50);
+        QObject::connect(&others, &QTimer::timeout, &others, [&s] {
+            s.remoteMedia.receiveDisplayForTest(QByteArrayLiteral("PS3D"));
+            s.remoteMedia.receiveDisplayForTest(QByteArrayLiteral("NSDX"));
+        });
+        others.start();
+        QTRY_COMPARE_WITH_TIMEOUT(s.recovery.size(), 1, RemoteMediaController::kMediaStallMs + 3000);
+        others.stop();
+        QCOMPARE(s.recovery.constFirst().at(1).toString(), kDisplayStoppedReason);
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // 2026-11-06: silence the window expected says nothing about display, so
     // the display's rule counts from when it ends, with its full wait. The
     // audio source stops too, so nothing ends the speaker hold early. `begin`
-    // and `end` start and end that silence. Real time: the tick is.
+    // and `end` start and end that silence. The floor is what's pinned: asking
+    // for audio again can run dry 500 ms later and end the hold, and then the
+    // audio stall rule fires, its own full wait on, so `reason` says which rule
+    // each case ends on. Real time: the tick is.
     void theDisplayRuleWaitsThrough(const std::function<void(Test::DisplayedSessionHarness&)>& begin,
                                     const std::function<void(Test::DisplayedSessionHarness&)>& end,
+                                    const QString& reason,
                                     qint64 floorMs = RemoteMediaController::kMediaStallMs)
     {
         IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
@@ -1117,6 +1186,7 @@ private slots:
         end(s);
         QTRY_COMPARE_WITH_TIMEOUT(s.recovery.size(), 1, 10000);
         QVERIFY2(back.elapsed() >= floorMs, qPrintable(QString::number(back.elapsed())));
+        QCOMPARE(s.recovery.constFirst().at(1).toString(), reason);
         s.stopAll();
         s.h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
@@ -1133,7 +1203,8 @@ private slots:
             },
             [](Test::DisplayedSessionHarness& s) {
                 s.h.station.moxController()->setMox(false);
-            });
+            },
+            kDisplayStoppedReason);
     }
 
     void theDisplayRuleCountsFromTheRadiosReturn()
@@ -1143,8 +1214,13 @@ private slots:
                 s.h.remote.setConnectionStateForTest(ConnectionState::Disconnected);
             },
             [](Test::DisplayedSessionHarness& s) {
+                // The radio going down retired the display, so nothing would
+                // judge it. A mark stands in for the Core's answer on its return.
                 s.h.remote.setConnectionStateForTest(ConnectionState::Connected);
-            });
+                QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.activeEndpointCount() == 1, 2000);
+                s.remoteMedia.markDisplaysAcceptedForTest();
+            },
+            kAudioStoppedReason);
     }
 
     void theDisplayRuleCountsFromTheUnmute()
@@ -1155,7 +1231,8 @@ private slots:
             },
             [](Test::DisplayedSessionHarness& s) {
                 s.h.remote.audioEngine()->setMasterMuted(false);
-            });
+            },
+            kAudioStoppedReason);
     }
 
     // A display suspended and accepted again has no old time to fire on. Its
@@ -1170,7 +1247,7 @@ private slots:
             [](Test::DisplayedSessionHarness& s) {
                 s.remoteMedia.setDisplaysSuspendingForTest(false);
             },
-            RemoteMediaController::kMediaStallMs - 1000);
+            kDisplayStoppedReason, RemoteMediaController::kMediaStallMs - 1000);
     }
 
     // 2026-11-06: nor does a display that stopped before the fault fire the

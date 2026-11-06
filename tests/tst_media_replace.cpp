@@ -1592,6 +1592,41 @@ private slots:
         s.h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
+    // 2026-11-06: a finished move restarts the display's clock only if it was
+    // running. A session with no frame keeps none, so a later speaker fault
+    // finds nothing to have stopped.
+    void aMoveWithNoFrameLeavesTheDisplaysClockUnstarted()
+    {
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(s.remoteMedia.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        const QString firstId = s.remoteMedia.mediaConnectionId();
+        QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.activeEndpointCount() == 1, 5000);
+        // Audio stops, so the direct rule moves media with no fault standing.
+        s.source.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(!s.remoteMedia.replacingConnection()
+                                     && s.remoteMedia.mediaConnectionId() != firstId,
+                                 20000);
+        s.source.start();
+        QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.audioStatus().state
+                                     == RemoteAudioStatus::State::Playing, 20000);
+        QVERIFY(s.recovery.isEmpty());
+        s.remoteMedia.markDisplaysAcceptedForTest();
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QTest::qWait(RemoteMediaController::kMediaStallMs + 1000);
+        QVERIFY(s.frames.isEmpty());
+        QVERIFY(s.recovery.isEmpty());
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
     // 2026-11-06: a display with no frame in this session has nothing to have
     // stopped, so it moves nothing on a direct path. Otherwise the move, the
     // recovery after it, and the same again in the next session would repeat

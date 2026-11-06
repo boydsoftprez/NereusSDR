@@ -666,6 +666,9 @@ public:
     /// budget, or no longer does, which a test cannot hold open on a real
     /// session.
     void setDisplaysSuspendingForTest(bool suspending);
+    /// Test only: `packet` arrives on the display channel, for the kinds a
+    /// test's Core doesn't send on demand.
+    void receiveDisplayForTest(const QByteArray& packet);
     /// Test only: every display counts as accepted, as when the Core's answer
     /// came and its frames are lost on the way. A test's Core answers only
     /// from a frame it then delivers.

@@ -2,8 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06: a display with no frame in its session moves nothing on a
 //               direct path during a speaker fault, so that path has no
-//               restart loop either. J.J. Boyd (KG4VCF), AI-assisted via
-//               Anthropic Claude Code.
+//               restart loop either. receiveDisplayForTest. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: a speaker failure says nothing about display, so a display
 //               that stops during one still moves a direct path to the tunnel
 //               and, on its own clock lastDisplayMs, once per outage, still
@@ -5213,6 +5213,11 @@ void RemoteMediaController::setDisplaysSuspendingForTest(bool suspending)
         Q_UNUSED(id);
         binding.suspending = suspending && binding.accepted;
     }
+}
+
+void RemoteMediaController::receiveDisplayForTest(const QByteArray& packet)
+{
+    receiveDisplay(packet);
 }
 
 void RemoteMediaController::markDisplaysAcceptedForTest()
