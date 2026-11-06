@@ -872,7 +872,8 @@ struct BandButtonColumn: View {
                              device: DisplayDropSheet.deviceWord, openSetup: openSetup,
                              onSetupDefaults: onSetupDefaults, onOpenPage: onOpenPage, onOpen: onOpen, pan: pan)
         } else {
-            DisplaySheet(model: controls.display, core: main.coreDisplay, openSetup: openSetup)
+            DisplaySheet(model: controls.display, core: main.coreDisplay, bandStack: controls.bandStack,
+                         settings: main.phoneSettings, openSetup: openSetup)
         }
     }
 }

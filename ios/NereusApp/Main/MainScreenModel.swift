@@ -199,6 +199,8 @@ final class MainScreenModel: ObservableObject {
     @Published private(set) var toolbarPan: PanIdentity = .first
 
     private let mirror: MirrorStore
+    /// The settings this device keeps for itself, for the switches the screens' models do not hold.
+    let phoneSettings: PhoneSettings
     private let settingsProxy: SettingsProxyClient
     private let commands: CommandClient?
     /// The open pans' controls below Pan 1, made as each is first shown.
@@ -233,7 +235,9 @@ final class MainScreenModel: ObservableObject {
          microphone: (any MicrophoneSource)? = nil, uplink: MediaUplink? = nil,
          captureVoxSender: (@Sendable () -> MirrorStore.BoundSender)? = nil,
          captureTakeSender: CommandClient.CaptureSender? = nil,
-         platform: TransmitModel.Platform = TransmitModel.Platform()) {
+         platform: TransmitModel.Platform = TransmitModel.Platform(),
+         phoneSettings: PhoneSettings = PhoneSettings()) {
+        self.phoneSettings = phoneSettings
         self.mirror = mirror
         settingsProxy = settings
         self.commands = commands

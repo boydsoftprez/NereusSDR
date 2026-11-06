@@ -917,7 +917,8 @@ struct MainScreen: View {
                              roundtableLines: first ? roundtableLines : [:],
                              openRoundtable: first ? { id in openRoundtable(id) } : nil,
                              dialStrip: strip, roundtable: first ? roundtable : nil,
-                             swipes: swipesHere ? swipes : nil)
+                             swipes: swipesHere ? swipes : nil,
+                             bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
@@ -980,7 +981,8 @@ struct MainScreen: View {
                     app.phoneNavigation?.followDisplayPan(pan)
                 })
             } else {
-                DisplaySheet(model: main.display, core: main.coreDisplay) {
+                DisplaySheet(model: main.display, core: main.coreDisplay, bandStack: main.controls(for: .first).bandStack,
+                             settings: main.phoneSettings) {
                     sheet = nil
                     openSetup()
                 }

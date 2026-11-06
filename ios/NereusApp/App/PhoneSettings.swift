@@ -344,6 +344,17 @@ final class PhoneSettings: ObservableObject {
 
     static let roundtableAppletPositionKey = "applets.roundtablePosition"
 
+    // MARK: Band stack (spec section 8, V6, V18)
+
+    /// Marks this device's band with chips for the saved entries in view. Off
+    /// until someone turns it on; each device keeps its own.
+    var showBandStackMarkers: Bool {
+        get { bool(Self.showBandStackMarkersKey, default: false) }
+        set { setBool(newValue, for: Self.showBandStackMarkersKey) }
+    }
+
+    static let showBandStackMarkersKey = "bandStack.showMarkers"
+
     // MARK: Swipes on the panadapter (Setup, General, Navigation; spec 11.3, S1)
 
     /// What a swipe in from the band's left edge opens: the RX panel unless

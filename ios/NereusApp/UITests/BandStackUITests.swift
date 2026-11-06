@@ -397,7 +397,139 @@ final class BandStackUITests: XCTestCase {
         save("band-stack-ipad-older-core-column")
     }
 
+    // MARK: Markers on the spectrum
+
+    /// The shared sample with the two 40 m entries moved into the fixture's
+    /// 48 kHz view around 7.2445 MHz.
+    private static let markersDocument = "phone-markers-document"
+
+    /// V18, in the older Display sheet: off until turned on, a chip per entry
+    /// in view with the active and the locked one marked, a tap sends goTo,
+    /// and the switch survives a relaunch.
+    @MainActor
+    func testSheetSwitchShowsMarkersAndATapGoesThere() throws {
+        try skipOnIPad()
+        let app = launch(stack: true, document: Self.markersDocument)
+        let net = element(app, "bandStackMarker.40m-net")
+        setMarkers(app, on: true, id: "bandStackMarkersSwitch")
+        XCTAssertTrue(net.waitForExistence(timeout: 10), "The switch drew no chip for 7.230")
+        XCTAssertTrue(net.label.contains("7.230") && net.label.contains("locked") && net.label.contains("active"),
+                      net.label)
+        XCTAssertFalse(element(app, "bandStackMarker.20m-ft8").exists, "A chip for 20 m on the 40 m band")
+        save("band-stack-markers")
+
+        XCTAssertTrue(net.isHittable, "The chip cannot be tapped")
+        net.tap()
+        let note = element(app, "bandStackMarkerNote")
+        XCTAssertTrue(note.waitForExistence(timeout: 10), "The tap sent nothing")
+        XCTAssertTrue(note.label.contains("bandStack.goTo") && note.label.contains("entryId 40m-net"), note.label)
+        save("band-stack-markers-note")
+        app.buttons["bandStackMarkerNoteClose"].tap()
+        XCTAssertTrue(note.waitForNonExistence(timeout: 5), "The note did not close")
+
+        app.terminate()
+        app.launchFresh()
+        XCTAssertTrue(net.waitForExistence(timeout: 30), "The switch did not survive a relaunch")
+        setMarkers(app, on: false, id: "bandStackMarkersSwitch")
+        XCTAssertTrue(net.waitForNonExistence(timeout: 10), "Off left the chips")
+    }
+
+    /// V18, in the pill's "On this phone".
+    @MainActor
+    func testPillSwitchShowsMarkers() throws {
+        try skipOnIPad()
+        let app = launch(stack: true, pill: true, document: Self.markersDocument)
+        setMarkers(app, on: true, id: "displayPillBandStack", pillTab: "view")
+        let ssb = element(app, "bandStackMarker.40m-ssb")
+        XCTAssertTrue(ssb.waitForExistence(timeout: 10), "The pill's switch drew no chip")
+        setMarkers(app, on: false, id: "displayPillBandStack", pillTab: "view")
+        XCTAssertTrue(ssb.waitForNonExistence(timeout: 10), "Off left the chips")
+    }
+
+    /// Spec section 8: hidden on air, and back when the radio stops.
+    @MainActor
+    func testMarkersHideOnAir() throws {
+        try skipOnIPad()
+        let app = launch(stack: true, keyed: true, document: Self.markersDocument)
+        setMarkers(app, on: true, id: "bandStackMarkersSwitch")
+        let net = element(app, "bandStackMarker.40m-net")
+        XCTAssertTrue(net.waitForExistence(timeout: 10), "The switch drew no chip")
+        let ptt = app.buttons["ptt"]
+        XCTAssertTrue(waitUntil { ptt.isEnabled }, "PTT is not usable: the fixture's link is not up")
+        ptt.tap()
+        XCTAssertTrue(net.waitForNonExistence(timeout: 10), "The chips stayed on air")
+        ptt.tap()
+        XCTAssertTrue(net.waitForExistence(timeout: 10), "The chips did not come back after the air")
+        setMarkers(app, on: false, id: "bandStackMarkersSwitch")
+    }
+
+    /// An older Core: the switch stays, greyed with the reason, in the sheet
+    /// and in the pill, and no chip draws.
+    @MainActor
+    func testOlderCoreGreysTheMarkersSwitch() throws {
+        try skipOnIPad()
+        let reason = "This Core does not have band stacks. Updating the Core may help."
+        let app = launch(stack: false)
+        app.buttons["display"].tap()
+        let sheet = app.buttons["bandStackMarkersSwitch"]
+        reach(sheet, scrolling: element(app, "displaySheet"))
+        XCTAssertFalse(sheet.isEnabled, "An older Core's switch can be pressed")
+        XCTAssertEqual(element(app, "bandStackMarkersNote").label, "Band stack: \(reason)")
+        save("band-stack-markers-older-sheet")
+
+        let pill = launch(stack: false, pill: true)
+        pill.buttons["display"].tap()
+        let tab = element(pill, "displayPillTab.view")
+        XCTAssertTrue(tab.waitForExistence(timeout: 10))
+        tab.tap()
+        let chip = pill.buttons["displayPillBandStack"]
+        reach(chip, scrolling: element(pill, "displayPill"))
+        XCTAssertFalse(chip.isEnabled, "An older Core's switch can be pressed")
+        XCTAssertTrue(pill.staticTexts[reason].exists, "The grey switch shows no reason")
+        save("band-stack-markers-older-pill")
+    }
+
     // MARK: Helpers
+
+    /// The sheet draws only the rows on show, so the switch is there once scrolled to.
+    @MainActor
+    private func reach(_ button: XCUIElement, scrolling sheet: XCUIElement) {
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10), "Display did not open")
+        for _ in 0..<6 where !(button.exists && button.isHittable) {
+            if sheet.identifier == "displayPill" {
+                sheet.swipeUp()
+            } else {
+                // Along the older sheet's left edge, clear of its sliders, which would take the drag.
+                sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.85))
+                    .press(forDuration: 0.05, thenDragTo: sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.15)))
+            }
+        }
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "Display has no Band stack switch")
+    }
+
+    /// Opens Display, sets the switch and closes Display.
+    @MainActor
+    private func setMarkers(_ app: XCUIApplication, on: Bool, id: String, pillTab: String? = nil) {
+        let display = app.buttons["display"]
+        XCTAssertTrue(display.waitForExistence(timeout: 30), "The toolbar has no Display button")
+        display.tap()
+        if let pillTab {
+            let tab = element(app, "displayPillTab.\(pillTab)")
+            XCTAssertTrue(tab.waitForExistence(timeout: 10), "The pill has no \(pillTab) tab")
+            tab.tap()
+        }
+        let button = app.buttons[id]
+        reach(button, scrolling: element(app, pillTab == nil ? "displaySheet" : "displayPill"))
+        XCTAssertTrue(waitUntil { button.isEnabled }, "The Band stack switch stays grey")
+        XCTAssertTrue(waitUntil { button.isHittable }, "The Band stack switch cannot be reached")
+        if (button.value as? String == "On") != on {
+            button.tap()
+        }
+        XCTAssertTrue(waitUntil { (button.value as? String == "On") == on }, "The switch reads \(String(describing: button.value))")
+        save(on ? "band-stack-markers-switch-on" : "band-stack-markers-switch-off")
+        display.tap()
+        XCTAssertTrue(button.waitForNonExistence(timeout: 10), "Display did not close")
+    }
 
     /// These look a block's controls up by name, and an iPad draws a second
     /// block in its applet. The iPad's own tests above name which block.
@@ -417,19 +549,24 @@ final class BandStackUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(stack: Bool) -> XCUIApplication {
+    private func launch(stack: Bool, pill: Bool = false, keyed: Bool = false, document: String = "facade-document") -> XCUIApplication {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
         // The band with slice A on 40 m and a Core, with none (a debug build's launch arguments).
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusBandMenuFixture",
                                stack ? "-NereusBandStackFixture" : "-NereusBandSelectFixture"]
+            + (keyed ? ["-NereusKeyedFixture"] : [])
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
         app.launchEnvironment["NEREUS_UITEST_CATALOGUE"] = root
             .appendingPathComponent("tests/data/link/v1/sessions/catalog-anan-g2.json").path
         app.launchEnvironment["NEREUS_UITEST_BANDSTACK"] = root
-            .appendingPathComponent("tests/data/bandstack/facade-document.json").path
+            .appendingPathComponent("tests/data/bandstack/\(document).json").path
+        if pill {
+            // The Core's Display description, so Display opens the pill.
+            app.launchEnvironment["NEREUS_UITEST_DISPLAY"] = root.appendingPathComponent("resources/setup/display.json").path
+        }
         app.launchFresh()
         return app
     }

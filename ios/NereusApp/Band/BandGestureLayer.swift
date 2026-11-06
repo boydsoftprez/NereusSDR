@@ -116,6 +116,11 @@ struct BandGestureLayer: View {
     /// The Panadapter tab's swipes: a drag that starts in an edge zone and
     /// heads in is the swipe, not the band's; nil leaves the edges to the band.
     var swipes: SwipeShortcutModel?
+    /// The pan's band stack, whose saved entries the phone's switch marks at
+    /// the foot of the spectrum; nil marks none.
+    var bandStack: BandStackModel?
+    /// The radio is on the air, whatever keyed it: the marks wait.
+    var radioOnAir = false
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -133,6 +138,8 @@ struct BandGestureLayer: View {
     @State private var flagHeights: [Int: CGFloat] = [:]
     /// Moves on whenever the take changes, so each badge redraws.
     @State private var badgeTick = 0
+    /// Moves on whenever the band stack changes, so what keeps clear of its chips moves too.
+    @State private var markerTick = 0
 
     var body: some View {
         GeometryReader { proxy in
@@ -225,6 +232,12 @@ struct BandGestureLayer: View {
             }
         }
         let others = foreign.entries
+        _ = markerTick
+        let showsMarkers = BandStackMarkerLayout.shows(switchOn: settings.showBandStackMarkers,
+                                                       availability: bandStack?.availability ?? .notConnected,
+                                                       onAir: keyed || radioOnAir || band.transmitOverlay)
+        let markerModel = showsMarkers ? bandStack : nil
+        let markerRects = markerModel?.markerChips(geometry: geometry, layout: layout).map(\.rect) ?? []
         // Other devices' markers first, so this phone's own draw over them.
         let markers = ForeignSliceMarkers.markers(others.map(\.slice))
             + SliceMarkers.markers(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
@@ -260,7 +273,7 @@ struct BandGestureLayer: View {
         let edgeRects = EdgeMarkers.rects(shown.edges, spectrumFoot: layout.spectrum.maxY,
                                           bandWidth: geometry.size.width, avoid: rects, sideways: sideways,
                                           large: large, dbmArrows: arrows, controls: controls)
-        let chipAvoid = rects + placements.filter(\.isFolded).map(\.rect) + edgeRects
+        let chipAvoid = rects + placements.filter(\.isFolded).map(\.rect) + edgeRects + markerRects
             + (jumped && slices.shownEntry != nil ? [JumpBar.rect(sideways: sideways, large: large)] : [])
             + (band.settings.showFps && band.framesPerSecond != nil ? [BandReadouts.fpsRect(layout: layout)] : [])
         let chipRect = WideChip.rect(layout: layout, avoid: chipAvoid, sideways: sideways,
@@ -273,10 +286,10 @@ struct BandGestureLayer: View {
         let flagAndTagRects = rects + placements.filter(\.isFolded).map(\.rect)
         let spotsModel = spots
         let emptyBand: (CGPoint) -> Bool = { point in
-            let spotRects = spotsModel.map { model in
+            let spotRects = (spotsModel.map { model in
                 BandMenuHit.spotRects(SpotLayout.layout(spots: model.bandSpots, flags: placements, geometry: geometry,
                                                         settings: model.display))
-            } ?? []
+            } ?? []) + (markerModel?.markerChips(geometry: geometry, layout: layout).map(\.rect) ?? [])
             let stations = others.compactMap { BandMenuHit.stationRect($0.slice, geometry: geometry, layout: layout) }
             return BandMenuHit.isEmptyBand(at: point, flags: flagAndTagRects, spots: spotRects, stations: stations,
                                            layout: layout)
@@ -295,6 +308,9 @@ struct BandGestureLayer: View {
                 // Spots start under the flags, which draw over them (D13).
                 SpotLayer(spots: spots, geometry: geometry, placements: placements)
             }
+            if let markerModel {
+                BandStackMarkerLayer(model: markerModel, geometry: geometry, layout: layout)
+            }
             if let roundtable {
                 // 8 points above the band plan, clear of every flag and folded tag.
                 RoundtableTagLayer(roundtable: roundtable, sliceIds: entries.map { Int64($0.id) },
@@ -302,7 +318,7 @@ struct BandGestureLayer: View {
                                    hzPerPoint: geometry.spanHz / Double(max(1, geometry.size.width)),
                                    top: layout.strip.minY - RoundtableTagLayout.footGap - RoundtableTagLayout.height,
                                    tickFoot: layout.strip.minY,
-                                   flagRects: rects + placements.filter(\.isFolded).map(\.rect) + [arrows]
+                                   flagRects: rects + placements.filter(\.isFolded).map(\.rect) + markerRects + [arrows]
                                     + (sideways ? [CGRect(x: BandColumnLayout.origin, y: BandColumnLayout.origin,
                                         width: BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: geometry.size.height)),
                                         height: BandColumnLayout.columnHeight(rows: BandColumnLayout.buttonCount
@@ -382,6 +398,9 @@ struct BandGestureLayer: View {
         }
         .onReceive(take?.objectWillChange.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
             badgeTick &+= 1
+        }
+        .onReceive(bandStack?.objectWillChange.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher()) { _ in
+            markerTick &+= 1
         }
         // In the same update as the jump, not on a later turn of the main
         // queue: the first frame drawn after the jump already holds the
