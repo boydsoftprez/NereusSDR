@@ -680,6 +680,16 @@ private slots:
         QCOMPARE(stack->count(), 3);
         const int height = applet->height();
 
+        // The height is the buttons row plus the tallest page, FM included,
+        // so drift that stays equal across pages shows here too.
+        QPushButton* phoneButton = buttonNamed(applet, QStringLiteral("Phone"));
+        const int buttonsRow = 2 * phoneButton->y() + phoneButton->height();
+        int tallestPage = 0;
+        for (int i = 0; i < stack->count(); ++i) {
+            tallestPage = qMax(tallestPage, stack->widget(i)->sizeHint().height());
+        }
+        QCOMPARE(height, buttonsRow + tallestPage);
+
         const auto pagesKeepTheirPolicy = [stack]() {
             for (int i = 0; i < stack->count(); ++i) {
                 if (stack->widget(i)->sizePolicy().verticalPolicy() != QSizePolicy::Preferred) {
