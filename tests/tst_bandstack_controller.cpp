@@ -489,10 +489,25 @@ private slots:
         // No saved zoom on this one: span 0.
         QCOMPARE(bench.controller->lastRecall().spanHz, qint64(0));
 
-        // Shared and off screen: it follows.
+        // Shared and off screen: it follows, on the frequency at the span it
+        // has. The low spot saved `wide` when it was left, and that stays there.
         const BandStackView away{qint64(14100000), qint64(192000)};
         QVERIFY(bench.controller->performRecall(goTo(0, low, away), nullptr));
-        QVERIFY(bench.controller->lastRecall().applyView);
+        last = bench.controller->lastRecall();
+        QVERIFY(last.applyView);
+        QCOMPARE(last.centerHz, qint64(7100000));
+        QCOMPARE(last.spanHz, qint64(0));
+        QCOMPARE(bench.controller->store().entry(low)->spanHz, qint64(192000));
+
+        // A shared pan is never handed a saved zoom, on screen or off. The high
+        // spot now holds `away`, whose center is nowhere near the frequency.
+        QCOMPARE(bench.controller->store().entry(high)->spanHz, qint64(192000));
+        const BandStackView narrowOnLow{qint64(7100000), qint64(24000)};
+        QVERIFY(bench.controller->performRecall(goTo(0, high, narrowOnLow), nullptr));
+        last = bench.controller->lastRecall();
+        QVERIFY(last.applyView);
+        QCOMPARE(last.centerHz, qint64(7150000));
+        QCOMPARE(last.spanHz, qint64(0));
     }
 
     // ── Seeds ────────────────────────────────────────────────────────────

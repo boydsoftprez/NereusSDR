@@ -210,7 +210,8 @@ place. A dwell save does not move your place and also skips a spot within 100 Hz
 5. Apply the pan rule (V14): alone on its pan, the slice brings back the entry's zoom, and with click
    tune on its center too, unless that would put the frequency off screen, in which case it centers
    on the frequency. On a shared pan with click tune on, the view stays if the frequency is on screen,
-   otherwise it follows as a band change does.
+   otherwise it follows as a band change does. For a shared pan the Core's `lastRecall` carries span 0
+   and the frequency as the center, so no device can apply a saved zoom or center to it.
 6. Move the slice's place, update the entry's last-used time, and report "40m: 7.185 LSB, 5 of 6".
 
 ### 5.6 Shared receivers

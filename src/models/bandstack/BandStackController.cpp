@@ -520,9 +520,13 @@ bool BandStackController::performRecall(const BandStackRecallRequest& request, Q
     ++m_lastRecall.seq;
     m_lastRecall.sliceId = slice->sliceIndex();
     m_lastRecall.applyView = alone || !onScreen;
-    m_lastRecall.centerHz = entry != nullptr && entry->centerHz != 0 ? entry->centerHz
-                                                                     : r.plan.frequencyHz;
-    m_lastRecall.spanHz = entry != nullptr ? entry->spanHz : 0;
+    // Design V14: the saved zoom and center are only for a pan the slice has to
+    // itself. A shared pan follows as a band change does: the frequency, at the
+    // span it has, so the other slice's view is not narrowed.
+    const BandStackEntry* savedView = alone ? entry : nullptr;
+    m_lastRecall.centerHz = savedView != nullptr && savedView->centerHz != 0 ? savedView->centerHz
+                                                                             : r.plan.frequencyHz;
+    m_lastRecall.spanHz = savedView != nullptr ? savedView->spanHz : 0;
 
     markChanged();
     emit reportRecall(slice->sliceIndex(), r.report);
