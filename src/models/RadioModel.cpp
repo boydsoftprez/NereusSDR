@@ -5247,7 +5247,9 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
             applyDriveSliderPower();
             return;
         }
-        if (ownsLocalDsp() && !m_txBandKnown) {
+        // A paused set is no edit of a band's value, so with no slice it adopts none.
+        if (ownsLocalDsp() && !m_txBandKnown
+            && (txBoundSlice() || !m_transmitModel.heldEditsPaused())) {
             // The initializing TXBand pass for the adopted band, less the
             // power load (this PWR set is the band's value): its limits,
             // tune power and FM TX offset (console.cs:17539-17550

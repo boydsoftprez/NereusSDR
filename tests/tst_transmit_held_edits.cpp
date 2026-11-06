@@ -889,11 +889,14 @@ private slots:
         seedRadio(kMac);
         RadioModel radio;
         radio.keepTransmitEditsWithoutRadio();
+        QSignalSpy adopted(&radio, &RadioModel::transmitBandChanged);
         {
             const TransmitModel::HeldEditPause notAnEdit(radio.transmitModel());
             radio.transmitModel().setPower(33);
         }
         QCOMPARE(heldKeys(), QStringList{});
+        // Nor does it make the default band the transmit band.
+        QCOMPARE(adopted.count(), 0);
         connectLikeRadioModel(radio.transmitModel(), kMac);
         QCOMPARE(saved(kMac, QStringLiteral("powerByBand/20m")), QStringLiteral("83"));
 

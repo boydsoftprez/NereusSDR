@@ -1028,6 +1028,7 @@ public:
     // connect that drops before the radio answers keeps it for the next.
     // RadioModel hands it its band once the radio has answered.
     bool holdsWithNoBand() const;
+    bool heldEditsPaused() const { return m_heldEditPauses > 0; }
     bool holdPowerForNextBand(int power);
     // The Tune slider and button with no transmit band: held with no band when
     // that applies, and `shownBand`'s value in memory either way, as it was,
