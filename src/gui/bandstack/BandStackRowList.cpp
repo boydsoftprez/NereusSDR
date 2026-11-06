@@ -10,6 +10,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-06 - contentHeightChanged, for the popup (band stack plan Task 10).
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/bandstack/BandStackRowList.h"
@@ -602,10 +604,14 @@ void BandStackRowList::relayout()
         }
     }
 
+    const int heightBefore = m_contentHeight;
     m_contentHeight = y + margin;
     setFixedHeight(m_contentHeight);
     placeEditor();
     update();
+    if (m_contentHeight != heightBefore) {
+        emit contentHeightChanged();
+    }
 }
 
 void BandStackRowList::resizeEvent(QResizeEvent* event)

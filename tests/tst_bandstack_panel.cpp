@@ -1435,7 +1435,10 @@ private slots:
         fake.setDocument(document);
         QCOMPARE(toastCount(*window, message), 1);
         QTRY_VERIFY_WITH_TIMEOUT(toast.isNull(), kToastCloseWaitMs);
-        QVERIFY2(shown.elapsed() >= kUndoMs - 50, qPrintable(QString::number(shown.elapsed())));
+        // The toast's QTimer is coarse, which Qt lets fire up to 5% early (seen
+        // here at 4758 ms under load).
+        QVERIFY2(shown.elapsed() >= kUndoMs * 95 / 100 - 50,
+                 qPrintable(QString::number(shown.elapsed())));
         QVERIFY(fake.calls.isEmpty());
 
         // The next batch, one entry, and Undo.

@@ -7,7 +7,12 @@
 // MainWindow offscreen with a fake BandStackAccess: which verb, which slice and
 // which view each path sends, with the modifiers held, and the old path when the
 // stack is not ready. Also STACK+ and STACK-, the four hot key entry points, and
-// one toast per refusal or report.
+// one toast per refusal or report. Then the popup: which slice and band each
+// path opens it for, where it opens, what keeps it open and what closes it, and
+// the reason it shows with no usable stack.
+//
+// NEREUS_BANDSTACK_CAPTURE_DIR, when set, saves the popup in each look there, to
+// read by eye.
 //
 // Design: docs/architecture/2026-11-05-band-stack-design.md, sections 5.1 and 7.
 //
@@ -15,17 +20,28 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-06 - The popup (band stack plan Task 10). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QAction>
 #include <QApplication>
+#include <QContextMenuEvent>
+#include <QDir>
 #include <QGridLayout>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QLabel>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QScreen>
+#include <QScrollArea>
+#include <QTimer>
 #include <QWindow>
 
 #include <functional>
@@ -36,11 +52,15 @@
 #include "gui/MainWindow.h"
 #include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
+#include "gui/bandstack/BandStackPopup.h"
+#include "gui/bandstack/BandStackRowList.h"
 #include "gui/containers/ContainerManager.h"
 #include "gui/containers/ContainerWidget.h"
 #include "gui/meters/MeterWidget.h"
 #include "gui/meters/OtherButtonItem.h"
 #include "gui/meters/VfoDisplayItem.h"
+#include "gui/styles/AppTheme.h"
+#include "gui/styles/WorkspacePreview.h"
 #include "gui/widgets/StatusToast.h"
 #include "models/BandDefaults.h"
 #include "models/RadioModel.h"
@@ -118,6 +138,103 @@ QAction* bandMenuEntry(MainWindow& window, const QString& text)
     return nullptr;
 }
 
+QJsonObject popupEntry(const QString& id, const QString& band, qint64 hz, const QString& mode,
+                       bool locked = false, const QString& name = {})
+{
+    return QJsonObject{{QStringLiteral("id"), id},
+                       {QStringLiteral("band"), band},
+                       {QStringLiteral("frequencyHz"), hz},
+                       {QStringLiteral("mode"), mode},
+                       {QStringLiteral("filterLowHz"), -2800},
+                       {QStringLiteral("filterHighHz"), -100},
+                       {QStringLiteral("centerHz"), hz},
+                       {QStringLiteral("spanHz"), 96000},
+                       {QStringLiteral("locked"), locked},
+                       {QStringLiteral("seeded"), false},
+                       {QStringLiteral("name"), name},
+                       {QStringLiteral("lastUsedMs"), 0}};
+}
+
+QJsonObject popupBand(const QStringList& ids)
+{
+    return QJsonObject{{QStringLiteral("order"), QJsonArray::fromStringList(ids)},
+                       {QStringLiteral("returnMode"), QStringLiteral("current")},
+                       {QStringLiteral("specificId"), QString()}};
+}
+
+// Three spots on 40m with Slice B on the first, one on each band the flyout and
+// grid paths below open, and `extra40m` more on 40m to make the list scroll.
+QJsonObject popupDocument(int extra40m = 0)
+{
+    QStringList on40m{QStringLiteral("net"), QStringLiteral("ssb"), QStringLiteral("dx")};
+    QJsonArray entries{popupEntry(QStringLiteral("net"), QStringLiteral("40m"), 7074000,
+                                  QStringLiteral("LSB")),
+                       popupEntry(QStringLiteral("ssb"), QStringLiteral("40m"), 7200000,
+                                  QStringLiteral("LSB"), true),
+                       popupEntry(QStringLiteral("dx"), QStringLiteral("40m"), 7255500,
+                                  QStringLiteral("LSB"), false, QStringLiteral("Evening net")),
+                       popupEntry(QStringLiteral("ft8"), QStringLiteral("20m"), 14074000,
+                                  QStringLiteral("USB")),
+                       popupEntry(QStringLiteral("top"), QStringLiteral("160m"), 1840000,
+                                  QStringLiteral("LSB")),
+                       popupEntry(QStringLiteral("time"), QStringLiteral("WWV"), 10000000,
+                                  QStringLiteral("AM"))};
+    for (int i = 0; i < extra40m; ++i) {
+        const QString id = QStringLiteral("more%1").arg(i);
+        on40m << id;
+        entries.append(popupEntry(id, QStringLiteral("40m"), 7100000 + i * 1000,
+                                  QStringLiteral("LSB")));
+    }
+    return QJsonObject{
+        {QStringLiteral("schema"), 1},
+        {QStringLiteral("region"), QStringLiteral("United States")},
+        {QStringLiteral("options"),
+         QJsonObject{{QStringLiteral("dupeProtection"), true},
+                     {QStringLiteral("expiryMinutes"), 0},
+                     {QStringLiteral("dwellSeconds"), 0}}},
+        {QStringLiteral("bands"),
+         QJsonObject{{QStringLiteral("40m"), popupBand(on40m)},
+                     {QStringLiteral("20m"), popupBand({QStringLiteral("ft8")})},
+                     {QStringLiteral("160m"), popupBand({QStringLiteral("top")})},
+                     {QStringLiteral("WWV"), popupBand({QStringLiteral("time")})}}},
+        {QStringLiteral("entries"), entries},
+        {QStringLiteral("places"),
+         QJsonObject{{QStringLiteral("B"),
+                      QJsonObject{{QStringLiteral("40m"), QStringLiteral("net")}}}}},
+        {QStringLiteral("lastExpiry"),
+         QJsonObject{{QStringLiteral("batchId"), QString()}, {QStringLiteral("count"), 0}}}};
+}
+
+QPushButton* flyoutButton(SpectrumOverlayPanel& overlay, const QString& text)
+{
+    for (QPushButton* button : overlay.parentWidget()->findChildren<QPushButton*>()) {
+        if (button->text() == text && button->isVisible()) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
+void openBandFlyout(SpectrumOverlayPanel& overlay)
+{
+    for (QPushButton* button : overlay.findChildren<QPushButton*>()) {
+        if (button->text() == QStringLiteral("BAND")) {
+            button->click();
+            return;
+        }
+    }
+}
+
+// A press Qt hands the popup itself, as one outside it arrives while it has the
+// mouse. QTest warns about a point outside the widget, so this is sent directly.
+void pressOutside(QWidget& popup)
+{
+    const QPoint local(-20, -20);
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(local), QPointF(popup.mapToGlobal(local)),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&popup, &press);
+}
+
 struct RouterFixture {
     std::unique_ptr<MainWindow> window;
     RadioModel* model{nullptr};
@@ -155,11 +272,11 @@ struct RouterFixture {
         }
         containerOnB->setRxSource(kContainerRxSourceB);
         auto* meter = new MeterWidget();
-        containerOnB->setContent(meter);
         vfo = new VfoDisplayItem();
         vfo->setLayout(VfoDisplayItem::Layout::Thetis);
         vfo->setRect(0, 0, 1, 1);
         meter->addItem(vfo);
+        containerOnB->setContent(meter);
         a->setFrequency(kOn20mHz);
         b->setFrequency(kOn40mHz);
 
@@ -513,6 +630,354 @@ private slots:
 
         QCOMPARE(toastCount(*f.window, reason), 1);
         QVERIFY(f.fake.calls.isEmpty());
+    }
+
+    // ── The popup ────────────────────────────────────────────────────────────
+    void popupOpensForEachPath_data()
+    {
+        QTest::addColumn<QString>("path");
+        QTest::addColumn<int>("sliceId");
+        QTest::addColumn<int>("band");
+        QTest::addColumn<QStringList>("rows");
+
+        QTest::newRow("flyout 20m") << QStringLiteral("20") << kSliceA << int(Band::Band20m)
+                                    << QStringList{QStringLiteral("ft8")};
+        QTest::newRow("flyout WWV") << QStringLiteral("WWV") << kSliceA << int(Band::WWV)
+                                    << QStringList{QStringLiteral("time")};
+        // Band number 0, which the VFO display's own request also carries.
+        QTest::newRow("container 160m") << QStringLiteral("container") << kSliceB
+                                        << int(Band::Band160m)
+                                        << QStringList{QStringLiteral("top")};
+        QTest::newRow("container WWV") << QStringLiteral("container") << kSliceB << int(Band::WWV)
+                                       << QStringList{QStringLiteral("time")};
+        // Slice B is on 40m.
+        QTest::newRow("vfo") << QStringLiteral("vfo") << kSliceB << int(Band::Band40m)
+                             << QStringList{QStringLiteral("net"), QStringLiteral("ssb"),
+                                            QStringLiteral("dx")};
+    }
+
+    void popupOpensForEachPath()
+    {
+        QFETCH(QString, path);
+        QFETCH(int, sliceId);
+        QFETCH(int, band);
+        QFETCH(QStringList, rows);
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument());
+
+        if (path == QStringLiteral("container")) {
+            emit f.containerOnB->bandStackRequested(band);
+        } else if (path == QStringLiteral("vfo")) {
+            emit f.vfo->bandStackRequested(0);
+        } else {
+            openBandFlyout(*f.overlay);
+            QPushButton* button = flyoutButton(*f.overlay, path);
+            QVERIFY(button);
+            emit button->customContextMenuRequested(QPoint(3, 3));
+        }
+
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        const auto close = qScopeGuard([popup] { popup->close(); });
+        QVERIFY(popup->isVisible());
+        QVERIFY(popup->band() == static_cast<Band>(band));
+        QCOMPARE(popup->rows()->sliceId(), sliceId);
+        QCOMPARE(popup->rows()->visibleRowIds(), rows);
+        QVERIFY(popup->shownReason().isEmpty());
+        // Opening it sends nothing to the Core.
+        QVERIFY(f.fake.calls.isEmpty());
+    }
+
+    void popupOpensAtThePointerAndStaysOnScreen()
+    {
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument(14));
+
+        f.window->openBandStackPopup(f.b, Band::Band20m, QPoint(100, 100));
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        const auto close = qScopeGuard([popup] { popup->close(); });
+        // Beside the pointer. The offscreen platform adds a 2 px window frame that
+        // a real popup does not have.
+        QVERIFY2(popup->x() >= 102 && popup->x() <= 104 && popup->y() >= 102 && popup->y() <= 104,
+                 qPrintable(QStringLiteral("%1,%2").arg(popup->x()).arg(popup->y())));
+        QCOMPARE(popup->width(), BandStackPopup::kWidth);
+
+        // A long band stops at the mockup's height and scrolls.
+        popup->close();
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        QCOMPARE(popup->height(), BandStackPopup::kMaxHeight);
+        QCOMPARE(popup->rows()->visibleRowIds().size(), 17);
+
+        const QRect screen = popup->screen()->availableGeometry();
+        popup->close();
+        f.window->openBandStackPopup(f.b, Band::Band40m, screen.bottomRight());
+        QVERIFY2(screen.contains(popup->geometry()),
+                 qPrintable(QStringLiteral("%1,%2 %3x%4")
+                                .arg(popup->x()).arg(popup->y())
+                                .arg(popup->width()).arg(popup->height())));
+    }
+
+    void popupRowsActAndKeepItOpen()
+    {
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument());
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        const auto close = qScopeGuard([popup] { popup->close(); });
+        QTRY_VERIFY(popup->rows()->rowRect(QStringLiteral("dx")).isValid());
+        BandStackRowList* rows = popup->rows();
+
+        QTest::mouseClick(rows, Qt::LeftButton, Qt::NoModifier,
+                          rows->rowRect(QStringLiteral("dx")).center());
+        QCOMPARE(f.fake.calls.size(), 1);
+        QCOMPARE(f.fake.calls.first().verb, QStringLiteral("goTo"));
+        QCOMPARE(f.fake.calls.first().sliceId, kSliceB);
+        QCOMPARE(f.fake.calls.first().entryId, QStringLiteral("dx"));
+        QVERIFY(popup->isVisible());
+
+        // Slice B is on this band, so the add row is there.
+        QVERIFY(rows->addRect().isValid());
+        QTest::mouseClick(rows, Qt::LeftButton, Qt::NoModifier, rows->addRect().center());
+        QCOMPARE(f.fake.calls.size(), 2);
+        QCOMPARE(f.fake.calls.last().verb, QStringLiteral("add"));
+        QCOMPARE(f.fake.calls.last().sliceId, kSliceB);
+        QVERIFY(popup->isVisible());
+
+        // No drag in a popup.
+        const QPoint from = rows->rowRect(QStringLiteral("net")).center();
+        const QPoint to = rows->rowRect(QStringLiteral("dx")).center();
+        QTest::mousePress(rows, Qt::LeftButton, Qt::NoModifier, from);
+        QMouseEvent move(QEvent::MouseMove, QPointF(to), QPointF(rows->mapToGlobal(to)),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(rows, &move);
+        QVERIFY(!rows->isDragging());
+        QTest::mouseRelease(rows, Qt::LeftButton, Qt::NoModifier, to);
+        for (const FakeBandStackAccess::Call& call : std::as_const(f.fake.calls)) {
+            QVERIFY(call.verb != QStringLiteral("reorder"));
+        }
+
+        // The slice leaves the band: the add row goes, and the popup fits again.
+        const int heightBefore = popup->height();
+        f.b->setFrequency(kOn20mHz);
+        QVERIFY(!rows->addRect().isValid());
+        QVERIFY(popup->height() < heightBefore);
+    }
+
+    void popupRowMenuDoesNotCloseIt()
+    {
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument());
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        const auto close = qScopeGuard([popup] { popup->close(); });
+        BandStackRowList* rows = popup->rows();
+        const QPoint at = rows->rowRect(QStringLiteral("dx")).center();
+
+        // The row menu runs its own loop, so a timer works it.
+        QStringList seen;
+        QTimer poll;
+        poll.setInterval(5);
+        connect(&poll, &QTimer::timeout, &poll, [&] {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            if (!menu) {
+                return;
+            }
+            poll.stop();
+            for (QAction* action : menu->actions()) {
+                // Without the shortcut that follows a tab.
+                seen << action->text().section(u'\t', 0, 0);
+                if (seen.last() == QStringLiteral("Lock")) {
+                    action->trigger();
+                }
+            }
+            menu->close();
+        });
+        poll.start();
+        QContextMenuEvent event(QContextMenuEvent::Mouse, at, rows->mapToGlobal(at));
+        QApplication::sendEvent(rows, &event);
+
+        QVERIFY2(seen.contains(QStringLiteral("Go there")), qPrintable(seen.join(u',')));
+        QVERIFY2(seen.contains(QStringLiteral("Delete")), qPrintable(seen.join(u',')));
+        QCOMPARE(f.fake.calls.size(), 1);
+        QCOMPARE(f.fake.calls.first().verb, QStringLiteral("edit"));
+        QCOMPARE(f.fake.calls.first().entryId, QStringLiteral("dx"));
+        QVERIFY(popup->isVisible());
+        QCOMPARE(QApplication::activePopupWidget(), popup);
+    }
+
+    void popupClosesOnAnOutsideClickAndEsc()
+    {
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument());
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        QVERIFY(popup->isVisible());
+        pressOutside(*popup);
+        QVERIFY(!popup->isVisible());
+
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        QVERIFY(popup->isVisible());
+        QTest::keyClick(popup->rows(), Qt::Key_Escape);
+        QVERIFY(!popup->isVisible());
+
+        // A slice that goes away takes its popup with it.
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        QVERIFY(popup->isVisible());
+        emit f.model->sliceRemoved(kSliceB);
+        QVERIFY(!popup->isVisible());
+    }
+
+    void popupLeavesTheFlyoutOpenUntilAClickOutsideBoth()
+    {
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument());
+        openBandFlyout(*f.overlay);
+        QPushButton* twenty = flyoutButton(*f.overlay, QStringLiteral("20"));
+        QVERIFY(twenty);
+        QWidget* flyout = twenty->parentWidget();
+        emit twenty->customContextMenuRequested(QPoint(3, 3));
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        const auto close = qScopeGuard([popup] { popup->close(); });
+        QVERIFY(popup->isVisible());
+        QVERIFY(flyout->isVisible());
+
+        BandStackRowList* rows = popup->rows();
+        QTest::mouseClick(rows, Qt::LeftButton, Qt::NoModifier,
+                          rows->rowRect(QStringLiteral("ft8")).center());
+        QCOMPARE(f.fake.calls.size(), 1);
+        QCOMPARE(f.fake.calls.first().verb, QStringLiteral("goTo"));
+        QVERIFY(popup->isVisible());
+        QVERIFY(flyout->isVisible());
+
+        // Outside both: the popup goes on the press itself, and the press Qt
+        // replays behind it finds no popup up and closes the flyout.
+        pressOutside(*popup);
+        QVERIFY(!popup->isVisible());
+        QVERIFY(flyout->isVisible());
+        QWidget* surface = twenty->nativeParentWidget();
+        QVERIFY(surface && surface->windowHandle());
+        const QPoint away(surface->width() - 20, surface->height() - 20);
+        QTest::mouseClick(surface->windowHandle(), Qt::LeftButton, Qt::NoModifier, away);
+        QVERIFY(!flyout->isVisible());
+    }
+
+    void popupShowsTheReasonInsteadOfRows_data()
+    {
+        QTest::addColumn<int>("state");
+        QTest::addColumn<QString>("reason");
+        QTest::newRow("older Core")
+            << int(BandStackAccess::State::NeedsNewerCore)
+            << QStringLiteral("This Core does not have band stacks. Updating the Core may help.");
+        QTest::newRow("not connected") << int(BandStackAccess::State::NotConnected)
+                                       << BandStackAccess::notConnectedReason();
+    }
+
+    void popupShowsTheReasonInsteadOfRows()
+    {
+        QFETCH(int, state);
+        QFETCH(QString, reason);
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument());
+        f.fake.setState(static_cast<BandStackAccess::State>(state), reason);
+
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        const auto close = qScopeGuard([popup] { popup->close(); });
+        QVERIFY(popup->isVisible());
+        QCOMPARE(popup->shownReason(), reason);
+        auto* label = popup->findChild<QLabel*>(QStringLiteral("bandStackPopupReason"));
+        auto* list = popup->findChild<QScrollArea*>(QStringLiteral("bandStackPopupRows"));
+        QVERIFY(label && list);
+        QVERIFY(label->isVisible());
+        QCOMPARE(label->text(), reason);
+        QVERIFY(!list->isVisible());
+        QVERIFY(f.fake.calls.isEmpty());
+
+        // The stack comes back while it is open.
+        f.fake.setState(BandStackAccess::State::Ready);
+        QVERIFY(popup->shownReason().isEmpty());
+        QVERIFY(!label->isVisible());
+        QVERIFY(list->isVisible());
+    }
+
+    void popupWithNoSliceSaysSo()
+    {
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument());
+        f.window->openBandStackPopup(nullptr, Band::Band40m, QPoint(100, 100));
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        const auto close = qScopeGuard([popup] { popup->close(); });
+        QVERIFY(popup->isVisible());
+        QCOMPARE(popup->shownReason(), QStringLiteral("Select a slice first."));
+    }
+
+    void popupCaptures_data()
+    {
+        QTest::addColumn<bool>("workspaceLook");
+        QTest::newRow("workspace look") << true;
+        QTest::newRow("classic look") << false;
+    }
+
+    void popupCaptures()
+    {
+        QFETCH(bool, workspaceLook);
+        const QString directory = qEnvironmentVariable("NEREUS_BANDSTACK_CAPTURE_DIR");
+        if (directory.isEmpty()) {
+            return;
+        }
+        WorkspacePreview::setEnabledForTest(workspaceLook);
+        const auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
+        auto& app = *qobject_cast<QApplication*>(QCoreApplication::instance());
+        applyDarkPalette(app);
+        applyAppBaselineQss(app);
+        if (workspaceLook) {
+            applyWorkspacePalette(app);
+        }
+        const QString look = workspaceLook ? QStringLiteral("workspace") : QStringLiteral("classic");
+        const auto save = [&](QWidget& popup, const char* name) {
+            settle();
+            QVERIFY(popup.grab().save(QDir(directory).filePath(
+                QStringLiteral("%1-popup-%2.png").arg(look, QString::fromLatin1(name)))));
+        };
+        RouterFixture f;
+        QVERIFY(f.build());
+        f.fake.setDocument(popupDocument());
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        auto* popup = f.window->findChild<BandStackPopup*>();
+        QVERIFY(popup);
+        const auto close = qScopeGuard([popup] { popup->close(); });
+        save(*popup, "on-band");
+        popup->close();
+        f.window->openBandStackPopup(f.a, Band::Band40m, QPoint(100, 100));
+        save(*popup, "other-band");
+        popup->close();
+        f.fake.setDocument(popupDocument(14));
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        save(*popup, "long");
+        popup->close();
+        f.fake.setState(BandStackAccess::State::NeedsNewerCore,
+                        QStringLiteral("This Core does not have band stacks. Updating the Core may help."));
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        save(*popup, "older-core");
+        popup->close();
+        f.fake.setState(BandStackAccess::State::NotConnected, BandStackAccess::notConnectedReason());
+        f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
+        save(*popup, "not-connected");
     }
 
     // ── What comes back ──────────────────────────────────────────────────────

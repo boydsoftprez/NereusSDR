@@ -16,6 +16,9 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-06 - contentHeightChanged and a public revealPlaceSoon, for the
+//                 popup (band stack plan Task 10). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QColor>
@@ -105,6 +108,8 @@ public:
     void fillRowMenu(QMenu& menu, const QString& entryId);
     /// Opens the name editor on a row, opening its band first if need be.
     void beginRename(const QString& entryId);
+    /// Scrolls the slice's place into view, once the layout has settled.
+    void revealPlaceSoon();
 
     // What the rows show now.
     QStringList visibleRowIds() const;
@@ -127,6 +132,8 @@ signals:
     /// Esc, with the rows focused.
     void closeRequested();
     void currentBandChanged();
+    /// The rows' height changed: a row or the add row came or went.
+    void contentHeightChanged();
 
 protected:
     bool event(QEvent* event) override;
@@ -199,7 +206,6 @@ private:
 
     void showRowMenu(const QString& entryId, const QPoint& globalPos);
     void revealRow(const QString& entryId);
-    void revealPlaceSoon();
 
     void paintSection(QPainter& painter, const Item& item) const;
     void paintRow(QPainter& painter, const Item& item) const;

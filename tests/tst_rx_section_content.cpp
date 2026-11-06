@@ -1195,14 +1195,17 @@ private slots:
         grid.buttonClicked(14, Qt::RightButton);  // a jump takes either button
         QCOMPARE(grid.shownGroup(), BandGroup::Hf);
 
-        // WWV sets the band for either button; it has no band stack.
+        // WWV's right-click asks for its stack, as any band's does.
         grid.buttonClicked(13, Qt::RightButton);
+        QCOMPARE(bands.count(), 1);
+        QCOMPARE(stacks.count(), 1);
+        QCOMPARE(stacks.last().at(0).toInt(), static_cast<int>(Band::WWV));
+        grid.buttonClicked(13, Qt::LeftButton);
         QCOMPARE(bands.count(), 2);
         QCOMPARE(bands.last().at(0).toInt(), static_cast<int>(Band::WWV));
-        QCOMPARE(stacks.count(), 0);
         // A band's right-click asks for its stack.
         grid.buttonClicked(3, Qt::RightButton);
-        QCOMPARE(stacks.count(), 1);
+        QCOMPARE(stacks.count(), 2);
         QCOMPARE(stacks.last().at(0).toInt(), static_cast<int>(Band::Band40m));
         // The blank does nothing.
         grid.buttonClicked(11, Qt::LeftButton);

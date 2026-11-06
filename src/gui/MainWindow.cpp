@@ -1091,6 +1091,11 @@
 //   2026-11-06 - Band stack plan Task 9: the rows' context (view, slices, band
 //                 plan colour, blocked reason) and the expiry note's Undo.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 10: openBandStackPopup, from a flyout
+//               button's right-click, a container band button's and the VFO
+//               display's long press; it replaces the container's stopgap of
+//               opening the panel. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-06 - Band stack plan Task 8: pressBand routes every band press in
 //               the window, the flyout stays open across presses, and the
 //               four hot key entry points. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1332,6 +1337,7 @@ warren@wpratt.com
 #include "gui/multidevice/NoticeCard.h"
 #include "gui/HostingSliceActions.h"
 #include "gui/bandstack/BandStackPanel.h"
+#include "gui/bandstack/BandStackPopup.h"
 #include "gui/bandstack/BandStackRowList.h"
 #include "models/bandstack/LocalBandStackAccess.h"
 #include "gui/LevelCalGridFollowGuard.h"
@@ -2591,6 +2597,19 @@ BandStackView MainWindow::viewForSlice(SliceModel* slice) const
     return view;
 }
 
+void MainWindow::openBandStackPopup(SliceModel* slice, Band band, const QPoint& globalPos)
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    if (!m_bandStackPopup) {
+        m_bandStackPopup = new BandStackPopup(m_bandStackAccess, this);
+        m_bandStackPopup->rows()->setContext(bandStackRowContext());
+    }
+    m_bandStackPopup->setUnavailableReason(bandStackReason());
+    m_bandStackPopup->showFor(slice, band, globalPos);
+}
+
 void MainWindow::pressBand(SliceModel* slice, Band band, Qt::KeyboardModifiers mods)
 {
     if (!m_radioModel) { return; }
@@ -2651,6 +2670,9 @@ void MainWindow::bindBandStackAccess(BandStackAccess* access)
     m_bandStackAccess = access;
     if (m_bandStackPanel) {
         m_bandStackPanel->setAccess(access);
+    }
+    if (m_bandStackPopup) {
+        m_bandStackPopup->setAccess(access);
     }
     m_bandStackExpiryBatch.clear();
     if (access) {
@@ -2721,7 +2743,7 @@ QString MainWindow::bandStackBlockedReason(int sliceId) const
     return {};
 }
 
-void MainWindow::wireBandStackRows()
+BandStackRowContext MainWindow::bandStackRowContext()
 {
     BandStackRowContext context;
     context.viewForSlice = [this](int sliceId) {
@@ -2748,19 +2770,41 @@ void MainWindow::wireBandStackRows()
         return QColor();
     };
     context.blockedReason = [this](int sliceId) { return bandStackBlockedReason(sliceId); };
-    m_bandStackPanel->rows()->setContext(std::move(context));
+    return context;
+}
+
+void MainWindow::refreshBandStackRows()
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    if (m_bandStackPanel) {
+        m_bandStackPanel->rows()->refreshSlices();
+    }
+    if (m_bandStackPopup) {
+        m_bandStackPopup->rows()->refreshSlices();
+    }
+}
+
+void MainWindow::wireBandStackRows()
+{
+    m_bandStackPanel->rows()->setContext(bandStackRowContext());
 
     connect(&m_radioModel->bandPlanManagerMutable(), &BandPlanManager::planChanged, this,
-            [this] { m_bandStackPanel->rows()->refreshSlices(); });
+            &MainWindow::refreshBandStackRows);
     for (SliceModel* slice : m_radioModel->slices()) {
         watchBandStackSlice(slice);
     }
     connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int sliceId) {
         watchBandStackSlice(m_radioModel->sliceById(sliceId));
-        m_bandStackPanel->rows()->refreshSlices();
+        refreshBandStackRows();
     });
-    connect(m_radioModel, &RadioModel::sliceRemoved, this,
-            [this] { m_bandStackPanel->rows()->refreshSlices(); });
+    connect(m_radioModel, &RadioModel::sliceRemoved, this, [this](int sliceId) {
+        if (m_bandStackPopup && m_bandStackPopup->rows()->sliceId() == sliceId) {
+            m_bandStackPopup->close();
+        }
+        refreshBandStackRows();
+    });
 }
 
 void MainWindow::watchBandStackSlice(SliceModel* slice)
@@ -2768,13 +2812,8 @@ void MainWindow::watchBandStackSlice(SliceModel* slice)
     if (!slice) {
         return;
     }
-    const auto refresh = [this] {
-        if (!m_shuttingDown && m_bandStackPanel) {
-            m_bandStackPanel->rows()->refreshSlices();
-        }
-    };
-    connect(slice, &SliceModel::frequencyChanged, this, refresh);
-    connect(slice, &SliceModel::lockedChanged, this, refresh);
+    connect(slice, &SliceModel::frequencyChanged, this, &MainWindow::refreshBandStackRows);
+    connect(slice, &SliceModel::lockedChanged, this, &MainWindow::refreshBandStackRows);
 }
 
 void MainWindow::refreshBandStackAvailability()
@@ -2782,6 +2821,9 @@ void MainWindow::refreshBandStackAvailability()
     const QString reason = bandStackReason();
     if (m_bandStackPanel) {
         m_bandStackPanel->setUnavailableReason(reason);
+    }
+    if (m_bandStackPopup) {
+        m_bandStackPopup->setUnavailableReason(reason);
     }
     if (m_bandStackLabel) {
         m_bandStackLabel->setToolTip(reason.isEmpty() ? QStringLiteral("Band stack") : reason);
@@ -8404,6 +8446,11 @@ void MainWindow::ensureOverlayPanels()
             if (s == nullptr) { return; }
             selectSliceForWindow(s->sliceIndex());
             pressBand(s, bandFromName(name), QGuiApplication::keyboardModifiers());
+        });
+        // The pan's own slice, as a press has; looking at its stack selects nothing.
+        connect(panel, &SpectrumOverlayPanel::bandContextRequested, this,
+                [this, panId](const QString& name, const QPoint& globalPos) {
+            openBandStackPopup(sliceForPan(panId), bandFromName(name), globalPos);
         });
     }
     // Parity Task 18 (C8): a pan created after connect says so when empty.
@@ -16057,10 +16104,20 @@ void MainWindow::wireContainerControls(ContainerWidget* c)
             [this, c]() { onContainerFilterContext(c, -1); });
     // From Thetis MeterManager.cs:13216 and :14593 [v2.10.3.15]: a band
     // button's or the VFO display's right-click opens console.PopupBandstack
-    // (console.cs:48529). NereusSDR's band stack shows in its panel, so the
-    // right-click brings the panel up.
-    connect(c, &ContainerWidget::bandStackRequested, this, [this](int) {
-        if (m_bandStackPanel && !m_bandStackPanel->isOpen()) { bandStackPanel(); }
+    // (console.cs:48529). NereusSDR's popup shows that band's rows at the pointer.
+    connect(c, &ContainerWidget::bandStackRequested, this, [this, c](int band) {
+        openBandStackPopup(containerSlice(c), static_cast<Band>(band), QCursor::pos());
+    });
+    // The VFO display names no band: it is the band the slice is on.
+    connect(c, &ContainerWidget::vfoBandStackRequested, this, [this, c] {
+        SliceModel* slice = containerSlice(c);
+        if (!slice) {
+            showContainerButtonReason(
+                ContainerButtonDispatcher::noSliceReason(containerControlRxSource(c)));
+            return;
+        }
+        openBandStackPopup(slice, BandDefaults::bandGridBandFromFrequency(slice->frequency()),
+                           QCursor::pos());
     });
     connect(c, &ContainerWidget::antennaSelected, this,
             [this, c](int index) { onContainerAntennaSelected(c, index); });

@@ -137,6 +137,9 @@
 //                zoom strip when that is placed. The flag covered the open
 //                Display pill and took its clicks. J.J. Boyd (KG4VCF),
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - A press in the band stack popup is not a click outside the BAND
+//                flyout. Band stack plan Task 10. J.J. Boyd (KG4VCF),
+//                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - The BAND flyout stays open after a press, and a band button's
 //                right-click asks for its stack (bandContextRequested). Band
 //                stack plan Task 8. J.J. Boyd (KG4VCF), AI-assisted
@@ -641,6 +644,12 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
     // an outside click.
     const bool pillOwnsClick = m_activeFlyout == m_displayFlyout
         && (QApplication::activeModalWidget() != nullptr || isInDisplayPill(obj, true));
+    // Band stack plan Task 10: the band stack popup a flyout button opened, or
+    // a row menu from it, sits over the flyout, so a press in it is not an
+    // outside click. A press outside the popup closes the popup and Qt replays
+    // it with no popup up, which is when it counts here.
+    const bool bandPopupUp = m_activeFlyout == m_bandFlyout
+        && QApplication::activePopupWidget() != nullptr;
     if (event->type() == QEvent::MouseButtonPress) {
         auto* me = static_cast<QMouseEvent*>(event);
         // The same press is seen several times: at its window, at the
@@ -652,7 +661,7 @@ bool SpectrumOverlayPanel::eventFilter(QObject* obj, QEvent* event)
             m_swallowPanMouse = false;
             m_swallowPanContextMenu = false;
         }
-        if (m_activeFlyout && !pillOwnsClick) {
+        if (m_activeFlyout && !pillOwnsClick && !bandPopupUp) {
             QPoint gp = me->globalPosition().toPoint();
             bool inFlyout = m_activeFlyout->rect().contains(
                                 m_activeFlyout->mapFromGlobal(gp));

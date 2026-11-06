@@ -70,6 +70,7 @@
 #include "core/StepAttenuatorFacade.h"
 #include "core/WdspTypes.h"
 #include "gui/bandstack/BandStackPanel.h"
+#include "gui/bandstack/BandStackPopup.h"
 #include "gui/DiversityDialog.h"
 #include "gui/GuiSessionCoordinator.h"
 #include "gui/HGauge.h"
@@ -829,16 +830,18 @@ private slots:
             "This slice's filter is not one of this mode's presets, so there is no "
             "preset to edit.")));
 
-        // A band button's or the VFO display's band-stack right-click brings
-        // up the band stack panel, and a second one leaves it up.
+        // A band button's band-stack right-click opens the popup for that band,
+        // and leaves the panel as it was.
         auto* bandStack = window->findChild<BandStackPanel*>();
         QVERIFY(bandStack);
         bandStack->setOpen(false, false);
         emit container->bandStackRequested(5);
-        QVERIFY(bandStack->isOpen());
-        emit container->bandStackRequested(5);
-        QVERIFY(bandStack->isOpen());
-        bandStack->setOpen(false, false);
+        auto* bandPopup = window->findChild<BandStackPopup*>();
+        QVERIFY(bandPopup);
+        QVERIFY(bandPopup->isVisible());
+        QVERIFY(bandPopup->band() == static_cast<Band>(5));
+        QVERIFY(!bandStack->isOpen());
+        bandPopup->close();
         store->resetPreset(DSPMode::USB, 2);
         store->resetPreset(DSPMode::USB, 4);
         QVERIFY(sessions.replace({}, false));

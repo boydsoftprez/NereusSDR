@@ -10596,6 +10596,8 @@ nereus_add_test(tst_bandstack_panel
 # real MainWindow offscreen with a fake access.
 nereus_add_test(tst_bandstack_router
     fakes/FakeBandStackAccess.h)
+# About sixty cases, each on its own MainWindow: past the default under load.
+set_tests_properties(tst_bandstack_router PROPERTIES TIMEOUT 300)
 
 # Band stack plan Task 5: a recall on a shared receiver asks through the
 # confirm step, through a loopback link with fake peers.

@@ -25,6 +25,9 @@
 //   2026-11-06: the rows' context and the expiry note's Undo (band stack
 //               plan Task 9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-11-06: openBandStackPopup(), the popup a band's right-click and the
+//               VFO display's long press open (band stack plan Task 10). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
 //               display's clicks, wheel and keys act on the slice they
 //               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
@@ -402,6 +405,8 @@ class MultiDeviceController;
 class HostingSliceActions;
 class BandStackAccess;
 class BandStackPanel;
+class BandStackPopup;
+struct BandStackRowContext;
 struct BandStackView;
 enum class BandStackDirection;
 class NoticeCard;
@@ -481,6 +486,8 @@ public:
     /// What `slice`'s pan shows now, for the band stack's saved view. Empty
     /// when no pan shows it.
     BandStackView viewForSlice(SliceModel* slice) const;
+    /// One band's rows for `slice` at the pointer, or the reason there are none.
+    void openBandStackPopup(SliceModel* slice, Band band, const QPoint& globalPos);
     // Display pill plan Task 9: the window's per-band pan models.
     PanModels* panModels() const { return m_panModels; }
 
@@ -2071,12 +2078,15 @@ private:
     // as any change of the pane's size does.
     QWidget* m_panColumn{nullptr};
     BandStackPanel* m_bandStackPanel{nullptr};
+    BandStackPopup* m_bandStackPopup{nullptr};
     QAction* m_bandStackAction{nullptr};
     QPointer<BandStackAccess> m_bandStackAccess;
     void bindBandStackAccess(BandStackAccess* access);
     void refreshBandStackSlice();
     void refreshBandStackDots();
     void wireBandStackRows();
+    BandStackRowContext bandStackRowContext();
+    void refreshBandStackRows();
     void watchBandStackSlice(SliceModel* slice);
     /// Why a recall on this slice will be refused, for the rows to show.
     QString bandStackBlockedReason(int sliceId) const;

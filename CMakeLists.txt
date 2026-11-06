@@ -1799,6 +1799,8 @@ set(GUI_SOURCES
     src/gui/DesktopStationController.h
     src/gui/bandstack/BandStackPanel.cpp
     src/gui/bandstack/BandStackPanel.h
+    src/gui/bandstack/BandStackPopup.cpp
+    src/gui/bandstack/BandStackPopup.h
     src/gui/bandstack/BandStackRowList.cpp
     src/gui/bandstack/BandStackRowList.h
     src/gui/HostingSliceActions.cpp
