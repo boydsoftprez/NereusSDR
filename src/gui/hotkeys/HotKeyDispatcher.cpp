@@ -10,6 +10,7 @@
 #include "core/hotkeys/HotKeyBindings.h"
 #include "models/SliceModel.h"
 
+#include <QDateTime>
 #include <QStringList>
 
 #include <algorithm>
@@ -17,6 +18,12 @@
 #include <cstdlib>
 #include <iterator>
 #include <utility>
+
+#if defined(Q_OS_MAC) || defined(Q_OS_LINUX)
+#include <time.h>
+#elif defined(Q_OS_WIN)
+#include <windows.h>
+#endif
 
 namespace NereusSDR {
 
@@ -27,6 +34,33 @@ namespace {
 // enough that a drag or a typed frequency soon after is what the next key
 // starts from. NereusSDR's choice, not a value from a reference.
 constexpr qint64 kInFlightWindowMs = 250;
+
+// A clock that stops while the machine sleeps. Qt's own can't serve: QElapsedTimer
+// reads std::chrono::steady_clock, which keeps counting through sleep on macOS
+// (libc++ src/chrono.cpp, CLOCK_MONOTONIC_RAW) and on Windows (QueryPerformanceCounter;
+// Microsoft, "Acquiring high-resolution time stamps").
+qint64 awakeClockMs()
+{
+#if defined(Q_OS_MAC)
+    // man clock_gettime: CLOCK_UPTIME_RAW "does not increment while the system is asleep".
+    return static_cast<qint64>(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000ULL);
+#elif defined(Q_OS_WIN)
+    // Microsoft, QueryUnbiasedInterruptTime: "does not include time the system spends
+    // in sleep or hibernation". Units of 100 ns. MinGW declares it too
+    // (mingw-w64 realtimeapiset.h, _WIN32_WINNT >= 0x0601). The page does not mention
+    // connected standby.
+    ULONGLONG ticks = 0;
+    QueryUnbiasedInterruptTime(&ticks);
+    return static_cast<qint64>(ticks / 10000ULL);
+#elif defined(Q_OS_LINUX)
+    // clock_gettime(2): CLOCK_MONOTONIC "does not count time that the system is suspended".
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return static_cast<qint64>(now.tv_sec) * 1000 + now.tv_nsec / 1000000;
+#else
+#error "The hot key sleep failsafe needs a clock that stops during sleep on this platform."
+#endif
+}
 
 const QString& idTxHold()
 {
@@ -75,6 +109,11 @@ HotKeyDispatcher::HotKeyDispatcher(HotKeyBindings* bindings, HotKeyTargets* targ
     m_flushTimer.setTimerType(Qt::PreciseTimer);
     m_flushTimer.setInterval(static_cast<int>(TuneCoalescer::kMinIntervalMs));
     connect(&m_flushTimer, &QTimer::timeout, this, &HotKeyDispatcher::flushTune);
+
+    m_wallClock = [] { return QDateTime::currentMSecsSinceEpoch(); };
+    m_awakeClock = [] { return awakeClockMs(); };
+    m_sleepTimer.setInterval(kSleepTickMs);
+    connect(&m_sleepTimer, &QTimer::timeout, this, &HotKeyDispatcher::checkForSleep);
 
     connect(m_bindings, &HotKeyBindings::enabledChanged, this, [this](bool on) {
         if (!on) {
@@ -174,6 +213,54 @@ void HotKeyDispatcher::releaseAllHolds()
     const QList<CwKeyHold> keys = m_cwKeysDown;
     for (const CwKeyHold& hold : keys) {
         endCwKey(hold.id, hold.source);
+    }
+}
+
+void HotKeyDispatcher::setSleepClocksForTest(ClockMs wallClock, ClockMs awakeClock)
+{
+    m_wallClock = std::move(wallClock);
+    m_awakeClock = std::move(awakeClock);
+    noteSleepClocks();
+}
+
+void HotKeyDispatcher::noteSleepClocks()
+{
+    m_lastWallMs = m_wallClock();
+    m_lastAwakeMs = m_awakeClock();
+}
+
+void HotKeyDispatcher::checkForSleep()
+{
+    if (!m_sleepTimer.isActive()) {
+        return;
+    }
+    const qint64 wallGained = m_wallClock() - m_lastWallMs;
+    const qint64 awakeGained = m_awakeClock() - m_lastAwakeMs;
+    noteSleepClocks();
+    // The wall clock can also be moved forward by itself: a time sync, or someone
+    // setting the clock. Epoch time ignores a daylight change unless the machine's
+    // clock itself jumps. A jump past the threshold during a hold drops that hold,
+    // which fails toward key-up. Moved back, it reads as no sleep.
+    if (wallGained - awakeGained <= kSleepGapMs) {
+        return;
+    }
+    qCInfo(lcHotKeys) << "Holds dropped: the machine slept for" << wallGained - awakeGained << "ms";
+    // As the other failsafes: holds drop, and a latched MOX or a TUNE stays on.
+    releaseAllHolds();
+    emit holdsDroppedBySleep();
+}
+
+void HotKeyDispatcher::updateSleepWatch()
+{
+    const bool holding = !m_holdSources.isEmpty() || !m_cwKeysDown.isEmpty();
+    if (holding == m_sleepTimer.isActive()) {
+        return;
+    }
+    if (holding) {
+        noteSleepClocks();
+        m_sleepTimer.start();
+    } else {
+        m_sleepTimer.stop();
     }
 }
 
@@ -387,6 +474,7 @@ void HotKeyDispatcher::startHold(const HotKeyAction& action, const HotKeySource&
             }
         }
         m_holdSources.append(source);
+        updateSleepWatch();
         return;
     }
 
@@ -404,6 +492,7 @@ void HotKeyDispatcher::startHold(const HotKeyAction& action, const HotKeySource&
     const bool alreadyDown = std::any_of(m_cwKeysDown.cbegin(), m_cwKeysDown.cend(),
                                          [&action](const CwKeyHold& hold) { return hold.id == action.id; });
     m_cwKeysDown.append(CwKeyHold{action.id, source});
+    updateSleepWatch();
     if (!alreadyDown) {
         m_targets->setCwKeyDown(action.id, true);
     }
@@ -411,7 +500,9 @@ void HotKeyDispatcher::startHold(const HotKeyAction& action, const HotKeySource&
 
 void HotKeyDispatcher::endTransmitHold(const HotKeySource& source)
 {
-    if (m_holdSources.removeAll(source) == 0 || !m_holdSources.isEmpty() || !m_holdKeyed) {
+    const qsizetype removed = m_holdSources.removeAll(source);
+    updateSleepWatch();
+    if (removed == 0 || !m_holdSources.isEmpty() || !m_holdKeyed) {
         return;
     }
     m_holdKeyed = false;
@@ -427,6 +518,7 @@ void HotKeyDispatcher::endCwKey(const QString& id, const HotKeySource& source)
     const qsizetype removed = m_cwKeysDown.removeIf([&id, &source](const CwKeyHold& hold) {
         return hold.id == id && hold.source == source;
     });
+    updateSleepWatch();
     if (removed == 0) {
         return;
     }

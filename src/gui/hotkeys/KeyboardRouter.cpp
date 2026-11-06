@@ -122,6 +122,9 @@ KeyboardRouter::KeyboardRouter(HotKeyDispatcher* dispatcher, HotKeyBindings* bin
             m_down.clear();
         }
     });
+    // Not dropHolds: the dispatcher has already let go of every source. A key's
+    // release after wake finds no entry, and one lost in sleep can't eat the next press.
+    connect(m_dispatcher, &HotKeyDispatcher::holdsDroppedBySleep, this, [this] { m_down.clear(); });
     qApp->installEventFilter(this);
     // A menu can hold on to the key-up, natively on a Mac. Menus added later
     // arrive as ActionAdded, in the filter.

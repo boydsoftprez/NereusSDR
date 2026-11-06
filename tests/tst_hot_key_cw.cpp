@@ -350,6 +350,20 @@ private slots:
         QCOMPARE(w.bits(), 0);
     }
 
+    void sleepLetsGoOfTheKeys()
+    {
+        LocalWindow w;
+        qint64 wall = 1000000;
+        w.keys->setSleepClocksForTest([&wall] { return wall; }, [] { return qint64(5000); });
+        w.press(kDot);
+        w.press(kDash);
+        w.press(kStraight);
+        QVERIFY(w.line->dot() && w.line->dash() && w.line->cwx());
+        wall += 3600000;
+        w.keys->checkForSleep();
+        QCOMPARE(w.bits(), 0);
+    }
+
     // ---- A voice mode ----
 
     void inAVoiceModeTheKeysDoNothingAndSayNothing()

@@ -17,6 +17,8 @@
 #include <QPointer>
 #include <QTimer>
 
+#include <functional>
+
 namespace NereusSDR {
 
 class HotKeyBindings;
@@ -35,9 +37,31 @@ public:
     void releaseAll(const HotKeySource& source);    // failsafes, one source
     void releaseAllHolds();                         // the off switch
 
+    // A hold drops when its release can't arrive, and across sleep it can't. While
+    // anything is held, a timer compares the wall clock with a clock that stops
+    // while the machine sleeps. Wall time gained on it was time asleep.
+    //
+    // A stall moves both clocks together, so a 2 s hitch on this thread reads as a
+    // gap near zero, however long it is. So the threshold only has to clear a hitch
+    // landing between the two clock reads, which is why it is above 2 s, and it
+    // matches the 3 s the radio links allow for silence. A shorter sleep goes unseen.
+    static constexpr qint64 kSleepGapMs = 3000;
+    // Costs nothing at rest: it runs only while something is held. A hold still
+    // down on wake drops within one tick of waking.
+    static constexpr int kSleepTickMs = 1000;
+
+    using ClockMs = std::function<qint64()>;
+    void setSleepClocksForTest(ClockMs wallClock, ClockMs awakeClock);
+    bool sleepWatchRunning() const { return m_sleepTimer.isActive(); }
+
 public slots:
     void onTransmitWentOff();                       // clears the ledger's claim
     void flushTune();                               // the timer's slot; public for tests
+    void checkForSleep();                           // the timer's slot; public for tests
+
+signals:
+    // After the holds dropped. Whoever pairs presses with releases forgets its keys.
+    void holdsDroppedBySleep();
 
 private:
     // Steps waiting on one slice. Tune and levels limit separately, so a volume
@@ -69,6 +93,8 @@ private:
     void startHold(const HotKeyAction& action, const HotKeySource& source);
     void endTransmitHold(const HotKeySource& source);
     void endCwKey(const QString& id, const HotKeySource& source);
+    void updateSleepWatch();
+    void noteSleepClocks();
 
     HotKeyBindings* m_bindings;
     HotKeyTargets* m_targets;
@@ -81,6 +107,12 @@ private:
     QList<HotKeySource> m_holdSources;
     bool m_holdKeyed{false};
     QList<CwKeyHold> m_cwKeysDown;
+
+    QTimer m_sleepTimer;
+    ClockMs m_wallClock;
+    ClockMs m_awakeClock;
+    qint64 m_lastWallMs{0};
+    qint64 m_lastAwakeMs{0};
 };
 
 } // namespace NereusSDR

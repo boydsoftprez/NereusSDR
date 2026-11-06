@@ -552,6 +552,32 @@ private slots:
 
     // ---- Hosting ----
 
+    void sleepUnkeysAHoldAndLeavesALatchedMox()
+    {
+        LocalWindow w;
+        qint64 wall = 1000000;
+        w.keys->setSleepClocksForTest([&wall] { return wall; }, [] { return qint64(5000); });
+
+        w.press(kHold);
+        QVERIFY(w.mox->isMox());
+        wall += 3600000;
+        w.keys->checkForSleep();
+        QVERIFY(!w.mox->isMox());
+        w.release(kHold);
+        QVERIFY(!w.mox->isMox());
+
+        // A MOX latched with a press stays on, as through every failsafe.
+        w.press(kMox);
+        QVERIFY(w.mox->isMox());
+        w.press(kHold);
+        wall += 3600000;
+        w.keys->checkForSleep();
+        QVERIFY(w.mox->isMox());
+        QVERIFY(w.mox->isManualKey());
+        w.press(kMox);
+        QVERIFY(!w.mox->isMox());
+    }
+
     void aHostedHoldKeysThroughTheController()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }

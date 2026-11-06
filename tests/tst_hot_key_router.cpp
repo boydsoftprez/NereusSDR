@@ -1270,6 +1270,52 @@ private slots:
     }
 #endif
 
+    void sleepDropsAHoldAndTheKeyBehavesAfterWake()
+    {
+        const HotKeySource keyboard{HotKeySourceKind::Keyboard, QString()};
+        Bench w;
+        QVERIFY(w.ready());
+        qint64 wall = 1000000;
+        w.keys->setSleepClocksForTest([&wall] { return wall; }, [] { return qint64(5000); });
+        const auto sleep = [&] {
+            wall += 3600000;
+            w.keys->checkForSleep();
+        };
+
+        // Let go during the sleep, with the release lost: the next press keys.
+        down(&w.window, Qt::Key_Space);
+        QTRY_VERIFY(w.mox->isMox());
+        sleep();
+        QTRY_VERIFY(!w.mox->isMox());
+        down(&w.window, Qt::Key_Space);
+        QTRY_VERIFY(w.mox->isMox());
+        up(&w.window, Qt::Key_Space);
+        QTRY_VERIFY(!w.mox->isMox());
+
+        // Still down on wake: its repeats key nothing.
+        down(&w.window, Qt::Key_Space);
+        QTRY_VERIFY(w.mox->isMox());
+        sleep();
+        QTRY_VERIFY(!w.mox->isMox());
+        sendKey(&w.window, QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, true);
+        QCoreApplication::processEvents();
+        QVERIFY(!w.mox->isMox());
+        up(&w.window, Qt::Key_Space);
+
+        // The real release after wake does nothing further, to a latched MOX either.
+        down(&w.window, Qt::Key_Space);
+        QTRY_VERIFY(w.mox->isMox());
+        sleep();
+        QTRY_VERIFY(!w.mox->isMox());
+        w.keys->press(QStringLiteral("tx.mox"), keyboard);
+        QTRY_VERIFY(w.mox->isMox());
+        up(&w.window, Qt::Key_Space);
+        QCoreApplication::processEvents();
+        QVERIFY(w.mox->isMox());
+        w.keys->press(QStringLiteral("tx.mox"), keyboard);
+        QTRY_VERIFY(!w.mox->isMox());
+    }
+
     void aMenuBarMenuOpeningDropsTheHoldAndLeavesMox()
     {
         const HotKeySource keyboard{HotKeySourceKind::Keyboard, QString()};

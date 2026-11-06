@@ -121,6 +121,23 @@ public:
     }
 };
 
+// Clocks a test moves by hand, so no case depends on load.
+struct SleepClocks {
+    explicit SleepClocks(HotKeyDispatcher& dispatcher)
+    {
+        dispatcher.setSleepClocksForTest([this] { return wall; }, [this] { return awakeTime; });
+    }
+    void awake(qint64 ms)
+    {
+        wall += ms;
+        awakeTime += ms;
+    }
+    void sleep(qint64 ms) { wall += ms; }
+
+    qint64 wall{1000000};
+    qint64 awakeTime{5000};
+};
+
 } // namespace
 
 class TestHotKeyDispatcher : public QObject {
@@ -753,6 +770,150 @@ private slots:
         d().release(QStringLiteral("cw.dot"), kPedal);
         QCOMPARE(t().keyHolds.size(), 2);
         QCOMPARE(t().cwKeys.size(), 2);
+    }
+
+    // ---- The sleep failsafe ----
+
+    void sleep_aGapDropsEveryHoldFromEverySource()
+    {
+        SleepClocks clocks(d());
+        QSignalSpy dropped(&d(), &HotKeyDispatcher::holdsDroppedBySleep);
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        d().press(QStringLiteral("tx.hold"), kPedal);
+        d().press(QStringLiteral("cw.dot"), kPedal);
+
+        clocks.sleep(3600000);
+        d().checkForSleep();
+
+        QCOMPARE(t().keyHolds, (QList<bool>{true, false}));
+        QCOMPARE(t().cwKeys.last(), qMakePair(QStringLiteral("cw.dot"), false));
+        QCOMPARE(dropped.size(), 1);
+        QVERIFY(t().toasts.isEmpty());
+        QVERIFY(!d().sleepWatchRunning());
+    }
+
+    void sleep_theThresholdIsAboveAndNotAt()
+    {
+        SleepClocks clocks(d());
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        clocks.sleep(HotKeyDispatcher::kSleepGapMs);
+        d().checkForSleep();
+        QCOMPARE(t().keyHolds, QList<bool>{true});
+        clocks.sleep(HotKeyDispatcher::kSleepGapMs + 1);
+        d().checkForSleep();
+        QCOMPARE(t().keyHolds, (QList<bool>{true, false}));
+    }
+
+    void sleep_aNormalTickOrAStallDoesNotDrop()
+    {
+        SleepClocks clocks(d());
+        QSignalSpy dropped(&d(), &HotKeyDispatcher::holdsDroppedBySleep);
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        for (const qint64 awakeMs : {qint64(HotKeyDispatcher::kSleepTickMs), qint64(2000), qint64(60000)}) {
+            clocks.awake(awakeMs);
+            d().checkForSleep();
+        }
+        QCOMPARE(t().keyHolds, QList<bool>{true});
+        QCOMPARE(dropped.size(), 0);
+        QVERIFY(d().sleepWatchRunning());
+    }
+
+    void sleep_theWallClockSetBackIsNoSleep()
+    {
+        SleepClocks clocks(d());
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        clocks.wall -= 3600000;
+        d().checkForSleep();
+        QCOMPARE(t().keyHolds, QList<bool>{true});
+    }
+
+    void sleep_theTimerRunsOnlyWhileSomethingIsHeld()
+    {
+        QVERIFY(!d().sleepWatchRunning());
+        d().press(QStringLiteral("tx.mox"), kSpace);
+        QVERIFY(!d().sleepWatchRunning());
+
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        QVERIFY(d().sleepWatchRunning());
+        d().press(QStringLiteral("cw.dot"), kPedal);
+        d().release(QStringLiteral("tx.hold"), kSpace);
+        QVERIFY(d().sleepWatchRunning());
+        d().release(QStringLiteral("cw.dot"), kPedal);
+        QVERIFY(!d().sleepWatchRunning());
+
+        // A refused hold joins nothing.
+        t().reasons.insert(QStringLiteral("tx.hold"), QStringLiteral("No."));
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        QVERIFY(!d().sleepWatchRunning());
+    }
+
+    void sleep_theCheckWithNothingHeldDoesNothing()
+    {
+        SleepClocks clocks(d());
+        QSignalSpy dropped(&d(), &HotKeyDispatcher::holdsDroppedBySleep);
+        clocks.sleep(3600000);
+        d().checkForSleep();
+        QCOMPARE(dropped.size(), 0);
+    }
+
+    void sleep_aHoldWithoutTheClaimLeavesALatchedMox()
+    {
+        SleepClocks clocks(d());
+        t().transmittingNow = true;
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        clocks.sleep(3600000);
+        d().checkForSleep();
+        QVERIFY(t().keyHolds.isEmpty());
+        QVERIFY(!d().sleepWatchRunning());
+    }
+
+    void sleep_aTuneTakenOverStaysOn()
+    {
+        SleepClocks clocks(d());
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        t().tuneOrTwoTone = true;
+        clocks.sleep(3600000);
+        d().checkForSleep();
+        QCOMPARE(t().keyHolds, QList<bool>{true});
+    }
+
+    void sleep_aLaterHoldWorksAndTheOldReleaseDoesNothing()
+    {
+        SleepClocks clocks(d());
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        clocks.sleep(3600000);
+        d().checkForSleep();
+        QCOMPARE(t().keyHolds, (QList<bool>{true, false}));
+
+        d().release(QStringLiteral("tx.hold"), kSpace);
+        QCOMPARE(t().keyHolds, (QList<bool>{true, false}));
+
+        // Time asleep before this hold is not held against it.
+        clocks.sleep(3600000);
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        QCOMPARE(t().keyHolds, (QList<bool>{true, false, true}));
+        clocks.awake(HotKeyDispatcher::kSleepTickMs);
+        d().checkForSleep();
+        QCOMPARE(t().keyHolds, (QList<bool>{true, false, true}));
+        d().release(QStringLiteral("tx.hold"), kSpace);
+        QCOMPARE(t().keyHolds, (QList<bool>{true, false, true, false}));
+    }
+
+    void sleep_theTimerRunsTheCheck()
+    {
+        SleepClocks clocks(d());
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        clocks.sleep(3600000);
+        QTRY_COMPARE_WITH_TIMEOUT(t().keyHolds, (QList<bool>{true, false}), 30000);
+    }
+
+    void sleep_theRealClocksDoNotDropAHold()
+    {
+        d().press(QStringLiteral("tx.hold"), kSpace);
+        d().checkForSleep();
+        QTest::qWait(50);
+        d().checkForSleep();
+        QCOMPARE(t().keyHolds, QList<bool>{true});
     }
 
     // ---- CW keys ----
