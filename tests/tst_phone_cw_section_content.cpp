@@ -40,6 +40,7 @@
 #include "gui/applets/PhoneCwApplet.h"
 #include "gui/applets/PhoneCwSectionContent.h"
 #include "gui/applets/SectionParts.h"
+#include "gui/containers/ContainerContentHost.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContentPropertyEditor.h"
 #include "models/RadioModel.h"
@@ -717,6 +718,131 @@ private slots:
         QCOMPARE(applet->height(), height);
         QVERIFY(!gaugeNamed(applet, QStringLiteral("Compression gauge"))->isHidden());
         QVERIFY(pagesKeepTheirPolicy());
+    }
+
+    // ── A free canvas ────────────────────────────────────────────────────
+
+    // A free canvas sizes an entry once and a page click doesn't resize it,
+    // so with page buttons showing the rect must hold either page. Through
+    // the real host: build the copy, turn the page, read that every row fits.
+    void aFreeCanvasCopyFitsEitherPage_data()
+    {
+        QTest::addColumn<QString>("page");
+        QTest::addColumn<QStringList>("hidden");
+        QTest::newRow("phone, mic only") << QStringLiteral("phone")
+                                         << allBut(kPhoneRows, QStringLiteral("mic"));
+        QTest::newRow("phone, nothing hidden") << QStringLiteral("phone") << QStringList{};
+        QTest::newRow("cw, nothing hidden") << QStringLiteral("cw") << QStringList{};
+        QTest::newRow("cw, delay only") << QStringLiteral("cw")
+                                        << allBut(kCwRows, QStringLiteral("cwDelay"));
+        QTest::newRow("one row on each") << QStringLiteral("phone")
+                                         << allBut(kPhoneRows, QStringLiteral("level"))
+                                                + allBut(kCwRows, QStringLiteral("cwPan"));
+    }
+
+    void aFreeCanvasCopyFitsEitherPage()
+    {
+        QFETCH(QString, page);
+        QFETCH(QStringList, hidden);
+
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        ContainerContentRegistry registry;
+        registerPhoneCwSectionContent(registry, &applet);
+        ContainerContentHost host(registry);
+        host.resize(500, 900);
+        host.show();
+
+        ContainerDocument document;
+        document.id = QStringLiteral("main");
+        document.layout = ContentLayout::FreeCanvas;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("phcw.panel"));
+        entry.id = QStringLiteral("copy");
+        entry.config = hiding(hidden, page);
+        document.contents = {entry};
+        host.reconcile(document);
+
+        auto* copy = qobject_cast<PhoneCwApplet*>(host.entryRows().first().widget.data());
+        QVERIFY(copy);
+        const auto settle = [copy]() {
+            for (int pass = 0; pass < 6; ++pass) {
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+                copy->layout()->activate();
+                stackOf(copy)->currentWidget()->layout()->activate();
+            }
+        };
+        const auto everyRowFits = [copy](QString* problem) {
+            const QStringList rows = QStringList{kPageButtons} + kPhoneRows + kCwRows;
+            for (const QString& id : rows) {
+                QWidget* row = rowOf(copy, id);
+                if (!row->isVisible()) {
+                    continue;
+                }
+                const int bottom = row->mapTo(copy, QPoint(0, row->height())).y();
+                const int wanted = row->hasHeightForWidth() ? row->heightForWidth(row->width())
+                                                            : row->sizeHint().height();
+                if (bottom > copy->height() || row->height() < wanted) {
+                    *problem = QStringLiteral("%1 is %2 px of %3 wanted, ending at %4 in a %5 px rect")
+                                   .arg(id).arg(row->height()).arg(wanted).arg(bottom).arg(copy->height());
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        QString problem;
+        settle();
+        QVERIFY2(everyRowFits(&problem), qPrintable(problem));
+        const int rectHeight = copy->height();
+
+        const QString other = page == QLatin1String("phone") ? QStringLiteral("CW") : QStringLiteral("Phone");
+        const QString back = page == QLatin1String("phone") ? QStringLiteral("Phone") : QStringLiteral("CW");
+        buttonNamed(copy, other)->click();
+        settle();
+        QVERIFY(rowOf(copy, kPageButtons)->isVisible());
+        QVERIFY2(everyRowFits(&problem), qPrintable(problem));
+        QCOMPARE(copy->height(), rectHeight);
+
+        buttonNamed(copy, back)->click();
+        settle();
+        QVERIFY2(everyRowFits(&problem), qPrintable(problem));
+    }
+
+    // With the page buttons hidden the page can't change, so the copy asks
+    // for what it shows. Its minimum follows the same rule, and the settings
+    // preview's copy asks for the same as the live one.
+    void aFreeCanvasCopyReportsTheSizeItNeeds()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        ContainerContentRegistry registry;
+        registerPhoneCwSectionContent(registry, &applet);
+        QWidget host;
+
+        ContentEntry noButtons = registry.makeEntry(QStringLiteral("phcw.panel"));
+        noButtons.config = hiding(QStringList{kPageButtons} + allBut(kPhoneRows, QStringLiteral("mic")));
+        const std::unique_ptr<QWidget> shortView(registry.createPreview(noButtons, &host));
+        QVERIFY(shortView);
+        QCOMPARE(shortView->property("freeCanvasHint").toSize().height(), shortView->sizeHint().height());
+        QCOMPARE(shortView->property("freeCanvasMinimum").toSizeF().height(),
+                 qreal(shortView->minimumSizeHint().height()));
+
+        ContentEntry withButtons = registry.makeEntry(QStringLiteral("phcw.panel"));
+        withButtons.config = hiding(allBut(kPhoneRows, QStringLiteral("mic")));
+        const std::unique_ptr<QWidget> tallView(registry.createPreview(withButtons, &host));
+        QVERIFY(tallView);
+        auto* copy = qobject_cast<PhoneCwApplet*>(tallView.get());
+        QVERIFY(copy);
+        QStackedWidget* stack = stackOf(copy);
+        const int buttons = rowOf(copy, kPageButtons)->sizeHint().height();
+        QCOMPARE(tallView->property("freeCanvasHint").toSize().height(),
+                 buttons + stack->widget(1)->sizeHint().height());
+        QCOMPARE(tallView->property("freeCanvasMinimum").toSizeF().height(),
+                 qreal(rowOf(copy, kPageButtons)->minimumSizeHint().height()
+                       + qMax(stack->widget(0)->minimumSizeHint().height(),
+                              stack->widget(1)->minimumSizeHint().height())));
+        // The stack path is not touched: it still follows the page shown.
+        QVERIFY(tallView->sizeHint().height() < tallView->property("freeCanvasHint").toSize().height());
     }
 
     // ── Editor ───────────────────────────────────────────────────────────
