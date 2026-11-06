@@ -122,6 +122,7 @@
 #include "core/session/media/DaemonAudioSource.h"
 #include "core/session/media/DisplayCodec.h"
 #include "core/session/media/DisplayBudget.h"
+#include "core/BoardCapabilities.h"
 #include "core/session/media/IMediaTransport.h"
 #include "core/session/media/LibDataChannelMediaTransport.h"
 #include "core/session/media/OpusAudioCodec.h"
@@ -733,9 +734,9 @@ struct Harness {
         }
     }
 
-    void enableWidebandSource()
+    void enableWidebandSource(HPSDRHW board = HPSDRHW::Saturn)
     {
-        p2.setBoardForTest(HPSDRHW::Saturn);
+        p2.setBoardForTest(board);
         radio.injectConnectionForTest(&p2);
         RadioInfo info;
         info.protocol = ProtocolVersion::Protocol2;
@@ -860,7 +861,7 @@ private slots:
     void aControllerLosingAViewOffTheReceiverIsToldWhy_data();
     void aControllerLosingAViewOffTheReceiverIsToldWhy();
     void controlReturningBeforeTheRetireRunsKeepsTheView();
-    void aControllersViewOnAnAdcWithNoWidebandIsToldWhy();
+    void aControllersViewComesBackWhenItsRouteReturnsToAWidebandAdc();
     void aListenersRequestTheReceiverLeavesBehindIsToldWhy_data();
     void aListenersRequestTheReceiverLeavesBehindIsToldWhy();
     void aListenersViewWhollyOffTheReceiverIsRefused_data();
@@ -5026,13 +5027,17 @@ void TstDaemonMediaController::controlReturningBeforeTheRetireRunsKeepsTheView()
     h.finish();
 }
 
-// A controller whose slice's ADC offers no wideband on a connected radio: its
-// view off the receiver can never be drawn. The move to such an ADC is staged by
-// dropping the radio to Protocol 1 and announcing it; no row reroutes a DDC.
-void TstDaemonMediaController::aControllersViewOnAnAdcWithNoWidebandIsToldWhy()
+// One wideband ADC, a controller's view off the receiver, and its slice's route
+// going to the other ADC (an antenna choice) and back. Nothing can be drawn while
+// away, but the Core keeps the request: refused, nothing would ask when the route
+// returns. "Keep the zoom" holds on the way back with nothing asked.
+void TstDaemonMediaController::aControllersViewComesBackWhenItsRouteReturnsToAWidebandAdc()
 {
     Harness h;
-    h.enableWidebandSource();
+    h.radio.setBoardForTest(HPSDRHW::Angelia);
+    h.enableWidebandSource(HPSDRHW::Angelia);
+    QCOMPARE(BoardCapsTable::widebandAdcsFor(h.radio.boardCapabilities(),
+                                             ProtocolVersion::Protocol2), 1);
     h.establishSession();
     h.startReadyPeer();
     const QByteArray device = h.server.mediaSessionDevice(h.server.mediaSessionEpoch());
@@ -5048,15 +5053,29 @@ void TstDaemonMediaController::aControllersViewOnAnAdcWithNoWidebandIsToldWhy()
     QVERIFY(h.client.sendMediaControl(request, h.client.sessionEpoch()));
     QTRY_COMPARE(h.p2.wbEnableMask(), quint8(1));
 
-    RadioInfo protocol1;
-    protocol1.protocol = ProtocolVersion::Protocol1;
-    h.radio.setLastRadioInfoForTest(protocol1);
-    emit h.radio.streamAdcRoutingChanged();
+    const auto routeTo = [&](int adc) {
+        DdcAssignment assignment{};
+        assignment.streamDdc[h.streamIndex] = 0;
+        assignment.rate[0] = 192000;
+        assignment.ddcEnable = 1;
+        assignment.adcCtrl1 = adc;
+        h.radio.publishDdcAssignmentForTest(assignment);
+    };
+    routeTo(1);
+    QCOMPARE(h.radio.sliceAdcIndex(h.sliceId), 1);
+    QCOMPARE(h.radio.widebandAdcRateHz(1), std::nullopt);
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(0));
+    for (int i = 0; i < 5; ++i) {
+        h.feedRadio();
+        QTest::qWait(20);
+    }
+    QVERIFY(displayRefusals(controls, 21).isEmpty());
+    QCOMPARE(h.controller.activeEndpointCount(), 1);
 
-    QTRY_VERIFY(!displayRefusals(controls, 21).isEmpty());
-    QCOMPARE(displayRefusals(controls, 21),
-             QStringList{QString::fromLatin1(kRetireReasonViewOffReceiver)});
-    QCOMPARE(h.controller.activeEndpointCount(), 0);
+    routeTo(0);
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(1));
+    QVERIFY(displayRefusals(controls, 21).isEmpty());
+    QCOMPARE(h.controller.activeEndpointCount(), 1);
     h.finish();
 }
 

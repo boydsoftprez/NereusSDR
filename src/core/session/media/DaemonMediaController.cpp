@@ -266,7 +266,6 @@
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonMediaController.h"
-#include "core/BoardCapabilities.h"
 #include "core/session/media/RemoteIqCodec.h"
 #include "core/session/media/RemoteSpectrumContext.h"
 
@@ -7711,23 +7710,18 @@ void DaemonMediaController::onWidebandSourceChanged(int)
     }
 }
 
-// A view wholly off the receiver, for a device that cannot have wideband fill it:
-// with none of the receiver in it, configure refuses it on every frame. That is a
-// device with no control of the slice, or any device once the slice's ADC offers
-// no wideband on a connected radio. A controller on an ADC that does is left out:
-// its demand comes back when the capture does, and a reconnect keeps its zoom.
+// A view wholly off the receiver, for a device with no control of the slice: with
+// none of the receiver in it and no wideband for it, configure refuses it on every
+// frame. A controller is left out and its endpoint held: its demand comes back when
+// wideband does, whether a capture restarting or its slice's route returning to a
+// wideband ADC. While the route offers none it draws nothing, with no status.
 bool DaemonMediaController::viewHasNothingToDraw(const EndpointEntry& entry) const
 {
     if (!m_radioModel || entry.txViewer || !entry.request.extendedView || entry.widebandWanted) {
         return false;
     }
     if (controlsSlice(entry.sliceId)) {
-        const int adc = m_radioModel->sliceAdcIndex(entry.sliceId);
-        if (!m_radioModel->isConnected() || adc < 0
-            || adc < BoardCapsTable::widebandAdcsFor(m_radioModel->boardCapabilities(),
-                                                     m_radioModel->currentRadioInfo().protocol)) {
-            return false;
-        }
+        return false;
     }
     const int stream = entry.request.source.streamIndex;
     const double rateHz = m_radioModel->streamSampleRateHz(stream);

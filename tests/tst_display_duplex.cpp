@@ -654,9 +654,20 @@ private slots:
         QVERIFY(ownership->join(rig.device, rig.window.otherSliceId));
         SpectrumWidget* const other = rig.window.pan(QStringLiteral("one"));
         QSignalSpy controls(rig.window.client.get(), &StationClient::mediaControlReceived);
-        other->setDisplayWindowPreservingHistory(other->centerFrequency() + 700000.0, 768000.0);
+        const double offCentreHz = other->centerFrequency() + 700000.0;
+        other->setDisplayWindowPreservingHistory(offCentreHz, 768000.0);
         rig.window.gui->planNowForTest();
-        QTest::qWait(100);
+        // The Core has the view before the key.
+        QTRY_VERIFY_WITH_TIMEOUT(([&] {
+            rig.window.feed();
+            for (const auto& call : controls) {
+                const QJsonObject control = call.at(0).toJsonObject();
+                if (control.value(QStringLiteral("op")) == QLatin1String("context")
+                    && qFuzzyCompare(control.value(QStringLiteral("centreHz")).toDouble(),
+                                     offCentreHz)) { return true; }
+            }
+            return false;
+        })(), 5000);
         rig.key(true);
         if (QTest::currentTestFailed()) { return; }
         ownership->setOwner(rig.window.otherSliceId, QByteArrayLiteral("phone-device"));

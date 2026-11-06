@@ -1,8 +1,8 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
 //   2026-11-06: A pan refused for a slice asks again when this window comes to
-//               control it, and a retired wide view clears its wide state with
-//               a display budget as it does without. J.J. Boyd (KG4VCF),
+//               control it, and a source retirement with a display budget
+//               clears a pan's wide state. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
 //   2026-10-30: bounded passive retry schedule history and a hold boundary
 //               for canceled startup steps. J.J. Boyd (KG4VCF),
@@ -475,14 +475,6 @@
 namespace NereusSDR {
 Q_LOGGING_CATEGORY(lcRemoteMedia, "nereus.remote.media")
 namespace {
-
-// The Core retired a wide view because the receiver is not in it, so nothing it
-// held can be drawn. The same reasons a Core with no budget refuses with.
-bool viewLeftItsReceiver(const QString& reason)
-{
-    return reason == QLatin1String(kRetireReasonSourceRetune)
-        || reason == QLatin1String(kRetireReasonViewOffReceiver);
-}
 constexpr int kMaxEndpoints = 8;
 constexpr int kDefaultAllocationAckTimeoutMs = kDisplayAllocationAckTimeoutMs;
 // The derivation in RemoteMediaController.h, checked: one control heartbeat
@@ -1453,6 +1445,8 @@ struct RemoteMediaController::Private {
     // the Core said (CoreBusy); None for a pan at its requested quality.
     // The pan status builder maps it to words.
     QHash<QString, DisplayBudgetReason> panBudgetReason;
+    /// Whether this window controlled each slice at the mirror's last word.
+    QHash<int, bool> sliceControlledHere;
     // Parity Task 17 (R-R3-01, R-R3-04): each pan's dBm window, settled
     // once it has held for a frame period so a drag of the dBm strip asks
     // the Core again when it stops, not at every step.
@@ -5418,6 +5412,7 @@ void RemoteMediaController::deliverRtp(const QByteArray& packet)
 
 void RemoteMediaController::start()
 {
+    d->sliceControlledHere.clear();
     // stop() reports the retired audio status, and a listener may retire
     // this controller in turn.
     const QPointer<RemoteMediaController> self(this);
@@ -5757,12 +5752,17 @@ bool RemoteMediaController::retireSubscriptions(const QList<quint32>& endpointId
 }
 
 // A pan refused for a slice this window has just come to control may now be
-// granted, and with its request unchanged nothing else would ask.
+// granted, and with its request unchanged nothing else would ask. Only the arrival
+// of control: the mirror reports any change to the slice's entry, MOX edges and
+// listeners included, and a refused pan must not ask again for those.
 void RemoteMediaController::askAgainForRefusedDisplaysOf(int sliceId)
 {
     const SliceAccessMirror* access = d->client ? d->client->sliceAccess() : nullptr;
     if (!access) { return; }
-    if (!access->controlledHere(sliceId)) { return; }
+    const bool controlled = access->controlledHere(sliceId);
+    const bool wasControlled = d->sliceControlledHere.value(sliceId, false);
+    d->sliceControlledHere.insert(sliceId, controlled);
+    if (!controlled || wasControlled) { return; }
     bool cleared = false;
     for (auto& [endpointId, binding] : d->bindings) {
         Q_UNUSED(endpointId);
@@ -7837,8 +7837,6 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             const QPointer<RemoteMediaController> self(this);
             QPointer<SpectrumWidget> widget = binding.widget;
             const bool erase = binding.retiring || binding.suspending || !binding.widget;
-            const bool wideViewGone = viewLeftItsReceiver(reason)
-                && binding.acceptedRequest.value(QStringLiteral("extendedView")).toBool();
             binding.acceptedRevision = 0;
             binding.acceptedCharge = {};
             binding.acceptedRequest = {};
@@ -7865,7 +7863,8 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             binding.sliceLeftCore = reason == QLatin1String(kRetireReasonSliceRemoved);
             if (erase) { d->bindings.erase(found); }
             if (widget) {
-                if (wideViewGone) {
+                // A wide view has nothing left to hold it open.
+                if (widget->remoteWidebandActive()) {
                     widget->clearRemoteSpectrum();
                 } else {
                     widget->invalidateRemoteSpectrumFrame();
@@ -7925,8 +7924,6 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 const QPointer<RemoteMediaController> self(this);
                 QPointer<SpectrumWidget> widget = binding.widget;
                 const bool erase = binding.retiring || binding.suspending || !binding.widget;
-                const bool wideViewGone = viewLeftItsReceiver(reason)
-                    && binding.acceptedRequest.value(QStringLiteral("extendedView")).toBool();
                 binding.acceptedRevision = 0;
                 binding.acceptedCharge = {};
                 binding.acceptedRequest = {};
@@ -7944,7 +7941,8 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 }
                 if (erase) { d->bindings.erase(found); }
                 if (widget) {
-                    if (wideViewGone) {
+                    // A wide view has nothing left to hold it open.
+                    if (widget->remoteWidebandActive()) {
                         widget->clearRemoteSpectrum();
                     } else {
                         widget->invalidateRemoteSpectrumFrame();

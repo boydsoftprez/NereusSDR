@@ -3879,6 +3879,19 @@ private slots:
                 [&subscribes](const QJsonObject& control) {
             if (control.value(QStringLiteral("op")) == QLatin1String("subscribe")) { ++subscribes; }
         });
+        // Asks repeating the last one. A pan's dBm window settling changes the
+        // request, which is a new ask for a reason of its own.
+        int repeatedAsks = 0;
+        QJsonObject lastAsk;
+        connect(&server, &StationServer::mediaControlReceived, &station,
+                [&repeatedAsks, &lastAsk](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) != QLatin1String("subscribe")) { return; }
+            QJsonObject ask = control;
+            ask.remove(QStringLiteral("revision"));
+            ask.remove(QStringLiteral("endpointId"));
+            if (ask == lastAsk) { ++repeatedAsks; }
+            lastAsk = ask;
+        });
         int wideLocks = 0;
         connect(&station.alexController(), &AlexController::bpfStateChanged, &station,
                 [&wideLocks](int, const AlexController::AlexAdcState& state) {
@@ -3992,14 +4005,13 @@ private slots:
         // and that is refused, for the view reaching past the receiver.
         const int refusalsSettled = budget ? 2 : 1;
         QTRY_COMPARE(refusals(), refusalsSettled);
-        const int askedAfter = subscribes;
+        const int repeatedAfter = repeatedAsks;
         for (int i = 0; i < 5; ++i) {
             feed();
             gui.planNowForTest();
             QTest::qWait(30);
         }
-        QCOMPARE(refusals(), refusalsSettled);
-        QCOMPARE(subscribes, askedAfter);
+        QCOMPARE(repeatedAsks, repeatedAfter);
         QCOMPARE(gui.panDisplayState(pan->panId()).phase, PanDisplayState::Phase::Refused);
         QVERIFY(!widget->remoteWidebandActive());
 
@@ -4009,7 +4021,62 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(p2.wbEnableMask(), quint8(1), 10000);
         QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
         QVERIFY(gui.panDisplayState(pan->panId()).phase != PanDisplayState::Phase::Refused);
-        QCOMPARE(subscribes, askedAfter + 1);
+        QVERIFY(repeatedAsks <= repeatedAfter + 1);
+
+        // A refused pan on a slice this window controls: nothing in the slice's
+        // access entry but the arrival of control asks again. With Protocol 1
+        // reported the Core has no wideband for the ask control arrives with.
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QTRY_VERIFY(!client.sliceAccess()->controlledHere(sliceId));
+        QTRY_COMPARE_WITH_TIMEOUT(gui.panDisplayState(pan->panId()).phase,
+                                  PanDisplayState::Phase::Refused, 10000);
+        RadioInfo protocol1;
+        protocol1.protocol = ProtocolVersion::Protocol1;
+        station.setLastRadioInfoForTest(protocol1);
+        int refused = refusals();
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_VERIFY(client.sliceAccess()->controlledHere(sliceId));
+        QTRY_COMPARE_WITH_TIMEOUT(refusals(), refused + 1, 10000);
+        const int repeatedWhileControlled = repeatedAsks;
+        const qsizetype listenersBefore = client.sliceAccess()->entry(sliceId)->listeners.size();
+        QVERIFY(station.sliceOwnership()->join(QByteArrayLiteral("another-device"), sliceId));
+        QTRY_COMPARE(client.sliceAccess()->entry(sliceId)->listeners.size(), listenersBefore + 1);
+        MoxController* const mox = station.moxController();
+        mox->setMoxCheck({});
+        for (const bool keyed : {true, false, true, false}) {
+            mox->setMox(keyed);
+            QTRY_COMPARE(mox->state(), keyed ? MoxState::Tx : MoxState::Rx);
+            QTest::qWait(30);
+        }
+        gui.planNowForTest();
+        QCOMPARE(repeatedAsks, repeatedWhileControlled);
+        QVERIFY(station.sliceOwnership()->leave(QByteArrayLiteral("another-device"), sliceId));
+
+        // A reconnect with this off-receiver view up, on a radio with wideband:
+        // the question is whether the rate is ready at the ask.
+        station.setLastRadioInfoForTest(info);
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QTRY_VERIFY(!client.sliceAccess()->controlledHere(sliceId));
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        std::optional<double> rateAtConnected;
+        connect(&station, &RadioModel::connectionStateChanged, this,
+                [&station, &rateAtConnected, sliceId](ConnectionState state) {
+            if (state == ConnectionState::Connected) {
+                rateAtConnected = station.widebandAdcRateHz(station.sliceAdcIndex(sliceId));
+            }
+        });
+        station.setConnectionStateForTest(ConnectionState::Disconnected);
+        QTRY_VERIFY(!remote.isConnected() || daemon.activeEndpointCount() == 0);
+        QTRY_COMPARE(p2.wbEnableMask(), quint8(0));
+        station.wireWidebandConnectionForTest();
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        QVERIFY(rateAtConnected.has_value());
+        QTRY_COMPARE_WITH_TIMEOUT(p2.wbEnableMask(), quint8(1), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        QVERIFY(gui.panDisplayState(pan->panId()).phase != PanDisplayState::Phase::Refused);
+        QCOMPARE(widget->centerFrequency(), kCentreHz + 700'000.0);
+        QCOMPARE(widget->bandwidth(), kSpanHz);
     }
 
     // A slice that shares its receiver and changes band is put on another
