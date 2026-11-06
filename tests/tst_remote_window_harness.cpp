@@ -1680,7 +1680,9 @@ private slots:
         QCOMPARE(offlineEditToasts(h), QStringList());
     }
 
-    // MOX and TUNE have their own handling; they get no second message.
+    // MOX and TUNE have their own handling; they get no second message. Each is
+    // left on when the link returns, so the Core's snapshot differs from what
+    // was set: a watch that counted them would say so here.
     void linkDownMoxAndTuneGetNoSecondMessage()
     {
         RemoteWindowHarness h;
@@ -1694,9 +1696,9 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(h.client()->isReconnectPending(), 5000);
         QTest::keyClick(rx, Qt::Key_Shift);
         tx.setMox(true);
-        tx.setMox(false);
         tx.setTune(true);
-        tx.setTune(false);
+        QVERIFY(tx.isMox());
+        QVERIFY(tx.isTune());
 
         QTRY_VERIFY_WITH_TIMEOUT(h.acceptedConnections() == 2
                                  && h.client()->isHandshakeComplete(), 10000);
