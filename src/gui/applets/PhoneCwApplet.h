@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - PR 757 corrections: fitCopyToCurrentPage, and the unread
+//                 m_surface is gone. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-11-06 - A container copy of this panel (createPanelCopy) hides each
 //                 row, and the Phone and CW buttons, from its entry config.
 //                 The docked panel is unchanged. Brian Sutton, AI-assisted
@@ -386,7 +389,6 @@ private:
 
     // A container copy names its rows here. The docked applet leaves this
     // empty, so its panel never hides a row from a container entry.
-    Surface m_surface = Surface::Applet;
     std::unique_ptr<SectionParts> m_parts;
     QList<PhoneCwApplet*> m_copies;
     bool m_compressionSeen = false;

@@ -7,6 +7,14 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - PR 757 corrections: a copy asks only for the page it shows
+//                 and shortens as rows hide; the gap after compression goes
+//                 with that row; the row label says PROC and VAX; a reading
+//                 keeps the compression gauge's reason; the DEXP marker stays
+//                 in step between the panel and its copies; a copy takes the
+//                 panel's iambic memory. The docked panel's layout is
+//                 unchanged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-11-06 - A container copy hides each row and the Phone and CW
 //                 buttons from its entry, and opens on the page that entry
 //                 names. The docked panel is unchanged. Brian Sutton,
@@ -201,6 +209,8 @@ static constexpr int kCwLampW       = 52;   // the approved mockup's lamps
 static constexpr int kCwRowH        = 22;   // AetherSDR's 22 px rows
 
 
+namespace {
+
 // A row of a container copy, wrapped so the copy can hide it. On the docked
 // applet `parts` is null and the row is parented exactly as it was.
 class SectionColumn {
@@ -277,6 +287,8 @@ private:
     QString m_label;
 };
 
+} // namespace
+
 // Phone/CW-specific button background — bluer (#1a3a5a) than the
 // canonical kButtonBg (#1a2a3a) used by Style::buttonBaseStyle().
 // Retained as a tightly-scoped file-local exception per
@@ -322,7 +334,6 @@ PhoneCwApplet::PhoneCwApplet(RadioModel* model, QWidget* parent)
 
 PhoneCwApplet::PhoneCwApplet(RadioModel* model, QWidget* parent, Surface surface)
     : AppletWidget(model, parent)
-    , m_surface(surface)
 {
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     if (surface != Surface::Applet) {
