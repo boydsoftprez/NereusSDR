@@ -829,21 +829,23 @@ private slots:
         QTest::addColumn<QStringList>("hidden");
         QTest::addColumn<bool>("shipping");
         for (const bool shipping : {false, true}) {
-            const auto row = [shipping](const char* name) -> QTestData& {
-                return QTest::addRow("%s, %s", shipping ? "shipping" : "classic", name);
+            // A guard passes without the fix it stands beside. "Phone, nothing
+            // hidden" is one in the classic look only: in the shipping look
+            // it failed before the copy measured what the host leaves it.
+            const auto row = [shipping](const char* name, bool guard) -> QTestData& {
+                return QTest::addRow("%s, %s%s", shipping ? "shipping" : "classic",
+                                     guard ? "guard: " : "", name);
             };
-            row("phone, mic only") << QStringLiteral("phone")
-                                   << allBut(kPhoneRows, QStringLiteral("mic")) << shipping;
-            // A guard in the classic look: it passes without that fix too.
-            row("guard: phone, nothing hidden") << QStringLiteral("phone") << QStringList{} << shipping;
-            row("cw, nothing hidden") << QStringLiteral("cw") << QStringList{} << shipping;
-            row("cw, delay only") << QStringLiteral("cw")
-                                  << allBut(kCwRows, QStringLiteral("cwDelay")) << shipping;
-            // A guard as well.
-            row("guard: one row on each") << QStringLiteral("phone")
-                                          << allBut(kPhoneRows, QStringLiteral("level"))
-                                                 + allBut(kCwRows, QStringLiteral("cwPan"))
-                                          << shipping;
+            row("phone, mic only", false) << QStringLiteral("phone")
+                                          << allBut(kPhoneRows, QStringLiteral("mic")) << shipping;
+            row("phone, nothing hidden", !shipping) << QStringLiteral("phone") << QStringList{} << shipping;
+            row("cw, nothing hidden", false) << QStringLiteral("cw") << QStringList{} << shipping;
+            row("cw, delay only", false) << QStringLiteral("cw")
+                                         << allBut(kCwRows, QStringLiteral("cwDelay")) << shipping;
+            row("one row on each", true) << QStringLiteral("phone")
+                                         << allBut(kPhoneRows, QStringLiteral("level"))
+                                                + allBut(kCwRows, QStringLiteral("cwPan"))
+                                         << shipping;
         }
     }
 
@@ -1111,12 +1113,39 @@ private slots:
         QVERIFY(host);
         auto* copy = qobject_cast<PhoneCwApplet*>(host->entryRows().first().widget.data());
         QVERIFY(copy);
+        // everyRowFits skips what isn't showing, so make sure this is showing.
+        QVERIFY(rowOf(copy, QStringLiteral("mic"))->isVisible());
         QString problem;
         for (const QString& page : {QStringLiteral("CW"), QStringLiteral("Phone")}) {
             buttonNamed(copy, page)->click();
             settleCopy(copy);
             QVERIFY2(everyRowFits(copy, &problem), qPrintable(problem));
         }
+    }
+
+    // Nothing left on the page to report a change: no row's old height counts.
+    void aCopyWithEveryRowHiddenReportsOnlyItsMargins_data() { addLookRows(); }
+
+    void aCopyWithEveryRowHiddenReportsOnlyItsMargins()
+    {
+        QFETCH(bool, shipping);
+        std::optional<ShippingLook> look;
+        if (shipping) {
+            look.emplace();
+        }
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        ContainerContentRegistry registry;
+        registerPhoneCwSectionContent(registry, &applet);
+        QWidget host;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("phcw.panel"));
+        entry.config = hiding(QStringList{kPageButtons} + kPhoneRows);
+        const std::unique_ptr<QWidget> view(registry.createPreview(entry, &host));
+        QVERIFY(view);
+        auto* copy = qobject_cast<PhoneCwApplet*>(view.get());
+        QVERIFY(copy);
+        const QMargins margins = stackOf(copy)->widget(0)->layout()->contentsMargins();
+        QCOMPARE(view->property("freeCanvasHint").toSize().height(), margins.top() + margins.bottom());
     }
 
     // With the page buttons hidden the page can't change, so the copy asks

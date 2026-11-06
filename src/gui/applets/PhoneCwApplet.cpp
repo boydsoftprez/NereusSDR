@@ -8,7 +8,7 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-06 - A copy measures itself as the host will leave it: themed for
-//                 text, polished, with every layout level's height fresh, so
+//                 text, with every layout level's height fresh, so
 //                 its free canvas size holds in the workspace look too.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06 - PR 757 corrections: a copy asks only for the page it shows
@@ -2208,27 +2208,21 @@ void PhoneCwApplet::reportFreeCanvasSize()
     // The host reads this before the copy is first shown, so measure what
     // the copy will be by then. The host themes its copies for text only,
     // which raises small text in the workspace look (the 8 px PROC value and
-    // the 10 px CW status line to 11 px), and a style sheet reaches a child's
-    // font only when that child is polished. The skip mark goes back after:
-    // a settings preview's copy isn't marked and takes the whole look.
+    // the 10 px CW status line to 11 px). The skip mark goes back after: a
+    // settings preview's copy isn't marked and takes the whole look.
     const QVariant skipMark = property(WorkspacePreview::kSkipProperty);
     setProperty(WorkspacePreview::kSkipProperty, true);
     WorkspacePreview::themeSubtree(this);
     setProperty(WorkspacePreview::kSkipProperty, skipMark);
-    const QList<QWidget*> children = findChildren<QWidget*>();
-    for (QWidget* child : children) {
-        child->ensurePolished();
-    }
     // Every level, since each parent layout keeps a widget's old height until
     // that widget says otherwise, and a change climbs one level per pass of
-    // the event loop (the PROC value's height, and the hidden MON row's).
+    // the event loop (the PROC value's height).
+    const QList<QWidget*> children = findChildren<QWidget*>();
     for (QWidget* child : children) {
         child->updateGeometry();
     }
-    const QList<QLayout*> layouts = findChildren<QLayout*>();
-    for (QLayout* layout : layouts) {
-        layout->invalidate();
-    }
+    // A hidden row tells no one, and a page's sublayouts would still count it.
+    // Activating a page refreshes them all (the MON row's old height).
     for (int i = 0; i < m_stack->count(); ++i) {
         m_stack->widget(i)->layout()->activate();
     }
