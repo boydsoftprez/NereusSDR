@@ -12452,7 +12452,13 @@ private slots:
         // The Core goes quiet, and the speaker comes back to nothing.
         audio.source.stop();
         h.remoteBus->setOutputPacingAvailableForTesting(true);
-        QTRY_COMPARE_WITH_TIMEOUT(recoveries.size(), 1, 30000);
+        // About 13 s: the receiver runs dry, media moves at 5 s, the tunnel's
+        // rule fires at 3 s. A limit that beats ICE's 30 s, with room for load.
+        QElapsedTimer quiet;
+        quiet.start();
+        QTRY_COMPARE_WITH_TIMEOUT(recoveries.size(), 1, 20000);
+        qInfo().noquote() << QStringLiteral("recovery %1 ms after the Core went quiet")
+                                 .arg(quiet.elapsed());
 
         audio.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));

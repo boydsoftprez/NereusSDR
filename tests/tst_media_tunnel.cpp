@@ -18,6 +18,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: aTunnelThatStallsAfterASpeakerFaultIsFoundAtTheStallRule.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 interop (display codec v2, Task 6): media started
 //               through the tunnel agrees display codec v2, and the display
 //               frames it delivers are version 2 (DisplayVersionTap).
@@ -941,6 +943,57 @@ private slots:
         const qint64 audioResumeMs = silence.elapsed();
         qInfo("Tunnel recovery decoded audio after %lld ms and displayed a frame after %lld ms",
               static_cast<long long>(audioResumeMs), static_cast<long long>(displayResumeMs));
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: packets reaching a running receiver end the speaker hold at
+    // once. A tunnel that dies after a speaker came back and played is found
+    // by the 3 s rule, not by the receiver running dry first, which would add
+    // its 2.5 s. Real audio is needed here: only packets the receiver takes
+    // keep it from running dry. Real time: the stall clock is.
+    void aTunnelThatStallsAfterASpeakerFaultIsFoundAtTheStallRule()
+    {
+        IceConfiguration::setOnlyLoopbackShimCandidatesForTest(true);
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy recovery(&remoteMedia, &RemoteMediaController::recoveryRequested);
+        QTimer source;
+        source.setInterval(10);
+        QObject::connect(&source, &QTimer::timeout, &source, [&h] { h.feedMixedTone(); });
+        QTimer speaker;
+        speaker.setInterval(10);
+        QObject::connect(&speaker, &QTimer::timeout, &speaker, [&h] { h.remoteBus->render(480); });
+        source.start();
+        speaker.start();
+        h.connectSession();
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioStatus().state
+                                     == RemoteAudioStatus::State::Playing, 20000);
+
+        // The speaker fails, the retry plays, and the problem clears.
+        remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QCOMPARE(remoteMedia.audioStatus().state, RemoteAudioStatus::State::PlaybackProblem);
+        QTRY_VERIFY_WITH_TIMEOUT(remoteMedia.audioStatus().state
+                                     == RemoteAudioStatus::State::Playing, 20000);
+        QVERIFY(recovery.isEmpty());
+
+        // Then the tunnel goes quiet.
+        QElapsedTimer quiet;
+        quiet.start();
+        qint64 recoveredMs = -1;
+        const QMetaObject::Connection recoveredAt = QObject::connect(
+            &remoteMedia, &RemoteMediaController::recoveryRequested, &remoteMedia,
+            [&quiet, &recoveredMs] {
+                if (recoveredMs < 0) { recoveredMs = quiet.elapsed(); }
+            });
+        h.stationLink->setDropsOutgoing(true);
+        QTRY_VERIFY_WITH_TIMEOUT(!recovery.isEmpty(), 10000);
+        QObject::disconnect(recoveredAt);
+        qInfo("A tunnel stalled after a speaker fault found after %lld ms",
+              static_cast<long long>(recoveredMs));
+        QVERIFY2(recoveredMs <= 5000, qPrintable(QString::number(recoveredMs)));
+        source.stop();
+        speaker.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

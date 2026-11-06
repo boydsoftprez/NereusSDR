@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-11-05: a speaker failure says nothing about display, so a direct
+//               path whose display stops during one still moves to the
+//               tunnel. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-11-05: the unmute restarts the silence rules' clocks, so a long mute
 //               on a relayed path no longer ends the session at the next
 //               tick; restartSilenceClocks is the one place that restarts
@@ -1407,6 +1411,15 @@ struct RemoteMediaController::Private {
         if (lastMediaMs >= 0) { lastMediaMs = now; }
         if (fallbackFinishedMs >= 0) { fallbackFinishedMs = now; }
     }
+    // 2026-11-05: a display the Core has accepted and is sending, so its
+    // silence says something about the path whatever the audio is doing.
+    bool displayExpected() const
+    {
+        return std::any_of(bindings.cbegin(), bindings.cend(), [](const auto& entry) {
+            const Binding& binding = entry.second;
+            return binding.accepted && !binding.suspending && !binding.retiring;
+        });
+    }
     bool coreTransmitting() const
     {
         if (!client || client->capabilities().txStateVersion < 1) { return false; }
@@ -2195,9 +2208,16 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // speaker failure: asking the Core for nothing is no outage, and a
         // failed speaker is this computer's, not the path's. Both rules count
         // from the end of the stop, so a retry that reaches a dead path still
-        // gets their full wait and no less.
+        // gets their full wait and no less. A display the Core is sending
+        // still counts on a direct path: a fault can last the whole session,
+        // and waiting it out would leave that display frozen.
         if (d->audioStoppedForSpeaker) {
-            d->restartSilenceClocks();
+            if (!d->displayExpected()) {
+                d->restartSilenceClocks();
+                return;
+            }
+            d->lastAudio.restart();
+            checkMediaSilence();
             return;
         }
         if (slowPath && d->lastAudio.elapsed() > kMediaStallMs) {
