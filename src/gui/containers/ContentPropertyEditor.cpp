@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original contextual draft property editor.
 // Modification history (NereusSDR):
+//   2026-11-06 - Advanced bindings is disabled with its reason on a Phone/CW
+//                 panel copy (phcw.panel), which has no source of its own.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - PR 677 review fix wave (I6): a colour the user sets is
 //                 recorded as picked (MeterItem::setColourUserSet); the
 //                 userColours key follows the other context keys. A fade
@@ -802,6 +805,10 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
         // An RX section item is a copy the RX applet makes and wires; the
         // factory never reads the entry's context.
         advanced->setEnabled(false);advanced->setToolTip(tr("These controls follow the RX panel; they have no source of their own."));
+    } else if(entry.typeId.startsWith(QStringLiteral("phcw.")) && m_registry.hasWidgetFactory(entry.typeId)) {
+        // A Phone/CW panel copy is a copy the Phone/CW applet makes and
+        // wires; the factory never reads the entry's context.
+        advanced->setEnabled(false);advanced->setToolTip(tr("These controls follow the Phone/CW panel; they have no source of their own."));
     } else if((composite && composite->typeId()=="meter.clock") || entry.typeId=="CLOCK") {
         advanced->setEnabled(false);advanced->setToolTip(tr("This clock uses local time independently of radio and MMIO sources. Stored context is retained."));
     } else if((applet && entry.typeId!="applet:s_meter") || (widgetType && !declared)) {
