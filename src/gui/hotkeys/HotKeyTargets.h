@@ -42,7 +42,7 @@ public:
     virtual void runWindowAction(const QString& id) = 0;
     virtual QString unavailableReason(const QString& id) const = 0;    // empty when available
     virtual bool transmitting() const = 0;                             // MOX, TUNE or two-tone on, or Core keyed
-    virtual bool tuneOrTwoToneOn() const = 0;
+    virtual bool tuneOrTwoToneOn() const = 0;                          // confirmed on: asked is not on
     virtual bool keyHold(bool down) = 0;                               // true if the press was admitted
     virtual void runTransmitAction(const QString& id) = 0;             // tx.mox, tx.tune, tx.twotone
     virtual void runCwMessage(const QString& id) = 0;                  // cw.msgN, cw.stop

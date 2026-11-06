@@ -8,6 +8,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: setupUnavailableReason, for the Keyboard page.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: confirmed TUNE, remote keys
+//                forgotten with their activity, a local stop's keys, a take not
+//                granted, the remote on-air reason. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 
@@ -352,10 +355,16 @@ bool MainWindowHotKeyTargets::moxOn() const
 
 bool MainWindowHotKeyTargets::transmitting() const
 {
-    return moxOn() || tuneOrTwoToneOn();
+    // Another device's key is not this window's, as on a hosting window: the
+    // hold goes on to keyHold, which says why it does nothing.
+    if (!otherDeviceOnAirReason().isEmpty()) {
+        return false;
+    }
+    return moxOn() || tuneOrTwoToneAsked();
 }
 
-bool MainWindowHotKeyTargets::tuneOrTwoToneOn() const
+// What a press has to wait for: a TUNE asked for counts from the moment it goes.
+bool MainWindowHotKeyTargets::tuneOrTwoToneAsked() const
 {
     RadioModel* const model = m_window->m_radioModel;
     if (model == nullptr || !m_window->m_containerButtons) {
@@ -366,6 +375,36 @@ bool MainWindowHotKeyTargets::tuneOrTwoToneOn() const
     const int source = ContainerWidget::kFirstRxSource;
     return !model->tunePressAsksOn(!buttons.stateOf(Id::Tun, source).on)
         || buttons.stateOf(Id::TwoTon, source).on;
+}
+
+// What a release may leave the key to. A TUNE only asked for can still be
+// refused, and no unkey follows a refusal: the release must go. If the Core takes
+// that TUNE after all, the Core ending the key is the safe way round.
+bool MainWindowHotKeyTargets::tuneOrTwoToneOn() const
+{
+    RadioModel* const model = m_window->m_radioModel;
+    if (model == nullptr || !m_window->m_containerButtons) {
+        return false;
+    }
+    using Id = OtherButtonItem::ButtonId;
+    const ContainerButtonDispatcher& buttons = *m_window->m_containerButtons;
+    const int source = ContainerWidget::kFirstRxSource;
+    // Lit, and not a TUNE this window has already let go of (tunePressAsksOn).
+    const bool tuneOn = buttons.stateOf(Id::Tun, source).on && !model->tunePressAsksOn(false);
+    return tuneOn || buttons.stateOf(Id::TwoTon, source).on;
+}
+
+// A remote window's copy of what a hosting window's controller refuses a hold
+// with. Empty on a window that owns its radio, and with nobody else on the air.
+QString MainWindowHotKeyTargets::otherDeviceOnAirReason() const
+{
+    RadioModel* const model = m_window->m_radioModel;
+    const StationClient* const client = m_window->m_stationClient;
+    if (model == nullptr || model->ownsLocalDsp() || client == nullptr) {
+        return {};
+    }
+    const QString holder = client->otherHolderReason();
+    return !holder.isEmpty() && (moxOn() || tuneOrTwoToneAsked()) ? holder : QString();
 }
 
 bool MainWindowHotKeyTargets::keyHold(bool down)
@@ -384,6 +423,11 @@ bool MainWindowHotKeyTargets::keyHold(bool down)
         return false;
     }
     if (m_window->m_shuttingDown || !m_window->m_containerButtons) {
+        return false;
+    }
+    // Refused here, with the press never sent to the Core.
+    if (const QString onAir = otherDeviceOnAirReason(); !onAir.isEmpty()) {
+        toast(onAir);
         return false;
     }
     if (!m_window->transmitControlsPermitted()) {
@@ -427,6 +471,7 @@ bool MainWindowHotKeyTargets::keyHoldThroughHost(bool down)
         return false;
     }
     const QPointer<DesktopStationController> controller(m_window->m_desktopStationController);
+    m_hostTakeNotGranted = false;
     const DesktopStationController::RequestResult result = controller->requestMox(down);
     if (!window || !controller || controller != m_window->m_desktopStationController) {
         return false;
@@ -446,7 +491,7 @@ bool MainWindowHotKeyTargets::keyHoldThroughHost(bool down)
         // Transmit is held already and it did not key: the controller refused,
         // and moxRejected has said why. A take still running keys when it ends.
         const MoxController* const mox = m_window->m_radioModel->moxController();
-        keyed = !m_window->desktopOwnsTransmit() || (mox != nullptr && mox->isMox());
+        keyed = !m_hostTakeNotGranted && (!m_window->desktopOwnsTransmit() || (mox != nullptr && mox->isMox()));
     }
     if (m_window->m_txApplet) {
         m_window->m_txApplet->syncDesktopKeyState();

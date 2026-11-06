@@ -289,6 +289,9 @@ DesktopStationController::RequestResult DesktopStationController::takeAndKey(
             if (!self || !serverRef || !modelRef || !assigned
                 || self->m_intentGeneration != intent || self->server() != serverRef
                 || self->m_model != modelRef || !self->stationHoldsTransmit()) {
+                if (self && self->m_intentGeneration == intent) {
+                    emit self->keyTakeNotGranted();
+                }
                 return;
             }
             self->keyNow(key);

@@ -62,6 +62,10 @@ signals:
     /// (a stop not confirmed), and when another request, a stop or the end
     /// of hosting replaced it.
     void takeFinished(quint64 takeId, bool held);
+    /// A take that was to key (MOX, TUNE, two-tone) and is still the current
+    /// request ended with this device not holding transmit, so nothing keyed.
+    /// Emitted within the call when that's when it ended.
+    void keyTakeNotGranted();
 
 public:
     RequestResult requestMox(bool on);

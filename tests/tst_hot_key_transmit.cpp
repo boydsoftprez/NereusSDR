@@ -765,6 +765,166 @@ private slots:
         QVERIFY(!remote->screenKeyDown());
     }
 
+    // ---- First-look fixes: items 2, 9 and 11 ----
+
+    // A TUNE still waiting for its answer must not take away the hold's unkey:
+    // refused, it would leave the radio keyed with nothing holding it.
+    void aTuneStillAskedDoesNotKeepTheKeyAfterTheRelease()
+    {
+        RemoteWindowHarness::Options options;
+        options.sliceAccess = true;
+        RemoteWindowHarness h(options);
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* const client = h.client();
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+        RemoteTransmitClient* const remote = client->remoteTransmit();
+        HotKeyDispatcher* const keys = h.window()->hotKeyDispatcher();
+
+        // No event loop from here on: the Core has answered nothing.
+        keys->press(kHold, kKeyboard);
+        QVERIFY(remote->screenKeyDown());
+        keys->press(kTune, kKeyboard);
+        QVERIFY(remote->tuneAsked());
+        keys->release(kHold, kKeyboard);
+        QVERIFY(!remote->screenKeyDown());
+    }
+
+    void aTuneConfirmedOnSurvivesTheRelease()
+    {
+        RemoteWindowHarness::Options options;
+        options.sliceAccess = true;
+        RemoteWindowHarness h(options);
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* const client = h.client();
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+        RemoteTransmitClient* const remote = client->remoteTransmit();
+        HotKeyDispatcher* const keys = h.window()->hotKeyDispatcher();
+
+        // No event loop here either: this bench Core would refuse the key.
+        keys->press(kHold, kKeyboard);
+        QVERIFY(remote->screenKeyDown());
+        // The Core's TUNE reads on in the window's copy, as the button lights it.
+        h.window()->radioModel()->transmitModel().setTune(true);
+        keys->release(kHold, kKeyboard);
+        QVERIFY(remote->screenKeyDown());
+    }
+
+    // A hosted take the Core doesn't grant leaves no claim: MOX latched after
+    // it survives letting go.
+    void aHostedTakeNotGrantedLeavesNoClaimOnALaterMox()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        HostingWindow w;
+        QVERIFY(w.directory.isValid());
+        QVERIFY(w.start());
+        TransmitHolder* const holder = w.controller->server()->transmitHolder();
+
+        // MOX reads on past the wait, by the holder's hook only, so the take
+        // waits and ends not assigned. The wait fires when this test says.
+        const TransmitHolder::Hooks saved = holder->hooks();
+        bool moxReadsOn = true;
+        std::function<void()> endOfWait;
+        TransmitHolder::Hooks forced = saved;
+        forced.moxOn = [&moxReadsOn]() { return moxReadsOn; };
+        forced.schedule = [&endOfWait](int, std::function<void()> fire) { endOfWait = std::move(fire); };
+        holder->setHooks(forced);
+
+        w.keys->press(kHold, kKeyboard);
+        QVERIFY(!w.mox->isMox());
+        QVERIFY(endOfWait);
+        endOfWait();
+        QVERIFY(!holder->isHeldBy(SliceOwnership::stationDevice()));
+
+        moxReadsOn = false;
+        holder->setHooks(saved);
+        holder->onMoxReading(false);
+        QTRY_VERIFY(holder->state() == TransmitHolder::State::Unheld);
+
+        // Still holding the key, MOX with the button.
+        w.keys->press(kMox, kKeyboard);
+        QTRY_VERIFY(w.mox->isMox());
+        w.keys->release(kHold, kKeyboard);
+        pump();
+        QVERIFY(w.mox->isMox());
+        w.keys->press(kMox, kKeyboard);
+        QTRY_VERIFY(!w.mox->isMox());
+    }
+
+    // A hosting window says why a hold does nothing while another device is on
+    // the air. A remote one says the same, and sends the Core nothing.
+    void aRemoteHoldWhileAnotherDeviceIsOnTheAirSaysWhy()
+    {
+        RemoteWindowHarness::Options options;
+        options.sliceAccess = true;
+        RemoteWindowHarness h(options);
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* const client = h.client();
+
+        DeviceSessionRegistry::Entry peer;
+        peer.deviceId = kPhoneDevice;
+        peer.kind = DeviceSessionRegistry::Kind::Token;
+        peer.name = QStringLiteral("Phone");
+        peer.shortName = QStringLiteral("Phone");
+        peer.deviceKind = QStringLiteral("phone");
+        QObject phoneSession;
+        QCOMPARE(h.server().deviceSessions()->admit(peer, &phoneSession).admission,
+                 DeviceSessionRegistry::Admission::Admitted);
+        TransmitHolder::KeyRequest key;
+        key.deviceId = peer.deviceId;
+        QCOMPARE(h.server().transmitHolder()->askKey(key).verdict, KeyingVerdict::Admit);
+        MoxController* const coreMox = h.station().moxController();
+        coreMox->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        coreMox->setMoxCheck(nullptr);
+        coreMox->setKeyingGate([](PttMode, const KeyerIdentity&) { return KeyingAnswer{}; });
+        KeyerIdentity phone;
+        phone.deviceId = kPhoneDevice;
+        phone.source = PttMode::Manual;
+        coreMox->setMox(true, phone);
+        QVERIFY(coreMox->isMox());
+        RadioModel* const model = h.window()->radioModel();
+        QTRY_VERIFY(model->isTransmitting());
+        const QString words = TxRefusals::otherDeviceHolds(QStringLiteral("Phone")).text;
+        QTRY_COMPARE(client->otherHolderReason(), words);
+
+        // Even with a permission the window has yet to hear go away.
+        StationCapabilities granted = h.server().buildCapabilities();
+        granted.txPermitted = true;
+        h.pushCapabilities(granted);
+        QTRY_VERIFY(client->capabilities().txPermitted);
+
+        RemoteTransmitClient* const remote = client->remoteTransmit();
+        HotKeyDispatcher* const keys = h.window()->hotKeyDispatcher();
+        const auto shown = [&h, &words]() {
+            int count = 0;
+            for (StatusToast* const toast : h.window()->findChildren<StatusToast*>()) {
+                count += toast->message() == words ? 1 : 0;
+            }
+            return count;
+        };
+        QCOMPARE(shown(), 0);
+        keys->press(kHold, kKeyboard);
+        QCOMPARE(shown(), 1);
+        QVERIFY(!remote->screenKeyDown());
+        keys->release(kHold, kKeyboard);
+        QVERIFY(!remote->screenKeyDown());
+        coreMox->setMox(false, phone);
+    }
+
     void aCoreKeyIsTransmitting()
     {
         RemoteWindowHarness::Options options;

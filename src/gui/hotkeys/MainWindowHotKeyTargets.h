@@ -8,6 +8,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: setupUnavailableReason, for the Keyboard page.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: confirmed TUNE, remote keys
+//                forgotten with their activity, a take not granted, the remote
+//                on-air reason. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // What hot keys do in the real window: the same entry points the on-screen
 // controls use, so local, hosting and remote windows behave as those do.
@@ -74,6 +77,8 @@ private:
     void walkBand(SliceModel* slice, int direction);
     void selectNextSlice();
     bool moxOn() const;
+    bool tuneOrTwoToneAsked() const;
+    QString otherDeviceOnAirReason() const;
     bool keyHoldThroughHost(bool down);
     bool transmitSliceInCw() const;
     bool remotePaddleMissing(const QString& id) const;
@@ -86,6 +91,8 @@ private:
     // The hold's key went through the hosted Core, so its release must too:
     // the controller lets go only of a key it recorded.
     bool m_holdThroughHost{false};
+    // The take under the press being made ended, within its own call.
+    bool m_hostTakeNotGranted{false};
     // This key's press went down, so its release is ours to send. A release
     // with no press must not lift the serial reader's straight key, nor send
     // the Core a key-up.
