@@ -27,6 +27,10 @@
 #include "gui/hotkeys/devices/DeviceInput.h"
 
 #include "core/LogCategories.h"
+#include "gui/hotkeys/devices/PowerMateLinuxInput.h"
+#include "gui/hotkeys/devices/PowerMateParser.h"
+#include "gui/hotkeys/devices/Rc28Parser.h"
+#include "gui/hotkeys/devices/ShuttleParser.h"
 #include "gui/hotkeys/devices/UsbPresence.h"
 
 #include <QMutexLocker>
@@ -47,6 +51,13 @@ namespace {
 // NereusSDR's choice, not a value from a reference.
 constexpr int kMaxReportsPerPoll = 64;
 
+// On Linux the kernel's own driver takes a PowerMate, so hidapi can't see it.
+#if defined(Q_OS_LINUX) && defined(NEREUS_HAVE_HIDAPI)
+constexpr bool kKernelOwnsPowerMate = true;
+#else
+constexpr bool kKernelOwnsPowerMate = false;
+#endif
+
 const QString& notPluggedInReason()
 {
     static const QString kReason = QStringLiteral("Not plugged in");
@@ -65,28 +76,54 @@ DeviceInput::LayerFactory& testLayerFactory()
     return kFactory;
 }
 
+// Only the application turns this on. A test process links the same library and never
+// does, so no test can reach a real device or the prompt that opening one raises.
+bool& realDevicesAllowedFlag()
+{
+    static bool kAllowed = false;
+    return kAllowed;
+}
+
 std::optional<QList<DeviceSpec>>& testTable()
 {
     static std::optional<QList<DeviceSpec>> kTable;
     return kTable;
 }
 
-// Tasks 13 and 14 add each row's parser. FlexControl and the Ulanzi Dial have
-// inputs of their own.
+// Task 14 adds the last rows' parsers. FlexControl and the Ulanzi Dial have inputs of
+// their own.
 QList<DeviceSpec> realTable()
 {
+    const auto rc28 = [] { return std::make_unique<Rc28Parser>(); };
     return {
         // Ids from AetherSDR src/core/HidDeviceParser.cpp:7-24, report sizes from
         // src/core/HidDeviceParser.h:46-126 [@1e0718ad]
-        DeviceSpec{DeviceId::Rc28, 0x0C26, 0x001E, 32, nullptr},
-        DeviceSpec{DeviceId::Rc28, 0x2341, 0x0266, 32, nullptr},
-        DeviceSpec{DeviceId::PowerMate, 0x077D, 0x0410, 6, nullptr},
-        DeviceSpec{DeviceId::ShuttleXpress, 0x0B33, 0x0020, 5, nullptr},
-        DeviceSpec{DeviceId::ShuttlePro2, 0x0B33, 0x0030, 5, nullptr},
+        DeviceSpec{DeviceId::Rc28, 0x0C26, 0x001E, 32, rc28},
+        DeviceSpec{DeviceId::Rc28, 0x2341, 0x0266, 32, rc28},
+        DeviceSpec{DeviceId::PowerMate, 0x077D, 0x0410, 6, [] { return std::make_unique<PowerMateParser>(); }},
+        DeviceSpec{DeviceId::ShuttleXpress, 0x0B33, 0x0020, 5,
+                   [] { return std::make_unique<ShuttleParser>(ShuttleParser::Model::Xpress); }},
+        DeviceSpec{DeviceId::ShuttlePro2, 0x0B33, 0x0030, 5,
+                   [] { return std::make_unique<ShuttleParser>(ShuttleParser::Model::Pro2); }},
         DeviceSpec{DeviceId::TMate2, 0x1721, 0x0614, 64, nullptr},
         DeviceSpec{DeviceId::StreamDeckPlus, 0x0FD9, 0x0084, 14, nullptr},
     };
 }
+
+// A bus with nothing on it, for a process that hasn't allowed real devices. It never
+// calls the device library.
+class NoDeviceLayer : public HidLayer {
+public:
+    QSet<quint32> present() override
+    {
+        return {};
+    }
+
+    std::unique_ptr<HidDeviceHandle> open(quint16 /*vendorId*/, quint16 /*productId*/, QString* /*error*/) override
+    {
+        return nullptr;
+    }
+};
 
 #ifdef NEREUS_HAVE_HIDAPI
 
@@ -153,6 +190,9 @@ std::unique_ptr<HidLayer> makeLayer()
         return testLayerFactory()();
     }
 #ifdef NEREUS_HAVE_HIDAPI
+    if (!realDevicesAllowedFlag()) {
+        return std::make_unique<NoDeviceLayer>();
+    }
     return std::make_unique<RealHidLayer>();
 #else
     return nullptr;
@@ -198,6 +238,15 @@ DeviceInput::DeviceInput(QObject* parent)
     m_presenceTimer->setInterval(kPresenceMs);
     connect(m_pollTimer, &QTimer::timeout, this, &DeviceInput::poll);
     connect(m_presenceTimer, &QTimer::timeout, this, &DeviceInput::checkPresence);
+    if (kKernelOwnsPowerMate && realDevicesAllowedFlag() && !testLayerFactory()) {
+        m_powerMateLinux = new PowerMateLinuxInput(this);
+        connect(m_powerMateLinux, &PowerMateLinuxInput::deviceEvent, this,
+                [this](const DeviceEvent& event) { emit deviceEvent(DeviceId::PowerMate, event); });
+        connect(m_powerMateLinux, &PowerMateLinuxInput::wentAway, this, [this] {
+            qCInfo(lcHotKeys) << HotKeyDeviceBindings::deviceName(DeviceId::PowerMate) << "went away";
+            notify(DeviceId::PowerMate, false, notPluggedInReason());
+        });
+    }
 }
 
 DeviceInput::~DeviceInput()
@@ -212,6 +261,16 @@ bool DeviceInput::supported()
 #else
     return false;
 #endif
+}
+
+void DeviceInput::allowRealDevices()
+{
+    realDevicesAllowedFlag() = true;
+}
+
+bool DeviceInput::realDevicesAllowed()
+{
+    return realDevicesAllowedFlag();
 }
 
 void DeviceInput::setLayerFactoryForTest(LayerFactory factory)
@@ -270,6 +329,10 @@ void DeviceInput::stop()
         closeDevice(id);
         notify(id, false, QString());
     }
+    if (m_powerMateLinux != nullptr && m_powerMateLinux->isOpen()) {
+        m_powerMateLinux->close();
+        notify(DeviceId::PowerMate, false, QString());
+    }
     m_states.clear();
 }
 
@@ -298,6 +361,9 @@ void DeviceInput::checkPresence()
         if (m_open.find(id) != m_open.end()) {
             continue;
         }
+        if (id == DeviceId::PowerMate && m_powerMateLinux != nullptr && m_powerMateLinux->isOpen()) {
+            continue;
+        }
         bool seen = false;
         // First match wins: a device with two ids opens once.
         for (const DeviceSpec& spec : std::as_const(m_table)) {
@@ -307,9 +373,21 @@ void DeviceInput::checkPresence()
                 break;
             }
         }
-        if (!seen) {
-            notify(id, false, notPluggedInReason());
+        if (seen) {
+            continue;
         }
+        if (id == DeviceId::PowerMate && m_powerMateLinux != nullptr) {
+            m_powerMateLinux->check();
+            if (m_powerMateLinux->isOpen()) {
+                notify(id, true, QString());
+                continue;
+            }
+            if (!m_powerMateLinux->failureReason().isEmpty()) {
+                notify(id, false, m_powerMateLinux->failureReason());
+                continue;
+            }
+        }
+        notify(id, false, notPluggedInReason());
     }
 }
 

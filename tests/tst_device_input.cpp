@@ -590,14 +590,65 @@ private slots:
 
     void theRealTableListsTheUsbDevices()
     {
-        // The real layer. No row has a parser, so it opens nothing even with one plugged in.
+        // The real table on a simulated bus with everything plugged in. A row with a
+        // parser opens; TMate 2 and Stream Deck+ have none, so they don't.
+        DeviceInput::clearDeviceTableForTest();
+        for (const quint32 key : {UsbPresence::key(0x0C26, 0x001E), UsbPresence::key(0x077D, 0x0410),
+                                  UsbPresence::key(0x0B33, 0x0020), UsbPresence::key(0x0B33, 0x0030),
+                                  UsbPresence::key(0x1721, 0x0614), UsbPresence::key(0x0FD9, 0x0084)}) {
+            m_bus->present.insert(key);
+        }
+        DeviceInput input;
+        input.start();
+        QCOMPARE(m_bus->opens,
+                 (QList<quint32>{UsbPresence::key(0x0C26, 0x001E), UsbPresence::key(0x077D, 0x0410),
+                                 UsbPresence::key(0x0B33, 0x0020), UsbPresence::key(0x0B33, 0x0030)}));
+        input.stop();
+    }
+
+    void theEmulatorsIdOpensTheRc28Row()
+    {
+        DeviceInput::clearDeviceTableForTest();
+        m_bus->plug(kEmuVid, kEmuPid);
+        DeviceInput input;
+        input.start();
+        QCOMPARE(m_bus->opens, QList<quint32>{UsbPresence::key(kEmuVid, kEmuPid)});
+        input.stop();
+    }
+
+    void aTestProcessNeverReachesARealDevice()
+    {
+        // No fake layer and the real table: what ControllerHost gets in any test that
+        // doesn't set one up. It lists every device as not plugged in and calls nothing.
+        QVERIFY(!DeviceInput::realDevicesAllowed());
         DeviceInput::setLayerFactoryForTest(nullptr);
         DeviceInput::clearDeviceTableForTest();
         DeviceInput input;
         QSignalSpy states(&input, &DeviceInput::deviceStateChanged);
         input.start();
+        input.checkPresence();
         QCOMPARE(states.size(), 6);     // FlexControl and the Ulanzi Dial have inputs of their own
+        for (const QList<QVariant>& state : std::as_const(states)) {
+            QVERIFY(!state.at(1).toBool());
+            QCOMPARE(state.at(2).toString(), DeviceInput::supported() ? kNotPlugged
+                                                                       : QStringLiteral("This build has no USB device support."));
+        }
         input.stop();
+    }
+
+    void onlyTheApplicationAllowsRealDevices()
+    {
+        // The other half of the case above: the application does turn it on, and
+        // before it builds anything that makes a DeviceInput.
+        QFile source(QStringLiteral(NEREUS_SOURCE_DIR "/src/main.cpp"));
+        QVERIFY(source.open(QIODevice::ReadOnly));
+        const QByteArray text = source.readAll();
+        const qsizetype allow = text.indexOf("DeviceInput::allowRealDevices()");
+        QVERIFY(allow >= 0);
+        QVERIFY(allow < text.indexOf("app.exec()"));
+        QFile capture(QStringLiteral(NEREUS_SOURCE_DIR "/src/capture_main.cpp"));
+        QVERIFY(capture.open(QIODevice::ReadOnly));
+        QVERIFY(!capture.readAll().contains("allowRealDevices"));
     }
 
     void realPresenceReadsTheBusWithoutHid()

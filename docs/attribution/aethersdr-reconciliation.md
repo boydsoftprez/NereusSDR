@@ -1557,3 +1557,14 @@ NereusSDR adds attribution and its existing producer annotation.
 | `src/gui/hotkeys/devices/DeviceInput.cpp` | `src/core/HidEncoderManager.cpp:481-488, 568, 585-609, 615-632`, `src/core/HidDeviceParser.cpp:7-24`, `src/core/HidDeviceParser.h:46-126` [@1e0718ad] | hidapi open sequence, read loop, hotplug check, ids and report sizes, on a worker thread with one device per kind. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/devices/GestureEngine.h` | `src/gui/MainWindow_Controllers.cpp:2476-2495` [@1e0718ad] | The 600 ms hold time, a fact with its cite. |
 | `src/core/hotkeys/HotKeyDeviceBindings.cpp` | `src/gui/MainWindow_Controllers.cpp:855-860` [@1e0718ad] | Which TMate 2 encoder index is printed E1 and E2, a fact with its cite. |
+
+## November 6, 2026 RC-28, PowerMate and Shuttles (hot keys plan Task 13)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/Rc28Parser.h` | `src/core/HidDeviceParser.h:39-50` [@1e0718ad] | Parser class shape. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/Rc28Parser.cpp` | `src/core/HidDeviceParser.cpp:43-90`, `src/core/HidEncoderManager.cpp:924-936` [@1e0718ad] | Report layout and light report. Button bits read singly, rotation reported with a button held. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/PowerMateParser.h` | `src/core/HidDeviceParser.h:51-59` [@1e0718ad] | Parser class shape. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/PowerMateParser.cpp` | `src/core/HidDeviceParser.cpp:92-113` [@1e0718ad] | Report layout. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/ShuttleParser.h` | `src/core/HidDeviceParser.h:60-81` [@1e0718ad] | Parser class shape, one class for both models. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/ShuttleParser.cpp` | `src/core/HidDeviceParser.cpp:115-195` [@1e0718ad] | Jog and its wrap. Buttons differ from upstream on other sources' evidence, cited in the file. Recorded in AETHERSDR-PROVENANCE.md. |

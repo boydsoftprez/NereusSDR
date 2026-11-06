@@ -7,6 +7,8 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0266", TAG+="ua
 # Griffin PowerMate
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="077d", ATTRS{idProduct}=="0410", TAG+="uaccess"
 SUBSYSTEM=="input", ATTRS{idVendor}=="077d", ATTRS{idProduct}=="0410", TAG+="uaccess"
+# Griffin SoundKnob, the PowerMate's older id
+SUBSYSTEM=="input", ATTRS{idVendor}=="077d", ATTRS{idProduct}=="04aa", TAG+="uaccess"
 # Contour ShuttleXpress and ShuttlePro v2
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b33", ATTRS{idProduct}=="0020", TAG+="uaccess"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="0b33", ATTRS{idProduct}=="0030", TAG+="uaccess"

@@ -45,6 +45,8 @@ class QTimer;
 
 namespace NereusSDR {
 
+class PowerMateLinuxInput;
+
 // One open device. The real one wraps a hid_device; a test supplies its own.
 class HidDeviceHandle {
 public:
@@ -95,6 +97,12 @@ public:
 
     static bool supported();    // false in a build without hidapi
 
+    // The application calls this once at startup, before it builds a window. Until
+    // then the real device library is never touched, so a test process, which never
+    // calls it, can't open a device on this computer or raise the macOS prompt.
+    static void allowRealDevices();
+    static bool realDevicesAllowed();
+
     // Null goes back to the real device layer, or the real table.
     static void setLayerFactoryForTest(LayerFactory factory);
     static void setDeviceTableForTest(const QList<DeviceSpec>& table);
@@ -125,6 +133,7 @@ private:
     QList<DeviceSpec> m_table;
     QTimer* m_pollTimer;
     QTimer* m_presenceTimer;
+    PowerMateLinuxInput* m_powerMateLinux{nullptr};     // Linux only; a Qt child
     bool m_started{false};
 
     std::map<DeviceId, OpenDevice> m_open;
