@@ -1162,6 +1162,76 @@ private slots:
         QCOMPARE(b->binauralEnabled(), fresh.binauralEnabled());
         QCOMPARE(b->diversityEnabled(), fresh.diversityEnabled());
     }
+
+    // The slice the operator was on comes back with the rest of the layout.
+    void theActiveSliceComesBackAndNothingKeys()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            QVERIFY(before.setActiveSliceById(1));
+            before.flushPendingSettingsSave();
+        }
+        KeyWatchConnection radio;
+        RadioModel after;
+        after.injectConnectionForTest(&radio);
+        const auto detach = qScopeGuard([&] { after.injectConnectionForTest(nullptr); });
+        connectDesktop(after, 2, 5, {kPan0, kPan1});
+        QCOMPARE(after.activeSlice(), after.sliceById(1));
+        QVERIFY(after.sliceById(1)->isActiveSlice());
+        QVERIFY(!after.sliceById(0)->isActiveSlice());
+        QCOMPARE(after.txBoundSlice(), after.sliceById(0));
+        QCOMPARE(radio.moxCalls, 0);
+        QCOMPARE(radio.txIqCalls, 0);
+    }
+
+    // The two are saved apart: the transmit slice is not moved by the active one.
+    void theActiveAndTransmitSlicesComeBackApart()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            QVERIFY(before.txSliceArbiter()->requestHandoff(1));
+            QVERIFY(before.setActiveSliceById(0));
+            before.flushPendingSettingsSave();
+        }
+        RadioModel after;
+        connectDesktop(after, 2, 5, {kPan0, kPan1});
+        QCOMPARE(after.activeSlice(), after.sliceById(0));
+        QCOMPARE(after.txBoundSlice(), after.sliceById(1));
+    }
+
+    // Saved letter gone from the record: today's starting slice.
+    void aSavedActiveSliceThatIsGoneFallsBackToTheStartingSlice()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            before.flushPendingSettingsSave();
+        }
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/ActiveSliceId")
+                .arg(AppSettings::normalizedRadioMac(kDesktopMac)), 3);
+        RadioModel after;
+        connectDesktop(after, 2, 5, {kPan0, kPan1});
+        QCOMPARE(after.activeSlice(), after.sliceById(0));
+    }
+
+    // A reconnect keeps what is on screen, whatever was last saved.
+    void aReconnectKeepsTheActiveSliceOnScreen()
+    {
+        RadioModel model;
+        connectDesktop(model, 2, 5, {kPan0, kPan1});
+        QVERIFY(model.setActiveSliceById(1));
+        model.flushPendingSettingsSave();
+        QVERIFY(model.setActiveSliceById(0));
+
+        QCOMPARE(model.addStartingSlices(kDesktopMac), -1);
+        model.configureStreamPool(2, 5, kRateHz);
+        model.bindUnboundSlices();
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1}, false, false);
+        QCOMPARE(model.activeSlice(), model.sliceById(0));
+    }
 };
 
 QTEST_MAIN(TestStandaloneSliceRestore)

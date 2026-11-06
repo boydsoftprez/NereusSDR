@@ -5261,6 +5261,12 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // the air reaches its windows (paTransmitBandVersion 1).
     connect(this, &RadioModel::transmitBandChanged,
             this, &RadioModel::announcePaTransmitBand);
+    // A desktop saves which slice it is on with its layout.
+    connect(this, &RadioModel::activeSliceChanged, this, [this] {
+        if (desktopLayoutSaves()) {
+            scheduleSettingsSave();
+        }
+    });
 
     // From mi0bot console.cs:30272 [v2.10.3.13-beta2]: the drive byte is
     // recomputed through the normal path on every MOX-to-TX transition, so a
@@ -20273,6 +20279,14 @@ void RadioModel::stageKeptReceiveLayout(const QString& mac,
 // radio's slice keys through admission, holds back saves when a slice is
 // refused, and refuses a save over an unclear RADE owner, none of which a
 // window with no Core does today.
+namespace {
+// Beside TxBoundSliceId, which keeps the transmit slice the same way.
+QString desktopActiveSliceKey(const QString& normalizedMac)
+{
+    return QStringLiteral("hardware/%1/ActiveSliceId").arg(normalizedMac);
+}
+} // namespace
+
 bool RadioModel::desktopLayoutSaves() const
 {
     return role() == Role::Local && !m_receiveLayoutManaged && !m_hostsStationDevice
@@ -20300,6 +20314,7 @@ void RadioModel::prepareDesktopLayout(const QString& radioMac, bool liveSlices)
     m_desktopLayoutWaiting.clear();
     m_desktopLayoutRuled = false;
     m_desktopLayoutRestorePending = false;
+    m_desktopLayoutActiveId = -1;
     if (mac.isEmpty()) {
         return;
     }
@@ -20331,6 +20346,9 @@ void RadioModel::prepareDesktopLayout(const QString& radioMac, bool liveSlices)
     m_desktopLayoutWaiting = waiting;
     m_desktopLayoutRuled = !waiting.isEmpty();
     m_desktopLayoutRestorePending = true;
+    // Slices already on screen keep the one they are on.
+    m_desktopLayoutActiveId = liveSlices
+        ? -1 : AppSettings::instance().value(desktopActiveSliceKey(mac), -1).toInt();
 }
 
 bool RadioModel::restoreDesktopLayoutSlices(const QStringList& panIds)
@@ -20395,6 +20413,14 @@ bool RadioModel::restoreDesktopLayoutSlices(const QStringList& panIds)
                      "They come back on a later connect when there is room.")
                       .arg(letters.join(QStringLiteral(", "))));
     }
+    // The slice the operator was on, now its slice is here. A letter that did
+    // not come back leaves the starting slice active. It moves the selection
+    // only: the transmit slice is the arbiter's (finishRestore, after this).
+    const int savedActive = std::exchange(m_desktopLayoutActiveId, -1);
+    if (savedActive >= 0 && sliceById(savedActive)) {
+        setActiveSliceById(savedActive);
+        if (!self) { return true; }
+    }
     if (desktopLayoutSaves()) {
         scheduleSettingsSave();
     }
@@ -20409,6 +20435,9 @@ bool RadioModel::captureDesktopReceiveLayout()
         return true;
     }
     AppSettings& store = AppSettings::instance();
+    if (m_activeSlice) {
+        store.setValue(desktopActiveSliceKey(m_desktopLayoutMac), m_activeSlice->sliceIndex());
+    }
     const ReceiveLayoutStore::LoadResult existing = ReceiveLayoutStore::load(store, m_desktopLayoutMac);
     if (existing.state != ReceiveLayoutStore::LoadState::Loaded
         && existing.state != ReceiveLayoutStore::LoadState::Missing) {
