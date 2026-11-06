@@ -197,6 +197,23 @@ private slots:
         QFile::remove(path + QStringLiteral(".bak"));
     }
 
+    // The phone decodes this same file (ios/NereusKit BandStackTests), so its
+    // decoder reads what the facade really sends.
+    void theSharedSampleIsWhatTheFacadeSends()
+    {
+        QFile file(QStringLiteral(NEREUS_TEST_DATA_DIR "/bandstack/facade-document.json"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray sample = file.readAll();
+        const QJsonObject expected = QJsonDocument::fromJson(sample).object();
+        QVERIFY(!expected.isEmpty());
+
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/AA:BB:CC:DD:EE:01/bandstack/Document"), QString::fromUtf8(sample));
+        Core core;
+        startStack(core);
+        QCOMPARE(coreDocument(core), expected);
+    }
+
     void theVerbsAreDeclaredWithTheirCapability()
     {
         const QSet<QByteArray> expected{

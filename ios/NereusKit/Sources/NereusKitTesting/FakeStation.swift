@@ -193,6 +193,8 @@ public final class FakeStation: @unchecked Sendable {
         case client(LinkMessage.Kind)
         /// The `devices` object, made as it is played, with the Core's name then.
         case devices
+        /// The `bandStack` object, made as it is played, with the document then.
+        case bandStack
     }
 
     /// Where the fake answers; each fake has its own, so pairings with
@@ -269,6 +271,11 @@ public final class FakeStation: @unchecked Sendable {
     private var devicesRevision: Int64 = 1
     /// `devices`' `coreAddresses`, sent with ``Additions/coreAddresses``.
     var coreAddressesJson = FakeStation.noCoreAddresses
+    /// The band stack document and its revision (``Additions/bandStack``,
+    /// FakeStation+BandStack.swift).
+    var bandStackDocument = (json: "", revision: Int64(0))
+    /// The band stack commands the fake took, oldest first.
+    var bandStackCommandLog: [LinkMessage.CommandInvoke] = []
     /// The fake takes the Core's device commands: it advertises `deviceAdminVersion` 1.
     private let takesDeviceCommands: Bool
     /// The last revision the app subscribed each display endpoint at.
@@ -379,6 +386,10 @@ public final class FakeStation: @unchecked Sendable {
                     steps.append(.station(try Self.devicesSchema(filled, additions: additions)))
                     steps.append(.devices)
                 }
+                if object["type"] as? String == "snapshot.complete", additions.contains(.bandStack) {
+                    steps.append(.station(LinkCodec.encode(.schema(try Self.schema(ofClass: Self.bandStackClass)))))
+                    steps.append(.bandStack)
+                }
                 object = try Self.withWireBatchProperties(object, added: snapshotAdditions)
                 message = object
                 if withoutCapabilities.contains(Self.freedvCapability) {
@@ -425,6 +436,9 @@ public final class FakeStation: @unchecked Sendable {
         challenge = placeholders.challenge
         freedvState.runs = !withoutCapabilities.contains(Self.freedvCapability)
         displayState.seed(slices: sliceIds, pans: slicePans)
+        if additions.contains(.bandStack) {
+            bandStackDocument = (try LinkFixtureLoader.bandStackDocument(), 1)
+        }
     }
 
     // MARK: What the app connects with
@@ -799,6 +813,9 @@ public final class FakeStation: @unchecked Sendable {
         if additions.contains(.band2m) {
             set("band2mVersion", 1)
         }
+        for (name, value) in bandStackCapabilityVersions(additions) {
+            set(name, value)
+        }
         if additions.contains(.setupDescription) {
             set("setupDescriptionVersion", setupDescriptionVersion)
         }
@@ -1018,6 +1035,9 @@ public final class FakeStation: @unchecked Sendable {
             return replies
         }
         if let replies = vaxReplies(invoke) {
+            return replies
+        }
+        if let replies = bandStackReplies(invoke) {
             return replies
         }
         if let replies = roundtableReplies(invoke) {
@@ -1639,6 +1659,8 @@ public final class FakeStation: @unchecked Sendable {
                 texts.append(text)
             case .devices:
                 texts.append(devicesObject())
+            case .bandStack:
+                texts.append(bandStackObject())
             case .client:
                 return (texts, index)
             }

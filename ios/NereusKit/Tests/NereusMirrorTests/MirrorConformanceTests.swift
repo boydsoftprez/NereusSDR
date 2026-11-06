@@ -22,7 +22,7 @@ import Testing
     @Test func everyAppFixturePassesThroughTheMirror() async throws {
         let classes = try SessionFixtures.mirrorClasses()
         let fixtures = try SessionFixtures.forApp()
-        #expect(fixtures.count == 90)
+        #expect(fixtures.count == 91)
         // Roundtable's thirteen verbs and the roundtable object.
         #expect(fixtures.contains { $0.id == "session-verbs-roundtable" })
         #expect(fixtures.contains { $0.id == "session-verbs-roundtable-frequency" })

@@ -10583,6 +10583,9 @@ nereus_add_test(tst_bandstack_link
     fakes/FakeBandStackAccess.h
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
+# tests/data/bandstack/facade-document.json is shared with the phone's BandStackTests.
+target_compile_definitions(tst_bandstack_link PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 
 # Band stack plan Task 5: a recall on a shared receiver asks through the
 # confirm step, through a loopback link with fake peers.
