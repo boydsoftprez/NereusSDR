@@ -34,6 +34,13 @@
 //                 live channel's readings during a slow connect. J.J.
 //                 Boyd (KG4VCF), with AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-06 -- pumpWritesTheLiveChannelsReadings compares the slice with
+//                 the lane refresh the pump published, not a later read of
+//                 the channel, waits for measured readings, and shows the
+//                 pump following the channel when it moves. PR 757's CI: ADC
+//                 peak -58.295 on the slice, -41.249 on the channel. J.J.
+//                 Boyd (KG4VCF), with AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -45,6 +52,7 @@
 
 #include <memory>
 
+#include "MeterPumpSnapshot.h"
 #include "core/AppSettings.h"
 #include "core/ConnectionState.h"
 #include "core/HardwareProfile.h"
@@ -75,6 +83,7 @@ constexpr double kNoReadingDbm = NereusSDR::SliceMeterPump::kNoReadingDbm;
 } // namespace
 using NereusSDR::Test::ConnectableRadioModel;
 using NereusSDR::Test::LoopbackTransport;
+using NereusSDR::Test::pollUntilPumpWroteSnapshot;
 
 namespace {
 
@@ -89,6 +98,27 @@ void expectNoReadings(const SliceModel* slice)
     QCOMPARE(slice->agcGainDb(), kNoReadingDbm);
     QCOMPARE(slice->agcPeakDb(), kNoReadingDbm);
     QCOMPARE(slice->agcAverageDb(), kNoReadingDbm);
+}
+
+// The raw WDSP meters: no RXOffset on any of them (Thetis adds it to the two
+// signal readings only).
+void expectReadingsOf(const SliceModel* slice, const RxChannel::MeterReadings& readings)
+{
+    QCOMPARE(slice->adcPeakDbfs(), readings.value(RxMeterType::AdcPeak));
+    QCOMPARE(slice->adcAverageDbfs(), readings.value(RxMeterType::AdcAvg));
+    QCOMPARE(slice->agcGainDb(),
+             SliceMeterPump::thetisAgcGainReading(readings.value(RxMeterType::AgcGain)));
+    QCOMPARE(slice->agcPeakDb(), readings.value(RxMeterType::AgcPeak));
+    QCOMPARE(slice->agcAverageDb(), readings.value(RxMeterType::AgcAvg));
+}
+
+// Every one of the five is a measurement: above WDSP's -400 seed and the
+// no-reading value it equals.
+bool allMeasured(const SliceModel* slice)
+{
+    return slice->adcPeakDbfs() > kNoReadingDbm && slice->adcAverageDbfs() > kNoReadingDbm
+        && slice->agcGainDb() > kNoReadingDbm && slice->agcPeakDb() > kNoReadingDbm
+        && slice->agcAverageDb() > kNoReadingDbm;
 }
 
 std::unique_ptr<RadioModel> makeStationRadioModel()
@@ -244,26 +274,40 @@ private slots:
 
         // Trunk merge of remote transmit (R-R3-39): the pump reads the cache
         // the receive lane refreshes. Its first poll asks the lane for one
-        // and shows no reading until the lane has read the channel; the
-        // poll after that carries the channel's readings.
-        const auto pollWithReadings = [&]() {
-            pump->poll();
-            QTRY_VERIFY(ch->meterReadingReady());
-            pump->poll();
-        };
+        // and shows no reading until the lane has read the channel; a later
+        // poll carries the channel's readings.
+        //
+        // This channel is receiving: the fake radio streams a constant I
+        // every 10 ms (P1FakeRadio::onAutoStreamTick) and WDSP's channel
+        // slews it up (WdspEngine.cpp's OpenChannel tdelayup, tslewup), so
+        // the ADC peak climbs from about -400 and each block moves the
+        // meters. Each comparison is therefore held to the one refresh the
+        // pump published (MeterPumpSnapshot.h).
+        RxChannel::MeterReadings readings;
+        QVERIFY2(QTest::qWaitFor(
+                     [&]() {
+                         return pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings)
+                             && allMeasured(slice);
+                     },
+                     NereusSDR::Test::kNereusTryDefaultMs),
+                 "the pump never wrote five measured readings");
+        expectReadingsOf(slice, readings);
 
-        // The raw WDSP meters: no RXOffset on any of them (Thetis adds it to
-        // the two signal readings only).
-        pollWithReadings();
-        QCOMPARE(slice->adcPeakDbfs(), ch->getMeter(RxMeterType::AdcPeak));
-        QCOMPARE(slice->adcAverageDbfs(), ch->getMeter(RxMeterType::AdcAvg));
-        QCOMPARE(slice->agcGainDb(),
-                 SliceMeterPump::thetisAgcGainReading(ch->getMeter(RxMeterType::AgcGain)));
-        QCOMPARE(slice->agcPeakDb(), ch->getMeter(RxMeterType::AgcPeak));
-        QCOMPARE(slice->agcAverageDb(), ch->getMeter(RxMeterType::AgcAvg));
+        // Live, not stale: the channel moves on, which alone is no fault of
+        // the slice (it is the order PR 757's CI failed on), and the next
+        // poll that carries the channel's new reading writes it.
+        const double published = slice->adcAverageDbfs();
+        QVERIFY2(QTest::qWaitFor(
+                     [&]() { return ch->getMeter(RxMeterType::AdcAvg) != published; },
+                     NereusSDR::Test::kNereusTryDefaultMs),
+                 "the channel's reading never moved");
+        QCOMPARE(slice->adcAverageDbfs(), published);
+        QVERIFY(pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
+        QVERIFY(slice->adcAverageDbfs() != published);
+        expectReadingsOf(slice, readings);
 
         // A lost link clears them with the S-meter readings, whatever they
-        // held (seeded here, as this channel sees no signal).
+        // held (seeded here, so the clear is seen to replace known values).
         const auto seed = [slice]() {
             slice->setAdcPeakDbfs(-11.0);
             slice->setAdcAverageDbfs(-22.0);
@@ -280,11 +324,9 @@ private slots:
         // Back to Connected: the channel's readings again.
         seed();
         model.setConnectionStateForTest(ConnectionState::Connected);
-        pollWithReadings();
-        QCOMPARE(slice->agcGainDb(),
-                 SliceMeterPump::thetisAgcGainReading(ch->getMeter(RxMeterType::AgcGain)));
-        QCOMPARE(slice->agcAverageDb(), ch->getMeter(RxMeterType::AgcAvg));
-        QCOMPARE(slice->adcPeakDbfs(), ch->getMeter(RxMeterType::AdcPeak));
+        QVERIFY(pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
+        QVERIFY(allMeasured(slice));
+        expectReadingsOf(slice, readings);
         harness.reset();
     }
 

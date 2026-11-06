@@ -26,8 +26,12 @@
 // Modification history (NereusSDR):
 //   2026-10-22 - Written for NereusSDR by J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - The pump's snapshot comes from MeterPumpSnapshot.h, bounded
+//                by time, not attempts. J.J. Boyd (KG4VCF), with AI-assisted
+//                implementation via Anthropic Claude Code.
 // =================================================================
 
+#include "MeterPumpSnapshot.h"
 #include "MultiDeviceHarness.h"
 
 #include <QSignalSpy>
@@ -221,21 +225,9 @@ private slots:
         pump->poll();
         QTRY_VERIFY(ch->meterReadingReady());
         QTRY_VERIFY(ch->meterReadings().readNs > before);
-        // The pump's poll asks the lane for its next refresh, and so does
-        // this test's read, so the lane may refresh between them. Poll and
-        // read until it did not: the test then holds the snapshot the pump
-        // wrote.
+        // The test holds the snapshot the pump wrote (MeterPumpSnapshot.h).
         RxChannel::MeterReadings readings;
-        bool samePoll = false;
-        for (int attempt = 0; attempt < 50 && !samePoll; ++attempt) {
-            pump->poll();
-            readings = ch->meterReadings();
-            samePoll = readings.readNs == slice->meterReadingNs();
-            if (!samePoll) {
-                QTest::qWait(5);
-            }
-        }
-        QVERIFY(samePoll);
+        QVERIFY(NereusSDR::Test::pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
         const qint64 after = RxChannel::meterClockNs();
         const qint64 first = slice->meterReadingNs();
         QVERIFY2(first > before && first <= after,
