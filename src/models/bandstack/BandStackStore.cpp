@@ -171,25 +171,14 @@ bool isAllowedDwell(int seconds)
     return seconds == 0 || seconds == 10 || seconds == 30 || seconds == 60;
 }
 
-// The same shape the refusal shows everywhere else: 7.185 or 7.185.250.
-QString displayFrequency(qint64 frequencyHz)
-{
-    const QString text = QString::number(static_cast<double>(frequencyHz) / 1e6, 'f', 6);
-    const qsizetype split = text.indexOf(QLatin1Char('.')) + 4;
-    const QString hertz = text.mid(split);
-    if (hertz == QLatin1String("000")) {
-        return text.left(split);
-    }
-    return text.left(split) + QLatin1Char('.') + hertz;
-}
-
 // From Thetis clsBandStackManager.cs:391-402 [v2.10.3.15]
 void writeSpot(BandStackEntry& entry, const BandStackSpot& spot, qint64 nowMs)
 {
+    // How the pan looked is saved but is not a change to the spot, so it does
+    // not end a seed.
     const bool changed = entry.frequencyHz != spot.frequencyHz || entry.mode != spot.mode
                          || entry.filterLowHz != spot.filterLowHz
-                         || entry.filterHighHz != spot.filterHighHz
-                         || entry.centerHz != spot.centerHz || entry.spanHz != spot.spanHz;
+                         || entry.filterHighHz != spot.filterHighHz;
     entry.frequencyHz = spot.frequencyHz;
     entry.mode = spot.mode;
     entry.filterLowHz = spot.filterLowHz;
@@ -230,19 +219,6 @@ std::optional<BandStackReturnMode> returnModeFromName(const QString& name)
     return std::nullopt;
 }
 
-// Not bandFromName, which knows no SWL band and files any unknown string under
-// GEN. A document's key names exactly the band bandKeyName wrote it for.
-std::optional<Band> strictBandFromKey(const QString& key)
-{
-    for (int i = 0; i < static_cast<int>(Band::Count); ++i) {
-        const Band band = static_cast<Band>(i);
-        if (bandKeyName(band) == key) {
-            return band;
-        }
-    }
-    return std::nullopt;
-}
-
 std::optional<qint64> readInteger(const QJsonObject& object, const QString& key)
 {
     const QJsonValue value = object.value(key);
@@ -277,7 +253,7 @@ std::optional<BandStackEntry> entryFromJson(const QJsonObject& object)
         return std::nullopt;
     }
 
-    const std::optional<Band> band = strictBandFromKey(bandKey.toString());
+    const std::optional<Band> band = BandStackStore::bandFromKey(bandKey.toString());
     const std::optional<qint64> frequencyHz = readInteger(object, QStringLiteral("frequencyHz"));
     const std::optional<int> filterLowHz = readInt(object, QStringLiteral("filterLowHz"));
     const std::optional<int> filterHighHz = readInt(object, QStringLiteral("filterHighHz"));
@@ -325,6 +301,31 @@ QJsonObject entryToJson(const BandStackEntry& entry)
 }
 
 } // namespace
+
+// Not bandFromName, which knows no SWL band and files any unknown string under
+// GEN. A document's key names exactly the band bandKeyName wrote it for.
+std::optional<Band> BandStackStore::bandFromKey(const QString& key)
+{
+    for (int i = 0; i < static_cast<int>(Band::Count); ++i) {
+        const Band band = static_cast<Band>(i);
+        if (bandKeyName(band) == key) {
+            return band;
+        }
+    }
+    return std::nullopt;
+}
+
+// The same shape the refusal shows everywhere else: 7.185 or 7.185.250.
+QString BandStackStore::displayFrequency(qint64 frequencyHz)
+{
+    const QString text = QString::number(static_cast<double>(frequencyHz) / 1e6, 'f', 6);
+    const qsizetype split = text.indexOf(QLatin1Char('.')) + 4;
+    const QString hertz = text.mid(split);
+    if (hertz == QLatin1String("000")) {
+        return text.left(split);
+    }
+    return text.left(split) + QLatin1Char('.') + hertz;
+}
 
 // From Thetis console.cs:45621-45734 [v2.10.3.15]
 BandStackTarget BandStackStore::planPress(QChar slice, Band currentBand, Band band,
@@ -388,6 +389,14 @@ BandStackTarget BandStackStore::planStep(QChar slice, Band band, BandStackDirect
         next = d == BandStackDirection::Next ? (index + 1) % count : (index + count - 1) % count;
     }
     return {BandStackTarget::Entry, order.at(next), band};
+}
+
+BandStackTarget BandStackStore::planCurrent(QChar slice, Band band) const
+{
+    if (m_bands.value(band).order.isEmpty()) {
+        return {BandStackTarget::EmptyBand, QString(), band};
+    }
+    return currentTarget(slice, band);
 }
 
 // Ours differs: the first press on a band with no place lands on the first
@@ -478,6 +487,28 @@ bool BandStackStore::addDwell(Band band, const BandStackSpot& spot, qint64 nowMs
     }
     addEntry(band, spot, nowMs);
     return true;
+}
+
+void BandStackStore::markUsed(const QString& id, qint64 nowMs)
+{
+    const auto entry = m_entries.find(id);
+    if (entry != m_entries.end()) {
+        entry->lastUsedMs = nowMs;
+    }
+}
+
+QString BandStackStore::entryNear(Band band, qint64 frequencyHz) const
+{
+    const QStringList order = m_bands.value(band).order;
+    const auto found = std::find_if(order.cbegin(), order.cend(), [&](const QString& id) {
+        return withinDuplicateWindow(m_entries[id].frequencyHz, frequencyHz);
+    });
+    return found == order.cend() ? QString() : *found;
+}
+
+QString BandStackStore::specificId(Band band) const
+{
+    return m_bands.value(band).specificId;
 }
 
 void BandStackStore::setPlace(QChar slice, Band band, const QString& entryId)
@@ -596,7 +627,17 @@ void BandStackStore::replaceWithSeeds(const QList<BandStackEntry>& seeds)
     for (const QString& id : std::as_const(doomed)) {
         eraseEntry(id);
     }
-    addSeeds(seeds);
+
+    // A kept entry already holds the spot, so a seed within 100 Hz of it on
+    // the same band would only be a duplicate of it.
+    QList<BandStackEntry> wanted;
+    wanted.reserve(seeds.size());
+    for (const BandStackEntry& seed : seeds) {
+        if (entryNear(seed.band, seed.frequencyHz).isEmpty()) {
+            wanted.append(seed);
+        }
+    }
+    addSeeds(wanted);
 }
 
 QList<BandStackEntry> BandStackStore::expire(qint64 nowMs)
@@ -773,7 +814,7 @@ bool BandStackStore::fromJson(const QJsonObject& document)
 
     const QJsonObject bands = bandsValue.toObject();
     for (auto it = bands.constBegin(); it != bands.constEnd(); ++it) {
-        const std::optional<Band> band = strictBandFromKey(it.key());
+        const std::optional<Band> band = bandFromKey(it.key());
         if (!band.has_value() || !it.value().isObject()) {
             return false;
         }
@@ -829,7 +870,7 @@ bool BandStackStore::fromJson(const QJsonObject& document)
         }
         const QJsonObject object = slice.value().toObject();
         for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
-            const std::optional<Band> band = strictBandFromKey(it.key());
+            const std::optional<Band> band = bandFromKey(it.key());
             if (!band.has_value() || !it.value().isString()) {
                 return false;
             }

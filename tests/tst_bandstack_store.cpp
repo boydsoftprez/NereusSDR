@@ -271,6 +271,71 @@ private slots:
         QCOMPARE(store.entry(QStringLiteral("b"))->lastUsedMs, kNow);
     }
 
+    // How the pan looked is saved, but it is not a change to the spot.
+    void saveOnLeave_centerOrSpanAloneKeepsTheSeedAndSavesThem()
+    {
+        BandStackStore store = threeOn40();
+        store.setPlace(kA, Band::Band40m, QStringLiteral("b"));
+        const BandStackEntry before = *store.entry(QStringLiteral("b"));
+        const BandStackSpot view{before.frequencyHz, before.mode, before.filterLowHz,
+                                 before.filterHighHz, before.centerHz + 5000, 96000};
+        QVERIFY(store.saveOnLeave(kA, Band::Band40m, view, kNow, {kA}));
+        const BandStackEntry* entry = store.entry(QStringLiteral("b"));
+        QVERIFY(entry->seeded);
+        QCOMPARE(entry->centerHz, before.centerHz + 5000);
+        QCOMPARE(entry->spanHz, qint64(96000));
+
+        BandStackSpot filter = view;
+        filter.filterHighHz = before.filterHighHz + 100;
+        QVERIFY(store.saveOnLeave(kA, Band::Band40m, filter, kNow, {kA}));
+        QVERIFY(!store.entry(QStringLiteral("b"))->seeded);
+    }
+
+    void replaceWithSeeds_skipsASeedWithin100HzOfAKeptEntry()
+    {
+        BandStackStore store;
+        store.loadSeeds({seed(QStringLiteral("mine"), Band::Band40m, 7150000)});
+        QVERIFY(store.saveOnLeave(kA, Band::Band40m, spotAt(7150000), kNow, {kA}) == false);
+        store.setPlace(kA, Band::Band40m, QStringLiteral("mine"));
+        QVERIFY(store.saveOnLeave(kA, Band::Band40m, spotAt(7150000), kNow, {kA}));
+        QVERIFY(store.edit(QStringLiteral("mine"), std::nullopt, true));
+
+        store.replaceWithSeeds({seed(QString(), Band::Band40m, 7150050),   // near: skipped
+                                seed(QString(), Band::Band40m, 7150100),   // exactly 100: kept
+                                seed(QString(), Band::Band20m, 7150050)}); // other band: kept
+        QCOMPARE(store.entries(Band::Band40m).size(), qsizetype(2));
+        QCOMPARE(store.entries(Band::Band20m).size(), qsizetype(1));
+        QVERIFY(store.entry(QStringLiteral("mine")) != nullptr);
+    }
+
+    void planCurrent_isWhatCurrentWouldChoose()
+    {
+        BandStackStore store = threeOn40();
+        QCOMPARE(store.planCurrent(kA, Band::Band40m).entryId, QStringLiteral("b")); // first voice
+        store.setPlace(kA, Band::Band40m, QStringLiteral("c"));
+        QCOMPARE(store.planCurrent(kA, Band::Band40m).entryId, QStringLiteral("c"));
+        QCOMPARE(store.planCurrent(kA, Band::Band20m).kind, BandStackTarget::EmptyBand);
+    }
+
+    void markUsed_entryNear_specificId_bandFromKey()
+    {
+        BandStackStore store = threeOn40();
+        store.markUsed(QStringLiteral("b"), kNow);
+        QCOMPARE(store.entry(QStringLiteral("b"))->lastUsedMs, kNow);
+        store.markUsed(QStringLiteral("gone"), kNow); // ignored
+
+        QCOMPARE(store.entryNear(Band::Band40m, 7150099), QStringLiteral("b"));
+        QCOMPARE(store.entryNear(Band::Band40m, 7150100), QString());
+        QCOMPARE(store.entryNear(Band::Band20m, 7150000), QString());
+
+        QCOMPARE(store.specificId(Band::Band40m), QString());
+        QVERIFY(store.setReturn(Band::Band40m, BandStackReturnMode::Specific, QStringLiteral("c")));
+        QCOMPARE(store.specificId(Band::Band40m), QStringLiteral("c"));
+
+        QCOMPARE(BandStackStore::bandFromKey(QStringLiteral("31m")), std::optional<Band>(Band::Band31m));
+        QVERIFY(!BandStackStore::bandFromKey(QStringLiteral("nope")).has_value());
+    }
+
     void saveOnLeave_lockedIsNoOp()
     {
         BandStackStore store;

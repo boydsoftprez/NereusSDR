@@ -864,6 +864,8 @@
 //                Stop All TX that finds nothing to stop still drops a held
 //                CAT TX. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
+//   2026-11-05 - bandStackController, retuneRefusalFor, saveBandMemory.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1121,6 +1123,7 @@ class TxDisplayFeed;
 class TransmitState;
 // Stage C2 filter preset editor — user-override layer over Thetis defaults.
 class FilterPresetStore;
+class BandStackController;
 
 // Phase 3J-2 H2: spot-system forward declarations. RadioModel owns the
 // seven spot-ingest clients (DxCluster, RBN, WSJT-X, SpotCollector,
@@ -3479,6 +3482,20 @@ public:
     // Core runs this same function on its own slice.
     void onBandButtonClicked(SliceModel* slice, NereusSDR::Band band);
 
+    // The band stack (docs/architecture/2026-11-05-band-stack-design.md).
+    // Null on a Role::Remote model, and until a radio is known on a local one.
+    BandStackController* bandStackController() const { return m_bandStackController.get(); }
+
+    /// Why retuning `slice` to `frequencyHz` would be refused, in the words the
+    /// rollback in wireSliceSignals uses, or empty when it would not be. Asks
+    /// the allocator with the inputs bindSliceToStream gives it and changes
+    /// nothing. A slice with no live receiver is never refused here.
+    QString retuneRefusalFor(const SliceModel* slice, double frequencyHz) const;
+
+    /// A slice's held and current per-band memory for `band` goes to settings,
+    /// as a band change saves the band it leaves.
+    void saveBandMemory(SliceModel* slice, NereusSDR::Band band);
+
     // Panadapter management (client-side)
     QList<PanadapterModel*> panadapters() const { return m_panadapters; }
     int addPanadapter();
@@ -5668,6 +5685,13 @@ public:
     // the connection-thread handshake.
     void setLastRadioInfoForTest(const NereusSDR::RadioInfo& info) {
         m_lastRadioInfo = info;
+    }
+
+    // The radio becomes known, as a connect tells every listener, without the
+    // rest of the Connected handler. A second call stands in for a reconnect.
+    void announceRadioForTest(const NereusSDR::RadioInfo& info) {
+        m_lastRadioInfo = info;
+        emit currentRadioChanged(m_lastRadioInfo);
     }
 
     // The version string a successful connect sets, which the seam above
@@ -9714,6 +9738,7 @@ private:
     // model's slices and receivers), not through Qt parenting.
     std::unique_ptr<StationTciController> m_stationTci;
     std::unique_ptr<RfKitBandFollow>      m_rfKitBandFollow;
+    std::unique_ptr<BandStackController>  m_bandStackController;
     // CAT setup from a connected desktop: the `stationCat` object and, on
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};

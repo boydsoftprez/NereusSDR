@@ -1763,6 +1763,7 @@ set(MODEL_SOURCES
     src/models/BandDefaults.cpp
     src/models/bandstack/BandStackSeeds.cpp
     src/models/bandstack/BandStackStore.cpp
+    src/models/bandstack/BandStackController.cpp
     src/models/BandPlanManager.cpp
     src/models/PureSignalSettings.cpp
     src/models/PureSignalSettings.h

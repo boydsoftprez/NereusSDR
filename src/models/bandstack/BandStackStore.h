@@ -182,6 +182,10 @@ public:
     BandStackTarget planPress(QChar slice, Band currentBand, Band band, BandStackDirection d) const;
     BandStackTarget planStep(QChar slice, Band band, BandStackDirection d) const;
 
+    /// What Current entry would choose on `band`: the slice's place, or the
+    /// first voice entry, or the first entry, or EmptyBand with no entries.
+    BandStackTarget planCurrent(QChar slice, Band band) const;
+
     /// Writes `spot` into the slice's place on `band` unless the entry is
     /// locked, another slice in `slicesOnBand` has it as its place, or
     /// duplicate protection finds another entry within 100 Hz. Returns true
@@ -199,6 +203,15 @@ public:
 
     /// Adds a dwell save. No place changes. Returns true when it added.
     bool addDwell(Band band, const BandStackSpot& spot, qint64 nowMs);
+
+    /// A recall used the entry: it restarts its expiry time. Unknown is ignored.
+    void markUsed(const QString& id, qint64 nowMs);
+
+    /// The first entry on `band` within 100 Hz of `frequencyHz`, or empty.
+    QString entryNear(Band band, qint64 frequencyHz) const;
+
+    /// The band's "Always return here" entry, or empty.
+    QString specificId(Band band) const;
 
     /// Ignored unless `entryId` is an entry on `band`.
     void setPlace(QChar slice, Band band, const QString& entryId);
@@ -222,7 +235,8 @@ public:
     void loadSeeds(const QList<BandStackEntry>& seeds);
 
     /// Region change: removes everything except entries locked and no longer
-    /// seeded, then adds `seeds` as loadSeeds does.
+    /// seeded, then adds `seeds` as loadSeeds does, leaving out any seed within
+    /// 100 Hz of a kept entry on the same band.
     void replaceWithSeeds(const QList<BandStackEntry>& seeds);
 
     /// Removes and returns entries past the expiry time, skipping locked,
@@ -254,6 +268,13 @@ public:
 
     /// An unknown schema or a bad shape returns false with no change.
     bool fromJson(const QJsonObject& document);
+
+    /// The band `key` names as bandKeyName writes it, shortwave bands included.
+    /// Nullopt for anything else.
+    static std::optional<Band> bandFromKey(const QString& key);
+
+    /// A frequency as refusals and reports show it: 7.185 or 7.185.250.
+    static QString displayFrequency(qint64 frequencyHz);
 
 private:
     struct BandState {
