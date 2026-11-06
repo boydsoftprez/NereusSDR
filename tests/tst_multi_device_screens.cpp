@@ -831,6 +831,11 @@ private slots:
         Core core;
         core.model->configureStreamPool(4, 5, 192000);
         becomeHostingStation(core);
+        // The rate is saved per radio; saveReceiverB's model knows no radio.
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/slices/1/SampleRate")
+                .arg(AppSettings::normalizedRadioMac(core.model->currentRadioMac())),
+            kReceiverBRate);
         SliceModel* a = core.model->sliceById(0);
         a->setFrequency(14'200'000.0);
         a->setDspMode(DSPMode::USB);
@@ -938,7 +943,21 @@ private slots:
                                       false, false, &host);
         QTRY_COMPARE(core.model->slices().size(), 2);
         core.model->flushPendingSettingsSave();
-        QCOMPARE(letter(), before);
+        // Key by key: QCOMPARE cuts off two long maps before the difference.
+        const QVariantMap after = letter();
+        QStringList changed;
+        for (const QString& key : before.keys()) {
+            if (after.value(key) != before.value(key)) {
+                changed.append(key + QLatin1Char('=') + before.value(key).toString()
+                               + QStringLiteral(" now ") + after.value(key).toString());
+            }
+        }
+        for (const QString& key : after.keys()) {
+            if (!before.contains(key)) {
+                changed.append(key + QStringLiteral(" added"));
+            }
+        }
+        QVERIFY2(changed.isEmpty(), qPrintable(changed.join(QStringLiteral("; "))));
         AppSettings::instance().clear();
     }
 

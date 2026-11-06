@@ -29646,7 +29646,14 @@ void RadioModel::noteOfflineReceiverPropertyEdit()
 {
     if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
         // The edited slice, which need not be the active one.
-        scheduleSettingsSave(qobject_cast<SliceModel*>(sender()));
+        auto* slice = qobject_cast<SliceModel*>(sender());
+        // A slice being made is not an edit: its pan key arrives while it is
+        // still on the constructor's 14.225 MHz, and a capture then wrote that
+        // over the letter's 20 m memory. addSliceImpl's own save ends the job.
+        if (slice && !m_slicePublications.value(slice).ready) {
+            return;
+        }
+        scheduleSettingsSave(slice);
     }
 }
 
