@@ -62,6 +62,7 @@ public:
     // HotKeyStateSource. windowSlice above serves both.
     bool transmitOn(const QString& id) const override;
     bool muted(const SliceModel* slice) const override;
+    bool radioConnected() const override;
 
     // The pan zoom acts on while `activeWindow` has focus: that floating pan,
     // else the window's active pan.

@@ -94,6 +94,9 @@ public:
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop();
     Q_INVOKABLE void sendOutput(NereusSDR::DeviceId id, QByteArray report);
+    // Something else has this device, a deck plugin's own app, say. While claimed it
+    // stays closed here, so one press can't arrive twice. Letting go opens it again.
+    Q_INVOKABLE void setDeviceClaimedElsewhere(NereusSDR::DeviceId id, bool claimed);
 
     static bool supported();    // false in a build without hidapi
 
@@ -143,6 +146,7 @@ private:
         QString reason;
     };
     QHash<DeviceId, State> m_states;
+    QSet<DeviceId> m_claimedElsewhere;
 };
 
 } // namespace NereusSDR

@@ -157,6 +157,7 @@ void HotKeyStateFeed::update()
     }
 
     Display display;
+    display.connected = m_source->radioConnected();
     if (slice != nullptr) {
         display.frequency = frequencyText(slice->frequency());
         display.mode = SliceModel::modeName(slice->dspMode());
@@ -164,7 +165,8 @@ void HotKeyStateFeed::update()
         display.slice = slice->sliceLetter();
     }
     if (display.frequency != m_display.frequency || display.mode != m_display.mode
-        || display.filter != m_display.filter || display.slice != m_display.slice) {
+        || display.filter != m_display.filter || display.slice != m_display.slice
+        || display.connected != m_display.connected) {
         m_display = display;
         emit displayChanged();
     }

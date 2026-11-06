@@ -1568,3 +1568,15 @@ NereusSDR adds attribution and its existing producer annotation.
 | `src/gui/hotkeys/devices/PowerMateParser.cpp` | `src/core/HidDeviceParser.cpp:92-113` [@1e0718ad] | Report layout. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/devices/ShuttleParser.h` | `src/core/HidDeviceParser.h:60-81` [@1e0718ad] | Parser class shape, one class for both models. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/devices/ShuttleParser.cpp` | `src/core/HidDeviceParser.cpp:115-195` [@1e0718ad] | Jog and its wrap. Buttons differ from upstream on other sources' evidence, cited in the file. Recorded in AETHERSDR-PROVENANCE.md. |
+
+## November 6, 2026 TMate 2 and Stream Deck+ (hot keys plan Task 14)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/TMate2Parser.h` | `src/core/HidDeviceParser.h:106-132` [@1e0718ad] | Parser class shape. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/TMate2Parser.cpp` | `src/core/HidDeviceParser.cpp:270-329`, `src/core/HidDeviceParser.h:108-116` [@1e0718ad] | Report layout. Every change in a report is given at once. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/StreamDeckPlusParser.h` | `src/core/HidDeviceParser.h:82-104` [@1e0718ad] | Parser class shape. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/StreamDeckPlusParser.cpp` | `src/core/HidDeviceParser.cpp:196-268` [@1e0718ad] | Report layout. All four dials and all keys from one report. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/DeviceOutput.h` | `src/core/HidEncoderManager.cpp:648-761`, `src/gui/MainWindow_Controllers.cpp:1111-1197` [@1e0718ad] | Output builders, returning bytes. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/DeviceOutput.cpp` | `src/core/HidEncoderManager.cpp:13-38,105-136,282-294,299-314,533-549,648-761`, `src/core/HidEncoderManager.h:93-95`, `src/gui/MainWindow_Controllers.cpp:1111-1197` [@1e0718ad] | Digit table, frame fields, packet layouts, JPEG settings. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/ControllerHost.cpp` | `src/gui/MainWindow_Controllers.cpp:1291` [@1e0718ad] | A key's idle color, a fact with its cite. |

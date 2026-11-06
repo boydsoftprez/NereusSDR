@@ -28,6 +28,7 @@ public:
     virtual SliceModel* windowSlice() const = 0;
     virtual bool transmitOn(const QString& id) const = 0;   // tx.mox, tx.tune, tx.twotone, tx.hold
     virtual bool muted(const SliceModel* slice) const = 0;  // a listened slice has this device's own mute
+    virtual bool radioConnected() const = 0;
 };
 
 class NEREUS_GUI_EXPORT HotKeyStateFeed : public QObject {
@@ -39,6 +40,7 @@ public:
         QString mode;       // "USB"
         QString filter;     // "2.7K", "500"
         QChar slice;
+        bool connected{false};  // the radio, which a TMate 2 has a light for
     };
 
     explicit HotKeyStateFeed(HotKeyStateSource* source, QObject* parent = nullptr);

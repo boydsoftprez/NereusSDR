@@ -19,6 +19,7 @@
 #include "core/WdspTypes.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "gui/MainWindow.h"
+#include "gui/hotkeys/ControllerHost.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
 #include "gui/hotkeys/HotKeyStateFeed.h"
 #include "gui/hotkeys/HotKeyTargets.h"
@@ -37,10 +38,12 @@ public:
     QHash<QString, bool> transmit;
     bool listenMuted{false};
     bool listened{false};
+    bool radio{false};
 
     SliceModel* windowSlice() const override { return slice; }
     bool transmitOn(const QString& id) const override { return transmit.value(id, false); }
     bool muted(const SliceModel* s) const override { return listened ? listenMuted : s->muted(); }
+    bool radioConnected() const override { return radio; }
 };
 
 // One window, connected, with two slices. The cases share it: building one takes seconds.
@@ -107,6 +110,16 @@ private slots:
     void cleanupTestCase()
     {
         m_bench.reset();
+    }
+
+    void theRadioConnectionIsPartOfTheDisplay()
+    {
+        QSignalSpy changed(&feed(), &HotKeyStateFeed::displayChanged);
+        QCOMPARE(feed().display().connected, false);
+        source().radio = true;
+        feed().refresh();
+        QCOMPARE(feed().display().connected, true);
+        QCOMPARE(changed.size(), 1);
     }
 
     void everyActionFromTheBrief()
@@ -268,6 +281,14 @@ private slots:
         QVERIFY(m_bench->feed != nullptr);
         QVERIFY(m_bench->a != nullptr);
         QVERIFY(m_bench->b != nullptr);
+    }
+
+    void windowFeedsTheDisplaysAndKnowsTheRadioIsConnected()
+    {
+        Bench& w = *m_bench;
+        QCOMPARE(w.window.controllerHost()->stateFeed(), w.feed);
+        w.feed->refresh();
+        QCOMPARE(w.feed->display().connected, true);
     }
 
     void windowFollowsTheSelectedSlice()

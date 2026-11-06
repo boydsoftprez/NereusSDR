@@ -1922,11 +1922,14 @@ set(GUI_SOURCES
     src/gui/hotkeys/midi/MidiProfile.cpp
     src/gui/hotkeys/HotKeyStateFeed.cpp
     src/gui/hotkeys/devices/DeviceInput.cpp
+    src/gui/hotkeys/devices/DeviceOutput.cpp
     src/gui/hotkeys/devices/GestureEngine.cpp
     src/gui/hotkeys/devices/PowerMateLinuxInput.cpp
     src/gui/hotkeys/devices/PowerMateParser.cpp
     src/gui/hotkeys/devices/Rc28Parser.cpp
     src/gui/hotkeys/devices/ShuttleParser.cpp
+    src/gui/hotkeys/devices/StreamDeckPlusParser.cpp
+    src/gui/hotkeys/devices/TMate2Parser.cpp
     src/gui/hotkeys/devices/UsbPresence.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp

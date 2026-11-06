@@ -4,6 +4,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: the USB worker, gestures
 //                and device routing. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 14: displays and lit keys from
+//                the state feed. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/ControllerHost.h"
 
@@ -12,9 +14,12 @@
 #include "core/hotkeys/HotKeyActionList.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
+#include "gui/hotkeys/HotKeyStateFeed.h"
 #include "gui/hotkeys/devices/DeviceInput.h"
+#include "gui/hotkeys/devices/DeviceOutput.h"
 #include "gui/hotkeys/midi/MidiInput.h"
 
+#include <QColor>
 #include <QMetaObject>
 #include <QStringList>
 
@@ -41,6 +46,12 @@ const QString& deviceKey()
     static const QString kKey = QStringLiteral("HotKeys/Midi/Device");
     return kKey;
 }
+
+// From AetherSDR src/gui/MainWindow_Controllers.cpp:1291 [@1e0718ad]
+const QColor kDeckKeyIdle(20, 28, 45);
+// This design's: upstream's keys don't light. Red for what transmits, green otherwise.
+const QColor kDeckKeyLitTransmit(170, 30, 30);
+const QColor kDeckKeyLit(20, 110, 40);
 
 bool isLevelAction(const QString& id)
 {
@@ -96,6 +107,9 @@ ControllerHost::ControllerHost(HotKeyDispatcher* dispatcher, HotKeyBindings* bin
     connect(&m_gestureTimer, &QTimer::timeout, this, &ControllerHost::onGestureTick);
     m_ringTimer.setInterval(kRingRepeatMs);
     connect(&m_ringTimer, &QTimer::timeout, this, &ControllerHost::onRingTick);
+    m_displayTimer.setSingleShot(true);
+    connect(&m_displayTimer, &QTimer::timeout, this, &ControllerHost::onDisplayTick);
+    connect(m_deviceBindings.get(), &HotKeyDeviceBindings::bindingsChanged, this, &ControllerHost::refreshDeckKeys);
 
     m_midiThread.start();
     m_usbThread.start();
@@ -274,6 +288,18 @@ void ControllerHost::onDeviceStateChanged(DeviceId id, bool connected, const QSt
         forgetDevice(id);
     }
     emit deviceStateChanged(id, connected, reason);
+    // A device just opened shows nothing of ours, so it gets everything.
+    if (connected && id == DeviceId::TMate2) {
+        m_lastTMateFrame.clear();
+        m_displayDirty = true;
+        pumpDisplays();
+    } else if (connected && id == DeviceId::StreamDeckPlus) {
+        m_deckKeys = {};
+        m_lastDeckStrip.clear();
+        refreshDeckKeys();
+        m_displayDirty = true;
+        pumpDisplays();
+    }
 }
 
 void ControllerHost::onDeviceEvent(DeviceId id, const DeviceEvent& event)
@@ -479,6 +505,135 @@ void ControllerHost::sendDeviceTurn(DeviceId id, const QString& control, int ste
         return;
     }
     m_dispatcher->turn(binding.actionId, binding.actionIdDown, steps, deviceSource(id), binding.pin);
+}
+
+void ControllerHost::setStateFeed(HotKeyStateFeed* feed)
+{
+    if (m_stateFeed) {
+        disconnect(m_stateFeed, nullptr, this, nullptr);
+    }
+    m_stateFeed = feed;
+    if (feed == nullptr) {
+        return;
+    }
+    connect(feed, &HotKeyStateFeed::displayChanged, this, [this] {
+        if (deviceConnected(DeviceId::TMate2) || deviceConnected(DeviceId::StreamDeckPlus)) {
+            m_displayDirty = true;
+            pumpDisplays();
+        }
+    });
+    connect(feed, &HotKeyStateFeed::stateChanged, this, [this](const QString& id, bool /*on*/) {
+        refreshDeckKeys();
+        // The feed says this before it updates the display, and a change of slice can
+        // be both. On the next pass the frame shows them together.
+        if (id == QLatin1String("slice.lock") && deviceConnected(DeviceId::TMate2)) {
+            m_displayDirty = true;
+            if (!m_displayTimer.isActive()) {
+                m_displayTimer.start(0);
+            }
+        }
+    });
+    refreshDeckKeys();
+    if (deviceConnected(DeviceId::TMate2) || deviceConnected(DeviceId::StreamDeckPlus)) {
+        m_displayDirty = true;
+        pumpDisplays();
+    }
+}
+
+HotKeyStateFeed* ControllerHost::stateFeed() const
+{
+    return m_stateFeed.data();
+}
+
+void ControllerHost::queueOutput(DeviceId id, const QList<QByteArray>& packets)
+{
+    DeviceInput* const usb = m_usb;
+    for (const QByteArray& packet : packets) {
+        QMetaObject::invokeMethod(usb, [usb, id, packet] { usb->sendOutput(id, packet); }, Qt::QueuedConnection);
+    }
+}
+
+void ControllerHost::onDisplayTick()
+{
+    pumpDisplays();
+}
+
+void ControllerHost::pumpDisplays()
+{
+    if (!m_displayDirty) {
+        return;
+    }
+    const qint64 now = m_deviceClock();
+    const qint64 wait = m_lastDisplayMs < 0 ? 0 : kDisplayMinMs - (now - m_lastDisplayMs);
+    if (wait > 0) {
+        // The newest state goes out when the wait is over.
+        m_displayTimer.start(static_cast<int>(wait));
+        return;
+    }
+    m_displayDirty = false;
+    m_displayTimer.stop();
+    const bool sentFrame = sendTMateFrame();
+    const bool sentStrip = sendDeckStrip();
+    if (sentFrame || sentStrip) {
+        m_lastDisplayMs = now;
+    }
+}
+
+bool ControllerHost::sendTMateFrame()
+{
+    if (!deviceConnected(DeviceId::TMate2)) {
+        return false;
+    }
+    const HotKeyStateFeed::Display display = m_stateFeed ? m_stateFeed->display() : HotKeyStateFeed::Display{};
+    const bool locked = m_stateFeed && m_stateFeed->isOn(QStringLiteral("slice.lock"));
+    const QByteArray frame = DeviceOutput::tmate2Frame(display.frequency, display.connected, locked);
+    if (frame == m_lastTMateFrame) {
+        return false;   // a change of mode or filter, which this display doesn't show
+    }
+    m_lastTMateFrame = frame;
+    queueOutput(DeviceId::TMate2, {frame});
+    return true;
+}
+
+bool ControllerHost::sendDeckStrip()
+{
+    if (!deviceConnected(DeviceId::StreamDeckPlus)) {
+        return false;
+    }
+    const HotKeyStateFeed::Display display = m_stateFeed ? m_stateFeed->display() : HotKeyStateFeed::Display{};
+    const QString slice = display.slice.isNull() ? QString() : QString(display.slice);
+    const QString shown = QStringList{slice, display.frequency, display.mode, display.filter}.join(QLatin1Char('|'));
+    if (shown == m_lastDeckStrip) {
+        return false;
+    }
+    m_lastDeckStrip = shown;
+    queueOutput(DeviceId::StreamDeckPlus,
+                DeviceOutput::streamDeckStrip(
+                    DeviceOutput::renderStreamDeckStrip(slice, display.frequency, display.mode, display.filter)));
+    return true;
+}
+
+void ControllerHost::refreshDeckKeys()
+{
+    if (!deviceConnected(DeviceId::StreamDeckPlus)) {
+        return;
+    }
+    for (int key = 0; key < DeviceOutput::kStreamDeckKeyCount; ++key) {
+        const QString control = QStringLiteral("button%1").arg(key + 1);
+        const QString actionId = m_deviceBindings->binding(DeviceId::StreamDeckPlus, control, ControlGesture::Press).actionId;
+        const HotKeyAction* const action = HotKeyActionList::find(actionId);
+        const QString label = action != nullptr ? action->name : QString();
+        const bool lit = m_stateFeed && m_stateFeed->isOn(actionId);
+        DeckKey& shown = m_deckKeys[static_cast<size_t>(key)];
+        if (shown.sent && shown.label == label && shown.lit == lit) {
+            continue;
+        }
+        shown = DeckKey{label, lit, true};
+        const bool transmits = action != nullptr && action->transmits;
+        const QColor& background = !lit ? kDeckKeyIdle : (transmits ? kDeckKeyLitTransmit : kDeckKeyLit);
+        queueOutput(DeviceId::StreamDeckPlus,
+                    DeviceOutput::streamDeckKeyImage(key, DeviceOutput::renderStreamDeckKey(label, background)));
+    }
 }
 
 void ControllerHost::forgetDevice(DeviceId id)

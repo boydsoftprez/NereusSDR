@@ -31,6 +31,8 @@
 #include "gui/hotkeys/devices/PowerMateParser.h"
 #include "gui/hotkeys/devices/Rc28Parser.h"
 #include "gui/hotkeys/devices/ShuttleParser.h"
+#include "gui/hotkeys/devices/StreamDeckPlusParser.h"
+#include "gui/hotkeys/devices/TMate2Parser.h"
 #include "gui/hotkeys/devices/UsbPresence.h"
 
 #include <QMutexLocker>
@@ -64,6 +66,12 @@ const QString& notPluggedInReason()
     return kReason;
 }
 
+const QString& claimedReason()
+{
+    static const QString kReason = QStringLiteral("A deck plugin is using it.");
+    return kReason;
+}
+
 const QString& noSupportReason()
 {
     static const QString kReason = QStringLiteral("This build has no USB device support.");
@@ -90,8 +98,7 @@ std::optional<QList<DeviceSpec>>& testTable()
     return kTable;
 }
 
-// Task 14 adds the last rows' parsers. FlexControl and the Ulanzi Dial have inputs of
-// their own.
+// FlexControl and the Ulanzi Dial have inputs of their own.
 QList<DeviceSpec> realTable()
 {
     const auto rc28 = [] { return std::make_unique<Rc28Parser>(); };
@@ -105,8 +112,8 @@ QList<DeviceSpec> realTable()
                    [] { return std::make_unique<ShuttleParser>(ShuttleParser::Model::Xpress); }},
         DeviceSpec{DeviceId::ShuttlePro2, 0x0B33, 0x0030, 5,
                    [] { return std::make_unique<ShuttleParser>(ShuttleParser::Model::Pro2); }},
-        DeviceSpec{DeviceId::TMate2, 0x1721, 0x0614, 64, nullptr},
-        DeviceSpec{DeviceId::StreamDeckPlus, 0x0FD9, 0x0084, 14, nullptr},
+        DeviceSpec{DeviceId::TMate2, 0x1721, 0x0614, 64, [] { return std::make_unique<TMate2Parser>(); }},
+        DeviceSpec{DeviceId::StreamDeckPlus, 0x0FD9, 0x0084, 14, [] { return std::make_unique<StreamDeckPlusParser>(); }},
     };
 }
 
@@ -313,7 +320,7 @@ void DeviceInput::start()
         return;
     }
     for (const DeviceId id : ids) {
-        notify(id, false, notPluggedInReason());
+        notify(id, false, m_claimedElsewhere.contains(id) ? claimedReason() : notPluggedInReason());
     }
     checkPresence();
     m_presenceTimer->start();
@@ -349,6 +356,26 @@ void DeviceInput::sendOutput(DeviceId id, QByteArray report)
     }
 }
 
+void DeviceInput::setDeviceClaimedElsewhere(DeviceId id, bool claimed)
+{
+    if (claimed == m_claimedElsewhere.contains(id)) {
+        return;
+    }
+    if (!claimed) {
+        m_claimedElsewhere.remove(id);
+        checkPresence();
+        return;
+    }
+    m_claimedElsewhere.insert(id);
+    closeDevice(id);
+    if (id == DeviceId::PowerMate && m_powerMateLinux != nullptr && m_powerMateLinux->isOpen()) {
+        m_powerMateLinux->close();
+    }
+    if (m_started && m_layer) {
+        notify(id, false, claimedReason());
+    }
+}
+
 void DeviceInput::checkPresence()
 {
     if (!m_started || !m_layer) {
@@ -358,6 +385,10 @@ void DeviceInput::checkPresence()
     // is what brings up the Input Monitoring prompt on macOS.
     const QSet<quint32> present = m_layer->present();
     for (const DeviceId id : tableDevices()) {
+        if (m_claimedElsewhere.contains(id)) {
+            notify(id, false, claimedReason());
+            continue;
+        }
         if (m_open.find(id) != m_open.end()) {
             continue;
         }

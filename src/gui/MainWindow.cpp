@@ -9475,6 +9475,7 @@ void MainWindow::buildUI()
         if (PureSignalSessionFacade* ps = m_radioModel->pureSignalFacade()) {
             connect(ps, &PureSignalSessionFacade::statusChanged, feed, &HotKeyStateFeed::refresh);
         }
+        m_controllerHost->setStateFeed(feed);
     }
     if (WorkspacePreview::enabled()) {
         // Workspace preview: the header source menu enables the open slices.

@@ -356,6 +356,11 @@ bool MainWindowHotKeyTargets::moxOn() const
     return !model->moxPressAsksOn(!lit);
 }
 
+bool MainWindowHotKeyTargets::radioConnected() const
+{
+    return m_window->m_radioModel != nullptr && m_window->m_radioModel->isConnected();
+}
+
 bool MainWindowHotKeyTargets::transmitOn(const QString& id) const
 {
     if (id == QLatin1String("tx.hold")) {

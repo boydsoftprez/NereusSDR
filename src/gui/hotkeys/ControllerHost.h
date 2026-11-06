@@ -4,6 +4,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: the USB worker, gestures
 //                and device routing. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 14: displays and lit keys from
+//                the state feed. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // Owns the controller workers and turns what they report into dispatcher calls.
 // Lives on the main thread with the dispatcher. MidiInput lives on the MIDI worker,
@@ -22,11 +24,13 @@
 #include <QHash>
 #include <QObject>
 #include <QPair>
+#include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QThread>
 #include <QTimer>
 
+#include <array>
 #include <functional>
 #include <memory>
 
@@ -35,6 +39,7 @@ namespace NereusSDR {
 class HotKeyBindings;
 class DeviceInput;
 class HotKeyDispatcher;
+class HotKeyStateFeed;
 class MidiInput;
 
 class NEREUS_GUI_EXPORT ControllerHost : public QObject {
@@ -49,6 +54,8 @@ public:
     // How often a control waiting to become a hold is looked at. Costs nothing at
     // rest: it runs only while one is down.
     static constexpr int kGestureTickMs = 20;
+    // A display follows a turning knob at most this often (plan, Task 14).
+    static constexpr int kDisplayMinMs = 100;
 
     ControllerHost(HotKeyDispatcher* dispatcher, HotKeyBindings* bindings, QObject* parent = nullptr);
     ~ControllerHost() override;
@@ -70,6 +77,10 @@ public:
     bool deviceConnected(DeviceId id) const { return m_deviceStates.value(id).connected; }
     QString deviceReason(DeviceId id) const { return m_deviceStates.value(id).reason; }
 
+    // What the displays and lit keys show. Null-safe if the feed goes first.
+    void setStateFeed(HotKeyStateFeed* feed);
+    HotKeyStateFeed* stateFeed() const;
+
     using ClockMs = std::function<qint64()>;
     void setDeviceClockForTest(ClockMs clock) { m_deviceClock = std::move(clock); }
 
@@ -84,6 +95,7 @@ public slots:
     void onDeviceStateChanged(NereusSDR::DeviceId id, bool connected, const QString& reason);
     void onGestureTick();   // the timer's slot; public for tests
     void onRingTick();      // the timer's slot; public for tests
+    void onDisplayTick();   // the timer's slot; public for tests
 
 signals:
     void midiBindingRefused(QString controlKey, QString reason);
@@ -109,6 +121,12 @@ private:
     void forgetDevice(DeviceId id);
     void forgetAllDevices();
     void updateGestureTimer();
+
+    void queueOutput(DeviceId id, const QList<QByteArray>& packets);
+    void pumpDisplays();
+    bool sendTMateFrame();
+    bool sendDeckStrip();
+    void refreshDeckKeys();
 
     HotKeyDispatcher* m_dispatcher;
     QThread m_midiThread;
@@ -141,6 +159,21 @@ private:
     ClockMs m_deviceClock;
     QTimer m_gestureTimer;
     QTimer m_ringTimer;
+
+    // Displays and lit keys. All drawn here, and only what changed is drawn, and only
+    // for a device that's open. The worker is handed bytes.
+    struct DeckKey {
+        QString label;
+        bool lit{false};
+        bool sent{false};
+    };
+    QPointer<HotKeyStateFeed> m_stateFeed;
+    QByteArray m_lastTMateFrame;
+    QString m_lastDeckStrip;
+    std::array<DeckKey, 8> m_deckKeys;
+    bool m_displayDirty{false};
+    qint64 m_lastDisplayMs{-1};
+    QTimer m_displayTimer;
 };
 
 } // namespace NereusSDR

@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 14: claimed elsewhere.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 //
 // The USB worker through a simulated reader, and device routing into the dispatcher
@@ -590,8 +592,8 @@ private slots:
 
     void theRealTableListsTheUsbDevices()
     {
-        // The real table on a simulated bus with everything plugged in. A row with a
-        // parser opens; TMate 2 and Stream Deck+ have none, so they don't.
+        // The real table on a simulated bus with everything plugged in. Every row has
+        // a parser now, so each opens.
         DeviceInput::clearDeviceTableForTest();
         for (const quint32 key : {UsbPresence::key(0x0C26, 0x001E), UsbPresence::key(0x077D, 0x0410),
                                   UsbPresence::key(0x0B33, 0x0020), UsbPresence::key(0x0B33, 0x0030),
@@ -602,7 +604,63 @@ private slots:
         input.start();
         QCOMPARE(m_bus->opens,
                  (QList<quint32>{UsbPresence::key(0x0C26, 0x001E), UsbPresence::key(0x077D, 0x0410),
-                                 UsbPresence::key(0x0B33, 0x0020), UsbPresence::key(0x0B33, 0x0030)}));
+                                 UsbPresence::key(0x0B33, 0x0020), UsbPresence::key(0x0B33, 0x0030),
+                                 UsbPresence::key(0x1721, 0x0614), UsbPresence::key(0x0FD9, 0x0084)}));
+        input.stop();
+    }
+
+    void aDeviceClaimedElsewhereStaysClosedUntilLetGo()
+    {
+        m_bus->plug(kKnobVid, kKnobPid);
+        DeviceInput input;
+        QSignalSpy states(&input, &DeviceInput::deviceStateChanged);
+        input.start();
+        QCOMPARE(openCount(), 1);
+        states.clear();
+
+        input.setDeviceClaimedElsewhere(DeviceId::PowerMate, true);
+        QCOMPARE(m_bus->closes, 1);
+        QCOMPARE(states.size(), 1);
+        QCOMPARE(states.at(0).at(0).value<DeviceId>(), DeviceId::PowerMate);
+        QCOMPARE(states.at(0).at(1).toBool(), false);
+        QCOMPARE(states.at(0).at(2).toString(), QStringLiteral("A deck plugin is using it."));
+
+        // Still on the bus, and the regular check leaves it alone.
+        input.checkPresence();
+        QCOMPARE(openCount(), 1);
+        QCOMPARE(states.size(), 1);
+
+        states.clear();
+        input.setDeviceClaimedElsewhere(DeviceId::PowerMate, false);
+        QCOMPARE(openCount(), 2);
+        QCOMPARE(states.size(), 1);
+        QCOMPARE(states.at(0).at(1).toBool(), true);
+        input.stop();
+    }
+
+    void aClaimMadeBeforeStartHoldsAndAnUnpluggedDeviceSaysSo()
+    {
+        m_bus->plug(kKnobVid, kKnobPid);
+        DeviceInput input;
+        input.setDeviceClaimedElsewhere(DeviceId::PowerMate, true);
+        QSignalSpy states(&input, &DeviceInput::deviceStateChanged);
+        input.start();
+        QCOMPARE(openCount(), 0);
+        input.setDeviceClaimedElsewhere(DeviceId::PowerMate, true);   // no change, nothing sent
+        const auto lastFor = [&states](DeviceId id) {
+            QString reason;
+            for (const QList<QVariant>& state : states) {
+                if (state.at(0).value<DeviceId>() == id) {
+                    reason = state.at(2).toString();
+                }
+            }
+            return reason;
+        };
+        QCOMPARE(lastFor(DeviceId::PowerMate), QStringLiteral("A deck plugin is using it."));
+        m_bus->unplug(kKnobVid, kKnobPid);
+        input.setDeviceClaimedElsewhere(DeviceId::PowerMate, false);
+        QCOMPARE(lastFor(DeviceId::PowerMate), kNotPlugged);
+        QCOMPARE(openCount(), 0);
         input.stop();
     }
 
