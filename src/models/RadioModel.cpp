@@ -8544,6 +8544,21 @@ void RadioModel::applyTransmitBand(Band band, bool initializing)
     if (initializing) {
         oldPwr = m_transmitModel.powerForBand(oldBand); // we cant use what is set on the trackbar if we are initialisting, becase it is irrelevent, old_band will = value at this point MW0LGE
     }
+    // Ours differs on purpose from console.cs:17533-17537 [v2.10.3.15], which
+    // saves ptbPWR.Value here. MOX is down from the start of TUNE's off (about
+    // 130 ms before its restore) and two-tone's stop (200 ms), and PWR still
+    // holds the FIXED temporary power, so Thetis makes that power the old
+    // band's. Its restore then sets PreviousPWR on the new band. Here the old
+    // band gets the power from before the temporary one, and the restore (below)
+    // gets the new band's.
+    const bool tuneHoldsPwr = !initializing && m_isTuning && m_tuneSetFixedPwr;
+    const bool twoToneHoldsPwr = !initializing && !tuneHoldsPwr
+        && m_twoToneController && m_twoToneController->holdsFixedPower();
+    if (tuneHoldsPwr) {
+        oldPwr = m_savedPowerPct;
+    } else if (twoToneHoldsPwr) {
+        oldPwr = m_twoToneController->savedFixedPower();
+    }
     m_transmitModel.setPowerForBand(oldBand, oldPwr);
 
     // ptbPWR.LimitValue = limitPower_by_band[(int)value];
@@ -8558,6 +8573,13 @@ void RadioModel::applyTransmitBand(Band band, bool initializing)
     // ptbPWR_Scroll even when the value is unchanged, so the new band's
     // limit and gain reach the drive; setPower only signals a change.
     const int newPwr = m_transmitModel.powerForBand(band);
+    // What the restore still to come puts back is the new band's power (see
+    // the note on the save above, console.cs:17533-17537 [v2.10.3.15]).
+    if (tuneHoldsPwr) {
+        m_savedPowerPct = newPwr;
+    } else if (twoToneHoldsPwr) {
+        m_twoToneController->transmitBandMoved(newPwr);
+    }
     if (m_transmitModel.power() == newPwr) {
         drivePowerScroll();
     } else {

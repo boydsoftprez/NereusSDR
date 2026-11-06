@@ -117,6 +117,10 @@ public:
 // QMetaObject::invokeMethod from the lambda routes setTxDrive through a
 // queued connection on the connection thread; two passes cover any chained
 // queued emissions.
+// How long the TUNE-off and two-tone stop settles last in the tests that make
+// a band change inside them.
+static constexpr int kWindowSettleMs = 500;
+
 static void pump()
 {
     QCoreApplication::processEvents();
@@ -2327,6 +2331,314 @@ private slots:
 
         tx.setPowerForBand(Band::Band80m, 44);
         QCOMPARE(storedPower(Band::Band80m), QStringLiteral("44"));
+    }
+
+    // A band change just after TUNE or two-tone goes off, before the restore.
+    // Thetis saves ptbPWR.Value as the old band's power there
+    // (console.cs:17533-17537 [v2.10.3.15]), which is still the temporary
+    // power, and its restore then sets PreviousPWR on the new band. Ours keeps
+    // each band's own power, and drives the new band's.
+
+    // 80 m at 20, 40 m at 55 (not the default 50, so the store is written).
+    // Returns the drive byte 40 m has at 55 outside any TUNE or two-tone, then
+    // goes back to 80 m. A limit above zero is set
+    // on 40 m first.
+    static int armEightyAtTwentyFortyAtFiftyFive(RadioModel& model, MockConnection* conn,
+                                             int fortyLimit = 0)
+    {
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        if (fortyLimit > 0) {
+            tx.setLimitPowerForBand(Band::Band40m, fortyLimit);
+        }
+        tx.setPower(20);
+        pump();
+        slice->setFrequency(7100000.0);
+        pump();
+        tx.setPower(55);
+        pump();
+        const int fortyByte = conn->txDriveLog.isEmpty() ? -1 : conn->txDriveLog.last();
+        slice->setFrequency(3700000.0);
+        pump();
+        return fortyByte;
+    }
+    static void verifyEachBandKeptItsOwnPower(TransmitModel& tx)
+    {
+        QVERIFY(tx.powerSliderLimitEnabled());
+        QCOMPARE(tx.power(), 55);
+        QCOMPARE(tx.powerForBand(Band::Band80m), 20);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 55);
+        QVERIFY(!tx.isBandPowerSaveHeld());
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+        QCOMPARE(storedPower(Band::Band40m), QStringLiteral("55"));
+    }
+    // TUNE on and off, stopping inside the settle with the walk finished.
+    static void tuneOffAndStopInTheWindow(RadioModel& model, TransmitModel& tx)
+    {
+        model.setTuneOffSettleMsForTest(kWindowSettleMs);
+        model.setTune(true);
+        pump();
+        QVERIFY(model.isTune());
+        QCOMPARE(tx.power(), 35);
+        model.setTune(false);
+        QTRY_VERIFY(!model.isTransmitting());
+        QVERIFY(model.tuneOffPendingForTest());
+        QCOMPARE(tx.power(), 35);
+    }
+
+    void tuneFixed_bandChangeInTheOffWindow_eachBandKeepsItsOwnPower()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        armFixedTuneAtTwenty(tx);
+        const int fortyByte = armEightyAtTwentyFortyAtFiftyFive(model, conn);
+        QVERIFY(fortyByte >= 0);
+        tuneOffAndStopInTheWindow(model, tx);
+
+        slice->setFrequency(7100000.0);
+        pump();
+        QVERIFY(model.tuneOffPendingForTest());
+        QCOMPARE(tx.power(), 55);
+        QCOMPARE(tx.powerForBand(Band::Band80m), 20);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 55);
+        QCOMPARE(conn->txDriveLog.last(), fortyByte);
+
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        verifyEachBandKeptItsOwnPower(tx);
+        QCOMPARE(conn->txDriveLog.last(), fortyByte);
+    }
+
+    // The restore turns the limit back on, so the drive is limited as any band
+    // change to this band is.
+    void tuneFixed_bandChangeInTheOffWindow_theNewBandsLimitApplies()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        armFixedTuneAtTwenty(tx);
+        const int fortyByte = armEightyAtTwentyFortyAtFiftyFive(model, conn, /*fortyLimit=*/30);
+        QVERIFY(fortyByte >= 0);
+        tuneOffAndStopInTheWindow(model, tx);
+
+        slice->setFrequency(7100000.0);
+        pump();
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        verifyEachBandKeptItsOwnPower(tx);
+        QCOMPARE(conn->txDriveLog.last(), fortyByte);
+    }
+
+    void tuneFixed_twoBandChangesInTheOffWindow_eachKeepsItsOwnPower()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        armFixedTuneAtTwenty(tx);
+        armEightyAtTwentyFortyAtFiftyFive(model, conn);
+        tx.setPowerForBand(Band::Band20m, 70);
+        tuneOffAndStopInTheWindow(model, tx);
+
+        slice->setFrequency(7100000.0);
+        pump();
+        slice->setFrequency(14100000.0);
+        pump();
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        QCOMPARE(tx.power(), 70);
+        QCOMPARE(tx.powerForBand(Band::Band80m), 20);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 55);
+        QCOMPARE(tx.powerForBand(Band::Band20m), 70);
+        QCOMPARE(storedPower(Band::Band80m), QStringLiteral("20"));
+        QCOMPARE(storedPower(Band::Band40m), QStringLiteral("55"));
+        QCOMPARE(storedPower(Band::Band20m), QStringLiteral("70"));
+    }
+
+    // TUNE pressed again inside the window, on the new band, picks the off up.
+    // Its own restore still ends with each band's power.
+    void tuneFixed_bandChangeInTheOffWindow_thenTuneAgain_endsWithEachBandsPower()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        armFixedTuneAtTwenty(tx);
+        armEightyAtTwentyFortyAtFiftyFive(model, conn);
+        tuneOffAndStopInTheWindow(model, tx);
+
+        slice->setFrequency(7100000.0);
+        pump();
+        model.setTune(true);
+        pump();
+        QVERIFY(model.isTune());
+        QVERIFY(!model.tuneOffPendingForTest());
+
+        model.setTuneOffSettleMsForTest(0);
+        model.setTune(false);
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        verifyEachBandKeptItsOwnPower(tx);
+    }
+
+    // After the restore nothing is held: the band change is the ordinary one.
+    void tuneFixed_bandChangeAfterTheRestore_behavesAsAnyOther()
+    {
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        armFixedTuneAtTwenty(tx);
+        const int fortyByte = armEightyAtTwentyFortyAtFiftyFive(model, conn);
+        QVERIFY(fortyByte >= 0);
+
+        model.setTune(true);
+        pump();
+        model.setTune(false);
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        QCOMPARE(tx.power(), 20);
+
+        slice->setFrequency(7100000.0);
+        pump();
+        verifyEachBandKeptItsOwnPower(tx);
+        QCOMPARE(conn->txDriveLog.last(), fortyByte);
+
+        // PWR moved on the band stays with it, as it does on any band change.
+        tx.setPower(44);
+        pump();
+        slice->setFrequency(3700000.0);
+        pump();
+        QCOMPARE(tx.power(), 20);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 44);
+        QCOMPARE(storedPower(Band::Band40m), QStringLiteral("44"));
+    }
+
+    // Two-tone's stop waits 200 ms with MOX down (setup.cs:11151-11152
+    // [v2.10.3.15]), so the same window opens, with the two-tone drive up.
+    void twoToneFixed_bandChangeInTheStopWindow_eachBandKeepsItsOwnPower()
+    {
+        TxChannel txChannel{/*channelId=*/1};
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{
+            if (model.twoToneController()) {
+                model.twoToneController()->setTxChannel(nullptr);
+            }
+            model.injectConnectionForTest(nullptr);
+        });
+        attachTwoTone(model, txChannel);
+        armFixedTwoToneAtTwenty(model);
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        const int fortyByte = armEightyAtTwentyFortyAtFiftyFive(model, conn);
+        QVERIFY(fortyByte >= 0);
+        twoToneOffAndStopInTheWindow(model, tx);
+
+        slice->setFrequency(7100000.0);
+        pump();
+        QVERIFY(model.twoToneController()->isDeactivationInFlight());
+        QCOMPARE(tx.power(), 55);
+        QCOMPARE(tx.powerForBand(Band::Band80m), 20);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 55);
+
+        QTRY_VERIFY(!model.twoToneController()->isActive());
+        QVERIFY(!tx.isTwoToneActive());
+        verifyEachBandKeptItsOwnPower(tx);
+        QCOMPARE(conn->txDriveLog.last(), fortyByte);
+    }
+
+    void twoToneFixed_bandChangeInTheStopWindow_theNewBandsLimitApplies()
+    {
+        TxChannel txChannel{/*channelId=*/1};
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{
+            if (model.twoToneController()) {
+                model.twoToneController()->setTxChannel(nullptr);
+            }
+            model.injectConnectionForTest(nullptr);
+        });
+        attachTwoTone(model, txChannel);
+        armFixedTwoToneAtTwenty(model);
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        const int fortyByte = armEightyAtTwentyFortyAtFiftyFive(model, conn, /*fortyLimit=*/30);
+        QVERIFY(fortyByte >= 0);
+        twoToneOffAndStopInTheWindow(model, tx);
+
+        slice->setFrequency(7100000.0);
+        pump();
+        QTRY_VERIFY(!model.twoToneController()->isActive());
+        verifyEachBandKeptItsOwnPower(tx);
+        QCOMPARE(conn->txDriveLog.last(), fortyByte);
+    }
+
+    // A refused start has put the power back. A later band change is an
+    // ordinary one.
+    void twoToneFixed_aRefusedStart_laterBandChangeIsOrdinary()
+    {
+        TxChannel txChannel{/*channelId=*/1};
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{
+            if (model.twoToneController()) {
+                model.twoToneController()->setTxChannel(nullptr);
+            }
+            model.injectConnectionForTest(nullptr);
+        });
+        attachTwoTone(model, txChannel);
+        armFixedTwoToneAtTwenty(model);
+        TransmitModel& tx = model.transmitModel();
+        SliceModel* slice = model.activeSlice();
+        armEightyAtTwentyFortyAtFiftyFive(model, conn);
+        model.moxController()->setMoxCheck([] {
+            return safety::BandPlanGuard::MoxCheckResult{
+                false, QStringLiteral("refused for the test")};
+        });
+        startTwoTone(model);
+        QVERIFY(!model.twoToneController()->isActive());
+        model.moxController()->setMoxCheck({});
+
+        tx.setPower(33);
+        pump();
+        slice->setFrequency(7100000.0);
+        pump();
+        QCOMPARE(tx.power(), 55);
+        QCOMPARE(tx.powerForBand(Band::Band80m), 33);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 55);
+    }
+
+    // Two-tone on and off, stopping inside the stop's settle.
+    static void twoToneOffAndStopInTheWindow(RadioModel& model, TransmitModel& tx)
+    {
+        startTwoTone(model);
+        QVERIFY(model.twoToneController()->isActive());
+        QCOMPARE(tx.power(), 60);
+        model.twoToneController()->setSettleDelaysMs(kWindowSettleMs, 0);
+        model.setTwoTone(false);
+        QTRY_VERIFY(!model.isTransmitting());
+        QVERIFY(model.twoToneController()->isDeactivationInFlight());
+        QCOMPARE(tx.power(), 60);
     }
 
     // Not FIXED: TUN neither sets nor restores PWR, so a PWR change made

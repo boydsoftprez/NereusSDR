@@ -9193,7 +9193,8 @@ private:
     //   //MW0LGE_22b  [original inline comment from console.cs:30033]
     //   Saved and restored only under the FIXED tune source
     //   (console.cs:30094-30104 and 30180-30185 [v2.10.3.15]); see
-    //   m_tuneSetFixedPwr.
+    //   m_tuneSetFixedPwr. A band change before the restore replaces it with
+    //   the new band's power (applyTransmitBand).
     // Default 100 matches TransmitModel::m_power default (TransmitModel.h).
     // G.4 fixup: changed from 50 (initial value mismatch with TransmitModel);
     // harmless after the cold-off guard in setTune(false) but kept for hygiene.

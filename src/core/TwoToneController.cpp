@@ -701,6 +701,7 @@ void TwoToneController::continueActivation()
     // drive to compute; new_pwr is then the source's own value, which is
     // what the FIXED branch below needs.
     m_savedPwrValid = false;
+    m_savedPwrBandMoved = false;
     // A restore a superseded cycle left undone has none coming now.
     m_tx->setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::TwoTone, false);
     const bool fixedSource =
@@ -1085,8 +1086,37 @@ void TwoToneController::restoreSavedPower()
     if (!lifetime || !cycleCurrent(serial)) { return; }
     m_tx->setPower(m_savedPwr);
     if (!lifetime || !cycleCurrent(serial)) { return; }
+    // Ours differs on purpose from setup.cs:11196-11201 [v2.10.3.15]: after a
+    // band change in the stop's settle (console.cs:17533-17537 [v2.10.3.15]),
+    // PWR is already this band's, so the setPower above may not scroll, and the
+    // drive was last computed for the two-tone with the limit off. txMode 0 now,
+    // as setTwoToneActive(false) ran first, so this drives PWR within the limit.
+    if (m_savedPwrBandMoved && m_paProfileManager) {
+        if (const PaProfile* profile = m_paProfileManager->activeProfile()) {
+            Band band = m_slice
+                ? bandFromFrequency(m_slice->frequency())
+                : Band::Band20m;
+            if (m_txBand) {
+                band = m_txBand();
+            }
+            (void)m_tx->setPowerUsingTargetDbm(
+                *profile, band,
+                /*bSetPower=*/true,
+                /*bFromTune=*/false,
+                /*bTwoTone=*/false,
+                m_tx->hpsdrModel());
+            if (!lifetime || !cycleCurrent(serial)) { return; }
+        }
+    }
     m_savedPwrValid = false;
+    m_savedPwrBandMoved = false;
     m_tx->setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::TwoTone, false);
+}
+
+void TwoToneController::transmitBandMoved(int newBandPower) noexcept
+{
+    m_savedPwr = newBandPower;
+    m_savedPwrBandMoved = true;
 }
 
 // ---------------------------------------------------------------------------
