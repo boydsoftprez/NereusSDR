@@ -179,6 +179,35 @@ else.
 See: Your hand-tuned frequency is saved over your place in that band, as spec section 5.3 says. Try
 it and say whether that feels right, since it replaces what was saved there.
 
+### 18. Going back to your own place
+
+Status: pending
+
+Do: Recall a spot. Tune away from it on the same band. Then click that spot's row, or its tick on the
+spectrum.
+
+See: The radio returns to the saved frequency, and the saved entry is unchanged.
+
+### 19. The phone's expiry note
+
+Status: pending
+
+Do: With a Core that has no window open, turn on Auto-expiry from the phone's Setup page and wait for
+an entry to expire.
+
+See: The phone says how many entries were removed and offers Undo for 5 seconds. Undo brings them
+back. Nobody has seen this note on a real screen, so say whether it sits in the right place, upright
+and sideways.
+
+### 20. A shared pan on a recall
+
+Status: pending
+
+Do: Put Slice A and Slice B on one pan. Recall a spot for Slice A that is off screen and was saved
+with a tighter zoom.
+
+See: The pan follows the frequency as a band change does, and keeps its zoom.
+
 ## Layout problems to look at
 
 Status: pending
