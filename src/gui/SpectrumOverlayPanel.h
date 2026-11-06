@@ -270,6 +270,8 @@ public slots:
 signals:
     // Band flyout
     void bandSelected(const QString& bandName, double freqHz, const QString& mode);
+    /// A right-click on a band button: bandSelected's name, and where.
+    void bandContextRequested(const QString& bandKey, const QPoint& globalPos);
 
     // Display pill
     /// "Setup defaults" in the pill's footer. The page follows the open

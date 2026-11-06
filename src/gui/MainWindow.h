@@ -18,6 +18,10 @@
 //               column; the placeholder reason retired (band stack plan
 //               Task 7). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-11-06: pressBand(), the one router for a band press;
+//               bandStackNext(), bandStackPrevious(), bandStackAdd(),
+//               viewForSlice() (band stack plan Task 8). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
 //               display's clicks, wheel and keys act on the slice they
 //               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
@@ -285,6 +289,7 @@
 //============================================================================================//
 
 #include "gui/widgets/CpuRowCycler.h"
+#include "models/Band.h"
 #include <functional>
 #include <memory>
 #include <map>
@@ -394,6 +399,8 @@ class MultiDeviceController;
 class HostingSliceActions;
 class BandStackAccess;
 class BandStackPanel;
+struct BandStackView;
+enum class BandStackDirection;
 class NoticeCard;
 struct SessionMessage;
 class AdcOverloadBadge;
@@ -468,6 +475,9 @@ public:
     QString bandStackReason() const;
     /// Test seam: the window uses this access instead of its RadioModel's.
     void setBandStackAccessForTest(BandStackAccess* access);
+    /// What `slice`'s pan shows now, for the band stack's saved view. Empty
+    /// when no pan shows it.
+    BandStackView viewForSlice(SliceModel* slice) const;
     // Display pill plan Task 9: the window's per-band pan models.
     PanModels* panModels() const { return m_panModels; }
 
@@ -720,6 +730,17 @@ public slots:
     /// Opens or closes the band stack panel: the status bar's dots, the Band
     /// menu's Band Stacking... and the hot keys' entry point.
     void bandStackPanel();
+    /// Every band press in this window: the Band menu, the BAND flyout, a
+    /// container's band grid and the VFO display's band screen. With the band
+    /// stack ready: on `slice`'s own band Ctrl (Cmd on Mac) adds the spot and
+    /// Shift goes to the previous entry; anything else presses for the next.
+    /// Otherwise RadioModel::onBandButtonClicked, as without a stack.
+    void pressBand(SliceModel* slice, Band band, Qt::KeyboardModifiers mods);
+    /// The next or previous entry on the selected slice's band, wrapping
+    /// within it, and adding its current spot. The hot keys' entry points.
+    void bandStackNext();
+    void bandStackPrevious();
+    void bandStackAdd();
     /// Applies a change of the Core's capability or the connection: the panel's
     /// greyed state and the dots' and menu entry's tooltip.
     void refreshBandStackAvailability();
@@ -2052,6 +2073,8 @@ private:
     void bindBandStackAccess(BandStackAccess* access);
     void refreshBandStackSlice();
     void refreshBandStackDots();
+    /// bandStackNext, bandStackPrevious and a container's STACK+ and STACK-.
+    void stepBandStack(SliceModel* slice, BandStackDirection direction);
 
     void createDefaultContainers();
 

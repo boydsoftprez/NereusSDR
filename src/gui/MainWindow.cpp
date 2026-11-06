@@ -1088,6 +1088,10 @@
 //               column, the dots and menu entry open it, refusals and reports
 //               toast, the placeholder is gone. J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 8: pressBand routes every band press in
+//               the window, the flyout stays open across presses, and the
+//               four hot key entry points. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (C2, I1, I2, M6): a filter display
 //                 learns whether its slice is the transmit slice; the VFO
 //                 display's TX box asks requestTransmitSlice and shows
@@ -1409,6 +1413,7 @@ warren@wpratt.com
 #include "gui/multidevice/TakeTransmitDialog.h"
 #include "models/PanadapterModel.h"
 #include "models/Band.h"
+#include "models/BandDefaults.h"
 #include "models/TransmitModel.h"
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
@@ -2571,6 +2576,69 @@ void MainWindow::setBandStackAccessForTest(BandStackAccess* access)
     bindBandStackAccess(access);
 }
 
+BandStackView MainWindow::viewForSlice(SliceModel* slice) const
+{
+    BandStackView view;
+    const SpectrumWidget* spectrum = slice ? spectrumForSlice(slice) : nullptr;
+    if (spectrum) {
+        view.centerHz = qRound64(spectrum->centerFrequency());
+        view.spanHz = qRound64(spectrum->bandwidth());
+    }
+    return view;
+}
+
+void MainWindow::pressBand(SliceModel* slice, Band band, Qt::KeyboardModifiers mods)
+{
+    if (!m_radioModel) { return; }
+    if (!m_bandStackAccess || m_bandStackAccess->state() != BandStackAccess::State::Ready) {
+        m_radioModel->onBandButtonClicked(slice, band);
+        return;
+    }
+    if (!slice) { return; }
+    const int sliceId = slice->sliceIndex();
+    const BandStackView view = viewForSlice(slice);
+    const bool sameBand = BandDefaults::bandGridBandFromFrequency(slice->frequency()) == band;
+    if (sameBand && mods.testFlag(Qt::ControlModifier)) {
+        m_bandStackAccess->add(sliceId, view);
+    } else if (sameBand && mods.testFlag(Qt::ShiftModifier)) {
+        m_bandStackAccess->press(sliceId, band, BandStackDirection::Previous, view);
+    } else {
+        m_bandStackAccess->press(sliceId, band, BandStackDirection::Next, view);
+    }
+}
+
+void MainWindow::stepBandStack(SliceModel* slice, BandStackDirection direction)
+{
+    if (!m_bandStackAccess || m_bandStackAccess->state() != BandStackAccess::State::Ready) {
+        showContainerButtonReason(bandStackReason());
+        return;
+    }
+    if (slice) {
+        m_bandStackAccess->step(slice->sliceIndex(), direction, viewForSlice(slice));
+    }
+}
+
+void MainWindow::bandStackNext()
+{
+    stepBandStack(activeSliceForWindow(), BandStackDirection::Next);
+}
+
+void MainWindow::bandStackPrevious()
+{
+    stepBandStack(activeSliceForWindow(), BandStackDirection::Previous);
+}
+
+void MainWindow::bandStackAdd()
+{
+    if (!m_bandStackAccess || m_bandStackAccess->state() != BandStackAccess::State::Ready) {
+        showContainerButtonReason(bandStackReason());
+        return;
+    }
+    if (SliceModel* slice = activeSliceForWindow()) {
+        m_bandStackAccess->add(slice->sliceIndex(), viewForSlice(slice));
+    }
+}
+
 void MainWindow::bindBandStackAccess(BandStackAccess* access)
 {
     if (m_bandStackAccess) {
@@ -2607,6 +2675,8 @@ void MainWindow::refreshBandStackAvailability()
     }
     refreshBandStackDots();
     refreshBandStackSlice();
+    // STACK+ and STACK- are disabled with the same reason.
+    refreshContainerControls();
 }
 
 void MainWindow::refreshBandStackSlice()
@@ -8217,7 +8287,7 @@ void MainWindow::ensureOverlayPanels()
             SliceModel* s = sliceForPan(panId);
             if (s == nullptr) { return; }
             selectSliceForWindow(s->sliceIndex());
-            m_radioModel->onBandButtonClicked(s, bandFromName(name));
+            pressBand(s, bandFromName(name), QGuiApplication::keyboardModifiers());
         });
     }
     // Parity Task 18 (C8): a pan created after connect says so when empty.
@@ -9819,6 +9889,14 @@ void MainWindow::buildUI()
         // Desktop remote transmit: the Core's own reason when it gave one.
         hooks.remoteTransmitReasonNow = [this] { return remoteTransmitReason(); };
         hooks.spectrumFor = [this](SliceModel* s) { return spectrumForSlice(s); };
+        // Band stack plan Task 8: a band grid press, STACK+ and STACK-.
+        hooks.pressBand = [this](SliceModel* s, Band band) {
+            pressBand(s, band, QGuiApplication::keyboardModifiers());
+        };
+        hooks.bandStackReason = [this] { return bandStackReason(); };
+        hooks.stepBandStack = [this](SliceModel* s, bool next) {
+            stepBandStack(s, next ? BandStackDirection::Next : BandStackDirection::Previous);
+        };
         // Parity Task 31 (A11): DUP, the window's DisplayDuplex setting, as
         // View > Display duplex (DUP) sets it.
         hooks.displayDuplexOn = [this] { return m_displayDuplexSetting; };
@@ -13503,7 +13581,7 @@ void MainWindow::buildMenuBar()
         for (const auto& entry : hfBands) {
             const Band band = entry.band;
             hfMenu->addAction(QString::fromUtf8(entry.label), this, [this, band]() {
-                if (m_radioModel) { m_radioModel->onBandButtonClicked(band); }
+                pressBand(activeSliceForWindow(), band, QGuiApplication::keyboardModifiers());
             });
         }
     }
@@ -13522,12 +13600,12 @@ void MainWindow::buildMenuBar()
         QAction* genAction = bandMenu->addAction(QStringLiteral("&GEN"));
         genAction->setToolTip(QStringLiteral("General coverage"));
         connect(genAction, &QAction::triggered, this, [this]() {
-            if (m_radioModel) { m_radioModel->onBandButtonClicked(Band::GEN); }
+            pressBand(activeSliceForWindow(), Band::GEN, QGuiApplication::keyboardModifiers());
         });
     }
 
     bandMenu->addAction(QStringLiteral("&WWV"), this, [this]() {
-        if (m_radioModel) { m_radioModel->onBandButtonClicked(Band::WWV); }
+        pressBand(activeSliceForWindow(), Band::WWV, QGuiApplication::keyboardModifiers());
     });
 
     bandMenu->addSeparator();
@@ -16069,7 +16147,7 @@ void MainWindow::wireVfoDisplayRequests(VfoDisplayItem* vfo)
             [this, guard](int sliceId, Band band) {
         SliceModel* slice = vfoRequestSlice(guard, sliceId);
         if (!slice || slice->locked()) { return; }
-        m_radioModel->onBandButtonClicked(slice, band);
+        pressBand(slice, band, QGuiApplication::keyboardModifiers());
     });
     // From Thetis MeterManager.cs:14991-15028 [v2.10.3.15] (setMode).
     connect(vfo, &VfoDisplayItem::modeRequested, this,

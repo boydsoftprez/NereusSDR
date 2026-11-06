@@ -10592,6 +10592,11 @@ target_compile_definitions(tst_bandstack_link PRIVATE
 nereus_add_test(tst_bandstack_panel
     fakes/FakeBandStackAccess.h)
 
+# Band stack plan Task 8: every band press through MainWindow::pressBand, on a
+# real MainWindow offscreen with a fake access.
+nereus_add_test(tst_bandstack_router
+    fakes/FakeBandStackAccess.h)
+
 # Band stack plan Task 5: a recall on a shared receiver asks through the
 # confirm step, through a loopback link with fake peers.
 nereus_add_test(tst_bandstack_question

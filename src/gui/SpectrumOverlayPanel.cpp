@@ -137,6 +137,10 @@
 //                zoom strip when that is placed. The flag covered the open
 //                Display pill and took its clicks. J.J. Boyd (KG4VCF),
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - The BAND flyout stays open after a press, and a band button's
+//                right-click asks for its stack (bandContextRequested). Band
+//                stack plan Task 8. J.J. Boyd (KG4VCF), AI-assisted
+//                implementation via Anthropic Claude Code.
 //   2026-10-11 - An open flyout owns the mouse over its whole rectangle
 //                (claimMouseForFlyout), and the outside press that closes
 //                it on the same pan is taken with its moves, release and
@@ -890,9 +894,15 @@ void SpectrumOverlayPanel::buildBandFlyout()
         double  freqHz   = kBandGrid[i].freqHz;
         QString mode     = QString::fromLatin1(kBandGrid[i].mode);
 
+        // The flyout stays open across presses and closes on a click elsewhere
+        // (eventFilter), so a second press can step through the band's stack.
         connect(btn, &QPushButton::clicked, this, [this, bandName, freqHz, mode]() {
-            hideFlyout();
             emit bandSelected(bandName, freqHz, mode);
+        });
+        btn->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(btn, &QWidget::customContextMenuRequested, this,
+                [this, btn, bandName](const QPoint& pos) {
+            emit bandContextRequested(bandName, btn->mapToGlobal(pos));
         });
         grid->addWidget(btn, row, col);
     }
