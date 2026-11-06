@@ -20,6 +20,7 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: bandStack(), local or remote by role.
 //   2026-11-05: Band stack plan Task 4: the `bandStack` facade, bound to the controller on the Core.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
@@ -1969,6 +1970,8 @@ mw0lge@grange-lane.co.uk
 #include "core/FFTRouter.h"  // Phase 3F Sub-Epic D Task 13
 #include "models/FilterPresetStore.h"
 #include "models/bandstack/BandStackController.h"
+#include "models/bandstack/LocalBandStackAccess.h"
+#include "models/bandstack/RemoteBandStackAccess.h"
 #include "core/accessories/N2adrPreset.h"
 #include "core/codec/AlexFilterMap.h"  // Phase 3F: per-ADC BPF -> HPF bits
 #include "core/AlexSettingsKeys.h"
@@ -3992,6 +3995,12 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     m_roundtableState = new RoundtableState(this);
     // Band stack plan Task 4: the `bandStack` object, in every placement.
     m_bandStackFacade = new BandStackFacade(this);
+    // Band stack plan Task 6: what the GUI talks to.
+    if (m_role == Role::Remote) {
+        m_bandStackAccess = new RemoteBandStackAccess(this);
+    } else {
+        m_bandStackAccess = new LocalBandStackAccess(this);
+    }
     m_roundtableModel = new RoundtableModel(this);
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
@@ -10890,6 +10899,14 @@ void RadioModel::reportStationSliceCommandRejected(const QString& reason)
         return;
     }
     emit sliceAddRejected(reason);
+}
+
+void RadioModel::reportStationBandStackRefused(const QString& reason)
+{
+    if (m_role != Role::Remote) {
+        return;
+    }
+    emit stationBandStackRefused(reason);
 }
 
 void RadioModel::reportStationAccessoryRefusal(const QString& device, const QString& reason,

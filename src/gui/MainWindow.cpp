@@ -1081,6 +1081,9 @@
 //                Thetis's MatchTXFilterToRXFilter has no NereusSDR
 //                equivalent yet (noted at the click). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - Band stack plan Task 6: while this desktop hosts, its band
+//               stack runs as the station device (bindBandStack). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (C2, I1, I2, M6): a filter display
 //                 learns whether its slice is the transmit slice; the VFO
 //                 display's TX box asks requestTransmitSlice and shows
@@ -1317,6 +1320,7 @@ warren@wpratt.com
 #include "gui/multidevice/MultiDeviceController.h"
 #include "gui/multidevice/NoticeCard.h"
 #include "gui/HostingSliceActions.h"
+#include "models/bandstack/LocalBandStackAccess.h"
 #include "gui/LevelCalGridFollowGuard.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/session/PathRacer.h"
@@ -3303,6 +3307,9 @@ void MainWindow::refreshDesktopStationState()
         if (server) {
             m_hostingSlices = std::make_unique<HostingSliceActions>(server, m_radioModel);
             wireHostingSlices();
+            // Band stack plan Task 6: its stack runs as the station device too.
+            m_hostingSlices->bindBandStack(
+                qobject_cast<LocalBandStackAccess*>(m_radioModel->bandStack()));
         }
         if (server && server->transmitHolder()) {
             m_desktopHolderConnection = connect(server->transmitHolder(),

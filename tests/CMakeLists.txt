@@ -10580,6 +10580,7 @@ nereus_add_test(tst_slice_select_band
 # Band stack plan Task 4: the band stack through a loopback link: the facade,
 # the feature gate and every bandStack.* verb.
 nereus_add_test(tst_bandstack_link
+    fakes/FakeBandStackAccess.h
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 

@@ -18,6 +18,9 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-05 - Band stack plan Task 6: BandStackAccess, local and remote, and
+//                 the fake. J.J. Boyd (KG4VCF), with AI-assisted implementation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -32,6 +35,10 @@
 #include "core/settings/SettingsProxy.h"
 #include "models/Band.h"
 #include "models/bandstack/BandStackController.h"
+#include "models/bandstack/LocalBandStackAccess.h"
+#include "core/session/RemoteDevicesState.h"
+#include "core/session/SliceAccessMirror.h"
+#include "fakes/FakeBandStackAccess.h"
 
 namespace {
 
@@ -39,6 +46,8 @@ const QString kNotUnderstood = QStringLiteral("The request for the band stack wa
 const QString kUpdateApp = QStringLiteral("Update this app to use band stacks on this Core.");
 const QString kNoEntry = QStringLiteral("That band stack entry no longer exists.");
 const QString kNoRadio = QStringLiteral("Connect to a radio to use band stacks.");
+const QString kNewerCore =
+    QStringLiteral("This Core does not have band stacks yet. Updating the Core adds them.");
 
 const QHash<QByteArray, int> kStack{{"deviceAuth", 1}, {"sessionHolder", 1}, {"bandStack", 1}};
 const QHash<QByteArray, int> kSharesStack{
@@ -121,6 +130,36 @@ QJsonObject coreDocument(const Core& core)
 {
     return parse(core.model->bandStackFacade()->json());
 }
+
+// A remote window on the loopback, up to the end of its handshake.
+struct RemoteWindow {
+    RadioModel window{RadioModel::Role::Remote};
+    SettingsProxy proxy;
+    StationClient client{&window, &proxy};
+
+    BandStackAccess* access() const { return window.bandStack(); }
+
+    // A device-key sign-in, as far as slices go: the Core numbers the first token
+    // window token:1, and it sees who holds each slice. A token window adopts none,
+    // so a test gives it one with setOwner.
+    void sharesSlices()
+    {
+        client.setTokenSessionHolderForTest(QStringLiteral("token:1"));
+        client.setTokenSliceAccessForTest(true);
+        client.declareFeatureForTest(QByteArrayLiteral("deviceAuth"), 1);
+    }
+
+    bool connectTo(Core& core, QObject* parent)
+    {
+        auto* coreEnd = new LoopbackTransport(QStringLiteral("station-end"), parent);
+        auto* windowEnd = new LoopbackTransport(QStringLiteral("client-end"), parent);
+        coreEnd->linkTo(windowEnd);
+        QSignalSpy completed(&client, &StationClient::handshakeComplete);
+        client.startSession(windowEnd, core.server->token());
+        core.server->acceptTransport(coreEnd);
+        return completed.wait(5000) || completed.count() == 1;
+    }
+};
 
 } // namespace
 
@@ -859,6 +898,575 @@ private slots:
         QVERIFY(!client.bandStackAvailable());
         QCOMPARE(window.bandStackFacade()->json(), QString());
         client.disconnectFromStation(QStringLiteral("test over"));
+    }
+
+    // ── BandStackAccess (Task 6) ─────────────────────────────────────────
+
+    void aWindowOnTheCoreSaysConnectUntilThereIsARadio()
+    {
+        Core core;
+        BandStackAccess* access = core.model->bandStack();
+        QVERIFY(qobject_cast<LocalBandStackAccess*>(access) != nullptr);
+        QCOMPARE(access->state(), BandStackAccess::State::NotConnected);
+        QCOMPARE(access->unavailableReason(), kNoRadio);
+        QVERIFY(access->document().isEmpty());
+
+        QSignalSpy refused(access, &BandStackAccess::refused);
+        const double frequency = core.model->sliceById(0)->frequency();
+        access->press(0, Band::Band40m, BandStackDirection::Next, {});
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toString(), kNoRadio);
+        QCOMPARE(core.model->sliceById(0)->frequency(), frequency);
+
+        // A radio known but not connected is still not connected.
+        core.model->setConnectionStateForTest(ConnectionState::Disconnected);
+        QSignalSpy document(access, &BandStackAccess::documentChanged);
+        QSignalSpy state(access, &BandStackAccess::stateChanged);
+        startStack(core);
+        QCOMPARE(document.count(), 1);
+        QVERIFY(!access->document().isEmpty());
+        QCOMPARE(access->state(), BandStackAccess::State::NotConnected);
+        QCOMPARE(state.count(), 0);
+
+        core.model->setConnectionStateForTest(ConnectionState::Connected);
+        QCOMPARE(access->state(), BandStackAccess::State::Ready);
+        QCOMPARE(access->unavailableReason(), QString());
+        QCOMPARE(state.count(), 1);
+        core.model->setConnectionStateForTest(ConnectionState::Disconnected);
+        QCOMPARE(access->state(), BandStackAccess::State::NotConnected);
+        QCOMPARE(state.count(), 2);
+    }
+
+    void aLocalCallGoesStraightToTheController()
+    {
+        Core core;
+        startStack(core);
+        core.model->setConnectionStateForTest(ConnectionState::Connected);
+        BandStackAccess* access = core.model->bandStack();
+        QSignalSpy refused(access, &BandStackAccess::refused);
+        QSignalSpy reported(access, &BandStackAccess::reported);
+        QSignalSpy report(core.model->bandStackController(), &BandStackController::reportRecall);
+        QSignalSpy document(access, &BandStackAccess::documentChanged);
+        SliceModel* slice = core.model->sliceById(0);
+
+        // A view reaches the controller: it comes back as the slice's spot on add.
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14123000.0);
+        BandStackView view;
+        view.centerHz = 14100000;
+        view.spanHz = 96000;
+        access->add(0, view);
+        const QString added = placeOf(access->document(), QStringLiteral("A"), QStringLiteral("20m"));
+        QVERIFY(!added.isEmpty());
+        QCOMPARE(entryIn(access->document(), added).value(QStringLiteral("centerHz")).toInteger(),
+                 14100000);
+        QVERIFY(document.count() >= 1);
+
+        access->press(0, Band::Band40m, BandStackDirection::Next, {});
+        const QString on40 = placeOf(access->document(), QStringLiteral("A"), QStringLiteral("40m"));
+        QVERIFY(!on40.isEmpty());
+        QCOMPARE(qRound64(slice->frequency()),
+                 entryIn(access->document(), on40).value(QStringLiteral("frequencyHz")).toInteger());
+        QCOMPARE(report.count(), 1);
+        QCOMPARE(reported.count(), 1);
+        QCOMPARE(reported.first().at(0).toString(), report.first().at(1).toString());
+        QVERIFY(reported.first().at(0).toString().startsWith(QStringLiteral("40m: ")));
+
+        access->step(0, BandStackDirection::Next, {});
+        QVERIFY(placeOf(access->document(), QStringLiteral("A"), QStringLiteral("40m")) != on40);
+        access->goTo(0, added, {});
+        QCOMPARE(qRound64(slice->frequency()), qint64(14123000));
+        QCOMPARE(reported.count(), 3);
+        slice->setFrequency(14124000.0);
+        access->saveHere(0, added, view);
+        QCOMPARE(entryIn(access->document(), added).value(QStringLiteral("frequencyHz")).toInteger(),
+                 14124000);
+        access->edit(added, QStringLiteral("Net"), std::nullopt);
+        QCOMPARE(entryIn(access->document(), added).value(QStringLiteral("name")).toString(),
+                 QStringLiteral("Net"));
+        QStringList reversed = orderOn(access->document(), QStringLiteral("40m"));
+        std::reverse(reversed.begin(), reversed.end());
+        access->reorder(Band::Band40m, reversed);
+        QCOMPARE(orderOn(access->document(), QStringLiteral("40m")), reversed);
+        access->setReturn(Band::Band40m, BandStackReturnMode::LastUsed, {});
+        QCOMPARE(access->document().value(QStringLiteral("bands")).toObject()
+                     .value(QStringLiteral("40m")).toObject()
+                     .value(QStringLiteral("returnMode")).toString(),
+                 QStringLiteral("lastUsed"));
+        access->options(false, 15, 30);
+        QCOMPARE(access->document().value(QStringLiteral("options")).toObject()
+                     .value(QStringLiteral("dwellSeconds")).toInt(), 30);
+        access->remove(reversed.last());
+        QVERIFY(entryIn(access->document(), reversed.last()).isEmpty());
+        access->clear(Band::Band80m);
+        access->reseed();
+        QVERIFY(!orderOn(access->document(), QStringLiteral("80m")).isEmpty());
+        QCOMPARE(refused.count(), 0);
+
+        // A refusal, in the controller's own words, and no change.
+        const QJsonObject before = access->document();
+        access->remove(QStringLiteral("no-such-entry"));
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toString(), kNoEntry);
+        access->restoreExpired(QStringLiteral("no-such-batch"));
+        QCOMPARE(refused.count(), 2);
+        QCOMPARE(access->document(), before);
+    }
+
+    void anInvokerTakesEveryLocalCall()
+    {
+        Core core;
+        startStack(core);
+        core.model->setConnectionStateForTest(ConnectionState::Connected);
+        auto* access = qobject_cast<LocalBandStackAccess*>(core.model->bandStack());
+        QVERIFY(access != nullptr);
+        QList<SessionMessage> sent;
+        access->setInvoker([&sent](const SessionMessage& message) { sent.append(message); });
+        const QString before = core.model->bandStackFacade()->json();
+        BandStackView view;
+        view.centerHz = 7100000;
+        view.spanHz = 48000;
+        access->press(0, Band::Band40m, BandStackDirection::Previous, view);
+        access->step(0, BandStackDirection::Next, {});
+        access->goTo(0, QStringLiteral("x"), {});
+        access->add(0, {});
+        access->saveHere(0, QStringLiteral("x"), {});
+        access->edit(QStringLiteral("x"), std::nullopt, true);
+        access->remove(QStringLiteral("x"));
+        access->reorder(Band::Band40m, {QStringLiteral("x"), QStringLiteral("y")});
+        access->setReturn(Band::Band40m, BandStackReturnMode::Specific, QStringLiteral("x"));
+        access->clear(std::nullopt);
+        access->reseed();
+        access->options(std::nullopt, 15, std::nullopt);
+        access->restoreExpired(QStringLiteral("b"));
+        QStringList verbs;
+        for (const SessionMessage& message : sent) {
+            QCOMPARE(message.kind, SessionMessageKind::CommandInvoke);
+            verbs.append(QString::fromLatin1(message.commandVerb));
+        }
+        QCOMPARE(verbs, QStringList({"bandStack.press", "bandStack.step", "bandStack.goTo",
+                                     "bandStack.add", "bandStack.saveHere", "bandStack.edit",
+                                     "bandStack.delete", "bandStack.reorder", "bandStack.setReturn",
+                                     "bandStack.clear", "bandStack.reseed", "bandStack.options",
+                                     "bandStack.restoreExpired"}));
+        QCOMPARE(core.model->bandStackFacade()->json(), before);
+        const auto valueIn = [](const SessionMessage& message, const char* name) {
+            for (const MirrorUpdate& argument : message.arguments) {
+                if (argument.name == name) {
+                    return argument.value;
+                }
+            }
+            return QVariant();
+        };
+        QCOMPARE(valueIn(sent.at(0), "band").toString(), QStringLiteral("40m"));
+        QCOMPARE(valueIn(sent.at(0), "direction").toString(), QStringLiteral("previous"));
+        QCOMPARE(valueIn(sent.at(0), "viewCenterHz").toLongLong(), 7100000);
+        QCOMPARE(valueIn(sent.at(0), "viewSpanHz").toLongLong(), 48000);
+        QVERIFY(!valueIn(sent.at(1), "viewCenterHz").isValid());
+        QCOMPARE(valueIn(sent.at(7), "ids").toString(), QStringLiteral("[\"x\",\"y\"]"));
+        QCOMPARE(valueIn(sent.at(8), "mode").toString(), QStringLiteral("specific"));
+
+        // Back to the controller once the invoker goes.
+        access->setInvoker({});
+        access->options(std::nullopt, std::nullopt, 10);
+        QCOMPARE(sent.size(), 13);
+        QCOMPARE(access->document().value(QStringLiteral("options")).toObject()
+                     .value(QStringLiteral("dwellSeconds")).toInt(), 10);
+    }
+
+    void aRemoteWindowWithNoCoreSaysConnect()
+    {
+        RemoteWindow remote;
+        BandStackAccess* access = remote.access();
+        QCOMPARE(access->state(), BandStackAccess::State::NotConnected);
+        QCOMPARE(access->unavailableReason(), kNoRadio);
+        QSignalSpy refused(access, &BandStackAccess::refused);
+        access->reseed();
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toString(), kNoRadio);
+    }
+
+    void aRemoteWindowOnAnOlderCoreIsToldAndSendsNothing()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        startStack(core);
+        RemoteWindow remote;
+        // What an older Core amounts to here: no bandStackVersion comes back.
+        remote.client.withholdFeatureForTest(QByteArrayLiteral("bandStack"));
+        QSignalSpy state(remote.access(), &BandStackAccess::stateChanged);
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(remote.access()->state(), BandStackAccess::State::NeedsNewerCore);
+        QVERIFY(state.count() >= 1);
+        QCOMPARE(remote.access()->unavailableReason(), kNewerCore);
+        QVERIFY(remote.access()->document().isEmpty());
+
+        QSignalSpy refused(remote.access(), &BandStackAccess::refused);
+        const double frequency = core.model->sliceById(0)->frequency();
+        const QString before = core.model->bandStackFacade()->json();
+        remote.access()->press(0, Band::Band40m, BandStackDirection::Next, {});
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toString(), kNewerCore);
+        QTest::qWait(50);
+        QCOMPARE(core.model->sliceById(0)->frequency(), frequency);
+        QCOMPARE(core.model->bandStackFacade()->json(), before);
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+    }
+
+    void aRemoteWindowSendsEveryVerbAndFollowsTheDocument()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        startStack(core);
+        RemoteWindow remote;
+        BandStackAccess* access = remote.access();
+        QVERIFY(qobject_cast<LocalBandStackAccess*>(access) == nullptr);
+        QSignalSpy state(access, &BandStackAccess::stateChanged);
+        QSignalSpy documentChanged(access, &BandStackAccess::documentChanged);
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(access->state(), BandStackAccess::State::Ready);
+        QVERIFY(state.count() >= 1);
+        QCOMPARE(access->unavailableReason(), QString());
+        QTRY_COMPARE(access->document(), coreDocument(core));
+        QVERIFY(documentChanged.count() >= 1);
+        QSignalSpy refused(access, &BandStackAccess::refused);
+        const auto caughtUp = [&core, access]() { return access->document() == coreDocument(core); };
+
+        SliceModel* slice = core.model->sliceById(0);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14123000.0);
+        BandStackView view;
+        view.centerHz = 14100000;
+        view.spanHz = 96000;
+
+        // Every value of a view arrives: add stores it in the entry.
+        const qsizetype on20 = orderOn(coreDocument(core), QStringLiteral("20m")).size();
+        access->add(0, view);
+        QTRY_COMPARE(orderOn(coreDocument(core), QStringLiteral("20m")).size(), on20 + 1);
+        const QString added = placeOf(coreDocument(core), QStringLiteral("A"), QStringLiteral("20m"));
+        QCOMPARE(entryIn(coreDocument(core), added).value(QStringLiteral("centerHz")).toInteger(),
+                 14100000);
+        QCOMPARE(entryIn(coreDocument(core), added).value(QStringLiteral("spanHz")).toInteger(), 96000);
+        QTRY_VERIFY(caughtUp());
+
+        // press: band as a key, and the view saved into the spot left.
+        access->press(0, Band::Band40m, BandStackDirection::Next, {});
+        QTRY_VERIFY(!placeOf(coreDocument(core), QStringLiteral("A"), QStringLiteral("40m")).isEmpty());
+        const QString on40 = placeOf(coreDocument(core), QStringLiteral("A"), QStringLiteral("40m"));
+        QCOMPARE(qRound64(slice->frequency()),
+                 entryIn(coreDocument(core), on40).value(QStringLiteral("frequencyHz")).toInteger());
+        access->step(0, BandStackDirection::Next, {});
+        QTRY_VERIFY(placeOf(coreDocument(core), QStringLiteral("A"), QStringLiteral("40m")) != on40);
+        access->goTo(0, added, {});
+        QTRY_COMPARE(qRound64(slice->frequency()), qint64(14123000));
+        slice->setFrequency(14124000.0);
+        BandStackView other;
+        other.centerHz = 14110000;
+        other.spanHz = 48000;
+        access->saveHere(0, added, other);
+        QTRY_COMPARE(entryIn(coreDocument(core), added).value(QStringLiteral("frequencyHz")).toInteger(),
+                     14124000);
+        QCOMPARE(entryIn(coreDocument(core), added).value(QStringLiteral("spanHz")).toInteger(), 48000);
+
+        access->edit(added, QStringLiteral("Net"), true);
+        QTRY_COMPARE(entryIn(coreDocument(core), added).value(QStringLiteral("name")).toString(),
+                     QStringLiteral("Net"));
+        QVERIFY(entryIn(coreDocument(core), added).value(QStringLiteral("locked")).toBool());
+        access->edit(added, std::nullopt, false);
+        QTRY_VERIFY(!entryIn(coreDocument(core), added).value(QStringLiteral("locked")).toBool());
+
+        QStringList reversed = orderOn(coreDocument(core), QStringLiteral("80m"));
+        QVERIFY(reversed.size() >= 2);
+        std::reverse(reversed.begin(), reversed.end());
+        access->reorder(Band::Band80m, reversed);
+        QTRY_COMPARE(orderOn(coreDocument(core), QStringLiteral("80m")), reversed);
+
+        const auto returnOf = [&core](const char* key) {
+            return coreDocument(core).value(QStringLiteral("bands")).toObject()
+                .value(QStringLiteral("80m")).toObject().value(QLatin1String(key)).toString();
+        };
+        access->setReturn(Band::Band80m, BandStackReturnMode::Specific, reversed.first());
+        QTRY_COMPARE(returnOf("returnMode"), QStringLiteral("specific"));
+        QCOMPARE(returnOf("specificId"), reversed.first());
+        access->setReturn(Band::Band80m, BandStackReturnMode::LastUsed, {});
+        QTRY_COMPARE(returnOf("returnMode"), QStringLiteral("lastUsed"));
+        access->setReturn(Band::Band80m, BandStackReturnMode::Current, {});
+        QTRY_COMPARE(returnOf("returnMode"), QStringLiteral("current"));
+
+        access->options(false, 15, 30);
+        QTRY_COMPARE(coreDocument(core).value(QStringLiteral("options")).toObject()
+                         .value(QStringLiteral("dwellSeconds")).toInt(), 30);
+        const QJsonObject options = coreDocument(core).value(QStringLiteral("options")).toObject();
+        QCOMPARE(options.value(QStringLiteral("dupeProtection")).toBool(true), false);
+        QCOMPARE(options.value(QStringLiteral("expiryMinutes")).toInt(), 15);
+        access->options(std::nullopt, 0, 0);
+        QTRY_COMPARE(coreDocument(core).value(QStringLiteral("options")).toObject()
+                         .value(QStringLiteral("expiryMinutes")).toInt(), 0);
+
+        access->remove(reversed.last());
+        QTRY_VERIFY(entryIn(coreDocument(core), reversed.last()).isEmpty());
+
+        // A locked entry stays through both clears, so each shows.
+        access->clear(Band::Band80m);
+        QTRY_VERIFY(orderOn(coreDocument(core), QStringLiteral("80m")).isEmpty());
+        QVERIFY(!orderOn(coreDocument(core), QStringLiteral("160m")).isEmpty());
+        access->clear(std::nullopt);
+        QTRY_VERIFY(orderOn(coreDocument(core), QStringLiteral("160m")).isEmpty());
+        access->reseed();
+        QTRY_VERIFY(!orderOn(coreDocument(core), QStringLiteral("160m")).isEmpty());
+
+        QTRY_VERIFY(caughtUp());
+        QCOMPARE(refused.count(), 0);
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+        QTRY_VERIFY(access->document().isEmpty());
+        QCOMPARE(access->state(), BandStackAccess::State::NotConnected);
+    }
+
+    void restoreExpiredGoesOutFromARemoteWindow()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        startStack(core);
+        BandStackController* controller = core.model->bandStackController();
+        qint64 clock = 1000000;
+        controller->setClockForTest([&clock]() { return clock; });
+        RemoteWindow remote;
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(remote.access()->state(), BandStackAccess::State::Ready);
+        QString refusal;
+        SliceModel* slice = core.model->sliceById(0);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14123000.0);
+        QVERIFY(controller->add(0, {}, &refusal));
+        const QString added = placeOf(coreDocument(core), QStringLiteral("A"), QStringLiteral("20m"));
+        BandStackRecallRequest step;
+        step.kind = BandStackRecallRequest::Step;
+        step.sliceId = 0;
+        QVERIFY(controller->performRecall(step, &refusal));
+        QVERIFY(controller->options(std::nullopt, 5, std::nullopt, &refusal));
+        clock += 6 * 60 * 1000;
+        controller->runExpiryForTest();
+        QVERIFY(entryIn(coreDocument(core), added).isEmpty());
+        const QString batch = coreDocument(core).value(QStringLiteral("lastExpiry")).toObject()
+                                  .value(QStringLiteral("batchId")).toString();
+        QTRY_COMPARE(remote.access()->document().value(QStringLiteral("lastExpiry")).toObject()
+                         .value(QStringLiteral("batchId")).toString(), batch);
+        remote.access()->restoreExpired(batch);
+        QTRY_VERIFY(!entryIn(coreDocument(core), added).isEmpty());
+        controller->setClockForTest({});
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+    }
+
+    void aCoreRefusalReachesRefusedOnce()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        startStack(core);
+        RemoteWindow remote;
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(remote.access()->state(), BandStackAccess::State::Ready);
+        QSignalSpy refused(remote.access(), &BandStackAccess::refused);
+        QSignalSpy generic(&remote.window, &RadioModel::sliceAddRejected);
+        const QString before = core.model->bandStackFacade()->json();
+        remote.access()->remove(QStringLiteral("no-such-entry"));
+        QTRY_COMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toString(), kNoEntry);
+        QCOMPARE(generic.count(), 0);
+        QCOMPARE(core.model->bandStackFacade()->json(), before);
+
+        // Any other refusal still takes the window's usual route.
+        remote.client.requestActiveSlice(42);
+        QTRY_COMPARE(generic.count(), 1);
+        QCOMPARE(refused.count(), 1);
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+    }
+
+    void aHeldPressIsAskedNotRefused()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        startStack(core);
+        core.model->configureStreamPool(2, 5, 192000);
+        core.model->sliceById(0)->setFrequency(7074000.0);
+        RemoteWindow remote;
+        remote.sharesSlices();
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(remote.access()->state(), BandStackAccess::State::Ready);
+        core.model->sliceOwnership()->setOwner(0, QByteArrayLiteral("token:1"));
+        QTRY_VERIFY(remote.client.sliceAccess()->controlledHere(0));
+        Device phone(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kStack);
+        QVERIFY(admitted(app));
+        const QList<int> own = core.model->sliceOwnership()->ownedBy(phone.key.fingerprint());
+        QCOMPARE(own.size(), 1);
+        core.model->sliceById(own.first())->setFrequency(7150000.0);
+        QCOMPARE(core.model->sliceById(own.first())->streamIndex(),
+                 core.model->sliceById(0)->streamIndex());
+
+        QSignalSpy refused(remote.access(), &BandStackAccess::refused);
+        QSignalSpy generic(&remote.window, &RadioModel::sliceAddRejected);
+        QSignalSpy reported(remote.access(), &BandStackAccess::reported);
+        remote.access()->press(0, Band::Band20m, BandStackDirection::Next, {});
+        RemoteDevicesState* devices = remote.client.remoteDevices();
+        QTRY_VERIFY(devices->question().has_value());
+        QCOMPARE(devices->question()->prompt.kind, QStringLiteral("panMove"));
+        QCOMPARE(refused.count(), 0);
+        QCOMPARE(generic.count(), 0);
+        QCOMPARE(reported.count(), 0);
+        QCOMPARE(core.model->sliceById(0)->frequency(), 7074000.0);
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+    }
+
+    void aRemoteWindowReportsARecallInTheCoresWords()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        startStack(core);
+        // A snapshot with an old recall in it reports nothing.
+        BandStackController* controller = core.model->bandStackController();
+        QString refusal;
+        BandStackRecallRequest first;
+        first.sliceId = 0;
+        first.band = Band::Band160m;
+        QVERIFY(controller->performRecall(first, &refusal));
+
+        RemoteWindow remote;
+        QSignalSpy reported(remote.access(), &BandStackAccess::reported);
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(remote.access()->state(), BandStackAccess::State::Ready);
+        QTRY_COMPARE(remote.access()->document(), coreDocument(core));
+        QCOMPARE(reported.count(), 0);
+        QVERIFY(remote.window.sliceById(0) != nullptr);
+
+        QSignalSpy core_(controller, &BandStackController::reportRecall);
+        const auto check = [&reported, &core_](int count) {
+            return reported.count() == count && core_.count() == count
+                && reported.last().at(0).toString() == core_.last().at(1).toString();
+        };
+
+        // An entry, then the next one, then the same one by name.
+        remote.access()->press(0, Band::Band40m, BandStackDirection::Next, {});
+        QTRY_COMPARE(reported.count(), 1);
+        QVERIFY2(check(1), qPrintable(reported.last().at(0).toString()));
+        QVERIFY(reported.last().at(0).toString().contains(QStringLiteral(" of ")));
+        remote.access()->step(0, BandStackDirection::Next, {});
+        QTRY_COMPARE(reported.count(), 2);
+        QVERIFY2(check(2), qPrintable(reported.last().at(0).toString()));
+        const QString here = placeOf(coreDocument(core), QStringLiteral("A"), QStringLiteral("40m"));
+        remote.access()->goTo(0, here, {});
+        QTRY_COMPARE(reported.count(), 3);
+        QVERIFY2(check(3), qPrintable(reported.last().at(0).toString()));
+
+        // Last used: not an entry, so frequency and mode alone.
+        QVERIFY(controller->setReturn(Band::Band20m, BandStackReturnMode::LastUsed, {}, &refusal));
+        remote.access()->press(0, Band::Band20m, BandStackDirection::Next, {});
+        QTRY_COMPARE(reported.count(), 4);
+        remote.access()->press(0, Band::Band40m, BandStackDirection::Next, {});
+        QTRY_COMPARE(reported.count(), 5);
+        core.model->sliceById(0)->setFrequency(7123000.0);
+        remote.access()->press(0, Band::Band20m, BandStackDirection::Next, {});
+        QTRY_COMPARE(reported.count(), 6);
+        QVERIFY2(check(6), qPrintable(reported.last().at(0).toString()));
+        QVERIFY(!reported.last().at(0).toString().contains(QStringLiteral(" of ")));
+
+        // An empty stack.
+        QVERIFY(controller->clear(Band::Band17m, &refusal));
+        QTRY_COMPARE(remote.access()->document(), coreDocument(core));
+        remote.access()->press(0, Band::Band17m, BandStackDirection::Next, {});
+        QTRY_COMPARE(reported.count(), 7);
+        QVERIFY2(check(7), qPrintable(reported.last().at(0).toString()));
+        QCOMPARE(reported.last().at(0).toString(),
+                 QStringLiteral("17m: empty stack, tuned to the middle of the band"));
+
+        // The session ending forgets it; the next snapshot is old news again.
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+        QTRY_VERIFY(remote.access()->document().isEmpty());
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(remote.access()->document(), coreDocument(core));
+        QCOMPARE(reported.count(), 7);
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+    }
+
+    void aRecallOnAnotherDevicesSliceIsNotReportedHere()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        startStack(core);
+        RemoteWindow remote;
+        remote.sharesSlices();
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(remote.access()->state(), BandStackAccess::State::Ready);
+        core.model->sliceOwnership()->setOwner(0, QByteArrayLiteral("token:1"));
+        QTRY_VERIFY(remote.client.sliceAccess()->controlledHere(0));
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kStack);
+        QVERIFY(admitted(app));
+        const QList<int> own = core.model->sliceOwnership()->ownedBy(phone.key.fingerprint());
+        QCOMPARE(own.size(), 1);
+
+        QSignalSpy reported(remote.access(), &BandStackAccess::reported);
+        const auto seq = [&remote]() {
+            return remote.access()->document().value(QStringLiteral("lastRecall")).toObject()
+                .value(QStringLiteral("seq")).toInt();
+        };
+        const int seen = seq();
+        QCOMPARE(refusalOf(core.invoke(app, "bandStack.press",
+                                       {i64("sliceId", own.first()),
+                                        text("band", QStringLiteral("40m")),
+                                        text("direction", QStringLiteral("next"))})),
+                 QString());
+        QTRY_COMPARE(seq(), seen + 1);
+        QCOMPARE(reported.count(), 0);
+
+        // Its own slice's recall, the next one, is.
+        remote.access()->press(0, Band::Band20m, BandStackDirection::Next, {});
+        QTRY_COMPARE(reported.count(), 1);
+        QVERIFY(reported.first().at(0).toString().startsWith(QStringLiteral("20m: ")));
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+    }
+
+    void theFakeRecordsEveryCallAndShowsWhatItIsGiven()
+    {
+        FakeBandStackAccess fake;
+        QSignalSpy document(&fake, &BandStackAccess::documentChanged);
+        QSignalSpy state(&fake, &BandStackAccess::stateChanged);
+        const QJsonObject given{{QStringLiteral("schema"), 1}};
+        fake.setDocument(given);
+        QCOMPARE(fake.document(), given);
+        QCOMPARE(document.count(), 1);
+        fake.setState(BandStackAccess::State::NeedsNewerCore, kNewerCore);
+        QCOMPARE(fake.state(), BandStackAccess::State::NeedsNewerCore);
+        QCOMPARE(fake.unavailableReason(), kNewerCore);
+        QCOMPARE(state.count(), 1);
+
+        BandStackView view;
+        view.spanHz = 96000;
+        fake.press(1, Band::Band40m, BandStackDirection::Previous, view);
+        fake.step(1, BandStackDirection::Next, {});
+        fake.goTo(1, QStringLiteral("e"), {});
+        fake.add(1, {});
+        fake.saveHere(1, QStringLiteral("e"), {});
+        fake.edit(QStringLiteral("e"), QStringLiteral("n"), true);
+        fake.remove(QStringLiteral("e"));
+        fake.reorder(Band::Band20m, {QStringLiteral("e")});
+        fake.setReturn(Band::Band20m, BandStackReturnMode::LastUsed, {});
+        fake.clear(std::nullopt);
+        fake.reseed();
+        fake.options(true, 5, 10);
+        fake.restoreExpired(QStringLiteral("b"));
+        QStringList verbs;
+        for (const FakeBandStackAccess::Call& call : fake.calls) {
+            verbs.append(call.verb);
+        }
+        QCOMPARE(verbs, QStringList({"press", "step", "goTo", "add", "saveHere", "edit", "remove",
+                                     "reorder", "setReturn", "clear", "reseed", "options",
+                                     "restoreExpired"}));
+        const FakeBandStackAccess::Call press = fake.calls.first();
+        QCOMPARE(press.sliceId, 1);
+        QCOMPARE(press.band, std::optional<Band>(Band::Band40m));
+        QCOMPARE(press.direction, BandStackDirection::Previous);
+        QCOMPARE(press.view.spanHz, std::optional<qint64>(96000));
+        QCOMPARE(fake.calls.at(5).name, std::optional<QString>(QStringLiteral("n")));
+        QCOMPARE(fake.calls.at(5).locked, std::optional<bool>(true));
+        QCOMPARE(fake.calls.at(7).ids, QStringList{QStringLiteral("e")});
+        QCOMPARE(fake.calls.at(8).mode, BandStackReturnMode::LastUsed);
+        QCOMPARE(fake.calls.at(11).expiryMinutes, std::optional<int>(5));
+        QCOMPARE(fake.calls.at(11).dwellSeconds, std::optional<int>(10));
     }
 };
 

@@ -1765,6 +1765,10 @@ set(MODEL_SOURCES
     src/models/bandstack/BandStackSeeds.cpp
     src/models/bandstack/BandStackStore.cpp
     src/models/bandstack/BandStackController.cpp
+    src/models/bandstack/BandStackAccess.h
+    src/models/bandstack/BandStackCommand.cpp
+    src/models/bandstack/LocalBandStackAccess.cpp
+    src/models/bandstack/RemoteBandStackAccess.cpp
     src/models/BandPlanManager.cpp
     src/models/PureSignalSettings.cpp
     src/models/PureSignalSettings.h

@@ -208,6 +208,7 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: sliceControlledHere.
 //   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-02: Track active and detail frequency record streams separately.
@@ -1437,6 +1438,7 @@ public:
     // Band stack plan Task 4: see IStationLink.
     bool bandStackAvailable() const override;
     CommandOutcome sendBandStackCommand(const QString& verb, const QJsonObject& arguments) override;
+    bool sliceControlledHere(int sliceId) const override;
     // Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): listen
     // to, stop listening to, take control of and release a slice. The
     // answers arrive on deviceCommandFinished; the access objects follow.

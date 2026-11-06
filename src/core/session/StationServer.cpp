@@ -1,6 +1,7 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: the bandStack.* verbs for the hosting desktop.
 //   2026-11-05: Band stack plan Task 4: bandStackVersion 1, the bandStack object and
 //               the bandStack.* gate (peerGetsBandStack).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -5329,6 +5330,14 @@ void StationServer::invokeAsStationDevice(const SessionMessage& invoke, StationA
         QByteArrayLiteral("diversity.setTarget"),
         QByteArrayLiteral("slice.setListenLevel"), QByteArrayLiteral("confirm.proceed"),
         QByteArrayLiteral("confirm.cancel"),     QByteArrayLiteral("notice.takeBack"),
+        // Band stack plan Task 6: the hosting desktop's stack (design V15).
+        QByteArrayLiteral("bandStack.press"),    QByteArrayLiteral("bandStack.step"),
+        QByteArrayLiteral("bandStack.goTo"),     QByteArrayLiteral("bandStack.add"),
+        QByteArrayLiteral("bandStack.saveHere"), QByteArrayLiteral("bandStack.edit"),
+        QByteArrayLiteral("bandStack.delete"),   QByteArrayLiteral("bandStack.reorder"),
+        QByteArrayLiteral("bandStack.setReturn"), QByteArrayLiteral("bandStack.clear"),
+        QByteArrayLiteral("bandStack.reseed"),   QByteArrayLiteral("bandStack.options"),
+        QByteArrayLiteral("bandStack.restoreExpired"),
     };
     if (invoke.kind != SessionMessageKind::CommandInvoke
         || !kHostVerbs.contains(invoke.commandVerb)) {

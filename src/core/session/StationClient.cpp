@@ -9,6 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: sliceControlledHere; a bandStack.* refusal goes
+//               to BandStackAccess::refused.
 //   2026-11-05: Band stack plan Task 4: bandStack declared, the `bandStack` mirror and
 //               sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -6040,6 +6042,19 @@ StationClient::CommandOutcome StationClient::sendBandStackCommand(const QString&
     return sendCommand(verb.toUtf8(), sliceId, wire, QStringLiteral("the band stack change"));
 }
 
+bool StationClient::sliceControlledHere(int sliceId) const
+{
+    // Band stack plan Task 6: a slice is another device's only when the Core
+    // says so and this window has an identity to compare it with.
+    if (m_sliceAccess == nullptr || !remoteSliceAccessAvailable()
+        || m_sliceAccess->selfDeviceId().isEmpty()) {
+        return true;
+    }
+    const std::optional<SliceAccessMirror::Entry> entry = m_sliceAccess->entry(sliceId);
+    return !entry.has_value() || entry->controllerDeviceId.isEmpty()
+        || m_sliceAccess->controlledHere(sliceId);
+}
+
 bool StationClient::remoteSliceAccessAvailable() const
 {
     // Slice control plan Task 5: the Core sends sliceAccessVersion only to
@@ -8845,6 +8860,11 @@ void StationClient::handleCommandResult(const SessionMessage& message)
             // own route (the pages that sent it show it; MainWindow says
             // it), never the slice one.
             m_radioModel->reportStationAccessoryRefusal(device, reason, message.commandId);
+        } else if (message.commandVerb.startsWith("bandStack.")) {
+            // Band stack plan Task 6: BandStackAccess::refused is the one place
+            // the GUI hears these. `message.commandVerb`, as a question's final
+            // answer finds no pending entry.
+            m_radioModel->reportStationBandStackRefused(reason);
         } else {
             m_radioModel->reportStationSliceCommandRejected(reason);
         }

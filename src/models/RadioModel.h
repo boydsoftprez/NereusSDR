@@ -866,6 +866,7 @@
 //                implementation via Anthropic Claude Code.
 //   2026-11-05 - bandStackController, retuneRefusalFor, saveBandMemory.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - bandStack(), reportStationBandStackRefused (band stack plan Task 6).
 //   2026-11-05 - bandStackFacade, the `bandStack` object in every placement.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
@@ -1125,6 +1126,7 @@ class TxDisplayFeed;
 class TransmitState;
 // Stage C2 filter preset editor — user-override layer over Thetis defaults.
 class FilterPresetStore;
+class BandStackAccess;
 class BandStackController;
 
 // Phase 3J-2 H2: spot-system forward declarations. RadioModel owns the
@@ -1589,6 +1591,9 @@ public:
     /// from the silent divergence this whole round exists to close: the
     /// click does nothing and nothing says why.
     void reportStationSliceCommandRejected(const QString& reason);
+    /// Band stack plan Task 6: the Core refused a bandStack.* verb. Routed to
+    /// stationBandStackRefused, which RemoteBandStackAccess turns into refused().
+    void reportStationBandStackRefused(const QString& reason);
 
     /// R-R3-47 / R-R3-22 / R-R3-48: the Core refused an accessory request,
     /// with its own reason. `device` says what it was about: "pgxl",
@@ -3491,6 +3496,8 @@ public:
     /// The `bandStack` object: it follows the controller on the Core and reads
     /// the mirror in a remote window. Never null.
     BandStackFacade* bandStackFacade() const { return m_bandStackFacade; }
+    /// What the GUI uses for the band stack, in every placement. Never null.
+    BandStackAccess* bandStack() const { return m_bandStackAccess; }
 
     /// Why retuning `slice` to `frequencyHz` would be refused, in the words the
     /// rollback in wireSliceSignals uses, or empty when it would not be. Asks
@@ -6799,6 +6806,8 @@ signals:
     // been reached; `reason` is sliceCapReason()'s words. MainWindow shows
     // it as a toast.
     void sliceAddRejected(QString reason);
+    /// See reportStationBandStackRefused().
+    void stationBandStackRefused(const QString& reason);
     /// R-R3-47 / R-R3-22: the Core refused a request for an accessory's own
     /// settings (`device` "pgxl" or "tgxl"); `reason` is the Core's words.
     /// Parity mini-round (ruling c): a local window's own switch refused on
@@ -9746,6 +9755,7 @@ private:
     std::unique_ptr<RfKitBandFollow>      m_rfKitBandFollow;
     std::unique_ptr<BandStackController>  m_bandStackController;
     BandStackFacade*                      m_bandStackFacade{nullptr};
+    BandStackAccess*                      m_bandStackAccess{nullptr};
     // CAT setup from a connected desktop: the `stationCat` object and, on
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};

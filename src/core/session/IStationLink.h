@@ -46,6 +46,7 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: sliceControlledHere.
 //   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -349,6 +350,9 @@ public:
     virtual CommandOutcome sendBandStackCommand(const QString& /*verb*/,
                                                 const QJsonObject& /*arguments*/)
     { return { false, QStringLiteral("This Core does not have band stacks yet. Updating the Core adds them.") }; }
+    /// Band stack plan Task 6: this window controls the slice. A link that does
+    /// not share slices has no other device to leave it to.
+    virtual bool sliceControlledHere(int /*sliceId*/) const { return true; }
 
     /// Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): the
     /// Core shares slices between devices with this window. Verbs
