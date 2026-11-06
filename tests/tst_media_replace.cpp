@@ -581,6 +581,15 @@ struct GuiHarness {
         return true;
     }
 
+    // 2026-11-05: this harness's window has no speaker by default, so its
+    // audio fails to open and it turns its own audio off. A window in that
+    // state is exempt from the silence rules, so a test of the stall tick
+    // needs one that can play.
+    void giveTheWindowASpeaker()
+    {
+        core.remote.audioEngine()->setSpeakersBusForTest(std::make_unique<PacedAudioBus>());
+    }
+
     // One audio packet on connection `index`, under its own main SSRC.
     void audioOn(int index)
     {
@@ -1144,6 +1153,7 @@ private slots:
     void mediaLeftOnTheWebRelayAfterAMoveKeepsTheStallRule()
     {
         GuiHarness g;
+        g.giveTheWindowASpeaker();
         QVERIFY(connectOnWebRelay(g));
         const QString firstId = g.gui->mediaConnectionId();
         const int rank = g.core.client.pathRank();
@@ -1412,6 +1422,7 @@ private slots:
     void theStallRuleWaitsForTheRadio()
     {
         GuiHarness g;
+        g.giveTheWindowASpeaker();
         QVERIFY(g.connect(tunnelShimPath()));
         QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
         g.feeding = false;

@@ -1,5 +1,10 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-11-05: silence the window caused by stopping its own audio for a
+//               speaker failure no longer moves the media connection or ends
+//               the session; the silence rules count from the end of that
+//               stop. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-10-30: bounded passive retry schedule history and a hold boundary
 //               for canceled startup steps. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -1921,6 +1926,11 @@ struct RemoteMediaController::Private {
     // A persistent local playback failure and the identity it was recorded
     // against; only matching recovery with real speaker progress clears it.
     std::optional<RemoteAudioFailure> audioFailure;
+    // 2026-11-05: this window stopped its own audio because its speaker
+    // failed, so the Core's silence says nothing about the path. Set by the
+    // failure; ended by packets reaching a running receiver, by a receiver
+    // that ran dry (the Core was asked and sent nothing), or by stop().
+    bool audioStoppedForSpeaker = false;
     // An interruption whose automatic retry is scheduled, until the next
     // accepted context or stop().
     bool audioRestarting = false;
@@ -2166,6 +2176,18 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // silence rules wait for the radio's return, which restarts their
         // clocks (connectionStateChanged below).
         if (!d->model->isConnected()) { return; }
+        // 2026-11-05: the same for a window that stopped its own audio for a
+        // speaker failure: asking the Core for nothing is no outage, and a
+        // failed speaker is this computer's, not the path's. Both rules count
+        // from the end of the stop, so a retry that reaches a dead path still
+        // gets their full wait and no less.
+        if (d->audioStoppedForSpeaker) {
+            const qint64 now = d->allocationClock();
+            d->lastAudio.restart();
+            if (d->lastMediaMs >= 0) { d->lastMediaMs = now; }
+            if (d->fallbackFinishedMs >= 0) { d->fallbackFinishedMs = now; }
+            return;
+        }
         if (slowPath && d->lastAudio.elapsed() > kMediaStallMs) {
             qCInfo(lcRemoteMedia) << "No audio from the Core for" << d->lastAudio.elapsed()
                                   << "ms on a relayed path; starting audio and display again";
@@ -2313,6 +2335,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         }
         d->audioEnabled = false;
         d->audio->stop();
+        d->audioStoppedForSpeaker = true;
         // A restart waiting on its backoff step ends here (the disable below
         // moves the revision on, so it could never run); the failure's own
         // retry, below, takes the next step.
@@ -2342,6 +2365,9 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             [this](const QString& reason, RemoteAudioReceiver::Fault fault) {
         qCWarning(lcRemoteMedia) << reason;
         d->audio->stop();
+        // 2026-11-05: the speaker was not what stopped this one, so what the
+        // silence rules see from here is the path's again.
+        d->audioStoppedForSpeaker = false;
         // R-R3-21, R-R3-51: while the Core transmits it sends this device no
         // receive audio, so running out of packets is expected silence, not
         // an outage (nor a lossless link interruption). Nothing is asked
@@ -4241,6 +4267,7 @@ void RemoteMediaController::stop()
     d->displayCounters = {};
     // A playback problem belongs to its session and ends with it.
     d->audioFailure.reset();
+    d->audioStoppedForSpeaker = false;
     d->audioRestarting = false;
     d->audioFailureDisableSent = false;
     d->audioRequestUnsent = false;
@@ -5347,6 +5374,9 @@ void RemoteMediaController::routeRtp(const QByteArray& arrived, const MediaPeer*
 {
     // Step 2b: the stall rule's clock.
     d->lastAudio.start();
+    // 2026-11-05: packets still in flight when the speaker failed reach a
+    // stopped receiver and change nothing; these answer a later request.
+    if (d->audio->isRunning()) { d->audioStoppedForSpeaker = false; }
     d->lastMediaMs = d->allocationClock();
     d->silenceFallbackFired = false;
     d->fallbackFinishedMs = -1;
