@@ -1758,16 +1758,33 @@ private slots:
         QVERIFY(minimal != nullptr);
         QSignalSpy triggered(minimal, &QAction::triggered);
 
-        // How a real press starts: Qt offers it to the shortcut map first.
+        // How a real press starts: Qt offers it to the shortcut map first. Minimal
+        // Mode isn't built, so its item is disabled and its key does nothing, but
+        // the key is still the menu's: MOX doesn't take it.
+        QVERIFY(!minimal->isEnabled());
         QTest::sendKeyEvent(QTest::Shortcut, &w.window, Qt::Key_M, QString(), Qt::ControlModifier);
-#ifndef Q_OS_MAC
-        QCOMPARE(triggered.count(), 1);
-#else
-        // On a Mac the native menu takes its shortcuts before any window hears the
-        // key, and Qt's shortcut map skips menu items, so only hardware can show it.
         QCOMPARE(triggered.count(), 0);
-#endif
         QVERIFY(!w.mox->isMox());
+
+#ifndef Q_OS_MAC
+        // A live item's key reaches it. On a Mac the native menu takes its shortcuts
+        // before any window hears the key, and Qt's shortcut map skips menu items,
+        // so only hardware can show it.
+        const QKeySequence ctrlShiftN(QStringLiteral("Ctrl+Shift+N"), QKeySequence::PortableText);
+        QAction* tnf = nullptr;
+        for (QAction* const action : w.window.findChildren<QAction*>()) {
+            if (action->shortcuts().contains(ctrlShiftN)) {
+                tnf = action;
+            }
+        }
+        QVERIFY(tnf != nullptr);
+        QVERIFY(tnf->isEnabled());
+        QSignalSpy tnfTriggered(tnf, &QAction::triggered);
+        QTest::sendKeyEvent(QTest::Shortcut, &w.window, Qt::Key_N, QString(),
+                            Qt::ControlModifier | Qt::ShiftModifier);
+        QCOMPARE(tnfTriggered.count(), 1);
+        QVERIFY(!w.mox->isMox());
+#endif
 
         // And the router lets the key itself by.
         KeySeen seen(&w.window);
