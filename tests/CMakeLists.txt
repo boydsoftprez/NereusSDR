@@ -11818,6 +11818,8 @@ if(Qt6WebSockets_FOUND)
     target_link_libraries(tst_hot_key_transmit PRIVATE Qt6::WebSockets)
 endif()
 nereus_add_test(tst_cw_soft_paddle)
+nereus_add_test(tst_hot_key_router fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_hot_key_router PRIVATE NEREUS_BUILD_TESTS)
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_hot_key_cw
         fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)

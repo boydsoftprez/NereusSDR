@@ -1425,6 +1425,7 @@ warren@wpratt.com
 #include "containers/ContainerButtonDispatcher.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
+#include "gui/hotkeys/KeyboardRouter.h"
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 #include "containers/ContainerSettingsDialog.h"
 #include "meters/MeterWidget.h"
@@ -9409,6 +9410,20 @@ void MainWindow::buildUI()
     auto* contentRegistry = new ContainerContentRegistry(this);
     auto* workspaceStore = new ContainerWorkspaceStore(AppSettings::instance(), this);
     m_containerManager->setWorkspaceAdapter(workspaceStore, contentRegistry);
+    // Hot keys: what every source calls. The targets reach the same entry
+    // points as the on-screen controls, m_containerButtons among them.
+    m_hotKeyBindings = std::make_unique<HotKeyBindings>();
+    m_hotKeyBindings->load();
+    m_hotKeyTargets = std::make_unique<MainWindowHotKeyTargets>(this);
+    m_hotKeyDispatcher = std::make_unique<HotKeyDispatcher>(m_hotKeyBindings.get(), m_hotKeyTargets.get());
+    // A key off by any route ends the hold's claim on it, so letting go later
+    // can't drop a key made since.
+    connect(m_radioModel, &RadioModel::transmitKeyWentOff,
+            m_hotKeyDispatcher.get(), &HotKeyDispatcher::onTransmitWentOff);
+    // Before ArrangeHoldFilter below. Qt calls the last installed application
+    // filter first, and that filter must see each key before the router eats it.
+    m_keyboardRouter = std::make_unique<KeyboardRouter>(
+        m_hotKeyDispatcher.get(), m_hotKeyBindings.get(), this);
     if (WorkspacePreview::enabled()) {
         // Workspace preview: the header source menu enables the open slices.
         m_containerManager->setSliceAvailability(
@@ -9757,17 +9772,6 @@ void MainWindow::buildUI()
         m_containerButtons = std::make_unique<ContainerButtonDispatcher>(
             m_radioModel, std::move(hooks));
     }
-
-    // Hot keys: what every source calls. The targets reach the same entry
-    // points as the on-screen controls, m_containerButtons among them.
-    m_hotKeyBindings = std::make_unique<HotKeyBindings>();
-    m_hotKeyBindings->load();
-    m_hotKeyTargets = std::make_unique<MainWindowHotKeyTargets>(this);
-    m_hotKeyDispatcher = std::make_unique<HotKeyDispatcher>(m_hotKeyBindings.get(), m_hotKeyTargets.get());
-    // A key off by any route ends the hold's claim on it, so letting go later
-    // can't drop a key made since.
-    connect(m_radioModel, &RadioModel::transmitKeyWentOff,
-            m_hotKeyDispatcher.get(), &HotKeyDispatcher::onTransmitWentOff);
 
     connect(m_containerManager, &ContainerManager::containerAdded, this,
             [this](const QString& id) {

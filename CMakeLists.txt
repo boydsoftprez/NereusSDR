@@ -1914,6 +1914,7 @@ set(GUI_SOURCES
     src/gui/WaterfallImpulseBlanker.cpp
     src/gui/WheelStepAccumulator.cpp
     src/gui/hotkeys/HotKeyDispatcher.cpp
+    src/gui/hotkeys/KeyboardRouter.cpp
     src/gui/hotkeys/MainWindowHotKeyTargets.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
