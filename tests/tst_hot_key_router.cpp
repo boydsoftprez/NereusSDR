@@ -954,6 +954,32 @@ private slots:
 
     // ---- Repeat ----
 
+    void aDialVolumeKeystrokeIsNotAHotKey()
+    {
+        // On Windows the Ulanzi Dial has no exclusive claim, so its volume keys also
+        // reach the focused window. They must not tune a second time.
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
+        Rig rig(&w.window);
+
+        // The window takes keys right now, so what follows isn't quiet for another reason.
+        tap(&w.window, Qt::Key_Right);
+        QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("tune.up")});
+        rig.targets.ran.clear();
+        const double hz = rig.slice.frequency();
+        const double windowHz = w.slice->frequency();
+
+        for (const int key : {Qt::Key_VolumeUp, Qt::Key_VolumeDown, Qt::Key_VolumeMute}) {
+            down(&w.window, key);
+            sendKey(&w.window, QEvent::KeyPress, key, Qt::NoModifier, true);
+            up(&w.window, key);
+        }
+        w.settleTunes();
+        QCOMPARE(rig.targets.ran, QStringList{});
+        QCOMPARE(rig.slice.frequency(), hz);
+        QCOMPARE(w.slice->frequency(), windowHz);
+    }
+
     void repeatAddsToTunesAndLevelsAndNothingElse()
     {
         Bench& w = sharedBench();

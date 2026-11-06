@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 16: HID product names, for a
+//                device with no ids to look for. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/devices/UsbPresence.h"
 
@@ -68,6 +70,37 @@ QSet<quint32> UsbPresence::connectedVidPids()
     hid_free_enumeration(all);
 #endif
     return present;
+}
+
+QStringList UsbPresence::hidProductNames()
+{
+    QStringList names;
+#if defined(Q_OS_MAC)
+    // Each HID interface is an IOHIDDevice service with a Product property. "Product"
+    // is kIOHIDProductKey in the SDK's IOHIDDeviceKeys.h:74, spelled out so this file
+    // includes no HID header.
+    io_iterator_t devices = 0;
+    if (IOServiceGetMatchingServices(MACH_PORT_NULL, IOServiceMatching("IOHIDDevice"), &devices) != KERN_SUCCESS) {
+        return names;
+    }
+    while (const io_object_t device = IOIteratorNext(devices)) {
+        const CFTypeRef property =
+            IORegistryEntryCreateCFProperty(device, CFSTR("Product"), kCFAllocatorDefault, 0);
+        if (property != nullptr) {
+            if (CFGetTypeID(property) == CFStringGetTypeID()) {
+                char buffer[256] = {};
+                if (CFStringGetCString(static_cast<CFStringRef>(property), buffer, sizeof(buffer),
+                                       kCFStringEncodingUTF8)) {
+                    names.append(QString::fromUtf8(buffer));
+                }
+            }
+            CFRelease(property);
+        }
+        IOObjectRelease(device);
+    }
+    IOObjectRelease(devices);
+#endif
+    return names;
 }
 
 QMutex& UsbPresence::hidApiLock()

@@ -1589,3 +1589,17 @@ NereusSDR adds attribution and its existing producer annotation.
 | `src/gui/hotkeys/devices/FlexControlParser.cpp` | `src/core/FlexControlManager.cpp:249-344` [@1e0718ad] | Token grammar, buffer cap, light report, comments verbatim. Returns events. Direction follows upstream's code, not its header. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/devices/FlexControlInput.h` | `src/core/FlexControlManager.h:16,57-70` [@1e0718ad] | The ids and retry bounds. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/devices/FlexControlInput.cpp` | `src/core/FlexControlManager.cpp:11-247,312-344` [@1e0718ad] | Detect, open, recovery, lights, comments verbatim. Behind a seam, and it looks for the device from launch. Recorded in AETHERSDR-PROVENANCE.md. |
+
+## November 6, 2026 Ulanzi Dial (hot keys plan Task 16)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/UlanziChordDecoder.h` | `src/core/UlanziChordDecoder.h:8-50,61-67` [@1e0718ad] | Key codes and class, comments verbatim. `reset()` returns the releases. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziChordDecoder.cpp` | `src/core/UlanziChordDecoder.cpp`, `src/core/UlanziDialMacOSManager.cpp:20-44`, `src/gui/UlanziDialMapperDialog.cpp:88-97,109-118` [@1e0718ad] | The state machine, comments verbatim, with four fixes where upstream can lose a release. Events named for controls. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziLinuxInput.h` | `src/core/EvdevEncoderManager.cpp:55` [@1e0718ad] | Debounce. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziLinuxInput.cpp` | `src/core/EvdevEncoderManager.cpp:31-46,55,68,90-92,140-159,175-178,192-224` [@1e0718ad] | Name match, grab, read loop, comments verbatim. Behind a seam. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziMacInput.h` | `src/gui/MainWindow_Controllers.cpp:2737-2743`, `src/core/UlanziDialWindowsManager.h:81` [@1e0718ad] | Main thread, and the presence interval. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziMacInput.cpp` | `src/core/UlanziDialMacOSManager.cpp:46-57,84-97,107-116,159` [@1e0718ad] | Match, seize, close, comments verbatim. Opens only after the registry shows the dial and the application allows it. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziWindowsInput.h` | `src/core/UlanziDialWindowsManager.h:16-33,80-81` [@1e0718ad] | Notes verbatim, poll and hotplug intervals. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziWindowsInput.cpp` | `src/core/UlanziDialWindowsManager.cpp:46,89-95,137-158,164-215` [@1e0718ad] | Enumeration, poll, report shapes, comments verbatim. Decoding is a static function. Recorded in AETHERSDR-PROVENANCE.md. |
+| `tests/tst_device_parser_ulanzi.cpp` | `tests/ulanzi_chord_decoder_test.cpp` [@1e0718ad] | Upstream's cases over controls, plus the fixes, the backends and the gate. Recorded in AETHERSDR-PROVENANCE.md. |

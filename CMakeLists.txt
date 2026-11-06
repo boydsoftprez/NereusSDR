@@ -1932,6 +1932,11 @@ set(GUI_SOURCES
     src/gui/hotkeys/devices/ShuttleParser.cpp
     src/gui/hotkeys/devices/StreamDeckPlusParser.cpp
     src/gui/hotkeys/devices/TMate2Parser.cpp
+    src/gui/hotkeys/devices/UlanziChordDecoder.cpp
+    src/gui/hotkeys/devices/UlanziDialInput.cpp
+    src/gui/hotkeys/devices/UlanziLinuxInput.cpp
+    src/gui/hotkeys/devices/UlanziMacInput.cpp
+    src/gui/hotkeys/devices/UlanziWindowsInput.cpp
     src/gui/hotkeys/devices/UsbPresence.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
