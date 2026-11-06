@@ -2492,6 +2492,61 @@ private slots:
         verifyEachBandKeptItsOwnPower(tx);
     }
 
+
+    // TUNE pressed again in the off window after a band change: the scroll that
+    // band change ran was a normal one, so the drive on the wire was the new
+    // band's PWR. It keys at the fixed tune power, as a plain TUNE on that band
+    // does. Only the mock's drive bytes are checked; nothing here measures RF.
+    void tuneFixed_againInTheOffWindowAfterABandChange_keysAtTheTunePower()
+    {
+        int plainTuneByte = -1;
+        int fortyPwrByte = -1;
+        {
+            RadioModel model;
+            MockConnection* conn = nullptr;
+            setupModel(model, conn, HPSDRModel::ANAN8000D);
+            std::unique_ptr<MockConnection> connOwner(conn);
+            auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+            armFixedTuneAtTwenty(model.transmitModel());
+            fortyPwrByte = armEightyAtTwentyFortyAtFiftyFive(model, conn);
+            model.activeSlice()->setFrequency(7100000.0);
+            pump();
+            model.setTune(true);
+            pump();
+            QVERIFY(model.isTune());
+            QVERIFY(!conn->txDriveLog.isEmpty());
+            plainTuneByte = conn->txDriveLog.last();
+            model.setTuneOffSettleMsForTest(0);
+            model.setTune(false);
+            QTRY_VERIFY(!model.tuneOffPendingForTest());
+        }
+        QVERIFY(fortyPwrByte >= 0);
+        QVERIFY(plainTuneByte != fortyPwrByte);
+
+        RadioModel model;
+        MockConnection* conn = nullptr;
+        setupModel(model, conn, HPSDRModel::ANAN8000D);
+        std::unique_ptr<MockConnection> connOwner(conn);
+        auto detach = qScopeGuard([&]{ model.injectConnectionForTest(nullptr); });
+        TransmitModel& tx = model.transmitModel();
+        armFixedTuneAtTwenty(tx);
+        QCOMPARE(armEightyAtTwentyFortyAtFiftyFive(model, conn), fortyPwrByte);
+        tuneOffAndStopInTheWindow(model, tx);
+
+        model.activeSlice()->setFrequency(7100000.0);
+        pump();
+        QCOMPARE(conn->txDriveLog.last(), fortyPwrByte);
+        model.setTune(true);
+        pump();
+        QVERIFY(model.isTune());
+        QVERIFY(model.isTransmitting());
+        QCOMPARE(conn->txDriveLog.last(), plainTuneByte);
+
+        model.setTuneOffSettleMsForTest(0);
+        model.setTune(false);
+        QTRY_VERIFY(!model.tuneOffPendingForTest());
+        verifyEachBandKeptItsOwnPower(tx);
+    }
     // After the restore nothing is held: the band change is the ordinary one.
     void tuneFixed_bandChangeAfterTheRestore_behavesAsAnyOther()
     {

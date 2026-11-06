@@ -32421,6 +32421,13 @@ void RadioModel::setTune(bool on)
             m_pendingTuneOff = false;
             m_transmitModel.setTune(true);
             if (!lifetime || !tuneCycleCurrent(serial)) { return; }
+            // A band change in the off window ran its scroll with TUNE down, so
+            // the drive on the wire is that band's PWR, and nothing below or on
+            // the MOX edge (which returns on isTune) puts the tune drive back.
+            // With TUNE up again this computes txMode 1, as SetPowerUsingTargetDBM
+            // does (console.cs:46724-46747 [v2.10.3.15]).
+            applyDriveSliderPower();
+            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
             if (pendingOff || !m_moxController->isMox()) { m_moxController->setTune(true, requester); }
             return;
         }
