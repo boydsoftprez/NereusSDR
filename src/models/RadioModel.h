@@ -5505,6 +5505,10 @@ public:
     // call this.
     // Isolate route-lifecycle tests from board/resource admission. Never a production caller.
     void setDiversityAdmissionBypassForTest() { m_diversityAdmissionBypassForTest = true; }
+    bool hasPendingBandSettingsForTest(int sliceId) const
+    {
+        return m_pendingBandSettings.contains(sliceId);
+    }
     void setReceiveLayoutHoldForTest(bool isProtected, bool pendingAdmission)
     {
         m_receiveLayoutManaged = true;

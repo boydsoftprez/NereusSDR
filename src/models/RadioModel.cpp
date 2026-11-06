@@ -17151,6 +17151,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             seedFrom = mine;
         }
     }
+    bool forgetLetterRitXit = false;
     if (!restoreSeed && !restoredSavedState) {
         // A letter with nothing saved opens on this slice's frequency and
         // mode. Either way the new slice takes this slice's noise
@@ -17178,14 +17179,8 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             if (!newReceiver) {
                 slice->restoreRitXitFromSettings();
                 if (!currentAdded()) { return -1; }
-            } else if (!m_receiveLayoutPendingAdmission && !m_receiveLayoutProtected) {
-                // The old offsets must not return at the next start, even on
-                // a receiver that saves nothing of its own. While a saved
-                // layout is held the store stays as it is, like every other
-                // save: the refusal text sends the operator to +RX in just
-                // that state, and the held letter must keep its values.
-                slice->forgetSavedRitXit();
-                scheduleSettingsSave(slice);
+            } else {
+                forgetLetterRitXit = true;
             }
         }
         if (seedFrom && seedFrom != slice) {
@@ -17301,6 +17296,22 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         }
         delete slice;
         return -1;
+    }
+
+    // A new receiver on a used letter: the old offsets must not return at the
+    // next start, even on a receiver that saves nothing of its own. After the
+    // rollback above, because a refused add made no receiver and the letter
+    // loses nothing. While a saved layout is held the store stays as it is,
+    // like every other save: the refusal text sends the operator to +RX in
+    // just that state, and the held letter must keep its values.
+    //
+    // The save names no slice, and this runs before a first slice becomes
+    // active. It writes the removal without writing this slice's band values:
+    // before connect it sits on the constructor's frequency, which must not
+    // replace the letter's band memory or the band connect restores.
+    if (forgetLetterRitXit && !m_receiveLayoutPendingAdmission && !m_receiveLayoutProtected) {
+        slice->forgetSavedRitXit();
+        scheduleSettingsSave();
     }
 
     // Retuning re-runs the allocator: the slice may stay on its stream

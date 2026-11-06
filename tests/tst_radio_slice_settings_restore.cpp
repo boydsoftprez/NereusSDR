@@ -457,6 +457,78 @@ private slots:
         QCOMPARE(onDisk.value(QStringLiteral("Slice0/XitHz"), 0).toInt(), 0);
     }
 
+    void newReceiverBeforeConnectLeavesTheLettersBandMemoryAlone()
+    {
+        // Ctrl+R or +RX with no radio connected. With no active slice to seed
+        // from, the slice sits on the constructor's frequency, which is not
+        // the operator's: it must not reach the letter's band memory, or
+        // connect lands there instead of where the letter was saved.
+        {
+            RadioModel first;
+            SliceModel* saved = first.sliceById(first.addSlice());
+            QVERIFY(saved);
+            saved->setFrequency(14'100'000.0);
+            saved->saveToSettings(Band::Band20m);
+            saved->setFrequency(7'074'000.0);
+            saved->setXitHz(700);
+            saved->setXitEnabled(true);
+            saved->saveToSettings(Band::Band40m);
+            first.flushPendingSettingsSave();
+        }
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("Slice0/LastBand"), QStringLiteral("40m"));
+        settings.setValue(QStringLiteral("Slice0/Band20m/Frequency"), 14'100'000.0);
+        settings.setValue(QStringLiteral("Slice0/Band40m/Frequency"), 7'074'000.0);
+
+        RadioModel radio;
+        SliceModel* slice = radio.sliceById(radio.addSlice(QString(), false, /*newReceiver=*/true));
+        QVERIFY(slice);
+        QVERIFY(!slice->xitEnabled());
+        radio.flushPendingSettingsSave();
+        QCOMPARE(settings.value(QStringLiteral("Slice0/LastBand")).toString(),
+                 QStringLiteral("40m"));
+        QCOMPARE(settings.value(QStringLiteral("Slice0/Band20m/Frequency")).toDouble(),
+                 14'100'000.0);
+        QCOMPARE(settings.value(QStringLiteral("Slice0/Band40m/Frequency")).toDouble(),
+                 7'074'000.0);
+        // And the removal still went out with that save.
+        QVERIFY(!settings.contains(QStringLiteral("Slice0/XitHz")));
+        radio.loadSliceStateForTest(slice);
+        QCOMPARE(slice->frequency(), 7'074'000.0);
+    }
+
+    void aRefusedAddKeepsTheLettersOffsets()
+    {
+        // A new pan with no receiver left: a normal outcome on a 2-DDC HL2.
+        // No receiver was made, so the letter loses nothing.
+        RadioModel radio;
+        radio.configureStreamPool(1, 2, kRateHz);
+        const int a = radio.addSlice(QStringLiteral("pan-a"));
+        QVERIFY(a >= 0);
+        radio.flushPendingSettingsSave();
+        auto& settings = AppSettings::instance();
+        const int refusedId = a + 1;
+        const QString prefix = QStringLiteral("Slice%1/").arg(refusedId);
+        settings.setValue(prefix + QStringLiteral("LastBand"), QStringLiteral("20m"));
+        settings.setValue(prefix + QStringLiteral("RitEnabled"), QStringLiteral("True"));
+        settings.setValue(prefix + QStringLiteral("RitHz"), 250);
+        settings.setValue(prefix + QStringLiteral("XitEnabled"), QStringLiteral("True"));
+        settings.setValue(prefix + QStringLiteral("XitHz"), 700);
+
+        QSignalSpy rejected(&radio, &RadioModel::sliceAddRejected);
+        radio.addSliceOnPan(QStringLiteral("pan-b"), /*restoreSavedState=*/false,
+                            /*newReceiver=*/true);
+        QCOMPARE(rejected.count(), 1);
+        QVERIFY(radio.sliceById(refusedId) == nullptr);
+        QCOMPARE(settings.value(prefix + QStringLiteral("RitEnabled")).toString(),
+                 QStringLiteral("True"));
+        QCOMPARE(settings.value(prefix + QStringLiteral("RitHz")).toInt(), 250);
+        QCOMPARE(settings.value(prefix + QStringLiteral("XitEnabled")).toString(),
+                 QStringLiteral("True"));
+        QCOMPARE(settings.value(prefix + QStringLiteral("XitHz")).toInt(), 700);
+        QVERIFY(!radio.hasPendingBandSettingsForTest(refusedId));
+    }
+
     void removingAReceiverThenAddingItAgainStartsWithRitAndXitOff()
     {
         RadioModel radio;
