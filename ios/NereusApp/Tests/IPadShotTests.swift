@@ -337,7 +337,7 @@ struct IPadShotTests {
 
     /// SetupTypedEntryTests' search without its 20,000-node cap: two pans'
     /// bands hold more elements than one Setup page.
-    private static func element(_ id: String, in root: NSObject) -> NSObject? {
+    static func element(_ id: String, in root: NSObject) -> NSObject? {
         var queue: [NSObject] = [root]
         var next = 0
         while next < queue.count, next < 500_000 {

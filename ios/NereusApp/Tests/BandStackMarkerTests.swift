@@ -36,6 +36,16 @@ struct BandStackMarkerTests {
                                     geometry: Self.geometry, layout: Self.layout)
     }
 
+    @Test("a refusal's note starts past the band column, on an iPad and on a phone on its side")
+    func noteClearsTheColumn() {
+        // The iPad's band, one column; the phone on its side, two, past its safe area.
+        for (height, inset) in [(CGFloat(578), CGFloat(0)), (CGFloat(182), CGFloat(62))] {
+            let column = inset + BandColumnLayout.origin
+                + BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: height))
+            #expect(BandStackMarkerLayout.noteLeft(bandHeight: height, leadingInset: inset) >= column)
+        }
+    }
+
     @Test("only entries in view get a chip, low to high, at the spectrum's foot above the band plan")
     func inViewAtTheFoot() throws {
         let entries = try document([(id: "high", hz: 7_230_000, locked: false), (id: "low", hz: 7_170_000, locked: false),

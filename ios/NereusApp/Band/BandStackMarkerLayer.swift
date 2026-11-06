@@ -27,6 +27,16 @@ enum BandStackMarkerLayout {
     /// How far a chip's left edge sits before its frequency.
     static let leadIn: CGFloat = 5
     static let edgeGap: CGFloat = 2
+
+    /// Where a refusal's note starts on a band this high: past the band
+    /// column, which reaches down over the waterfall's top on an iPad and a
+    /// phone on its side.
+    @MainActor
+    static func noteLeft(bandHeight: CGFloat, leadingInset: CGFloat) -> CGFloat {
+        leadingInset + BandColumnLayout.origin
+            + BandColumnLayout.columnWidth(columns: BandColumnLayout.columns(bandHeight: bandHeight))
+            + BandColumnLayout.clearance
+    }
     static let chipGap: CGFloat = 2
     static let dot: CGFloat = 7
     static let spacing: CGFloat = 4
@@ -91,6 +101,7 @@ struct BandStackMarkerLayer: View {
     @ObservedObject var model: BandStackModel
     let geometry: BandGeometry
     let layout: BandLayout
+    var leadingInset: CGFloat = 0
 
     /// As the board's `.mk` and `.mk.act`.
     private static let face = Color(red: 12 / 255, green: 12 / 255, blue: 14 / 255).opacity(0.86)
@@ -103,7 +114,7 @@ struct BandStackMarkerLayer: View {
     private static let lock = Color(red: 0xc9 / 255, green: 0xa2 / 255, blue: 0x4a / 255)
 
     /// The note's widest.
-    private static let noteMaxWidth: CGFloat = 280
+    private static let noteMaxWidth: CGFloat = 240
 
     var body: some View {
         let chips = model.markerChips(geometry: geometry, layout: layout)
@@ -170,7 +181,8 @@ struct BandStackMarkerLayer: View {
     }
 
     private func noteView(_ note: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        let left = BandStackMarkerLayout.noteLeft(bandHeight: layout.size.height, leadingInset: leadingInset)
+        return HStack(alignment: .top, spacing: 6) {
             Text(note)
                 .font(.system(size: 11))
                 .foregroundStyle(ChromeColours.refusalText)
@@ -192,9 +204,9 @@ struct BandStackMarkerLayer: View {
         }
         .padding(.leading, 8)
         .background(Self.face, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
-        .frame(width: min(Self.noteMaxWidth, max(0, layout.strip.width - 2 * BandStackMarkerLayout.edgeGap)))
+        .frame(width: min(Self.noteMaxWidth, max(0, layout.strip.maxX - left - BandStackMarkerLayout.edgeGap)))
         // At the top of the waterfall: a flag hanging down the spectrum would cover it there.
-        .offset(x: BandStackMarkerLayout.edgeGap, y: layout.waterfall.minY + BandStackMarkerLayout.footGap)
+        .offset(x: left, y: layout.waterfall.minY + BandStackMarkerLayout.footGap)
     }
 }
 

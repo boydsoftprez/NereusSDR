@@ -76,6 +76,25 @@ final class BandStackUITests: XCTestCase {
         XCTAssertFalse(note.exists, "The picker sent a command")
     }
 
+    /// Spec section 8: a tap on the lit band is the next entry, the same verb
+    /// any band's tap sends, and the sheet stays down to show where it went.
+    @MainActor
+    func testATapOnTheLitBandEchoesPressAndTheSheetStays() throws {
+        try skipOnIPad()
+        let app = launchOnPanSheet()
+        let lit = app.buttons["bandGrid.40"]
+        XCTAssertTrue(lit.waitForExistence(timeout: 10))
+        XCTAssertTrue(lit.isSelected, "The slice's own band is not lit")
+        lit.tap()
+        let note = element(app, "bandStackNote")
+        XCTAssertTrue(note.waitForExistence(timeout: 10), "The tap on the lit band sent nothing")
+        XCTAssertTrue(note.label.contains("bandStack.press"), note.label)
+        XCTAssertTrue(note.label.contains("band 40m"), note.label)
+        XCTAssertTrue(note.label.contains("direction next"), note.label)
+        XCTAssertTrue(element(app, "panSheet").exists, "The Pan sheet closed on a press with the capability")
+        save("band-stack-lit-tap")
+    }
+
     /// Spec section 8: the row's five items and the band's return and clear,
     /// each sending its verb.
     @MainActor
@@ -217,6 +236,10 @@ final class BandStackUITests: XCTestCase {
         XCTAssertTrue(note.label.contains("bandStack.press"), note.label)
         XCTAssertTrue(menu.exists, "The BAND menu closed on a press with the capability")
         save("band-stack-menu-sideways-note")
+        // The lit band's tap, the next entry, leaves it open too.
+        app.buttons["bandGrid.40"].tap()
+        XCTAssertTrue(waitUntil { note.label.contains("band 40m") }, note.label)
+        XCTAssertTrue(menu.exists, "The BAND menu closed on the lit band's tap")
         // The block's foot can be reached on a short band.
         let reorder = app.buttons["bandStackReorder"]
         if !reorder.isHittable {
@@ -461,6 +484,38 @@ final class BandStackUITests: XCTestCase {
         ptt.tap()
         XCTAssertTrue(net.waitForExistence(timeout: 10), "The chips did not come back after the air")
         setMarkers(app, on: false, id: "bandStackMarkersSwitch")
+    }
+
+    /// The iPad draws the phone's chips and the older sheet's switch: either
+    /// way up, off until turned on, and a tap on a chip sends goTo.
+    @MainActor
+    func testIPadSwitchShowsMarkersAndATapGoesThere() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "This is the iPad's column")
+        let app = launch(stack: true, document: Self.markersDocument)
+        let net = element(app, "bandStackMarker.40m-net")
+        XCTAssertTrue(app.buttons["bandColumn.display"].waitForExistence(timeout: 30), "The iPad has no band column")
+        XCTAssertFalse(net.exists, "A chip draws with the switch off")
+        setMarkers(app, on: true, id: "bandStackMarkersSwitch", opener: "bandColumn.display",
+                   container: "bandColumnMenu.display")
+        XCTAssertTrue(net.waitForExistence(timeout: 10), "The switch drew no chip for 7.230")
+        XCTAssertTrue(net.isHittable, "The chip cannot be tapped")
+        save("band-stack-ipad-markers")
+        net.tap()
+        let note = element(app, "bandStackMarkerNote")
+        XCTAssertTrue(note.waitForExistence(timeout: 10), "The tap sent nothing")
+        XCTAssertTrue(note.label.contains("bandStack.goTo") && note.label.contains("entryId 40m-net"), note.label)
+        XCTAssertGreaterThanOrEqual(note.frame.minX, element(app, "bandColumn").frame.maxX, "The column covers the note")
+        save("band-stack-ipad-markers-note")
+        app.buttons["bandStackMarkerNoteClose"].tap()
+        XCTAssertTrue(note.waitForNonExistence(timeout: 5), "The note did not close")
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(element(app, "appletColumn").waitForExistence(timeout: 20))
+        XCTAssertTrue(waitUntil { net.exists && net.isHittable }, "On its side the chip is gone or covered")
+        save("band-stack-ipad-markers-sideways")
+        setMarkers(app, on: false, id: "bandStackMarkersSwitch", opener: "bandColumn.display",
+                   container: "bandColumnMenu.display")
+        XCTAssertTrue(net.waitForNonExistence(timeout: 10), "Off left the chips")
     }
 
     /// An older Core: the switch stays, greyed with the reason, in the sheet
@@ -733,13 +788,18 @@ final class BandStackUITests: XCTestCase {
                     .press(forDuration: 0.05, thenDragTo: sheet.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.15)))
             }
         }
-        XCTAssertTrue(button.waitForExistence(timeout: 5), "Display has no Band stack switch")
+        let reached = button.waitForExistence(timeout: 5)
+        if !reached {
+            save("band-stack-switch-not-reached")
+        }
+        XCTAssertTrue(reached, "Display has no Band stack switch")
     }
 
     /// Opens Display, sets the switch and closes Display.
     @MainActor
-    private func setMarkers(_ app: XCUIApplication, on: Bool, id: String, pillTab: String? = nil) {
-        let display = app.buttons["display"]
+    private func setMarkers(_ app: XCUIApplication, on: Bool, id: String, pillTab: String? = nil,
+                            opener: String = "display", container: String? = nil) {
+        let display = app.buttons[opener]
         XCTAssertTrue(display.waitForExistence(timeout: 30), "The toolbar has no Display button")
         display.tap()
         if let pillTab {
@@ -748,7 +808,7 @@ final class BandStackUITests: XCTestCase {
             tab.tap()
         }
         let button = app.buttons[id]
-        reach(button, scrolling: element(app, pillTab == nil ? "displaySheet" : "displayPill"))
+        reach(button, scrolling: element(app, container ?? (pillTab == nil ? "displaySheet" : "displayPill")))
         XCTAssertTrue(waitUntil { button.isEnabled }, "The Band stack switch stays grey")
         XCTAssertTrue(waitUntil { button.isHittable }, "The Band stack switch cannot be reached")
         if (button.value as? String == "On") != on {
@@ -836,7 +896,10 @@ final class BandStackUITests: XCTestCase {
 
     @MainActor
     private func save(_ name: String) {
-        guard let directory = ProcessInfo.processInfo.environment["NEREUS_CONNECT_SHOTS"], !directory.isEmpty else {
+        let environment = ProcessInfo.processInfo.environment
+        let own = UIDevice.current.userInterfaceIdiom == .pad ? "NEREUS_IPAD_SHOTS" : "NEREUS_MAIN_SHOTS"
+        guard let directory = [environment[own], environment["NEREUS_CONNECT_SHOTS"]]
+            .compactMap({ $0 }).first(where: { !$0.isEmpty }) else {
             return
         }
         let url = URL(fileURLWithPath: directory).appendingPathComponent("\(name).png")

@@ -309,7 +309,7 @@ struct BandGestureLayer: View {
                 SpotLayer(spots: spots, geometry: geometry, placements: placements)
             }
             if let markerModel {
-                BandStackMarkerLayer(model: markerModel, geometry: geometry, layout: layout)
+                BandStackMarkerLayer(model: markerModel, geometry: geometry, layout: layout, leadingInset: leadingInset)
             }
             if let roundtable {
                 // 8 points above the band plan, clear of every flag and folded tag.
