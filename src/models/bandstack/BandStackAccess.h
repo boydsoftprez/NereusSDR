@@ -65,7 +65,7 @@ public:
     /// The words state() stands for.
     static QString needsNewerCoreReason()
     {
-        return QStringLiteral("This Core does not have band stacks yet. Updating the Core adds them.");
+        return QStringLiteral("This Core does not have band stacks. Updating the Core may help.");
     }
     static QString notConnectedReason()
     {

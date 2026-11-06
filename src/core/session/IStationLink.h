@@ -349,7 +349,7 @@ public:
     virtual bool bandStackAvailable() const { return false; }
     virtual CommandOutcome sendBandStackCommand(const QString& /*verb*/,
                                                 const QJsonObject& /*arguments*/)
-    { return { false, QStringLiteral("This Core does not have band stacks yet. Updating the Core adds them.") }; }
+    { return { false, QStringLiteral("This Core does not have band stacks. Updating the Core may help.") }; }
     /// Band stack plan Task 6: this window controls the slice. A link that does
     /// not share slices has no other device to leave it to.
     virtual bool sliceControlledHere(int /*sliceId*/) const { return true; }

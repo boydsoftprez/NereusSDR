@@ -47,7 +47,7 @@ const QString kUpdateApp = QStringLiteral("Update this app to use band stacks on
 const QString kNoEntry = QStringLiteral("That band stack entry no longer exists.");
 const QString kNoRadio = QStringLiteral("Connect to a radio to use band stacks.");
 const QString kNewerCore =
-    QStringLiteral("This Core does not have band stacks yet. Updating the Core adds them.");
+    QStringLiteral("This Core does not have band stacks. Updating the Core may help.");
 
 const QHash<QByteArray, int> kStack{{"deviceAuth", 1}, {"sessionHolder", 1}, {"bandStack", 1}};
 const QHash<QByteArray, int> kSharesStack{
@@ -817,7 +817,7 @@ private slots:
         QVERIFY(window.bandStackFacade() != nullptr);
         QVERIFY(!client.bandStackAvailable());
         QCOMPARE(client.sendBandStackCommand(QStringLiteral("bandStack.reseed"), {}).reason,
-                 QStringLiteral("This Core does not have band stacks yet. Updating the Core adds them."));
+                 QStringLiteral("This Core does not have band stacks. Updating the Core may help."));
 
         auto* coreEnd = new LoopbackTransport(QStringLiteral("station-end"), this);
         auto* windowEnd = new LoopbackTransport(QStringLiteral("client-end"), this);
