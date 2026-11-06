@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -59,6 +64,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "ButtonBoxItem.h"
+#include "gui/NereusGuiExport.h"
 #include "core/WdspTypes.h"
 
 namespace NereusSDR {
@@ -66,7 +72,7 @@ namespace NereusSDR {
 // Mode selection buttons in DSPMode order: LSB, USB, DSB, CWL, CWU, FM, AM,
 // DIGU, SPEC, DIGL, SAM, DRM.
 // Ported from Thetis clsModeButtonBox (MeterManager.cs:10071+ [v2.10.3.15]).
-class ModeButtonItem : public ButtonBoxItem {
+class NEREUS_GUI_EXPORT ModeButtonItem : public ButtonBoxItem {
     Q_OBJECT
 
 public:

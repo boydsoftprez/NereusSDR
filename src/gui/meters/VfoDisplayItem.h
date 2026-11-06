@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-28 - A digit's wheel takes one step per mouse notch, or per
 //                 about 15 px of trackpad travel, through
 //                 WheelStepAccumulator. J.J. Boyd (KG4VCF), AI-assisted
@@ -78,6 +83,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "gui/NereusGuiExport.h"
 #include "gui/WheelStepAccumulator.h"
 #include "BandGroups.h"
 #include "core/WdspTypes.h"
@@ -127,7 +133,7 @@ inline constexpr int kVfoStepButtonToIndex[16] = {0,2,3,4,5,6,7,8,11,12,14,15,17
 
 // VFO frequency display with mouse wheel digit tuning.
 // Ported from Thetis clsVfoDisplay (MeterManager.cs:12881+).
-class VfoDisplayItem : public MeterItem {
+class NEREUS_GUI_EXPORT VfoDisplayItem : public MeterItem {
     Q_OBJECT
 public:
     // Saved integers are kept: 0 was VFO A, 1 VFO B, 2 Both.
