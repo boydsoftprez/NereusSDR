@@ -1,6 +1,10 @@
 // no-port-check: NereusSDR-original tests for the filter display's edge
 // drags, notches, TNF buttons and zoom; Thetis cites name the behaviour checked.
 // Modification history (NereusSDR):
+//   2026-11-05 - File-local copies of kDefaultLowCutHz: binding the class's static
+//                 constexpr member to a reference does not link on Windows
+//                 once the class is exported. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26: first version. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 //   2026-10-26: final review fix wave (C2, I7): a display on a slice that
@@ -30,6 +34,11 @@
 #include "models/TransmitModel.h"
 
 using namespace NereusSDR;
+
+// CONTRIBUTING.md, Windows DLL Boundaries.
+namespace {
+constexpr int kDefaultLowCutHz = FilterDisplayItem::kDefaultLowCutHz;
+}
 
 namespace {
 
@@ -380,7 +389,7 @@ private slots:
         QSignalSpy spy(item.get(), &FilterDisplayItem::filterEdgesRequested);
         click(*item, midpoint(l.topLeft, l.topRight), Qt::RightButton);
         QCOMPARE(spy.count(), 1);
-        QCOMPARE(spy.first().at(1).toInt(), FilterDisplayItem::kDefaultLowCutHz);
+        QCOMPARE(spy.first().at(1).toInt(), kDefaultLowCutHz);
         QCOMPARE(spy.first().at(2).toInt(), FilterDisplayItem::kDefaultLowCutHz + 2700);
     }
 

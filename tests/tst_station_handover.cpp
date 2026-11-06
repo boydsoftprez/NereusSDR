@@ -504,7 +504,9 @@ private slots:
         QTest::qWait(150);
         QCOMPARE(client.bytesAvailable(), qint64(0));
         QVERIFY(!profileLock.acquire(0));
-        QVERIFY(client.waitForReadyRead(7000));
+        // The helper answers after its 5.2 s delay above; the rest of this bound is
+        // for a machine that stretches that helper's other work (run 41764912150).
+        QVERIFY(client.waitForReadyRead(30000));
         const QJsonObject answer = QJsonDocument::fromJson(client.readAll()).object();
         QVERIFY(answer.value(QStringLiteral("ok")).toBool());
         QVERIFY(profileLock.acquire(1000));
