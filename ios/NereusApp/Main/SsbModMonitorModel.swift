@@ -224,6 +224,7 @@ final class SsbModMonitorModel: ObservableObject {
             return
         }
         self.source = source
+        note = nil
         phone.setInteger(Int(source.rawValue), for: Self.sourceKey)
         reading = nil
         updateWatch()

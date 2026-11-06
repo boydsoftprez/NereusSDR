@@ -231,6 +231,7 @@ struct SsbModMonitorTests {
         #expect(monitor.source == .paFeedback)
         // Only its stream is watched. No reset: other devices may be reading.
         #expect(await ModMonitorTests.settle { rig.station.ssbModMonitorWatched == ["txSsbModulationFeedback"] })
+        try await LinkBarrier.roundTrip(rig.model.commands)
         #expect(Self.resets(rig.station).isEmpty)
         #expect(Self.unsubscribes(rig.station) == ["txSsbModulation"])
         #expect(monitor.note == nil)
@@ -242,6 +243,21 @@ struct SsbModMonitorTests {
         #expect(monitor.source == .paFeedback)
         monitor.choose(.txIq)
         #expect(await ModMonitorTests.settle { rig.station.ssbModMonitorWatched == ["txSsbModulation"] })
+        monitor.disappear()
+        await rig.model.disconnect()
+    }
+
+    @Test("a note about one source does not stay under another")
+    func noteGoesWithTheSource() async throws {
+        let rig = try await Self.connected(mode: "USB", center: center)
+        let monitor = try Self.monitor(rig)
+        await Self.pureSignal(rig)
+        #expect(await ModMonitorTests.settle { monitor.pureSignalRunning })
+        monitor.appear()
+        monitor.reset()
+        #expect(await ModMonitorTests.settle { monitor.note == SsbModMonitorModel.clearedText })
+        monitor.choose(.paFeedback)
+        #expect(monitor.note == nil)
         monitor.disappear()
         await rig.model.disconnect()
     }
