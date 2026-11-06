@@ -2174,6 +2174,14 @@ PhoneCwApplet* PhoneCwApplet::createPanelCopy(QWidget* parent, bool preview)
     return copy;
 }
 
+QSize PhoneCwApplet::freeCanvasSizeFor(const QJsonObject& config)
+{
+    const std::unique_ptr<PhoneCwApplet> probe(createPanelCopy(nullptr, true));
+    probe->m_cwStatusLine->setText(m_cwStatusLine->text());
+    probe->applyContainerConfig(config);
+    return probe->property("freeCanvasHint").toSize();
+}
+
 void PhoneCwApplet::applyContainerConfig(const QJsonObject& config)
 {
     if (m_parts) {

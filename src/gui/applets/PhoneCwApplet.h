@@ -10,7 +10,7 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-06 - PR 757 corrections: fitCopyToCurrentPage,
-//                 reportFreeCanvasSize, and the unread m_surface is gone. J.J. Boyd (KG4VCF), AI-assisted via
+//                 reportFreeCanvasSize, freeCanvasSizeFor, and the unread m_surface is gone. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 //   2026-11-06 - A container copy of this panel (createPanelCopy) hides each
 //                 row, and the Phone and CW buttons, from its entry config.
@@ -179,6 +179,9 @@ public:
     // changes nothing. A live copy is wired like this applet, follows the
     // same permission gates, and is not this applet's widget.
     PhoneCwApplet* createPanelCopy(QWidget* parent, bool preview);
+    // The free canvas size a live copy with this config reports. Measured on
+    // an inert copy, with this panel's CW status line, which a preview lacks.
+    QSize freeCanvasSizeFor(const QJsonObject& config);
     // Hides the rows the entry names, and shows Phone or CW from "page".
     void applyContainerConfig(const QJsonObject& config);
     const SectionParts* containerParts() const;

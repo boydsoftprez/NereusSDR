@@ -11,6 +11,8 @@
 //   2026-11-06 - The Phone/CW panel as container content, with a toggle to
 //                 hide each row and the page buttons. Brian Sutton,
 //                 AI-assisted via xAI Grok.
+//   2026-11-06 - A new copy's free canvas rect holds either page. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "PhoneCwSectionContent.h"
@@ -89,6 +91,11 @@ void registerPhoneCwSectionContent(ContainerContentRegistry& registry, PhoneCwAp
             return copy;
         },
         copyProperties(phoneCwApplet));
+    // The settings dialog saves a rect when it adds a copy, so the rect must
+    // hold either page from the start.
+    registry.setNewEntryCanvasSize(QLatin1String(kType), [phoneCwApplet](const ContentEntry& entry) {
+        return phoneCwApplet->freeCanvasSizeFor(entry.config);
+    });
 }
 
 } // namespace NereusSDR

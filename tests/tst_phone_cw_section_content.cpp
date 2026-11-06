@@ -29,7 +29,10 @@
 #include <QMap>
 #include <QPushButton>
 #include <QSlider>
+#include <QListWidget>
+#include <QSplitter>
 #include <QStackedWidget>
+#include <QTemporaryDir>
 #include <QVBoxLayout>
 
 #include <memory>
@@ -41,6 +44,12 @@
 #include "gui/applets/PhoneCwSectionContent.h"
 #include "gui/applets/SectionParts.h"
 #include "gui/containers/ContainerContentHost.h"
+#include "gui/containers/ContainerDocumentCodec.h"
+#include "gui/containers/ContainerEditSession.h"
+#include "gui/containers/ContainerManager.h"
+#include "gui/containers/ContainerSettingsDialog.h"
+#include "gui/containers/ContainerWorkspaceStore.h"
+#include "gui/meters/MeterPoller.h"
 #include "gui/containers/ContainerContentRegistry.h"
 #include "gui/containers/ContentPropertyEditor.h"
 #include "models/RadioModel.h"
@@ -144,6 +153,36 @@ struct Column {
         }
     }
 };
+
+void settleCopy(PhoneCwApplet* copy)
+{
+    for (int pass = 0; pass < 6; ++pass) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        copy->layout()->activate();
+        stackOf(copy)->currentWidget()->layout()->activate();
+    }
+}
+
+// Every row showing has the height it wants, inside the copy's rect.
+bool everyRowFits(PhoneCwApplet* copy, QString* problem)
+{
+    const QStringList rows = QStringList{kPageButtons} + kPhoneRows + kCwRows;
+    for (const QString& id : rows) {
+        QWidget* row = rowOf(copy, id);
+        if (!row->isVisible()) {
+            continue;
+        }
+        const int bottom = row->mapTo(copy, QPoint(0, row->height())).y();
+        const int wanted = row->hasHeightForWidth() ? row->heightForWidth(row->width())
+                                                    : row->sizeHint().height();
+        if (bottom > copy->height() || row->height() < wanted) {
+            *problem = QStringLiteral("%1 is %2 px of %3 wanted, ending at %4 in a %5 px rect")
+                           .arg(id).arg(row->height()).arg(wanted).arg(bottom).arg(copy->height());
+            return false;
+        }
+    }
+    return true;
+}
 
 // Every control a person can reach, by its accessible name.
 struct ControlState {
@@ -741,11 +780,13 @@ private slots:
         QTest::addColumn<QStringList>("hidden");
         QTest::newRow("phone, mic only") << QStringLiteral("phone")
                                          << allBut(kPhoneRows, QStringLiteral("mic"));
-        QTest::newRow("phone, nothing hidden") << QStringLiteral("phone") << QStringList{};
+        // A guard: this one passes without the fix too.
+        QTest::newRow("guard: phone, nothing hidden") << QStringLiteral("phone") << QStringList{};
         QTest::newRow("cw, nothing hidden") << QStringLiteral("cw") << QStringList{};
         QTest::newRow("cw, delay only") << QStringLiteral("cw")
                                         << allBut(kCwRows, QStringLiteral("cwDelay"));
-        QTest::newRow("one row on each") << QStringLiteral("phone")
+        // A guard as well.
+        QTest::newRow("guard: one row on each") << QStringLiteral("phone")
                                          << allBut(kPhoneRows, QStringLiteral("level"))
                                                 + allBut(kCwRows, QStringLiteral("cwPan"));
     }
@@ -774,53 +815,163 @@ private slots:
 
         auto* copy = qobject_cast<PhoneCwApplet*>(host.entryRows().first().widget.data());
         QVERIFY(copy);
-        const auto settle = [copy]() {
-            for (int pass = 0; pass < 6; ++pass) {
-                QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
-                copy->layout()->activate();
-                stackOf(copy)->currentWidget()->layout()->activate();
-            }
-        };
-        const auto everyRowFits = [copy](QString* problem) {
-            const QStringList rows = QStringList{kPageButtons} + kPhoneRows + kCwRows;
-            for (const QString& id : rows) {
-                QWidget* row = rowOf(copy, id);
-                if (!row->isVisible()) {
-                    continue;
-                }
-                const int bottom = row->mapTo(copy, QPoint(0, row->height())).y();
-                const int wanted = row->hasHeightForWidth() ? row->heightForWidth(row->width())
-                                                            : row->sizeHint().height();
-                if (bottom > copy->height() || row->height() < wanted) {
-                    *problem = QStringLiteral("%1 is %2 px of %3 wanted, ending at %4 in a %5 px rect")
-                                   .arg(id).arg(row->height()).arg(wanted).arg(bottom).arg(copy->height());
-                    return false;
-                }
-            }
-            return true;
-        };
-
         QString problem;
-        settle();
-        QVERIFY2(everyRowFits(&problem), qPrintable(problem));
+        settleCopy(copy);
+        QVERIFY2(everyRowFits(copy, &problem), qPrintable(problem));
         const int rectHeight = copy->height();
 
         const QString other = page == QLatin1String("phone") ? QStringLiteral("CW") : QStringLiteral("Phone");
         const QString back = page == QLatin1String("phone") ? QStringLiteral("Phone") : QStringLiteral("CW");
         buttonNamed(copy, other)->click();
-        settle();
+        settleCopy(copy);
         QVERIFY(rowOf(copy, kPageButtons)->isVisible());
-        QVERIFY2(everyRowFits(&problem), qPrintable(problem));
+        QVERIFY2(everyRowFits(copy, &problem), qPrintable(problem));
         QCOMPARE(copy->height(), rectHeight);
 
         buttonNamed(copy, back)->click();
-        settle();
-        QVERIFY2(everyRowFits(&problem), qPrintable(problem));
+        settleCopy(copy);
+        QVERIFY2(everyRowFits(copy, &problem), qPrintable(problem));
+    }
+
+    // Page buttons hidden, Page set to CW: the rect holds the CW page.
+    void aFreeCanvasCopyWithoutButtonsFitsItsPage()
+    {
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        ContainerContentRegistry registry;
+        registerPhoneCwSectionContent(registry, &applet);
+        ContainerContentHost host(registry);
+        host.resize(500, 900);
+        host.show();
+        ContainerDocument document;
+        document.id = QStringLiteral("main");
+        document.layout = ContentLayout::FreeCanvas;
+        ContentEntry entry = registry.makeEntry(QStringLiteral("phcw.panel"));
+        entry.id = QStringLiteral("copy");
+        entry.config = hiding({kPageButtons}, QStringLiteral("cw"));
+        document.contents = {entry};
+        host.reconcile(document);
+        auto* copy = qobject_cast<PhoneCwApplet*>(host.entryRows().first().widget.data());
+        QVERIFY(copy);
+        settleCopy(copy);
+        QCOMPARE(stackOf(copy)->currentIndex(), 1);
+        QVERIFY(!rowOf(copy, kPageButtons)->isVisible());
+        QString problem;
+        QVERIFY2(everyRowFits(copy, &problem), qPrintable(problem));
+        QVERIFY(rowOf(copy, QStringLiteral("cwDelay"))->isVisible());
+    }
+
+    // The way a person adds one: the settings dialog saves a rect straight
+    // away, which a free canvas prefers over any hint. The rect comes from
+    // the copy's reported height; other content keeps the usual 160 px.
+    void anAddedCopyFitsAndItsRectSurvivesAReload()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("settings.xml")));
+        ContainerWorkspaceStore store(settings);
+        RadioModel radio;
+        PhoneCwApplet applet(&radio);
+        ContainerContentRegistry registry;
+        registerPhoneCwSectionContent(registry, &applet);
+        registry.registerWidgetFactory(
+            QStringLiteral("test.plain"),
+            {QStringLiteral("test.plain"), QStringLiteral("Plain"), false, true, {}, ContentGroup::PanelSections},
+            [](const ContentEntry&, QWidget* parent, ContentRenderMode) -> QWidget* {
+                return new QLabel(QStringLiteral("plain"), parent);
+            });
+        MeterPoller poller;
+        QWidget root;
+        QSplitter splitter(&root);
+        ContainerManager manager(&root, &splitter);
+        manager.setWorkspaceAdapter(&store, &registry);
+        manager.setPreviewPoller(&poller);
+        ContainerDocument container;
+        container.id = QStringLiteral("A");
+        container.layout = ContentLayout::FreeCanvas;
+        WorkspaceDocument workspace;
+        workspace.mainContainerId = container.id;
+        workspace.containers = {container};
+        QCOMPARE(manager.commitWorkspace(workspace, 0).status, CommitStatus::Saved);
+        root.show();
+
+        ContainerSettingsDialog dialog(manager.container(container.id), nullptr, &manager);
+        dialog.resize(1300, 1000);
+        dialog.show();
+        QCoreApplication::processEvents();
+        auto* available = dialog.findChild<QListWidget*>(QStringLiteral("containerAvailableContents"));
+        QVERIFY(available);
+        const auto add = [available](const QString& type) {
+            for (int i = 0; i < available->count(); ++i) {
+                QListWidgetItem* item = available->item(i);
+                if (item->data(Qt::UserRole).toString() == type) {
+                    available->setCurrentItem(item);
+                    emit available->itemDoubleClicked(item);
+                    return true;
+                }
+            }
+            return false;
+        };
+        QVERIFY(add(QStringLiteral("phcw.panel")));
+        QVERIFY(add(QStringLiteral("test.plain")));
+        QVERIFY(add(QStringLiteral("phcw.panel")));
+        WorkspaceDocument draft = dialog.editSession()->draft();
+        QVector<ContentEntry>& added = draft.containers[0].contents;
+        QCOMPARE(added.size(), 3);
+        const QRectF first = added[0].freeCanvasRect().value();
+        const QRectF plain = added[1].freeCanvasRect().value();
+        const QRectF second = added[2].freeCanvasRect().value();
+        QCOMPARE(plain.height(), 160.0);
+        QVERIFY(first.height() > 160.0);
+        // Each rect is saved, so the next add starts below it.
+        QVERIFY(plain.top() >= first.bottom());
+        QVERIFY(second.top() >= plain.bottom());
+        QCOMPARE(second.height(), first.height());
+
+        // The second copy hides all Phone rows but mic and keeps its rect.
+        added[2].config = hiding(allBut(kPhoneRows, QStringLiteral("mic")));
+        dialog.reject();
+        draft.revision = store.snapshot().revision;
+        QCOMPARE(manager.commitWorkspace(draft, draft.revision).status, CommitStatus::Saved);
+
+        auto* host = manager.contentHost(container.id);
+        QVERIFY(host);
+        for (int index : {0, 2}) {
+            auto* copy = qobject_cast<PhoneCwApplet*>(host->entryRows().at(index).widget.data());
+            QVERIFY(copy);
+            // What the rect was sized from is what the live copy reports.
+            if (index == 0) {
+                QCOMPARE(qreal(copy->property("freeCanvasHint").toSize().height()), first.height());
+            }
+            QString problem;
+            for (const QString& page : {QStringLiteral("CW"), QStringLiteral("Phone"), QStringLiteral("CW")}) {
+                buttonNamed(copy, page)->click();
+                settleCopy(copy);
+                QCOMPARE(qreal(copy->height()), first.height());
+                QVERIFY2(everyRowFits(copy, &problem),
+                         qPrintable(QStringLiteral("copy %1 on %2: ").arg(index).arg(page) + problem));
+            }
+        }
+
+        // A rect the person sized stays as they sized it, through a save and
+        // a reload, even when it's too small for the copy.
+        WorkspaceDocument sized = store.snapshot();
+        const QRectF chosen(10, 30, 340, 100);
+        sized.containers[0].contents[0].setFreeCanvasRect(chosen);
+        QCOMPARE(manager.commitWorkspace(sized, sized.revision).status, CommitStatus::Saved);
+        const DocumentResult reloaded = ContainerDocumentCodec::decode(ContainerDocumentCodec::encode(store.snapshot()));
+        QCOMPARE(reloaded.document.containers[0].contents[0].freeCanvasRect().value(), chosen);
+        QCOMPARE(reloaded.document.containers[0].contents[2].freeCanvasRect().value(), second);
+        auto* resized = qobject_cast<PhoneCwApplet*>(host->entryRows().first().widget.data());
+        QVERIFY(resized);
+        settleCopy(resized);
+        QCOMPARE(resized->height(), 100);
     }
 
     // With the page buttons hidden the page can't change, so the copy asks
-    // for what it shows. Its minimum follows the same rule, and the settings
-    // preview's copy asks for the same as the live one.
+    // for what it shows. Its minimum follows the same rule. This reads the
+    // settings preview's copy, which has no CW status text: its hint can be
+    // a line short of a live copy's when CW is the taller page, so the rect
+    // an add saves is measured with the status text (see the test above).
     void aFreeCanvasCopyReportsTheSizeItNeeds()
     {
         RadioModel radio;
