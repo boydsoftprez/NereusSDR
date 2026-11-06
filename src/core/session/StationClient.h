@@ -527,6 +527,7 @@
 #include <optional>
 
 #include "core/session/IStationLink.h"
+#include "core/session/LinkDownEditWatch.h"
 #include "core/session/RemoteTransmitClient.h"
 #include "core/session/LinkVersion.h"
 #include "models/Band.h"
@@ -1818,6 +1819,11 @@ signals:
     /// Every full state publication, including reseeding an existing session.
     /// Does not recreate media or reset the session epoch.
     void stateSnapshotApplied();
+    /// Applet and slice properties ("object.property") the operator changed
+    /// while the link was down, which this snapshot replaced with the Core's
+    /// values. The properties' counterpart to
+    /// SettingsProxy::offlineEditsSuperseded(). See LinkDownEditWatch.
+    void linkDownEditsSuperseded(const QStringList& keys);
     void audioOpusBitratesChanged();
 
     /// The session ended, with the station's own reason where it gave one
@@ -2180,6 +2186,9 @@ private:
     QSet<QByteArray> m_unheldDeltaKeys;
 
     QHash<QByteArray, QPointer<QObject>> m_objects;
+    /// Parented to this. Runs only from a lost ready session until the next
+    /// session's first frame.
+    LinkDownEditWatch* m_linkDownEdits = nullptr;
 
     /// RX meter stamps: one slice delta's held RX meter readings.
     struct HeldRxMeterReadings {

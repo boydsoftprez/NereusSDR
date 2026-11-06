@@ -5099,11 +5099,12 @@ void MainWindow::ensureRemoteSession()
         // toast listing "hardware/aa:bb:.../alex/hpf/..." twelve times is
         // noise the operator will learn to dismiss unread.
         connect(proxy, &SettingsProxy::offlineEditsSuperseded, this,
-                [this](const QStringList& keys) {
-            showToast(tr("%n Core setting(s) you changed while the link was down "
-                         "did not stick. See the log for which.", "", keys.size()),
-                      ToastSeverity::Warning, 8000);
-        });
+                [this](const QStringList& keys) { showOfflineEditsToast(keys.size()); });
+        // Settings persistence audit (W11): the same message for the applet
+        // and slice properties. The settings snapshot lands first, moments
+        // before the state snapshot, so the two add up to one toast.
+        connect(m_stationClient, &StationClient::linkDownEditsSuperseded, this,
+                [this](const QStringList& keys) { showOfflineEditsToast(keys.size()); });
 
         // Task 19: the Disconnect side must pass attemptReconnect = false so a
         // deliberate quit does not schedule a surprise redial during teardown.
@@ -5127,6 +5128,18 @@ void MainWindow::disconnectFromStation()
     m_stationDisconnectRequested = false;
     clearStationLinkToastMemory();
     showToast(tr("Disconnected from the Core"), ToastSeverity::Info, 3000);
+}
+
+void MainWindow::showOfflineEditsToast(int count)
+{
+    if (m_offlineEditsToast) {
+        count += m_offlineEditsToastCount;
+        m_offlineEditsToast->close();
+    }
+    m_offlineEditsToastCount = count;
+    m_offlineEditsToast = showToast(tr("%n Core setting(s) you changed while the link was down "
+                                       "did not stick. See the log for which.", "", count),
+                                    ToastSeverity::Warning, 8000);
 }
 
 void MainWindow::clearStationLinkToastMemory()

@@ -1454,6 +1454,9 @@ set(CORE_SOURCES
     src/core/session/MirrorEnumDomain.cpp
     src/core/session/MirrorPolicy.cpp
     src/core/session/StateMirror.cpp
+    # Settings persistence audit (W11): what a window changed with the link
+    # down, so it can say the change did not stick.
+    src/core/session/LinkDownEditWatch.cpp
     # iPhone app Task 72 (R-IOS-02): one device's view of the mirror, with
     # its own coalescer, burst and sink; echo withheld from the writer only.
     src/core/session/MirrorView.cpp

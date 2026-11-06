@@ -1741,6 +1741,10 @@ private:
     QString m_lastReconnectToastReason;
     bool m_stationLinkLostSeen{false};
     bool m_reconnectToastSeen{false};
+    /// The toast for edits lost to the link being down, while it is up, and
+    /// the count it shows, so a later report from the same outage adds to it.
+    QPointer<class StatusToast> m_offlineEditsToast;
+    int m_offlineEditsToastCount{0};
     bool m_stationDisconnectRequested{false};
     bool m_initialConnectionStarted{false};
     bool m_retiringSession{false};
@@ -2408,6 +2412,7 @@ private:
     /// Returns the toast so a caller whose condition can end early can
     /// dismiss it rather than leaving a stale notice up for its full
     /// timeout. Hold it by QPointer: it deletes itself on close.
+    void showOfflineEditsToast(int count);
     StatusToast* showToast(const QString& message,
                            ToastSeverity severity,
                            int timeoutMs);

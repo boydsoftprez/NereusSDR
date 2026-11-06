@@ -155,6 +155,7 @@
 #include <QComboBox>
 #include <QGraphicsOpacityEffect>
 #include <QGroupBox>
+#include <QSlider>
 #include <QSpinBox>
 #include <QLabel>
 #include <QLayout>
@@ -210,6 +211,7 @@
 #include "gui/applets/PureSignalApplet.h"
 #include "gui/applets/RadeApplet.h"
 #include "gui/applets/RxApplet.h"
+#include "gui/widgets/StatusToast.h"
 #include "core/TxSliceArbiter.h"
 #ifdef HAVE_WEBSOCKETS
 #include "core/TciServer.h"
@@ -482,6 +484,39 @@ bool disconnectFromRadioMenu(RemoteWindowHarness& h)
     if (!disconnect || !disconnect->isEnabled()) { return false; }
     disconnect->trigger();
     return true;
+}
+
+// Link-down edits: the toast Setup's dropped values get, as it stands now.
+QStringList offlineEditToasts(RemoteWindowHarness& h)
+{
+    QStringList messages;
+    for (const StatusToast* toast : h.window()->findChildren<StatusToast*>()) {
+        if (toast->message().contains(QStringLiteral("did not stick"))) {
+            messages.append(toast->message());
+        }
+    }
+    return messages;
+}
+
+QString offlineEditToastFor(int count)
+{
+    return QStringLiteral("%1 Core setting(s) you changed while the link was down "
+                          "did not stick. See the log for which.").arg(count);
+}
+
+// The RX applet's AGC-T slider, found by what a real key press on it does.
+// The slider moves one step and is put back only through the same key.
+QSlider* agcThresholdSlider(RxApplet* rx, SliceModel* slice)
+{
+    for (QSlider* slider : rx->findChildren<QSlider*>()) {
+        const int before = slice->agcThreshold();
+        QTest::keyClick(slider, slider->value() > slider->minimum() ? Qt::Key_Left : Qt::Key_Right);
+        if (slice->agcThreshold() != before) {
+            QTest::keyClick(slider, slice->agcThreshold() < before ? Qt::Key_Right : Qt::Key_Left);
+            return slider;
+        }
+    }
+    return nullptr;
 }
 
 bool corePanelVisible(RemoteWindowHarness& h)
@@ -1465,6 +1500,237 @@ private slots:
         QVERIFY(!AppSettings::instance().contains(QStringLiteral("TciSliceAGain")));
         QVERIFY(!AppSettings::instance().contains(QStringLiteral("TciTxGain")));
         QVERIFY(!h.proxy().handlesKey(QStringLiteral("TciSliceAGain")));
+    }
+
+    // JJ's ruling of 2026-11-05: an applet or slice change made with the link
+    // down gets the message Setup's dropped values already get. Real key
+    // presses on the applet's slider; ten of them are one change said once.
+    void linkDownEditShowsOneToastForABurst()
+    {
+        RemoteWindowHarness h;
+        QVERIFY(h.start());
+        QVERIFY(connectFromRadioMenu(h));
+        auto* rx = h.window()->findChild<RxApplet*>();
+        QVERIFY(rx);
+        QTRY_VERIFY(rx->slice() != nullptr);
+        SliceModel* slice = rx->slice();
+        SliceModel* coreSlice = h.station().activeSlice();
+        QVERIFY(coreSlice);
+        QTRY_COMPARE(slice->agcThreshold(), coreSlice->agcThreshold());
+        QSlider* slider = agcThresholdSlider(rx, slice);
+        QVERIFY(slider);
+        QTRY_COMPARE(coreSlice->agcThreshold(), slice->agcThreshold());
+        // Long enough that the key presses above are no longer recent.
+        QTest::qWait(700);
+        const int coreValue = coreSlice->agcThreshold();
+
+        h.dropLink();
+        QTRY_VERIFY_WITH_TIMEOUT(h.client()->isReconnectPending(), 5000);
+        const Qt::Key away = slider->value() > (slider->minimum() + slider->maximum()) / 2
+            ? Qt::Key_Left : Qt::Key_Right;
+        for (int i = 0; i < 10; ++i) {
+            QTest::keyClick(slider, away);
+        }
+        // The controls stay usable.
+        QVERIFY(slider->isEnabled());
+        QVERIFY(slice->agcThreshold() != coreValue);
+
+        QTRY_VERIFY_WITH_TIMEOUT(h.acceptedConnections() == 2
+                                 && h.client()->isHandshakeComplete(), 10000);
+        QTRY_COMPARE(offlineEditToasts(h), QStringList{offlineEditToastFor(1)});
+        QTest::qWait(kSettleMs);
+        QCOMPARE(offlineEditToasts(h), QStringList{offlineEditToastFor(1)});
+        // Not queued: the Core kept its value and the window took it back.
+        QCOMPARE(coreSlice->agcThreshold(), coreValue);
+        QCOMPARE(slice->agcThreshold(), coreValue);
+    }
+
+    // The trap: a setter runs from code too. A write no operator input led
+    // to, and values the Core sends, say nothing; the reconnect's snapshot
+    // moves the slice with no edit behind it.
+    void linkDownCodeWritesAndCoreValuesShowNoToast()
+    {
+        RemoteWindowHarness h;
+        QVERIFY(h.start());
+        QVERIFY(connectFromRadioMenu(h));
+        auto* rx = h.window()->findChild<RxApplet*>();
+        QVERIFY(rx);
+        QTRY_VERIFY(rx->slice() != nullptr);
+        SliceModel* slice = rx->slice();
+        SliceModel* coreSlice = h.station().activeSlice();
+        QVERIFY(coreSlice);
+        QTRY_COMPARE(slice->agcThreshold(), coreSlice->agcThreshold());
+
+        // A value arriving on a live link.
+        coreSlice->setAgcThreshold(coreSlice->agcThreshold() - 3);
+        QTRY_COMPARE(slice->agcThreshold(), coreSlice->agcThreshold());
+
+        h.dropLink();
+        QTRY_VERIFY_WITH_TIMEOUT(h.client()->isReconnectPending(), 5000);
+        slice->setAgcThreshold(slice->agcThreshold() - 5);
+        // And one the reconnect's snapshot brings.
+        coreSlice->setAgcThreshold(coreSlice->agcThreshold() + 7);
+
+        QTRY_VERIFY_WITH_TIMEOUT(h.acceptedConnections() == 2
+                                 && h.client()->isHandshakeComplete(), 10000);
+        QTRY_COMPARE(slice->agcThreshold(), coreSlice->agcThreshold());
+        QTest::qWait(kSettleMs);
+        QCOMPARE(offlineEditToasts(h), QStringList());
+    }
+
+    // A write with the link up reaches the Core and says nothing, then or
+    // at the next reconnect.
+    void linkUpEditShowsNoToast()
+    {
+        RemoteWindowHarness h;
+        QVERIFY(h.start());
+        QVERIFY(connectFromRadioMenu(h));
+        auto* rx = h.window()->findChild<RxApplet*>();
+        QVERIFY(rx);
+        QTRY_VERIFY(rx->slice() != nullptr);
+        SliceModel* slice = rx->slice();
+        SliceModel* coreSlice = h.station().activeSlice();
+        QVERIFY(coreSlice);
+        QTRY_COMPARE(slice->agcThreshold(), coreSlice->agcThreshold());
+        QSlider* slider = agcThresholdSlider(rx, slice);
+        QVERIFY(slider);
+        QTest::keyClick(slider, slider->value() > slider->minimum() ? Qt::Key_Left : Qt::Key_Right);
+        QTRY_COMPARE(coreSlice->agcThreshold(), slice->agcThreshold());
+
+        h.dropLink();
+        QTRY_VERIFY_WITH_TIMEOUT(h.acceptedConnections() == 2
+                                 && h.client()->isHandshakeComplete(), 10000);
+        QTest::qWait(kSettleMs);
+        QCOMPARE(offlineEditToasts(h), QStringList());
+    }
+
+    // An edit that ends on the Core's own value lost nothing.
+    void linkDownEditBackToTheCoresValueShowsNoToast()
+    {
+        RemoteWindowHarness h;
+        QVERIFY(h.start());
+        QVERIFY(connectFromRadioMenu(h));
+        auto* rx = h.window()->findChild<RxApplet*>();
+        QVERIFY(rx);
+        QTRY_VERIFY(rx->slice() != nullptr);
+        SliceModel* slice = rx->slice();
+        SliceModel* coreSlice = h.station().activeSlice();
+        QVERIFY(coreSlice);
+        QTRY_COMPARE(slice->agcThreshold(), coreSlice->agcThreshold());
+        QSlider* slider = agcThresholdSlider(rx, slice);
+        QVERIFY(slider);
+        QTRY_COMPARE(coreSlice->agcThreshold(), slice->agcThreshold());
+
+        h.dropLink();
+        QTRY_VERIFY_WITH_TIMEOUT(h.client()->isReconnectPending(), 5000);
+        const int coreValue = coreSlice->agcThreshold();
+        const bool down = slider->value() > slider->minimum();
+        QTest::keyClick(slider, down ? Qt::Key_Left : Qt::Key_Right);
+        QVERIFY(slice->agcThreshold() != coreValue);
+        QTest::keyClick(slider, down ? Qt::Key_Right : Qt::Key_Left);
+        QCOMPARE(slice->agcThreshold(), coreValue);
+
+        QTRY_VERIFY_WITH_TIMEOUT(h.acceptedConnections() == 2
+                                 && h.client()->isHandshakeComplete(), 10000);
+        QTest::qWait(kSettleMs);
+        QCOMPARE(offlineEditToasts(h), QStringList());
+    }
+
+    // A window simply not on a Core is not a link that went down: before
+    // the first connect, and after the operator's own Disconnect.
+    void editsWhileNotOnACoreShowNoToast()
+    {
+        RemoteWindowHarness h;
+        QVERIFY(h.start());
+        auto* rx = h.window()->findChild<RxApplet*>();
+        QVERIFY(rx);
+        // Input before the first connect, with whatever slice exists yet.
+        for (QSlider* slider : rx->findChildren<QSlider*>()) {
+            QTest::keyClick(slider, Qt::Key_Left);
+        }
+        QVERIFY(connectFromRadioMenu(h));
+        QTest::qWait(kSettleMs);
+        QCOMPARE(offlineEditToasts(h), QStringList());
+
+        QTRY_VERIFY(rx->slice() != nullptr);
+        SliceModel* slice = rx->slice();
+        SliceModel* coreSlice = h.station().activeSlice();
+        QVERIFY(coreSlice);
+        QTRY_COMPARE(slice->agcThreshold(), coreSlice->agcThreshold());
+        QSlider* slider = agcThresholdSlider(rx, slice);
+        QVERIFY(slider);
+        QTRY_COMPARE(coreSlice->agcThreshold(), slice->agcThreshold());
+
+        QVERIFY(disconnectFromRadioMenu(h));
+        QTRY_VERIFY(!h.client()->isHandshakeComplete());
+        QTest::keyClick(slider, Qt::Key_Left);
+        QVERIFY(connectFromRadioMenu(h));
+        QTest::qWait(kSettleMs);
+        QCOMPARE(offlineEditToasts(h), QStringList());
+
+        // And a link that dropped, then the operator stopped the retrying:
+        // the edit made in between went with it.
+        h.dropLink();
+        QTRY_VERIFY_WITH_TIMEOUT(h.client()->isReconnectPending(), 5000);
+        QTest::keyClick(slider, Qt::Key_Left);
+        QVERIFY(disconnectFromRadioMenu(h));
+        QVERIFY(!h.client()->isReconnectPending());
+        QVERIFY(connectFromRadioMenu(h));
+        QTest::qWait(kSettleMs);
+        QCOMPARE(offlineEditToasts(h), QStringList());
+    }
+
+    // MOX and TUNE have their own handling; they get no second message.
+    void linkDownMoxAndTuneGetNoSecondMessage()
+    {
+        RemoteWindowHarness h;
+        QVERIFY(h.start());
+        QVERIFY(connectFromRadioMenu(h));
+        auto* rx = h.window()->findChild<RxApplet*>();
+        QVERIFY(rx);
+        TransmitModel& tx = h.window()->radioModel()->transmitModel();
+
+        h.dropLink();
+        QTRY_VERIFY_WITH_TIMEOUT(h.client()->isReconnectPending(), 5000);
+        QTest::keyClick(rx, Qt::Key_Shift);
+        tx.setMox(true);
+        tx.setMox(false);
+        tx.setTune(true);
+        tx.setTune(false);
+
+        QTRY_VERIFY_WITH_TIMEOUT(h.acceptedConnections() == 2
+                                 && h.client()->isHandshakeComplete(), 10000);
+        QTest::qWait(kSettleMs);
+        QCOMPARE(offlineEditToasts(h), QStringList());
+    }
+
+    // A Setup value and an applet change lost to the same outage are one
+    // message with one count, not two toasts stacked.
+    void setupAndAppletEditsLostTogetherShareOneToast()
+    {
+        RemoteWindowHarness h;
+        h.stationSettings().setValue(QStringLiteral("MultimeterDelayMs"), 250);
+        QVERIFY(h.start());
+        QVERIFY(connectFromRadioMenu(h));
+        auto* rx = h.window()->findChild<RxApplet*>();
+        QVERIFY(rx);
+        QTRY_VERIFY(rx->slice() != nullptr);
+        SliceModel* slice = rx->slice();
+        SliceModel* coreSlice = h.station().activeSlice();
+        QVERIFY(coreSlice);
+        QTRY_COMPARE(slice->agcThreshold(), coreSlice->agcThreshold());
+        QSlider* slider = agcThresholdSlider(rx, slice);
+        QVERIFY(slider);
+        QTRY_COMPARE(coreSlice->agcThreshold(), slice->agcThreshold());
+
+        h.dropLink();
+        QTRY_VERIFY_WITH_TIMEOUT(h.client()->isReconnectPending(), 5000);
+        AppSettings::instance().setValue(QStringLiteral("MultimeterDelayMs"), 500);
+        QTest::keyClick(slider, slider->value() > slider->minimum() ? Qt::Key_Left : Qt::Key_Right);
+
+        QTRY_VERIFY_WITH_TIMEOUT(h.acceptedConnections() == 2
+                                 && h.client()->isHandshakeComplete(), 10000);
+        QTRY_COMPARE(offlineEditToasts(h), QStringList{offlineEditToastFor(2)});
     }
 
     // R-R3-21: the meter update interval (MultimeterDelayMs) is the Core's
