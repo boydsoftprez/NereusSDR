@@ -3796,11 +3796,23 @@ private slots:
     // still holds the wide request, so control returning reopens the wide view
     // with nothing asked of the window. Keeping the span is its own PR, which
     // changes what this row pins.
+    void aListeningWindowsSpanCollapsesToTheReceiverAndControlReopensIt_data()
+    {
+        QTest::addColumn<bool>("budget");
+        QTest::newRow("no display budget") << false;
+        QTest::newRow("display budget") << true;
+    }
+
     void aListeningWindowsSpanCollapsesToTheReceiverAndControlReopensIt()
     {
+        QFETCH(bool, budget);
         constexpr double kCentreHz = 50'300'000.0;
         constexpr double kSpanHz = 768'000.0;
-        const QByteArray kDevice = QByteArrayLiteral("token:1");
+        QTemporaryDir keyDir;
+        const auto identity = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(identity->isValid());
+        const QByteArray kDevice = identity->fingerprint();
         QTemporaryDir dir;
         AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
         P2RadioConnection p2;
@@ -3820,6 +3832,15 @@ private slots:
         station.wireWidebandConnectionForTest();
         StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
         server.setMediaEnabled(true);
+        if (budget) {
+            QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        }
+        PairedDevice paired;
+        paired.id = identity->fingerprint();
+        paired.publicKeySpki = identity->publicKeySpki();
+        paired.name = QStringLiteral("Listening window");
+        paired.kind = QStringLiteral("computer");
+        QVERIFY(server.deviceStore()->add(paired));
         station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
         QVERIFY(station.sliceOwnership()->join(kDevice, sliceId));
         QPointer<DisplayTransport> sourceMedia;
@@ -3832,6 +3853,7 @@ private slots:
         remote.audioEngine()->setMasterMuted(true);
         SettingsProxy proxy;
         StationClient client(&remote, &proxy);
+        client.setDeviceIdentity(identity, paired.name, QStringLiteral("Window"));
         PanadapterStack stack;
         auto* pan = stack.addPanadapter(QStringLiteral("pan"));
         stack.setActivePan(QStringLiteral("pan"));
@@ -3864,14 +3886,21 @@ private slots:
         });
         auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
         auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        QString certificatePin = server.certificateFingerprint();
+        certificatePin.remove(QLatin1Char(':'));
+        clientLink->setPeerCertificateSha256(QByteArray::fromHex(certificatePin.toLatin1()));
+        stationLink->setPeerAddress(QStringLiteral("192.0.2.30"));
         stationLink->linkTo(clientLink);
-        client.startSession(clientLink, server.token());
+        client.startSession(clientLink, QString(), QString(),
+                            server.stationIdentity().fingerprint());
         server.acceptTransport(stationLink);
         QTRY_VERIFY(sourceMedia && sinkMedia);
         sourceMedia->other = sinkMedia;
         sourceMedia->activate();
         sinkMedia->activate();
+        QTRY_VERIFY(client.stationLinkReady());
         QTRY_VERIFY(remote.sliceById(sliceId));
+        QTRY_VERIFY(client.sliceAccess()->listeningHere(sliceId));
         QVERIFY(client.remoteWidebandAvailable());
         QVector<float> iq(2048, 0.001f);
         const auto feed = [&] {
@@ -3887,8 +3916,11 @@ private slots:
         const auto refusals = [&windowControls] {
             int count = 0;
             for (const auto& call : windowControls) {
-                if (call.at(0).toJsonObject().value(QStringLiteral("op"))
-                        == QLatin1String("rejected")) { ++count; }
+                const QJsonObject control = call.at(0).toJsonObject();
+                const QString op = control.value(QStringLiteral("op")).toString();
+                if (op == QLatin1String("rejected")
+                    || (op == QLatin1String("allocation-result")
+                        && !control.value(QStringLiteral("accepted")).toBool())) { ++count; }
             }
             return count;
         };
@@ -3938,25 +3970,46 @@ private slots:
         // does not sit on its last frame looking live.
         station.sliceOwnership()->setOwner(sliceId, kDevice);
         QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        const auto contextAtOffReceiverCentre = [&windowControls] {
+            for (const auto& call : windowControls) {
+                const QJsonObject control = call.at(0).toJsonObject();
+                if (control.value(QStringLiteral("op")) == QLatin1String("context")
+                    && qFuzzyCompare(control.value(QStringLiteral("centreHz")).toDouble(),
+                                     kCentreHz + 700'000.0)) { return true; }
+            }
+            return false;
+        };
         widget->setDisplayWindowPreservingHistory(kCentreHz + 700'000.0, kSpanHz);
         gui.planNowForTest();
-        QTRY_VERIFY_WITH_TIMEOUT((feed(), qFuzzyCompare(widget->centerFrequency(),
-                                                        kCentreHz + 700'000.0)), 10000);
-        QTest::qWait(100);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), contextAtOffReceiverCentre()), 10000);
         station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
         QTRY_COMPARE_WITH_TIMEOUT(gui.panDisplayState(pan->panId()).phase,
                                   PanDisplayState::Phase::Refused, 10000);
         QVERIFY(!widget->remoteWidebandActive());
-        QCOMPARE(p2.wbEnableMask(), quint8(0));
-        QCOMPARE(refusals(), 1);
+        QVERIFY(!widget->extendedMode());
+        QTRY_COMPARE(p2.wbEnableMask(), quint8(0));
+        // With a budget the retire is not a refusal: the window asks once more,
+        // and that is refused, for the view reaching past the receiver.
+        const int refusalsSettled = budget ? 2 : 1;
+        QTRY_COMPARE(refusals(), refusalsSettled);
         const int askedAfter = subscribes;
         for (int i = 0; i < 5; ++i) {
             feed();
             gui.planNowForTest();
             QTest::qWait(30);
         }
-        QCOMPARE(refusals(), 1);
+        QCOMPARE(refusals(), refusalsSettled);
         QCOMPARE(subscribes, askedAfter);
+        QCOMPARE(gui.panDisplayState(pan->panId()).phase, PanDisplayState::Phase::Refused);
+        QVERIFY(!widget->remoteWidebandActive());
+
+        // Control comes back: the view can be granted now, and the window asks
+        // with nothing else having changed.
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_COMPARE_WITH_TIMEOUT(p2.wbEnableMask(), quint8(1), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        QVERIFY(gui.panDisplayState(pan->panId()).phase != PanDisplayState::Phase::Refused);
+        QCOMPARE(subscribes, askedAfter + 1);
     }
 
     // A slice that shares its receiver and changes band is put on another

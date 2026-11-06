@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-11-06: A pan refused for a slice asks again when this window comes to
+//               control it, and a retired wide view clears its wide state with
+//               a display budget as it does without. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-10-30: bounded passive retry schedule history and a hold boundary
 //               for canceled startup steps. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -471,6 +475,14 @@
 namespace NereusSDR {
 Q_LOGGING_CATEGORY(lcRemoteMedia, "nereus.remote.media")
 namespace {
+
+// The Core retired a wide view because the receiver is not in it, so nothing it
+// held can be drawn. The same reasons a Core with no budget refuses with.
+bool viewLeftItsReceiver(const QString& reason)
+{
+    return reason == QLatin1String(kRetireReasonSourceRetune)
+        || reason == QLatin1String(kRetireReasonViewOffReceiver);
+}
 constexpr int kMaxEndpoints = 8;
 constexpr int kDefaultAllocationAckTimeoutMs = kDisplayAllocationAckTimeoutMs;
 // The derivation in RemoteMediaController.h, checked: one control heartbeat
@@ -2653,9 +2665,10 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // Slice control plan Task 14a: a change in who controls a slice may
         // turn a refused C-Tune pin into an accepted one, so the next fresh
         // picture may ask again.
-        connect(client->sliceAccess(), &SliceAccessMirror::changed, this, [this](int) {
+        connect(client->sliceAccess(), &SliceAccessMirror::changed, this, [this](int sliceId) {
             for (auto& state : d->ctunStreams) { state.refused = false; }
             refreshCtunState();
+            askAgainForRefusedDisplaysOf(sliceId);
         });
     }
     // The pin delta may follow its command result. Budgeted displays do
@@ -5743,6 +5756,26 @@ bool RemoteMediaController::retireSubscriptions(const QList<quint32>& endpointId
     return true;
 }
 
+// A pan refused for a slice this window has just come to control may now be
+// granted, and with its request unchanged nothing else would ask.
+void RemoteMediaController::askAgainForRefusedDisplaysOf(int sliceId)
+{
+    const SliceAccessMirror* access = d->client ? d->client->sliceAccess() : nullptr;
+    if (!access) { return; }
+    if (!access->controlledHere(sliceId)) { return; }
+    bool cleared = false;
+    for (auto& [endpointId, binding] : d->bindings) {
+        Q_UNUSED(endpointId);
+        if (!binding.slice || binding.slice->sliceIndex() != sliceId
+            || (!binding.rejected && binding.refusedIdentity.isEmpty())) { continue; }
+        binding.observed = {};
+        binding.refusedIdentity.clear();
+        binding.refusalReason.clear();
+        cleared = true;
+    }
+    if (cleared) { refreshSubscriptions(); }
+}
+
 void RemoteMediaController::refreshSubscriptions()
 {
     if (!d->client || !d->client->mediaAvailable() || d->epoch != d->client->sessionEpoch()
@@ -7804,6 +7837,8 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             const QPointer<RemoteMediaController> self(this);
             QPointer<SpectrumWidget> widget = binding.widget;
             const bool erase = binding.retiring || binding.suspending || !binding.widget;
+            const bool wideViewGone = viewLeftItsReceiver(reason)
+                && binding.acceptedRequest.value(QStringLiteral("extendedView")).toBool();
             binding.acceptedRevision = 0;
             binding.acceptedCharge = {};
             binding.acceptedRequest = {};
@@ -7829,7 +7864,13 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             // is SpectrumEndpoint.h's, the constant the Core sends.
             binding.sliceLeftCore = reason == QLatin1String(kRetireReasonSliceRemoved);
             if (erase) { d->bindings.erase(found); }
-            if (widget) { widget->invalidateRemoteSpectrumFrame(); }
+            if (widget) {
+                if (wideViewGone) {
+                    widget->clearRemoteSpectrum();
+                } else {
+                    widget->invalidateRemoteSpectrumFrame();
+                }
+            }
             if (!self) { return; }
             refreshSubscriptions();
         }
@@ -7884,6 +7925,8 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 const QPointer<RemoteMediaController> self(this);
                 QPointer<SpectrumWidget> widget = binding.widget;
                 const bool erase = binding.retiring || binding.suspending || !binding.widget;
+                const bool wideViewGone = viewLeftItsReceiver(reason)
+                    && binding.acceptedRequest.value(QStringLiteral("extendedView")).toBool();
                 binding.acceptedRevision = 0;
                 binding.acceptedCharge = {};
                 binding.acceptedRequest = {};
@@ -7901,7 +7944,11 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 }
                 if (erase) { d->bindings.erase(found); }
                 if (widget) {
-                    widget->invalidateRemoteSpectrumFrame();
+                    if (wideViewGone) {
+                        widget->clearRemoteSpectrum();
+                    } else {
+                        widget->invalidateRemoteSpectrumFrame();
+                    }
                     if (!self || !widget) { return; }
                     widget->applyRemoteCtunState(false, false);
                     if (!self) { return; }

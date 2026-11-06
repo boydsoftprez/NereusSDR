@@ -5492,6 +5492,9 @@ std::function<void()> MainWindow::wireWidebandExtensionForTest(
         // recheck that sees it clear.
         connect(ownership, &SliceOwnership::listenersChanged, spectrum,
                 [reconcile](int) { reconcile(); });
+        // A take from no controller, with this desktop already the only one on
+        // the slice, leaves that list as it was; this comes last on every change.
+        connect(ownership, &SliceOwnership::activeChanged, spectrum, reconcile);
     }
     const auto watchSlice = [modelRef, spectrumRef, reconcile](int sliceId) {
         if (!modelRef || !spectrumRef) { return; }

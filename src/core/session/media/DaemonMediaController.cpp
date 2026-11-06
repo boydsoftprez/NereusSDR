@@ -7,7 +7,7 @@
 //   2026-11-06: Wideband demand counts only for the device controlling the
 //               slice, and is recomputed when access to a slice changes and
 //               at the fall. A device with no control of a slice whose view
-//               lies off its receiver is refused with the retune reason.
+//               lies off its receiver is refused, with its own reason.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-27: Remote transmit hold then cut, fix wave B: the line's
 //               watchEnded and audioArrived reach StationServer (a line
@@ -266,6 +266,7 @@
 
 #include "core/ControlRanges.h"
 #include "core/session/media/DaemonMediaController.h"
+#include "core/BoardCapabilities.h"
 #include "core/session/media/RemoteIqCodec.h"
 #include "core/session/media/RemoteSpectrumContext.h"
 
@@ -7710,15 +7711,23 @@ void DaemonMediaController::onWidebandSourceChanged(int)
     }
 }
 
-// A device with no control of the slice, whose view lies wholly off the receiver:
-// with no wideband to draw from and none of the receiver in it, configure refuses
-// it on every frame. A controller is left out: its demand comes back with the
-// source, and it can drag the view back.
+// A view wholly off the receiver, for a device that cannot have wideband fill it:
+// with none of the receiver in it, configure refuses it on every frame. That is a
+// device with no control of the slice, or any device once the slice's ADC offers
+// no wideband on a connected radio. A controller on an ADC that does is left out:
+// its demand comes back when the capture does, and a reconnect keeps its zoom.
 bool DaemonMediaController::viewHasNothingToDraw(const EndpointEntry& entry) const
 {
-    if (!m_radioModel || entry.txViewer || !entry.request.extendedView
-        || entry.widebandWanted || controlsSlice(entry.sliceId)) {
+    if (!m_radioModel || entry.txViewer || !entry.request.extendedView || entry.widebandWanted) {
         return false;
+    }
+    if (controlsSlice(entry.sliceId)) {
+        const int adc = m_radioModel->sliceAdcIndex(entry.sliceId);
+        if (!m_radioModel->isConnected() || adc < 0
+            || adc < BoardCapsTable::widebandAdcsFor(m_radioModel->boardCapabilities(),
+                                                     m_radioModel->currentRadioInfo().protocol)) {
+            return false;
+        }
     }
     const int stream = entry.request.source.streamIndex;
     const double rateHz = m_radioModel->streamSampleRateHz(stream);
@@ -7751,7 +7760,7 @@ void DaemonMediaController::retireUndrawableViews()
             ? it->second.allocation.revision : it->second.revision;
         removeEndpoint(endpointId);
         sendRejected(m_peer ? m_peer->connectionId() : QString(), endpointId, revision,
-                     QString::fromLatin1(kRetireReasonSourceRetune));
+                     QString::fromLatin1(kRetireReasonViewOffReceiver));
         if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
     }
 }

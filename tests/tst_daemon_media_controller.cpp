@@ -857,8 +857,13 @@ private slots:
     void widebandSourceReplacementAndSessionRetirement();
     void aListenersWideViewRaisesNoWidebandDemand();
     void aControlChangeMovesWidebandDemandWithNoNewRequest();
+    void aControllerLosingAViewOffTheReceiverIsToldWhy_data();
     void aControllerLosingAViewOffTheReceiverIsToldWhy();
+    void controlReturningBeforeTheRetireRunsKeepsTheView();
+    void aControllersViewOnAnAdcWithNoWidebandIsToldWhy();
+    void aListenersRequestTheReceiverLeavesBehindIsToldWhy_data();
     void aListenersRequestTheReceiverLeavesBehindIsToldWhy();
+    void aListenersViewWhollyOffTheReceiverIsRefused_data();
     void aListenersViewWhollyOffTheReceiverIsRefused();
     void olderPeerKeepsLegacyContextAndCannotAcquireWideband();
     void minorSevenPeerReceivesLegacyAudioContexts();
@@ -4912,12 +4917,50 @@ void TstDaemonMediaController::aControlChangeMovesWidebandDemandWithNoNewRequest
     QCOMPARE(h.p2.wbEnableMask(), quint8(0));
 }
 
+// Why the Core refused or retired endpoint `id`, in order: "rejected" with no
+// display budget, a refused "allocation-result" with one.
+static QStringList displayRefusals(const QSignalSpy& controls, int id)
+{
+    QStringList reasons;
+    for (const auto& call : controls) {
+        const QJsonObject control = call.at(0).toJsonObject();
+        const QString op = control.value(QStringLiteral("op")).toString();
+        if (control.value(QStringLiteral("endpointId")).toInt() == id
+            && (op == QLatin1String("rejected")
+                || (op == QLatin1String("allocation-result")
+                    && !control.value(QStringLiteral("accepted")).toBool()))) {
+            reasons.append(control.value(QStringLiteral("reason")).toString());
+        }
+    }
+    return reasons;
+}
+
+static std::optional<DisplayBudgetLimits> offReceiverRowLimits(bool budget)
+{
+    return budget ? std::optional<DisplayBudgetLimits>(
+                        DisplayBudgetLimits{10'000'000, 10'000'000, 1})
+                  : std::nullopt;
+}
+
+static void offReceiverRowData()
+{
+    QTest::addColumn<bool>("budget");
+    QTest::newRow("no display budget") << false;
+    QTest::newRow("display budget") << true;
+}
+
+void TstDaemonMediaController::aControllerLosingAViewOffTheReceiverIsToldWhy_data()
+{
+    offReceiverRowData();
+}
+
 // A controller's wide view has the receiver off-screen, and control goes. With
 // no demand nothing can be drawn there, so the Core says why, once, rather than
 // fall silent with the window showing its last frame.
 void TstDaemonMediaController::aControllerLosingAViewOffTheReceiverIsToldWhy()
 {
-    Harness h;
+    QFETCH(bool, budget);
+    Harness h(offReceiverRowLimits(budget));
     h.enableWidebandSource();
     h.establishSession();
     h.startReadyPeer();
@@ -4937,33 +4980,97 @@ void TstDaemonMediaController::aControllerLosingAViewOffTheReceiverIsToldWhy()
     ownership->setOwner(h.sliceId, SliceOwnership::stationDevice());
     QVERIFY(ownership->isListening(device, h.sliceId));
 
-    QTRY_VERIFY(([&] {
-        h.feedRadio();
-        return !messageFor(controls, QStringLiteral("rejected"), 21).isEmpty();
-    })());
-    QCOMPARE(messageFor(controls, QStringLiteral("rejected"), 21)
-                 .value(QStringLiteral("reason")).toString(),
-             QString::fromLatin1(kRetireReasonSourceRetune));
+    QTRY_VERIFY(([&] { h.feedRadio(); return !displayRefusals(controls, 21).isEmpty(); })());
+    QCOMPARE(displayRefusals(controls, 21),
+             QStringList{QString::fromLatin1(kRetireReasonViewOffReceiver)});
     QCOMPARE(h.controller.activeEndpointCount(), 0);
     QTRY_COMPARE(h.p2.wbEnableMask(), quint8(0));
-    int refusals = 0;
     for (int i = 0; i < 5; ++i) {
         h.feedRadio();
         QTest::qWait(20);
     }
-    for (const auto& call : controls) {
-        if (call.at(0).toJsonObject().value(QStringLiteral("op")) == QLatin1String("rejected")) {
-            ++refusals;
-        }
+    QCOMPARE(displayRefusals(controls, 21).size(), 1);
+    h.finish();
+}
+
+// Control back before the queued retire has run: nothing is retired.
+void TstDaemonMediaController::controlReturningBeforeTheRetireRunsKeepsTheView()
+{
+    Harness h;
+    h.enableWidebandSource();
+    h.establishSession();
+    h.startReadyPeer();
+    const QByteArray device = h.server.mediaSessionDevice(h.server.mediaSessionEpoch());
+    SliceOwnership* ownership = h.radio.sliceOwnership();
+    ownership->setOwner(h.sliceId, SliceOwnership::stationDevice());
+    QVERIFY(ownership->join(device, h.sliceId));
+    ownership->setOwner(h.sliceId, device);
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    auto request = subscription(21, 1, h.sliceId, centre + 700'000.0);
+    request.insert(QStringLiteral("extendedView"), true);
+    request.insert(QStringLiteral("spanHz"), 768'000.0);
+    QVERIFY(h.client.sendMediaControl(request, h.client.sessionEpoch()));
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(1));
+
+    ownership->setOwner(h.sliceId, SliceOwnership::stationDevice());
+    ownership->setOwner(h.sliceId, device);
+
+    for (int i = 0; i < 5; ++i) {
+        h.feedRadio();
+        QTest::qWait(20);
     }
-    QCOMPARE(refusals, 1);
+    QVERIFY(displayRefusals(controls, 21).isEmpty());
+    QCOMPARE(h.controller.activeEndpointCount(), 1);
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(1));
+    h.finish();
+}
+
+// A controller whose slice's ADC offers no wideband on a connected radio: its
+// view off the receiver can never be drawn. The move to such an ADC is staged by
+// dropping the radio to Protocol 1 and announcing it; no row reroutes a DDC.
+void TstDaemonMediaController::aControllersViewOnAnAdcWithNoWidebandIsToldWhy()
+{
+    Harness h;
+    h.enableWidebandSource();
+    h.establishSession();
+    h.startReadyPeer();
+    const QByteArray device = h.server.mediaSessionDevice(h.server.mediaSessionEpoch());
+    SliceOwnership* ownership = h.radio.sliceOwnership();
+    ownership->setOwner(h.sliceId, SliceOwnership::stationDevice());
+    QVERIFY(ownership->join(device, h.sliceId));
+    ownership->setOwner(h.sliceId, device);
+    QSignalSpy controls(&h.client, &StationClient::mediaControlReceived);
+    const double centre = h.radio.streamCentreHz(h.streamIndex);
+    auto request = subscription(21, 1, h.sliceId, centre + 700'000.0);
+    request.insert(QStringLiteral("extendedView"), true);
+    request.insert(QStringLiteral("spanHz"), 768'000.0);
+    QVERIFY(h.client.sendMediaControl(request, h.client.sessionEpoch()));
+    QTRY_COMPARE(h.p2.wbEnableMask(), quint8(1));
+
+    RadioInfo protocol1;
+    protocol1.protocol = ProtocolVersion::Protocol1;
+    h.radio.setLastRadioInfoForTest(protocol1);
+    emit h.radio.streamAdcRoutingChanged();
+
+    QTRY_VERIFY(!displayRefusals(controls, 21).isEmpty());
+    QCOMPARE(displayRefusals(controls, 21),
+             QStringList{QString::fromLatin1(kRetireReasonViewOffReceiver)});
+    QCOMPARE(h.controller.activeEndpointCount(), 0);
+    h.finish();
+}
+
+void TstDaemonMediaController::aListenersRequestTheReceiverLeavesBehindIsToldWhy_data()
+{
+    offReceiverRowData();
 }
 
 // The controller tunes the receiver away from a listener's held request: its
 // extended permission must not keep it silently alive with nothing to draw.
 void TstDaemonMediaController::aListenersRequestTheReceiverLeavesBehindIsToldWhy()
 {
-    Harness h;
+    QFETCH(bool, budget);
+    Harness h(offReceiverRowLimits(budget));
     h.enableWidebandSource();
     h.establishSession();
     h.startReadyPeer();
@@ -4986,22 +5093,29 @@ void TstDaemonMediaController::aListenersRequestTheReceiverLeavesBehindIsToldWhy
     QVERIFY(h.radio.moveStreamWindowFor(h.streamIndex, awayHz, h.sliceId).isEmpty());
     QCOMPARE(h.radio.streamCentreHz(h.streamIndex), awayHz);
 
-    QTRY_VERIFY(([&] {
-        h.feedRadio();
-        return !messageFor(controls, QStringLiteral("rejected"), 21).isEmpty();
-    })());
-    QCOMPARE(messageFor(controls, QStringLiteral("rejected"), 21)
-                 .value(QStringLiteral("reason")).toString(),
-             QString::fromLatin1(kRetireReasonSourceRetune));
+    QTRY_VERIFY(([&] { h.feedRadio(); return !displayRefusals(controls, 21).isEmpty(); })());
     QCOMPARE(h.controller.activeEndpointCount(), 0);
     QCOMPARE(h.p2.wbEnableMask(), quint8(0));
+    for (int i = 0; i < 5; ++i) {
+        h.feedRadio();
+        QTest::qWait(20);
+    }
+    QCOMPARE(displayRefusals(controls, 21),
+             QStringList{QString::fromLatin1(kRetireReasonSourceRetune)});
+    h.finish();
+}
+
+void TstDaemonMediaController::aListenersViewWhollyOffTheReceiverIsRefused_data()
+{
+    offReceiverRowData();
 }
 
 // A listener asking for a view wholly off the receiver is refused at allocation,
 // where a controller's would be granted the wideband path.
 void TstDaemonMediaController::aListenersViewWhollyOffTheReceiverIsRefused()
 {
-    Harness h;
+    QFETCH(bool, budget);
+    Harness h(offReceiverRowLimits(budget));
     h.enableWidebandSource();
     h.establishSession();
     h.startReadyPeer();
@@ -5016,12 +5130,12 @@ void TstDaemonMediaController::aListenersViewWhollyOffTheReceiverIsRefused()
     request.insert(QStringLiteral("spanHz"), 768'000.0);
     QVERIFY(h.client.sendMediaControl(request, h.client.sessionEpoch()));
 
-    QTRY_VERIFY(!messageFor(controls, QStringLiteral("rejected"), 21).isEmpty());
-    QCOMPARE(messageFor(controls, QStringLiteral("rejected"), 21)
-                 .value(QStringLiteral("reason")).toString(),
-             QStringLiteral("This view reaches past what the receiver covers."));
+    QTRY_VERIFY(!displayRefusals(controls, 21).isEmpty());
+    QCOMPARE(displayRefusals(controls, 21),
+             QStringList{QStringLiteral("This view reaches past what the receiver covers.")});
     QCOMPARE(h.controller.activeEndpointCount(), 0);
     QCOMPARE(h.p2.wbEnableMask(), quint8(0));
+    h.finish();
 }
 
 void TstDaemonMediaController::widebandSourceReplacementAndSessionRetirement()
