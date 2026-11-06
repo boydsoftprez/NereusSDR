@@ -1,11 +1,17 @@
 #pragma once
 // no-port-check: NereusSDR-original inert document preview using shared GUI caches.
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Widget-factory rows with Fade on RX / TX get the fade
 //                 overlay and the radio's transmit state, read only
 //                 (m_fadeViews). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 #include "ContainerDocument.h"
+#include "gui/NereusGuiExport.h"
 #include <QWidget>
 #include <QPointer>
 class QVBoxLayout;
@@ -14,7 +20,7 @@ class ContainerContentRegistry;
 class MeterPoller;
 class MeterWidget;
 class FreeCanvasSurface;
-class ContainerPreviewWidget : public QWidget {
+class NEREUS_GUI_EXPORT ContainerPreviewWidget : public QWidget {
     Q_OBJECT
 public:
     ContainerPreviewWidget(ContainerContentRegistry&, MeterPoller&, QWidget* parent=nullptr);
