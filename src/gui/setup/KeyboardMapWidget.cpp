@@ -2,6 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys CI fixes: the map reflows to fit
+//                Setup's width, and its chrome takes the workspace palette.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/setup/KeyboardMapWidget.h"
 
@@ -9,12 +12,15 @@
 #include "core/hotkeys/HotKeyActionList.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "core/hotkeys/HotKeyChord.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QAbstractButton>
 #include <QHash>
 #include <QPainter>
+#include <QResizeEvent>
 
 #include <array>
+#include <cmath>
 #include <optional>
 
 namespace NereusSDR {
@@ -25,7 +31,15 @@ constexpr int kKeyWidth = 46;
 constexpr int kKeyHeight = 44;
 constexpr int kKeyGap = 3;
 constexpr int kBlockGap = 12;
-constexpr int kRowsTall = 6;
+constexpr int kNameTop = 12;  // the action's name starts under the key's own label
+
+// How far the keys may shrink with the blocks side by side. Under this the
+// navigation keys and keypad go below, where the main block has the whole width.
+constexpr double kBesideLeastScale = 0.85;
+// A key loses less height than width, which leaves its name room.
+constexpr double kLeastHeightScale = 0.9;
+// Past Setup's own smallest window, so the map never sets the page's width.
+constexpr int kLeastWidth = 320;
 
 enum class KeyKind {
     Normal,
@@ -158,6 +172,7 @@ QString shortName(QString name)
     name.replace(QLatin1String("Filter "), QLatin1String("Filt "));
     name.replace(QLatin1String("Volume "), QLatin1String("Vol "));
     name.replace(QLatin1String("previous"), QLatin1String("prev"));
+    name.replace(QLatin1String("Previous"), QLatin1String("Prev"));
     return name;
 }
 
@@ -263,14 +278,15 @@ protected:
         }
 
         const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-        const QColor fill = m_group.isEmpty() ? QColor(0x13, 0x13, 0x26) : KeyboardMapWidget::groupColor(m_group);
-        QColor edge(0x30, 0x40, 0x50);
+        const QColor fill = m_group.isEmpty() ? WorkspacePreview::roleColour(QColor(0x13, 0x13, 0x26), "button")
+                                              : KeyboardMapWidget::groupColor(m_group);
+        QColor edge = WorkspacePreview::roleColour(QColor(0x30, 0x40, 0x50), "border");
         qreal edgeWidth = 1.0;
         if (m_picked) {
             edge = Qt::white;
             edgeWidth = 2.0;
         } else if (hasFocus()) {
-            edge = QColor(0x00, 0xb4, 0xd8);
+            edge = WorkspacePreview::roleColour(QColor(0x00, 0xb4, 0xd8), "accent");
             edgeWidth = 2.0;
         }
         painter.setPen(QPen(edge, edgeWidth));
@@ -281,16 +297,21 @@ protected:
         QFont font = painter.font();
         font.setPixelSize(10);
         painter.setFont(font);
-        painter.setPen(isEnabled() ? QColor(0xc8, 0xd8, 0xe8) : QColor(0x60, 0x70, 0x80));
+        painter.setPen(isEnabled() ? WorkspacePreview::roleColour(QColor(0xc8, 0xd8, 0xe8), "text")
+                                   : WorkspacePreview::roleColour(QColor(0x60, 0x70, 0x80), "text-inactive"));
         painter.drawText(inner, Qt::AlignLeft | Qt::AlignTop, m_shownLabel);
 
         if (!m_action.isEmpty()) {
             font.setPixelSize(9);
             painter.setFont(font);
             painter.setPen(Qt::white);
-            const QRect lower = inner.adjusted(0, 12, 0, 0);
-            painter.setClipRect(lower);  // a long name stops short of the key's own label
-            painter.drawText(lower, Qt::AlignLeft | Qt::AlignBottom | Qt::TextWordWrap, m_action);
+            const QRect lower = inner.adjusted(0, kNameTop, 0, 0);
+            const QRect needed = painter.fontMetrics().boundingRect(QRect(0, 0, lower.width(), 0xffff),
+                                                                    Qt::AlignLeft | Qt::TextWordWrap, m_action);
+            // A name with no room is left to the tooltip, not cut in half.
+            if (needed.width() <= lower.width() && needed.height() <= lower.height()) {
+                painter.drawText(lower, Qt::AlignLeft | Qt::AlignBottom | Qt::TextWordWrap, m_action);
+            }
         }
     }
 
@@ -306,6 +327,19 @@ private:
     bool m_picked{false};
 };
 
+KeyGroupSwatch::KeyGroupSwatch(const QColor& color, QWidget* parent)
+    : QWidget(parent)
+    , m_color(color)
+{
+    setFixedSize(10, 10);
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+}
+
+void KeyGroupSwatch::paintEvent(QPaintEvent*)
+{
+    QPainter(this).fillRect(rect(), m_color);
+}
+
 KeyboardMapWidget::KeyboardMapWidget(HotKeyBindings* bindings, QWidget* parent)
     : QWidget(parent)
     , m_bindings(bindings)
@@ -319,36 +353,91 @@ KeyboardMapWidget::KeyboardMapWidget(HotKeyBindings* bindings, QWidget* parent)
 
 void KeyboardMapWidget::buildKeys()
 {
-    const int tallest = kRowsTall * kKeyHeight + (kRowsTall - 1) * kKeyGap;
-    int blockX = 0;
-    const auto layBlock = [this, &blockX, tallest](const QVector<Row>& rows) {
-        const int blockHeight = int(rows.size()) * kKeyHeight + (int(rows.size()) - 1) * kKeyGap;
-        int y = tallest - blockHeight;  // the smaller blocks sit on the bottom row
+    const auto buildBlock = [this](const QVector<Row>& rows) {
+        const int block = int(m_blocks.size());
+        int y = 0;
         int widest = 0;
         for (const Row& row : rows) {
-            int x = blockX;
+            int x = 0;
             for (const KeySpec& spec : row) {
                 if (spec.kind != KeyKind::Gap) {
                     auto* const key = new KeyboardMapKey(spec, this);
-                    key->setGeometry(x, y, spec.width, kKeyHeight);
                     connect(key, &QAbstractButton::clicked, this, [this, key] {
                         if (!key->chord().isEmpty()) {
                             emit keyClicked(key->chord());
                         }
                     });
                     m_keys.append(key);
+                    m_placed.append({key, block, QRect(x, y, spec.width, kKeyHeight)});
                 }
                 x += spec.width + kKeyGap;
             }
-            widest = qMax(widest, x - blockX - kKeyGap);
+            widest = qMax(widest, x - kKeyGap);
             y += kKeyHeight + kKeyGap;
         }
-        blockX += widest + kBlockGap;
+        m_blocks.append(QSize(widest, y - kKeyGap));
     };
-    layBlock(mainBlock());
-    layBlock(navigationBlock());
-    layBlock(keypadBlock());
-    setFixedSize(blockX - kBlockGap, tallest);
+    buildBlock(mainBlock());
+    buildBlock(navigationBlock());
+    buildBlock(keypadBlock());
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    placeKeys(sizeHint().width());
+}
+
+QSize KeyboardMapWidget::sizeHint() const
+{
+    return {m_blocks.at(0).width() + kBlockGap + m_blocks.at(1).width() + kBlockGap + m_blocks.at(2).width(),
+            height()};
+}
+
+QSize KeyboardMapWidget::minimumSizeHint() const
+{
+    return {kLeastWidth, height()};
+}
+
+void KeyboardMapWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (event->size().width() != event->oldSize().width()) {
+        placeKeys(event->size().width());
+    }
+}
+
+void KeyboardMapWidget::placeKeys(int width)
+{
+    const QSize& main = m_blocks.at(0);
+    const QSize& navigation = m_blocks.at(1);
+    const QSize& keypad = m_blocks.at(2);
+    const int beside = sizeHint().width();
+    const int below = navigation.width() + kBlockGap + keypad.width();
+    const int fullHeight = main.height();
+
+    m_stacked = double(width) / beside < kBesideLeastScale;
+    const double scale = qMin(1.0, double(width) / (m_stacked ? qMax(main.width(), below) : beside));
+    const double heightScale = qMax(scale, kLeastHeightScale);
+
+    // Where each block starts, at full size. The smaller blocks sit on the
+    // bottom row beside the main block, and at the top of their row below it.
+    const QVector<QPoint> origins = m_stacked
+        ? QVector<QPoint>{{0, 0},
+                          {0, fullHeight + kBlockGap},
+                          {navigation.width() + kBlockGap, fullHeight + kBlockGap}}
+        : QVector<QPoint>{{0, 0},
+                          {main.width() + kBlockGap, fullHeight - navigation.height()},
+                          {main.width() + kBlockGap + navigation.width() + kBlockGap, fullHeight - keypad.height()}};
+
+    // Both edges of each key scale, so rounding can't open or close a gap unevenly.
+    const auto scaledX = [scale](int x) { return int(std::lround(x * scale)); };
+    const auto scaledY = [heightScale](int y) { return int(std::lround(y * heightScale)); };
+    for (const PlacedKey& placed : std::as_const(m_placed)) {
+        const QRect at = placed.rect.translated(origins.at(placed.block));
+        const int left = scaledX(at.x());
+        const int top = scaledY(at.y());
+        placed.key->setGeometry(left, top, scaledX(at.x() + at.width()) - left, scaledY(at.y() + at.height()) - top);
+    }
+
+    const int tallest = m_stacked ? fullHeight + kBlockGap + qMax(navigation.height(), keypad.height()) : fullHeight;
+    setFixedHeight(scaledY(tallest));
 }
 
 void KeyboardMapWidget::refresh()
@@ -383,6 +472,10 @@ QString KeyboardMapWidget::menuGroup()
 
 QColor KeyboardMapWidget::groupColor(const QString& group)
 {
+    // A menu key is no action's group, so it stays a quiet grey of the look's own.
+    if (group == menuGroup()) {
+        return WorkspacePreview::roleColour(QColor(0x2a, 0x2a, 0x2f), "border-muted");
+    }
     static const QHash<QString, QColor> kColors{
         {QStringLiteral("Tuning"), QColor(0x17, 0x6a, 0x78)},
         {QStringLiteral("Filter"), QColor(0x1f, 0x6e, 0x45)},
@@ -393,7 +486,6 @@ QColor KeyboardMapWidget::groupColor(const QString& group)
         {QStringLiteral("Transmit"), QColor(0xa3, 0x2a, 0x2a)},
         {QStringLiteral("CW"), QColor(0x5b, 0x46, 0x90)},
         {QStringLiteral("Voice"), QColor(0x8a, 0x3a, 0x6c)},
-        {menuGroup(), QColor(0x2a, 0x2a, 0x2f)},
     };
     return kColors.value(group);
 }

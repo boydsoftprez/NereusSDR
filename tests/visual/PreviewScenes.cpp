@@ -300,6 +300,8 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: dialog-setup-keyboard-full.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: dialog-setup-midi-rows.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys CI fixes: dialog-setup-keyboard--min and
+//                --wide, for the map that reflows.
 //                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
@@ -11373,11 +11375,13 @@ QVector<SetupSizeSpec> setupSizeSpecs()
         {QStringLiteral("nr-anf"), {QStringLiteral("MNR")}, saturn, min, kSetupMinimumSize},
         {QStringLiteral("4o3a"), {}, saturn, min, kSetupMinimumSize},
         {QStringLiteral("rf-kit"), {QStringLiteral("RF2K-S")}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("keyboard"), {}, saturn, min, kSetupMinimumSize},
         {hardware, {alex}, saturn, wide, kSetupWideSize},
         {hardware, {alex, alex1}, saturn, wide, kSetupWideSize},
         {hardware, {alex, alex2}, saturn, wide, kSetupWideSize},
         {hardware, {oc}, saturn, wide, kSetupWideSize},
         {hardware, {oc, swl}, saturn, wide, kSetupWideSize},
+        {QStringLiteral("keyboard"), {}, saturn, wide, kSetupWideSize},
     };
 }
 

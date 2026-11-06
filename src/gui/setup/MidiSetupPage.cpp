@@ -387,8 +387,8 @@ void MidiSetupPage::buildControls()
     header->setSectionResizeMode(kColumnActsOn, QHeaderView::Fixed);
     header->setSectionResizeMode(kColumnClear, QHeaderView::Fixed);
     m_table->setColumnWidth(kColumnControl, 96);
-    m_table->setColumnWidth(kColumnKind, 124);
-    m_table->setColumnWidth(kColumnActsOn, 128);
+    m_table->setColumnWidth(kColumnKind, 116);
+    m_table->setColumnWidth(kColumnActsOn, 116);
     m_table->setColumnWidth(kColumnClear, 56);
     m_table->setFixedHeight(kListHeight);
 
@@ -502,7 +502,7 @@ void MidiSetupPage::createProfile()
     m_name->clear();
     fillProfileCombo();
     syncRows();
-    setStatus(QStringLiteral("Created profile %1. It has no controls yet.").arg(name));
+    setStatus(QStringLiteral("Created profile %1. It has no controls.").arg(name));
 }
 
 void MidiSetupPage::renameProfile()

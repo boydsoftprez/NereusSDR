@@ -15,6 +15,7 @@
 #include "gui/hotkeys/KeyboardRouter.h"
 #include "gui/setup/HotKeySetupCommon.h"
 #include "gui/setup/KeyboardMapWidget.h"
+#include "gui/styles/WorkspacePreview.h"
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -31,12 +32,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
-#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSaveFile>
-#include <QScrollArea>
-#include <QScrollBar>
 #include <QSet>
 #include <QSignalBlocker>
 #include <QStandardItemModel>
@@ -59,11 +57,14 @@ constexpr int kColumnButtons = 3;
 constexpr int kListHeight = 320;
 constexpr int kRowHeight = 30;
 constexpr int kChipsPerRow = 5;
+constexpr int kChipSwatchLeft = 6;
 constexpr qint64 kMostImportBytes = 1024 * 1024;  // far past any real shortcuts file
 
-const QColor kChangedKeyColor(0x00, 0xb4, 0xd8);
-const QColor kNoKeyColor(0x80, 0x90, 0xa0);
-const QColor kCaptureColor(0x10, 0x22, 0x3a);
+QColor changedKeyColor() { return WorkspacePreview::roleColour(QColor(0x00, 0xb4, 0xd8), "accent"); }
+QColor noKeyColor() { return WorkspacePreview::roleColour(QColor(0x80, 0x90, 0xa0), "text-secondary"); }
+QColor captureColor() { return WorkspacePreview::roleColour(QColor(0x10, 0x22, 0x3a), "sel-bg"); }
+QColor keyTextColor() { return WorkspacePreview::roleColour(QColor(0xc8, 0xd8, 0xe8), "text"); }
+QColor offKeyTextColor() { return WorkspacePreview::roleColour(QColor(0x5a, 0x6a, 0x7a), "text-inactive"); }
 
 QString noBindingsReason()
 {
@@ -79,18 +80,11 @@ QStringList legendGroups()
             KeyboardMapWidget::menuGroup()};
 }
 
-QIcon swatch(const QColor& color)
-{
-    QPixmap pixmap(10, 10);
-    pixmap.fill(color);
-    return QIcon(pixmap);
-}
-
 QString chipStyle()
 {
     return QStringLiteral(
         "QPushButton { background: #111120; border: 1px solid #304050; border-radius: 9px;"
-        " color: #c8d8e8; font-size: 11px; padding: 1px 8px 1px 6px; }"
+        " color: #c8d8e8; font-size: 11px; padding: 1px 8px 1px 21px; }"
         "QPushButton:hover { background: #1a2a3a; }"
         "QPushButton:checked { border-color: #ffffff; }"
         "QPushButton:disabled { color: #5a6a7a; }");
@@ -197,10 +191,13 @@ void KeyboardPage::buildMap()
             chipsOnRow = 0;
         }
         ++chipsOnRow;
-        auto* const chip = new QPushButton(swatch(KeyboardMapWidget::groupColor(group)), group, m_mapGroup);
+        auto* const chip = new QPushButton(group, m_mapGroup);
         chip->setObjectName(QStringLiteral("hotKeyChip:") + group);
         chip->setCheckable(true);
-        chip->setIconSize(QSize(10, 10));
+        auto* const chipLayout = new QHBoxLayout(chip);
+        chipLayout->setContentsMargins(kChipSwatchLeft, 0, 0, 0);
+        chipLayout->addWidget(new KeyGroupSwatch(KeyboardMapWidget::groupColor(group), chip), 0, Qt::AlignVCenter);
+        chipLayout->addStretch();
         chip->setStyleSheet(chipStyle());
         setReason(chip, QStringLiteral("Show only the %1 keys brightly.").arg(group));
         chipRow->addWidget(chip);
@@ -218,18 +215,9 @@ void KeyboardPage::buildMap()
     chipRow->addStretch();
     layout->addLayout(chipRows);
 
-    m_map = new KeyboardMapWidget(m_bindings.data());
+    m_map = new KeyboardMapWidget(m_bindings.data(), m_mapGroup);
     m_map->setObjectName(QStringLiteral("hotKeyMap"));
-    auto* const scroll = new QScrollArea(m_mapGroup);
-    scroll->setObjectName(QStringLiteral("hotKeyMapScroll"));
-    scroll->setWidget(m_map);
-    scroll->setWidgetResizable(false);
-    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    scroll->setFrameShape(QFrame::NoFrame);
-    // Room for the map and a bar under it, so the bar never covers the bottom row.
-    scroll->setFixedHeight(m_map->height() + scroll->horizontalScrollBar()->sizeHint().height() + 4);
-    layout->addWidget(scroll);
+    layout->addWidget(m_map);
 
     connect(m_layers, &QButtonGroup::idClicked, this, [this](int layer) {
         m_pick.clear();
@@ -367,7 +355,7 @@ void KeyboardPage::buildActions()
     m_noMatchRow = int(actions.size());
     auto* const noMatch = new QTableWidgetItem(QStringLiteral("No action matches."));
     noMatch->setFlags(Qt::ItemIsEnabled);
-    noMatch->setForeground(kNoKeyColor);
+    noMatch->setForeground(noKeyColor());
     m_table->setItem(m_noMatchRow, 0, noMatch);
     m_table->setSpan(m_noMatchRow, 0, 1, 4);
     m_table->setRowHidden(m_noMatchRow, true);
@@ -434,7 +422,7 @@ void KeyboardPage::buildRow(Row& row, const HotKeyAction& action)
 
     QString shownName = action.name;
     if (action.gesture == HotKeyGesture::Hold) {
-        shownName += QStringLiteral(" <span style=\"color:#8090a0\">hold</span>");
+        shownName += QStringLiteral(" <span style=\"color:%1\">hold</span>").arg(WorkspacePreview::roleColourName("#8090a0", "text-secondary"));
     }
     row.name = new QLabel(shownName, row.nameCell);
     row.name->setObjectName(QStringLiteral("hotKeyName:") + id);
@@ -585,21 +573,21 @@ void KeyboardPage::refreshRow(Row& row)
     row.key->setToolTip(reason);
     if (row.id == m_captureId) {
         row.key->setText(QStringLiteral("Press a key"));
-        row.key->setBackground(kCaptureColor);
-        row.key->setForeground(QColor(0xc8, 0xd8, 0xe8));
+        row.key->setBackground(captureColor());
+        row.key->setForeground(keyTextColor());
     } else {
         row.key->setBackground(QBrush());
         if (keys.isEmpty()) {
             row.key->setText(QStringLiteral("None"));
-            row.key->setForeground(kNoKeyColor);
+            row.key->setForeground(noKeyColor());
         } else {
             row.key->setText(KeyboardMapWidget::displayText(keys.join(QStringLiteral(", "))));
             if (changed && available) {
-                row.key->setForeground(kChangedKeyColor);
+                row.key->setForeground(changedKeyColor());
             } else if (available) {
-                row.key->setForeground(QColor(0xc8, 0xd8, 0xe8));
+                row.key->setForeground(keyTextColor());
             } else {
-                row.key->setForeground(QColor(0x5a, 0x6a, 0x7a));
+                row.key->setForeground(offKeyTextColor());
             }
         }
     }

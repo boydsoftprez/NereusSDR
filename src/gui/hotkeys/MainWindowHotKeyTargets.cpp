@@ -88,7 +88,7 @@ const QString& bandStackNotReadyReason()
 
 const QString& voiceNotBuiltReason()
 {
-    static const QString kReason = QStringLiteral("Voice messages aren't built yet.");
+    static const QString kReason = QStringLiteral("Voice messages aren't built.");
     return kReason;
 }
 

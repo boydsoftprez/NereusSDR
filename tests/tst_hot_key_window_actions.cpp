@@ -44,7 +44,7 @@ namespace {
 
 const HotKeySource kKeyboard{HotKeySourceKind::Keyboard, QString()};
 
-const QString kVoiceReason = QStringLiteral("Voice messages aren't built yet.");
+const QString kVoiceReason = QStringLiteral("Voice messages aren't built.");
 const QString kBandStackReason = QStringLiteral("Band stacking is not ready.");
 
 bool applyLayout(MainWindow& window, const QString& layoutId)

@@ -25,6 +25,7 @@
 #include <QLoggingCategory>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QShortcut>
@@ -50,6 +51,8 @@
 #include "core/hotkeys/HotKeyChord.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
+#include "HotKeyWindowActivation.h"
+#include "fakes/MainWindowTestSettings.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/AmpViewWindow.h"
 #include "gui/MainWindow.h"
@@ -119,12 +122,8 @@ QWidget* keyTarget()
     return focus != nullptr ? focus : QApplication::activeWindow();
 }
 
-// QWindow::isActive is already true for a dialog over an active parent, so
-// qWaitForWindowActive can't say the dialog has the keyboard. This can.
-bool waitActive(QWidget* window)
-{
-    return QTest::qWaitFor([window] { return QApplication::activeWindow() == window; }, 5000);
-}
+using NereusSDR::Test::activateAndWait;
+using NereusSDR::Test::waitActive;
 
 // Counts the key presses a widget actually receives, after the application filters.
 class KeySeen : public QObject {
@@ -208,7 +207,11 @@ public:
     }
 };
 
-// One real window, shown offscreen, connected, with Slice A on pan-0.
+// One real window, shown offscreen, connected, with Slice A on pan-0. Building
+// one takes seconds, so the cases share a window and each starts with ready(),
+// which puts back what a case may have changed. A case that changes something
+// ready() doesn't know about builds its own, and a failed case's window is
+// thrown away (TestHotKeyRouter::cleanup).
 struct Bench {
     MainWindow window{RemoteStationOptions{}, nullptr, MainWindow::ConnectionStartup::Deferred};
     RadioModel* model{window.radioModel()};
@@ -216,6 +219,9 @@ struct Bench {
     HotKeyDispatcher* keys{window.hotKeyDispatcher()};
     HotKeyBindings* bindings{window.hotKeyBindings()};
     SliceModel* slice{nullptr};
+    QPair<int, int> startFilter;
+    QList<QPointer<QObject>> addedByCase;
+    QString notReady;
 
     Bench()
     {
@@ -229,26 +235,65 @@ struct Bench {
         slice->setDspMode(DSPMode::USB);
         slice->setStepHz(kStepHz);
         slice->setFrequency(kStartHz);
+        startFilter = filter();
         window.resize(1200, 800);
         window.show();
         window.activateWindow();
     }
 
+    // What a case adds to the shared window goes when the next case starts.
+    template <typename T>
+    T* added(T* object)
+    {
+        addedByCase.append(object);
+        return object;
+    }
+
+    // Back to where a new window starts, with the keyboard and nothing focused.
     bool ready()
     {
-        if (!waitActive(&window)) {
+        notReady.clear();
+        while (QWidget* const popup = QApplication::activePopupWidget()) {
+            popup->close();
+        }
+        qDeleteAll(std::as_const(addedByCase));
+        addedByCase.clear();
+        qDeleteAll(window.findChildren<StatusToast*>());
+        window.containerManager()->setArrangeHeld(false);
+        window.containerManager()->setArrangeMode(false);
+        bindings->load();
+        settleTunes();
+        // Off and on forgets a key a case left down, and the tune the next key
+        // would otherwise build on for the next quarter second.
+        bindings->setEnabled(false);
+        bindings->setEnabled(true);
+        if (mox->isMox()) {
+            keys->press(QStringLiteral("tx.mox"), HotKeySource{HotKeySourceKind::Keyboard, QString()});
+            if (!QTest::qWaitFor([this] { return !mox->isMox(); }, 2000)) {
+                notReady = QStringLiteral("MOX stayed on");
+                return false;
+            }
+        }
+        slice->setFrequency(kStartHz);
+        slice->setFilter(startFilter.first, startFilter.second);
+        window.show();
+        if (!activateAndWait(&window)) {
+            notReady = NereusSDR::Test::activationState(&window);
             return false;
         }
         if (QWidget* const focus = QApplication::focusWidget()) {
             focus->clearFocus();
         }
-        return QApplication::focusWidget() == nullptr;
+        if (QApplication::focusWidget() != nullptr) {
+            notReady = NereusSDR::Test::activationState(&window);
+            return false;
+        }
+        return true;
     }
 
     bool reactivate()
     {
-        window.activateWindow();
-        return waitActive(&window);
+        return activateAndWait(&window);
     }
 
     QPair<int, int> filter() const { return {slice->filterLow(), slice->filterHigh()}; }
@@ -338,10 +383,24 @@ private slots:
     void init()
     {
         QVERIFY(RemoteWindowHarness::clearIsolatedProfile());
+        // The first-run dialog would take the keyboard from the window under test.
+        // On the Mac it waits for the device list, so it opens after the window is
+        // active. On Linux it opens at once and the window never gets the keyboard.
+        NereusSDR::Test::markAudioFirstRunDone();
+    }
+
+    // A failed case may have left anything behind, so it doesn't get to spoil
+    // the cases after it.
+    void cleanup()
+    {
+        if (QTest::currentTestFailed()) {
+            m_bench.reset();
+        }
     }
 
     void cleanupTestCase()
     {
+        m_bench.reset();
         QVERIFY(RemoteWindowHarness::removeIsolatedProfile());
     }
 
@@ -403,8 +462,9 @@ private slots:
     {
         WorkspacePreview::setEnabledForTest(true);
         const auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
+        m_bench.reset();  // one MainWindow at a time
         Bench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         auto* const filter = w.window.findChild<ArrangeHoldFilter*>(QStringLiteral("workspaceArrangeHold"));
         QVERIFY(filter != nullptr);
         ContainerManager* const manager = w.window.containerManager();
@@ -448,17 +508,17 @@ private slots:
     void textWidgetsKeepEveryKey()
     {
         QFETCH(int, kind);
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         QWidget* widget = nullptr;
         switch (kind) {
-        case 0: widget = new QLineEdit(&w.window); break;
-        case 1: widget = new QTextEdit(&w.window); break;
-        case 2: widget = new QPlainTextEdit(&w.window); break;
-        case 3: widget = new QSpinBox(&w.window); break;
-        case 4: widget = new QDoubleSpinBox(&w.window); break;
+        case 0: widget = w.added(new QLineEdit(&w.window)); break;
+        case 1: widget = w.added(new QTextEdit(&w.window)); break;
+        case 2: widget = w.added(new QPlainTextEdit(&w.window)); break;
+        case 3: widget = w.added(new QSpinBox(&w.window)); break;
+        case 4: widget = w.added(new QDoubleSpinBox(&w.window)); break;
         default: {
-            auto* const combo = new QComboBox(&w.window);
+            auto* const combo = w.added(new QComboBox(&w.window));
             combo->setEditable(true);
             widget = combo;
             break;
@@ -487,8 +547,8 @@ private slots:
 
     void anOpenDropdownOrMenuKeepsEveryKeyUntilItCloses()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         const auto keepsKeys = [&w] {
             QVERIFY(QApplication::activePopupWidget() != nullptr);
             const QPair<int, int> filter = w.filter();
@@ -502,7 +562,7 @@ private slots:
             QVERIFY(!w.mox->isMox());
         };
 
-        auto* const combo = new QComboBox(&w.window);
+        auto* const combo = w.added(new QComboBox(&w.window));
         combo->addItems({QStringLiteral("one"), QStringLiteral("two")});
         combo->show();
         combo->setFocus(Qt::MouseFocusReason);
@@ -514,7 +574,7 @@ private slots:
         combo->hidePopup();
         QTRY_VERIFY(QApplication::activePopupWidget() == nullptr);
         // The offscreen plugin does not hand activation back when a popup closes.
-        QVERIFY(w.reactivate());
+        QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QPair<int, int> before = w.filter();
         tap(keyTarget(), Qt::Key_B);
         QVERIFY(w.filter() != before);
@@ -536,7 +596,7 @@ private slots:
         QVERIFY(!w.mox->isMox());
         menu.close();
         QTRY_VERIFY(QApplication::activePopupWidget() == nullptr);
-        QVERIFY(w.reactivate());
+        QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         before = w.filter();
         tap(keyTarget(), Qt::Key_B);
         QVERIFY(w.filter() != before);
@@ -544,8 +604,8 @@ private slots:
 
     void arrangeModeKeepsTheArrowsOnly()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         ContainerManager* const manager = w.window.containerManager();
         manager->setArrangeMode(true);
         QVERIFY(manager->arrangeMode());
@@ -568,10 +628,10 @@ private slots:
 
     void aFocusedHandleKeepsTheArrowsDuringAHold()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         ContainerManager* const manager = w.window.containerManager();
-        auto* const surface = new FreeCanvasSurface(&w.window);
+        auto* const surface = w.added(new FreeCanvasSurface(&w.window));
         // Stands in for the file-local CanvasHandle: a focusable child of the surface.
         auto* const handle = new QWidget(surface);
         handle->setFocusPolicy(Qt::StrongFocus);
@@ -608,11 +668,11 @@ private slots:
     {
         QFETCH(int, kind);
         QFETCH(Qt::FocusReason, reason);
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         QSlider* slider = nullptr;
-        QWidget* const control = makeControl(kind, &w.window, slider);
-        auto* const elsewhere = new QPushButton(QStringLiteral("elsewhere"), &w.window);
+        QWidget* const control = w.added(makeControl(kind, &w.window, slider));
+        auto* const elsewhere = w.added(new QPushButton(QStringLiteral("elsewhere"), &w.window));
         elsewhere->show();
         KeySeen seen(control);
 
@@ -634,7 +694,7 @@ private slots:
             QTRY_VERIFY(QApplication::activePopupWidget() != nullptr);
             combo->hidePopup();
             QTRY_VERIFY(QApplication::activePopupWidget() == nullptr);
-            QVERIFY(w.reactivate());
+            QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
             QTRY_COMPARE(QApplication::focusWidget(), control);
         }
         w.settleTunes();
@@ -658,9 +718,9 @@ private slots:
 
     void aTabbedControlStaysSoAcrossAWindowSwitch()
     {
-        Bench w;
-        QVERIFY(w.ready());
-        auto* const slider = new QSlider(Qt::Horizontal, &w.window);
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
+        auto* const slider = w.added(new QSlider(Qt::Horizontal, &w.window));
         slider->setRange(0, 100);
         slider->setValue(50);
         slider->show();
@@ -669,9 +729,9 @@ private slots:
         QWidget other;
         other.show();
         other.activateWindow();
-        QVERIFY(waitActive(&other));
+        QVERIFY2(waitActive(&other), qPrintable(NereusSDR::Test::activationState(&other)));
         other.close();
-        QVERIFY(w.reactivate());
+        QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QTRY_COMPARE(QApplication::focusWidget(), slider);
 
         tap(slider, Qt::Key_Right);
@@ -692,10 +752,10 @@ private slots:
     void aClickedControlKeepsNothing()
     {
         QFETCH(int, kind);
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         QSlider* slider = nullptr;
-        QWidget* const control = makeControl(kind, &w.window, slider);
+        QWidget* const control = w.added(makeControl(kind, &w.window, slider));
         KeySeen seen(control);
         control->setFocus(Qt::MouseFocusReason);
         QCOMPARE(QApplication::focusWidget(), control);
@@ -716,8 +776,8 @@ private slots:
 
     void mainAndFloatingWindowsAct()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
 
         tap(&w.window, Qt::Key_B);
@@ -727,7 +787,7 @@ private slots:
         PanFloatingWindow pan(&w.window);
         pan.show();
         pan.activateWindow();
-        QVERIFY(waitActive(&pan));
+        QVERIFY2(waitActive(&pan), qPrintable(NereusSDR::Test::activationState(&pan)));
         tap(&pan, Qt::Key_B);
         QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("filter.next")});
         rig.targets.ran.clear();
@@ -736,7 +796,7 @@ private slots:
         FloatingContainer container(0);
         container.show();
         container.activateWindow();
-        QVERIFY(waitActive(&container));
+        QVERIFY2(waitActive(&container), qPrintable(NereusSDR::Test::activationState(&container)));
         tap(&container, Qt::Key_B);
         QCOMPARE(rig.targets.ran, QStringList{QStringLiteral("filter.next")});
         container.hide();
@@ -755,8 +815,8 @@ private slots:
     void otherWindowsKeepTheirKeys()
     {
         QFETCH(int, kind);
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         RoundtableModel roundtable;
         std::unique_ptr<QWidget> other;
@@ -776,7 +836,7 @@ private slots:
         auto* const slider = new QSlider(Qt::Horizontal, other.get());
         other->show();
         other->activateWindow();
-        QVERIFY(waitActive(other.get()));
+        QVERIFY2(waitActive(other.get()), qPrintable(NereusSDR::Test::activationState(other.get())));
 
         QList<QWidget*> controls{other.get(), tree, table, tabs, slider};
         if (kind == 0) {
@@ -799,8 +859,8 @@ private slots:
 
     void noKeyActsUnderAModalDialogOrWithNoActiveWindow()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
 
         QDialog dialog(&w.window);
@@ -814,7 +874,7 @@ private slots:
         QCOMPARE(rig.targets.ran, QStringList{});
         dialog.close();
         QTRY_VERIFY(QApplication::activeModalWidget() == nullptr);
-        QVERIFY(w.reactivate());
+        QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
 
         w.window.hide();
         QTRY_VERIFY(QApplication::activeWindow() == nullptr);
@@ -834,8 +894,8 @@ private slots:
     void aSpectrumClickLeavesTheBoxesTheirFocusAndKeys()
     {
         QFETCH(bool, roundtableBox);
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         auto* const spectrum = w.window.findChild<SpectrumWidget*>();
         QVERIFY(spectrum != nullptr);
         QVERIFY(spectrum->isVisible());
@@ -844,6 +904,8 @@ private slots:
         RoundtableState roundtableState;
         RoundtableModel roundtable;
         const auto detach = qScopeGuard([&roundtable] { roundtable.detach(); });
+        // The panel watches the model above, so it goes before the model does.
+        std::unique_ptr<QWidget> holderOwner;
         QWidget* holder = nullptr;
         QWidget* box = nullptr;
         if (roundtableBox) {
@@ -856,12 +918,14 @@ private slots:
                                                                       {QStringLiteral("hz"), 7185000},
                                                                       {QStringLiteral("members"), 5}}}}});
             auto* const panel = new RoundtablePanel(&roundtable, &w.window);
+            holderOwner.reset(panel);
             panel->followSlice(0);
             holder = panel;
             box = holder->findChild<QPlainTextEdit*>(QStringLiteral("roundtableBox"));
             QVERIFY(box != nullptr);
         } else {
-            holder = new CwxApplet(w.model, &w.window);
+            holderOwner = std::make_unique<CwxApplet>(w.model, &w.window);
+            holder = holderOwner.get();
             box = holder->findChild<QTextEdit*>(QStringLiteral("cwxText"));
             QVERIFY(box != nullptr);
             box->setEnabled(true);
@@ -892,8 +956,8 @@ private slots:
 
     void repeatAddsToTunesAndLevelsAndNothingElse()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         const auto repeatPress = [&w](int key) {
             sendKey(&w.window, QEvent::KeyPress, key, Qt::NoModifier, true);
@@ -933,8 +997,8 @@ private slots:
 
     void aRepeatArrivingAfterADropDoesNotKeyAgain()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         down(&w.window, Qt::Key_Space);
         QCOMPARE(rig.targets.keyHolds, QList<bool>{true});
@@ -950,8 +1014,8 @@ private slots:
 
     void separateFastPressesGoThroughTheSameLimitWithNoStepLost()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         rig.targets.clockRuns = false;
 
@@ -997,8 +1061,8 @@ private slots:
         QFETCH(Qt::KeyboardModifiers, pressModifiers);
         QFETCH(int, releaseKey);
         QFETCH(quint32, nativeKey);
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
 
         QCOMPARE(rig.bindings.bind(QStringLiteral("tx.hold"), chord, true).result, HotKeyBindResult::Bound);
@@ -1017,11 +1081,11 @@ private slots:
 
     void aReleaseWorksAfterFocusMovedIntoATextBox()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         down(&w.window, Qt::Key_Space);
         QVERIFY(w.mox->isMox());
-        auto* const edit = new QLineEdit(&w.window);
+        auto* const edit = w.added(new QLineEdit(&w.window));
         edit->show();
         edit->setFocus(Qt::MouseFocusReason);
         KeySeen seen(edit);
@@ -1043,8 +1107,8 @@ private slots:
     void eachFailsafeDropsAHoldOnceAndLeavesMoxOn()
     {
         QFETCH(int, failsafe);
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
 
         const auto runFailsafe = [failsafe, &w](auto&& whileItHolds) {
             QDialog dialog(&w.window);
@@ -1053,7 +1117,7 @@ private slots:
             case 0:
                 other.show();
                 other.activateWindow();
-                QVERIFY(waitActive(&other));
+                QVERIFY2(waitActive(&other), qPrintable(NereusSDR::Test::activationState(&other)));
                 break;
             case 1: {
                 QApplicationStateChangeEvent inactive(Qt::ApplicationInactive);
@@ -1070,7 +1134,7 @@ private slots:
             other.close();
             dialog.close();
             QTRY_VERIFY(QApplication::activeModalWidget() == nullptr);
-            QVERIFY(w.reactivate());
+            QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         };
 
         // The real window: Space keys, the failsafe unkeys.
@@ -1121,8 +1185,8 @@ private slots:
 
     void aDialogOpenedByThePressItselfStillDropsTheHold()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         QDialog dialog(&w.window);
         dialog.setModal(true);
@@ -1136,7 +1200,7 @@ private slots:
         up(&dialog, Qt::Key_Space);
         dialog.close();
         QTRY_VERIFY(QApplication::activeModalWidget() == nullptr);
-        QVERIFY(w.reactivate());
+        QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         down(&w.window, Qt::Key_Space);
         QCOMPARE(rig.targets.keyHolds, (QList<bool>{true, false, true}));
         up(&w.window, Qt::Key_Space);
@@ -1145,15 +1209,15 @@ private slots:
 
     void aToastShowingDoesNotDropAHold()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         down(&w.window, Qt::Key_Space);
 
         // The offscreen plugin activates it, whatever it asks.
-        auto* const toast = new StatusToast(QStringLiteral("A toast"), ToastSeverity::Info, 5000, &w.window);
+        auto* const toast = w.added(new StatusToast(QStringLiteral("A toast"), ToastSeverity::Info, 5000, &w.window));
         toast->show();
-        QVERIFY(waitActive(toast));
+        QVERIFY2(waitActive(toast), qPrintable(NereusSDR::Test::activationState(toast)));
         QCOMPARE(rig.targets.keyHolds, QList<bool>{true});
 
         up(&w.window, Qt::Key_Space);
@@ -1166,8 +1230,8 @@ private slots:
     // release, and nothing else runs.
     void aRepeatWithAChangedModifierKeepsTheHoldItsKeyStarted()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         QCOMPARE(rig.bindings.bind(QStringLiteral("tx.hold"), QStringLiteral("F9"), true).result, HotKeyBindResult::Bound);
         QCOMPARE(rig.bindings.bind(QStringLiteral("tx.mox"), QStringLiteral("Shift+F9"), true).result, HotKeyBindResult::Bound);
@@ -1186,8 +1250,8 @@ private slots:
     // Windows can send a repeat with changed modifiers as a fresh press.
     void aFreshPressOnAKeyAlreadyDownRunsNothing()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         QCOMPARE(rig.bindings.bind(QStringLiteral("cw.straight"), QStringLiteral("F9"), true).result, HotKeyBindResult::Bound);
         QCOMPARE(rig.bindings.bind(QStringLiteral("tx.mox"), QStringLiteral("Shift+F9"), true).result, HotKeyBindResult::Bound);
@@ -1222,8 +1286,8 @@ private slots:
     // isn't one is a new press. Qt's Control is the Mac's Cmd.
     void aSecondPressOfACommandKeyRunsOnAMac()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         constexpr quint32 kNative = 103;
         const Qt::KeyboardModifiers chord = Qt::ControlModifier | Qt::ShiftModifier;
 
@@ -1249,8 +1313,8 @@ private slots:
 
     void aHoldChordDownTwiceHoldsOnce()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         QCOMPARE(rig.bindings.bind(QStringLiteral("cw.straight"), QStringLiteral("Ctrl+F9"), true).result, HotKeyBindResult::Bound);
         constexpr quint32 kNative = 104;
@@ -1266,8 +1330,8 @@ private slots:
     // turns into anything else.
     void aHeldTuneKeyMayChangeItsStepAndNothingElse()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         QCOMPARE(rig.bindings.bind(QStringLiteral("tx.mox"), QStringLiteral("Ctrl+Right"), true).result, HotKeyBindResult::Bound);
         constexpr quint32 kNative = 124;
@@ -1308,8 +1372,8 @@ private slots:
 #ifdef Q_OS_LINUX
     void onLinuxLiftingShiftFirstStillReleases()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         QCOMPARE(rig.bindings.bind(QStringLiteral("cw.dot"), QStringLiteral("Shift+<"), true).result, HotKeyBindResult::Bound);
         QKeyEvent press(QEvent::KeyPress, Qt::Key_Less, Qt::ShiftModifier, 59, 0x3c, 0, QStringLiteral("<"));
@@ -1324,8 +1388,9 @@ private slots:
     void sleepDropsAHoldAndTheKeyBehavesAfterWake()
     {
         const HotKeySource keyboard{HotKeySourceKind::Keyboard, QString()};
+        m_bench.reset();  // one MainWindow at a time
         Bench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         qint64 wall = 1000000;
         w.keys->setSleepClocksForTest([&wall] { return wall; }, [] { return qint64(5000); });
         const auto sleep = [&] {
@@ -1372,8 +1437,8 @@ private slots:
     void aNativeMenuTrackingDropsTheHoldAndLeavesMox()
     {
         const HotKeySource keyboard{HotKeySourceKind::Keyboard, QString()};
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
 
         down(&w.window, Qt::Key_Space);
         QTRY_VERIFY(w.mox->isMox());
@@ -1406,8 +1471,8 @@ private slots:
     void aMenuBarMenuOpeningDropsTheHoldAndLeavesMox()
     {
         const HotKeySource keyboard{HotKeySourceKind::Keyboard, QString()};
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
 
         // A hold's key drops. No key-up has to arrive for it.
         // The title bar holds the window's menu bar, so ask for it by type.
@@ -1429,7 +1494,7 @@ private slots:
         up(&w.window, Qt::Key_Space);
 
         // A menu added later counts.
-        QMenu* const later = bar->addMenu(QStringLiteral("Later"));
+        QMenu* const later = w.added(bar->addMenu(QStringLiteral("Later")));
         down(&w.window, Qt::Key_Space);
         QTRY_VERIFY(w.mox->isMox());
         emit later->aboutToShow();
@@ -1451,8 +1516,8 @@ private slots:
     // excuse a window that has taken the keyboard.
     void anotherWindowAskingNotToActivateStillDropsAHold()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         down(&w.window, Qt::Key_Space);
         QCOMPARE(rig.targets.keyHolds, QList<bool>{true});
@@ -1460,7 +1525,7 @@ private slots:
         QWidget other(&w.window, Qt::FramelessWindowHint | Qt::Tool);
         other.setAttribute(Qt::WA_ShowWithoutActivating);
         other.show();
-        QVERIFY(waitActive(&other));
+        QVERIFY2(waitActive(&other), qPrintable(NereusSDR::Test::activationState(&other)));
         QCOMPARE(rig.targets.keyHolds, (QList<bool>{true, false}));
         up(&w.window, Qt::Key_Space);
     }
@@ -1469,9 +1534,9 @@ private slots:
 
     void offEatsNoKeyAndActsOnNothing()
     {
-        Bench w;
-        QVERIFY(w.ready());
-        auto* const button = new QPushButton(QStringLiteral("button"), &w.window);
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
+        auto* const button = w.added(new QPushButton(QStringLiteral("button"), &w.window));
         button->show();
         button->setFocus(Qt::MouseFocusReason);
         KeySeen seen(button);
@@ -1502,9 +1567,9 @@ private slots:
 
     void goingOffWhileHeldForgetsTheKey()
     {
-        Bench w;
-        QVERIFY(w.ready());
-        auto* const button = new QPushButton(QStringLiteral("button"), &w.window);
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
+        auto* const button = w.added(new QPushButton(QStringLiteral("button"), &w.window));
         button->show();
         button->setFocus(Qt::MouseFocusReason);
         down(button, Qt::Key_Space);
@@ -1537,8 +1602,8 @@ private slots:
     {
         QFETCH(QString, chord);
         const ChordKey key = keyOf(chord);
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         const auto nothingKeyed = [&](QWidget* to) {
             tap(to, key.key, key.modifiers);
@@ -1548,7 +1613,7 @@ private slots:
             QVERIFY(!w.mox->isMox());
         };
 
-        auto* const edit = new QLineEdit(&w.window);
+        auto* const edit = w.added(new QLineEdit(&w.window));
         edit->show();
         edit->setFocus(Qt::MouseFocusReason);
         nothingKeyed(edit);
@@ -1561,25 +1626,25 @@ private slots:
             QDialog dialog(&w.window);
             dialog.show();
             dialog.activateWindow();
-            QVERIFY(waitActive(&dialog));
+            QVERIFY2(waitActive(&dialog), qPrintable(NereusSDR::Test::activationState(&dialog)));
             nothingKeyed(&dialog);
             if (QTest::currentTestFailed()) {
                 return;
             }
         }
-        QVERIFY(w.reactivate());
+        QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
 
         QWidget other;
         other.show();
         other.activateWindow();
-        QVERIFY(waitActive(&other));
+        QVERIFY2(waitActive(&other), qPrintable(NereusSDR::Test::activationState(&other)));
         nothingKeyed(&w.window);
         nothingKeyed(&other);
         if (QTest::currentTestFailed()) {
             return;
         }
         other.close();
-        QVERIFY(w.reactivate());
+        QVERIFY2(w.reactivate(), qPrintable(NereusSDR::Test::activationState(&w.window)));
 
         // The control: the same chord from the clicked background reaches the rig.
         tap(&w.window, key.key, key.modifiers);
@@ -1590,8 +1655,8 @@ private slots:
 
     void everyDefaultChordRunsItsAction()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         for (const HotKeyAction& action : HotKeyActionList::all()) {
             for (const QString& chord : action.defaultKeys) {
@@ -1607,8 +1672,8 @@ private slots:
 
     void theWindowsOwnRouterRunsTheRealThing()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
 
         tap(&w.window, Qt::Key_Right);
         QTRY_COMPARE(w.slice->frequency(), kStartHz + kStepHz);
@@ -1635,8 +1700,8 @@ private slots:
 
     void aKeyComingThroughTheWindowRunsOnce()
     {
-        Bench w;
-        QVERIFY(w.ready());
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         Rig rig(&w.window);
         QWindow* const handle = w.window.windowHandle();
         QVERIFY(handle != nullptr);
@@ -1646,7 +1711,7 @@ private slots:
         };
 
         // Qt's own route: the window, then the focused widget and its parents.
-        auto* const button = new QPushButton(QStringLiteral("button"), &w.window);
+        auto* const button = w.added(new QPushButton(QStringLiteral("button"), &w.window));
         button->show();
         button->setFocus(Qt::MouseFocusReason);
         KeySeen seen(button);
@@ -1663,7 +1728,7 @@ private slots:
         rig.targets.ran.clear();
 
         // A text box passes the key up its parents, and none of them runs it.
-        auto* const edit = new QLineEdit(&w.window);
+        auto* const edit = w.added(new QLineEdit(&w.window));
         edit->show();
         edit->setFocus(Qt::MouseFocusReason);
         throughWindow(QEvent::KeyPress, Qt::Key_Up);
@@ -1680,8 +1745,9 @@ private slots:
 
     void menuShortcutsStillWork()
     {
+        m_bench.reset();  // one MainWindow at a time
         Bench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         const QKeySequence ctrlM(QStringLiteral("Ctrl+M"), QKeySequence::PortableText);
         QAction* minimal = nullptr;
         for (QAction* const action : w.window.findChildren<QAction*>()) {
@@ -1722,8 +1788,9 @@ private slots:
         QFETCH(bool, workspaceLook);
         WorkspacePreview::setEnabledForTest(workspaceLook);
         const auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
+        m_bench.reset();  // one MainWindow at a time
         Bench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
         QStringList checked;
         const auto check = [&checked](const QKeySequence& sequence) {
             if (sequence.isEmpty()) {
@@ -1758,6 +1825,16 @@ private slots:
     }
 
 private:
+    Bench& sharedBench()
+    {
+        if (!m_bench) {
+            m_bench = std::make_unique<Bench>();
+        }
+        return *m_bench;
+    }
+
+    std::unique_ptr<Bench> m_bench;
+
     // Kinds: 0 slider at 50, 1 button, 2 tab bar, 3 closed dropdown.
     QWidget* makeControl(int kind, QWidget* parent, QSlider*& slider)
     {

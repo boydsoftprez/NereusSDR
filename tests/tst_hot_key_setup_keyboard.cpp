@@ -26,6 +26,13 @@
 #include <QTemporaryDir>
 #include <QTreeWidget>
 
+#include "HotKeyWindowActivation.h"
+#include "fakes/MainWindowTestSettings.h"
+#include "gui/styles/WorkspacePalette.h"
+#include "gui/styles/WorkspacePreview.h"
+#include <QScopeGuard>
+#include <QScrollArea>
+#include <QSignalSpy>
 #include "core/AppSettings.h"
 #include "core/MoxController.h"
 #include "core/SliceOwnership.h"
@@ -34,6 +41,7 @@
 #include "core/session/SliceAccessMirror.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
+#include "HotKeyWindowActivation.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/MainWindow.h"
 #include "gui/SetupDialog.h"
@@ -124,10 +132,8 @@ struct PageBench {
     void beginSet(const QString& id) { button(&page, QStringLiteral("hotKeySet:"), id)->click(); }
 };
 
-bool waitActive(QWidget* window)
-{
-    return QTest::qWaitFor([window] { return QApplication::activeWindow() == window; }, 5000);
-}
+using NereusSDR::Test::activateAndWait;
+using NereusSDR::Test::waitActive;
 
 // One real window, offscreen, connected, with Slice A, and Setup open on the page.
 struct WindowBench {
@@ -155,7 +161,7 @@ struct WindowBench {
 
     bool ready()
     {
-        if (!waitActive(&window)) {
+        if (!activateAndWait(&window)) {
             return false;
         }
         if (QWidget* const focus = QApplication::focusWidget()) {
@@ -252,7 +258,12 @@ private slots:
         QVERIFY(RemoteWindowHarness::useIsolatedProfile(QStringLiteral("hot-key-setup-keyboard")));
     }
 
-    void init() { QVERIFY(RemoteWindowHarness::clearIsolatedProfile()); }
+    void init()
+    {
+        QVERIFY(RemoteWindowHarness::clearIsolatedProfile());
+        // The first-run dialog would take the keyboard from the window under test.
+        NereusSDR::Test::markAudioFirstRunDone();
+    }
 
     void cleanupTestCase() { QVERIFY(RemoteWindowHarness::removeIsolatedProfile()); }
 
@@ -279,6 +290,110 @@ private slots:
                                 "Ctrl+Shift+K", "Ctrl+Shift+N", "Ctrl+Shift+X"}) {
             QVERIFY2(onMap.contains(QLatin1String(key)), key);
         }
+    }
+
+    // The map fits the width it has, with no sideways scroll anywhere on the page.
+    void theMapFitsEveryWidth_data()
+    {
+        QTest::addColumn<int>("width");
+        QTest::addColumn<bool>("stacked");
+        QTest::newRow("820 by 600 window") << 563 << true;
+        QTest::newRow("900 by 650 window") << 643 << true;
+        QTest::newRow("just under full width") << 1000 << false;
+        QTest::newRow("wide") << 1400 << false;
+    }
+
+    void theMapFitsEveryWidth()
+    {
+        QFETCH(int, width);
+        QFETCH(bool, stacked);
+        HotKeyBindings bindings;
+        KeyboardMapWidget map(&bindings);
+        map.resize(width, map.height());
+        map.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&map));
+        QCOMPARE(map.stacked(), stacked);
+
+        const QList<QAbstractButton*> caps = map.findChildren<QAbstractButton*>();
+        QVERIFY(caps.size() > 90);
+        for (qsizetype i = 0; i < caps.size(); ++i) {
+            const QRect at = caps.at(i)->geometry();
+            QVERIFY2(map.rect().contains(at), qPrintable(caps.at(i)->accessibleName()));
+            QVERIFY2(at.width() >= 20 && at.height() >= 20, qPrintable(caps.at(i)->accessibleName()));
+            for (qsizetype j = i + 1; j < caps.size(); ++j) {
+                QVERIFY2(!at.intersects(caps.at(j)->geometry()),
+                         qPrintable(caps.at(i)->accessibleName() + QStringLiteral(" on ")
+                                    + caps.at(j)->accessibleName()));
+            }
+        }
+
+        // The navigation keys and keypad go below when short, beside when not.
+        const auto capAt = [&map](const char* chord) {
+            return map.findChild<QAbstractButton*>(QString::fromLatin1(chord));
+        };
+        const QRect space = capAt("Space")->geometry();
+        for (const char* chord : {"Home", "Left", "Num+7", "Num+Enter"}) {
+            QAbstractButton* const cap = capAt(chord);
+            QVERIFY2(cap != nullptr, chord);
+            if (stacked) {
+                QVERIFY2(cap->geometry().top() > space.bottom(), chord);
+            } else {
+                QVERIFY2(cap->geometry().left() > space.right(), chord);
+            }
+        }
+
+        // Every key answers a click in this layout, the far ones included.
+        QSignalSpy clicked(&map, &KeyboardMapWidget::keyClicked);
+        for (const char* chord : {"Q", "Space", "Home", "Right", "Num+7", "Num+."}) {
+            clicked.clear();
+            QAbstractButton* const cap = capAt(chord);
+            QVERIFY2(cap != nullptr && cap->isEnabled(), chord);
+            QTest::mouseClick(cap, Qt::LeftButton);
+            QCOMPARE(clicked.size(), 1);
+            QCOMPARE(clicked.first().first().toString(), QString::fromLatin1(chord));
+        }
+
+        // The tooltip has the action's whole name, whatever the cap has room for.
+        const QString spaceAction = bindings.actionForChord(QStringLiteral("Space"));
+        QCOMPARE(capAt("Space")->toolTip(), HotKeyActionList::find(spaceAction)->name);
+    }
+
+    void thePageHasNoSidewaysScrollForTheMap()
+    {
+        PageBench b;
+        auto* const map = b.page.findChild<KeyboardMapWidget*>();
+        for (QWidget* parent = map->parentWidget(); parent != nullptr; parent = parent->parentWidget()) {
+            if (auto* const area = qobject_cast<QScrollArea*>(parent)) {
+                QVERIFY(!area->objectName().contains(QStringLiteral("hotKeyMap")));
+            }
+        }
+    }
+
+    // The group colors are data, which the color sweep leaves alone, so the
+    // chrome around them is checked here: one role in the look, the old color out of it.
+    void aKeyWithNoActionTakesThePalette_data()
+    {
+        QTest::addColumn<bool>("workspaceLook");
+        QTest::addColumn<QColor>("fill");
+        QTest::newRow("classic look") << false << QColor(0x13, 0x13, 0x26);
+        QTest::newRow("workspace look")
+            << true << Workspace::WorkspacePalette::glassAndDepth().color(QStringLiteral("button"));
+    }
+
+    void aKeyWithNoActionTakesThePalette()
+    {
+        QFETCH(bool, workspaceLook);
+        QFETCH(QColor, fill);
+        WorkspacePreview::setEnabledForTest(workspaceLook);
+        const auto restore = qScopeGuard([] { WorkspacePreview::setEnabledForTest(false); });
+        HotKeyBindings bindings;
+        KeyboardMapWidget map(&bindings);
+        QAbstractButton* const cap = map.findChild<QAbstractButton*>(QStringLiteral("Esc"));
+        QVERIFY(cap != nullptr);
+        QVERIFY(cap->property("keyGroup").toString().isEmpty());
+        const QImage image = cap->grab().toImage();
+        const QColor painted = image.pixelColor(image.width() / 2, image.height() - 4);
+        QCOMPARE(painted.name(), fill.name());
     }
 
     void layersShowTheirKeysColoredByGroup()
@@ -864,7 +979,7 @@ private slots:
     void theSwitchAndTheViewItemMoveTogetherAndStopKeys()
     {
         WindowBench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QVERIFY(w.openPage());
         auto* const useShortcuts = named<QCheckBox>(w.page, QStringLiteral("hotKeyUseShortcuts"));
         QAction* const item = w.viewAction(QStringLiteral("Use &Shortcuts"));
@@ -885,7 +1000,7 @@ private slots:
         useShortcuts->click();
         w.dialog->close();
         w.window.activateWindow();
-        QVERIFY(waitActive(&w.window));
+        QVERIFY2(waitActive(&w.window), qPrintable(NereusSDR::Test::activationState(&w.window)));
         tap(&w.window, Qt::Key_Space);
         QVERIFY(!w.mox->isMox());
         item->trigger();
@@ -898,11 +1013,11 @@ private slots:
     void turningOffFromThePageDropsAHoldAndLeavesMoxOn()
     {
         WindowBench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QVERIFY(w.openPage());
         auto* const useShortcuts = named<QCheckBox>(w.page, QStringLiteral("hotKeyUseShortcuts"));
         w.window.activateWindow();
-        QVERIFY(waitActive(&w.window));
+        QVERIFY2(waitActive(&w.window), qPrintable(NereusSDR::Test::activationState(&w.window)));
 
         down(&w.window, Qt::Key_Space);
         QVERIFY(w.mox->isMox());
@@ -928,10 +1043,10 @@ private slots:
     void aKeyInSetGoesToSetAndKeysNothing()
     {
         WindowBench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QVERIFY(w.openPage());
         w.dialog->activateWindow();
-        QVERIFY(waitActive(w.dialog));
+        QVERIFY2(waitActive(w.dialog), qPrintable(NereusSDR::Test::activationState(w.dialog)));
 
         // Space while listening: a conflict for this row, and no key on the radio.
         const QString id = QStringLiteral("tune.up");
@@ -969,7 +1084,7 @@ private slots:
     void changesAreSavedAtOnce()
     {
         WindowBench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QVERIFY(w.openPage());
         const QString id = QStringLiteral("tune.up");
         button(w.page, QStringLiteral("hotKeySet:"), id)->click();
@@ -989,7 +1104,7 @@ private slots:
     void theMenuItemOpensThePageAndTheTreeHoldsIt()
     {
         WindowBench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QAction* const item = w.viewAction(QStringLiteral("&Keyboard Shortcuts..."));
         QVERIFY(item != nullptr);
         QVERIFY(item->isEnabled());
@@ -1022,7 +1137,7 @@ private slots:
     void theWindowsReasonsReachTheRows()
     {
         WindowBench w;
-        QVERIFY(w.ready());
+        QVERIFY2(w.ready(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QVERIFY(w.openPage());
         MainWindowHotKeyTargets targets(&w.window);
         // Voice is not built, band stack is not there yet.
