@@ -106,6 +106,10 @@ public:
     /// Test only: stops the analyzer's clock, then moves it. Production never
     /// calls this and reads steady_clock.
     void advanceClockForTest(std::chrono::milliseconds step);
+    /// Test only: stops the analyzer's clock at a fixed time, so where the
+    /// crest window's slots fall is the same every run. No effect once the
+    /// clock is stopped.
+    void startClockForTest(std::chrono::milliseconds at);
 
 private:
     using clock = std::chrono::steady_clock;

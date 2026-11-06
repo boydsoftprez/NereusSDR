@@ -34,11 +34,23 @@ std::vector<float> constantIq(double seconds, double i, double q)
 // One block is 1 ms of the analyzer's own clock, so these tests run on the
 // clock seam and never wait.
 constexpr int kBlockFrames = kFs / 1000;
+// A fixed start, on a crest slot's edge, so a reading does not depend on what
+// the real clock said. 10 ms slots: the phase rows start 0 to 9 ms after it.
+constexpr std::chrono::milliseconds kClockStart{1000000};
+
+void addPhaseRows()
+{
+    QTest::addColumn<int>("phase");
+    for (int phase = 0; phase < 10; ++phase) {
+        QTest::addRow("phase %d", phase) << phase;
+    }
+}
 
 // Calls each(ms) after each block.
 template <typename Each>
 void feedClocked(SsbModulationAnalyzer& analyzer, const std::vector<float>& iq, Each each)
 {
+    analyzer.startClockForTest(kClockStart);
     const int blocks = static_cast<int>(iq.size() / 2) / kBlockFrames;
     for (int b = 0; b < blocks; ++b) {
         analyzer.pushIq(iq.data() + static_cast<std::size_t>(2 * b * kBlockFrames), kBlockFrames);
@@ -247,9 +259,12 @@ private slots:
     }
 
     // A pause on a real radio is noise, not digital zero: review finding.
+    void crest_noisyPauseDoesNotInflateIt_data() { addPhaseRows(); }
     void crest_noisyPauseDoesNotInflateIt()
     {
         SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
         analyzer.setSampleRate(kFs);
         feedClocked(analyzer, constantIq(0.05, 0.5, 0.0));
         feedClocked(analyzer, constantIq(0.25, 0.01, 0.0));
@@ -258,9 +273,12 @@ private slots:
         QVERIFY2(std::fabs(*crest) < 0.1, qPrintable(QString::number(*crest)));
     }
 
+    void crest_twoToneWithNoisyPausesStaysThreeDb_data() { addPhaseRows(); }
     void crest_twoToneWithNoisyPausesStaysThreeDb()
     {
         SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
         analyzer.setSampleRate(kFs);
         feedClocked(analyzer, twoToneIq(0.1, 0.5));
         feedClocked(analyzer, constantIq(0.05, 0.01, 0.0));
@@ -270,10 +288,31 @@ private slots:
         QVERIFY2(std::fabs(*crest - 3.01) < 0.1, qPrintable(QString::number(*crest)));
     }
 
+    // Signal and noise in one 10 ms slot: only the signal counts, whichever
+    // comes first. Counted together, this reads 3 dB.
+    void crest_aPauseEdgeInsideASlotDoesNotCount_data() { addPhaseRows(); }
+    void crest_aPauseEdgeInsideASlotDoesNotCount()
+    {
+        SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
+        analyzer.setSampleRate(kFs);
+        for (int cycle = 0; cycle < 40; ++cycle) {
+            feedClocked(analyzer, constantIq(0.005, 0.5, 0.0));
+            feedClocked(analyzer, constantIq(0.005, 0.01, 0.0));
+        }
+        const auto crest = analyzer.snapshot().crestDb;
+        QVERIFY(crest.has_value());
+        QVERIFY2(std::fabs(*crest) < 0.1, qPrintable(QString::number(*crest)));
+    }
+
     // Quieter syllables within 30 dB count; the noise between them does not.
+    void crest_speechLikeBurstsStaySensible_data() { addPhaseRows(); }
     void crest_speechLikeBurstsStaySensible()
     {
         SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
         analyzer.setSampleRate(kFs);
         double low = 1000.0;
         double high = -1000.0;
@@ -293,15 +332,18 @@ private slots:
         }
         const QString seen = QStringLiteral("%1 to %2").arg(low).arg(high);
         QVERIFY2(low > 2.5, qPrintable(seen));
-        // The worst window without the noise is 5.67 dB, up to 0.2 dB more
-        // where the 10 ms slots happen to fall; with the noise, 6.67 dB.
-        QVERIFY2(high < 6.2, qPrintable(seen));
+        // The worst window reads up to 5.85 dB, at every phase. Noise let in
+        // reads 6.7 or more.
+        QVERIFY2(high < 5.9, qPrintable(seen));
     }
 
     // The maintainer's crest: peak over RMS of the envelope, over one stretch.
+    void crest_twoToneIsThreeDb_data() { addPhaseRows(); }
     void crest_twoToneIsThreeDb()
     {
         SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
         analyzer.setSampleRate(kFs);
         feedClocked(analyzer, twoToneIq(1.0));
         const auto crest = analyzer.snapshot().crestDb;
@@ -309,9 +351,12 @@ private slots:
         QVERIFY2(std::fabs(*crest - 3.01) < 0.1, qPrintable(QString::number(*crest)));
     }
 
+    void crest_steadyToneIsZeroDb_data() { addPhaseRows(); }
     void crest_steadyToneIsZeroDb()
     {
         SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
         analyzer.setSampleRate(kFs);
         feedClocked(analyzer, constantIq(1.0, 0.5, 0.0));
         const auto crest = analyzer.snapshot().crestDb;
@@ -319,9 +364,12 @@ private slots:
         QVERIFY2(std::fabs(*crest) < 0.01, qPrintable(QString::number(*crest)));
     }
 
+    void crest_aPauseNeverInflatesItThenShowsNoValue_data() { addPhaseRows(); }
     void crest_aPauseNeverInflatesItThenShowsNoValue()
     {
         SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
         analyzer.setSampleRate(kFs);
         feedClocked(analyzer, twoToneIq(1.0));
         const auto tone = analyzer.snapshot().crestDb;
@@ -351,11 +399,14 @@ private slots:
                  qPrintable(QString::number(endedAtMs)));
     }
 
+    void crest_leavesPausesOutOfASpeechLikeOver_data() { addPhaseRows(); }
     void crest_leavesPausesOutOfASpeechLikeOver()
     {
         // A constant-envelope burst, then silence, over and over: every
         // block counted is the same level, so a pause cannot raise it.
         SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
         analyzer.setSampleRate(kFs);
         for (int i = 0; i < 6; ++i) {
             feedClocked(analyzer, constantIq(0.05, 0.5, 0.0));
@@ -366,9 +417,12 @@ private slots:
         }
     }
 
+    void crest_ignoresThePeakOutsideItsWindow_data() { addPhaseRows(); }
     void crest_ignoresThePeakOutsideItsWindow()
     {
         SsbModulationAnalyzer analyzer;
+        QFETCH(int, phase);
+        analyzer.startClockForTest(kClockStart + std::chrono::milliseconds(phase));
         analyzer.setSampleRate(kFs);
         feedClocked(analyzer, constantIq(0.001, 1.0, 0.0));
         feedClocked(analyzer, constantIq(0.1, 0.5, 0.0));

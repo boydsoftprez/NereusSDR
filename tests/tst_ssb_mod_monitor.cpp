@@ -75,6 +75,13 @@ namespace {
 
 constexpr int kFs = 48000;
 
+// The desktop's words, literally, so a change to them fails here; the phone
+// carries its own copy of the first.
+const QString kPaFeedbackOffWords = QStringLiteral(
+    "PA FB reads PureSignal's feedback. PureSignal is off, or this radio does not have it.");
+const QString kPaFeedbackOnWords = QStringLiteral(
+    "Measure the PA output through PureSignal's feedback.");
+
 QVector<float> tone(int frames, float level)
 {
     QVector<float> iq(frames * 2);
@@ -87,6 +94,7 @@ QVector<float> tone(int frames, float level)
 
 void feedSteady(SsbModulationAnalyzer& a, double seconds, float level)
 {
+    a.startClockForTest(std::chrono::milliseconds(1000000));
     const QVector<float> block = tone(48, level);
     for (int ms = 0; ms < static_cast<int>(seconds * 1000.0); ++ms) {
         a.pushIq(block.constData(), 48);
@@ -645,6 +653,33 @@ private slots:
         QTRY_VERIFY(!core->isTransmitting());
     }
 
+    // The panel restarts only its own window: a watching device reads the
+    // same hold.
+    void aLocalPanelShowingOrChangingSourceLeavesTheHoldAlone()
+    {
+        std::unique_ptr<RadioModel> core = makeCore();
+        SsbModMonitorApplet local(core.get());
+        SsbModulationAnalyzer* tx = core->ssbModulationAnalyzer(0);
+        SsbModulationAnalyzer* fb = core->ssbModulationAnalyzer(1);
+        feedSteady(*tx, 0.3, 0.8f);
+        feedSteady(*fb, 0.3, 0.8f);
+        const auto held = [](SsbModulationAnalyzer* a) { return a->snapshot().peakHoldPct > 79.0; };
+
+        local.show();
+        QVERIFY(held(tx));
+        QVERIFY(held(fb));
+        local.setSource(SsbModMonitorApplet::Source::PaFeedback);
+        QVERIFY(held(tx));
+        QVERIFY(held(fb));
+        local.setSource(SsbModMonitorApplet::Source::TxIq);
+        QVERIFY(held(tx));
+        QVERIFY(held(fb));
+        local.hide();
+        local.show();
+        QVERIFY(held(tx));
+        QVERIFY(held(fb));
+    }
+
     void aDeviceChangingSourceLeavesThePanelsHoldAlone()
     {
         std::unique_ptr<RadioModel> core = makeCore();
@@ -874,14 +909,14 @@ private slots:
         SsbModMonitorApplet applet(core.get());
         applet.show();
         QVERIFY(!applet.paFeedbackEnabledForTest());
-        QCOMPARE(applet.paFeedbackToolTipForTest(), SsbModMonitorApplet::paFeedbackOffReason());
+        QCOMPARE(applet.paFeedbackToolTipForTest(), kPaFeedbackOffWords);
         QVERIFY(OperatorWording::isPlain(SsbModMonitorApplet::paFeedbackOffReason()));
 
         PureSignal* ps = core->installPureSignalForTest(nullptr);
         QVERIFY(!applet.paFeedbackEnabledForTest());
         ps->setPsEnabledForTest(true);
         QVERIFY(applet.paFeedbackEnabledForTest());
-        QVERIFY(applet.paFeedbackToolTipForTest() != SsbModMonitorApplet::paFeedbackOffReason());
+        QCOMPARE(applet.paFeedbackToolTipForTest(), kPaFeedbackOnWords);
         ps->setPsEnabledForTest(false);
         QVERIFY(!applet.paFeedbackEnabledForTest());
     }
@@ -894,7 +929,7 @@ private slots:
         SsbModMonitorApplet applet(&s.window);
         QTRY_VERIFY(applet.monitorAvailableForTest());
         QVERIFY(!applet.paFeedbackEnabledForTest());
-        QCOMPARE(applet.paFeedbackToolTipForTest(), SsbModMonitorApplet::paFeedbackOffReason());
+        QCOMPARE(applet.paFeedbackToolTipForTest(), kPaFeedbackOffWords);
 
         QJsonObject status = QJsonDocument::fromJson(
             core->pureSignalFacade()->statusJson().toUtf8()).object();
@@ -903,13 +938,13 @@ private slots:
             "statusJson", QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))));
         QVERIFY(s.window.ssbModFeedbackInUse());
         QVERIFY(applet.paFeedbackEnabledForTest());
-        QVERIFY(applet.paFeedbackToolTipForTest() != SsbModMonitorApplet::paFeedbackOffReason());
+        QCOMPARE(applet.paFeedbackToolTipForTest(), kPaFeedbackOnWords);
 
         status.insert(QStringLiteral("psEnabled"), false);
         QVERIFY(s.window.pureSignalFacade()->applyRemoteProperty(
             "statusJson", QString::fromUtf8(QJsonDocument(status).toJson(QJsonDocument::Compact))));
         QVERIFY(!applet.paFeedbackEnabledForTest());
-        QCOMPARE(applet.paFeedbackToolTipForTest(), SsbModMonitorApplet::paFeedbackOffReason());
+        QCOMPARE(applet.paFeedbackToolTipForTest(), kPaFeedbackOffWords);
     }
 
     void thePanelStartsOffInTheWindowsList()

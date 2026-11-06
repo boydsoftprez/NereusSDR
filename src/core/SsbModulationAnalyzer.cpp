@@ -123,6 +123,14 @@ void SsbModulationAnalyzer::advanceClockForTest(std::chrono::milliseconds step)
     m_nowForTest = m_nowForTest.value_or(clock::now()) + step;
 }
 
+void SsbModulationAnalyzer::startClockForTest(std::chrono::milliseconds at)
+{
+    std::lock_guard<std::mutex> lock(m_mu);
+    if (!m_nowForTest) {
+        m_nowForTest = clock::time_point{} + at;
+    }
+}
+
 SsbModulationAnalyzer::clock::time_point SsbModulationAnalyzer::nowLocked() const
 {
     return m_nowForTest ? *m_nowForTest : clock::now();
