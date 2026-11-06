@@ -225,6 +225,8 @@ private:
     void buildPhonePage(QWidget* page);
     void buildCwPage(QWidget* page);
     void buildFmPage(QWidget* page);
+    // A container copy: only the page it shows counts toward its height.
+    void fitCopyToCurrentPage();
     // Phase 3M-1b: wire mic gain slider + mic level gauge timer.
     void wireControls();
     void updateTransmitControlAvailability();

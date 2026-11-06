@@ -245,10 +245,26 @@ public:
         finish();
     }
 
+    // Extra room under the row just committed. The docked applet keeps its
+    // spacer in the column. A copy puts the room inside the row's wrapper,
+    // so it goes when the row is hidden.
+    void addGapBelow(int pixels) {
+        if (!m_parts) {
+            m_column->addSpacing(pixels);
+            return;
+        }
+        if (m_committed && m_committed->layout()) {
+            QMargins margins = m_committed->layout()->contentsMargins();
+            margins.setBottom(margins.bottom() + pixels);
+            m_committed->layout()->setContentsMargins(margins);
+        }
+    }
+
 private:
     void finish() {
         m_column->addWidget(m_host);
         m_parts->add(m_id, m_label, -1, {m_host});
+        m_committed = m_host;
         m_host = nullptr;
     }
 
@@ -256,6 +272,7 @@ private:
     QBoxLayout* m_column = nullptr;
     SectionParts* m_parts = nullptr;
     QWidget* m_host = nullptr;
+    QWidget* m_committed = nullptr;
     QString m_id;
     QString m_label;
 };
@@ -392,6 +409,11 @@ void PhoneCwApplet::buildUI()
 
     m_stack->setCurrentIndex(0);
     root->addWidget(m_stack);
+    if (m_parts) {
+        connect(m_stack, &QStackedWidget::currentChanged, this,
+                [this](int) { fitCopyToCurrentPage(); });
+        fitCopyToCurrentPage();
+    }
 
     // R-R3-49: controls whose feature is not built yet are hidden. The CW
     // and FM pages are never shown (showPage falls back to Phone), and with
@@ -468,7 +490,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         "Speech compression while transmitting, as the Compression meter shows it"));
     m_compGauge->setValue(-25.0);  // empty until a transmit reading arrives
     sections.commitWidget(m_compGauge);
-    vbox->addSpacing(4);
+    sections.addGapBelow(4);
 
     // ── Control 3: Mic profile combo ─────────────────────────────────────────
     QWidget* profileParent = sections.parentFor("profile", QStringLiteral("mic profile"));
@@ -733,6 +755,12 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         row->addWidget(m_amCarLabel);
 
         sections.commitLayout(row);
+    }
+
+    // A copy's spare room goes under its rows, so they stay together when a
+    // free canvas makes it taller than it asks to be.
+    if (m_parts) {
+        vbox->addStretch();
     }
 
     // ── Phone controls with nothing behind them yet (wired ones are live) ───
@@ -2133,6 +2161,25 @@ void PhoneCwApplet::applyContainerConfig(const QJsonObject& config)
     }
     const QString page = config.value(QStringLiteral("page")).toString();
     showPage(page == QLatin1String("cw") ? 1 : 0);
+    fitCopyToCurrentPage();
+}
+
+// A stacked widget asks for its tallest page, and the docked panel keeps
+// that. A copy asks only for the page it shows, so it shortens as rows hide.
+void PhoneCwApplet::fitCopyToCurrentPage()
+{
+    if (!m_parts || !m_stack) {
+        return;
+    }
+    for (int i = 0; i < m_stack->count(); ++i) {
+        QWidget* page = m_stack->widget(i);
+        QSizePolicy policy = page->sizePolicy();
+        policy.setVerticalPolicy(i == m_stack->currentIndex() ? QSizePolicy::Preferred
+                                                              : QSizePolicy::Ignored);
+        page->setSizePolicy(policy);
+    }
+    m_stack->updateGeometry();
+    updateGeometry();
 }
 
 const SectionParts* PhoneCwApplet::containerParts() const
