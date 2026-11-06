@@ -44,6 +44,7 @@
 #include "gui/hotkeys/HotKeyStateFeed.h"
 #include "gui/hotkeys/HotKeyTargets.h"
 #include "gui/hotkeys/devices/DeviceInput.h"
+#include "gui/hotkeys/devices/UlanziDialInput.h"
 #include "gui/hotkeys/devices/UsbPresence.h"
 #include "models/SliceModel.h"
 
@@ -1032,6 +1033,29 @@ private slots:
 
         client.socket->abort();
         QVERIFY(QTest::qWaitFor([&host] { return host.deviceConnected(DeviceId::StreamDeckPlus); }, kWaitMs));
+    }
+
+    void aUlanziPluginTakesTheDialAndGivesItBack()
+    {
+        ControllerHost host(m_dispatcher.get(), m_bindings.get());
+        connect(m_link.get(), &DeckLink::ulanziConnectionChanged, &host, &ControllerHost::setUlanziDialClaimedByPlugin);
+        const QString claimed = QStringLiteral("A deck plugin is using it.");
+        QVERIFY(QTest::qWaitFor([&host] { return host.deviceReason(DeviceId::UlanziDial) == UlanziDialInput::notPluggedInReason(); }, kWaitMs));
+
+        QVERIFY(m_link->setEnabled(true));
+        {
+            Client other(m_link->socketPath());
+            QVERIFY(other.hello("elgato"));
+            QVERIFY(sentinel(other));
+        }
+        QSignalSpy ulanzi(m_link.get(), &DeckLink::ulanziConnectionChanged);
+        Client client(m_link->socketPath());
+        QVERIFY(client.hello("ulanzi"));
+        QVERIFY(QTest::qWaitFor([&] { return host.deviceReason(DeviceId::UlanziDial) == claimed; }, kWaitMs));
+        QCOMPARE(ulanzi.size(), 1);
+
+        client.socket->abort();
+        QVERIFY(QTest::qWaitFor([&host] { return host.deviceReason(DeviceId::UlanziDial) == UlanziDialInput::notPluggedInReason(); }, kWaitMs));
     }
 };
 

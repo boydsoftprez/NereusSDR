@@ -37,6 +37,11 @@ public:
     static UlanziDialInput* create(QObject* parent);
 
     static const QString& notPluggedInReason();
+    static const QString& claimedReason();
+
+    // A plugin in Ulanzi Studio has the dial: let go of it, so one press can't arrive
+    // twice, and take it back when that plugin goes. Same thread as start and stop.
+    void setClaimedElsewhere(bool claimed);
 
 signals:
     void deviceEvent(NereusSDR::DeviceId id, NereusSDR::DeviceEvent event);
@@ -56,6 +61,7 @@ private:
     UlanziChordDecoder m_decoder;
     bool m_stateKnown{false};
     bool m_connected{false};
+    bool m_claimedElsewhere{false};
     QString m_reason;
 };
 

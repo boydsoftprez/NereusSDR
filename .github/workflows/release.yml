@@ -1667,6 +1667,8 @@ jobs:
           # (LICENSE and LICENSE-DUAL-LICENSING) into the portable deploy
           # tree so both the ZIP and the NSIS installer pick them up.
           Copy-Item -Recurse packaging\third-party-licenses deploy\licenses
+          # Deck plugins, laid out by the NereusDeckPlugins target.
+          Copy-Item -Recurse build\deck-plugins deploy\plugins
           Copy-Item LICENSE deploy\licenses\
           Copy-Item LICENSE-DUAL-LICENSING deploy\licenses\
           # DFNR (Apache-2.0 + MIT) and rnnoise (BSD) license files

@@ -3786,6 +3786,54 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             EXCLUDE_FROM_ALL)
 endif()
 
+# Deck plugins (hot keys). Plain files for other companies' apps: nothing links them.
+# NereusDeckPlugins lays them out in <build>/deck-plugins, with the Elgato folder zipped to
+# the .streamDeckPlugin its app opens. On macOS that goes into the app's Resources/plugins
+# and on Windows into plugins/ beside the executable, because the release packages are made
+# from those places. Linux installs to share/nereussdr/plugins; the Core's --component
+# nereusd install doesn't take them.
+set(NEREUS_DECK_PLUGINS_DIR "${CMAKE_BINARY_DIR}/deck-plugins")
+set(NEREUS_ELGATO_PLUGIN_ROOT "${CMAKE_SOURCE_DIR}/plugins/elgato-nereussdr")
+set(NEREUS_ULANZI_PLUGIN "${CMAKE_SOURCE_DIR}/plugins/ulanzi-nereussdr/com.nereussdr.radio.ulanziPlugin")
+set(NEREUS_SC_PLUGIN "${CMAKE_SOURCE_DIR}/plugins/streamcontroller-nereussdr")
+file(GLOB_RECURSE NEREUS_DECK_PLUGIN_FILES CONFIGURE_DEPENDS
+    "${NEREUS_ELGATO_PLUGIN_ROOT}/com.nereussdr.radio.sdPlugin/*"
+    "${NEREUS_ULANZI_PLUGIN}/*"
+    "${NEREUS_SC_PLUGIN}/*")
+add_custom_command(
+    OUTPUT "${NEREUS_DECK_PLUGINS_DIR}/NereusSDR.streamDeckPlugin"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${NEREUS_DECK_PLUGINS_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${NEREUS_DECK_PLUGINS_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E chdir "${NEREUS_ELGATO_PLUGIN_ROOT}"
+            ${CMAKE_COMMAND} -E tar cf "${NEREUS_DECK_PLUGINS_DIR}/NereusSDR.streamDeckPlugin" --format=zip
+            com.nereussdr.radio.sdPlugin
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${NEREUS_ULANZI_PLUGIN}"
+            "${NEREUS_DECK_PLUGINS_DIR}/com.nereussdr.radio.ulanziPlugin"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${NEREUS_SC_PLUGIN}"
+            "${NEREUS_DECK_PLUGINS_DIR}/streamcontroller-nereussdr"
+    COMMAND ${CMAKE_COMMAND} -E rm -f "${NEREUS_DECK_PLUGINS_DIR}/streamcontroller-nereussdr/test_link.py"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${NEREUS_DECK_PLUGINS_DIR}/streamcontroller-nereussdr/__pycache__"
+    DEPENDS ${NEREUS_DECK_PLUGIN_FILES}
+    COMMENT "Laying out the deck plugins"
+    VERBATIM)
+add_custom_target(NereusDeckPlugins ALL DEPENDS "${NEREUS_DECK_PLUGINS_DIR}/NereusSDR.streamDeckPlugin")
+add_dependencies(NereusSDR NereusDeckPlugins)
+if(APPLE)
+    add_custom_command(TARGET NereusSDR POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${NEREUS_DECK_PLUGINS_DIR}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Resources/plugins"
+        VERBATIM)
+elseif(WIN32)
+    add_custom_command(TARGET NereusSDR POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${NEREUS_DECK_PLUGINS_DIR}"
+                "$<TARGET_FILE_DIR:NereusSDR>/plugins"
+        VERBATIM)
+else()
+    install(DIRECTORY "${NEREUS_DECK_PLUGINS_DIR}/"
+            DESTINATION share/nereussdr/plugins
+            COMPONENT deck-plugins)
+endif()
+
 # Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.
 # LICENSE-DUAL-LICENSING is shipped alongside LICENSE because Thetis maintains
 # both at project root and GPL §1 "keep intact all notices that refer to this

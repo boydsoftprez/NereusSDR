@@ -9483,6 +9483,8 @@ void MainWindow::buildUI()
         m_deckLink = std::make_unique<DeckLink>(m_hotKeyDispatcher.get(), feed);
         connect(m_deckLink.get(), &DeckLink::elgatoConnectionChanged, m_controllerHost.get(),
                 &ControllerHost::setStreamDeckClaimedByPlugin);
+        connect(m_deckLink.get(), &DeckLink::ulanziConnectionChanged, m_controllerHost.get(),
+                &ControllerHost::setUlanziDialClaimedByPlugin);
         // The same gate as real devices: only the application turns it on, so a test
         // process that builds this window opens no socket.
         if (DeviceInput::realDevicesAllowed() && DeckLink::savedEnabled()) {

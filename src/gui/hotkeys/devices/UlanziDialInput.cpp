@@ -37,6 +37,27 @@ const QString& UlanziDialInput::notPluggedInReason()
     return kReason;
 }
 
+const QString& UlanziDialInput::claimedReason()
+{
+    // As DeviceInput says it for the other devices a plugin can take.
+    static const QString kReason = QStringLiteral("A deck plugin is using it.");
+    return kReason;
+}
+
+void UlanziDialInput::setClaimedElsewhere(bool claimed)
+{
+    if (claimed == m_claimedElsewhere) {
+        return;
+    }
+    m_claimedElsewhere = claimed;
+    if (claimed) {
+        stop();     // lets go of the device, and of any key it had down
+        notify(false, claimedReason());
+    } else {
+        start();
+    }
+}
+
 void UlanziDialInput::feedKey(int linuxKeyCode, int value)
 {
     const QList<DeviceEvent> events = m_decoder.feed(linuxKeyCode, value);

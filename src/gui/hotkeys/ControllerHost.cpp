@@ -383,6 +383,12 @@ void ControllerHost::setStreamDeckClaimedByPlugin(bool claimed)
         Qt::QueuedConnection);
 }
 
+void ControllerHost::setUlanziDialClaimedByPlugin(bool claimed)
+{
+    UlanziDialInput* const ulanzi = m_ulanzi;
+    QMetaObject::invokeMethod(ulanzi, [ulanzi, claimed] { ulanzi->setClaimedElsewhere(claimed); }, Qt::QueuedConnection);
+}
+
 void ControllerHost::onDeviceEvent(DeviceId id, const DeviceEvent& event)
 {
     // Ahead of the off switch: this is about the button, not what it runs.

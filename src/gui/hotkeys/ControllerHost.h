@@ -127,6 +127,7 @@ public slots:
     // Elgato's app has the Stream Deck+ through its plugin, so this closes the direct
     // link to it, and letting go opens it again. (DeckLink::elgatoConnectionChanged)
     void setStreamDeckClaimedByPlugin(bool claimed);
+    void setUlanziDialClaimedByPlugin(bool claimed);
 
 signals:
     void midiBindingRefused(QString controlKey, QString reason);

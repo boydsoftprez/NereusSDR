@@ -63,6 +63,7 @@ public:
 signals:
     void pluginsChanged();
     void elgatoConnectionChanged(bool connected);
+    void ulanziConnectionChanged(bool connected);
 
 private:
     struct Connection {
@@ -87,7 +88,7 @@ private:
     void onStateChanged(const QString& id, bool on);
     void onDisplayChanged();
     QByteArray displayLine() const;
-    void noteElgato();
+    void noteHostsWithDevices();
 
     QPointer<HotKeyDispatcher> m_dispatcher;
     QPointer<HotKeyStateFeed> m_feed;
@@ -101,6 +102,7 @@ private:
     QByteArray m_lastDisplayLine;
     quint64 m_lastConnectionId{0};
     bool m_elgatoConnected{false};
+    bool m_ulanziConnected{false};
 };
 
 } // namespace NereusSDR

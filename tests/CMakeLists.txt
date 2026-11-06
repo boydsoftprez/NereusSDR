@@ -11826,6 +11826,14 @@ nereus_add_test(tst_device_parser_ulanzi)
 target_compile_definitions(tst_device_parser_ulanzi PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 nereus_add_test(tst_deck_link)
 target_compile_definitions(tst_deck_link PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_deck_plugin_actions)
+target_compile_definitions(tst_deck_plugin_actions PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_BUILD_DIR="${CMAKE_BINARY_DIR}"
+    NEREUS_CMAKE_COMMAND="${CMAKE_COMMAND}")
+add_dependencies(tst_deck_plugin_actions NereusDeckPlugins)
+nereus_add_test(tst_deck_plugin_clients)
+target_compile_definitions(tst_deck_plugin_clients PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 nereus_add_test(tst_controller_host_lights)
 nereus_add_test(tst_device_output)
 target_compile_definitions(tst_device_output PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

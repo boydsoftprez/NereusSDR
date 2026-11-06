@@ -37,6 +37,17 @@ directory alongside NereusSDR's own `LICENSE`.
 | libsodium 1.0.22 | the cryptography under the pairing code's key exchange (password hashing, the exchange's curve arithmetic, the confirmation boxes), in the desktop, the Core, and the iPhone and iPad app | ISC | `libsodium.txt`, `libsodium-notices.txt` | `libsodium.txt` |
 | SPAKE2+EE (spake2-ee fd3ea61f) | the pairing code's key exchange, in the desktop, the Core, and the iPhone and iPad app | BSD-2-Clause | `spake2-ee.txt` | `spake2-ee.txt` |
 
+## Libraries inside the deck plugins
+
+These are not compiled into anything. They ship as plain files inside the plugins that run in
+Elgato's app and Ulanzi Studio (`plugins/`). Provenance: `docs/attribution/WS-PROVENANCE.md`,
+`docs/attribution/ULANZI-SDK-PROVENANCE.md`.
+
+| Dependency | Role | Licence | Notice file | Full licence text |
+| --- | --- | --- | --- | --- |
+| ws 8.21.0 | WebSocket client the Elgato and Ulanzi plugins talk to their host app with | MIT | `ws.txt` | `ws.txt` |
+| Ulanzi Studio plugin SDK 0.1.0 (`common-node`, `common-html`) | the Ulanzi plugin's connection to Ulanzi Studio, and its settings page | Apache-2.0 | `ulanzi-sdk.txt` | `Apache-2.0.txt` |
+
 ## Upstream projects whose code is ported into the binary
 
 | Upstream | How used | Licence | Notice file |
@@ -279,6 +290,8 @@ the §6(b) fallback.
 - `nlohmann-json.txt`   nlohmann json full MIT notice
 - `zlib.txt`            zlib full notice
 - `libaspl.txt`         libASPL full MIT notice
+- `ws.txt`              ws full MIT notice
+- `ulanzi-sdk.txt`      Ulanzi Studio plugin SDK licence, as it ships
 - `rtmidi.txt`          RtMidi full MIT-style notice and the one change made to it
 - `hidapi.txt`          hidapi BSD-style notice, the license choice NereusSDR makes
 - `fftw3-notices.txt`   notices in the FFTW header NereusSDR compiles

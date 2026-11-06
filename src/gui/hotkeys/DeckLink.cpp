@@ -417,7 +417,7 @@ void DeckLink::handleHello(QLocalSocket* socket, const QJsonObject& message)
         }
     }
     emit pluginsChanged();
-    noteElgato();
+    noteHostsWithDevices();
 }
 
 void DeckLink::handlePress(QLocalSocket* socket, const QJsonObject& message)
@@ -508,7 +508,7 @@ void DeckLink::dropConnection(QLocalSocket* socket)
     if (named) {
         emit pluginsChanged();
     }
-    noteElgato();
+    noteHostsWithDevices();
 }
 
 void DeckLink::writeLine(QLocalSocket* socket, const QByteArray& line)
@@ -557,14 +557,23 @@ QByteArray DeckLink::displayLine() const
                    {QStringLiteral("slice"), display.slice.isNull() ? QString() : QString(display.slice)}});
 }
 
-void DeckLink::noteElgato()
+// Elgato's app and Ulanzi Studio each take their device for themselves, so one press could
+// otherwise arrive twice: once from the plugin and once from this window's own driver.
+void DeckLink::noteHostsWithDevices()
 {
-    const bool connected = std::any_of(m_connections.cbegin(), m_connections.cend(), [](const Connection& connection) {
-        return connection.plugin == QLatin1String("elgato");
-    });
-    if (connected != m_elgatoConnected) {
-        m_elgatoConnected = connected;
-        emit elgatoConnectionChanged(connected);
+    const auto isConnected = [this](const QLatin1String& plugin) {
+        return std::any_of(m_connections.cbegin(), m_connections.cend(),
+                           [plugin](const Connection& connection) { return connection.plugin == plugin; });
+    };
+    const bool elgato = isConnected(QLatin1String("elgato"));
+    if (elgato != m_elgatoConnected) {
+        m_elgatoConnected = elgato;
+        emit elgatoConnectionChanged(elgato);
+    }
+    const bool ulanzi = isConnected(QLatin1String("ulanzi"));
+    if (ulanzi != m_ulanziConnected) {
+        m_ulanziConnected = ulanzi;
+        emit ulanziConnectionChanged(ulanzi);
     }
 }
 
