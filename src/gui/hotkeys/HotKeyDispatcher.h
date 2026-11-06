@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 2.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), exported: tests take its signal addresses across
+//                the Windows DLL. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // The only code that runs a hot key action. Keyboard, MIDI, knobs and deck
 // plugins all call it. It finds the slice, applies refusals, limits bursts and
@@ -10,6 +12,7 @@
 
 #include "core/hotkeys/HotKeyAction.h"
 #include "core/hotkeys/TuneCoalescer.h"
+#include "gui/NereusGuiExport.h"
 #include "gui/hotkeys/HotKeyTargets.h"
 
 #include <QList>
@@ -24,7 +27,7 @@ namespace NereusSDR {
 class HotKeyBindings;
 class SliceModel;
 
-class HotKeyDispatcher : public QObject {
+class NEREUS_GUI_EXPORT HotKeyDispatcher : public QObject {
     Q_OBJECT
 
 public:
