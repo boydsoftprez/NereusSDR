@@ -12,6 +12,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 17: every device's lights from
 //                the state feed. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 19: a plugin takes the Stream Deck+.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // Owns the controller workers and turns what they report into dispatcher calls.
 // Lives on the main thread with the dispatcher. MidiInput lives on the MIDI worker,
@@ -122,6 +124,9 @@ public slots:
     void onGestureTick();   // the timer's slot; public for tests
     void onRingTick();      // the timer's slot; public for tests
     void onDisplayTick();   // the timer's slot; public for tests
+    // Elgato's app has the Stream Deck+ through its plugin, so this closes the direct
+    // link to it, and letting go opens it again. (DeckLink::elgatoConnectionChanged)
+    void setStreamDeckClaimedByPlugin(bool claimed);
 
 signals:
     void midiBindingRefused(QString controlKey, QString reason);

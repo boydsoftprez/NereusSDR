@@ -336,6 +336,7 @@ class DialItem;
 class ContainerButtonDispatcher;
 class HotKeyBindings;
 class ControllerHost;
+class DeckLink;
 class HotKeyStateFeed;
 class HotKeyDispatcher;
 class KeyboardRouter;
@@ -533,6 +534,7 @@ public:
     HotKeyBindings* hotKeyBindings() const { return m_hotKeyBindings.get(); }
     ControllerHost* controllerHost() const { return m_controllerHost.get(); }
     HotKeyStateFeed* hotKeyStateFeed() const { return m_hotKeyStateFeed.get(); }
+    DeckLink* deckLink() const { return m_deckLink.get(); }
     ContainerManager* containerManager() const { return m_containerManager; }
     // Slice control plan Task 15 fix round 1: drops the hosting slice
     // requests so a test reaches selectSliceForWindow's fallback path.
@@ -1769,6 +1771,9 @@ private:
     // Declared after the dispatcher, so its worker has stopped before that goes.
     std::unique_ptr<ControllerHost> m_controllerHost;
     std::unique_ptr<HotKeyStateFeed> m_hotKeyStateFeed;
+    // After what it calls and reads, and reset first of them in ~MainWindow: a plugin's hold
+    // has to go while the radio model can still hear it.
+    std::unique_ptr<DeckLink> m_deckLink;
     // TX safety fix round 4 (2026-09-30): a local window's Radio >
     // Disconnect is available while a link is Connected or the lost-link
     // lock holds (the operator's way to lift it and stop recovery).

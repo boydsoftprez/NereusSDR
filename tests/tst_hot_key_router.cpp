@@ -18,6 +18,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QKeySequence>
@@ -49,6 +50,7 @@
 #include "core/hotkeys/HotKeyActionList.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "core/hotkeys/HotKeyChord.h"
+#include "gui/hotkeys/DeckLink.h"
 #include "core/roundtable/RoundtableState.h"
 #include "core/session/IStationLink.h"
 #include "HotKeyWindowActivation.h"
@@ -953,6 +955,17 @@ private slots:
     }
 
     // ---- Repeat ----
+
+    void aTestWindowOpensNoDeckLink()
+    {
+        // The window builds its link and only the application opens it, so no test process
+        // that builds a window has a socket or touches a home for it.
+        Bench& w = sharedBench();
+        QVERIFY2(w.ready(), qPrintable(w.notReady));
+        QVERIFY(w.window.deckLink() != nullptr);
+        QVERIFY(!w.window.deckLink()->isListening());
+        QVERIFY(!QFileInfo::exists(DeckLink::deckFolder()));
+    }
 
     void aDialVolumeKeystrokeIsNotAHotKey()
     {

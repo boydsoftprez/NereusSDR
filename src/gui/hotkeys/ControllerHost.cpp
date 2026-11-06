@@ -12,6 +12,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 17: every device's lights from
 //                the state feed. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 19: a plugin takes the Stream Deck+.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/ControllerHost.h"
 
@@ -371,6 +373,14 @@ void ControllerHost::onDeviceStateChanged(DeviceId id, bool connected, const QSt
         markOutputDirty(id);
         pumpOutputs();
     }
+}
+
+void ControllerHost::setStreamDeckClaimedByPlugin(bool claimed)
+{
+    DeviceInput* const usb = m_usb;
+    QMetaObject::invokeMethod(
+        usb, [usb, claimed] { usb->setDeviceClaimedElsewhere(DeviceId::StreamDeckPlus, claimed); },
+        Qt::QueuedConnection);
 }
 
 void ControllerHost::onDeviceEvent(DeviceId id, const DeviceEvent& event)

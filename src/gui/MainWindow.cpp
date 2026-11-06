@@ -1429,6 +1429,8 @@ warren@wpratt.com
 #include "containers/ContainerButtonDispatcher.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "gui/hotkeys/ControllerHost.h"
+#include "gui/hotkeys/DeckLink.h"
+#include "gui/hotkeys/devices/DeviceInput.h"
 #include "gui/hotkeys/HotKeyStateFeed.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
 #include "gui/hotkeys/KeyboardRouter.h"
@@ -2427,6 +2429,8 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 MainWindow::~MainWindow()
 {
     m_shuttingDown = true;
+    // Ahead of the feed it reads: a plugin's hold drops here, and the socket goes with it.
+    m_deckLink.reset();
     // It reads this window on the models' signals, and they can fire through teardown.
     m_hotKeyStateFeed.reset();
     if (m_clarityRegistry) { m_clarityRegistry->retireAll(); }
@@ -9476,6 +9480,14 @@ void MainWindow::buildUI()
             connect(ps, &PureSignalSessionFacade::statusChanged, feed, &HotKeyStateFeed::refresh);
         }
         m_controllerHost->setStateFeed(feed);
+        m_deckLink = std::make_unique<DeckLink>(m_hotKeyDispatcher.get(), feed);
+        connect(m_deckLink.get(), &DeckLink::elgatoConnectionChanged, m_controllerHost.get(),
+                &ControllerHost::setStreamDeckClaimedByPlugin);
+        // The same gate as real devices: only the application turns it on, so a test
+        // process that builds this window opens no socket.
+        if (DeviceInput::realDevicesAllowed() && DeckLink::savedEnabled()) {
+            m_deckLink->setEnabled(true);
+        }
     }
     if (WorkspacePreview::enabled()) {
         // Workspace preview: the header source menu enables the open slices.

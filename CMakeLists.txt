@@ -1918,6 +1918,7 @@ set(GUI_SOURCES
     src/gui/hotkeys/KeyboardRouter.cpp
     src/gui/hotkeys/MainWindowHotKeyTargets.cpp
     src/gui/hotkeys/ControllerHost.cpp
+    src/gui/hotkeys/DeckLink.cpp
     src/gui/hotkeys/midi/MidiInput.cpp
     src/gui/hotkeys/midi/MidiProfile.cpp
     src/gui/hotkeys/HotKeyStateFeed.cpp
