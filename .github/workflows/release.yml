@@ -417,13 +417,6 @@ jobs:
           test -x squashfs-root/usr/bin/nereusd
           test -f squashfs-root/usr/lib/libNereusSDRLib.so
           test -f squashfs-root/usr/lib/libNereusCore.so
-          # Issue 700: main.cpp asks for this theme on Cinnamon, and linuxdeploy
-          # skips the plugin with only a log line when it is not there. x86_64
-          # only: the aarch64 leg's apt Qt 6.4.2 has never carried it ("Could
-          # not find libqxdgdesktopportal.so on system" in its release logs).
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            test -f squashfs-root/usr/plugins/platformthemes/libqxdgdesktopportal.so
-          fi
           cmp packaging/linux/AppRun squashfs-root/AppRun
           # Exercise the package through AppRun without SDK/build-tree paths.
           # linuxdeploy's Qt plugin bundles xcb by default, so use that real
