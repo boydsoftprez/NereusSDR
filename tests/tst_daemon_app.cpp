@@ -299,6 +299,31 @@ private slots:
         QCOMPARE(settings.value(key).toString(), QStringLiteral("Built-in Output"));
     }
 
+    // Editing radio_mac does nothing once a radio has been chosen: the saved
+    // choice wins, and the log says so. The rule stays. Before any other
+    // start() here: the first one loads the log rules that silence this
+    // category, and the line is logged ahead of that.
+    void savedRadioChoiceWinsOverRadioMacAndSaysSo()
+    {
+        AppSettings& settings = AppSettings::instance();
+        const QString choiceKey = QStringLiteral("StationRadioChoice");
+        const auto forget = qScopeGuard([&settings, choiceKey] {
+            settings.remove(choiceKey);
+            settings.save();
+        });
+        settings.setValue(choiceKey, QStringLiteral("aa:bb:cc:dd:49:10"));
+        DaemonConfig cfg = testCoreConfig();
+        cfg.radioMac = QStringLiteral("aa:bb:cc:dd:49:11");
+        QTest::ignoreMessage(QtInfoMsg, QRegularExpression(QStringLiteral(
+            "using the saved radio AA:BB:CC:DD:49:10 \\(the config file's "
+            "aa:bb:cc:dd:49:11 is only a starting value\\)")));
+        DaemonApp app;
+        app.primeBoardForTest(HPSDRHW::HermesLite);
+        QVERIFY(app.start(cfg));
+        QCOMPARE(app.m_selectedRadioMac, QStringLiteral("AA:BB:CC:DD:49:10"));
+        app.stop();
+    }
+
     void noConfigAudioDeviceLeavesTheSpeakerUnset()
     {
         const QString key = QStringLiteral("audio/Speakers/DeviceName");
