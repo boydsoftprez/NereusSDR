@@ -12,7 +12,8 @@
 //                 with that row; the row label says PROC and VAX; a reading
 //                 keeps the compression gauge's reason; the DEXP marker stays
 //                 in step between the panel and its copies; a copy takes the
-//                 panel's iambic memory. The docked panel's layout is
+//                 panel's iambic memory; a free canvas copy reports a size
+//                 that holds either page. The docked panel's layout is
 //                 unchanged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
 //   2026-11-06 - A container copy hides each row and the Phone and CW
@@ -2181,6 +2182,31 @@ void PhoneCwApplet::applyContainerConfig(const QJsonObject& config)
     const QString page = config.value(QStringLiteral("page")).toString();
     showPage(page == QLatin1String("cw") ? 1 : 0);
     fitCopyToCurrentPage();
+    reportFreeCanvasSize();
+}
+
+// A free canvas sizes an entry once, from these two properties, and a page
+// click doesn't resize it. With the page buttons showing, the rect must hold
+// either page; with them hidden the page can't change.
+void PhoneCwApplet::reportFreeCanvasSize()
+{
+    if (!m_parts || !m_stack) {
+        return;
+    }
+    QSize hint = sizeHint();
+    QSize minimum = minimumSizeHint();
+    const QList<QWidget*> buttons = m_parts->widgets(QStringLiteral("pageButtons"));
+    if (!m_parts->isHidden(QStringLiteral("pageButtons")) && !buttons.isEmpty()
+        && UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)) {
+        QWidget* phone = m_stack->widget(0);
+        QWidget* cw = m_stack->widget(1);
+        hint.setHeight(buttons.first()->sizeHint().height()
+                       + qMax(phone->sizeHint().height(), cw->sizeHint().height()));
+        minimum.setHeight(buttons.first()->minimumSizeHint().height()
+                          + qMax(phone->minimumSizeHint().height(), cw->minimumSizeHint().height()));
+    }
+    setProperty("freeCanvasHint", hint);
+    setProperty("freeCanvasMinimum", QSizeF(minimum));
 }
 
 // A stacked widget asks for its tallest page, and the docked panel keeps

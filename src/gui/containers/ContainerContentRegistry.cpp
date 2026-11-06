@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-11-06 - A factory widget can report its own free canvas hint and
+//                 minimum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-11-01 - Original PureSignal-style bar proposal by Brian Sutton
 //                 (PR #731). Adapted as an existing bar face option on
 //                 2026-11-03 by J.J. Boyd (KG4VCF), with OpenAI Codex.
@@ -680,8 +683,13 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
         effective.context = context;
         if (QWidget* view = createWidget(effective, parent, ContentRenderMode::Preview)) {
             view->setAttribute(Qt::WA_TransparentForMouseEvents);
-            view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
-            view->setProperty("freeCanvasHint", view->sizeHint());
+            // As in the live host: a widget may have set these already.
+            if (!view->property("freeCanvasMinimum").isValid()) {
+                view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
+            }
+            if (!view->property("freeCanvasHint").isValid()) {
+                view->setProperty("freeCanvasHint", view->sizeHint());
+            }
             return view;
         }
     }

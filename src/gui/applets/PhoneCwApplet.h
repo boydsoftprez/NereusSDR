@@ -9,8 +9,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
-//   2026-11-06 - PR 757 corrections: fitCopyToCurrentPage, and the unread
-//                 m_surface is gone. J.J. Boyd (KG4VCF), AI-assisted via
+//   2026-11-06 - PR 757 corrections: fitCopyToCurrentPage,
+//                 reportFreeCanvasSize, and the unread m_surface is gone. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
 //   2026-11-06 - A container copy of this panel (createPanelCopy) hides each
 //                 row, and the Phone and CW buttons, from its entry config.
@@ -230,6 +230,9 @@ private:
     void buildFmPage(QWidget* page);
     // A container copy: only the page it shows counts toward its height.
     void fitCopyToCurrentPage();
+    // A container copy: the size a free canvas gives it, which holds either
+    // page while the page buttons show.
+    void reportFreeCanvasSize();
     // Phase 3M-1b: wire mic gain slider + mic level gauge timer.
     void wireControls();
     void updateTransmitControlAvailability();
