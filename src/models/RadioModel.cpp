@@ -21695,8 +21695,16 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     if (!preserveSlices && !m_receiveLayoutOverridesCount) {
         const qsizetype startingIndex =
             startingSliceId >= 0 ? m_slices.indexOf(sliceById(startingSliceId)) : 0;
-        setActiveSlice(static_cast<int>(std::max<qsizetype>(0, startingIndex)));
-        loadSliceState(m_activeSlice);
+        const int index = static_cast<int>(std::max<qsizetype>(0, startingIndex));
+        // A desktop's reconnect keeps the slice the operator is on. The load
+        // stays on the first slice, which is what fills the first pan.
+        const bool keepsActive = startingSliceId < 0 && role() == Role::Local
+            && !m_receiveLayoutManaged && !m_hostsStationDevice && m_activeSlice
+            && m_slices.contains(m_activeSlice);
+        if (!keepsActive) {
+            setActiveSlice(index);
+        }
+        loadSliceState(keepsActive ? m_slices.at(index) : m_activeSlice);
     }
     m_startingSliceAwaitingLoad = -1;
 

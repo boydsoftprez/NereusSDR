@@ -554,6 +554,76 @@ private slots:
         }
     }
 
+    // A real reconnect through connectToRadio keeps the active slice, on screen
+    // and in what is saved, so a restart lands on it too. A first connect lands
+    // on the starting slice.
+    void aReconnectKeepsTheActiveSliceOnScreen()
+    {
+        auto connected = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local, [](RadioModel&) {}, HPSDRHW::HermesLite);
+        QVERIFY(connected);
+        RadioModel& model = connected->model();
+        const QStringList pans{QStringLiteral("pan-0")};
+        model.restoreDesktopLayoutSlices(pans);
+        QCOMPARE(model.activeSlice(), model.sliceById(0));
+        QVERIFY(model.addSlice() >= 0);
+        QVERIFY(model.sliceById(1));
+        const auto reconnect = [&] {
+            model.disconnectFromRadio();
+            if (!QTest::qWaitFor([&] {
+                    return model.connectionState() == ConnectionState::Disconnected;
+                }, 10000)) {
+                return false;
+            }
+            model.connectToRadio(connected->radioInfo());
+            return QTest::qWaitFor([&] {
+                return model.connectionState() == ConnectionState::Connected;
+            }, 10000);
+        };
+        const QString savedActive = QStringLiteral("hardware/%1/ActiveSliceId")
+            .arg(AppSettings::normalizedRadioMac(connected->radioInfo().macAddress));
+
+        QVERIFY(model.setActiveSliceById(1));
+        QVERIFY(reconnect());
+        QTest::qWait(50);
+        QCOMPARE(model.activeSlice(), model.sliceById(1));
+        model.restoreDesktopLayoutSlices(pans);
+        QCOMPARE(model.activeSlice(), model.sliceById(1));
+        model.flushPendingSettingsSave();
+        QCOMPARE(AppSettings::instance().value(savedActive).toInt(), 1);
+
+        // Whatever was last saved: A is on screen now, and stays.
+        QVERIFY(model.setActiveSliceById(0));
+        QVERIFY(reconnect());
+        QTest::qWait(50);
+        model.restoreDesktopLayoutSlices(pans);
+        QCOMPARE(model.activeSlice(), model.sliceById(0));
+    }
+
+    // A Core inside a window still lands on the first slice when it reconnects.
+    void aCoreInAWindowReconnectStillLandsOnTheFirstSlice()
+    {
+        auto connected = ConnectableRadioModel::create(
+            10000, RadioModel::Role::Local,
+            [](RadioModel& m) { m.setHostsStationDevice(true); }, HPSDRHW::HermesLite);
+        QVERIFY(connected);
+        RadioModel& model = connected->model();
+        QVERIFY(model.addSlice() >= 0);
+        QVERIFY(model.sliceById(1));
+        QVERIFY(model.setActiveSliceById(1));
+        QCOMPARE(model.activeSlice(), model.sliceById(1));
+        model.disconnectFromRadio();
+        QVERIFY(QTest::qWaitFor([&] {
+            return model.connectionState() == ConnectionState::Disconnected;
+        }, 10000));
+        model.connectToRadio(connected->radioInfo());
+        QVERIFY(QTest::qWaitFor([&] {
+            return model.connectionState() == ConnectionState::Connected;
+        }, 10000));
+        QTest::qWait(50);
+        QCOMPARE(model.activeSlice(), model.slices().first());
+    }
+
     void receiveLayoutNoticeIsTheSameToastLocallyAndThroughACore()
     {
         const QString message = closedSentence(QLatin1Char('C'), 14'225'000.0, DSPMode::USB);

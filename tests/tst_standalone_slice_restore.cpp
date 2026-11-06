@@ -1274,22 +1274,6 @@ private slots:
         QCOMPARE(after.activeSlice(), after.sliceById(0));
     }
 
-    // A reconnect keeps what is on screen, whatever was last saved.
-    void aReconnectKeepsTheActiveSliceOnScreen()
-    {
-        RadioModel model;
-        connectDesktop(model, 2, 5, {kPan0, kPan1});
-        QVERIFY(model.setActiveSliceById(1));
-        model.flushPendingSettingsSave();
-        QVERIFY(model.setActiveSliceById(0));
-
-        QCOMPARE(model.addStartingSlices(kDesktopMac), -1);
-        model.configureStreamPool(2, 5, kRateHz);
-        model.bindUnboundSlices();
-        MainWindow::populatePanSlices(&model, {kPan0, kPan1}, false, false);
-        QCOMPARE(model.activeSlice(), model.sliceById(0));
-    }
-
     // A, B and C on screen from a 3-receiver radio, then a 2-receiver radio with
     // no record of its own. C is none of its letters: the record it starts must
     // not promise C at every connect, which it could never keep there. The
