@@ -14,6 +14,8 @@
 //   2026-11-05: Each window on a Core keeps its own paint rate (the Display
 //               pill's FPS, DisplayPaintFps). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
+//   2026-11-06: A desktop's fill at connect brings back the radio's saved
+//               layout. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-11-05: A window's fill at connect keeps a receiver's RIT and XIT.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
@@ -20584,6 +20586,12 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
     // Restoring a client layout is never permission to create station slices.
     // Capabilities report radio connectivity before slice snapshot hydration.
     if (!model->ownsLocalDsp() && (!operatorRequested || !snapshotReady)) { return; }
+    // A desktop's fill at connect brings back the radio's saved layout (JJ's
+    // ruling 2026-11-05). With one, a pan left empty was empty when saved: only
+    // what was open comes back. A layout change is not a restore.
+    if (!operatorRequested && !hosting && model->restoreDesktopLayoutSlices(panIds)) {
+        return;
+    }
     for (const QString& emptyPan : model->pansWithoutSlices(panIds)) {
         // Slice control plan Task 11: a hosting window's new slice is the
         // station device's, asked for the way its +RX asks.

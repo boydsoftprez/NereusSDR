@@ -24,6 +24,10 @@
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude.
+//   2026-11-06 - A desktop brings back every slice, its pans and its transmit
+//                slice from the radio's saved layout, as a Core does; the
+//                managed mode stays the Core's. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -3326,6 +3330,11 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // with the transmitter unkeyed.
     connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged,
             this, [this](int, int newId) {
+        // A desktop's transmit slice reaches the file with the rest of its
+        // layout, not only at the disconnect (JJ's ruling, 2026-11-05).
+        if (desktopLayoutSaves()) {
+            m_txSliceArbiter->save();
+        }
         // RADE threads: only the new TX slice's RADE channel encodes.
         refreshRadeTxSelection(mox());
         rebindAccessorySlice();
@@ -16092,7 +16101,9 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
         // status-bar line about adding a slice when all the operator did was
         // turn the knob. The frequencyChanged handler emits
         // sliceRetuneRejected instead, after it has rolled the VFO back.
-        if (previousStream < 0) {
+        // A desktop's restore says what stayed saved in one message of its own
+        // (restoreDesktopLayoutSlices), once, whatever the number of slices.
+        if (previousStream < 0 && !m_desktopLayoutRestoring) {
             emit sliceAddRejected(placement.reason);
         }
         return false;
@@ -17054,7 +17065,8 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // letter is left.
     int index = requestedId >= 0 ? requestedId : 0;
     if (requestedId < 0) {
-        index = m_deviceSliceReservations.isEmpty()
+        // So is a letter a desktop's saved layout still waits for.
+        index = m_deviceSliceReservations.isEmpty() && m_desktopLayoutKept.isEmpty()
             ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
         if (index < 0) {
             index = 0;
@@ -17410,8 +17422,26 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // behave the same way here regardless of how its pool got sized: the
     // slice survives unbound, exactly as it does before any pool exists.
     const bool placementAttempted = !restoreSeed || bindRestored;
+    // A desktop's saved slice is placed as a Core places its saved layout
+    // (bindReceiveLayoutSlices): on a receiver of its own pan that covers it,
+    // else on a new one. Two pans a little apart do not end up on one receiver,
+    // which would tune them in lockstep.
+    const bool placedByPan = bindRestored && m_desktopLayoutRestoring;
+    int panCovering = -1;
+    if (placedByPan) {
+        QList<int> panStreams;
+        for (const SliceModel* other : slicesOnPan(initialPanId, slice)) {
+            if (other->streamIndex() >= 0 && !panStreams.contains(other->streamIndex())) {
+                panStreams.append(other->streamIndex());
+            }
+        }
+        panCovering = panStreamCovering(m_streamAllocator, panStreams, slice->frequency());
+    }
     const bool bound = !placementAttempted
-        || bindSliceToStream(slice, slice->frequency(), openingANewPan);
+        || (panCovering >= 0
+                ? bindSliceToStream(slice, slice->frequency(), false, panCovering)
+                : bindSliceToStream(slice, slice->frequency(),
+                                    placedByPan || openingANewPan));
     if (!currentAdded()) { return -1; }
     if (!bound && poolReady && role() == Role::Local) {
         // bindSliceToStream already emitted sliceAddRejected with the
@@ -17830,7 +17860,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // a slice whose controls are already live.
     wireSliceSignals(slice);
     connect(slice, &SliceModel::panKeyChanged, this, [this, slice] {
-        if (m_receiveLayoutManaged) {
+        if (m_receiveLayoutManaged || desktopLayoutSaves()) {
             scheduleSettingsSave(slice);
         }
     });
@@ -17859,7 +17889,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     m_slicePublications.insert(slice, publication);
     publishReadySlices(index);
     if (!currentAdded()) { return -1; }
-    if (m_receiveLayoutManaged) {
+    if (m_receiveLayoutManaged || desktopLayoutSaves()) {
         scheduleSettingsSave(slice);
     }
     return index;
@@ -17974,7 +18004,11 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
             self->remarkActiveSlicesForOwnership();
             if (!self) { return; }
         }
-        if (self->m_receiveLayoutManaged && persist) { self->scheduleSettingsSave(); }
+        // The close's own flush ran while the slice was still in the list, so
+        // the layout is saved again now that it has left.
+        if ((self->m_receiveLayoutManaged || self->desktopLayoutSaves()) && persist) {
+            self->scheduleSettingsSave();
+        }
     });
     // Ruling 5.10: the add/remove sequence count, closed before the
     // re-mark below or, on an early return, before finishRemoval runs
@@ -19851,6 +19885,10 @@ QList<int> RadioModel::reservedSliceLetters() const
 
 bool RadioModel::sliceLetterReserved(int id) const
 {
+    if (std::any_of(m_desktopLayoutKept.cbegin(), m_desktopLayoutKept.cend(),
+                    [id](const ReceiveSliceState& state) { return state.id == id; })) {
+        return true;
+    }
     return std::any_of(m_deviceSliceReservations.cbegin(), m_deviceSliceReservations.cend(),
                        [id](const DeviceSliceReservation& reservation) {
                            return reservation.letterKept && reservation.state.id == id;
@@ -19968,6 +20006,9 @@ int RadioModel::addStartingSlices(const QString& radioMac)
         if (m_hostsStationDevice && !m_receiveLayoutManaged && m_deviceReservationsMac != mac) {
             reserveDeviceSlices(radioMac);
         }
+        if (!m_hostsStationDevice && !m_receiveLayoutManaged) {
+            prepareDesktopLayout(radioMac, /*liveSlices=*/true);
+        }
         return -1;
     }
     // JJ 2026-10-23, the open behavior ruling: at every local connect, the
@@ -20001,10 +20042,31 @@ int RadioModel::addStartingSlices(const QString& radioMac)
     const int unkept = m_deviceSliceReservations.isEmpty()
         ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
     m_windowSliceId = unkept >= 0 ? unkept : 0;
-    const int id = addSlice();
+    // A desktop starts on the first slice of the radio's saved layout, on its
+    // letter: with A closed last time, that is not A. The rest come back once
+    // the stream pool is sized (restoreDesktopLayoutSlices).
+    std::optional<ReceiveSliceState> savedStart;
+    if (!m_hostsStationDevice && !m_receiveLayoutManaged) {
+        prepareDesktopLayout(radioMac, /*liveSlices=*/false);
+        const int cap = startingSliceCap();
+        for (const ReceiveSliceState& state : std::as_const(m_desktopLayoutWaiting)) {
+            if (state.id < cap) {
+                savedStart = state;
+                break;
+            }
+        }
+    }
+    if (savedStart) {
+        m_windowSliceId = savedStart->id;
+    }
+    const int id = savedStart ? addSliceImpl(savedStart->id, QString()) : addSlice();
     SliceModel* slice = sliceById(id);
     if (!slice) {
         return -1;
+    }
+    if (savedStart) {
+        slice->setPanKey(savedStart->panKey);
+        return id;
     }
     if (id != m_windowSliceId) {
         qCWarning(lcConnection) << "Starting slice" << receiverLetter(id)
@@ -20152,9 +20214,22 @@ bool RadioModel::captureHostedReceiveLayout()
             ids.insert(entry.id);
         }
     }
+    stageKeptReceiveLayout(mac, existing, slices);
+    return true;
+}
+
+void RadioModel::stageKeptReceiveLayout(const QString& mac,
+                                        const ReceiveLayoutStore::LoadResult& existing,
+                                        const QList<ReceiveSliceState>& slices)
+{
+    AppSettings& store = AppSettings::instance();
     if (slices.isEmpty()) {
         ReceiveLayoutStore::forget(store, mac);
-        return true;
+        return;
+    }
+    QSet<int> ids;
+    for (const ReceiveSliceState& entry : slices) {
+        ids.insert(entry.id);
     }
     // Two RADE slices need a named audio owner (ReceiveLayoutStore::validate):
     // the one the layout named, else the lowest letter.
@@ -20175,8 +20250,203 @@ bool RadioModel::captureHostedReceiveLayout()
             ? existing.diversityOwnerId : std::nullopt;
     QString reason;
     if (!ReceiveLayoutStore::stage(store, mac, slices, &reason, radeOwner, diversityOwner)) {
-        qCWarning(lcConnection) << "Receive layout: paired devices' slices not saved:" << reason;
+        qCWarning(lcConnection) << "Receive layout: not saved:" << reason;
     }
+}
+
+// JJ's ruling 2026-11-05: a desktop brings back every slice, its pans and its
+// transmit slice from the same per-radio record a Core keeps. The store and the
+// restore are shared; the Core's managed mode is not. That mode holds the
+// radio's slice keys through admission, holds back saves when a slice is
+// refused, and refuses a save over an unclear RADE owner, none of which a
+// window with no Core does today.
+bool RadioModel::desktopLayoutSaves() const
+{
+    return role() == Role::Local && !m_receiveLayoutManaged && !m_hostsStationDevice
+        && !m_desktopLayoutMac.isEmpty();
+}
+
+void RadioModel::prepareDesktopLayout(const QString& radioMac, bool liveSlices)
+{
+    const QString mac = AppSettings::normalizedRadioMac(radioMac);
+    // Connecting again to this radio keeps the slices on screen, and tries
+    // again for what had no room. It does not read the record back: that
+    // would reopen a slice closed while the radio was off.
+    if (liveSlices && !mac.isEmpty() && mac == m_desktopLayoutMac) {
+        // Still pending: the last connect dropped before its restore ran, and
+        // what it read is still waiting.
+        if (!m_desktopLayoutRestorePending) {
+            m_desktopLayoutWaiting = m_desktopLayoutKept;
+            m_desktopLayoutRuled = true;
+            m_desktopLayoutRestorePending = true;
+        }
+        return;
+    }
+    m_desktopLayoutMac.clear();
+    m_desktopLayoutKept.clear();
+    m_desktopLayoutWaiting.clear();
+    m_desktopLayoutRuled = false;
+    m_desktopLayoutRestorePending = false;
+    if (mac.isEmpty()) {
+        return;
+    }
+    const ReceiveLayoutStore::LoadResult layout =
+        ReceiveLayoutStore::load(AppSettings::instance(), radioMac);
+    if (layout.state != ReceiveLayoutStore::LoadState::Loaded
+        && layout.state != ReceiveLayoutStore::LoadState::Missing) {
+        // Left as it is, never replaced: with no radio to save under, this run
+        // saves no layout.
+        qCWarning(lcConnection) << "Receive layout: saved layout not loaded:" << layout.error;
+        setReceiveLayoutRestoreStatus(QStringLiteral("invalid"),
+            withKeptLayout({tr("The saved receive layout could not be loaded."),
+                            plainReceiveLayoutProblem(layout.error)}));
+        return;
+    }
+    // A paired device's slice waits for that device, as it always has.
+    QList<ReceiveSliceState> waiting;
+    for (const ReceiveSliceState& state : layout.slices) {
+        if (!isPairedDeviceSubject(layoutSubject(state.owner, state.heldFor))) {
+            waiting.append(state);
+        }
+    }
+    // Another radio's slices are on screen. They stay, as they always have,
+    // and this radio's record is neither applied over them nor replaced by them.
+    if (liveSlices && !waiting.isEmpty()) {
+        return;
+    }
+    m_desktopLayoutMac = mac;
+    m_desktopLayoutWaiting = waiting;
+    m_desktopLayoutRuled = !waiting.isEmpty();
+    m_desktopLayoutRestorePending = true;
+}
+
+bool RadioModel::restoreDesktopLayoutSlices(const QStringList& panIds)
+{
+    if (role() != Role::Local || !m_desktopLayoutRestorePending) {
+        return false;
+    }
+    const QPointer<RadioModel> self(this);
+    const bool ruled = m_desktopLayoutRuled;
+    if (ruled) {
+        // A slice on a pan this window does not show goes on its first pan, as
+        // shrinking a layout puts it. The window keeps its own layout.
+        rehomeSlicesToPans(panIds);
+        if (!self) { return true; }
+    }
+    QList<ReceiveSliceState> unplaced;
+    bool added = false;
+    m_desktopLayoutRestoring = true;
+    const QList<ReceiveSliceState> waiting = std::exchange(m_desktopLayoutWaiting, {});
+    for (const ReceiveSliceState& entry : waiting) {
+        if (sliceById(entry.id) != nullptr) {
+            continue;
+        }
+        ReceiveSliceState state = entry;
+        state.owner.clear();
+        state.heldFor.clear();
+        if (!panIds.isEmpty() && !panIds.contains(state.panKey)) {
+            state.panKey = panIds.first();
+        }
+        const int cap = sliceChannelLimit();
+        const bool room = entry.id < cap && m_slices.size() < cap;
+        const int id = room ? addSliceImpl(entry.id, state.panKey, &state, /*bindRestored=*/true)
+                            : -1;
+        if (!self) { return true; }
+        if (id < 0) {
+            unplaced.append(entry);
+        } else {
+            added = true;
+        }
+    }
+    m_desktopLayoutRestoring = false;
+    m_desktopLayoutKept = unplaced;
+    m_desktopLayoutRestorePending = false;
+    // One rate per receiver, the highest saved among the slices on it. The
+    // connect's own pass ran with only the starting slice there. Protocol 1
+    // moves nothing, and a rate off the ladder asks for nothing.
+    if (added) {
+        applySavedSliceSampleRates(savedSliceSampleRates(), m_lastRadioInfo.protocol);
+        if (!self) { return true; }
+    }
+    if (!unplaced.isEmpty()) {
+        QStringList letters;
+        for (const ReceiveSliceState& state : std::as_const(unplaced)) {
+            letters.append(QString(receiverLetter(state.id)));
+        }
+        setReceiveLayoutRestoreStatus(QStringLiteral("degraded"),
+            letters.size() == 1
+                ? tr("Receiver %1 stays saved because this radio has no room for it now. "
+                     "It comes back on a later connect when there is room.")
+                      .arg(letters.first())
+                : tr("Receivers %1 stay saved because this radio has no room for them now. "
+                     "They come back on a later connect when there is room.")
+                      .arg(letters.join(QStringLiteral(", "))));
+    }
+    if (desktopLayoutSaves()) {
+        scheduleSettingsSave();
+    }
+    return ruled;
+}
+
+bool RadioModel::captureDesktopReceiveLayout()
+{
+    // Nothing until the restore has run: a save with only the starting slice
+    // up would close every other slice in the record.
+    if (m_desktopLayoutRestorePending || !desktopLayoutSaves()) {
+        return true;
+    }
+    AppSettings& store = AppSettings::instance();
+    const ReceiveLayoutStore::LoadResult existing = ReceiveLayoutStore::load(store, m_desktopLayoutMac);
+    if (existing.state != ReceiveLayoutStore::LoadState::Loaded
+        && existing.state != ReceiveLayoutStore::LoadState::Missing) {
+        qCWarning(lcConnection) << "Receive layout: kept unread, receivers not saved:"
+                                << existing.error;
+        return true;
+    }
+    QList<ReceiveSliceState> slices;
+    QSet<int> ids;
+    for (const SliceModel* slice : std::as_const(m_slices)) {
+        const SliceOwnership::Mark mark = m_sliceOwnership->mark(slice->sliceIndex());
+        slices.append({slice->sliceIndex(), slice->panKey(), slice->frequency(), slice->dspMode(),
+                       mark.owner, mark.heldFor});
+        ids.insert(slice->sliceIndex());
+    }
+    // What had no room stays in the record, unless a slice has its letter now
+    // (the radio ran out of other letters).
+    QList<ReceiveSliceState> kept;
+    for (const ReceiveSliceState& state : std::as_const(m_desktopLayoutKept)) {
+        if (!ids.contains(state.id)) {
+            kept.append(state);
+            slices.append(state);
+            ids.insert(state.id);
+        }
+    }
+    m_desktopLayoutKept = kept;
+    // A paired device's entry stays too. When the window has its letter, as a
+    // window with Run Core off may, the device's saved slices keep it with the
+    // letter's settings from before the window wrote them (as
+    // captureHostedReceiveLayout does for a letter it could not keep).
+    const bool snapshotHere =
+        AppSettings::normalizedRadioMac(m_deviceLetterSnapshotMac) == m_desktopLayoutMac;
+    if (existing.state == ReceiveLayoutStore::LoadState::Loaded) {
+        for (const ReceiveSliceState& entry : existing.slices) {
+            const QByteArray device = layoutSubject(entry.owner, entry.heldFor);
+            if (!isPairedDeviceSubject(device)) {
+                continue;
+            }
+            if (!ids.contains(entry.id)) {
+                slices.append(entry);
+                ids.insert(entry.id);
+            } else if (snapshotHere && m_deviceLetterSnapshot.contains(entry.id)) {
+                DeviceLayoutStore::append(store, m_desktopLayoutMac, device,
+                                          {entry.id, entry.panKey, entry.frequencyHz, entry.dspMode,
+                                           m_deviceLetterSnapshot.value(entry.id)},
+                                          deviceLayoutLimit());
+                m_deviceLetterSnapshot.remove(entry.id);
+            }
+        }
+    }
+    stageKeptReceiveLayout(m_desktopLayoutMac, existing, slices);
     return true;
 }
 
@@ -29345,7 +29615,9 @@ bool RadioModel::captureReceiveLayout(QString* error)
     if (!m_receiveLayoutManaged) {
         // A Core inside a desktop window keeps its paired devices' slices
         // in the layout too, so a restart either way gives them back.
-        return m_hostsStationDevice ? captureHostedReceiveLayout() : true;
+        // A desktop keeps its own slices there, for the same reason.
+        return m_hostsStationDevice ? captureHostedReceiveLayout()
+                                    : captureDesktopReceiveLayout();
     }
     // Slice control plan Task 7 (ruling Q10): a Core left with no slice
     // saves no layout, so a restart starts as a first start does, with one

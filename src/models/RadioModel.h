@@ -531,6 +531,9 @@
 //                applySavedSliceSampleRates), and a rate change saves it.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-11-06 - restoreDesktopLayoutSlices: a desktop brings back every slice
+//                from the radio's saved layout. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude.
 //   2026-11-05 - One sample rate per receiver on every band, so a band
 //                change leaves the rate alone (JJ's ruling). A new slice with
 //                a receiver of its own opens at the rate of the slice it was
@@ -3322,6 +3325,15 @@ public:
     /// with its own settings, when it signs in). Returns the slice's id, or
     /// -1 when none was made. Local only.
     int addStartingSlices(const QString& radioMac);
+
+    /// A desktop's connect, once the stream pool is sized: brings back every
+    /// slice the radio's saved layout has beyond the starting one, on its own
+    /// letter and pan (a pan not in `panIds` becomes the first of them). What
+    /// has no room stays saved and the receive-layout status says so once.
+    /// Returns true when a saved layout decided the slices, so an empty pan is
+    /// left as it was saved; false when there is none and the caller fills
+    /// empty pans as on a first run. Does nothing for a Core or a hosted window.
+    bool restoreDesktopLayoutSlices(const QStringList& panIds);
 
     /// StationServer admission, before a device's saved slices: makes the
     /// slices kept for `device` (addStartingSlices), each on its letter when
@@ -8323,6 +8335,17 @@ private:
     // devices' slices and kept letters, never the window's own, with every
     // other entry of the saved layout carried through.
     bool captureHostedReceiveLayout();
+    // What captureHostedReceiveLayout and captureDesktopReceiveLayout share:
+    // stages `slices` with the RADE and diversity owners the layout named.
+    void stageKeptReceiveLayout(const QString& mac,
+                                const ReceiveLayoutStore::LoadResult& existing,
+                                const QList<ReceiveSliceState>& slices);
+    // A desktop's use of the record (restoreDesktopLayoutSlices). True when
+    // this run's slices are saved under a radio's record.
+    bool desktopLayoutSaves() const;
+    // addStartingSlices: reads the record for this connect.
+    void prepareDesktopLayout(const QString& radioMac, bool liveSlices);
+    bool captureDesktopReceiveLayout();
 
     // RADE threads (2026-09-30): one receive route per RADE slice. The
     // channel decodes on its own thread; the DSP worker feeds it and plays
@@ -9030,6 +9053,19 @@ private:
     QHash<int, QMap<QString, QString>> m_deviceLetterSnapshot;
     // windowSliceId.
     int m_windowSliceId{0};
+    // prepareDesktopLayout: the radio this run's slices are saved under, empty
+    // when none (a record that cannot be read, another radio's slices on screen).
+    QString m_desktopLayoutMac;
+    // The record's slices still to bring back at this connect.
+    QList<ReceiveSliceState> m_desktopLayoutWaiting;
+    // The record's slices with no room this run. They stay in the record, and
+    // their letters go last to a new slice.
+    QList<ReceiveSliceState> m_desktopLayoutKept;
+    // From the connect's start until the restore has run, no layout is saved.
+    bool m_desktopLayoutRestorePending{false};
+    // A saved layout decides the slices, so empty pans are not filled.
+    bool m_desktopLayoutRuled{false};
+    bool m_desktopLayoutRestoring{false};
     bool m_receiveLayoutOverridesCount{false};
     // Slice ids the saved layout hydrated, until admission completes: a
     // slice refused at admission is "restored" only if its id is here.

@@ -2,6 +2,8 @@
 // 2026-10-29 - Separate fresh-slice seeding from explicit restoration and
 // verify authenticated admission with stale letter state and a full DDC pool.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-06 - A desktop brings back every slice from the radio's saved layout.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //
 // tst_standalone_slice_restore.cpp
 //
@@ -37,6 +39,11 @@
 #include "models/Band.h"
 #include "models/SliceModel.h"
 #include "MultiDeviceHarness.h"
+#include "core/RadioConnection.h"
+#include "core/ReceiveLayoutStore.h"
+#include "core/MoxController.h"
+#include "core/TxSliceArbiter.h"
+#include "gui/ReceiveLayoutNotices.h"
 
 using namespace NereusSDR;
 
@@ -87,7 +94,91 @@ bool expectSliceBRestored(const SliceModel* b, double frequency = kSliceBFreqHz,
     return true;
 }
 
+const QString kDesktopMac = QStringLiteral("AA:BB:CC:DD:EE:41");
+const QString kPan0 = QStringLiteral("pan-0");
+const QString kPan1 = QStringLiteral("pan-1");
+const QString kPan2 = QStringLiteral("pan-2");
+
+// A window with no Core connecting, in connectToRadioImpl's order, then the
+// queued step of its connect handler. The first model of a test is the run
+// before the restart, the next one the run after it.
+void connectDesktop(RadioModel& model, int ddcs, int maxSlices, const QStringList& pans)
+{
+    RadioInfo info;
+    info.macAddress = kDesktopMac;
+    info.protocol = ProtocolVersion::Protocol2;
+    model.setLastRadioInfoForTest(info);
+    model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+    const int start = model.addStartingSlices(kDesktopMac);
+    if (SliceModel* slice = model.sliceById(start)) {
+        model.setActiveSlice(static_cast<int>(model.slices().indexOf(slice)));
+        model.loadSliceState(slice);
+    }
+    model.configureStreamPool(ddcs, maxSlices, kRateHz);
+    model.bindUnboundSlices();
+    TxSliceArbiter* arbiter = model.txSliceArbiter();
+    arbiter->setMacAddress(kDesktopMac);
+    arbiter->load();
+    MainWindow::populatePanSlices(&model, pans, false, false);
+    arbiter->finishRestore();
+}
+
+QList<int> slicesInRecord()
+{
+    QList<int> ids;
+    const auto layout = ReceiveLayoutStore::load(AppSettings::instance(), kDesktopMac);
+    for (const ReceiveSliceState& state : layout.slices) {
+        ids.append(state.id);
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
 } // namespace
+
+// Records anything that could put the radio on the air.
+class KeyWatchConnection final : public RadioConnection {
+    Q_OBJECT
+public:
+    int moxCalls{0};
+    int txIqCalls{0};
+
+    explicit KeyWatchConnection(QObject* parent = nullptr) : RadioConnection(parent)
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void init() override {}
+    void connectToRadio(const NereusSDR::RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64) override {}
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int) override {}
+    void setMox(bool on) override
+    {
+        if (on) {
+            ++moxCalls;
+        }
+    }
+    void setAntennaRouting(AntennaRouting) override {}
+    void setAlexRxBpf(AlexRxBpf) override {}
+    void setWatchdogEnabled(bool enabled) override { m_watchdogEnabled = enabled; }
+    void sendTxIq(const float*, int) override { ++txIqCalls; }
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
 
 class TestStandaloneSliceRestore : public QObject {
     Q_OBJECT
@@ -433,6 +524,430 @@ private slots:
         QCOMPARE(c->sampleRateHz(), kRateHz);
         QCOMPARE(core.model->streamSampleRateHzForTest(a->streamIndex()), kRateHz);
         QCOMPARE(core.model->activeStreamCount(), 1);
+    }
+
+    // JJ's ruling 2026-11-05: a desktop brings back every slice, as a Core
+    // does. A second slice on a pan used to be gone after a relaunch.
+    void twoSlicesOnOnePanComeBackAfterARestart()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0});
+            SliceModel* a = before.sliceById(0);
+            QVERIFY(a);
+            a->setFrequency(kSliceAFreqHz);
+            before.addSliceOnPan(kPan0, false, true);
+            SliceModel* b = before.sliceById(1);
+            QVERIFY(b);
+            b->setFrequency(kSliceBFreqHz);
+            b->setDspMode(DSPMode::LSB);
+            b->setAfGain(33);
+            b->setMuted(true);
+            before.flushPendingSettingsSave();
+        }
+        RadioModel after;
+        connectDesktop(after, 2, 5, {kPan0});
+        QCOMPARE(after.slices().size(), 2);
+        SliceModel* b = after.sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->panKey(), kPan0);
+        QCOMPARE(b->frequency(), kSliceBFreqHz);
+        QCOMPARE(b->dspMode(), DSPMode::LSB);
+        QCOMPARE(b->afGain(), 33);
+        QVERIFY(b->muted());
+        QVERIFY(b->streamIndex() >= 0);
+        QCOMPARE(after.sliceById(0)->frequency(), kSliceAFreqHz);
+        QCOMPARE(after.sliceById(0)->panKey(), kPan0);
+    }
+
+    // Two pans a little apart keep a receiver each: on one receiver they
+    // would tune in lockstep.
+    void slicesOnTwoPansKeepAReceiverEach()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            before.sliceById(0)->setFrequency(kSliceAFreqHz);
+            before.sliceById(1)->setFrequency(kSliceAFreqHz + 10000.0);
+            before.flushPendingSettingsSave();
+        }
+        RadioModel after;
+        connectDesktop(after, 2, 5, {kPan0, kPan1});
+        QCOMPARE(after.slices().size(), 2);
+        QCOMPARE(after.sliceById(1)->panKey(), kPan1);
+        QVERIFY(after.sliceById(0)->streamIndex() != after.sliceById(1)->streamIndex());
+    }
+
+    void aTransmitSliceThatIsNotAComesBackAndNothingKeys()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            before.sliceById(1)->setFrequency(kSliceBFreqHz);
+            QVERIFY(before.txSliceArbiter()->requestHandoff(1));
+            // Saved when it moves, not only at the disconnect.
+            QCOMPARE(AppSettings::instance()
+                         .value(QStringLiteral("hardware/%1/TxBoundSliceId").arg(kDesktopMac))
+                         .toInt(),
+                     1);
+            before.flushPendingSettingsSave();
+        }
+        RadioModel after;
+        KeyWatchConnection radio;
+        after.injectConnectionForTest(&radio);
+        const auto detach = qScopeGuard([&] { after.injectConnectionForTest(nullptr); });
+        connectDesktop(after, 2, 5, {kPan0, kPan1});
+        SliceModel* b = after.sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(after.txBoundSlice(), b);
+        QVERIFY(b->isTxSlice());
+        QVERIFY(!after.sliceById(0)->isTxSlice());
+        QVERIFY(!after.moxController()->isMox());
+        QCOMPARE(radio.moxCalls, 0);
+        QCOMPARE(radio.txIqCalls, 0);
+        // The first slice's bind did not write over the saved choice.
+        after.flushPendingSettingsSave();
+        after.txSliceArbiter()->save();
+        QCOMPARE(AppSettings::instance()
+                     .value(QStringLiteral("hardware/%1/TxBoundSliceId").arg(kDesktopMac))
+                     .toInt(),
+                 1);
+    }
+
+    // More slices than the radio has room for: the rest stay saved, the
+    // window says so once, and a radio with room brings them back.
+    void slicesThatDoNotFitStaySavedAndComeBackLater()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 3, 5, {kPan0, kPan1, kPan2});
+            before.sliceById(0)->setFrequency(kSliceAFreqHz);
+            before.sliceById(1)->setFrequency(kSliceBFreqHz);
+            before.sliceById(2)->setFrequency(3600000.0);
+            before.sliceById(2)->setDspMode(DSPMode::LSB);
+            before.sliceById(2)->setAfGain(21);
+            before.flushPendingSettingsSave();
+        }
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+        {
+            RadioModel small;
+            QSignalSpy rejected(&small, &RadioModel::sliceAddRejected);
+            ReceiveLayoutNotices notices;
+            QStringList toasts;
+            connect(&small, &RadioModel::receiveLayoutRestoreStatusChanged, &small, [&] {
+                const QString toast = notices.toastFor(small.receiveLayoutRestoreState(),
+                                                       small.receiveLayoutRestoreMessage(), false);
+                if (!toast.isEmpty()) {
+                    toasts.append(toast);
+                }
+            });
+            connectDesktop(small, 2, 5, {kPan0, kPan1, kPan2});
+            QCOMPARE(small.slices().size(), 2);
+            QVERIFY(small.sliceById(2) == nullptr);
+            QCOMPARE(rejected.count(), 0);
+            QCOMPARE(toasts.size(), 1);
+            QVERIFY2(toasts.first().contains(QStringLiteral("Receiver C")),
+                     qPrintable(toasts.first()));
+            QVERIFY2(OperatorWording::isPlain(toasts.first()), qPrintable(toasts.first()));
+            // A Core's holds are not a desktop's: the radio's slices save.
+            QVERIFY(!small.receiveLayoutPendingAdmission());
+            QVERIFY(!small.m_receiveLayoutManaged);
+            QVERIFY(!small.m_receiveLayoutProtected);
+            QVERIFY(!small.sliceKeysAreHeld(0));
+            QVERIFY(!small.sliceKeysAreHeld(1));
+            // A new slice takes a letter nobody is waiting for.
+            small.addSliceOnPan(kPan0, false, true);
+            QVERIFY(small.sliceById(3) != nullptr);
+            QVERIFY(small.sliceById(2) == nullptr);
+            small.sliceById(1)->setFrequency(kSliceBFreqHz + 1000.0);
+            small.flushPendingSettingsSave();
+            QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2, 3}));
+            QCOMPARE(toasts.size(), 1);
+            small.removeSlice(3);
+            small.flushPendingSettingsSave();
+        }
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+        RadioModel roomy;
+        connectDesktop(roomy, 3, 5, {kPan0, kPan1, kPan2});
+        QCOMPARE(roomy.slices().size(), 3);
+        SliceModel* c = roomy.sliceById(2);
+        QVERIFY(c);
+        QCOMPARE(c->frequency(), 3600000.0);
+        QCOMPARE(c->dspMode(), DSPMode::LSB);
+        QCOMPARE(c->afGain(), 21);
+        QCOMPARE(c->panKey(), kPan2);
+        QVERIFY(roomy.receiveLayoutRestoreMessage().isEmpty());
+    }
+
+    // A letter past the radio's slice limit is the same case.
+    void aLetterPastTheSliceLimitStaysSaved()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 3, 5, {kPan0, kPan1, kPan2});
+            before.flushPendingSettingsSave();
+        }
+        {
+            RadioModel small;
+            connectDesktop(small, 3, 2, {kPan0, kPan1, kPan2});
+            QCOMPARE(small.slices().size(), 2);
+            small.sliceById(0)->setFrequency(kSliceAFreqHz);
+            small.flushPendingSettingsSave();
+        }
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+    }
+
+    // No record: exactly today's connect. One slice plus one per empty pan,
+    // and an existing install's letters come back through their own keys.
+    void firstRunWithNoRecordBehavesAsBefore()
+    {
+        saveSliceB();
+        RadioModel model;
+        connectDesktop(model, 2, 5, {kPan0, kPan1});
+        QCOMPARE(model.slices().size(), 2);
+        QCOMPARE(model.sliceById(0)->panKey(), kPan0);
+        QVERIFY(expectSliceBRestored(model.sliceById(1)));
+        QCOMPARE(model.sliceById(1)->panKey(), kPan1);
+        QCOMPARE(model.txBoundSlice(), model.sliceById(0));
+        // And the first save starts the record with all of it.
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1}));
+    }
+
+    // A slice closed before a quit: the close's own save runs before the
+    // slice leaves the list, so the record must catch up by the disconnect's
+    // flush, inside the save timer.
+    void aClosedSliceStaysClosed_data()
+    {
+        QTest::addColumn<QString>("panOfB");
+        QTest::newRow("sharing a pan") << kPan0;
+        QTest::newRow("on its own pan") << kPan1;
+    }
+
+    void aClosedSliceStaysClosed()
+    {
+        QFETCH(QString, panOfB);
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            before.sliceById(1)->setPanKey(panOfB);
+            before.sliceById(1)->setFrequency(kSliceBFreqHz);
+            before.flushPendingSettingsSave();
+            QCOMPARE(slicesInRecord(), QList<int>({0, 1}));
+            before.removeSlice(1);
+            before.flushPendingSettingsSave();
+        }
+        RadioModel after;
+        connectDesktop(after, 2, 5, {kPan0, kPan1});
+        QCOMPARE(after.slices().size(), 1);
+        QVERIFY(after.sliceById(1) == nullptr);
+        QCOMPARE(slicesInRecord(), QList<int>({0}));
+    }
+
+    // A closed A: the window starts on what was open, on its letter.
+    void closingAStartsTheNextRunOnTheNextLetter()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            before.sliceById(1)->setFrequency(kSliceBFreqHz);
+            before.flushPendingSettingsSave();
+            before.removeSlice(0);
+            before.sliceById(1)->setPanKey(kPan0);
+            before.flushPendingSettingsSave();
+        }
+        RadioModel after;
+        connectDesktop(after, 2, 5, {kPan0});
+        QCOMPARE(after.slices().size(), 1);
+        QVERIFY(after.sliceById(0) == nullptr);
+        QCOMPARE(after.sliceById(1)->frequency(), kSliceBFreqHz);
+        QCOMPARE(after.windowSliceId(), 1);
+        QCOMPARE(after.activeSlice(), after.sliceById(1));
+    }
+
+    // A layout from the menu is not a restore: it makes a new receiver from
+    // the slice the operator is on, not the letter's saved values.
+    void aLayoutChangeFromTheMenuIsNotARestore()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0});
+            before.sliceById(0)->setFrequency(kSliceAFreqHz);
+            before.flushPendingSettingsSave();
+        }
+        saveSliceB();
+        RadioModel model;
+        connectDesktop(model, 2, 5, {kPan0});
+        QCOMPARE(model.slices().size(), 1);
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1}, true, false);
+        SliceModel* b = model.sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->frequency(), kSliceAFreqHz);
+        QVERIFY(!b->muted());
+        QCOMPARE(b->panKey(), kPan1);
+    }
+
+    // The window shows fewer pans than the radio's record names. The window
+    // keeps its layout, and those slices go on its first pan, as shrinking
+    // a layout puts them.
+    void aSliceOnAPanTheWindowDoesNotShowGoesOnItsFirstPan()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            before.sliceById(1)->setFrequency(kSliceBFreqHz);
+            before.flushPendingSettingsSave();
+        }
+        RadioModel after;
+        connectDesktop(after, 2, 5, {kPan0});
+        QCOMPARE(after.slices().size(), 2);
+        QCOMPARE(after.sliceById(1)->panKey(), kPan0);
+        QCOMPARE(after.sliceById(1)->frequency(), kSliceBFreqHz);
+    }
+
+    // A layout change reaches the save path by itself, with no disconnect.
+    void aNewSliceReachesTheRecordWithoutADisconnect()
+    {
+        RadioModel model;
+        connectDesktop(model, 2, 5, {kPan0});
+        model.addSliceOnPan(kPan0, false, true);
+        QTRY_COMPARE(slicesInRecord(), QList<int>({0, 1}));
+    }
+
+    // A paired device's entry is its own: a window with Run Core off neither
+    // starts it nor loses it.
+    void aPairedDevicesEntryIsNeitherRestoredNorLost()
+    {
+        saveSliceB();
+        const QByteArray device = QByteArray(32, '\x11');
+        QList<ReceiveSliceState> saved;
+        saved.append({0, kPan0, 7074000.0, DSPMode::USB, SliceOwnership::stationDevice(), device});
+        saved.append({1, kPan0, kSliceBFreqHz, DSPMode::LSB, {}, {}});
+        QVERIFY(ReceiveLayoutStore::stage(AppSettings::instance(), kDesktopMac, saved));
+        {
+            RadioModel model;
+            connectDesktop(model, 2, 5, {kPan0});
+            QCOMPARE(model.slices().size(), 1);
+            QVERIFY(model.sliceById(0) == nullptr);
+            QVERIFY(model.sliceById(1) != nullptr);
+            model.sliceById(1)->setAfGain(40);
+            model.flushPendingSettingsSave();
+        }
+        const auto layout = ReceiveLayoutStore::load(AppSettings::instance(), kDesktopMac);
+        QCOMPARE(layout.slices.size(), 2);
+        QCOMPARE(layout.slices.at(0).heldFor.isEmpty() ? layout.slices.at(1).heldFor
+                                                       : layout.slices.at(0).heldFor,
+                 device);
+    }
+
+    // A record that cannot be read is left as it is, and the window starts as
+    // it does with none.
+    void anUnreadableRecordIsKeptAndTheWindowSaysSo()
+    {
+        const QString key = QStringLiteral("hardware/%1/receiveLayout")
+                                .arg(AppSettings::normalizedRadioMac(kDesktopMac));
+        AppSettings::instance().setValue(key, QStringLiteral("{not json"));
+        const QVariant before = AppSettings::instance().value(key);
+        RadioModel model;
+        connectDesktop(model, 2, 5, {kPan0, kPan1});
+        QCOMPARE(model.slices().size(), 2);
+        QCOMPARE(model.receiveLayoutRestoreState(), QStringLiteral("invalid"));
+        model.sliceById(1)->setFrequency(kSliceBFreqHz);
+        model.flushPendingSettingsSave();
+        QCOMPARE(AppSettings::instance().value(key), before);
+    }
+
+    // Connecting again keeps the slices on screen: a slice closed while the
+    // radio was off stays closed, though the record could not yet say so.
+    void aReconnectDoesNotReopenAClosedSlice()
+    {
+        RadioModel model;
+        connectDesktop(model, 2, 5, {kPan0});
+        model.addSliceOnPan(kPan0, false, true);
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1}));
+        model.removeSlice(1);
+        QCOMPARE(model.addStartingSlices(kDesktopMac), -1);
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1}, false, false);
+        QCOMPARE(model.slices().size(), 1);
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0}));
+    }
+
+    // A connect that drops before its queued restore ran saves nothing over
+    // the record, and the next connect still brings it all back.
+    void aConnectDroppedBeforeTheRestoreLosesNothing()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            before.flushPendingSettingsSave();
+        }
+        RadioModel model;
+        RadioInfo info;
+        info.macAddress = kDesktopMac;
+        info.protocol = ProtocolVersion::Protocol2;
+        model.setLastRadioInfoForTest(info);
+        model.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+        QVERIFY(model.addStartingSlices(kDesktopMac) >= 0);
+        model.scheduleSettingsSave();
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1}));
+        QCOMPARE(model.addStartingSlices(kDesktopMac), -1);
+        model.configureStreamPool(2, 5, kRateHz);
+        model.bindUnboundSlices();
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1}, false, false);
+        QCOMPARE(model.slices().size(), 2);
+    }
+
+    // Connecting to another radio in the same run keeps what is on screen, as
+    // it always has. That radio's record is not replaced by another radio's
+    // slices, and this radio's record stays this radio's.
+    void anotherRadiosRecordIsLeftAlone()
+    {
+        const QString other = QStringLiteral("AA:BB:CC:DD:EE:42");
+        QList<ReceiveSliceState> saved;
+        saved.append({0, kPan0, kSliceBFreqHz, DSPMode::LSB, {}, {}});
+        saved.append({2, kPan0, 3600000.0, DSPMode::LSB, {}, {}});
+        QVERIFY(ReceiveLayoutStore::stage(AppSettings::instance(), other, saved));
+
+        RadioModel model;
+        connectDesktop(model, 2, 5, {kPan0, kPan1});
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1}));
+
+        QCOMPARE(model.addStartingSlices(other), -1);
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1}, false, false);
+        QCOMPARE(model.slices().size(), 2);
+        model.sliceById(1)->setFrequency(kSliceBFreqHz);
+        model.flushPendingSettingsSave();
+        const auto layout = ReceiveLayoutStore::load(AppSettings::instance(), other);
+        QCOMPARE(layout.slices.size(), 2);
+        QCOMPARE(layout.slices.at(1).id, 2);
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1}));
+    }
+
+    // Slices sharing a receiver take the highest rate saved among them.
+    void slicesSharingAReceiverTakeTheHighestSavedRate()
+    {
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0});
+            before.sliceById(0)->setFrequency(kSliceAFreqHz);
+            before.addSliceOnPan(kPan0, false, true);
+            before.sliceById(1)->setFrequency(kSliceAFreqHz + 5000.0);
+            before.flushPendingSettingsSave();
+        }
+        const QString mac = AppSettings::normalizedRadioMac(kDesktopMac);
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/slices/1/SampleRate").arg(mac), 384000);
+        RadioModel after;
+        connectDesktop(after, 2, 5, {kPan0});
+        QVERIFY(after.waitForReceiveLaneForTest());
+        QCOMPARE(after.sliceById(0)->streamIndex(), after.sliceById(1)->streamIndex());
+        QCOMPARE(after.streamSampleRateHzForTest(after.sliceById(0)->streamIndex()), 384000);
+        QCOMPARE(after.sliceById(0)->sampleRateHz(), 384000);
+        QCOMPARE(after.sliceById(1)->sampleRateHz(), 384000);
     }
 };
 
