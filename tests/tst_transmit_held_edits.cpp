@@ -22,6 +22,9 @@
 
 #include "core/AppSettings.h"
 #include "core/CwTypes.h"
+#include "core/TciProtocol.h"
+#include "core/cat/CatService.h"
+#include "core/SliceOwnership.h"
 #include "core/daemon/DaemonApp.h"
 #include "core/daemon/DaemonConfig.h"
 #include "core/HpsdrModel.h"
@@ -398,6 +401,72 @@ private slots:
         verifyRadioUntouched(tx, kMac);
     }
 
+
+    // Holding is for the operator's own edits in the app. A logger that sends
+    // drive when it connects, before the radio does, must not replace that
+    // radio's saved value at connect.
+    void aCatWriteWithNoRadioHoldsNothing()
+    {
+        seedRadio(kMac);
+        RadioModel radio;
+        radio.setBoardForTest(HPSDRHW::HermesLite);
+        radio.addSlice(QStringLiteral("pan-0"));
+        for (SliceModel* slice : radio.slices()) {
+            radio.sliceOwnership()->setOwner(slice->sliceIndex(), SliceOwnership::stationDevice());
+        }
+        CatEndpointConfig config;
+        config.binding.primarySliceId = 0;
+        QVERIFY(radio.catService()->applyChannelConfig(1, config));
+        radio.catService()->startConfigured();
+        const quint64 id = radio.catService()->openSession(1, CatTransportKind::Tester);
+        QVERIFY(id);
+        radio.keepTransmitEditsWithoutRadio();
+
+        radio.catService()->processFrame(id, "ZZPC077;");
+        QCOMPARE(radio.transmitModel().power(), 77);
+        radio.catService()->processFrame(id, "ZZMG+12;");
+        QCOMPARE(radio.transmitModel().micGainDb(), 12);
+        radio.catService()->processFrame(id, "ZZTO033;");
+        QCOMPARE(heldKeys(), QStringList{});
+
+        // And the operator's own edit right after still is held.
+        radio.transmitModel().setMicGainDb(-2);
+        QCOMPARE(heldKeys(),
+                 QStringList{TransmitModel::heldEditsPrefix() + QStringLiteral("tx/MicGain")});
+    }
+
+    void aTciWriteWithNoRadioHoldsNothing()
+    {
+        seedRadio(kMac);
+        RadioModel radio;
+        radio.setBoardForTest(HPSDRHW::HermesLite);
+        radio.addSlice(QStringLiteral("pan-0"));
+        radio.keepTransmitEditsWithoutRadio();
+        TciProtocol tci(&radio);
+        const int speed = radio.transmitModel().cwKeyerSpeed() == 33 ? 34 : 33;
+        tci.handleCommand(QStringLiteral("cw_keyer_speed:%1;").arg(speed));
+        QCOMPARE(radio.transmitModel().cwKeyerSpeed(), speed);
+        tci.handleCommand(QStringLiteral("cw_macros_speed:29;"));
+        tci.handleCommand(QStringLiteral("drive:0,61;"));
+        tci.handleCommand(QStringLiteral("tune_drive:0,41;"));
+        tci.handleCommand(QStringLiteral("mon_volume:-20;"));
+        QCOMPARE(heldKeys(), QStringList{});
+    }
+
+    // Before any slice exists no band is the radio's: the save used to land on
+    // the default band, replacing that band's power on a radio that then came
+    // up on another. Not held: the radio's saved powers stand.
+    void aPowerEditBeforeAnySliceHoldsNothing()
+    {
+        seedRadio(kMac);
+        RadioModel radio;
+        radio.keepTransmitEditsWithoutRadio();
+        radio.transmitModel().setPower(radio.transmitModel().power() == 33 ? 34 : 33);
+        QCOMPARE(heldKeys(), QStringList{});
+        connectLikeRadioModel(radio.transmitModel(), kMac);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/20m")), QStringLiteral("83"));
+        QCOMPARE(radio.transmitModel().powerForBand(Band::Band20m), 83);
+    }
     void aPowerEditThroughTheRadioModelLandsOnTheTransmitBand()
     {
         seedRadio(kMac);

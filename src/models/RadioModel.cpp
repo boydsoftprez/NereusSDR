@@ -5239,6 +5239,13 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // restore, which sets nothing, saves nothing until a band is known.
     connect(&m_transmitModel, &TransmitModel::powerChanged, this,
             [this](int /*power*/) {
+        // With no slice, no band is the radio's: m_lastBand is a default, and a
+        // value held for it would replace that band's power on a radio that
+        // then comes up on another. Not held; the radio's saved powers stand.
+        std::optional<TransmitModel::HeldEditPause> noBandOfItsOwn;
+        if (!txBoundSlice()) {
+            noBandOfItsOwn.emplace(m_transmitModel);
+        }
         if (ownsLocalDsp() && !m_txBandKnown) {
             // The initializing TXBand pass for the adopted band, less the
             // power load (this PWR set is the band's value): its limits,
