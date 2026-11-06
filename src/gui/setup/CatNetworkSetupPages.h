@@ -79,7 +79,7 @@ public:
 //   Sensors / VFO Quirks.  All 17 AppSettings keys bound.
 // Phase 20 (Phase 3J-1): Setup → Network → TCI Server page rewrite.
 // ---------------------------------------------------------------------------
-class CatTciServerPage : public SetupPage {
+class NEREUS_GUI_EXPORT CatTciServerPage : public SetupPage {
     Q_OBJECT
 
 public:

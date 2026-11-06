@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-05-10 — Reimplemented in C++20/Qt6 for NereusSDR by
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Claude Opus 4.7 (1M context).
@@ -63,6 +68,7 @@ mw0lge@grange-lane.co.uk
 #pragma once
 
 #include <QColor>
+#include "gui/NereusGuiExport.h"
 #include <QString>
 #include <QVector>
 #include <QWidget>
@@ -93,7 +99,7 @@ namespace NereusSDR {
 /// Thetis (pipe-delimited Text per ucLGPicker.cs:666-738; base64 wrapper
 /// per ucLGPicker.cs:912-930) so existing Thetis skins can round-trip
 /// through NereusSDR (Phase 3H skin import).
-class GradientPickerWidget : public QWidget
+class NEREUS_GUI_EXPORT GradientPickerWidget : public QWidget
 {
     Q_OBJECT
 

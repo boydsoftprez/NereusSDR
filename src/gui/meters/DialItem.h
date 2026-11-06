@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Thetis dial tuning (clsDialDisplay Degrees, Pressed,
 //                 Update, MouseUp, MouseWheel): drag and wheel tune the
 //                 slice the dial follows, acceleration with undo on
@@ -72,6 +77,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "gui/NereusGuiExport.h"
 #include <QColor>
 #include <QFont>
 #include <QRectF>
@@ -94,7 +100,7 @@ struct DialSliceState {
 // Circular tuning dial: drag the marker round the ring, or use the wheel,
 // to tune; the corner buttons step slices (top), turn acceleration on and
 // off (bottom left) and lock the slice (bottom right).
-class DialItem : public MeterItem {
+class NEREUS_GUI_EXPORT DialItem : public MeterItem {
     Q_OBJECT
 
 public:
