@@ -2089,7 +2089,6 @@ void PhoneCwApplet::setCompressionReading(double dB)
 {
     m_compressionSeen = true;
     m_compressionDb = dB;
-    m_compressionUnavailable = false;
     if (m_compGauge) {
         // Gauge range -25..0 dB (AetherSDR PhoneCwApplet layout). The reading
         // is floored at -30 by the poller; anything at or below -25, and a
