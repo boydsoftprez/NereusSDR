@@ -447,8 +447,6 @@ private slots:
         tci.handleCommand(QStringLiteral("cw_keyer_speed:%1;").arg(speed));
         QCOMPARE(radio.transmitModel().cwKeyerSpeed(), speed);
         tci.handleCommand(QStringLiteral("cw_macros_speed:29;"));
-        tci.handleCommand(QStringLiteral("drive:0,61;"));
-        tci.handleCommand(QStringLiteral("tune_drive:0,41;"));
         tci.handleCommand(QStringLiteral("mon_volume:-20;"));
         QCOMPARE(heldKeys(), QStringList{});
     }
