@@ -5,6 +5,8 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys CI fixes: the map reflows to fit
 //                Setup's width, and its chrome takes the workspace palette.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: the arrow caps say Tune.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/setup/KeyboardMapWidget.h"
 
@@ -164,7 +166,7 @@ QString shortName(QString name)
     name.replace(QLatin1String("Add band stack entry"), QLatin1String("Stack add"));
     name.replace(QLatin1String("Open band stack panel"), QLatin1String("Stack panel"));
     name.replace(QLatin1String("Band stack "), QLatin1String("Stack "));
-    name.replace(QLatin1String("Tune "), QString());
+    name.replace(QLatin1String("Tune step "), QLatin1String("Step "));
     name.replace(QLatin1String(" one step"), QString());
     name.replace(QLatin1String(" ten steps"), QLatin1String(" x10"));
     name.replace(QLatin1String("CW message "), QLatin1String("CW "));

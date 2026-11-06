@@ -440,6 +440,33 @@ private slots:
         QVERIFY(!tuning->isChecked());
     }
 
+    // Left and Right tune, and a cap that only said "down" or "up" didn't say so.
+    void theArrowCapsSayTheyTune_data()
+    {
+        QTest::addColumn<QString>("chord");
+        QTest::addColumn<QString>("shown");
+        QTest::newRow("left") << QStringLiteral("Left") << QStringLiteral("Tune down");
+        QTest::newRow("right") << QStringLiteral("Right") << QStringLiteral("Tune up");
+        QTest::newRow("shift left") << QStringLiteral("Shift+Left") << QStringLiteral("Tune down x10");
+        QTest::newRow("shift right") << QStringLiteral("Shift+Right") << QStringLiteral("Tune up x10");
+        // Short enough still to show on a cap.
+        QTest::newRow("step") << QStringLiteral("[") << QStringLiteral("Step smaller");
+    }
+
+    void theArrowCapsSayTheyTune()
+    {
+        QFETCH(QString, chord);
+        QFETCH(QString, shown);
+        HotKeyBindings bindings;
+        KeyboardMapWidget map(&bindings);
+        if (chord.startsWith(QLatin1String("Shift+"))) {
+            map.setLayer(KeyboardMapWidget::LayerShift);
+        }
+        QAbstractButton* const cap = map.findChild<QAbstractButton*>(chord);
+        QVERIFY2(cap != nullptr, qPrintable(chord));
+        QCOMPARE(cap->accessibleName(), QStringLiteral("%1: %2").arg(chord, shown));
+    }
+
     void aMapKeysChordIsTheOneTheRouterLooksUp_data()
     {
         QTest::addColumn<int>("layer");
