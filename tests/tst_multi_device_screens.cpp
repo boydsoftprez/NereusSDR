@@ -53,6 +53,9 @@
 //   2026-11-05: A hosting window's fill keeps a receiver's RIT and XIT; a
 //               new one starts off. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude.
+//   2026-11-06: A hosting window's fill asks for no rate the saved-rate gate
+//               stops, on a connected model. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude.
 
 #include "MultiDeviceHarness.h"
 
@@ -82,6 +85,7 @@
 #include "core/session/StationClient.h"
 #include "core/session/TransmitStateFacade.h"
 #include "core/settings/SettingsProxy.h"
+#include "core/P1RadioConnection.h"
 #include "core/RadioConnection.h"
 #include "gui/HostingSliceActions.h"
 #include "gui/MainWindow.h"
@@ -219,6 +223,7 @@ class TxFrequencyRecorder final : public RadioConnection {
     Q_OBJECT
 public:
     QList<quint64> txFrequencies;
+    int sampleRateRequests{0};
 
     explicit TxFrequencyRecorder(QObject* parent = nullptr) : RadioConnection(parent)
     {
@@ -231,7 +236,7 @@ public:
     void setReceiverFrequency(int, quint64) override {}
     void setTxFrequency(quint64 hz) override { txFrequencies.append(hz); }
     void setActiveReceiverCount(int) override {}
-    void setSampleRate(int) override {}
+    void setSampleRate(int) override { ++sampleRateRequests; }
     void setAttenuator(int) override {}
     void setPreamp(bool) override {}
     void setTxDrive(int) override {}
@@ -870,6 +875,63 @@ private slots:
         QCOMPARE(core.model->txBoundSlice(), b);
         QVERIFY(!recorder.txFrequencies.isEmpty());
         QCOMPARE(recorder.txFrequencies.last(), quint64(7'074'700));
+        AppSettings::instance().clear();
+    }
+
+    // The PR shepherd's asks: on the hosted path, a saved rate that the gate in
+    // applyRestoredSampleRate stops asks for nothing, and the slice shows the
+    // rate its receiver runs. Connected, unlike the tests above.
+    void aHostingWindowsFillAsksForNoRateTheGateStops_data()
+    {
+        QTest::addColumn<int>("protocol");
+        QTest::addColumn<int>("savedRate");
+        QTest::newRow("protocol 2, a rate off the ladder") << 2 << 123456;
+        QTest::newRow("protocol 1, a rate on the ladder") << 1 << 96000;
+        QTest::newRow("protocol 1, a rate off the ladder") << 1 << 123456;
+    }
+
+    void aHostingWindowsFillAsksForNoRateTheGateStops()
+    {
+        QFETCH(int, protocol);
+        QFETCH(int, savedRate);
+        saveReceiverB();
+        if (QTest::currentTestFailed()) { return; }
+        Core core;
+        core.model->configureStreamPool(4, 5, 192000);
+        becomeHostingStation(core);
+        RadioInfo info;
+        info.macAddress = QStringLiteral("AA:BB:CC:DD:EE:42");
+        info.protocol = protocol == 2 ? ProtocolVersion::Protocol2 : ProtocolVersion::Protocol1;
+        core.model->setLastRadioInfoForTest(info);
+        core.model->setHpsdrModelForTest(protocol == 2 ? HPSDRModel::ANAN_G2 : HPSDRModel::HERMES);
+        // The rate is radio-wide only on a real Protocol 1 connection.
+        TxFrequencyRecorder recorder;
+        P1RadioConnection protocol1;
+        core.model->injectConnectionForTest(protocol == 2
+                                                ? static_cast<RadioConnection*>(&recorder)
+                                                : &protocol1);
+        const auto detach = qScopeGuard([&] { core.model->injectConnectionForTest(nullptr); });
+        core.model->setConnectionStateForTest(ConnectionState::Connected);
+        QVERIFY(core.model->isConnected());
+        QCOMPARE(core.model->sampleRateIsRadioWide(), protocol == 1);
+        AppSettings::instance().setValue(
+            QStringLiteral("hardware/%1/slices/1/SampleRate")
+                .arg(AppSettings::normalizedRadioMac(info.macAddress)),
+            savedRate);
+        const int before = recorder.sampleRateRequests;
+
+        HostingSliceActions host(core.server.get(), core.model.get());
+        MainWindow::populatePanSlices(core.model.get(), {QStringLiteral("pan-host-2")},
+                                      false, false, &host);
+        QTRY_COMPARE(core.model->slices().size(), 2);
+        QVERIFY(core.model->waitForReceiveLaneForTest());
+        SliceModel* b = core.model->sliceById(1);
+        QVERIFY(b);
+        QVERIFY(b->streamIndex() >= 0);
+        QCOMPARE(recorder.sampleRateRequests, before);
+        const int effective = core.model->streamSampleRateHzForTest(b->streamIndex());
+        QCOMPARE(effective, 192000);
+        QCOMPARE(b->sampleRateHz(), effective);
         AppSettings::instance().clear();
     }
 
