@@ -4184,6 +4184,7 @@ nereus_add_test(tst_tx_applet_lev_eq_cfc)
 # the same transmit-permission gates.  The applet's own panel is unchanged.
 nereus_add_test(tst_tx_section_content)
 nereus_add_test(tst_rx_section_content)
+nereus_add_test(tst_phone_cw_section_content)
 target_compile_definitions(tst_rx_section_content PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
