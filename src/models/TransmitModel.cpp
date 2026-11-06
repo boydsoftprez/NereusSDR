@@ -2406,7 +2406,8 @@ void TransmitModel::takePowerHeldForNextBand(Band band)
     bool ok = false;
     const int power = s.value(heldPowerForNextBandKey()).toInt(&ok);
     if (ok) {
-        setPowerForBand(band, power);
+        // As CAT and the container button do: HL2's slider stops below 100.
+        setPowerForBand(band, std::min(power, rfPowerSliderMaxFor(m_hpsdrModel)));
         writeForRadio(QStringLiteral("powerByBand/%1").arg(bandKeyName(band)),
                       QString::number(powerForBand(band)));
     }

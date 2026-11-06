@@ -162,18 +162,18 @@ void settle()
 
 // connectToRadioImpl's order, up to the radio answering. No radio has answered
 // until radioAnswers, and a connect can end here.
-void beginConnect(RadioModel& radio, const QString& mac)
+void beginConnect(RadioModel& radio, const QString& mac, HPSDRModel model = HPSDRModel::ANAN_G2)
 {
     RadioInfo info;
     info.macAddress = mac;
     info.protocol = ProtocolVersion::Protocol2;
     radio.setLastRadioInfoForTest(info);
-    radio.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+    radio.setHpsdrModelForTest(model);
     connectLikeRadioModel(radio.transmitModel(), mac);
     radio.applyConnectTransmitBandForTest();
     if (PaProfileManager* profiles = radio.paProfileManager()) {
         profiles->setMacAddress(mac);
-        profiles->load(HPSDRModel::ANAN_G2);
+        profiles->load(model);
     }
     const int start = radio.addStartingSlices(mac);
     if (SliceModel* slice = radio.sliceById(start)) {
@@ -853,6 +853,33 @@ private slots:
         QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QStringLiteral("71"));
         radio.moxController()->setMox(false);
         settle();
+    }
+
+    // HL2's PWR tops out below 100. A held value above that is clamped when it
+    // is applied, as CAT and the container button clamp theirs.
+    void aHeldPowerIsClampedToTheHl2Maximum()
+    {
+        seedRadio(kMac);
+        saveStartingSliceOn40m();
+        {
+            RadioModel before;
+            before.keepTransmitEditsWithoutRadio();
+            before.transmitModel().setPower(95);
+            QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
+        }
+        RadioModel radio;
+        DriveWatchConnection connection;
+        radio.injectConnectionForTest(&connection);
+        const auto detach = qScopeGuard([&radio] { radio.injectConnectionForTest(nullptr); });
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        beginConnect(radio, kMac, HPSDRModel::HERMESLITE);
+        radioAnswers(radio);
+
+        const int top = rfPowerSliderMaxFor(HPSDRModel::HERMESLITE);
+        QCOMPARE(heldKeys(), QStringList{});
+        QCOMPARE(radio.transmitModel().power(), top);
+        QCOMPARE(radio.transmitModel().powerForBand(Band::Band40m), top);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QString::number(top));
     }
 
     // A logger's drive is not held, band or no band, and neither is a window's
