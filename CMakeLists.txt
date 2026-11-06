@@ -1782,6 +1782,7 @@ set(MODEL_SOURCES
 set(GUI_SOURCES
     src/gui/GuiApplication.cpp
     src/gui/GuiApplication.h
+    src/gui/PortalThemeChoice.h
     src/gui/MainWindow.cpp
     src/gui/TxHeldIndicator.cpp
     src/gui/TxHeldIndicator.h
