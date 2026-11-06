@@ -253,6 +253,63 @@ private slots:
         QCOMPARE(bench.a->frequency(), 7150000.0);
     }
 
+    void goTo_ownPlace_goesBackToIt_andTheEntryStays()
+    {
+        Bench bench;
+        bench.fill40({7100000, 7185000});
+        const QString id = idAt(*bench.controller, Band::Band40m, 7185000);
+        QCOMPARE(bench.controller->store().place(QChar(u'A'), Band::Band40m), id);
+        const BandStackEntry before = *bench.controller->store().entry(id);
+
+        bench.a->setFrequency(7200000.0);
+        bench.a->setDspMode(DSPMode::CWL);
+        const BandStackView view{qint64(7200000), qint64(24000)};
+        QVERIFY(bench.controller->performRecall(goTo(0, id, view), nullptr));
+
+        QCOMPARE(bench.a->frequency(), 7185000.0);
+        QCOMPARE(bench.a->dspMode(), DSPMode::LSB);
+        const BandStackEntry* after = bench.controller->store().entry(id);
+        QVERIFY(after != nullptr);
+        QCOMPARE(after->frequencyHz, qint64(7185000));
+        QCOMPARE(after->mode, before.mode);
+        QCOMPARE(after->centerHz, before.centerHz);
+        QCOMPARE(after->spanHz, before.spanHz);
+        QCOMPARE(bench.controller->store().place(QChar(u'A'), Band::Band40m), id);
+    }
+
+    void goTo_ownPlace_keepsTheSeedMark()
+    {
+        Bench bench;
+        const QList<BandStackEntry> seeds = bench.controller->store().entries(Band::Band40m);
+        QVERIFY(!seeds.isEmpty());
+        const BandStackEntry seed = seeds.first();
+        QVERIFY(seed.seeded);
+        QVERIFY(bench.controller->performRecall(goTo(0, seed.id), nullptr));
+
+        bench.a->setFrequency(static_cast<double>(seed.frequencyHz + 5000));
+        QVERIFY(bench.controller->performRecall(goTo(0, seed.id), nullptr));
+
+        QCOMPARE(qRound64(bench.a->frequency()), seed.frequencyHz);
+        const BandStackEntry* after = bench.controller->store().entry(seed.id);
+        QVERIFY(after != nullptr);
+        QCOMPARE(after->frequencyHz, seed.frequencyHz);
+        QVERIFY(after->seeded);
+    }
+
+    void goTo_anotherRow_stillSavesThePlaceBeingLeft()
+    {
+        Bench bench;
+        bench.fill40({7100000, 7185000});
+        const QString low = idAt(*bench.controller, Band::Band40m, 7100000);
+        const QString high = idAt(*bench.controller, Band::Band40m, 7185000);
+
+        bench.a->setFrequency(7190000.0);
+        QVERIFY(bench.controller->performRecall(goTo(0, low), nullptr));
+
+        QCOMPARE(bench.a->frequency(), 7100000.0);
+        QCOMPARE(bench.controller->store().entry(high)->frequencyHz, qint64(7190000));
+    }
+
     void press_onOneEntry_landsOnWhatItJustSaved()
     {
         Bench bench;

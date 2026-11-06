@@ -187,6 +187,12 @@ frequency, mode, filter, center and zoom go into the spot you are on unless one 
 The last slice on a spot saves when it leaves, as usual. A saved change clears the seed mark, and
 that entry stops being replaced by a region change.
 
+Clicking the row or tick of the spot you are already on, or tapping its chip on the phone, takes you
+back to what the spot has saved. Nothing is saved, so tuning away and clicking your own row undoes
+the tuning, and the spot keeps its seed mark. To keep where you tuned to, use "Save current spot
+here" or add it as a new spot. A band press that wraps on a band with one entry is different: it
+saves first and lands on what it saved.
+
 "Save current spot here" writes at once, including onto a spot another slice is on. It does not
 move the other slice.
 

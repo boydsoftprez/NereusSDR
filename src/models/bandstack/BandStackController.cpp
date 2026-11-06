@@ -348,10 +348,18 @@ BandStackController::resolve(const BandStackRecallRequest& request) const
     // Save first, so a press that lands on the spot it just left (one entry,
     // wrapping) goes to what was just saved.
     BandStackStore after = m_store;
-    const BandStackEntry* leaving = after.entry(after.place(letter, current));
+    const QString placeId = after.place(letter, current);
+    const BandStackEntry* leaving = after.entry(placeId);
     r.leftBand = current;
     r.leftSpot = currentSpot(slice, request.view, leaving);
-    after.saveOnLeave(letter, current, r.leftSpot, nowMs(), slicesOnBand(current));
+    // Going to your own place is going back to it, so nothing is left to save:
+    // writing here would replace the spot asked for with where the slice wandered
+    // to, and clear a seed's mark (design section 5.3).
+    const bool goingBack =
+        request.kind == BandStackRecallRequest::GoTo && request.entryId == placeId;
+    if (!goingBack) {
+        after.saveOnLeave(letter, current, r.leftSpot, nowMs(), slicesOnBand(current));
+    }
 
     BandStackTarget target;
     switch (request.kind) {
