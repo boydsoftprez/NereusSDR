@@ -1179,6 +1179,9 @@
 //               the taker through it: on a Core no desktop hosts the
 //               Core's own position was named with nothing. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a release that ended a key tells the watchdog it was read,
+//               so a watch left only for VOX counts its silence afresh. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -4617,8 +4620,21 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 reply(result);
                 return;
             }
+            // Maintainer's ruling, 2026-11-05: a release that ended this
+            // device's key, read here, restarts the silence of a watch left
+            // only for its armed VOX (RemoteTxWatchdog::releaseRead).
+            const bool isRelease = command.verb == RemoteKeying::Verb::Unkey
+                || ((command.verb == RemoteKeying::Verb::Tune
+                     || command.verb == RemoteKeying::Verb::TwoTone)
+                    && !command.on);
+            const bool wasKeyed = isRelease && m_radioModel
+                && m_radioModel->keyedBy().deviceId == command.deviceId;
             // Task 36: a key waiting for its microphone buffer answers later.
             m_remoteKeying->handle(command, std::move(reply));
+            if (wasKeyed && m_txWatchdog && m_radioModel
+                && m_radioModel->keyedBy().deviceId != command.deviceId) {
+                m_txWatchdog->releaseRead(command.deviceId);
+            }
         };
         // Task 37: tx.keepalive on the session's own link.
         access.keepalive = [this](const QByteArray& requester, quint64 sequence, quint32 epoch) {

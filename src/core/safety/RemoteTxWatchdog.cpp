@@ -45,6 +45,9 @@
 //               renews nothing and leaves the stop to the check, so a
 //               release read behind it is no lost link. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-05: releaseRead: a release that ended a key restarts the silence
+//               of a watch left only for VOX (maintainer's ruling). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -116,6 +119,20 @@ void RemoteTxWatchdog::setCwActive(const QByteArray& deviceId, bool active, quin
 void RemoteTxWatchdog::setKeyed(const QByteArray& deviceId, bool keyed, quint32 epoch)
 {
     update(deviceId, keyed, true, epoch, false, false);
+}
+
+void RemoteTxWatchdog::releaseRead(const QByteArray& deviceId)
+{
+    const auto it = m_devices.find(deviceId);
+    if (it == m_devices.end() || it->keyed || it->cwActive || !it->voxArmed) {
+        return;
+    }
+    // Maintainer's ruling, 2026-11-05, narrowing G-73's "no arriving packet
+    // renews a watch" for this one case: see the header.
+    it->lastMs = std::max(it->lastMs, now());
+    it->lateTurnGiven = false;
+    it->lateHoldTurnGiven = false;
+    reschedule();
 }
 
 void RemoteTxWatchdog::setVoxArmed(const QByteArray& deviceId, bool armed)

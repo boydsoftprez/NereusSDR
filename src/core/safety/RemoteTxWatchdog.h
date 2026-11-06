@@ -36,7 +36,10 @@
 // - A keepalive is heard when it came off the network (its wait at the
 //   Core since its receipt is taken off; TX mic thread, JJ approved
 //   2026-10-01), so a stall of the Core's event loop, which holds both the
-//   keepalives and this watchdog, is never taken for a quiet link. The
+//   keepalives and this watchdog, is not taken for a quiet link on a path
+//   that reports that wait. The "tx" channel does. The session's tx.keepalive
+//   passes none and counts as heard when read, so with no "tx" channel a
+//   stall past the cut is taken for a quiet link. The
 //   watchdog cannot run during such a stall: a link that went quiet in it
 //   is caught when the stall ends, as the silence is counted from the last
 //   keepalive's receipt. A check that fires late (more than
@@ -52,7 +55,21 @@
 // - A keepalive heard past the cut (or past a hold's bound below) renews
 //   nothing and stops nothing itself. The check, already due, judges the
 //   watch after its one turn, so a release read behind that keepalive ends
-//   the key normally, and a dead link is still cut by that check.
+//   the key normally, and a dead link is still cut by that check: the second
+//   check from then, or the third past a hold's bound when a second stall
+//   makes the next check late (the RF is held silent throughout). This is no
+//   promise about RF before the check: the cut guard takes RF off the air in
+//   a stall only while it is judging, that is, after the "tx" channel was
+//   heard on this key.
+// - One exception to "no arriving packet renews a watch" (addendum G-73),
+//   by the maintainer's ruling of 2026-11-05: a release that ended the
+//   device's key, read while the watch stays only for its armed VOX, starts
+//   that watch's silence afresh from the read (releaseRead). The device's
+//   release fence stopped its keepalives, so the old count says nothing about
+//   the link, and VOX stays armed through a stall. Nothing else renews: a
+//   keepalive past the cut still does not, and a watch still keyed or sending
+//   CW is untouched. A device that then goes quiet is cut 3001 ms after the
+//   read, and a VOX key after it holds and cuts on the same count.
 // - The hold: more than 400 ms without one while keyed: hold(id, true)
 //   and holdStarted. The key stays on and nothing is stopped; the Core
 //   sends silence in place of the device's audio. A device watched only for
@@ -133,6 +150,9 @@
 //   2026-11-05: a keepalive heard past the cut leaves the stop to the
 //               check. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-11-05: releaseRead (maintainer's ruling); the receipt-time rule says
+//               which paths it covers. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -252,6 +272,10 @@ public:
     /// The device's own release: its key is no longer watched (VOX armed
     /// still is).
     void released(const QByteArray& deviceId) { setKeyed(deviceId, false); }
+    /// The Core read a release from `deviceId` that ended its key. A watch
+    /// left only for its armed VOX counts its silence from now (see the
+    /// rules above); any other watch is untouched.
+    void releaseRead(const QByteArray& deviceId);
 
     void setCwActive(const QByteArray& deviceId, bool active, quint32 cwEpoch);
     bool isWatching(const QByteArray& deviceId) const;
