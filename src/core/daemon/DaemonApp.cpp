@@ -290,6 +290,15 @@ bool DaemonApp::start(const DaemonConfig& cfg)
         m_selectedRadioMac = !pending.isEmpty() ? pending
             : !saved.isEmpty()                 ? saved
                                                : cfg.radioMac;
+        // Editing radio_mac does nothing once a radio has been chosen, so
+        // say which one is in use, like the sample rate and speaker device.
+        if (pending.isEmpty() && !saved.isEmpty() && !cfg.radioMac.isEmpty()
+            && saved.compare(cfg.radioMac, Qt::CaseInsensitive) != 0) {
+            qCInfo(lcApp).noquote()
+                << QStringLiteral("DaemonApp: using the saved radio %1 (the config "
+                                  "file's %2 is only a starting value)")
+                       .arg(saved, cfg.radioMac);
+        }
         m_stationRadios->setTarget(m_selectedRadioMac);
     }
     m_radioAttempted = false;
