@@ -12,6 +12,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -161,6 +166,7 @@ mw0lge@grange-lane.co.uk
 //============================================================================================//
 
 #include "MeterItem.h"
+#include "gui/NereusGuiExport.h"
 #include <QColor>
 #include <QElapsedTimer>
 #include <QHash>
@@ -231,7 +237,7 @@ constexpr int kWebImageMaxPans = 8;
 // (Thetis has one display and sets console.PnlDisplayBackgroundImage,
 // MeterManager.cs:15620-15640). A null image means the pan's own
 // background. Only live items write here; previews never do.
-class WebImageBackgrounds : public QObject {
+class NEREUS_GUI_EXPORT WebImageBackgrounds : public QObject {
     Q_OBJECT
 public:
     static WebImageBackgrounds& instance();
@@ -246,7 +252,7 @@ private:
     QHash<int, QImage> m_images;
 };
 
-class WebImageItem : public MeterItem {
+class NEREUS_GUI_EXPORT WebImageItem : public MeterItem {
     Q_OBJECT
 
 public:

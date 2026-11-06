@@ -16,6 +16,9 @@
 //               set as subject and issuer, so the file compiles against
 //               OpenSSL 4, whose X509_get_subject_name() returns const.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: setKeySourceForTest(), a test-only seam so tests stop
+//               paying for an RSA key per Core. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/security/CertificateStore.h"
@@ -36,6 +39,7 @@
 #include <QSaveFile>
 #include <QSslSocket>
 
+#include <atomic>
 #include <memory>
 
 namespace NereusSDR {
@@ -57,6 +61,28 @@ EvpPkeyPtr  makeEvpPkeyPtr(EVP_PKEY* p)   { return EvpPkeyPtr(p, &EVP_PKEY_free)
 X509Ptr     makeX509Ptr(X509* p)          { return X509Ptr(p, &X509_free); }
 BioPtr      makeBioPtr(BIO* p)            { return BioPtr(p, &BIO_free); }
 X509NamePtr makeX509NamePtr(X509_NAME* p) { return X509NamePtr(p, &X509_NAME_free); }
+
+std::atomic<CertificateStore::KeySourceForTest> g_keySourceForTest{nullptr};
+
+// The key from the test seam, or null when there is none to use.
+EvpPkeyPtr keyFromTestSource()
+{
+    const CertificateStore::KeySourceForTest source = g_keySourceForTest.load();
+    if (source == nullptr) {
+        return makeEvpPkeyPtr(nullptr);
+    }
+    const QByteArray pem = source();
+    if (pem.isEmpty()) {
+        return makeEvpPkeyPtr(nullptr);
+    }
+    BioPtr bio = makeBioPtr(BIO_new_mem_buf(pem.constData(), static_cast<int>(pem.size())));
+    EvpPkeyPtr key = makeEvpPkeyPtr(
+        bio ? PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr) : nullptr);
+    if (!key) {
+        ERR_clear_error();
+    }
+    return key;
+}
 
 // RSA key size in bits. NereusSDR-original choice (see CertificateStore.h
 // top-of-file note): neither remote-daemon design document specifies an
@@ -388,6 +414,11 @@ CertificateStore::LoadResult CertificateStore::loadExisting()
     return LoadResult::Loaded;
 }
 
+void CertificateStore::setKeySourceForTest(KeySourceForTest source)
+{
+    g_keySourceForTest.store(source);
+}
+
 bool CertificateStore::generateAndStore()
 {
     // Fix round 1 review minor 8: every OpenSSL setter below now checks
@@ -409,7 +440,10 @@ bool CertificateStore::generateAndStore()
     // top-of-file note for why RSA over ECDSA, and the find_package(
     // OpenSSL 3.0 ...) block in the top-level CMakeLists.txt for the
     // version floor this call depends on.
-    EvpPkeyPtr pkey = makeEvpPkeyPtr(EVP_RSA_gen(kRsaKeyBits));
+    EvpPkeyPtr pkey = keyFromTestSource();
+    if (!pkey) {
+        pkey = makeEvpPkeyPtr(EVP_RSA_gen(kRsaKeyBits));
+    }
     if (!pkey) {
         return failOpenSsl("RSA key generation");
     }
