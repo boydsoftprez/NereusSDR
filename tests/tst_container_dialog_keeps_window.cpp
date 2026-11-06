@@ -10,16 +10,20 @@
 //
 // What each platform proves. MeterWidget is a native leaf on macOS and Windows,
 // so Qt never recreates the dialog there and the dialog cases pass with or
-// without the fix. They can only fail on Linux. There Qt's check runs under the
-// offscreen platform too: QRhiWidgetPrivate::init() enables the RHI config
-// whether or not the platform has RhiBasedRendering, and only the render to
-// texture setup depends on that capability. The qt* cases use plain non-native
-// QRhiWidgets, so they exercise Qt's behaviour on every platform.
+// without the anchor. They can only fail on Linux, and the Linux legs are the
+// only CI that runs this test: macOS CI builds no tests, and Windows CI builds
+// only its named audio tests. On Linux Qt's check runs under the offscreen
+// platform too: the QRhiWidget constructor enables the RHI config whether or
+// not the platform has RhiBasedRendering, and only the render to texture setup
+// depends on that capability. The qt* cases use plain non-native QRhiWidgets,
+// so they exercise Qt's behaviour wherever the test is built, a Mac developer
+// build included.
 //
-// Which Qt can show the failure. QTBUG-139109 (exec() returning early after a
-// recreate) is fixed in Qt 6.11.1 and 6.12.0. On those, exec() blocks with or
-// without the anchor, so only an older Qt tells the two apart: 6.8.3 on the
-// Linux CI legs, which are also the legs where a MeterWidget is non-native.
+// Which Qt can show the failure. Every Qt still recreates the window without
+// the anchor, 6.12.0 included, so the checks that the window survives go red on
+// any Linux Qt. QTBUG-139109 (exec() returning early after a recreate) is fixed
+// in Qt 6.11.1 and 6.12.0, so only an older Qt can fail the check that exec()
+// kept blocking: 6.8.3 on the Linux CI legs.
 #include <QtTest>
 #include <QDialog>
 #include <QGuiApplication>
