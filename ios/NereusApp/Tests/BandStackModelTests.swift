@@ -50,13 +50,14 @@ struct BandStackModelTests {
 
     /// A stack on one band whose `lastRecall` is the given one.
     private static func document(seq: Int, sliceId: Int = 0, applyView: Bool = true, centerHz: Int64 = 7_240_000,
-                                 spanHz: Int64 = 48_000, note: String = "") -> String {
+                                 spanHz: Int64 = 48_000, note: String = "", expiryBatch: String = "",
+                                 expiryCount: Int = 0) -> String {
         """
         {"schema":1,"region":"United States\(note)","options":{"dupeProtection":true,"expiryMinutes":15,"dwellSeconds":30},\
         "bands":{"40m":{"order":["40m-net"],"returnMode":"current","specificId":""}},\
         "entries":[{"id":"40m-net","band":"40m","frequencyHz":7185000,"mode":"LSB","filterLowHz":-2800,"filterHighHz":-100,\
         "centerHz":7188000,"spanHz":192000,"locked":false,"seeded":false,"name":"","lastUsedMs":0}],\
-        "places":{},"lastExpiry":{"batchId":"","count":0},\
+        "places":{},"lastExpiry":{"batchId":"\(expiryBatch)","count":\(expiryCount)},\
         "lastRecall":{"seq":\(seq),"sliceId":\(sliceId),"applyView":\(applyView),"centerHz":\(centerHz),"spanHz":\(spanHz)}}
         """
     }
@@ -363,6 +364,83 @@ struct BandStackModelTests {
         #expect(view(span: 200, alone: true, clickTune: false)?.spanHz == 1_000)
         // No span known and none saved: nothing to ask for.
         #expect(view(span: 0, alone: true, clickTune: false, current: TuneGestures.View(centerHz: 0, spanHz: 0)) == nil)
+    }
+
+    // MARK: Following an expiry
+
+    /// A new document for the rig, in the mirror once this returns.
+    private func deliver(_ json: String, to rig: Rig) async -> Bool {
+        let stack = rig.stack
+        let revision = (stack.stack?.revision ?? 0) + 1
+        await rig.station.deliver(.delta(LinkMessage.Delta(key: "bandStack", properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(json)),
+            .init(ordinal: 1, name: "revision", value: .i64(revision)),
+        ])))
+        return await Eventually.holds { stack.stack?.revision == revision }
+    }
+
+    @Test("an expiry already in the first document is not news; a new batch shows, and Undo sends it back")
+    func expiryNoteAndUndo() async throws {
+        let first = Self.document(seq: 1, expiryBatch: "old-batch", expiryCount: 3)
+        let rig = try await connected { $0.setBandStack(first) }
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.stack?.lastExpiryBatchId == "old-batch" })
+        #expect(stack.expiryNote == nil)
+
+        #expect(await deliver(Self.document(seq: 1, expiryBatch: "batch-1", expiryCount: 2), to: rig))
+        #expect(stack.expiryNote == BandStackModel.ExpiryNote(text: "Removed 2 expired entries", batchId: "batch-1"))
+        stack.undoExpiry()
+        #expect(stack.expiryNote == nil)
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 1 })
+        #expect(rig.station.bandStackCommands.first?.verb == "bandStack.restoreExpired")
+        #expect(args(rig.station.bandStackCommands.first) == ["batchId": .utf8("batch-1")])
+        // The same batch again, with anything else changed, shows it no second time.
+        #expect(await deliver(Self.document(seq: 1, note: " again", expiryBatch: "batch-1", expiryCount: 2), to: rig))
+        #expect(stack.expiryNote == nil)
+        #expect(BandStackModel.expiryText(count: 1) == "Removed 1 expired entry")
+        await rig.close()
+    }
+
+    @Test("the expiry note goes by itself, the Core clearing the batch ends it, and it outlives another verb's answer")
+    func expiryNoteEnds() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.availability == .ready })
+        #expect(BandStackModel.expiryNoteDuration == .seconds(5))
+
+        // Another verb's answer leaves it, and the Core clearing the batch ends it.
+        #expect(await deliver(Self.document(seq: 1, expiryBatch: "batch-1", expiryCount: 1), to: rig))
+        #expect(stack.expiryNote?.text == "Removed 1 expired entry")
+        stack.step(.next)
+        #expect(await Eventually.holds { rig.station.bandStackCommands.count == 1 && stack.note == nil })
+        #expect(stack.expiryNote?.batchId == "batch-1")
+        #expect(await deliver(Self.document(seq: 1), to: rig))
+        #expect(stack.expiryNote == nil)
+
+        // Left alone, it goes.
+        stack.expiryNoteLife = .milliseconds(50)
+        #expect(await deliver(Self.document(seq: 1, expiryBatch: "batch-2", expiryCount: 2), to: rig))
+        #expect(stack.expiryNote?.batchId == "batch-2")
+        #expect(await Eventually.holds { stack.expiryNote == nil })
+        await rig.close()
+    }
+
+    @Test("an Undo the Core refuses says why on the expiry note, without an Undo, and a dropped link ends a note")
+    func expiryUndoRefused() async throws {
+        let rig = try await connected()
+        let stack = rig.stack
+        #expect(await Eventually.holds { stack.availability == .ready })
+        #expect(await deliver(Self.document(seq: 1, expiryBatch: "batch-1", expiryCount: 2), to: rig))
+        let words = "Those entries can no longer be brought back."
+        rig.station.refuseNext("bandStack.restoreExpired", reason: words)
+        stack.undoExpiry()
+        #expect(await Eventually.holds { stack.expiryNote == BandStackModel.ExpiryNote(text: words, batchId: nil) })
+        #expect(stack.note == nil)
+
+        #expect(await deliver(Self.document(seq: 1, expiryBatch: "batch-2", expiryCount: 2), to: rig))
+        #expect(stack.expiryNote?.batchId == "batch-2")
+        await rig.close()
+        #expect(await Eventually.holds { stack.expiryNote == nil })
     }
 
     @Test("each open pan has its own band stack model")

@@ -66,6 +66,10 @@ final class BandStackModel: ObservableObject {
     /// starts to scroll, and the mode outlives that.
     @Published private(set) var reorder: Reorder?
 
+    /// The Core's expiry, or why it could not be undone. It is its own note, so
+    /// another verb's answer does not take the Undo away early.
+    @Published private(set) var expiryNote: ExpiryNote?
+
     /// The entry whose name is being typed in its row, and what is typed. Held
     /// here for the same reason as ``reorder``.
     @Published private(set) var renaming: String?
@@ -82,6 +86,12 @@ final class BandStackModel: ObservableObject {
         var ids: [String]
     }
 
+    /// What the expiry note says. Only a note with a batch offers Undo.
+    struct ExpiryNote: Equatable {
+        let text: String
+        let batchId: String?
+    }
+
     /// A slice of this pan's and where it is.
     struct SliceOnBand: Equatable {
         let id: Int
@@ -92,6 +102,8 @@ final class BandStackModel: ObservableObject {
 
     /// How long a hold on a band button takes to open its list.
     static let holdSeconds = 0.5
+    /// How long the Core takes an expiry's Undo, and so how long the note stays (spec V5).
+    static let expiryNoteDuration: Duration = .seconds(5)
 
     /// The list on show: the one picked, else the active slice's band.
     var shownBand: String? {
@@ -126,6 +138,11 @@ final class BandStackModel: ObservableObject {
     /// The last `lastRecall.seq` read; nil until a document says what has
     /// already happened, which is not news.
     private var seenRecallSeq: Int?
+    /// The last `lastExpiry.batchId` read, as ``seenRecallSeq`` treats its seq.
+    private var seenExpiryBatch: String?
+    /// How long this expiry note stays; tests shorten it.
+    var expiryNoteLife = BandStackModel.expiryNoteDuration
+    private var expiryNoteTimer: Task<Void, Never>?
     private var sliceReadQueued = false
     private var lastActiveSliceId: Int?
     /// The newest verb sent: an older one's answer does not replace its note.
@@ -142,6 +159,7 @@ final class BandStackModel: ObservableObject {
             if !complete {
                 MainActor.assumeIsolated {
                     self?.seenRecallSeq = nil
+                    self?.seenExpiryBatch = nil
                 }
             }
             Task { @MainActor in self?.refresh() }
@@ -458,7 +476,22 @@ final class BandStackModel: ObservableObject {
     }
 
     func restoreExpired(batchId: String) {
-        send("bandStack.restoreExpired", [text("batchId", batchId)])
+        send("bandStack.restoreExpired", [text("batchId", batchId)]) { [weak self] refusal in
+            // Said where the Undo was: the band shows this note with its chips off.
+            if let refusal {
+                self?.note = nil
+                self?.showExpiryNote(ExpiryNote(text: refusal, batchId: nil))
+            }
+        }
+    }
+
+    /// The note's Undo.
+    func undoExpiry() {
+        guard let batchId = expiryNote?.batchId else {
+            return
+        }
+        clearExpiryNote()
+        restoreExpired(batchId: batchId)
     }
 
     /// `ids` goes as the text of a JSON array of strings, since the link has
@@ -520,6 +553,55 @@ final class BandStackModel: ObservableObject {
                                         clickTune: band.settings.ctun,
                                         spanLimits: band.spanLimits(sampleRateHz: entry.sampleRateHz)) {
             band.requestView(view)
+        }
+    }
+
+    // MARK: Following an expiry
+
+    static func expiryText(count: Int) -> String {
+        count == 1 ? "Removed 1 expired entry" : "Removed \(count) expired entries"
+    }
+
+    /// Shows a new `lastExpiry` once per batch. The Core clears the batch when
+    /// it is undone, which ends the note on every pan that still shows it.
+    private func followExpiry(_ document: BandStack?) {
+        guard let document, availability == .ready else {
+            if document == nil {
+                seenExpiryBatch = nil
+            }
+            clearExpiryNote()
+            return
+        }
+        let batch = document.lastExpiryBatchId
+        let isNew = seenExpiryBatch.map { $0 != batch } ?? false
+        seenExpiryBatch = batch
+        guard isNew else {
+            return
+        }
+        if !batch.isEmpty, document.lastExpiryCount > 0 {
+            showExpiryNote(ExpiryNote(text: Self.expiryText(count: document.lastExpiryCount), batchId: batch))
+        } else if expiryNote?.batchId != nil {
+            clearExpiryNote()
+        }
+    }
+
+    private func showExpiryNote(_ shown: ExpiryNote) {
+        expiryNoteTimer?.cancel()
+        expiryNote = shown
+        let life = expiryNoteLife
+        expiryNoteTimer = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: life)
+            if !Task.isCancelled {
+                self?.expiryNote = nil
+            }
+        }
+    }
+
+    private func clearExpiryNote() {
+        expiryNoteTimer?.cancel()
+        expiryNoteTimer = nil
+        if expiryNote != nil {
+            expiryNote = nil
         }
     }
 
@@ -610,6 +692,7 @@ final class BandStackModel: ObservableObject {
         }
         endReorderIfElsewhere()
         follow(next?.lastRecall)
+        followExpiry(next)
     }
 
     private func readAvailability(_ document: BandStack?) -> Availability {

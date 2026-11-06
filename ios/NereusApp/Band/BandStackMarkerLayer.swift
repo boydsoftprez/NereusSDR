@@ -104,7 +104,7 @@ struct BandStackMarkerLayer: View {
     var leadingInset: CGFloat = 0
 
     /// As the board's `.mk` and `.mk.act`.
-    private static let face = Color(red: 12 / 255, green: 12 / 255, blue: 14 / 255).opacity(0.86)
+    fileprivate static let face = Color(red: 12 / 255, green: 12 / 255, blue: 14 / 255).opacity(0.86)
     private static let rim = Color(red: 0x33 / 255, green: 0x50 / 255, blue: 0x6d / 255)
     private static let words = Color(red: 0xa9 / 255, green: 0xc7 / 255, blue: 0xe4 / 255)
     private static let dot = Color(red: 0x6e / 255, green: 0xa5 / 255, blue: 0xd8 / 255)
@@ -114,7 +114,7 @@ struct BandStackMarkerLayer: View {
     private static let lock = Color(red: 0xc9 / 255, green: 0xa2 / 255, blue: 0x4a / 255)
 
     /// The note's widest.
-    private static let noteMaxWidth: CGFloat = 240
+    fileprivate static let noteMaxWidth: CGFloat = 240
 
     var body: some View {
         let chips = model.markerChips(geometry: geometry, layout: layout)
@@ -206,7 +206,66 @@ struct BandStackMarkerLayer: View {
         .background(Self.face, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
         .frame(width: min(Self.noteMaxWidth, max(0, layout.strip.maxX - left - BandStackMarkerLayout.edgeGap)))
         // At the top of the waterfall: a flag hanging down the spectrum would cover it there.
-        .offset(x: left, y: layout.waterfall.minY + BandStackMarkerLayout.footGap)
+        .offset(x: left, y: layout.waterfall.minY + BandStackMarkerLayout.footGap
+            + (model.expiryNote == nil ? 0 : BandStackExpiryNoteRow.height + BandStackMarkerLayout.footGap))
+    }
+}
+
+/// The expiry note's words and its Undo, in each place the stack shows notes.
+struct BandStackExpiryNoteRow: View {
+    static let height: CGFloat = 28
+
+    @ObservedObject var model: BandStackModel
+    /// Goes before "ExpiryNote" and "ExpiryUndo" in the row's identifiers.
+    let identifier: String
+    var font: Font = .system(size: 11)
+
+    var body: some View {
+        if let expiry = model.expiryNote {
+            HStack(alignment: .center, spacing: 6) {
+                Text(expiry.text)
+                    .font(font)
+                    .foregroundStyle(expiry.batchId == nil ? ChromeColours.refusalText : ChromeColours.textBright)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("\(identifier)ExpiryNote")
+                if expiry.batchId != nil {
+                    Button {
+                        model.undoExpiry()
+                    } label: {
+                        Text("Undo")
+                            .font(font.weight(.semibold))
+                            .foregroundStyle(ChromeColours.textBright)
+                            .frame(minWidth: 44, minHeight: Self.height)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Brings the expired entries back")
+                    .accessibilityIdentifier("\(identifier)ExpiryUndo")
+                }
+            }
+            .frame(minHeight: Self.height)
+        }
+    }
+}
+
+/// The expiry note on the band, where the operator is when entries expire. It
+/// shows with the chips switched off too, since it has nowhere else to be.
+struct BandStackExpiryNoteLayer: View {
+    @ObservedObject var model: BandStackModel
+    let layout: BandLayout
+    var leadingInset: CGFloat = 0
+
+    var body: some View {
+        if model.expiryNote != nil {
+            let left = BandStackMarkerLayout.noteLeft(bandHeight: layout.size.height, leadingInset: leadingInset)
+            BandStackExpiryNoteRow(model: model, identifier: "bandStackBand")
+                .padding(.horizontal, 8)
+                .background(BandStackMarkerLayer.face, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                .frame(width: min(BandStackMarkerLayer.noteMaxWidth,
+                                  max(0, layout.strip.maxX - left - BandStackMarkerLayout.edgeGap)))
+                .offset(x: left, y: layout.waterfall.minY + BandStackMarkerLayout.footGap)
+        }
     }
 }
 

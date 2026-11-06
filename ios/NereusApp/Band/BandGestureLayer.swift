@@ -311,6 +311,9 @@ struct BandGestureLayer: View {
             if let markerModel {
                 BandStackMarkerLayer(model: markerModel, geometry: geometry, layout: layout, leadingInset: leadingInset)
             }
+            if let bandStack {
+                BandStackExpiryNoteLayer(model: bandStack, layout: layout, leadingInset: leadingInset)
+            }
             if let roundtable {
                 // 8 points above the band plan, clear of every flag and folded tag.
                 RoundtableTagLayer(roundtable: roundtable, sliceIds: entries.map { Int64($0.id) },

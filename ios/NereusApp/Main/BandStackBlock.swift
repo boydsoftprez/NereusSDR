@@ -594,6 +594,8 @@ struct BandStackBlock: View {
                 .padding(.top, 6)
                 .accessibilityIdentifier("bandStackEmpty")
         }
+        BandStackExpiryNoteRow(model: model, identifier: "bandStack")
+            .padding(.top, model.expiryNote == nil ? 0 : 6)
         if let note = model.note {
             HStack(alignment: .top, spacing: 6) {
                 Text(note)

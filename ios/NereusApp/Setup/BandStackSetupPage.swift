@@ -72,6 +72,11 @@ struct BandStackSetupPage: View {
                         .accessibilityIdentifier("bandStackSetup.reason")
                 }
             }
+            if model.expiryNote != nil {
+                SetupPanelSection {
+                    BandStackExpiryNoteRow(model: model, identifier: "bandStackSetup", font: .body)
+                }
+            }
             if let note = model.note {
                 noteRow(note)
             }
