@@ -13,6 +13,11 @@
 //               lock act on the slice they name, through vfoRequestSlice()
 //               (now any meter item). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-06: bandStackPanel(), bandStackReason(),
+//               refreshBandStackAvailability(), the panel beside the pan
+//               column; the placeholder reason retired (band stack plan
+//               Task 7). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
 //               display's clicks, wheel and keys act on the slice they
 //               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
@@ -387,6 +392,8 @@ class SystemTile;
 class StatusBadge;
 class MultiDeviceController;
 class HostingSliceActions;
+class BandStackAccess;
+class BandStackPanel;
 class NoticeCard;
 struct SessionMessage;
 class AdcOverloadBadge;
@@ -411,9 +418,6 @@ public:
     /// The preset a container's filter right-click edits, or -1 when the
     /// slice's filter is none of its mode's presets.
     static int containerFilterContextSlot(int index, int activePreset, int presetCount);
-    /// What a container's band-stack right-click says while band stacking
-    /// is not built.
-    static QString containerBandStackReason();
     enum class ConnectionStartup { Automatic, Deferred };
     explicit MainWindow(QWidget* parent = nullptr);
 
@@ -460,6 +464,10 @@ public:
     void setDesktopStationController(DesktopStationController* controller);
     void refreshDesktopStationState();
     FftEnginePool* fftEnginePoolForTest() const { return m_fftEnginePool; }
+    /// Why the band stack cannot be used now. Empty when it can.
+    QString bandStackReason() const;
+    /// Test seam: the window uses this access instead of its RadioModel's.
+    void setBandStackAccessForTest(BandStackAccess* access);
     // Display pill plan Task 9: the window's per-band pan models.
     PanModels* panModels() const { return m_panModels; }
 
@@ -709,6 +717,13 @@ public:
     static QString tnfAddRejectedNotice(const QString& reason);
 
 public slots:
+    /// Opens or closes the band stack panel: the status bar's dots, the Band
+    /// menu's Band Stacking... and the hot keys' entry point.
+    void bandStackPanel();
+    /// Applies a change of the Core's capability or the connection: the panel's
+    /// greyed state and the dots' and menu entry's tooltip.
+    void refreshBandStackAvailability();
+
     // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
     // Update PA status badge state. Wired by Task 17 to
     // RadioModel::paTrippedChanged.
@@ -2027,6 +2042,16 @@ private:
     void connectProfileRail();
     int m_hDelta{0};
     int m_vDelta{0};
+    // Band stack plan Task 7: the column of pans and zoom bar beside the band
+    // stack panel. Free containers live on it, so opening the panel moves them
+    // as any change of the pane's size does.
+    QWidget* m_panColumn{nullptr};
+    BandStackPanel* m_bandStackPanel{nullptr};
+    QAction* m_bandStackAction{nullptr};
+    QPointer<BandStackAccess> m_bandStackAccess;
+    void bindBandStackAccess(BandStackAccess* access);
+    void refreshBandStackSlice();
+    void refreshBandStackDots();
 
     void createDefaultContainers();
 

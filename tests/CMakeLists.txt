@@ -10587,6 +10587,11 @@ nereus_add_test(tst_bandstack_link
 target_compile_definitions(tst_bandstack_link PRIVATE
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 
+# Band stack plan Task 7: the panel shell and its place beside the pans, both
+# looks, real MainWindow offscreen.
+nereus_add_test(tst_bandstack_panel
+    fakes/FakeBandStackAccess.h)
+
 # Band stack plan Task 5: a recall on a shared receiver asks through the
 # confirm step, through a loopback link with fake peers.
 nereus_add_test(tst_bandstack_question

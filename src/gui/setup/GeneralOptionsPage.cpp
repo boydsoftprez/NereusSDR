@@ -703,7 +703,8 @@ void GeneralOptionsPage::buildHardwareConfigGroup()
         // From Thetis setup.cs:19251-19260 [v2.10.3.15] (ChkExtended_CheckedChanged):
         //   console.Extended = chkExtended.Checked;
         // Its //MW0LGE_21d BandStackManager.RegionReset() has no NereusSDR
-        // counterpart: the band stack does not follow the region.
+        // counterpart: this setting leaves the band stack alone, and a region
+        // change asks before replacing entries (band stack design V1).
         AppSettings::instance().setValue(QString::fromLatin1(RadioModel::kExtendedTransmitKey),
                                           on ? QStringLiteral("True") : QStringLiteral("False"));
         if (RadioModel* radio = model()) {
@@ -715,6 +716,8 @@ void GeneralOptionsPage::buildHardwareConfigGroup()
 
     // --- Warning label ---
     // From Thetis setup.designer.cs:8045-8054 [v2.10.3.13]
+    // Stays hidden: nothing here resets the band stack without asking (band
+    // stack design 5.7, V1).
     m_lblWarningRegionExtended = new QLabel(
         tr("Changing this setting will reset your band stack entries"), group);
     m_lblWarningRegionExtended->setObjectName(QStringLiteral("lblWarningRegionExtended"));

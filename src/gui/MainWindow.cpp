@@ -1084,6 +1084,10 @@
 //   2026-11-05 - Band stack plan Task 6: while this desktop hosts, its band
 //               stack runs as the station device (bindBandStack). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 7: the band stack panel beside the pan
+//               column, the dots and menu entry open it, refusals and reports
+//               toast, the placeholder is gone. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (C2, I1, I2, M6): a filter display
 //                 learns whether its slice is the transmit slice; the VFO
 //                 display's TX box asks requestTransmitSlice and shows
@@ -1320,6 +1324,7 @@ warren@wpratt.com
 #include "gui/multidevice/MultiDeviceController.h"
 #include "gui/multidevice/NoticeCard.h"
 #include "gui/HostingSliceActions.h"
+#include "gui/bandstack/BandStackPanel.h"
 #include "models/bandstack/LocalBandStackAccess.h"
 #include "gui/LevelCalGridFollowGuard.h"
 #include "core/session/RemoteDevicesState.h"
@@ -2118,6 +2123,20 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         refreshContainerControls();
     });
 
+    // Band stack plan Task 7: the panel's state follows the access, the link
+    // and the connection, and every refusal and report toasts, once.
+    bindBandStackAccess(m_radioModel->bandStack());
+    connect(m_radioModel, &RadioModel::stationLinkStateChanged,
+            this, &MainWindow::refreshBandStackAvailability);
+    connect(m_radioModel, &RadioModel::connectionStateChanged,
+            this, &MainWindow::refreshBandStackAvailability);
+    connect(m_radioModel, &RadioModel::activeSliceChanged,
+            this, &MainWindow::refreshBandStackSlice);
+    connect(m_radioModel, &RadioModel::sliceAdded,
+            this, &MainWindow::refreshBandStackSlice);
+    connect(m_radioModel, &RadioModel::sliceRemoved,
+            this, &MainWindow::refreshBandStackSlice);
+
     // Issue #118 — show a transient status-bar message when a band-button
     // click short-circuits (locked slice, XVTR without transverter config).
     // Prevents silent failure — the user sees why nothing happened.
@@ -2532,6 +2551,97 @@ bool MainWindow::desktopListensTo(int sliceId) const
     const SliceOwnership& ownership = *m_radioModel->sliceOwnership();
     return !ownership.mark(sliceId).isHeld()
         && ownership.isListening(SliceOwnership::stationDevice(), sliceId);
+}
+
+void MainWindow::bandStackPanel()
+{
+    if (m_bandStackPanel) {
+        m_bandStackPanel->setOpen(!m_bandStackPanel->isOpen());
+    }
+}
+
+QString MainWindow::bandStackReason() const
+{
+    return m_bandStackAccess ? m_bandStackAccess->unavailableReason()
+                             : BandStackAccess::notConnectedReason();
+}
+
+void MainWindow::setBandStackAccessForTest(BandStackAccess* access)
+{
+    bindBandStackAccess(access);
+}
+
+void MainWindow::bindBandStackAccess(BandStackAccess* access)
+{
+    if (m_bandStackAccess) {
+        m_bandStackAccess->disconnect(this);
+    }
+    m_bandStackAccess = access;
+    if (m_bandStackPanel) {
+        m_bandStackPanel->setAccess(access);
+    }
+    if (access) {
+        connect(access, &BandStackAccess::stateChanged,
+                this, &MainWindow::refreshBandStackAvailability);
+        connect(access, &BandStackAccess::refused, this, [this](const QString& reason) {
+            showToast(reason, ToastSeverity::Warning, 3000);
+        });
+        connect(access, &BandStackAccess::reported, this, [this](const QString& text) {
+            showToast(text, ToastSeverity::Info, 3000);
+        });
+    }
+    refreshBandStackAvailability();
+}
+
+void MainWindow::refreshBandStackAvailability()
+{
+    const QString reason = bandStackReason();
+    if (m_bandStackPanel) {
+        m_bandStackPanel->setUnavailableReason(reason);
+    }
+    if (m_bandStackLabel) {
+        m_bandStackLabel->setToolTip(reason.isEmpty() ? QStringLiteral("Band stack") : reason);
+    }
+    if (m_bandStackAction) {
+        m_bandStackAction->setToolTip(reason);
+    }
+    refreshBandStackDots();
+    refreshBandStackSlice();
+}
+
+void MainWindow::refreshBandStackSlice()
+{
+    if (m_shuttingDown || !m_bandStackPanel) {
+        return;
+    }
+    m_bandStackPanel->setSlice(activeSliceForWindow());
+}
+
+void MainWindow::refreshBandStackDots()
+{
+    auto* dots = qobject_cast<QLabel*>(m_bandStackLabel);
+    if (!dots) {
+        return;
+    }
+    // desktop.html's dots: grey, the selection colour while the panel is open,
+    // and dark while the stack cannot be used.
+    QColor colour = WorkspacePreview::roleColour(QColor(0x40, 0x48, 0x58), "text-inactive");
+    if (!bandStackReason().isEmpty()) {
+        colour = WorkspacePreview::roleColour(QColor(0x28, 0x2c, 0x34), "border");
+    } else if (m_bandStackPanel && m_bandStackPanel->isOpen()) {
+        colour = WorkspacePreview::roleColour(QColor(0x00, 0xb4, 0xd8), "accent");
+    }
+    QPixmap pm(10, 22);
+    pm.fill(Qt::transparent);
+    QPainter painter(&pm);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(colour);
+    painter.setPen(Qt::NoPen);
+    for (int i = 0; i < 3; ++i) {
+        painter.drawEllipse(0, i * 7, 9, 6);
+    }
+    painter.end();
+    dots->setPixmap(pm);
 }
 
 SliceModel* MainWindow::activeSliceForWindow() const
@@ -3284,6 +3394,7 @@ void MainWindow::refreshDesktopStationState()
     // that pan retirement may already have destroyed during shutdown.
     if (m_shuttingDown) { return; }
     if (!m_radioModel || m_radioModel->role() != RadioModel::Role::Local) { return; }
+    refreshBandStackSlice();
     const quint64 bindingGeneration = m_desktopBindingGeneration;
     const bool hosting = desktopHosting();
     StationServer* server = hosting ? m_desktopStationController->server() : nullptr;
@@ -8996,8 +9107,23 @@ void MainWindow::buildUI()
 
     // Left side: spectrum + zoom bar
     auto* spectrumPane = new QWidget(m_mainSplitter);
-    spectrumPane->setMinimumWidth(400);
-    auto* layout = new QVBoxLayout(spectrumPane);
+    // Band stack plan Task 7: the panel sits inside this pane, left of the pan
+    // column, not as a splitter child: restoreSplitterState drops saved sizes
+    // when the splitter's count differs.
+    auto* paneLayout = new QHBoxLayout(spectrumPane);
+    paneLayout->setContentsMargins(0, 0, 0, 0);
+    paneLayout->setSpacing(0);
+    m_bandStackPanel = new BandStackPanel(m_radioModel->bandStack(), spectrumPane);
+    paneLayout->addWidget(m_bandStackPanel);
+    connect(m_bandStackPanel, &BandStackPanel::closeRequested, this,
+            [this] { m_bandStackPanel->setOpen(false); });
+    connect(m_bandStackPanel, &BandStackPanel::openChanged, this,
+            [this] { refreshBandStackDots(); });
+    m_panColumn = new QWidget(spectrumPane);
+    m_panColumn->setObjectName(QStringLiteral("panColumn"));
+    m_panColumn->setMinimumWidth(400);
+    paneLayout->addWidget(m_panColumn, 1);
+    auto* layout = new QVBoxLayout(m_panColumn);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
@@ -9006,7 +9132,7 @@ void MainWindow::buildUI()
     // "pan-0" containing a PanadapterApplet whose embedded SpectrumWidget
     // becomes the new single-pan default. activeSpectrumWidget() resolves
     // to that widget for backward-compat call sites.
-    m_panStack = new PanadapterStack(spectrumPane);
+    m_panStack = new PanadapterStack(m_panColumn);
     m_panStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     layout->addWidget(m_panStack, 1);
 
@@ -9363,7 +9489,7 @@ void MainWindow::buildUI()
     }
 
     // Zoom slider bar below spectrum
-    auto* zoomBar = new QSlider(Qt::Horizontal, spectrumPane);
+    auto* zoomBar = new QSlider(Qt::Horizontal, m_panColumn);
     zoomBar->setRange(1, 768);
     zoomBar->setValue(768);
     zoomBar->setFixedHeight(20);
@@ -9394,7 +9520,7 @@ void MainWindow::buildUI()
     }
 
     // --- Container Infrastructure (Phase 3G-1) ---
-    m_containerManager = new ContainerManager(spectrumPane, m_mainSplitter, this);
+    m_containerManager = new ContainerManager(m_panColumn, m_mainSplitter, this);
     if (m_edgeDockArea) {
         m_containerManager->setEdgeDockArea(m_edgeDockArea);
     }
@@ -13348,6 +13474,7 @@ void MainWindow::buildMenuBar()
     // BAND
     // =========================================================================
     QMenu* bandMenu = menuBar()->addMenu(QStringLiteral("&Band"));
+    bandMenu->setToolTipsVisible(true);
 
     {
         QMenu* hfMenu = bandMenu->addMenu(QStringLiteral("&HF"));
@@ -13405,12 +13532,8 @@ void MainWindow::buildMenuBar()
 
     bandMenu->addSeparator();
 
-    {
-        QAction* bandStackAction = bandMenu->addAction(QStringLiteral("Band &Stacking..."));
-        bandStackAction->setEnabled(false);
-        // R-R3-49: hidden until band stacking is built.
-        UnbuiltFeatures::hideUnlessBuilt(bandStackAction, UnbuiltFeature::BandStack);
-    }
+    m_bandStackAction = bandMenu->addAction(QStringLiteral("Band &Stacking..."));
+    connect(m_bandStackAction, &QAction::triggered, this, &MainWindow::bandStackPanel);
 
     // =========================================================================
     // MODE
@@ -14106,28 +14229,19 @@ void MainWindow::buildStatusBar()
 
     // ── Left section ──────────────────────────────────────────────────────────
 
-    // Band Stack: three grey circles (NYI — clickable placeholder). Added to
-    // m_placeholderGroup below rather than hbox directly, so it folds
-    // together with TNF/CWX/DVK/FDX at rung 10 (design §6) instead of
-    // sitting at its own fixed early position.
+    // Band Stack: three circles that open and close the panel (band stack plan
+    // Task 7; refreshBandStackDots paints them). Added to m_placeholderGroup
+    // below rather than hbox directly, so it folds together with
+    // TNF/CWX/DVK/FDX at rung 10 (design §6) instead of sitting at its own
+    // fixed early position.
     auto* bandStackLabel = new QLabel(barWidget);
     bandStackLabel->setFixedSize(10, 22);
-    {
-        QPixmap pm(10, 22);
-        pm.fill(Qt::transparent);
-        QPainter painter(&pm);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(WorkspacePreview::roleColour(QColor(0x40, 0x48, 0x58), "text-inactive"));
-        painter.setPen(Qt::NoPen);
-        for (int i = 0; i < 3; ++i) {
-            painter.drawEllipse(0, i * 7, 9, 6);
-        }
-        painter.end();
-        bandStackLabel->setPixmap(pm);
-    }
     bandStackLabel->setToolTip(QStringLiteral("Band stack"));
     bandStackLabel->setCursor(Qt::PointingHandCursor);
     bandStackLabel->setObjectName(QStringLiteral("statusBandStackDots"));
+    // QLabel has no click: the same event filter path as the panel toggle below.
+    bandStackLabel->installEventFilter(this);
+    bandStackLabel->setProperty("isBandStackToggle", true);
 
     // +PAN icon. From AetherSDR MainWindow.cpp:4368-4396 [@c6481cb]: a jagged
     // spectrum polyline with a plus in the upper right. An icon reads as a
@@ -14991,8 +15105,6 @@ void MainWindow::buildStatusBar()
     // R-R3-49: items whose feature is not built yet never show. Reported as
     // availability, the controller's one side channel, so the fold ladder
     // neither shows them nor charges their width.
-    m_chromeBar->setItemAvailable(m_bandStackLabel,
-                                  UnbuiltFeatures::isBuilt(UnbuiltFeature::BandStack));
     m_chromeBar->setItemAvailable(m_placeholderGroup,
                                   UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)
                                       || UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice)
@@ -15750,10 +15862,11 @@ void MainWindow::wireContainerControls(ContainerWidget* c)
             [this, c]() { onContainerFilterContext(c, -1); });
     // From Thetis MeterManager.cs:13216 and :14593 [v2.10.3.15]: a band
     // button's or the VFO display's right-click opens console.PopupBandstack
-    // (console.cs:48529). Band stacking is not built in NereusSDR (the Band
-    // menu's entry waits for it too), so the right-click says so.
-    connect(c, &ContainerWidget::bandStackRequested, this,
-            [this](int) { showContainerButtonReason(containerBandStackReason()); });
+    // (console.cs:48529). NereusSDR's band stack shows in its panel, so the
+    // right-click brings the panel up.
+    connect(c, &ContainerWidget::bandStackRequested, this, [this](int) {
+        if (m_bandStackPanel && !m_bandStackPanel->isOpen()) { bandStackPanel(); }
+    });
     connect(c, &ContainerWidget::antennaSelected, this,
             [this, c](int index) { onContainerAntennaSelected(c, index); });
     connect(c, &ContainerWidget::tuneStepSelected, this,
@@ -16577,11 +16690,6 @@ void MainWindow::onContainerFilterClicked(ContainerWidget* c, int index)
     // [v2.10.3.15]), so this click sets the slice's RX filter only and
     // leaves TransmitModel's filter as it is.
     slice->setFilter(presets[index].low, presets[index].high);
-}
-
-QString MainWindow::containerBandStackReason()
-{
-    return tr("Band stacking is not ready.");
 }
 
 int MainWindow::containerFilterContextSlot(int index, int activePreset, int presetCount)
@@ -17811,11 +17919,10 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 
     // Update axis-lock positions for overlay-docked containers
     if (m_mainSplitter && m_containerManager) {
-        // Use the spectrum pane (first splitter child) as reference
-        QWidget* spectrumPane = m_edgeDockArea ? m_edgeDockArea->center() : m_mainSplitter->widget(0);
-        if (spectrumPane) {
-            m_hDelta = spectrumPane->width();
-            m_vDelta = spectrumPane->height();
+        // Use the pan column, the free containers' parent, as reference
+        if (m_panColumn) {
+            m_hDelta = m_panColumn->width();
+            m_vDelta = m_panColumn->height();
             m_containerManager->updateDockedPositions(m_hDelta, m_vDelta);
         }
     }
@@ -17945,6 +18052,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // Handle ☰ panel toggle click — label has property "isPanelToggle"
     if (event->type() == QEvent::MouseButtonPress) {
         auto* label = qobject_cast<QLabel*>(watched);
+        if (label && label->property("isBandStackToggle").toBool()) {
+            bandStackPanel();
+            return true;
+        }
         if (label && label->property("isPanelToggle").toBool()) {
             if (m_edgeDockArea) {
                 // Workspace preview: collapse the right strip, keep its contents.

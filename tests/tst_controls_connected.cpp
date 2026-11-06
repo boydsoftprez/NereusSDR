@@ -69,6 +69,7 @@
 #include "core/RadioDiscovery.h"
 #include "core/StepAttenuatorFacade.h"
 #include "core/WdspTypes.h"
+#include "gui/bandstack/BandStackPanel.h"
 #include "gui/DiversityDialog.h"
 #include "gui/GuiSessionCoordinator.h"
 #include "gui/HGauge.h"
@@ -828,13 +829,16 @@ private slots:
             "This slice's filter is not one of this mode's presets, so there is no "
             "preset to edit.")));
 
-        // Band stacking is not built: a band button's or the VFO display's
-        // band-stack right-click says so rather than doing nothing.
-        qDeleteAll(window->findChildren<StatusToast*>());
+        // A band button's or the VFO display's band-stack right-click brings
+        // up the band stack panel, and a second one leaves it up.
+        auto* bandStack = window->findChild<BandStackPanel*>();
+        QVERIFY(bandStack);
+        bandStack->setOpen(false, false);
         emit container->bandStackRequested(5);
-        QVERIFY(toastShown(window, MainWindow::containerBandStackReason()));
-        QCOMPARE(MainWindow::containerBandStackReason(),
-                 QStringLiteral("Band stacking is not ready."));
+        QVERIFY(bandStack->isOpen());
+        emit container->bandStackRequested(5);
+        QVERIFY(bandStack->isOpen());
+        bandStack->setOpen(false, false);
         store->resetPreset(DSPMode::USB, 2);
         store->resetPreset(DSPMode::USB, 4);
         QVERIFY(sessions.replace({}, false));

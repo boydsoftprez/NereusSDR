@@ -1797,6 +1797,8 @@ set(GUI_SOURCES
     src/gui/SessionEndSave.h
     src/gui/DesktopStationController.cpp
     src/gui/DesktopStationController.h
+    src/gui/bandstack/BandStackPanel.cpp
+    src/gui/bandstack/BandStackPanel.h
     src/gui/HostingSliceActions.cpp
     src/gui/HostingSliceActions.h
     src/gui/GuiDesktopStationRuntime.cpp
@@ -2307,6 +2309,9 @@ set(GUI_SOURCES
 if(APPLE)
     list(APPEND GUI_SOURCES src/gui/QtCocoaAccessibilityOwnershipGuard.mm)
     set_source_files_properties(src/gui/QtCocoaAccessibilityOwnershipGuard.mm
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    list(APPEND GUI_SOURCES src/gui/bandstack/BandStackReducedMotion.mm)
+    set_source_files_properties(src/gui/bandstack/BandStackReducedMotion.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 qt_add_resources(RESOURCES resources.qrc)
