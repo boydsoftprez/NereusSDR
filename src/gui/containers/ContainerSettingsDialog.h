@@ -236,6 +236,7 @@ private:
     void updateDraftStatus();
     QString m_selectedId;
     ContentPropertyEditor* m_contentEditor=nullptr;
+    QComboBox* m_meterFaceCombo=nullptr;
     QComboBox *m_headerCombo=nullptr, *m_layoutCombo=nullptr, *m_placementCombo=nullptr, *m_anchorCombo=nullptr;
     bool insertImported(const DocumentResult& result, bool replaceContainer);
     bool m_loadingDraft=false;

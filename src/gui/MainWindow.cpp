@@ -11,6 +11,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-02: Prioritize passive reports at the selected listening context.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: The note on populatePanSlices no longer says an
@@ -5789,6 +5796,8 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // opens the panel on this slice; the line itself follows the model.
     connect(newFlag, &VfoWidget::roundtableLineClicked, this,
             [this, sliceIndex]() { openRoundtableForSlice(sliceIndex); });
+    connect(slice, &SliceModel::frequencyChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
+    connect(slice, &SliceModel::dspModeChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
     scheduleRoundtableRefresh();
     // Phase 3F closeout — AntennaPickerMenu selection forwards to
     // SliceModel::setRxAntenna. Sub-Epic E Task 5 consumer wire-up.
@@ -6404,10 +6413,12 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
     // Connection thread -- would need synchronisation AND lose Qt's
     // automatic disconnect-on-destroy, which is what makes this safe at
     // shutdown.
-    connect(m_radioModel, &RadioModel::rawIqDataForStream, engine,
-            [engine, streamIndex](int idx, const QVector<float>& samples) {
+    // The companion tap stamps AUTO's atomic epoch before this queued
+    // delivery. Qt retains the existing engine-context lifetime ordering.
+    connect(m_radioModel, &RadioModel::rawIqDataForAutoAgc, engine,
+            [engine, streamIndex](int idx, const QVector<float>& samples, quint64 epoch) {
         if (idx != streamIndex) { return; }
-        engine->feedIQ(samples);
+        engine->feedIQForAutoAgc(samples, epoch);
     });
 
     // A lost I/Q packet on this stream (or on every stream, -1): on a
@@ -6439,10 +6450,10 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
     auto* nf = new NoiseFloorTracker;
     m_streamNoiseFloors.insert(streamIndex, nf);
     if (m_radioModel) { m_radioModel->setStreamNoiseFloorTracker(streamIndex, nf); }
-    connect(engine, &FFTEngine::fftReady, this,
-            [nf](int, const QVector<float>& binsDbm) {
+    connect(engine, &FFTEngine::autoAgcFrameReady, this,
+            [nf](int, const QVector<float>& binsDbm, quint64 epoch) {
         static constexpr float kFrameIntervalMs = 33.0f;
-        nf->feed(binsDbm, kFrameIntervalMs);
+        nf->feedForEpoch(binsDbm, kFrameIntervalMs, epoch);
     });
     // Rulings wave R2: every FFT size change, wherever it came from (a
     // pan's Display pill, Setup, a station setting change), restarts this
@@ -6786,14 +6797,60 @@ void MainWindow::wirePanRoundtableTags()
     }
 }
 
+void MainWindow::onRoundtableRoomChanged(const QString& roomId)
+{
+    const RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+    const QJsonObject room = model ? model->room(roomId) : QJsonObject();
+    const QString structure = roundtableRoomStructureSignature(room);
+    if (!m_roundtableRoomStructures.contains(roomId) || m_roundtableRoomStructures.value(roomId) != structure) {
+        if (room.isEmpty()) { m_roundtableRoomStructures.remove(roomId); }
+        else { m_roundtableRoomStructures.insert(roomId, structure); }
+        refreshRoundtableTagsImmediately();
+    } else {
+        scheduleRoundtableRefresh();
+    }
+}
+
+void MainWindow::refreshRoundtableTagsImmediately()
+{
+    if (m_roundtableRefreshTimer) { m_roundtableRefreshTimer->stop(); }
+    m_roundtableRefreshPending = false;
+    refreshRoundtableTags();
+}
+
 void MainWindow::scheduleRoundtableRefresh()
 {
-    if (m_roundtableRefreshPending) { return; }
-    m_roundtableRefreshPending = true;
-    QTimer::singleShot(0, this, [this]() {
-        m_roundtableRefreshPending = false;
-        refreshRoundtableTags();
-    });
+    if (!m_roundtableRefreshTimer) {
+        m_roundtableRefreshTimer = new QTimer(this);
+        m_roundtableRefreshTimer->setObjectName(QStringLiteral("roundtableReportCoalescer"));
+        m_roundtableRefreshTimer->setSingleShot(true);
+        connect(m_roundtableRefreshTimer, &QTimer::timeout, this, [this]() {
+            if (m_roundtableRefreshPending) {
+                m_roundtableRefreshPending = false;
+                refreshRoundtableTags();
+                const RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+                if (model && model->frequencyAvailable()) { m_roundtableRefreshTimer->start(200); }
+            }
+        });
+    }
+    const RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+    if (!model || !model->frequencyAvailable()) {
+        // Retain the legacy flow's queued refresh, including construction
+        // before the pan stack is ready.
+        m_roundtableRefreshPending = true;
+        if (!m_roundtableRefreshTimer->isActive() || m_roundtableRefreshTimer->interval() != 0) {
+            m_roundtableRefreshTimer->start(0);
+        }
+        return;
+    }
+    if (m_roundtableRefreshTimer->isActive() && m_roundtableRefreshTimer->interval() == 200) {
+        m_roundtableRefreshPending = true;
+        return;
+    }
+    m_roundtableRefreshTimer->stop();
+    m_roundtableRefreshPending = false;
+    refreshRoundtableTags();
+    m_roundtableRefreshTimer->start(200);
 }
 
 void MainWindow::refreshRoundtableTags()
@@ -6804,16 +6861,9 @@ void MainWindow::refreshRoundtableTags()
     for (SliceModel* slice : m_radioModel->slices()) {
         if (slice) { sliceIds.append(slice->sliceIndex()); }
     }
-    QList<RoundtableTag> tags = roundtableTagsFor(roundtable, sliceIds);
-    const RoundtableTagDisplay display = roundtableTagDisplayFor(roundtable);
-    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
-        if (it.value()) {
-            SliceModel* slice = nullptr;
-            for (SliceModel* candidate : m_radioModel->slices()) {
-                if (candidate && candidate->sliceIndex() == it.key()) { slice = candidate; break; }
-            }
-            QString family;
-            if (slice) {
+    const auto familyOfSlice = [](const SliceModel* slice) {
+        QString family;
+        if (slice) {
                 switch (slice->dspMode()) {
                 case DSPMode::LSB: family = QStringLiteral("lsb"); break;
                 case DSPMode::USB: family = QStringLiteral("usb"); break;
@@ -6826,7 +6876,22 @@ void MainWindow::refreshRoundtableTags()
                 case DSPMode::RADE_L: case DSPMode::RADE2_L: family = QStringLiteral("fdvl"); break;
                 default: break;
                 }
+        }
+        return family;
+    };
+    const SliceModel* active = m_radioModel->activeSlice();
+    const QString activeFamily = familyOfSlice(active);
+    const QString activeContext = active && !activeFamily.isEmpty()
+        ? RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily) : QString();
+    QList<RoundtableTag> tags = roundtableTagsFor(roundtable, sliceIds, activeContext);
+    const RoundtableTagDisplay display = roundtableTagDisplayFor(roundtable);
+    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+        if (it.value()) {
+            SliceModel* slice = nullptr;
+            for (SliceModel* candidate : m_radioModel->slices()) {
+                if (candidate && candidate->sliceIndex() == it.key()) { slice = candidate; break; }
             }
+            const QString family = familyOfSlice(slice);
             if (slice && roundtable && roundtable->frequencyAvailable()) {
                 const QString context = RoundtableModel::frequencyContextId(std::llround(slice->frequency()), family);
                 for (RoundtableTag& tag : tags) { tag.mine = tag.mine || tag.roomId == context; }
@@ -10737,10 +10802,10 @@ void MainWindow::buildUI()
     auto* nfTracker = new NoiseFloorTracker;
     m_radioModel->setNoiseFloorTracker(nfTracker);
 
-    connect(primaryFftEngine(), &FFTEngine::fftReady,
-            this, [nfTracker](int /*rxId*/, const QVector<float>& binsDbm) {
+    connect(primaryFftEngine(), &FFTEngine::autoAgcFrameReady,
+            this, [nfTracker](int /*rxId*/, const QVector<float>& binsDbm, quint64 epoch) {
         static constexpr float kFrameIntervalMs = 33.0f;
-        nfTracker->feed(binsDbm, kFrameIntervalMs);
+        nfTracker->feedForEpoch(binsDbm, kFrameIntervalMs, epoch);
     });
 
     // Max Bin detector: feed FFTEngine dBm bins into WdspEngine's NereusSDR-native
@@ -11916,27 +11981,38 @@ void MainWindow::populateDefaultMeter()
     // Roundtable plan Task 14 (design 11.2): the tags on every pan follow
     // the band list, the link, the slices' rooms and mentions of you.
     if (RoundtableModel* roundtable = m_radioModel->roundtableModel()) {
-        connect(roundtable, &RoundtableModel::roomsChanged, this, &MainWindow::scheduleRoundtableRefresh);
-        connect(roundtable, &RoundtableModel::roomChanged, this, &MainWindow::scheduleRoundtableRefresh);
-        connect(roundtable, &RoundtableModel::linkChanged, this, &MainWindow::scheduleRoundtableRefresh);
-        connect(roundtable, &RoundtableModel::mentionsChanged, this, &MainWindow::scheduleRoundtableRefresh);
-        connect(roundtable, &RoundtableModel::sliceRoomsChanged, this, &MainWindow::scheduleRoundtableRefresh);
+        connect(roundtable, &RoundtableModel::roomsChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
+        connect(roundtable, &RoundtableModel::roomChanged, this, &MainWindow::onRoundtableRoomChanged);
+        connect(roundtable, &RoundtableModel::linkChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
+        connect(roundtable, &RoundtableModel::mentionsChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
+        connect(roundtable, &RoundtableModel::sliceRoomsChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
         connect(roundtable, &RoundtableModel::settingChanged, this, [this](const QString& key) {
             if (key.isEmpty() || key == QLatin1String("Roundtable/SignalFormat")) {
-                scheduleRoundtableRefresh();
+                refreshRoundtableTagsImmediately();
             }
         });
         // Quiet retained reports still age even when no server update arrives.
         // Reuse the coalesced refresh; this never requests data or tunes a slice.
         auto* reportAgeTimer = new QTimer(this);
+        reportAgeTimer->setObjectName(QStringLiteral("roundtableReportAgeTimer"));
         reportAgeTimer->setInterval(1000);
         connect(reportAgeTimer, &QTimer::timeout, this, [this, roundtable]() {
-            if (roundtable->frequencyAvailable()) { scheduleRoundtableRefresh(); }
+            if (!roundtable->frequencyAvailable()) { return; }
+            if (m_roundtableRefreshTimer && m_roundtableRefreshTimer->isActive()
+                && m_roundtableRefreshTimer->interval() == 200) {
+                m_roundtableRefreshPending = true;
+            } else {
+                // An idle age tick must not consume the next numeric
+                // sample's leading presentation. During a report burst,
+                // its latest age joins the existing trailing pass.
+                refreshRoundtableTags();
+            }
         });
         reportAgeTimer->start();
     }
-    connect(m_radioModel, &RadioModel::sliceAdded, this, &MainWindow::scheduleRoundtableRefresh);
-    connect(m_radioModel, &RadioModel::sliceRemoved, this, &MainWindow::scheduleRoundtableRefresh);
+    connect(m_radioModel, &RadioModel::activeSliceChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
+    connect(m_radioModel, &RadioModel::sliceAdded, this, &MainWindow::refreshRoundtableTagsImmediately);
+    connect(m_radioModel, &RadioModel::sliceRemoved, this, &MainWindow::refreshRoundtableTagsImmediately);
     scheduleRoundtableRefresh();
     connect(m_roundtableApplet, &RoundtableApplet::settingsRequested, this, [this]() {
         openSpotHub();

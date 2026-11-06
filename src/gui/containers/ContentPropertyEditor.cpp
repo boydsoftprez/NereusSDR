@@ -178,6 +178,13 @@ ContentPropertyEditor::ContentPropertyEditor(ContainerContentRegistry& registry,
 void ContentPropertyEditor::setContainerDefaults(const QJsonObject& defaults)
 {
     m_defaults=defaults;
+    if(auto* bar=qobject_cast<BarPresetItem*>(m_item.get())) {
+        bar->setContainerFace(defaults.value("meterFace").toString("Classic"));
+        if(auto* face=findChild<QComboBox*>("face")) {
+            const QSignalBlocker blocker(face);
+            face->setItemText(face->findData("Container"),tr("Use container setting (%1)").arg(defaults.value("meterFace").toString()=="Instrument" ? tr("Modern") : tr("Classic")));
+        }
+    }
     if(auto* source=findChild<QComboBox*>("contentSlice")) {
         const int inherited=defaults.contains("sliceId")?defaults["sliceId"].toInt():defaults["rxSource"].toInt(1)-1;
         source->setItemText(0,defaults.value("rxSourceMode").toString()==QStringLiteral("followSelectedRx")
@@ -563,6 +570,13 @@ QWidget* ContentPropertyEditor::control(const QString& key,const QJsonValue& val
         if(combo->findData(value.toInt())<0) {combo->addItem(tr("Stored reading %1").arg(value.toInt()),value.toInt());}
         combo->setCurrentIndex(combo->findData(value.toInt()));
         connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,key,channel,combo]{property(key,combo->currentData().toInt(),channel);});widget=combo;
+    } else if(key=="face") {
+        auto* combo=new GuardedComboBox(this);
+        combo->addItem(tr("Use container setting (%1)").arg(m_defaults.value("meterFace").toString()=="Instrument" ? tr("Modern") : tr("Classic")),"Container");
+        combo->addItem(tr("Classic"),"Classic");
+        combo->addItem(tr("Modern"),"Instrument");
+        combo->setCurrentIndex(combo->findData(value.toString()));
+        connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,key,combo]{property(key,combo->currentData().toString());}); widget=combo;
     } else if(key=="style" || key=="clockMode") {
         auto* combo=new QComboBox(this);combo->addItems(key=="style"?QStringList{"Line","Solid","Segments"}:QStringList{"Both","UTC","Local"});combo->setCurrentText(value.toString());
         connect(combo,&QComboBox::currentTextChanged,this,[this,key,channel](const QString& text){property(key,text,channel);});widget=combo;
@@ -650,6 +664,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     auto* visible=new QCheckBox(common); visible->setObjectName("contentVisible"); visible->setChecked(entry.visible); form->addRow(tr("Visible"),visible);
     connect(visible,&QCheckBox::toggled,this,[this](bool value){m_entry.visible=value;publish();});
     m_item.reset(m_registry.createMeterItem(entry,nullptr,ContentRenderMode::Preview));
+    if(auto* bar=qobject_cast<BarPresetItem*>(m_item.get())) {bar->setContainerFace(m_defaults.value("meterFace").toString("Classic"));}
     if(m_item) {m_hydrated=m_registry.captureMeterItem(*m_item,entry);}
     if(m_policy==ContentLayout::FreeCanvas) {
         auto* group=new QGroupBox(tr("Canvas position and size (logical pixels)"),this);group->setObjectName("canvasGeometry");group->setEnabled(!m_geometryLocked);
@@ -734,7 +749,7 @@ void ContentPropertyEditor::setEntry(const ContentEntry& entry)
     } else if(auto* bar=qobject_cast<BarPresetItem*>(m_item.get())) {
         auto* group=new QGroupBox(tr("Appearance and behavior"),this); auto* fields=new QFormLayout(group); root->addWidget(group);
         const auto props=bar->configuration();
-        QStringList keys{"label","showTitle","barColor","showMarker","backdropColor","titleColor","historyColor","showHistory","peakHold","peakHoldColor","showValue","showPeakValue","peakValueColor","showSub","subColor","style","segLowColor","segHighColor","lowColor","highColor","updateIntervalMs","historyMs","ignoreHistoryMs","rowHeight","attack","decay","bindingId","secondaryBindingId"};
+        QStringList keys{"face","label","showTitle","barColor","showMarker","backdropColor","titleColor","historyColor","showHistory","peakHold","peakHoldColor","showValue","showPeakValue","peakValueColor","showSub","subColor","style","segLowColor","segHighColor","lowColor","highColor","updateIntervalMs","historyMs","ignoreHistoryMs","rowHeight","attack","decay","bindingId","secondaryBindingId"};
         const QString flavor=props["flavor"].toString();
         if(flavor=="Custom") { keys.append({"minValue","maxValue","redThreshold","units"}); }
         if(props.contains("powerLimitW")) { keys.append("powerLimitW"); }

@@ -80,6 +80,7 @@
 #include "core/roundtable/RoundtableState.h"
 #include "core/roundtable/RoundtableWire.h"
 #include "core/session/StationClient.h"
+#include "core/session/IStationLink.h"
 #include "core/session/StationServer.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
@@ -1254,6 +1255,107 @@ private slots:
         RoundtableModel::setClockForTest({});
         QVERIFY(RemoteWindowHarness::removeIsolatedProfile());
         qInstallMessageHandler(g_previousHandler);
+    }
+
+    void frequencyTagsPresentStructureImmediatelyAndCoalesceSampleBursts()
+    {
+        // A controlled record source keeps this presentation test independent
+        // of a remote handshake's later initial empty-stream reset. The
+        // existing placement flow covers the real remote record transport.
+        class FrequencyLink : public IStationLink {
+        public:
+            bool roundtableAvailable() const override { return true; }
+            bool roundtableFrequencyAvailable() const override { return true; }
+            CommandOutcome requestAddSlice(const QString&) override { return {}; }
+            CommandOutcome requestAddSliceOnPan(const QString&) override { return {}; }
+            CommandOutcome requestRemoveSlice(int) override { return {}; }
+            CommandOutcome requestActiveSlice(int) override { return {}; }
+            CommandOutcome requestSliceSampleRate(int, int) override { return {}; }
+            CommandOutcome requestRoundtableReadAt(qint64, const QString&) override { return {true, {}}; }
+            CommandOutcome requestRoundtableUnreadAt(qint64, const QString&) override { return {true, {}}; }
+        } link;
+        RoundtableState state;
+        Everything p;
+        SliceModel* slice = p.model()->sliceById(p.sliceId());
+        QVERIFY(slice);
+        slice->setDspMode(DSPMode::USB);
+        slice->setFrequency(14200000);
+        RoundtableModel* model = p.model()->roundtableModel();
+        QVERIFY(model);
+        model->attachStation(&link, &state);
+        state.applyStationValue("linkState", static_cast<int>(RoundtableModel::LinkState::Live));
+        const QJsonObject actor{{"sourceRoom", "usb-14200000"}, {"ref", "tx"}, {"callsign", "W1AW"},
+            {"hz", 14200000}, {"family", "usb"}, {"keyed", true}};
+        QJsonObject reporter{{"sourceRoom", "usb-14200000"}, {"ref", "rx"}, {"callsign", "K4ABC"},
+            {"hz", 14200000}, {"family", "usb"}, {"keyed", false},
+            {"reading", QJsonObject{{"turn", 1}, {"present", true}, {"dbm", -73}, {"t", g_now}}}};
+        model->applyRooms({{"frequencyVersion", 1}, {"rooms", QJsonArray{
+            QJsonObject{{"id", "usb-14200000"}, {"stations", QJsonArray{actor, reporter}}}}}});
+        QVERIFY(model->frequencyAvailable());
+        SpectrumWidget* pan = panOf(p.window());
+        QVERIFY(pan);
+        const auto shown = [pan]() {
+            QStringList rows;
+            for (const RoundtableTag& tag : pan->roundtableTags()) { rows.append(tag.reportLines); }
+            return rows.join(QLatin1Char(' '));
+        };
+        QJsonObject turn{{"id", 1}, {"kind", "talking"}, {"sourceRoom", "usb-14200000"}, {"hz", 14200000},
+            {"start", g_now - 1000}, {"end", QJsonValue::Null}, {"talkers", QJsonArray{actor}}};
+        QJsonObject view{{"id", "usb-14200000"}, {"view", "frequency"}, {"family", "usb"}, {"hz", 14200000},
+            {"now", QJsonArray{turn}}, {"members", QJsonArray{actor, reporter}}};
+        model->applyRoom(view);
+        QVERIFY2(shown().contains(QStringLiteral("Talking: W1AW")), qPrintable(shown()));
+        // Drain the initial structural flag/layout changes before measuring
+        // report-only texture invalidation. Those geometry changes correctly
+        // dirty the static marker cache independently of Roundtable samples.
+        settle();
+        turn.insert("start", g_now);
+        view.insert("now", QJsonArray{turn}); model->applyRoom(view);
+        auto* ageTimer = p.window()->findChild<QTimer*>(QStringLiteral("roundtableReportAgeTimer"));
+        QVERIFY(ageTimer);
+        QVERIFY(QMetaObject::invokeMethod(ageTimer, "timeout", Qt::DirectConnection));
+        const auto report = [&](int dbm) {
+            QJsonObject sample = reporter.value("reading").toObject(); sample.insert("dbm", dbm);
+            reporter.insert("reading", sample); view.insert("members", QJsonArray{actor, reporter}); model->applyRoom(view);
+        };
+        report(-74);
+        QVERIFY2(shown().contains(QStringLiteral("-74")), qPrintable(shown()));
+        pan->clearOverlayStaticDirtyForTest();
+        class PresentationCacheProbe : public QObject {
+        public:
+            SpectrumWidget* pan = nullptr;
+            bool observed = false;
+            bool dirtied = false;
+            bool eventFilter(QObject*, QEvent* event) override {
+                if (event->type() == QEvent::Timer) { pan->clearOverlayStaticDirtyForTest(); }
+                return false;
+            }
+        } cache;
+        cache.pan = pan;
+        auto* coalescer = p.window()->findChild<QTimer*>(QStringLiteral("roundtableReportCoalescer"));
+        QVERIFY(coalescer);
+        coalescer->installEventFilter(&cache);
+        connect(coalescer, &QTimer::timeout, &cache, [&] {
+            cache.observed = true;
+            cache.dirtied = pan->overlayStaticDirtyForTest();
+        });
+        report(-75); report(-76);
+        QVERIFY(!pan->overlayStaticDirtyForTest());
+        QVERIFY(shown().contains(QStringLiteral("-74")));
+        QVERIFY(!shown().contains(QStringLiteral("-76")));
+        QTRY_VERIFY2_WITH_TIMEOUT(shown().contains(QStringLiteral("-76")),
+            qPrintable(QStringLiteral("shown=%1 frequency=%2 view=%3").arg(shown()).arg(model->frequencyAvailable())
+                .arg(QString::fromUtf8(QJsonDocument(model->room(QStringLiteral("frequency:usb-14200000"))).toJson(QJsonDocument::Compact)))), kWaitMs);
+        QVERIFY(cache.observed);
+        QVERIFY(!cache.dirtied);
+        qInfo("MainWindow trailing report presentation: static texture invalidations=%d", cache.dirtied ? 1 : 0);
+        QJsonObject next = actor; next.insert("callsign", "N3NEW"); next.insert("ref", "next-tx");
+        turn.insert("id", 2); turn.insert("talkers", QJsonArray{next});
+        QJsonObject sample = reporter.value("reading").toObject(); sample.insert("turn", 2); sample.insert("dbm", -61);
+        reporter.insert("reading", sample); view.insert("now", QJsonArray{turn});
+        view.insert("members", QJsonArray{next, reporter}); model->applyRoom(view);
+        QVERIFY2(shown().contains(QStringLiteral("Talking: N3NEW")), qPrintable(shown()));
+        QVERIFY(shown().contains(QStringLiteral("-61")));
     }
 
     void theWholeFlowInTheEverythingPlacement()

@@ -208,6 +208,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02: Track active and detail frequency record streams separately.
+//               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26: CW transmit, remote CW (R-CW-48): remoteCwAvailable.
@@ -2320,6 +2322,7 @@ private:
     /// room it reads.
     QSet<QString> m_roundtableStreams;
     QString m_roundtableReadStream;
+    QSet<QString> m_roundtableFrequencyReadStreams;
     CommandOutcome sendRoundtableCommand(const QByteArray& verb,
                                          const QList<MirrorUpdate>& arguments,
                                          const QString& clientId = QString(),

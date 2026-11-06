@@ -8,6 +8,8 @@
 #include <QtTest>
 
 #include "core/HpsdrModel.h"
+#include "core/MoxController.h"
+#include "core/NoiseFloorTracker.h"
 #include "core/daemon/DaemonAgcSource.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -61,10 +63,7 @@ struct Harness {
 
     void feed(int streamIndex, float amplitude)
     {
-        const bool invoked = QMetaObject::invokeMethod(
-            &radio, "rawIqDataForStream", Qt::DirectConnection,
-            Q_ARG(int, streamIndex), Q_ARG(QVector<float>, noiseIq(amplitude)));
-        Q_ASSERT(invoked);
+        radio.forkIqToTapsForTest(streamIndex, noiseIq(amplitude));
     }
 
     bool warm(SliceModel* slice, int streamIndex, float amplitude)
@@ -95,6 +94,118 @@ class TstDaemonAgcSource final : public QObject {
     Q_OBJECT
 
 private slots:
+    void transmitStampedPacketCannotEnterSourceActivatedDuringItsFanout()
+    {
+        Harness h;
+        qint64 clock = 0;
+        DaemonSpectrumSource source;
+        source.setRadioModel(&h.radio);
+        source.setComputesBinsDbm(true);
+        const MediaSourceKey key{h.firstStream, FftTier::Wide};
+        DaemonSpectrumSourceConfig config;
+        config.centreHz = h.radio.streamCentreHz(h.firstStream);
+        config.sampleRateHz = h.radio.streamSampleRateHz(h.firstStream);
+        config.maxPendingIqFloats = config.fft.fftSize * 4;
+        NoiseFloorTracker tracker;
+        for (int i = 0; i < 70; ++i) { tracker.feed(QVector<float>(4096, -85.0f), 33.0f); }
+        const float held = tracker.agcNoiseFloor();
+        auto* controller = h.radio.moxController();
+        controller->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        controller->setMox(true);
+        QTRY_VERIFY(h.radio.isTransmitting());
+        const quint64 transmitEpoch = h.radio.autoAgcAcquisitionEpoch();
+        QVERIFY((transmitEpoch & 1U) != 0);
+        bool reactivated = false;
+        // forkIqToTaps captures the TX epoch and emits the companion first.
+        // Pause there; release TX and activate a new receiving source before
+        // the same packet's ordinary untagged fan-out can resume.
+        const auto pause = connect(&h.radio, &RadioModel::rawIqDataForAutoAgc, &h.radio,
+            [&](int stream, const QVector<float>&, quint64 epoch) {
+                if (reactivated || stream != key.streamIndex || epoch != transmitEpoch) { return; }
+                controller->setMox(false);
+                QTRY_VERIFY(!h.radio.autoAgcAcquisitionInhibited());
+                config.autoAgcEpoch = h.radio.autoAgcAcquisitionEpoch();
+                tracker.setAcquisitionEpoch(*config.autoAgcEpoch);
+                QVERIFY(source.activate(key, config));
+                QTRY_VERIFY(source.isActive(key));
+                reactivated = true;
+            }, Qt::DirectConnection);
+        h.radio.forkIqToTapsForTest(h.firstStream, noiseIq(0.0f));
+        disconnect(pause);
+        QVERIFY(reactivated);
+        h.radio.rawIqDataForAutoAgc(h.firstStream, noiseIq(0.0f), transmitEpoch);
+        h.radio.rawIqDataForAutoAgc(h.firstStream, noiseIq(0.0f), transmitEpoch - 1);
+        // A source configured for stamped AUTO input also rejects the
+        // explicitly untagged non-radio/test input API.
+        source.submitIq(h.firstStream, noiseIq(0.0f));
+        const auto queue = source.inputQueueDiagnostics(key);
+        QCOMPARE(queue.pendingIqFloats, 0);
+        QVERIFY(!queue.drainQueued);
+        QCOMPARE(source.completedInputHandoffs(key), quint64(0));
+        // The setter locks the source state and refuses after a worker has
+        // started a handoff, closing the race with an already-taken queue.
+        QVERIFY(source.setEngineFrameGapClockForTest(key, [&]() { return clock += 10; }));
+        QCOMPARE(source.publishedFrames(key), quint64(0));
+        QVERIFY(!tracker.acquisitionCurrent());
+        QCOMPARE(tracker.agcNoiseFloor(), held);
+        h.radio.forkIqToTapsForTest(h.firstStream, noiseIq(0.15f));
+        h.radio.forkIqToTapsForTest(h.firstStream, {0.0f, 0.0f});
+        QTRY_VERIFY(source.publishedFrames(key) > 0);
+        const auto fresh = source.takeLatest(key);
+        QVERIFY(fresh && fresh->binsDbmValid);
+        QCOMPARE(fresh->autoAgcEpoch, config.autoAgcEpoch);
+        tracker.feedForEpoch(fresh->binsDbm, 33.0f, *fresh->autoAgcEpoch);
+        QVERIFY(tracker.acquisitionCurrent());
+        auto anotherEpoch = config;
+        anotherEpoch.autoAgcEpoch = *config.autoAgcEpoch + 2;
+        QVERIFY(!source.update(key, anotherEpoch)); // connection fixed at activation
+        source.deactivate(key);
+        anotherEpoch.autoAgcEpoch = transmitEpoch;
+        QVERIFY(!source.activate(key, anotherEpoch)); // an epoch must be receiving
+    }
+
+    void controllerTxRetiresOnlyProducerAndPreservesSettledEstimator()
+    {
+        Harness h;
+        DaemonAgcSource source(&h.radio);
+        QVERIFY(h.warm(h.first, h.firstStream, 0.15f));
+        NoiseFloorTracker* tracker = h.radio.noiseFloorTrackerForSlice(h.first);
+        QVERIFY(tracker && tracker->isGood());
+        const float held = tracker->agcNoiseFloor();
+        h.first->setAutoAgcEnabled(true);
+        h.radio.runAutoAgcTickForTest();
+        const int threshold = h.first->agcThreshold();
+        // Work queued before the edge cannot publish into the resumed
+        // source; retirement clears its latest frame and input queue.
+        h.feed(h.firstStream, 0.0f);
+        auto* controller = h.radio.moxController();
+        controller->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        controller->setMox(true);
+        QTRY_VERIFY(h.radio.isTransmitting());
+        QVERIFY(!h.radio.transmitModel().isMox());
+        QCOMPARE(source.activeStreamCount(), 0);
+        for (int i = 0; i < 100; ++i) { h.feed(h.firstStream, 0.0f); }
+        QCoreApplication::processEvents();
+        h.radio.runAutoAgcTickForTest();
+        QCOMPARE(tracker->agcNoiseFloor(), held);
+        QVERIFY(tracker->isGood());
+        QCOMPARE(h.first->agcThreshold(), threshold);
+        QVERIFY(!h.first->stationAutoAgcNoiseFloorValid());
+        controller->setMox(false);
+        QTRY_VERIFY(!h.radio.autoAgcAcquisitionInhibited());
+        QCOMPARE(tracker, h.radio.noiseFloorTrackerForSlice(h.first));
+        QCOMPARE(tracker->agcNoiseFloor(), held);
+        QVERIFY(tracker->isGood());
+        QVERIFY(!tracker->acquisitionCurrent());
+        h.radio.runAutoAgcTickForTest();
+        QCOMPARE(h.first->agcThreshold(), threshold);
+        QVERIFY(!h.first->stationAutoAgcNoiseFloorValid());
+        QVERIFY(h.warm(h.first, h.firstStream, 0.15f));
+        QVERIFY(tracker->isGood());
+        h.radio.runAutoAgcTickForTest();
+        QCOMPARE(h.first->agcThreshold(), threshold);
+    }
+
     void initTestCase()
     {
 #ifndef HAVE_FFTW3
@@ -136,10 +247,14 @@ private slots:
         QVERIFY(h.first->stationAutoAgcNoiseFloorGeneration() > initialGeneration);
         QVERIFY(h.warm(h.first, h.first->streamIndex(), 0.15f));
 
-        h.radio.transmitModel().setMox(true);
+        h.radio.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        h.radio.moxController()->setMox(true);
+        QTRY_VERIFY(h.radio.moxController()->isMox());
+        QVERIFY(!h.radio.transmitModel().isMox());
         QVERIFY(!h.first->stationAutoAgcNoiseFloorValid());
         QCOMPARE(source.activeStreamCount(), 0);
-        h.radio.transmitModel().setMox(false);
+        h.radio.moxController()->setMox(false);
+        QTRY_VERIFY(!h.radio.isTransmitting());
         QVERIFY(h.warm(h.first, h.first->streamIndex(), 0.15f));
 
         h.radio.setConnectionStateForTest(ConnectionState::Disconnected);

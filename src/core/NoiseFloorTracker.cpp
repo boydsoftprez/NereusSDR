@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
+//                 reject stale/mixed TX frames without changing display DSP.
+//                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-04-16 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -70,6 +73,22 @@ namespace NereusSDR {
 
 NoiseFloorTracker::NoiseFloorTracker() = default;
 
+// NereusSDR-original: freshness changes without restarting the estimator.
+void NoiseFloorTracker::setAcquisitionEpoch(quint64 epoch)
+{
+    if (m_acquisitionEpoch != epoch) {
+        m_acquisitionEpoch = epoch;
+        m_acquisitionCurrent = false;
+    }
+}
+
+void NoiseFloorTracker::feedForEpoch(const QVector<float>& binsDbm,
+                                    float frameIntervalMs, quint64 epoch)
+{
+    if (epoch != m_acquisitionEpoch) { return; }
+    feed(binsDbm, frameIntervalMs);
+}
+
 // NereusSDR-original. See the header.
 float NoiseFloorTracker::agcReferenceOffsetDb(int binCount) noexcept
 {
@@ -82,9 +101,10 @@ float NoiseFloorTracker::agcReferenceOffsetDb(int binCount) noexcept
 
 void NoiseFloorTracker::feed(const QVector<float>& binsDbm, float frameIntervalMs)
 {
-    if (binsDbm.isEmpty()) {
+    if (binsDbm.isEmpty() || (m_acquisitionEpoch & 1U) != 0) {
         return;
     }
+    m_acquisitionCurrent = true;
 
     // Compute bin average
     const float binAverage = std::accumulate(binsDbm.cbegin(), binsDbm.cend(), 0.0f)
