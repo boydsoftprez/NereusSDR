@@ -343,6 +343,11 @@
 //                 (transmitSettingsVersion 16, R-CW-03), with their ranges,
 //                 defaults and hardware/<mac>/tx/ keys. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06 - A PWR or tune power edit with no radio and no transmit slice
+//                 is held with no band and becomes the band the radio comes up
+//                 on: holdPowerForNextBand, setTunePowerWithNoBand,
+//                 takePowerHeldForNextBand. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-11-05 - Transmit edits made with no radio are kept in a held area
 //                 for the next radio (JJ's ruling): setKeepsEditsWithoutRadio,
 //                 heldEditsPrefix, HeldEditPause. J.J. Boyd (KG4VCF),
@@ -1016,6 +1021,22 @@ public:
     void setKeepsEditsWithoutRadio(bool keep) { m_keepsEditsWithoutRadio = keep; }
     bool keepsEditsWithoutRadio() const { return m_keepsEditsWithoutRadio; }
     static QString heldEditsPrefix();
+
+    // A PWR or tune power edit with no radio and no transmit slice has no band:
+    // the band is whichever the radio comes up on. It waits under the held
+    // area with no band, and load() and loadFromSettings() leave it there, so a
+    // connect that drops before the radio answers keeps it for the next.
+    // RadioModel hands it its band once the radio has answered.
+    bool holdsWithNoBand() const;
+    bool holdPowerForNextBand(int power);
+    // The Tune slider and button with no transmit band: held with no band when
+    // that applies, and `shownBand`'s value in memory either way, as it was,
+    // so what they show still adds up. Never held for `shownBand`.
+    void setTunePowerWithNoBand(Band shownBand, int watts);
+    bool hasPowerHeldForNextBand() const;
+    // Those values become `band`'s for the bound radio, in memory and on disk,
+    // and leave the held area. Only that band changes.
+    void takePowerHeldForNextBand(Band band);
 
     class HeldEditPause {
     public:

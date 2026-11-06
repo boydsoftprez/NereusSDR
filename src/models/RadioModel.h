@@ -5402,6 +5402,10 @@ public:
     // a fake RadioConnection. Production transitions go through the
     // private setConnectionState() called from connection signals.
     void setConnectionStateForTest(ConnectionState s) { setConnectionState(s); }
+    // connectToRadioImpl's TXBand initializing pass, after the per-radio load.
+    void applyConnectTransmitBandForTest() {
+        applyTransmitBand(transmitSliceBand(), /*initializing=*/true);
+    }
     // From Longpath src/models/RadioModel.h:1685-1690 [@383f058]
     // Stands in for the connectToRadio() write of the wire rate / RX count
     // so a test can replay the state sequence around it without a radio.
@@ -7343,6 +7347,7 @@ private:
     // R-R3-49 (parity Task 2): the transmit band for tunePowerForTxBand,
     // and the Core's transmit chain wiring (moved from connectToRadio()).
     void refreshTransmitTuneBand();
+    void applyPowerHeldForNextBand();
     // The transmit slice's band, else m_lastBand: the band refreshTransmitTuneBand
     // hands the TUNE path and applyTransmitBand.
     Band transmitSliceBand() const;

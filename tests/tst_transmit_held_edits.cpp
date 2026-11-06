@@ -19,17 +19,24 @@
 
 #include <QApplication>
 #include <QMetaProperty>
+#include <QSlider>
 
 #include "core/AppSettings.h"
 #include "core/CwTypes.h"
 #include "core/TciProtocol.h"
 #include "core/cat/CatService.h"
 #include "core/SliceOwnership.h"
+#include "core/MoxController.h"
+#include "core/PaProfileManager.h"
+#include "core/RadioConnection.h"
+#include "core/TxSliceArbiter.h"
 #include "core/daemon/DaemonApp.h"
 #include "core/daemon/DaemonConfig.h"
 #include "core/HpsdrModel.h"
 #include "core/session/RemoteStationOptions.h"
 #include "gui/MainWindow.h"
+#include "gui/applets/TxApplet.h"
+#include "gui/containers/ContainerButtonDispatcher.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -72,6 +79,133 @@ void connectLikeRadioModel(TransmitModel& model, const QString& mac)
 }
 
 const QString kTune20m = QStringLiteral("tunePowerByBand/%1").arg(static_cast<int>(Band::Band20m));
+const QString kTune40m = QStringLiteral("tunePowerByBand/%1").arg(static_cast<int>(Band::Band40m));
+
+// Set with no radio and no transmit slice: no band yet.
+QString heldPowerKey()
+{
+    return TransmitModel::heldEditsPrefix() + QStringLiteral("tx/PowerForNextBand");
+}
+
+QString heldTunePowerKey()
+{
+    return TransmitModel::heldEditsPrefix() + QStringLiteral("tx/TunePowerForNextBand");
+}
+
+void restartSettings()
+{
+    auto& s = AppSettings::instance();
+    QVERIFY(s.save());
+    s.clear();
+    s.load();
+}
+
+// The starting slice comes back on the band it was closed on.
+void saveStartingSliceOn40m()
+{
+    SliceModel saved;
+    saved.setSliceIndex(0);
+    saved.setFrequency(7'100'000.0);
+    saved.setDspMode(DSPMode::LSB);
+    saved.saveToSettings(Band::Band40m);
+}
+
+class DriveWatchConnection final : public RadioConnection {
+    Q_OBJECT
+public:
+    QList<int> drives;
+    int moxOnCalls{0};
+    int iqCalls{0};
+
+    explicit DriveWatchConnection(QObject* parent = nullptr) : RadioConnection(parent)
+    {
+        setState(ConnectionState::Connected);
+    }
+
+    void init() override {}
+    void connectToRadio(const NereusSDR::RadioInfo&) override {}
+    void disconnect() override {}
+    void setReceiverFrequency(int, quint64) override {}
+    void setTxFrequency(quint64) override {}
+    void setActiveReceiverCount(int) override {}
+    void setSampleRate(int) override {}
+    void setAttenuator(int) override {}
+    void setPreamp(bool) override {}
+    void setTxDrive(int level) override { drives.append(level); }
+    void sendTxIq(const float*, int) override { ++iqCalls; }
+    void setWatchdogEnabled(bool) override {}
+    void setAntennaRouting(AntennaRouting) override {}
+    void setMox(bool on) override
+    {
+        if (on) {
+            ++moxOnCalls;
+        }
+    }
+    void setTrxRelay(bool) override {}
+    void setMicBoost(bool) override {}
+    void setLineIn(bool) override {}
+    void setMicTipRing(bool) override {}
+    void setMicBias(bool) override {}
+    void setLineInGain(int) override {}
+    void setUserDigOut(quint8) override {}
+    void setPuresignalRun(bool) override {}
+    void setMicPTTDisabled(bool) override {}
+    void setMicXlr(bool) override {}
+};
+
+void settle()
+{
+    for (int i = 0; i < 3; ++i) {
+        QCoreApplication::processEvents();
+    }
+}
+
+// connectToRadioImpl's order, up to the radio answering. No radio has answered
+// until radioAnswers, and a connect can end here.
+void beginConnect(RadioModel& radio, const QString& mac)
+{
+    RadioInfo info;
+    info.macAddress = mac;
+    info.protocol = ProtocolVersion::Protocol2;
+    radio.setLastRadioInfoForTest(info);
+    radio.setHpsdrModelForTest(HPSDRModel::ANAN_G2);
+    connectLikeRadioModel(radio.transmitModel(), mac);
+    radio.applyConnectTransmitBandForTest();
+    if (PaProfileManager* profiles = radio.paProfileManager()) {
+        profiles->setMacAddress(mac);
+        profiles->load(HPSDRModel::ANAN_G2);
+    }
+    const int start = radio.addStartingSlices(mac);
+    if (SliceModel* slice = radio.sliceById(start)) {
+        radio.setActiveSlice(static_cast<int>(radio.slices().indexOf(slice)));
+        radio.loadSliceStateForTest(slice);
+    }
+    radio.configureStreamPool(2, 5, 192000);
+    radio.bindUnboundSlices();
+}
+
+void radioAnswers(RadioModel& radio)
+{
+    radio.onConnectionStateChangedForTest(ConnectionState::Connected);
+    settle();
+}
+
+// A window's queued step on Connected (MainWindow, Sub-Epic D Task 15): the
+// saved layout's slices, then the saved transmit slice. It is queued by the
+// connection state signal, before the rest of the Connected handling runs.
+void addWindowsConnectStep(RadioModel& radio, const QStringList& pans)
+{
+    QObject::connect(&radio, &RadioModel::connectionStateChanged, &radio,
+                     [&radio, pans](ConnectionState state) {
+        if (state != ConnectionState::Connected) {
+            return;
+        }
+        QMetaObject::invokeMethod(&radio, [&radio, pans] {
+            MainWindow::populatePanSlices(&radio, pans, false, false);
+            radio.txSliceArbiter()->finishRestore();
+        }, Qt::QueuedConnection);
+    });
+}
 
 // A radio with values of its own on everything the startup could disturb.
 const QList<std::pair<QString, QString>>& radiosSavedValues()
@@ -132,10 +266,13 @@ private slots:
         for (const QString& key : s.allKeys()) {
             if (key.startsWith(TransmitModel::heldEditsPrefix())
                 || key.startsWith(QStringLiteral("tx/preconnect/"))
-                || key.startsWith(QStringLiteral("hardware/aa:bb:cc:48:"))) {
+                || key.startsWith(QStringLiteral("Slice"))
+                || key.startsWith(QStringLiteral("hardware/aa:bb:cc:48:"), Qt::CaseInsensitive)) {
                 s.remove(key);
             }
         }
+        // A Core's start reads the file, and a connect or a restart wrote it.
+        QVERIFY(s.save());
     }
 
     // ── The ruling ──────────────────────────────────────────────────────
@@ -451,20 +588,315 @@ private slots:
         QCOMPARE(heldKeys(), QStringList{});
     }
 
-    // Before any slice exists no band is the radio's: the save used to land on
-    // the default band, replacing that band's power on a radio that then came
-    // up on another. Not held: the radio's saved powers stand.
-    void aPowerEditBeforeAnySliceHoldsNothing()
+    // ── No radio and no slice: no band yet ──────────────────────────────
+
+    // Before any slice exists no band is the radio's: a save would land on the
+    // default band and replace that band's power on a radio that then comes up
+    // on another. So it waits with no band, and goes to the band the radio
+    // comes up on. Only that band changes.
+    void aPowerEditBeforeAnySliceGoesToTheBandTheRadioComesUpOn()
+    {
+        seedRadio(kMac);
+        saveStartingSliceOn40m();
+        {
+            RadioModel before;
+            before.keepTransmitEditsWithoutRadio();
+            before.transmitModel().setPower(33);
+            QCOMPARE(before.transmitModel().power(), 33);
+            QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
+        }
+        restartSettings();
+        QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
+
+        RadioModel radio;
+        DriveWatchConnection connection;
+        radio.injectConnectionForTest(&connection);
+        const auto detach = qScopeGuard([&radio] { radio.injectConnectionForTest(nullptr); });
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        beginConnect(radio, kMac);
+        // The radio has not answered: nothing has moved.
+        QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
+        QCOMPARE(radio.transmitModel().powerForBand(Band::Band40m), 71);
+        connection.drives.clear();
+
+        radioAnswers(radio);
+
+        TransmitModel& tx = radio.transmitModel();
+        QCOMPARE(radio.txBoundSlice(), radio.sliceById(0));
+        QCOMPARE(bandFromFrequency(radio.txBoundSlice()->frequency()), Band::Band40m);
+        QCOMPARE(heldKeys(), QStringList{});
+        QCOMPARE(tx.power(), 33);
+        QCOMPARE(tx.powerForBand(Band::Band40m), 33);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QStringLiteral("33"));
+        QCOMPARE(tx.powerForBand(Band::Band20m), 83);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/20m")), QStringLiteral("83"));
+        QCOMPARE(tx.powerForBand(Band::Band6m), 9);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/6m")), QStringLiteral("9"));
+
+        // The drive is what the slider sets at that value.
+        QVERIFY(!connection.drives.isEmpty());
+        const int driveAtHeldValue = connection.drives.last();
+        tx.setPower(71);
+        settle();
+        QVERIFY(connection.drives.last() != driveAtHeldValue);
+        tx.setPower(33);
+        settle();
+        QCOMPARE(connection.drives.last(), driveAtHeldValue);
+
+        // Connecting never keys.
+        QCOMPARE(connection.moxOnCalls, 0);
+        QCOMPARE(connection.iqCalls, 0);
+        QVERIFY(!radio.moxController()->isMox());
+    }
+
+    // The Tune slider with no band: the applet's fallback path.
+    void aTuneSliderEditBeforeAnySliceGoesToTheBandTheRadioComesUpOn()
+    {
+        seedRadio(kMac);
+        saveStartingSliceOn40m();
+        AppSettings::instance().setValue(radioKey(kMac, kTune40m), QStringLiteral("24"));
+        {
+            RadioModel before;
+            TxApplet applet(&before);
+            before.keepTransmitEditsWithoutRadio();
+            QVERIFY(applet.tunePowerSlider());
+            applet.tunePowerSlider()->setValue(44);
+            QCOMPARE(applet.tunePowerSlider()->value(), 44);
+            QCOMPARE(heldKeys(), QStringList{heldTunePowerKey()});
+        }
+        restartSettings();
+
+        RadioModel radio;
+        TxApplet applet(&radio);
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        beginConnect(radio, kMac);
+        QCOMPARE(heldKeys(), QStringList{heldTunePowerKey()});
+        radioAnswers(radio);
+
+        TransmitModel& tx = radio.transmitModel();
+        QCOMPARE(heldKeys(), QStringList{});
+        QCOMPARE(tx.tunePowerForBand(Band::Band40m), 44);
+        QCOMPARE(tx.tunePowerForTxBand(), 44);
+        QCOMPARE(applet.tunePowerSlider()->value(), 44);
+        QCOMPARE(saved(kMac, kTune40m), QStringLiteral("44"));
+        QCOMPARE(tx.tunePowerForBand(Band::Band20m), 23);
+        QCOMPARE(saved(kMac, kTune20m), QStringLiteral("23"));
+    }
+
+    void aTuneButtonWithNoBandHoldsWithNoBandAndAddsUp()
+    {
+        RadioModel radio;
+        radio.keepTransmitEditsWithoutRadio();
+        ContainerButtonDispatcher::Hooks hooks;
+        hooks.transmitPermitted = [] { return true; };
+        ContainerButtonDispatcher dispatcher(&radio, std::move(hooks));
+        const int start = radio.transmitModel().tunePowerForBand(Band::Band20m);
+
+        using Id = ContainerButtonDispatcher::Id;
+        QCOMPARE(dispatcher.click(Id::TuneM5, 0), QString());
+        QCOMPARE(dispatcher.click(Id::TuneM5, 0), QString());
+
+        QCOMPARE(heldKeys(), QStringList{heldTunePowerKey()});
+        QCOMPARE(AppSettings::instance().value(heldTunePowerKey()).toInt(), start - 10);
+        // Back where it started is still the operator's value.
+        QCOMPARE(dispatcher.click(Id::TuneP5, 0), QString());
+        QCOMPARE(dispatcher.click(Id::TuneP5, 0), QString());
+        QCOMPARE(AppSettings::instance().value(heldTunePowerKey()).toInt(), start);
+    }
+
+    // After a PWR edit the tune power still has no band.
+    void aPowerEditLeavesTunePowerWithNoBand()
+    {
+        RadioModel radio;
+        radio.keepTransmitEditsWithoutRadio();
+        radio.transmitModel().setPower(33);
+        QVERIFY(!radio.transmitModel().tuneTxBandKnown());
+        QVERIFY(!radio.transmitModel().setTunePowerForTxBand(44));
+        QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
+    }
+
+    // A connect that ends before the radio answers delivers nothing, and the
+    // next one still does. Also when it ends with the step already queued.
+    void aConnectThatDropsFirstKeepsItForTheNext()
+    {
+        seedRadio(kMac);
+        saveStartingSliceOn40m();
+        {
+            RadioModel before;
+            before.keepTransmitEditsWithoutRadio();
+            before.transmitModel().setPower(33);
+        }
+        {
+            RadioModel dropped;
+            dropped.setConnectionStateForTest(ConnectionState::Connecting);
+            beginConnect(dropped, kMac);
+            dropped.setConnectionStateForTest(ConnectionState::Disconnected);
+            settle();
+        }
+        QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QStringLiteral("71"));
+        {
+            RadioModel dropped;
+            dropped.setConnectionStateForTest(ConnectionState::Connecting);
+            beginConnect(dropped, kMac);
+            dropped.onConnectionStateChangedForTest(ConnectionState::Connected);
+            dropped.setConnectionStateForTest(ConnectionState::Disconnected);
+            settle();
+        }
+        QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QStringLiteral("71"));
+
+        RadioModel radio;
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        beginConnect(radio, kMac);
+        radioAnswers(radio);
+        QCOMPARE(heldKeys(), QStringList{});
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QStringLiteral("33"));
+        QCOMPARE(radio.transmitModel().power(), 33);
+    }
+
+    // The transmit slice a window restores on Connected decides the band, not
+    // the starting slice it had before then.
+    void aHeldPowerWaitsForTheRestoredTransmitSlice()
+    {
+        seedRadio(kMac);
+        const QStringList pans{QStringLiteral("pan-0"), QStringLiteral("pan-1")};
+        {
+            RadioModel before;
+            before.setConnectionStateForTest(ConnectionState::Connecting);
+            addWindowsConnectStep(before, pans);
+            beginConnect(before, kMac);
+            radioAnswers(before);
+            SliceModel* a = before.sliceById(0);
+            SliceModel* b = before.sliceById(1);
+            QVERIFY(a);
+            QVERIFY(b);
+            a->setFrequency(14'100'000.0);
+            b->setFrequency(7'100'000.0);
+            QVERIFY(before.txSliceArbiter()->requestHandoff(1));
+            before.flushPendingSettingsSave();
+        }
+        for (const auto& [key, value] : radiosSavedValues()) {
+            AppSettings::instance().setValue(radioKey(kMac, key), value);
+        }
+        {
+            RadioModel edit;
+            edit.keepTransmitEditsWithoutRadio();
+            edit.transmitModel().setPower(33);
+        }
+
+        RadioModel radio;
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        addWindowsConnectStep(radio, pans);
+        beginConnect(radio, kMac);
+        radioAnswers(radio);
+
+        QCOMPARE(radio.txBoundSlice(), radio.sliceById(1));
+        QCOMPARE(heldKeys(), QStringList{});
+        QCOMPARE(radio.transmitModel().powerForBand(Band::Band40m), 33);
+        QCOMPARE(radio.transmitModel().powerForBand(Band::Band20m), 83);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/20m")), QStringLiteral("83"));
+        QCOMPARE(radio.transmitModel().power(), 33);
+    }
+
+    // A value held for a band keeps it. The band-less one is applied last, so
+    // on the band the radio comes up on it wins, whichever came first.
+    void aBandlessPowerAndAPageEditForTheSameBand()
+    {
+        seedRadio(kMac);
+        saveStartingSliceOn40m();
+        {
+            RadioModel before;
+            before.keepTransmitEditsWithoutRadio();
+            before.transmitModel().setPower(33);
+            before.transmitModel().setPowerForBand(Band::Band40m, 55);
+            before.transmitModel().setPowerForBand(Band::Band6m, 44);
+        }
+        RadioModel radio;
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        beginConnect(radio, kMac);
+        radioAnswers(radio);
+        QCOMPARE(heldKeys(), QStringList{});
+        QCOMPARE(radio.transmitModel().powerForBand(Band::Band40m), 33);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QStringLiteral("33"));
+        QCOMPARE(radio.transmitModel().powerForBand(Band::Band6m), 44);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/6m")), QStringLiteral("44"));
+    }
+
+    // Nothing here runs on the air: PWR and the drive stay, and it waits.
+    void aHeldPowerDoesNotApplyWhileMoxIsUp()
+    {
+        seedRadio(kMac);
+        saveStartingSliceOn40m();
+        {
+            RadioModel before;
+            before.keepTransmitEditsWithoutRadio();
+            before.transmitModel().setPower(33);
+        }
+        RadioModel radio;
+        DriveWatchConnection connection;
+        radio.injectConnectionForTest(&connection);
+        const auto detach = qScopeGuard([&radio] { radio.injectConnectionForTest(nullptr); });
+        radio.moxController()->setTimerIntervals(0, 0, 0, 0, 0, 0);
+        radio.setConnectionStateForTest(ConnectionState::Connecting);
+        beginConnect(radio, kMac);
+        radio.moxController()->setMox(true);
+        settle();
+        QVERIFY(radio.moxController()->isMox());
+        const int powerOnAir = radio.transmitModel().power();
+        connection.drives.clear();
+
+        radioAnswers(radio);
+
+        QCOMPARE(heldKeys(), QStringList{heldPowerKey()});
+        QCOMPARE(radio.transmitModel().power(), powerOnAir);
+        QCOMPARE(saved(kMac, QStringLiteral("powerByBand/40m")), QStringLiteral("71"));
+        radio.moxController()->setMox(false);
+        settle();
+    }
+
+    // A logger's drive is not held, band or no band, and neither is a window's
+    // mirror of the Core's.
+    void aPausedPowerEditWithNoSliceHoldsNothing()
     {
         seedRadio(kMac);
         RadioModel radio;
         radio.keepTransmitEditsWithoutRadio();
-        radio.transmitModel().setPower(radio.transmitModel().power() == 33 ? 34 : 33);
+        {
+            const TransmitModel::HeldEditPause notAnEdit(radio.transmitModel());
+            radio.transmitModel().setPower(33);
+        }
         QCOMPARE(heldKeys(), QStringList{});
         connectLikeRadioModel(radio.transmitModel(), kMac);
         QCOMPARE(saved(kMac, QStringLiteral("powerByBand/20m")), QStringLiteral("83"));
-        QCOMPARE(radio.transmitModel().powerForBand(Band::Band20m), 83);
+
+        RadioModel window{RadioModel::Role::Remote};
+        window.keepTransmitEditsWithoutRadio();
+        window.transmitModel().setPower(34);
+        QCOMPARE(heldKeys(), QStringList{});
     }
+
+    // A Core's restored slice is a transmit band, and it holds for that band.
+    void aCoreWithASliceHoldsForItsBand()
+    {
+        seedRadio(kMac);
+        DaemonConfig config = DaemonConfig::defaults();
+        config.remotePort = 0;
+        config.statusPage = false;
+        DaemonApp app;
+        app.primeBoardForTest(HPSDRHW::HermesLite);
+        QVERIFY(app.start(config));
+        RadioModel* radio = app.radioModelForTest();
+        QVERIFY(radio);
+        QVERIFY(radio->txBoundSlice());
+        const Band band = bandFromFrequency(radio->txBoundSlice()->frequency());
+        radio->transmitModel().setPower(radio->transmitModel().power() == 33 ? 34 : 33);
+        QCOMPARE(heldKeys().join(u' '),
+                 TransmitModel::heldEditsPrefix()
+                     + QStringLiteral("powerByBand/%1").arg(bandKeyName(band)));
+        app.stop();
+    }
+
     void aPowerEditThroughTheRadioModelLandsOnTheTransmitBand()
     {
         seedRadio(kMac);

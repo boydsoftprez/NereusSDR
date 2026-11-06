@@ -2348,14 +2348,88 @@ void TransmitModel::writeForRadio(const QString& relativeKey, const QString& tex
     }
 }
 
+namespace {
+
+QString heldPowerForNextBandKey()
+{
+    return TransmitModel::heldEditsPrefix() + QStringLiteral("tx/PowerForNextBand");
+}
+
+QString heldTunePowerForNextBandKey()
+{
+    return TransmitModel::heldEditsPrefix() + QStringLiteral("tx/TunePowerForNextBand");
+}
+
+} // namespace
+
+bool TransmitModel::holdsWithNoBand() const
+{
+    return m_persistMac.isEmpty() && m_keepsEditsWithoutRadio && m_heldEditPauses == 0;
+}
+
+bool TransmitModel::holdPowerForNextBand(int power)
+{
+    if (!holdsWithNoBand()) {
+        return false;
+    }
+    AppSettings::instance().setValue(heldPowerForNextBandKey(),
+                                     QString::number(std::clamp(power, 0, 100)));
+    return true;
+}
+
+void TransmitModel::setTunePowerWithNoBand(Band shownBand, int watts)
+{
+    if (holdsWithNoBand()) {
+        auto& s = AppSettings::instance();
+        const int clamped = std::clamp(watts, 0, tunePowerMax());
+        // Writing back what is shown is no edit, unless it returns to it.
+        if (clamped != tunePowerForBand(shownBand) || s.contains(heldTunePowerForNextBandKey())) {
+            s.setValue(heldTunePowerForNextBandKey(), QString::number(clamped));
+        }
+    }
+    const HeldEditPause noBandOfItsOwn(*this);
+    setTunePowerForBand(shownBand, watts);
+}
+
+bool TransmitModel::hasPowerHeldForNextBand() const
+{
+    const auto& s = AppSettings::instance();
+    return s.contains(heldPowerForNextBandKey()) || s.contains(heldTunePowerForNextBandKey());
+}
+
+void TransmitModel::takePowerHeldForNextBand(Band band)
+{
+    if (m_persistMac.isEmpty()) {
+        return;
+    }
+    auto& s = AppSettings::instance();
+    bool ok = false;
+    const int power = s.value(heldPowerForNextBandKey()).toInt(&ok);
+    if (ok) {
+        setPowerForBand(band, power);
+        writeForRadio(QStringLiteral("powerByBand/%1").arg(bandKeyName(band)),
+                      QString::number(powerForBand(band)));
+    }
+    const int tunePower = s.value(heldTunePowerForNextBandKey()).toInt(&ok);
+    if (ok) {
+        setTunePowerForBand(band, tunePower);
+        writeForRadio(QStringLiteral("tunePowerByBand/%1").arg(static_cast<int>(band)),
+                      QString::number(tunePowerForBand(band)));
+    }
+    s.remove(heldPowerForNextBandKey());
+    s.remove(heldTunePowerForNextBandKey());
+}
+
 // Before anything is read: the ordinary load then takes the held value through
-// the same parsing, clamps and never-loaded rules as a saved one.
+// the same parsing, clamps and never-loaded rules as a saved one. A value with
+// no band stays: it has no key of the radio's to go to yet.
 void TransmitModel::moveHeldEditsToRadio(const QString& mac)
 {
     auto& s = AppSettings::instance();
     const QString prefix = heldEditsPrefix();
     for (const QString& key : s.allKeys()) {
-        if (!key.startsWith(prefix)) {
+        if (!key.startsWith(prefix) || key == heldPowerForNextBandKey()
+            || key == heldTunePowerForNextBandKey()) {
             continue;
         }
         s.setValue(QStringLiteral("hardware/%1/%2").arg(mac, key.mid(prefix.size())),

@@ -5238,13 +5238,14 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // that band becomes _tx_band and the save lands there. The MOX-edge
     // restore, which sets nothing, saves nothing until a band is known.
     connect(&m_transmitModel, &TransmitModel::powerChanged, this,
-            [this](int /*power*/) {
-        // With no slice, no band is the radio's: m_lastBand is a default, and a
-        // value held for it would replace that band's power on a radio that
-        // then comes up on another. Not held; the radio's saved powers stand.
-        std::optional<TransmitModel::HeldEditPause> noBandOfItsOwn;
-        if (!txBoundSlice()) {
-            noBandOfItsOwn.emplace(m_transmitModel);
+            [this](int power) {
+        // With no radio and no slice, no band is the radio's: m_lastBand is a
+        // default, and a save to it would replace that band's power on a radio
+        // that then comes up on another. It waits for the band the radio comes
+        // up on (applyPowerHeldForNextBand), and no band is adopted for it.
+        if (!txBoundSlice() && m_transmitModel.holdPowerForNextBand(power)) {
+            applyDriveSliderPower();
+            return;
         }
         if (ownsLocalDsp() && !m_txBandKnown) {
             // The initializing TXBand pass for the adopted band, less the
@@ -8073,6 +8074,10 @@ bool RadioModel::setTunePowerForTxBandForStation(int watts, QString* reason, boo
     }
     refreshTransmitTuneBand();
     if (!m_transmitModel.setTunePowerForTxBand(watts)) {
+        if (m_transmitModel.holdsWithNoBand()) {
+            m_transmitModel.setTunePowerWithNoBand(m_lastBand, watts);
+            return true;
+        }
         if (reason) { *reason = QStringLiteral("The Core has no transmit band."); }
         return false;
     }
@@ -8482,7 +8487,37 @@ void RadioModel::refreshTransmitTuneBand()
     if (m_role != Role::Local) {
         return;
     }
+    // The last slice went with no radio: no band is the radio's now, and the
+    // next edit waits for one.
+    if (!txBoundSlice() && m_transmitModel.holdsWithNoBand()) {
+        if (m_txBandKnown) {
+            m_txBandKnown = false;
+            emit transmitBandChanged();
+        }
+        m_transmitModel.clearTuneTxBand();
+        return;
+    }
     applyTransmitBand(transmitSliceBand(), /*initializing=*/false);
+}
+
+// A PWR or tune power edit made with no radio and no slice becomes the transmit
+// band's, through the TXBand pass a connect makes, so the limits and the drive
+// follow as they do for a band's own power. Connecting never keys: this keys
+// nothing, and sends no drive beyond that pass. On the air it does not run, and
+// the value waits for the next connect.
+void RadioModel::applyPowerHeldForNextBand()
+{
+    if (m_role != Role::Local || !txBoundSlice()
+        || !m_transmitModel.hasPowerHeldForNextBand()) {
+        return;
+    }
+    if ((m_moxController && m_moxController->isMox()) || m_isTuning
+        || (m_twoToneController && m_twoToneController->holdsFixedPower())) {
+        return;
+    }
+    const Band band = transmitSliceBand();
+    m_transmitModel.takePowerHeldForNextBand(band);
+    applyTransmitBand(band, /*initializing=*/true);
 }
 
 Band RadioModel::transmitSliceBand() const
@@ -31274,6 +31309,17 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         // the connected radio's fields (Radio Info labels, sample rate,
         // capability-gated tab visibility, per-MAC settings restore).
         emit currentRadioChanged(m_lastRadioInfo);
+        // Queued after a window's own step on this state, which brings back
+        // the saved slices and the transmit slice: the band is known then. A
+        // connect that has dropped by then leaves the value waiting.
+        if (m_role == Role::Local && m_transmitModel.hasPowerHeldForNextBand()) {
+            QMetaObject::invokeMethod(this, [this, mac = m_lastRadioInfo.macAddress] {
+                if (m_connectionState == ConnectionState::Connected
+                    && m_lastRadioInfo.macAddress == mac) {
+                    applyPowerHeldForNextBand();
+                }
+            }, Qt::QueuedConnection);
+        }
         // Phase 3P-I-a T11 — apply persisted per-band Alex antenna to the
         // fresh connection. Matches Thetis's initial UpdateAlexAntSelection
         // call path on radio startup (HPSDR/Alex.cs:310 [@501e3f5]).
