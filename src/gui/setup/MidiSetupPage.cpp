@@ -2,6 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: its list and cell helpers
+//                moved to HotKeySetupCommon.h for the Knobs page.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/setup/MidiSetupPage.h"
 
@@ -141,49 +144,6 @@ QString kindRefusal(const QString& key, MidiControlKind kind)
         return QStringLiteral("Pitch bend sends where the wheel is, so it can only be a fader.");
     }
     return {};
-}
-
-void setComboData(QComboBox* combo, const QVariant& data)
-{
-    const QSignalBlocker blocker(combo);
-    combo->setCurrentIndex(std::max(0, combo->findData(data)));
-}
-
-void disableItem(QComboBox* combo, int index, const QString& reason)
-{
-    auto* const model = qobject_cast<QStandardItemModel*>(combo->model());
-    if (QStandardItem* const item = model != nullptr ? model->item(index) : nullptr) {
-        item->setFlags(item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
-        item->setToolTip(reason);
-    }
-}
-
-// The name goes in the widget's own place, so it can't be found again once the
-// row is gone: a removed row's widgets are only deleted later.
-void retireNames(QWidget* cell)
-{
-    if (cell == nullptr) {
-        return;
-    }
-    cell->setObjectName({});
-    const QList<QWidget*> children = cell->findChildren<QWidget*>();
-    for (QWidget* const child : children) {
-        child->setObjectName({});
-    }
-}
-
-QWidget* makeCell(QWidget* content, QHBoxLayout** layoutOut = nullptr)
-{
-    auto* const cell = new QWidget;
-    makeCellClear(cell);
-    auto* const layout = new QHBoxLayout(cell);
-    layout->setContentsMargins(2, 2, 2, 2);
-    layout->setSpacing(3);
-    layout->addWidget(content);
-    if (layoutOut != nullptr) {
-        *layoutOut = layout;
-    }
-    return cell;
 }
 
 } // namespace
@@ -405,21 +365,6 @@ void MidiSetupPage::buildControls()
     layout->addWidget(m_status);
 }
 
-// Every action under its group's name, as the Keyboard page's list orders them.
-void MidiSetupPage::fillActionCombo(QComboBox* combo, const QString& noneText) const
-{
-    combo->addItem(noneText, QString());
-    for (const QString& group : groupsInOrder()) {
-        combo->addItem(group);
-        disableItem(combo, combo->count() - 1, {});
-        for (const HotKeyAction& action : HotKeyActionList::all()) {
-            if (action.group == group) {
-                combo->addItem(action.name, action.id);
-            }
-        }
-    }
-}
-
 void MidiSetupPage::markUnavailableActions(QComboBox* combo) const
 {
     auto* const model = qobject_cast<QStandardItemModel*>(combo->model());
@@ -587,7 +532,7 @@ void MidiSetupPage::addRow(const MidiBinding& binding)
         const QString refusal = kindRefusal(key, kind);
         row.kind->setItemData(index, refusal.isEmpty() ? kindHelp(kind) : refusal, Qt::ToolTipRole);
         if (!refusal.isEmpty()) {
-            disableItem(row.kind, index, refusal);
+            disableComboItem(row.kind, index, refusal);
         }
     }
     row.cells[0] = makeCell(row.kind);

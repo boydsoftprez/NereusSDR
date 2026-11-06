@@ -99,6 +99,7 @@ public:
     Q_INVOKABLE void setDeviceClaimedElsewhere(NereusSDR::DeviceId id, bool claimed);
 
     static bool supported();    // false in a build without hidapi
+    static QString unsupportedReason();
 
     // The application calls this once at startup, before it builds a window. Until
     // then the real device library is never touched, so a test process, which never

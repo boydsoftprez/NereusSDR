@@ -300,6 +300,7 @@
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: dialog-setup-keyboard-full.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: dialog-setup-midi-rows.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: dialog-setup-knobs scenes.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys CI fixes: dialog-setup-keyboard--min and
 //                --wide, for the map that reflows.
 //                AI-assisted implementation via Anthropic Claude Code.
@@ -401,6 +402,9 @@
 #include "ControlsSheet.h"
 #include "PreviewData.h"
 #include "core/AppSettings.h"
+#include "core/hotkeys/HotKeyDeviceBindings.h"
+#include "gui/hotkeys/ControllerHost.h"
+#include "gui/hotkeys/devices/DeviceInput.h"
 #include "gui/hotkeys/midi/MidiInput.h"
 #include "gui/hotkeys/midi/MidiProfile.h"
 #include "core/ControlRanges.h"
@@ -437,6 +441,7 @@
 #include "gui/multidevice/TakeTransmitDialog.h"
 #include "gui/setup/AppearanceSetupPages.h"
 #include "gui/setup/HardwarePage.h"
+#include "gui/setup/KnobsSetupPage.h"
 #include "gui/setup/TciLogWindow.h"
 #include "gui/widgets/FilterPolicyDialog.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
@@ -11376,12 +11381,14 @@ QVector<SetupSizeSpec> setupSizeSpecs()
         {QStringLiteral("4o3a"), {}, saturn, min, kSetupMinimumSize},
         {QStringLiteral("rf-kit"), {QStringLiteral("RF2K-S")}, saturn, min, kSetupMinimumSize},
         {QStringLiteral("keyboard"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("knobs"), {}, saturn, min, kSetupMinimumSize},
         {hardware, {alex}, saturn, wide, kSetupWideSize},
         {hardware, {alex, alex1}, saturn, wide, kSetupWideSize},
         {hardware, {alex, alex2}, saturn, wide, kSetupWideSize},
         {hardware, {oc}, saturn, wide, kSetupWideSize},
         {hardware, {oc, swl}, saturn, wide, kSetupWideSize},
         {QStringLiteral("keyboard"), {}, saturn, wide, kSetupWideSize},
+        {QStringLiteral("knobs"), {}, saturn, wide, kSetupWideSize},
     };
 }
 
@@ -11941,6 +11948,62 @@ QVector<Scene> setupPageScenes(MainWindow* window)
                 ctx.images.last().extra[QStringLiteral("grown_to_fit")] = QJsonObject{
                     {QStringLiteral("from"), QJsonArray{start.width(), start.height()}},
                     {QStringLiteral("to"), QJsonArray{d->width(), d->height()}}};
+            }
+        }});
+    }
+    // Each knob device's drawing and rows, then one with a plain fix to read.
+    if (leafByStem.contains(QStringLiteral("knobs"))) {
+        const SetupLeaf leaf = leafByStem.value(QStringLiteral("knobs"));
+        const QString title = where(leaf, {});
+        for (const DeviceId id : HotKeyDeviceBindings::devices()) {
+            if (id == DeviceId::Rc28) {
+                continue;   // the page's own scene
+            }
+            const QString name = QStringLiteral("dialog-setup-knobs-") + HotKeyDeviceBindings::deviceKey(id).toLower();
+            scenes.append({name, QStringLiteral("2v"), true, [name, leaf, title, id](SceneContext& ctx) {
+                SetupDialog* d = openSetupPageScene(ctx, leaf.index);
+                if (d == nullptr) {
+                    return;
+                }
+                auto* const page = d->findChild<KnobsSetupPage*>();
+                if (page == nullptr || !page->selectDevice(id)) {
+                    ctx.failure = QStringLiteral("%1: the device could not be chosen").arg(title);
+                    return;
+                }
+                pump(kFinalSettleMs);
+                clearScrollBarHover(d);
+                ctx.notes.append(QStringLiteral("%1 (registry index %2), %3")
+                                     .arg(title).arg(leaf.index).arg(HotKeyDeviceBindings::deviceName(id)));
+                captureDialog(ctx, d, name);
+                page->selectDevice(DeviceId::Rc28);
+            }});
+        }
+        const QString name = QStringLiteral("dialog-setup-knobs-states");
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, title](SceneContext& ctx) {
+            SetupDialog* d = openSetupPageScene(ctx, leaf.index);
+            if (d == nullptr) {
+                return;
+            }
+            auto* const page = d->findChild<KnobsSetupPage*>();
+            ControllerHost* const host = page != nullptr ? page->controllerHost() : nullptr;
+            if (host == nullptr) {
+                ctx.failure = QStringLiteral("%1: the page has no controller host").arg(title);
+                return;
+            }
+            // What the device layer would say. Nothing is opened: the preview allows no real device.
+            host->onDeviceStateChanged(DeviceId::Rc28, true, {});
+            host->onDeviceStateChanged(DeviceId::StreamDeckPlus, false, deviceOpenFailureReason(QStringLiteral("exclusive access")));
+            host->onDeviceStateChanged(DeviceId::PowerMate, false, deviceOpenFailureReason(QStringLiteral("not permitted")));
+            page->selectDevice(DeviceId::StreamDeckPlus);
+            pump(kFinalSettleMs);
+            clearScrollBarHover(d);
+            ctx.notes.append(QStringLiteral("%1 (registry index %2), one device connected and two with a fix")
+                                 .arg(title).arg(leaf.index));
+            captureDialog(ctx, d, name);
+            page->selectDevice(DeviceId::Rc28);
+            const QString gone = QStringLiteral("Not plugged in");
+            for (const DeviceId id : {DeviceId::Rc28, DeviceId::StreamDeckPlus, DeviceId::PowerMate}) {
+                host->onDeviceStateChanged(id, false, gone);
             }
         }});
     }

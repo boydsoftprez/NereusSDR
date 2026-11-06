@@ -270,6 +270,11 @@ bool DeviceInput::supported()
 #endif
 }
 
+QString DeviceInput::unsupportedReason()
+{
+    return noSupportReason();
+}
+
 void DeviceInput::allowRealDevices()
 {
     realDevicesAllowedFlag() = true;

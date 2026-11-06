@@ -261,6 +261,11 @@ FlexControlInput::~FlexControlInput()
     closeWithLightsOff();
 }
 
+QString FlexControlInput::unsupportedReason()
+{
+    return noSupportReason();
+}
+
 bool FlexControlInput::supported()
 {
 #ifdef HAVE_SERIALPORT

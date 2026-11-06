@@ -35,6 +35,7 @@ namespace NereusSDR {
 class ControllerHost;
 class HotKeyBindings;
 class KeyboardPage;
+class KnobsSetupPage;
 class MidiSetupPage;
 class RadioModel;
 class SliceModel;
@@ -470,6 +471,7 @@ private:
     QPointer<KeyboardPage> m_keyboardPage;
     ControllerHost* m_controllerHost{nullptr};
     QPointer<MidiSetupPage> m_midiPage;
+    QPointer<KnobsSetupPage> m_knobsPage;
     int m_displayPanIndex{-1};
     QWidget* m_displaySourceHost{nullptr};
     QHash<QString, SetupPage*> m_displaySourcePages;

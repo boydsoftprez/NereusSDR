@@ -99,6 +99,7 @@ public:
     Q_INVOKABLE void setLit(int lit);
 
     static bool supported();    // false in a build without Qt SerialPort
+    static QString unsupportedReason();
 
     // Null goes back to the real serial ports, or the real timer. A factory may return
     // null, which is what a build without Qt SerialPort has.

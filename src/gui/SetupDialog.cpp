@@ -219,6 +219,7 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: Keys and controllers > Keyboard replaces Keyboard > Shortcuts.
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: Keys and controllers > MIDI replaces CAT & Network > MIDI Control.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: Keys and controllers > Knobs.
 //                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
@@ -286,6 +287,7 @@
 #include "setup/RotorSetupPage.h"
 // Keys and controllers
 #include "setup/HotKeySetupPages.h"
+#include "setup/KnobsSetupPage.h"
 #include "setup/MidiSetupPage.h"
 // Diagnostics
 #include "setup/DiagnosticsSetupPages.h"
@@ -562,6 +564,9 @@ void SetupDialog::refreshHotKeyAvailability()
     }
     if (m_midiPage) {
         m_midiPage->refreshAvailability();
+    }
+    if (m_knobsPage) {
+        m_knobsPage->refreshAvailability();
     }
 }
 
@@ -2359,6 +2364,12 @@ void SetupDialog::buildTree()
         auto* page = new MidiSetupPage(m_controllerHost, m_hotKeyBindings);
         page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
         m_midiPage = page;
+        return page;
+    });
+    registerPage(keysAndControllers, "Knobs", SetupScope::ThisComputer, [this]() -> QWidget* {
+        auto* page = new KnobsSetupPage(m_controllerHost, m_hotKeyBindings);
+        page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
+        m_knobsPage = page;
         return page;
     });
 

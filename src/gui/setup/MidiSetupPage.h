@@ -78,7 +78,6 @@ private:
 
     void buildController();
     void buildControls();
-    void fillActionCombo(QComboBox* combo, const QString& noneText) const;
     void markUnavailableActions(QComboBox* combo) const;
 
     void loadActiveProfile();

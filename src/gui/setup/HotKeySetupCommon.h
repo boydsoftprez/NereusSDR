@@ -3,6 +3,9 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: what the Keyboard and
 //                MIDI pages share, moved out of HotKeySetupPages.cpp.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: the action lists and table
+//                cells the MIDI and Knobs pages share, moved out of MidiSetupPage.cpp.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // The look and the words the Keys and controllers pages have in common.
 #pragma once
@@ -11,10 +14,17 @@
 #include "core/hotkeys/HotKeyActionList.h"
 #include "gui/StyleConstants.h"
 
+#include <QComboBox>
+#include <QHBoxLayout>
 #include <QList>
+#include <QSignalBlocker>
+#include <QStandardItemModel>
 #include <QString>
 #include <QStringList>
+#include <QVariant>
 #include <QWidget>
+
+#include <algorithm>
 
 namespace NereusSDR::HotKeySetup {
 
@@ -92,6 +102,61 @@ inline void makeCellClear(QWidget* cell)
 {
     cell->setObjectName(QStringLiteral("hotKeyCell"));
     cell->setStyleSheet(QStringLiteral("QWidget#hotKeyCell { background: transparent; }"));
+}
+
+inline void setComboData(QComboBox* combo, const QVariant& data)
+{
+    const QSignalBlocker blocker(combo);
+    combo->setCurrentIndex(std::max(0, combo->findData(data)));
+}
+
+inline void disableComboItem(QComboBox* combo, int index, const QString& reason)
+{
+    auto* const model = qobject_cast<QStandardItemModel*>(combo->model());
+    if (QStandardItem* const item = model != nullptr ? model->item(index) : nullptr) {
+        item->setFlags(item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
+        item->setToolTip(reason);
+    }
+}
+
+// Every action under its group's name, as the Keyboard page's list orders them.
+inline void fillActionCombo(QComboBox* combo, const QString& noneText)
+{
+    combo->addItem(noneText, QString());
+    for (const QString& group : groupsInOrder()) {
+        combo->addItem(group);
+        disableComboItem(combo, combo->count() - 1, {});
+        for (const HotKeyAction& action : HotKeyActionList::all()) {
+            if (action.group == group) {
+                combo->addItem(action.name, action.id);
+            }
+        }
+    }
+}
+
+// The name goes in the widget's own place, so it can't be found again once the
+// row is gone: a removed row's widgets are only deleted later.
+inline void retireNames(QWidget* cell)
+{
+    if (cell == nullptr) {
+        return;
+    }
+    cell->setObjectName({});
+    const QList<QWidget*> children = cell->findChildren<QWidget*>();
+    for (QWidget* const child : children) {
+        child->setObjectName({});
+    }
+}
+
+inline QWidget* makeCell(QWidget* content)
+{
+    auto* const cell = new QWidget;
+    makeCellClear(cell);
+    auto* const layout = new QHBoxLayout(cell);
+    layout->setContentsMargins(2, 2, 2, 2);
+    layout->setSpacing(3);
+    layout->addWidget(content);
+    return cell;
 }
 
 inline QString lineEditStyle()

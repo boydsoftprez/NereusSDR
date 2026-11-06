@@ -823,6 +823,7 @@ private slots:
         // Hot keys: the keys on this computer's keyboard are this computer's.
         QCOMPARE(scopeOf(QStringLiteral("Keyboard")), SetupScope::ThisComputer);
         QCOMPARE(scopeOf(QStringLiteral("MIDI")), SetupScope::ThisComputer);
+        QCOMPARE(scopeOf(QStringLiteral("Knobs")), SetupScope::ThisComputer);
         // The CAT pages set up the Core's CAT from a remote window
         // (RemoteCatControl), so they are Core pages, as Rotor and RF-Kit are.
         QCOMPARE(scopeOf(QStringLiteral("Rotor")), SetupScope::Core);
@@ -2522,8 +2523,8 @@ private slots:
         // drops by that many. Spectrum Peaks, Waterfall Defaults and 3D View
         // moved to the Display pill (PR 443), where they are the Mixed Peaks &
         // Markers, Waterfall and View pages, leaving 9 This Computer pages,
-        // and Keys and controllers > Keyboard and MIDI make it 11.
-        QVERIFY(thisComputer >= 11);
+        // and Keys and controllers > Keyboard, MIDI and Knobs make it 12.
+        QVERIFY(thisComputer >= 12);
         QVERIFY(core >= 22);
         QVERIFY(mixed >= 8);
 
