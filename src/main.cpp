@@ -118,10 +118,12 @@ int main(int argc, char* argv[])
     // On Cinnamon (X11) Qt's native file dialog is created but never mapped,
     // leaving the window modal-blocked behind an invisible dialog. Routing
     // dialogs through xdg-desktop-portal shows Cinnamon's own chooser. Only
-    // when the user has not picked a platform theme themselves.
+    // when no platform theme is set already, and not in an AppImage, whose
+    // runtime sets APPDIR and APPIMAGE (StationBinaryLocator.h reads them too).
     if (NereusSDR::shouldUsePortalThemeOnThisDesktop(
             qEnvironmentVariable("XDG_CURRENT_DESKTOP"),
-            qEnvironmentVariable("QT_QPA_PLATFORMTHEME"))) {
+            qEnvironmentVariable("QT_QPA_PLATFORMTHEME"),
+            !qEnvironmentVariableIsEmpty("APPDIR") || !qEnvironmentVariableIsEmpty("APPIMAGE"))) {
         qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
     }
 #endif
