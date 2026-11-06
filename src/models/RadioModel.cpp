@@ -17942,7 +17942,12 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             scheduleSettingsSave(slice);
         }
     });
-    if (restoredSampleRateHz > 0) {
+    // Joined a running receiver for want of any other: it takes that receiver's
+    // rate and moves nothing, here or in the restore's pass over saved rates.
+    if (noneOfItsOwn) {
+        m_desktopLayoutJoinedRunning.insert(index);
+    }
+    if (restoredSampleRateHz > 0 && !noneOfItsOwn) {
         // And put the restored rate on the DDC, not just on the menu. No-op
         // when the slice has no stream or its stream already runs at that rate.
         slice->setSampleRateHz(restoredSampleRateHz);
@@ -20465,7 +20470,12 @@ bool RadioModel::restoreDesktopLayoutSlices(const QStringList& panIds)
     // connect's own pass ran with only the starting slice there. Protocol 1
     // moves nothing, and a rate off the ladder asks for nothing.
     if (added) {
-        applySavedSliceSampleRates(savedSliceSampleRates(), m_lastRadioInfo.protocol);
+        QHash<int, int> saved = savedSliceSampleRates();
+        for (const int id : std::as_const(m_desktopLayoutJoinedRunning)) {
+            saved.remove(id);
+        }
+        m_desktopLayoutJoinedRunning.clear();
+        applySavedSliceSampleRates(saved, m_lastRadioInfo.protocol);
         if (!self) { return true; }
     }
     // A letter this connect's closure named has already been told it stays saved.

@@ -1373,6 +1373,65 @@ private slots:
         QCOMPARE(slicesInRecord(other), QList<int>({0, 1, 2}));
     }
 
+    // JJ's ruling: nothing moves a running receiver by accident. C, restored
+    // with no free receiver and none of its own pan's covering it, joins A's and
+    // takes its rate, whatever rate C was saved at.
+    void aSliceJoiningARunningReceiverTakesItsRate_data()
+    {
+        QTest::addColumn<int>("savedC");
+        QTest::addColumn<int>("savedA");
+        QTest::newRow("c384k_a192k") << 384000 << 192000;
+        QTest::newRow("c96k_a192k") << 96000 << 192000;
+        QTest::newRow("c96k_aNone") << 96000 << 0;
+    }
+    void aSliceJoiningARunningReceiverTakesItsRate()
+    {
+        QFETCH(int, savedC);
+        QFETCH(int, savedA);
+        {
+            RadioModel before;
+            connectDesktop(before, 2, 5, {kPan0, kPan1});
+            before.sliceById(0)->setFrequency(kSliceAFreqHz);
+            before.sliceById(1)->setFrequency(kSliceBFreqHz);
+            QVERIFY(before.setActiveSliceById(0));
+            before.addSliceOnPan(kPan1, false, true);
+            QVERIFY(before.sliceById(2));
+            before.sliceById(2)->setFrequency(kSliceAFreqHz + 5000.0);
+            QCOMPARE(before.sliceById(2)->streamIndex(), before.sliceById(0)->streamIndex());
+            before.flushPendingSettingsSave();
+        }
+        auto& s = AppSettings::instance();
+        const QString mac = AppSettings::normalizedRadioMac(kDesktopMac);
+        const QString keyC = QStringLiteral("hardware/%1/slices/2/SampleRate").arg(mac);
+        const QString keyA = QStringLiteral("hardware/%1/slices/0/SampleRate").arg(mac);
+        s.setValue(keyC, savedC);
+        if (savedA > 0) {
+            s.setValue(keyA, savedA);
+        } else {
+            s.remove(keyA);
+        }
+        RadioModel after;
+        QList<int> aRates;
+        QObject::connect(&after, &RadioModel::sliceAdded, &after, [&](int id) {
+            if (id == 0 && after.sliceById(0)) {
+                QObject::connect(after.sliceById(0), &SliceModel::sampleRateHzChanged, &after,
+                                 [&](int hz) { aRates.append(hz); });
+            }
+        });
+        connectDesktop(after, 2, 5, {kPan0, kPan1});
+        SliceModel* a = after.sliceById(0);
+        SliceModel* c = after.sliceById(2);
+        QVERIFY(a);
+        QVERIFY(c);
+        QCOMPARE(c->streamIndex(), a->streamIndex());
+        QCOMPARE(after.streamSampleRateHzForTest(a->streamIndex()), kRateHz);
+        QCOMPARE(aRates, QList<int>{});
+        QCOMPARE(a->frequency(), kSliceAFreqHz);
+        QCOMPARE(c->sampleRateHz(), kRateHz);
+        after.flushPendingSettingsSave();
+        QCOMPARE(s.value(keyC).toInt(), kRateHz);
+    }
+
     // Built live on a 2 DDC radio: C is on B's pan but inside A's receiver. No
     // receiver of its own pan covers it and none is free, and A's covers it, as
     // the live path found when it was tuned there.
