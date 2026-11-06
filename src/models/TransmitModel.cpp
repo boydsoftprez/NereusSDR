@@ -2439,7 +2439,9 @@ void TransmitModel::loadFromSettings(const QString& mac)
     //
     // The model property remains the single source of truth at runtime;
     // PsForm + the PureSignal coordinator write through the model API,
-    // and per-profile recall flips it via the existing setter.
+    // and choosing a profile flips it via the existing setter.  Connecting
+    // does not recall a profile (RadioModel::scopeTxProfiles only loads the
+    // bank), so a profile saved with PureSignal on still starts off.
 
     // ── VOX properties (voxEnabled NOT loaded — safety: always false) ─────
     const int voxThresholdDb = s.value(pfx + QLatin1String("Dexp_Threshold"),
