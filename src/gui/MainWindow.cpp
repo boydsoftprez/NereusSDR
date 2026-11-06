@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: A pan raises the wideband flag only for a slice this window
+//               controls, not one it only listens to, JJ's decision.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06: A pan going away lowers its wideband flag while the widgets are
 //               whole, the CH labels are held rather than searched for, and a
 //               wing click retunes only a slice this window controls. Hosting
@@ -3227,6 +3230,9 @@ void MainWindow::setDesktopStationController(DesktopStationController* controlle
             if (!desktopHosting() && m_desktopTakeDialog) { m_desktopTakeDialog->close(); }
             if (!self) { return; }
             refreshDesktopStationState();
+            // Not while quitting: raising a flag here would bypass the filter
+            // and start wideband just before the radio is told to stop.
+            if (m_shuttingDown) { return; }
             emit desktopHostingChanged();
         });
         // TX badge take: the badge's take ended after its call.
@@ -5508,9 +5514,11 @@ std::function<void()> MainWindow::wireWidebandExtensionForTest(
             [reconcile, panId](const QString& retiredId) {
         if (retiredId == panId) { reconcile(); }
     });
-    // A wing click moves the slice, so it answers to the same rule as any other
-    // tune: not another device's slice, nor one this window only listens to.
-    // On that device's transmit slice it would move its transmit frequency.
+    // A wing click moves the slice, so on a hosting desktop it answers to the
+    // same rule as any other tune: not another device's slice, nor one the
+    // window only listens to. On that device's transmit slice it would move its
+    // transmit frequency. A remote window goes on to setFrequency, whose hold
+    // tells the operator why nothing moved.
     connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
             spectrum, [resolve, mayRetune](double freqHz) {
         SliceModel* slice = resolve();
@@ -5518,6 +5526,8 @@ std::function<void()> MainWindow::wireWidebandExtensionForTest(
             slice->setFrequency(freqHz);
         }
     });
+    // Settings restore and rate seeding may have derived the actual state
+    // before this bridge existed, so seed the resolved slice immediately.
     reconcile();
     return reconcile;
 }
@@ -8019,10 +8029,14 @@ void MainWindow::ensureOverlayPanels()
         const std::function<void()> reconcileWideband = wireWidebandExtensionForTest(
             sw, m_radioModel, m_panStack, panId,
             [this](int sliceId) {
-                return !markerOnlyPlacement(sliceId)
-                    && (windowControlsSlice(sliceId) || windowListensTo(sliceId));
+                // Only the window controlling a receiver may bypass its filter
+                // (JJ: "No, controlling only"). Never while quitting: that
+                // would bypass it and start wideband just before the radio is
+                // told to stop.
+                return !m_shuttingDown && !markerOnlyPlacement(sliceId)
+                    && windowControlsSlice(sliceId);
             },
-            [this](int sliceId) { return windowControlsSlice(sliceId); });
+            [this](int sliceId) { return !desktopHosting() || windowControlsSlice(sliceId); });
         connect(this, &MainWindow::desktopHostingChanged, sw, reconcileWideband);
 
         // Display pill plan Task 7: a zoom on this pan (and its

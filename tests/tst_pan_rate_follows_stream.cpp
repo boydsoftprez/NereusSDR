@@ -420,6 +420,33 @@ private slots:
         QVERIFY(!model->widebandActiveForChain(0));
     }
 
+    // The same with the pan that goes being the active one. Nothing on the flag
+    // path reads the active id, which is stale while panRetired runs.
+    void layoutShrinkRetiringTheActiveExtendedPanLowersTheFlagAndSurvives()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpInactivePanExtended(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        stack->setActivePan(QStringLiteral("pan-1"));
+        QCOMPARE(stack->activePanId(), QStringLiteral("pan-1"));
+        QVERIFY(stack->spectrum(QStringLiteral("pan-1"))->extendedMode());
+        QVERIFY(model->widebandActiveForChain(0));
+
+        QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("1"))));
+        QVERIFY(!stack->panadapter(QStringLiteral("pan-1")));
+        QCOMPARE(stack->activePanId(), QStringLiteral("pan-0"));
+        QVERIFY(!model->sliceById(1)->widebandExtensionRequested());
+        QVERIFY(!model->widebandActiveForChain(0));
+
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        QVERIFY(!model->widebandActiveForChain(0));
+    }
+
     // The same with the pan floating, which sits under its own window.
     void removingAFloatingExtendedPanLowersTheFlagAndSurvives()
     {

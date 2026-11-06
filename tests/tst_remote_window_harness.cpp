@@ -2363,6 +2363,57 @@ private slots:
         QVERIFY(!h.station().isTune());
     }
 
+    // A remote window never writes the wideband flag on its model, listening or
+    // not: it sends the Core permission for an extended view, and no more.
+    void remoteListeningPanNeverWritesTheWidebandFlag()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        QVERIFY(connectSharing(h));
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(h, phoneSession);
+        QVERIFY(!phone.isEmpty());
+        h.station().sliceOwnership()->setOwner(1, phone);
+        QTRY_VERIFY(flagFor(h, 1) && flagFor(h, 1)->isListening());
+        auto* spectrum = qobject_cast<SpectrumWidget*>(flagFor(h, 1)->parentWidget());
+        QVERIFY(spectrum);
+        const SliceModel* slice = h.remoteModel()->sliceById(1);
+        QVERIFY(slice);
+        QSignalSpy flagChanges(slice, &SliceModel::widebandExtensionRequestedChanged);
+
+        spectrum->setFrequencyRange(spectrum->centerFrequency(), 768000.0);
+
+        QCOMPARE(flagChanges.count(), 0);
+        QVERIFY(!slice->widebandExtensionRequested());
+    }
+
+    // A click in a wing on a slice this window only listens to reaches the
+    // model's hold, which tells the operator why nothing moved.
+    void remoteWingClickOnAListenedSliceAnnouncesTheHold()
+    {
+        RemoteWindowHarness h(sharingOptions(2, QStringLiteral("2v")));
+        QVERIFY(h.start());
+        QVERIFY(connectSharing(h));
+        QObject phoneSession;
+        const QByteArray phone = admitPhone(h, phoneSession);
+        QVERIFY(!phone.isEmpty());
+        h.station().sliceOwnership()->setOwner(1, phone);
+        QTRY_VERIFY(flagFor(h, 1) && flagFor(h, 1)->isListening());
+        auto* spectrum = qobject_cast<SpectrumWidget*>(flagFor(h, 1)->parentWidget());
+        QVERIFY(spectrum);
+        const SliceModel* slice = h.remoteModel()->sliceById(1);
+        QVERIFY(slice);
+        QTRY_VERIFY(slice->isReadOnlyListener());
+        const double before = slice->frequency();
+        QSignalSpy held(h.remoteModel(), &RadioModel::sliceRequestHeldForListener);
+
+        emit spectrum->ddcRetuneRequested(before + 200000.0);
+
+        QCOMPARE(held.count(), 1);
+        QCOMPARE(held.at(0).at(0).toInt(), 1);
+        QCOMPARE(slice->frequency(), before);
+    }
+
     // An old letter's delivered intent must not inherit the flag's Take
     // control behavior after this window becomes only a listener.
     void remoteStaleTxLetterNeverTakesControlOfAListenedSlice()
@@ -3762,7 +3813,9 @@ int main(int argc, char** argv)
            QStringLiteral("remoteContainerMonAndPsaFollowTheTransmitHolder"),
            QStringLiteral("remoteTxBadgeOnAListenedSliceTakesTheSliceThenTransmit")}},
          {QStringLiteral("access"),
-          {QStringLiteral("remoteContainerSliceButtonsFollowTheCoresChangeOfControl"),
+          {QStringLiteral("remoteWingClickOnAListenedSliceAnnouncesTheHold"),
+           QStringLiteral("remoteListeningPanNeverWritesTheWidebandFlag"),
+           QStringLiteral("remoteContainerSliceButtonsFollowTheCoresChangeOfControl"),
            QStringLiteral("remoteLayoutChangeKeepsListeningToASliceOnARemainingPan"),
            QStringLiteral("remoteListenTheCoreAcceptsShowsTheSliceHere"),
            QStringLiteral("remotePlacementsFollowTheCoresAccessUpdates"),
