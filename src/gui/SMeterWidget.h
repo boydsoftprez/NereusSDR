@@ -175,6 +175,7 @@ mw0lge@grange-lane.co.uk
 #pragma once
 
 #include "core/ControlRanges.h"
+#include "gui/NereusGuiExport.h"
 
 #include <QColor>
 #include <QVector>
@@ -224,7 +225,7 @@ signals:
 // Below S9 the scale markings are white; above S9 they are red.
 //
 // From AetherSDR src/gui/SMeterWidget.h [@0cd4559]
-class SMeterWidget : public QWidget {
+class NEREUS_GUI_EXPORT SMeterWidget : public QWidget {
     Q_OBJECT
 
 public:
