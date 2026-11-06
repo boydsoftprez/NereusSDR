@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3: builds the bindings, targets and dispatcher;
+//                windowSliceTabs from refreshRxAppletSlices.
+//                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Prioritize passive reports at the selected listening context.
@@ -1420,6 +1423,9 @@ warren@wpratt.com
 #include <QJsonArray>
 #include "containers/ContainerWidget.h"
 #include "containers/ContainerButtonDispatcher.h"
+#include "core/hotkeys/HotKeyBindings.h"
+#include "gui/hotkeys/HotKeyDispatcher.h"
+#include "gui/hotkeys/MainWindowHotKeyTargets.h"
 #include "containers/ContainerSettingsDialog.h"
 #include "meters/MeterWidget.h"
 #include "meters/FilterDisplayItem.h"
@@ -3044,18 +3050,15 @@ void MainWindow::refreshOverlayAttAccess()
     }
 }
 
-void MainWindow::refreshRxAppletSlices()
+QVector<SliceModel*> MainWindow::windowSliceTabs() const
 {
-    // TX rulings (item 3): the pans' ATT flyouts follow the same access.
-    refreshOverlayAttAccess();
-    if (!m_rxApplet || !m_radioModel) { return; }
+    QVector<SliceModel*> tabs;
+    if (!m_radioModel) { return tabs; }
     const bool remoteShared = sliceAccessClient() != nullptr;
     const QList<SliceChooser::Row> rows =
         windowSliceRows(*m_radioModel, sliceAccessServer(), sliceAccessClient());
-    const QHash<int, VfoWidget::SliceAccess> access = windowSliceAccess(rows);
     // Ruling U7: a tab for each slice this window controls, and for each
     // slice it listens to that it shows.
-    QVector<SliceModel*> tabs;
     for (SliceModel* slice : m_radioModel->slices()) {
         if (!slice) { continue; }
         const int id = slice->sliceIndex();
@@ -3074,6 +3077,18 @@ void MainWindow::refreshRxAppletSlices()
         }
         if (tab) { tabs.append(slice); }
     }
+    return tabs;
+}
+
+void MainWindow::refreshRxAppletSlices()
+{
+    // TX rulings (item 3): the pans' ATT flyouts follow the same access.
+    refreshOverlayAttAccess();
+    if (!m_rxApplet || !m_radioModel) { return; }
+    const QList<SliceChooser::Row> rows =
+        windowSliceRows(*m_radioModel, sliceAccessServer(), sliceAccessClient());
+    const QHash<int, VfoWidget::SliceAccess> access = windowSliceAccess(rows);
+    const QVector<SliceModel*> tabs = windowSliceTabs();
     SliceModel* rx = windowRxSlice();
     if (rx && !tabs.contains(rx)) {
         rx = desktopHosting() ? activeSliceForWindow() : m_radioModel->activeSlice();
@@ -9742,6 +9757,13 @@ void MainWindow::buildUI()
         m_containerButtons = std::make_unique<ContainerButtonDispatcher>(
             m_radioModel, std::move(hooks));
     }
+
+    // Hot keys: what every source calls. The targets reach the same entry
+    // points as the on-screen controls, m_containerButtons among them.
+    m_hotKeyBindings = std::make_unique<HotKeyBindings>();
+    m_hotKeyBindings->load();
+    m_hotKeyTargets = std::make_unique<MainWindowHotKeyTargets>(this);
+    m_hotKeyDispatcher = std::make_unique<HotKeyDispatcher>(m_hotKeyBindings.get(), m_hotKeyTargets.get());
 
     connect(m_containerManager, &ContainerManager::containerAdded, this,
             [this](const QString& id) {
