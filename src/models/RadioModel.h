@@ -9061,6 +9061,9 @@ private:
     // The record's slices with no room this run. They stay in the record, and
     // their letters go last to a new slice.
     QList<ReceiveSliceState> m_desktopLayoutKept;
+    // addStartingSlices to loadSliceState: the slice just made, which has not
+    // reached its saved band yet. -1 at any other time.
+    int m_startingSliceAwaitingLoad{-1};
     // From the connect's start until the restore has run, no layout is saved.
     bool m_desktopLayoutRestorePending{false};
     // A saved layout decides the slices, so empty pans are not filled.

@@ -20064,6 +20064,7 @@ int RadioModel::addStartingSlices(const QString& radioMac)
     if (!slice) {
         return -1;
     }
+    m_startingSliceAwaitingLoad = id;
     if (savedStart) {
         slice->setPanKey(savedStart->panKey);
         return id;
@@ -21583,6 +21584,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         setActiveSlice(static_cast<int>(std::max<qsizetype>(0, startingIndex)));
         loadSliceState(m_activeSlice);
     }
+    m_startingSliceAwaitingLoad = -1;
 
     // ── 3M-1c L.2: TwoToneController transmit-slice mode source ────────────
     //
@@ -27338,6 +27340,16 @@ void RadioModel::loadSliceState(SliceModel* slice)
     m_lastBand = currentBand;
 
     slice->restoreFromSettings(currentBand);
+
+    // The starting slice was made on the constructor's 14.225 MHz, holding its
+    // last band's values, and has only now reached that band. What was captured
+    // on the way (its pan key, its noise reduction, the restore's own steps) is
+    // no edit, and would be written over the 20 m memory and this band's other
+    // modes' filters. The slice stays due a save, which writes what it holds now.
+    if (slice->sliceIndex() == m_startingSliceAwaitingLoad) {
+        m_startingSliceAwaitingLoad = -1;
+        m_pendingBandSettings.remove(slice->sliceIndex());
+    }
 
     // The restored band's antennas come from Setup's antenna table. The
     // slice used to restore a saved label of its own here and write it

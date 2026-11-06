@@ -99,6 +99,32 @@ const QString kPan0 = QStringLiteral("pan-0");
 const QString kPan1 = QStringLiteral("pan-1");
 const QString kPan2 = QStringLiteral("pan-2");
 
+// Nothing a desktop connect has waiting to save may be for a band its slice is
+// not on: a connect writes no other band's memory. Reports through qFail, so a
+// test that goes on still fails.
+void expectNoCaptureForAnotherBand(const RadioModel& model)
+{
+    for (auto it = model.m_pendingBandSettings.cbegin();
+         it != model.m_pendingBandSettings.cend(); ++it) {
+        const SliceModel* slice = model.sliceById(it.key());
+        if (!slice) {
+            continue;
+        }
+        const QString own = QStringLiteral("Slice%1/Band%2/")
+            .arg(it.key())
+            .arg(bandKeyName(bandFromFrequency(slice->frequency())));
+        const QString anyBand = QStringLiteral("Slice%1/Band").arg(it.key());
+        for (auto key = it.value().cbegin(); key != it.value().cend(); ++key) {
+            if (key.key().startsWith(anyBand) && !key.key().startsWith(own)) {
+                QTest::qFail(qPrintable(QStringLiteral("a connect would write %1 with the slice on %2")
+                                            .arg(key.key()).arg(slice->frequency())),
+                             __FILE__, __LINE__);
+                return;
+            }
+        }
+    }
+}
+
 // A window with no Core connecting, in connectToRadioImpl's order, then the
 // queued step of its connect handler. The first model of a test is the run
 // before the restart, the next one the run after it.
@@ -121,6 +147,42 @@ void connectDesktop(RadioModel& model, int ddcs, int maxSlices, const QStringLis
     arbiter->load();
     MainWindow::populatePanSlices(&model, pans, false, false);
     arbiter->finishRestore();
+    expectNoCaptureForAnotherBand(model);
+}
+
+// Letter A was last on 40 m, and 20 m and 40 m's USB filter have values of their
+// own that a connect must leave alone.
+void saveLetterAOn40WithOwn20()
+{
+    SliceModel saved;
+    saved.setSliceIndex(0);
+    saved.setFrequency(14074000.0);
+    saved.setDspMode(DSPMode::DIGU);
+    saved.setAgcThreshold(-77);
+    saved.saveToSettings(Band::Band20m);
+    saved.setFrequency(7150000.0);
+    saved.setDspMode(DSPMode::USB);
+    saved.setFilter(321, 2345);
+    saved.saveToSettings(Band::Band40m);
+    saved.setFrequency(7074000.0);
+    saved.setDspMode(DSPMode::LSB);
+    saved.setAgcThreshold(-55);
+    saved.saveToSettings(Band::Band40m);
+}
+
+// QCOMPARE in a helper only returns from the helper, so this is called last.
+void expectLetterAMemoriesKept()
+{
+    auto& settings = AppSettings::instance();
+    QCOMPARE(settings.value(QStringLiteral("Slice0/Band20m/Frequency")).toDouble(), 14074000.0);
+    QCOMPARE(settings.value(QStringLiteral("Slice0/Band20m/DspMode")).toInt(),
+             static_cast<int>(DSPMode::DIGU));
+    QCOMPARE(settings.value(QStringLiteral("Slice0/Band20m/AgcThreshold")).toInt(), -77);
+    QCOMPARE(settings.value(QStringLiteral("Slice0/Band40m/Frequency")).toDouble(), 7074000.0);
+    QCOMPARE(settings.value(QStringLiteral("Slice0/Band40m/AgcThreshold")).toInt(), -55);
+    QCOMPARE(settings.value(QStringLiteral("Slice0/Band40m/ModeUSB/FilterLow")).toInt(), 321);
+    QCOMPARE(settings.value(QStringLiteral("Slice0/Band40m/ModeUSB/FilterHigh")).toInt(), 2345);
+    QCOMPARE(settings.value(QStringLiteral("Slice0/LastBand")).toString(), QStringLiteral("40m"));
 }
 
 QList<int> slicesInRecord()
@@ -948,6 +1010,75 @@ private slots:
         QCOMPARE(after.streamSampleRateHzForTest(after.sliceById(0)->streamIndex()), 384000);
         QCOMPARE(after.sliceById(0)->sampleRateHz(), 384000);
         QCOMPARE(after.sliceById(1)->sampleRateHz(), 384000);
+    }
+
+    // The starting slice is made on the constructor's 14.225 MHz, holding the
+    // letter's last band's values, and moves to its last band when its saved
+    // state loads. What was captured before that is not an edit: it used to
+    // write 14.225 MHz and those values over the letter's 20 m memory.
+    void aConnectLeavesAnotherBandsMemoryAlone()
+    {
+        saveLetterAOn40WithOwn20();
+        {
+            RadioModel model;
+            connectDesktop(model, 2, 5, {kPan0});
+            QCOMPARE(model.sliceById(0)->frequency(), 7074000.0);
+            model.flushPendingSettingsSave();
+        }
+        expectLetterAMemoriesKept();
+    }
+
+    void aConnectWithARecordLeavesAnotherBandsMemoryAlone()
+    {
+        {
+            RadioModel first;
+            connectDesktop(first, 2, 5, {kPan0});
+            first.flushPendingSettingsSave();
+        }
+        QCOMPARE(slicesInRecord(), QList<int>({0}));
+        saveLetterAOn40WithOwn20();
+        {
+            RadioModel model;
+            connectDesktop(model, 2, 5, {kPan0});
+            QCOMPARE(model.sliceById(0)->frequency(), 7074000.0);
+            model.flushPendingSettingsSave();
+        }
+        expectLetterAMemoriesKept();
+    }
+
+    // With a connection, as at a real connect, the slice's handlers are wired,
+    // and the restore itself captures as it goes.
+    void aWiredConnectLeavesAnotherBandsMemoryAlone()
+    {
+        saveLetterAOn40WithOwn20();
+        {
+            KeyWatchConnection connection;
+            RadioModel model;
+            model.injectConnectionForTest(&connection);
+            auto detach = qScopeGuard([&] { model.injectConnectionForTest(nullptr); });
+            connectDesktop(model, 2, 5, {kPan0});
+            QCOMPARE(model.sliceById(0)->frequency(), 7074000.0);
+            model.flushPendingSettingsSave();
+        }
+        expectLetterAMemoriesKept();
+    }
+
+    // What the operator does after the connect is still saved on that band,
+    // with a band change straight after it.
+    void anEditAfterTheConnectIsStillSaved()
+    {
+        saveLetterAOn40WithOwn20();
+        KeyWatchConnection connection;
+        RadioModel model;
+        model.injectConnectionForTest(&connection);
+        auto detach = qScopeGuard([&] { model.injectConnectionForTest(nullptr); });
+        connectDesktop(model, 2, 5, {kPan0});
+        model.sliceById(0)->setAgcThreshold(-41);
+        model.sliceById(0)->setFrequency(14100000.0);
+        model.flushPendingSettingsSave();
+        auto& settings = AppSettings::instance();
+        QCOMPARE(settings.value(QStringLiteral("Slice0/Band40m/AgcThreshold")).toInt(), -41);
+        QCOMPARE(settings.value(QStringLiteral("Slice0/Band20m/Frequency")).toDouble(), 14100000.0);
     }
 };
 
