@@ -7937,6 +7937,9 @@ void StationServer::finishTakeover(quint64 serial, const QByteArray& targetId,
         // cannot restore the incumbent's slices or place.
         saveTakenSlicesFor(targetId);
         if (!self) return;
+        // R-HK-13: the device's next session starts with a press. This session's
+        // end skips that (placeSettled), its place being settled here.
+        m_cwPaddleReported.remove(targetId);
         releaseDeviceClaims(targetId, std::nullopt);
         if (!self) return;
         const auto afterSlices = m_deviceSessions->entry(targetId);

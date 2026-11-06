@@ -9409,7 +9409,9 @@ sender runs for the holder is the holder's key, as VOX is (section 18.6).
   and renews the deadline: the Core lets go 3 s after the last rise, so
   sending the same state again, or a message that only lets go of one key, is
   not a press. A key past its deadline or ended by `cw.stop` stays up until it
-  has been reported up and rises again. With no key rising and no paddle
+  has been reported up and rises again, and a refused press counts as reported
+  the same way. This is per key: the other key rising still goes down. A session
+  taken over forgets its pair. With no key rising and no paddle
   down, the message is a release and keys nothing. A change while the paddle
   is down keeps its activity epoch; the first press is a replacement, ending
   what the sender ran. Under a link hold both keys read up on the wire and

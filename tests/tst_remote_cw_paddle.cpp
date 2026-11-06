@@ -277,6 +277,10 @@ private slots:
         QVERIFY(accepted(rig.core.invoke(appA, "tx.take")));
         QVERIFY(accepted(rig.paddle(appA, true, false)));
         QVERIFY(rig.bitsUp());
+        // The block is per key: the other key rising keys, and this one stays up.
+        QVERIFY(accepted(rig.paddle(appA, true, true)));
+        QVERIFY(rig.line()->dash());
+        QVERIFY(!rig.line()->dot());
         QVERIFY(accepted(rig.paddle(appA, false, false)));
         QVERIFY(accepted(rig.paddle(appA, true, false)));
         QVERIFY(rig.line()->dot());
@@ -793,6 +797,92 @@ private slots:
     }
 
     // ---- First-look fixes, item 7: a release ends only what its key started ----
+
+    void aRefusedPressLeavesWhatWasRunning_data()
+    {
+        QTest::addColumn<bool>("refused");
+        QTest::newRow("refused") << true;
+        QTest::newRow("an empty answer") << false;
+    }
+
+    void aRefusedPressLeavesWhatWasRunning()
+    {
+        QFETCH(bool, refused);
+        quint32 nextId = 1;
+        RemoteTransmitClient client([&](const QByteArray&, const QList<MirrorUpdate>&) { return nextId++; });
+        client.setAvailable(true);
+        client.setCwAvailable(true);
+        client.setCwReleaseAvailable(true);
+        client.setCwPaddleAvailable(true);
+        const auto started = [&client](quint32 id, const QByteArray& verb, qint64 epoch) {
+            client.commandFinished(id, verb, true, {},
+                                   {{0, "cwEpoch", MirrorWireKind::Int64, epoch},
+                                    {1, "cwActive", MirrorWireKind::Bool, true}});
+        };
+        const auto notStarted = [&](quint32 id, const QByteArray& verb) {
+            client.commandFinished(id, verb, !refused, refused ? QStringLiteral("No.") : QString(), {});
+        };
+
+        // A memory plays. Slash is refused, and lifting it leaves the memory.
+        started(client.sendCwMemory(1), "cw.memory", 12);
+        notStarted(client.setCwKey(true), "cw.key");
+        QVERIFY(client.setCwKey(false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 12u);
+        QVERIFY(client.keepaliveRunning());
+
+        // So with comma held: lifting slash leaves it, and lifting comma ends it.
+        started(client.setCwPaddle(true, false), "cw.paddle", 13);
+        notStarted(client.setCwKey(true), "cw.key");
+        QVERIFY(client.setCwKey(false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 13u);
+        QVERIFY(client.keepaliveRunning());
+        QVERIFY(client.setCwPaddle(false, false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 0u);
+        QVERIFY(!client.keepaliveRunning());
+
+        // And the other way round: the key held, comma refused.
+        started(client.setCwKey(true), "cw.key", 14);
+        notStarted(client.setCwPaddle(true, false), "cw.paddle");
+        QVERIFY(client.setCwPaddle(false, false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 14u);
+        QVERIFY(client.keepaliveRunning());
+        QVERIFY(client.setCwKey(false) != 0);
+        QCOMPARE(client.remoteCwEpoch(), 0u);
+    }
+
+    void aTakenOverDevicesNextSessionPressIsAPress()
+    {
+        PaddleCore rig;
+        Device devices[5];
+        for (Device& device : devices) {
+            rig.core.pair(device);
+        }
+        QList<LoopbackTransport*> apps;
+        for (int i = 0; i < 4; ++i) {
+            apps.append(rig.core.signIn(devices[i], peerDeclaring(3)));
+            QVERIFY(admitted(apps.last()));
+        }
+        QVERIFY(accepted(rig.core.invoke(apps[0], "tx.take")));
+        // A key reported down and ended: only its up report would clear the pair.
+        QVERIFY(accepted(rig.paddle(apps[0], true, false)));
+        QVERIFY(rig.line()->dot());
+        QVERIFY(accepted(rig.core.invoke(apps[0], "cw.stop")));
+        QVERIFY(rig.bitsUp());
+
+        LoopbackTransport* fifth = rig.core.signIn(devices[4], peerDeclaring(3));
+        QJsonObject held;
+        verifyHeld(fifth, &held);
+        fifth->sendText(SessionMessages::encode(SessionMessages::sessionTakeover(
+            devices[0].id(), static_cast<quint32>(held.value(QStringLiteral("revision")).toInteger()))));
+        QTRY_VERIFY(admitted(fifth));
+
+        rig.core.invoke(apps[1], "session.leave");
+        LoopbackTransport* back = rig.core.signIn(devices[0], peerDeclaring(3));
+        QVERIFY(admitted(back));
+        QVERIFY(accepted(rig.core.invoke(back, "tx.take")));
+        QVERIFY(accepted(rig.paddle(back, true, false)));
+        QVERIFY(rig.line()->dot());
+    }
 
     void aReleaseLeavesAMessageThatReplacedTheKey()
     {

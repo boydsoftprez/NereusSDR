@@ -346,10 +346,13 @@ private:
         QByteArray verb;
         bool releaseIntent;
         quint64 cwGeneration{0};
+        // Who ran before this press took over: a press that starts nothing gives it back.
+        CwOwner cwOwnerBefore{CwOwner::None};
     };
 
     quint32 send(const QByteArray& verb, const QList<MirrorUpdate>& arguments, Kind kind,
-                 bool releaseIntent = false, bool allowUnavailableRelease = false);
+                 bool releaseIntent = false, bool allowUnavailableRelease = false,
+                 CwOwner cwOwnerBefore = CwOwner::None);
     quint32 requestTwoTone(const QByteArray& verb, const char* argument, bool on);
     void release(quint32 epoch);
     void reset();
