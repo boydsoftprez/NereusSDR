@@ -16,6 +16,15 @@ struct PhoneSettingsTests {
         return defaults
     }
 
+    @Test("the Display pill's FPS is kept on the phone, and is unset until it is moved")
+    func displayPaintFps() throws {
+        let defaults = try freshDefaults()
+        let settings = PhoneSettings(defaults: defaults)
+        #expect(settings.displayPaintFps == nil)
+        settings.displayPaintFps = 15
+        #expect(PhoneSettings(defaults: defaults).displayPaintFps == 15)
+    }
+
     @Test("Reconnect automatically starts as its one named default and forgets nothing else")
     func autoReconnect() throws {
         let defaults = try freshDefaults()

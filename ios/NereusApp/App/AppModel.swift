@@ -317,6 +317,7 @@ final class AppModel: ObservableObject {
         // MON's route on the media connection (D80, `monitor-audio`).
         main.transmit.monitorRouteSender = { route in await media.setMonitorRoute(route) }
         main.panStack.keptPans = phoneSettings
+        main.panStack.paintFps = phoneSettings.displayPaintFps
         longSession = SessionController(settings: phoneSettings, subscriber: main.subscriber, band: main.band,
                                         transmit: main.transmit, sources: sessionSources)
         records = RecordStreamClient(mirror: mirror, commands: commands)

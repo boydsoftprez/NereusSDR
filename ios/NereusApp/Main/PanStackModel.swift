@@ -98,9 +98,20 @@ final class PanStackModel: ObservableObject {
     var allowsMorePans: Bool
     /// Where the pans the operator leaves open are kept; nil keeps none.
     var keptPans: PhoneSettings?
+    /// This phone's own rate, for every pan: the Display pill's FPS. Nil until
+    /// it is first moved, when each pan asks at the Core's.
+    @Published var paintFps: Int? {
+        didSet { bands.values.forEach { $0.subscriber.paintFps = paintFps } }
+    }
 
     /// The pans the radio allows.
     var limit: Int { PanLimits.panCount(capabilities: mirror.capabilities) }
+
+    /// The Display pill's FPS moved: every pan asks at it, and it is kept.
+    func choosePaintFps(_ fps: Int) {
+        paintFps = fps
+        keptPans?.displayPaintFps = fps
+    }
 
     private let first: PanBand
     private var bands: [PanIdentity: PanBand] = [:]
@@ -512,6 +523,7 @@ final class PanStackModel: ObservableObject {
         let subscriber = BandSubscriber(band: band, slices: slices, mirror: mirror, settings: settings,
                                         operations: operations, deadline: deadline, pan: pan, shared: shared)
         subscriber.session = first.subscriber.session
+        subscriber.paintFps = paintFps
         let opened = PanBand(pan: pan, band: band, slices: slices, subscriber: subscriber)
         bands[pan] = opened
         // From src/gui/MoxDisplayController.cpp:393-447 (rise: the pan hosting the transmit slice takes the MOX display)

@@ -544,6 +544,20 @@ final class PhoneSettings: ObservableObject {
         set { storeQuietly(newValue.sorted(), for: Self.foldedPanColumnsKey) }
     }
 
+    /// The Display pill's FPS: this phone's own rate, unset until it is
+    /// moved. The Core's one rate is Setup's (`DisplaySpectrumFps`).
+    var displayPaintFps: Int? {
+        get { defaults.object(forKey: Self.keyPrefix + Self.displayPaintFpsKey) as? Int }
+        set {
+            if let newValue {
+                storeQuietly(newValue, for: Self.displayPaintFpsKey)
+            } else {
+                reset(Self.displayPaintFpsKey)
+            }
+        }
+    }
+
+    static let displayPaintFpsKey = "display.paintFps"
     static let displayPillTabKey = "layout.displayPillTab"
     static let appletColumnShownKey = "layout.appletColumnShown"
     static let buttonColumnFoldedKey = "layout.buttonColumnFolded"
