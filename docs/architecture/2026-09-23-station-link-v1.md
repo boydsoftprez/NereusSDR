@@ -6150,6 +6150,7 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 3. whole key | `RemoteMoxTimeOutSeconds` | station |
 | 3. whole key | `RxOnly` | station |
 | 3. whole key | `ModMon/FbStream` | station |
+| 3. whole key | `DisplayDecimation` | operatorLocal |
 | 3. whole key | `ExtendedTxAllowed` | operatorLocal |
 
 <!-- /surface -->
