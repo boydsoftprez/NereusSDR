@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 1.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: clearKey, for the
+//                Keyboard page's map. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // The user's key bindings and slice pins, the rebinding rules, defaults, import
 // and export. Only values that differ from the defaults go in AppSettings.
@@ -52,6 +54,7 @@ public:
     // action already holding chord loses that one key.
     HotKeyBindOutcome bind(const QString& id, const QString& chord, bool replaceConflict);
     void clear(const QString& id);         // removes every key, keeps the pin
+    void clearKey(const QString& id, const QString& chord);  // removes that one key
     void resetToDefault(const QString& id);  // keys and pin; takes its keys back from others
     void resetAll();                       // keys and pins; leaves enabled() alone
 

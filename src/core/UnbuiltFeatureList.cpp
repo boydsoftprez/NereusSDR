@@ -48,8 +48,6 @@ const QList<Entry>& all()
          QStringLiteral("View > UI Scale; Setup > General > UI Scale & Theme")},
         {F::MinimalMode, QStringLiteral("minimal-mode"),
          QStringLiteral("View > Minimal Mode; Setup > Appearance > Collapsible Display")},
-        {F::Keyboard, QStringLiteral("keyboard"),
-         QStringLiteral("View > Keyboard Shortcuts; Setup > Keyboard > Shortcuts")},
         {F::Equalizer, QStringLiteral("equalizer"),
          QStringLiteral("DSP > Equalizer")},
         {F::Transverters, QStringLiteral("transverters"),

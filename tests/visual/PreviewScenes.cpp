@@ -298,6 +298,8 @@
 //                 in CW as the approved mockup's right strip does;
 //                 dialog-setup-cw--scrolled steps DSP > CW.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: dialog-setup-keyboard-full.
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -11389,6 +11391,8 @@ QVector<SetupFullSpec> setupFullSpecs()
     return {
         // desktop-modes-audio: the VAX 1 to 4 cards and the TCI audio settings.
         {QStringLiteral("digital-modes"), QStringLiteral("digital-modes-full")},
+        // Hot keys: the keyboard map and the action list together.
+        {QStringLiteral("keyboard"), QStringLiteral("keyboard-full")},
     };
 }
 

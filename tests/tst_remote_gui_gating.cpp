@@ -820,6 +820,8 @@ private slots:
         QVERIFY(!labels.contains(QStringLiteral("VAX")));
         QVERIFY(!labels.contains(QStringLiteral("TCI")));
         QCOMPARE(scopeOf(QStringLiteral("TCI Server")), SetupScope::ThisComputer);
+        // Hot keys: the keys on this computer's keyboard are this computer's.
+        QCOMPARE(scopeOf(QStringLiteral("Keyboard")), SetupScope::ThisComputer);
         // The CAT pages set up the Core's CAT from a remote window
         // (RemoteCatControl), so they are Core pages, as Rotor and RF-Kit
         // are; MIDI Control stays this computer's.
@@ -2512,15 +2514,16 @@ private slots:
             }
             }
         }
-        // R-R3-49: seven This Computer leaves (UI Scale & Theme, Navigation,
-        // Skins, Collapsible Display, MIDI Control, Shortcuts, Logging &
-        // Performance) and seven Core leaves (Serial Ports, TCP/IP CAT, CAT
+        // R-R3-49: six This Computer leaves (UI Scale & Theme, Navigation,
+        // Skins, Collapsible Display, MIDI Control, Logging & Performance)
+        // and seven Core leaves (Serial Ports, TCP/IP CAT, CAT
         // Options, CAT PTT, TX Profiles, Signal Generator, Hardware Tests) are
         // not registered while their features are not built, so each floor
         // drops by that many. Spectrum Peaks, Waterfall Defaults and 3D View
         // moved to the Display pill (PR 443), where they are the Mixed Peaks &
-        // Markers, Waterfall and View pages, leaving 9 This Computer pages.
-        QVERIFY(thisComputer >= 9);
+        // Markers, Waterfall and View pages, leaving 9 This Computer pages,
+        // and Keys and controllers > Keyboard makes it 10.
+        QVERIFY(thisComputer >= 10);
         QVERIFY(core >= 22);
         QVERIFY(mixed >= 8);
 

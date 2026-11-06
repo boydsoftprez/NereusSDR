@@ -403,6 +403,49 @@ private slots:
         QCOMPARE(b.keysFor("mute"), (QStringList{"U", "Num+*"}));
     }
 
+    void clearKeyTakesOnlyThatKey()
+    {
+        HotKeyBindings b;
+        QSignalSpy spy(&b, &HotKeyBindings::bindingsChanged);
+        b.setPin("volume.up", QLatin1Char('B'));
+        spy.clear();
+        b.clearKey("volume.up", "Up");
+        QCOMPARE(b.keysFor("volume.up"), QStringList{"Num++"});
+        QVERIFY(b.actionForChord("Up").isEmpty());
+        QCOMPARE(b.actionForChord("Num++"), QString("volume.up"));
+        QCOMPARE(b.pinFor("volume.up"), QLatin1Char('B'));
+        QCOMPARE(spy.size(), 1);
+
+        // A key it doesn't have, an action or a chord that doesn't exist: nothing.
+        b.clearKey("volume.up", "Up");
+        b.clearKey("volume.up", "L");
+        b.clearKey("no.such.action", "Num++");
+        b.clearKey("volume.up", "not a key");
+        QCOMPARE(b.keysFor("volume.up"), QStringList{"Num++"});
+        QCOMPARE(spy.size(), 1);
+
+        // Any spelling of the chord.
+        b.clearKey("volume.up", "num++");
+        QVERIFY(b.keysFor("volume.up").isEmpty());
+    }
+
+    void aStrayPressSaysWhatItWouldDo()
+    {
+        HotKeyBindings b;
+        QCOMPARE(b.bind("cw.stop", "Q", false).reason,
+                 QString("Q is a plain key, so a stray press would stop the message. "
+                         "Use Space, a function key or a combination."));
+        QCOMPARE(b.bind("voice.stop", "Q", false).reason,
+                 QString("Q is a plain key, so a stray press would stop the message. "
+                         "Use Space, a function key or a combination."));
+        QCOMPARE(b.bind("tx.hold", "Q", false).reason,
+                 QString("Q is a plain key, so a stray press would transmit. "
+                         "Use Space, a function key or a combination."));
+        QCOMPARE(b.bind("cw.msg1", "Q", false).reason,
+                 QString("Q is a plain key, so a stray press would transmit. "
+                         "Use Space, a function key or a combination."));
+    }
+
     void clearAndReset()
     {
         HotKeyBindings b;

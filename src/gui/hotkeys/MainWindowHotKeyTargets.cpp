@@ -6,6 +6,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 5: CW messages and keys.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: setupUnavailableReason, for the Keyboard page.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 
@@ -316,13 +318,22 @@ QString MainWindowHotKeyTargets::unavailableReason(const QString& id) const
         return voiceNotBuiltReason();
     }
     // Only in CW: in a voice mode these keys do nothing and say nothing.
-    if ((id == QLatin1String("cw.dot") || id == QLatin1String("cw.dash"))
-        && m_window->m_radioModel != nullptr && !m_window->m_radioModel->ownsLocalDsp()
-        && transmitSliceInCw()
-        && (m_window->m_stationClient == nullptr || !m_window->m_stationClient->remoteCwPaddleAvailable())) {
+    if (transmitSliceInCw() && remotePaddleMissing(id)) {
         return remotePaddleReason();
     }
     return bandStackReason(m_window, id);
+}
+
+QString MainWindowHotKeyTargets::setupUnavailableReason(const QString& id) const
+{
+    return remotePaddleMissing(id) ? remotePaddleReason() : unavailableReason(id);
+}
+
+bool MainWindowHotKeyTargets::remotePaddleMissing(const QString& id) const
+{
+    return (id == QLatin1String("cw.dot") || id == QLatin1String("cw.dash"))
+        && m_window->m_radioModel != nullptr && !m_window->m_radioModel->ownsLocalDsp()
+        && (m_window->m_stationClient == nullptr || !m_window->m_stationClient->remoteCwPaddleAvailable());
 }
 
 bool MainWindowHotKeyTargets::moxOn() const

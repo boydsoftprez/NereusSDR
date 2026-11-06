@@ -32,6 +32,8 @@
 
 namespace NereusSDR {
 
+class HotKeyBindings;
+class KeyboardPage;
 class RadioModel;
 class SliceModel;
 class DspReceiverSelection;
@@ -95,6 +97,12 @@ public:
     void setCoreTargets(CoreTargetStore* store);
     void setCoreSettingsContext(const CoreSettingsContext& context);
     void setCoresPageBinder(std::function<void(CoresSetupPage*)> binder);
+
+    // Hot keys plan Task 8: what the Keyboard page edits and why an action can't
+    // be used on this window. Pages are lazy, so a host sets this before the page
+    // is first visited. With none, the page says so and stays disabled.
+    void setHotKeyContext(HotKeyBindings* bindings, std::function<QString(const QString&)> unavailableReason);
+    void refreshHotKeyAvailability();
 
     // Display pill plan Task 20 (D22, D26; R-DSP-33): how Setup's FFT
     // controls change the station's FFT settings. One handler per control;
@@ -452,6 +460,9 @@ private:
     SetupFftHandlers m_fftHandlers;
     void pushFftHandlers();
     SetupDisplayProviders m_displayProviders;
+    HotKeyBindings* m_hotKeyBindings{nullptr};
+    std::function<QString(const QString&)> m_hotKeyUnavailableReason;
+    QPointer<KeyboardPage> m_keyboardPage;
     int m_displayPanIndex{-1};
     QWidget* m_displaySourceHost{nullptr};
     QHash<QString, SetupPage*> m_displaySourcePages;

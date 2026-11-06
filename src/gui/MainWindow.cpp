@@ -1092,6 +1092,8 @@
 //                 reason; one VOX line reason (voxLineReason) for the
 //                 container button and the applets. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: Use Shortcuts and Keyboard Shortcuts in View, bindings saved on change.
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -9414,6 +9416,9 @@ void MainWindow::buildUI()
     // points as the on-screen controls, m_containerButtons among them.
     m_hotKeyBindings = std::make_unique<HotKeyBindings>();
     m_hotKeyBindings->load();
+    // Every change sticks at once, wherever it was made (Setup, the View menu).
+    connect(m_hotKeyBindings.get(), &HotKeyBindings::bindingsChanged, this, [this] { m_hotKeyBindings->save(); });
+    connect(m_hotKeyBindings.get(), &HotKeyBindings::enabledChanged, this, [this] { m_hotKeyBindings->save(); });
     m_hotKeyTargets = std::make_unique<MainWindowHotKeyTargets>(this);
     m_hotKeyDispatcher = std::make_unique<HotKeyDispatcher>(m_hotKeyBindings.get(), m_hotKeyTargets.get());
     // A key off by any route ends the hold's claim on it, so letting go later
@@ -13077,9 +13082,14 @@ void MainWindow::buildMenuBar()
 
     {
         QAction* kbAction = viewMenu->addAction(QStringLiteral("&Keyboard Shortcuts..."));
-        kbAction->setEnabled(false);
-        // R-R3-49: hidden until keyboard shortcut editing is built.
-        UnbuiltFeatures::hideUnlessBuilt(kbAction, UnbuiltFeature::Keyboard);
+        connect(kbAction, &QAction::triggered, this, [this] { openSetupAtPage(QStringLiteral("Keyboard")); });
+
+        // V4: the off switch, here and on the Keyboard page, one setting.
+        QAction* useShortcuts = viewMenu->addAction(QStringLiteral("Use &Shortcuts"));
+        useShortcuts->setCheckable(true);
+        useShortcuts->setChecked(m_hotKeyBindings->enabled());
+        connect(useShortcuts, &QAction::toggled, m_hotKeyBindings.get(), &HotKeyBindings::setEnabled);
+        connect(m_hotKeyBindings.get(), &HotKeyBindings::enabledChanged, useShortcuts, &QAction::setChecked);
     }
 
     // =========================================================================
@@ -14063,8 +14073,9 @@ QString MainWindow::tnfIndicatorTooltip(int notchCount, bool globalEnabled)
 
 QKeySequence MainWindow::tnfToggleShortcut()
 {
-    // Design section 10.2: KeyboardSetupPages.cpp is a 100% NYI stub, no
-    // ShortcutManager or registerAction exists in src/, and every shipped
+    // Design section 10.2: no ShortcutManager or registerAction exists in
+    // src/ (Setup's Keyboard page edits hot key actions, not menu items; this
+    // chord is one of the keys it shows as reserved), and every shipped
     // shortcut is a plain QAction::setShortcut in this file. AetherSDR
     // registers "tnf_toggle" with an empty default sequence
     // (MainWindow_Shortcuts.cpp:1093 [@c6481cbf]) precisely because it HAS a
@@ -18221,6 +18232,9 @@ SetupDialog* MainWindow::createSetupDialog()
     // and SettingsProxy sends nothing while it is not ready. In local
     // direct mode the settings are always available and nothing changes.
     auto* dialog = new SetupDialog(m_radioModel, this);
+    dialog->setHotKeyContext(m_hotKeyBindings.get(), [this](const QString& id) {
+        return m_hotKeyTargets->setupUnavailableReason(id);
+    });
     dialog->setReceiverSelector([this] { return activeSliceForWindow(); },
                                 [this] { return desktopHosting(); });
     if (m_radioModel && m_radioModel->sliceOwnership()) {
@@ -19389,6 +19403,7 @@ void MainWindow::applyRemoteRoleGating()
     for (SetupDialog* dialog : findChildren<SetupDialog*>()) {
         dialog->setTransmitPermitted(transmitPermitted, transmitReason);
         dialog->setVoxPermitted(voxLine, voxReason);
+        dialog->refreshHotKeyAvailability();  // a Core's dot and dash
         dialog->setTransmitSettingsPermitted(settingsPermitted, settingsReason);
         dialog->setTransmitSettingsPermitted(chainPermitted, chainReason, 2);
         dialog->setTransmitSettingsPermitted(profilePermitted, profileReason, 3);

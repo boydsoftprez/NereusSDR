@@ -6,6 +6,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 5: CW messages and keys.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: setupUnavailableReason, for the Keyboard page.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // What hot keys do in the real window: the same entry points the on-screen
 // controls use, so local, hosting and remote windows behave as those do.
@@ -39,6 +41,9 @@ public:
     void runSliceAction(const QString& id, SliceModel* slice, int steps) override;
     void runWindowAction(const QString& id) override;
     QString unavailableReason(const QString& id) const override;
+    // The Keyboard page's word on a row: as above, but a Core with no dot or
+    // dash says so whatever mode the transmit slice is in right now.
+    QString setupUnavailableReason(const QString& id) const;
     bool transmitting() const override;
     bool tuneOrTwoToneOn() const override;
     bool keyHold(bool down) override;
@@ -71,6 +76,7 @@ private:
     bool moxOn() const;
     bool keyHoldThroughHost(bool down);
     bool transmitSliceInCw() const;
+    bool remotePaddleMissing(const QString& id) const;
     RemoteTransmitClient* remoteCwClient() const;
     QString remoteCwRefusal() const;
     void setRemotePaddleKey(bool isDot, bool down);

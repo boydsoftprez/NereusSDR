@@ -216,6 +216,8 @@
 //   2026-10-15 - CAT & Network > rigctld in a remote window: this computer's
 //                rigctld, which acts as the window (RemoteRigctldPage).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: Keys and controllers > Keyboard replaces Keyboard > Shortcuts.
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupDialog.h"
@@ -280,8 +282,8 @@
 // Rotor control plan Task 7: the antenna rotor (Settings -> CAT & Network
 // -> Rotor).
 #include "setup/RotorSetupPage.h"
-// Keyboard
-#include "setup/KeyboardSetupPages.h"
+// Keys and controllers
+#include "setup/HotKeySetupPages.h"
 // Diagnostics
 #include "setup/DiagnosticsSetupPages.h"
 #include "diagnostics/RadioStatusPage.h"
@@ -540,6 +542,20 @@ void SetupDialog::showEvent(QShowEvent* event)
         if (first != nullptr) {
             m_tree->setCurrentItem(first);
         }
+    }
+}
+
+void SetupDialog::setHotKeyContext(HotKeyBindings* bindings,
+                                   std::function<QString(const QString&)> unavailableReason)
+{
+    m_hotKeyBindings = bindings;
+    m_hotKeyUnavailableReason = std::move(unavailableReason);
+}
+
+void SetupDialog::refreshHotKeyAvailability()
+{
+    if (m_keyboardPage) {
+        m_keyboardPage->refreshAvailability();
     }
 }
 
@@ -2324,14 +2340,16 @@ void SetupDialog::buildTree()
 
     tick("CAT & Network");
 
-    // ── Keyboard ──────────────────────────────────────────────────────────────
-    QTreeWidgetItem* keyboard = addCategory("Keyboard");
-    if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Keyboard)) {
-        registerPage(keyboard, "Shortcuts", SetupScope::ThisComputer,
-                     [] { return new KeyboardShortcutsPage; });
-    }
+    // ── Keys and controllers ──────────────────────────────────────────────────
+    QTreeWidgetItem* keysAndControllers = addCategory("Keys and controllers");
+    registerPage(keysAndControllers, "Keyboard", SetupScope::ThisComputer, [this]() -> QWidget* {
+        auto* page = new KeyboardPage(m_hotKeyBindings);
+        page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
+        m_keyboardPage = page;
+        return page;
+    });
 
-    tick("Keyboard");
+    tick("Keys and controllers");
 
     // ── Test ──────────────────────────────────────────────────────────────────
     // Phase 3M-1c H.1: top-level Test category for the Two-Tone IMD page.

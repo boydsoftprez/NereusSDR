@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 1.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: clearKey, and the two
+//                stop actions' own refusal text. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "core/hotkeys/HotKeyBindings.h"
 
@@ -74,10 +76,12 @@ std::optional<HotKeyBindOutcome> refusal(const HotKeyAction& action, const HotKe
 
     const bool noHandModifier = !chord.ctrl && !chord.shift && !chord.alt && !chord.meta;
     if (plainKeysRefused(action) && noHandModifier && chord.isLetterOrNumberOrArrow()) {
+        // The two stop actions share the rule but transmit nothing.
+        const QString stray = action.transmits ? QStringLiteral("transmit") : QStringLiteral("stop the message");
         return HotKeyBindOutcome{
             HotKeyBindResult::RefusedTransmitPlainKey,
-            QStringLiteral("%1 is a plain key, so a stray press would transmit. "
-                           "Use Space, a function key or a combination.").arg(text),
+            QStringLiteral("%1 is a plain key, so a stray press would %2. "
+                           "Use Space, a function key or a combination.").arg(text, stray),
             {}};
     }
 
@@ -335,6 +339,16 @@ void HotKeyBindings::clear(const QString& id)
         return;
     }
     m_keys.insert(id, QStringList{});
+    rebuildChordIndex();
+    emit bindingsChanged();
+}
+
+void HotKeyBindings::clearKey(const QString& id, const QString& chord)
+{
+    const std::optional<HotKeyChord> parsed = HotKeyChord::parse(chord);
+    if (!parsed.has_value() || !m_keys.contains(id) || m_keys[id].removeAll(parsed->toString()) == 0) {
+        return;
+    }
     rebuildChordIndex();
     emit bindingsChanged();
 }

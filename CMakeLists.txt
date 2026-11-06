@@ -2253,7 +2253,8 @@ set(GUI_SOURCES
     src/gui/setup/RfKitPage.cpp
     src/gui/setup/RotorSetupPage.cpp
     src/gui/setup/TciLogWindow.cpp
-    src/gui/setup/KeyboardSetupPages.cpp
+    src/gui/setup/HotKeySetupPages.cpp
+    src/gui/setup/KeyboardMapWidget.cpp
     src/gui/setup/DiagnosticsSetupPages.cpp
     src/gui/diagnostics/RadioStatusPage.cpp
     src/gui/diagnostics/DiagnosticsPhaseHPages.cpp

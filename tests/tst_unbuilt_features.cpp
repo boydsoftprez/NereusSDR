@@ -608,10 +608,6 @@ QMap<F, QList<Surface>> surfaces()
     map[F::UiScale] = {menu(QStringLiteral("&UI Scale")), setupPage(QStringLiteral("UI Scale & Theme"))};
     map[F::MinimalMode] = {menu(QStringLiteral("&Minimal Mode")),
                            setupPage(QStringLiteral("Collapsible Display"))};
-    map[F::Keyboard] = {
-        menu(QStringLiteral("&Keyboard Shortcuts...")), setupPage(QStringLiteral("Shortcuts")),
-        Surface{QStringLiteral("Setup category Keyboard"), Host::Setup,
-                [](Hosts& h) { return h.categoryShown(QStringLiteral("Keyboard")); }}};
     map[F::Equalizer] = {menu(QStringLiteral("&Equalizer..."))};
     map[F::Transverters] = {
         boxButton(QStringLiteral("antenna XVTR"), antennas, 5),
@@ -1505,6 +1501,24 @@ private slots:
     // Performance checkboxes went, holds only the logging groups, hidden
     // until logging is built. It is not in the tree, selectPage() does not
     // find it, and no registered page or category is empty, local or remote.
+    void keyboardSurfacesAreAlwaysShown()
+    {
+        GuiSessionCoordinator sessions;
+        for (bool remote : {false, true}) {
+            const QString where = remote ? QStringLiteral("remote: ") : QStringLiteral("local: ");
+            Hosts hosts(sessions, remote);
+            QVERIFY(hosts.window() != nullptr);
+            for (const char* text : {"&Keyboard Shortcuts...", "Use &Shortcuts"}) {
+                QVERIFY2(actionShown(hosts.window(), QLatin1String(text)), qPrintable(where + QLatin1String(text)));
+            }
+            QVERIFY2(hosts.categoryShown(QStringLiteral("Keys and controllers")), qPrintable(where));
+            QVERIFY2(hosts.pageRegistered(QStringLiteral("Keyboard")), qPrintable(where));
+            // The old category and leaf are gone, not hidden.
+            QVERIFY2(!hosts.categoryShown(QStringLiteral("Keyboard")), qPrintable(where));
+            QVERIFY2(!hosts.pageRegistered(QStringLiteral("Shortcuts")), qPrintable(where));
+        }
+    }
+
     void emptiedSetupPageIsNotShownOrFound()
     {
         const QString logging = QStringLiteral("Logging & Performance");
