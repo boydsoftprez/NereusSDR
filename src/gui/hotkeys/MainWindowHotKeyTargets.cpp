@@ -4,10 +4,14 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 4: the transmit keys.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 5: CW messages and keys.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 
 #include "core/ControlRanges.h"
+#include "core/CwSoftPaddle.h"
+#include "core/CwxSender.h"
 #include "core/LogCategories.h"
 #include "core/MoxController.h"
 #include "core/UnbuiltFeatureList.h"
@@ -15,6 +19,7 @@
 #include "core/safety/TxRefusal.h"
 #include "core/session/IStationLink.h"
 #include "core/session/RemoteTransmitClient.h"
+#include "core/session/StationClient.h"
 #include "gui/DesktopStationController.h"
 #include "gui/MainWindow.h"
 #include "gui/PanFloatingWindow.h"
@@ -29,6 +34,7 @@
 #include "models/Band.h"
 #include "models/BandDefaults.h"
 #include "models/BandGrid.h"
+#include "models/CwKeyerController.h"
 #include "models/FilterPresetStore.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -78,6 +84,13 @@ const QString& bandStackNotReadyReason()
 const QString& voiceNotBuiltReason()
 {
     static const QString kReason = QStringLiteral("Voice messages aren't built yet.");
+    return kReason;
+}
+
+// Until the remote window has its own verb for them.
+const QString& remotePaddleReason()
+{
+    static const QString kReason = QStringLiteral("Dot and dash need a newer Core.");
     return kReason;
 }
 
@@ -302,6 +315,12 @@ QString MainWindowHotKeyTargets::unavailableReason(const QString& id) const
     if (id.startsWith(QLatin1String("voice.")) && !UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice)) {
         return voiceNotBuiltReason();
     }
+    // Only in CW: in a voice mode these keys do nothing and say nothing.
+    if ((id == QLatin1String("cw.dot") || id == QLatin1String("cw.dash"))
+        && m_window->m_radioModel != nullptr && !m_window->m_radioModel->ownsLocalDsp()
+        && transmitSliceInCw()) {
+        return remotePaddleReason();
+    }
     return bandStackReason(m_window, id);
 }
 
@@ -441,12 +460,189 @@ void MainWindowHotKeyTargets::runTransmitAction(const QString& id)
     }
 }
 
-void MainWindowHotKeyTargets::runCwMessage(const QString& /*id*/)
+bool MainWindowHotKeyTargets::transmitSliceInCw() const
 {
+    RadioModel* const model = m_window->m_radioModel;
+    if (model == nullptr) {
+        return false;
+    }
+    const SliceModel* slice = model->txBoundSlice();
+    // A remote window has no transmit slice until the Core marks one for a
+    // holder. It goes by its active slice then, as its TX applet does.
+    if (slice == nullptr && !model->ownsLocalDsp()) {
+        slice = model->activeSlice();
+    }
+    return slice != nullptr && (slice->dspMode() == DSPMode::CWL || slice->dspMode() == DSPMode::CWU);
 }
 
-void MainWindowHotKeyTargets::setCwKeyDown(const QString& /*id*/, bool /*down*/)
+RemoteTransmitClient* MainWindowHotKeyTargets::remoteCwClient() const
 {
+    return m_window->m_stationClient != nullptr ? m_window->m_stationClient->remoteTransmit() : nullptr;
+}
+
+QString MainWindowHotKeyTargets::remoteCwRefusal() const
+{
+    // The reasons the CWX applet's Send and Key are disabled with
+    // (MainWindow's remote transmit controls), in the same order.
+    const StationClient* const client = m_window->m_stationClient;
+    if (client == nullptr || !client->remoteCwAvailable()) {
+        return MainWindow::cwxRemoteSendReason();
+    }
+    if (!m_window->transmitControlsPermitted()) {
+        return m_window->remoteTransmitReason();
+    }
+    if (client->knowsTransmitHolder() && !client->holdsTransmitHere()) {
+        const QString holder = client->otherHolderReason();
+        return holder.isEmpty() ? TxRefusals::notHolder().text : holder;
+    }
+    return {};
+}
+
+void MainWindowHotKeyTargets::runCwMessage(const QString& id)
+{
+    RadioModel* const model = m_window->m_radioModel;
+    if (model == nullptr || m_window->m_shuttingDown) {
+        return;
+    }
+    const bool local = model->ownsLocalDsp();
+    if (id == QLatin1String("cw.stop")) {
+        if (local) {
+            if (CwxSender* const sender = model->cwxSender()) {
+                sender->stop();
+            }
+            return;
+        }
+        RemoteTransmitClient* const remote = remoteCwClient();
+        if (remote == nullptr || remote->stopCw() == 0) {
+            toast(MainWindow::cwxRemoteSendReason());
+        }
+        return;
+    }
+
+    bool isNumber = false;
+    const int number = id.startsWith(QLatin1String("cw.msg")) ? id.mid(6).toInt(&isNumber) : 0;
+    if (!isNumber) {
+        qCWarning(lcHotKeys) << "No CW message for:" << id;
+        return;
+    }
+    if (local) {
+        CwxSender* const sender = model->cwxSender();
+        if (sender == nullptr) {
+            return;
+        }
+        // Emitted before sendMemory returns: only this press's refusal is ours
+        // to say. The applet hears the sender too.
+        const QMetaObject::Connection said = QObject::connect(
+            sender, &CwxSender::refused, m_window, [this](const QString& words) { toast(words); });
+        sender->sendMemory(number);
+        QObject::disconnect(said);
+        return;
+    }
+    const QString refusal = remoteCwRefusal();
+    if (!refusal.isEmpty()) {
+        toast(refusal);
+        return;
+    }
+    RemoteTransmitClient* const remote = remoteCwClient();
+    if (remote == nullptr || remote->sendCwMemory(number) == 0) {
+        toast(MainWindow::cwxRemoteSendReason());
+    }
+}
+
+void MainWindowHotKeyTargets::setCwKeyDown(const QString& id, bool down)
+{
+    RadioModel* const model = m_window->m_radioModel;
+    if (model == nullptr) {
+        return;
+    }
+    const bool isDot = id == QLatin1String("cw.dot");
+    const bool isDash = id == QLatin1String("cw.dash");
+    if (!isDot && !isDash && id != QLatin1String("cw.straight")) {
+        qCWarning(lcHotKeys) << "No CW key for:" << id;
+        return;
+    }
+    if (!down) {
+        // Whatever has changed since the press, letting go always works.
+        if (isDot) {
+            model->cwSoftPaddle()->setDot(false);
+        } else if (isDash) {
+            model->cwSoftPaddle()->setDash(false);
+        } else {
+            setStraightKeyDown(false);
+        }
+        return;
+    }
+    // A press in a voice mode does nothing and says nothing, and stays that way
+    // if the mode changes under the held key: the dispatcher sends no second press.
+    if (m_window->m_shuttingDown || !transmitSliceInCw()) {
+        return;
+    }
+    if (!isDot && !isDash) {
+        setStraightKeyDown(true);
+        return;
+    }
+    // A remote window's dot and dash are refused before this (unavailableReason).
+    if (!model->ownsLocalDsp()) {
+        return;
+    }
+    const QString holder = model->cwxHolderRefusal(QByteArray());
+    if (!holder.isEmpty()) {
+        toast(holder);
+    } else if (isDot) {
+        model->cwSoftPaddle()->setDot(true);
+    } else {
+        model->cwSoftPaddle()->setDash(true);
+    }
+}
+
+void MainWindowHotKeyTargets::setStraightKeyDown(bool down)
+{
+    RadioModel* const model = m_window->m_radioModel;
+    const bool local = model->ownsLocalDsp();
+    if (!down) {
+        if (!std::exchange(m_straightDown, false)) {
+            return;
+        }
+        if (local) {
+            if (CwxSender* const sender = model->cwxSender()) {
+                sender->setHandKey(false);
+            }
+        } else if (RemoteTransmitClient* const remote = remoteCwClient()) {
+            remote->setCwKey(false);
+        }
+        return;
+    }
+    if (local) {
+        const QString holder = model->cwxHolderRefusal(QByteArray());
+        if (!holder.isEmpty()) {
+            toast(holder);
+            return;
+        }
+        // setHandKey has no gate of its own: the serial reader asks first, on
+        // its thread, and so does this key. Blocked until a fresh press, as the
+        // dispatcher sends no second press for a key still down.
+        const CwKeyerController* const keyer = model->cwKeyerController();
+        if (keyer == nullptr || !keyer->keyerAllowed()) {
+            if (keyer != nullptr && model->moxController() != nullptr) {
+                model->moxController()->reportCwRefusal(keyer->refusal());
+            }
+            return;
+        }
+        CwxSender* const sender = model->cwxSender();
+        m_straightDown = sender != nullptr && sender->setHandKey(true);
+        return;
+    }
+    const QString refusal = remoteCwRefusal();
+    if (!refusal.isEmpty()) {
+        toast(refusal);
+        return;
+    }
+    RemoteTransmitClient* const remote = remoteCwClient();
+    if (remote == nullptr || remote->setCwKey(true) == 0) {
+        toast(MainWindow::cwxRemoteSendReason());
+        return;
+    }
+    m_straightDown = true;
 }
 
 void MainWindowHotKeyTargets::toast(const QString& text)

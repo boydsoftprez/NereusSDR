@@ -1144,6 +1144,8 @@ set(CORE_SOURCES
     # CW transmit (R-CW-04, R-CW-36): the serial key reader.
     src/core/CwSerialKeyInput.cpp
     src/core/CwSerialKeyInput.h
+    src/core/CwSoftPaddle.cpp
+    src/core/CwSoftPaddle.h
     # CW transmit (R-CW-39): the computer sidetone (ChannelMaster sidetone.c).
     src/core/CwSidetone.cpp
     src/core/CwSidetone.h

@@ -943,6 +943,8 @@
 //   2026-11-05 - Hot keys plan Task 4: setHoldToTalk, reportRemoteKeyWentOff,
 //                transmitKeyWentOff. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-11-05 - Hot keys plan Task 5: cwSoftPaddle. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -1081,6 +1083,7 @@ class MoxController;
 class CwKeyerController;   // CW transmit (R-CW-05)
 class CwxSender;           // CW transmit (R-CW-31)
 class CwSerialKeyInput;    // CW transmit (R-CW-36)
+class CwSoftPaddle;        // Hot keys (R-HK-13)
 struct KeyerIdentity;
 class TxChannel;
 // Phase 3F Sub-Epic J Task 11: forward decl for rxChannelForSlice()'s
@@ -3062,6 +3065,11 @@ public:
     /// Why the serial key port is not read (CAT has it, it would not
     /// open, it stopped working); empty while it is read or none is named.
     QString cwSerialKeyRefusal() const { return m_cwSerialKeyRefusal; }
+    /// Hot keys (R-HK-13): dot and dash from a key, on the current
+    /// connection's key line, following the keyer gate. Every stop, a
+    /// transmit cut's catch-up, another device taking transmit and the
+    /// connection going away release it. Never null.
+    CwSoftPaddle* cwSoftPaddle() const { return m_cwSoftPaddle.get(); }
     /// A reader on a line source the test drives, wired as production's.
     void replaceCwSerialKeyInputForTest(std::unique_ptr<CwSerialKeyInput> input);
     /// R-CW-37: the mode the auto mode switch returns the slice to.
@@ -10212,6 +10220,9 @@ private:
     // R-CW-04: the words when CAT or the CAT PTT input uses `port`.
     QString cwSerialPortConflict(const QString& port) const;
     void setCwSerialKeyRefusal(const QString& words);
+    void wireCwSoftPaddle();
+    // Reset before the connection can go in the destructor.
+    std::unique_ptr<CwSoftPaddle> m_cwSoftPaddle;
     // Reset before the CWX sender in the destructor.
     std::unique_ptr<CwSerialKeyInput> m_cwSerialKey;
     QString m_cwSerialKeyRefusal;
