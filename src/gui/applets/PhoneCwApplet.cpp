@@ -2146,6 +2146,12 @@ PhoneCwApplet* PhoneCwApplet::createPanelCopy(QWidget* parent, bool preview)
     }
     connect(copy, &PhoneCwApplet::openSetupRequested,
             this, &PhoneCwApplet::openSetupRequested);
+    // The DEXP marker is in no model, so the sliders pass it to each other:
+    // this panel's slider to and from each copy's. Setting a slider to the
+    // value it has does nothing, so this stops by itself.
+    copy->m_dexpSlider->setValue(m_dexpSlider->value());
+    connect(m_dexpSlider, &QSlider::valueChanged, copy->m_dexpSlider, &QSlider::setValue);
+    connect(copy->m_dexpSlider, &QSlider::valueChanged, m_dexpSlider, &QSlider::setValue);
     m_copies.append(copy);
     connect(copy, &QObject::destroyed, this, [this, copy]() {
         m_copies.removeAll(copy);
