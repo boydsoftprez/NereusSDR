@@ -583,6 +583,10 @@ inline constexpr int kDisplaySpectrumFpsMax = 60;
 inline constexpr int kDisplaySpectrumFpsStep = 1;
 inline constexpr int kDisplaySpectrumFpsDefault = 30;
 inline constexpr const char* kDisplaySpectrumFpsUnit = "fps";
+// A window on a Core keeps its own paint rate here (the Display pill's FPS);
+// kDisplaySpectrumFpsKey stays the Core's one shared rate. Same range. Unset
+// until the pill is first moved (readDisplayPaintFps, DisplayFftSizing.h).
+inline constexpr const char* kDisplayPaintFpsKey = "DisplayPaintFps";
 
 // Spectrum Detector, in Thetis's order (SpectrumDetectorMode's values):
 // From Thetis Project Files/Source/Console/setup.designer.cs:34984-34989 [v2.10.3.15]

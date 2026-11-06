@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Each window on a Core keeps its own paint rate (the Display
+//               pill's FPS, DisplayPaintFps). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Prioritize passive reports at the selected listening context.
@@ -7631,18 +7634,49 @@ void MainWindow::applyDisplayFps(int fps)
     // The engine's own clamp (FftEnginePool::setOutputFps).
     fps = qBound(1, fps, 60);
     m_fftEnginePool->setOutputFps(fps);
-    // Each pan draws at the rate its rows arrive.
-    if (m_panStack) {
-        for (PanadapterApplet* applet : m_panStack->allApplets()) {
-            if (SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr) {
-                sw->setDisplayFps(fps);
-            }
-        }
-    }
     AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
                                      QString::number(fps));
+    applyWindowPaintFps();
     refreshDisplayPillFftStates();
     emit stationFftSettingsChanged();
+}
+
+int MainWindow::windowPaintFps() const
+{
+    const AppSettings& s = AppSettings::instance();
+    if (m_radioModel && !m_radioModel->ownsLocalDsp()) {
+        return readDisplayPaintFps(s);
+    }
+    return qBound(1,
+        s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
+                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
+        60);
+}
+
+void MainWindow::applyWindowPaintFps()
+{
+    if (!m_panStack) { return; }
+    const int fps = windowPaintFps();
+    // Each pan draws at the rate its rows arrive.
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr) {
+            sw->setDisplayFps(fps);
+        }
+    }
+}
+
+void MainWindow::applyDisplayPillFps(int fps)
+{
+    if (m_radioModel && m_radioModel->ownsLocalDsp()) {
+        applyDisplayFps(fps);
+        return;
+    }
+    // A window on a Core: its own rate, saved in its own file. The Core's
+    // rate is Setup's to set, and the pan requests follow on their own.
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplayPaintFpsKey),
+                                     QString::number(qBound(1, fps, 60)));
+    applyWindowPaintFps();
+    refreshDisplayPillFftStates();
 }
 
 void MainWindow::applyDisplayFftWindow(int windowType)
@@ -7714,10 +7748,7 @@ DisplayPillFftState MainWindow::displayPillFftState(const QString& panId) const
     state.sizingMode = sizing.mode;
     state.baselineSize = sizing.storedSize;
     state.lastHzPerBinTarget = sizing.lastHzPerBinTarget;
-    state.fps = qBound(1,
-        s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
-        60);
+    state.fps = windowPaintFps();
     state.windowType = qBound(0,
         s.value(QLatin1String(ControlRanges::kDisplayFftWindowKey),
                 QString::number(ControlRanges::kDisplayFftWindowDefault)).toString().toInt(),
@@ -8108,6 +8139,11 @@ void MainWindow::ensureOverlayPanels()
             if (key.isEmpty()) {
                 applyDecimationFromSettings();
             }
+            // A window with no rate of its own paints at the Core's. One
+            // with its own reads the same number again and stays.
+            if (key.isEmpty() || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
+                applyWindowPaintFps();
+            }
             if (sizingKey
                 || key == QLatin1String(ControlRanges::kDisplayFftWindowKey)
                 || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
@@ -8319,7 +8355,7 @@ void MainWindow::wirePanDisplayFlyout(SpectrumOverlayPanel* panel, SpectrumWidge
         [this](ControlRanges::DisplayFftSizingMode mode, double hzPerBinIfNoneRemembered) {
             applyDisplayFftSizingMode(mode, hzPerBinIfNoneRemembered);
         };
-    hooks.applyFps = [this](int fps) { applyDisplayFps(fps); };
+    hooks.applyFps = [this](int fps) { applyDisplayPillFps(fps); };
     hooks.applyWindowType = [this](int windowType) { applyDisplayFftWindow(windowType); };
     hooks.applyHzPerBinTarget = [this](double hz) { applyDisplayHzPerBinTarget(hz); };
     hooks.applyDecimation = [this](int decimation) { applyDisplayDecimation(decimation); };
@@ -10696,11 +10732,7 @@ void MainWindow::buildUI()
     // on the same display knobs, including ones created later.  Only the
     // SpectrumWidget half is left here.
     {
-        const int persistedFps = qBound(1,
-            AppSettings::instance().value(
-                QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
-            60);
+        const int persistedFps = windowPaintFps();
         if (activeSpectrumWidget()) {
             activeSpectrumWidget()->setDisplayFps(persistedFps);
         }

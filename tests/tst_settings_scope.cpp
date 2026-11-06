@@ -689,8 +689,10 @@ private slots:
             << QStringLiteral("DisplayFftSizingMode") << int(SettingsScope::Station);
         QTest::newRow("DisplayHzPerBinLastTarget is Station (the remembered target)")
             << QStringLiteral("DisplayHzPerBinLastTarget") << int(SettingsScope::Station);
-        QTest::newRow("DisplaySpectrumFps is Station (the straddle -- see SettingsScope.cpp)")
+        QTest::newRow("DisplaySpectrumFps is Station (the Core's one shared rate)")
             << QStringLiteral("DisplaySpectrumFps") << int(SettingsScope::Station);
+        QTest::newRow("DisplayPaintFps is OperatorLocal (each window's own paint rate)")
+            << QStringLiteral("DisplayPaintFps") << int(SettingsScope::OperatorLocal);
         // Parity ruling C12: the per-band grid dB max and min are the Core's.
         QTest::newRow("DisplayGridMax_20m is Station (the Core's per-band grid)")
             << QStringLiteral("DisplayGridMax_20m") << int(SettingsScope::Station);

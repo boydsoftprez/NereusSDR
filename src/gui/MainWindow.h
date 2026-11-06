@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: applyDisplayPillFps(), windowPaintFps(), applyWindowPaintFps():
+//               each window on a Core keeps its own paint rate. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: wireDialRequests(): a dial's tuning, step, slice select and
 //               lock act on the slice they name, through vfoRequestSlice()
 //               (now any meter item). J.J. Boyd (KG4VCF), AI-assisted via
@@ -502,8 +505,14 @@ public:
     /// every pan's Display pill up to date. A value out of range, or a
     /// station that cannot be reached, changes nothing. In a remote window
     /// the key goes to the Core and the pan requests follow on their own.
-    /// Frames per second, also every pan's own drawing rate.
+    /// Frames per second, also every pan's own drawing rate. On a Core this
+    /// is the Core's one shared rate, and a window that has its own keeps
+    /// drawing at that.
     void applyDisplayFps(int fps);
+    /// The Display pill's FPS. Direct to a radio, applyDisplayFps. In a window
+    /// on a Core, that window's own rate (DisplayPaintFps), which writes
+    /// nothing to the Core.
+    void applyDisplayPillFps(int fps);
     /// A ControlRanges::kDisplayFftWindows value.
     void applyDisplayFftWindow(int windowType);
     /// The Hz/bin control's value, through the sizing mode: above 0 sets
@@ -1065,6 +1074,9 @@ private slots:
     /// these." while disconnected, "The Core has not sent its settings."
     /// while connected without them).
     bool stationSettingsAvailable() const;
+    /// The rate this window's pans draw at, and every pan is told it.
+    int windowPaintFps() const;
+    void applyWindowPaintFps();
     QString stationSettingsReason() const;
     // Parity Task 19 (R-IOS-25, B7.2): the Spot Hub's Core settings and the
     // station's spot sources, available or disabled with a reason.

@@ -2228,6 +2228,8 @@ public:
     // test binary can round-trip settings and call dbmToRgb directly.
     void saveSettingsForTest()              { saveSettings(); }
     void loadSettingsForTest()              { loadSettings(); }
+    /// The paint timer's period (setDisplayFps sets it).
+    int displayTimerIntervalForTest() const { return m_displayTimer.interval(); }
     /// The MOX tune gate is the property under test; synthesising a press,
     /// a wheel notch and a spot-label hit would test Qt's event delivery
     /// instead. Every emitter routes through requestTune, which is greppable.

@@ -9924,6 +9924,7 @@
         ],
         "operatorLocalKeys": [
             "DisplayDecimation",
+            "DisplayPaintFps",
             "ExtendedTxAllowed"
         ],
         "operatorLocalPrefixes": [
