@@ -86,6 +86,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 5: parseBandStackRecall.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
@@ -567,6 +569,12 @@ public:
 
     static const QList<CommandVerbSpec>& verbSpecs();
 
+    /// Band stack plan Task 5: a recall's request, by the checks handleBandStack
+    /// answers with. Nullopt for what it would refuse as not understood, so
+    /// StationServer holds nothing that would be refused at proceed.
+    static std::optional<NereusSDR::BandStackRecallRequest> parseBandStackRecall(
+        const NereusSDR::SessionMessage& invoke);
+
 signals:
     /// Every CommandResult this dispatcher produces, in answer to some
     /// earlier dispatch() call. Task 18 encodes and relays each one back
@@ -676,7 +684,8 @@ private:
     /// Band stack plan Task 4: every bandStack.* verb (bandStackVersion 1).
     void handleBandStack(const NereusSDR::SessionMessage& invoke);
     /// Runs a parsed recall and answers it. The arguments have been read and the
-    /// slice check passed. The shared-receiver hold goes in front of this call.
+    /// slice check passed. StationServer::handleBandStackRecall has already held
+    /// it if it had to.
     void proceedBandStackRecall(const NereusSDR::SessionMessage& invoke,
                                 const NereusSDR::BandStackRecallRequest& request);
     /// Who may act on a slice through the band stack: the listener's words or

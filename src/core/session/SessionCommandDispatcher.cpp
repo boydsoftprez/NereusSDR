@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 5: parseBandStackRecall.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -4769,6 +4771,17 @@ std::optional<BandStackReturnMode> bandStackReturnModeFrom(const QString& name)
 }
 
 } // namespace
+
+std::optional<BandStackRecallRequest> SessionCommandDispatcher::parseBandStackRecall(
+    const SessionMessage& invoke)
+{
+    if (!bandStackArgumentsFit(invoke.arguments, invoke.commandVerb)
+        || !bandStackViewFrom(invoke.arguments).has_value()) {
+        return std::nullopt;
+    }
+    return BandStackController::parseRecall(bandStackArgumentsAsJson(invoke.arguments),
+                                            QString::fromLatin1(invoke.commandVerb));
+}
 
 QString SessionCommandDispatcher::bandStackSliceRefusal(int sliceId) const
 {

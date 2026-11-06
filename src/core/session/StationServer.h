@@ -182,6 +182,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 5: isBandStackRecall, handleBandStackRecall.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: peerGetsBandStack.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Negotiate frequency chat only with version2 peers.
@@ -2530,6 +2532,13 @@ private:
     /// A command about receivers (the pin, a C-Tune move, adding a slice or
     /// a pan) under the anchor and take rules. True when it answered.
     bool handleReceiverCommand(SessionTransport* transport, const SessionMessage& message);
+    /// Band stack plan Task 5: bandStack.press, bandStack.step or bandStack.goTo.
+    static bool isBandStackRecall(const SessionMessage& message);
+    /// A recall under the anchor and take rules (design 5.6), checked against
+    /// where planRecall says it would go. True when it answered; false for the
+    /// dispatcher to run it or refuse it.
+    bool handleBandStackRecall(SessionTransport* transport, const SessionMessage& message,
+                               const QByteArray& requester);
     /// A slice retune that leaves its shared receiver (ruling 6.5). True
     /// when it answered.
     bool handleSliceRetune(SessionTransport* transport, const SessionMessage& message);
