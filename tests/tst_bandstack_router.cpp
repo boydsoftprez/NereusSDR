@@ -11,6 +11,12 @@
 // path opens it for, where it opens, what keeps it open and what closes it, and
 // the reason it shows with no usable stack.
 //
+// One MainWindow serves every case, put back to a known state before each one.
+// A window takes over a second to build, and the saved container each window
+// adds is restored by the next, so a window per case cost 105 s on the Mac and
+// ran past 120 s on Linux CI. A case that fails, or one that leaves the window
+// unusable, gets a new window for the case after it.
+//
 // NEREUS_BANDSTACK_CAPTURE_DIR, when set, saves the popup in each look there, to
 // read by eye.
 //
@@ -22,6 +28,9 @@
 //                 implementation via Anthropic Claude Code.
 //   2026-11-06 - The popup (band stack plan Task 10). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - One window for every case; the fixture's container no longer
+//                 covers the flyout. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -277,13 +286,34 @@ struct RouterFixture {
         vfo->setRect(0, 0, 1, 1);
         meter->addItem(vfo);
         containerOnB->setContent(meter);
-        a->setFrequency(kOn20mHz);
-        b->setFrequency(kOn40mHz);
+        // A new overlay container sits raised at 0,0 at 640 by 480, over the pan's
+        // flyout. Only its signals and its meter are used here, so it goes under
+        // the pan and a click on the flyout reaches the flyout.
+        containerOnB->lower();
 
         window->setBandStackAccessForTest(&fake);
-        fake.setState(BandStackAccess::State::Ready);
-        fake.calls.clear();
+        reset();
         return true;
+    }
+
+    // What the cases change, back as build() leaves it.
+    void reset()
+    {
+        if (auto* popup = window->findChild<BandStackPopup*>()) {
+            popup->close();
+        }
+        // The BAND button toggles, so it closes a flyout a case left open.
+        if (flyoutButton(*overlay, QStringLiteral("20"))) {
+            openBandFlyout(*overlay);
+        }
+        qDeleteAll(window->findChildren<StatusToast*>());
+        fake.setDocument(QJsonObject{});
+        fake.setState(BandStackAccess::State::Ready);
+        model->setActiveSlice(0);
+        a->setFrequency(kOn20mHz);
+        b->setFrequency(kOn40mHz);
+        settle();
+        fake.calls.clear();
     }
 
     ~RouterFixture()
@@ -299,7 +329,41 @@ struct RouterFixture {
 class TstBandStackRouter : public QObject {
     Q_OBJECT
 
+private:
+    bool buildFixture()
+    {
+        m_fixture.reset();
+        m_fixture = std::make_unique<RouterFixture>();
+        m_rebuild = false;
+        return m_fixture->build();
+    }
+
+    std::unique_ptr<RouterFixture> m_fixture;
+    bool m_rebuild{false};
+
 private slots:
+    void initTestCase() { QVERIFY(buildFixture()); }
+
+    void init()
+    {
+        if (m_rebuild) {
+            QVERIFY(buildFixture());
+        } else {
+            m_fixture->reset();
+        }
+    }
+
+    // A failed case may have left anything behind, so it does not get to spoil
+    // the cases after it.
+    void cleanup()
+    {
+        if (QTest::currentTestFailed()) {
+            m_rebuild = true;
+        }
+    }
+
+    void cleanupTestCase() { m_fixture.reset(); }
+
     // ── pressBand's decision ─────────────────────────────────────────────────
     void pressDecides_data()
     {
@@ -327,8 +391,7 @@ private slots:
         QFETCH(int, mods);
         QFETCH(QString, verb);
         QFETCH(bool, previous);
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.b->setFrequency(sliceHz);
 
         f.window->pressBand(f.b, Band::Band20m, Qt::KeyboardModifiers(mods));
@@ -356,8 +419,7 @@ private slots:
     void withoutAReadyStackThePressIsTheOldOne()
     {
         QFETCH(int, state);
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setState(static_cast<BandStackAccess::State>(state), QStringLiteral("Not now."));
 
         f.window->pressBand(f.b, Band::Band20m, Qt::ControlModifier);
@@ -376,16 +438,14 @@ private slots:
 
     void noSliceDoesNothing()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.window->pressBand(nullptr, Band::Band20m, Qt::NoModifier);
         QVERIFY(f.fake.calls.isEmpty());
     }
 
     void theViewIsTheSlicePan()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         SpectrumWidget* spectrum = f.window->spectrumForSlice(f.b);
         QVERIFY(spectrum);
         spectrum->setFrequencyRange(7'100'000.0, 96'000.0);
@@ -428,8 +488,7 @@ private slots:
         QFETCH(int, mods);
         QFETCH(QString, verb);
         QFETCH(bool, previous);
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
 
         std::function<void()> press;
         int sliceId = kSliceA;
@@ -495,8 +554,7 @@ private slots:
     // A real flyout button in a real window, with Shift on the click itself.
     void aRealFlyoutClickCarriesItsModifier()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         QPushButton* bandButton = nullptr;
         for (QPushButton* button : f.overlay->findChildren<QPushButton*>()) {
             if (button->text() == QStringLiteral("BAND")) {
@@ -519,6 +577,11 @@ private slots:
         QWidget* surface = twenty->nativeParentWidget();
         QVERIFY(surface && surface->windowHandle());
         const QPoint point = twenty->mapTo(surface, twenty->rect().center());
+        // Nothing of the window's own covers the button. The pan is native on the
+        // Mac and Windows but not on Linux, where the surface is the top-level
+        // window, so a widget over the flyout takes the click there and only there.
+        QCOMPARE(f.window->childAt(twenty->mapTo(f.window.get(), twenty->rect().center())),
+                 static_cast<QWidget*>(twenty));
 
         QTest::mouseClick(surface->windowHandle(), Qt::LeftButton, Qt::ShiftModifier, point);
 
@@ -547,8 +610,7 @@ private slots:
     {
         QFETCH(int, id);
         QFETCH(bool, previous);
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
 
         emit f.containerOnB->otherButtonClicked(id);
 
@@ -561,10 +623,11 @@ private slots:
 
     void stackButtonsAreOfferedAndGreyWithTheReason()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         auto* buttons = new OtherButtonItem();
-        qobject_cast<MeterWidget*>(f.containerOnB->content())->addItem(buttons);
+        auto* meter = qobject_cast<MeterWidget*>(f.containerOnB->content());
+        meter->addItem(buttons);
+        const auto removeButtons = qScopeGuard([meter, buttons] { meter->removeItem(buttons); });
         settle();
         QVERIFY(buttons->isOffered(OtherButtonItem::ButtonId::StackUp));
         QVERIFY(buttons->isOffered(OtherButtonItem::ButtonId::StackDown));
@@ -589,8 +652,7 @@ private slots:
     // ── The entry points, found by name as the hot keys find them ────────────
     void entryPointsActOnTheSelectedSlice()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.model->setActiveSlice(1);
 
         QVERIFY(QMetaObject::invokeMethod(f.window.get(), "bandStackNext"));
@@ -620,8 +682,7 @@ private slots:
     void entryPointsSayWhyWhenNotReady()
     {
         QFETCH(QString, slot);
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         const QString reason = QStringLiteral("Connect to a radio to use band stacks.");
         f.fake.setState(BandStackAccess::State::NotConnected, reason);
         QCOMPARE(toastCount(*f.window, reason), 0);
@@ -662,8 +723,7 @@ private slots:
         QFETCH(int, sliceId);
         QFETCH(int, band);
         QFETCH(QStringList, rows);
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument());
 
         if (path == QStringLiteral("container")) {
@@ -691,8 +751,7 @@ private slots:
 
     void popupOpensAtThePointerAndStaysOnScreen()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument(14));
 
         f.window->openBandStackPopup(f.b, Band::Band20m, QPoint(100, 100));
@@ -722,8 +781,7 @@ private slots:
 
     void popupRowsActAndKeepItOpen()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument());
         f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
         auto* popup = f.window->findChild<BandStackPopup*>();
@@ -770,8 +828,7 @@ private slots:
 
     void popupRowMenuDoesNotCloseIt()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument());
         f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
         auto* popup = f.window->findChild<BandStackPopup*>();
@@ -814,8 +871,7 @@ private slots:
 
     void popupClosesOnAnOutsideClickAndEsc()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument());
         f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
         auto* popup = f.window->findChild<BandStackPopup*>();
@@ -829,17 +885,19 @@ private slots:
         QTest::keyClick(popup->rows(), Qt::Key_Escape);
         QVERIFY(!popup->isVisible());
 
-        // A slice that goes away takes its popup with it.
+        // A slice that goes away takes its popup with it. Everything else in the
+        // window hears this too, though the slice is still there, so the next
+        // case gets a new window.
         f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
         QVERIFY(popup->isVisible());
+        m_rebuild = true;
         emit f.model->sliceRemoved(kSliceB);
         QVERIFY(!popup->isVisible());
     }
 
     void popupLeavesTheFlyoutOpenUntilAClickOutsideBoth()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument());
         openBandFlyout(*f.overlay);
         QPushButton* twenty = flyoutButton(*f.overlay, QStringLiteral("20"));
@@ -887,8 +945,7 @@ private slots:
     {
         QFETCH(int, state);
         QFETCH(QString, reason);
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument());
         f.fake.setState(static_cast<BandStackAccess::State>(state), reason);
 
@@ -915,8 +972,7 @@ private slots:
 
     void popupWithNoSliceSaysSo()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument());
         f.window->openBandStackPopup(nullptr, Band::Band40m, QPoint(100, 100));
         auto* popup = f.window->findChild<BandStackPopup*>();
@@ -954,8 +1010,10 @@ private slots:
             QVERIFY(popup.grab().save(QDir(directory).filePath(
                 QStringLiteral("%1-popup-%2.png").arg(look, QString::fromLatin1(name)))));
         };
-        RouterFixture f;
-        QVERIFY(f.build());
+        // A window of its own, built in the look it is captured in.
+        QVERIFY(buildFixture());
+        m_rebuild = true;
+        RouterFixture& f = *m_fixture;
         f.fake.setDocument(popupDocument());
         f.window->openBandStackPopup(f.b, Band::Band40m, QPoint(100, 100));
         auto* popup = f.window->findChild<BandStackPopup*>();
@@ -983,8 +1041,7 @@ private slots:
     // ── What comes back ──────────────────────────────────────────────────────
     void refusalsAndReportsToastOnce()
     {
-        RouterFixture f;
-        QVERIFY(f.build());
+        RouterFixture& f = *m_fixture;
         const QString refusal = QStringLiteral("Band 20m ignored: the slice is locked.");
         const QString report = QStringLiteral("20m: 14.074 USB, 1 of 2");
         emit f.fake.refused(refusal);
