@@ -82,6 +82,7 @@ bool DesktopStationController::start(bool profileOwnershipEstablished)
 void DesktopStationController::stop()
 {
     supersedeTake();
+    supersedeKeyTake();
     ++m_intentGeneration;
     m_question.reset();
     m_moxRequested = false;
@@ -161,6 +162,7 @@ DesktopStationController::RequestResult DesktopStationController::requestTwoTone
 DesktopStationController::RequestResult DesktopStationController::requestTakeTransmit()
 {
     supersedeTake();
+    supersedeKeyTake();
     ++m_intentGeneration;
     m_question.reset();
     if (!m_model || !enabled() || !server()) {
@@ -175,6 +177,13 @@ DesktopStationController::RequestResult DesktopStationController::requestTakeTra
     const RequestResult result = takeAndKey(Key::Take, std::nullopt, std::nullopt);
     if (!self) { return result; }
     return settleTake(takeId, result);
+}
+
+void DesktopStationController::supersedeKeyTake()
+{
+    if (std::exchange(m_keyTakeWaiting, false)) {
+        emit keyTakeNotGranted(true);
+    }
 }
 
 void DesktopStationController::supersedeTake()
@@ -202,6 +211,7 @@ DesktopStationController::RequestResult DesktopStationController::settleTake(
 DesktopStationController::RequestResult DesktopStationController::request(Key key, bool on)
 {
     supersedeTake();
+    supersedeKeyTake();
     ++m_intentGeneration;
     m_question.reset();
     if (!on && key == Key::TwoTone) {
@@ -245,6 +255,7 @@ DesktopStationController::RequestResult DesktopStationController::confirmTake(
     // TX badge take: the answer to a take's question continues that take.
     const quint64 takeId = shown.key == Key::Take ? m_takeInFlight : 0;
     if (takeId == 0) { supersedeTake(); }
+    supersedeKeyTake();
     ++m_intentGeneration;
     m_question.reset();
     if (!m_model || !enabled() || !server()) {
@@ -273,6 +284,7 @@ DesktopStationController::RequestResult DesktopStationController::takeAndKey(
     const QPointer<StationServer> serverRef(stationServer);
     const QPointer<RadioModel> modelRef(m_model);
     const quint64 intent = m_intentGeneration;
+    m_keyTakeWaiting = key != Key::Take;
     const TransmitHolder::TakeVerdict verdict = stationServer->takeTransmitForStation(
         shownEpoch, shownKeyed, [self, serverRef, modelRef, intent, key](bool assigned) {
             // TX badge take: the take ends here, held or not.
@@ -286,11 +298,14 @@ DesktopStationController::RequestResult DesktopStationController::takeAndKey(
                                                     && self->stationHoldsTransmit());
                 return;
             }
+            if (self && self->m_intentGeneration == intent) {
+                self->m_keyTakeWaiting = false;
+            }
             if (!self || !serverRef || !modelRef || !assigned
                 || self->m_intentGeneration != intent || self->server() != serverRef
                 || self->m_model != modelRef || !self->stationHoldsTransmit()) {
                 if (self && self->m_intentGeneration == intent) {
-                    emit self->keyTakeNotGranted();
+                    emit self->keyTakeNotGranted(false);
                 }
                 return;
             }
@@ -301,6 +316,10 @@ DesktopStationController::RequestResult DesktopStationController::takeAndKey(
     if (!self || !serverRef || !modelRef || self->m_intentGeneration != intent
         || self->server() != serverRef || self->m_model != modelRef) {
         return {RequestState::Refused, {}, QStringLiteral("The transmit request changed.")};
+    }
+    // Only AtOnce leaves its callback still to come.
+    if (verdict != TransmitHolder::TakeVerdict::AtOnce) {
+        self->m_keyTakeWaiting = false;
     }
     switch (verdict) {
     case TransmitHolder::TakeVerdict::AtOnce:

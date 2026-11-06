@@ -65,7 +65,7 @@ public:
     void onRemoteCwEnded();
     // A hosted take this hold's key was waiting on was not granted. True when
     // that hold had a claim on the key, which is gone now.
-    bool onHostKeyTakeNotGranted();
+    bool onHostKeyTakeNotGranted(bool superseded);
 
     // Band stack is reached by slot name, so these keys stay disabled with a
     // reason until `window` has the slots.

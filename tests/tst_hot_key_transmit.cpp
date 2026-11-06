@@ -278,6 +278,33 @@ QJsonValue argument(const QJsonObject& command, const QString& name)
     return {};
 }
 
+struct WaitingTake {
+    explicit WaitingTake(TransmitHolder* transmitHolder)
+        : holder(transmitHolder)
+        , saved(transmitHolder->hooks())
+    {
+        TransmitHolder::Hooks forced = saved;
+        forced.moxOn = [this]() { return moxReadsOn; };
+        forced.schedule = [this](int, std::function<void()> fire) { endOfWait = std::move(fire); };
+        holder->setHooks(forced);
+    }
+    ~WaitingTake() { holder->setHooks(saved); }
+    // The wait ends with MOX reading off, so a take still current is granted.
+    void finish()
+    {
+        moxReadsOn = false;
+        holder->setHooks(saved);
+        if (endOfWait) {
+            endOfWait();
+        }
+        holder->onMoxReading(false);
+    }
+    TransmitHolder* holder;
+    TransmitHolder::Hooks saved;
+    bool moxReadsOn{true};
+    std::function<void()> endOfWait;
+};
+
 } // namespace
 
 class TestHotKeyTransmit final : public QObject {
@@ -886,6 +913,102 @@ private slots:
         QVERIFY(w.mox->isMox());
         w.keys->press(kMox, kKeyboard);
         QTRY_VERIFY(!w.mox->isMox());
+    }
+
+    // A later request replaces a take a hold is waiting on, and no went-off comes
+    // for a key that never came on. The hold's claim goes with it.
+    void aSupersededTakeLeavesNoClaimOnALaterMox_data()
+    {
+        QTest::addColumn<int>("request");
+        QTest::newRow("2-TONE off") << 0;
+        QTest::newRow("the TX badge") << 1;
+        QTest::newRow("MOX, refused while the take waits") << 2;
+    }
+
+    void aSupersededTakeLeavesNoClaimOnALaterMox()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        QFETCH(int, request);
+        HostingWindow w;
+        QVERIFY(w.directory.isValid());
+        QVERIFY(w.start());
+        TransmitHolder* const holder = w.controller->server()->transmitHolder();
+        WaitingTake wait(holder);
+
+        w.keys->press(kHold, kKeyboard);
+        QVERIFY(wait.endOfWait);
+        QVERIFY(!w.mox->isMox());
+        if (request == 0) {
+            w.controller->requestTwoTone(false);
+        } else if (request == 1) {
+            w.controller->requestTakeTransmit();
+        } else {
+            QCOMPARE(w.controller->requestMox(true).state, DesktopStationController::RequestState::Refused);
+        }
+
+        // The wait ends with MOX still reading on, so the take is not assigned.
+        wait.endOfWait();
+        QVERIFY(!holder->isHeldBy(SliceOwnership::stationDevice()));
+        wait.moxReadsOn = false;
+        holder->setHooks(wait.saved);
+        holder->onMoxReading(false);
+        QTRY_VERIFY(holder->state() == TransmitHolder::State::Unheld);
+
+        // Still holding the key, MOX with the button.
+        w.keys->press(kMox, kKeyboard);
+        QTRY_VERIFY(w.mox->isMox());
+        w.keys->release(kHold, kKeyboard);
+        pump();
+        QVERIFY(w.mox->isMox());
+        w.keys->press(kMox, kKeyboard);
+        QTRY_VERIFY(!w.mox->isMox());
+    }
+
+    // The take replaced is granted after all, and keys nothing. The MOX asked for
+    // since is the operator's.
+    void aMoxAfterAReplacedTakeThatWasGrantedSurvivesTheRelease()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        HostingWindow w;
+        QVERIFY(w.directory.isValid());
+        QVERIFY(w.start());
+        WaitingTake wait(w.controller->server()->transmitHolder());
+
+        w.keys->press(kHold, kKeyboard);
+        QVERIFY(wait.endOfWait);
+        QCOMPARE(w.controller->requestMox(true).state, DesktopStationController::RequestState::Refused);
+        wait.finish();
+        QTRY_VERIFY(wait.holder->isHeldBy(SliceOwnership::stationDevice()));
+        QVERIFY(!w.mox->isMox());
+
+        QCOMPARE(w.controller->requestMox(true).state, DesktopStationController::RequestState::Pending);
+        QTRY_VERIFY(w.mox->isMox());
+        w.keys->release(kHold, kKeyboard);
+        pump();
+        QVERIFY(w.mox->isMox());
+        w.controller->requestMox(false);
+        QTRY_VERIFY(!w.mox->isMox());
+    }
+
+    // The other order: a hold pressed while the button's take waits is refused
+    // like any request then, and neither of them keys later.
+    void aHoldDuringAWaitingTakeKeysNothing()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        HostingWindow w;
+        QVERIFY(w.directory.isValid());
+        QVERIFY(w.start());
+        WaitingTake wait(w.controller->server()->transmitHolder());
+
+        QCOMPARE(w.controller->requestMox(true).state, DesktopStationController::RequestState::Pending);
+        QVERIFY(wait.endOfWait);
+        w.keys->press(kHold, kKeyboard);
+        wait.finish();
+        pump();
+        QVERIFY(!w.mox->isMox());
+        w.keys->release(kHold, kKeyboard);
+        pump();
+        QVERIFY(!w.mox->isMox());
     }
 
     // A hosting window says why a hold does nothing while another device is on

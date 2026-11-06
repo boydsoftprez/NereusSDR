@@ -3233,8 +3233,8 @@ void MainWindow::setDesktopStationController(DesktopStationController* controlle
         });
         // A hold's key waiting on a take that wasn't granted leaves no claim, so
         // letting go can't drop a key made since. No went-off signal comes: nothing keyed.
-        connect(replacement, &DesktopStationController::keyTakeNotGranted, this, [this] {
-            if (m_hotKeyTargets && m_hotKeyDispatcher && m_hotKeyTargets->onHostKeyTakeNotGranted()) {
+        connect(replacement, &DesktopStationController::keyTakeNotGranted, this, [this](bool superseded) {
+            if (m_hotKeyTargets && m_hotKeyDispatcher && m_hotKeyTargets->onHostKeyTakeNotGranted(superseded)) {
                 m_hotKeyDispatcher->onTransmitWentOff();
             }
         });

@@ -699,9 +699,12 @@ void MainWindowHotKeyTargets::onRemoteCwEnded()
     }
 }
 
-bool MainWindowHotKeyTargets::onHostKeyTakeNotGranted()
+bool MainWindowHotKeyTargets::onHostKeyTakeNotGranted(bool superseded)
 {
-    m_hostTakeNotGranted = true;
+    // Superseded, this says nothing of the request now being made, a hold's own among them.
+    if (!superseded) {
+        m_hostTakeNotGranted = true;
+    }
     return std::exchange(m_holdThroughHost, false);
 }
 
