@@ -133,18 +133,22 @@ struct TuneUnderLoadTests {
         /// 11-04) has an encode of 1.25 ms, so 16 ms. The slowest has 2.57 ms,
         /// about 33 ms. One run's reading of this work on GitHub's hosted Mac
         /// (PR 745, run 41937480842, 2026-11-05, four iPhone scenes): 17.69 to
-        /// 19.17 ms, so a factor of 1.11 to 1.20 and a limit of 166 to 180 ms,
+        /// 19.17 ms, so a factor of 1.11 to 1.20 and a limit of 165.8 to 179.7 ms,
         /// with medians of 63 (nothing drawn), 104 (main held 15 ms a frame),
         /// 102 (2D) and 95 ms (3D), all within.
         static let referenceMs = 16.0
         /// The most a slow runner can raise the limit: to 180 ms. In those
         /// 26 CI runs the slowest median of any scene is 168 ms, so this still
-        /// clears it. A hold on the main thread that runs alongside the fake
+        /// clears it. A later run (PR 749, run 42148478672, 2026-11-05, before
+        /// this work was printed) read 179.4 ms with an encode of 2.87 ms, so
+        /// the margin on a run that slow is under 1 ms. The cap stays: a higher
+        /// one lets more of a real hold through, and a slow runner that lands
+        /// just over gets a rerun of that job. A hold on the main thread that runs alongside the fake
         /// Core's 60 ms answer, which sleeps in its own task, does not add to
         /// it: writes space at about the larger of the two. A hold between the
         /// answer and the next write does add. Injected here, 2026-11-04, a
         /// 150 ms hold per write gave medians of 154-168 ms alongside the
-        /// answer and 211-215 ms after it. So this cap always catches the
+        /// answer and 211-232 ms after it. So this cap always catches the
         /// second, and the first only on a runner whose limit is under them.
         static let maxFactor = 1.2
         static let samples = 16
@@ -159,7 +163,7 @@ struct TuneUnderLoadTests {
 
         /// For the result line and for a failing expectation.
         var summary: String {
-            String(format: "runner work %.2f ms (p10 %.2f, p90 %.2f, reference %.1f), factor %.2f",
+            String(format: "runner work %.2f ms (p10 %.2f, p90 %.2f, reference %.1f), factor %.3f",
                    workMs, percentile(samplesMs, 0.1), percentile(samplesMs, 0.9), Self.referenceMs, factor)
         }
 
@@ -199,7 +203,7 @@ struct TuneUnderLoadTests {
         let worst = run.spacingsMs.max() ?? 0
         let limit = run.runner.medianLimitMs
         #expect(run.writes >= 10, "\(run.label): only \(run.writes) writes in a \(dragSeconds) s drag")
-        #expect(median <= limit, "\(run.label): writes \(Int(median)) ms apart (median), limit \(Int(limit)) ms; \(run.runner.summary)")
+        #expect(median <= limit, "\(run.label): writes \(String(format: "%.1f", median)) ms apart (median), limit \(String(format: "%.1f", limit)) ms; \(run.runner.summary)")
         #expect(worst < 1_000, "\(run.label): a write waited \(Int(worst)) ms")
         #expect((run.liftToFinalMs ?? .infinity) <= 250,
                 "\(run.label): the final value reached the Core \(run.liftToFinalMs.map { "\(Int($0)) ms" } ?? "never") after the lift")
@@ -572,7 +576,7 @@ struct TuneUnderLoadTests {
             TuneUnderLoad \(label) (simulator): touches \(touches), writes \(run.writes), \
             spacing ms p10 \(Int(percentile(spacings, 0.1))) median \(Int(percentile(spacings, 0.5))) \
             p90 \(Int(percentile(spacings, 0.9))) max \(Int(spacings.max() ?? 0)); \
-            median limit \(Int(runner.medianLimitMs)) ms, \
+            median \(String(format: "%.1f", percentile(spacings, 0.5))) against limit \(String(format: "%.1f", runner.medianLimitMs)) ms, \
             \(percentile(spacings, 0.5) <= runner.medianLimitMs ? "within" : "over"); \(runner.summary); \
             lift to final \(run.liftToFinalMs.map { "\(Int($0)) ms" } ?? "never"); \
             answer to next write ms median \(Int(percentile(answerToNext, 0.5))) \

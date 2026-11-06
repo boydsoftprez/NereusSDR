@@ -605,10 +605,23 @@ import Testing
         let rig = try Rig(clock: clock)
         let core = try TestControlAnswerer()
         defer { core.close() }
+        let seen = SeenCandidates()
+        let answerTaken = ConditionWaiters()
+        rig.dialer.observeCoreCandidates {
+            seen.set($0)
+            answerTaken.release()
+        }
         let dialling = Task { try await rig.dialer.dial { _ in } }
         let (connection, _) = try await answer(rig, core: core)
+        // The answer is only on its way to the dial so far, and the service's
+        // 10 s wait for it is still armed. Moving the clock now would fire that
+        // wait too, and the dial would read as no answer, which is right for an
+        // answer it never read (a load finding, PR 752 CI).
+        try #require(await answerTaken.wait(within: TestBackstop.hang) { !seen.lines.isEmpty })
+        let deadlineMs = Int64(RendezvousDialer.dialDeadline.components.seconds * 1000)
+        #expect(clock.pendingDueTimes == [deadlineMs], "only the dial's deadline is left to fire")
         // Nothing more from the Core: its candidates never come.
-        await clock.advance(by: Int64(RendezvousDialer.dialDeadline.components.seconds * 1000))
+        await clock.advance(by: deadlineMs)
         await #expect(throws: RendezvousDialError.notOpenedInTime) { try await dialling.value }
         #expect(await connection.waitUntilClosed(within: TestBackstop.hang))
         #expect(rig.dialer.attemptTry?.outcome == .timedOut)

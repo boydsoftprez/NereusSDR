@@ -14,6 +14,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: kHarnessWaitMs: waits survive a slow CI machine; a wait that
+//               runs out says which step stalled. beginSignIn(), a sign-in
+//               that does not wait. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-27: F3: optional model factory after scratch AppSettings is
 //               bound, for controlled CWX time. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -55,6 +59,8 @@
 #include <memory>
 #include <optional>
 
+#include <QDebug>
+
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
 #include "core/DeviceLayoutStore.h"
@@ -94,6 +100,19 @@ const QString kCoreFull = QStringLiteral("The Core already has four devices conn
 const QString kSameDevice = QStringLiteral("This device connected again.");
 const QString kUnknownVerb =
     QStringLiteral("The Core does not know this request. Updating the Core may help.");
+
+// How long a sign-in or an invoke() may take. Each returns as soon as it
+// arrives, so this is only an upper bound. It was 5 s: in Linux CI run
+// 41764912150 these tests ran 7 times slower than usual, a sign-in passed 5 s,
+// and admitted() and invoke() failed on a working Core. It is as long as the
+// Core's own deadline for finishing a connection (kStationHandshakeDeadlineMs):
+// a sign-in that cannot finish until its caller returns, inside a direct signal
+// from the Core, has to use beginSignIn(), or the two race.
+constexpr int kHarnessWaitMs = 30000;
+
+// The harness's other waits (a greeting, a close, a device list). That run
+// measured none of them passing 5 s, so they get the same bound as NEREUS_TRY.
+constexpr int kHarnessStepWaitMs = 15000;
 
 const QHash<QByteArray, int> kHolder{{"deviceAuth", 1}, {"sessionHolder", 1}};
 
@@ -296,28 +315,42 @@ struct Core {
         station->linkTo(app);
         clients.append(app);
         server->acceptTransport(station);
-        const bool greeted = QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, 5000);
-        Q_UNUSED(greeted);
+        const bool greeted = QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, kHarnessStepWaitMs);
+        if (!greeted) {
+            qWarning("MultiDeviceHarness: open() got no greeting within %d ms", kHarnessStepWaitMs);
+        }
         return app;
     }
 
-    // Hello at `minor` declaring `features`, then `auth`; waits for the end
-    // of the connect sequence or the close.
-    static void send(LoopbackTransport* app, const SessionMessage& auth, quint16 minor,
-                     const QHash<QByteArray, int>& features)
+    // Hello at `minor` declaring `features`, then `auth`.
+    static void sendHelloAndAuth(LoopbackTransport* app, const SessionMessage& auth, quint16 minor,
+                                 const QHash<QByteArray, int>& features)
     {
         app->sendText(SessionMessages::encode(SessionMessages::hello(
             kSessionProtocolMajor, minor, 0, QStringLiteral("NereusSDR iPhone"),
             {kSessionProtocolMajor}, features)));
         app->sendText(SessionMessages::encode(auth));
+    }
+
+    // Hello and `auth`; waits for the end of the connect sequence or the close.
+    static void send(LoopbackTransport* app, const SessionMessage& auth, quint16 minor,
+                     const QHash<QByteArray, int>& features)
+    {
+        sendHelloAndAuth(app, auth, minor, features);
         const bool settled = QTest::qWaitFor(
             [app]() {
                 return app->receivedKinds().contains(QByteArrayLiteral("snapshot.complete"))
                     || app->receivedKinds().contains(QByteArrayLiteral("session.held"))
                     || !app->isOpen();
             },
-            5000);
-        Q_UNUSED(settled);
+            kHarnessWaitMs);
+        // The caller asserts later, and several sign-ins in a row can use up
+        // ctest's limit before it does: say here which step stalled.
+        if (!settled) {
+            qWarning().noquote() << "MultiDeviceHarness: sign-in got no snapshot.complete,"
+                                 << "session.held or close within" << kHarnessWaitMs
+                                 << "ms; received" << app->receivedKinds();
+        }
     }
 
     SessionMessage deviceAuth(LoopbackTransport* app, const Device& device) const
@@ -336,6 +369,16 @@ struct Core {
     {
         LoopbackTransport* app = open();
         send(app, deviceAuth(app, device), minor, features);
+        return app;
+    }
+
+    // A device's sign-in sent and not waited for: for a caller the Core is
+    // still waiting on, where signIn() would hold the Core's event loop up
+    // for the whole wait and past the sign-in's own deadline.
+    LoopbackTransport* beginSignIn(const Device& device)
+    {
+        LoopbackTransport* app = open();
+        sendHelloAndAuth(app, deviceAuth(app, device), kSessionProtocolMinor, kHolder);
         return app;
     }
 
@@ -360,8 +403,10 @@ struct Core {
             }
             return QJsonObject{};
         };
-        const bool answered = QTest::qWaitFor([&find]() { return !find().isEmpty(); }, 5000);
-        Q_UNUSED(answered);
+        const bool answered = QTest::qWaitFor([&find]() { return !find().isEmpty(); }, kHarnessWaitMs);
+        if (!answered) {
+            qWarning("MultiDeviceHarness: invoke() got no answer within %d ms", kHarnessWaitMs);
+        }
         return find();
     }
 };
@@ -374,8 +419,10 @@ bool admitted(const LoopbackTransport* app)
 
 QJsonObject endOf(LoopbackTransport* app)
 {
-    const bool closed = QTest::qWaitFor([app]() { return !app->isOpen(); }, 5000);
-    Q_UNUSED(closed);
+    const bool closed = QTest::qWaitFor([app]() { return !app->isOpen(); }, kHarnessStepWaitMs);
+    if (!closed) {
+        qWarning("MultiDeviceHarness: endOf() saw no close within %d ms", kHarnessStepWaitMs);
+    }
     return firstOfType(app->received(), QStringLiteral("session.end"));
 }
 
@@ -416,7 +463,7 @@ void verifyHeld(LoopbackTransport* app, QJsonObject* out = nullptr)
 // Waits until `app`'s latest connectedDevices list satisfies `test`.
 bool waitForList(const LoopbackTransport* app, const std::function<bool(const QJsonArray&)>& test)
 {
-    return QTest::qWaitFor([app, &test]() { return test(connectedList(app)); }, 5000);
+    return QTest::qWaitFor([app, &test]() { return test(connectedList(app)); }, kHarnessStepWaitMs);
 }
 
 QStringList idsOf(const QJsonArray& list)

@@ -45,6 +45,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: waitForLast uses kHarnessWaitMs. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-09-25: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), iPhone app plan Task 74 (R-IOS-02, R-IOS-30),
 //               with AI-assisted implementation via Anthropic Claude Code.
@@ -289,7 +291,7 @@ void preparePtt(Core& core)
 
 QJsonObject waitForLast(const LoopbackTransport* app, const QString& type, int after)
 {
-    const bool arrived = QTest::qWaitFor([&]() { return countOf(app, type) > after; }, 5000);
+    const bool arrived = QTest::qWaitFor([&]() { return countOf(app, type) > after; }, kHarnessWaitMs);
     Q_UNUSED(arrived);
     return lastOf(app, type);
 }
