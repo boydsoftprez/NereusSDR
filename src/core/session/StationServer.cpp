@@ -1,6 +1,8 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-05: A device's first slice is a new receiver, RIT and XIT off.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-10-31: Strip legacy Roundtable fields by record type, preserving RF kind.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -12328,7 +12330,8 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     //    it starts with none.
     if (ownership->ownedBy(deviceId).isEmpty()) {
         const SliceOwnership::CreatorScope creator(ownership, deviceId);
-        if (m_radioModel->addSlice(QString()) < 0) {
+        if (m_radioModel->addSlice(QString(), /*restoreSavedState=*/false,
+                                   /*newReceiver=*/true) < 0) {
             qCInfo(lcStation) << "A device was admitted with no slice: the slice cap is full";
         }
     }

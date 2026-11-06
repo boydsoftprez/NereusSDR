@@ -4,6 +4,10 @@
 // AppSettings file.  The primed-board seam deliberately replaces only radio
 // discovery/connection; it still uses the real board capability table and
 // stream allocator.  RADE worker acceptance belongs in its worker tests.
+//
+// Modification history (NereusSDR):
+//   2026-11-05: A new receiver leaves a held saved layout's RIT and XIT alone.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 
 #include <QtTest/QtTest>
 
@@ -899,6 +903,49 @@ private slots:
                  QStringLiteral("Your receivers were not saved. It places a receiver "
                                 "on a panadapter this program does not recognize."));
         app.stop();
+    }
+
+    // JJ's ruling 2026-11-05: a new receiver starts with RIT and XIT off and
+    // removes the letter's saved values, but never while a saved layout is
+    // held. The refusal text sends the operator to +RX while it is held, and
+    // the held letter must still have its offsets when the layout comes back.
+    void newReceiverAndTheSavedLayoutHold_data()
+    {
+        QTest::addColumn<bool>("protectedLayout");
+        QTest::addColumn<bool>("pendingAdmission");
+        QTest::addColumn<bool>("savedValuesStay");
+        QTest::newRow("managed Core, nothing held") << false << false << false;
+        QTest::newRow("layout protected") << true << false << true;
+        QTest::newRow("pending admission") << false << true << true;
+    }
+
+    void newReceiverAndTheSavedLayoutHold()
+    {
+        QFETCH(bool, protectedLayout);
+        QFETCH(bool, pendingAdmission);
+        QFETCH(bool, savedValuesStay);
+        auto& settings = AppSettings::instance();
+        settings.setValue(QStringLiteral("Slice0/LastBand"), QStringLiteral("20m"));
+        settings.setValue(QStringLiteral("Slice0/RitEnabled"), QStringLiteral("True"));
+        settings.setValue(QStringLiteral("Slice0/RitHz"), 250);
+        settings.setValue(QStringLiteral("Slice0/XitEnabled"), QStringLiteral("True"));
+        settings.setValue(QStringLiteral("Slice0/XitHz"), 700);
+
+        RadioModel radio;
+        radio.setReceiveLayoutHoldForTest(protectedLayout, pendingAdmission);
+        radio.addSliceOnPan(QStringLiteral("pan-0"), /*restoreSavedState=*/false,
+                            /*newReceiver=*/true);
+        SliceModel* added = radio.sliceById(0);
+        QVERIFY(added);
+        // The new receiver is off whichever way the store goes.
+        QVERIFY(!added->ritEnabled());
+        QCOMPARE(added->ritHz(), 0);
+        QVERIFY(!added->xitEnabled());
+        QCOMPARE(added->xitHz(), 0);
+        QCOMPARE(settings.contains(QStringLiteral("Slice0/RitEnabled")), savedValuesStay);
+        QCOMPARE(settings.contains(QStringLiteral("Slice0/RitHz")), savedValuesStay);
+        QCOMPARE(settings.contains(QStringLiteral("Slice0/XitEnabled")), savedValuesStay);
+        QCOMPARE(settings.contains(QStringLiteral("Slice0/XitHz")), savedValuesStay);
     }
 };
 

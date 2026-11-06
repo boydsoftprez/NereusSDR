@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+// 2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//              letter used before too; a restored receiver keeps its own.
+//              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//              Anthropic Claude.
 // 2026-10-29 - Allow receiver preferences to restore without replacing a
 //              new slice's frequency, mode, filter or DDC sample rate.
 //              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1644,8 +1648,20 @@ public:
     // its effective DDC. Receiver
     // preferences, including Locked, still restore; the lock cannot veto
     // the seed because it is restored afterwards. Existing callers retain
-    // full tuning restoration, including layout hydration.
+    // full tuning restoration, including layout hydration. RIT and XIT
+    // restore only with full tuning: fresh creation decides them itself
+    // (RadioModel::addSliceImpl).
     void restoreFromSettings(NereusSDR::Band band, bool restoreTuning = true);
+
+    // The RIT and XIT half of a full restore, for fresh creation that is not
+    // a new receiver: the window's starting slice at connect, and any other
+    // caller that did not say the slice is new.
+    void restoreRitXitFromSettings();
+
+    // Removes this letter's saved RIT and XIT, so a new receiver on a used
+    // letter leaves what a never-used letter has. Without this a receiver
+    // that saves nothing of its own gets the old offsets back at next start.
+    void forgetSavedRitXit();
 
     // Seed a manifest-validated receive descriptor while its Local RadioModel
     // is completely offline.  This is intentionally narrower than the normal

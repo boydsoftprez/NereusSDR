@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//                letter used before too; a restored receiver keeps its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -3006,7 +3010,8 @@ public:
     /// is a host and sharing it is the point. It was briefly a caller-
     /// supplied flag; every caller that forgot it silently reintroduced the
     /// coupled-pan defect, so the decision lives with the data it depends on.
-    int addSlice(const QString& initialPanId = QString(), bool restoreSavedState = false);
+    int addSlice(const QString& initialPanId = QString(), bool restoreSavedState = false,
+                 bool newReceiver = false);
 
     /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
     /// carries the same id.
@@ -3351,13 +3356,20 @@ public:
     /// check is deliberately skipped on that path: the station
     /// owns the slice list and enforces its own cap, with its own reason,
     /// which comes back through reportStationSliceCommandRejected().
-    // A saved letter (Slice<N>/LastBand and that band's keys, plus the
-    // letter's own keys such as Auto AGC) comes back on every local mint,
-    // whether or not `restoreSavedState` is set and whether or not a Core
-    // manages the receive layout. A letter with nothing saved still opens
-    // on the active slice's frequency and mode. The remote client only
-    // sends the verb; the Core mints the slice and mirrors it back.
-    Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false);
+    // A saved letter's preferences (Slice<N>/LastBand and that band's keys,
+    // plus the letter's own keys such as Auto AGC) come back on every local
+    // mint, whether or not `restoreSavedState` is set and whether or not a
+    // Core manages the receive layout. Only `restoreSavedState` brings its
+    // frequency and mode. A letter with nothing saved still opens on the
+    // active slice's frequency and mode.
+    //
+    // `newReceiver` is for a slice someone asked for (+RX, a device's
+    // request). It starts with RIT and XIT off and removes the letter's saved
+    // values, unless a saved layout is held. Without it a letter's RIT and
+    // XIT come back. The remote client only sends the verb; the Core mints
+    // the slice and mirrors it back.
+    Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false,
+                                   bool newReceiver = false);
 
     /// Re-point any slice whose pan is not in `livePanIds` at the first one
     /// that is. Returns how many moved.
@@ -5513,6 +5525,16 @@ public:
     // call this.
     // Isolate route-lifecycle tests from board/resource admission. Never a production caller.
     void setDiversityAdmissionBypassForTest() { m_diversityAdmissionBypassForTest = true; }
+    bool hasPendingBandSettingsForTest(int sliceId) const
+    {
+        return m_pendingBandSettings.contains(sliceId);
+    }
+    void setReceiveLayoutHoldForTest(bool isProtected, bool pendingAdmission)
+    {
+        m_receiveLayoutManaged = true;
+        m_receiveLayoutProtected = isProtected;
+        m_receiveLayoutPendingAdmission = pendingAdmission;
+    }
     void setDdcContextForTest(bool mox, bool puresignalRun, bool diversity) {
         m_ddcCtxForTest    = true;
         m_ddcCtxMoxForTest = mox;
@@ -8228,7 +8250,7 @@ private:
     int addSliceImpl(int requestedId, const QString& initialPanId,
                      const ReceiveSliceState* restoreSeed = nullptr,
                      bool bindRestored = false,
-                     bool restoreSavedState = false);
+                     bool restoreSavedState = false, bool newReceiver = false);
 
     /// iPhone app Task 73: every slice's `active` from its owner's active
     /// slice, and activeSlice() moved to the station-level one (emitting
