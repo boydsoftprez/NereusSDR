@@ -1,5 +1,7 @@
 // no-port-check: NereusSDR-original inert preview projection, no polling targets.
 // Modification history (NereusSDR):
+//   2026-11-06 - Issue 743: the anchor's comment names the Qt bug it avoids,
+//                 QTBUG-139109. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-05 - Issue 743: a hidden QRhiWidget gives the dialog its RHI
 //                 surface from the first show on Linux, so the first meter
 //                 added does not replace the dialog's native window.
@@ -65,10 +67,17 @@ ContainerPreviewWidget::ContainerPreviewWidget(ContainerContentRegistry& registr
     // Issue 743: here a MeterWidget is not a native window of its own, so the
     // first one parented into a shown raster dialog makes Qt destroy and
     // recreate the dialog's native window to get an RHI surface (QWidget::
-    // setParent, Qt 6.11 qwidget.cpp:10943-10990), in the middle of exec().
+    // setParent, Qt 6.8.3 qwidget.cpp:10901-10912). Destroying the window hides
+    // the dialog, and that ends QDialog::exec() early with Rejected
+    // (QTBUG-139109; the fix is in Qt 6.11.1 and 6.12.0, not 6.8.3 or 6.11.0).
+    // The end of exec() also clears the re-shown window's modality, so when
+    // the dialog later goes away Qt does not release the block on the other
+    // windows, and the main window stays deaf to input.
     // Qt looks for a child's RHI config without regard to visibility
-    // (q_evaluateRhiConfigRecursive, qwidget.cpp:1110), so this hidden child
-    // gives the dialog that surface when its window is first created. It is a
+    // (q_evaluateRhiConfigRecursive, qwidget.cpp:1108), so this hidden child
+    // gives the dialog that surface when its window is first created and
+    // there is no recreate. It costs one QRhi and swapchain while the dialog
+    // is open, which the dialog pays anyway once it holds a meter. It is a
     // plain QRhiWidget, not a MeterWidget, so nothing counts it as a meter; it
     // stays out of the layout, m_surfaces and m_views, and paints nothing.
     auto* rhiAnchor=new QRhiWidget(this);
