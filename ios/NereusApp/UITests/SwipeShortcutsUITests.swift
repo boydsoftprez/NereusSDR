@@ -43,7 +43,7 @@ final class SwipeShortcutsUITests: XCTestCase {
         drag(app, from: CGPoint(x: 6, y: y), to: CGPoint(x: 230, y: y))
         waitUntil("the left edge did not open the RX panel") { self.overPanel(app, "rxPanelDrawer") != nil }
         waitUntil("the RX panel did not settle at the left") {
-            self.overPanel(app, "rxPanelDrawer").map { $0.frame.minX.magnitude < 1 } ?? false
+            self.overPanel(app, "rxPanelDrawer").map { $0.minX.magnitude < 1 } ?? false
         }
         try save("swipe-ui-rx-open")
         // While it is up, the right edge opens nothing.
@@ -56,7 +56,7 @@ final class SwipeShortcutsUITests: XCTestCase {
         drag(app, from: CGPoint(x: width - 6, y: y), to: CGPoint(x: width - 230, y: y))
         waitUntil("the right edge did not open the TX panel") { self.overPanel(app, "txPanelDrawer") != nil }
         waitUntil("the TX panel did not settle at the right") {
-            self.overPanel(app, "txPanelDrawer").map { abs($0.frame.maxX - width) < 1 } ?? false
+            self.overPanel(app, "txPanelDrawer").map { abs($0.maxX - width) < 1 } ?? false
         }
         try save("swipe-ui-tx-open")
         // A swipe back toward its side closes it.
@@ -176,18 +176,31 @@ final class SwipeShortcutsUITests: XCTestCase {
         UIDevice.current.userInterfaceIdiom == .pad
     }
 
-    /// The panel `identifier` as it shows over the band, or nil. On a phone
+    /// Where the panel `identifier` shows over the band, or nil. On a phone
     /// that is the panel; upright on an iPad the same panel also stands in the
-    /// front panel under the band, and that one does not count.
+    /// front panel under the band, and that one does not count. All from one
+    /// snapshot: a panel closing can't vanish between one frame and the next.
     @MainActor
-    private func overPanel(_ app: XCUIApplication, _ identifier: String) -> XCUIElement? {
-        let panels = app.descendants(matching: .any).matching(identifier: identifier).allElementsBoundByIndex
-        let front = app.descendants(matching: .any)["frontPanel"]
-        guard front.exists else {
+    private func overPanel(_ app: XCUIApplication, _ identifier: String) -> CGRect? {
+        guard let root = try? app.snapshot() else {
+            XCTFail("no snapshot of the app")
+            return nil
+        }
+        var panels: [CGRect] = []
+        var frontTop: CGFloat?
+        func visit(_ element: XCUIElementSnapshot) {
+            if element.identifier == identifier {
+                panels.append(element.frame)
+            } else if element.identifier == "frontPanel", frontTop == nil {
+                frontTop = element.frame.minY
+            }
+            element.children.forEach(visit)
+        }
+        visit(root)
+        guard let frontTop else {
             return panels.first
         }
-        let top = front.frame.minY
-        return panels.first { $0.frame.midY < top }
+        return panels.first { $0.midY < frontTop }
     }
 
     /// A height inside the edge zones: on the band, below the flags, above PTT.

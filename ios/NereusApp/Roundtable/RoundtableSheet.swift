@@ -67,6 +67,9 @@ struct RoundtableSheet: View {
     /// the screen (spec 11.4): the sheet shows a line that asks it here,
     /// and this opens it. Nil asks in the sheet itself, as on a phone.
     var askFirstRun: (() -> Void)?
+    /// Told each time the sheet has decided whether it is compact, after any
+    /// change of height that follows: tests wait on this, as on holdObserver.
+    var compactDecided: (() -> Void)?
 
     /// The question was answered here: no note follows it.
     @State private var answeredHere = false
@@ -150,6 +153,7 @@ struct RoundtableSheet: View {
         } action: { compact in
             compactLandscape = compact
             if compact { detent = .full }
+            compactDecided?()
         }
         .background(RoundtableColours.ground)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius, topTrailingRadius: WorkspacePalette.panelRadius))
