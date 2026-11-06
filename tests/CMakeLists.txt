@@ -9612,7 +9612,8 @@ target_link_libraries(nereus_floor_probe PRIVATE NereusCore)
 set_target_properties(nereus_floor_probe PROPERTIES AUTOMOC ON)
 # The poll registry regression uses a separate test-only vendor archive.
 # No fixture fault injection or observer is present in shipping Core/RTC.
-nereus_add_test(tst_juice_poll_liveness CORE_ONLY EXTRA_LABELS session)
+# OWN_TLS_KEYS: its link list below leaves out Core, which the shared key needs.
+nereus_add_test(tst_juice_poll_liveness CORE_ONLY OWN_TLS_KEYS EXTRA_LABELS session)
 if(TEST tst_juice_poll_liveness)
     include("${CMAKE_CURRENT_SOURCE_DIR}/fakes/juice-poll/Instrument.cmake")
     # Keep standard sharding, sandbox, labels and aggregate registration, but
@@ -9624,7 +9625,8 @@ endif()
 
 # The startup regression compiles real pinned OpenSSL RTC with observers in
 # a separate generated copy. Shipping RTC contains no fixture access/hooks.
-nereus_add_test(tst_dtls_startup CORE_ONLY EXTRA_LABELS session)
+# OWN_TLS_KEYS: its link list below leaves out Core, which the shared key needs.
+nereus_add_test(tst_dtls_startup CORE_ONLY OWN_TLS_KEYS EXTRA_LABELS session)
 if(TEST tst_dtls_startup)
     include("${CMAKE_CURRENT_SOURCE_DIR}/fakes/dtls-startup/Instrument.cmake")
     set_property(TARGET tst_dtls_startup PROPERTY LINK_LIBRARIES
@@ -11922,6 +11924,22 @@ endif()
 add_subdirectory(portaudio_bounds)
 
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
+# TestSharedTlsKey.cpp calls CertificateStore, so a target with its object must
+# link Core. A test that replaces its LINK_LIBRARIES to keep Core out registers
+# with OWN_TLS_KEYS. Checked here so every configure says so, not just the link
+# of a target nobody built locally (PR 749, tst_juice_poll_liveness).
+foreach(_tls_target IN LISTS _all_tests)
+    if(TARGET ${_tls_target})
+        get_target_property(_tls_sources ${_tls_target} SOURCES)
+        get_target_property(_tls_libraries ${_tls_target} LINK_LIBRARIES)
+        if("${_tls_sources}" MATCHES "TARGET_OBJECTS:nereus_test_shared_tls_key"
+           AND NOT "${_tls_libraries}" MATCHES "(^|;)(NereusCore|NereusSDRLib)(;|$)")
+            message(FATAL_ERROR "${_tls_target} links TestSharedTlsKey.cpp's object "
+                "without NereusCore or NereusSDRLib, and will not link. "
+                "Register it with OWN_TLS_KEYS.")
+        endif()
+    endif()
+endforeach()
 add_custom_target(all_tests DEPENDS ${_all_tests})
 set_property(GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED TRUE)
 
