@@ -174,6 +174,7 @@ public:
     bool transmitOn(const QString& id) const override { return transmit.value(id, false); }
     bool muted(const SliceModel* s) const override { return s->muted(); }
     bool radioConnected() const override { return radio; }
+    bool radioTransmitting() const override { return false; }
 };
 
 } // namespace

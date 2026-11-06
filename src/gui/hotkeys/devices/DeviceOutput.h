@@ -26,6 +26,9 @@
 //                 send, where upstream writes to the device as it builds them.
 //                 The main digits and three fixed segments only. Key and strip
 //                 images are drawn for this design.
+//   2026-11-06 - The off state for hot keys plan Task 17, J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code
+//                 (Claude Opus 5.5).
 // =================================================================
 
 // What goes out to a display or a lit key, as the bytes to write. Everything here runs
@@ -47,6 +50,8 @@ inline constexpr int kStreamDeckPacketSize = 1024;
 
 // frequency is the state feed's text, "14.250.000". With no digits the display is blank.
 NEREUS_GUI_EXPORT QByteArray tmate2Frame(const QString& frequency, bool connected, bool locked);
+// The display blank, its lights off and its backlight dark.
+NEREUS_GUI_EXPORT QByteArray tmate2OffFrame();
 
 // key counts from 0. An image of another size is scaled to fit.
 NEREUS_GUI_EXPORT QList<QByteArray> streamDeckKeyImage(int key, const QImage& image120);
@@ -60,5 +65,6 @@ NEREUS_GUI_EXPORT QList<QByteArray> streamDeckStripPackets(const QByteArray& jpe
 NEREUS_GUI_EXPORT QImage renderStreamDeckKey(const QString& label, const QColor& background);
 NEREUS_GUI_EXPORT QImage renderStreamDeckStrip(const QString& slice, const QString& frequency, const QString& mode,
                                                const QString& filter);
+NEREUS_GUI_EXPORT QImage renderStreamDeckBlankStrip();
 
 } // namespace NereusSDR::DeviceOutput

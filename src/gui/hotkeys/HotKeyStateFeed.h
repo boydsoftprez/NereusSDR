@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 17: what an RC-28's TX light
+//                follows. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // What lights and displays show: which actions are on, and the window's slice. It
 // follows the models' signals and never polls, and it says only what changed.
@@ -29,6 +31,7 @@ public:
     virtual bool transmitOn(const QString& id) const = 0;   // tx.mox, tx.tune, tx.twotone, tx.hold
     virtual bool muted(const SliceModel* slice) const = 0;  // a listened slice has this device's own mute
     virtual bool radioConnected() const = 0;
+    virtual bool radioTransmitting() const = 0;     // the radio's own state, whatever keyed it
 };
 
 class NEREUS_GUI_EXPORT HotKeyStateFeed : public QObject {
@@ -40,7 +43,8 @@ public:
         QString mode;       // "USB"
         QString filter;     // "2.7K", "500"
         QChar slice;
-        bool connected{false};  // the radio, which a TMate 2 has a light for
+        bool connected{false};  // the radio, which a TMate 2 and an RC-28 have a light for
+        bool transmitting{false};   // which an RC-28 has a light for
     };
 
     explicit HotKeyStateFeed(HotKeyStateSource* source, QObject* parent = nullptr);

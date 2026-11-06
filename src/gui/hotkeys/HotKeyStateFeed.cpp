@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 17: what an RC-28's TX light
+//                follows. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/HotKeyStateFeed.h"
 
@@ -158,6 +160,7 @@ void HotKeyStateFeed::update()
 
     Display display;
     display.connected = m_source->radioConnected();
+    display.transmitting = m_source->radioTransmitting();
     if (slice != nullptr) {
         display.frequency = frequencyText(slice->frequency());
         display.mode = SliceModel::modeName(slice->dspMode());
@@ -166,7 +169,7 @@ void HotKeyStateFeed::update()
     }
     if (display.frequency != m_display.frequency || display.mode != m_display.mode
         || display.filter != m_display.filter || display.slice != m_display.slice
-        || display.connected != m_display.connected) {
+        || display.connected != m_display.connected || display.transmitting != m_display.transmitting) {
         m_display = display;
         emit displayChanged();
     }

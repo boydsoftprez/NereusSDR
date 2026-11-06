@@ -39,11 +39,13 @@ public:
     bool listenMuted{false};
     bool listened{false};
     bool radio{false};
+    bool onAir{false};
 
     SliceModel* windowSlice() const override { return slice; }
     bool transmitOn(const QString& id) const override { return transmit.value(id, false); }
     bool muted(const SliceModel* s) const override { return listened ? listenMuted : s->muted(); }
     bool radioConnected() const override { return radio; }
+    bool radioTransmitting() const override { return onAir; }
 };
 
 // One window, connected, with two slices. The cases share it: building one takes seconds.
@@ -110,6 +112,20 @@ private slots:
     void cleanupTestCase()
     {
         m_bench.reset();
+    }
+
+    void whetherTheRadioIsTransmittingIsPartOfTheDisplay()
+    {
+        QSignalSpy changed(&feed(), &HotKeyStateFeed::displayChanged);
+        QCOMPARE(feed().display().transmitting, false);
+        source().onAir = true;
+        feed().refresh();
+        QCOMPARE(feed().display().transmitting, true);
+        QCOMPARE(changed.size(), 1);
+        source().onAir = false;
+        feed().refresh();
+        QCOMPARE(feed().display().transmitting, false);
+        QCOMPARE(changed.size(), 2);
     }
 
     void theRadioConnectionIsPartOfTheDisplay()

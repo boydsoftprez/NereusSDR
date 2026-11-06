@@ -10,6 +10,8 @@
 //                worker. AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 16: the Ulanzi Dial.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 17: every device's lights from
+//                the state feed. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/ControllerHost.h"
 
@@ -22,6 +24,7 @@
 #include "gui/hotkeys/devices/DeviceInput.h"
 #include "gui/hotkeys/devices/DeviceOutput.h"
 #include "gui/hotkeys/devices/FlexControlInput.h"
+#include "gui/hotkeys/devices/Rc28Parser.h"
 #include "gui/hotkeys/devices/UlanziDialInput.h"
 #include "gui/hotkeys/midi/MidiInput.h"
 
@@ -29,6 +32,8 @@
 #include <QMetaObject>
 #include <QStringList>
 
+#include <algorithm>
+#include <array>
 #include <utility>
 
 namespace NereusSDR {
@@ -58,6 +63,30 @@ const QColor kDeckKeyIdle(20, 28, 45);
 // This design's: upstream's keys don't light. Red for what transmits, green otherwise.
 const QColor kDeckKeyLitTransmit(170, 30, 30);
 const QColor kDeckKeyLit(20, 110, 40);
+// This design's: lights turned off leave a key dark, with no name on it.
+const QColor kDeckKeyOff(0, 0, 0);
+
+// Every device with a light or a display, in the order a pass reaches them.
+constexpr std::array<DeviceId, 4> kLitDevices = {DeviceId::Rc28, DeviceId::FlexControl, DeviceId::TMate2,
+                                                 DeviceId::StreamDeckPlus};
+
+constexpr int kFlexAuxButtons = 3;
+
+QString lightsKey(DeviceId id)
+{
+    return QStringLiteral("HotKeys/Device/%1/Lights").arg(HotKeyDeviceBindings::deviceKey(id));
+}
+
+bool isRc28FKey(const QString& control)
+{
+    return control == QLatin1String("f1") || control == QLatin1String("f2");
+}
+
+bool isTransmitAction(const QString& id)
+{
+    const HotKeyAction* const action = HotKeyActionList::find(id);
+    return action != nullptr && action->transmits;
+}
 
 bool isLevelAction(const QString& id)
 {
@@ -130,7 +159,18 @@ ControllerHost::ControllerHost(HotKeyDispatcher* dispatcher, HotKeyBindings* bin
     connect(&m_ringTimer, &QTimer::timeout, this, &ControllerHost::onRingTick);
     m_displayTimer.setSingleShot(true);
     connect(&m_displayTimer, &QTimer::timeout, this, &ControllerHost::onDisplayTick);
-    connect(m_deviceBindings.get(), &HotKeyDeviceBindings::bindingsChanged, this, &ControllerHost::refreshDeckKeys);
+    connect(m_deviceBindings.get(), &HotKeyDeviceBindings::bindingsChanged, this, [this] {
+        refreshDeckKeys();
+        markOutputDirty(DeviceId::Rc28);
+        markOutputDirty(DeviceId::FlexControl);
+        pumpOutputs();
+    });
+    const AppSettings& settings = AppSettings::instance();
+    for (const DeviceId id : kLitDevices) {
+        if (settings.value(lightsKey(id)).toString() == QLatin1String("False")) {
+            m_lightsOff.insert(id);
+        }
+    }
 
     m_midiThread.start();
     m_usbThread.start();
@@ -311,22 +351,34 @@ void ControllerHost::onDeviceStateChanged(DeviceId id, bool connected, const QSt
         forgetDevice(id);
     }
     emit deviceStateChanged(id, connected, reason);
+    if (!connected) {
+        pumpOutputs();  // lets go of whatever was waiting for it
+        return;
+    }
     // A device just opened shows nothing of ours, so it gets everything.
-    if (connected && id == DeviceId::TMate2) {
+    if (id == DeviceId::TMate2) {
         m_lastTMateFrame.clear();
-        m_displayDirty = true;
-        pumpDisplays();
-    } else if (connected && id == DeviceId::StreamDeckPlus) {
+    } else if (id == DeviceId::StreamDeckPlus) {
         m_deckKeys = {};
         m_lastDeckStrip.clear();
         refreshDeckKeys();
-        m_displayDirty = true;
-        pumpDisplays();
+    } else if (id == DeviceId::Rc28) {
+        // Written at each open whatever it last said, as upstream
+        // (AetherSDR src/gui/MainWindow_Controllers.cpp:2683 [@1e0718ad]).
+        m_lastRc28Report.clear();
+    }
+    if (hasLights(id)) {
+        markOutputDirty(id);
+        pumpOutputs();
     }
 }
 
 void ControllerHost::onDeviceEvent(DeviceId id, const DeviceEvent& event)
 {
+    // Ahead of the off switch: this is about the button, not what it runs.
+    if (id == DeviceId::Rc28) {
+        noteRc28Button(event);
+    }
     // The off switch has already let go of everything and forgotten it, so an up
     // here has nothing to end. A down here must leave nothing to end.
     if (!m_dispatcher->enabled()) {
@@ -539,33 +591,76 @@ void ControllerHost::setStateFeed(HotKeyStateFeed* feed)
     if (feed == nullptr) {
         return;
     }
+    m_lastTransmitting = feed->display().transmitting;
     connect(feed, &HotKeyStateFeed::displayChanged, this, [this] {
-        if (deviceConnected(DeviceId::TMate2) || deviceConnected(DeviceId::StreamDeckPlus)) {
-            m_displayDirty = true;
-            pumpDisplays();
+        markOutputDirty(DeviceId::TMate2);
+        markOutputDirty(DeviceId::StreamDeckPlus);
+        markOutputDirty(DeviceId::Rc28);
+        const bool transmitting = m_stateFeed && m_stateFeed->display().transmitting;
+        if (transmitting != m_lastTransmitting) {
+            m_lastTransmitting = transmitting;
+            sendAtOnce(DeviceId::Rc28);
         }
+        pumpOutputs();
     });
     connect(feed, &HotKeyStateFeed::stateChanged, this, [this](const QString& id, bool /*on*/) {
-        refreshDeckKeys();
-        // The feed says this before it updates the display, and a change of slice can
-        // be both. On the next pass the frame shows them together.
-        if (id == QLatin1String("slice.lock") && deviceConnected(DeviceId::TMate2)) {
-            m_displayDirty = true;
-            if (!m_displayTimer.isActive()) {
-                m_displayTimer.start(0);
-            }
+        markOutputDirty(DeviceId::Rc28);
+        markOutputDirty(DeviceId::FlexControl);
+        markOutputDirty(DeviceId::StreamDeckPlus);
+        if (id == QLatin1String("slice.lock")) {
+            markOutputDirty(DeviceId::TMate2);
+        }
+        if (isTransmitAction(id)) {
+            sendAtOnce(DeviceId::StreamDeckPlus);
+            sendAtOnce(DeviceId::FlexControl);
+        }
+        // The feed says this before it updates the display, and one change of slice can
+        // be several of these. On the next pass the output shows them together.
+        if (anyOutputDirty()) {
+            m_displayTimer.start(0);
         }
     });
     refreshDeckKeys();
-    if (deviceConnected(DeviceId::TMate2) || deviceConnected(DeviceId::StreamDeckPlus)) {
-        m_displayDirty = true;
-        pumpDisplays();
+    for (const DeviceId id : kLitDevices) {
+        markOutputDirty(id);
     }
+    pumpOutputs();
 }
 
 HotKeyStateFeed* ControllerHost::stateFeed() const
 {
     return m_stateFeed.data();
+}
+
+bool ControllerHost::hasLights(DeviceId id)
+{
+    return std::find(kLitDevices.cbegin(), kLitDevices.cend(), id) != kLitDevices.cend();
+}
+
+bool ControllerHost::lightsEnabled(DeviceId id) const
+{
+    return hasLights(id) && !m_lightsOff.contains(id);
+}
+
+void ControllerHost::setLightsEnabled(DeviceId id, bool enabled)
+{
+    if (!hasLights(id) || enabled == lightsEnabled(id)) {
+        return;
+    }
+    if (enabled) {
+        m_lightsOff.remove(id);
+    } else {
+        m_lightsOff.insert(id);
+    }
+    AppSettings& settings = AppSettings::instance();
+    settings.setValue(lightsKey(id), enabled ? QStringLiteral("True") : QStringLiteral("False"));
+    settings.save();
+    // What each device is sent already depends on this, so the off state goes once,
+    // and after it there's nothing new to send. Not held at the gate: this is one change
+    // the user just asked for. An RC-28 with an F key down still waits for the release.
+    m_outputGates[id].lastMs = -1;
+    markOutputDirty(id);
+    pumpOutputs();
 }
 
 void ControllerHost::queueOutput(DeviceId id, const QList<QByteArray>& packets)
@@ -574,32 +669,191 @@ void ControllerHost::queueOutput(DeviceId id, const QList<QByteArray>& packets)
     for (const QByteArray& packet : packets) {
         QMetaObject::invokeMethod(usb, [usb, id, packet] { usb->sendOutput(id, packet); }, Qt::QueuedConnection);
     }
+    m_outputsQueued += static_cast<int>(packets.size());
 }
 
 void ControllerHost::onDisplayTick()
 {
-    pumpDisplays();
+    pumpOutputs();
 }
 
-void ControllerHost::pumpDisplays()
+void ControllerHost::markOutputDirty(DeviceId id)
 {
-    if (!m_displayDirty) {
+    // Nothing is kept or worked out for a device that isn't there.
+    if (deviceConnected(id)) {
+        m_outputGates[id].dirty = true;
+    }
+}
+
+bool ControllerHost::anyOutputDirty() const
+{
+    return std::any_of(m_outputGates.cbegin(), m_outputGates.cend(), [](const OutputGate& gate) { return gate.dirty; });
+}
+
+void ControllerHost::pumpOutputs()
+{
+    const qint64 now = m_deviceClock();
+    qint64 soonest = -1;
+    for (const DeviceId id : kLitDevices) {
+        const auto gate = m_outputGates.find(id);
+        if (gate == m_outputGates.end() || !gate->dirty) {
+            continue;
+        }
+        if (!deviceConnected(id)) {
+            gate->dirty = false;
+            continue;
+        }
+        qint64 wait = gate->lastMs < 0 ? 0 : kDisplayMinMs - (now - gate->lastMs);
+        if (id == DeviceId::Rc28) {
+            const qint64 lightWait = rc28LightWaitMs(now);
+            if (lightWait < 0) {
+                continue;   // the release brings it back here
+            }
+            wait = std::max(wait, lightWait);
+        }
+        if (wait > 0) {
+            // The newest state goes out when the wait is over.
+            soonest = soonest < 0 ? wait : std::min(soonest, wait);
+            continue;
+        }
+        gate->dirty = false;
+        if (sendOutputFor(id)) {
+            gate->lastMs = now;
+        }
+    }
+    if (soonest >= 0) {
+        m_displayTimer.start(static_cast<int>(soonest));
+    } else {
+        m_displayTimer.stop();
+    }
+}
+
+void ControllerHost::sendAtOnce(DeviceId id)
+{
+    if (!deviceConnected(id)) {
         return;
     }
     const qint64 now = m_deviceClock();
-    const qint64 wait = m_lastDisplayMs < 0 ? 0 : kDisplayMinMs - (now - m_lastDisplayMs);
-    if (wait > 0) {
-        // The newest state goes out when the wait is over.
-        m_displayTimer.start(static_cast<int>(wait));
+    if (id == DeviceId::Rc28 && rc28LightWaitMs(now) != 0) {
+        markOutputDirty(id);
+        pumpOutputs();
         return;
     }
-    m_displayDirty = false;
-    m_displayTimer.stop();
-    const bool sentFrame = sendTMateFrame();
-    const bool sentStrip = sendDeckStrip();
-    if (sentFrame || sentStrip) {
-        m_lastDisplayMs = now;
+    OutputGate& gate = m_outputGates[id];
+    bool sent = false;
+    if (id == DeviceId::StreamDeckPlus) {
+        // The keys only: a strip waiting at the gate stays there.
+        sent = refreshDeckKeys();
+    } else {
+        gate.dirty = false;
+        sent = sendOutputFor(id);
     }
+    if (sent) {
+        gate.lastMs = now;
+    }
+}
+
+bool ControllerHost::sendOutputFor(DeviceId id)
+{
+    switch (id) {
+    case DeviceId::Rc28:
+        return sendRc28Lights();
+    case DeviceId::FlexControl:
+        return sendFlexLights();
+    case DeviceId::TMate2:
+        return sendTMateFrame();
+    case DeviceId::StreamDeckPlus: {
+        const bool sentKeys = refreshDeckKeys();
+        const bool sentStrip = sendDeckStrip();
+        return sentKeys || sentStrip;
+    }
+    default:
+        return false;
+    }
+}
+
+qint64 ControllerHost::rc28LightWaitMs(qint64 now) const
+{
+    if (!m_rc28FKeysDown.isEmpty()) {
+        return -1;
+    }
+    return m_rc28LightsSettleAtMs < 0 ? 0 : std::max<qint64>(0, m_rc28LightsSettleAtMs - now);
+}
+
+void ControllerHost::noteRc28Button(const DeviceEvent& event)
+{
+    if (!isRc28FKey(event.control)) {
+        return;
+    }
+    if (event.kind == DeviceEvent::Kind::ButtonDown) {
+        m_rc28FKeysDown.insert(event.control);
+    } else if (event.kind == DeviceEvent::Kind::ButtonUp && m_rc28FKeysDown.remove(event.control)
+               && m_rc28FKeysDown.isEmpty()) {
+        // Upstream found that writing these lights with a button held broke the F1
+        // light, so it writes once after the release, a little later so the release
+        // report settles (AetherSDR src/gui/MainWindow_Controllers.cpp:2596-2600 [@1e0718ad]).
+        m_rc28LightsSettleAtMs = m_deviceClock() + kRc28LightSettleMs;
+        markOutputDirty(DeviceId::Rc28);
+        pumpOutputs();
+    }
+}
+
+bool ControllerHost::actionOn(const QString& actionId) const
+{
+    return m_stateFeed && m_stateFeed->isOn(actionId);
+}
+
+bool ControllerHost::sendRc28Lights()
+{
+    QByteArray report;
+    if (lightsEnabled(DeviceId::Rc28)) {
+        const HotKeyStateFeed::Display display = m_stateFeed ? m_stateFeed->display() : HotKeyStateFeed::Display{};
+        // An F light shows the action on that key's hold row, as upstream
+        // (AetherSDR src/gui/MainWindow_Controllers.cpp:583-589 [@1e0718ad]).
+        const auto holdOn = [this](const char* control) {
+            const QString name = QString::fromLatin1(control);
+            return actionOn(m_deviceBindings->binding(DeviceId::Rc28, name, ControlGesture::Hold).actionId);
+        };
+        // TX as the radio has it, whatever keyed it, and not MOX
+        // (AetherSDR CHANGELOG.md:1523 [@1e0718ad]).
+        report = rc28LightReport(display.transmitting, holdOn("f1"), holdOn("f2"), display.connected);
+    } else {
+        report = rc28LightReport(false, false, false, false);
+    }
+    if (report == m_lastRc28Report) {
+        return false;
+    }
+    m_lastRc28Report = report;
+    queueOutput(DeviceId::Rc28, {report});
+    return true;
+}
+
+int ControllerHost::flexLitButton() const
+{
+    if (!lightsEnabled(DeviceId::FlexControl)) {
+        return 0;
+    }
+    // One lit at a time. With two on, the lower button shows.
+    for (int button = 1; button <= kFlexAuxButtons; ++button) {
+        const QString control = QStringLiteral("button%1").arg(button);
+        if (actionOn(m_deviceBindings->binding(DeviceId::FlexControl, control, ControlGesture::Tap).actionId)) {
+            return button;
+        }
+    }
+    return 0;
+}
+
+bool ControllerHost::sendFlexLights()
+{
+    const int lit = flexLitButton();
+    if (lit == m_lastFlexLit) {
+        return false;
+    }
+    m_lastFlexLit = lit;
+    FlexControlInput* const flex = m_flex;
+    QMetaObject::invokeMethod(flex, [flex, lit] { flex->setLit(lit); }, Qt::QueuedConnection);
+    ++m_outputsQueued;
+    return true;
 }
 
 bool ControllerHost::sendTMateFrame()
@@ -607,9 +861,13 @@ bool ControllerHost::sendTMateFrame()
     if (!deviceConnected(DeviceId::TMate2)) {
         return false;
     }
-    const HotKeyStateFeed::Display display = m_stateFeed ? m_stateFeed->display() : HotKeyStateFeed::Display{};
-    const bool locked = m_stateFeed && m_stateFeed->isOn(QStringLiteral("slice.lock"));
-    const QByteArray frame = DeviceOutput::tmate2Frame(display.frequency, display.connected, locked);
+    QByteArray frame;
+    if (lightsEnabled(DeviceId::TMate2)) {
+        const HotKeyStateFeed::Display display = m_stateFeed ? m_stateFeed->display() : HotKeyStateFeed::Display{};
+        frame = DeviceOutput::tmate2Frame(display.frequency, display.connected, actionOn(QStringLiteral("slice.lock")));
+    } else {
+        frame = DeviceOutput::tmate2OffFrame();
+    }
     if (frame == m_lastTMateFrame) {
         return false;   // a change of mode or filter, which this display doesn't show
     }
@@ -623,40 +881,52 @@ bool ControllerHost::sendDeckStrip()
     if (!deviceConnected(DeviceId::StreamDeckPlus)) {
         return false;
     }
+    const bool lightsOn = lightsEnabled(DeviceId::StreamDeckPlus);
     const HotKeyStateFeed::Display display = m_stateFeed ? m_stateFeed->display() : HotKeyStateFeed::Display{};
     const QString slice = display.slice.isNull() ? QString() : QString(display.slice);
-    const QString shown = QStringList{slice, display.frequency, display.mode, display.filter}.join(QLatin1Char('|'));
+    // With no separator in it, this can't be the same as anything shown.
+    const QString shown = lightsOn ? QStringList{slice, display.frequency, display.mode, display.filter}.join(QLatin1Char('|'))
+                                   : QStringLiteral("off");
     if (shown == m_lastDeckStrip) {
         return false;
     }
     m_lastDeckStrip = shown;
+    ++m_imagesDrawn;
     queueOutput(DeviceId::StreamDeckPlus,
                 DeviceOutput::streamDeckStrip(
-                    DeviceOutput::renderStreamDeckStrip(slice, display.frequency, display.mode, display.filter)));
+                    lightsOn ? DeviceOutput::renderStreamDeckStrip(slice, display.frequency, display.mode, display.filter)
+                             : DeviceOutput::renderStreamDeckBlankStrip()));
     return true;
 }
 
-void ControllerHost::refreshDeckKeys()
+bool ControllerHost::refreshDeckKeys()
 {
     if (!deviceConnected(DeviceId::StreamDeckPlus)) {
-        return;
+        return false;
     }
+    const bool lightsOn = lightsEnabled(DeviceId::StreamDeckPlus);
+    bool sent = false;
     for (int key = 0; key < DeviceOutput::kStreamDeckKeyCount; ++key) {
         const QString control = QStringLiteral("button%1").arg(key + 1);
-        const QString actionId = m_deviceBindings->binding(DeviceId::StreamDeckPlus, control, ControlGesture::Press).actionId;
+        const QString actionId = lightsOn
+            ? m_deviceBindings->binding(DeviceId::StreamDeckPlus, control, ControlGesture::Press).actionId
+            : QString();
         const HotKeyAction* const action = HotKeyActionList::find(actionId);
         const QString label = action != nullptr ? action->name : QString();
-        const bool lit = m_stateFeed && m_stateFeed->isOn(actionId);
+        const bool lit = actionOn(actionId);
         DeckKey& shown = m_deckKeys[static_cast<size_t>(key)];
-        if (shown.sent && shown.label == label && shown.lit == lit) {
+        if (shown.sent && shown.label == label && shown.lit == lit && shown.off == !lightsOn) {
             continue;
         }
-        shown = DeckKey{label, lit, true};
+        shown = DeckKey{label, lit, !lightsOn, true};
         const bool transmits = action != nullptr && action->transmits;
-        const QColor& background = !lit ? kDeckKeyIdle : (transmits ? kDeckKeyLitTransmit : kDeckKeyLit);
+        const QColor& background = !lightsOn ? kDeckKeyOff : (!lit ? kDeckKeyIdle : (transmits ? kDeckKeyLitTransmit : kDeckKeyLit));
+        ++m_imagesDrawn;
         queueOutput(DeviceId::StreamDeckPlus,
                     DeviceOutput::streamDeckKeyImage(key, DeviceOutput::renderStreamDeckKey(label, background)));
+        sent = true;
     }
+    return sent;
 }
 
 void ControllerHost::forgetDevice(DeviceId id)
@@ -674,6 +944,11 @@ void ControllerHost::forgetDevice(DeviceId id)
         m_ringTimer.stop();
     }
     updateGestureTimer();
+    // A release lost with the device or in sleep can't leave its lights waiting.
+    if (id == DeviceId::Rc28 && !m_rc28FKeysDown.isEmpty()) {
+        m_rc28FKeysDown.clear();
+        pumpOutputs();
+    }
 }
 
 void ControllerHost::forgetAllDevices()

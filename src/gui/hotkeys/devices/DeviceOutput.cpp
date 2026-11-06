@@ -24,6 +24,9 @@
 //                 send, where upstream writes to the device as it builds them.
 //                 The main digits and three fixed segments only. Key and strip
 //                 images are drawn for this design.
+//   2026-11-06 - The off state for hot keys plan Task 17, J.J. Boyd (KG4VCF),
+//                 with AI-assisted transformation via Anthropic Claude Code
+//                 (Claude Opus 5.5).
 // =================================================================
 
 #include "gui/hotkeys/devices/DeviceOutput.h"
@@ -120,6 +123,21 @@ constexpr int kStripHeight = 100;
 constexpr int kStripColumns = 4;
 constexpr int kStripJpegQuality = 92;
 
+void setTm2FixedFields(quint8* vector)
+{
+    // Matches the original Delphi app / TMate2Probe captures. 0x28 here
+    // overdrives the LCD on some units and can make the display unreadable.
+    // [original inline comment from src/core/HidEncoderManager.cpp:533-534]
+    vector[kTm2Contrast] = 0x00;
+    vector[kTm2Refresh] = 0x28;
+    vector[kTm2Speed1] = 0x01;
+    vector[kTm2Speed2] = 0x05;
+    vector[kTm2Speed3] = 0x0A;
+    vector[kTm2Thr12] = 0x0F;
+    vector[kTm2Thr23] = 0x19;
+    vector[kTm2Eval] = 0x0A;
+}
+
 void setSegment(quint8* vector, SegEntry segment)
 {
     vector[segment.byte] |= segment.mask;
@@ -165,22 +183,21 @@ QList<QByteArray> split(const QByteArray& jpeg, int headerSize, WriteHeader writ
 
 } // namespace
 
+QByteArray tmate2OffFrame()
+{
+    QByteArray frame(kTm2FrameSize, '\0');
+    // Backlight 0, 0, 0 as upstream's clean close
+    // (AetherSDR src/core/HidEncoderManager.cpp:567-570 [@1e0718ad]). No segment and no LED.
+    setTm2FixedFields(reinterpret_cast<quint8*>(frame.data()) + 1);
+    return frame;
+}
+
 QByteArray tmate2Frame(const QString& frequency, bool connected, bool locked)
 {
     QByteArray frame(kTm2FrameSize, '\0');
     auto* const vector = reinterpret_cast<quint8*>(frame.data()) + 1;
 
-    // Matches the original Delphi app / TMate2Probe captures. 0x28 here
-    // overdrives the LCD on some units and can make the display unreadable.
-    // [original inline comment from src/core/HidEncoderManager.cpp:533-534]
-    vector[kTm2Contrast] = 0x00;
-    vector[kTm2Refresh] = 0x28;
-    vector[kTm2Speed1] = 0x01;
-    vector[kTm2Speed2] = 0x05;
-    vector[kTm2Speed3] = 0x0A;
-    vector[kTm2Thr12] = 0x0F;
-    vector[kTm2Thr23] = 0x19;
-    vector[kTm2Eval] = 0x0A;
+    setTm2FixedFields(vector);
     vector[kTm2BacklightR] = kBacklightR;
     vector[kTm2BacklightG] = kBacklightG;
     vector[kTm2BacklightB] = kBacklightB;
@@ -280,6 +297,13 @@ QImage renderStreamDeckKey(const QString& label, const QColor& background)
         painter.setPen(Qt::white);
         painter.drawText(QRect(4, 4, 112, 112), Qt::AlignCenter | Qt::TextWordWrap, label);
     }
+    return image;
+}
+
+QImage renderStreamDeckBlankStrip()
+{
+    QImage image(kStripWidth, kStripHeight, QImage::Format_RGB32);
+    image.fill(Qt::black);
     return image;
 }
 

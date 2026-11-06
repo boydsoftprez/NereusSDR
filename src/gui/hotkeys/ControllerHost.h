@@ -10,6 +10,8 @@
 //                worker. AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 16: the Ulanzi Dial.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 17: every device's lights from
+//                the state feed. AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // Owns the controller workers and turns what they report into dispatcher calls.
 // Lives on the main thread with the dispatcher. MidiInput lives on the MIDI worker,
@@ -60,8 +62,13 @@ public:
     // How often a control waiting to become a hold is looked at. Costs nothing at
     // rest: it runs only while one is down.
     static constexpr int kGestureTickMs = 20;
-    // A display follows a turning knob at most this often (plan, Task 14).
+    // A display or a light follows the slice at most this often, per device (plan,
+    // Tasks 14 and 17). A change of transmit state goes at once.
     static constexpr int kDisplayMinMs = 100;
+    // An RC-28's lights are written this long after its last F key comes up, and never
+    // while one is down.
+    // From AetherSDR src/gui/MainWindow_Controllers.cpp:2596-2600 [@1e0718ad]
+    static constexpr int kRc28LightSettleMs = 80;
 
     ControllerHost(HotKeyDispatcher* dispatcher, HotKeyBindings* bindings, QObject* parent = nullptr);
     ~ControllerHost() override;
@@ -89,8 +96,19 @@ public:
     void setStateFeed(HotKeyStateFeed* feed);
     HotKeyStateFeed* stateFeed() const;
 
+    // RC-28, FlexControl, TMate 2 and Stream Deck+ have lights or a display. Turning them
+    // off writes the off state once and stops updates, and it's saved. Default on. The
+    // others have nothing to turn off, so this does nothing for them.
+    static bool hasLights(DeviceId id);
+    bool lightsEnabled(DeviceId id) const;
+    void setLightsEnabled(DeviceId id, bool enabled);
+
     using ClockMs = std::function<qint64()>;
     void setDeviceClockForTest(ClockMs clock) { m_deviceClock = std::move(clock); }
+
+    // What a recording device can't see: work done for a device that isn't there.
+    int outputsQueuedForTest() const { return m_outputsQueued; }
+    int imagesDrawnForTest() const { return m_imagesDrawn; }
 
 public slots:
     // Where MidiInput's signals land; public for tests.
@@ -131,10 +149,20 @@ private:
     void updateGestureTimer();
 
     void queueOutput(DeviceId id, const QList<QByteArray>& packets);
-    void pumpDisplays();
+    void markOutputDirty(DeviceId id);
+    bool anyOutputDirty() const;
+    void pumpOutputs();
+    void sendAtOnce(DeviceId id);
+    bool sendOutputFor(DeviceId id);
+    qint64 rc28LightWaitMs(qint64 now) const;   // below 0 while an F key is down
+    void noteRc28Button(const DeviceEvent& event);
+    bool actionOn(const QString& actionId) const;
+    bool sendRc28Lights();
+    bool sendFlexLights();
+    int flexLitButton() const;
     bool sendTMateFrame();
     bool sendDeckStrip();
-    void refreshDeckKeys();
+    bool refreshDeckKeys();
 
     HotKeyDispatcher* m_dispatcher;
     QThread m_midiThread;
@@ -170,20 +198,32 @@ private:
     QTimer m_gestureTimer;
     QTimer m_ringTimer;
 
-    // Displays and lit keys. All drawn here, and only what changed is drawn, and only
+    // Displays and lights. All drawn here, and only what changed is drawn, and only
     // for a device that's open. The worker is handed bytes.
     struct DeckKey {
         QString label;
         bool lit{false};
+        bool off{false};
         bool sent{false};
+    };
+    struct OutputGate {
+        qint64 lastMs{-1};
+        bool dirty{false};
     };
     QPointer<HotKeyStateFeed> m_stateFeed;
     QByteArray m_lastTMateFrame;
     QString m_lastDeckStrip;
     std::array<DeckKey, 8> m_deckKeys;
-    bool m_displayDirty{false};
-    qint64 m_lastDisplayMs{-1};
+    QByteArray m_lastRc28Report;
+    int m_lastFlexLit{0};               // as FlexControlInput holds it, over an unplug too
+    bool m_lastTransmitting{false};
+    QSet<QString> m_rc28FKeysDown;
+    qint64 m_rc28LightsSettleAtMs{-1};
+    QHash<DeviceId, OutputGate> m_outputGates;
+    QSet<DeviceId> m_lightsOff;
     QTimer m_displayTimer;
+    int m_outputsQueued{0};
+    int m_imagesDrawn{0};
 };
 
 } // namespace NereusSDR
