@@ -25,6 +25,9 @@
 //   2026-11-06: the rows' context and the expiry note's Undo (band stack
 //               plan Task 9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-11-06: refreshBandStackTicks() and the spectrum ticks' click and menu
+//               (band stack plan Task 11). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-06: openBandStackPopup(), the popup a band's right-click and the
 //               VFO display's long press open (band stack plan Task 10). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -406,6 +409,7 @@ class HostingSliceActions;
 class BandStackAccess;
 class BandStackPanel;
 class BandStackPopup;
+class BandStackRowList;
 struct BandStackRowContext;
 struct BandStackView;
 enum class BandStackDirection;
@@ -2084,6 +2088,17 @@ private:
     void bindBandStackAccess(BandStackAccess* access);
     void refreshBandStackSlice();
     void refreshBandStackDots();
+    // Band stack plan Task 11: what every pan's spectrum ticks show.
+    void refreshBandStackTicks();
+    void recallBandStackTick(const QString& panId, const QString& entryId);
+    void showBandStackTickMenu(const QString& panId, const QString& entryId,
+                               const QPoint& globalPos);
+    void renameBandStackTick(const QString& entryId);
+    // The row menu's owner for a tick. Never shown: it holds the pan's slice,
+    // where the panel's rows hold the window's (V7). Rename goes to the popup.
+    BandStackRowList* m_bandStackTickRows{nullptr};
+    QPointer<SliceModel> m_bandStackTickSlice;
+    QPoint m_bandStackTickMenuAt;
     void wireBandStackRows();
     BandStackRowContext bandStackRowContext();
     void refreshBandStackRows();

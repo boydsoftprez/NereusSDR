@@ -19,6 +19,9 @@
 //   2026-11-06 - contentHeightChanged and a public revealPlaceSoon, for the
 //                 popup (band stack plan Task 10). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - A list that is not on screen asks for the rename to happen
+//                 where it can be seen (band stack plan Task 11). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QColor>
@@ -104,6 +107,9 @@ public:
     /// voice entry, else the first. Empty on an empty band.
     QString defaultSpecificEntry(Band band) const;
 
+    /// The filter as a row shows it: "2.7K".
+    static QString filterText(int lowHz, int highHz);
+
     /// The row menu, for `entryId`, into an empty menu.
     void fillRowMenu(QMenu& menu, const QString& entryId);
     /// Opens the name editor on a row, opening its band first if need be.
@@ -134,6 +140,9 @@ signals:
     void currentBandChanged();
     /// The rows' height changed: a row or the add row came or went.
     void contentHeightChanged();
+    /// Rename from the row menu, on a list that is not on screen, so the name
+    /// editor has to open on a list that is.
+    void renameElsewhereRequested(const QString& entryId);
 
 protected:
     bool event(QEvent* event) override;

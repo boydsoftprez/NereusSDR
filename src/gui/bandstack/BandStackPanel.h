@@ -18,6 +18,8 @@
 //   2026-11-06 - The rows, the band menu and the panel menu (band stack plan
 //                 Task 9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-11-06 - Says when Show on the spectrum changes (band stack plan Task
+//                 11). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QPointer>
@@ -101,6 +103,7 @@ signals:
     void closeRequested();
     void menuRequested();
     void openChanged(bool open);
+    void showOnSpectrumChanged(bool on);
 
 protected:
     void resizeEvent(QResizeEvent* event) override;

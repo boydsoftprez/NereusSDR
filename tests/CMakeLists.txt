@@ -10597,6 +10597,11 @@ nereus_add_test(tst_bandstack_panel
 nereus_add_test(tst_bandstack_router
     fakes/FakeBandStackAccess.h)
 
+# Band stack plan Task 11: the spectrum ticks, at the widget and on a real
+# MainWindow offscreen with a fake access.
+nereus_add_test(tst_bandstack_overlay
+    fakes/FakeBandStackAccess.h)
+
 # Band stack plan Task 5: a recall on a shared receiver asks through the
 # confirm step, through a loopback link with fake peers.
 nereus_add_test(tst_bandstack_question

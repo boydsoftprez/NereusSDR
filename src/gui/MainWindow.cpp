@@ -1091,6 +1091,11 @@
 //   2026-11-06 - Band stack plan Task 9: the rows' context (view, slices, band
 //                 plan colour, blocked reason) and the expiry note's Undo.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 11: the spectrum ticks, from the panel's
+//               Show on the spectrum, pushed to every pan, hidden on air; a
+//               click recalls on the pan's slice and a right-click opens the
+//               row menu. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //   2026-11-06 - Band stack plan Task 10: openBandStackPopup, from a flyout
 //               button's right-click, a container band button's and the VFO
 //               display's long press; it replaces the container's stopgap of
@@ -2147,6 +2152,24 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
             this, &MainWindow::refreshBandStackAvailability);
     connect(m_radioModel, &RadioModel::activeSliceChanged,
             this, &MainWindow::refreshBandStackSlice);
+    // Band stack plan Task 11: a tick's highlight follows its pan's slice, and
+    // the overlay goes on air with every pan (V11).
+    connect(m_radioModel, &RadioModel::activeSliceChanged,
+            this, &MainWindow::refreshBandStackTicks);
+    connect(m_radioModel, &RadioModel::sliceAdded,
+            this, &MainWindow::refreshBandStackTicks);
+    connect(m_radioModel, &RadioModel::sliceRemoved,
+            this, &MainWindow::refreshBandStackTicks);
+    connect(m_radioModel, &RadioModel::transmittingChanged, this, [this](bool onAir) {
+        if (!m_panStack) {
+            return;
+        }
+        for (PanadapterApplet* applet : m_panStack->allApplets()) {
+            if (SpectrumWidget* spectrum = applet ? applet->spectrumWidget() : nullptr) {
+                spectrum->setBandStackTicksHidden(onAir);
+            }
+        }
+    });
     connect(m_radioModel, &RadioModel::sliceAdded,
             this, &MainWindow::refreshBandStackSlice);
     connect(m_radioModel, &RadioModel::sliceRemoved,
@@ -2674,6 +2697,9 @@ void MainWindow::bindBandStackAccess(BandStackAccess* access)
     if (m_bandStackPopup) {
         m_bandStackPopup->setAccess(access);
     }
+    if (m_bandStackTickRows) {
+        m_bandStackTickRows->setAccess(access);
+    }
     m_bandStackExpiryBatch.clear();
     if (access) {
         // A note already there when this access arrives is not news.
@@ -2682,6 +2708,8 @@ void MainWindow::bindBandStackAccess(BandStackAccess* access)
                                      .value(QStringLiteral("batchId")).toString();
         connect(access, &BandStackAccess::documentChanged,
                 this, &MainWindow::showBandStackExpiryNote);
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::refreshBandStackTicks);
         connect(access, &BandStackAccess::stateChanged,
                 this, &MainWindow::refreshBandStackAvailability);
         connect(access, &BandStackAccess::refused, this, [this](const QString& reason) {
@@ -2833,8 +2861,176 @@ void MainWindow::refreshBandStackAvailability()
     }
     refreshBandStackDots();
     refreshBandStackSlice();
+    refreshBandStackTicks();
     // STACK+ and STACK- are disabled with the same reason.
     refreshContainerControls();
+}
+
+namespace {
+
+// The ticks of a band stack document, for a pan whose slice has this letter
+// (null for a pan with no slice). desktop.html's draw() and its tooltip.
+QVector<BandStackTick> bandStackTicksFromDocument(const QJsonObject& document, QChar sliceLetter)
+{
+    const QJsonObject bands = document.value(QStringLiteral("bands")).toObject();
+    const QJsonObject places = sliceLetter.isNull()
+        ? QJsonObject{}
+        : document.value(QStringLiteral("places")).toObject()
+              .value(QString(sliceLetter)).toObject();
+    const QJsonArray entries = document.value(QStringLiteral("entries")).toArray();
+
+    // A band's own order, then any entry it does not list, as the rows do.
+    QHash<QString, QString> bandOfEntry;
+    for (const QJsonValue& value : entries) {
+        const QJsonObject entry = value.toObject();
+        bandOfEntry.insert(entry.value(QStringLiteral("id")).toString(),
+                           entry.value(QStringLiteral("band")).toString());
+    }
+    QHash<QString, QStringList> listedByBand;
+    for (auto band = bands.constBegin(); band != bands.constEnd(); ++band) {
+        const QJsonArray order = band.value().toObject().value(QStringLiteral("order")).toArray();
+        for (const QJsonValue& id : order) {
+            if (bandOfEntry.value(id.toString()) == band.key()) {
+                listedByBand[band.key()].append(id.toString());
+            }
+        }
+    }
+    for (auto entry = bandOfEntry.constBegin(); entry != bandOfEntry.constEnd(); ++entry) {
+        QStringList& listed = listedByBand[entry.value()];
+        if (!listed.contains(entry.key())) {
+            listed.append(entry.key());
+        }
+    }
+
+    QVector<BandStackTick> ticks;
+    ticks.reserve(entries.size());
+    for (const QJsonValue& value : entries) {
+        const QJsonObject entry = value.toObject();
+        const QString band = entry.value(QStringLiteral("band")).toString();
+        if (!BandStackStore::bandFromKey(band).has_value()) {
+            continue;
+        }
+        const QString id = entry.value(QStringLiteral("id")).toString();
+        const qint64 hz = entry.value(QStringLiteral("frequencyHz")).toInteger();
+        const QString mode = entry.value(QStringLiteral("mode")).toString();
+        const QString name = entry.value(QStringLiteral("name")).toString();
+        const int low = entry.value(QStringLiteral("filterLowHz")).toInt();
+        const int high = entry.value(QStringLiteral("filterHighHz")).toInt();
+        const QStringList listed = listedByBand.value(band);
+        const QString frequency = BandStackStore::displayFrequency(hz);
+
+        BandStackTick tick;
+        tick.entryId = id;
+        tick.hz = static_cast<double>(hz);
+        tick.label = QStringLiteral("%1 %2").arg(frequency, mode);
+        tick.tip = QStringLiteral("<b>%1 MHz</b><br>%2, %3<br>%4 of %5 on %6")
+                       .arg(frequency, mode, BandStackRowList::filterText(low, high))
+                       .arg(listed.indexOf(id) + 1)
+                       .arg(listed.size())
+                       .arg(band);
+        if (!name.isEmpty()) {
+            tick.tip += QStringLiteral("<br><i>%1</i>").arg(name.toHtmlEscaped());
+        }
+        tick.locked = entry.value(QStringLiteral("locked")).toBool();
+        if (tick.locked) {
+            tick.tip += QStringLiteral("<br>Locked");
+        }
+        tick.active = places.value(band).toString() == id;
+        tick.colour = SpectrumWidget::bandStackTickColour(tick.active);
+        tick.filterLowHz = low;
+        tick.filterHighHz = high;
+        ticks.append(tick);
+    }
+    return ticks;
+}
+
+} // namespace
+
+void MainWindow::refreshBandStackTicks()
+{
+    if (m_shuttingDown || !m_panStack || !m_radioModel) {
+        return;
+    }
+    // Off by default and per device (V6). An older Core has no stack to show.
+    const bool show = m_bandStackPanel && m_bandStackPanel->showOnSpectrum()
+        && m_bandStackAccess && m_bandStackAccess->state() == BandStackAccess::State::Ready;
+    const QJsonObject document = show ? m_bandStackAccess->document() : QJsonObject{};
+    const bool onAir = m_radioModel->isTransmitting();
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        SpectrumWidget* spectrum = applet ? applet->spectrumWidget() : nullptr;
+        if (!spectrum) {
+            continue;
+        }
+        const SliceModel* slice = show ? sliceForPan(applet->panId()) : nullptr;
+        spectrum->setBandStackTicks(
+            show ? bandStackTicksFromDocument(document, slice ? slice->sliceLetter() : QChar())
+                 : QVector<BandStackTick>{});
+        spectrum->setBandStackTicksHidden(onAir);
+    }
+}
+
+void MainWindow::recallBandStackTick(const QString& panId, const QString& entryId)
+{
+    if (!m_bandStackAccess) {
+        return;
+    }
+    // V7: a tick on a pan acts on that pan's active slice.
+    SliceModel* slice = sliceForPan(panId);
+    if (!slice) {
+        showToast(QStringLiteral("Select a slice first."), ToastSeverity::Warning, 3000);
+        return;
+    }
+    m_bandStackAccess->goTo(slice->sliceIndex(), entryId, viewForSlice(slice));
+}
+
+void MainWindow::showBandStackTickMenu(const QString& panId, const QString& entryId,
+                                       const QPoint& globalPos)
+{
+    if (m_shuttingDown || !m_bandStackAccess) {
+        return;
+    }
+    if (!m_bandStackTickRows) {
+        m_bandStackTickRows = new BandStackRowList(m_bandStackAccess, this);
+        m_bandStackTickRows->setObjectName(QStringLiteral("bandStackTickRows"));
+        m_bandStackTickRows->setContext(bandStackRowContext());
+        m_bandStackTickRows->hide();
+        connect(m_bandStackTickRows, &BandStackRowList::renameElsewhereRequested,
+                this, &MainWindow::renameBandStackTick);
+    }
+    SliceModel* slice = sliceForPan(panId);
+    m_bandStackTickSlice = slice;
+    m_bandStackTickMenuAt = globalPos;
+    m_bandStackTickRows->setSliceId(slice ? slice->sliceIndex() : -1);
+    m_bandStackTickRows->setSliceFrequency(slice ? std::optional<double>(slice->frequency())
+                                                 : std::nullopt);
+    ScopedChildWidget<QMenu> menuOwner(this);
+    QMenu& menu = *menuOwner.get();
+    m_bandStackTickRows->fillRowMenu(menu, entryId);
+    menu.exec(globalPos);
+}
+
+void MainWindow::renameBandStackTick(const QString& entryId)
+{
+    if (!m_bandStackAccess) {
+        return;
+    }
+    const QJsonArray entries = m_bandStackAccess->document()
+                                   .value(QStringLiteral("entries")).toArray();
+    for (const QJsonValue& value : entries) {
+        const QJsonObject entry = value.toObject();
+        if (entry.value(QStringLiteral("id")).toString() != entryId) {
+            continue;
+        }
+        const std::optional<Band> band =
+            BandStackStore::bandFromKey(entry.value(QStringLiteral("band")).toString());
+        if (band.has_value()) {
+            openBandStackPopup(m_bandStackTickSlice, *band, m_bandStackTickMenuAt);
+            if (m_bandStackPopup) {
+                m_bandStackPopup->rows()->beginRename(entryId);
+            }
+        }
+        return;
+    }
 }
 
 void MainWindow::refreshBandStackSlice()
@@ -8452,7 +8648,17 @@ void MainWindow::ensureOverlayPanels()
                 [this, panId](const QString& name, const QPoint& globalPos) {
             openBandStackPopup(sliceForPan(panId), bandFromName(name), globalPos);
         });
+        // Band stack plan Task 11: this pan's ticks, on this pan's slice.
+        connect(sw, &SpectrumWidget::bandStackTickClicked, this,
+                [this, panId](const QString& entryId) { recallBandStackTick(panId, entryId); });
+        connect(sw, &SpectrumWidget::bandStackTickContext, this,
+                [this, panId](const QString& entryId, const QPoint& globalPos) {
+            showBandStackTickMenu(panId, entryId, globalPos);
+        });
+        connect(applet, &PanadapterApplet::activeSliceChanged, this,
+                [this] { refreshBandStackTicks(); });
     }
+    refreshBandStackTicks();
     // Parity Task 18 (C8): a pan created after connect says so when empty.
     refreshNoSliceHints();
     reconcileClarityBindings();
@@ -9352,6 +9558,8 @@ void MainWindow::buildUI()
             [this] { m_bandStackPanel->setOpen(false); });
     connect(m_bandStackPanel, &BandStackPanel::openChanged, this,
             [this] { refreshBandStackDots(); });
+    connect(m_bandStackPanel, &BandStackPanel::showOnSpectrumChanged, this,
+            [this] { refreshBandStackTicks(); });
     wireBandStackRows();
     m_panColumn = new QWidget(spectrumPane);
     m_panColumn->setObjectName(QStringLiteral("panColumn"));

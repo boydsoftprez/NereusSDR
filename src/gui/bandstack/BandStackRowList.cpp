@@ -12,6 +12,9 @@
 //                 implementation via Anthropic Claude Code.
 //   2026-11-06 - contentHeightChanged, for the popup (band stack plan Task 10).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - A list that is not on screen asks for the rename to happen
+//                 where it can be seen (band stack plan Task 11). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/bandstack/BandStackRowList.h"
@@ -712,6 +715,11 @@ void BandStackRowList::removeEntry(const QString& entryId)
 
 // ---- The row menu ----
 
+QString BandStackRowList::filterText(int lowHz, int highHz)
+{
+    return filterWidthText(lowHz, highHz);
+}
+
 void BandStackRowList::fillRowMenu(QMenu& menu, const QString& entryId)
 {
     const Entry* entry = entryById(entryId);
@@ -751,7 +759,13 @@ void BandStackRowList::fillRowMenu(QMenu& menu, const QString& entryId)
 
     QAction* rename = menu.addAction(QStringLiteral("Rename\t%1")
                                          .arg(QKeySequence(Qt::Key_F2).toString(QKeySequence::NativeText)));
-    connect(rename, &QAction::triggered, this, [this, id] { beginRename(id); });
+    connect(rename, &QAction::triggered, this, [this, id] {
+        if (isVisible()) {
+            beginRename(id);
+        } else {
+            emit renameElsewhereRequested(id);
+        }
+    });
 
     QAction* lock = menu.addAction(QStringLiteral("%1\t%2").arg(
         entry->locked ? QStringLiteral("Unlock") : QStringLiteral("Lock"),
