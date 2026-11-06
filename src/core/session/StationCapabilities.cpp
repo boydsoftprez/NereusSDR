@@ -459,6 +459,11 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
             updates.append(intEntry("miniDisplayVersion", miniDisplayVersion));
         }
         updates.append(intEntry("accessoryTxVersion", accessoryTxVersion));
+        // SSB Mod Monitor. Omitted at 0 so the capability list an older
+        // peer already knows stays the same length.
+        if (txSsbModMonitorVersion > 0) {
+            updates.append(intEntry("txSsbModMonitorVersion", txSsbModMonitorVersion));
+        }
         // Rotor control plan Task 4b: the Core's rotor, on a Core that owns
         // one (absent reads as 0).
         if (remoteRotorControlVersion > 0) {
@@ -1022,6 +1027,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "mediaTunnelVersion"
                    || u.name == "mediaRelayRoutingVersion"
                    || u.name == "txModMonitorVersion"
+                   || u.name == "txSsbModMonitorVersion"
                    || u.name == "sessionHolderVersion"
                    || u.name == "remoteTxVersion"
                    || u.name == "txWatchPathVersion"
@@ -1179,6 +1185,8 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.mediaRelayRoutingVersion = version;
                 } else if (u.name == "txModMonitorVersion") {
                     caps.txModMonitorVersion = version;
+                } else if (u.name == "txSsbModMonitorVersion") {
+                    caps.txSsbModMonitorVersion = version;
                 } else {
                     caps.bandSelectVersion = version;
                 }

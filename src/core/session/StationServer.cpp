@@ -1195,6 +1195,8 @@
 #include "core/session/MediaTunnel.h"
 #include "core/session/ModMonitorPublisher.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorPublisher.h"
+#include "core/session/SsbModMonitorRecord.h"
 
 #include "core/AppSettings.h"
 #include "core/BuildIdentity.h"
@@ -3755,6 +3757,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     setUpCoreLogStream();
     // R-IOS-13 / R-R3-49: and the AM Mod Monitor's two streams.
     setUpModMonitorStreams();
+    setUpSsbModMonitorStreams();
     // Roundtable plan Task 11: and Roundtable's rooms.
     setUpRoundtable();
 
@@ -3909,6 +3912,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         // R-IOS-13 / R-R3-49: the Mod Monitor's reset is the Core's too.
         if (invoke.commandVerb == "txModMonitor.reset") {
             handleModMonitorReset(m_dispatchingTransport, invoke);
+        } else if (invoke.commandVerb == "txSsbModMonitor.reset") {
+            handleSsbModMonitorReset(m_dispatchingTransport, invoke);
         } else {
             handleRecordsCommand(m_dispatchingTransport, invoke);
         }
@@ -6041,6 +6046,10 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
     // R-IOS-13 / R-R3-49: the Mod Monitor stops with its last watcher.
     if (m_modMonitor) {
         m_modMonitor->subscriptionsChanged();
+        if (!self) { return; }
+    }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->subscriptionsChanged();
         if (!self) { return; }
     }
     if (!view.isNull()) {
@@ -9593,6 +9602,7 @@ bool StationServer::applySettingsWrite(SessionTransport* transport, const Sessio
         // R-IOS-13 / R-R3-49 (txModMonitorVersion 1): the Mod Monitor's
         // feedback receiver reaches the Core's feedback analyzer at once.
         m_radioModel->applyModMonitorSetting(key, m_settings.value(key));
+        m_radioModel->applySsbModMonitorSetting(key, m_settings.value(key));
         // Parity ruling C12: a band's grid dB max or min reaches the Core's
         // pans at once; on that band the new range goes to every window.
         m_radioModel->applyPanGridSetting(key);
@@ -9746,6 +9756,7 @@ void StationServer::applySettingsRemove(const SessionMessage& message)
         m_radioModel->applyRemoteTxDisplaySetting(key);
         // R-IOS-13 / R-R3-49: the Mod Monitor's feedback receiver, rx1.
         m_radioModel->applyModMonitorSetting(key, QVariant());
+        m_radioModel->applySsbModMonitorSetting(key, QVariant());
         // Parity ruling C12: the band's default grid range.
         m_radioModel->applyPanGridSetting(key);
         // Level Cal: the radio's default meter or display calibration.
@@ -13759,6 +13770,11 @@ int StationServer::txModMonitorVersion() const
     return recordStreamVersion() >= 1 && m_modMonitor != nullptr ? 1 : 0;
 }
 
+int StationServer::txSsbModMonitorVersion() const
+{
+    return recordStreamVersion() >= 1 && m_ssbModMonitor != nullptr ? 1 : 0;
+}
+
 int StationServer::mediaReplaceVersion() const
 {
     // iPhone app plan Task 29 (R-IOS-16): the media `replace` operation,
@@ -15182,6 +15198,7 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // R-IOS-13 / R-R3-49: the AM Mod Monitor's readings, appended
             // after remoteIqVersion by StationCapabilities::toUpdates().
             caps.txModMonitorVersion = txModMonitorVersion();
+            caps.txSsbModMonitorVersion = txSsbModMonitorVersion();
             // Optional and last: old peers retain their exact descriptor.
             caps.miniDisplayVersion = media && peerDeclares(
                 transport, QByteArrayLiteral("miniDisplay"), 1) ? 1 : 0;
@@ -15591,6 +15608,9 @@ void StationServer::flushRecordStreams()
     if (m_modMonitor) {
         m_modMonitor->flushed();
     }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->flushed();
+    }
 }
 
 void StationServer::handleRecordsCommand(SessionTransport* transport, const SessionMessage& message)
@@ -15671,6 +15691,9 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
         if (m_modMonitor) {
             m_modMonitor->subscriptionsChanged();
         }
+        if (m_ssbModMonitor) {
+            m_ssbModMonitor->subscriptionsChanged();
+        }
         return;
     }
     // The answer, then the backlog as a reset: the peer's copy starts from
@@ -15681,6 +15704,9 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
     send(transport, SessionMessages::recordBatch(fitRecordBatchToPeer(transport, first)));
     if (m_modMonitor) {
         m_modMonitor->subscriptionsChanged();
+    }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->subscriptionsChanged();
     }
     // Parity Task 33: a viewer of the CFC display may start the reads.
     updateCfcCompressionPolling();
@@ -16395,6 +16421,57 @@ void StationServer::handleModMonitorReset(SessionTransport* transport,
         && message.arguments.first().kind == MirrorWireKind::Int64;
     const qlonglong source = readable ? message.arguments.first().value.toLongLong() : -1;
     if ((source != 0 && source != 1) || !m_modMonitor->resetSource(static_cast<int>(source))) {
+        answer(false, QStringLiteral("The Core could not read this request."));
+        return;
+    }
+    answer(true, QString());
+}
+
+void StationServer::setUpSsbModMonitorStreams()
+{
+    if (m_radioModel.isNull() || recordStreamVersion() < 1) {
+        return;
+    }
+    if (m_recordFlushTimer == nullptr) {
+        m_recordFlushTimer = new QTimer(this);
+        m_recordFlushTimer->setSingleShot(true);
+        m_recordFlushTimer->setInterval(kDefaultDeltaFlushMs);
+        connect(m_recordFlushTimer, &QTimer::timeout, this, &StationServer::flushRecordStreams);
+    }
+    std::array<RecordStream*, 2> streams{};
+    for (int source = 0; source < 2; ++source) {
+        const QString name = SsbModMonitorRecord::streamName(source);
+        auto stream = std::make_unique<RecordStream>(name, SsbModMonitorRecord::kCapacity);
+        streams[static_cast<std::size_t>(source)] = stream.get();
+        m_recordStreams.emplace(name, std::move(stream));
+    }
+    m_radioModel->applySsbModMonitorSetting(QStringLiteral("SsbModMon/FbStream"),
+                                            m_settings.value(QStringLiteral("SsbModMon/FbStream")));
+    m_ssbModMonitor = std::make_unique<SsbModMonitorPublisher>(
+        m_radioModel.data(), streams[0], streams[1], [this]() { scheduleRecordFlush(); });
+}
+
+void StationServer::handleSsbModMonitorReset(SessionTransport* transport,
+                                             const SessionMessage& message)
+{
+    const auto answer = [this, transport, &message](bool accepted, const QString& reason) {
+        send(transport, SessionMessages::commandResult(message.commandVerb, message.commandId,
+                                                       accepted, reason, {}));
+    };
+    if (peerFor(transport).agreedMinor < kRadioIdentitySessionProtocolMinor) {
+        answer(false, QStringLiteral("Update this app to see the Core's SSB modulation monitor."));
+        return;
+    }
+    if (txSsbModMonitorVersion() < 1 || m_ssbModMonitor == nullptr) {
+        answer(false, QStringLiteral("This Core does not send the SSB modulation monitor. "
+                                     "Updating the Core may help."));
+        return;
+    }
+    const bool readable = message.arguments.size() == 1
+        && message.arguments.first().name == "source"
+        && message.arguments.first().kind == MirrorWireKind::Int64;
+    const qlonglong source = readable ? message.arguments.first().value.toLongLong() : -1;
+    if ((source != 0 && source != 1) || !m_ssbModMonitor->resetSource(static_cast<int>(source))) {
         answer(false, QStringLiteral("The Core could not read this request."));
         return;
     }

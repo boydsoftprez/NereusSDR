@@ -2095,6 +2095,11 @@ public:
     /// detaches.  NereusSDR-original (AM Mod Monitor applet).
     void setAmModulationTap(class AmModulationAnalyzer* tap);
 
+    /// SSB modulation monitor tap. Same block the radio gets, on the TX
+    /// worker thread. nullptr detaches. The owner attaches it only while
+    /// transmitting USB or LSB.
+    void setSsbModulationTap(class SsbModulationAnalyzer* tap);
+
     /// CESSB (osctrl) run gate.  Wraps SetTXAosctrlRun(channel, on ? 1 : 0).
     ///
     /// SIDE EFFECT 1: SetTXAosctrlRun calls TXASetupBPFilters(channel)
@@ -3136,6 +3141,7 @@ private:
     // calling sendTxIq.  Size: 2 * m_outputBufferSize floats.
     std::vector<float> m_outInterleavedFloat;
     std::atomic<class AmModulationAnalyzer*> m_amModTap{nullptr};  // AM Mod Monitor tap
+    std::atomic<class SsbModulationAnalyzer*> m_ssbModTap{nullptr}; // SSB Mod Monitor tap
 
     // Float scratch for the post-fexchange0 MON siphon emit — the
     // sip1OutputReady signal carries `const float*`, but m_out is double,

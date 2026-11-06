@@ -414,7 +414,8 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                     else { delete row.widget.data(); }
                 }
                 view->setProperty("singletonTypeId",entry.typeId); view->setParent(m_body);
-                view->setMinimumHeight(entry.typeId=="applet:s_meter"?130:0); view->setMaximumHeight(QWIDGETSIZE_MAX);
+                view->setMinimumHeight(entry.typeId=="applet:s_meter"?130:
+                    entry.typeId=="applet:ssb_mod_monitor"?360:0); view->setMaximumHeight(QWIDGETSIZE_MAX);
                 view->setSizePolicy(QSizePolicy::Expanding,QSizePolicy::Preferred);
                 m_layout->insertWidget(position,view); row.widget=view;
             }
@@ -504,6 +505,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 view->setMinimumHeight(0); view->setMaximumHeight(QWIDGETSIZE_MAX);
                 view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
                 if (entry.typeId == "applet:s_meter") { view->setMinimumHeight(130); }
+                if (entry.typeId == "applet:ssb_mod_monitor") { view->setMinimumHeight(360); }
                 row.widget = view; m_layout->addWidget(view);
                 // Unavailable, it is grayed with its reason, not hidden.
                 row.presentationVisible = entry.visible;

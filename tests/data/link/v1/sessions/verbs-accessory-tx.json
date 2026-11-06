@@ -471,6 +471,12 @@
           },
           {
             "kind": "i64",
+            "name": "txSsbModMonitorVersion",
+            "ordinal": 0,
+            "value": 1
+          },
+          {
+            "kind": "i64",
             "name": "remoteRotorControlVersion",
             "ordinal": 0,
             "value": 1
