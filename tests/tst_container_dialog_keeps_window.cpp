@@ -210,7 +210,8 @@ private slots:
     // QTBUG-139109 itself, and what it leaves behind: the recreate ends exec()
     // early, and the main window's input stays blocked after the dialog is
     // gone. This is what the reporter's "dialog vanishes, app blocks" would be.
-    // A Qt with the fix has nothing to show here.
+    // A Qt with the fix has nothing to show here, and neither does a run with
+    // QT_WIDGETS_RHI=1, which forces RHI from the start so nothing is recreated.
     void qtExecReturnsEarlyAndLeavesTheBlockAfterARecreate()
     {
         PressCounter mainWindow;
@@ -223,7 +224,7 @@ private slots:
             child.release();
         });
         if (run.reachedAccept) {
-            QSKIP("This Qt has the fix for QTBUG-139109: exec() kept blocking");
+            QSKIP("exec() kept blocking: this Qt has the fix for QTBUG-139109, or QT_WIDGETS_RHI is set");
         }
         QCOMPARE(run.result, int(QDialog::Rejected));
 
