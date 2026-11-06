@@ -123,6 +123,11 @@ HotKeyDispatcher::HotKeyDispatcher(HotKeyBindings* bindings, HotKeyTargets* targ
     });
 }
 
+bool HotKeyDispatcher::enabled() const
+{
+    return m_bindings->enabled();
+}
+
 void HotKeyDispatcher::press(const QString& id, const HotKeySource& source, QChar pin)
 {
     if (!m_bindings->enabled()) {
@@ -267,6 +272,17 @@ void HotKeyDispatcher::updateSleepWatch()
 void HotKeyDispatcher::onTransmitWentOff()
 {
     m_holdKeyed = false;
+    noteTransmitHold();
+    emit transmitKeyWentOff();
+}
+
+void HotKeyDispatcher::noteTransmitHold()
+{
+    const bool on = transmitHoldOn();
+    if (on != m_transmitHoldOn) {
+        m_transmitHoldOn = on;
+        emit transmitHoldChanged(on);
+    }
 }
 
 void HotKeyDispatcher::flushTune()
@@ -475,6 +491,7 @@ void HotKeyDispatcher::startHold(const HotKeyAction& action, const HotKeySource&
         }
         m_holdSources.append(source);
         updateSleepWatch();
+        noteTransmitHold();
         return;
     }
 
@@ -503,9 +520,11 @@ void HotKeyDispatcher::endTransmitHold(const HotKeySource& source)
     const qsizetype removed = m_holdSources.removeAll(source);
     updateSleepWatch();
     if (removed == 0 || !m_holdSources.isEmpty() || !m_holdKeyed) {
+        noteTransmitHold();
         return;
     }
     m_holdKeyed = false;
+    noteTransmitHold();
     // TUNE or two-tone took over the key during the hold: they stay on after
     // you let go, like the buttons.
     if (!m_targets->tuneOrTwoToneOn()) {

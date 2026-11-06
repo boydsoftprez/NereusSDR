@@ -11,12 +11,15 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: confirmed TUNE, remote keys
 //                forgotten with their activity, a take not granted, the remote
 //                on-air reason. AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: the state feed's source.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // What hot keys do in the real window: the same entry points the on-screen
 // controls use, so local, hosting and remote windows behave as those do.
 #pragma once
 
 #include "gui/NereusGuiExport.h"
+#include "gui/hotkeys/HotKeyStateFeed.h"
 #include "gui/hotkeys/HotKeyTargets.h"
 
 #include <QElapsedTimer>
@@ -31,7 +34,7 @@ class RemoteTransmitClient;
 class SpectrumWidget;
 class VfoWidget;
 
-class NEREUS_GUI_EXPORT MainWindowHotKeyTargets final : public HotKeyTargets {
+class NEREUS_GUI_EXPORT MainWindowHotKeyTargets final : public HotKeyTargets, public HotKeyStateSource {
 public:
     explicit MainWindowHotKeyTargets(MainWindow* window);
 
@@ -55,6 +58,10 @@ public:
     void setCwKeyDown(const QString& id, bool down) override;
     void toast(const QString& text) override;
     qint64 nowMs() const override;
+
+    // HotKeyStateSource. windowSlice above serves both.
+    bool transmitOn(const QString& id) const override;
+    bool muted(const SliceModel* slice) const override;
 
     // The pan zoom acts on while `activeWindow` has focus: that floating pan,
     // else the window's active pan.

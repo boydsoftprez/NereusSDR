@@ -165,7 +165,7 @@ jobs:
             libgstreamer-gl1.0-0 libgstreamer-plugins-base1.0-0 \
             libfuse2 file desktop-file-utils xvfb \
             libfftw3-dev imagemagick \
-            libasound2-dev libjack-jackd2-dev \
+            libasound2-dev libudev-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
             libssl-dev
 
@@ -473,7 +473,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev \
             qt6-multimedia-dev qt6-base-private-dev qt6-shadertools-dev \
             qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libssl-dev \
-            libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev libpulse-dev \
+            libasound2-dev libudev-dev libjack-jackd2-dev libpipewire-0.3-dev libpulse-dev \
             libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
       # The pinned dependency downloads (see "Dependency downloads" above
       # build-linux).

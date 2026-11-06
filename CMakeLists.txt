@@ -1052,6 +1052,7 @@ set(CORE_SOURCES
     src/core/hotkeys/HotKeyActionList.cpp
     src/core/hotkeys/HotKeyBindings.cpp
     src/core/hotkeys/HotKeyChord.cpp
+    src/core/hotkeys/HotKeyDeviceBindings.cpp
     src/core/LogCategories.cpp
     # Remote-window parity Task 22 (R-R3-49): the log sink no logging
     # thread waits on, and the zip archive the support bundle travels in.
@@ -1919,6 +1920,10 @@ set(GUI_SOURCES
     src/gui/hotkeys/ControllerHost.cpp
     src/gui/hotkeys/midi/MidiInput.cpp
     src/gui/hotkeys/midi/MidiProfile.cpp
+    src/gui/hotkeys/HotKeyStateFeed.cpp
+    src/gui/hotkeys/devices/DeviceInput.cpp
+    src/gui/hotkeys/devices/GestureEngine.cpp
+    src/gui/hotkeys/devices/UsbPresence.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
     src/gui/PanFloatingWindow.cpp
@@ -2329,6 +2334,39 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ALSA_FOUND)
 else()
     set(NEREUS_RTMIDI_AVAILABLE FALSE)
     message(STATUS "ALSA not found: this build has no MIDI support")
+endif()
+
+# hidapi: desktop only, never NereusCore or nereusd (R-HK-18). The platform's C file
+# goes straight into the library, so no DLL and no package step. On Linux it needs
+# libudev; without it the build has no USB device support and the devices stay
+# listed and disabled, with the reason.
+set(NEREUS_HIDAPI_AVAILABLE FALSE)
+if(APPLE)
+    set(NEREUS_HIDAPI_AVAILABLE TRUE)
+    set(NEREUS_HIDAPI_PLATFORM mac)
+elseif(WIN32)
+    set(NEREUS_HIDAPI_AVAILABLE TRUE)
+    set(NEREUS_HIDAPI_PLATFORM windows)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBUDEV IMPORTED_TARGET libudev)
+    endif()
+    if(LIBUDEV_FOUND)
+        set(NEREUS_HIDAPI_AVAILABLE TRUE)
+        set(NEREUS_HIDAPI_PLATFORM linux)
+    else()
+        message(STATUS "libudev not found: this build has no USB device support")
+    endif()
+endif()
+if(NEREUS_HIDAPI_AVAILABLE)
+    set(NEREUS_HIDAPI_SOURCE third_party/hidapi/${NEREUS_HIDAPI_PLATFORM}/hid.c)
+    list(APPEND GUI_SOURCES ${NEREUS_HIDAPI_SOURCE})
+    set_source_files_properties(${NEREUS_HIDAPI_SOURCE} PROPERTIES
+        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+        INCLUDE_DIRECTORIES
+            "${CMAKE_SOURCE_DIR}/third_party/hidapi/hidapi;${CMAKE_SOURCE_DIR}/third_party/hidapi/${NEREUS_HIDAPI_PLATFORM}"
+        SKIP_PRECOMPILE_HEADERS ON
+        SKIP_AUTOGEN ON)
 endif()
 qt_add_resources(RESOURCES resources.qrc)
 
@@ -2912,6 +2950,20 @@ function(nereus_apply_gui_deps target)
         else()
             target_compile_definitions(${target} PRIVATE __LINUX_ALSA__)
             target_link_libraries(${target} PUBLIC ALSA::ALSA)
+        endif()
+    endif()
+    if(NEREUS_HIDAPI_AVAILABLE)
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_HIDAPI)
+        target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/hidapi)
+        if(APPLE)
+            target_link_libraries(${target} PUBLIC
+                "-framework IOKit" "-framework CoreFoundation" "-framework AppKit")
+        elseif(WIN32)
+            # hid.c loads hid.dll and cfgmgr32.dll itself (windows/hid.c:131-136). Its
+            # functions stay private to the library, so no dllexport.
+            target_compile_definitions(${target} PRIVATE HID_API_NO_EXPORT_DEFINE)
+        else()
+            target_link_libraries(${target} PUBLIC PkgConfig::LIBUDEV)
         endif()
     endif()
 

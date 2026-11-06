@@ -1548,3 +1548,12 @@ NereusSDR adds attribution and its existing producer annotation.
 | `src/gui/hotkeys/midi/MidiRelativeDecoder.h` | `src/core/MidiRelativeCcDecoder.h:7-76` [@1e0718ad] | The relative CC decoder whole, comments verbatim; only the namespace differs. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/midi/MidiInput.h` | `src/core/MidiControlManager.cpp:325` [@1e0718ad] | The value ranges. Recorded in AETHERSDR-PROVENANCE.md. |
 | `src/gui/hotkeys/midi/MidiInput.cpp` | `src/core/MidiControlManager.cpp:99-101, 112-121, 139-142, 271-298, 313-325, 345-375` [@1e0718ad] | RtMidi open sequence, callback hand-off, name match, message decoding and learn, on a worker thread with a port list comparison for unplug. Recorded in AETHERSDR-PROVENANCE.md. |
+
+## November 6, 2026 USB knobs (hot keys plan Task 12)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/DeviceInput.h` | `src/core/HidEncoderManager.h:189-190` [@1e0718ad] | The 5 ms poll and 3 s check. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/DeviceInput.cpp` | `src/core/HidEncoderManager.cpp:481-488, 568, 585-609, 615-632`, `src/core/HidDeviceParser.cpp:7-24`, `src/core/HidDeviceParser.h:46-126` [@1e0718ad] | hidapi open sequence, read loop, hotplug check, ids and report sizes, on a worker thread with one device per kind. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/GestureEngine.h` | `src/gui/MainWindow_Controllers.cpp:2476-2495` [@1e0718ad] | The 600 ms hold time, a fact with its cite. |
+| `src/core/hotkeys/HotKeyDeviceBindings.cpp` | `src/gui/MainWindow_Controllers.cpp:855-860` [@1e0718ad] | Which TMate 2 encoder index is printed E1 and E2, a fact with its cite. |

@@ -398,7 +398,7 @@ void AboutDialog::buildUI()
     mainLayout->addSpacing(8);
     // §D exception: #aabbcc matches the card subtitle colour above.
     auto* alsoBuiltWith = new QLabel(
-        QStringLiteral("Also built with RADE, Opus, PortAudio, RtMidi, r8brain, rnnoise, "
+        QStringLiteral("Also built with RADE, Opus, PortAudio, RtMidi, hidapi, r8brain, rnnoise, "
                        "DeepFilterNet, libspecbleach, libdatachannel, libjuice, "
                        "usrsctp, libsrtp, plog, nlohmann json, OpenSSL and zlib. "
                        "Their licenses ship with NereusSDR in its licenses folder."),

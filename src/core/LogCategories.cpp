@@ -30,6 +30,9 @@ Q_LOGGING_CATEGORY(lcCat,        "nereus.cat")
 Q_LOGGING_CATEGORY(lcTci,        "nereus.tci")
 Q_LOGGING_CATEGORY(lcSpots,      "nereus.spots")
 Q_LOGGING_CATEGORY(lcHotKeys,    "nereus.hotkeys")
+// Raw knob and controller reports, for an owner to send a capture. Off unless asked for:
+// QT_LOGGING_RULES="nereus.hotkeys.device.debug=true".
+Q_LOGGING_CATEGORY(lcHotKeyDevice, "nereus.hotkeys.device", QtInfoMsg)
 
 // --- LogManager ---
 

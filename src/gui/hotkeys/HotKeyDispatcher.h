@@ -4,6 +4,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), exported: tests take its signal addresses across
 //                the Windows DLL. AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: what the hold ledger says,
+//                for the state feed and the RC-28's stay-on. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // The only code that runs a hot key action. Keyboard, MIDI, knobs and deck
 // plugins all call it. It finds the slice, applies refusals, limits bursts and
@@ -53,6 +55,13 @@ public:
     // down on wake drops within one tick of waking.
     static constexpr int kSleepTickMs = 1000;
 
+    bool enabled() const;                           // the off switch
+
+    // A hold is keying the radio: the light for tx.hold.
+    bool transmitHoldOn() const { return !m_holdSources.isEmpty() && m_holdKeyed; }
+    // This source's press is in the ledger, whether or not it keyed.
+    bool holdsTransmit(const HotKeySource& source) const { return m_holdSources.contains(source); }
+
     using ClockMs = std::function<qint64()>;
     void setSleepClocksForTest(ClockMs wallClock, ClockMs awakeClock);
     bool sleepWatchRunning() const { return m_sleepTimer.isActive(); }
@@ -65,6 +74,9 @@ public slots:
 signals:
     // After the holds dropped. Whoever pairs presses with releases forgets its keys.
     void holdsDroppedBySleep();
+    void transmitHoldChanged(bool on);
+    // The key went off by some route of its own. A hold still in the ledger no longer keys.
+    void transmitKeyWentOff();
 
 private:
     // Steps waiting on one slice. Tune and levels limit separately, so a volume
@@ -98,6 +110,7 @@ private:
     void endCwKey(const QString& id, const HotKeySource& source);
     void updateSleepWatch();
     void noteSleepClocks();
+    void noteTransmitHold();
 
     HotKeyBindings* m_bindings;
     HotKeyTargets* m_targets;
@@ -109,6 +122,7 @@ private:
     // (a latched MOX, say) leaves the key alone.
     QList<HotKeySource> m_holdSources;
     bool m_holdKeyed{false};
+    bool m_transmitHoldOn{false};   // the last transmitHoldChanged
     QList<CwKeyHold> m_cwKeysDown;
 
     QTimer m_sleepTimer;

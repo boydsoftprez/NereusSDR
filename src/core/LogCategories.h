@@ -32,6 +32,7 @@ Q_DECLARE_LOGGING_CATEGORY(lcCat)
 Q_DECLARE_LOGGING_CATEGORY(lcTci)
 Q_DECLARE_LOGGING_CATEGORY(lcSpots)
 Q_DECLARE_LOGGING_CATEGORY(lcHotKeys)
+Q_DECLARE_LOGGING_CATEGORY(lcHotKeyDevice)
 
 // Runtime-manageable logging category metadata.
 struct LogCategoryInfo {

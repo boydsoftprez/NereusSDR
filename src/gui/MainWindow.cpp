@@ -1429,6 +1429,7 @@ warren@wpratt.com
 #include "containers/ContainerButtonDispatcher.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "gui/hotkeys/ControllerHost.h"
+#include "gui/hotkeys/HotKeyStateFeed.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
 #include "gui/hotkeys/KeyboardRouter.h"
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
@@ -2426,6 +2427,8 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 MainWindow::~MainWindow()
 {
     m_shuttingDown = true;
+    // It reads this window on the models' signals, and they can fire through teardown.
+    m_hotKeyStateFeed.reset();
     if (m_clarityRegistry) { m_clarityRegistry->retireAll(); }
     // Retire native hosts while their windows and original construction owners
     // still exist. QObject's later child teardown is too late to reparent a
@@ -3120,6 +3123,7 @@ void MainWindow::refreshActiveSlicePresentation()
     // meters follow this window's RX slice, which may be one it listens to;
     // the menu checks below follow the slice it controls.
     SliceModel* rx = windowRxSlice();
+    if (m_hotKeyStateFeed) { m_hotKeyStateFeed->refresh(); }
     if (m_rxDashboard) {
         m_rxDashboard->bindSlice(rx);
         if (rx) { m_rxDashboard->setSliceLetter(rx->sliceLetter()); }
@@ -3972,6 +3976,7 @@ void MainWindow::refreshSliceChooser()
                 const std::pair<int, bool> volume = listenVolumeFor(sliceId);
                 flag->setListenVolume(volume.first, volume.second);
             }
+            if (m_hotKeyStateFeed) { m_hotKeyStateFeed->refresh(); }
         });
     }
     // Slice control plan Task 14a: each flag says who controls its slice
@@ -5812,7 +5817,10 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // Task 14b: "Your volume" and Mute on a listened flag set this device's
     // own listening level, never the slice's AF or mute.
     connect(newFlag, &VfoWidget::listenVolumeRequested, this,
-            [this](int idx, int level, bool muted) { setFlagListenVolume(idx, level, muted); });
+            [this](int idx, int level, bool muted) {
+                setFlagListenVolume(idx, level, muted);
+                if (m_hotKeyStateFeed) { m_hotKeyStateFeed->refresh(); }
+            });
     // Phase 3F (Bug 3): clicking this flag activates its slice so the RX
     // applet, the pan the flag sits on, and every other active-slice surface
     // follow it. Every flag runs through here, Slice A's included, since the
@@ -9448,6 +9456,26 @@ void MainWindow::buildUI()
     m_keyboardRouter = std::make_unique<KeyboardRouter>(
         m_hotKeyDispatcher.get(), m_hotKeyBindings.get(), this);
     m_controllerHost = std::make_unique<ControllerHost>(m_hotKeyDispatcher.get(), m_hotKeyBindings.get());
+    // Lights and displays read this. It follows the models, and never polls.
+    m_hotKeyStateFeed = std::make_unique<HotKeyStateFeed>(m_hotKeyTargets.get());
+    {
+        HotKeyStateFeed* const feed = m_hotKeyStateFeed.get();
+        connect(m_hotKeyDispatcher.get(), &HotKeyDispatcher::transmitHoldChanged, feed, &HotKeyStateFeed::refresh);
+        // What the window's MOX, TUNE and 2-TONE buttons light from.
+        connect(m_radioModel, &RadioModel::transmittingChanged, feed, &HotKeyStateFeed::refresh);
+        connect(m_radioModel, &RadioModel::connectionStateChanged, feed, &HotKeyStateFeed::refresh);
+        connect(&m_radioModel->transmitModel(), &TransmitModel::tuneChanged, feed, &HotKeyStateFeed::refresh);
+        if (MoxController* mox = m_radioModel->moxController()) {
+            connect(mox, &MoxController::moxStateChanged, feed, &HotKeyStateFeed::refresh);
+            connect(mox, &MoxController::manualMoxChanged, feed, &HotKeyStateFeed::refresh);
+        }
+        if (TwoToneController* twoTone = m_radioModel->twoToneController()) {
+            connect(twoTone, &TwoToneController::twoToneActiveChanged, feed, &HotKeyStateFeed::refresh);
+        }
+        if (PureSignalSessionFacade* ps = m_radioModel->pureSignalFacade()) {
+            connect(ps, &PureSignalSessionFacade::statusChanged, feed, &HotKeyStateFeed::refresh);
+        }
+    }
     if (WorkspacePreview::enabled()) {
         // Workspace preview: the header source menu enables the open slices.
         m_containerManager->setSliceAvailability(

@@ -11,9 +11,12 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: confirmed TUNE, remote keys
 //                forgotten with their activity, a local stop's keys, a take not
 //                granted, the remote on-air reason. AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: the state feed's source.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 
+#include "gui/hotkeys/HotKeyDispatcher.h"
 #include "core/ControlRanges.h"
 #include "core/CwSoftPaddle.h"
 #include "core/CwxSender.h"
@@ -351,6 +354,26 @@ bool MainWindowHotKeyTargets::moxOn() const
     const bool lit = m_window->m_containerButtons
                          ->stateOf(OtherButtonItem::ButtonId::Mox, ContainerWidget::kFirstRxSource).on;
     return !model->moxPressAsksOn(!lit);
+}
+
+bool MainWindowHotKeyTargets::transmitOn(const QString& id) const
+{
+    if (id == QLatin1String("tx.hold")) {
+        return m_window->m_hotKeyDispatcher && m_window->m_hotKeyDispatcher->transmitHoldOn();
+    }
+    if (!m_window->m_containerButtons) {
+        return false;
+    }
+    // What the window's own buttons light.
+    const std::optional<OtherButtonItem::ButtonId> button = transmitButtonFor(id);
+    return button && m_window->m_containerButtons->stateOf(*button, ContainerWidget::kFirstRxSource).on;
+}
+
+bool MainWindowHotKeyTargets::muted(const SliceModel* slice) const
+{
+    // As toggleMute: on a listened slice, mute is this device's own.
+    const int id = slice->sliceIndex();
+    return m_window->windowListensTo(id) ? m_window->listenVolumeFor(id).second : slice->muted();
 }
 
 bool MainWindowHotKeyTargets::transmitting() const
@@ -844,6 +867,9 @@ void MainWindowHotKeyTargets::setListenVolume(int sliceId, int level, bool muted
             const std::pair<int, bool> volume = m_window->listenVolumeFor(sliceId);
             flag->setListenVolume(volume.first, volume.second);
         }
+    }
+    if (m_window->m_hotKeyStateFeed) {
+        m_window->m_hotKeyStateFeed->refresh();
     }
 }
 
