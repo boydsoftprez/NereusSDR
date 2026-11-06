@@ -2448,6 +2448,20 @@ void SliceModel::copyReceiverSettingsFrom(const SliceModel& source)
     setAmsqEnabled(source.amsqEnabled());
     setFmsqThresh(source.fmsqThresh());
     setFmsqEnabled(source.fmsqEnabled());
+    // These go with the mode: a DIGU copy with the seed's filter and a zero
+    // offset does not demodulate the same. Audio pan, binaural and diversity
+    // stay at their defaults.
+    setDiglOffsetHz(source.diglOffsetHz());
+    setDiguOffsetHz(source.diguOffsetHz());
+    setRttyMarkHz(source.rttyMarkHz());
+    setRttyShiftHz(source.rttyShiftHz());
+    setApfTuneHz(source.apfTuneHz());
+    setApfEnabled(source.apfEnabled());
+    setFmCtcssMode(source.fmCtcssMode());
+    setFmCtcssValueHz(source.fmCtcssValueHz());
+    setFmOffsetHz(source.fmOffsetHz());
+    setFmTxMode(source.fmTxMode());
+    setFmReverse(source.fmReverse());
     copyNoiseReductionFrom(source);
 }
 

@@ -1110,6 +1110,58 @@ private slots:
         model.flushPendingSettingsSave();
         QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
     }
+
+    // They go with the mode: a DIGU copy with a zero offset does not demodulate
+    // the same. Audio pan, binaural and diversity stay at their defaults.
+    void aNewReceiverTakesTheOpenSlicesModeSettings()
+    {
+        RadioModel model;
+        model.configureStreamPool(2, 2, kRateHz);
+        SliceModel* a = model.sliceById(model.addSlice(kPan0));
+        QVERIFY(a);
+        a->setFrequency(kSliceAFreqHz);
+        a->setDiglOffsetHz(-1234);
+        a->setDiguOffsetHz(1357);
+        a->setRttyMarkHz(2125);
+        a->setRttyShiftHz(425);
+        a->setApfEnabled(true);
+        a->setApfTuneHz(120);
+        a->setFmCtcssMode(1);
+        a->setFmCtcssValueHz(123.0);
+        a->setFmOffsetHz(600000);
+        a->setFmTxMode(FmTxMode::High);
+        a->setFmReverse(true);
+        a->setAudioPan(0.25);
+        a->setBinauralEnabled(true);
+        const SliceModel fresh;
+        QVERIFY(a->diglOffsetHz() != fresh.diglOffsetHz());
+        QVERIFY(a->diguOffsetHz() != fresh.diguOffsetHz());
+        QVERIFY(a->rttyMarkHz() != fresh.rttyMarkHz());
+        QVERIFY(a->rttyShiftHz() != fresh.rttyShiftHz());
+        QVERIFY(a->apfTuneHz() != fresh.apfTuneHz());
+        QVERIFY(a->fmCtcssMode() != fresh.fmCtcssMode());
+        QVERIFY(a->fmCtcssValueHz() != fresh.fmCtcssValueHz());
+        QVERIFY(a->fmOffsetHz() != fresh.fmOffsetHz());
+        QVERIFY(a->fmTxMode() != fresh.fmTxMode());
+
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1}, true, false);
+        SliceModel* b = model.sliceById(1);
+        QVERIFY(b);
+        QCOMPARE(b->diglOffsetHz(), a->diglOffsetHz());
+        QCOMPARE(b->diguOffsetHz(), a->diguOffsetHz());
+        QCOMPARE(b->rttyMarkHz(), a->rttyMarkHz());
+        QCOMPARE(b->rttyShiftHz(), a->rttyShiftHz());
+        QVERIFY(b->apfEnabled());
+        QCOMPARE(b->apfTuneHz(), a->apfTuneHz());
+        QCOMPARE(b->fmCtcssMode(), a->fmCtcssMode());
+        QCOMPARE(b->fmCtcssValueHz(), a->fmCtcssValueHz());
+        QCOMPARE(b->fmOffsetHz(), a->fmOffsetHz());
+        QCOMPARE(b->fmTxMode(), a->fmTxMode());
+        QVERIFY(b->fmReverse());
+        QCOMPARE(b->audioPan(), fresh.audioPan());
+        QCOMPARE(b->binauralEnabled(), fresh.binauralEnabled());
+        QCOMPARE(b->diversityEnabled(), fresh.diversityEnabled());
+    }
 };
 
 QTEST_MAIN(TestStandaloneSliceRestore)
