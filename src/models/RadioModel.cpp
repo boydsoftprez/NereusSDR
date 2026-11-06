@@ -17153,6 +17153,11 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         if (!self || !added) { return -1; }
         slice->setProperty("initialPanId", initialPanId);
     }
+    // RADE gaps fix round 1: a RADE seed makes this slice the restored RADE
+    // owner (installRadeRxRoute); a rollback below gives the owner back. Taken
+    // before either restore below, which can do the same from a saved RADE
+    // mode; after them the owner "given back" was the refused slice itself.
+    const std::optional<int> radeOwnerBeforeSeed = m_restoredRadeReceiveOwner;
     if (restoreSeed && bindRestored) {
         // iPhone app Task 73: a device's slice made again while the radio
         // runs. restoreReceiveState is the offline startup seam (it refuses
@@ -17269,9 +17274,6 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // iPhone app Task 73 (ruling 5.2 step 4): a device's new slice opens on
     // its own active slice; a device with none opens on the station-level
     // active slice, whose receiver it then joins (D48) at no cost.
-    // RADE gaps fix round 1: a RADE seed makes this slice the restored RADE
-    // owner (installRadeRxRoute); a rollback below gives the owner back.
-    const std::optional<int> radeOwnerBeforeSeed = m_restoredRadeReceiveOwner;
     SliceModel* seedFrom = m_activeSlice;
     if (role() == Role::Local && !m_sliceOwnership->creator().isEmpty()) {
         const int own = m_sliceOwnership->activeFor(m_sliceOwnership->creator());
