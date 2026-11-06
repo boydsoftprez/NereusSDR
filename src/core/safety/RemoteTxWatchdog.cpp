@@ -95,6 +95,12 @@ bool RemoteTxWatchdog::isHeld(const QByteArray& deviceId) const
     return it != m_devices.cend() && it.value().held;
 }
 
+bool RemoteTxWatchdog::txChannelHeard(const QByteArray& deviceId) const
+{
+    const auto it = m_devices.constFind(deviceId);
+    return it != m_devices.cend() && it.value().txChannelHeard;
+}
+
 void RemoteTxWatchdog::setCwActive(const QByteArray& deviceId, bool active, quint32 cwEpoch)
 {
     if (deviceId.isEmpty() || (active && cwEpoch == 0)) {
@@ -108,6 +114,9 @@ void RemoteTxWatchdog::setCwActive(const QByteArray& deviceId, bool active, quin
         Watch watch;
         watch.lastMs = now();
         it = m_devices.insert(deviceId, watch);
+    }
+    if (active && !it->keyed && !it->cwActive) {
+        it->txChannelHeard = false;
     }
     it->cwActive = active;
     it->cwEpoch = active ? cwEpoch : 0;
@@ -150,6 +159,10 @@ void RemoteTxWatchdog::update(const QByteArray& deviceId, bool keyed, bool keyed
     const bool wasWatched = it != m_devices.end();
     Watch watch = wasWatched ? it.value() : Watch{};
     if (keyedChanged) {
+        const bool keyStarts = keyed && (watch.keyed ? epoch != watch.epoch : !watch.cwActive);
+        if (keyStarts) {
+            watch.txChannelHeard = false;
+        }
         watch.keyed = keyed;
         watch.epoch = keyed ? epoch : 0;
     }
@@ -199,11 +212,16 @@ bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, const TxKeepalive& 
 {
     const quint64 sequence = value.sequence;
     const quint32 epoch = value.epoch;
-    Q_UNUSED(path);
     auto it = m_devices.find(deviceId);
     if (it == m_devices.end()) {
         // Nothing watched: a keepalive before the key, or after its end.
         return false;
+    }
+    // Before any refusal: a "tx" copy that counts for nothing here (a copy of
+    // what the session's brought, one past the cut) still shows the channel
+    // works. One from a key that has ended says nothing about this one.
+    if (path == Path::TxChannel && (it->epoch == 0 || epoch >= it->epoch)) {
+        it->txChannelHeard = true;
     }
     if (it->cwActive && (value.cwEpoch == 0 || value.cwEpoch != it->cwEpoch)) {
         return false;

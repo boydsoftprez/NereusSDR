@@ -126,6 +126,16 @@
 //               live channel row stalls past the cut with a session copy read
 //               first. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-11-05: receipt age on a direct or TURN pair: a dead device with a
+//               stall is cut one budget from the keepalive's arrival, and a
+//               live key on session keepalives alone survives a stall past
+//               the cut. WebSocket is pinned unchanged. A later key holds and
+//               cuts in full. With no "tx" copy read the guard's clock follows
+//               the copy's arrival; with one read the copy is heard when read,
+//               and it ends the guard's hold, as before.
+//               These and the stalled rows they extend are ctest entries of
+//               their own. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 #include "core/safety/TransmitHolder.h"
@@ -142,6 +152,7 @@
 #include "core/safety/TransmitCutLine.h"
 #include "core/session/PathRacer.h"
 #include "core/session/RemoteTransmitClient.h"
+#include "core/session/SessionMessages.h"
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "core/session/TransmitStateFacade.h"
@@ -171,6 +182,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -396,6 +408,61 @@ struct MoveWhileKeying {
 const QString kStopSentence =
     QStringLiteral("The link to Shack MacBook went quiet, so the Core stopped transmitting.");
 
+// A session keepalive as it comes off the wire.
+QByteArray sessionKeepaliveWire(quint64 sequence, quint32 epoch)
+{
+    const QList<MirrorUpdate> arguments{
+        MirrorUpdate{0, QByteArrayLiteral("sequence"), MirrorWireKind::Int64,
+                     QVariant(static_cast<qint64>(sequence))},
+        MirrorUpdate{0, QByteArrayLiteral("epoch"), MirrorWireKind::Int64,
+                     QVariant(static_cast<qint64>(epoch))}};
+    return SessionMessages::encode(SessionMessages::commandInvoke(
+        QByteArrayLiteral("tx.keepalive"), static_cast<quint32>(sequence), arguments));
+}
+
+// A later key after a stall: its keepalives hold it, then the link goes quiet
+// (`sever`): a fresh hold at 401 ms and a cut at 3001 ms, each within the
+// usual 100 ms. Empty when all of that happened; otherwise what did not.
+QString laterKeyHoldsAndCutsInFull(Test::RemoteAudioSessionHarness& h,
+                                   const std::function<void()>& sever)
+{
+    RemoteTxWatchdog* const watchdog = h.server.txWatchdog();
+    QSignalSpy held(watchdog, &RemoteTxWatchdog::holdStarted);
+    QSignalSpy tripped(watchdog, &RemoteTxWatchdog::tripped);
+    h.remote.setMoxFromButton(true);
+    if (!QTest::qWaitFor([&h] { return h.station.moxController()->isMox(); }, 5000)) {
+        return QStringLiteral("the later key did not key");
+    }
+    QTest::qWait(500);
+    if (!held.isEmpty() || !tripped.isEmpty()) {
+        return QStringLiteral("the later key was held or stopped with its keepalives arriving");
+    }
+    sever();
+    if (!QTest::qWaitFor([&held] { return !held.isEmpty(); }, 3000)) {
+        return QStringLiteral("the later key's RF was not held");
+    }
+    const qint64 silentAtHold = held.first().at(1).toLongLong();
+    qInfo("the later key: held %lld ms after its last keepalive",
+          static_cast<long long>(silentAtHold));
+    if (silentAtHold <= RemoteTxWatchdog::kLinkHoldMs || silentAtHold > kHoldBoundMs) {
+        return QStringLiteral("the later key held at %1 ms").arg(silentAtHold);
+    }
+    if (!QTest::qWaitFor([&tripped] { return !tripped.isEmpty(); }, 5000)) {
+        return QStringLiteral("the later key was not cut");
+    }
+    const Trip trip = tripOf(tripped);
+    qInfo("the later key: cut %lld ms after its last keepalive",
+          static_cast<long long>(trip.silentMs));
+    if (trip.linkClosed || trip.silentMs <= RemoteTxWatchdog::kLinkCutMs
+        || trip.silentMs > kCutBoundMs) {
+        return QStringLiteral("the later key was cut at %1 ms").arg(trip.silentMs);
+    }
+    if (!QTest::qWaitFor([&h] { return !h.station.moxController()->isMox(); }, 5000)) {
+        return QStringLiteral("the later key stayed on after its cut");
+    }
+    return {};
+}
+
 // ---- Remote transmit cut off the main thread (2026-10-15) ----------------
 
 using Clock = std::chrono::steady_clock;
@@ -526,6 +593,60 @@ private:
     std::atomic<bool> m_running{true};
     std::atomic<bool> m_seen{false};
     Clock::time_point m_firstAt{};
+    std::thread m_thread;   // last: it starts once the rest are set
+};
+
+// When `bits`, once set, first cleared, and whether `cutReached` read true by
+// then, from a thread of its own: a held main thread cannot see it. The cut
+// flag falls again with the MOX off on main, so read it after the hold's clear
+// and compare the clear with that MOX off too.
+class HoldClearWatch {
+public:
+    HoldClearWatch(const TxChannel& tx, quint32 bits, std::function<bool()> cutReached)
+        : m_thread([this, &tx, bits, cutReached = std::move(cutReached)] {
+            bool held = false;
+            bool cut = false;
+            while (m_running.load()) {
+                cut = cut || cutReached();
+                const bool heldNow = (tx.rfHoldMask() & bits) != 0u;
+                if (heldNow) {
+                    held = true;
+                } else if (held) {
+                    m_clearedAt = Clock::now();
+                    m_cutByThen = cut || cutReached();
+                    m_cleared = true;
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::microseconds(200));
+            }
+            m_sawHold = held;
+        })
+    {
+    }
+    ~HoldClearWatch() { stop(); }
+    HoldClearWatch(const HoldClearWatch&) = delete;
+    HoldClearWatch& operator=(const HoldClearWatch&) = delete;
+
+    void stop()
+    {
+        m_running.store(false);
+        if (m_thread.joinable()) {
+            m_thread.join();
+        }
+    }
+    // All of these after stop().
+    bool sawHold() const { return m_sawHold || m_cleared; }
+    bool clearedBeforeCut(Clock::time_point moxOffAt) const
+    {
+        return m_cleared && !m_cutByThen && m_clearedAt < moxOffAt;
+    }
+
+private:
+    std::atomic<bool> m_running{true};
+    bool m_sawHold = false;
+    bool m_cleared = false;
+    bool m_cutByThen = false;
+    Clock::time_point m_clearedAt{};
     std::thread m_thread;   // last: it starts once the rest are set
 };
 
@@ -1281,20 +1402,37 @@ private slots:
     // copy the Core reads first arrives past it, with no receipt time. It
     // renews and stops nothing; the fed copies, timed at their receipt, show
     // the link never went quiet.
+    // Third row: the same on a direct or TURN data channel, where a "tx" copy has
+    // been read, so the session copy behaves as on a WebSocket; and a later key
+    // holds and cuts in full.
     void aLiveChannelKeepsTheKeyWhenMainIsHeld_data()
     {
         QTest::addColumn<int>("holdMs");
         QTest::addColumn<bool>("sessionCopyFirst");
-        QTest::newRow("under the cut") << 1000 << false;
-        QTest::newRow("past the cut, a session copy first") << 3500 << true;
+        QTest::addColumn<bool>("measuresReceipt");
+        QTest::newRow("under the cut") << 1000 << false << false;
+        QTest::newRow("past the cut, a session copy first") << 3500 << true << false;
+        QTest::newRow("past the cut, a session copy first, direct or TURN data channel")
+            << 3500 << true << true;
+        // A healthy "tx" channel: the same on either link through a stall.
+        QTest::newRow("under the cut, a session copy first") << 2500 << true << false;
+        QTest::newRow("under the cut, a session copy first, direct or TURN data channel")
+            << 2500 << true << true;
     }
     void aLiveChannelKeepsTheKeyWhenMainIsHeld()
     {
         QFETCH(int, holdMs);
         QFETCH(bool, sessionCopyFirst);
+        QFETCH(bool, measuresReceipt);
         CutRig rig;
+        // Only the row that keys again: the long first key would leave no room.
+        std::unique_ptr<FeedPump> pump;
+        if (measuresReceipt) {
+            pump = std::make_unique<FeedPump>(rig.h.station.remoteMicFeed());
+        }
         QVERIFY(rig.keyOnTheTxChannel());
         Test::RemoteAudioSessionHarness& h = rig.h;
+        h.stationLink->setMeasuresReceipt(measuresReceipt);
         QSignalSpy tripped(h.server.txWatchdog(), &RemoteTxWatchdog::tripped);
         QSignalSpy stopped(&h.station, &RadioModel::transmitStopped);
         const std::size_t mark = rig.conn.count();
@@ -1367,6 +1505,13 @@ private slots:
             QVERIFY(args.at(0).toString() != kStopSentence);
         }
         QVERIFY(!rig.conn.transmitCut());
+        if (measuresReceipt) {
+            const QString later = laterKeyHoldsAndCutsInFull(h, [&rig, &h] {
+                rig.coreTransport->setReceiveSeveredForTest(true);
+                h.stationLink->setSevered(true);
+            });
+            QVERIFY2(later.isEmpty(), qPrintable(later));
+        }
     }
 
     // The two orders after a stall, made deterministic: the guard's cut
@@ -1456,22 +1601,29 @@ private slots:
     // and the stop is the watchdog's check's to make, after the release was
     // read. (A keepalive in flight when the hold began gave the first row
     // this order by chance: hosted Linux, run 41203885532.)
+    // Last row: on a direct or TURN data channel. A "tx" copy has been read, so the
+    // keepalive is heard when read, as on a WebSocket. The keepalive counts from when it came, renewing
+    // nothing past it, and the release still ends the key with no lost link.
     void aReleaseReadAfterTheCutIsNotALostLink_data()
     {
         QTest::addColumn<bool>("keepaliveAhead");
         QTest::addColumn<bool>("voxArmed");
-        QTest::newRow("the release alone") << false << false;
-        QTest::newRow("a keepalive waiting ahead of it") << true << false;
-        QTest::newRow("with VOX armed") << true << true;
+        QTest::addColumn<bool>("measuresReceipt");
+        QTest::newRow("the release alone") << false << false << false;
+        QTest::newRow("a keepalive waiting ahead of it") << true << false << false;
+        QTest::newRow("with VOX armed") << true << true << false;
+        QTest::newRow("direct or TURN data channel, with VOX armed") << true << true << true;
     }
     void aReleaseReadAfterTheCutIsNotALostLink()
     {
         QFETCH(bool, keepaliveAhead);
         QFETCH(bool, voxArmed);
+        QFETCH(bool, measuresReceipt);
         CutRig rig;
         FeedPump pump(rig.h.station.remoteMicFeed());
         QVERIFY(rig.keyOnTheTxChannel(voxArmed));
         Test::RemoteAudioSessionHarness& h = rig.h;
+        h.stationLink->setMeasuresReceipt(measuresReceipt);
         Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
         QVERIFY(windowEnd != nullptr);
         QSignalSpy tripped(h.server.txWatchdog(), &RemoteTxWatchdog::tripped);
@@ -1682,6 +1834,361 @@ private slots:
         QVERIFY(h.station.moxController()->isMox());
         h.remote.setMoxFromButton(false);
         QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+    }
+
+    // ---- Receipt age on the session's keepalives (2026-11-05) ---------------
+
+    // Keyed over the session alone, with no "tx" channel, so only the
+    // watchdog judges. One session keepalive arrives, the device dies, and
+    // the Core's main thread stalls 2500 ms before reading it. On a direct or
+    // TURN data channel it counts from its arrival: the cut comes about 3001 ms
+    // after that, and RF is held as soon as the stall ends. On a WebSocket
+    // there is no receipt time and the behavior is pinned as it was: counted
+    // as heard when read, RF stays on about 401 ms longer after the stall, and
+    // the cut about 3001 ms after the read, so about 5500 ms after its arrival.
+    // A later key is fresh.
+    void aDeadDeviceWithAStallIsCutFromTheKeepalivesArrival_data()
+    {
+        QTest::addColumn<bool>("measuresReceipt");
+        QTest::newRow("direct or TURN data channel, no tx channel") << true;
+        QTest::newRow("WebSocket") << false;
+    }
+    void aDeadDeviceWithAStallIsCutFromTheKeepalivesArrival()
+    {
+        QFETCH(bool, measuresReceipt);
+        constexpr int kStallMs = 2500;
+        TxChannel tx{WdspEngine::kTxChannelId};   // outlives the harness
+        Test::RemoteAudioSessionHarness h;
+        h.station.injectTxChannelForTest(&tx);
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        h.openFakeMicrophoneLine();
+        h.connectSession();
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        h.stationLink->setMeasuresReceipt(measuresReceipt);
+        Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
+        QVERIFY(windowEnd != nullptr);
+        RemoteTransmitClient* const transmit = h.client.remoteTransmit();
+        QVERIFY(transmit != nullptr);
+        RemoteTxWatchdog* const watchdog = h.server.txWatchdog();
+
+        h.remote.setMoxFromButton(true);
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        QTest::qWait(300);
+        QSignalSpy tripped(watchdog, &RemoteTxWatchdog::tripped);
+        QSignalSpy held(watchdog, &RemoteTxWatchdog::holdStarted);
+        QSignalSpy heard(watchdog, &RemoteTxWatchdog::keepaliveHeard);
+        QVERIFY(tripped.isEmpty() && held.isEmpty());
+
+        // One more leaves the window. It waits, and the device dies with
+        // nothing else sent.
+        windowEnd->setHoldsOutgoing(true);
+        const quint64 sentBefore = transmit->sessionKeepalivesSent();
+        QTRY_VERIFY_WITH_TIMEOUT(transmit->sessionKeepalivesSent() > sentBefore, 1000);
+        QElapsedTimer sinceStallStart;
+        sinceStallStart.start();
+        windowEnd->setHoldsOutgoing(false);
+        windowEnd->setDropsOutgoing(true);
+        const qsizetype heardBefore = heard.size();
+        qint64 trippedAfterMs = -1;
+        QObject scope;   // last: disconnects before the value goes
+        QObject::connect(watchdog, &RemoteTxWatchdog::tripped, &scope,
+                         [&](const QByteArray&, bool, qint64) {
+            trippedAfterMs = sinceStallStart.elapsed();
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(kStallMs));
+
+        QTRY_COMPARE_WITH_TIMEOUT(tripped.count(), 1, 8000);
+        QVERIFY2(heard.size() > heardBefore, "the keepalive that waited was not counted");
+        const Trip trip = tripOf(tripped);
+        QVERIFY(!trip.linkClosed);
+        QCOMPARE(held.count(), 1);
+        const qint64 silentAtHold = held.first().at(1).toLongLong();
+        qInfo("%s, stall %d ms: held at %lld ms of silence, cut at %lld ms of silence, %lld ms "
+              "after the stall began",
+              measuresReceipt ? "direct or TURN data channel" : "WebSocket", kStallMs,
+              static_cast<long long>(silentAtHold), static_cast<long long>(trip.silentMs),
+              static_cast<long long>(trippedAfterMs));
+        // The silence reported runs from what the watchdog took as the last
+        // keepalive's hearing, in both rows.
+        QVERIFY2(trip.silentMs > RemoteTxWatchdog::kLinkCutMs && trip.silentMs <= kCutBoundMs,
+                 qPrintable(QString::number(trip.silentMs)));
+        if (measuresReceipt) {
+            // No more than one full budget from the arrival.
+            QVERIFY2(trippedAfterMs <= kCutBoundMs, qPrintable(QString::number(trippedAfterMs)));
+            QVERIFY2(silentAtHold >= kStallMs - 100, qPrintable(QString::number(silentAtHold)));
+        } else {
+            // Pinned, unchanged: a full budget from the read, so RF stayed on
+            // for a fresh hold's 401 ms.
+            QVERIFY2(trippedAfterMs > kStallMs + RemoteTxWatchdog::kLinkCutMs,
+                     qPrintable(QString::number(trippedAfterMs)));
+            QVERIFY2(silentAtHold > RemoteTxWatchdog::kLinkHoldMs && silentAtHold <= kHoldBoundMs,
+                     qPrintable(QString::number(silentAtHold)));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QTRY_COMPARE(h.client.transmitState()->stopReason(), QStringLiteral("linkLost"));
+        QTRY_COMPARE(tx.rfHoldMask(), 0u);
+
+        // The device comes back and keys again.
+        windowEnd->setDropsOutgoing(false);
+        h.remote.setMoxFromButton(false);
+        const QString later = laterKeyHoldsAndCutsInFull(
+            h, [&h] { h.stationLink->setSevered(true); });
+        QVERIFY2(later.isEmpty(), qPrintable(later));
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // Keyed over the session alone, the link alive through a stall past the
+    // cut: session keepalives keep arriving (fed from a thread of their own,
+    // as a data channel's library thread hands them over), with one sent by
+    // the window read first. On a direct or TURN data channel they count at their
+    // receipts: nothing held, nothing stopped. On a WebSocket they cannot show
+    // when they came, so the behavior is pinned as it was: the first one read
+    // renews nothing, nor do those behind it, and the live key is stopped as
+    // a lost link. A later key is fresh.
+    void aLiveKeyOnSessionKeepalivesAloneThroughAStall_data()
+    {
+        QTest::addColumn<bool>("measuresReceipt");
+        QTest::newRow("direct or TURN data channel, no tx channel") << true;
+        QTest::newRow("WebSocket") << false;
+    }
+    void aLiveKeyOnSessionKeepalivesAloneThroughAStall()
+    {
+        QFETCH(bool, measuresReceipt);
+        constexpr int kStallMs = 3500;
+        TxChannel tx{WdspEngine::kTxChannelId};   // outlives the harness
+        Test::RemoteAudioSessionHarness h;
+        h.station.injectTxChannelForTest(&tx);
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        h.openFakeMicrophoneLine();
+        h.connectSession();
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        h.stationLink->setMeasuresReceipt(measuresReceipt);
+        Test::LoopbackTransport* const stationEnd = h.stationLink.data();
+        Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
+        QVERIFY(windowEnd != nullptr);
+        RemoteTransmitClient* const transmit = h.client.remoteTransmit();
+        QVERIFY(transmit != nullptr);
+        RemoteTxWatchdog* const watchdog = h.server.txWatchdog();
+
+        h.remote.setMoxFromButton(true);
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        QTest::qWait(300);
+        const quint32 keyEpoch = h.station.keyedBy().epoch;
+        QSignalSpy tripped(watchdog, &RemoteTxWatchdog::tripped);
+        QSignalSpy held(watchdog, &RemoteTxWatchdog::holdStarted);
+        QSignalSpy stopped(&h.station, &RadioModel::transmitStopped);
+        HoldMaskWatch anyHold(tx, ~0u);
+
+        // The session copy read first: posted before the feeder starts.
+        windowEnd->setHoldsOutgoing(true);
+        const quint64 sentBefore = transmit->sessionKeepalivesSent();
+        QTRY_VERIFY_WITH_TIMEOUT(transmit->sessionKeepalivesSent() > sentBefore, 1000);
+        windowEnd->setHoldsOutgoing(false);
+
+        // Sequences above anything the window's own keepalives reach here.
+        std::atomic<bool> feeding{true};
+        std::atomic<int> fed{0};
+        std::thread feeder([stationEnd, keyEpoch, &feeding, &fed]() {
+            quint64 sequence = 1'000'000;
+            while (feeding.load()) {
+                stationEnd->arriveFromAnyThreadForTest(sessionKeepaliveWire(++sequence, keyEpoch));
+                fed.fetch_add(1);
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(RemoteTxWatchdog::kKeepaliveIntervalMs / 2));
+            }
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(kStallMs));
+        const int fedDuringStall = fed.load();
+
+        // Main runs again with the feeder still going.
+        if (measuresReceipt) {
+            QTest::qWait(500);
+        } else {
+            QTRY_COMPARE_WITH_TIMEOUT(tripped.count(), 1, 3000);
+        }
+        const bool keyedAfter = h.station.moxController()->isMox();
+        anyHold.stop();
+        const bool everHeld = anyHold.seen();
+        feeding.store(false);
+        feeder.join();
+        qInfo("%s, stall %d ms with %d keepalives fed: %s, %d stops",
+              measuresReceipt ? "direct or TURN data channel" : "WebSocket", kStallMs, fedDuringStall,
+              keyedAfter ? "still keyed" : "stopped", static_cast<int>(tripped.count()));
+        QVERIFY2(fedDuringStall >= 10, qPrintable(QString::number(fedDuringStall)));
+        if (measuresReceipt) {
+            QVERIFY(keyedAfter);
+            QVERIFY2(!everHeld, "the RF was held on a live link");
+            QCOMPARE(held.count(), 0);
+            QCOMPARE(tripped.count(), 0);
+            QCOMPARE(stopped.count(), 0);
+            QVERIFY(h.client.transmitState()->stopReason() != QLatin1String("linkLost"));
+        } else {
+            QVERIFY(!keyedAfter);
+            QVERIFY(!tripOf(tripped).linkClosed);
+            QCOMPARE(stopped.count(), 1);
+            QCOMPARE(stopped.first().at(0).toString(), kStopSentence);
+            QTRY_COMPARE(h.client.transmitState()->stopReason(), QStringLiteral("linkLost"));
+        }
+
+        h.remote.setMoxFromButton(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        const QString later = laterKeyHoldsAndCutsInFull(
+            h, [&h] { h.stationLink->setSevered(true); });
+        QVERIFY2(later.isEmpty(), qPrintable(later));
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // The known limit of a key with the channel heard. The "tx" channel goes, the
+    // session is left one copy, and main stalls 2500 ms. A "tx" copy has been read
+    // on this key, so that copy is heard when read, by the watchdog and the guard
+    // alike, even on a link that reports its wait. It ends the guard's hold, so RF
+    // is on again for about 401 ms, and the cut is a full count from the read:
+    // about 5500 ms after the channel's last receipt. As before this change.
+    void aChannelHeardSessionCopyReadAfterAStallEndsTheGuardsHold()
+    {
+        constexpr int kStallMs = 2500;
+        CutRig rig;
+        QVERIFY(rig.keyOnTheTxChannel());
+        Test::RemoteAudioSessionHarness& h = rig.h;
+        h.stationLink->setMeasuresReceipt(true);
+        Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
+        QVERIFY(windowEnd != nullptr);
+        const quint32 keyEpoch = h.station.keyedBy().epoch;
+        const std::size_t mark = rig.conn.count();
+        // A "tx" copy read on this key, for certain.
+        QTRY_VERIFY_WITH_TIMEOUT(h.server.txWatchdog()->txChannelHeard(h.windowKey->fingerprint()),
+                                 2000);
+        HoldClearWatch guardHold(rig.tx, kGuardHoldBit,
+                                 [&rig] { return rig.conn.transmitCut(); });
+
+        // Right after a receipt, so the copy comes within a few milliseconds
+        // of the channel's last.
+        const Clock::time_point before = h.server.lastTxChannelReceiptForTest();
+        QTRY_VERIFY_WITH_TIMEOUT(h.server.lastTxChannelReceiptForTest() != before, 2000);
+        rig.coreTransport->setReceiveSeveredForTest(true);
+        windowEnd->setDropsOutgoing(true);
+        constexpr quint64 kSequence = 1'000'000;
+        h.stationLink->arriveFromAnyThreadForTest(sessionKeepaliveWire(kSequence, keyEpoch));
+        std::this_thread::sleep_for(std::chrono::milliseconds(kStallMs));
+
+        QTRY_VERIFY_WITH_TIMEOUT(hasEntry(rig.conn.since(mark), QStringLiteral("MOX off")), 8000);
+        const std::vector<RecordingConnection::Entry> entries = rig.conn.since(mark);
+        const Clock::time_point lastReceipt = h.server.lastTxChannelReceiptForTest();
+        const Clock::time_point moxOffAt = findEntry(entries, QStringLiteral("MOX off"))->at;
+        const double cutAfterReceiptMs = msBetween(lastReceipt, moxOffAt);
+        guardHold.stop();
+        const bool clearedEarly = guardHold.clearedBeforeCut(moxOffAt);
+        qInfo("a session copy after a %d ms stall, the channel heard: cut %.1f ms after the "
+              "channel's last receipt, hold cleared before the cut: %s",
+              kStallMs, cutAfterReceiptMs, clearedEarly ? "yes" : "no");
+        QVERIFY2(guardHold.sawHold(), "the guard did not hold the RF");
+        QVERIFY2(clearedEarly, "the copy did not end the guard's hold");
+        QVERIFY2(cutAfterReceiptMs > double(kStallMs + RemoteTxWatchdog::kLinkCutMs - 100),
+                 qPrintable(QString::number(cutAfterReceiptMs)));
+        QVERIFY2(cutAfterReceiptMs <= double(kStallMs + kCutBoundMs + 100),
+                 qPrintable(QString::number(cutAfterReceiptMs)));
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+    }
+
+    // The reason the age stops at the first "tx" copy. On a key with the channel
+    // heard, session copies that win the read through a lag that lasts must not stop
+    // the live key. Each cycle one arrives on a link that reports its wait, then main
+    // is busy 500 ms, so it is read about 500 ms old. Its sequence is above anything
+    // the window's own keepalives reach here, so it wins the read and those are
+    // copies. Given its age it would renew only to its arrival, so a hold would never
+    // end and the key would stop at the hold's bound. Eight cycles run past that.
+    // RF may be held between reads, which this test does not judge.
+    void aChannelHeardLagOnSessionCopiesReadFirstDoesNotStopALiveKey()
+    {
+        constexpr int kLagMs = 500;
+        constexpr int kCycles = 8;
+        CutRig rig;
+        QVERIFY(rig.keyOnTheTxChannel());
+        Test::RemoteAudioSessionHarness& h = rig.h;
+        h.stationLink->setMeasuresReceipt(true);
+        RemoteTxWatchdog* const watchdog = h.server.txWatchdog();
+        const QByteArray device = h.windowKey->fingerprint();
+        const quint32 keyEpoch = h.station.keyedBy().epoch;
+        QTRY_VERIFY_WITH_TIMEOUT(watchdog->txChannelHeard(device), 2000);
+        QSignalSpy tripped(watchdog, &RemoteTxWatchdog::tripped);
+        QSignalSpy stopped(&h.station, &RadioModel::transmitStopped);
+
+        for (int cycle = 0; cycle < kCycles; ++cycle) {
+            h.stationLink->arriveFromAnyThreadForTest(
+                sessionKeepaliveWire(1'000'000 + quint64(cycle), keyEpoch));
+            std::this_thread::sleep_for(std::chrono::milliseconds(kLagMs));
+            QTest::qWait(10);
+        }
+
+        QCOMPARE(tripped.count(), 0);
+        QCOMPARE(stopped.count(), 0);
+        QVERIFY(h.station.moxController()->isMox());
+        QVERIFY(watchdog->txChannelHeard(device));
+        h.remote.setMoxFromButton(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QCOMPARE(tripped.count(), 0);
+    }
+
+    // The other half of one answer. With no "tx" channel the guard judges nothing
+    // on a voice key, but its clock follows the same copy, and a CW start reads
+    // it. On a link that reports its wait the clock goes to the arrival; with no
+    // wait to report, to the read.
+    void aGuardsClockFollowsTheSameAnswerWithNoChannel_data()
+    {
+        QTest::addColumn<bool>("measuresReceipt");
+        QTest::newRow("direct or TURN data channel, no tx channel") << true;
+        QTest::newRow("WebSocket") << false;
+    }
+    void aGuardsClockFollowsTheSameAnswerWithNoChannel()
+    {
+        QFETCH(bool, measuresReceipt);
+        constexpr int kStallMs = 1000;
+        TxChannel tx{WdspEngine::kTxChannelId};   // outlives the harness
+        Test::RemoteAudioSessionHarness h;
+        h.station.injectTxChannelForTest(&tx);
+        h.pairWindow = true;
+        h.makeTransmitReady();
+        h.openFakeMicrophoneLine();
+        h.connectSession();
+        QTRY_VERIFY(h.client.capabilities().txPermitted);
+        h.stationLink->setMeasuresReceipt(measuresReceipt);
+        Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
+        QVERIFY(windowEnd != nullptr);
+        RemoteTransmitClient* const transmit = h.client.remoteTransmit();
+        QVERIFY(transmit != nullptr);
+        RemoteTxWatchdog* const watchdog = h.server.txWatchdog();
+
+        h.remote.setMoxFromButton(true);
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox(), 5000);
+        QTest::qWait(300);
+        QVERIFY(h.server.txCutGuard() != nullptr);
+        QVERIFY(!h.server.txCutGuard()->isJudging());
+        QSignalSpy heard(watchdog, &RemoteTxWatchdog::keepaliveHeard);
+
+        windowEnd->setHoldsOutgoing(true);
+        const quint64 sentBefore = transmit->sessionKeepalivesSent();
+        QTRY_VERIFY_WITH_TIMEOUT(transmit->sessionKeepalivesSent() > sentBefore, 1000);
+        windowEnd->setHoldsOutgoing(false);
+        windowEnd->setDropsOutgoing(true);
+        const qsizetype heardBefore = heard.size();
+        std::this_thread::sleep_for(std::chrono::milliseconds(kStallMs));
+        QTRY_VERIFY_WITH_TIMEOUT(heard.size() > heardBefore, 1000);
+        const double clockBehindMs =
+            msBetween(h.server.txCutGuard()->lastHeardForTest(), Clock::now());
+        qInfo("%s: the guard's clock %.1f ms behind after a %d ms stall",
+              measuresReceipt ? "direct or TURN data channel" : "WebSocket", clockBehindMs,
+              kStallMs);
+        if (measuresReceipt) {
+            QVERIFY2(clockBehindMs >= kStallMs - 100, qPrintable(QString::number(clockBehindMs)));
+        } else {
+            QVERIFY2(clockBehindMs < kStallMs - 100, qPrintable(QString::number(clockBehindMs)));
+        }
+        windowEnd->setDropsOutgoing(false);
+        h.remote.setMoxFromButton(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 
     // ---- The Part E paths --------------------------------------------------
@@ -2170,7 +2677,16 @@ int main(int argc, char** argv)
     const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
         test.metaObject(), app.arguments(), "NEREUS_TX_LINK_LOSS_GROUP",
         {{QStringLiteral("starvation"),
-          {QStringLiteral("starvationOnALiveLinkHoldsAmThenCutsEveryMode")}}});
+          {QStringLiteral("starvationOnALiveLinkHoldsAmThenCutsEveryMode")}},
+         {QStringLiteral("receipt_age"),
+          {QStringLiteral("aDeadDeviceWithAStallIsCutFromTheKeepalivesArrival"),
+           QStringLiteral("aLiveKeyOnSessionKeepalivesAloneThroughAStall"),
+           QStringLiteral("aChannelHeardSessionCopyReadAfterAStallEndsTheGuardsHold"),
+           QStringLiteral("aChannelHeardLagOnSessionCopiesReadFirstDoesNotStopALiveKey"),
+           QStringLiteral("aGuardsClockFollowsTheSameAnswerWithNoChannel")}},
+         {QStringLiteral("stalled"),
+          {QStringLiteral("aLiveChannelKeepsTheKeyWhenMainIsHeld"),
+           QStringLiteral("aReleaseReadAfterTheCutIsNotALostLink")}}});
     return arguments ? QTest::qExec(&test, *arguments) : 1;
 }
 #include "tst_tx_link_loss_each_path.moc"

@@ -10082,7 +10082,7 @@ if(TEST tst_tx_link_loss_each_path)
         RESOURCE_LOCK "tx-link-loss-each-path")
 endif()
 nereus_split_test(tst_tx_link_loss_each_path
-    ENV NEREUS_TX_LINK_LOSS_GROUP GROUPS starvation)
+    ENV NEREUS_TX_LINK_LOSS_GROUP GROUPS starvation receipt_age stalled)
 # iPhone app plan Task 39 (D14, R-IOS-13, R-IOS-21): the Core's transmit
 # meter pump, and the mirrored `txState` object (TransmitState): who keyed,
 # the time left, the meters ten times a second while keyed, and why the Core
