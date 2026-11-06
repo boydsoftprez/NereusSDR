@@ -18297,6 +18297,7 @@ SetupDialog* MainWindow::createSetupDialog()
         return m_hotKeyTargets->setupUnavailableReason(id);
     });
     dialog->setControllerHost(m_controllerHost.get());
+    dialog->setDeckLink(m_deckLink.get());
     dialog->setReceiverSelector([this] { return activeSliceForWindow(); },
                                 [this] { return desktopHosting(); });
     if (m_radioModel && m_radioModel->sliceOwnership()) {

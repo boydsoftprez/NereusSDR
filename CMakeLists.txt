@@ -2279,6 +2279,7 @@ set(GUI_SOURCES
     src/gui/setup/HotKeySetupPages.cpp
     src/gui/setup/KeyboardMapWidget.cpp
     src/gui/setup/KnobsSetupPage.cpp
+    src/gui/setup/DeckPluginsSetupPage.cpp
     src/gui/setup/MidiSetupPage.cpp
     src/gui/setup/DiagnosticsSetupPages.cpp
     src/gui/diagnostics/RadioStatusPage.cpp

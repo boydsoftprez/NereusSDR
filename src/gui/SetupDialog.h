@@ -33,6 +33,7 @@
 namespace NereusSDR {
 
 class ControllerHost;
+class DeckLink;
 class HotKeyBindings;
 class KeyboardPage;
 class KnobsSetupPage;
@@ -109,6 +110,9 @@ public:
     // Hot keys plan Task 11: what the MIDI page drives. With none, it says so and
     // stays disabled.
     void setControllerHost(ControllerHost* host);
+    // Hot keys plan Task 21: what the Deck Plugins page switches. With none, it says so
+    // and its switch stays disabled.
+    void setDeckLink(DeckLink* link);
 
     // Display pill plan Task 20 (D22, D26; R-DSP-33): how Setup's FFT
     // controls change the station's FFT settings. One handler per control;
@@ -472,6 +476,7 @@ private:
     ControllerHost* m_controllerHost{nullptr};
     QPointer<MidiSetupPage> m_midiPage;
     QPointer<KnobsSetupPage> m_knobsPage;
+    DeckLink* m_deckLink{nullptr};
     int m_displayPanIndex{-1};
     QWidget* m_displaySourceHost{nullptr};
     QHash<QString, SetupPage*> m_displaySourcePages;

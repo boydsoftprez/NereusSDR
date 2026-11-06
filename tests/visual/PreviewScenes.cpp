@@ -301,6 +301,7 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: dialog-setup-keyboard-full.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: dialog-setup-midi-rows.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: dialog-setup-knobs scenes.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 21: dialog-setup-deck-plugins at both sizes.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys CI fixes: dialog-setup-keyboard--min and
 //                --wide, for the map that reflows.
 //                AI-assisted implementation via Anthropic Claude Code.
@@ -11382,6 +11383,7 @@ QVector<SetupSizeSpec> setupSizeSpecs()
         {QStringLiteral("rf-kit"), {QStringLiteral("RF2K-S")}, saturn, min, kSetupMinimumSize},
         {QStringLiteral("keyboard"), {}, saturn, min, kSetupMinimumSize},
         {QStringLiteral("knobs"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("deck-plugins"), {}, saturn, min, kSetupMinimumSize},
         {hardware, {alex}, saturn, wide, kSetupWideSize},
         {hardware, {alex, alex1}, saturn, wide, kSetupWideSize},
         {hardware, {alex, alex2}, saturn, wide, kSetupWideSize},
@@ -11389,6 +11391,7 @@ QVector<SetupSizeSpec> setupSizeSpecs()
         {hardware, {oc, swl}, saturn, wide, kSetupWideSize},
         {QStringLiteral("keyboard"), {}, saturn, wide, kSetupWideSize},
         {QStringLiteral("knobs"), {}, saturn, wide, kSetupWideSize},
+        {QStringLiteral("deck-plugins"), {}, saturn, wide, kSetupWideSize},
     };
 }
 

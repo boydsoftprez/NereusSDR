@@ -220,6 +220,7 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: Keys and controllers > MIDI replaces CAT & Network > MIDI Control.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: Keys and controllers > Knobs.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 21: Keys and controllers > Deck Plugins.
 //                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
@@ -287,6 +288,7 @@
 #include "setup/RotorSetupPage.h"
 // Keys and controllers
 #include "setup/HotKeySetupPages.h"
+#include "setup/DeckPluginsSetupPage.h"
 #include "setup/KnobsSetupPage.h"
 #include "setup/MidiSetupPage.h"
 // Diagnostics
@@ -573,6 +575,11 @@ void SetupDialog::refreshHotKeyAvailability()
 void SetupDialog::setControllerHost(ControllerHost* host)
 {
     m_controllerHost = host;
+}
+
+void SetupDialog::setDeckLink(DeckLink* link)
+{
+    m_deckLink = link;
 }
 
 void SetupDialog::selectPage(const QString& label)
@@ -2371,6 +2378,9 @@ void SetupDialog::buildTree()
         page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
         m_knobsPage = page;
         return page;
+    });
+    registerPage(keysAndControllers, "Deck Plugins", SetupScope::ThisComputer, [this]() -> QWidget* {
+        return new DeckPluginsSetupPage(m_deckLink);
     });
 
     tick("Keys and controllers");
