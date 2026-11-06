@@ -1,6 +1,7 @@
 # Hot keys: keyboard, MIDI, knobs and deck plugins
 
-Status: approved 2026-11-05 ("yes plan and build with crew and subagents"). Plan:
+Status: built 2026-11-06 and awaiting a hardware run. Approved 2026-11-05 ("yes plan and build with crew and subagents"). Evidence:
+[2026-11-05-hot-keys-evidence.md](2026-11-05-hot-keys-evidence.md). Plan:
 [2026-11-05-hot-keys-plan.md](2026-11-05-hot-keys-plan.md). Where the plan's "Corrections to the spec" table
 differs from this document, the table is right, because it was checked against the code afterward.
 
