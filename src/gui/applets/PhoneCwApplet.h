@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - A container copy of this panel (createPanelCopy) hides each
+//                 row, and the Phone and CW buttons, from its entry config.
+//                 The docked panel is unchanged. Brian Sutton, AI-assisted
+//                 via xAI Grok.
 //   2026-04-17 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                 (KG4VCF), with AI-assisted transformation via Anthropic
 //                 Claude Code.
@@ -107,6 +111,11 @@
 #include "AppletWidget.h"
 #include "gui/NereusGuiExport.h"
 
+#include <QJsonObject>
+#include <QList>
+
+#include <memory>
+
 class QStackedWidget;
 class QButtonGroup;
 class QSlider;
@@ -119,6 +128,7 @@ namespace NereusSDR {
 
 class HGauge;
 class DexpPeakMeter;
+class SectionParts;
 class TriBtn;
 
 // PhoneCwApplet — QStackedWidget with Phone (0) and CW (1) pages.
@@ -161,6 +171,15 @@ public:
     // Switch the stacked widget page: 0=Phone, 1=CW, 2=FM
     void showPage(int index);
 
+    // A container's own copy of this panel. The docked applet is unchanged.
+    // With preview, the copy is built and not wired: it is disabled and it
+    // changes nothing. A live copy is wired like this applet, follows the
+    // same permission gates, and is not this applet's widget.
+    PhoneCwApplet* createPanelCopy(QWidget* parent, bool preview);
+    // Hides the rows the entry names, and shows Phone or CW from "page".
+    void applyContainerConfig(const QJsonObject& config);
+    const SectionParts* containerParts() const;
+
 public slots:
     /// R-R3-21: the transmit compression reading, in dB, as the meters'
     /// Compression bar receives it (MeterPoller's TxComp binding while
@@ -199,6 +218,9 @@ private slots:
     void pollDexpMeters();
 
 private:
+    enum class Surface { Applet, LiveCopy, Preview };
+    PhoneCwApplet(RadioModel* model, QWidget* parent, Surface surface);
+
     void buildUI();
     void buildPhonePage(QWidget* page);
     void buildCwPage(QWidget* page);
@@ -359,6 +381,16 @@ private:
     QComboBox*   m_fmMemCombo{nullptr};
     QPushButton* m_fmMemPrev{nullptr};
     QPushButton* m_fmMemNext{nullptr};
+
+    // A container copy names its rows here. The docked applet leaves this
+    // empty, so its panel never hides a row from a container entry.
+    Surface m_surface = Surface::Applet;
+    std::unique_ptr<SectionParts> m_parts;
+    QList<PhoneCwApplet*> m_copies;
+    bool m_compressionSeen = false;
+    bool m_compressionUnavailable = false;
+    double m_compressionDb = -25.0;
+    QString m_compressionReason;
 };
 
 } // namespace NereusSDR
