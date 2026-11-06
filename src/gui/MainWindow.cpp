@@ -11,6 +11,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: A pan going away lowers its wideband flag while the widgets are
+//               whole, the CH labels are held rather than searched for, and a
+//               wing click retunes only a slice this window controls. Hosting
+//               starting or stopping rechecks the flag.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06: A pan raises the wideband flag only for a slice this window
 //               controls or listens to, issue 701.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -3222,6 +3227,7 @@ void MainWindow::setDesktopStationController(DesktopStationController* controlle
             if (!desktopHosting() && m_desktopTakeDialog) { m_desktopTakeDialog->close(); }
             if (!self) { return; }
             refreshDesktopStationState();
+            emit desktopHostingChanged();
         });
         // TX badge take: the badge's take ended after its call.
         connect(replacement, &DesktopStationController::takeFinished, this,
@@ -5362,13 +5368,15 @@ void MainWindow::configureSpectrumForPanForTest(SpectrumWidget* spectrum,
     spectrum->loadSettings();
 }
 
-void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
-                                              RadioModel* model,
-                                              PanadapterStack* stack,
-                                              const QString& panId,
-                                              const std::function<bool(int)>& mayRaiseWideband)
+std::function<void()> MainWindow::wireWidebandExtensionForTest(
+    SpectrumWidget* spectrum,
+    RadioModel* model,
+    PanadapterStack* stack,
+    const QString& panId,
+    const std::function<bool(int)>& mayRaiseWideband,
+    const std::function<bool(int)>& mayRetune)
 {
-    if (!spectrum || !model || !stack) { return; }
+    if (!spectrum || !model || !stack) { return {}; }
     const QPointer<RadioModel> modelRef(model);
     const QPointer<PanadapterStack> stackRef(stack);
     const QPointer<SpectrumWidget> spectrumRef(spectrum);
@@ -5490,15 +5498,28 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         if (requestOwner->slice) { (requestOwner->slice)->setWidebandExtensionRequested(false); }
         requestOwner->slice.clear();
     });
+    // A pan leaving the stack: it has gone from the map, so resolve() finds
+    // nothing and the flag falls here, with every widget still whole. Left to
+    // `destroyed` above, it fell during the deferred delete, and a filter change
+    // reaching a search of the window's children crashed the app with no stop
+    // frame sent to the radio. removePanadapter announces this for docked and
+    // floating pans alike.
+    connect(stack, &PanadapterStack::panRetired, spectrum,
+            [reconcile, panId](const QString& retiredId) {
+        if (retiredId == panId) { reconcile(); }
+    });
+    // A wing click moves the slice, so it answers to the same rule as any other
+    // tune: not another device's slice, nor one this window only listens to.
+    // On that device's transmit slice it would move its transmit frequency.
     connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
-            spectrum, [resolve](double freqHz) {
-        if (SliceModel* slice = resolve()) {
+            spectrum, [resolve, mayRetune](double freqHz) {
+        SliceModel* slice = resolve();
+        if (slice && (!mayRetune || mayRetune(slice->sliceIndex()))) {
             slice->setFrequency(freqHz);
         }
     });
-    // Settings restore and rate seeding may have derived the actual state
-    // before this bridge existed, so seed the resolved slice immediately.
     reconcile();
+    return reconcile;
 }
 
 void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
@@ -7995,10 +8016,14 @@ void MainWindow::ensureOverlayPanels()
         // this is the only wiring for them and nothing doubles.
         wireSpectrumSliceControls(sw, panId);
         // The slices streamShownOnPan lets a pan show, whose stream it chose.
-        wireWidebandExtensionForTest(sw, m_radioModel, m_panStack, panId, [this](int sliceId) {
-            return !markerOnlyPlacement(sliceId)
-                && (windowControlsSlice(sliceId) || windowListensTo(sliceId));
-        });
+        const std::function<void()> reconcileWideband = wireWidebandExtensionForTest(
+            sw, m_radioModel, m_panStack, panId,
+            [this](int sliceId) {
+                return !markerOnlyPlacement(sliceId)
+                    && (windowControlsSlice(sliceId) || windowListensTo(sliceId));
+            },
+            [this](int sliceId) { return windowControlsSlice(sliceId); });
+        connect(this, &MainWindow::desktopHostingChanged, sw, reconcileWideband);
 
         // Display pill plan Task 7: a zoom on this pan (and its
         // requestAutoZoomReplan(), which emits the same signal) replans the
@@ -9589,8 +9614,7 @@ void MainWindow::buildUI()
     auto refreshFilterIndicators = [this]() {
         for (int adc = 0; adc < 2; ++adc) {
             const auto& state = m_radioModel->filterChainState(adc);
-            auto* lbl = findChild<QLabel*>(
-                QStringLiteral("chainIndicator%1").arg(adc));
+            QLabel* lbl = m_chainIndicatorLabels[static_cast<std::size_t>(adc)];
             if (!lbl) { continue; }
             const bool available = m_radioModel->filterChainStateAvailable(adc);
             lbl->setText(available ? state.reasonText
@@ -14259,6 +14283,7 @@ void MainWindow::buildStatusBar()
 
         auto* botLbl = new QLabel(QStringLiteral("idle"), w);
         botLbl->setObjectName(QStringLiteral("chainIndicator%1").arg(adc));
+        m_chainIndicatorLabels[static_cast<std::size_t>(adc)] = botLbl;
         botLbl->setStyleSheet(
             QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
                 .arg(Style::kTextInactive));

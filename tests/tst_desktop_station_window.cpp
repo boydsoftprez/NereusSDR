@@ -29,8 +29,9 @@
 //     reason while another device holds it; nothing keys.
 //   2026-11-06, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //     issue 701: a hosted pan nothing picks a stream for keeps the rate of
-//     the stream it carries when the wire rate is published, and its wide view
-//     raises no wideband flag for a slice this window may not use.
+//     the stream it carries when the wire rate is published, its wide view
+//     raises no wideband flag for a slice this window may not use, and a wing
+//     click retunes only a slice this window controls.
 
 #include "UnusedLoopbackPort.h"
 #include "gui/HostingSliceActions.h"
@@ -455,11 +456,6 @@ struct ForeignSliceOnPan
 
     ~ForeignSliceOnPan()
     {
-        // The flag down while the window is whole. Left raised, the window's
-        // destructor crashes: a real radio disconnects first (closeEvent), and
-        // here a raised flag falls when the pan goes, whose bpfStateChanged
-        // walks a widget tree being deleted (refreshFilterIndicators).
-        if (pan) { pan->setFrequencyRange(pan->centerFrequency(), pan->sampleRate()); }
         if (controller) { controller->stop(); }
     }
 };
@@ -471,6 +467,8 @@ void prepareForeignSliceOnPan(ForeignSliceOnPan& f)
         f.directory.filePath(QStringLiteral("station.settings")));
     f.window = std::make_unique<MainWindow>(RemoteStationOptions{}, nullptr,
                                             MainWindow::ConnectionStartup::Deferred);
+    f.window->resize(1280, 800);
+    f.window->show();
     f.model = f.window->radioModel();
     f.model->setBoardForTest(HPSDRHW::Saturn);
     RadioInfo info;
@@ -2253,6 +2251,134 @@ private slots:
         QVERIFY(!f.model->widebandActiveForChain(f.model->sliceChainIndex(f.sliceId)));
     }
 
+    // The flag comes back up when the slice returns to this window.
+    void aSliceReturningToThisWindowRaisesItsPansWidebandFlagAgain()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        ForeignSliceOnPan f;
+        prepareForeignSliceOnPan(f);
+        if (QTest::currentTestFailed()) { return; }
+        giveSliceToThePhone(f);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(f.pan->extendedMode());
+        QVERIFY(!f.slice->widebandExtensionRequested());
+
+        f.model->sliceOwnership()->setOwner(f.sliceId, SliceOwnership::stationDevice());
+
+        QVERIFY(f.slice->widebandExtensionRequested());
+        QVERIFY(f.model->widebandActiveForChain(f.model->sliceChainIndex(f.sliceId)));
+    }
+
+    // Hosting ending makes the slice this window's again, with no stream
+    // binding to tell the pan.
+    void hostingEndingRaisesAHeldDownWidebandFlag()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        ForeignSliceOnPan f;
+        prepareForeignSliceOnPan(f);
+        if (QTest::currentTestFailed()) { return; }
+        giveSliceToThePhone(f);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(!f.slice->widebandExtensionRequested());
+
+        f.controller->stop();
+
+        QTRY_VERIFY(f.slice->widebandExtensionRequested());
+    }
+
+    // A slice placed on a pan only as a marker never raises the flag, even in
+    // the state the window keeps from happening, with it as the pan's active
+    // slice. Forced here because that is the only way to reach this term.
+    void aMarkerOnlySliceNeverRaisesWideband()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        PlacedListen f;
+        prepareListenedSlice(f, false);
+        if (QTest::currentTestFailed()) { return; }
+        RadioInfo info;
+        info.boardType = HPSDRHW::Saturn;
+        info.protocol = ProtocolVersion::Protocol2;
+        f.model->setLastRadioInfoForTest(info);
+        placeListenedSlice(f);
+        if (QTest::currentTestFailed()) { return; }
+        PanadapterApplet* applet = f.stack->panadapter(QStringLiteral("pan-0"));
+        QVERIFY(applet);
+        applet->setActiveSliceIndex(f.bId);
+        QCOMPARE(applet->activeSliceIndex(), f.bId);
+
+        f.remaining->setFrequencyRange(f.remaining->centerFrequency(), 768000.0);
+
+        QVERIFY(f.remaining->extendedMode());
+        QVERIFY(!f.model->sliceById(f.bId)->widebandExtensionRequested());
+    }
+
+    // A short click in a wing retunes a slice. It must not reach another
+    // device's: on its transmit slice that would move its transmit frequency.
+    void aWingClickNeverRetunesAnotherDevicesSlice()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        ForeignSliceOnPan f;
+        prepareForeignSliceOnPan(f);
+        if (QTest::currentTestFailed()) { return; }
+        giveSliceToThePhone(f);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(f.pan->extendedMode());
+        const double before = f.slice->frequency();
+        QSignalSpy retunes(f.pan, &SpectrumWidget::ddcRetuneRequested);
+
+        f.pan->setConnectionState(ConnectionState::Connected);
+        QTest::mouseClick(f.pan, Qt::LeftButton, {},
+                          QPoint(f.pan->width() / 20, 20));
+
+        QCOMPARE(retunes.count(), 1);
+        QCOMPARE(f.slice->frequency(), before);
+    }
+
+    // Nor a slice this window only listens to: a pan's controls never act on
+    // one (streamShownOnPan).
+    void aWingClickNeverRetunesAListenedSlice()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        ForeignSliceOnPan f;
+        prepareForeignSliceOnPan(f);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(f.model->setStreamSampleRate(f.stream, 96000));
+        QTRY_COMPARE(f.pan->sampleRate(), ForeignSliceOnPan::kStreamRateHz);
+        f.model->sliceOwnership()->setOwner(f.sliceId, f.phone);
+        QVERIFY(f.model->sliceOwnership()->isListening(SliceOwnership::stationDevice(), f.sliceId));
+        QVERIFY(f.pan->extendedMode());
+        const double before = f.slice->frequency();
+        QSignalSpy retunes(f.pan, &SpectrumWidget::ddcRetuneRequested);
+
+        f.pan->setConnectionState(ConnectionState::Connected);
+        QTest::mouseClick(f.pan, Qt::LeftButton, {},
+                          QPoint(f.pan->width() / 20, 20));
+
+        QCOMPARE(retunes.count(), 1);
+        QCOMPARE(f.slice->frequency(), before);
+    }
+
+    // The hosted window's own slice still retunes.
+    void aWingClickRetunesThisWindowsOwnSliceWhileHosting()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        ForeignSliceOnPan f;
+        prepareForeignSliceOnPan(f);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(f.model->setStreamSampleRate(f.stream, 96000));
+        QTRY_COMPARE(f.pan->sampleRate(), ForeignSliceOnPan::kStreamRateHz);
+        QVERIFY(f.pan->extendedMode());
+        const double before = f.slice->frequency();
+        QSignalSpy retunes(f.pan, &SpectrumWidget::ddcRetuneRequested);
+
+        f.pan->setConnectionState(ConnectionState::Connected);
+        QTest::mouseClick(f.pan, Qt::LeftButton, {},
+                          QPoint(f.pan->width() / 20, 20));
+
+        QCOMPARE(retunes.count(), 1);
+        QVERIFY(f.slice->frequency() != before);
+    }
+
     void aRevealStillCentresThePanItOpensOnTheSlice()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
@@ -3496,6 +3622,12 @@ int main(int argc, char** argv)
            QStringLiteral("aPanNothingPicksAStreamForKeepsTheRateOfTheStreamItCarries"),
            QStringLiteral("aPanNothingPicksAStreamForDoesNotRaiseWidebandForThatSlice"),
            QStringLiteral("aSliceLeavingThisWindowDropsItsPansWidebandFlag"),
+           QStringLiteral("aSliceReturningToThisWindowRaisesItsPansWidebandFlagAgain"),
+           QStringLiteral("hostingEndingRaisesAHeldDownWidebandFlag"),
+           QStringLiteral("aMarkerOnlySliceNeverRaisesWideband"),
+           QStringLiteral("aWingClickNeverRetunesAnotherDevicesSlice"),
+           QStringLiteral("aWingClickNeverRetunesAListenedSlice"),
+           QStringLiteral("aWingClickRetunesThisWindowsOwnSliceWhileHosting"),
            QStringLiteral("aRevealStillCentresThePanItOpensOnTheSlice"),
            QStringLiteral("aRevealGrowDocksASliceKeyedToThePanItMakes"),
            QStringLiteral("aPlacedListenedSliceIsNeverTheRemainingPansActiveSlice"),

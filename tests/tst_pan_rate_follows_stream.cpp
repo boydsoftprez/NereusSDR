@@ -20,15 +20,16 @@
 // Modification history (NereusSDR):
 //   2026-11-06: Live Setup change rows: inactive pans, the cached stream
 //               windows, Clarity's source, the clamp, Protocol 1, and the
-//               extended view that keeps a chain's filter bypassed.
+//               extended view that keeps a chain's filter bypassed. A pan going
+//               away with the flag up, and the wing click.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-05: Created. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 
 #include <QLoggingCategory>
-#include <QScopeGuard>
 #include <QSignalBlocker>
+#include <QSignalSpy>
 #include <QStandardPaths>
 #include <QThread>
 
@@ -53,6 +54,7 @@ namespace {
 
 constexpr int kStreamRateHz = 192000;
 constexpr double kWireRateHz = 1536000.0;
+constexpr int kWideSpanHz = 768000;
 
 // The handler hands an engine its rate on the engine's own thread. Run a
 // no-op there so everything posted before this has landed; a poll for the
@@ -129,6 +131,40 @@ class TestPanRateFollowsStream : public QObject {
         QTRY_COMPARE(secondary->sampleRate(), static_cast<double>(kStreamRateHz));
         stack->setActivePan(QStringLiteral("pan-0"));
         QCOMPARE(stack->activePanId(), QStringLiteral("pan-0"));
+    }
+
+    // bringUpTwoPans on Protocol 2, then a live drop with pan 1 active and narrow
+    // and pan 2 inactive and wide, so pan 2 is extended with its slice's flag up.
+    static void bringUpInactivePanExtended(MainWindow& window, int& secondStream)
+    {
+        bringUpTwoPans(window, secondStream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        RadioInfo info;
+        info.boardType = HPSDRHW::Saturn;
+        info.protocol = ProtocolVersion::Protocol2;
+        model->setLastRadioInfoForTest(info);
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        SpectrumWidget* primary = stack->spectrum(QStringLiteral("pan-0"));
+        SpectrumWidget* secondary = stack->spectrum(QStringLiteral("pan-1"));
+        QCOMPARE(model->sliceChainIndex(0), 0);
+        QCOMPARE(model->sliceChainIndex(1), 0);
+        QVERIFY(model->setStreamSampleRate(0, kWideSpanHz));
+        QVERIFY(model->setStreamSampleRate(secondStream, kWideSpanHz));
+        QTRY_COMPARE(secondary->sampleRate(), static_cast<double>(kWideSpanHz));
+        primary->setFrequencyRange(primary->centerFrequency(), 96000.0);
+        secondary->setFrequencyRange(secondary->centerFrequency(), kWideSpanHz);
+        QVERIFY(!secondary->extendedMode());
+        QVERIFY(!model->sliceById(1)->widebandExtensionRequested());
+        QVERIFY(!model->widebandActiveForChain(0));
+
+        moveAllocatorQuietly(model, {0, secondStream}, kStreamRateHz);
+        if (QTest::currentTestFailed()) { return; }
+        emit model->wireSampleRateChanged(kStreamRateHz);
+
+        QVERIFY(secondary->extendedMode());
+        QVERIFY(model->sliceById(1)->widebandExtensionRequested());
+        QVERIFY(model->widebandActiveForChain(0));
     }
 
 private slots:
@@ -328,50 +364,22 @@ private slots:
     // active and narrow, one chain. Pan 2 stays wide, which holds extended mode
     // and raises its slice's flag. The bypass is per chain, so pan 1's receiver
     // loses the filter too though its own flag stays down. Zooming pan 2 in
-    // gives it back. The RF behavior this pins is an open question on the PR.
+    // gives it back. JJ's ruling on this behavior: "Keep the zoom".
     void liveDropKeepsAnInactiveWidePanExtendedAndBypassesItsChain()
     {
         MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
         int stream = -1;
-        bringUpTwoPans(window, stream);
+        bringUpInactivePanExtended(window, stream);
         if (QTest::currentTestFailed()) { return; }
         RadioModel* model = window.radioModel();
-        RadioInfo info;
-        info.boardType = HPSDRHW::Saturn;
-        info.protocol = ProtocolVersion::Protocol2;
-        model->setLastRadioInfoForTest(info);
         PanadapterStack* stack = window.findChild<PanadapterStack*>();
         SpectrumWidget* primary = stack->spectrum(QStringLiteral("pan-0"));
         SpectrumWidget* secondary = stack->spectrum(QStringLiteral("pan-1"));
         const SliceModel* first = model->sliceById(0);
         const SliceModel* second = model->sliceById(1);
-        QVERIFY(first && second);
-        // See ForeignSliceOnPan in tst_desktop_station_window: the flag has to
-        // be down before the window goes, however this row ends.
-        const auto narrowOnExit = qScopeGuard([secondary] {
-            secondary->setFrequencyRange(secondary->centerFrequency(), secondary->sampleRate());
-        });
-        QCOMPARE(model->sliceChainIndex(0), 0);
-        QCOMPARE(model->sliceChainIndex(1), 0);
-        constexpr int kHighRateHz = 768000;
-        QVERIFY(model->setStreamSampleRate(0, kHighRateHz));
-        QVERIFY(model->setStreamSampleRate(stream, kHighRateHz));
-        QTRY_COMPARE(secondary->sampleRate(), static_cast<double>(kHighRateHz));
-        primary->setFrequencyRange(primary->centerFrequency(), 96000.0);
-        secondary->setFrequencyRange(secondary->centerFrequency(), kHighRateHz);
-        QVERIFY(!secondary->extendedMode());
-        QVERIFY(!second->widebandExtensionRequested());
-        QVERIFY(!model->widebandActiveForChain(0));
-
-        moveAllocatorQuietly(model, {0, stream}, kStreamRateHz);
-        if (QTest::currentTestFailed()) { return; }
-        emit model->wireSampleRateChanged(kStreamRateHz);
 
         QCOMPARE(stack->activePanId(), QStringLiteral("pan-0"));
-        QCOMPARE(secondary->bandwidth(), static_cast<double>(kHighRateHz));
-        QVERIFY(secondary->extendedMode());
-        QVERIFY(second->widebandExtensionRequested());
-        QVERIFY(model->widebandActiveForChain(0));
+        QCOMPARE(secondary->bandwidth(), static_cast<double>(kWideSpanHz));
         QVERIFY(!primary->extendedMode());
         QVERIFY(!first->widebandExtensionRequested());
         QVERIFY(model->panBypassState({0}).bypassed);
@@ -386,6 +394,84 @@ private slots:
         QVERIFY(!second->widebandExtensionRequested());
         QVERIFY(!model->widebandActiveForChain(0));
         QVERIFY(!model->panBypassState({0}).bypassed);
+    }
+
+    // Layout shrink with the flag up on the pan that goes. The flag has to fall
+    // while the widget tree is whole: the deferred delete of the pan used to
+    // lower it from `destroyed`, and the filter indicators then walked into the
+    // dying pan's children, killing the process with no stop frame to the radio.
+    void layoutShrinkWithAnExtendedPanLowersTheFlagAndSurvives()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpInactivePanExtended(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+
+        QVERIFY(QMetaObject::invokeMethod(&window, "applyPanLayout",
+                                          Q_ARG(QString, QStringLiteral("1"))));
+        QVERIFY(!stack->panadapter(QStringLiteral("pan-1")));
+        QVERIFY(!model->sliceById(1)->widebandExtensionRequested());
+        QVERIFY(!model->widebandActiveForChain(0));
+
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        QVERIFY(!model->widebandActiveForChain(0));
+    }
+
+    // The same with the pan floating, which sits under its own window.
+    void removingAFloatingExtendedPanLowersTheFlagAndSurvives()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpInactivePanExtended(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        stack->floatPanadapter(QStringLiteral("pan-1"));
+        QVERIFY(stack->panadapter(QStringLiteral("pan-1")));
+        QVERIFY(model->sliceById(1)->widebandExtensionRequested());
+
+        stack->removePanadapter(QStringLiteral("pan-1"));
+        QVERIFY(!model->sliceById(1)->widebandExtensionRequested());
+        QVERIFY(!model->widebandActiveForChain(0));
+
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        QVERIFY(!model->widebandActiveForChain(0));
+    }
+
+    // The window going away with the flag up, no radio to disconnect.
+    void windowDestroyedWithTheFlagUpSurvives()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpInactivePanExtended(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(window.radioModel()->widebandActiveForChain(0));
+    }
+
+    // Not hosting: a short click in a wing moves this pan's slice, as it did.
+    void wingClickRetunesThisWindowsSlice()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpInactivePanExtended(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        SpectrumWidget* secondary =
+            window.findChild<PanadapterStack*>()->spectrum(QStringLiteral("pan-1"));
+        const SliceModel* second = window.radioModel()->sliceById(1);
+        const double before = second->frequency();
+        QSignalSpy retunes(secondary, &SpectrumWidget::ddcRetuneRequested);
+
+        secondary->setConnectionState(ConnectionState::Connected);
+        QTest::mouseClick(secondary, Qt::LeftButton, {},
+                          QPoint(secondary->width() / 20, 20));
+
+        QCOMPARE(retunes.count(), 1);
+        QVERIFY(second->frequency() != before);
+        QCOMPARE(second->frequency(), retunes.at(0).at(0).toDouble());
     }
 
     // Live Setup change, one pan with slices A and B on two streams: selecting
