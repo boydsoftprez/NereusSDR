@@ -13,19 +13,21 @@
 //
 // Limits: the signal is fired by hand rather than through connectToRadio or
 // setSampleRateLive, and a null connection stands in for Protocol 2. A live
-// change is staged by moveAllocatorQuietly, which leaves the state
-// startSampleRateChange leaves. tst_desktop_station_window has the hosted row,
-// a pan nothing picks a stream for.
+// change is staged by moveAllocatorQuietly, which is not the real path (see
+// its comment). tst_desktop_station_window has the hosted rows, a pan nothing
+// picks a stream for.
 //
 // Modification history (NereusSDR):
 //   2026-11-06: Live Setup change rows: inactive pans, the cached stream
-//               windows, Clarity's source, the clamp, and Protocol 1.
+//               windows, Clarity's source, the clamp, Protocol 1, and the
+//               extended view that keeps a chain's filter bypassed.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-05: Created. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // =================================================================
 #include <QtTest/QtTest>
 
 #include <QLoggingCategory>
+#include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QThread>
@@ -93,8 +95,11 @@ class TestPanRateFollowsStream : public QObject {
                      static_cast<double>(kStreamRateHz));
     }
 
-    // What a live Setup change leaves (RadioModel::startSampleRateChange):
-    // the allocator on the new rate, nothing published.
+    // Stages what this handler sees from a live Setup change: the allocator on
+    // the new rate and no streamCentreChanged. It is not the real path.
+    // setStreamSampleRate runs the commit path, which applies a placement plan,
+    // saves the slice and requests a DDC assignment, while
+    // RadioModel::startSampleRateChange keeps each centre and does none of that.
     static void moveAllocatorQuietly(RadioModel* model, const QList<int>& streams, int rateHz)
     {
         const QSignalBlocker quiet(model);
@@ -317,6 +322,70 @@ private slots:
 
         QCOMPARE(secondary->sampleRate(), static_cast<double>(kStreamRateHz));
         QCOMPARE(secondary->bandwidth(), static_cast<double>(kStreamRateHz));
+    }
+
+    // Live Setup change down, extended view on, pan 2 inactive and wide, pan 1
+    // active and narrow, one chain. Pan 2 stays wide, which holds extended mode
+    // and raises its slice's flag. The bypass is per chain, so pan 1's receiver
+    // loses the filter too though its own flag stays down. Zooming pan 2 in
+    // gives it back. The RF behavior this pins is an open question on the PR.
+    void liveDropKeepsAnInactiveWidePanExtendedAndBypassesItsChain()
+    {
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        int stream = -1;
+        bringUpTwoPans(window, stream);
+        if (QTest::currentTestFailed()) { return; }
+        RadioModel* model = window.radioModel();
+        RadioInfo info;
+        info.boardType = HPSDRHW::Saturn;
+        info.protocol = ProtocolVersion::Protocol2;
+        model->setLastRadioInfoForTest(info);
+        PanadapterStack* stack = window.findChild<PanadapterStack*>();
+        SpectrumWidget* primary = stack->spectrum(QStringLiteral("pan-0"));
+        SpectrumWidget* secondary = stack->spectrum(QStringLiteral("pan-1"));
+        const SliceModel* first = model->sliceById(0);
+        const SliceModel* second = model->sliceById(1);
+        QVERIFY(first && second);
+        // See ForeignSliceOnPan in tst_desktop_station_window: the flag has to
+        // be down before the window goes, however this row ends.
+        const auto narrowOnExit = qScopeGuard([secondary] {
+            secondary->setFrequencyRange(secondary->centerFrequency(), secondary->sampleRate());
+        });
+        QCOMPARE(model->sliceChainIndex(0), 0);
+        QCOMPARE(model->sliceChainIndex(1), 0);
+        constexpr int kHighRateHz = 768000;
+        QVERIFY(model->setStreamSampleRate(0, kHighRateHz));
+        QVERIFY(model->setStreamSampleRate(stream, kHighRateHz));
+        QTRY_COMPARE(secondary->sampleRate(), static_cast<double>(kHighRateHz));
+        primary->setFrequencyRange(primary->centerFrequency(), 96000.0);
+        secondary->setFrequencyRange(secondary->centerFrequency(), kHighRateHz);
+        QVERIFY(!secondary->extendedMode());
+        QVERIFY(!second->widebandExtensionRequested());
+        QVERIFY(!model->widebandActiveForChain(0));
+
+        moveAllocatorQuietly(model, {0, stream}, kStreamRateHz);
+        if (QTest::currentTestFailed()) { return; }
+        emit model->wireSampleRateChanged(kStreamRateHz);
+
+        QCOMPARE(stack->activePanId(), QStringLiteral("pan-0"));
+        QCOMPARE(secondary->bandwidth(), static_cast<double>(kHighRateHz));
+        QVERIFY(secondary->extendedMode());
+        QVERIFY(second->widebandExtensionRequested());
+        QVERIFY(model->widebandActiveForChain(0));
+        QVERIFY(!primary->extendedMode());
+        QVERIFY(!first->widebandExtensionRequested());
+        QVERIFY(model->panBypassState({0}).bypassed);
+        QVERIFY(model->panBypassState({1}).bypassed);
+        QCOMPARE(model->alexController().adcState(0).effective,
+                 AlexController::BpfEffective::WidebandLocked);
+
+        secondary->setFrequencyRange(secondary->centerFrequency(),
+                                     static_cast<double>(kStreamRateHz));
+
+        QVERIFY(!secondary->extendedMode());
+        QVERIFY(!second->widebandExtensionRequested());
+        QVERIFY(!model->widebandActiveForChain(0));
+        QVERIFY(!model->panBypassState({0}).bypassed);
     }
 
     // Live Setup change, one pan with slices A and B on two streams: selecting

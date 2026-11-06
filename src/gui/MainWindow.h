@@ -659,10 +659,13 @@ public:
                                     int sliceId);
     static void configureSpectrumForPanForTest(SpectrumWidget* spectrum,
                                                 const QString& panId);
+    /// mayRaiseWideband, when set, says whether this pan may raise the wideband
+    /// flag for a slice id.
     static void wireWidebandExtensionForTest(SpectrumWidget* spectrum,
                                              RadioModel* model,
                                              PanadapterStack* stack,
-                                             const QString& panId);
+                                             const QString& panId,
+                                             const std::function<bool(int)>& mayRaiseWideband = {});
     static void fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
                                        const QVector<float>& bins);
     /// 3D Stacked-Trace Spectrum Plan Task 14 fix-forward (recall) + Task 15

@@ -29,7 +29,8 @@
 //     reason while another device holds it; nothing keys.
 //   2026-11-06, J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //     issue 701: a hosted pan nothing picks a stream for keeps the rate of
-//     the stream it carries when the wire rate is published.
+//     the stream it carries when the wire rate is published, and its wide view
+//     raises no wideband flag for a slice this window may not use.
 
 #include "UnusedLoopbackPort.h"
 #include "gui/HostingSliceActions.h"
@@ -431,6 +432,91 @@ bool feedFrame(MainWindow& window, int stream)
     const QVector<float> frame(4096, 1.0e-12f);
     return QMetaObject::invokeMethod(&window, "dispatchFftFrameToPans", stream, frame, 1.0, 0.0,
                                      window.fftEnginePoolForTest()->inputGeneration());
+}
+
+// Issue 701. A hosting window on Protocol 2 with two pans. Slice B is on pan-1,
+// on its own stream, with pan-1 active and wide. B is still this window's until
+// giveSliceToThePhone.
+struct ForeignSliceOnPan
+{
+    static constexpr double kStreamRateHz = 96000.0;
+    static constexpr double kSpanHz = 384000.0;
+    QTemporaryDir directory;
+    std::unique_ptr<AppSettings> settings;
+    std::unique_ptr<MainWindow> window;
+    std::unique_ptr<DesktopStationController> controller;
+    QObject phoneSession;
+    RadioModel* model{nullptr};
+    SpectrumWidget* pan{nullptr};
+    SliceModel* slice{nullptr};
+    QByteArray phone;
+    int sliceId{-1};
+    int stream{-1};
+
+    ~ForeignSliceOnPan()
+    {
+        // The flag down while the window is whole. Left raised, the window's
+        // destructor crashes: a real radio disconnects first (closeEvent), and
+        // here a raised flag falls when the pan goes, whose bpfStateChanged
+        // walks a widget tree being deleted (refreshFilterIndicators).
+        if (pan) { pan->setFrequencyRange(pan->centerFrequency(), pan->sampleRate()); }
+        if (controller) { controller->stop(); }
+    }
+};
+
+void prepareForeignSliceOnPan(ForeignSliceOnPan& f)
+{
+    QVERIFY(f.directory.isValid());
+    f.settings = std::make_unique<AppSettings>(
+        f.directory.filePath(QStringLiteral("station.settings")));
+    f.window = std::make_unique<MainWindow>(RemoteStationOptions{}, nullptr,
+                                            MainWindow::ConnectionStartup::Deferred);
+    f.model = f.window->radioModel();
+    f.model->setBoardForTest(HPSDRHW::Saturn);
+    RadioInfo info;
+    info.boardType = HPSDRHW::Saturn;
+    info.protocol = ProtocolVersion::Protocol2;
+    f.model->setLastRadioInfoForTest(info);
+    f.model->configureStreamPool(5, 5, 192000);
+    f.model->setConnectionStateForTest(ConnectionState::Connected);
+    const int aId = f.model->addSlice(QStringLiteral("pan-0"));
+    f.sliceId = f.model->addSlice(QStringLiteral("pan-1"));
+    QVERIFY(applyLayout(*f.window, QStringLiteral("2v")));
+    auto* stack = f.window->findChild<PanadapterStack*>();
+    QVERIFY(stack);
+    f.pan = stack->spectrum(QStringLiteral("pan-1"));
+    QVERIFY(f.pan);
+    f.slice = f.model->sliceById(f.sliceId);
+    QVERIFY(f.slice);
+    f.slice->setFrequency(f.model->sliceById(aId)->frequency() + 1'000'000.0);
+    f.stream = f.slice->streamIndex();
+    QVERIFY(f.stream >= 0 && f.stream != f.model->sliceById(aId)->streamIndex());
+    f.controller = std::make_unique<DesktopStationController>(
+        f.model, optionsFor(*f.settings, f.directory.path()));
+    f.window->setDesktopStationController(f.controller.get());
+    QVERIFY(f.controller->start(true));
+    QVERIFY(f.controller->server());
+    f.phone = admitPhone(*f.controller->server(), f.phoneSession,
+                         QByteArrayLiteral("phone-device-id-for-pan-rate-01")).deviceId;
+    QVERIFY(!f.phone.isEmpty());
+    stack->setActivePan(QStringLiteral("pan-1"));
+    QCOMPARE(stack->activePanId(), QStringLiteral("pan-1"));
+    f.pan->setFrequencyRange(f.pan->centerFrequency(), ForeignSliceOnPan::kSpanHz);
+}
+
+// The phone controls the slice and this window does not listen. Its stream
+// moves to its own rate, under the pan's span, and a VFO tick runs the routing
+// pass, which finds that nothing picks a stream for the pan.
+void giveSliceToThePhone(ForeignSliceOnPan& f)
+{
+    SliceOwnership* ownership = f.model->sliceOwnership();
+    ownership->setOwner(f.sliceId, f.phone);
+    QVERIFY(ownership->leave(SliceOwnership::stationDevice(), f.sliceId));
+    QVERIFY(f.model->setStreamSampleRate(f.stream, static_cast<int>(ForeignSliceOnPan::kStreamRateHz)));
+    f.slice->setFrequency(f.slice->frequency() + 100.0);
+    QCOMPARE(f.slice->streamIndex(), f.stream);
+    QTRY_COMPARE(f.pan->sampleRate(), ForeignSliceOnPan::kStreamRateHz);
+    QCOMPARE(f.pan->bandwidth(), ForeignSliceOnPan::kSpanHz);
 }
 
 class TstDesktopStationWindow final : public QObject {
@@ -2109,53 +2195,62 @@ private slots:
     void aPanNothingPicksAStreamForKeepsTheRateOfTheStreamItCarries()
     {
         if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
-        QTemporaryDir directory;
-        QVERIFY(directory.isValid());
-        AppSettings settings(directory.filePath(QStringLiteral("station.settings")));
-        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
-        RadioModel* model = window.radioModel();
-        model->setBoardForTest(HPSDRHW::Saturn);
-        model->configureStreamPool(5, 5, 192000);
-        model->setConnectionStateForTest(ConnectionState::Connected);
-        const int aId = model->addSlice(QStringLiteral("pan-0"));
-        const int bId = model->addSlice(QStringLiteral("pan-1"));
-        QVERIFY(applyLayout(window, QStringLiteral("2v")));
-        auto* stack = window.findChild<PanadapterStack*>();
-        QVERIFY(stack);
-        SpectrumWidget* pan = stack->spectrum(QStringLiteral("pan-1"));
-        QVERIFY(pan);
-        SliceModel* b = model->sliceById(bId);
-        QVERIFY(b);
-        b->setFrequency(model->sliceById(aId)->frequency() + 1'000'000.0);
-        const int stream = b->streamIndex();
-        QVERIFY(stream >= 0 && stream != model->sliceById(aId)->streamIndex());
-        DesktopStationController controller(model, optionsFor(settings, directory.path()));
-        window.setDesktopStationController(&controller);
-        QVERIFY(controller.start(true));
-        QVERIFY(controller.server());
-        QObject phoneSession;
-        const QByteArray phone = admitPhone(*controller.server(), phoneSession,
-                                            QByteArrayLiteral("phone-device-id-for-pan-rate-01"))
-                                     .deviceId;
-        QVERIFY(!phone.isEmpty());
-        SliceOwnership* ownership = model->sliceOwnership();
-        ownership->setOwner(bId, phone);
-        QVERIFY(ownership->leave(SliceOwnership::stationDevice(), bId));
+        ForeignSliceOnPan f;
+        prepareForeignSliceOnPan(f);
+        if (QTest::currentTestFailed()) { return; }
+        giveSliceToThePhone(f);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(f.model->fftRouter()->receiversForPan(QStringLiteral("pan-1")).contains(f.stream));
+        QVERIFY(f.pan->extendedMode());
 
-        constexpr int kStreamRateHz = 96000;
-        QVERIFY(model->setStreamSampleRate(stream, kStreamRateHz));
-        // A VFO tick runs the routing pass, which sees that nothing picks.
-        b->setFrequency(b->frequency() + 100.0);
-        QCOMPARE(b->streamIndex(), stream);
-        QTRY_COMPARE(pan->sampleRate(), static_cast<double>(kStreamRateHz));
-        QVERIFY(model->fftRouter()->receiversForPan(QStringLiteral("pan-1")).contains(stream));
-        stack->setActivePan(QStringLiteral("pan-1"));
-        QCOMPARE(stack->activePanId(), QStringLiteral("pan-1"));
+        emit f.model->wireSampleRateChanged(1536000.0);
 
-        emit model->wireSampleRateChanged(1536000.0);
+        QCOMPARE(f.pan->sampleRate(), ForeignSliceOnPan::kStreamRateHz);
+        QCOMPARE(f.pan->bandwidth(), ForeignSliceOnPan::kSpanHz);
+        QVERIFY(f.pan->extendedMode());
+    }
 
-        QCOMPARE(pan->sampleRate(), static_cast<double>(kStreamRateHz));
-        controller.stop();
+    // That same pan's wide view belongs to no one here, so it must not take
+    // the filter from the phone's receiver and the rest of its chain.
+    void aPanNothingPicksAStreamForDoesNotRaiseWidebandForThatSlice()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        ForeignSliceOnPan f;
+        prepareForeignSliceOnPan(f);
+        if (QTest::currentTestFailed()) { return; }
+        giveSliceToThePhone(f);
+        if (QTest::currentTestFailed()) { return; }
+
+        emit f.model->wireSampleRateChanged(1536000.0);
+
+        QVERIFY(f.pan->extendedMode());
+        QVERIFY(!f.slice->widebandExtensionRequested());
+        QVERIFY(!f.model->widebandActiveForChain(f.model->sliceChainIndex(f.sliceId)));
+    }
+
+    // A wide view on this window's own slice raises the flag. The slice going
+    // to the phone leaves it raised while this window listens, as a listened
+    // slice is still the one its pan shows, and drops it when listening ends.
+    void aSliceLeavingThisWindowDropsItsPansWidebandFlag()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        ForeignSliceOnPan f;
+        prepareForeignSliceOnPan(f);
+        if (QTest::currentTestFailed()) { return; }
+        QVERIFY(f.model->setStreamSampleRate(f.stream, 96000));
+        QTRY_COMPARE(f.pan->sampleRate(), ForeignSliceOnPan::kStreamRateHz);
+        QVERIFY(f.pan->extendedMode());
+        QVERIFY(f.slice->widebandExtensionRequested());
+
+        SliceOwnership* ownership = f.model->sliceOwnership();
+        ownership->setOwner(f.sliceId, f.phone);
+        QVERIFY(ownership->isListening(SliceOwnership::stationDevice(), f.sliceId));
+        QVERIFY(f.slice->widebandExtensionRequested());
+
+        QVERIFY(ownership->leave(SliceOwnership::stationDevice(), f.sliceId));
+
+        QVERIFY(!f.slice->widebandExtensionRequested());
+        QVERIFY(!f.model->widebandActiveForChain(f.model->sliceChainIndex(f.sliceId)));
     }
 
     void aRevealStillCentresThePanItOpensOnTheSlice()
@@ -3399,6 +3494,8 @@ int main(int argc, char** argv)
          {QStringLiteral("layout"),
           {QStringLiteral("layoutChangeKeepsListeningToASliceOnARemainingPan"),
            QStringLiteral("aPanNothingPicksAStreamForKeepsTheRateOfTheStreamItCarries"),
+           QStringLiteral("aPanNothingPicksAStreamForDoesNotRaiseWidebandForThatSlice"),
+           QStringLiteral("aSliceLeavingThisWindowDropsItsPansWidebandFlag"),
            QStringLiteral("aRevealStillCentresThePanItOpensOnTheSlice"),
            QStringLiteral("aRevealGrowDocksASliceKeyedToThePanItMakes"),
            QStringLiteral("aPlacedListenedSliceIsNeverTheRemainingPansActiveSlice"),

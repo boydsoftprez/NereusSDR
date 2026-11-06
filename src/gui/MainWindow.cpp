@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: A pan raises the wideband flag only for a slice this window
+//               controls or listens to, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06: The wire-rate signal also updates every pan and the cached
 //               stream windows, so a live Setup change reaches inactive pans,
 //               a later slice switch and Clarity's source, issue 701.
@@ -5362,7 +5365,8 @@ void MainWindow::configureSpectrumForPanForTest(SpectrumWidget* spectrum,
 void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
                                               RadioModel* model,
                                               PanadapterStack* stack,
-                                              const QString& panId)
+                                              const QString& panId,
+                                              const std::function<bool(int)>& mayRaiseWideband)
 {
     if (!spectrum || !model || !stack) { return; }
     const QPointer<RadioModel> modelRef(model);
@@ -5394,7 +5398,7 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         bool hasBoundSlice{false};
     };
     const auto requestOwner = std::make_shared<LocalRequestOwner>();
-    const auto reconcile = [modelRef, spectrumRef, resolve, requestOwner]() {
+    const auto reconcile = [modelRef, spectrumRef, resolve, requestOwner, mayRaiseWideband]() {
         if (!modelRef || !spectrumRef || modelRef->role() != RadioModel::Role::Local) {
             return;
         }
@@ -5443,7 +5447,12 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         if (available) { spectrumRef->setWidebandAdcIndex(adc); }
         spectrumRef->setLocalWidebandAvailable(available);
         if (modelRef && spectrumRef && next && requestOwner->slice == next) {
-            next->setWidebandExtensionRequested(spectrumRef->extendedMode());
+            // The bypass is per chain and takes the filter from every receiver
+            // on it, so a pan's wide view must not raise it for a slice its
+            // window may not use. The view itself stays.
+            next->setWidebandExtensionRequested(
+                spectrumRef->extendedMode()
+                && (!mayRaiseWideband || mayRaiseWideband(next->sliceIndex())));
         }
     };
     connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
@@ -5459,6 +5468,12 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
             [reconcile](int, const QVector<int>&) { reconcile(); });
     connect(model, &RadioModel::sliceRemoved, spectrum,
             [reconcile](int) { reconcile(); });
+    if (SliceOwnership* ownership = model->sliceOwnership()) {
+        connect(ownership, &SliceOwnership::markChanged, spectrum,
+                [reconcile](int, const QByteArray&, const QByteArray&) { reconcile(); });
+        connect(ownership, &SliceOwnership::listenersChanged, spectrum,
+                [reconcile](int) { reconcile(); });
+    }
     const auto watchSlice = [modelRef, spectrumRef, reconcile](int sliceId) {
         if (!modelRef || !spectrumRef) { return; }
         if (SliceModel* slice = modelRef->sliceById(sliceId)) {
@@ -7979,7 +7994,11 @@ void MainWindow::ensureOverlayPanels()
         // where click-to-tune always retuned flag A. Those copies are gone, so
         // this is the only wiring for them and nothing doubles.
         wireSpectrumSliceControls(sw, panId);
-        wireWidebandExtensionForTest(sw, m_radioModel, m_panStack, panId);
+        // The slices streamShownOnPan lets a pan show, whose stream it chose.
+        wireWidebandExtensionForTest(sw, m_radioModel, m_panStack, panId, [this](int sliceId) {
+            return !markerOnlyPlacement(sliceId)
+                && (windowControlsSlice(sliceId) || windowListensTo(sliceId));
+        });
 
         // Display pill plan Task 7: a zoom on this pan (and its
         // requestAutoZoomReplan(), which emits the same signal) replans the
