@@ -1080,6 +1080,36 @@ private slots:
         QCOMPARE(settings.value(QStringLiteral("Slice0/Band40m/AgcThreshold")).toInt(), -41);
         QCOMPARE(settings.value(QStringLiteral("Slice0/Band20m/Frequency")).toDouble(), 14100000.0);
     }
+
+    // JJ's ruling: extras that do not fit stay saved. The limit drops on a
+    // connect to the same radio, with the slices live.
+    void aSliceClosedByASmallerLimitStaysSavedAndComesBack()
+    {
+        RadioModel model;
+        connectDesktop(model, 3, 5, {kPan0, kPan1, kPan2});
+        model.sliceById(2)->setFrequency(3600000.0);
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+
+        QCOMPARE(model.addStartingSlices(kDesktopMac), -1);
+        model.configureStreamPool(3, 2, kRateHz);
+        model.bindUnboundSlices();
+        QVERIFY(!model.sliceById(2));
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1, kPan2}, false, false);
+        QVERIFY(!model.sliceById(2));
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+
+        QCOMPARE(model.addStartingSlices(kDesktopMac), -1);
+        model.configureStreamPool(3, 5, kRateHz);
+        model.bindUnboundSlices();
+        MainWindow::populatePanSlices(&model, {kPan0, kPan1, kPan2}, false, false);
+        SliceModel* c = model.sliceById(2);
+        QVERIFY(c);
+        QCOMPARE(c->frequency(), 3600000.0);
+        model.flushPendingSettingsSave();
+        QCOMPARE(slicesInRecord(), QList<int>({0, 1, 2}));
+    }
 };
 
 QTEST_MAIN(TestStandaloneSliceRestore)

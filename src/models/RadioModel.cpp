@@ -13909,6 +13909,18 @@ void RadioModel::closeSlicesPastChannelLimit()
         ids.append(slice->sliceIndex());
         victims.append(const_cast<SliceModel*>(slice));
     }
+    // JJ's ruling: on a desktop, extras that do not fit stay saved and come back
+    // on a later connect with room. A restore still to run tries them and keeps
+    // them; with none to come they are kept now.
+    if (desktopLayoutSaves()) {
+        QList<ReceiveSliceState>& keep =
+            m_desktopLayoutRestorePending ? m_desktopLayoutWaiting : m_desktopLayoutKept;
+        for (const SliceModel* slice : std::as_const(past)) {
+            const SliceOwnership::Mark mark = m_sliceOwnership->mark(slice->sliceIndex());
+            keep.prepend({slice->sliceIndex(), slice->panKey(), slice->frequency(),
+                          slice->dspMode(), mark.owner, mark.heldFor});
+        }
+    }
     const bool allClosed = past.size() == m_slices.size();
     if (allClosed) {
         installReceiveFallbackSlice();
