@@ -3,11 +3,15 @@
 # Modification history (NereusSDR):
 #   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 20.
 #                AI-assisted implementation via Anthropic Claude Code.
+#   2026-11-06 - J.J. Boyd (KG4VCF), a key that leaves the deck while down lets go.
+#                AI-assisted implementation via Anthropic Claude Code.
 """python3 test_link.py                       link.py against a stub of the window
 python3 test_link.py --integration <home>  a client tst_deck_plugin_clients drives through stdin
 
-main.py and the action can't import here without StreamController, so they are only compiled.
+main.py and the action can't import here without StreamController. main.py is only compiled, and the
+action runs on stand-ins for the host's classes, called the way the host calls it. No host has run this.
 """
+import importlib.util
 import json
 import os
 import socket
@@ -15,7 +19,9 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -237,6 +243,126 @@ class LinkTest(unittest.TestCase):
         for relative in ("main.py", os.path.join("actions", "deck_action.py")):
             with open(os.path.join(HERE, relative), encoding="utf-8") as handle:
                 compile(handle.read(), relative, "exec")
+
+
+class HostAction:
+    """What deck_action.py takes from StreamController's ActionBase."""
+
+    def __init__(self, plugin_base):
+        self.plugin_base = plugin_base
+        self.deck_controller = types.SimpleNamespace(get_alive=lambda: True)
+        self.present = True
+        self.removed_upstream = 0
+
+    def get_is_present(self):
+        return self.present
+
+    def get_settings(self):
+        return {}
+
+    def on_removed_from_cache(self):
+        self.removed_upstream += 1
+
+
+class Events:
+    DOWN = "down"
+    UP = "up"
+    TURN_CW = "cw"
+    TURN_CCW = "ccw"
+
+
+def load_deck_action():
+    host_input = types.SimpleNamespace(Key=types.SimpleNamespace(Events=Events),
+                                       Dial=types.SimpleNamespace(Events=Events))
+    stand_ins = {
+        "src": types.ModuleType("src"),
+        "src.backend": types.ModuleType("src.backend"),
+        "src.backend.PluginManager": types.ModuleType("src.backend.PluginManager"),
+        "src.backend.PluginManager.ActionBase": types.SimpleNamespace(ActionBase=HostAction),
+        "src.backend.DeckManagement": types.ModuleType("src.backend.DeckManagement"),
+        "src.backend.DeckManagement.InputIdentifier": types.SimpleNamespace(Input=host_input),
+        "gi": types.SimpleNamespace(require_version=lambda *_: None),
+        "gi.repository": types.SimpleNamespace(Adw=None, GLib=None, Gtk=None),
+    }
+    with mock.patch.dict(sys.modules, stand_ins):
+        spec = importlib.util.spec_from_file_location("deck_action_for_test",
+                                                      os.path.join(HERE, "actions", "deck_action.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
+
+
+class HeldKeyTest(unittest.TestCase):
+    def setUp(self):
+        self.module = load_deck_action()
+        self.sent = []
+        link_stub = types.SimpleNamespace(key_down=lambda i, pin: self.sent.append(("press", i)),
+                                          key_up=lambda i: self.sent.append(("release", i)))
+        self.plugin = types.SimpleNamespace(link=link_stub, held=set())
+        action_class = type("HoldAction", (self.module.DeckAction,), {"ACTION_ID": "tx.hold"})
+        self.action = action_class(self.plugin)
+
+    def press(self):
+        self.action.event_callback(Events.DOWN, None)
+        self.assertEqual(self.sent, [("press", "tx.hold")])
+
+    def released_once(self):
+        self.assertEqual(self.sent, [("press", "tx.hold"), ("release", "tx.hold")])
+        self.assertEqual(self.plugin.held, set())
+
+    def test_an_ordinary_press_and_release(self):
+        self.press()
+        self.assertEqual(self.plugin.held, {self.action})
+        self.action.event_callback(Events.UP, None)
+        self.released_once()
+
+    def test_a_release_with_no_press_says_nothing(self):
+        # The key went down on the page before this one.
+        self.action.event_callback(Events.UP, None)
+        self.assertEqual(self.sent, [])
+
+    def test_removed_while_down_lets_go_once(self):
+        self.press()
+        self.action.on_removed_from_cache()
+        self.released_once()
+        self.assertEqual(self.action.removed_upstream, 1)   # the host's own tidying still runs
+        self.action.event_callback(Events.UP, None)
+        self.released_once()
+
+    def test_removed_while_up_says_nothing(self):
+        self.action.on_removed_from_cache()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.action.removed_upstream, 1)
+
+    def test_another_page_lets_go_once(self):
+        self.press()
+        self.module.let_go_of_what_left(self.plugin.held)
+        self.assertEqual(len(self.sent), 1)     # still here: nothing changes
+        self.action.present = False
+        self.module.let_go_of_what_left(self.plugin.held)
+        self.released_once()
+        self.module.let_go_of_what_left(self.plugin.held)
+        self.released_once()
+
+    def test_a_deck_that_went_away_lets_go(self):
+        self.press()
+        self.action.deck_controller = types.SimpleNamespace(get_alive=lambda: False)
+        self.module.let_go_of_what_left(self.plugin.held)
+        self.released_once()
+
+    def test_a_deck_that_raises_lets_go(self):
+        def gone():
+            raise OSError("no such device")
+        self.press()
+        self.action.deck_controller = types.SimpleNamespace(get_alive=gone)
+        self.module.let_go_of_what_left(self.plugin.held)
+        self.released_once()
+
+    def test_the_plugin_runs_the_check(self):
+        with open(os.path.join(HERE, "main.py"), encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("let_go_of_what_left(self.held)", text)
+        self.assertIn("target=self._watch_held", text)
 
 
 if __name__ == "__main__":

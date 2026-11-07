@@ -2,6 +2,8 @@
 # Modification history (NereusSDR):
 #   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 20.
 #                AI-assisted implementation via Anthropic Claude Code.
+#   2026-11-06 - J.J. Boyd (KG4VCF), a key that leaves the deck while down lets go.
+#                AI-assisted implementation via Anthropic Claude Code.
 """NereusSDR for StreamController, in the app's process. Linux only. Written for NereusSDR
 after reading how the AetherSDR plugin registers with the host; none of its code is here, and
 this plugin calls no TCI. Registers one action per entry in actions/actions.json.
@@ -10,6 +12,8 @@ Host classes as AetherSDR plugins/streamcontroller-aethersdr/main.py:18-21,98-10
 """
 import json
 import os
+import threading
+import time
 import weakref
 
 from src.backend.PluginManager.PluginBase import PluginBase
@@ -18,7 +22,9 @@ from src.backend.DeckManagement.InputIdentifier import Input
 from src.backend.PluginManager.ActionInputSupport import ActionInputSupport
 
 from .link import DeckClient
-from .actions.deck_action import DeckAction
+from .actions.deck_action import DeckAction, let_go_of_what_left
+
+HELD_CHECK_SECONDS = 0.25
 
 KEY_ONLY = {
     Input.Key: ActionInputSupport.SUPPORTED,
@@ -39,6 +45,8 @@ class NereusSDRPlugin(PluginBase):
         super().__init__()
 
         self.lit = set()
+        # Strong references: the host drops an action that left, and it must still let go.
+        self.held = set()
         self.deck_actions = weakref.WeakSet()
         self.link = DeckClient("streamcontroller", "1.0.0",
                                on_state=self._state_changed, on_disconnected=self._link_gone)
@@ -63,6 +71,12 @@ class NereusSDRPlugin(PluginBase):
             app_version="1.0.0-alpha",
         )
         self.link.start()
+        threading.Thread(target=self._watch_held, name="NereusSDR held keys", daemon=True).start()
+
+    def _watch_held(self):
+        while True:
+            time.sleep(HELD_CHECK_SECONDS)
+            let_go_of_what_left(self.held)
 
     def _state_changed(self, action_id, on):
         if on:
