@@ -62,6 +62,12 @@ signals:
     /// (a stop not confirmed), and when another request, a stop or the end
     /// of hosting replaced it.
     void takeFinished(quint64 takeId, bool held);
+    /// A take that was to key (MOX, TUNE, two-tone) and is still the current
+    /// request ended with this device not holding transmit, so nothing keyed.
+    /// Emitted within the call when that's when it ended. Also when a later
+    /// request replaces such a take still waiting (superseded), and only then:
+    /// its callback will key nothing. Emitted before that request goes on.
+    void keyTakeNotGranted(bool superseded);
 
 public:
     RequestResult requestMox(bool on);
@@ -95,6 +101,7 @@ private:
     bool stationHoldsTransmit() const;
     // TX badge take: ends the take in flight as not held (takeFinished).
     void supersedeTake();
+    void supersedeKeyTake();
     // TX badge take: what a take's call returns, and whether it ended there.
     RequestResult settleTake(quint64 takeId, RequestResult result);
 
@@ -108,6 +115,7 @@ private:
     QPointer<StepAttenuatorController> m_savingStepAtt;
     std::optional<TakeQuestion> m_question;
     quint64 m_intentGeneration{0};
+    bool m_keyTakeWaiting{false};  // a take that is to key, its callback still due
     quint64 m_nextQuestionId{0};
     quint64 m_takeInFlight{0};
     quint64 m_nextTakeId{0};

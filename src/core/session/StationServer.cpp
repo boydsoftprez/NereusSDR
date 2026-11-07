@@ -1,6 +1,8 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: cw.paddle, remoteCwVersion 3.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-31: Strip legacy Roundtable fields by record type, preserving RF kind.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -4714,8 +4716,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId,
                                                        false, TxRefusals::notReady().text, {});
             }
+            // R-HK-13: only a key that rises raises a key. With none rising and no
+            // paddle down, the message is a release: the key it reports down
+            // was ended (the deadline, a stop) and needs a fresh press.
+            CwxSender::PaddleKeys paddleRose;
+            bool paddleGoesOn = false;
+            if (request.kind == Kind::Paddle) {
+                const QPair<bool, bool> last = m_cwPaddleReported.value(requester);
+                paddleRose = {request.dot && !last.first, request.dash && !last.second};
+                m_cwPaddleReported.insert(requester, {request.dot, request.dash});
+                paddleGoesOn = (request.dot || request.dash)
+                    && m_radioModel->cwxSendingFor() == requester
+                    && m_radioModel->cwxSender()->isRemotePaddleHeld();
+            }
             const bool engages = request.kind == Kind::Send || request.kind == Kind::Memory
-                || (request.kind == Kind::Key && request.down);
+                || (request.kind == Kind::Key && request.down)
+                || (request.kind == Kind::Paddle && (paddleRose.any() || paddleGoesOn));
             TxRefusal refusal;
             if (engages) {
                 // The session's own gate first, then the holder's: sending
@@ -4731,8 +4747,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     }
                 }
                 if (refusal.isEmpty()) {
-                    const auto start = [&request](CwxSender& sender, quint32 epoch,
-                                                  const std::function<bool()>& admit) {
+                    const auto start = [&request, paddleRose](CwxSender& sender, quint32 epoch,
+                                                              const std::function<bool()>& admit) {
                         switch (request.kind) {
                         case Kind::Send:
                             return sender.sendRemoteText(epoch, request.text, admit);
@@ -4740,21 +4756,34 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                             return sender.sendRemoteMemory(epoch, request.number, admit);
                         case Kind::Key:
                             return sender.holdRemoteKey(epoch, admit);
+                        case Kind::Paddle:
+                            return sender.holdRemotePaddle(epoch, {request.dot, request.dash}, paddleRose, admit);
                         case Kind::Stop:
                             break;
                         }
                         return false;
                     };
+                    // A change while this device's paddle is down stays in its
+                    // activity: a replacement would lift the key that stays
+                    // down and fence the wire for a frame, mid-element.
                     refusal = m_radioModel->requestRemoteCwxFor(
-                        requester, request.kind != Kind::Send, start);
+                        requester, request.kind != Kind::Send && !paddleGoesOn, start);
+                }
+                // A refused press is no reason to leave the other key down.
+                if (!refusal.isEmpty() && request.kind == Kind::Paddle
+                    && m_radioModel->cwxSendingFor() == requester) {
+                    m_radioModel->cwxSender()->setPaddleHeld(false, false);
                 }
             } else {
-                // A release (cw.stop, cw.key up) is always taken: it ends
+                // A release (cw.stop, cw.key up, cw.paddle with no key rising and
+                // none held) is always taken: it ends
                 // only what the sender runs for this device, so it never
                 // touches another device's CW or the station's own.
                 if (m_radioModel->cwxSendingFor() == requester) {
                     if (request.kind == Kind::Stop) {
                         m_radioModel->stopCwxFor(requester);
+                    } else if (request.kind == Kind::Paddle) {
+                        m_radioModel->cwxSender()->setPaddleHeld(false, false);
                     } else {
                         m_radioModel->cwxSender()->setKeyHeld(false);
                     }
@@ -6109,6 +6138,8 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
             // for ends with its session, at once rather than at the Key's
             // 3 s watchdog.
             m_radioModel->stopCwxFor(sessionDevice);
+            // R-HK-13: the next session's first press is a press.
+            m_cwPaddleReported.remove(sessionDevice);
             if (!self) { return; }
         }
         if (leaving || sessionDevice.startsWith("token:")) {
@@ -6870,6 +6901,25 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                 QStringLiteral("Update this app to send CW through this Core."), {}));
             break;
         }
+        // Hot keys (R-HK-13): dot and dash came with remoteCwVersion 3. Both up
+        // is a release, and a release is always taken.
+        bool paddleStarts = false;
+        if (message.commandVerb == "cw.paddle") {
+            for (const MirrorUpdate& argument : message.arguments) {
+                if ((argument.name == "dot" || argument.name == "dash") && argument.value.toBool()) {
+                    paddleStarts = true;
+                }
+            }
+        }
+        if (paddleStarts
+            && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
+                || !peerDeclares(transport, QByteArrayLiteral("remoteTx"), 1)
+                || !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 3))) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                QStringLiteral("Update this app to send dot and dash through this Core."), {}));
+            break;
+        }
         }
         // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA profile verbs, to a
         // peer that declared paProfiles, gated as the desktop's own PA
@@ -7473,6 +7523,7 @@ void StationServer::admit(SessionTransport* transport, const QString& name,
             if (m_radioModel) {
                 // CW transmit (R-CW-49): the older session's CWX ends too.
                 m_radioModel->stopCwxFor(device.deviceId);
+                m_cwPaddleReported.remove(device.deviceId);
                 if (!self) { return; }
             }
             m_transmitHolder->holderDropped(device.deviceId,
@@ -7886,6 +7937,9 @@ void StationServer::finishTakeover(quint64 serial, const QByteArray& targetId,
         // cannot restore the incumbent's slices or place.
         saveTakenSlicesFor(targetId);
         if (!self) return;
+        // R-HK-13: the device's next session starts with a press. This session's
+        // end skips that (placeSettled), its place being settled here.
+        m_cwPaddleReported.remove(targetId);
         releaseDeviceClaims(targetId, std::nullopt);
         if (!self) return;
         const auto afterSlices = m_deviceSessions->entry(targetId);

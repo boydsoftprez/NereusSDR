@@ -59,6 +59,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCwVersion 3.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-25: merge of main: stationRoundtableVersion moves after main's
 //               displayCodecVersion. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -891,6 +893,11 @@ struct StationCapabilities {
     /// declared remoteCw 1 as well (remoteCwEntry); any other peer is sent
     /// no entry and reads 0, and a window then shows its CWX sending
     /// controls disabled with the update reason.
+    /// 2: on-air starts need this version, and carry a CW activity epoch.
+    /// 3 (hot keys, R-HK-13): also cw.paddle {dot, dash}, from a peer that
+    /// declared remoteCw 3. A peer that declared 2 is sent 3 too, and everything
+    /// it uses is unchanged; its cw.paddle starts are refused. Below 3 a window
+    /// shows dot and dash unavailable with their own reason.
     bool remoteCwEntry = false;
     int remoteCwVersion = 0;
 

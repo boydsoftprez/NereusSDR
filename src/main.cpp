@@ -1,4 +1,5 @@
 #include "gui/GuiConnectionController.h"
+#include "gui/hotkeys/devices/DeviceInput.h"
 #include "gui/GuiApplication.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePreview.h"
@@ -114,6 +115,7 @@ int main(int argc, char* argv[])
     }
 
     NereusSDR::GuiApplication app(argc, argv);
+    NereusSDR::DeviceInput::allowRealDevices();
 #if defined(Q_OS_MAC)
     QString accessibilityRejection;
     if (!installQtCocoaAccessibilityOwnershipGuard(&accessibilityRejection)) {

@@ -349,6 +349,12 @@ if you want to host the remote-access service yourself.
   and ALSA direct on the headless Core) with device lists that update live.
   The header has separate PC and RADIO volumes. CAT runs on four slice-bound
   channels, with Hamlib rigctld for loggers.
+- **Hot keys, knobs and MIDI.** Default keyboard keys tune, change band,
+  mode and filter, and key the radio, with rebinding in Setup. MIDI
+  controllers, USB knobs and Stream Deck, Ulanzi and StreamController
+  plugins use the same actions. The keyboard keys are built and ready for a
+  hardware run; the knobs, MIDI and deck plugins have been tried only with
+  simulated input and are untested on real devices.
 - **Audio and digital applications.** Choose receiver mixes, station and
   radio speaker/headphone output, microphone sources and VAX audio buses.
   TCI provides WebSocket control/audio for external applications. Spots from

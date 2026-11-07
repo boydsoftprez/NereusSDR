@@ -216,6 +216,12 @@
 //   2026-10-15 - CAT & Network > rigctld in a remote window: this computer's
 //                rigctld, which acts as the window (RemoteRigctldPage).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: Keys and controllers > Keyboard replaces Keyboard > Shortcuts.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: Keys and controllers > MIDI replaces CAT & Network > MIDI Control.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: Keys and controllers > Knobs.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 21: Keys and controllers > Deck Plugins.
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "SetupDialog.h"
@@ -280,8 +286,11 @@
 // Rotor control plan Task 7: the antenna rotor (Settings -> CAT & Network
 // -> Rotor).
 #include "setup/RotorSetupPage.h"
-// Keyboard
-#include "setup/KeyboardSetupPages.h"
+// Keys and controllers
+#include "setup/HotKeySetupPages.h"
+#include "setup/DeckPluginsSetupPage.h"
+#include "setup/KnobsSetupPage.h"
+#include "setup/MidiSetupPage.h"
 // Diagnostics
 #include "setup/DiagnosticsSetupPages.h"
 #include "diagnostics/RadioStatusPage.h"
@@ -541,6 +550,36 @@ void SetupDialog::showEvent(QShowEvent* event)
             m_tree->setCurrentItem(first);
         }
     }
+}
+
+void SetupDialog::setHotKeyContext(HotKeyBindings* bindings,
+                                   std::function<QString(const QString&)> unavailableReason)
+{
+    m_hotKeyBindings = bindings;
+    m_hotKeyUnavailableReason = std::move(unavailableReason);
+}
+
+void SetupDialog::refreshHotKeyAvailability()
+{
+    if (m_keyboardPage) {
+        m_keyboardPage->refreshAvailability();
+    }
+    if (m_midiPage) {
+        m_midiPage->refreshAvailability();
+    }
+    if (m_knobsPage) {
+        m_knobsPage->refreshAvailability();
+    }
+}
+
+void SetupDialog::setControllerHost(ControllerHost* host)
+{
+    m_controllerHost = host;
+}
+
+void SetupDialog::setDeckLink(DeckLink* link)
+{
+    m_deckLink = link;
 }
 
 void SetupDialog::selectPage(const QString& label)
@@ -2317,21 +2356,34 @@ void SetupDialog::buildTree()
         });
         registerPage(cat, "CAT PTT", SetupScope::Core, [this] { return new CatPttSetupPage(m_model); });
     }
-    if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Midi)) {
-        registerPage(cat, "MIDI Control", SetupScope::ThisComputer,
-                     [] { return new CatMidiControlPage; });
-    }
 
     tick("CAT & Network");
 
-    // ── Keyboard ──────────────────────────────────────────────────────────────
-    QTreeWidgetItem* keyboard = addCategory("Keyboard");
-    if (UnbuiltFeatures::isBuilt(UnbuiltFeature::Keyboard)) {
-        registerPage(keyboard, "Shortcuts", SetupScope::ThisComputer,
-                     [] { return new KeyboardShortcutsPage; });
-    }
+    // ── Keys and controllers ──────────────────────────────────────────────────
+    QTreeWidgetItem* keysAndControllers = addCategory("Keys and controllers");
+    registerPage(keysAndControllers, "Keyboard", SetupScope::ThisComputer, [this]() -> QWidget* {
+        auto* page = new KeyboardPage(m_hotKeyBindings);
+        page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
+        m_keyboardPage = page;
+        return page;
+    });
+    registerPage(keysAndControllers, "MIDI", SetupScope::ThisComputer, [this]() -> QWidget* {
+        auto* page = new MidiSetupPage(m_controllerHost, m_hotKeyBindings);
+        page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
+        m_midiPage = page;
+        return page;
+    });
+    registerPage(keysAndControllers, "Knobs", SetupScope::ThisComputer, [this]() -> QWidget* {
+        auto* page = new KnobsSetupPage(m_controllerHost, m_hotKeyBindings);
+        page->setUnavailableReasonProvider(m_hotKeyUnavailableReason);
+        m_knobsPage = page;
+        return page;
+    });
+    registerPage(keysAndControllers, "Deck Plugins", SetupScope::ThisComputer, [this]() -> QWidget* {
+        return new DeckPluginsSetupPage(m_deckLink);
+    });
 
-    tick("Keyboard");
+    tick("Keys and controllers");
 
     // ── Test ──────────────────────────────────────────────────────────────────
     // Phase 3M-1c H.1: top-level Test category for the Two-Tone IMD page.

@@ -1,0 +1,14 @@
+{
+    "version": "1.0.0",
+    "id": "com_nereussdr_radio",
+    "name": "NereusSDR",
+    "descriptions": {
+        "en_US": "Untested. No real host has run this plugin yet. Runs NereusSDR's hot key actions from your keys and dials, through a private connection to the NereusSDR window on this computer."
+    },
+    "short-descriptions": {
+        "en_US": "NereusSDR hot keys (untested)"
+    },
+    "tags": ["Ham Radio", "SDR"],
+    "minimum-app-version": "1.0.0",
+    "app-version": "1.4.11-beta"
+}

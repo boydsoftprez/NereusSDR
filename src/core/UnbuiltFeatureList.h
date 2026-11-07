@@ -38,6 +38,13 @@
 //   2026-09-29 - TciExtras leaves the list: the three RX2 VFO options
 //                reach the TCI wire as Thetis sends them. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - Hot keys plan Task 8: Keyboard leaves the list; Setup >
+//                Keys and controllers > Keyboard and View > Keyboard Shortcuts
+//                are built. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-11-06 - Hot keys plan Task 11: Midi leaves the list; Setup > Keys and
+//                controllers > MIDI and Tools > MIDI Mapping are built. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -52,7 +59,6 @@ enum class UnbuiltFeature {
     DisplayMode,      // View > Display Mode; the eleven container display-mode buttons
     UiScale,          // View > UI Scale; Setup > General > UI Scale & Theme
     MinimalMode,      // View > Minimal Mode; Setup > Appearance > Collapsible Display
-    Keyboard,         // View > Keyboard Shortcuts; Setup > Keyboard > Shortcuts
     Equalizer,        // DSP > Equalizer (built after R4)
     Transverters,     // Radio > Transverters; Band > VHF; Hardware > XVTR; OC Outputs VHF tab;
                       // the container band and antenna XVTR buttons
@@ -60,7 +66,6 @@ enum class UnbuiltFeature {
     Cwx,              // Tools > CWX; Phone/CW applet CW page; CW keyer settings; CWX on the status bar
     Memories,         // Tools > Memory Manager; the Spot Hub Memories option
     Cat,              // Tools > CAT Control; Setup > Serial Ports, TCP/IP CAT; CAT on the status bar
-    Midi,             // Tools > MIDI Mapping; Setup > MIDI Control
     Help,             // Help > Getting Started, NereusSDR Help, Understanding Data Modes
     Acc,              // Phone/CW applet +ACC and the microphone source ACC item
     PhoneMon,         // Phone/CW applet MON and its level

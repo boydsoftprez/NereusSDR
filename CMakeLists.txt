@@ -1049,6 +1049,10 @@ set(CORE_SOURCES
     src/core/VoltsAmpsLog.cpp
     src/core/SkuUiProfile.cpp
     src/core/HardwareProfile.cpp
+    src/core/hotkeys/HotKeyActionList.cpp
+    src/core/hotkeys/HotKeyBindings.cpp
+    src/core/hotkeys/HotKeyChord.cpp
+    src/core/hotkeys/HotKeyDeviceBindings.cpp
     src/core/LogCategories.cpp
     # Remote-window parity Task 22 (R-R3-49): the log sink no logging
     # thread waits on, and the zip archive the support bundle travels in.
@@ -1141,6 +1145,8 @@ set(CORE_SOURCES
     # CW transmit (R-CW-04, R-CW-36): the serial key reader.
     src/core/CwSerialKeyInput.cpp
     src/core/CwSerialKeyInput.h
+    src/core/CwSoftPaddle.cpp
+    src/core/CwSoftPaddle.h
     # CW transmit (R-CW-39): the computer sidetone (ChannelMaster sidetone.c).
     src/core/CwSidetone.cpp
     src/core/CwSidetone.h
@@ -1908,6 +1914,31 @@ set(GUI_SOURCES
     src/gui/SpectrumWidget.cpp
     src/gui/WaterfallImpulseBlanker.cpp
     src/gui/WheelStepAccumulator.cpp
+    src/gui/hotkeys/HotKeyDispatcher.cpp
+    src/gui/hotkeys/KeyboardRouter.cpp
+    src/gui/hotkeys/MainWindowHotKeyTargets.cpp
+    src/gui/hotkeys/ControllerHost.cpp
+    src/gui/hotkeys/DeckLink.cpp
+    src/gui/hotkeys/midi/MidiInput.cpp
+    src/gui/hotkeys/midi/MidiProfile.cpp
+    src/gui/hotkeys/HotKeyStateFeed.cpp
+    src/gui/hotkeys/devices/DeviceInput.cpp
+    src/gui/hotkeys/devices/DeviceOutput.cpp
+    src/gui/hotkeys/devices/FlexControlInput.cpp
+    src/gui/hotkeys/devices/FlexControlParser.cpp
+    src/gui/hotkeys/devices/GestureEngine.cpp
+    src/gui/hotkeys/devices/PowerMateLinuxInput.cpp
+    src/gui/hotkeys/devices/PowerMateParser.cpp
+    src/gui/hotkeys/devices/Rc28Parser.cpp
+    src/gui/hotkeys/devices/ShuttleParser.cpp
+    src/gui/hotkeys/devices/StreamDeckPlusParser.cpp
+    src/gui/hotkeys/devices/TMate2Parser.cpp
+    src/gui/hotkeys/devices/UlanziChordDecoder.cpp
+    src/gui/hotkeys/devices/UlanziDialInput.cpp
+    src/gui/hotkeys/devices/UlanziLinuxInput.cpp
+    src/gui/hotkeys/devices/UlanziMacInput.cpp
+    src/gui/hotkeys/devices/UlanziWindowsInput.cpp
+    src/gui/hotkeys/devices/UsbPresence.cpp
     src/gui/PanadapterApplet.cpp
     src/gui/PanadapterStack.cpp
     src/gui/PanFloatingWindow.cpp
@@ -2245,7 +2276,11 @@ set(GUI_SOURCES
     src/gui/setup/RfKitPage.cpp
     src/gui/setup/RotorSetupPage.cpp
     src/gui/setup/TciLogWindow.cpp
-    src/gui/setup/KeyboardSetupPages.cpp
+    src/gui/setup/HotKeySetupPages.cpp
+    src/gui/setup/KeyboardMapWidget.cpp
+    src/gui/setup/KnobsSetupPage.cpp
+    src/gui/setup/DeckPluginsSetupPage.cpp
+    src/gui/setup/MidiSetupPage.cpp
     src/gui/setup/DiagnosticsSetupPages.cpp
     src/gui/diagnostics/RadioStatusPage.cpp
     src/gui/diagnostics/DiagnosticsPhaseHPages.cpp
@@ -2297,9 +2332,58 @@ set(GUI_SOURCES
 # Resources
 # --------------------------------------------------------------------------
 if(APPLE)
-    list(APPEND GUI_SOURCES src/gui/QtCocoaAccessibilityOwnershipGuard.mm)
+    list(APPEND GUI_SOURCES src/gui/QtCocoaAccessibilityOwnershipGuard.mm
+        src/gui/hotkeys/MacMenuTrackingWatch.mm)
     set_source_files_properties(src/gui/QtCocoaAccessibilityOwnershipGuard.mm
+        src/gui/hotkeys/MacMenuTrackingWatch.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
+# RtMidi: desktop only, never NereusCore or nereusd (R-HK-18). On Linux it needs
+# ALSA (found above); without it the build has no MIDI support and the device
+# stays listed and disabled, with the reason.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ALSA_FOUND)
+    set(NEREUS_RTMIDI_AVAILABLE TRUE)
+    list(APPEND GUI_SOURCES third_party/rtmidi/RtMidi.cpp)
+    set_source_files_properties(third_party/rtmidi/RtMidi.cpp PROPERTIES
+        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+        SKIP_PRECOMPILE_HEADERS ON
+        SKIP_AUTOGEN ON)
+else()
+    set(NEREUS_RTMIDI_AVAILABLE FALSE)
+    message(STATUS "ALSA not found: this build has no MIDI support")
+endif()
+
+# hidapi: desktop only, never NereusCore or nereusd (R-HK-18). The platform's C file
+# goes straight into the library, so no DLL and no package step. On Linux it needs
+# libudev; without it the build has no USB device support and the devices stay
+# listed and disabled, with the reason.
+set(NEREUS_HIDAPI_AVAILABLE FALSE)
+if(APPLE)
+    set(NEREUS_HIDAPI_AVAILABLE TRUE)
+    set(NEREUS_HIDAPI_PLATFORM mac)
+elseif(WIN32)
+    set(NEREUS_HIDAPI_AVAILABLE TRUE)
+    set(NEREUS_HIDAPI_PLATFORM windows)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBUDEV IMPORTED_TARGET libudev)
+    endif()
+    if(LIBUDEV_FOUND)
+        set(NEREUS_HIDAPI_AVAILABLE TRUE)
+        set(NEREUS_HIDAPI_PLATFORM linux)
+    else()
+        message(STATUS "libudev not found: this build has no USB device support")
+    endif()
+endif()
+if(NEREUS_HIDAPI_AVAILABLE)
+    set(NEREUS_HIDAPI_SOURCE third_party/hidapi/${NEREUS_HIDAPI_PLATFORM}/hid.c)
+    list(APPEND GUI_SOURCES ${NEREUS_HIDAPI_SOURCE})
+    set_source_files_properties(${NEREUS_HIDAPI_SOURCE} PROPERTIES
+        COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+        INCLUDE_DIRECTORIES
+            "${CMAKE_SOURCE_DIR}/third_party/hidapi/hidapi;${CMAKE_SOURCE_DIR}/third_party/hidapi/${NEREUS_HIDAPI_PLATFORM}"
+        SKIP_PRECOMPILE_HEADERS ON
+        SKIP_AUTOGEN ON)
 endif()
 qt_add_resources(RESOURCES resources.qrc)
 
@@ -2866,6 +2950,39 @@ function(nereus_apply_gui_deps target)
     target_link_libraries(${target} PUBLIC
         Qt6::Svg
     )
+    if(NEREUS_RTMIDI_AVAILABLE)
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_RTMIDI)
+        target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/rtmidi)
+        if(APPLE)
+            target_compile_definitions(${target} PRIVATE __MACOSX_CORE__)
+            target_link_libraries(${target} PUBLIC
+                "-framework CoreMIDI" "-framework CoreAudio" "-framework CoreFoundation")
+        elseif(WIN32)
+            # The number RtMidi adds to a Windows name by default is the port's
+            # place in the list, and it moves when another device comes or goes:
+            # that would read as an unplug (third_party/rtmidi/RtMidi.cpp:2975-2983).
+            target_compile_definitions(${target} PRIVATE
+                __WINDOWS_MM__ RTMIDI_DO_NOT_ENSURE_UNIQUE_PORTNAMES)
+            target_link_libraries(${target} PUBLIC winmm)
+        else()
+            target_compile_definitions(${target} PRIVATE __LINUX_ALSA__)
+            target_link_libraries(${target} PUBLIC ALSA::ALSA)
+        endif()
+    endif()
+    if(NEREUS_HIDAPI_AVAILABLE)
+        target_compile_definitions(${target} PUBLIC NEREUS_HAVE_HIDAPI)
+        target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/third_party/hidapi)
+        if(APPLE)
+            target_link_libraries(${target} PUBLIC
+                "-framework IOKit" "-framework CoreFoundation" "-framework AppKit")
+        elseif(WIN32)
+            # hid.c loads hid.dll and cfgmgr32.dll itself (windows/hid.c:131-136). Its
+            # functions stay private to the library, so no dllexport.
+            target_compile_definitions(${target} PRIVATE HID_API_NO_EXPORT_DEFINE)
+        else()
+            target_link_libraries(${target} PUBLIC PkgConfig::LIBUDEV)
+        endif()
+    endif()
 
     nereus_apply_warnings(${target})
 endfunction()
@@ -3668,6 +3785,54 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/nereusd"
             COMPONENT nereusd
             EXCLUDE_FROM_ALL)
+endif()
+
+# Deck plugins (hot keys). Plain files for other companies' apps: nothing links them.
+# NereusDeckPlugins lays them out in <build>/deck-plugins, with the Elgato folder zipped to
+# the .streamDeckPlugin its app opens. On macOS that goes into the app's Resources/plugins
+# and on Windows into plugins/ beside the executable, because the release packages are made
+# from those places. Linux installs to share/nereussdr/plugins; the Core's --component
+# nereusd install doesn't take them.
+set(NEREUS_DECK_PLUGINS_DIR "${CMAKE_BINARY_DIR}/deck-plugins")
+set(NEREUS_ELGATO_PLUGIN_ROOT "${CMAKE_SOURCE_DIR}/plugins/elgato-nereussdr")
+set(NEREUS_ULANZI_PLUGIN "${CMAKE_SOURCE_DIR}/plugins/ulanzi-nereussdr/com.nereussdr.radio.ulanziPlugin")
+set(NEREUS_SC_PLUGIN "${CMAKE_SOURCE_DIR}/plugins/streamcontroller-nereussdr")
+file(GLOB_RECURSE NEREUS_DECK_PLUGIN_FILES CONFIGURE_DEPENDS
+    "${NEREUS_ELGATO_PLUGIN_ROOT}/com.nereussdr.radio.sdPlugin/*"
+    "${NEREUS_ULANZI_PLUGIN}/*"
+    "${NEREUS_SC_PLUGIN}/*")
+add_custom_command(
+    OUTPUT "${NEREUS_DECK_PLUGINS_DIR}/NereusSDR.streamDeckPlugin"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${NEREUS_DECK_PLUGINS_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${NEREUS_DECK_PLUGINS_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E chdir "${NEREUS_ELGATO_PLUGIN_ROOT}"
+            ${CMAKE_COMMAND} -E tar cf "${NEREUS_DECK_PLUGINS_DIR}/NereusSDR.streamDeckPlugin" --format=zip
+            com.nereussdr.radio.sdPlugin
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${NEREUS_ULANZI_PLUGIN}"
+            "${NEREUS_DECK_PLUGINS_DIR}/com.nereussdr.radio.ulanziPlugin"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${NEREUS_SC_PLUGIN}"
+            "${NEREUS_DECK_PLUGINS_DIR}/streamcontroller-nereussdr"
+    COMMAND ${CMAKE_COMMAND} -E rm -f "${NEREUS_DECK_PLUGINS_DIR}/streamcontroller-nereussdr/test_link.py"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${NEREUS_DECK_PLUGINS_DIR}/streamcontroller-nereussdr/__pycache__"
+    DEPENDS ${NEREUS_DECK_PLUGIN_FILES}
+    COMMENT "Laying out the deck plugins"
+    VERBATIM)
+add_custom_target(NereusDeckPlugins ALL DEPENDS "${NEREUS_DECK_PLUGINS_DIR}/NereusSDR.streamDeckPlugin")
+add_dependencies(NereusSDR NereusDeckPlugins)
+if(APPLE)
+    add_custom_command(TARGET NereusSDR POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${NEREUS_DECK_PLUGINS_DIR}"
+                "$<TARGET_BUNDLE_CONTENT_DIR:NereusSDR>/Resources/plugins"
+        VERBATIM)
+elseif(WIN32)
+    add_custom_command(TARGET NereusSDR POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${NEREUS_DECK_PLUGINS_DIR}"
+                "$<TARGET_FILE_DIR:NereusSDR>/plugins"
+        VERBATIM)
+else()
+    install(DIRECTORY "${NEREUS_DECK_PLUGINS_DIR}/"
+            DESTINATION share/nereussdr/plugins
+            COMPONENT deck-plugins)
 endif()
 
 # Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.

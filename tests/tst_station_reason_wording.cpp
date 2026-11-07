@@ -1141,7 +1141,7 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("TxRefusals::notHolder().text"),
           // The remote epoch wrapper returns requestCwxFor's sender words
           // (CwxSender.h) or TxRefusals::notReady(), all scanned below.
-          QStringLiteral("m_radioModel->requestRemoteCwxFor( requester, request.kind != Kind::Send, start)")}},
+          QStringLiteral("m_radioModel->requestRemoteCwxFor( requester, request.kind != Kind::Send && !paddleGoesOn, start)")}},
         // CW transmit Task 14: the CWX sender's refusals, which the remote
         // CW verbs send an app (memory numbers are plain).
         {"src/core/CwxSender.h", {}, {}, 4},

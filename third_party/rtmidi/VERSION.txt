@@ -1,0 +1,23 @@
+RtMidi
+======
+
+Version: 6.0.0
+Repository: https://github.com/thestk/rtmidi
+Tag: 6.0.0
+Commit: 1e5b49925aa60065db52de44c366d446a902547b
+Archive: https://codeload.github.com/thestk/rtmidi/tar.gz/refs/tags/6.0.0
+Archive SHA-256: ef7bcda27fee6936b651c29ebe9544c74959d0b1583b716ce80a1c6fea7617f0
+Vendored: 2026-11-06
+License: MIT-style, see LICENSE
+
+Files copied from the archive, with the SHA-256 of each as upstream ships it:
+
+  RtMidi.h    74f98ca172243b0b9c0c59f53c4e20285d879ffa86b3d61692109b013f4606f9
+  RtMidi.cpp  184d775e88e5d73b079897363fb42af155122e879f0bc9254a1c7edae4eadb3c
+  LICENSE     7fa091d9c1aa492ebfcafa9f919d27bbce61e4f048ece2dfc3b7f93181e9e364
+
+RtMidi.h and LICENSE are unchanged. RtMidi.cpp carries one patch, the RtMidi.cpp
+part of AetherSDR commit 5769f480 (docs/attribution/RTMIDI-PROVENANCE.md shows it).
+SHA-256 of the file as vendored:
+
+  RtMidi.cpp  abe58cc71d3524d4389f2d947ef718c4d08256d9b253c509060cf88636d1bd2b
