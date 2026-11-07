@@ -268,6 +268,42 @@ private slots:
         QCOMPARE(cutEpochs.front(), 11u);
     }
 
+    // A live key with no "tx" channel survives a stall past the cut, so the
+    // guard is not judging. Its keepalives came in time and are read late:
+    // they move the count to when they came, and that key starting CW is not
+    // cut as a lost link. One that came past the cut renews nothing (G-73), so
+    // the same CW start after it is cut.
+    void aKeepaliveInTimeReadBehindAStallMovesAGuardNotJudging_data()
+    {
+        QTest::addColumn<bool>("cameInTime");
+        QTest::newRow("came in time") << true;
+        QTest::newRow("came past the cut") << false;
+    }
+    void aKeepaliveInTimeReadBehindAStallMovesAGuardNotJudging()
+    {
+        QFETCH(bool, cameInTime);
+        std::atomic<int> cuts{0};
+        RemoteTxCutGuard guard(
+            [&](quint64, quint64, quint32, qint64) { cuts.fetch_add(1); },
+            [](quint64, quint32, bool) {});
+        const Clock::time_point start{};
+        guard.useControlledClockForTest(start);
+        guard.arm(0, 3, 0);
+        QVERIFY(!guard.isJudging());
+        guard.advanceClockForTest(3500ms);
+        if (cameInTime) {
+            quint64 sequence = 0;
+            for (auto at = 100ms; at <= 3500ms; at += 100ms) {
+                QVERIFY(guard.heardKeepaliveOnMain({++sequence, 3, 0}, start + at));
+            }
+        } else {
+            QVERIFY(!guard.heardKeepaliveOnMain({1, 3, 0}, start + 3500ms));
+        }
+        guard.arm(0, 3, 11);
+        QCOMPARE(cuts.load(), cameInTime ? 0 : 1);
+        QCOMPARE(guard.isJudging(), cameInTime);
+    }
+
     void cwHoldBoundSurvivesStaleButNewerReceipts()
     {
         std::mutex mutex;

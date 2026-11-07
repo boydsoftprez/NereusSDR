@@ -58,6 +58,18 @@
 //               hold a key past heldSinceMs + 2600 ms, on time or with
 //               every check late; a fresh one still ends such a hold. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a keepalive read past the cut renews nothing and leaves the
+//               stop to the check, so a release read behind it is no lost
+//               link. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-11-05: review fix wave: releaseRead, the hold bound's arrival, the
+//               no-timer stop, and no timer restart from an expired
+//               keepalive. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-11-05: a keepalive read behind a stall, with and without its wait:
+//               the budget from its arrival, a backlog, a session copy and a
+//               channel copy in either order, and a wait far too long. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -245,6 +257,15 @@ private slots:
     void copiesAndOvertakenKeepalivesDoNotCount();
     void lateKeepaliveCannotRescueExpiredWatch_data();
     void lateKeepaliveCannotRescueExpiredWatch();
+    void aReleaseBehindAnExpiredKeepaliveEndsTheKeyWithNoStop();
+    void expiredKeepalivesOnEveryTurnCannotPutOffTheCut();
+    void aKeepaliveHeardInTimeBehindAnExpiredOneKeepsTheKey();
+    void aKeepalivePastAHoldsBoundLeavesTheStopToTheCheck();
+    void withNoTimerAnExpiredKeepaliveStillStops();
+    void aReleaseReadStartsAVoxOnlyWatchsSilenceAfresh();
+    void aReleaseReadKeepsNoKeyedOrCwWatchAlive();
+    void aSurvivingVoxWatchStillCutsWhenTheLinkGoesQuiet();
+    void aVoxKeyAfterAReleaseReadHoldsAt401AndCutsAt3001();
     void anOlderEpochDoesNotCount();
     void aKeyTheDeviceWasNeverAnsweredForTakesAnyEpoch();
     void theDevicesReleaseEndsTheWatchAtOnce();
@@ -260,6 +281,29 @@ private slots:
     void anotherDevicesKeepalivesCannotPutOffADeadLink_data();
     void anotherDevicesKeepalivesCannotPutOffADeadLink();
     void aCheckOnlySlightlyLateJudgesAtOnce();
+    void aStaleKeepaliveRenewsOnlyFromItsArrival_data();
+    void aStaleKeepaliveRenewsOnlyFromItsArrival();
+    void aBacklogRenewsOnlyToItsLastArrival();
+    void aSessionCopyAndAChannelCopyInEitherOrder_data();
+    void aSessionCopyAndAChannelCopyInEitherOrder();
+    void aWaitFarTooLongRenewsNothingAndStopsNothing();
+    void aSustainedLagWithNoChannelHeardHoldsThenStopsAtTheHoldBound_data();
+    void aSustainedLagWithNoChannelHeardHoldsThenStopsAtTheHoldBound();
+    void aLagWithNoChannelHeardUnderTheHoldLessOneIntervalHoldsNothing();
+    void aLagWithNoChannelHeardJustUnderTheHoldChopsRfAndDoesNotStop_data();
+    void aLagWithNoChannelHeardJustUnderTheHoldChopsRfAndDoesNotStop();
+    void aChannelCopySetsTheFlagWhateverBecomesOfIt_data();
+    void aChannelCopySetsTheFlagWhateverBecomesOfIt();
+    void aSessionCopyReadBeforeTheFirstChannelCopyCarriesItsAge();
+    void theFlagStartsAgainWithEachKey_data();
+    void theFlagStartsAgainWithEachKey();
+    void aKeyOrCwJoiningOneRunningKeepsTheFlag_data();
+    void aKeyOrCwJoiningOneRunningKeepsTheFlag();
+    void aChannelCopyFailingTheCwCheckSetsTheFlag_data();
+    void aChannelCopyFailingTheCwCheckSetsTheFlag();
+    void watchdogOnlyASessionCopyHandedNoAgeRenewsFromTheRead();
+    void watchdogOnlySessionCopiesHandedNoAgeThroughALagHoldOnlyBeforeTheFirstLateRead();
+    void watchdogOnlyChannelCopiesReadFirstThroughALagHoldThenStop();
 };
 
 void TestRemoteTxWatchdog::theNumbersAreStatedTogether()
@@ -895,17 +939,272 @@ void TestRemoteTxWatchdog::lateKeepaliveCannotRescueExpiredWatch()
     const bool withinDeadline = gapMs <= RemoteTxWatchdog::kLinkCutMs;
     QCOMPARE(accepted, withinDeadline);
     QCOMPARE(heard.count(), withinDeadline ? 1 : 0);
-    QCOMPARE(rig.stops.size(), withinDeadline ? size_t(0) : size_t(1));
-    QCOMPARE(rig.watchdog.isWatching(kPhone), withinDeadline);
+    QCOMPARE(rig.watchdog.isWatching(kPhone), true);
     if (!withinDeadline) {
+        // It renewed nothing, and the stop is the check's: what was read
+        // behind this keepalive goes first, as for any late check.
+        QVERIFY(rig.stops.empty());
+        QVERIFY(rig.timerDue.has_value());
+        QVERIFY(*rig.timerDue <= rig.nowMs);
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();   // late: its one turn
+        QVERIFY(rig.stops.empty());
+        QVERIFY(rig.timerDue.has_value());
+        QVERIFY(*rig.timerDue <= rig.nowMs);
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();   // judged
+        QCOMPARE(rig.stops.size(), size_t(1));
+        QVERIFY(!rig.watchdog.isWatching(kPhone));
         QCOMPARE(tripped.count(), 1);
         QCOMPARE(tripped.at(0).at(1).toBool(), false);
         QCOMPARE(tripped.at(0).at(2).toLongLong(), gapMs);
         QVERIFY(!rig.timerDue.has_value());
-        rig.watchdog.onTimer();
         QVERIFY(!rig.watchdog.keepalive(kPhone, 7, 4, RemoteTxWatchdog::Path::Session));
         QCOMPARE(rig.stops.size(), size_t(1));
+    } else {
+        QVERIFY(rig.stops.empty());
     }
+}
+
+// A stall past the cut, and the device released during it: the session read
+// after the stall gives a keepalive the device sent before its release, then
+// the release. The keepalive stops nothing, so the release ends the key with
+// no lost link recorded, whichever way the overdue check falls around them.
+void TestRemoteTxWatchdog::aReleaseBehindAnExpiredKeepaliveEndsTheKeyWithNoStop()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::TxChannel));
+    QSignalSpy tripped(&rig.watchdog, &RemoteTxWatchdog::tripped);
+
+    rig.nowMs = 3700;
+    QVERIFY(!rig.watchdog.keepalive(kPhone, 6, 4, RemoteTxWatchdog::Path::Session));
+    QCOMPARE(tripped.count(), 0);
+    rig.watchdog.setKeyed(kPhone, false);
+    QVERIFY(!rig.watchdog.isWatching(kPhone));
+    rig.watchdog.onTimer();
+    QCOMPARE(tripped.count(), 0);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(!rig.timerDue.has_value());
+}
+
+// The cut stays bounded: an expired keepalive read between every check (the
+// link's backlog, or a device still sending into a dead watch) never renews
+// the watch and never earns another turn, so the second check stops it.
+void TestRemoteTxWatchdog::expiredKeepalivesOnEveryTurnCannotPutOffTheCut()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::Session));
+    quint64 sequence = 5;
+    rig.nowMs = 3700;
+    int checks = 0;
+    while (rig.watchdog.isWatching(kPhone) && checks < 10) {
+        // Restarting the timer here is what would put the check off.
+        const int startsBefore = rig.starts;
+        QVERIFY(!rig.watchdog.keepalive(kPhone, ++sequence, 4, RemoteTxWatchdog::Path::Session));
+        QCOMPARE(rig.starts, startsBefore);
+        ++rig.nowMs;
+        QVERIFY(rig.timerDue.has_value());
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+        ++checks;
+    }
+    QCOMPARE(checks, 2);
+    QCOMPARE(rig.stops.size(), size_t(1));
+}
+
+// A stall past the cut on a live link: the session's copy, with no receipt
+// time, is read first and reads as past the cut. The "tx" channel's copies,
+// timed at their receipt during the stall, show the link was never quiet, so
+// the key stays and nothing is stopped.
+void TestRemoteTxWatchdog::aKeepaliveHeardInTimeBehindAnExpiredOneKeepsTheKey()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::TxChannel));
+
+    rig.nowMs = 3700;
+    QVERIFY(!rig.watchdog.keepalive(kPhone, 6, 4, RemoteTxWatchdog::Path::Session));
+    // Sequence 6 again: the expired copy did not count, so its twin does.
+    QVERIFY(rig.watchdog.keepalive(kPhone, 6, 4, RemoteTxWatchdog::Path::TxChannel, 2500));
+    QVERIFY(rig.watchdog.keepalive(kPhone, 7, 4, RemoteTxWatchdog::Path::TxChannel, 0));
+    rig.watchdog.onTimer();
+    rig.advanceTo(3800);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.watchdog.isWatching(kPhone));
+}
+
+// The same for a hold past its bound: keepalives that counted without ending
+// it kept the cut away, and one heard past the bound leaves the stop to the
+// check, with its turn for the bound.
+void TestRemoteTxWatchdog::aKeepalivePastAHoldsBoundLeavesTheStopToTheCheck()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    quint64 sequence = 0;
+    constexpr qint64 kAgeMs = 450;
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, ++sequence, 4, RemoteTxWatchdog::Path::TxChannel));
+    rig.advanceTo(501);
+    QCOMPARE(rig.holdsStarted(), 1);
+    for (qint64 t = 600; t <= 2900; t += 100) {
+        rig.nowMs = t;
+        QVERIFY(rig.watchdog.keepalive(kPhone, ++sequence, 4, RemoteTxWatchdog::Path::TxChannel,
+                                       kAgeMs));
+    }
+    QVERIFY(rig.watchdog.isHeld(kPhone));
+
+    // Heard at 3150, 2649 ms into a hold bound at 2600, and within the cut
+    // of the last one that counted.
+    rig.nowMs = 3600;
+    const int startsBefore = rig.starts;
+    QVERIFY(!rig.watchdog.keepalive(kPhone, ++sequence, 4, RemoteTxWatchdog::Path::TxChannel,
+                                    kAgeMs));
+    QCOMPARE(rig.starts, startsBefore);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.watchdog.isHeld(kPhone));
+    rig.timerDue.reset();
+    rig.watchdog.onTimer();   // late: the bound's one turn
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.timerDue.has_value());
+    rig.timerDue.reset();
+    rig.watchdog.onTimer();   // judged
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.holdEnds.size(), size_t(1));
+    QVERIFY(rig.holdEnds.front().how == RemoteTxWatchdog::HoldEnd::Cut);
+}
+
+// No timer hook means no check will ever run, so the keepalive stops it.
+void TestRemoteTxWatchdog::withNoTimerAnExpiredKeepaliveStillStops()
+{
+    qint64 nowMs = 0;
+    int stops = 0;
+    RemoteTxWatchdog watchdog;
+    RemoteTxWatchdog::Hooks hooks;
+    hooks.clock = [&nowMs] { return nowMs; };
+    hooks.stop = [&stops](const QByteArray&, const QString&) { ++stops; };
+    watchdog.setHooks(std::move(hooks));
+    watchdog.setKeyed(kPhone, true, 4);
+    nowMs = RemoteTxWatchdog::kLinkCutMs + 1;
+    QVERIFY(!watchdog.keepalive(kPhone, 1, 4, RemoteTxWatchdog::Path::Session));
+    QCOMPARE(stops, 1);
+    QVERIFY(!watchdog.isWatching(kPhone));
+}
+
+// Maintainer's ruling, 2026-11-05: VOX armed, keyed, and the release read past
+// the cut. The key is over, and the watch left for VOX counts from the read.
+void TestRemoteTxWatchdog::aReleaseReadStartsAVoxOnlyWatchsSilenceAfresh()
+{
+    Rig rig;
+    rig.watchdog.setVoxArmed(kPhone, true);
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::TxChannel));
+
+    rig.nowMs = 3700;
+    rig.watchdog.setKeyed(kPhone, false);
+    rig.watchdog.releaseRead(kPhone);
+    QVERIFY(rig.watchdog.isWatching(kPhone));
+    // The two checks that were overdue find a fresh count.
+    for (int i = 0; i < 2 && rig.timerDue && *rig.timerDue <= rig.nowMs; ++i) {
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+    }
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.watchdog.isWatching(kPhone));
+}
+
+// Only that case: a keepalive past the cut still renews nothing, and a release
+// read does nothing to a watch still keyed or sending CW.
+void TestRemoteTxWatchdog::aReleaseReadKeepsNoKeyedOrCwWatchAlive()
+{
+    {
+        Rig rig;
+        rig.watchdog.setVoxArmed(kPhone, true);
+        rig.advanceTo(100);
+        QVERIFY(rig.watchdog.keepalive(kPhone, 5, 0, RemoteTxWatchdog::Path::Session));
+        rig.nowMs = 3700;
+        QVERIFY(!rig.watchdog.keepalive(kPhone, 6, 0, RemoteTxWatchdog::Path::Session));
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+        QCOMPARE(rig.stops.size(), size_t(1));
+    }
+    {
+        Rig rig;
+        rig.watchdog.setKeyed(kPhone, true, 4);
+        rig.advanceTo(100);
+        QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::Session));
+        rig.nowMs = 3700;
+        rig.watchdog.releaseRead(kPhone);   // an unkey for an earlier key
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+        QCOMPARE(rig.stops.size(), size_t(1));
+    }
+    {
+        Rig rig;
+        rig.watchdog.setVoxArmed(kPhone, true);
+        rig.watchdog.setCwActive(kPhone, true, 9);
+        rig.nowMs = 3700;
+        rig.watchdog.releaseRead(kPhone);
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+        rig.timerDue.reset();
+        rig.watchdog.onTimer();
+        QCOMPARE(rig.stops.size(), size_t(1));
+    }
+}
+
+// A dead device does not keep VOX armed for ever: with nothing after the
+// release, the surviving watch stops 3001 ms after the read.
+void TestRemoteTxWatchdog::aSurvivingVoxWatchStillCutsWhenTheLinkGoesQuiet()
+{
+    Rig rig;
+    rig.watchdog.setVoxArmed(kPhone, true);
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::TxChannel));
+    rig.nowMs = 3700;
+    rig.watchdog.setKeyed(kPhone, false);
+    rig.watchdog.releaseRead(kPhone);
+    rig.advanceTo(3700 + RemoteTxWatchdog::kLinkCutMs);
+    QVERIFY(rig.stops.empty());
+    rig.advanceTo(3700 + RemoteTxWatchdog::kLinkCutMs + 1);
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.stops.front().atMs, 3700 + RemoteTxWatchdog::kLinkCutMs + 1);
+    QVERIFY(!rig.watchdog.isWatching(kPhone));
+}
+
+// A VOX key right after the read gets its full budget from it: the hold at
+// 401 ms and the cut at 3001 ms.
+void TestRemoteTxWatchdog::aVoxKeyAfterAReleaseReadHoldsAt401AndCutsAt3001()
+{
+    Rig rig;
+    rig.watchdog.setVoxArmed(kPhone, true);
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 4, RemoteTxWatchdog::Path::TxChannel));
+    rig.nowMs = 3700;
+    rig.watchdog.setKeyed(kPhone, false);
+    rig.watchdog.releaseRead(kPhone);
+    rig.watchdog.setKeyed(kPhone, true, 0);
+    rig.advanceTo(3700 + 400);
+    QCOMPARE(rig.holdsStarted(), 0);
+    rig.advanceTo(3700 + 401);
+    QCOMPARE(rig.holdsStarted(), 1);
+    QCOMPARE(rig.holdStarts.front().silentMs, qint64(401));
+    rig.advanceTo(3700 + 3000);
+    QVERIFY(rig.stops.empty());
+    rig.advanceTo(3700 + 3001);
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.stops.front().atMs, qint64(3700 + 3001));
 }
 
 // TX mic thread: the Core's event loop stalls 420 ms while the phone's
@@ -1451,6 +1750,478 @@ void TestRemoteTxWatchdog::theSameLossOnAReliableChannelHolds()
           run.lost, static_cast<long long>(run.longestGapMs), run.holds, run.stops);
     QVERIFY(run.longestGapMs > RemoteTxWatchdog::kLinkHoldMs);
     QVERIFY2(run.holds > 0, "the reliable channel never stalled past the hold");
+}
+
+// Receipt age on a direct or TURN pair, no "tx" copy read. Keyed at 0; a keepalive comes at
+// 100 ms and the link dies; main stalls and reads it at 3000 ms, the last
+// moment it can still count. With its wait, it renews from 100 ms: RF is held
+// when the stall ends and the cut is 3001 ms after its arrival. With no wait
+// (a WebSocket reports none), it counts as heard at 3000 ms and renews a full
+// budget: RF goes back for 401 ms and the cut is at 6001 ms.
+void TestRemoteTxWatchdog::aStaleKeepaliveRenewsOnlyFromItsArrival_data()
+{
+    QTest::addColumn<qint64>("ageMs");
+    QTest::addColumn<qint64>("holdAtMs");
+    QTest::addColumn<qint64>("cutAtMs");
+    QTest::newRow("with its wait") << qint64(2900) << qint64(3000) << qint64(3101);
+    QTest::newRow("with no wait") << qint64(0) << qint64(3401) << qint64(6001);
+}
+
+void TestRemoteTxWatchdog::aStaleKeepaliveRenewsOnlyFromItsArrival()
+{
+    QFETCH(qint64, ageMs);
+    QFETCH(qint64, holdAtMs);
+    QFETCH(qint64, cutAtMs);
+    Rig rig;
+    QSignalSpy tripped(&rig.watchdog, &RemoteTxWatchdog::tripped);
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.nowMs = 3000;
+    QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::Session, ageMs));
+    rig.advanceTo(cutAtMs - 1);
+    QCOMPARE(rig.holdsStarted(), 1);
+    QCOMPARE(rig.holds.front().atMs, holdAtMs);
+    QVERIFY(rig.stops.empty());
+    rig.advanceTo(cutAtMs);
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.stops.front().atMs, cutAtMs);
+    QCOMPARE(tripped.first().at(2).toLongLong(), qint64(3001));
+    // A later key: its hold at 401 ms and its cut at 3001 ms, in full.
+    const qint64 later = rig.nowMs;
+    rig.watchdog.setKeyed(kPhone, true, 4);
+    rig.advanceTo(later + 400);
+    QCOMPARE(rig.holdsStarted(), 1);
+    rig.advanceTo(later + 401);
+    QCOMPARE(rig.holdsStarted(), 2);
+    rig.advanceTo(later + 3000);
+    QCOMPARE(rig.stops.size(), size_t(1));
+    rig.advanceTo(later + 3001);
+    QCOMPARE(rig.stops.size(), size_t(2));
+}
+
+// Several in a backlog, each with its wait: the count ends at the last one's
+// arrival, however many there are and however late they are read. A session copy
+// has its wait only on a key with no "tx" copy read; after that the station hands
+// it none, and a late one renews from its read.
+void TestRemoteTxWatchdog::aBacklogRenewsOnlyToItsLastArrival()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.nowMs = 2900;
+    QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::Session, 2800));
+    QVERIFY(rig.watchdog.keepalive(kPhone, 2, 3, RemoteTxWatchdog::Path::Session, 2700));
+    QVERIFY(rig.watchdog.keepalive(kPhone, 3, 3, RemoteTxWatchdog::Path::Session, 2600));
+    rig.advanceTo(2900);
+    QCOMPARE(rig.holdsStarted(), 1);
+    QCOMPARE(rig.holds.front().atMs, qint64(2900));
+    // More read during the hold: old, so they end nothing and move the cut
+    // only to when they came.
+    rig.nowMs = 3000;
+    QVERIFY(rig.watchdog.keepalive(kPhone, 4, 3, RemoteTxWatchdog::Path::Session, 2600));
+    QVERIFY(rig.watchdog.keepalive(kPhone, 5, 3, RemoteTxWatchdog::Path::Session, 2500));
+    QVERIFY(rig.watchdog.isHeld(kPhone));
+    rig.advanceTo(3500);
+    QVERIFY(rig.stops.empty());
+    rig.advanceTo(3501);
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.stops.front().atMs, qint64(3501));
+}
+
+// The same keepalive on the session and on the "tx" channel, each with its
+// own wait, read after a stall. Only the first read counts. With one receipt
+// the order changes nothing. With two, the cut is at the first read's arrival
+// plus 3001 ms, so never later than the later of the two real arrivals. Watchdog
+// only: the session copy's age is handed in, which fits only a key with no "tx"
+// copy read yet, the read of this very copy being the first. After that the
+// station hands it none.
+void TestRemoteTxWatchdog::aSessionCopyAndAChannelCopyInEitherOrder_data()
+{
+    QTest::addColumn<bool>("sessionFirst");
+    QTest::addColumn<qint64>("sessionAgeMs");
+    QTest::addColumn<qint64>("channelAgeMs");
+    QTest::addColumn<qint64>("cutAtMs");
+    QTest::newRow("one receipt, session first") << true << qint64(900) << qint64(900) << qint64(3101);
+    QTest::newRow("one receipt, channel first") << false << qint64(900) << qint64(900) << qint64(3101);
+    QTest::newRow("session later, session first") << true << qint64(850) << qint64(900) << qint64(3151);
+    QTest::newRow("session later, channel first") << false << qint64(850) << qint64(900) << qint64(3101);
+}
+
+void TestRemoteTxWatchdog::aSessionCopyAndAChannelCopyInEitherOrder()
+{
+    QFETCH(bool, sessionFirst);
+    QFETCH(qint64, sessionAgeMs);
+    QFETCH(qint64, channelAgeMs);
+    QFETCH(qint64, cutAtMs);
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.nowMs = 1000;
+    const auto session = [&] {
+        return rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::Session, sessionAgeMs);
+    };
+    const auto channel = [&] {
+        return rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::TxChannel, channelAgeMs);
+    };
+    QVERIFY(sessionFirst ? session() : channel());
+    QVERIFY(!(sessionFirst ? channel() : session()));
+    rig.advanceTo(cutAtMs - 1);
+    QVERIFY(rig.stops.empty());
+    rig.advanceTo(cutAtMs);
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.stops.front().atMs, cutAtMs);
+}
+
+// A wait longer than anything real cannot stop a live key: it reads as older
+// than the count already has, so it moves nothing and the next one counts.
+void TestRemoteTxWatchdog::aWaitFarTooLongRenewsNothingAndStopsNothing()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::Session));
+    rig.advanceTo(200);
+    constexpr qint64 kFarTooLongMs = 1'000'000'000;
+    QVERIFY(rig.watchdog.keepalive(kPhone, 2, 3, RemoteTxWatchdog::Path::Session, kFarTooLongMs));
+    QVERIFY(rig.stops.empty());
+    rig.advanceTo(300);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 3, 3, RemoteTxWatchdog::Path::Session));
+    rig.advanceTo(600);
+    QCOMPARE(rig.holdsStarted(), 0);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.watchdog.isWatching(kPhone));
+}
+
+namespace {
+// Keyed at 0. A keepalive arrives every 100 ms and is read at once up to 1000
+// ms; from then on each is read `lagMs` after it came, as behind a busy main
+// thread on a link that reports the wait. Runs to `endMs` or the stop.
+void runLag(Rig& rig, qint64 lagMs, qint64 endMs)
+{
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    quint64 sequence = 0;
+    for (qint64 arrival = 100; rig.stops.empty(); arrival += 100) {
+        const qint64 ageMs = arrival <= 1000 ? 0 : lagMs;
+        const qint64 readAt = arrival + ageMs;
+        if (readAt > endMs) {
+            break;
+        }
+        rig.advanceTo(readAt);
+        if (!rig.stops.empty()) {
+            break;
+        }
+        rig.watchdog.keepalive(kPhone, ++sequence, 3, RemoteTxWatchdog::Path::Session, ageMs);
+    }
+    rig.advanceTo(endMs);
+}
+} // namespace
+
+// With no "tx" copy read on the key, session copies carry their age, as in the
+// three tests below. The rows after them are the key with one read.
+//
+// A lag that lasts, not a stall: every keepalive arrives on time and is read
+// too old to end a hold. The last one that came in time was at 1000. RF is held
+// at 1401 and never comes back, each later keepalive renews the count but not
+// the hold, and the stop comes at the hold's bound, 4002, as a lost link. The
+// silence it reports is only the lag, about what the last read was old.
+void TestRemoteTxWatchdog::aSustainedLagWithNoChannelHeardHoldsThenStopsAtTheHoldBound_data()
+{
+    QTest::addColumn<qint64>("lagMs");
+    QTest::addColumn<qint64>("silentAtStopMs");
+    QTest::newRow("just over the hold, 401") << qint64(401) << qint64(402);
+    QTest::newRow("500") << qint64(500) << qint64(502);
+    QTest::newRow("2000") << qint64(2000) << qint64(2002);
+}
+
+void TestRemoteTxWatchdog::aSustainedLagWithNoChannelHeardHoldsThenStopsAtTheHoldBound()
+{
+    QFETCH(qint64, lagMs);
+    QFETCH(qint64, silentAtStopMs);
+    Rig rig;
+    QSignalSpy tripped(&rig.watchdog, &RemoteTxWatchdog::tripped);
+    runLag(rig, lagMs, 6000);
+    QCOMPARE(rig.holdsStarted(), 1);
+    QCOMPARE(rig.holds.front().atMs, qint64(1401));
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.stops.front().atMs, qint64(4002));
+    for (const auto& hold : rig.holds) {   // never released before the stop
+        QVERIFY(hold.held || hold.atMs >= rig.stops.front().atMs);
+    }
+    QCOMPARE(rig.stops.front().atMs - rig.holds.front().atMs,
+             qint64(RemoteTxWatchdog::kLinkHoldMaxMs + 1));
+    QCOMPARE(tripped.count(), 1);
+    QCOMPARE(tripped.first().at(1).toBool(), false);   // quiet, not a closed link
+    QCOMPARE(tripped.first().at(2).toLongLong(), silentAtStopMs);
+}
+
+// With a keepalive every 100 ms, the check is due 401 ms after the last one
+// came and the next is read 100 ms after the last was. So a lag of 300 ms
+// reaches the next read first.
+void TestRemoteTxWatchdog::aLagWithNoChannelHeardUnderTheHoldLessOneIntervalHoldsNothing()
+{
+    Rig rig;
+    runLag(rig, 300, 8000);
+    QCOMPARE(rig.holdsStarted(), 0);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.watchdog.isWatching(kPhone));
+}
+
+// A lag from there up to 400 ms: the check holds RF just before each read, and
+// that read, 400 ms old or less, ends the hold. So RF is held for part of every
+// 100 ms and the key is not stopped. This is the model, with timers on time. A
+// real lag delays the check too, and a late check gets a turn, so these exact
+// figures may not occur on a real Core.
+void TestRemoteTxWatchdog::aLagWithNoChannelHeardJustUnderTheHoldChopsRfAndDoesNotStop_data()
+{
+    QTest::addColumn<qint64>("lagMs");
+    QTest::addColumn<qint64>("heldEachCycleMs");
+    QTest::newRow("350") << qint64(350) << qint64(49);
+    QTest::newRow("400") << qint64(400) << qint64(99);
+}
+
+void TestRemoteTxWatchdog::aLagWithNoChannelHeardJustUnderTheHoldChopsRfAndDoesNotStop()
+{
+    QFETCH(qint64, lagMs);
+    QFETCH(qint64, heldEachCycleMs);
+    Rig rig;
+    runLag(rig, lagMs, 8000);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.watchdog.isWatching(kPhone));
+    QVERIFY2(rig.holdsStarted() > 50, qPrintable(QString::number(rig.holdsStarted())));
+    QVERIFY(!rig.holdEnds.empty());
+    for (const auto& end : rig.holdEnds) {
+        QCOMPARE(end.lengthMs, heldEachCycleMs);
+    }
+}
+
+// Any "tx" copy read sets the flag, counted or refused, unless it is from a key
+// that has ended. The call's own result is what each row's copy gets.
+void TestRemoteTxWatchdog::aChannelCopySetsTheFlagWhateverBecomesOfIt_data()
+{
+    QTest::addColumn<quint64>("sequence");
+    QTest::addColumn<quint32>("epoch");
+    QTest::addColumn<qint64>("readAt");
+    QTest::addColumn<bool>("counts");
+    QTest::addColumn<bool>("sets");
+    QTest::newRow("counted") << quint64(2) << quint32(3) << qint64(200) << true << true;
+    QTest::newRow("a sequence copy") << quint64(1) << quint32(3) << qint64(200) << false << true;
+    QTest::newRow("from an older key") << quint64(2) << quint32(2) << qint64(200) << false << false;
+    QTest::newRow("past the cut") << quint64(2) << quint32(3) << qint64(3200) << false << true;
+}
+
+void TestRemoteTxWatchdog::aChannelCopySetsTheFlagWhateverBecomesOfIt()
+{
+    QFETCH(quint64, sequence);
+    QFETCH(quint32, epoch);
+    QFETCH(qint64, readAt);
+    QFETCH(bool, counts);
+    QFETCH(bool, sets);
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::Session));
+    QVERIFY(!rig.watchdog.txChannelHeard(kPhone));
+    rig.nowMs = readAt;   // no check runs first: read ahead of it, behind a stall
+    QCOMPARE(rig.watchdog.keepalive(kPhone, sequence, epoch, RemoteTxWatchdog::Path::TxChannel),
+             counts);
+    // Past the cut too: this rig runs a timer, so the stop is the check's, still due.
+    QVERIFY(rig.watchdog.isWatching(kPhone));
+    QCOMPARE(rig.watchdog.txChannelHeard(kPhone), sets);
+}
+
+// The first-read race. Keyed at 0, nothing heard until a stall ends at 2000. A
+// session copy read before the first "tx" copy of the key carries its age, so it
+// counts from 100 and the hold stays. The "tx" copy of the same sequence is a
+// copy, and it still sets the flag. The next session copy, as old, is then
+// heard when read, as today, and ends the hold.
+void TestRemoteTxWatchdog::aSessionCopyReadBeforeTheFirstChannelCopyCarriesItsAge()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.advanceTo(2000);
+    QCOMPARE(rig.holdsStarted(), 1);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::Session, 1900));
+    QVERIFY(rig.watchdog.isHeld(kPhone));
+    QVERIFY(!rig.watchdog.txChannelHeard(kPhone));
+    QVERIFY(!rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::TxChannel, 1900));
+    QVERIFY(rig.watchdog.txChannelHeard(kPhone));
+    QVERIFY(rig.watchdog.isHeld(kPhone));
+    QVERIFY(rig.watchdog.keepalive(kPhone, 2, 3, RemoteTxWatchdog::Path::Session, 0));
+    QVERIFY(!rig.watchdog.isHeld(kPhone));
+}
+
+// When it starts again. The VOX rows keep the watch across the release, so only
+// the key's start clears it. A release alone does not.
+void TestRemoteTxWatchdog::theFlagStartsAgainWithEachKey_data()
+{
+    QTest::addColumn<QString>("how");
+    QTest::addColumn<bool>("heardAfter");
+    QTest::newRow("a release and a new key, the watch ended")
+        << QStringLiteral("watch ended") << false;
+    QTest::newRow("a release, VOX armed keeps the watch") << QStringLiteral("released") << true;
+    QTest::newRow("a release and a new key, VOX armed keeps the watch")
+        << QStringLiteral("new key") << false;
+    QTest::newRow("a new epoch on the key") << QStringLiteral("new epoch") << false;
+    QTest::newRow("the same key again") << QStringLiteral("same key") << true;
+    QTest::newRow("CW starts with no key, VOX armed keeps the watch")
+        << QStringLiteral("cw alone") << false;
+    QTest::newRow("CW starts on the key") << QStringLiteral("cw on key") << true;
+}
+
+void TestRemoteTxWatchdog::theFlagStartsAgainWithEachKey()
+{
+    QFETCH(QString, how);
+    QFETCH(bool, heardAfter);
+    Rig rig;
+    if (how != QStringLiteral("watch ended")) {
+        rig.watchdog.setVoxArmed(kPhone, true);
+    }
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::TxChannel));
+    QVERIFY(rig.watchdog.txChannelHeard(kPhone));
+    if (how == QStringLiteral("watch ended") || how == QStringLiteral("released")
+        || how == QStringLiteral("new key") || how == QStringLiteral("cw alone")) {
+        rig.watchdog.setKeyed(kPhone, false, 0);
+    }
+    if (how == QStringLiteral("watch ended")) {
+        QVERIFY(!rig.watchdog.isWatching(kPhone));
+        QVERIFY(!rig.watchdog.txChannelHeard(kPhone));
+        rig.watchdog.setKeyed(kPhone, true, 4);
+    } else if (how == QStringLiteral("new key") || how == QStringLiteral("new epoch")) {
+        rig.watchdog.setKeyed(kPhone, true, 4);
+    } else if (how == QStringLiteral("same key")) {
+        rig.watchdog.setKeyed(kPhone, true, 3);
+    } else if (how == QStringLiteral("cw alone") || how == QStringLiteral("cw on key")) {
+        rig.watchdog.setCwActive(kPhone, true, 11);
+    }
+    QCOMPARE(rig.watchdog.txChannelHeard(kPhone), heardAfter);
+}
+
+// Not a new start: a key joining CW already running, and CW replaced with no key,
+// keep what the watch has heard. Each has already shown its channel works.
+void TestRemoteTxWatchdog::aKeyOrCwJoiningOneRunningKeepsTheFlag_data()
+{
+    QTest::addColumn<bool>("keyJoins");
+    QTest::newRow("a key joining running CW") << true;
+    QTest::newRow("CW replaced with no key") << false;
+}
+
+void TestRemoteTxWatchdog::aKeyOrCwJoiningOneRunningKeepsTheFlag()
+{
+    QFETCH(bool, keyJoins);
+    Rig rig;
+    rig.watchdog.setCwActive(kPhone, true, 11);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, TxKeepalive{1, 3, 11},
+                                   RemoteTxWatchdog::Path::TxChannel));
+    QVERIFY(rig.watchdog.txChannelHeard(kPhone));
+    if (keyJoins) {
+        rig.watchdog.setKeyed(kPhone, true, 3);
+    } else {
+        rig.watchdog.setCwActive(kPhone, true, 12);
+    }
+    QVERIFY(rig.watchdog.txChannelHeard(kPhone));
+}
+
+// A "tx" copy the CW check refuses renews nothing, and it still shows the channel
+// works, so it sets the flag first.
+void TestRemoteTxWatchdog::aChannelCopyFailingTheCwCheckSetsTheFlag_data()
+{
+    QTest::addColumn<quint32>("cwEpoch");
+    QTest::newRow("no CW epoch") << quint32(0);
+    QTest::newRow("another CW epoch") << quint32(12);
+}
+
+void TestRemoteTxWatchdog::aChannelCopyFailingTheCwCheckSetsTheFlag()
+{
+    QFETCH(quint32, cwEpoch);
+    Rig rig;
+    rig.watchdog.setCwActive(kPhone, true, 11);
+    rig.advanceTo(100);
+    QVERIFY(!rig.watchdog.txChannelHeard(kPhone));
+    QVERIFY(!rig.watchdog.keepalive(kPhone, TxKeepalive{1, 3, cwEpoch},
+                                    RemoteTxWatchdog::Path::TxChannel));
+    QVERIFY(rig.watchdog.txChannelHeard(kPhone));
+}
+
+// Watchdog only. This and the two lag tests below hand a session copy age 0 by
+// hand, as the station does with a "tx" copy read. That the station does is pinned
+// in tst_tx_link_loss_each_path.
+//
+// One read late is heard when read. Keyed at 0, the channel's copy at 100, then a
+// stall to 3000 in which the check holds at 501: the session copy renews in full
+// and ends the hold, and the cut is a full count from that read.
+void TestRemoteTxWatchdog::watchdogOnlyASessionCopyHandedNoAgeRenewsFromTheRead()
+{
+    Rig rig;
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.advanceTo(100);
+    QVERIFY(rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::TxChannel));
+    rig.advanceTo(3000);
+    QCOMPARE(rig.holdsStarted(), 1);
+    QVERIFY(rig.watchdog.txChannelHeard(kPhone));
+    QVERIFY(rig.watchdog.keepalive(kPhone, 2, 3, RemoteTxWatchdog::Path::Session, 0));
+    QVERIFY(!rig.watchdog.isHeld(kPhone));
+    rig.advanceTo(6000);
+    QVERIFY(rig.stops.empty());
+    rig.advanceTo(6001);
+    QCOMPARE(rig.stops.size(), size_t(1));
+}
+
+namespace {
+// A key with the channel heard at 100, and from there a keepalive arriving every
+// 100 ms on both paths, each read 500 ms after it came. `sessionFirst` picks who
+// wins every read; the loser is a copy. A session copy is handed no age here, as
+// the station gives it none; a "tx" copy carries its age always.
+void runChannelHeardLag(Rig& rig, bool sessionFirst, qint64 endMs)
+{
+    constexpr qint64 kLagMs = 500;
+    rig.watchdog.setKeyed(kPhone, true, 3);
+    rig.advanceTo(100);
+    rig.watchdog.keepalive(kPhone, 1, 3, RemoteTxWatchdog::Path::TxChannel);
+    quint64 sequence = 1;
+    for (qint64 arrival = 200; arrival + kLagMs <= endMs && rig.stops.empty(); arrival += 100) {
+        rig.advanceTo(arrival + kLagMs);
+        if (!rig.stops.empty()) {
+            break;
+        }
+        ++sequence;
+        if (sessionFirst) {
+            rig.watchdog.keepalive(kPhone, sequence, 3, RemoteTxWatchdog::Path::Session, 0);
+            rig.watchdog.keepalive(kPhone, sequence, 3, RemoteTxWatchdog::Path::TxChannel, kLagMs);
+        } else {
+            rig.watchdog.keepalive(kPhone, sequence, 3, RemoteTxWatchdog::Path::TxChannel, kLagMs);
+            rig.watchdog.keepalive(kPhone, sequence, 3, RemoteTxWatchdog::Path::Session, 0);
+        }
+    }
+    rig.advanceTo(endMs);
+}
+} // namespace
+
+// Watchdog only. Session copies handed no age and read first through the lag: heard
+// when read. The one hold is before the first late read, while nothing was read
+// at all, and that read ends it. After that nothing holds and nothing stops.
+void TestRemoteTxWatchdog::watchdogOnlySessionCopiesHandedNoAgeThroughALagHoldOnlyBeforeTheFirstLateRead()
+{
+    Rig rig;
+    runChannelHeardLag(rig, true, 20000);
+    QCOMPARE(rig.holdsStarted(), 1);
+    QCOMPARE(rig.holds.front().atMs, qint64(501));
+    QCOMPARE(rig.holds.at(1).atMs, qint64(700));
+    QVERIFY(!rig.holds.at(1).held);
+    QVERIFY(rig.stops.empty());
+    QVERIFY(rig.watchdog.isWatching(kPhone));
+}
+
+// Watchdog only. "tx" copies read first through the same lag: they carry their age,
+// so this is today's read-race hold, unchanged: held, never ended, stopped at the
+// hold's bound. Only the order differs from the test above.
+void TestRemoteTxWatchdog::watchdogOnlyChannelCopiesReadFirstThroughALagHoldThenStop()
+{
+    Rig rig;
+    runChannelHeardLag(rig, false, 6000);
+    QCOMPARE(rig.holdsStarted(), 1);
+    QCOMPARE(rig.holds.front().atMs, qint64(501));
+    QCOMPARE(rig.stops.size(), size_t(1));
+    QCOMPARE(rig.stops.front().atMs, qint64(501 + RemoteTxWatchdog::kLinkHoldMaxMs + 1));
 }
 
 QTEST_GUILESS_MAIN(TestRemoteTxWatchdog)

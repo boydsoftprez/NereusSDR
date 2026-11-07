@@ -9047,6 +9047,19 @@ else (another device's keepalives included) moved the check in between.
 A check no more than 5 ms late is the timer's ordinary slack and judges
 at once.
 
+**Correction, 2026-11-06: who reports a receipt.** The `tx` channel is no
+longer the only one. On a key with no `tx` copy read yet, a session's
+`tx.keepalive` on a data channel over a direct or TURN pair is judged at its
+receipt the same way, at the watchdog and at the cut guard. On such a key
+every keepalive read more than 400 ms old leaves the hold on, so a lag that
+lasts stops the key at the hold's 2600 ms bound as a lost link. Once any `tx`
+copy has been read on the key, session copies count as heard when read for
+the rest of it, even if the channel then dies. These have no receipt that
+shows a stall and count as heard when read: `tx.keepalive` on a WebSocket; on
+a data channel over the web relay, a stall that began before the relay leg's
+read, because the leg reads on the main thread; every watch's keepalives; and
+one a session move held on its new connection.
+
 **VOX a device armed.** A device whose media carries no microphone line
 cannot arm it: its `transmit.voxEnabled` write is refused "This device's
 microphone is not connected to the Core. Wait a moment and try again."
