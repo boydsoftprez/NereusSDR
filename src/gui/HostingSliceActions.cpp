@@ -24,6 +24,8 @@
 //               card's Take it back record goes. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
+//   2026-11-05: addOnPan says when it is the fill at connect (restoredFill).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 
 #include "gui/HostingSliceActions.h"
 
@@ -155,9 +157,13 @@ void HostingSliceActions::select(int sliceId)
     run(QByteArrayLiteral("setActiveSliceById"), sliceId, {intArg("sliceId", sliceId)});
 }
 
-void HostingSliceActions::addOnPan(const QString& panId)
+void HostingSliceActions::addOnPan(const QString& panId, bool restoredFill)
 {
-    run(QByteArrayLiteral("addSliceOnPan"), -1, {utf8Arg("panId", panId)});
+    QList<MirrorUpdate> arguments{utf8Arg("panId", panId)};
+    if (restoredFill) {
+        arguments.append(boolArg("restoredFill", true));
+    }
+    run(QByteArrayLiteral("addSliceOnPan"), -1, arguments);
 }
 
 void HostingSliceActions::close(int sliceId)

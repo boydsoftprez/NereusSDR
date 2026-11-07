@@ -1308,7 +1308,7 @@ QString ContainerButtonDispatcher::clickTransmitSetting(Id id, int rxSource)
             }
             break;
         }
-        if (!tx.setTunePowerForTxBand(target)) { tx.setTunePowerForBand(band, target); }
+        if (!tx.setTunePowerForTxBand(target)) { tx.setTunePowerWithNoBand(band, target); }
         break;
     }
     default:

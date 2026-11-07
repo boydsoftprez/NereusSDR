@@ -335,10 +335,12 @@ public final class FakeStation: @unchecked Sendable {
     /// suite has no such fixture or it does not read as the link document
     /// describes. With `requiresPairing`, only a device key paired with the
     /// fake signs in. `pairingClock` controls only the waits after burned codes.
+    /// `startingPans` puts a slice of the snapshot on another pan, by its Core key.
     public init(fixture fixtureId: String = FakeStation.defaultFixture, requiresPairing: Bool = false,
                 additions: Additions = [], stationLabel: String? = nil,
                 withoutCapabilities: Set<String> = [],
-                pairingClock: any LinkClock = SystemLinkClock()) throws {
+                pairingClock: any LinkClock = SystemLinkClock(),
+                startingPans: [Int: String] = [:]) throws {
         self.pairingClock = pairingClock
         guard let fixture = try SessionFixtures.all().first(where: { $0.id == fixtureId }) else {
             throw LinkFixtureLoader.Malformed(description: "the suite has no session fixture \(fixtureId)")
@@ -398,7 +400,14 @@ public final class FakeStation: @unchecked Sendable {
                     message = object
                 }
                 if object["type"] as? String == "object.create", object["class"] as? String == "SliceModel" {
-                    let properties = object["properties"] as? [[String: Any]] ?? []
+                    var properties = object["properties"] as? [[String: Any]] ?? []
+                    if let index = properties.first(where: { $0["name"] as? String == "sliceIndex" })?["value"] as? Int,
+                       let pan = startingPans[index],
+                       let at = properties.firstIndex(where: { $0["name"] as? String == "panKey" }) {
+                        properties[at]["value"] = pan
+                        object["properties"] = properties
+                        message = object
+                    }
                     if let index = properties.first(where: { $0["name"] as? String == "sliceIndex" })?["value"] as? Int {
                         sliceIds.insert(Int64(index))
                         if let pan = properties.first(where: { $0["name"] as? String == "panKey" })?["value"] as? String {

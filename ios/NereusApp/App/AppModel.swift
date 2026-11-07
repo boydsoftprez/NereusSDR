@@ -317,6 +317,8 @@ final class AppModel: ObservableObject {
                                phoneSettings: phoneSettings)
         // MON's route on the media connection (D80, `monitor-audio`).
         main.transmit.monitorRouteSender = { route in await media.setMonitorRoute(route) }
+        main.panStack.keptPans = phoneSettings
+        main.panStack.paintFps = phoneSettings.displayPaintFps
         longSession = SessionController(settings: phoneSettings, subscriber: main.subscriber, band: main.band,
                                         transmit: main.transmit, sources: sessionSources)
         records = RecordStreamClient(mirror: mirror, commands: commands)
@@ -371,8 +373,9 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        // The band plays unless muted; the wish carries across connections.
-        requestAudio(true)
+        // The band plays unless muted; the wish carries across connections and launches.
+        audioMuted = phoneSettings.audioMuted
+        requestAudio(!audioMuted)
         $connection
             .sink { [weak self] state in
                 self?.longSession.connectionChanged(state)
@@ -427,6 +430,11 @@ final class AppModel: ObservableObject {
             micLevel?.interrupted()
         }
         audio.setMicrophone(phoneSettings.microphone)
+        // Play the band through, as last chosen on this phone.
+        if let saved = phoneSettings.audioRoute.flatMap(AudioRoute.init(storedForm:)) {
+            audio.restoreChoice(saved)
+        }
+        audio.choiceMade = { [weak phoneSettings] route in phoneSettings?.audioRoute = route.storedForm }
         // MON plays in headphones only: the rule, not a choice (D80).
         audio.setWhileTransmitting(muteBand: phoneSettings.muteBandWhileTalking, monInHeadphonesOnly: true)
         transmit.$transmittingHere.combineLatest(transmit.$mon)
@@ -451,6 +459,7 @@ final class AppModel: ObservableObject {
             return
         }
         audioMuted = muted
+        phoneSettings.audioMuted = muted
         requestAudio(!muted)
     }
 

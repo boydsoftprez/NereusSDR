@@ -1,6 +1,8 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-05: A device's first slice is a new receiver, RIT and XIT off.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-11-05: Band stack plan Task 6: the bandStack.* verbs for the hosting desktop.
 //   2026-11-05: Band stack plan Task 4: bandStackVersion 1, the bandStack object and
 //               the bandStack.* gate (peerGetsBandStack).
@@ -4207,14 +4209,14 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
             });
 
-    // JJ 2026-10-23: devices admitted to a Core inside a desktop window
-    // before its radio connected are placed once it has (after the other
+    // JJ 2026-10-23: devices admitted to a Core before its radio connected
+    // are placed once it has (after the other
     // Connected handlers, so the window's starting slice exists).
     if (m_radioModel) {
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,
                 [this](ConnectionState state) {
                     if (state != ConnectionState::Connected || m_placementAwaitingRadio.isEmpty()
-                        || m_radioModel.isNull() || m_radioModel->currentRadioMac().isEmpty()) {
+                        || m_radioModel.isNull()) {
                         return;
                     }
                     const QSet<QByteArray> waiting = std::exchange(m_placementAwaitingRadio, {});
@@ -9529,8 +9531,9 @@ void StationServer::applyBandPlanSetting(const QString& key)
 QString StationServer::sliceSettingsRefusal(SessionTransport* transport, const QString& key) const
 {
     // Slice<N>/... is SliceModel's per-slice, per-band state (Station
-    // scope). A slice's NNR keys, hardware/<mac>/slices/<N>/nnr/..., are
-    // model-owned and refused to every writer already.
+    // scope). A slice's NNR keys, hardware/<mac>/slices/<N>/nnr/..., and its
+    // saved rate, hardware/<mac>/slices/<N>/SampleRate, are model-owned and
+    // refused to every writer already.
     static const QRegularExpression kSliceKey(QStringLiteral("^Slice(\\d+)/"));
     const QRegularExpressionMatch match = kSliceKey.match(key);
     if (!match.hasMatch() || m_radioModel.isNull()) {
@@ -12303,7 +12306,11 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     // device's letter from the saved layout, which it reads when the radio
     // connects (RadioModel::addStartingSlices). A device admitted before
     // that is placed when the radio connects, so it neither takes a letter
-    // kept for another device nor leaves the window without one. An older
+    // kept for another device nor leaves the window without one. A headless
+    // Core waits the same way: a device's saved slices are stored per radio,
+    // so with no radio it would get a new slice and not its own. A token
+    // window has no saved slices to wait for, and a connected radio with no
+    // MAC has no store to read, so those are placed now. An older
     // window (no sessionHolder) needs its slice at admission or it is
     // refused (olderWindowWithoutSliceReason), so it is placed now, as
     // before.
@@ -12314,8 +12321,10 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
             break;
         }
     }
-    if (holdsSessions && m_radioModel->hostsStationDevice()
-        && m_radioModel->currentRadioMac().isEmpty()) {
+    const bool waitsForItsLayout = m_radioModel->hostsStationDevice()
+        || (!deviceId.startsWith("token:")
+            && m_radioModel->connectionState() != ConnectionState::Connected);
+    if (holdsSessions && waitsForItsLayout && m_radioModel->currentRadioMac().isEmpty()) {
         m_placementAwaitingRadio.insert(deviceId);
         m_connectedDevices->refresh();
         return;
@@ -12378,7 +12387,8 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     //    it starts with none.
     if (ownership->ownedBy(deviceId).isEmpty()) {
         const SliceOwnership::CreatorScope creator(ownership, deviceId);
-        if (m_radioModel->addSlice(QString()) < 0) {
+        if (m_radioModel->addSlice(QString(), /*restoreSavedState=*/false,
+                                   /*newReceiver=*/true) < 0) {
             qCInfo(lcStation) << "A device was admitted with no slice: the slice cap is full";
         }
     }
@@ -12407,6 +12417,17 @@ bool StationServer::closeSliceFor(int sliceId, const QByteArray& saveFor, SavedS
     saved.frequencyHz = slice->frequency();
     saved.dspMode = slice->dspMode();
     const QString mac = m_radioModel->currentRadioMac();
+    // Persistence audit: with no radio connected there is no layout store to
+    // save in (as saveTakenSlicesFor), so the slice of a device that can come
+    // back stays, with its keys, held for it. Its next admission returns it,
+    // and the end of its next away period saves it. A device that was removed
+    // has nothing to come back to, so its slice closes.
+    if (unclaimed && !saveFor.isEmpty() && mac.isEmpty() && m_devices->find(saveFor)) {
+        m_radioModel->sliceOwnership()->hold(sliceId, saveFor);
+        if (!self || !m_radioModel) return false;
+        m_radioModel->requestSettingsSave();
+        return false;
+    }
     // Removing saves the slice's own settings to its keys first.
     if (unclaimed) {
         m_radioModel->closeUnclaimedSlice(sliceId);

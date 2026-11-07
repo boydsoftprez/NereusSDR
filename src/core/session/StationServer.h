@@ -2288,7 +2288,10 @@ private:
     /// request, saving it for `saveFor` when set; false (nothing done)
     /// when it is the Core's last slice. Slice control plan Task 8:
     /// `unclaimed` closes only a slice nobody controls or listens to,
-    /// whatever the count (RadioModel::closeUnclaimedSlice).
+    /// whatever the count (RadioModel::closeUnclaimedSlice). With no radio
+    /// connected such a slice is not closed when it would be saved for a
+    /// paired device: it is held for that device instead, and this returns
+    /// false.
     bool closeSliceFor(int sliceId, const QByteArray& saveFor, SavedSlice* closed = nullptr,
                        bool unclaimed = false);
     /// Fix wave C2 (ruling 5.2, its last paragraph): the paired device a

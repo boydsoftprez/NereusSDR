@@ -230,6 +230,40 @@ private slots:
         QVERIFY2(savedStillPresent,
                  "Saved radio must survive the stale sweep regardless of lastSeen age");
     }
+
+    // Persistence audit: a radio's first connect turns Auto-connect on.
+    void firstConnectTurnsAutoConnectOn()
+    {
+        AppSettings settings = makeSettings();
+        settings.clearSavedRadios();
+        const RadioInfo info = makeHl2Info();
+        settings.saveRadioOnConnect(info);
+        const auto saved = settings.savedRadio(info.macAddress);
+        QVERIFY(saved.has_value());
+        QCOMPARE(saved->autoConnect, true);
+        QCOMPARE(saved->pinToMac, false);
+    }
+
+    // After that a connect keeps the saved choices, whichever they are.
+    void laterConnectKeepsTheSavedChoices()
+    {
+        AppSettings settings = makeSettings();
+        settings.clearSavedRadios();
+        const RadioInfo info = makeHl2Info();
+        settings.saveRadio(info, /*pinToMac=*/true, /*autoConnect=*/false);
+        settings.saveRadioOnConnect(info);
+        auto saved = settings.savedRadio(info.macAddress);
+        QVERIFY(saved.has_value());
+        QCOMPARE(saved->autoConnect, false);
+        QCOMPARE(saved->pinToMac, true);
+
+        settings.saveRadio(info, /*pinToMac=*/false, /*autoConnect=*/true);
+        settings.saveRadioOnConnect(info);
+        saved = settings.savedRadio(info.macAddress);
+        QVERIFY(saved.has_value());
+        QCOMPARE(saved->autoConnect, true);
+        QCOMPARE(saved->pinToMac, false);
+    }
 };
 
 QTEST_MAIN(TestConnectionPanelSavedRadios)

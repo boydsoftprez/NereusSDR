@@ -167,7 +167,10 @@ public:
     /// depends on hidden state. Same shape as AetherSDR's SpectrumOverlayMenu,
     /// which carries m_panId and emits addRxClicked(m_panId)
     /// (SpectrumOverlayMenu.cpp:315 [@c6481cbf]).
-    void setPanId(const QString& panId) { m_panId = panId; }
+    ///
+    /// Knowing its pan, the strip also takes back whether it was collapsed on
+    /// that pan (Pan_<panId>_OverlayCollapsed).
+    void setPanId(const QString& panId);
     QString panId() const { return m_panId; }
 
     // Bind this overlay panel to a RadioModel. Enables the VAX Ch combo

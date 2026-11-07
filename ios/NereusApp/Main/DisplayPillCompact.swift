@@ -174,9 +174,9 @@ enum DisplayPillLayout {
         .slider(key: "DisplayFftSize"),
         .slider(key: "DisplayHzPerBinTarget"),
         .fftReadout,
-        .slider(key: "DisplaySpectrumFps"),
         .menu(key: "DisplayFftWindow"),
         .caption("On this phone"),
+        .phone(.paintFps),
         .phone(.decimation),
     ]
 }
@@ -201,6 +201,7 @@ enum DisplayPillPeek {
         case .slider(let key, _, _, _): key
         case .phone(.spectrumHeight): "phone.spectrumHeight"
         case .phone(.lookBack): "phone.lookBack"
+        case .phone(.paintFps): "phone.paintFps"
         case .phone(.decimation): "phone.decimation"
         default: nil
         }

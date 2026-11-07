@@ -479,6 +479,8 @@ private struct DisplayPillRowsView: View {
                 DisplayPillChipsLine(chips: [.phone(row)], columns: 1, source: source, display: display,
                                      band: band, bandStack: bandStack, settings: main.phoneSettings)
             }
+        case .paintFps:
+            DisplayPillPaintFpsRow(stack: main.panStack, core: core, holding: holding("phone.paintFps"))
         case .decimation:
             let range = BandDisplaySettings.decimationRange
             VStack(alignment: .leading, spacing: 2) {
@@ -499,6 +501,36 @@ private struct DisplayPillRowsView: View {
                     DisplayPillReason(text: CatalogFeed.needsNewerCoreText)
                 }
             }
+        }
+    }
+}
+
+/// The FPS row: this phone's own rate, and the Core's until it is first moved.
+private struct DisplayPillPaintFpsRow: View {
+    @ObservedObject var stack: PanStackModel
+    @ObservedObject var core: CoreDisplayModel
+    let holding: (Bool) -> Void
+
+    private var shown: Int {
+        stack.paintFps
+            ?? core.control(CoreDisplayModel.fpsKey).flatMap { core.value($0) }.map { Int($0.rounded()) }
+            ?? BandSubscriber.defaultFps
+    }
+
+    var body: some View {
+        // From src/gui/SpectrumOverlayPanel.cpp:3877 ("FPS:"), its range from
+        // src/core/ControlRanges.h (kDisplaySpectrumFpsMin, kDisplaySpectrumFpsMax).
+        VStack(alignment: .leading, spacing: 2) {
+            DisplayPillLabel(text: "FPS")
+                .frame(minHeight: 26)
+            PanelSliderRow(label: nil, value: Double(shown),
+                           range: StationCatalog.Range(min: 10, max: 60, step: 1),
+                           accessibility: "FPS", format: { String(Int($0.rounded())) },
+                           greyed: false) { value in
+                stack.choosePaintFps(Int(value.rounded()))
+            }
+            .onEditing(holding)
+            .accessibilityIdentifier("displayPillPaintFps")
         }
     }
 }

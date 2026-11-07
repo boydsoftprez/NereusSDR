@@ -219,8 +219,9 @@ public:
     bool raiseFloatingPan(const QString& panId);
 
     /// Phase 3F Sub-Epic D Task 6: persist splitter geometry across launches.
-    /// Keyed under AppSettings "PanSplitter0Sizes" + "PanLayoutId" (and per-row
-    /// children for 12h / 2x2). Restore loads the layout AND the sizes.
+    /// Keyed under AppSettings "PanSplitter0Sizes" + "PanLayoutId", and
+    /// "PanSplitter1Sizes" / "PanSplitter2Sizes" for the rows of 12h, 2h1, 2x2
+    /// and 3h2. Restore loads the sizes into the layout already applied.
     void saveSplitterState();
 
     /// Write every still-floating pan's window geometry to AppSettings.
@@ -240,6 +241,12 @@ public:
     void prepareShutdown();
     void restoreSplitterState();
 
+    /// Float again every pan that was floating when the last session ended,
+    /// each at its saved place (PanFloatingWindow::restoreWindowGeometry, so a
+    /// screen that has gone falls back as any floated pan does). Run once at
+    /// startup, after the layout exists and the main window is up.
+    void restoreFloatingPans();
+
     /// Phase 3F Sub-Epic D Task 6 test seam: read the root splitter's current
     /// sizes (used by tests and saveSplitterState).
     QList<int> rootSplitterSizes() const;
@@ -247,6 +254,13 @@ public:
     /// Phase 3F Sub-Epic D Task 6 test seam: drive the root splitter to a
     /// known size pattern so the persistence round-trip can be asserted.
     void rootSplitterSetSizesForTest(const QList<int>& sizes);
+
+    /// The sizes of each row splitter inside the root, in root order: none for
+    /// the single-row layouts, one for 12h and 2h1, two for 2x2 and 3h2.
+    QList<QList<int>> nestedSplitterSizes() const;
+
+    /// Test seam: drive one row splitter to a known size pattern.
+    void nestedSplitterSetSizesForTest(int row, const QList<int>& sizes);
 
 signals:
     void activePanChanged(const QString& panId);
@@ -268,6 +282,8 @@ private:
     /// A deferred refresh must never resolve a retired pane's reused ID.
     QList<QPointer<PanadapterApplet>> dockAllFloatingPans();
     void clearSplitters();
+    /// The row splitters directly under the root, in root order.
+    QList<QSplitter*> nestedSplitters() const;
 
     /// Single construction point for every splitter in the pan tree.
     ///

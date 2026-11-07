@@ -318,6 +318,28 @@ struct CoreDisplayTests {
         #expect(await settle { rig.sent.last?.fps == 15 })
     }
 
+    @Test("the pill's FPS keeps the phone's own rate and writes nothing to the Core; Setup's still writes the Core's")
+    func pillFpsIsThePhonesOwn() async throws {
+        let rig = try Rig()
+        await quiet()
+        rig.main.receive(.mediaState(.connected))
+        #expect(await settle { rig.sent.count == 1 })
+        let phone = try PhoneSettingsFixture.fresh()
+        rig.main.panStack.keptPans = phone
+        rig.main.panStack.choosePaintFps(15)
+        #expect(await settle { rig.sent.last?.fps == 15 })
+        #expect(phone.displayPaintFps == 15)
+        #expect(!writes(rig).contains { $0.key == CoreDisplayModel.fpsKey })
+        // Setup's row, the Core's one rate: written, and this phone keeps its own.
+        let core = rig.main.coreDisplay
+        let fps = try #require(core.control(CoreDisplayModel.fpsKey))
+        core.set(fps, to: 20)
+        #expect(await settle { writes(rig).last?.key == CoreDisplayModel.fpsKey && writes(rig).last?.value == "20" })
+        echo(rig, CoreDisplayModel.fpsKey, "20")
+        await quiet()
+        #expect(rig.sent.last?.fps == 15)
+    }
+
     @Test("a valid Core FFT grant takes precedence over the current planned width")
     func grantedWidthTakesPrecedence() async throws {
         let rig = try Rig()
@@ -791,4 +813,14 @@ struct CoreDisplayTests {
         #expect(spots.notes.isEmpty)
     }
 
+}
+
+private enum PhoneSettingsFixture {
+    @MainActor
+    static func fresh() throws -> PhoneSettings {
+        let name = "CoreDisplayTests." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defaults.removePersistentDomain(forName: name)
+        return PhoneSettings(defaults: defaults)
+    }
 }

@@ -46,6 +46,8 @@
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
 // =================================================================
+//   2026-11-05: addOnPan says when it is the fill at connect (restoredFill).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 
 #include "core/session/SessionMessages.h"
 #include "gui/NereusGuiExport.h"
@@ -81,7 +83,10 @@ public:
     void select(int sliceId);
     /// A new slice on `panId` (addSliceOnPan): +RX, the layout's empty pans,
     /// the chooser's New slice. At full capacity this asks first.
-    void addOnPan(const QString& panId);
+    /// `restoredFill` is the fill at connect, which brings back a saved
+    /// layout's receiver rather than making a new one: it keeps the letter's
+    /// RIT and XIT. Only the station device's request can say so.
+    void addOnPan(const QString& panId, bool restoredFill = false);
     /// Close (removeSlice). A slice someone else listens to stays open for
     /// them (Q6).
     void close(int sliceId);
