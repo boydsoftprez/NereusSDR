@@ -11906,6 +11906,7 @@ void SpectrumWidget::loadTransmitSpan()
     if (m_txViewBandwidthHz > 0.0) { m_bandwidthHz = m_txViewBandwidthHz; }
     m_txSpanLoaded = true;
     rebuildWaterfallViewport();
+    emit viewSpanChanged(m_bandwidthHz);
 }
 
 void SpectrumWidget::restoreReceiveSpan()
@@ -11918,6 +11919,7 @@ void SpectrumWidget::restoreReceiveSpan()
     }
     m_txSpanLoaded = false;
     rebuildWaterfallViewport();
+    emit viewSpanChanged(m_bandwidthHz);
 }
 
 void SpectrumWidget::resetPeaksForDuplexChange()
@@ -15159,6 +15161,10 @@ void SpectrumWidget::applyViewWindow(double centreHz, double bandwidthHz)
     // Display pill plan Task 9: the pan's band follows its receive centre.
     if (moved && !m_txSpanLoaded) {
         emit centerFrequencyChanged(m_centerHz);
+    }
+
+    if (resized) {
+        emit viewSpanChanged(m_bandwidthHz);
     }
 }
 

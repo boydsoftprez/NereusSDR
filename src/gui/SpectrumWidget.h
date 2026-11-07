@@ -2228,6 +2228,8 @@ public:
     // test binary can round-trip settings and call dbmToRgb directly.
     void saveSettingsForTest()              { saveSettings(); }
     void loadSettingsForTest()              { loadSettings(); }
+    /// The paint timer's period (setDisplayFps sets it).
+    int displayTimerIntervalForTest() const { return m_displayTimer.interval(); }
     /// The MOX tune gate is the property under test; synthesising a press,
     /// a wheel notch and a spot-label hit would test Qt's event delivery
     /// instead. Every emitter routes through requestTune, which is greppable.
@@ -3197,6 +3199,10 @@ signals:
     void centerChanged(double centerHz);
     // Emitted when user scrolls to change bandwidth
     void bandwidthChangeRequested(double newBandwidthHz);
+    /// The span shown changed, however it changed: zoom, a clamp, a transmit
+    /// view swap. Tells; asks for nothing, where bandwidthChangeRequested
+    /// replans the FFT.
+    void viewSpanChanged(double bandwidthHz);
 
     /// Phase 3F Sub-Epic F Task 10: emitted when zoom-state or operator
     /// toggle changes extended-mode. Consumers (RadioModel via MainWindow)

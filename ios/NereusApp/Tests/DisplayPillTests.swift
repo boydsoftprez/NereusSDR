@@ -132,9 +132,9 @@ struct DisplayPillTests {
             .group("FFT"),
             .setting(key: "DisplayFftSizingMode"), .setting(key: "DisplayFftSize"),
             .setting(key: "DisplayHzPerBinTarget"), .fftReadout,
-            .setting(key: "DisplaySpectrumFps"), .setting(key: "DisplayFftWindow"),
+            .setting(key: "DisplayFftWindow"),
             .group("On this phone"),
-            .phone(.decimation),
+            .phone(.paintFps), .phone(.decimation),
         ],
     ]
 

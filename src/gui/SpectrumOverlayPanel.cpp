@@ -842,6 +842,20 @@ void SpectrumOverlayPanel::updateLayout()
 
 // ── toggle ────────────────────────────────────────────────────────────────────
 
+void SpectrumOverlayPanel::setPanId(const QString& panId)
+{
+    m_panId = panId;
+    if (m_panId.isEmpty()) { return; }
+    const bool expanded =
+        AppSettings::instance()
+            .value(QStringLiteral("Pan_%1_OverlayCollapsed").arg(m_panId), QStringLiteral("False"))
+            .toString() != QStringLiteral("True");
+    if (expanded != m_expanded) {
+        m_expanded = expanded;
+        updateLayout();
+    }
+}
+
 void SpectrumOverlayPanel::toggle()
 {
     m_expanded = !m_expanded;
@@ -849,6 +863,10 @@ void SpectrumOverlayPanel::toggle()
         hideFlyout();
     }
     updateLayout();
+    if (!m_panId.isEmpty()) {
+        AppSettings::instance().setValue(QStringLiteral("Pan_%1_OverlayCollapsed").arg(m_panId),
+                                         m_expanded ? QStringLiteral("False") : QStringLiteral("True"));
+    }
     emit collapsed(!m_expanded);
 }
 

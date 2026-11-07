@@ -4151,6 +4151,50 @@ private slots:
                                          QStringLiteral("Connect to the Core to change these."));
         QVERIFY(fits("pillStationNote", QStringLiteral("Connect to the Core to change these.")));
     }
+
+    // ---- The strip's collapse arrow is remembered for each pan ----
+
+    void stripCollapseComesBackForItsOwnPan() {
+        const auto arrow = [](SpectrumOverlayPanel& panel, QChar glyph) -> QPushButton* {
+            for (QPushButton* button : panel.findChildren<QPushButton*>()) {
+                if (button->text() == QString(glyph)) { return button; }
+            }
+            return nullptr;
+        };
+        const QChar kExpandedArrow(0x25c0);
+        const QChar kCollapsedArrow(0x25b6);
+
+        QWidget host;
+        host.resize(800, 600);
+        int expandedHeight = 0;
+        {
+            SpectrumOverlayPanel panel(&host);
+            panel.setPanId(QStringLiteral("pan-1"));
+            expandedHeight = panel.height();
+            QPushButton* collapse = arrow(panel, kExpandedArrow);
+            QVERIFY(collapse);
+            collapse->click();
+            QVERIFY(panel.height() < expandedHeight);
+        }
+        // After a restart: the same pan is collapsed, another is not.
+        {
+            SpectrumOverlayPanel panel(&host);
+            panel.setPanId(QStringLiteral("pan-1"));
+            QVERIFY(arrow(panel, kCollapsedArrow));
+            QVERIFY(panel.height() < expandedHeight);
+            SpectrumOverlayPanel other(&host);
+            other.setPanId(QStringLiteral("pan-0"));
+            QVERIFY(arrow(other, kExpandedArrow));
+            QCOMPARE(other.height(), expandedHeight);
+            arrow(panel, kCollapsedArrow)->click();
+            QCOMPARE(panel.height(), expandedHeight);
+        }
+        {
+            SpectrumOverlayPanel panel(&host);
+            panel.setPanId(QStringLiteral("pan-1"));
+            QVERIFY(arrow(panel, kExpandedArrow));
+        }
+    }
 };
 
 QTEST_MAIN(TstSpectrumOverlayPanel)

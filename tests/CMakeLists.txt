@@ -3107,6 +3107,11 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # Structurally ported from AetherSDR src/gui/PanadapterStack.{h,cpp}
 # [@0cd4559]; applyLayout / floatPanadapter / rebuildSplitters stubbed for
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
+# Persistence audit 2026-11: what the main window brings back after a restart.
+# A file of its own because these build the whole window more than once per
+# function, and tst_panadapter_stack_layouts is already split for load.
+nereus_add_test(tst_window_layout_restart)
+
 nereus_add_test(tst_panadapter_stack_layouts fakes/LoopbackTransport.cpp)
 # CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet Linux
 # runner and timed out in a busy one (PR 657, run 40260509791), so four
@@ -5709,12 +5714,15 @@ nereus_add_test(tst_vax_tx_mic_source)
 target_compile_definitions(tst_vax_tx_mic_source PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Mic_Source pre-connect persistence fallback (eager-borg-d64bed) ──────────
-# Verifies the pre-connect global key fallback added so the user's
-# Setup -> Audio -> TX Input click survives even when no radio is
-# bound at click time.  Cases: pre-connect click writes global,
-# load with no per-MAC uses fallback, per-MAC overrides preconnect,
-# post-connect writes don't touch preconnect, first-run defaults to Pc.
+# The old pre-connect global key, read only since 2026-11-05: a click with no
+# radio is held instead, load with no per-MAC uses the old key, per-MAC
+# overrides it, post-connect writes don't touch it, first-run defaults to Pc.
 nereus_add_test(tst_transmit_model_mic_source_preconnect)
+
+# Transmit edits made with no radio: kept for the next radio (JJ's ruling
+# 2026-11-05), and no startup path, window or Core, holds a write nobody made.
+nereus_add_test(tst_transmit_held_edits)
+target_compile_definitions(tst_transmit_held_edits PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-VAX-toggle: TransmitModel previousNonVaxMicSource + toggleVaxSource ──
 # Verifies the model-layer plumbing for the PhoneCwApplet VAX button:
@@ -8556,6 +8564,11 @@ target_compile_definitions(tst_spectrum_widget_cal_offset PRIVATE
 # property setter, so the VFO menu reported the saved rate while the receiver,
 # codec and wire stayed on the previous band's.
 nereus_add_test(tst_restored_sample_rate_reaches_the_ddc)
+
+# The sample rate an operator chose has to stick: a new slice on its own
+# receiver opens at the rate in use, and a device's slice made again on a
+# running Core comes back at its saved rate.
+nereus_add_test(tst_sample_rate_sticks)
 
 # Codex review round 6, PR #293: Phase 3F gave TCI more slices than TCI ever
 # agreed to talk about. tx_frequency must come from the slice TxSliceArbiter
