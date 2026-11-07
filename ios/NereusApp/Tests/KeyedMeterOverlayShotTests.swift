@@ -121,6 +121,8 @@ struct KeyedMeterOverlayShotTests {
             .init(name: "connectionPhase", value: .enumeration(6)), .init(name: "isPresent", value: .bool(true)),
             .init(name: "fwdPower", value: .f64(830)), .init(name: "swr", value: .f64(1.08))])))
         model.main.accessories.refresh()
+        // The rekey's copies can still be on the way once the model says it is transmitting.
+        await TransmitScreenTests.barrier(model, station)
         let before = significantCommands(station)
         try await shoot("pttm-amp", model: model) { window in
             try await activate("keyedTab-Amp", in: window)

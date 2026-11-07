@@ -595,6 +595,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "bandStackVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -1289,6 +1294,280 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "paProfile.setMaxPower"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "sliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "band",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "direction",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewCenterHz",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewSpanHz",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.press"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "sliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "direction",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewCenterHz",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewSpanHz",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.step"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "sliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "entryId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewCenterHz",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewSpanHz",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.goTo"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "sliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewCenterHz",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewSpanHz",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.add"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "sliceId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "entryId",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewCenterHz",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "viewSpanHz",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.saveHere"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "entryId",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "name",
+                    "optional": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "locked",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.edit"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "entryId",
+                    "optional": false
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.delete"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "band",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "ids",
+                    "optional": false
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.reorder"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "band",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "mode",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "entryId",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.setReturn"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "band",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.clear"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.reseed"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "dupeProtection",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "expiryMinutes",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "dwellSeconds",
+                    "optional": true
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.options"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "batchId",
+                    "optional": false
+                }
+            ],
+            "capability": "bandStackVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "bandStack.restoreExpired"
         },
         {
             "arguments": [
@@ -5542,6 +5821,22 @@
                     "kind": "enum",
                     "name": "bandFollow",
                     "ordinal": 19
+                }
+            ]
+        },
+        "BandStackFacade": {
+            "properties": [
+                {
+                    "direction": "outbound",
+                    "kind": "utf8",
+                    "name": "json",
+                    "ordinal": 0
+                },
+                {
+                    "direction": "outbound",
+                    "kind": "i64",
+                    "name": "revision",
+                    "ordinal": 1
                 }
             ]
         },
@@ -9831,6 +10126,10 @@
             "key": "paProfiles"
         },
         {
+            "class": "BandStackFacade",
+            "key": "bandStack"
+        },
+        {
             "class": "SetupDescription",
             "key": "setup"
         },
@@ -9923,6 +10222,8 @@
             }
         ],
         "operatorLocalKeys": [
+            "DisplayDecimation",
+            "DisplayPaintFps",
             "ExtendedTxAllowed"
         ],
         "operatorLocalPrefixes": [

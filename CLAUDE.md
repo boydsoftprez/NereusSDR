@@ -152,6 +152,9 @@ The build also produces the headless `nereusd`, installed only with
 Dependencies: [README.md](README.md) "Building from Source". **Read
 [docs/development/fast-test-loop.md](docs/development/fast-test-loop.md)
 before running tests**; build single tests, never the whole suite by default.
+**The test rule (same doc):** while working, run only the tests for changed code;
+the full set runs once, on GitHub, when a PR is marked ready, and once by hand on
+main before a release.
 First launch generates FFTW wisdom (~15 min), cached in `~/.config/NereusSDR/`.
 
 ## Where things live

@@ -3,6 +3,7 @@
 
 import Foundation
 import NereusBand
+import NereusMirror
 @testable import NereusSDR
 import SwiftUI
 import Testing
@@ -28,7 +29,7 @@ import UIKit
 @Suite("Scroll view identifiers", .serialized)
 @MainActor
 struct ScrollViewIdentifierTests {
-    @Test("the diagnostics page and the iPad Setup list are found after an early walk of a scroll view's tree",
+    @Test("the diagnostics page, the iPad Setup list and the band stack block are found after an early walk of a scroll view's tree",
           .timeLimit(.minutes(2)))
     func foundAfterAnEarlyWalk() async throws {
         if SetupTypedEntryTests.applicationAccessibilityTurnedOn || SetupTypedEntryTests.applicationAccessibility() {
@@ -48,6 +49,11 @@ struct ScrollViewIdentifierTests {
             Text("Footer")
         }
         #expect(try await found("setupSplitList", in: split, size: CGSize(width: 1_194, height: 834)))
+        // The block scrolls in the Pan sheet and the BAND menu; its identifier is on its content.
+        let store = MirrorStore(send: { _ in })
+        let stack = BandStackModel(store: store, slices: BandSlicesModel(store: store, commands: nil), commands: nil)
+        let block = ScrollView { BandStackBlock(model: stack, width: 220) }
+        #expect(try await found("bandStackBlock", in: block, size: CGSize(width: 236, height: 200)))
     }
 
     /// The band column on a band too short for it, in a window whose
