@@ -10,6 +10,8 @@
 
 // 2026-10-31: Match the real Core's frequency capability record field.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Directory stations for the overlay redesign tests.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusLink
@@ -131,6 +133,14 @@ extension FakeStation {
                 "readings": .array([]), "lastMessage": .null, "ended": .null]
     }
 
+    /// One station as a band list row's `stations` lists it.
+    public static func roundtableStation(ref: String, callsign: String, sourceRoom: String, hz: Int64,
+                                         family: String = "lsb", keyed: Bool = false) -> LinkJSON {
+        .object(["ref": .string(ref), "sourceRoom": .string(sourceRoom), "slice": .number(0), "hz": .number(Double(hz)),
+                 "family": .string(family), "callsign": .string(callsign), "nth": .number(1), "grid": .null,
+                 "keyed": .bool(keyed), "away": .bool(false), "joining": .bool(false)])
+    }
+
     public static func roundtableMember(ref: String, callsign: String, seq: Int64, you: Bool = false)
         -> LinkMessage.RecordBatch.Record {
         .init(id: "member:\(ref)", fields: [
@@ -217,6 +227,8 @@ extension FakeStation {
             var delivered = false
             var followed: Set<String> = []
             var read: [String] = []
+            var frequencyReaders: Set<String> = []
+            var frequencyReadStreams: [String: String] = [:]
             var posts: [RoundtablePost] = []
             var nextMessageId: Int64 = 1_000
             var muteList: [String] = []
@@ -247,6 +259,16 @@ extension FakeStation {
     /// Each room the app asked to read, oldest first.
     public var roundtableReads: [String] {
         roundtableState.read { $0.read }
+    }
+
+    /// Exact readAt contexts still owned by this fake Core's client.
+    public var roundtableFrequencyReaders: Set<String> {
+        roundtableState.read { $0.frequencyReaders }
+    }
+
+    /// A malformed accepted stream name exercises client acknowledgement validation.
+    public func setRoundtableReadStream(_ stream: String?, for context: String) {
+        roundtableState.read { $0.frequencyReadStreams[context] = stream }
     }
 
     /// Each post the fake took, oldest first.
@@ -486,9 +508,14 @@ extension FakeStation {
                     return [result(false, Self.roundtableUnreadableReason)]
                 }
                 let context = "\(family)-\(hz)"
-                if invoke.verb == "roundtable.unreadAt" { return [result(true)] }
+                if invoke.verb == "roundtable.unreadAt" {
+                    inside.frequencyReaders.remove(context)
+                    return [result(true)]
+                }
                 inside.read.append(context)
-                return [result(true, values: [.init(name: "stream", value: .utf8(Self.roundtableFrequencyStreamPrefix + context))])]
+                inside.frequencyReaders.insert(context)
+                let stream = inside.frequencyReadStreams[context] ?? Self.roundtableFrequencyStreamPrefix + context
+                return [result(true, values: [.init(name: "stream", value: .utf8(stream))])]
             case "roundtable.post":
                 guard let roomId = text("roomId"), let message = text("text"), let clientId = text("clientId"),
                       !roomId.isEmpty, !message.isEmpty, Self.isClientId(clientId) else {

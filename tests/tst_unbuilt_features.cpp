@@ -619,8 +619,6 @@ QMap<F, QList<Surface>> surfaces()
         menu(QStringLiteral("Trans&verters…")), menu(QStringLiteral("&VHF")),
         onPage(QStringLiteral("Hardware Config"), QStringLiteral("XVTR tab"), tab(QStringLiteral("XVTR"))),
         onPage(QStringLiteral("Hardware Config"), QStringLiteral("OC VHF tab"), tab(QStringLiteral("VHF")))};
-    map[F::BandStack] = {menu(QStringLiteral("Band &Stacking...")),
-                         status(QStringLiteral("statusBandStackDots"))};
     map[F::Cwx] = {
         menu(QStringLiteral("C&WX...")), status(QStringLiteral("statusCwxLabel")),
         applet(QStringLiteral("Phone/CW CW tab"), phoneButton(QStringLiteral("CW"))),

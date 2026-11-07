@@ -24,6 +24,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <random>
 #include <memory>
@@ -60,6 +61,18 @@ QVector<float> syntheticIq(int complexSamples, double cyclesPerSample)
     return iq;
 }
 
+// A clock for the engine's 5 ms minimum frame gap
+// (setEngineFrameGapClockForTest) that moves 10 ms at each read, so the gap
+// has always passed. A test that feeds one block and waits for its frame
+// then gets that frame however fast the block follows the frame before it:
+// the engine drops a block that lands inside the gap and, with no more
+// input coming, the wait would run out. The clock's count lives in the
+// lambda, so each source's worker thread reads its own and it cannot
+// outlive its engine.
+std::function<qint64()> frameGapAlwaysPassedClock()
+{
+    return [ms = qint64(0)]() mutable { return ms += 10; };
+}
 
 // The conversion exactly as DaemonAgcSource::onFrameAvailable ran it on the
 // main thread before it moved to the engine threads (2026-09-30), kept here
@@ -262,6 +275,9 @@ private slots:
         const MediaSourceKey key{0, FftTier::Wide};
         QVERIFY(source.activate(key, sourceConfig(1024, 7100000.0, 48000.0)));
         QTRY_VERIFY(source.isActive(key));
+        // A relabel keeps the engine's frame gap running, so the frame after
+        // the move must not depend on how long the test took to reach it.
+        QVERIFY(source.setEngineFrameGapClockForTest(key, frameGapAlwaysPassedClock()));
 
         QSignalSpy frames(&source, &DaemonSpectrumSource::frameAvailable);
         // 1024 samples fill the window, sample 1025 runs the transform. At
@@ -298,24 +314,15 @@ private slots:
         // 798 more samples fill the window again (226 + 798 = 1024). A
         // restarted engine would hold only these 798 and need 1025.
         const int framesBefore = frames.count();
-        quint64 handoffs = source.completedInputHandoffs(key);
+        const quint64 handoffs = source.completedInputHandoffs(key);
         source.submitIq(0, syntheticIq(798, 0.25));
         QTRY_VERIFY(source.completedInputHandoffs(key) > handoffs);
-        // One more sample runs the transform. The engine refuses a second
-        // transform within 5 ms of the first and keeps its window full, so
-        // the trigger is offered again, a bounded number of times: 798 + 200
-        // samples stay short of the 1025 a restarted engine would need.
-        constexpr int kMaxTriggers = 200;
-        int triggers = 0;
-        while (frames.count() == framesBefore && triggers < kMaxTriggers) {
-            handoffs = source.completedInputHandoffs(key);
-            source.submitIq(0, syntheticIq(1, 0.25));
-            QTRY_VERIFY(source.completedInputHandoffs(key) > handoffs);
-            QCoreApplication::processEvents();
-            ++triggers;
-        }
-        QVERIFY2(frames.count() > framesBefore,
-                 "the relabeled source lost its input history");
+        // One more sample runs the transform: 799 samples are far short of
+        // the 1025 a restarted engine would need.
+        source.submitIq(0, syntheticIq(1, 0.25));
+        QTRY_VERIFY2(frames.count() > framesBefore,
+                     "the relabeled source lost its input history");
+        QCOMPARE(source.engineMinimumGapSkips(key), quint64(0));
         const auto retuned = source.takeLatest(key);
         QVERIFY(retuned.has_value());
         QCOMPARE(retuned->centreHz, 10100000.0);
@@ -558,6 +565,7 @@ private slots:
         DaemonSpectrumSource source;
         QVERIFY(source.activate(key, config));
         QTRY_VERIFY(source.isActive(key));
+        QVERIFY(source.setEngineFrameGapClockForTest(key, frameGapAlwaysPassedClock()));
         QSignalSpy frames(&source, &DaemonSpectrumSource::frameAvailable);
 
         // From here the test thread runs no events until all ten frames exist.
@@ -571,8 +579,6 @@ private slots:
                 QVERIFY2(waited.elapsed() < 5000, "engine thread did not take the packet");
                 QThread::msleep(1);
             }
-            // Past FFTEngine's 5 ms defensive emit cap before the next frame.
-            QThread::msleep(10);
         }
         QCOMPARE(frames.count(), 0);
         // Every packet really made its own frame; the slot kept only the last.
@@ -903,6 +909,10 @@ private slots:
         QVERIFY(agc.activate(key, sourceConfig(1024, 7100000.0, 48000.0)));
         QTRY_VERIFY(plain.isActive(key));
         QTRY_VERIFY(agc.isActive(key));
+        // Each round feeds one block and waits for its frame, so no block
+        // may land inside the 5 ms minimum frame gap after the round before.
+        QVERIFY(plain.setEngineFrameGapClockForTest(key, frameGapAlwaysPassedClock()));
+        QVERIFY(agc.setEngineFrameGapClockForTest(key, frameGapAlwaysPassedClock()));
 
         NoiseFloorTracker reference;
         NoiseFloorTracker moved;
@@ -939,6 +949,8 @@ private slots:
             QVERIFY(std::memcmp(&referenceFloor, &movedFloor, sizeof(float)) == 0);
             QCOMPARE(moved.isGood(), reference.isGood());
         }
+        QCOMPARE(plain.engineMinimumGapSkips(key), quint64(0));
+        QCOMPARE(agc.engineMinimumGapSkips(key), quint64(0));
     }
 };
 

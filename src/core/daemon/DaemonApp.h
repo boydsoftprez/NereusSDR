@@ -88,6 +88,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_CORE_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-08-02: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
@@ -130,6 +135,7 @@
 // =================================================================
 
 #include "core/RadioDiscovery.h"       // RadioInfo, RadioDiscovery, HPSDRHW
+#include "core/NereusCoreExport.h"
 #include "core/daemon/DaemonConfig.h"
 #include "core/daemon/DisplayLoadInputs.h"
 #include "core/daemon/StationControlSocket.h"
@@ -194,7 +200,7 @@ class StationRendezvous;
 // the first start()) and reused: stop() quit()+wait()s it (joins) without
 // destroying it, and the next start() calls start() on the same QThread
 // again, which Qt supports for a thread that has already finished.
-class DaemonApp : public QObject {
+class NEREUS_CORE_EXPORT DaemonApp : public QObject {
     Q_OBJECT
 
 public:

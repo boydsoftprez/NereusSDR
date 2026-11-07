@@ -114,6 +114,14 @@ public:
     // identity.
     explicit CertificateStore(const QString& directory = defaultDirectory());
 
+    // Test-only seam, no production caller: when set, a new certificate
+    // takes its RSA key from this source (PEM text) instead of generating
+    // one. An empty or unusable answer falls back to generating. Each
+    // certificate still has its own serial and fingerprint. See
+    // tests/TestSharedTlsKey.cpp.
+    using KeySourceForTest = QByteArray (*)();
+    static void setKeySourceForTest(KeySourceForTest source);
+
     // Where the production TLS identity lives: the config directory of the
     // profile this process is actually running under, resolved through
     // AppSettings::resolveConfigDir() rather than rebuilt by hand

@@ -83,6 +83,8 @@
 //   2026-10-22: setDirectCandidateDelayForTest() (test builds only), so
 //               a test can have the web relay's pair nominated first.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a message's receipt also gives a session keepalive its age,
+//               a real one on a direct or TURN pair. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/DataChannelTransport.h"
@@ -243,7 +245,8 @@ struct Event {
     QString second;
     quint32 id = 0;
     /// Control logging lane: a control message's receipt (steady clock,
-    /// nanoseconds), 0 where not measured. For the log only.
+    /// nanoseconds), 0 where not measured. For the log, and for a session
+    /// tx.keepalive's age (SessionTransport::deliveringMessageWaitUs).
     qint64 receivedNs = 0;
 };
 

@@ -19,6 +19,10 @@
 // on a pan whose slice this window only listens to, and writes nothing.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
+// 2026-11-06 (band stack plan Task 8): the BAND flyout stays open across
+// presses and closes on a click elsewhere; a band button's right-click asks
+// for its stack. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//
 // 2026-10-10 (display pill plan Task 16): the Display pill. Four tabs in
 // order, each with its header and footer; the Spectrum and 3D View rows
 // seeded from a real SpectrumWidget with nothing written, following it
@@ -66,6 +70,7 @@
 #include <QCheckBox>
 #include <QSpinBox>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QGridLayout>
 #include <QImage>
 #include <QDir>
@@ -968,6 +973,61 @@ private slots:
             QCOMPARE(selected.last().at(2).toString(), QString::fromLatin1(expected[i].mode));
         }
     }
+    // Band stack plan Task 8: a second press steps through the band's stack,
+    // so the flyout stays up until a click elsewhere.
+    void bandFlyoutStaysOpenUntilAClickElsewhere() {
+        PanelHarness h;
+        h.host.resize(900, 600);
+        h.host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&h.host));
+
+        QPushButton* bandButton = nullptr;
+        for (QPushButton* button : h.panel->findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("BAND")) {
+                bandButton = button;
+            }
+        }
+        QVERIFY(bandButton);
+        bandButton->click();
+
+        QPushButton* twenty = nullptr;
+        for (QPushButton* button : h.host.findChildren<QPushButton*>()) {
+            if (button->text() == QStringLiteral("20")) {
+                twenty = button;
+            }
+        }
+        QVERIFY(twenty);
+        QWidget* flyout = twenty->parentWidget();
+        QVERIFY(flyout->isVisible());
+
+        QSignalSpy selected(h.panel, &SpectrumOverlayPanel::bandSelected);
+        QTest::mouseClick(twenty, Qt::LeftButton);
+        QCOMPARE(selected.count(), 1);
+        QVERIFY(flyout->isVisible());
+        QTest::mouseClick(twenty, Qt::LeftButton);
+        QCOMPARE(selected.count(), 2);
+        QVERIFY(flyout->isVisible());
+        QCOMPARE(selected.last().at(0).toString(), QStringLiteral("20m"));
+
+        // A right-click asks for the band's stack and leaves the flyout up.
+        QSignalSpy context(h.panel, &SpectrumOverlayPanel::bandContextRequested);
+        const QPoint local(4, 5);
+        QContextMenuEvent rightClick(QContextMenuEvent::Mouse, local, twenty->mapToGlobal(local));
+        QApplication::sendEvent(twenty, &rightClick);
+        QCOMPARE(context.count(), 1);
+        QCOMPARE(context.first().at(0).toString(), QStringLiteral("20m"));
+        QCOMPARE(context.first().at(1).toPoint(), twenty->mapToGlobal(local));
+        QCOMPARE(selected.count(), 2);
+        QVERIFY(flyout->isVisible());
+
+        const QPoint elsewhere(880, 580);
+        QVERIFY(!flyout->geometry().contains(elsewhere));
+        QVERIFY(!h.panel->geometry().contains(elsewhere));
+        QTest::mouseClick(h.host.windowHandle(), Qt::LeftButton, Qt::NoModifier, elsewhere);
+        QVERIFY(!flyout->isVisible());
+        QCOMPARE(selected.count(), 2);
+    }
+
     // TX rulings (item 3, JJ): a listened pan's ATT flyout is held with
     // the reason naming the controller, and writes nothing.
     void attFlyoutHeldOnAListenedSlice() {
@@ -4150,6 +4210,50 @@ private slots:
         h.panel->setStationRowsAvailable(false,
                                          QStringLiteral("Connect to the Core to change these."));
         QVERIFY(fits("pillStationNote", QStringLiteral("Connect to the Core to change these.")));
+    }
+
+    // ---- The strip's collapse arrow is remembered for each pan ----
+
+    void stripCollapseComesBackForItsOwnPan() {
+        const auto arrow = [](SpectrumOverlayPanel& panel, QChar glyph) -> QPushButton* {
+            for (QPushButton* button : panel.findChildren<QPushButton*>()) {
+                if (button->text() == QString(glyph)) { return button; }
+            }
+            return nullptr;
+        };
+        const QChar kExpandedArrow(0x25c0);
+        const QChar kCollapsedArrow(0x25b6);
+
+        QWidget host;
+        host.resize(800, 600);
+        int expandedHeight = 0;
+        {
+            SpectrumOverlayPanel panel(&host);
+            panel.setPanId(QStringLiteral("pan-1"));
+            expandedHeight = panel.height();
+            QPushButton* collapse = arrow(panel, kExpandedArrow);
+            QVERIFY(collapse);
+            collapse->click();
+            QVERIFY(panel.height() < expandedHeight);
+        }
+        // After a restart: the same pan is collapsed, another is not.
+        {
+            SpectrumOverlayPanel panel(&host);
+            panel.setPanId(QStringLiteral("pan-1"));
+            QVERIFY(arrow(panel, kCollapsedArrow));
+            QVERIFY(panel.height() < expandedHeight);
+            SpectrumOverlayPanel other(&host);
+            other.setPanId(QStringLiteral("pan-0"));
+            QVERIFY(arrow(other, kExpandedArrow));
+            QCOMPARE(other.height(), expandedHeight);
+            arrow(panel, kCollapsedArrow)->click();
+            QCOMPARE(panel.height(), expandedHeight);
+        }
+        {
+            SpectrumOverlayPanel panel(&host);
+            panel.setPanId(QStringLiteral("pan-1"));
+            QVERIFY(arrow(panel, kExpandedArrow));
+        }
     }
 };
 

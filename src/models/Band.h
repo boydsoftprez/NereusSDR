@@ -13,6 +13,8 @@
 //   2026-09-28 - 2 m as its own band (Band2m, number 27), per-band state
 //                 slots (R-IOS-26, R-R3-49). J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05 - hamBandRangeHz, for the band stack.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -73,6 +75,8 @@
 #include <QVector>
 
 #include <array>
+#include <optional>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -218,6 +222,10 @@ Band bandFromFrequency(double hz);
 /// Existing union band-identity boundaries visible in a frequency window.
 /// This lookup does not define a new region-specific legal allocation table.
 QVector<double> hamBandEdgesHz(double minHz, double maxHz);
+
+/// The edges of a ham band in Hz, from the table bandFromFrequency uses.
+/// Nullopt for any other band.
+std::optional<std::pair<double, double>> hamBandRangeHz(Band band);
 
 /// Maps a 0-based `BandButtonItem` UI index to the corresponding Band.
 /// Button order: 160m, 80m, 60m, 40m, 30m, 20m, 17m, 15m, 12m, 10m, 6m,

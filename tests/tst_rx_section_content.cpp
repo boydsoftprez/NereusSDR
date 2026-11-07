@@ -38,6 +38,13 @@
 //                 per slice, the Nereus grid's same buttons and the saved
 //                 visibility bits. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-05 - aCopiedPassbandCentreDragKeepsTheWidth checks its spy is
+//                 valid, which it was not on Windows while the widget was
+//                 not exported from the GUI DLL. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - aBandGridJumpsBetweenGroups spies by member pointer now that
+//                 BandButtonItem is exported. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -826,6 +833,10 @@ private slots:
         QCOMPARE(passband->filterLo(), 8000);
         QCOMPARE(passband->filterHi(), 9900);
         QSignalSpy shifted(passband, &FilterPassbandWidget::passbandShifted);
+        // Not valid on Windows while FilterPassbandWidget was not exported
+        // from the GUI DLL: the signal's address here was MinGW's import
+        // thunk.
+        QVERIFY(shifted.isValid());
 
         const auto mouse = [passband](QEvent::Type type, int x, Qt::MouseButton button,
                                       Qt::MouseButtons buttons) {
@@ -1316,11 +1327,10 @@ private slots:
     {
         BandButtonItem grid;
         grid.setSliceBand(0, Band::Band20m);
-        // bandClicked is on BandButtonItem, which the GUI DLL does not
-        // export on Windows; the string form finds it through the object.
-        QSignalSpy bands(&grid, SIGNAL(bandClicked(int)));
-        QSignalSpy stacks(&grid, SIGNAL(bandStackRequested(int)));
+        QSignalSpy bands(&grid, &BandButtonItem::bandClicked);
+        QSignalSpy stacks(&grid, &BandButtonItem::bandStackRequested);
         QVERIFY(bands.isValid());
+        QVERIFY(stacks.isValid());
 
         grid.buttonClicked(14, Qt::LeftButton);  // SWL
         QCOMPARE(grid.shownGroup(), BandGroup::Gen);
@@ -1342,14 +1352,17 @@ private slots:
         grid.buttonClicked(14, Qt::RightButton);  // a jump takes either button
         QCOMPARE(grid.shownGroup(), BandGroup::Hf);
 
-        // WWV sets the band for either button; it has no band stack.
+        // WWV's right-click asks for its stack, as any band's does.
         grid.buttonClicked(13, Qt::RightButton);
+        QCOMPARE(bands.count(), 1);
+        QCOMPARE(stacks.count(), 1);
+        QCOMPARE(stacks.last().at(0).toInt(), static_cast<int>(Band::WWV));
+        grid.buttonClicked(13, Qt::LeftButton);
         QCOMPARE(bands.count(), 2);
         QCOMPARE(bands.last().at(0).toInt(), static_cast<int>(Band::WWV));
-        QCOMPARE(stacks.count(), 0);
         // A band's right-click asks for its stack.
         grid.buttonClicked(3, Qt::RightButton);
-        QCOMPARE(stacks.count(), 1);
+        QCOMPARE(stacks.count(), 2);
         QCOMPARE(stacks.last().at(0).toInt(), static_cast<int>(Band::Band40m));
         // The blank does nothing.
         grid.buttonClicked(11, Qt::LeftButton);

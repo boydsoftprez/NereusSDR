@@ -167,7 +167,10 @@ public:
     /// depends on hidden state. Same shape as AetherSDR's SpectrumOverlayMenu,
     /// which carries m_panId and emits addRxClicked(m_panId)
     /// (SpectrumOverlayMenu.cpp:315 [@c6481cbf]).
-    void setPanId(const QString& panId) { m_panId = panId; }
+    ///
+    /// Knowing its pan, the strip also takes back whether it was collapsed on
+    /// that pan (Pan_<panId>_OverlayCollapsed).
+    void setPanId(const QString& panId);
     QString panId() const { return m_panId; }
 
     // Bind this overlay panel to a RadioModel. Enables the VAX Ch combo
@@ -270,6 +273,8 @@ public slots:
 signals:
     // Band flyout
     void bandSelected(const QString& bandName, double freqHz, const QString& mode);
+    /// A right-click on a band button: bandSelected's name, and where.
+    void bandContextRequested(const QString& bandKey, const QPoint& globalPos);
 
     // Display pill
     /// "Setup defaults" in the pill's footer. The page follows the open

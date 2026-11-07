@@ -46,8 +46,7 @@
 //   keys are whole-key rules below, Station, not
 //   "explicit exceptions" in this file's strict sense, since no prefix
 //   rule claims "Display*" for step 1 to need to override. DisplaySpectrumFps
-//   carries its own paragraph (see below) because it is not simply
-//   "Station" in the same sense as the other three.
+//   has its own paragraph below, with DisplayPaintFps, each window's own rate.
 //
 //   "audio/" -- almost every audio/* key is local sound hardware
 //   selection (AudioEngine.cpp's ensureSpeakersOpen/ensureTxInputOpen via
@@ -64,31 +63,28 @@
 //   Station either -- it is still local sound hardware selection, just on
 //   whichever machine happens to be running nereusd standalone.
 //
-// ---- The DisplaySpectrumFps straddle -----------------------------------
+// ---- DisplaySpectrumFps and DisplayPaintFps -----------------------------
 //
-// DisplaySpectrumFps is read TWICE for two different reasons on two sides
-// of the R2 split, and a three-valued (well, two-valued) scope enum
-// cannot encode "both, meaning different things at each end":
-//   - MainWindow.cpp:1483, into FftPoolConfig::fps -- the rate at which
-//     the daemon's FFT engines actually produce spectrum frames. This
-//     belongs to the station.
-//   - MainWindow.cpp:3485, into the CLIENT's own SpectrumWidget paint
-//     timer (setDisplayFps) -- how often ONE client's own screen redraws
-//     the trace it already has. This belongs to the operator's machine;
-//     a remote client with a 165 Hz monitor and a local client on a
-//     10-year-old laptop have no reason to share this number.
-// This function classifies it Station, grouped with the other three
-// FftPoolConfig knobs, because the daemon-side consumer is the one that
-// actually changes what data exists (the production rate), while the
-// client-side consumer only changes how often an already-produced frame
-// is redrawn -- the less consequential of the two if the value is wrong.
-// This is a known, accepted, UNRESOLVED straddle, not a fix: a future
-// task that wants the client's own paint rate independently configurable
-// needs its own key (e.g. a client-local "DisplayPaintFps"), not a second
-// meaning for this one.
+// DisplaySpectrumFps used to carry two meanings, the station's rate and each
+// client's own paint rate, recorded here as a known straddle. JJ's ruling of
+// 2026-11-05 ended it: each window keeps its own paint rate, and the Core's
+// rate stays one shared setting.
+//   - DisplaySpectrumFps (Station) is the Core's rate. Setup's FFT & Engine
+//     rate and the phone's Setup page set it. Direct to a radio it is also
+//     the window's one rate, for the FFT pool and the paint timer alike.
+//   - DisplayPaintFps (OperatorLocal) is one window's or device's own rate,
+//     set by a window's Display pill on a Core. It sets the paint timer and
+//     the fps that window asks the Core for. Until it is set the window takes
+//     DisplaySpectrumFps (readDisplayPaintFps, DisplayFftSizing.h).
+// No Core reads DisplaySpectrumFps to run its engines: a Core's engine runs at
+// the highest rate its endpoints ask (DaemonMediaController).
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05  J.J. Boyd / KG4VCF  DisplayPaintFps: each window's own paint
+//                                    rate; the DisplaySpectrumFps straddle
+//                                    ends. AI-assisted via Anthropic Claude
+//                                    Code.
 //   2026-09-29  J.J. Boyd / KG4VCF  Level Cal: RX1_DisplayCalOffsetDb is a
 //                                    station key. AI-assisted via
 //                                    Anthropic Claude Code.
@@ -537,8 +533,7 @@ const Rule kPrefixes[] = {
 // ---- 3. Whole-key rules ---------------------------------------------------
 const Rule kWholeKeys[] = {
     // The four FftPoolConfig knobs -- see this file's header comment for
-    // the full "Display" writeup and the DisplaySpectrumFps straddle
-    // paragraph. Not "explicit exceptions" (step 1): no "Display" prefix
+    // the full "Display" writeup and the DisplaySpectrumFps paragraph. Not "explicit exceptions" (step 1): no "Display" prefix
     // rule exists for these to escape.
     { "DisplayFftSize", SettingsScope::Station },
     { "DisplayFftWindow", SettingsScope::Station },
@@ -550,6 +545,12 @@ const Rule kWholeKeys[] = {
     // the target they choose between (ControlRanges.h).
     { "DisplayFftSizingMode", SettingsScope::Station },
     { "DisplayHzPerBinLastTarget", SettingsScope::Station },
+    // Rendering > Decimation: each device has its own (StationCatalog's "device"
+    // scope), so two windows on one Core do not move each other.
+    { "DisplayDecimation", SettingsScope::OperatorLocal },
+    // Each window's own paint rate (the Display pill's FPS on a Core). The
+    // Core's rate is DisplaySpectrumFps, above.
+    { "DisplayPaintFps", SettingsScope::OperatorLocal },
 
     // TX-side WDSP analyzer configuration. TxAnalyzer owns the detector,
     // averaging, normalization, FFT geometry and window applied before TX
@@ -842,7 +843,11 @@ bool isModelOwnedDspSettingsKey(QStringView rawKey)
     const QStringList parts = key.split(QLatin1Char('/'));
     return (parts.size() >= 4 && parts[2] == QStringLiteral("puresignal"))
         || (parts.size() >= 6 && parts[2] == QStringLiteral("slices")
-            && parts[4] == QStringLiteral("nnr"));
+            && parts[4] == QStringLiteral("nnr"))
+        // The rate a slice comes back at: a device changes a rate through
+        // requestSliceSampleRate, which checks the slice's owner.
+        || (parts.size() == 5 && parts[2] == QStringLiteral("slices")
+            && parts[4] == QStringLiteral("samplerate"));
 }
 
 QList<SettingsScopeRule> settingsScopeRules()

@@ -583,6 +583,10 @@ inline constexpr int kDisplaySpectrumFpsMax = 60;
 inline constexpr int kDisplaySpectrumFpsStep = 1;
 inline constexpr int kDisplaySpectrumFpsDefault = 30;
 inline constexpr const char* kDisplaySpectrumFpsUnit = "fps";
+// A window on a Core keeps its own paint rate here (the Display pill's FPS);
+// kDisplaySpectrumFpsKey stays the Core's one shared rate. Same range. Unset
+// until the pill is first moved (readDisplayPaintFps, DisplayFftSizing.h).
+inline constexpr const char* kDisplayPaintFpsKey = "DisplayPaintFps";
 
 // Spectrum Detector, in Thetis's order (SpectrumDetectorMode's values):
 // From Thetis Project Files/Source/Console/setup.designer.cs:34984-34989 [v2.10.3.15]
@@ -647,7 +651,8 @@ inline constexpr int kDisplayAvgTimePillPageMs = 25;
 
 // Decimation matches Thetis by JJ's 2026-09-27 ruling: 1 to 16, step 1,
 // starting at 1 (setup.designer.cs:33828-33853 [v2.10.3.15]). The desktop
-// keeps no setting for it: each window's engines hold it.
+// saves it beside the other FFT knobs; a window's engines hold what it says.
+inline constexpr const char* kDisplayDecimationKey = "DisplayDecimation";
 inline constexpr const char* kDisplayDecimationLabel = "Decimation";
 inline constexpr int kDisplayDecimationMin = 1;
 inline constexpr int kDisplayDecimationMax = 16;
