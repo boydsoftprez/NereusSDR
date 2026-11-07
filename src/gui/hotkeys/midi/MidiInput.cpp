@@ -24,11 +24,15 @@
 //   2026-11-06 - One fewer port with the open port's name counts as losing it.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude
 //                 Opus 5.5).
+//   2026-11-06 - A process that hasn't allowed real devices gets no device layer.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude
+//                 Opus 5.5).
 // =================================================================
 
 #include "gui/hotkeys/midi/MidiInput.h"
 
 #include "core/LogCategories.h"
+#include "gui/hotkeys/devices/DeviceInput.h"
 
 #ifdef NEREUS_HAVE_RTMIDI
 #include "RtMidi.h"
@@ -184,6 +188,11 @@ std::unique_ptr<MidiPortBackend> makeBackend()
     }
     if (factory) {
         return factory();
+    }
+    // Only the application allows real devices (src/main.cpp). As DeviceInput, FlexControl
+    // and the Ulanzi Dial.
+    if (!DeviceInput::realDevicesAllowed()) {
+        return nullptr;
     }
 #ifdef NEREUS_HAVE_RTMIDI
     return std::make_unique<RtMidiBackend>();

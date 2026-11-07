@@ -11,6 +11,7 @@
 #include <QSignalSpy>
 
 #include "fakes/FakeMidiBackend.h"
+#include "gui/hotkeys/devices/DeviceInput.h"
 #include "gui/hotkeys/midi/MidiInput.h"
 #include "gui/hotkeys/midi/MidiRelativeDecoder.h"
 
@@ -152,13 +153,22 @@ private slots:
 
     // ---- The real device layer ----
 
-    // The one thing that can run with no device: listing, whatever the machine has.
-    // A machine with no MIDI service gets an empty list, not a thrown error.
-    void realLayer_listingReturns()
+    // Only the application allows real devices (src/main.cpp), so a test process lists
+    // nothing and opens nothing, whatever this machine has plugged in. It reads like a
+    // build without MIDI, which is the same null backend.
+    void realLayer_aTestProcessNeverTouchesIt()
     {
         MidiInput::setBackendFactoryForTest(nullptr);
-        const QStringList names = MidiInput::portNames();
-        qInfo() << "MIDI ports here:" << names.size();
+        QVERIFY(!DeviceInput::realDevicesAllowed());
+        QVERIFY(MidiInput::portNames().isEmpty());
+        MidiInput input;
+        QSignalSpy connection(&input, &MidiInput::connectionChanged);
+        input.openPort(QStringLiteral("Anything"));
+        QCOMPARE(connection.size(), 1);
+        QCOMPARE(connection.at(0).at(0).toBool(), false);
+        QCOMPARE(connection.at(0).at(1).toString(), QStringLiteral("This build has no MIDI support."));
+        input.checkPorts();
+        QCOMPARE(connection.size(), 1);
         QCOMPARE(MidiInput::supported(),
 #ifdef NEREUS_HAVE_RTMIDI
                  true
@@ -166,7 +176,6 @@ private slots:
                  false
 #endif
         );
-        QVERIFY(names.size() >= 0);
     }
 
     // ---- Controls out of MidiInput ----
