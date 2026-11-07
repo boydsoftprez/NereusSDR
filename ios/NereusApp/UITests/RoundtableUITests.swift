@@ -10,6 +10,9 @@
 // 2026-10-25: JJ's answer: on a phone the first-run question opens at full
 // height, Stay hidden and Go live on screen without a scroll. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-05: These run upright on an iPad, where the flag line opens the
+// sheet; on its side it scrolls the column instead. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -216,6 +219,9 @@ final class RoundtableUITests: XCTestCase {
 
     @MainActor
     private func launch(firstRun: Bool = false) -> XCUIApplication {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCUIDevice.shared.orientation = .portrait
+        }
         let app = XCUIApplication()
         // The band with slice A in a Roundtable room, with no Core (a debug build's launch arguments).
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusRoundtableFixture"]
