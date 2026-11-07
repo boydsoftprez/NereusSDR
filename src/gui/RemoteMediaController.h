@@ -779,6 +779,7 @@ private:
     void requestRecovery(quint32 expectedEpoch, const QString& reason);
     void settleWithoutRetry(quint32 expectedEpoch, const QString& reason);
     void refreshSubscriptions();
+    void askAgainForRefusedDisplaysOf(int sliceId);
     void refreshBudgetSubscriptions();
     void refreshLegacyMiniSubscriptions();
     // Parity Task 32: the monitor-audio request and its answer.

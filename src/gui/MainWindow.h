@@ -280,6 +280,7 @@
 //============================================================================================//
 
 #include "gui/widgets/CpuRowCycler.h"
+#include <array>
 #include <functional>
 #include <memory>
 #include <map>
@@ -532,6 +533,9 @@ public:
     static bool firstRunPromptsBarredForTestRun();
 
 signals:
+    /// This window started or stopped hosting, so the slices it controls changed
+    /// with no slice or ownership signal to say so.
+    void desktopHostingChanged();
     void connectionsRequested();
     void hostedInitialConnectionRequested();
     void setupDialogCreated(NereusSDR::SetupDialog* dialog);
@@ -659,10 +663,17 @@ public:
                                     int sliceId);
     static void configureSpectrumForPanForTest(SpectrumWidget* spectrum,
                                                 const QString& panId);
-    static void wireWidebandExtensionForTest(SpectrumWidget* spectrum,
-                                             RadioModel* model,
-                                             PanadapterStack* stack,
-                                             const QString& panId);
+    /// mayRaiseWideband, when set, says whether this pan may raise the wideband
+    /// flag for a slice id. mayRetune, when set, says whether a click in a wing
+    /// may retune a slice id. Returns the pan's reconcile step, for a change the
+    /// wiring has no signal of its own for.
+    static std::function<void()> wireWidebandExtensionForTest(
+        SpectrumWidget* spectrum,
+        RadioModel* model,
+        PanadapterStack* stack,
+        const QString& panId,
+        const std::function<bool(int)>& mayRaiseWideband = {},
+        const std::function<bool(int)>& mayRetune = {});
     static void fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
                                        const QVector<float>& bins);
     /// 3D Stacked-Trace Spectrum Plan Task 14 fix-forward (recall) + Task 15
@@ -1906,7 +1917,8 @@ private:
     // (FFTEngine for RX, TxAnalyzer for TX).  See TxAnalyzer.h header.
     TxAnalyzer*         m_txAnalyzer{nullptr};
 
-    /// Last centre + sample rate RadioModel published for each stream, kept
+    /// Last centre + sample rate RadioModel published for each stream (the
+    /// wire-rate handler keeps the rate current on a live change), kept
     /// so a pan that subscribes AFTER the stream was centred still learns
     /// where its bins sit. RadioModel::bindSliceToStream emits
     /// streamCentreChanged BEFORE SliceModel::streamIndex is updated and
@@ -2014,6 +2026,10 @@ private:
     // stop flag and runs a fresh ~5 s NIC walk on the main thread mid-
     // close. Symptom: ⌘Q beach-balls for the full SafeDefault scan time.
     bool m_shuttingDown{false};
+    // The two CH labels in the status bar. Held, not looked up: a filter state
+    // change can arrive while a pan's widgets are being deleted, and a search of
+    // the window's children walks into them (wireWidebandExtensionForTest).
+    std::array<QPointer<QLabel>, 2> m_chainIndicatorLabels;
 
     // Container infrastructure (Phase 3G-1)
     ContainerManager* m_containerManager{nullptr};
