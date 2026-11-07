@@ -251,11 +251,16 @@ class HostAction:
     def __init__(self, plugin_base):
         self.plugin_base = plugin_base
         self.deck_controller = types.SimpleNamespace(get_alive=lambda: True)
+        self.state = 0
+        self.input_state = 0
         self.present = True
         self.removed_upstream = 0
 
     def get_is_present(self):
         return self.present
+
+    def get_input(self):
+        return types.SimpleNamespace(state=self.input_state)
 
     def get_settings(self):
         return {}
@@ -339,6 +344,14 @@ class HeldKeyTest(unittest.TestCase):
         self.module.let_go_of_what_left(self.plugin.held)
         self.assertEqual(len(self.sent), 1)     # still here: nothing changes
         self.action.present = False
+        self.module.let_go_of_what_left(self.plugin.held)
+        self.released_once()
+        self.module.let_go_of_what_left(self.plugin.held)
+        self.released_once()
+
+    def test_another_state_of_the_key_lets_go_once(self):
+        self.press()
+        self.action.input_state = 1     # the release goes to that state's actions, not this one
         self.module.let_go_of_what_left(self.plugin.held)
         self.released_once()
         self.module.let_go_of_what_left(self.plugin.held)

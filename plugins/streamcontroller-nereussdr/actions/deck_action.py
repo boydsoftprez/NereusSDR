@@ -16,8 +16,9 @@ What a held key can leave by, from StreamController src/backend at 0f439967a16a 
     gets no call, and the release goes to whatever the new page has on that key.
   The deck going away: DeckController.py:1815-1818 delete() empties the page's actions with no call.
   The screen saver: DeckController.py:3242-3247 eats a release while it shows.
-Those three have no call, and ActionCore.py:446 get_is_present plus DeckController.py:1837 get_alive
-are what can see them, so main.py looks at each held action with let_go_of_what_left. The plugin
+  Another state of the same key: DeckController.py:3263,3280 sends the release to the active state only.
+Those four have no call, and ActionCore.py:446 get_is_present (which doesn't look at the state, :446-452),
+ActionCore.py:122 get_input and DeckController.py:1837 get_alive are what can see them, so main.py looks at each held action with let_go_of_what_left. The plugin
 runs in the host's process, so the socket stays open and the window sees no drop.
 """
 import os
@@ -78,7 +79,8 @@ class DeckAction(ActionBase):
 
     def still_on_deck(self):
         try:
-            return self.deck_controller.get_alive() and self.get_is_present()
+            return (self.deck_controller.get_alive() and self.get_is_present()
+                    and self.get_input().state == self.state)
         except Exception:   # a deck that is going away can raise anything
             return False
 
