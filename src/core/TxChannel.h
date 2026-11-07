@@ -371,6 +371,10 @@ warren@wpratt.com
 //                 and the AM monitor tap, all zeros; the gate, the run
 //                 sequence and rfGateOpened are untouched. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -2095,6 +2099,13 @@ public:
     /// detaches.  NereusSDR-original (AM Mod Monitor applet).
     void setAmModulationTap(class AmModulationAnalyzer* tap);
 
+    /// SSB modulation monitor tap. Same block the radio gets, on the TX
+    /// worker thread. nullptr detaches. The owner attaches it only while
+    /// transmitting USB or LSB.
+    void setSsbModulationTap(class SsbModulationAnalyzer* tap);
+    class SsbModulationAnalyzer* ssbModulationTapForTest() const
+    { return m_ssbModTap.load(std::memory_order_acquire); }
+
     /// CESSB (osctrl) run gate.  Wraps SetTXAosctrlRun(channel, on ? 1 : 0).
     ///
     /// SIDE EFFECT 1: SetTXAosctrlRun calls TXASetupBPFilters(channel)
@@ -3136,6 +3147,7 @@ private:
     // calling sendTxIq.  Size: 2 * m_outputBufferSize floats.
     std::vector<float> m_outInterleavedFloat;
     std::atomic<class AmModulationAnalyzer*> m_amModTap{nullptr};  // AM Mod Monitor tap
+    std::atomic<class SsbModulationAnalyzer*> m_ssbModTap{nullptr}; // SSB Mod Monitor tap
 
     // Float scratch for the post-fexchange0 MON siphon emit — the
     // sip1OutputReady signal carries `const float*`, but m_out is double,

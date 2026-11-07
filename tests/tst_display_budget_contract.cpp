@@ -717,7 +717,8 @@ private slots:
                 QCOMPARE(names, golden);
                 for (const QByteArray& name : {QByteArrayLiteral("remoteIqVersion"),
                                                QByteArrayLiteral("txModMonitorVersion"),
-                                               QByteArrayLiteral("accessoryTxVersion")}) {
+                                               QByteArrayLiteral("accessoryTxVersion"),
+                                               QByteArrayLiteral("txSsbModMonitorVersion")}) {
                     QCOMPARE(updateIndex(last.updates, name), -1);
                 }
             } else {
@@ -781,7 +782,7 @@ private slots:
                                    "mediaTunnelVersion", "mediaRelayRoutingVersion",
                                    // Independent minor-11 capabilities.
                                    "remoteIqVersion", "txModMonitorVersion",
-                                   "accessoryTxVersion"});
+                                   "accessoryTxVersion", "txSsbModMonitorVersion"});
                 QCOMPARE(names, withReason);
                 QCOMPARE(updateIndex(last.updates, QByteArrayLiteral("setupDescriptionVersion")),
                          -1);
@@ -790,7 +791,8 @@ private slots:
                                      QByteArrayLiteral("spectrumPictureVersion")), -1);
                 for (const QByteArray& name : {QByteArrayLiteral("remoteIqVersion"),
                                                QByteArrayLiteral("txModMonitorVersion"),
-                                               QByteArrayLiteral("accessoryTxVersion")}) {
+                                               QByteArrayLiteral("accessoryTxVersion"),
+                                               QByteArrayLiteral("txSsbModMonitorVersion")}) {
                     const int index = updateIndex(last.updates, name);
                     QVERIFY(index >= 0);
                     QCOMPARE(last.updates.at(index).kind, MirrorWireKind::Int64);
@@ -855,7 +857,8 @@ private slots:
                                            QByteArrayLiteral("mediaRelayRoutingVersion"),
                                            QByteArrayLiteral("remoteIqVersion"),
                                            QByteArrayLiteral("txModMonitorVersion"),
-                                           QByteArrayLiteral("accessoryTxVersion")}) {
+                                           QByteArrayLiteral("accessoryTxVersion"),
+                                           QByteArrayLiteral("txSsbModMonitorVersion")}) {
                 stripped.removeAt(updateIndex(stripped, name));
             }
             QCOMPARE(SessionMessages::encode(SessionMessages::capabilities(stripped)), older);

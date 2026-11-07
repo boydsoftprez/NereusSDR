@@ -595,6 +595,11 @@
             "value": 1
         },
         {
+            "kind": "i64",
+            "name": "txSsbModMonitorVersion",
+            "value": 1
+        },
+        {
             "kind": "utf8",
             "name": "coreBuildInfo",
             "value": "{\"productVersion\":\"0.5.2\",\"sourceTag\":\"link-surface@fixture\"}"
@@ -2688,6 +2693,19 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "txModMonitor.reset"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "source",
+                    "optional": false
+                }
+            ],
+            "capability": "txSsbModMonitorVersion",
+            "capabilityVersion": 1,
+            "minMinor": 11,
+            "verb": "txSsbModMonitor.reset"
         },
         {
             "arguments": [

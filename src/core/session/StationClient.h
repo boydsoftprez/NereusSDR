@@ -505,6 +505,8 @@
 //               `roundtable` object, the room streams and the thirteen
 //               Roundtable requests. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1664,6 +1666,9 @@ public:
     void setModMonitorSource(int source) override;
     /// txModMonitor.reset for a source.
     CommandOutcome requestModMonitorReset(int source) override;
+    bool txSsbModMonitorAvailable() const override;
+    void setSsbModMonitorSource(int source) override;
+    CommandOutcome requestSsbModMonitorReset(int source) override;
     /// Parity Task 21 (R-IOS-18): minor 11 and stationRadiosVersion at
     /// least 1 on a ready session.
     bool stationRadiosAvailable() const override;
@@ -2083,6 +2088,9 @@ private:
     int m_modMonitorSource = -1;
     QString m_modMonitorStream;
     void syncModMonitorSubscription();
+    int m_ssbModMonitorSource = -1;
+    QString m_ssbModMonitorStream;
+    void syncSsbModMonitorSubscription();
     /// Task 78: this session's hello declared sessionHolder 1.
     bool m_declaredSessionHolder = false;
     bool m_declaresSessionHolder = true;

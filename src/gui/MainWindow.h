@@ -228,6 +228,8 @@
 //   2026-10-26 - Final review fix wave (M6): voxLineReason, one VOX
 //                 line reason for the container button and the applets.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 //=================================================================
@@ -2306,6 +2308,7 @@ private:
     class DigitalApplet*    m_digitalApplet{nullptr};
     class PureSignalApplet* m_pureSignalApplet{nullptr};
     class ModMonitorApplet* m_modMonApplet{nullptr};   // AM Mod Monitor
+    class SsbModMonitorApplet* m_ssbModMonApplet{nullptr}; // SSB Mod Monitor
     class DiversityApplet*  m_diversityApplet{nullptr};
     class CwxApplet*        m_cwxApplet{nullptr};
     QLabel*                 m_statusCwxLabel{nullptr};

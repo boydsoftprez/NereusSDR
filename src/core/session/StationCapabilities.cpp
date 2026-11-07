@@ -213,6 +213,10 @@
 //   2026-10-08 - Rotor control plan Task 4b: remoteRotorControlVersion,
 //                after accessoryTxVersion, when it is not 0. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationCapabilities.h"
@@ -651,6 +655,12 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (nnrLoadWarningVersion > 0) {
         updates.append(intEntry("nnrLoadWarningVersion", nnrLoadWarningVersion));
     }
+    // SSB Mod Monitor: after every other entry and before coreBuildInfo
+    // (which stays last), so no entry a peer already reads moves. Omitted at
+    // 0, and sent only in the minor-11 block.
+    if (radioIdentityEntries && txSsbModMonitorVersion > 0) {
+        updates.append(intEntry("txSsbModMonitorVersion", txSsbModMonitorVersion));
+    }
     if (coreBuildInfo) {
         const QByteArray json = coreBuildInfo->toJson();
         if (!json.isEmpty()) updates.append(stringEntry("coreBuildInfo", QString::fromUtf8(json)));
@@ -1022,6 +1032,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                    || u.name == "mediaTunnelVersion"
                    || u.name == "mediaRelayRoutingVersion"
                    || u.name == "txModMonitorVersion"
+                   || u.name == "txSsbModMonitorVersion"
                    || u.name == "sessionHolderVersion"
                    || u.name == "remoteTxVersion"
                    || u.name == "txWatchPathVersion"
@@ -1179,6 +1190,8 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                     caps.mediaRelayRoutingVersion = version;
                 } else if (u.name == "txModMonitorVersion") {
                     caps.txModMonitorVersion = version;
+                } else if (u.name == "txSsbModMonitorVersion") {
+                    caps.txSsbModMonitorVersion = version;
                 } else {
                     caps.bandSelectVersion = version;
                 }

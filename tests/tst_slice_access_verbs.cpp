@@ -64,6 +64,7 @@
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "CapabilityOrder.h"
 
 #include "core/session/SliceAccessController.h"
 #include "core/session/SliceAccessPolicy.h"
@@ -226,18 +227,19 @@ private slots:
         QVERIFY(admitted(appD));
         QCOMPARE(capability(appA->received(), QStringLiteral("sliceAccessVersion")), 1);
         QVERIFY(!capability(appD->received(), QStringLiteral("sliceAccessVersion")).has_value());
-        // The capability is the last before coreBuildInfo.
+        // The capability is the last of the peer-gated entries, and the peer
+        // that did not declare it gets the same list without it.
         const QJsonArray caps =
             firstOfType(appA->received(), QStringLiteral("capabilities"))
                 .value(QStringLiteral("properties")).toArray();
-        QString last;
-        for (const QJsonValue& p : caps) {
-            const QString name = p.toObject().value(QStringLiteral("name")).toString();
-            if (name != QStringLiteral("coreBuildInfo")) {
-                last = name;
-            }
-        }
-        QCOMPARE(last, QStringLiteral("sliceAccessVersion"));
+        QCOMPARE(capabilityEntriesAfter(capabilityEntryNames(caps),
+                                        QStringLiteral("sliceAccessVersion")),
+                 kCapabilitiesAfterPeerGated);
+        const QJsonArray plainCaps = firstOfType(appD->received(), QStringLiteral("capabilities"))
+                                         .value(QStringLiteral("properties")).toArray();
+        QVERIFY(!plainCaps.isEmpty());
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("sliceAccessVersion")}),
+                 capabilityBytesWithout(plainCaps));
 
         // A: the class and an object per slice. D: neither.
         QTRY_VERIFY(holds(appA, accessKey(0)));

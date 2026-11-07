@@ -76,6 +76,9 @@ public final class RecordStreamClient: ObservableObject {
         if stream == AmModulationReading.txStream || stream == AmModulationReading.feedbackStream {
             return AmModulationReading.capacity
         }
+        if stream == SsbModulationReading.txStream || stream == SsbModulationReading.feedbackStream {
+            return SsbModulationReading.capacity
+        }
         if stream == StationVax.levelsStream {
             return StationVax.levelsCapacity
         }
