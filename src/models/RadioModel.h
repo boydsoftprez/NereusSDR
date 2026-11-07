@@ -3552,7 +3552,8 @@ public:
     QString retuneRefusalFor(const SliceModel* slice, double frequencyHz) const;
 
     /// A slice's held and current per-band memory for `band` goes to settings,
-    /// as a band change saves the band it leaves.
+    /// as a band change saves the band it leaves. Writes nothing while
+    /// sliceKeysAreHeld for the slice, as the band click does.
     void saveBandMemory(SliceModel* slice, NereusSDR::Band band);
 
     // Panadapter management (client-side)

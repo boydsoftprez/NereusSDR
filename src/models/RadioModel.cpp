@@ -1641,6 +1641,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-05 - owns the BandStackController; retuneRefusalFor, saveBandMemory.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-07 - saveBandMemory writes nothing while sliceKeysAreHeld, as the
+//                 band click does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -20859,8 +20862,12 @@ void RadioModel::saveBandMemory(SliceModel* slice, Band band)
     if (slice == nullptr) {
         return;
     }
-    materializePendingBandSettings(slice->sliceIndex());
-    slice->saveToSettings(band);
+    // As the band click: while the restore holds this slice's keys, a recall
+    // still moves the slice but writes none of them.
+    if (!sliceKeysAreHeld(slice->sliceIndex())) {
+        materializePendingBandSettings(slice->sliceIndex());
+        slice->saveToSettings(band);
+    }
 }
 
 // --- Panadapter Management ---

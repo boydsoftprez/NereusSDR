@@ -12,6 +12,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - New test for NereusSDR by J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - A recall during the restore's hold writes no saved keys.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -244,6 +246,59 @@ private slots:
 
         QCOMPARE(report.count(), 1);
         QCOMPARE(bench.controller->store().place(QChar(u'A'), Band::Band40m), target->id);
+    }
+
+    // While the restore at connect holds the slice's keys, a recall still
+    // moves the slice, as the band click does, but writes none of them.
+    void recall_duringTheRestoreHold_leavesTheSavedKeysAlone_afterItSaves_data()
+    {
+        QTest::addColumn<bool>("held");
+        QTest::newRow("during the hold") << true;
+        QTest::newRow("after the hold") << false;
+    }
+
+    void recall_duringTheRestoreHold_leavesTheSavedKeysAlone_afterItSaves()
+    {
+        QFETCH(bool, held);
+        Bench bench;
+        SliceModel* a = bench.a;
+        auto& settings = AppSettings::instance();
+        const QString key20 = QStringLiteral("Slice0/Band20m/Frequency");
+        const QString key40 = QStringLiteral("Slice0/Band40m/Frequency");
+
+        // Saved spots on both bands, then the slice moves on 20 m.
+        a->setFrequency(7012300.0);
+        a->setDspMode(DSPMode::LSB);
+        a->saveToSettings(Band::Band40m);
+        a->setFrequency(14100000.0);
+        a->setDspMode(DSPMode::USB);
+        a->saveToSettings(Band::Band20m);
+        a->setFrequency(14234500.0);
+        QCOMPARE(settings.value(key20).toDouble(), 14100000.0);
+        QCOMPARE(settings.value(key40).toDouble(), 7012300.0);
+
+        const qint64 targetHz = bench.controller->planRecall(press(0, Band::Band40m)).frequencyHz;
+        QVERIFY(targetHz != 7012300);
+
+        bench.radio.setReceiveLayoutHoldForTest(false, true);
+        QVERIFY(bench.radio.sliceKeysAreHeld(0));
+        if (!held) {
+            bench.radio.setReceiveLayoutHoldForTest(false, false);
+            QVERIFY(!bench.radio.sliceKeysAreHeld(0));
+        }
+
+        QString refusal;
+        QVERIFY2(bench.controller->performRecall(press(0, Band::Band40m), &refusal),
+                 qPrintable(refusal));
+        QCOMPARE(qRound64(a->frequency()), targetHz);
+
+        if (held) {
+            QCOMPARE(settings.value(key20).toDouble(), 14100000.0);
+            QCOMPARE(settings.value(key40).toDouble(), 7012300.0);
+        } else {
+            QCOMPARE(settings.value(key20).toDouble(), 14234500.0);
+            QCOMPARE(settings.value(key40).toDouble(), static_cast<double>(targetHz));
+        }
     }
 
     void press_savesAndAdvances_wrapping_shiftGoesBack()
