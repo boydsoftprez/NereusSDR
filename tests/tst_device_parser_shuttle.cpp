@@ -144,6 +144,22 @@ private slots:
         QCOMPARE(text(parser.parse(report(99))), QStringList{});
     }
 
+    void aFirstReportWithAButtonDownStartsNoPress()
+    {
+        ShuttleParser parser(Model::Pro2);
+        QVERIFY(parser.parse(report(0, 0x0001)).isEmpty());
+        parser.parse(report(0));
+        QCOMPARE(text(parser.parse(report(0, 0x0001))), QStringList{"down button1"});
+    }
+
+    void resetArmsTheFirstReportAgain()
+    {
+        ShuttleParser parser(Model::Pro2);
+        parser.parse(report(0));
+        parser.reset();
+        QVERIFY(parser.parse(report(0, 0x0001)).isEmpty());
+    }
+
     void staysMarkedUntested()
     {
         QVERIFY(!HotKeyDeviceBindings::testedOnRealDevice(DeviceId::ShuttleXpress));

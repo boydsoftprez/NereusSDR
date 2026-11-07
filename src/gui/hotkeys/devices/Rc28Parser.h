@@ -39,6 +39,7 @@ public:
     void reset() override;
 
 private:
+    bool m_seeded{false};
     quint8 m_buttons{0x07};     // active-low, so all released
 };
 

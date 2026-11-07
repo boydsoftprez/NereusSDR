@@ -38,6 +38,8 @@ public:
     void reset() override;
 
 private:
+    bool m_keysSeeded{false};
+    bool m_dialsSeeded{false};
     quint8 m_keys{0};       // bitmask of previous LCD key states (bits 0-7)
     quint8 m_dialPresses{0};    // bitmask of previous encoder button states (bits 0-3)
 };

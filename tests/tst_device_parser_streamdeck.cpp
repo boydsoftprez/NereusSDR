@@ -51,6 +51,7 @@ private slots:
     void aKeyDownAndUp()
     {
         StreamDeckPlusParser parser;
+        parser.parse(keys({}));
         QCOMPARE(text(parser.parse(keys({1}))), QStringList{"down button1"});
         QVERIFY(parser.parse(keys({1})).isEmpty());
         QCOMPARE(text(parser.parse(keys({}))), QStringList{"up button1"});
@@ -59,6 +60,7 @@ private slots:
     void keysTogetherGiveAllDowns()
     {
         StreamDeckPlusParser parser;
+        parser.parse(keys({}));
         QCOMPARE(text(parser.parse(keys({1, 4, 8}))), (QStringList{"down button1", "down button4", "down button8"}));
         QCOMPARE(text(parser.parse(keys({4}))), (QStringList{"up button1", "up button8"}));
     }
@@ -66,6 +68,7 @@ private slots:
     void aDialPress()
     {
         StreamDeckPlusParser parser;
+        parser.parse(dial(0x00, 0));
         QCOMPARE(text(parser.parse(dial(0x00, 0, 1))), QStringList{"down dial2"});
         QCOMPARE(text(parser.parse(dial(0x00, 1, 1, 0, 1))), (QStringList{"down dial1", "down dial4"}));
         QCOMPARE(text(parser.parse(dial(0x00, 0, 0))), (QStringList{"up dial1", "up dial2", "up dial4"}));
@@ -89,6 +92,7 @@ private slots:
     void aTurnDoesNotDisturbAPress()
     {
         StreamDeckPlusParser parser;
+        parser.parse(dial(0x00, 0));
         parser.parse(dial(0x00, 1));
         QCOMPARE(text(parser.parse(dial(0x01, 2))), QStringList{"turn dial1 2"});
         QVERIFY(parser.parse(dial(0x00, 1)).isEmpty());
@@ -97,6 +101,7 @@ private slots:
     void touchIsIgnored()
     {
         StreamDeckPlusParser parser;
+        parser.parse(keys({}));
         QByteArray touch = keys({1, 2});
         touch[1] = 0x02;
         QVERIFY(parser.parse(touch).isEmpty());
@@ -132,6 +137,44 @@ private slots:
         parser.reset();
         QVERIFY(parser.parse(keys({})).isEmpty());
         QVERIFY(parser.parse(dial(0x00, 0)).isEmpty());
+    }
+
+    // ---- Connecting never keys ----
+
+    void aFirstKeyReportWithAKeyDownStartsNoPress()
+    {
+        StreamDeckPlusParser parser;
+        QVERIFY(parser.parse(keys({1, 4})).isEmpty());
+        parser.parse(keys({}));
+        QCOMPARE(text(parser.parse(keys({1}))), QStringList{"down button1"});
+    }
+
+    void aFirstDialReportWithADialDownStartsNoPress()
+    {
+        StreamDeckPlusParser parser;
+        QVERIFY(parser.parse(dial(0x00, 1)).isEmpty());
+        parser.parse(dial(0x00, 0));
+        QCOMPARE(text(parser.parse(dial(0x00, 1))), QStringList{"down dial1"});
+    }
+
+    // Each says only what it carries, so one can't show the other released.
+    void keysAndDialsEachHaveTheirOwnFirstReport()
+    {
+        StreamDeckPlusParser parser;
+        parser.parse(keys({}));
+        parser.parse(dial(0x01, 1));
+        QVERIFY(parser.parse(dial(0x00, 1)).isEmpty());
+        QCOMPARE(text(parser.parse(keys({2}))), QStringList{"down button2"});
+    }
+
+    void resetArmsTheFirstReportsAgain()
+    {
+        StreamDeckPlusParser parser;
+        parser.parse(keys({}));
+        parser.parse(dial(0x00, 0));
+        parser.reset();
+        QVERIFY(parser.parse(keys({1})).isEmpty());
+        QVERIFY(parser.parse(dial(0x00, 1)).isEmpty());
     }
 
     void staysMarkedUntested()

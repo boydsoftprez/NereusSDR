@@ -21,6 +21,9 @@
 //                 Anthropic Claude Code (Claude Opus 5.5). Hot keys plan Task
 //                 14. Reports every dial turned and every key changed in one
 //                 report, where upstream reports only the first.
+//   2026-11-06 - The first report after an open only seeds the buttons, so connecting
+//                 never starts a press. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code (Claude Opus 5.5).
 // =================================================================
 
 #include "gui/hotkeys/devices/StreamDeckPlusParser.h"
@@ -94,12 +97,21 @@ QList<DeviceEvent> StreamDeckPlusParser::parse(QByteArrayView report)
         }
         // Upstream gives one change per report, which is lost if no report follows.
         const quint8 keys = stateBits(report, kFirstKey, kKeyCount);
+        // Connecting never keys: one down in the first report starts no press.
+        if (!m_keysSeeded) {
+            m_keysSeeded = true;
+            m_keys = keys;
+        }
         appendChanges(events, m_keys, keys, kKeyCount, "button");
         m_keys = keys;
     } else if (type == kTypeDial) {
         const auto subtype = static_cast<quint8>(report[4]);
         if (subtype == kDialPush) {
             const quint8 presses = stateBits(report, kFirstDial, kDialCount);
+            if (!m_dialsSeeded) {
+                m_dialsSeeded = true;
+                m_dialPresses = presses;
+            }
             appendChanges(events, m_dialPresses, presses, kDialCount, "dial");
             m_dialPresses = presses;
         } else if (subtype == kDialTurn) {
@@ -122,6 +134,8 @@ QList<DeviceEvent> StreamDeckPlusParser::parse(QByteArrayView report)
 
 void StreamDeckPlusParser::reset()
 {
+    m_keysSeeded = false;
+    m_dialsSeeded = false;
     m_keys = 0;
     m_dialPresses = 0;
 }

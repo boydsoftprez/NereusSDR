@@ -19,6 +19,9 @@
 //                 by J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code (Claude Opus 5.5). Hot keys plan Task
 //                 13. A press and a turn in one report give both events.
+//   2026-11-06 - The first report after an open only seeds the buttons, so connecting
+//                 never starts a press. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code (Claude Opus 5.5).
 // =================================================================
 
 #include "gui/hotkeys/devices/PowerMateParser.h"
@@ -43,6 +46,11 @@ QList<DeviceEvent> PowerMateParser::parse(QByteArrayView report)
     }
 
     const bool down = report[0] != 0;
+    // Connecting never keys: a button down in the first report starts no press.
+    if (!m_seeded) {
+        m_seeded = true;
+        m_down = down;
+    }
     if (down != m_down) {
         m_down = down;
         DeviceEvent event;
@@ -64,6 +72,7 @@ QList<DeviceEvent> PowerMateParser::parse(QByteArrayView report)
 
 void PowerMateParser::reset()
 {
+    m_seeded = false;
     m_down = false;
 }
 

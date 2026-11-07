@@ -1211,6 +1211,30 @@ private slots:
         QCOMPARE(states.at(0).at(2).toString(), kNotPlugged);
     }
 
+    // A keyboard report says what is down now, so the first one after an open may be
+    // nobody pressing anything. Connecting never keys.
+    void windowsFirstKeyboardReportStartsNoPress()
+    {
+        constexpr quint8 kLeftCtrlBit = 0x01;
+        constexpr quint8 kYUsage = 0x1C;
+        FakeHid hid;
+        hid.paths = QStringList{QStringLiteral("keyboard")};
+        UlanziWindowsInput::setLayerFactoryForTest([&hid] { return std::make_unique<FakeWindowsLayer>(&hid); });
+        UlanziWindowsInput input;
+        QSignalSpy events(&input, &UlanziWindowsInput::deviceEvent);
+        input.start();
+        hid.reports = {keyboardReport(kLeftCtrlBit, kYUsage)};
+        input.poll();
+        QCOMPARE(eventsOf(events), QStringList{});
+
+        // Seen up, it presses as usual.
+        hid.reports = {keyboardReport(0), keyboardReport(kLeftCtrlBit), keyboardReport(kLeftCtrlBit, kYUsage)};
+        input.poll();
+        input.poll();
+        input.poll();
+        QCOMPARE(eventsOf(events), QStringList{QStringLiteral("down rightTop")});
+    }
+
     void windowsReportsWhenNoInterfaceOpens()
     {
         FakeHid hid;

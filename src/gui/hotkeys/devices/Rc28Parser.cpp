@@ -21,6 +21,9 @@
 //                 13. Reads the button bits one by one where upstream compares
 //                 the whole byte, so a hold sees its release with another
 //                 button down, and reports rotation with a button held.
+//   2026-11-06 - The first report after an open only seeds the buttons, so connecting
+//                 never starts a press. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code (Claude Opus 5.5).
 // =================================================================
 
 #include "gui/hotkeys/devices/Rc28Parser.h"
@@ -79,6 +82,13 @@ QList<DeviceEvent> Rc28Parser::parse(QByteArrayView report)
     const quint8 direction = static_cast<quint8>(report[3]);
     const quint8 buttons = static_cast<quint8>(report[5]) & kAllReleased;
 
+    // Connecting never keys. An open can bring a report with these bits low when nobody
+    // is pressing anything, an Arduino at 2341:0266 being the likely source. As TMate2Parser.
+    if (!m_seeded) {
+        m_seeded = true;
+        m_buttons = buttons;
+    }
+
     // Upstream compares the whole byte, so with a second button down it never sees
     // the first let go. A hold has to see its release, so each bit stands alone.
     const quint8 changed = buttons ^ m_buttons;
@@ -109,6 +119,7 @@ QList<DeviceEvent> Rc28Parser::parse(QByteArrayView report)
 
 void Rc28Parser::reset()
 {
+    m_seeded = false;
     m_buttons = kAllReleased;
 }
 

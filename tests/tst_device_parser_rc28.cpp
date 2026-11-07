@@ -44,6 +44,7 @@ private slots:
     void eachButtonHasItsOwnBit()
     {
         Rc28Parser parser;
+        parser.parse(report(0x07));
         QCOMPARE(text(parser.parse(report(0x03))), QStringList{"down f2"});
         QCOMPARE(text(parser.parse(report(0x07))), QStringList{"up f2"});
         QCOMPARE(text(parser.parse(report(0x06))), QStringList{"down tx"});
@@ -63,6 +64,7 @@ private slots:
     void twoButtonsChangingInOneReportGiveBoth()
     {
         Rc28Parser parser;
+        parser.parse(report(0x07));
         QCOMPARE(text(parser.parse(report(0x01))), (QStringList{"down f1", "down f2"}));
         QCOMPARE(text(parser.parse(report(0x07))), (QStringList{"up f1", "up f2"}));
     }
@@ -78,6 +80,7 @@ private slots:
     void aPressAndATurnInOneReportGiveBoth()
     {
         Rc28Parser parser;
+        parser.parse(report(0x07));
         QCOMPARE(text(parser.parse(report(0x05, 0x01, 1))), (QStringList{"down f1", "turn wheel 1"}));
     }
 
@@ -94,6 +97,7 @@ private slots:
     void aWrongGuardByteGivesNothing()
     {
         Rc28Parser parser;
+        parser.parse(report(0x07));
         QVERIFY(parser.parse(report(0x05, 0x01, 3, 0x02)).isEmpty());
         // And it changed no state: the next good report still shows the press.
         QCOMPARE(text(parser.parse(report(0x05))), QStringList{"down f1"});
@@ -117,9 +121,57 @@ private slots:
     void resetForgetsWhatWasHeld()
     {
         Rc28Parser parser;
+        parser.parse(report(0x07));
         parser.parse(report(0x05));
         parser.reset();
         QVERIFY(parser.parse(report(0x07)).isEmpty());
+    }
+
+    // ---- Connecting never keys ----
+
+    // An open can bring guard 0x01 and byte 5 at 0x00, which reads as all three down.
+    void aFirstReportWithEveryBitLowStartsNoPress()
+    {
+        Rc28Parser parser;
+        QVERIFY(parser.parse(report(0x00)).isEmpty());
+        QVERIFY(parser.parse(report(0x00)).isEmpty());
+    }
+
+    void aButtonSeenDownFirstPressesOnceItHasBeenSeenUp()
+    {
+        Rc28Parser parser;
+        QVERIFY(parser.parse(report(0x06)).isEmpty());
+        parser.parse(report(0x07));
+        QCOMPARE(text(parser.parse(report(0x06))), QStringList{"down tx"});
+    }
+
+    void anotherButtonPressesWhileTheFirstReportsOneDown()
+    {
+        Rc28Parser parser;
+        QVERIFY(parser.parse(report(0x06)).isEmpty());
+        QCOMPARE(text(parser.parse(report(0x04))), QStringList{"down f1"});
+    }
+
+    void aTurnInTheFirstReportStillCounts()
+    {
+        Rc28Parser parser;
+        QCOMPARE(text(parser.parse(report(0x00, 0x01, 2))), QStringList{"turn wheel 2"});
+    }
+
+    void aWrongGuardByteIsNotTheFirstReport()
+    {
+        Rc28Parser parser;
+        QVERIFY(parser.parse(report(0x07, 0, 0, 0x02)).isEmpty());
+        QVERIFY(parser.parse(report(0x06)).isEmpty());
+    }
+
+    void resetArmsTheFirstReportAgain()
+    {
+        Rc28Parser parser;
+        parser.parse(report(0x07));
+        QCOMPARE(text(parser.parse(report(0x06))), QStringList{"down tx"});
+        parser.reset();
+        QVERIFY(parser.parse(report(0x00)).isEmpty());
     }
 
     void lightReport()

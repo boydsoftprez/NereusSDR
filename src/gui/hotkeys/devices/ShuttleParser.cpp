@@ -21,6 +21,9 @@
 //                 13. Reads the buttons from bytes 3 and 4, not upstream's
 //                 bytes, and decodes the ring, which upstream does not. See the
 //                 comment in the .cpp for why.
+//   2026-11-06 - The first report after an open only seeds the buttons, so connecting
+//                 never starts a press. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code (Claude Opus 5.5).
 // =================================================================
 
 #include "gui/hotkeys/devices/ShuttleParser.h"
@@ -79,6 +82,11 @@ QList<DeviceEvent> ShuttleParser::parse(QByteArrayView report)
     const int firstBit = m_model == Model::Xpress ? kXpressFirstBit : kPro2FirstBit;
     const int buttonCount = m_model == Model::Xpress ? kXpressButtons : kPro2Buttons;
     const auto buttons = static_cast<quint16>(static_cast<quint8>(report[3]) | (static_cast<quint8>(report[4]) << 8));
+
+    // Connecting never keys: a button down in the first report starts no press.
+    if (m_firstReport) {
+        m_buttons = buttons;
+    }
 
     // Buttons
     // [original inline comment from src/core/HidDeviceParser.cpp:126]

@@ -73,6 +73,7 @@ private slots:
     void pressAndRotateInOneReportGiveBoth()
     {
         PowerMateParser parser;
+        parser.parse(report(0));
         QCOMPARE(text(parser.parse(report(1, 0x01))), (QStringList{"down press", "turn wheel 1"}));
     }
 
@@ -85,9 +86,32 @@ private slots:
     void resetForgetsThePress()
     {
         PowerMateParser parser;
+        parser.parse(report(0));
         parser.parse(report(1));
         parser.reset();
         QVERIFY(parser.parse(report(0)).isEmpty());
+    }
+
+    void aFirstReportDownStartsNoPress()
+    {
+        PowerMateParser parser;
+        QVERIFY(parser.parse(report(1)).isEmpty());
+        parser.parse(report(0));
+        QCOMPARE(text(parser.parse(report(1))), QStringList{"down press"});
+    }
+
+    void aTurnInTheFirstReportStillCounts()
+    {
+        PowerMateParser parser;
+        QCOMPARE(text(parser.parse(report(1, 0x01))), QStringList{"turn wheel 1"});
+    }
+
+    void resetArmsTheFirstReportAgain()
+    {
+        PowerMateParser parser;
+        parser.parse(report(0));
+        parser.reset();
+        QVERIFY(parser.parse(report(1)).isEmpty());
     }
 
     // ---- Linux, on recorded input_event values ----

@@ -34,6 +34,7 @@ public:
     void reset() override;
 
 private:
+    bool m_seeded{false};
     bool m_down{false};
 };
 

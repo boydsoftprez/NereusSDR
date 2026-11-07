@@ -22,6 +22,9 @@
 //                 nothing is enumerated until the application allows it. Report
 //                 decoding is a static function a Mac test can run. A refused open
 //                 is reported on the Knobs page.
+//   2026-11-06 - The first report after an open only seeds the buttons, so connecting
+//                 never starts a press. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code (Claude Opus 5.5).
 // =================================================================
 
 #include "gui/hotkeys/devices/UlanziWindowsInput.h"
@@ -49,6 +52,7 @@ namespace {
 
 constexpr quint8 kConsumerPage = 0x0C;
 constexpr quint8 kKeyboardPage = 0x07;
+constexpr int kKeyboardReportSize = 8;
 
 UlanziWindowsInput::LayerFactory& testLayerFactory()
 {
@@ -246,7 +250,11 @@ void UlanziWindowsInput::poll()
         }
         if (n > 0) {
             const QByteArray report(buf, n);
-            const QList<QPair<int, int>> keys = decodeReport(it->lastReport, report);
+            // Connecting never keys. A keyboard report says what is down now, so the first
+            // one starts no press. A consumer report is one detent or tap, and keeps its event.
+            const bool firstKeyState = it->lastReport.isEmpty() && report.size() == kKeyboardReportSize;
+            const QList<QPair<int, int>> keys =
+                firstKeyState ? QList<QPair<int, int>>{} : decodeReport(it->lastReport, report);
             it->lastReport = report;
             for (const QPair<int, int>& key : keys) {
                 feedKey(key.first, key.second);
@@ -281,7 +289,7 @@ QList<QPair<int, int>> UlanziWindowsInput::decodeReport(const QByteArray& previo
     //   [report_id?] [usage_lo] [usage_hi]   (3 bytes total typical)
     // Keyboard report (8 bytes):
     //   [modifier_mask] [reserved] [key1] [key2] ... [key6]
-    if (len == 8) {
+    if (len == kKeyboardReportSize) {
         // Standard keyboard report.
         const unsigned char mod = byteAt(report, 0);
         const unsigned char prevMod = previous.size() == 8 ? byteAt(previous, 0) : 0;
