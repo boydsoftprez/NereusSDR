@@ -19,6 +19,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-03: Overlay redesign D18: the band's Roundtable card and tags keep off
 // the button column. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-05: The Roundtable sheet is told its full height on this band.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -458,6 +460,8 @@ struct MainScreen: View {
                                     detent: Binding(get: { roundtableSheet ?? .half },
                                                     set: { roundtableSheet = $0 }),
                                     dialOn: dialStrip, linkUp: pttLinkUp,
+                                    fullHeight: Self.roundtablePlace(bandHeight: proxy.size.height, detent: .full,
+                                                                     gaugesFoot: nil, dialStrip: dialStrip).height,
                                     stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare,
                                     firstRunNoteSeen: firstRunNoteSeenBinding,
                                     close: closeRoundtable, back: { toggleRoundtable(target: .own) },

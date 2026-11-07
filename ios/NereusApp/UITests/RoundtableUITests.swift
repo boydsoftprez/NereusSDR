@@ -13,6 +13,9 @@
 // 2026-11-04: One sheet on every frequency under a finger: toggle, Back in place, the more
 // button, and a band drag that leaves it open (overlay design D22, D27, D36, D38).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-05: These run upright on an iPad, where the flag line opens the
+// sheet; on its side it scrolls the column instead. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 import XCTest
 
@@ -358,6 +361,9 @@ final class RoundtableUITests: XCTestCase {
 
     @MainActor
     private func launch(firstRun: Bool = false, frequency: Bool = false) -> XCUIApplication {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCUIDevice.shared.orientation = .portrait
+        }
         let app = XCUIApplication()
         // The band with slice A in a Roundtable room, with no Core (a debug build's launch arguments).
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusRoundtableFixture"]

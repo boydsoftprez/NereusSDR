@@ -25,6 +25,10 @@
 // 2026-11-04: One sheet on every frequency: your own uses the frequency view, Back stays
 // up on your own, and the more button has Signal and Cancel (overlay design D22, D25, D36, D38).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-05: The compact sheet is for a band too short for half height, a
+// phone's on its side. It read the sheet's own height, so half height on an
+// iPad's band snapped back to full and the handle did nothing. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -57,6 +61,8 @@ struct RoundtableSheet: View {
     let dialOn: Bool
     /// The session is up: PTT can be used.
     let linkUp: Bool
+    /// How tall the sheet is at full height on this band.
+    let fullHeight: CGFloat
     /// The station's callsign and grid, as the Core's settings give them.
     let stationCallsign: String
     let stationGrid: String
@@ -72,12 +78,28 @@ struct RoundtableSheet: View {
     var askFirstRun: (() -> Void)?
     /// This client's pan at a frequency and family, for a view's Your pan.
     var panLevel: ((Int64, String) -> Double?)?
+    /// Told each time the sheet has decided whether it is compact, after any
+    /// change of height that follows: tests wait on this, as on holdObserver.
+    var compactDecided: (() -> Void)?
 
     /// The question was answered here: no note follows it.
     @State private var answeredHere = false
     @State private var compactLandscape = false
 
     static let handleHeight: CGFloat = 22
+    /// The compact sheet needs this much width, which only a sideways band has...
+    static let compactMinimumWidth: CGFloat = 500
+    /// ...and a band that gives it less than this at full height, so half
+    /// height would leave no room. A phone's on its side does; an iPad's does not.
+    static let compactBelowFullHeight: CGFloat = 350
+
+    /// The sheet takes the compact layout, always at full height, on a band
+    /// too short for half height. This goes by the full height and not the
+    /// height the sheet has now: half height on an iPad's band is short too,
+    /// with room to go to full and back.
+    static func isCompact(width: CGFloat, fullHeight: CGFloat) -> Bool {
+        width > compactMinimumWidth && fullHeight < compactBelowFullHeight
+    }
 
     /// The first-run question asked in the sheet itself (a phone) takes the
     /// full height, so its two buttons show without a scroll. An iPad asks
@@ -149,10 +171,11 @@ struct RoundtableSheet: View {
             }
         }
         .onGeometryChange(for: Bool.self) { geometry in
-            geometry.size.width > 500 && geometry.size.height < 350
+            Self.isCompact(width: geometry.size.width, fullHeight: fullHeight)
         } action: { compact in
             compactLandscape = compact
             if compact { detent = .full }
+            compactDecided?()
         }
         .background(RoundtableColours.ground)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius, topTrailingRadius: WorkspacePalette.panelRadius))
