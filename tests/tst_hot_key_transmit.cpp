@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 4.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // What keys the radio from a hot key: hold to talk, MOX, TUNE and two-tone on
 // real local, hosting and remote windows. Nothing here keys a real radio.
@@ -13,6 +15,7 @@
 #include <QJsonObject>
 #include <QLoggingCategory>
 #include <QPointer>
+#include <QPushButton>
 #include <QScopeGuard>
 #include <QSignalSpy>
 #include <QSslSocket>
@@ -39,6 +42,8 @@
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/DesktopStationController.h"
 #include "gui/MainWindow.h"
+#include "gui/applets/TxApplet.h"
+#include "gui/hotkeys/HotKeyStateFeed.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 #include "gui/multidevice/TakeTransmitDialog.h"
@@ -57,6 +62,7 @@ const QString kHold = QStringLiteral("tx.hold");
 const QString kMox = QStringLiteral("tx.mox");
 const QString kTune = QStringLiteral("tx.tune");
 const QString kTwoTone = QStringLiteral("tx.twotone");
+const QString kVox = QStringLiteral("vox.toggle");
 const QByteArray kPhoneDevice = QByteArrayLiteral("token:phone");
 
 class ToneRecordingTxChannel : public TxChannel {
@@ -394,6 +400,52 @@ private slots:
         w.press(kMox);
         QVERIFY(!w.mox->isMox());
         QVERIFY(w.window.findChildren<StatusToast*>().size() > before);
+    }
+
+    // ---- VOX: the TX applet's button ----
+
+    void localVoxIsTheTxAppletsButton()
+    {
+        LocalWindow w;
+        TxApplet* const applet = w.window.findChild<TxApplet*>();
+        QVERIFY(applet != nullptr && applet->voxButton() != nullptr);
+        QPushButton* const button = applet->voxButton();
+        TransmitModel& tx = w.model->transmitModel();
+        HotKeyStateFeed* const feed = w.window.hotKeyStateFeed();
+        QVERIFY(!tx.voxEnabled());
+        QVERIFY(!button->isChecked());
+
+        w.press(kVox);
+        QVERIFY(tx.voxEnabled());
+        QVERIFY(button->isChecked());
+        QVERIFY(feed->isOn(kVox));
+        // Arming VOX keys nothing, and a key's release leaves it armed.
+        QVERIFY(!w.mox->isMox());
+        w.release(kVox);
+        w.keys->releaseAll(kKeyboard);
+        QVERIFY(tx.voxEnabled());
+
+        w.press(kVox);
+        QVERIFY(!tx.voxEnabled());
+        QVERIFY(!button->isChecked());
+        QVERIFY(!feed->isOn(kVox));
+    }
+
+    void aHostedVoxWhileAnotherDeviceHoldsSaysWhoAndStaysOff()
+    {
+        if (!QSslSocket::supportsSsl()) { QSKIP("Qt reports no working TLS backend."); }
+        HostingWindow w;
+        QVERIFY(w.directory.isValid());
+        QVERIFY(w.start());
+        QVERIFY(w.phoneHolds());
+
+        // The holder rule the VOX button follows (desktopVoxHolderReason).
+        const QString reason = TxRefusals::otherDeviceHolds(QStringLiteral("Phone")).text;
+        w.keys->press(kVox, kKeyboard);
+        QVERIFY(toastShown(w.window, reason));
+        QVERIFY(!w.model->transmitModel().voxEnabled());
+        QVERIFY(w.window.findChild<TakeTransmitDialog*>() == nullptr);
+        QVERIFY(w.controller->server()->transmitHolder()->isHeldBy(kPhoneDevice));
     }
 
     // ---- Local: hold ----
@@ -772,6 +824,33 @@ private slots:
         QVERIFY(h.window()->findChild<TakeTransmitDialog*>() == nullptr);
         keys->release(kHold, kKeyboard);
         QVERIFY(!client->remoteTransmit()->screenKeyDown());
+    }
+
+    void aRemoteWindowWithoutPermissionRefusesVoxInTheCoresWords()
+    {
+        RemoteWindowHarness::Options options;
+        options.sliceAccess = true;
+        RemoteWindowHarness h(options);
+        QVERIFY(h.start());
+        h.server().setRemoteTransmitAllowed(true);
+        h.server().setTokenSessionsMayTransmitForTest(true);
+        QVERIFY(connectSharing(h));
+        StationClient* const client = h.client();
+        StationCapabilities refused = h.server().buildCapabilities();
+        refused.txPermitted = false;
+        const QString words = QStringLiteral("This Core is not taking keys from you today.");
+        refused.txRefusalReason = words;
+        h.pushCapabilities(refused);
+        QTRY_VERIFY(!client->capabilities().txPermitted);
+        QTRY_COMPARE(client->capabilities().txRefusalReason, words);
+
+        // As the TX applet's VOX button: refused first by remote transmit.
+        h.window()->hotKeyDispatcher()->press(kVox, kKeyboard);
+        QVERIFY(toastShown(*h.window(), words));
+        QVERIFY(!h.window()->radioModel()->transmitModel().voxEnabled());
+        QVERIFY(!client->voxArmedHere());
+        pump();
+        QVERIFY(!h.station().transmitModel().voxEnabled());
     }
 
     void aRemoteHoldFollowsTheLedger()

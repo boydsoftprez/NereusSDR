@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 1.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 //
 // The action list, chord text and bindings, against the plan's Action ids table
@@ -67,6 +69,8 @@ QList<ExpectedAction> expectedActions()
         {"tx.mox", "Transmit", G::Press, true, {"Ctrl+Shift+M"}},
         {"tx.tune", "Transmit", G::Press, true, {"Ctrl+T"}},
         {"tx.twotone", "Transmit", G::Press, true, {"Ctrl+Shift+T"}},
+        // JJ, 2026-11-07: VOX on or off, with no default key.
+        {"vox.toggle", "Transmit", G::Press, true, {}},
         {"cw.msg1", "CW", G::Press, true, {"Ctrl+F1"}},
         {"cw.msg2", "CW", G::Press, true, {"Ctrl+F2"}},
         {"cw.msg3", "CW", G::Press, true, {"Ctrl+F3"}},
@@ -114,7 +118,7 @@ private slots:
     {
         const QList<ExpectedAction> expected = expectedActions();
         const QList<HotKeyAction>& actual = HotKeyActionList::all();
-        QCOMPARE(actual.size(), 50);
+        QCOMPARE(actual.size(), 51);
         QCOMPARE(actual.size(), expected.size());
         for (int i = 0; i < expected.size(); ++i) {
             const ExpectedAction& e = expected.at(i);
@@ -580,12 +584,13 @@ private slots:
         HotKeyBindings b;
         b.setPin("tune.up", QLatin1Char('D'));
         const QStringList lines = b.exportText().split('\n', Qt::SkipEmptyParts);
-        QCOMPARE(lines.size(), 51);
+        QCOMPARE(lines.size(), 52);
         QCOMPARE(lines.at(0), QStringLiteral("# NereusSDR shortcuts 1"));
         QCOMPARE(lines.at(1), QStringLiteral("tune.up\tRight\tD"));
         QVERIFY(lines.contains(QStringLiteral("volume.up\tUp Num++\t")));
         QVERIFY(lines.contains(QStringLiteral("cw.dot\t,\t")));
         QVERIFY(lines.contains(QStringLiteral("tx.hold\tSpace\t")));
+        QVERIFY(lines.contains(QStringLiteral("vox.toggle\t\t")));
     }
 
     void importRestoresAnExport()

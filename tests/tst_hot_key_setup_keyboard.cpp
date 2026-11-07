@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // Setup > Keys and controllers > Keyboard: the map, the list, Set and its
 // refusals, Acts on, disabled rows with their reasons, import and export, and
@@ -724,7 +726,7 @@ private slots:
             }
             return ids;
         };
-        QCOMPARE(shown().size(), 50);
+        QCOMPARE(shown().size(), 51);
 
         auto* const search = named<QLineEdit>(&b.page, QStringLiteral("hotKeySearch"));
         search->setText(QStringLiteral("ZOOM"));

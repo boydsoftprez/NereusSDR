@@ -4,6 +4,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 17: what an RC-28's TX light
 //                follows. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 // What lights and displays show: which actions are on, and the window's slice. It
 // follows the models' signals and never polls, and it says only what changed.
@@ -28,7 +30,7 @@ class HotKeyStateSource {
 public:
     virtual ~HotKeyStateSource() = default;
     virtual SliceModel* windowSlice() const = 0;
-    virtual bool transmitOn(const QString& id) const = 0;   // tx.mox, tx.tune, tx.twotone, tx.hold
+    virtual bool transmitOn(const QString& id) const = 0;   // tx.mox, tx.tune, tx.twotone, tx.hold, vox.toggle
     virtual bool muted(const SliceModel* slice) const = 0;  // a listened slice has this device's own mute
     virtual bool radioConnected() const = 0;
     virtual bool radioTransmitting() const = 0;     // the radio's own state, whatever keyed it

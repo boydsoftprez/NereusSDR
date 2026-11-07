@@ -13,6 +13,8 @@
 //                granted, the remote on-air reason. AI-assisted via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: the state feed's source.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/MainWindowHotKeyTargets.h"
 
@@ -161,6 +163,11 @@ std::optional<OtherButtonItem::ButtonId> transmitButtonFor(const QString& id)
     }
     if (id == QLatin1String("tx.twotone")) {
         return Id::TwoTon;
+    }
+    // The container's VOX button, which is the TX applet's: the same setting,
+    // lit from it and refused with the button's own reason.
+    if (id == QLatin1String("vox.toggle")) {
+        return Id::Vox;
     }
     return std::nullopt;
 }

@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 2.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/HotKeyDispatcher.h"
 
@@ -366,7 +368,8 @@ void HotKeyDispatcher::execute(const HotKeyAction& action, SliceModel* slice)
         m_targets->runWindowAction(action.id);
         break;
     case HotKeyScope::TransmitSlice:
-        if (action.id.startsWith(QLatin1String("tx."))) {
+        // VOX is a transmit button too, the TX applet's.
+        if (action.id.startsWith(QLatin1String("tx.")) || action.id == QLatin1String("vox.toggle")) {
             m_targets->runTransmitAction(action.id);
         } else if (action.id.startsWith(QLatin1String("cw."))) {
             m_targets->runCwMessage(action.id);

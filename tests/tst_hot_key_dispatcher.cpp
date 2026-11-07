@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 2.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 //
 // The one dispatcher, against a fake HotKeyTargets with an injected clock: the
@@ -1028,7 +1030,7 @@ private slots:
     void scope_transmitActionsIgnoreSliceRefusals_data()
     {
         QTest::addColumn<QString>("id");
-        for (const char* id : {"tx.mox", "tx.tune", "tx.twotone"}) {
+        for (const char* id : {"tx.mox", "tx.tune", "tx.twotone", "vox.toggle"}) {
             QTest::newRow(id) << QString::fromLatin1(id);
         }
     }
@@ -1070,7 +1072,7 @@ private slots:
     void turn_neverKeys_data()
     {
         QTest::addColumn<QString>("id");
-        for (const char* id : {"tx.hold", "tx.mox", "cw.dot", "cw.msg1"}) {
+        for (const char* id : {"tx.hold", "tx.mox", "vox.toggle", "cw.dot", "cw.msg1"}) {
             QTest::newRow(id) << QString::fromLatin1(id);
         }
     }

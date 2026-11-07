@@ -1096,6 +1096,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: Tools > MIDI Mapping opens Setup's MIDI page.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: the state feed follows VOX (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -9469,6 +9471,8 @@ void MainWindow::buildUI()
         connect(m_radioModel, &RadioModel::transmittingChanged, feed, &HotKeyStateFeed::refresh);
         connect(m_radioModel, &RadioModel::connectionStateChanged, feed, &HotKeyStateFeed::refresh);
         connect(&m_radioModel->transmitModel(), &TransmitModel::tuneChanged, feed, &HotKeyStateFeed::refresh);
+        // VOX, as the TX applet's button and the container's light from it.
+        connect(&m_radioModel->transmitModel(), &TransmitModel::voxEnabledChanged, feed, &HotKeyStateFeed::refresh);
         if (MoxController* mox = m_radioModel->moxController()) {
             connect(mox, &MoxController::moxStateChanged, feed, &HotKeyStateFeed::refresh);
             connect(mox, &MoxController::manualMoxChanged, feed, &HotKeyStateFeed::refresh);

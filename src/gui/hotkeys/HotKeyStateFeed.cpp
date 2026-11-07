@@ -4,6 +4,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 17: what an RC-28's TX light
 //                follows. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "gui/hotkeys/HotKeyStateFeed.h"
 
@@ -23,7 +25,7 @@ namespace {
 const QStringList& transmitIds()
 {
     static const QStringList kIds = {QStringLiteral("tx.mox"), QStringLiteral("tx.tune"), QStringLiteral("tx.twotone"),
-                                     QStringLiteral("tx.hold")};
+                                     QStringLiteral("tx.hold"), QStringLiteral("vox.toggle")};
     return kIds;
 }
 

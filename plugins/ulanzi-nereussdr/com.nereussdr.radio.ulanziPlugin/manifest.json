@@ -560,6 +560,22 @@
       ]
     },
     {
+      "Name": "VOX on or off",
+      "Icon": "assets/icons/action.png",
+      "PropertyInspectorPath": "property-inspector/slice.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "Tooltip": "VOX on or off",
+      "UUID": "com.nereussdr.radio.controller.vox.toggle",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "assets/icons/action.png"
+        }
+      ]
+    },
+    {
       "Name": "CW message 1",
       "Icon": "assets/icons/action.png",
       "PropertyInspectorPath": "property-inspector/slice.html",

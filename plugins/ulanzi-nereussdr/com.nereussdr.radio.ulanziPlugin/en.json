@@ -135,6 +135,10 @@
       "Tooltip": "Two-tone"
     },
     {
+      "Name": "VOX on or off",
+      "Tooltip": "VOX on or off"
+    },
+    {
       "Name": "CW message 1",
       "Tooltip": "CW message 1"
     },

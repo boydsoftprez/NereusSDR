@@ -32,6 +32,7 @@
   {"id": "tx.mox", "name": "MOX", "group": "Transmit", "gesture": "press", "transmits": true},
   {"id": "tx.tune", "name": "TUNE", "group": "Transmit", "gesture": "press", "transmits": true},
   {"id": "tx.twotone", "name": "Two-tone", "group": "Transmit", "gesture": "press", "transmits": true},
+  {"id": "vox.toggle", "name": "VOX on or off", "group": "Transmit", "gesture": "press", "transmits": true},
   {"id": "cw.msg1", "name": "CW message 1", "group": "CW", "gesture": "press", "transmits": true},
   {"id": "cw.msg2", "name": "CW message 2", "group": "CW", "gesture": "press", "transmits": true},
   {"id": "cw.msg3", "name": "CW message 3", "group": "CW", "gesture": "press", "transmits": true},

@@ -2,6 +2,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 1.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "core/hotkeys/HotKeyActionList.h"
 
@@ -72,6 +74,9 @@ QList<HotKeyAction> buildActions()
     add(QStringLiteral("tx.mox"), QStringLiteral("MOX"), transmit, G::Press, true, S::TransmitSlice, {QStringLiteral("Ctrl+Shift+M")});
     add(QStringLiteral("tx.tune"), QStringLiteral("TUNE"), transmit, G::Press, true, S::TransmitSlice, {QStringLiteral("Ctrl+T")});
     add(QStringLiteral("tx.twotone"), QStringLiteral("Two-tone"), transmit, G::Press, true, S::TransmitSlice, {QStringLiteral("Ctrl+Shift+T")});
+    // The TX applet's VOX button. It lets the voice key the radio, so it takes the
+    // transmit rules. It has no default key.
+    add(QStringLiteral("vox.toggle"), QStringLiteral("VOX on or off"), transmit, G::Press, true, S::TransmitSlice, {});
 
     for (int n = 1; n <= 8; ++n) {
         add(QStringLiteral("cw.msg%1").arg(n), QStringLiteral("CW message %1").arg(n), cw, G::Press, true,

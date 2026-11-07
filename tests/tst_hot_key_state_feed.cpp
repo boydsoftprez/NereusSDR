@@ -2,12 +2,15 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // What lights and displays read: on and off, and the window's slice. First against
 // models alone, then wired to a real offscreen window.
 #include <QtTest>
 
 #include <QApplication>
+#include <QPushButton>
 #include <QPointer>
 #include <QSignalSpy>
 #include <QTimer>
@@ -19,6 +22,7 @@
 #include "core/WdspTypes.h"
 #include "core/hotkeys/HotKeyBindings.h"
 #include "gui/MainWindow.h"
+#include "gui/applets/TxApplet.h"
 #include "gui/hotkeys/ControllerHost.h"
 #include "gui/hotkeys/HotKeyDispatcher.h"
 #include "gui/hotkeys/HotKeyStateFeed.h"
@@ -141,8 +145,8 @@ private slots:
     void everyActionFromTheBrief()
     {
         const QStringList ids = HotKeyStateFeed::actionIds();
-        for (const char* id : {"tx.mox", "tx.tune", "tx.twotone", "tx.hold", "mute", "slice.lock", "rit.toggle",
-                               "xit.toggle", "nr.toggle", "nb.toggle", "anf.toggle"}) {
+        for (const char* id : {"tx.mox", "tx.tune", "tx.twotone", "tx.hold", "vox.toggle", "mute", "slice.lock",
+                               "rit.toggle", "xit.toggle", "nr.toggle", "nb.toggle", "anf.toggle"}) {
             QVERIFY2(ids.contains(QLatin1String(id)), id);
         }
     }
@@ -211,7 +215,7 @@ private slots:
     void transmitStatesComeFromTheSource()
     {
         QSignalSpy changed(&feed(), &HotKeyStateFeed::stateChanged);
-        for (const char* id : {"tx.mox", "tx.tune", "tx.twotone", "tx.hold"}) {
+        for (const char* id : {"tx.mox", "tx.tune", "tx.twotone", "tx.hold", "vox.toggle"}) {
             changed.clear();
             source().transmit.insert(QString::fromLatin1(id), true);
             feed().refresh();
@@ -342,6 +346,33 @@ private slots:
         QTRY_VERIFY(w.feed->isOn(QStringLiteral("tx.tune")));
         w.model->transmitModel().setTune(false);
         QTRY_VERIFY(!w.feed->isOn(QStringLiteral("tx.tune")));
+    }
+
+    // The TX applet's VOX button, clicked, is what a deck key lit for VOX shows.
+    void windowVoxFollowsTheTxAppletsButton()
+    {
+        Bench& w = *m_bench;
+        const QString vox = QStringLiteral("vox.toggle");
+        TxApplet* const applet = w.window.findChild<TxApplet*>();
+        QVERIFY(applet != nullptr && applet->voxButton() != nullptr);
+        QPushButton* const button = applet->voxButton();
+        QVERIFY(button->isEnabled());
+        QVERIFY(!w.model->transmitModel().voxEnabled());
+        QVERIFY(!w.feed->isOn(vox));
+
+        QSignalSpy changed(w.feed, &HotKeyStateFeed::stateChanged);
+        button->click();
+        QVERIFY(w.model->transmitModel().voxEnabled());
+        QVERIFY(w.feed->isOn(vox));
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(changed.at(0).at(0).toString(), vox);
+        QCOMPARE(changed.at(0).at(1).toBool(), true);
+
+        button->click();
+        QVERIFY(!w.model->transmitModel().voxEnabled());
+        QVERIFY(!w.feed->isOn(vox));
+        QCOMPARE(changed.count(), 2);
+        QCOMPARE(changed.at(1).at(1).toBool(), false);
     }
 
     void windowReportsAHoldThatKeys()

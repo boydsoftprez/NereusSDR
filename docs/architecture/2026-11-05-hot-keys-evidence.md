@@ -50,6 +50,8 @@ the rest.
 | R-HK-18 | `tst_core_has_no_gui_includes::coreNeverIncludesGui`, `::coreNeverIncludesDeviceLibraries`, `::coreSourcesListNoDeviceLibrary`, `::nereusdLinksNoDeviceLibrary` | unit | passed (Task 1, Task 10, Task 18). The link check reads `nereusd` where the build has one |
 | R-HK-19 | `tst_hot_key_device_bindings::noDeviceIsMarkedTested`; `tst_hot_key_setup_knobs::noStateCanChangeUntested`; `staysMarkedUntested` in each of `tst_device_parser_rc28`, `_powermate`, `_shuttle`, `_tmate2`, `_streamdeck`, `_flexcontrol`; `tst_hot_key_setup_midi::aControllerStartsEmptyAndIsUntested`; `tst_deck_plugin_actions::everyPluginSaysUntestedAndCarriesItsLicenseNote` | unit, UI | passed (Tasks 13 to 16, 18, 20). Ulanzi has no `staysMarkedUntested` case; `tst_hot_key_device_bindings::noDeviceIsMarkedTested` and `tst_hot_key_setup_knobs::noStateCanChangeUntested` cover it |
 
+| VOX (`vox.toggle`, JJ's request of 2026-11-07; no R-HK number) | `tst_hot_key_bindings::listMatchesThePlanTable`, `::exportFormat`; `tst_hot_key_dispatcher::scope_transmitActionsIgnoreSliceRefusals`, `::turn_neverKeys`; `tst_hot_key_transmit::localVoxIsTheTxAppletsButton`, `::aHostedVoxWhileAnotherDeviceHoldsSaysWhoAndStaysOff`, `::aRemoteWindowWithoutPermissionRefusesVoxInTheCoresWords`; `tst_hot_key_state_feed::everyActionFromTheBrief`, `::transmitStatesComeFromTheSource`, `::windowVoxFollowsTheTxAppletsButton`; `tst_hot_key_setup_keyboard::theListSearchesNamesAndKeys` (row count); `tst_deck_plugin_actions` | unit, UI, hardware | see the VOX run below. A remote window arming VOX through a live microphone line has no test: the remote harness opens no line, so only the refusal is shown. A real deck key lighting for it is pending |
+
 No R-HK row lacks a test.
 
 ## Still unproven

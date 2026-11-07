@@ -632,6 +632,23 @@
       ]
     },
     {
+      "UUID": "com.nereussdr.radio.vox.toggle",
+      "Name": "VOX on or off",
+      "Category": "Transmit",
+      "Icon": "imgs/plugin-icon",
+      "Tooltip": "VOX on or off",
+      "Controllers": [
+        "Keypad"
+      ],
+      "PropertyInspectorPath": "pi/slice.html",
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/plugin-icon"
+        }
+      ]
+    },
+    {
       "UUID": "com.nereussdr.radio.cw.msg1",
       "Name": "CW message 1",
       "Category": "CW",
