@@ -1687,7 +1687,11 @@ struct ModesTabBindingTests {
                                           "[1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]",
                                           // Display's frequency-grid spacing choices, in hertz:
                                           // phone drawing values, independent of radio hardware.
-                                          "[0, 1000, 2000, 5000, 10000, 25000, 50000, 100000]"]
+                                          "[0, 1000, 2000, 5000, 10000, 25000, 50000, 100000]",
+                                          // The Roundtable meter bar's division marks (overlay design
+                                          // D11), as fractions of the bar: where the drawing puts its
+                                          // lines, the same on every radio.
+                                          "[0.136, 0.273, 0.409, 0.545, 0.773]"]
         #expect(TransmitTimeOutModel.choices == [30, 60, 120, 180, 300, 600, 900, 1200, 1800])
         #expect(ModMonitorModel.posScale.ticks == [0, 50, 100, 125, 160])
         #expect(TxEqualizerModel.curveCounts == [5, 10, 18])
@@ -1695,6 +1699,7 @@ struct ModesTabBindingTests {
         #expect(CatControlModel.baudRates == [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200])
         #expect(RotorSetupCard.bauds == [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200])
         #expect(PhoneSetupKeys.frequencyGridSpacingChoices == [0, 1000, 2000, 5000, 10000, 25000, 50000, 100000])
+        #expect(RoundtableMeterBar.marks == [0.136, 0.273, 0.409, 0.545, 0.773])
         #expect(TxEqCurveParts.tickStep(250) == 50 && TxEqCurveParts.tickStep(40_000) == 10000)
         func tables(in text: String) -> [Substring] {
             text.matches(of: numericList).map { text[$0.range] }.filter { list in

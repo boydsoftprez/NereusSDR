@@ -84,7 +84,8 @@ struct AppletColumn: View {
                                      stationCallsign: roundtable.stationCallsign,
                                      toggleWide: { roundtable.wide.wrappedValue = false },
                                      firstRunNoteSeen: roundtable.firstRunNoteSeen,
-                                     askFirstRun: roundtable.askFirstRun)
+                                     askFirstRun: roundtable.askFirstRun,
+                                     linkUp: roundtable.linkUp, panLevel: roundtable.panLevel)
             } else {
                 column
             }
@@ -156,7 +157,8 @@ struct AppletColumn: View {
                                  embedding: RoundtableRoomEmbedding(reader: reader, scroll: roomScroll, space: Self.space,
                                                                     visibleHeight: viewportHeight
                                                                         - (pinned ? footHeight : 0)),
-                                 firstRunNoteSeen: roundtable.firstRunNoteSeen, askFirstRun: roundtable.askFirstRun)
+                                 firstRunNoteSeen: roundtable.firstRunNoteSeen, askFirstRun: roundtable.askFirstRun,
+                                 linkUp: roundtable.linkUp, panLevel: roundtable.panLevel)
                     .id(RoundtableApplet.id)
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.space)) } action: { frame in
                         appletPlace.frame = frame

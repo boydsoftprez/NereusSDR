@@ -4,6 +4,10 @@
 // Modification history (NereusSDR):
 // 2026-10-25: Roundtable plan Task 18, the swipes on the panadapter under a
 // finger. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-05: Right on an iPad too: it keeps the RX and TX panels on screen
+// and starts both edges Off, so these tests turn the edges on there and look
+// only at panels over the band. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 
 import XCTest
 
@@ -14,6 +18,14 @@ import XCTest
 // (PTT, MOX, the hold PTT, TUNE) is written to `pttKeyLog` before anything
 // decides whether it may, so a swipe that keyed shows there even with no
 // Core to key.
+//
+// On an iPad the same swipes run upright, with two differences by design.
+// Both edges start Off (SwipeShortcuts.defaultTarget, spec 11.4, S2), so
+// launch(rightEdge:) turns them on as Setup would. RxPanel and TxPanel, with
+// their "rxPanelDrawer" and "txPanelDrawer" identifiers, always show in the
+// front panel under the band (IPadLayout.frontPanel, FrontPanelColumns), so
+// these tests ask overPanel(_:_:) for a panel over the band, not the
+// identifier alone.
 final class SwipeShortcutsUITests: XCTestCase {
     override func setUp() {
         continueAfterFailure = false
@@ -29,28 +41,34 @@ final class SwipeShortcutsUITests: XCTestCase {
         let y = try zoneY(app)
         let width = app.windows.firstMatch.frame.width
         drag(app, from: CGPoint(x: 6, y: y), to: CGPoint(x: 230, y: y))
-        let rx = app.descendants(matching: .any)["rxPanelDrawer"]
-        XCTAssertTrue(rx.waitForExistence(timeout: 10), "the left edge did not open the RX panel")
-        waitUntil("the RX panel did not settle at the left") { rx.frame.minX.magnitude < 1 }
+        waitUntil("the left edge did not open the RX panel") { self.overPanel(app, "rxPanelDrawer") != nil }
+        waitUntil("the RX panel did not settle at the left") {
+            self.overPanel(app, "rxPanelDrawer").map { $0.minX.magnitude < 1 } ?? false
+        }
         try save("swipe-ui-rx-open")
         // While it is up, the right edge opens nothing.
         drag(app, from: CGPoint(x: width - 6, y: y), to: CGPoint(x: width - 230, y: y))
         Thread.sleep(forTimeInterval: 0.6)
-        XCTAssertFalse(app.descendants(matching: .any)["txPanelDrawer"].exists, "a swipe opened over a panel")
+        XCTAssertNil(overPanel(app, "txPanelDrawer"), "a swipe opened over a panel")
         // A tap on the dimmed band closes it.
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: width - 40, dy: y)).tap()
-        XCTAssertTrue(rx.waitForNonExistence(timeout: 10), "a tap on the band did not close the RX panel")
+        waitUntil("a tap on the band did not close the RX panel") { self.overPanel(app, "rxPanelDrawer") == nil }
         drag(app, from: CGPoint(x: width - 6, y: y), to: CGPoint(x: width - 230, y: y))
-        let tx = app.descendants(matching: .any)["txPanelDrawer"]
-        XCTAssertTrue(tx.waitForExistence(timeout: 10), "the right edge did not open the TX panel")
-        waitUntil("the TX panel did not settle at the right") { abs(tx.frame.maxX - width) < 1 }
+        waitUntil("the right edge did not open the TX panel") { self.overPanel(app, "txPanelDrawer") != nil }
+        waitUntil("the TX panel did not settle at the right") {
+            self.overPanel(app, "txPanelDrawer").map { abs($0.maxX - width) < 1 } ?? false
+        }
         try save("swipe-ui-tx-open")
         // A swipe back toward its side closes it.
         drag(app, from: CGPoint(x: 30, y: y), to: CGPoint(x: 160, y: y))
-        XCTAssertTrue(tx.waitForNonExistence(timeout: 10), "a swipe back did not close the TX panel")
+        waitUntil("a swipe back did not close the TX panel") { self.overPanel(app, "txPanelDrawer") == nil }
         Thread.sleep(forTimeInterval: 0.5)
         XCTAssertEqual(keyLog(app), "none", "a swipe keyed")
-        // The toolbar's buttons stay RX left and TX right.
+        // The toolbar's buttons stay RX left and TX right. An iPad's toolbar has neither:
+        // the panels sit in the front panel (IPadUITests.testUprightFrontPanelAndOnItsSideTheColumn).
+        guard !onIPad else {
+            return
+        }
         let rxButton = app.buttons["rxPanel"]
         let txButton = app.buttons["txPanel"]
         XCTAssertTrue(rxButton.exists && txButton.exists)
@@ -67,7 +85,7 @@ final class SwipeShortcutsUITests: XCTestCase {
         let before = flag.frame
         drag(app, from: CGPoint(x: 6, y: y), to: CGPoint(x: 46, y: y))
         Thread.sleep(forTimeInterval: 0.8)
-        XCTAssertFalse(app.descendants(matching: .any)["rxPanelDrawer"].exists, "a short drag opened the panel")
+        XCTAssertNil(overPanel(app, "rxPanelDrawer"), "a short drag opened the panel")
         XCTAssertEqual(flag.frame.minX, before.minX, accuracy: 1, "a short swipe moved the band")
     }
 
@@ -81,21 +99,21 @@ final class SwipeShortcutsUITests: XCTestCase {
         // Leftward, so slice A's flag has room to follow the band (rightward it meets B's and steps aside).
         drag(app, from: CGPoint(x: 300, y: y), to: CGPoint(x: 200, y: y))
         waitUntil("a drag in the middle did not move the band") { flag.frame.minX < before.minX - 50 }
-        XCTAssertFalse(app.descendants(matching: .any)["rxPanelDrawer"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["txPanelDrawer"].exists)
+        XCTAssertNil(overPanel(app, "rxPanelDrawer"))
+        XCTAssertNil(overPanel(app, "txPanelDrawer"))
     }
 
     /// With the right edge set to Off, a drag in from it moves the band.
     @MainActor
     func testOffGivesTheEdgeBackToTheBand() throws {
-        let app = launch(extra: ["-phone.swipe.rightEdge", "off"])
+        let app = launch(rightEdge: "off")
         let y = try zoneY(app)
         let width = app.windows.firstMatch.frame.width
         let flag = app.descendants(matching: .any)["flagA"]
         let before = flag.frame
         drag(app, from: CGPoint(x: width - 6, y: y), to: CGPoint(x: width - 126, y: y))
         waitUntil("the edge set to Off did not move the band") { flag.frame.minX < before.minX - 60 }
-        XCTAssertFalse(app.descendants(matching: .any)["txPanelDrawer"].exists, "Off still opened the TX panel")
+        XCTAssertNil(overPanel(app, "txPanelDrawer"), "Off still opened the TX panel")
     }
 
     /// Up from the tab bar opens Roundtable on my frequency, half height.
@@ -126,12 +144,11 @@ final class SwipeShortcutsUITests: XCTestCase {
         let y = try zoneY(app)
         let width = app.windows.firstMatch.frame.width
         drag(app, from: CGPoint(x: width - 6, y: y), to: CGPoint(x: width - 260, y: y))
-        let tx = app.descendants(matching: .any)["txPanelDrawer"]
-        XCTAssertTrue(tx.waitForExistence(timeout: 10))
+        waitUntil("the right edge did not open the TX panel") { self.overPanel(app, "txPanelDrawer") != nil }
         Thread.sleep(forTimeInterval: 1.0)
         XCTAssertEqual(keyLog(app), "none", "opening the TX panel by a swipe keyed")
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 30, dy: y)).tap()
-        XCTAssertTrue(tx.waitForNonExistence(timeout: 10))
+        waitUntil("a tap on the band did not close the TX panel") { self.overPanel(app, "txPanelDrawer") == nil }
         let ptt = app.descendants(matching: .any)["ptt"]
         XCTAssertTrue(ptt.waitForExistence(timeout: 10))
         let centre = ptt.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
@@ -146,14 +163,45 @@ final class SwipeShortcutsUITests: XCTestCase {
         ptt.swipeLeft()
         Thread.sleep(forTimeInterval: 0.6)
         XCTAssertEqual(keyLog(app), "none", "a swipe or a drag from PTT keyed")
-        XCTAssertFalse(app.descendants(matching: .any)["rxPanelDrawer"].exists, "a drag from PTT opened a panel")
-        XCTAssertFalse(tx.exists, "a drag from PTT opened a panel")
+        XCTAssertNil(overPanel(app, "rxPanelDrawer"), "a drag from PTT opened a panel")
+        XCTAssertNil(overPanel(app, "txPanelDrawer"), "a drag from PTT opened a panel")
         // The control: a tap on PTT asks to key.
         ptt.tap()
         waitUntil("a tap on PTT did not ask to key") { self.keyLog(app).hasPrefix("tap") }
     }
 
     // MARK: Helpers
+
+    private var onIPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
+
+    /// Where the panel `identifier` shows over the band, or nil. On a phone
+    /// that is the panel; upright on an iPad the same panel also stands in the
+    /// front panel under the band, and that one does not count. All from one
+    /// snapshot: a panel closing can't vanish between one frame and the next.
+    @MainActor
+    private func overPanel(_ app: XCUIApplication, _ identifier: String) -> CGRect? {
+        guard let root = try? app.snapshot() else {
+            XCTFail("no snapshot of the app")
+            return nil
+        }
+        var panels: [CGRect] = []
+        var frontTop: CGFloat?
+        func visit(_ element: XCUIElementSnapshot) {
+            if element.identifier == identifier {
+                panels.append(element.frame)
+            } else if element.identifier == "frontPanel", frontTop == nil {
+                frontTop = element.frame.minY
+            }
+            element.children.forEach(visit)
+        }
+        visit(root)
+        guard let frontTop else {
+            return panels.first
+        }
+        return panels.first { $0.midY < frontTop }
+    }
 
     /// A height inside the edge zones: on the band, below the flags, above PTT.
     @MainActor
@@ -206,10 +254,19 @@ final class SwipeShortcutsUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(extra: [String] = []) -> XCUIApplication {
+    private func launch(rightEdge: String? = nil) -> XCUIApplication {
+        var edges: [String] = []
+        if onIPad {
+            // Upright, so the band has the whole width. Both edges start Off
+            // here, so these tests turn them on as Setup would.
+            XCUIDevice.shared.orientation = .portrait
+            edges = ["-phone.swipe.leftEdge", "rxPanel", "-phone.swipe.rightEdge", rightEdge ?? "txPanel"]
+        } else if let rightEdge {
+            edges = ["-phone.swipe.rightEdge", rightEdge]
+        }
         let app = XCUIApplication()
         // The band with slice A in a Roundtable room, with no Core (a debug build's launch arguments).
-        app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusRoundtableFixture"] + extra
+        app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusRoundtableFixture"] + edges
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()

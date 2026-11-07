@@ -12,6 +12,13 @@
 //   2026-11-05: applyDisplayPillFps(), windowPaintFps(), applyWindowPaintFps():
 //               each window on a Core keeps its own paint rate. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04: The one inspector's routing: toggleRoundtableInspector,
+//               showOwnRoundtableInspector, the fold's list and the short menu.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-03: The view of another frequency: viewRoundtableFrequency,
+//               refreshRoundtablePeek, m_roundtablePeek. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-03: m_roundtablePeaks, the held peaks on the live card. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: wireDialRequests(): a dial's tuning, step, slice select and
 //               lock act on the slice they name, through vfoRequestSlice()
 //               (now any meter item). J.J. Boyd (KG4VCF), AI-assisted via
@@ -339,6 +346,7 @@
 #include "gui/RemoteReceiverAudioNote.h"
 #include "gui/DesktopStationController.h"
 #include "gui/NereusGuiExport.h"
+#include "gui/roundtable/RoundtableTagLayout.h"
 
 class QProgressDialog;
 class QSlider;
@@ -924,8 +932,41 @@ private slots:
     void onRoundtableRoomChanged(const QString& roomId);
     void refreshRoundtableTagsImmediately();
     void refreshRoundtableTags();
-    // A flag's Roundtable line: activate its slice and show the panel.
+    // Each flag line's open state: the inspector shows its frequency.
+    void refreshRoundtableLineOpenStates();
+    // Each flag's S-meter source (overlay design D40, D41). Display only.
+    void refreshFlagSMeterSource(VfoWidget* flag, const SliceModel* slice);
+    void refreshFlagSMeterSources();
+    // A flag's Roundtable line toggles the inspector on that slice's frequency
+    // (overlay design D26, D34); a legacy server's opens the panel.
+    void toggleRoundtableForSlice(int sliceId);
+    // Your own room in the panel: a legacy flag line, and Read reports.
     void openRoundtableForSlice(int sliceId);
+    void showRoundtablePanel();
+    // The one inspector (overlay design D34). The same frequency again closes it;
+    // another swaps in place with no close in between. None of this moves a slice.
+    void toggleRoundtableInspector(SpectrumWidget* pan, qint64 hz, const QString& family);
+    void showOwnRoundtableInspector(SpectrumWidget* pan);
+    void toggleRoundtableFold(SpectrumWidget* pan, const QStringList& roomIds);
+    // The short menu (D36) on a tag, the card, a flag line or the inspector's ⋯.
+    void openRoundtableMenu(SpectrumWidget* pan, const QString& context, const QPoint& at, bool fromInspector);
+    void openRoundtableMenuForSlice(int sliceId, const QPoint& at);
+    void openRoundtableMessages(const QString& context);
+    void openRoundtableReports();
+    void tuneRoundtableRoom(const QString& context);
+    SpectrumWidget* panHoldingRoundtableSlice(int sliceId) const;
+    // Makes the one inspector this pan's, closing it on any other (a change of pan).
+    void adoptRoundtablePeek(SpectrumWidget* pan);
+    // Ends the read of what the inspector was viewing, with no close.
+    void releaseRoundtablePeekRead();
+    void updateRoundtableInspectorSpot();
+    // The floating view of another frequency (overlay design D21 to D27). False
+    // when the frequency is your own, so there is nothing to view.
+    bool viewRoundtableFrequency(SpectrumWidget* pan, const QString& context);
+    void refreshRoundtablePeek();
+    void sampleRoundtablePeekPan();
+    void closeRoundtablePeek();
+    void onRoundtablePeekClosed();
 
     /// TNF inbound handlers. Each mutates the single global NotchModel; the
     /// frequencies arrive already resolved in the emitting pan's own
@@ -2438,6 +2479,9 @@ private:
     // appeared for the new slice and operators had no way to interact
     // with it.
     QHash<int, class VfoWidget*> m_vfoWidgetsBySlice;
+    // Each flag's destroyed connection takes this as its receiver. Declared after
+    // the map, so it lets go first: QWidget deletes the flags after the members.
+    QObject m_vfoFlagLifetime;
 
     // Applets (Phase 3-UI)
     class AmpApplet*   m_ampApplet{nullptr};
@@ -2481,6 +2525,17 @@ private:
     bool m_roundtableRefreshPending{false};               // latest trailing sample
     QTimer* m_roundtableRefreshTimer{nullptr};
     QHash<QString, QString> m_roundtableRoomStructures;
+    RoundtablePeakTracker m_roundtablePeaks;              // overlay design D12
+    QPointer<class RoundtableFrequencyPeek> m_roundtablePeek;  // overlay design D24
+    QTimer* m_roundtablePeekTimer{nullptr};               // Your pan, D23: only while open
+    QString m_roundtablePeekContext;
+    std::optional<double> m_roundtablePeekPanDbm;         // the last sample of Your pan
+    bool m_roundtablePeekMessages{false};                 // the panel keeps reading after a close
+    bool m_roundtablePeekOpening{false};
+    QStringList m_roundtablePeekFold;                     // the fold listed, D37
+    QPointer<SpectrumWidget> m_roundtablePeekSlicePan;    // where your slice stood at the last look, D34
+    qint64 m_roundtablePeekAnchorHz{0};                   // the clicked tag: a pan with no slice's spot
+    bool m_roundtablePeekJustLost{false};                 // a refusal's message follows its close
 
     // Phase 3P-III Task 14: RF-Kit RF2K-S applet.
     class Rf2ksApplet*      m_rfKitApplet{nullptr};

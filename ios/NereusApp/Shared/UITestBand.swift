@@ -113,7 +113,14 @@ enum UITestBand {
     static let roundtableArgument = "-NereusRoundtableFixture"
     /// With ``roundtableArgument``: the station has not answered Roundtable's first question.
     static let roundtableFirstRunArgument = "-NereusRoundtableFirstRun"
+    /// With ``roundtableArgument``: a server that reads frequencies, with two more
+    /// frequencies on the band, and slice A's frequency writes taken as a drag makes them.
+    static let roundtableFrequencyArgument = "-NereusRoundtableFrequency"
     static let roundtableRoomId = "lsb-7236400"
+    static let roundtableViewedRoom = "lsb-7225000"
+    static let roundtableViewedHz = 7_225_000.0
+    static let roundtableOtherRoom = "lsb-7262000"
+    static let roundtableOtherHz = 7_262_000.0
     static let catalogueEnvironment = "NEREUS_UITEST_CATALOGUE"
     /// Beside ``argument``: the Core describes Setup > Display at version
     /// 29, read from the file this names (the repository's
@@ -151,10 +158,12 @@ enum UITestBand {
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         }
         regionDocument = (json: bandStack ?? "", revision: 1)
+        let roundtableFrequency = roundtable && arguments.contains(roundtableFrequencyArgument)
         app.useBandFixturePropertySender { [weak mirror] write in
             guard write.properties.count == 1, let entry = write.properties.first,
                   write.key == "slice:0" && entry.name == "afGain"
-                    || twoPans && write.key.hasPrefix("slice:") && entry.name == "panKey" else {
+                    || twoPans && write.key.hasPrefix("slice:") && entry.name == "panKey"
+                    || roundtableFrequency && write.key == "slice:0" && entry.name == "frequency" else {
                 throw LinkSendError.notConnected
             }
             await MainActor.run {
@@ -181,7 +190,7 @@ enum UITestBand {
           + (twoPans ? [.init(ordinal: 9, name: "effectiveMaxSlices", value: .i64(4)),
                         .init(ordinal: 10, name: "userDdcCount", value: .i64(2))] : [])
           + (keyed ? [.init(ordinal: 11, name: "txPermitted", value: .bool(true))] : [])
-          + (roundtable ? [.init(ordinal: 12, name: RoundtableModel.capabilityName, value: .i64(1))] : [])
+          + (roundtable ? [.init(ordinal: 12, name: RoundtableModel.capabilityName, value: .i64(roundtableFrequency ? 2 : 1))] : [])
           + (bandSelect ? [.init(ordinal: 13, name: PanSheetModel.bandSelectCapability, value: .i64(1))] : [])
           + (bandStack == nil ? [] : [.init(ordinal: 14, name: BandStack.capability, value: .i64(1))])
           + (general == nil ? [] : [.init(ordinal: 4, name: "setupDescriptionVersion", value: .i64(30)),
@@ -313,10 +322,13 @@ enum UITestBand {
             // The model wants the band list and slice A's room once it reads the object.
             _ = app.roundtable
             app.records.apply(LinkMessage.RecordBatch(stream: RoundtableModel.roomsStream, generation: 1, reset: true,
-                                                      upserts: [roundtableSummary(now: now)], removes: []))
-            app.records.apply(LinkMessage.RecordBatch(stream: RoundtableModel.roomStreamName(roundtableRoomId),
+                                                      upserts: roundtableFrequency ? frequencyDirectory(now: now)
+                                                          : [roundtableSummary(now: now)], removes: []))
+            app.records.apply(LinkMessage.RecordBatch(stream: (roundtableFrequency ? RoundtableModel.frequencyStreamPrefix
+                                                               : RoundtableModel.roomStreamPrefix) + roundtableRoomId,
                                                       generation: 1, reset: true,
-                                                      upserts: roundtableRecords(now: now), removes: []))
+                                                      upserts: roundtableFrequency ? frequencyRecords(now: now)
+                                                          : roundtableRecords(now: now), removes: []))
         }
         if arguments.contains(spotsArgument) {
             app.records.apply(LinkMessage.RecordBatch(stream: RecordStreamClient.spotsStream, generation: 1, reset: true,
@@ -523,6 +535,51 @@ enum UITestBand {
             "last": .number(Double(now)), "folded": .bool(false), "start": .null, "heard": .number(3),
             "readings": .array([]), "lastMessage": .null, "ended": .null,
         ])
+    }
+
+    /// The rooms stream on a server that reads frequencies: the capability, slice A's
+    /// frequency, and a talker on each side of it to view.
+    private static func frequencyDirectory(now: Int64) -> [LinkMessage.RecordBatch.Record] {
+        func station(_ call: String, _ hz: Double, room: String, keyed: Bool) -> LinkJSON {
+            .object(["ref": .string(call), "sourceRoom": .string(room), "slice": .number(0), "hz": .number(hz),
+                     "family": .string("lsb"), "callsign": .string(call), "nth": .number(1), "grid": .null,
+                     "keyed": .bool(keyed), "away": .bool(false), "joining": .bool(false)])
+        }
+        func room(_ id: String, _ call: String, _ hz: Double) -> LinkMessage.RecordBatch.Record {
+            var summary = roundtableSummary(now: now)
+            summary.id = id
+            summary.fields["id"] = .string(id)
+            summary.fields["hz"] = .number(hz)
+            summary.fields["talkers"] = .array([.string(call)])
+            summary.fields["stations"] = .array([station(call, hz, room: id, keyed: true)])
+            return summary
+        }
+        var mine = roundtableSummary(now: now)
+        mine.fields["stations"] = .array([station("K4ABC", sliceHz, room: roundtableRoomId, keyed: true),
+                                          station("N4XYZ", sliceHz, room: roundtableRoomId, keyed: false)])
+        return [.init(id: "frequency-capability", fields: ["record": .string("frequency"), "version": .number(1)]),
+                mine, room(roundtableViewedRoom, "AA5ABC", roundtableViewedHz),
+                room(roundtableOtherRoom, "K1SAID", roundtableOtherHz)]
+    }
+
+    /// Slice A's frequency, each record naming its source room as the server's do.
+    private static func frequencyRecords(now: Int64) -> [LinkMessage.RecordBatch.Record] {
+        roundtableRecords(now: now).map { original in
+            var record = original
+            record.fields["sourceRoom"] = .string(roundtableRoomId)
+            if record.fields["record"] == .string("turn") {
+                record.fields["hz"] = .number(sliceHz)
+                if case .array(let talkers)? = record.fields["talkers"] {
+                    record.fields["talkers"] = .array(talkers.map { value in
+                        guard case .object(var talker) = value else { return value }
+                        talker["sourceRoom"] = .string(roundtableRoomId)
+                        talker["hz"] = .number(sliceHz)
+                        return .object(talker)
+                    })
+                }
+            }
+            return record
+        }
     }
 
     /// Slice A's room: K4ABC on the air, three readings of it, you, an

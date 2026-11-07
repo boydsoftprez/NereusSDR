@@ -127,6 +127,7 @@ mw0lge@grange-lane.co.uk
 #include <QTimer>
 
 #include <functional>
+#include <optional>
 #include "core/NereusCoreExport.h"
 
 namespace NereusSDR {
@@ -161,6 +162,11 @@ public:
     // analog SMeterWidget exists; a headless daemon build never calls
     // this at all.
     void setSourceSelector(std::function<MeterSource()> selector);
+    /// What the selector picks now, for a test of the caller's mapping. Empty with none set.
+    std::optional<MeterSource> selectedSourceForTest() const
+    {
+        return m_sourceSelector ? std::optional<MeterSource>(m_sourceSelector()) : std::nullopt;
+    }
 
     // Max Bin, per slice: the strongest point of that slice's own passband
     // on the trace of the pan that shows it, before the receive offset, or
