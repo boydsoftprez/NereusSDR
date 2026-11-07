@@ -14,6 +14,13 @@
 // 2026-10-25: Roundtable fix wave: the swipes' model is a @StateObject, made
 // once when the screen makes its own. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
+// 2026-11-03: Overlay redesign D21 to D27: a tag or another slice's flag line views a
+// frequency without tuning; the sheet, the applet or a panel over the pan shows it.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-03: Overlay redesign D18: the band's Roundtable card and tags keep off
+// the button column. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-05: The Roundtable sheet is told its full height on this band.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -74,6 +81,7 @@ struct MainScreen: View {
     /// The iPad's open pans.
     @ObservedObject private var panStack: PanStackModel
     @ObservedObject private var roundtable: RoundtableModel
+    @Environment(\.bandOnScreen) private var bandOnScreen
     /// The connection's covers over the band: the link lost, the radio off,
     /// the phone offline, and back on the air. Nil where no flow runs (tests).
     let flow: ConnectionFlow?
@@ -120,6 +128,10 @@ struct MainScreen: View {
     @State private var pttHold = PttLatchHold()
     /// The Roundtable sheet, open at this height, or closed.
     @State private var roundtableSheet: RoundtableSheet.Detent?
+    /// The sheet is up on a viewed frequency: a lost read closes it (D27).
+    @State private var viewingInSheet = false
+    /// An iPad with the column hidden shows your own frequency in the panel (D24).
+    @State private var roundtablePanelOwn = false
     /// Where the keyed gauges end on the band, while keyed.
     @State private var gaugesFoot: CGFloat?
     @State private var firstRunNoteSeen: Bool
@@ -145,12 +157,13 @@ struct MainScreen: View {
     @State private var txPanelEntry = Edge.trailing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
+    @Environment(\.keyboardRoom) private var keyboardRoom
 
     /// `rxPanelOpen` and `txPanelOpen` open the screen with that panel out,
     /// `sheet` with that sheet open.
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
-         txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab = .spectrum,
-         columnShown: Bool = true, columnMenu: BandColumnMenu? = nil, columnPan: PanIdentity = .first,
+         txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab? = nil,
+         columnShown: Bool? = nil, columnMenu: BandColumnMenu? = nil, columnPan: PanIdentity = .first,
          roundtableSheet: RoundtableSheet.Detent? = nil, holdObserver: ((PttHold.Action) -> Void)? = nil,
          swipes: SwipeShortcutModel? = nil, roundtableWide: Bool = false,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
@@ -177,15 +190,19 @@ struct MainScreen: View {
         offline = flow?.offline ?? false
         _rxPanelOpen = State(initialValue: rxPanelOpen)
         _sheet = State(initialValue: sheet)
-        _displayTab = State(initialValue: displayTab)
-        _columnShown = State(initialValue: columnShown)
+        // The layout comes back as it was left; a test's picture may name its own.
+        let kept = app.phoneSettings
+        _displayTab = State(initialValue: displayTab ?? kept.displayPillTab)
+        _columnShown = State(initialValue: columnShown ?? kept.appletColumnShown)
+        _columnFolded = State(initialValue: kept.buttonColumnFolded)
+        _foldedPans = State(initialValue: Set(kept.foldedPanColumns.map(PanIdentity.init(number:))))
         _columnMenu = State(initialValue: columnMenu)
     }
 
     var body: some View {
         GeometryReader { proxy in
-            let sideways = proxy.size.width > proxy.size.height
-            let layout = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size)
+            let layout = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size, keyboardRoom: keyboardRoom)
+            let sideways = proxy.size.width > proxy.size.height + keyboardRoom
             Group {
                 switch layout {
                 case .phone:
@@ -204,6 +221,7 @@ struct MainScreen: View {
                             band(sideways: true, leadingInset: 0, trailingInset: 0, column: true)
                             if columnShown {
                                 AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                             openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) },
                                              roundtable: roundtable.available ? appletConfig : nil)
                                     .transition(.move(edge: .trailing))
                             }
@@ -215,7 +233,8 @@ struct MainScreen: View {
                         toolbar(sideways: false, layout: layout)
                         ConnectionSummaryRow(app: app)
                         band(sideways: false, leadingInset: 0, trailingInset: 0, column: true)
-                        FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings)
+                        FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                          openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) })
                             .frame(height: IPadLayout.frontPanelHeight(underToolbar: proxy.size.height - Toolbar.height))
                     }
                 }
@@ -229,6 +248,8 @@ struct MainScreen: View {
             if inColumn {
                 // The applet shows the room: the phone's sheet gives way to it.
                 roundtableSheet = nil
+                viewingInSheet = false
+                roundtablePanelOwn = false
             } else {
                 roundtableWide = false
             }
@@ -351,7 +372,8 @@ struct MainScreen: View {
                 }
             } else {
                 bandLayers(main.controls(for: .first), sideways: sideways, leadingInset: sideways ? leadingInset : 0,
-                           trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn)
+                           trailingInset: sideways ? trailingInset : 0, swipesHere: swipesOn,
+                           buttonColumnFolded: column ? columnFolded : nil)
             }
             GeometryReader { proxy in
                 if let audio = app.audio {
@@ -445,10 +467,14 @@ struct MainScreen: View {
                                     detent: Binding(get: { roundtableSheet ?? .half },
                                                     set: { roundtableSheet = $0 }),
                                     dialOn: dialStrip, linkUp: pttLinkUp,
+                                    fullHeight: Self.roundtablePlace(bandHeight: proxy.size.height, detent: .full,
+                                                                     gaugesFoot: nil, dialStrip: dialStrip).height,
                                     stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare,
                                     firstRunNoteSeen: firstRunNoteSeenBinding,
-                                    close: closeRoundtable, holdObserver: holdObserver,
-                                    askFirstRun: layoutNow.isIPad ? { firstRunForm = true } : nil)
+                                    close: closeRoundtable, back: { toggleRoundtable(target: .own) },
+                                    holdObserver: holdObserver,
+                                    askFirstRun: layoutNow.isIPad ? { firstRunForm = true } : nil,
+                                    panLevel: panLevel)
                         .frame(maxWidth: sideways ? Self.roundtableSidewaysWidth : .infinity)
                         .frame(height: place.height)
                         .padding(.leading, sideways ? leadingInset : 0)
@@ -457,6 +483,19 @@ struct MainScreen: View {
                 }
                 .padding(.trailing, sideways ? trailingInset : 0)
                 .transition(.move(edge: .bottom))
+            }
+            if showsRoundtablePopover {
+                RoundtableFrequencyPopover(roundtable: roundtable, slices: main.slices, transmit: transmit,
+                                           stationCallsign: app.freedv.callsign, linkUp: pttLinkUp, panLevel: panLevel,
+                                           firstRunNoteSeen: firstRunNoteSeenBinding,
+                                           askFirstRun: { firstRunForm = true },
+                                           onTune: { hz, family in
+                                               main.slices.tune(toHz: hz, family: family)
+                                               closeRoundtable()
+                                           }, onBack: { toggleRoundtable(target: .own) }, onClose: closeRoundtable)
+                    .padding(.vertical, Self.roundtablePopoverInset)
+                    .padding(.trailing, Self.roundtablePopoverTrailing)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
             }
             if let flow {
                 LinkLostBanner(flow: flow, mirror: app.mirror, devices: main.devices)
@@ -604,7 +643,7 @@ struct MainScreen: View {
             }
         }
         // A pan closing takes its open menu and band menu with it.
-        .onChange(of: panStack.open) { _, open in
+        .onChange(of: panStack.open) { closedFrom, open in
             if !open.contains(columnPan) || open.count < 2 && columnPan != .first {
                 columnMenu = nil
                 columnPan = .first
@@ -613,13 +652,39 @@ struct MainScreen: View {
                 bandMenu = nil
                 bandMenuPan = .first
             }
-            foldedPans.formIntersection(open)
+            // Only a pan closing forgets its fold: a kept one waits for its pan to open.
+            foldedPans.subtract(Set(closedFrom).subtracting(open))
         }
+        .onChange(of: displayTab) { _, tab in app.phoneSettings.displayPillTab = tab }
+        .onChange(of: columnShown) { _, shown in app.phoneSettings.appletColumnShown = shown }
+        .onChange(of: columnFolded) { _, folded in app.phoneSettings.buttonColumnFolded = folded }
+        .onChange(of: foldedPans) { _, pans in app.phoneSettings.foldedPanColumns = Set(pans.map(\.number)) }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: roundtableSheet)
         .onChange(of: roundtableSheet == nil) { _, closed in
             if closed {
                 // Closing the sheet lets go of a held PTT.
                 transmit.releaseHeldPtt()
+            }
+        }
+        // D27: a read lost closes the view and says so. The panel goes with the read.
+        .onChange(of: roundtable.lostReads) { _, _ in
+            if viewingInSheet {
+                closeRoundtable()
+            }
+            if let reason = roundtable.lostReadReason {
+                main.slices.showReason(reason)
+            }
+        }
+        // D27, D38: a band drag tunes and the view stays on what it shows. Only when
+        // your slice lands on the viewed frequency does it become your own, in place.
+        .onChange(of: roundtable.activeContext?.id) { _, context in
+            if let context, roundtable.isViewing, context == roundtable.readingRoomId {
+                returnToOwn()
+            }
+        }
+        .onChange(of: roundtable.frequencyAvailable) { _, available in
+            if !available {
+                roundtablePanelOwn = false
             }
         }
     }
@@ -672,7 +737,7 @@ struct MainScreen: View {
         })
         return ZStack(alignment: .topLeading) {
             bandLayers(controls, sideways: sideways, leadingInset: leadingInset, trailingInset: trailingInset,
-                       swipesHere: swipesOn, foot: foot, menuBinding: menu)
+                       swipesHere: swipesOn, foot: foot, buttonColumnFolded: folded.wrappedValue, menuBinding: menu)
             BandButtonColumn(pan: pan, open: open, folded: folded, main: main, displayTab: $displayTab,
                              leadingInset: leadingInset, trailingInset: trailingInset,
                              openSetup: {
@@ -757,7 +822,82 @@ struct MainScreen: View {
         return lines
     }
 
+    /// What the one inspector shows: your own frequency or a viewed one (D34, D38).
+    enum RoundtableTarget: Equatable {
+        case own
+        case viewed(String)
+    }
+
+    /// What asking for a target does.
+    enum RoundtableStep: Equatable {
+        case close
+        case show(RoundtableTarget)
+    }
+
+    /// D38: the same thing again closes, another swaps in place. The iPad's column
+    /// has nothing to close: the same tag returns it to your own (overlay.js toggleIns).
+    static func roundtableStep(target: RoundtableTarget, shown: RoundtableTarget?, inColumn: Bool) -> RoundtableStep {
+        guard target == shown else {
+            return .show(target)
+        }
+        return inColumn ? .show(.own) : .close
+    }
+
+    /// What the inspector shows now, or nil when it is closed.
+    private var roundtableShown: RoundtableTarget? {
+        guard appletInColumn || roundtableSheet != nil || showsRoundtablePopover else {
+            return nil
+        }
+        if roundtable.isViewing, let reading = roundtable.readingRoomId {
+            return .viewed(reading)
+        }
+        return .own
+    }
+
+    /// The card, a tag, a fold's row, a flag's line and Back all come here. Nothing
+    /// here tunes: only a band drag and the Tune button do (D21).
+    func toggleRoundtable(target: RoundtableTarget) {
+        roundtable.activeSliceId = main.slices.activeSliceId.map(Int64.init)
+        switch Self.roundtableStep(target: target, shown: roundtableShown, inColumn: appletInColumn) {
+        case .close:
+            closeRoundtable()
+        case .show(.own):
+            openRoundtable(main.slices.activeSliceId ?? main.slices.entries.first?.id ?? 0)
+        case .show(.viewed(let context)):
+            viewRoundtable(context)
+        }
+    }
+
+    /// A context on the band: your own frequency, or one to view.
+    private func roundtableTarget(_ context: String) -> RoundtableTarget {
+        context == roundtable.activeContext?.id ? .own : .viewed(context)
+    }
+
+    /// D26: a slice's flag line, on that slice's frequency, leaving the active slice
+    /// alone. A legacy server has no such view: its line opens your room, as ever.
+    private func toggleRoundtableLine(_ sliceId: Int) {
+        guard roundtable.frequencyAvailable else {
+            openRoundtable(sliceId)
+            return
+        }
+        let context = sliceId == main.slices.activeSliceId ? nil : roundtable.sliceContexts[Int64(sliceId)]?.id
+        toggleRoundtable(target: context.map(roundtableTarget) ?? .own)
+    }
+
+    /// Back to your own frequency in place: the inspector stays up.
+    private func returnToOwn() {
+        viewingInSheet = false
+        if showsRoundtablePopover {
+            roundtablePanelOwn = true
+        }
+        Task { await roundtable.backToSlice() }
+    }
+
+    /// Your own frequency in the inspector, swapped in at the height it has.
     private func openRoundtable(_ sliceId: Int) {
+        if roundtable.isViewing {
+            returnToOwn()
+        }
         sheet = nil
         rxPanelOpen = false
         txPanelOpen = false
@@ -768,7 +908,59 @@ struct MainScreen: View {
             appletScrollRequest += 1
             return
         }
-        roundtableSheet = .half
+        if layoutNow.isIPad, roundtable.frequencyAvailable {
+            // D24: the panel over the pan, for your own frequency as well.
+            roundtableSheet = nil
+            roundtablePanelOwn = true
+            return
+        }
+        if roundtableSheet == nil {
+            roundtableSheet = .half
+        }
+    }
+
+    /// D21, D24: a frequency in view, tuned nowhere. iPhone: the sheet. iPad with
+    /// the column showing: the applet. iPad without it: the panel over the pan.
+    private func viewRoundtable(_ context: String) {
+        Task {
+            if let reason = await roundtable.read(context) {
+                // D27: the view closes with the usual status line, and no slice moves.
+                main.slices.showReason(reason)
+                if roundtable.isViewing {
+                    closeRoundtable()
+                }
+                return
+            }
+            sheet = nil
+            rxPanelOpen = false
+            txPanelOpen = false
+            if appletInColumn {
+                appletScrollRequest += 1
+            } else if layoutNow.isIPad {
+                roundtableSheet = nil
+                roundtablePanelOwn = false
+            } else {
+                viewingInSheet = true
+                // A swap keeps the height the sheet has (D38).
+                if roundtableSheet == nil {
+                    roundtableSheet = .half
+                }
+            }
+        }
+    }
+
+    /// The iPad's panel over the pan: the inspector with no column to show it (D24).
+    private var showsRoundtablePopover: Bool {
+        layoutNow.isIPad && !appletInColumn && (roundtable.isViewing || roundtablePanelOwn) && bandOnScreen
+    }
+
+    /// The panel's margins in the band (overlay.css .scr--ipad .rc-psheet).
+    static let roundtablePopoverInset: CGFloat = 8
+    static let roundtablePopoverTrailing: CGFloat = 14
+
+    /// This client's pan, for a frequency view's Your pan row.
+    private var panLevel: (Int64, String) -> Double? {
+        { [weak band = main.band] hz, family in band?.panLevel(hz: hz, family: family) }
     }
 
     /// The Roundtable applet shows in the iPad's applet column.
@@ -795,12 +987,19 @@ struct MainScreen: View {
                                }),
                                scrollRequest: appletScrollRequest,
                                firstRunNoteSeen: firstRunNoteSeenBinding,
-                               askFirstRun: { firstRunForm = true })
+                               askFirstRun: { firstRunForm = true },
+                               linkUp: pttLinkUp, panLevel: panLevel)
     }
 
     private func closeRoundtable() {
         roundtableSheet = nil
+        viewingInSheet = false
+        roundtablePanelOwn = false
         transmit.releaseHeldPtt()
+        // Closing a frequency's view lets go of its read (D24).
+        if roundtable.isViewing {
+            Task { await roundtable.backToSlice() }
+        }
     }
 
     // MARK: Swipes
@@ -808,6 +1007,7 @@ struct MainScreen: View {
     /// A sheet or panel is up: no swipe opens anything.
     private var panelsUp: Bool {
         sheet != nil || rxPanelOpen || txPanelOpen || soundPanelOpen || roundtableSheet != nil
+            || showsRoundtablePopover
     }
 
     /// The swipe under the finger, when it brings in `target` from a band edge.
@@ -881,7 +1081,7 @@ struct MainScreen: View {
     /// is its.
     @ViewBuilder
     private func bandLayers(_ controls: PanControls, sideways: Bool, leadingInset: CGFloat, trailingInset: CGFloat,
-                            swipesHere: Bool, foot: Bool = true,
+                            swipesHere: Bool, foot: Bool = true, buttonColumnFolded: Bool? = nil,
                             menuBinding: Binding<BandMenuAnchor?>? = nil) -> some View {
         let band = controls.band.band
         let slices = controls.band.slices
@@ -903,7 +1103,8 @@ struct MainScreen: View {
                              keyed: transmit.ptt.transmitting, txFilterHz: transmit.txFilterHz,
                              onAirSliceId: transmit.radioOnAirSliceId, txZeroLineSliceId: transmit.txZeroLineSliceId,
                              foreign: main.foreign, sideways: sideways,
-                             trailingInset: trailingInset, leadingInset: leadingInset, display: controls.display,
+                             trailingInset: trailingInset, leadingInset: leadingInset,
+                             buttonColumnFolded: buttonColumnFolded, display: controls.display,
                              spots: app.spots,
                              readout: main.meterReadout,
                              flagLevel: { [weak sMeter = main.sMeter] in sMeter?.flagLevel(for: $0) },
@@ -915,8 +1116,11 @@ struct MainScreen: View {
                              // Roundtable reads Pan 1's slices, as its sheet does.
                              roundtableLines: first ? roundtableLines : [:],
                              openRoundtable: first ? { id in openRoundtable(id) } : nil,
+                             viewRoundtable: first ? { context in toggleRoundtable(target: roundtableTarget(context)) } : nil,
+                             toggleRoundtableLine: first ? { id in toggleRoundtableLine(id) } : nil,
                              dialStrip: strip, roundtable: first ? roundtable : nil,
-                             swipes: swipesHere ? swipes : nil)
+                             swipes: swipesHere ? swipes : nil,
+                             bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
@@ -964,7 +1168,10 @@ struct MainScreen: View {
             // The pan last touched's sheet, with Add a pan and Close this pan.
             let controls = main.controls(for: main.toolbarPan)
             PanSheet(model: controls.sheet, sliceColour: main.sliceColour, pan: controls.pan, stack: main.panStack,
-                     slices: controls.band.slices)
+                     slices: controls.band.slices, bandStack: controls.bandStack, openBandStackSetup: {
+                sheet = nil
+                app.phoneNavigation?.openPage(.bandStack)
+            })
         case .display:
             if let source = main.displayPillSource {
                 DisplayDropSheet(pages: source.pages, source: source, main: main, tab: $displayTab,
@@ -979,7 +1186,8 @@ struct MainScreen: View {
                     app.phoneNavigation?.followDisplayPan(pan)
                 })
             } else {
-                DisplaySheet(model: main.display, core: main.coreDisplay) {
+                DisplaySheet(model: main.display, core: main.coreDisplay, bandStack: main.controls(for: .first).bandStack,
+                             settings: main.phoneSettings) {
                     sheet = nil
                     openSetup()
                 }

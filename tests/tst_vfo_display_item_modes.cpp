@@ -1,6 +1,10 @@
 // no-port-check: NereusSDR-original tests for the VFO display item's slice
 // modes, Thetis colours, paint and published readings.
 // Modification history (NereusSDR):
+//   2026-11-05 - File-local copies of kInactiveSliceAlpha: binding the class's static
+//                 constexpr member to a reference does not link on Windows
+//                 once the class is exported. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - All slices: the slices' titles match and the band text
 //                 clears the filter text. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
@@ -26,6 +30,11 @@
 #include "gui/meters/VfoDisplayItem.h"
 
 using namespace NereusSDR;
+
+// CONTRIBUTING.md, Windows DLL Boundaries.
+namespace {
+constexpr int kInactiveSliceAlpha = VfoDisplayItem::kInactiveSliceAlpha;
+}
 
 namespace {
 
@@ -212,7 +221,7 @@ private slots:
         } else {
             // Thetis draws each part at nFade, so a part over another
             // compounds; the split box fill alone is at 24.
-            QCOMPARE(qAlpha(image.pixel(78, 32)), VfoDisplayItem::kInactiveSliceAlpha);
+            QCOMPARE(qAlpha(image.pixel(78, 32)), kInactiveSliceAlpha);
             QVERIFY2(alphaA < 64, qPrintable(QString::number(alphaA)));
         }
         QCOMPARE(maxAlpha(image, sliceB), 255);

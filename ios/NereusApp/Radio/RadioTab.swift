@@ -3,6 +3,30 @@
 
 import SwiftUI
 
+/// Keeps the Radio tab's open pages on this phone and hands them back.
+@MainActor
+final class RadioRouter: ObservableObject {
+    /// Told each change of the open pages.
+    var keep: (@MainActor ([RadioView.Route]) -> Void)?
+    /// The place kept from last time, until the Core's menu says whether it
+    /// exists here, or the operator goes somewhere first.
+    @Published private(set) var pendingRestore: [RadioView.Route]?
+
+    /// A session reached ready: `saved` is shown once the tab finds it on the Core's menu.
+    func restore(_ saved: [RadioView.Route]) {
+        pendingRestore = saved.isEmpty ? nil : saved
+    }
+
+    func restoreDone() {
+        pendingRestore = nil
+    }
+
+    func routeChanged(_ route: [RadioView.Route]) {
+        pendingRestore = nil
+        keep?(route)
+    }
+}
+
 /// The Radio tab (spec section 5.2 item 5, picture 05, the board's
 /// `tpl-radio`). It opens with the Core and link: the Core's name (its
 /// address when it has none), how it is reached and the round-trip time,
@@ -43,6 +67,7 @@ struct RadioView: View {
     @ObservedObject var app: AppModel
     @ObservedObject var main: MainScreenModel
     @ObservedObject var flow: ConnectionFlow
+    @ObservedObject var router: RadioRouter
     /// Disconnect is not offered while this phone transmits.
     @ObservedObject private var transmit: TransmitModel
     @StateObject private var radio: RadioTabModel
@@ -56,7 +81,9 @@ struct RadioView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow,
-         accessoryRoute: [AccessoriesSection.Route] = [], route: [Route] = [], isActive: Bool = true) {
+         accessoryRoute: [AccessoriesSection.Route] = [], route: [Route] = [], isActive: Bool = true,
+         router: RadioRouter = RadioRouter()) {
+        self.router = router
         self.app = app
         self.main = main
         self.flow = flow
@@ -71,11 +98,45 @@ struct RadioView: View {
         page
             .onChange(of: onScreen, initial: true) { _, _ in syncLifecycle() }
             // Another page opening closes an open pad, sending nothing.
-            .onChange(of: route) { _, _ in pads.close() }
+            .onChange(of: route) { _, next in
+                pads.close()
+                router.routeChanged(next)
+            }
+            // The place kept from last time, once the Core's menu says it exists.
+            .onChange(of: router.pendingRestore, initial: true) { _, _ in restorePlace() }
+            .onChange(of: radio.menu) { _, _ in restorePlace() }
+            .onChange(of: app.setupPages.isCurrent) { _, _ in restorePlace() }
             .onDisappear {
                 radio.hide()
                 radios.close()
             }
+    }
+
+    /// `saved` when the row it opens is on the menu and can open here; the
+    /// tab itself otherwise. The accessories are always listed.
+    static func restored(_ saved: [Route], menu: [RadioMenu.Entry]) -> [Route] {
+        switch saved.first {
+        case nil:
+            return []
+        case .accessory?:
+            return saved
+        case let top?:
+            return menu.contains { entry in entry.enabled && entry.page.map(Route.init) == top } ? saved : []
+        }
+    }
+
+    private func restorePlace() {
+        guard let saved = router.pendingRestore, app.mirror.isSnapshotComplete, !app.mirror.isStale,
+              app.main.catalogFeed.catalog != nil || app.main.catalogFeed.needsNewerCore,
+              // The antenna page's row waits for the Core's Setup description.
+              saved.first != .antennaSetup || app.setupPages.isCurrent else {
+            return
+        }
+        radio.refresh()
+        router.restoreDone()
+        let found = Self.restored(saved, menu: radio.menu)
+        guard route.isEmpty, !found.isEmpty else { return }
+        route = found
     }
 
     /// What is on screen now: the tab in front with the app active, and which page.

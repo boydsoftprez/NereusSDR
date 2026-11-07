@@ -222,11 +222,15 @@ struct ConnectionFlowTests {
     final class FailingStationItem: SecretItem, @unchecked Sendable {
         let backing = InMemorySecretItem()
         var failRemoval = false
+        var failRead = false
         private let lock = NSLock()
         private var written = 0
         /// How many writes reached the Keychain stand-in.
         var writes: Int { lock.withLock { written } }
-        func read() throws -> Data? { try backing.read() }
+        func read() throws -> Data? {
+            if failRead { throw Failure.denied }
+            return try backing.read()
+        }
         func add(_ data: Data) throws -> Bool { try backing.add(data) }
         func write(_ data: Data) throws {
             if failRemoval { throw Failure.denied }
@@ -341,9 +345,40 @@ struct ConnectionFlowTests {
         func close() { inner.close() }
     }
 
+    final class UnansweredLeaves: @unchecked Sendable {
+        private let lock = NSLock()
+        private var seen = 0
+        var count: Int { lock.withLock { seen } }
+        func note() { lock.withLock { seen += 1 } }
+    }
+
+    /// A Core that never hears `session.leave`, so the flow waits out the timeout.
+    final class LeaveDroppingTransport: LinkTransport, @unchecked Sendable {
+        let inner: any LinkTransport
+        let leaves: UnansweredLeaves
+        init(inner: any LinkTransport, leaves: UnansweredLeaves) {
+            self.inner = inner
+            self.leaves = leaves
+        }
+        func open(onEvent: @escaping @Sendable (LinkTransportEvent) async -> Void) async throws -> Data {
+            try await inner.open(onEvent: onEvent)
+        }
+        @discardableResult func send(_ text: String) -> Bool {
+            if let message = try? LinkCodec.decode(text), case .commandInvoke(let invoke) = message,
+               invoke.verb == "session.leave" {
+                leaves.note()
+                return true
+            }
+            return inner.send(text)
+        }
+        func ping() { inner.ping() }
+        func close() { inner.close() }
+    }
+
     final class DialCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var made = 0
+        var count: Int { lock.withLock { made } }
         func first() -> Bool {
             lock.withLock {
                 made += 1
@@ -526,10 +561,11 @@ struct ConnectionFlowTests {
                                 sessionAuthenticator: (any StationAuthenticator)? = nil,
                                 remotePeers: RemotePeers = RemotePeers(),
                                 failingStationItem: FailingStationItem? = nil,
-                                networks: (@Sendable () -> LocalNetworks)? = nil) throws -> Harness {
+                                networks: (@Sendable () -> LocalNetworks)? = nil,
+                                kept: PhoneSettings? = nil, reconnectOnOpen: Bool = false) throws -> Harness {
         let suite = "ConnectionFlowTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        let settings = PhoneSettings(defaults: defaults)
+        let settings = kept ?? PhoneSettings(defaults: defaults)
         settings.deviceName = deviceName
         let app = media.map { station in
             AppModel(phoneSettings: settings, mediaPeerFactory: station.mediaPeerFactory,
@@ -579,7 +615,7 @@ struct ConnectionFlowTests {
             rendezvous.showCodesOnMailboxNumbers()
             dependencies.rendezvousTransportFactory = rendezvous.rendezvousTransportFactory
         }
-        let flow = ConnectionFlow(app: app, dependencies: dependencies)
+        let flow = ConnectionFlow(app: app, dependencies: dependencies, reconnectOnOpen: reconnectOnOpen)
         return Harness(app: app, flow: flow, stations: stations, stationItem: stationItem,
                        keyItem: keyItem, microphone: microphone,
                        network: network, clock: clock, log: log, reach: reach)
@@ -629,6 +665,402 @@ struct ConnectionFlowTests {
         await harness.flow.connect(to: row)
         #expect(await settle { harness.flow.screen == .band })
         return (station, harness)
+    }
+
+    // MARK: Reconnect automatically
+
+    /// A phone with the switch turned on, as these tests need: it starts off.
+    private func keptSettings(lastCore station: FakeStation?, autoReconnect: Bool? = true) throws -> PhoneSettings {
+        let settings = PhoneSettings(defaults: try #require(UserDefaults(suiteName: "ConnectionFlowTests-\(UUID().uuidString)")))
+        settings.lastCore = station.map { Base64URL.encode($0.identity.publicKey) }
+        if let autoReconnect {
+            settings.autoReconnect = autoReconnect
+        }
+        return settings
+    }
+
+    @Test("a phone that never touched the switch opens on Your Cores and dials nothing, even after the scene is active")
+    func reconnectUntouchedStaysOnYourCores() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: station, autoReconnect: nil)
+        let dials = DialCounter()
+        let harness = try Self.harness(factory: { endpoint, trust in
+            _ = dials.first()
+            return station.transportFactory(endpoint, trust)
+        }, paired: [Self.paired(station)], kept: kept, reconnectOnOpen: true)
+        #expect(harness.flow.screen == .cores)
+        harness.flow.sceneBecameActive()
+        await Task.yield()
+        #expect(harness.flow.screen == .cores)
+        #expect(harness.flow.connectingTo == nil)
+        #expect(dials.count == 0)
+        #expect(harness.app.session == nil)
+        // Nothing is forgotten by not dialing: turning it on later has a Core to go to.
+        #expect(kept.lastCore != nil)
+    }
+
+    @Test("on: a cold launch dials the last used Core, shows connecting and then the band, and never keys")
+    func reconnectOnLaunch() async throws {
+        let station = try FakeStation()
+        let other = PairedStation(identityKey: P256.Signing.PrivateKey().publicKey.derRepresentation, label: "Attic",
+                                  endpoints: [StationEndpoint(host: "192.0.2.9", port: 4_000)])
+        let kept = try keptSettings(lastCore: station)
+        let harness = try Self.harness(factory: station.transportFactory, paired: [other, Self.paired(station)],
+                                       kept: kept, reconnectOnOpen: true)
+        #expect(harness.flow.screen == .connectingOnOpen)
+        #expect(harness.flow.connectingTo == station.identity.publicKey)
+        harness.flow.sceneBecameActive()
+        #expect(await settle { harness.flow.screen == .band })
+        #expect(harness.flow.connectingTo == nil)
+        #expect(!harness.app.main.transmit.ptt.transmitting)
+        await harness.app.disconnect()
+    }
+
+    @Test("a launch iOS began in the background dials nothing until the scene is first active")
+    func backgroundLaunchWaitsForTheScene() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: station)
+        let dials = DialCounter()
+        let harness = try Self.harness(factory: { endpoint, trust in
+            _ = dials.first()
+            return station.transportFactory(endpoint, trust)
+        }, paired: [Self.paired(station)], kept: kept, reconnectOnOpen: true)
+        #expect(harness.flow.screen == .connectingOnOpen)
+        // Long enough for a dial to have begun, had it been going to.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(dials.count == 0)
+        #expect(harness.app.session == nil)
+        #expect(kept.lastCore != nil)
+
+        harness.flow.sceneBecameActive()
+        #expect(await settle { harness.flow.screen == .band })
+        let dialled = dials.count
+        #expect(dialled > 0)
+        // Coming back to the front later is not a second launch.
+        harness.flow.sceneBecameActive()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(dials.count == dialled)
+        await harness.app.disconnect()
+    }
+
+    @Test("Disconnect forgets the Core before it waits, so a force close during the leave stays on Your Cores")
+    func disconnectForgetsBeforeTheLeave() async throws {
+        let station = try FakeStation(fixture: "session-device-sign-in", additions: [.sessionLeave])
+        let unanswered = UnansweredLeaves()
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: { endpoint, trust in
+            LeaveDroppingTransport(inner: station.transportFactory(endpoint, trust), leaves: unanswered)
+        }, paired: [Self.paired(station)], kept: kept)
+        await harness.flow.connect(to: try #require(harness.flow.cores.first))
+        #expect(await settle { harness.flow.screen == .band && harness.app.connection == .connected })
+        #expect(kept.lastCore != nil)
+        let leaving = Task { await harness.flow.disconnect() }
+        // The Core has not answered, so the flow is in the leave's timeout: a
+        // force close now is what the kept Core has to survive.
+        #expect(await settle(seconds: 1) { unanswered.count == 1 })
+        #expect(harness.flow.disconnecting)
+        #expect(kept.lastCore == nil)
+        await leaving.value
+        #expect(harness.flow.screen == .cores)
+        #expect(kept.lastCore == nil)
+    }
+
+    @Test("Cancel on LINK LOST is leaving on purpose: the next launch stays on Your Cores, and Reconnect keeps it again")
+    func linkLostCancelForgets() async throws {
+        let (station, harness) = try await connectedToFake()
+        let encoded = Base64URL.encode(station.identity.publicKey)
+        #expect(harness.app.phoneSettings.lastCore == encoded)
+        await station.dropLink()
+        #expect(await settle { harness.flow.linkLost != nil })
+        await harness.flow.cancelReconnecting()
+        #expect(harness.app.phoneSettings.lastCore == nil)
+        #expect(harness.flow.linkLost?.stopped == true)
+        await harness.flow.reconnect()
+        #expect(await settle { harness.app.phoneSettings.lastCore == encoded })
+        await harness.app.disconnect()
+    }
+
+    @Test("off: a cold launch opens on Your Cores and dials nothing")
+    func reconnectOff() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: station)
+        kept.autoReconnect = false
+        let harness = try Self.harness(factory: station.transportFactory, paired: [Self.paired(station)],
+                                       kept: kept, reconnectOnOpen: true)
+        #expect(harness.flow.screen == .cores)
+        await Task.yield()
+        #expect(harness.flow.connectingTo == nil)
+        #expect(harness.app.session == nil)
+    }
+
+    @Test("no launch of the flow outside the app's own dials, whatever is kept")
+    func onlyTheAppsLaunchDials() async throws {
+        let station = try FakeStation()
+        let harness = try Self.harness(factory: station.transportFactory, paired: [Self.paired(station)],
+                                       kept: try keptSettings(lastCore: station))
+        #expect(harness.flow.screen == .cores)
+        #expect(harness.flow.connectingTo == nil)
+    }
+
+    @Test("a session reaching ready is what is kept; Disconnect clears it and the next launch stays on Your Cores")
+    func disconnectStaysOnCores() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: station.transportFactory, paired: [Self.paired(station)], kept: kept)
+        await harness.flow.connect(to: try #require(harness.flow.cores.first))
+        #expect(await settle { harness.flow.screen == .band })
+        #expect(kept.lastCore == Base64URL.encode(station.identity.publicKey))
+        await harness.flow.disconnect()
+        #expect(harness.flow.screen == .cores)
+        #expect(kept.lastCore == nil)
+        let again = try Self.harness(factory: station.transportFactory, paired: [Self.paired(station)],
+                                     kept: kept, reconnectOnOpen: true)
+        #expect(again.flow.screen == .cores)
+        #expect(again.flow.connectingTo == nil)
+    }
+
+    @Test("Back to Cores from a lost link is leaving on purpose too")
+    func leaveBandClears() async throws {
+        let (station, harness) = try await connectedToFake()
+        #expect(harness.app.phoneSettings.lastCore != nil)
+        await station.dropLink()
+        #expect(await settle { harness.flow.linkLost != nil })
+        await harness.flow.cancelReconnecting()
+        await harness.flow.leaveBand()
+        #expect(harness.flow.screen == .cores)
+        #expect(harness.app.phoneSettings.lastCore == nil)
+    }
+
+    @Test("a session the sleep timer ended reconnects at the next open")
+    func sleepTimerKeepsTheCore() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: station.transportFactory, paired: [Self.paired(station)], kept: kept)
+        await harness.flow.connect(to: try #require(harness.flow.cores.first))
+        #expect(await settle { harness.flow.screen == .band && harness.app.connection == .connected })
+        let original = try #require(harness.app.session)
+        let expiry = CommandSendPermit()
+        #expect(await harness.flow.disconnect(ifCurrent: original, authority: expiry, stillAllowed: { !expiry.isRevoked }))
+        #expect(harness.flow.screen == .cores)
+        #expect(kept.lastCore == Base64URL.encode(station.identity.publicKey))
+    }
+
+    @Test("Remove Core clears it, and removing another Core does not")
+    func removeCoreClears() async throws {
+        let station = try FakeStation()
+        let other = PairedStation(identityKey: P256.Signing.PrivateKey().publicKey.derRepresentation, label: "Attic",
+                                  endpoints: [StationEndpoint(host: "192.0.2.9", port: 4_000)])
+        let kept = try keptSettings(lastCore: station)
+        let harness = try Self.harness(factory: station.transportFactory, paired: [other, Self.paired(station)], kept: kept)
+        #expect(await harness.flow.removeCore(identityKey: other.identityKey))
+        #expect(kept.lastCore != nil)
+        #expect(await harness.flow.removeCore(identityKey: station.identity.publicKey))
+        #expect(kept.lastCore == nil)
+    }
+
+    // MARK: The last Core used comes first on Your Cores
+
+    /// A Core that is listed but never dialed in these tests.
+    private static func listedCore(_ label: String) -> PairedStation {
+        PairedStation(identityKey: P256.Signing.PrivateKey().publicKey.derRepresentation, label: label,
+                      endpoints: [StationEndpoint(host: "192.0.2.9", port: 4_000)])
+    }
+
+    @Test("reaching ready puts that Core first, where the highlighted Connect is, and the rest keep their order")
+    func lastUsedMovesToTheTop() async throws {
+        let station = try FakeStation()
+        let before = Self.listedCore("Attic")
+        let after = Self.listedCore("Field")
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: station.transportFactory,
+                                       paired: [before, Self.paired(station), after], kept: kept)
+        #expect(harness.flow.cores.map(\.id) == [before.identityKey, station.identity.publicKey, after.identityKey])
+        let row = try #require(harness.flow.cores.first { $0.id == station.identity.publicKey })
+        await harness.flow.connect(to: row)
+        #expect(await settle { harness.flow.screen == .band })
+        #expect(kept.lastUsedCore == Base64URL.encode(station.identity.publicKey))
+        #expect(harness.flow.cores.map(\.id) == [station.identity.publicKey, before.identityKey, after.identityKey])
+    }
+
+    @Test("the last Core used stays first after Disconnect and at the next launch, and nothing dials because of it")
+    func lastUsedSurvivesDisconnect() async throws {
+        let station = try FakeStation()
+        let other = Self.listedCore("Attic")
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: station.transportFactory,
+                                       paired: [other, Self.paired(station)], kept: kept)
+        let row = try #require(harness.flow.cores.first { $0.id == station.identity.publicKey })
+        await harness.flow.connect(to: row)
+        #expect(await settle { harness.flow.screen == .band })
+        await harness.flow.disconnect()
+        #expect(harness.flow.screen == .cores)
+        #expect(kept.lastCore == nil)
+        #expect(kept.lastUsedCore == Base64URL.encode(station.identity.publicKey))
+        #expect(harness.flow.cores.map(\.id) == [station.identity.publicKey, other.identityKey])
+
+        let dials = DialCounter()
+        let again = try Self.harness(factory: { endpoint, trust in
+            _ = dials.first()
+            return station.transportFactory(endpoint, trust)
+        }, paired: [other, Self.paired(station)], kept: kept, reconnectOnOpen: true)
+        again.flow.sceneBecameActive()
+        await Self.flowSettled(again)
+        #expect(again.flow.screen == .cores)
+        #expect(again.flow.connectingTo == nil)
+        #expect(dials.count == 0)
+        #expect(again.flow.cores.map(\.id) == [station.identity.publicKey, other.identityKey])
+    }
+
+    @Test("removing the last Core used puts the list back in paired order; removing another does not clear it")
+    func lastUsedRemovedFallsBack() async throws {
+        let station = try FakeStation()
+        let first = Self.listedCore("Attic")
+        let second = Self.listedCore("Field")
+        let third = Self.listedCore("Mobile")
+        let kept = try keptSettings(lastCore: nil)
+        kept.lastUsedCore = Base64URL.encode(station.identity.publicKey)
+        let harness = try Self.harness(factory: station.transportFactory,
+                                       paired: [first, second, Self.paired(station), third], kept: kept)
+        #expect(harness.flow.cores.first?.id == station.identity.publicKey)
+        #expect(await harness.flow.removeCore(identityKey: third.identityKey))
+        #expect(kept.lastUsedCore == Base64URL.encode(station.identity.publicKey))
+        #expect(harness.flow.cores.map(\.id) == [station.identity.publicKey, first.identityKey, second.identityKey])
+        #expect(await harness.flow.removeCore(identityKey: station.identity.publicKey))
+        #expect(kept.lastUsedCore == nil)
+        #expect(harness.flow.cores.map(\.id) == [first.identityKey, second.identityKey])
+    }
+
+    @Test("with no last Core used, the list is in paired order")
+    func noLastUsedKeepsPairedOrder() async throws {
+        let station = try FakeStation()
+        let first = Self.listedCore("Attic")
+        let second = Self.listedCore("Field")
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: station.transportFactory, paired: [first, second], kept: kept)
+        #expect(kept.lastUsedCore == nil)
+        #expect(harness.flow.cores.map(\.id) == [first.identityKey, second.identityKey])
+    }
+
+    @Test("a last Core used that isn't on the list, or can't be read, leaves paired order", arguments: [
+        Base64URL.encode(Data(repeating: 7, count: 91)),
+        "not a key!",
+    ])
+    func staleLastUsedKeepsPairedOrder(stale: String) async throws {
+        let station = try FakeStation()
+        let first = Self.listedCore("Attic")
+        let second = Self.listedCore("Field")
+        let kept = try keptSettings(lastCore: nil)
+        kept.lastUsedCore = stale
+        let harness = try Self.harness(factory: station.transportFactory, paired: [first, second], kept: kept)
+        #expect(harness.flow.cores.map(\.id) == [first.identityKey, second.identityKey])
+    }
+
+    @Test("a connect that never reaches ready leaves the order and the last Core used alone")
+    func failedConnectIsNotLastUsed() async throws {
+        let station = try FakeStation()
+        let other = Self.listedCore("Attic")
+        let kept = try keptSettings(lastCore: nil)
+        let harness = try Self.harness(factory: { _, _ in DeadTransport(error: .failed("no answer")) },
+                                       paired: [other, Self.paired(station)], kept: kept)
+        let row = try #require(harness.flow.cores.first { $0.id == station.identity.publicKey })
+        await harness.flow.connect(to: row)
+        #expect(await settle { harness.flow.screen == .cores && harness.flow.trouble != nil })
+        #expect(kept.lastUsedCore == nil)
+        #expect(harness.flow.cores.map(\.id) == [other.identityKey, station.identity.publicKey])
+    }
+
+    @Test("a last Core that needs pairing, or a Keychain that can't be read, stays off the air")
+    func pairingAndKeychainStay() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: station)
+        kept.coresNeedingPairing = [Base64URL.encode(station.identity.publicKey)]
+        let pairing = try Self.harness(factory: station.transportFactory, paired: [Self.paired(station)],
+                                       kept: kept, reconnectOnOpen: true)
+        #expect(pairing.flow.screen == .cores)
+        #expect(pairing.flow.connectingTo == nil)
+
+        let unreadable = FailingStationItem()
+        unreadable.failRead = true
+        let denied = try Self.harness(factory: station.transportFactory, failingStationItem: unreadable,
+                                      kept: try keptSettings(lastCore: station), reconnectOnOpen: true)
+        #expect(denied.flow.cores.isEmpty)
+        #expect(denied.flow.screen == .welcome)
+        #expect(denied.flow.connectingTo == nil)
+    }
+
+    @Test("a Core that can't be reached leads to Your Cores with the sheet, and is still the last Core")
+    func unreachableLeadsToCores() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: station)
+        let harness = try Self.harness(factory: { _, _ in DeadTransport(error: .failed("no answer")) },
+                                       paired: [Self.paired(station)], kept: kept, reconnectOnOpen: true)
+        harness.flow.sceneBecameActive()
+        #expect(await settle { harness.flow.screen == .cores && harness.flow.trouble != nil })
+        #expect(harness.flow.connectingTo == nil)
+        #expect(kept.lastCore != nil)
+    }
+
+    @Test("Cancel while connecting on opening leads to Your Cores, and the next launch tries again")
+    func cancelOnOpen() async throws {
+        let station = try FakeStation()
+        let kept = try keptSettings(lastCore: station)
+        let harness = try Self.harness(factory: { _, _ in HangingTransport() }, paired: [Self.paired(station)],
+                                       kept: kept, reconnectOnOpen: true)
+        #expect(harness.flow.screen == .connectingOnOpen)
+        harness.flow.sceneBecameActive()
+        await harness.flow.cancelConnecting()
+        #expect(harness.flow.screen == .cores)
+        #expect(harness.flow.connectingTo == nil)
+        #expect(kept.lastCore != nil)
+        await Task.yield()
+        #expect(harness.app.session == nil)
+    }
+
+    // MARK: Redial on return
+
+    @Test("back in front, a link waiting to retry redials at once; it does not wait for its timer")
+    func redialOnReturn() async throws {
+        let (station, harness) = try await connectedToFake()
+        await station.dropLink()
+        #expect(await settle { harness.flow.linkLost != nil })
+        #expect(await settle { if case .waitingToRetry = harness.app.connection { true } else { false } })
+        let before = harness.flow.redialsForTesting
+        harness.flow.sceneBecameActive()
+        #expect(harness.flow.redialsForTesting == before + 1)
+        // The clock never moved.
+        #expect(await settle { harness.app.connection == .connected })
+        await harness.app.disconnect()
+    }
+
+    @Test("back in front, nothing redials when connected, after Disconnect or after Cancel")
+    func noRedialOnReturn() async throws {
+        let (station, harness) = try await connectedToFake()
+        harness.flow.sceneBecameActive()
+        #expect(harness.flow.redialsForTesting == 0)
+
+        await station.dropLink()
+        #expect(await settle { harness.flow.linkLost != nil })
+        await harness.flow.cancelReconnecting()
+        harness.flow.sceneBecameActive()
+        #expect(harness.flow.redialsForTesting == 0)
+
+        await harness.flow.disconnect()
+        harness.flow.sceneBecameActive()
+        #expect(harness.flow.redialsForTesting == 0)
+        #expect(harness.app.session == nil)
+    }
+
+    @Test("back in front offline, the hold stays: no try can succeed")
+    func noRedialOffline() async throws {
+        let (station, harness) = try await connectedToFake()
+        await station.dropLink()
+        #expect(await settle { harness.flow.linkLost != nil })
+        harness.network.set(online: false)
+        #expect(await settle { harness.flow.offline })
+        let before = harness.flow.redialsForTesting
+        harness.flow.sceneBecameActive()
+        #expect(harness.flow.redialsForTesting == before)
+        await harness.app.disconnect()
     }
 
     @Test("the fifth-device question keeps Core order, selects the first eligible place and honours Take it back")

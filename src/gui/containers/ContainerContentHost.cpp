@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-11-06 - A factory widget can report its own free canvas hint and
+//                 minimum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-10-29 - A stack of only clock faces keeps its face height as the
 //                 preferred size and shrinks with the container, so making
 //                 the container shorter does not show a scrollbar.
@@ -659,8 +662,9 @@ void ContainerContentHost::reconcileFreeCanvas(const ContainerDocument& document
                     widget->setProperty(WorkspacePreview::kSkipProperty,true);
                     connectConfigNotifier(widget,entry.id);
                     attachFade(widget,effective,row.context);
-                    widget->setProperty("freeCanvasMinimum",QSizeF(widget->minimumSizeHint()));
-                    widget->setProperty("freeCanvasHint",widget->sizeHint());
+                    // A widget that knows better has already set these (a Phone/CW copy, whose hint covers only its current page).
+                    if(!widget->property("freeCanvasMinimum").isValid()) {widget->setProperty("freeCanvasMinimum",QSizeF(widget->minimumSizeHint()));}
+                    if(!widget->property("freeCanvasHint").isValid()) {widget->setProperty("freeCanvasHint",widget->sizeHint());}
                     widget->setMinimumSize(0,0);widget->setMaximumSize(QWIDGETSIZE_MAX,QWIDGETSIZE_MAX);
                     row.widget=widget;
                 }

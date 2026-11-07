@@ -35,6 +35,23 @@ enum IPadLayout: Equatable {
         return size.width > size.height ? .column : .frontPanel
     }
 
+    /// A bottom safe area taller than any home indicator is a keyboard's.
+    private static let keyboardMinimumHeight: CGFloat = 100
+
+    /// The height a keyboard has taken from a root view whose bottom safe area
+    /// is `bottomInset`; 0 with none, so the home indicator is not counted.
+    static func keyboardRoom(bottomInset: CGFloat) -> CGFloat {
+        bottomInset > keyboardMinimumHeight ? bottomInset : 0
+    }
+
+    /// The arrangement with a keyboard up: its room comes off the height, which
+    /// says nothing of how the iPad is held, so it is read with that room back.
+    /// Typing in an applet does not rearrange the screen around the field.
+    static func arrangement(horizontal: UserInterfaceSizeClass?, size: CGSize, keyboardRoom: CGFloat) -> IPadLayout {
+        arrangement(horizontal: horizontal,
+                    size: CGSize(width: size.width, height: size.height + keyboardRoom))
+    }
+
     /// The band's width in a screen `width` wide: on its side, less the
     /// column while it shows.
     func bandWidth(screenWidth width: CGFloat, columnShown: Bool) -> CGFloat {
@@ -60,4 +77,9 @@ enum IPadLayout: Equatable {
     var isIPad: Bool {
         self != .phone
     }
+}
+
+extension EnvironmentValues {
+    /// The height a keyboard has taken from the app's root (``IPadLayout``).
+    @Entry var keyboardRoom: CGFloat = 0
 }

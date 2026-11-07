@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - Band stack plan Task 7: BandStack retired, the band stack is
+//                 built. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-09-28 - iPhone app plan Task 25 (D41): the enum, all(), key(),
 //                 isBuilt() and the test seams moved here from
 //                 src/gui/UnbuiltFeatures.{h,cpp} unchanged. J.J. Boyd
@@ -56,7 +58,6 @@ enum class UnbuiltFeature {
     Equalizer,        // DSP > Equalizer (built after R4)
     Transverters,     // Radio > Transverters; Band > VHF; Hardware > XVTR; OC Outputs VHF tab;
                       // the container band and antenna XVTR buttons
-    BandStack,        // Band > Band Stacking; the band stack dots on the status bar
     Cwx,              // Tools > CWX; Phone/CW applet CW page; CW keyer settings; CWX on the status bar
     Memories,         // Tools > Memory Manager; the Spot Hub Memories option
     Cat,              // Tools > CAT Control; Setup > Serial Ports, TCP/IP CAT; CAT on the status bar
@@ -123,7 +124,7 @@ namespace UnbuiltFeatures {
 
 struct Entry {
     UnbuiltFeature feature;
-    QString key;          // the decisions table's item name, e.g. "band-stack"
+    QString key;          // the decisions table's item name, e.g. "cwx"
     QString description;  // what the feature is, for logs and tests
 };
 

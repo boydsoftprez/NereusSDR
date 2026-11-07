@@ -9739,6 +9739,86 @@ private slots:
         QVERIFY(!media || !media->active);
     }
 
+    // JJ's ruling of 2026-11-05: a window on a Core asks at its own paint
+    // rate, with the averaging timed for it, so a slow machine asks for
+    // less. With no rate of its own it asks at the Core's.
+    void subscribeAsksAtTheWindowsOwnPaintRate()
+    {
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        auto& appSettings = AppSettings::instance();
+        const QString fpsKey = QLatin1String(ControlRanges::kDisplaySpectrumFpsKey);
+        const QString paintKey = QLatin1String(ControlRanges::kDisplayPaintFpsKey);
+        const bool hadFps = appSettings.contains(fpsKey);
+        const QVariant savedFps = appSettings.value(fpsKey);
+        const bool hadPaint = appSettings.contains(paintKey);
+        const QVariant savedPaint = appSettings.value(paintKey);
+        appSettings.setValue(fpsKey, QStringLiteral("20"));
+        appSettings.remove(paintKey);
+        const auto restore = qScopeGuard([&] {
+            if (hadFps) { appSettings.setValue(fpsKey, savedFps); }
+            else { appSettings.remove(fpsKey); }
+            if (hadPaint) { appSettings.setValue(paintKey, savedPaint); }
+            else { appSettings.remove(paintKey); }
+        });
+        IsolatedRadioModel station;
+        station.setBoardForTest(HPSDRHW::HermesLite);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        station.addSlice(QStringLiteral("pan-0"));
+        QVERIFY(!station.slices().isEmpty());
+        SliceModel* stationSlice = station.slices().first();
+        stationSlice->setStreamIndex(0);
+        stationSlice->setFrequency(14225000);
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true); // Display fixture opens no speaker.
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        PanadapterStack stack;
+        auto* applet = stack.addPanadapter(QStringLiteral("pan-0"));
+        applet->setActiveSliceIndex(stationSlice->sliceIndex());
+        auto* widget = applet->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(14225000, 24000);
+        widget->setSpectrumAverageTimeMs(200);
+        stack.resize(600, 400);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        qint64 now = 1'000;
+        QPointer<DisplayTransport> media;
+        RemoteMediaController controller(&client, &remote, &stack, nullptr,
+            [&media](QObject* owner) -> IMediaTransport* {
+                media = new DisplayTransport(owner);
+                return media;
+            },
+            [&now] { return now; });
+        QSignalSpy controls(&server, &StationServer::mediaControlReceived);
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, server.token());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(client.mediaAvailable());
+        QTRY_VERIFY(media);
+        media->activate();
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 1);
+        QCOMPARE(lastControl(controls, QStringLiteral("subscribe"))
+                     .value(QStringLiteral("fps")).toInt(), 20);
+
+        appSettings.setValue(paintKey, QStringLiteral("12"));
+        QTRY_COMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+        const QJsonObject asked = lastControl(controls, QStringLiteral("subscribe"));
+        QCOMPARE(asked.value(QStringLiteral("fps")).toInt(), 12);
+        QCOMPARE(asked.value(QStringLiteral("trace")).toObject()
+                     .value(QStringLiteral("averageAlpha")).toDouble(),
+                 double(averageAlphaForTimeMs(200, 12)));
+
+        // The Core's rate moving does not move a window that has its own.
+        appSettings.setValue(fpsKey, QStringLiteral("25"));
+        QTest::qWait(RemoteMediaController::kPlannerIntervalMs * 2 + 30);
+        QCOMPARE(countControl(controls, QStringLiteral("subscribe")), 2);
+    }
+
     // Parity Task 17 (B3.3, B3.7, B3.10): a pan asks the Core for a dBm
     // window that is what it shows (its own range widened by the
     // waterfall's levels), so a signal above 0 dBm is not flattened and a

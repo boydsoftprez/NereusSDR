@@ -4,6 +4,8 @@
 //               control it, and a source retirement with a display budget
 //               clears a pan's wide state. J.J. Boyd (KG4VCF),
 //               AI-assisted via Claude Code.
+//   2026-11-05: A window asks the Core at its own paint rate. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: bounded passive retry schedule history and a hold boundary
 //               for canceled startup steps. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -907,10 +909,9 @@ DbmWindow heldDbmWindow(const SpectrumWidget* widget, double binWidthHz,
 
 int requestedFps()
 {
-    return qBound(1, AppSettings::instance().value(
-                         QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                         QString::number(ControlRanges::kDisplaySpectrumFpsDefault))
-                         .toString().toInt(), 60);
+    // This window's own rate: each endpoint is sent at the rate its window
+    // asks (DaemonMediaController), so a slow machine asks for less.
+    return readDisplayPaintFps(AppSettings::instance());
 }
 
 // The FFT size a pan asks for, from the station's sizing mode (design D38,
