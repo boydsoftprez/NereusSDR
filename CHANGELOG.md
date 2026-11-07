@@ -85,20 +85,34 @@ confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
   ([#736](https://github.com/boydsoftprez/NereusSDR/pull/736),
   [#738](https://github.com/boydsoftprez/NereusSDR/pull/738), issue
   [#730](https://github.com/boydsoftprez/NereusSDR/issues/730))
+- **Remote transmit through a pause on the Core.** If the Core paused for more
+  than about 3 seconds, an ordinary release from a remote device could be counted
+  as a lost link. The device was told its link had gone quiet, and VOX turned
+  off. A release now ends the key as usual and VOX stays armed. A related case is
+  fixed for devices connected over the internet before their audio connection is
+  up: a pause no longer stops a live key, and a device that really drops is
+  stopped sooner. A real lost link still stops transmit, with the same limits as
+  before. Not yet tried on a radio.
+  ([#756](https://github.com/boydsoftprez/NereusSDR/pull/756),
+  [#761](https://github.com/boydsoftprez/NereusSDR/pull/761))
+
+<!-- CONFIRM at the cut: 756 and 761 have hardware-run steps in their PR bodies.
+If a bench run happens, say so and drop "Not yet tried on a radio". -->
 
 <!-- Still to come. Delete this block at the cut. None of these are on main at
-6e35668e6. Write each one up above only after it lands, checked against the
+354f1a453. Write each one up above only after it lands, checked against the
 code, and credit Brian Sutton (W4KZO) on his work: 752 carries 742, 746 carries
-740, and 757 is his.
+740, 760 carries his Phone / CW panel, and 757 is his.
 - Roundtable overlay redesign and frequency view: PR 741. The Roundtable entries
   above and chapter 16 will need revising when it lands.
 - Station lock from another computer: PR 744.
 - SSB Mod Monitor: PR 752, from Brian Sutton's PR 742.
 - Right-click AUTO to open AGC/ALC setup: PR 746, from Brian Sutton's PR 740.
-- Hot keys: PR 759.
+- Hot keys: PR 759, with a VOX on/off action.
 - Band stacks: PR 748.
-- Also open, not yet read for the notes: 747, 750, 751, 753, 754, 755, 756, 757, 758.
-No note needed, on main: 749 and 745 (tests, CI, Windows exports).
+- Also open, not yet read for the notes: 747 (carries 750), 751, 753, 754, 755,
+  757, 758, 760, 764.
+No note needed, on main: 749, 745, 762 and 763 (tests, CI, Windows exports).
 -->
 
 ## [2026.11.0] - 2026-11-01

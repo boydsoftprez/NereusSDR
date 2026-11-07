@@ -19,7 +19,7 @@ its version is independent of the desktop release. The
 
 ### On main since 2026.11.0, not released
 
-As of `6e35668e6` (2026-11-06). The next version resolves to 2026.11.1 if it
+As of `354f1a453` (2026-11-07). The next version resolves to 2026.11.1 if it
 ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 [CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]` has the operator wording.
 
@@ -34,31 +34,37 @@ ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 | PureSignal hardware peak follows the active protocol | 735 | Native WDSP regression; KC5L confirmed on ANAN-200D (P2) and ANAN-100 (P1); issue 734 closed. |
 | ANAN-G2E radio microphone controls shown, desktop and remote Setup | 736, 738 | Tests only. Microphone audio unconfirmed; issue 730 open. |
 | Roundtable website: helper Review link, Station settings wording | 728 | Server test suite. Station settings wording seen on the live site on 2026-11-05. |
+| A release during a Core stall no longer counts as a lost link, and VOX stays armed; session keepalives on a data channel count from arrival on a key with no "tx" copy read | 756, 761 | Forced-stall tests with red-first proof. Touches transmit. Not run on a radio, a real stall, hosted Linux or Windows; hardware steps are in each PR. |
 
 Also on main, with no operator-facing change and so no release note: PR 749
-(test debts, CI and Windows DLL exports) and PR 745 (iOS drag pace test scaling).
+(test debts, CI and Windows DLL exports), PR 745 (iOS drag pace test scaling),
+PR 762 (meter pump tests) and PR 763 (CI runs the full test set when a pull
+request is marked ready). After PR 763, nothing tests main between releases, so
+**a full CI and iOS run on main, started by hand from the Actions tab, is due
+before the cut.**
 PR 749's exports reach no production connection across a DLL, and its certificate
 key seam has no production caller, so Windows and Core behavior stay as they were.
 The Windows signal fix still needs a Windows test run; PR 749 names it.
 
 ### Still to come before the next release
 
-Open and not on main as of `6e35668e6`, and not described as done anywhere in the
+Open and not on main as of `354f1a453`, and not described as done anywhere in the
 docs. Being open does not put a PR in the release; J.J. Boyd decides scope.
 
-- Roundtable overlay redesign and frequency view (PR 741, draft).
-- Station lock from another computer (PR 744, draft).
-- SSB Mod Monitor (PR 752, draft: Brian Sutton W4KZO's PR 742 with review corrections).
-- Right-click AUTO to open AGC/ALC setup (PR 746, draft: Brian Sutton W4KZO's PR 740, corrected).
-- Hot keys (PR 759, draft).
-- Band stacks (PR 748, draft).
+- Roundtable overlay redesign and frequency view (PR 741).
+- Station lock from another computer (PR 744).
+- SSB Mod Monitor (PR 752: Brian Sutton W4KZO's PR 742 with review corrections).
+- Right-click AUTO to open AGC/ALC setup (PR 746: Brian Sutton W4KZO's PR 740, corrected).
+- Phone / CW container sections (PR 760: Brian Sutton W4KZO's panel with review corrections).
+- Hot keys, with a VOX on/off action (PR 759).
+- Band stacks (PR 748).
 
 Also open, listed by PR title and not yet read for the notes: 747 (settings that
-revert), 750 (new receivers start with RIT and XIT off), 751 (FFT and pan on the
-stream's rate on Protocol 2), 753 (Cinnamon file choosers), 754 (container dialog
-when adding a meter), 755 (iPad Roundtable sheet), 756 (a release during a Core
-stall), 757 (hide rows of a Phone/CW container copy, Brian Sutton W4KZO), 758 (a
-failed speaker or an unmute).
+revert; carries 750, new receivers start with RIT and XIT off), 751 (FFT and pan
+on the stream's rate on Protocol 2), 753 (Cinnamon file choosers), 754 (container
+dialog when adding a meter), 755 (iPad Roundtable sheet), 757 (hide rows of a
+Phone/CW container copy, Brian Sutton W4KZO), 758 (a failed speaker or an
+unmute), 764 (streams on the DDCs the radio reports).
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
