@@ -114,6 +114,18 @@
 //               and one that never delivers moves nothing; the cut's lower
 //               edge allows a 250 ms late read. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a release read after the cut gains a row that forces a
+//               session keepalive to wait ahead of the release, the order
+//               that failed on hosted Linux by chance. The test runs the
+//               pump its rig lacks, so a long first key cannot leave the
+//               next one no room. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-11-05: review fix wave: a release read after the cut with VOX
+//               armed keeps VOX, and a later VOX key holds and cuts in full;
+//               a release and a new key read together keep the new key; a
+//               live channel row stalls past the cut with a session copy read
+//               first. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include "core/safety/TransmitHolder.h"
@@ -135,6 +147,7 @@
 #include "core/session/TransmitStateFacade.h"
 #include "core/session/media/DaemonMediaController.h"
 #include "core/session/media/LibDataChannelMediaTransport.h"
+#include "core/session/media/RemoteMicReceiver.h"
 #include "gui/RemoteMediaController.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -516,6 +529,35 @@ private:
     std::thread m_thread;   // last: it starts once the rest are set
 };
 
+// Stands in for the TX worker this rig lacks: pulls the microphone feed on a
+// thread of its own. With no worker, a key held past the input ring's 682 ms
+// leaves it full, and the next key is refused as no microphone.
+class FeedPump {
+public:
+    explicit FeedPump(RemoteMicFeed* feed)
+        : m_block(static_cast<std::size_t>(RemoteMicConfig::kPumpBlockFrames) * 2)
+        , m_thread([this, feed] {
+            while (m_running.load()) {
+                feed->pull(m_block.data(), RemoteMicConfig::kPumpBlockFrames);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        })
+    {
+    }
+    ~FeedPump()
+    {
+        m_running.store(false);
+        m_thread.join();
+    }
+    FeedPump(const FeedPump&) = delete;
+    FeedPump& operator=(const FeedPump&) = delete;
+
+private:
+    std::atomic<bool> m_running{true};
+    std::vector<float> m_block;
+    std::thread m_thread;   // last: it starts once the rest are set
+};
+
 // The real Core and window on a direct media pair, as
 // dataChannelSeveredAloneKeepsTransmitting sets them up, with the station
 // model given a recording connection on a QThread of its own (the
@@ -567,8 +609,9 @@ struct CutRig {
     }
 
     // Connected, the window keyed with its keepalives on the "tx" channel,
-    // and the Core's cut guard judging them.
-    bool keyOnTheTxChannel()
+    // and the Core's cut guard judging them. With `armVox`, the window takes
+    // transmit and arms the Core's VOX over its microphone line first.
+    bool keyOnTheTxChannel(bool armVox = false)
     {
         h.connectSession();
         if (!QTest::qWaitFor([this] { return daemonMedia->micReceiver() != nullptr; }, 5000)
@@ -580,6 +623,24 @@ struct CutRig {
         }
         // Give the "tx" channel time to open after media is ready.
         QTest::qWait(300);
+        if (armVox) {
+            TransmitHolder::KeyRequest take;
+            take.deviceId = h.windowKey->fingerprint();
+            if (h.server.transmitHolder()->askKey(take).verdict != KeyingVerdict::Admit) {
+                qWarning("cut rig: the window could not take transmit");
+                return false;
+            }
+            h.remote.transmitModel().setVoxEnabled(true);
+            if (!QTest::qWaitFor(
+                    [this] {
+                        return h.station.transmitModel().voxEnabled()
+                            && h.server.voxArmedBy() == h.windowKey->fingerprint();
+                    },
+                    5000)) {
+                qWarning("cut rig: VOX was not armed");
+                return false;
+            }
+        }
         h.remote.setMoxFromButton(true);
         RemoteTransmitClient* const transmit = h.client.remoteTransmit();
         if (!QTest::qWaitFor(
@@ -1216,8 +1277,21 @@ private slots:
     // thread is held too): the guard hears them off the main thread and
     // the key is kept. Nothing is held, nothing is cut, nothing stops, and
     // the window's own release unkeys.
+    // Second row (review fix wave): main is held past the cut, and a session
+    // copy the Core reads first arrives past it, with no receipt time. It
+    // renews and stops nothing; the fed copies, timed at their receipt, show
+    // the link never went quiet.
+    void aLiveChannelKeepsTheKeyWhenMainIsHeld_data()
+    {
+        QTest::addColumn<int>("holdMs");
+        QTest::addColumn<bool>("sessionCopyFirst");
+        QTest::newRow("under the cut") << 1000 << false;
+        QTest::newRow("past the cut, a session copy first") << 3500 << true;
+    }
     void aLiveChannelKeepsTheKeyWhenMainIsHeld()
     {
+        QFETCH(int, holdMs);
+        QFETCH(bool, sessionCopyFirst);
         CutRig rig;
         QVERIFY(rig.keyOnTheTxChannel());
         Test::RemoteAudioSessionHarness& h = rig.h;
@@ -1252,7 +1326,19 @@ private slots:
             }
         });
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        if (sessionCopyFirst) {
+            Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
+            QVERIFY(windowEnd != nullptr);
+            RemoteTransmitClient* const transmit = h.client.remoteTransmit();
+            QVERIFY(transmit != nullptr);
+            windowEnd->setHoldsOutgoing(true);
+            const quint64 sentBefore = transmit->sessionKeepalivesSent();
+            QTRY_VERIFY_WITH_TIMEOUT(transmit->sessionKeepalivesSent() > sentBefore, 1000);
+            // Posted now, so it is read ahead of what the feeder's copies
+            // post during the hold.
+            windowEnd->setHoldsOutgoing(false);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(holdMs));
         const std::vector<RecordingConnection::Entry> during = rig.conn.since(mark);
         const bool cutDuringHold = rig.conn.transmitCut();
         const bool judgingAfterHold = h.server.txCutGuard()->isJudging();
@@ -1364,10 +1450,27 @@ private slots:
     // first, and records nothing: one MOX-off edge, no link-lost stop, the
     // window never told linkLost, VOX untouched, the connection's cut
     // cleared, and the next key reaches the connection.
+    // Second row: a session keepalive the window sent before its release
+    // waits ahead of it on the same link, so the Core reads that keepalive,
+    // past the cut, before the release. It says nothing about the release,
+    // and the stop is the watchdog's check's to make, after the release was
+    // read. (A keepalive in flight when the hold began gave the first row
+    // this order by chance: hosted Linux, run 41203885532.)
+    void aReleaseReadAfterTheCutIsNotALostLink_data()
+    {
+        QTest::addColumn<bool>("keepaliveAhead");
+        QTest::addColumn<bool>("voxArmed");
+        QTest::newRow("the release alone") << false << false;
+        QTest::newRow("a keepalive waiting ahead of it") << true << false;
+        QTest::newRow("with VOX armed") << true << true;
+    }
     void aReleaseReadAfterTheCutIsNotALostLink()
     {
+        QFETCH(bool, keepaliveAhead);
+        QFETCH(bool, voxArmed);
         CutRig rig;
-        QVERIFY(rig.keyOnTheTxChannel());
+        FeedPump pump(rig.h.station.remoteMicFeed());
+        QVERIFY(rig.keyOnTheTxChannel(voxArmed));
         Test::RemoteAudioSessionHarness& h = rig.h;
         Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
         QVERIFY(windowEnd != nullptr);
@@ -1380,6 +1483,16 @@ private slots:
         // The release leaves the window and waits on the link, as it does
         // behind a stalled Core's socket.
         windowEnd->setHoldsOutgoing(true);
+        if (keepaliveAhead) {
+            // The window sends one more on the session, which waits too. Its
+            // copy on the "tx" channel still reaches the Core, so the wait
+            // starts with nothing held.
+            RemoteTransmitClient* const transmit = h.client.remoteTransmit();
+            QVERIFY(transmit != nullptr);
+            const quint64 sentBefore = transmit->sessionKeepalivesSent();
+            QTRY_VERIFY_WITH_TIMEOUT(transmit->sessionKeepalivesSent() > sentBefore, 1000);
+        }
+        const qsizetype readBeforeRelease = h.stationLink->received().size();
         h.remote.setMoxFromButton(false);
         std::this_thread::sleep_for(std::chrono::milliseconds(3500));
         // Before the main thread runs anything again.
@@ -1395,6 +1508,24 @@ private slots:
                                  5000);
         QTRY_VERIFY_WITH_TIMEOUT(!rig.conn.transmitCut(), 3000);
         QTRY_VERIFY(!h.client.transmitState()->keyed());
+        if (keepaliveAhead) {
+            // The order this row is for: the keepalive was read first.
+            bool keepaliveSeen = false;
+            bool releaseSeen = false;
+            const QList<QByteArray> read = h.stationLink->received().mid(readBeforeRelease);
+            for (const QByteArray& wire : read) {
+                const QJsonObject o = QJsonDocument::fromJson(wire).object();
+                const QString verb = o.value(QStringLiteral("verb")).toString();
+                if (verb == QLatin1String("tx.keepalive") && !releaseSeen) {
+                    keepaliveSeen = true;
+                }
+                if (verb == QLatin1String("tx.unkey")) {
+                    releaseSeen = true;
+                }
+            }
+            QVERIFY(keepaliveSeen);
+            QVERIFY(releaseSeen);
+        }
 
         // A second later: nothing recorded as a lost link.
         QTest::qWait(1000);
@@ -1408,8 +1539,13 @@ private slots:
         QCOMPARE(moxOffEdges, 1);
         QCOMPARE(h.client.transmitState()->stopSerial(), stopSerialBefore);
         QVERIFY(h.client.transmitState()->stopReason() != QLatin1String("linkLost"));
-        // tripped == 0 carries the VOX property: VOX is disarmed only by the
-        // watchdog's stop.
+        // VOX stays armed through the release, in the row that arms it
+        // (maintainer's ruling, 2026-11-05).
+        if (voxArmed) {
+            QVERIFY(h.station.transmitModel().voxEnabled());
+            QCOMPARE(h.server.voxArmedBy(), h.windowKey->fingerprint());
+            QVERIFY(h.server.txWatchdog()->isWatching(h.windowKey->fingerprint()));
+        }
         QVERIFY(!rig.conn.transmitCut());
 
         // The next key reaches the connection.
@@ -1417,6 +1553,132 @@ private slots:
         h.remote.setMoxFromButton(true);
         QTRY_VERIFY_WITH_TIMEOUT(hasEntry(rig.conn.since(beforeKey), QStringLiteral("MOX on")),
                                  5000);
+        QVERIFY(h.station.moxController()->isMox());
+        h.remote.setMoxFromButton(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox()
+                                     && h.station.moxController()->state() == MoxState::Rx,
+                                 5000);
+        if (!voxArmed) {
+            return;
+        }
+
+        // A later VOX key: a fresh guard arm, and the full hold and cut from
+        // the last keepalive when the link then really goes quiet.
+        QCOMPARE(tripped.count(), 0);
+        QSignalSpy held(h.server.txWatchdog(), &RemoteTxWatchdog::holdStarted);
+        const quint64 armBefore = h.server.txCutGuard()->armSerial();
+        h.station.moxController()->onVoxActive(true);
+        QTRY_VERIFY_WITH_TIMEOUT(h.station.moxController()->isMox()
+                                     && h.station.keyedBy().trigger == QByteArrayLiteral("vox"),
+                                 5000);
+        QVERIFY(h.server.txCutGuard()->armSerial() > armBefore);
+        QVERIFY(!rig.coreTransport.isNull());
+        rig.coreTransport->setReceiveSeveredForTest(true);
+        h.stationLink->setSevered(true);
+        QTRY_COMPARE_WITH_TIMEOUT(held.count(), 1, 3000);
+        const qint64 silentAtHold = held.first().at(1).toLongLong();
+        QVERIFY2(silentAtHold > RemoteTxWatchdog::kLinkHoldMs && silentAtHold <= kHoldBoundMs,
+                 qPrintable(QString::number(silentAtHold)));
+        QTRY_COMPARE_WITH_TIMEOUT(tripped.count(), 1, 5000);
+        const Trip trip = tripOf(tripped);
+        QVERIFY(!trip.linkClosed);
+        QVERIFY2(trip.silentMs > RemoteTxWatchdog::kLinkCutMs && trip.silentMs <= kCutBoundMs,
+                 qPrintable(QString::number(trip.silentMs)));
+        QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+        QVERIFY(!h.station.transmitModel().voxEnabled());
+        QVERIFY(h.server.voxArmedBy().isEmpty());
+    }
+
+    // The window releases and presses again while the Core's main thread is
+    // held past the cut, so the Core reads a keepalive, the release and the
+    // new key together. Neither row trips the watchdog for the old key's
+    // silence. With no VOX, the new key waits for its microphone line, the
+    // cut clears in that wait, and it reaches the connection. With VOX armed
+    // the line is already live, so the new key is taken before the cut's
+    // catch-up runs. The catch-up stops it, and its stop hold makes the model
+    // drop the flip to transmit it had queued (RadioModel::onMoxHardwareFlipped),
+    // so this rig's connection is never told to key. That stop is kept. On a
+    // real connection the transmit cut latch is the second gate, for the order
+    // where the flip comes first; this rig's connection has no latch, so this
+    // row does not exercise it.
+    void aReleaseAndANewKeyReadTogetherAreNotALostLink_data()
+    {
+        QTest::addColumn<bool>("voxArmed");
+        QTest::newRow("no VOX") << false;
+        QTest::newRow("with VOX armed") << true;
+    }
+    void aReleaseAndANewKeyReadTogetherAreNotALostLink()
+    {
+        QFETCH(bool, voxArmed);
+        CutRig rig;
+        FeedPump pump(rig.h.station.remoteMicFeed());
+        QVERIFY(rig.keyOnTheTxChannel(voxArmed));
+        Test::RemoteAudioSessionHarness& h = rig.h;
+        Test::LoopbackTransport* const windowEnd = h.stationLink->peerForTest();
+        QVERIFY(windowEnd != nullptr);
+        const std::size_t markBeforeNewKey = rig.conn.count();
+        RemoteTransmitClient* const transmit = h.client.remoteTransmit();
+        QVERIFY(transmit != nullptr);
+        QSignalSpy tripped(h.server.txWatchdog(), &RemoteTxWatchdog::tripped);
+        QSignalSpy stopped(&h.station, &RadioModel::transmitStopped);
+        const quint32 stopSerialBefore = h.client.transmitState()->stopSerial();
+        const qsizetype readBefore = h.stationLink->received().size();
+
+        windowEnd->setHoldsOutgoing(true);
+        const quint64 sentBefore = transmit->sessionKeepalivesSent();
+        QTRY_VERIFY_WITH_TIMEOUT(transmit->sessionKeepalivesSent() > sentBefore, 1000);
+        h.remote.setMoxFromButton(false);
+        h.remote.setMoxFromButton(true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3500));
+        const bool cutDuringHold = rig.conn.transmitCut();
+        windowEnd->setHoldsOutgoing(false);
+        QVERIFY2(cutDuringHold, "the guard did not cut while main was held");
+
+        // Read together, in that order.
+        QTRY_VERIFY_WITH_TIMEOUT(
+            commandsOf(h.stationLink, QStringLiteral("tx.unkey")) >= 1
+                && commandsOf(h.stationLink, QStringLiteral("tx.key")) >= 2,
+            5000);
+        qsizetype unkeyAt = -1;
+        qsizetype keyAt = -1;
+        const QList<QByteArray> read = h.stationLink->received().mid(readBefore);
+        for (qsizetype i = 0; i < read.size(); ++i) {
+            const QString verb =
+                QJsonDocument::fromJson(read.at(i)).object().value(QStringLiteral("verb")).toString();
+            if (verb == QLatin1String("tx.unkey") && unkeyAt < 0) {
+                unkeyAt = i;
+            }
+            if (verb == QLatin1String("tx.key") && keyAt < 0) {
+                keyAt = i;
+            }
+        }
+        QVERIFY(unkeyAt >= 0 && keyAt > unkeyAt);
+
+        // What must happen is awaited; the fixed wait is only for what must
+        // not.
+        if (voxArmed) {
+            // The kept stop, recorded as the station's and not as a lost link.
+            QTRY_COMPARE_WITH_TIMEOUT(h.client.transmitState()->stopSerial(),
+                                      stopSerialBefore + 1, 5000);
+            QCOMPARE(h.client.transmitState()->stopReason(), QStringLiteral("station"));
+            QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);
+            QTest::qWait(1500);
+            QCOMPARE(tripped.count(), 0);
+            QCOMPARE(h.client.transmitState()->stopSerial(), stopSerialBefore + 1);
+            QVERIFY(h.station.transmitModel().voxEnabled());
+            QCOMPARE(h.server.voxArmedBy(), h.windowKey->fingerprint());
+            QVERIFY(!hasEntry(rig.conn.since(markBeforeNewKey), QStringLiteral("MOX on")));
+            QVERIFY(!h.station.moxController()->isMox());
+            return;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(
+            h.station.moxController()->isMox()
+                && hasEntry(rig.conn.since(markBeforeNewKey), QStringLiteral("MOX on")),
+            5000);
+        QTest::qWait(1500);
+        QCOMPARE(tripped.count(), 0);
+        QCOMPARE(h.client.transmitState()->stopSerial(), stopSerialBefore);
+        QCOMPARE(stopped.count(), 0);
         QVERIFY(h.station.moxController()->isMox());
         h.remote.setMoxFromButton(false);
         QTRY_VERIFY_WITH_TIMEOUT(!h.station.moxController()->isMox(), 5000);

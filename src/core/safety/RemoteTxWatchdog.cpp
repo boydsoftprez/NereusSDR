@@ -41,6 +41,13 @@
 //               once it has lasted more than kLinkHoldMaxMs, in the check,
 //               in reschedule() and for a keepalive heard past it. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a keepalive heard past the cut, or past a hold's bound,
+//               renews nothing and leaves the stop to the check, so a
+//               release read behind it is no lost link. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-05: releaseRead: a release that ended a key restarts the silence
+//               of a watch left only for VOX (maintainer's ruling). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxWatchdog.h"
@@ -112,6 +119,20 @@ void RemoteTxWatchdog::setCwActive(const QByteArray& deviceId, bool active, quin
 void RemoteTxWatchdog::setKeyed(const QByteArray& deviceId, bool keyed, quint32 epoch)
 {
     update(deviceId, keyed, true, epoch, false, false);
+}
+
+void RemoteTxWatchdog::releaseRead(const QByteArray& deviceId)
+{
+    const auto it = m_devices.find(deviceId);
+    if (it == m_devices.end() || it->keyed || it->cwActive || !it->voxArmed) {
+        return;
+    }
+    // Maintainer's ruling, 2026-11-05, narrowing G-73's "no arriving packet
+    // renews a watch" for this one case: see the header.
+    it->lastMs = std::max(it->lastMs, now());
+    it->lateTurnGiven = false;
+    it->lateHoldTurnGiven = false;
+    reschedule();
 }
 
 void RemoteTxWatchdog::setVoxArmed(const QByteArray& deviceId, bool armed)
@@ -194,10 +215,18 @@ bool RemoteTxWatchdog::keepalive(const QByteArray& deviceId, const TxKeepalive& 
     // Once the watch expires (past the cut), no arriving packet may renew it.
     // Fix wave A: the same for a hold past its bound; a keepalive heard
     // after it cannot end the hold.
+    // The stop is the check's, with its one late turn: a release sent after
+    // this keepalive is read behind it, and ends the key with no lost link.
+    // This changes nothing on the watch, so the check, already due, still
+    // judges it. With no timer to run a check, the stop is here.
     if (heard - watch.lastMs > kLinkCutMs
         || (watch.held && heard - watch.heldSinceMs > kLinkHoldMaxMs)) {
-        trip(deviceId, false);
-        return false; // The stop callback may have destroyed this object.
+        if (!m_hooks.startTimer) {
+            trip(deviceId, false);
+            return false; // The stop callback may have destroyed this object.
+        }
+        reschedule();
+        return false;
     }
     if (sequence <= watch.lastSequence) {
         // A copy (the same keepalive by another path) or one overtaken.
