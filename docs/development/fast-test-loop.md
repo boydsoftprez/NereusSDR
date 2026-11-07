@@ -176,6 +176,41 @@ To add a test to the group, register it with
 up with the wall clock, not for one that merely waits with a generous
 timeout.
 
+## The test rule
+
+J.J. Boyd's rule, 2026-11-06.
+
+- **While working:** run only the tests for the code you changed. After a
+  failure, re-run only what failed.
+- **Before main:** the full set runs once, on GitHub, when a pull request is
+  marked ready. Land ready pull requests as a group where you can, so they
+  share one run. After a failure, re-run only the failed jobs.
+- **Phone tap-through tests (the UI tests):** only when the phone app changed,
+  and only in that run.
+- **Before a release:** one full run on main, started by hand from the Actions
+  tab, for both CI and iOS. Nothing else tests the merged result: two pull
+  requests that each pass can break main together, and release builds configure
+  with tests off.
+- **Kept:** license checks and transmit tests.
+- **Dropped:** stress runs, break-on-purpose runs, repeats of passing tests,
+  repeat review rounds (one review, one fix round), and testing combined builds
+  (build it and check it starts).
+- **A test that fails only sometimes** gets one look and a note, and becomes a
+  job only if it keeps blocking work.
+
+What CI runs for this:
+
+| Event | What runs |
+| --- | --- |
+| Push to a draft pull request | Compliance, rendezvous and Roundtable only |
+| Marking a draft ready, or a push once it's ready | Everything, with the required checks |
+| Push to main | No tests; builds that keep the hosted compiler caches warm |
+| By hand, from the Actions tab | Everything; on main this also refreshes the saved test times |
+
+A draft that reads green has passed only the quick jobs. Its required `Build`
+checks don't report until it's marked ready, so nothing can merge without the
+full run. A draft also has no build artifacts.
+
 ## Test windows
 
 Tests run without windows by default. Every test registered through

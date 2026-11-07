@@ -1181,6 +1181,15 @@
 //               the taker through it: on a Core no desktop hosts the
 //               Core's own position was named with nothing. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a release that ended a key tells the watchdog it was read,
+//               so a watch left only for VOX counts its silence afresh. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: on a key with no "tx" copy read yet, the session's
+//               tx.keepalive reaches the watchdog and the cut guard with its
+//               wait since receipt, where its link reports one (a data channel
+//               on a direct or TURN pair; over the web relay, whose leg reads on
+//               main, not for a stall that began before the leg's read). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -4619,8 +4628,21 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 reply(result);
                 return;
             }
+            // Maintainer's ruling, 2026-11-05: a release that ended this
+            // device's key, read here, restarts the silence of a watch left
+            // only for its armed VOX (RemoteTxWatchdog::releaseRead).
+            const bool isRelease = command.verb == RemoteKeying::Verb::Unkey
+                || ((command.verb == RemoteKeying::Verb::Tune
+                     || command.verb == RemoteKeying::Verb::TwoTone)
+                    && !command.on);
+            const bool wasKeyed = isRelease && m_radioModel
+                && m_radioModel->keyedBy().deviceId == command.deviceId;
             // Task 36: a key waiting for its microphone buffer answers later.
             m_remoteKeying->handle(command, std::move(reply));
+            if (wasKeyed && m_txWatchdog && m_radioModel
+                && m_radioModel->keyedBy().deviceId != command.deviceId) {
+                m_txWatchdog->releaseRead(command.deviceId);
+            }
         };
         // Task 37: tx.keepalive on the session's own link.
         access.keepalive = [this](const QByteArray& requester, quint64 sequence, quint32 epoch) {
@@ -4628,15 +4650,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // Control logging lane: logged after, as it was watched,
                 // with its wait since the control link received it.
                 const bool watched = m_txWatchdog->isWatching(requester);
-                const std::optional<qint64> waitUs = m_dispatchingTransport != nullptr
-                    ? m_dispatchingTransport->deliveringMessageWaitUs()
-                    : std::nullopt;
+                // Heard when it came off the network, where the link says, on a
+                // key with no "tx" copy read yet. One answer for both halves.
+                const qint64 waitUs = dispatchingMessageAgeUs();
+                const qint64 ageUs = sessionKeepaliveAgeUs(requester, waitUs);
                 if (m_txWatchdog->keepalive(requester, sequence, epoch,
-                                            RemoteTxWatchdog::Path::Session)) {
-                    noteKeepaliveForCutGuard(requester, 0);
+                                            RemoteTxWatchdog::Path::Session, ageUs / 1000)) {
+                    noteKeepaliveForCutGuard(requester, ageUs);
                 }
                 controlLogKeepalive(requester, ControlLog::KeepaliveChannel::Control,
-                                    waitUs.value_or(0) / 1000, watched);
+                                    waitUs / 1000, watched);
             }
         };
         access.keepaliveV2 = [this](const QByteArray& requester, const TxKeepalive& value) {
@@ -4644,15 +4667,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // Control logging lane: logged after, as it was watched,
                 // with its wait since the control link received it.
                 const bool watched = m_txWatchdog->isWatching(requester);
-                const std::optional<qint64> waitUs = m_dispatchingTransport != nullptr
-                    ? m_dispatchingTransport->deliveringMessageWaitUs()
-                    : std::nullopt;
-                if (m_txWatchdog->keepalive(requester, value,
-                                            RemoteTxWatchdog::Path::Session)) {
-                    noteCwKeepalive(requester, value, 0);
+                // Heard when it came off the network, where the link says, on a
+                // key with no "tx" copy read yet. One answer for both halves.
+                const qint64 waitUs = dispatchingMessageAgeUs();
+                const qint64 ageUs = sessionKeepaliveAgeUs(requester, waitUs);
+                if (m_txWatchdog->keepalive(requester, value, RemoteTxWatchdog::Path::Session,
+                                            ageUs / 1000)) {
+                    noteCwKeepalive(requester, value, ageUs);
                 }
                 controlLogKeepalive(requester, ControlLog::KeepaliveChannel::Control,
-                                    waitUs.value_or(0) / 1000, watched);
+                                    waitUs / 1000, watched);
             }
         };
         // Task 77 (ruling 7.7): the transmitter's own settings are the
@@ -11355,6 +11379,19 @@ void StationServer::recoverRemoteCw(quint32 epoch)
         || !m_transmitHolder || !m_transmitHolder->isHeldBy(activity.deviceId)
         || !m_txWatchdog->isWatching(activity.deviceId) || m_txWatchdog->isHeld(activity.deviceId)) { return; }
     m_radioModel->resumeRemoteCw(epoch);
+}
+
+qint64 StationServer::sessionKeepaliveAgeUs(const QByteArray& deviceId, qint64 waitUs) const
+{
+    return m_txWatchdog && !m_txWatchdog->txChannelHeard(deviceId) ? waitUs : 0;
+}
+
+qint64 StationServer::dispatchingMessageAgeUs() const
+{
+    if (m_dispatchingTransport == nullptr) {
+        return 0;
+    }
+    return std::max<qint64>(0, m_dispatchingTransport->deliveringMessageWaitUs().value_or(0));
 }
 
 void StationServer::noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs)

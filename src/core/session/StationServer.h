@@ -2396,6 +2396,14 @@ private:
     // counted for `deviceId`, `ageUs` after its receipt, also moves the
     // guard's last-heard when the guard is armed for that device.
     void noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs);
+    /// How long the message now being dispatched waited since its receipt
+    /// off the network (microseconds), or 0 where its link does not say: a
+    /// WebSocket, or a message a session move held on its new connection.
+    /// A session keepalive with 0 counts as heard when read.
+    qint64 dispatchingMessageAgeUs() const;
+    // The age a session keepalive carries to the watchdog and the cut guard:
+    // its wait, on a key with no "tx" copy read yet (txChannelHeard), else 0.
+    qint64 sessionKeepaliveAgeUs(const QByteArray& deviceId, qint64 waitUs) const;
     void noteCwKeepalive(const QByteArray& deviceId, const TxKeepalive& value, qint64 ageUs);
     bool deviceHasCwV2(const QByteArray& deviceId) const;
     void recoverRemoteCw(quint32 epoch);
