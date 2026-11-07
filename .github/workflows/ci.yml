@@ -574,7 +574,8 @@ jobs:
       # all four shards run concurrently.
       #
       # macOS + Windows stay single-job. macOS builds the app only;
-      # Windows also builds the named audio catalogue/notifier tests.
+      # Windows also builds the named audio catalogue/notifier tests and
+      # the station lock tests.
       #
       # `shard` / `shards` only apply on Linux entries; macOS / Windows
       # leave them unset so CMake's NEREUS_TEST_SHARDS defaults to 0 (no
@@ -1223,7 +1224,7 @@ jobs:
           case "$RUNNER_OS" in
             Linux)   cmake --build build -j"$(nproc)" --target all all_tests ;;
             macOS)   cmake --build build -j"$(sysctl -n hw.ncpu)" ;;
-            Windows) cmake --build build -j"$NUMBER_OF_PROCESSORS" --target all tst_wasapi_notifier_lifetime tst_wasapi_policy tst_audio_device_catalog ;;
+            Windows) cmake --build build -j"$NUMBER_OF_PROCESSORS" --target all tst_wasapi_notifier_lifetime tst_wasapi_policy tst_audio_device_catalog tst_station_foreign_lock tst_station_handover ;;
           esac
 
       # Every libcrypto or libssl the built binaries link must be openssl@3's
@@ -1322,6 +1323,8 @@ jobs:
             build/tests/tst_wasapi_policy.exe
             build/tests/tst_wasapi_notifier_lifetime.exe
             build/tests/tst_audio_device_catalog.exe
+            build/tests/tst_station_foreign_lock.exe
+            build/tests/tst_station_handover.exe
             build/*.dll
             third_party/fftw3/bin/*.dll
           retention-days: 7
