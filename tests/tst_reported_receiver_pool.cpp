@@ -48,6 +48,7 @@
 #include "core/HpsdrModel.h"
 #include "core/RadioDiscovery.h"
 #include "core/ReceiverManager.h"
+#include "core/codec/P2CodecOrionMkII.h"
 #include "gui/setup/hardware/RadioInfoTab.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -228,6 +229,123 @@ private slots:
         // The two-argument form is the no-report form.
         QCOMPARE(BoardCapsTable::userDdcCountFor(g2, ProtocolVersion::Protocol2),
                  BoardCapsTable::userDdcCountFor(g2, ProtocolVersion::Protocol2, 0));
+    }
+
+    // The gateware 2-ADC family: the report counts every DDC, DDC0 and DDC1
+    // included, and an index at or above it does not exist.
+    void gateware_family_report_limits_ddcs_and_the_pool()
+    {
+        const auto p2 = ProtocolVersion::Protocol2;
+        for (HPSDRHW board : {HPSDRHW::OrionMKII, HPSDRHW::Orion, HPSDRHW::Angelia,
+                              HPSDRHW::Andromeda}) {
+            const BoardCapabilities& caps = BoardCapsTable::forBoard(board);
+            QCOMPARE(BoardCapsTable::ddcIndexLimit(caps, p2, 5), 5);
+            QCOMPARE(BoardCapsTable::userDdcCountFor(caps, p2, 5), 3);
+            QCOMPARE(BoardCapsTable::userDdcCountFor(caps, p2, 4), 2);
+            QCOMPARE(BoardCapsTable::userDdcCountFor(caps, p2, 6), 4);
+            QCOMPARE(BoardCapsTable::userDdcCountFor(caps, p2, 7), 5);
+            QCOMPARE(BoardCapsTable::ddcIndexLimit(caps, p2, 8), 8);
+            QCOMPARE(BoardCapsTable::userDdcCountFor(caps, p2, 8), 5);
+            QCOMPARE(BoardCapsTable::ddcIndexLimit(caps, p2, 0), 0);
+            QCOMPARE(BoardCapsTable::userDdcCountFor(caps, p2, 0), 5);
+            // A report that leaves no DDC for receiver 0 still leaves it DDC2.
+            QCOMPARE(BoardCapsTable::ddcIndexLimit(caps, p2, 2), 3);
+            QCOMPARE(BoardCapsTable::userDdcCountFor(caps, p2, 2), 1);
+            // Max RX stays the radio's own number.
+            QCOMPARE(BoardCapsTable::effectiveReceiverCount(caps, p2, 5), 5);
+        }
+    }
+
+    // Saturn's report is a fixed value, not its DDC count (p2app.c:427,
+    // saturnregisters.h:22 [@4b0b76f]). 1-ADC boards have other codecs and
+    // other shapes, and Protocol 1 ignores the report. Nothing changes for any.
+    void other_boards_have_no_ddc_limit()
+    {
+        const auto p2 = ProtocolVersion::Protocol2;
+        const BoardCapabilities& g2 = BoardCapsTable::forBoard(HPSDRHW::Saturn);
+        const BoardCapabilities& g2mk2 = BoardCapsTable::forBoard(HPSDRHW::SaturnMKII);
+        QCOMPARE(BoardCapsTable::ddcIndexLimit(g2, p2, 4), 0);
+        QCOMPARE(BoardCapsTable::userDdcCountFor(g2, p2, 4), 4);
+        QCOMPARE(BoardCapsTable::ddcIndexLimit(g2mk2, p2, 4), 0);
+        QCOMPARE(BoardCapsTable::userDdcCountFor(g2mk2, p2, 4), 4);
+
+        for (HPSDRHW board : {HPSDRHW::Atlas, HPSDRHW::Hermes, HPSDRHW::HermesII,
+                              HPSDRHW::HermesC10, HPSDRHW::HermesLite,
+                              HPSDRHW::HermesLiteRxOnly, HPSDRHW::Unknown}) {
+            const BoardCapabilities& caps = BoardCapsTable::forBoard(board);
+            for (int reported : {0, 1, 2, 4, 5, 8}) {
+                QCOMPARE(BoardCapsTable::ddcIndexLimit(caps, p2, reported), 0);
+                const int fromRow = BoardCapsTable::userDdcCountFor(caps, p2);
+                const int expected = reported > 0
+                    ? std::min(fromRow, std::min(caps.maxReceivers, reported)) : fromRow;
+                QCOMPARE(BoardCapsTable::userDdcCountFor(caps, p2, reported), expected);
+            }
+        }
+
+        const BoardCapabilities& orion = BoardCapsTable::forBoard(HPSDRHW::OrionMKII);
+        QCOMPARE(BoardCapsTable::ddcIndexLimit(orion, ProtocolVersion::Protocol1, 5), 0);
+        QCOMPARE(BoardCapsTable::userDdcCountFor(orion, ProtocolVersion::Protocol1, 5), 4);
+    }
+
+    // JJ's radio, 2026-11-06: through the real discovery parse and the same
+    // RadioInfo the model keeps, a report of 5 gives three pans on DDC2, DDC3
+    // and DDC4; a fourth separate pan is refused, and more slices on an
+    // existing pan still work.
+    void anvelina_reporting_five_gets_three_streams_on_ddcs_it_has()
+    {
+        RadioModel model;
+        model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+        P2CodecOrionMkII codec;
+        model.receiverManager()->setP2Codec(&codec);
+        QTest::failOnWarning(QRegularExpression(QStringLiteral("Cannot create receiver")));
+
+        const RadioInfo info = parsedP2(HPSDRHW::OrionMKII, 5);
+        QCOMPARE(connectPool(model, info), 3);
+        QCOMPARE(model.streamPoolSize(), 3);
+        QCOMPARE(model.userStreamCount(), 3);
+        QCOMPARE(model.maxActiveRxCount(), 5);
+        QCOMPARE(model.currentCodecContextForTest().ddcIndexLimit, 5);
+
+        QSignalSpy rejected(&model, &RadioModel::sliceAddRejected);
+        for (int pan = 0; pan < 3; ++pan) {
+            model.addSliceOnPan(QStringLiteral("pan-%1").arg(pan));
+        }
+        QCOMPARE(rejected.count(), 0);
+        QCOMPARE(model.activeStreamCount(), 3);
+
+        std::array<SliceConfig, 5> live{};
+        for (int st = 0; st < 3; ++st) {
+            live[st].live = true;
+            live[st].sampleRateHz = 192000;
+            live[st].antennaIndex = 1;
+        }
+        const DdcAssignment a =
+            codec.applyDdcAssignment(model.currentCodecContextForTest(), live);
+        QCOMPARE(a.ddcEnable, 0x1c);
+
+        const int before = model.slices().size();
+        model.addSliceOnPan(QStringLiteral("pan-3"));
+        QCOMPARE(model.slices().size(), before);
+        QCOMPARE(rejected.count(), 1);
+        QVERIFY2(rejected.at(0).at(0).toString().contains(
+                     QStringLiteral("All 3 of the radio's receivers are in use")),
+                 qPrintable(rejected.at(0).at(0).toString()));
+
+        model.addSliceOnPan(QStringLiteral("pan-0"));
+        QCOMPARE(rejected.count(), 1);
+        QCOMPARE(model.slices().size(), before + 1);
+    }
+
+    // Reporting 8 or nothing keeps today's five streams and the whole order.
+    void anvelina_reporting_eight_or_none_keeps_five_streams()
+    {
+        for (int reported : {8, 0}) {
+            RadioModel model;
+            model.setHpsdrModelForTest(HPSDRModel::ANVELINAPRO3);
+            QCOMPARE(connectPool(model, parsedP2(HPSDRHW::OrionMKII, reported)), 5);
+            QCOMPARE(model.streamPoolSize(), 5);
+            QCOMPARE(model.currentCodecContextForTest().ddcIndexLimit, reported);
+        }
     }
 
     // Protocol 1 is unchanged: its frame slot plan sets the count.

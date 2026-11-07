@@ -55,6 +55,10 @@
 //   2026-10-12 - A saved radio keeps the second firmware number its
 //                 discovery reply carried (firmwareBetaVersion). J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - A saved radio keeps the receiver count its discovery
+//                 reply carried (reportedReceivers), so connecting from the
+//                 saved entry sizes the stream pool as discovery would.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-15 - addWriteObserver(): setValue() and remove() also tell
 //                 the write observers, beside the change hook. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1385,6 +1389,12 @@ void AppSettings::saveRadio(const RadioInfo& info, bool pinToMac, bool autoConne
     setValue(prefix + QStringLiteral("firmwareVersion"), QString::number(info.firmwareVersion));
     setValue(prefix + QStringLiteral("firmwareBetaVersion"),
              QString::number(info.firmwareBetaVersion));
+    // Only a real report replaces the saved one: an edit of the entry or a
+    // hand-typed address has no reply to read it from.
+    if (info.reportedReceivers > 0) {
+        setValue(prefix + QStringLiteral("reportedReceivers"),
+                 QString::number(info.reportedReceivers));
+    }
     setValue(prefix + QStringLiteral("pinToMac"),        pinToMac   ? QStringLiteral("True") : QStringLiteral("False"));
     setValue(prefix + QStringLiteral("autoConnect"),     autoConnect ? QStringLiteral("True") : QStringLiteral("False"));
     setValue(prefix + QStringLiteral("lastSeen"),
@@ -1406,6 +1416,18 @@ void AppSettings::setRadioAutoConnect(const QString& macKey, bool autoConnect)
     }
     setValue(prefix + QStringLiteral("autoConnect"),
              autoConnect ? QStringLiteral("True") : QStringLiteral("False"));
+}
+
+bool AppSettings::refreshRadioReportedReceivers(const QString& macKey, int reportedReceivers)
+{
+    const QString prefix = radioKeyPrefix(macKey);
+    const QString key = prefix + QStringLiteral("reportedReceivers");
+    if (reportedReceivers <= 0 || !contains(prefix + QStringLiteral("name"))
+        || value(key, QStringLiteral("0")).toInt() == reportedReceivers) {
+        return false;
+    }
+    setValue(key, QString::number(reportedReceivers));
+    return true;
 }
 
 void AppSettings::forgetRadio(const QString& macKey)
@@ -1486,6 +1508,12 @@ std::optional<SavedRadio> AppSettings::savedRadio(const QString& macKey) const
     // Absent in a radio saved before 2026-10-12: none reported.
     sr.info.firmwareBetaVersion = value(prefix + QStringLiteral("firmwareBetaVersion"),
                                         QStringLiteral("0")).toInt();
+    // Absent in a radio saved before 2026-11-06: none reported.
+    sr.info.reportedReceivers = value(prefix + QStringLiteral("reportedReceivers"),
+                                      QStringLiteral("0")).toInt();
+    if (sr.info.reportedReceivers > 0) {
+        sr.info.maxReceivers = sr.info.reportedReceivers;
+    }
 
     // Saved-only flags
     sr.pinToMac    = (value(prefix + QStringLiteral("pinToMac"),

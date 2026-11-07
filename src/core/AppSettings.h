@@ -561,6 +561,10 @@ public:
     // would also rewrite its other fields and its lastSeen time). No-op for
     // a radio that is not saved.
     void setRadioAutoConnect(const QString& macKey, bool autoConnect);
+    // A discovery reply's receiver count for a radio already saved, so a later
+    // direct connect to the saved address knows it. Returns true when the saved
+    // value changed; an unsaved radio or a report of 0 changes nothing.
+    bool refreshRadioReportedReceivers(const QString& macKey, int reportedReceivers);
 
     // Remove the entry for macKey. No-op if not found.
     void forgetRadio(const QString& macKey);

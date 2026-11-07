@@ -31,6 +31,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - applyDdcAssignment leaves out DDCs at or above the radio's
+//                reported count (ctx.ddcIndexLimit). J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-04-20 — Reimplemented in C++20/Qt6 for NereusSDR by J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code. Lifted from P2RadioConnection inline compose
@@ -1274,9 +1277,26 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     // ADC and rate the same way (Rx_specific_C&C.v:218-221 [@8e86a61]).
     // DDC6 has not been captured on this radio. DDC4 stays in the table so
     // a fifth stream still has a receiver.
+    //
+    // Bench, 2026-11-06 (KG4VCF's Anvelina Pro 3, gateware 22.15): the radio
+    // reports 5 receivers (discovery byte 20), DDC0 to DDC4. With DDC2 to
+    // DDC6 enabled at 1,536 kHz, ports 1037 to 1039 (DDC2 to DDC4) deliver at
+    // full rate and ports 1040 and 1041 (DDC5 and DDC6) deliver nothing. DDC4
+    // shows no comb on this gateware. NR changes between firmware releases, so
+    // the order above is a preference and the filter below removes what the
+    // radio does not have: reported 5 gives DDC2, DDC3, DDC4; reported 8 or no
+    // report keeps the whole order. NereusSDR's own policy; Thetis takes DDC
+    // counts from the model (BoardCapsTable::ddcIndexLimit).
     static constexpr int kAnvelinaStreamToDdc[5] = {2, 3, 5, 6, 4};
-    const int* const streamToDdc = (ctx.model == HPSDRModel::ANVELINAPRO3)
+    const int* const preferredDdcs = (ctx.model == HPSDRModel::ANVELINAPRO3)
         ? kAnvelinaStreamToDdc : kStreamToDdc;
+    int streamToDdc[5] = {};
+    int usableStreams = 0;
+    for (int i = 0; i < 5; ++i) {
+        if (ctx.ddcIndexLimit <= 0 || preferredDdcs[i] < ctx.ddcIndexLimit) {
+            streamToDdc[usableStreams++] = preferredDdcs[i];
+        }
+    }
 
     // ADC control from Thetis console.cs:8249 [v2.10.3.15]:
     //   cntrl1 = rx_adc_ctrl1 & 0xff;  (default rx_adc_ctrl1=4, console.cs:15099)
@@ -1297,6 +1317,9 @@ DdcAssignment P2CodecOrionMkII::applyDdcAssignment(
     // (DDC5, DDC6, DDC4 on an Anvelina Pro 3; see kAnvelinaStreamToDdc).
     for (int i = 0; i < 5; ++i) {
         if (!slices[i].live) { continue; }
+        // The stream pool is sized to match (BoardCapsTable::userDdcCountFor),
+        // so a live stream should not land here; it gets no DDC if one does.
+        if (i >= usableStreams) { continue; }
         const int ddc = streamToDdc[i];
         // Phase 3F Sub-Epic I Task 7b: publish the mapping explicitly.
         a.streamDdc[i] = ddc;

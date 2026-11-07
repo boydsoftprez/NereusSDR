@@ -20,6 +20,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 — currentCodecContext hands the codec the radio's DDC limit
+//                 (BoardCapsTable::ddcIndexLimit). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -38365,6 +38368,10 @@ NereusSDR::CodecContext RadioModel::currentCodecContext() const
     // PureSignal transmits (P1CodecStandard::applyDdcAssignment). Seeded
     // before the test seam for the same reason as adcCtrl.
     ctx.model = m_hardwareProfile.model;
+    // Which DDCs the radio has. From the same RadioInfo as the stream pool, so
+    // the pool and the codec agree on every connect path.
+    ctx.ddcIndexLimit = BoardCapsTable::ddcIndexLimit(
+        boardCapabilities(), m_lastRadioInfo.protocol, m_lastRadioInfo.reportedReceivers);
     const SliceModel* diversityOwner = sliceById(m_diversityTargetSliceId);
     ctx.diversityStream = diversityOwner ? diversityOwner->streamIndex() : 0;
 
