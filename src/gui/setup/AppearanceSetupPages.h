@@ -5,10 +5,16 @@
 // in AppearanceSetupPages.cpp.
 //
 // Modification history (NereusSDR):
+//   2026-11-05 - NEREUS_GUI_EXPORT: this class's signals are used from outside
+//                 its DLL. Without the export their addresses were MinGW's
+//                 auto-import thunks, which moc's code does not recognize,
+//                 so a QSignalSpy or connect on them failed on Windows.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - PR 677 review fix wave (I3): the marker above. J.J. Boyd
 //                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 #include "gui/SetupPage.h"
+#include "gui/NereusGuiExport.h"
 
 class QSlider;
 class QComboBox;
@@ -60,7 +66,7 @@ private:
 // ---------------------------------------------------------------------------
 // Appearance > Meter Styles
 // ---------------------------------------------------------------------------
-class MeterStylesPage : public SetupPage {
+class NEREUS_GUI_EXPORT MeterStylesPage : public SetupPage {
     Q_OBJECT
 public:
     explicit MeterStylesPage(RadioModel* model, QWidget* parent = nullptr);
