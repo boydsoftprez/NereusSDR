@@ -26,6 +26,9 @@
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: no Nagle on the tunnel's connection to the relay.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06: a message waits for the leg's thread before it reaches the
+//               agent. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 // =================================================================
 
 #include <QtTest>
@@ -46,6 +49,7 @@
 #include <QWebSocket>
 #include <QWebSocketServer>
 
+#include <chrono>
 #include <memory>
 #include <thread>
 
@@ -181,6 +185,43 @@ private slots:
     {
         SystemProxy::setProxyForTest(std::nullopt);
         HappyEyeballs::setResolverForTest({});
+    }
+
+    // Why a session over the web relay gets no real age (the rule in
+    // RemoteTxWatchdog.h). A real RelayLeg, joined. A message the relay sends
+    // while this thread is stalled waits for the leg's socket: nothing reaches
+    // the ICE agent until this thread runs again. So a data channel behind the
+    // leg stamps it after the stall, with no age for that stall. A stall that
+    // begins after the leg's write is another matter: that message gets its
+    // age. This proves that much about the leg. It runs no data channel and no
+    // watchdog; the result, a keepalive counted as heard when read, is pinned on
+    // the WebSocket rows of tst_tx_link_loss_each_path, which behave the same.
+    void aMessageWaitsForTheLegsThreadBeforeReachingTheAgent()
+    {
+        RelayPlayer relay;
+        RelayLeg leg;
+        QVERIFY(leg.bindLanes());
+        QUdpSocket agent;
+        QVERIFY(agent.bind(QHostAddress::LocalHost, 0));
+        leg.setAgentForTest(1, QHostAddress::LocalHost, agent.localPort());
+        leg.open(relay.url(), QStringLiteral("tok"));
+        std::shared_ptr<Accepted> current = relay.waitForConnection();
+        QVERIFY(current);
+        QTRY_VERIFY(!current->received.isEmpty()); // JOIN
+        current->socket->sendBinaryMessage(QByteArray("\x81\x01\x00", 3));
+        QTRY_COMPARE(leg.state(), RelayLeg::State::Joined);
+
+        const QByteArray payload = QByteArrayLiteral("a keepalive");
+        current->socket->sendBinaryMessage(QByteArray(1, char(kTagControl)) + payload);
+        // flush() is false when nothing was left to write, so it says nothing
+        // here; what matters is that nothing is left in Qt's buffer.
+        current->socket->flush();
+        QCOMPARE(current->socket->bytesToWrite(), qint64(0));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        QVERIFY2(!agent.hasPendingDatagrams(), "the agent got it with the leg's thread stalled");
+
+        QTRY_VERIFY(agent.hasPendingDatagrams());
+        QCOMPARE(agent.receiveDatagram().data(), payload);
     }
 
     void routeObservationFollowsUsablePeerAndCurrentSocket()

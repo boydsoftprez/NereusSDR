@@ -20,6 +20,10 @@
 //               and cuts after more than kCutMs; arm(), disarm() and the
 //               destructor release a hold. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-06: A keepalive that came in time and is read behind a stall now
+//               counts on a guard that is not judging, so a key that survived
+//               the stall is not cut when it starts CW. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/safety/RemoteTxCutGuard.h"
@@ -88,6 +92,12 @@ void RemoteTxCutGuard::useControlledClockForTest(Clock::time_point start)
     m_controlledClock = true;
     m_controlledNow = start;
 }
+RemoteTxCutGuard::Clock::time_point RemoteTxCutGuard::lastHeardForTest()
+{
+    const std::lock_guard<std::mutex> lock(m_mutex);
+    return m_lastHeard;
+}
+
 void RemoteTxCutGuard::advanceClockForTest(std::chrono::milliseconds elapsed)
 {
     {
@@ -246,7 +256,11 @@ bool RemoteTxCutGuard::heardKeepaliveLocked(const TxKeepalive& value, Clock::tim
         || (m_keyEpoch != 0 && value.epoch < m_keyEpoch)
         || (m_cwEpoch != 0 && value.cwEpoch != m_cwEpoch)
         || at - m_lastHeard > std::chrono::milliseconds(kCutMs)
-        || nowLocked() - m_lastHeard > std::chrono::milliseconds(kCutMs)
+        // While judging, the thread cuts at this moment. Not judging, nothing
+        // here cuts, and one that came in time but is read behind a stall
+        // moves the count to when it came. One that came past the cut does
+        // not, by the check above (G-73).
+        || (m_judging.load() && nowLocked() - m_lastHeard > std::chrono::milliseconds(kCutMs))
         || (m_holding.load() && nowLocked() - m_heldSince
             > std::chrono::milliseconds(RemoteTxWatchdog::kLinkHoldMaxMs))) {
         return false;
