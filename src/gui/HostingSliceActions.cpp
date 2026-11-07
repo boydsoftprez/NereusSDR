@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: band stack plan Task 6: bindBandStack, runBandStack. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic Claude
+//               Code.
 //   2026-09-29: original implementation for NereusSDR by J.J. Boyd
 //               (KG4VCF), slice control and shared listening plan Task 10,
 //               with AI-assisted implementation via Anthropic Claude Code.
@@ -21,6 +24,8 @@
 //               card's Take it back record goes. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
+//   2026-11-05: addOnPan says when it is the fill at connect (restoredFill).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 
 #include "gui/HostingSliceActions.h"
 
@@ -98,6 +103,9 @@ HostingSliceActions::HostingSliceActions(StationServer* server, RadioModel* mode
 
 HostingSliceActions::~HostingSliceActions()
 {
+    if (m_bandStack) {
+        m_bandStack->setInvoker({});
+    }
     if (m_server) {
         m_server->setStationNoticeHandler({});
     }
@@ -149,14 +157,55 @@ void HostingSliceActions::select(int sliceId)
     run(QByteArrayLiteral("setActiveSliceById"), sliceId, {intArg("sliceId", sliceId)});
 }
 
-void HostingSliceActions::addOnPan(const QString& panId)
+void HostingSliceActions::addOnPan(const QString& panId, bool restoredFill)
 {
-    run(QByteArrayLiteral("addSliceOnPan"), -1, {utf8Arg("panId", panId)});
+    QList<MirrorUpdate> arguments{utf8Arg("panId", panId)};
+    if (restoredFill) {
+        arguments.append(boolArg("restoredFill", true));
+    }
+    run(QByteArrayLiteral("addSliceOnPan"), -1, arguments);
 }
 
 void HostingSliceActions::close(int sliceId)
 {
     run(QByteArrayLiteral("removeSlice"), sliceId, {intArg("sliceId", sliceId)});
+}
+
+void HostingSliceActions::bindBandStack(LocalBandStackAccess* access)
+{
+    if (m_bandStack) {
+        m_bandStack->setInvoker({});
+    }
+    m_bandStack = access;
+    if (!m_bandStack) {
+        return;
+    }
+    const QPointer<HostingSliceActions> self(this);
+    m_bandStack->setInvoker([self](const SessionMessage& invoke) {
+        if (self) {
+            self->runBandStack(invoke);
+        }
+    });
+}
+
+void HostingSliceActions::runBandStack(const SessionMessage& invoke)
+{
+    int sliceId = -1;
+    for (const MirrorUpdate& argument : invoke.arguments) {
+        if (argument.name == "sliceId") {
+            sliceId = static_cast<int>(argument.value.toLongLong());
+        }
+    }
+    run(invoke.commandVerb, sliceId, invoke.arguments);
+}
+
+void HostingSliceActions::emitRefused(const QByteArray& verb, const QString& reason)
+{
+    if (m_bandStack && verb.startsWith("bandStack.")) {
+        m_bandStack->reportInvokerRefusal(reason);
+    } else {
+        emit refused(reason);
+    }
 }
 
 void HostingSliceActions::proceed(qint64 questionId, qint64 choice)
@@ -186,7 +235,7 @@ void HostingSliceActions::run(const QByteArray& verb, int sliceId,
 {
     if (!m_server) {
         const QString reason = QStringLiteral("This computer is not sharing the radio now.");
-        emit refused(reason);
+        emitRefused(verb, reason);
         emit finished(verb, sliceId, false, reason);
         return;
     }
@@ -227,7 +276,10 @@ void HostingSliceActions::onAnswer(const QByteArray& verb, int sliceId,
         emit pending(sliceId, false);
     }
     if (!result.accepted && !result.reason.isEmpty()) {
-        emit refused(result.reason);
+        emitRefused(verb, result.reason);
+        if (!self) {
+            return;
+        }
     }
     emit finished(verb, sliceId, result.accepted, result.reason);
     // Take-over fix wave (M-3): a controlTaken card goes when control came

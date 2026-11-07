@@ -9,6 +9,8 @@
 // 2026-10-24: the app runs Roundtable's verbs fixture. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-26: CW transmit, the app's hello declares remoteCw 1 and cwSettings
 //   1. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-06: the app declares bandStack 1 and runs its verbs fixture.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import LinkSessionTestSupport
@@ -36,7 +38,10 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 90)
+        #expect(fixtures.count == 91)
+        // The band stack's thirteen verbs (bandStackVersion 1), now the app
+        // declares bandStack 1.
+        #expect(fixtures.contains { $0.id == "session-verbs-band-stack" })
         // Roundtable's thirteen verbs (stationRoundtableVersion 1), now the
         // app also exercises frequency chat with roundtable 2.
         #expect(fixtures.contains { $0.id == "session-verbs-roundtable" })
@@ -191,7 +196,8 @@ import Testing
                                   "rxFilterLowPass": 1, "radeReason": 1, "audioQuality": 1, "stationCat": 1,
                                   "radioSpeaker": 1, "coreSpeaker": 1,
                                   "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
-                                  "roundtable": 2, "remoteCw": 2, "cwSettings": 1, "nnrLoadWarning": 1])
+                                  "roundtable": 2, "remoteCw": 2, "cwSettings": 1, "nnrLoadWarning": 1,
+                                  "bandStack": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the

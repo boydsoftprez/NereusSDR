@@ -4,6 +4,10 @@
 //               direct path during a speaker fault, so that path has no
 //               restart loop either. receiveDisplayForTest. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06: A pan refused for a slice asks again when this window comes to
+//               control it, and a source retirement with a display budget
+//               clears a pan's wide state. J.J. Boyd (KG4VCF),
+//               AI-assisted via Claude Code.
 //   2026-11-05: a speaker failure says nothing about display, so a display
 //               that stops during one still moves a direct path to the tunnel
 //               and, on its own clock lastDisplayMs, once per outage, still
@@ -20,6 +24,8 @@
 //               the session; the silence rules count from the end of that
 //               stop. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //               Code.
+//   2026-11-05: A window asks the Core at its own paint rate. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: bounded passive retry schedule history and a hold boundary
 //               for canceled startup steps. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -923,10 +929,9 @@ DbmWindow heldDbmWindow(const SpectrumWidget* widget, double binWidthHz,
 
 int requestedFps()
 {
-    return qBound(1, AppSettings::instance().value(
-                         QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                         QString::number(ControlRanges::kDisplaySpectrumFpsDefault))
-                         .toString().toInt(), 60);
+    // This window's own rate: each endpoint is sent at the rate its window
+    // asks (DaemonMediaController), so a slow machine asks for less.
+    return readDisplayPaintFps(AppSettings::instance());
 }
 
 // The FFT size a pan asks for, from the station's sizing mode (design D38,
@@ -1485,6 +1490,8 @@ struct RemoteMediaController::Private {
     // the Core said (CoreBusy); None for a pan at its requested quality.
     // The pan status builder maps it to words.
     QHash<QString, DisplayBudgetReason> panBudgetReason;
+    /// Whether this window controlled each slice at the mirror's last word.
+    QHash<int, bool> sliceControlledHere;
     // Parity Task 17 (R-R3-01, R-R3-04): each pan's dBm window, settled
     // once it has held for a frame period so a drag of the dBm strip asks
     // the Core again when it stops, not at every step.
@@ -2746,9 +2753,10 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         // Slice control plan Task 14a: a change in who controls a slice may
         // turn a refused C-Tune pin into an accepted one, so the next fresh
         // picture may ask again.
-        connect(client->sliceAccess(), &SliceAccessMirror::changed, this, [this](int) {
+        connect(client->sliceAccess(), &SliceAccessMirror::changed, this, [this](int sliceId) {
             for (auto& state : d->ctunStreams) { state.refused = false; }
             refreshCtunState();
+            askAgainForRefusedDisplaysOf(sliceId);
         });
     }
     // The pin delta may follow its command result. Budgeted displays do
@@ -5522,6 +5530,7 @@ void RemoteMediaController::deliverRtp(const QByteArray& packet)
 
 void RemoteMediaController::start()
 {
+    d->sliceControlledHere.clear();
     // stop() reports the retired audio status, and a listener may retire
     // this controller in turn.
     const QPointer<RemoteMediaController> self(this);
@@ -5858,6 +5867,31 @@ bool RemoteMediaController::retireSubscriptions(const QList<quint32>& endpointId
             || d->connectionId != connectionId) { return false; }
     }
     return true;
+}
+
+// A pan refused for a slice this window has just come to control may now be
+// granted, and with its request unchanged nothing else would ask. Only the arrival
+// of control: the mirror reports any change to the slice's entry, MOX edges and
+// listeners included, and a refused pan must not ask again for those.
+void RemoteMediaController::askAgainForRefusedDisplaysOf(int sliceId)
+{
+    const SliceAccessMirror* access = d->client ? d->client->sliceAccess() : nullptr;
+    if (!access) { return; }
+    const bool controlled = access->controlledHere(sliceId);
+    const bool wasControlled = d->sliceControlledHere.value(sliceId, false);
+    d->sliceControlledHere.insert(sliceId, controlled);
+    if (!controlled || wasControlled) { return; }
+    bool cleared = false;
+    for (auto& [endpointId, binding] : d->bindings) {
+        Q_UNUSED(endpointId);
+        if (!binding.slice || binding.slice->sliceIndex() != sliceId
+            || (!binding.rejected && binding.refusedIdentity.isEmpty())) { continue; }
+        binding.observed = {};
+        binding.refusedIdentity.clear();
+        binding.refusalReason.clear();
+        cleared = true;
+    }
+    if (cleared) { refreshSubscriptions(); }
 }
 
 void RemoteMediaController::refreshSubscriptions()
@@ -7946,7 +7980,14 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
             // is SpectrumEndpoint.h's, the constant the Core sends.
             binding.sliceLeftCore = reason == QLatin1String(kRetireReasonSliceRemoved);
             if (erase) { d->bindings.erase(found); }
-            if (widget) { widget->invalidateRemoteSpectrumFrame(); }
+            if (widget) {
+                // A wide view has nothing left to hold it open.
+                if (widget->remoteWidebandActive()) {
+                    widget->clearRemoteSpectrum();
+                } else {
+                    widget->invalidateRemoteSpectrumFrame();
+                }
+            }
             if (!self) { return; }
             refreshSubscriptions();
         }
@@ -8018,7 +8059,12 @@ void RemoteMediaController::receiveAllocationResult(const QJsonObject& payload)
                 }
                 if (erase) { d->bindings.erase(found); }
                 if (widget) {
-                    widget->invalidateRemoteSpectrumFrame();
+                    // A wide view has nothing left to hold it open.
+                    if (widget->remoteWidebandActive()) {
+                        widget->clearRemoteSpectrum();
+                    } else {
+                        widget->invalidateRemoteSpectrumFrame();
+                    }
                     if (!self || !widget) { return; }
                     widget->applyRemoteCtunState(false, false);
                     if (!self) { return; }

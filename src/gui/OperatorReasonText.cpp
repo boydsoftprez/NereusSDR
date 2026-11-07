@@ -60,6 +60,8 @@ constexpr Entry kEntries[] = {
      "This view reaches past the frequencies the receiver covers.", "Refused"},
     {kRetireReasonSourceRetune, "Refused: out of range",
      "The receiver was retuned and no longer covers this view.", "Refused"},
+    {kRetireReasonViewOffReceiver, "Refused: out of range",
+     "This pan's view is off the receiver, and no wideband spectrum can fill it.", "Refused"},
     {"This display's receiver is not on the Core.", "Refused: no slice",
      "This pan's slice is not available on the Core.", "Refused"},
     // iPhone app Task 76 (ruling 9.1): displays only for a device's own slices.

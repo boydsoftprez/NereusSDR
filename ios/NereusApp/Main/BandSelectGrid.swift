@@ -10,10 +10,19 @@ import SwiftUI
 /// shows one greyed row; one that cannot open a band for the phone greys
 /// the buttons, each with the reason under the grid. The Pan sheet draws
 /// it, and so does the band column's BAND menu (R-IOS-58).
+///
+/// Where the Core keeps a band stack a tap goes through the stack, and a
+/// half-second hold shows that band's list and sends nothing; the visible way
+/// to the same list is the stack block's picker.
 struct BandSelectGrid: View {
     @ObservedObject var model: PanSheetModel
-    /// After a band button is tapped: the BAND menu closes.
+    /// The pan's band stack; nil draws the grid alone.
+    var stack: BandStackModel?
+    /// After a band button's tap the stack did not take: the BAND menu closes.
     var selected: () -> Void = {}
+
+    /// A hold that showed a list leaves its finger's lift to the button.
+    @State private var liftIsHold = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -28,10 +37,15 @@ struct BandSelectGrid: View {
                 SheetGrid(columns: 4) {
                     ForEach(buttons) { button in
                         PanelButton(label: button.label, lit: button.lit, style: .blue, disabled: !enabled) {
-                            model.selectBand(button.id)
-                            selected()
+                            if liftIsHold {
+                                liftIsHold = false
+                            } else if !model.pressBand(button.id, stack: stack) {
+                                selected()
+                            }
                         }
+                        .simultaneousGesture(hold(button), including: stack == nil ? .subviews : .all)
                         .accessibilityHint(enabled ? "" : model.bandUnavailableReason)
+                        .accessibilityIdentifier("bandGrid.\(button.label)")
                     }
                 }
                 if !enabled {
@@ -39,5 +53,21 @@ struct BandSelectGrid: View {
                 }
             }
         }
+    }
+
+    /// A new touch starts clean, whatever the last hold's finger did, so a
+    /// hold that slid off its button never swallows the next tap.
+    private func hold(_ button: PanSheetModel.BandButton) -> some Gesture {
+        LongPressGesture(minimumDuration: BandStackModel.holdSeconds)
+            .onChanged { _ in
+                liftIsHold = false
+            }
+            .onEnded { _ in
+                guard let stack, stack.availability == .ready else {
+                    return
+                }
+                liftIsHold = true
+                stack.showBand(BandStackModel.bandKey(label: button.label))
+            }
     }
 }

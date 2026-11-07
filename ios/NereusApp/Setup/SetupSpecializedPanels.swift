@@ -16,6 +16,8 @@ struct SetupSpecializedPanels {
     let make: Make
     var makePa: MakePa?
     var paValues: PaValuesModel?
+    /// Told when this device edits the region, so the Core's new region can ask (spec V1).
+    var bandStackRegion: BandStackRegionPrompt?
 
     init(_ make: @escaping Make, makePa: MakePa? = nil) {
         self.make = make
@@ -61,6 +63,7 @@ struct SetupSpecializedPanels {
                                            pages: app.setupPages, dispatcher: dispatcher))
         }
         panels.paValues = app.paValues
+        panels.bandStackRegion = app.main.bandStackRegion
         return panels
     }
 }

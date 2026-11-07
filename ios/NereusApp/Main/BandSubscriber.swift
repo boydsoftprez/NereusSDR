@@ -20,8 +20,9 @@ import os
 /// wants (``BandModel/requestedView`` after a zoom, a double tap or a pan,
 /// else the active slice in the middle of all its sample rate), with the display
 /// extras the phone's display settings ask for while the Core offers them.
-/// The FFT size, window and frame rate are the Core's own settings
-/// (`DisplayFftSize`, `DisplayFftWindow`, `DisplayHzPerBinTarget`,
+/// The frame rate is this phone's own once its Display pill has set one
+/// (``paintFps``); until then, and for the FFT size and window, the Core's own
+/// settings (`DisplayFftSize`, `DisplayFftWindow`, `DisplayHzPerBinTarget`,
 /// `DisplaySpectrumFps`), read through the settings proxy. When the Core
 /// has not set one, its catalogue's `display` gives the default and the
 /// FFT sizes it computes (link 7.4); a Core without `display` gets the
@@ -147,6 +148,16 @@ final class BandSubscriber: ObservableObject {
             if session.subscribes && !oldValue.subscribes {
                 beginAsking()
             } else {
+                queueReplan()
+            }
+        }
+    }
+
+    /// This phone's own rate, from its Display pill's FPS (kept in
+    /// ``PhoneSettings/displayPaintFps``); nil takes the Core's.
+    var paintFps: Int? {
+        didSet {
+            if paintFps != oldValue {
                 queueReplan()
             }
         }
@@ -619,7 +630,7 @@ final class BandSubscriber: ObservableObject {
                          gates: MediaFeatureGates) -> DisplaySubscription {
         let described = band.catalog?.display
         // The selected data mode caps frames and may halve the detail.
-        let fps = session.fps(min(max(setting("DisplaySpectrumFps")
+        let fps = session.fps(min(max(paintFps ?? setting("DisplaySpectrumFps")
                               ?? Self.describedDefault(described, "DisplaySpectrumFps") ?? Self.defaultFps,
                           DisplayEndpointRequest.fpsRange.lowerBound),
                       DisplayEndpointRequest.fpsRange.upperBound))
