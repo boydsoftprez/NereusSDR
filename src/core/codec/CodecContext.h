@@ -15,6 +15,8 @@
 //   netInterface.c:1416) without making the file a port.
 //
 // Modification history (NereusSDR):
+//   2026-11-06 - ddcIndexLimit: the first DDC the radio does not have
+//                (J.J. Boyd KG4VCF, AI-assisted: Claude Code).
 //   2026-10-26 - ocExtrasByte and kDxWireMask: the Anvelina PRO3 DX open
 //                collector outputs (J.J. Boyd KG4VCF, AI-assisted: Claude
 //                Code).
@@ -79,6 +81,11 @@ struct SliceConfig {
 };
 
 struct CodecContext {
+    // The first DDC index the radio does not have, 0 for no limit
+    // (BoardCapsTable::ddcIndexLimit). P2CodecOrionMkII::applyDdcAssignment
+    // reads it; RadioModel::currentCodecContext sets it.
+    int ddcIndexLimit{0};
+
     // NereusSDR-original: logical target stream, independent of physical pair
     // DDC0/1 and of the one process-wide WDSP External Diversity id.
     int diversityStream{0};
