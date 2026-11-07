@@ -595,6 +595,11 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    // Written here because the log opens only once the profile is owned.
+    if (!ownership.takeoverNote().isEmpty()) {
+        qCWarning(NereusSDR::lcApp).noquote() << ownership.takeoverNote();
+    }
+
     // Task 1: mark this settings store as having seen a nereusd first run,
     // so R2 Task 15's Setup gate can later tell "this profile's settings
     // snapshot is empty because it is a legitimately fresh daemon

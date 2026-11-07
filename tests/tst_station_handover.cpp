@@ -12,6 +12,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QScopeGuard>
+#include <QSysInfo>
 #include <QTcpServer>
 #include <QTemporaryDir>
 #include <QUuid>
@@ -109,6 +110,17 @@ bool controlSocketPresent(const QString& socketPath)
 #endif
 }
 
+// The name QLockFile writes and compares. On Windows that is COMPUTERNAME, which
+// can differ from the DNS name QSysInfo gives.
+QString lockFileMachineName()
+{
+#ifdef Q_OS_WIN
+    return qEnvironmentVariable("COMPUTERNAME");
+#else
+    return QSysInfo::machineHostName();
+#endif
+}
+
 QByteArray fileBytes(const QString& path)
 {
     QFile file(path);
@@ -143,8 +155,8 @@ private slots:
         QVERIFY(!error.isEmpty());
         QFile oldLock(competitor.lockPath());
 #ifdef Q_OS_WIN
-        // QLockFile on Windows opens its file with no sharing, so a live
-        // owner's lock cannot be opened, let alone aged, by anyone else.
+        // QLockFile on Windows shares its open file only for reading, so a live
+        // owner's lock cannot be opened for writing, let alone aged, by anyone else.
         QVERIFY(!oldLock.open(QIODevice::ReadWrite));
 #else
         QVERIFY(oldLock.open(QIODevice::ReadWrite));
@@ -182,6 +194,57 @@ private slots:
         StationHandover recovered(profile);
         QVERIFY(recovered.acquire(1000));
         recovered.release();
+    }
+
+    // The real Core entry point, on this computer's disk: a lock another
+    // computer left does not stop it, and its log says what happened.
+    void coreTakesOverAnotherComputersLockOnThisDisk()
+    {
+        QTemporaryDir scratch;
+        QVERIFY(scratch.isValid());
+        const QString config = configFile(scratch, true);
+        QVERIFY(!config.isEmpty());
+        const QString socketPath = QDir(scratch.path()).filePath(
+            QString::fromLatin1(StationControlSocket::kSocketName));
+        const QString profile = profileName();
+        const QString directory = AppSettings::resolveConfigDir(profile);
+        QVERIFY(QDir().mkpath(directory));
+        const auto removeProfile = qScopeGuard([&] { QDir(directory).removeRecursively(); });
+
+        QFile leftover(QDir(directory).filePath(QStringLiteral("station.lock")));
+        QVERIFY(leftover.open(QIODevice::WriteOnly));
+        leftover.write("99999\nNereusSDR\nOld-MacBook.local\n"
+                       "017FA02B-0000-5000-A000-000000000000\n");
+        leftover.close();
+
+        QProcess daemon;
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("NEREUS_HANDOVER_TEST_PRIMED_BOARD"), QStringLiteral("1"));
+        daemon.setProcessEnvironment(env);
+        daemon.setProcessChannelMode(QProcess::MergedChannels);
+        daemon.start(QCoreApplication::applicationFilePath(),
+                     {QStringLiteral("--daemon-helper"), QStringLiteral("--config"), config,
+                      QStringLiteral("--profile"), profile});
+        const auto stopDaemon = qScopeGuard([&] {
+            if (daemon.state() != QProcess::NotRunning) {
+                daemon.kill();
+                daemon.waitForFinished();
+            }
+        });
+        QVERIFY(daemon.waitForStarted());
+        QVERIFY(QTest::qWaitFor([&] { return controlSocketPresent(socketPath); }, 15000));
+        StationHandover competitor(profile);
+        QVERIFY(!competitor.acquire(0));
+        QVERIFY(!competitor.lockedByOtherComputer());
+        // The daemon's own lock now: its pid, this computer's name and id. An
+        // empty id would match anything, so each line is compared on its own.
+        // QLockFile on Windows shares its open file for reading, so this reads
+        // back there too.
+        const QList<QByteArray> daemonLock = fileBytes(leftover.fileName()).split('\n');
+        QCOMPARE(daemonLock.value(0).toLongLong(), daemon.processId());
+        QCOMPARE(QString::fromUtf8(daemonLock.value(2)), lockFileMachineName());
+        QCOMPARE(daemonLock.value(3), QSysInfo::machineUniqueId());
+        QVERIFY(waitForText(daemon, "Old-MacBook.local"));
     }
 
     void releaseReplyAndSocketPathHandoff()
