@@ -9823,6 +9823,7 @@ if(TEST tst_station_handover_roundtrip)
     set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES "realtime")
     set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_realtime tst_station_handover_roundtrip)
 endif()
+nereus_add_test(tst_station_foreign_lock EXTRA_LABELS session)
 nereus_add_test(tst_desktop_station_controller)
 nereus_add_test(tst_desktop_station_window)
 # TX rulings review: MainWindow::hostingSliceActionsForTest and
