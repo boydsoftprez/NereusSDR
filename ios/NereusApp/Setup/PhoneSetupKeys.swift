@@ -926,6 +926,8 @@ struct PhoneNavigation {
     /// The Display pill opened on this pan: a Setup Display page already
     /// open edits that pan too, so the two show the same values.
     var followDisplayPan: (PanIdentity) -> Void = { _ in }
+    /// Opens one of the app's own Setup pages on the Setup tab.
+    var openPage: (SetupTree.Page) -> Void = { _ in }
 }
 
 /// This phone's own Display rows on the Core's version 29 pages (spec

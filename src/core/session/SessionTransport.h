@@ -52,6 +52,9 @@
 //                                    and deliveringMessageWaitUs(), read
 //                                    for the Core's log only. AI-assisted
 //                                    via Anthropic Claude Code.
+//   2026-11-05  J.J. Boyd / KG4VCF  deliveringMessageWaitUs() is also a
+//                                    session keepalive's age. AI-assisted
+//                                    via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -186,7 +189,11 @@ public:
     /// long (microseconds) the message waited between the transport's
     /// receipt of it off the network and its delivery on this thread.
     /// Absent where the transport reads on this thread (no separate
-    /// receipt) or does not measure it. For the log only.
+    /// receipt) or does not measure it. The age it gives a session keepalive
+    /// applies only on a key with no "tx" copy read yet. A data channel over the web relay
+    /// reports no wait for a stall that began before its leg's read, as the
+    /// leg reads on this thread too; only one that began after that write. For the log, and for a session
+    /// tx.keepalive's age at the transmit watchdog and the cut guard.
     virtual std::optional<qint64> deliveringMessageWaitUs() const { return std::nullopt; }
 
 signals:

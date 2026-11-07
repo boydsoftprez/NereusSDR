@@ -39,13 +39,19 @@
 //   2026-09-30: take-over re-review (N-3): forgetNotice(), a closed
 //               card's Take it back record goes. J.J. Boyd (KG4VCF), with
 //               AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05: band stack plan Task 6: bindBandStack, runBandStack. J.J. Boyd
+//               (KG4VCF), with AI-assisted implementation via Anthropic Claude
+//               Code.
 //   2026-09-30: TX rulings review: hasTakeBackForTest(). J.J. Boyd
 //               (KG4VCF), with AI-assisted implementation via Anthropic
 //               Claude Code.
 // =================================================================
+//   2026-11-05: addOnPan says when it is the fill at connect (restoredFill).
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 
 #include "core/session/SessionMessages.h"
 #include "gui/NereusGuiExport.h"
+#include "models/bandstack/LocalBandStackAccess.h"
 
 #include <QByteArray>
 #include <QHash>
@@ -77,10 +83,22 @@ public:
     void select(int sliceId);
     /// A new slice on `panId` (addSliceOnPan): +RX, the layout's empty pans,
     /// the chooser's New slice. At full capacity this asks first.
-    void addOnPan(const QString& panId);
+    /// `restoredFill` is the fill at connect, which brings back a saved
+    /// layout's receiver rather than making a new one: it keeps the letter's
+    /// RIT and XIT. Only the station device's request can say so.
+    void addOnPan(const QString& panId, bool restoredFill = false);
     /// Close (removeSlice). A slice someone else listens to stays open for
     /// them (Q6).
     void close(int sliceId);
+
+    /// Band stack plan Task 6: the desktop's band stack runs as the station
+    /// device from now on, so a press that would move another device's slice
+    /// asks (design V15) with question(), as anything else held does. A refusal
+    /// goes to `access` alone, whose refused() is where the GUI hears the stack.
+    /// Undone when this object goes.
+    void bindBandStack(LocalBandStackAccess* access);
+    /// A bandStack.* request, as the bound access builds it.
+    void runBandStack(const SessionMessage& invoke);
 
     /// Answer the question question() carried: `choice` is the picked
     /// receiver or slice for a take, -1 for none.
@@ -129,9 +147,11 @@ private:
     void onAnswer(const QByteArray& verb, int sliceId, const SessionMessage& result,
                   qint64 noticeId);
     QList<MirrorUpdate> sliceArguments(int sliceId, bool withRevision) const;
+    void emitRefused(const QByteArray& verb, const QString& reason);
 
     QPointer<StationServer> m_server;
     QPointer<RadioModel> m_model;
+    QPointer<LocalBandStackAccess> m_bandStack;
     quint32 m_nextCommandId = 1;
     int m_invokeDepth = 0;
     /// Requests answered "Waiting for you to confirm." and not yet finally.

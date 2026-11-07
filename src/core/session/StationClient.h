@@ -208,6 +208,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: sliceControlledHere.
+//   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-02: Track active and detail frequency record streams separately.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -529,6 +532,7 @@
 #include <optional>
 
 #include "core/session/IStationLink.h"
+#include "core/session/LinkDownEditWatch.h"
 #include "core/session/RemoteTransmitClient.h"
 #include "core/session/LinkVersion.h"
 #include "models/Band.h"
@@ -1434,6 +1438,10 @@ public:
     static QString station2mUnavailableReason();
     QString band2mUnavailableReason() const override;
     CommandOutcome requestSelectBand(int sliceId, int band) override;
+    // Band stack plan Task 4: see IStationLink.
+    bool bandStackAvailable() const override;
+    CommandOutcome sendBandStackCommand(const QString& verb, const QJsonObject& arguments) override;
+    bool sliceControlledHere(int sliceId) const override;
     // Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): listen
     // to, stop listening to, take control of and release a slice. The
     // answers arrive on deviceCommandFinished; the access objects follow.
@@ -1823,6 +1831,11 @@ signals:
     /// Every full state publication, including reseeding an existing session.
     /// Does not recreate media or reset the session epoch.
     void stateSnapshotApplied();
+    /// Applet and slice properties ("object.property") the operator changed
+    /// while the link was down, which this snapshot replaced with the Core's
+    /// values. The properties' counterpart to
+    /// SettingsProxy::offlineEditsSuperseded(). See LinkDownEditWatch.
+    void linkDownEditsSuperseded(const QStringList& keys);
     void audioOpusBitratesChanged();
 
     /// The session ended, with the station's own reason where it gave one
@@ -2188,6 +2201,9 @@ private:
     QSet<QByteArray> m_unheldDeltaKeys;
 
     QHash<QByteArray, QPointer<QObject>> m_objects;
+    /// Parented to this. Runs only from a lost ready session until the next
+    /// session's first frame.
+    LinkDownEditWatch* m_linkDownEdits = nullptr;
 
     /// RX meter stamps: one slice delta's held RX meter readings.
     struct HeldRxMeterReadings {

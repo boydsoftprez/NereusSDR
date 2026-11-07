@@ -20,6 +20,15 @@
 
 // 2026-10-30: Approved frequency-first people, reports and phone interactions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Viewing a frequency without tuning, in the sheet (overlay design D21 to D24).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: One sheet on every frequency: your own uses the frequency view, Back stays
+// up on your own, and the more button has Signal and Cancel (overlay design D22, D25, D36, D38).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-05: The compact sheet is for a band too short for half height, a
+// phone's on its side. It read the sheet's own height, so half height on an
+// iPad's band snapped back to full and the handle did nothing. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 
@@ -30,10 +39,12 @@ import SwiftUI
 /// in one scroll. The message box is pinned at its foot with PTT beside
 /// it, smaller and 24 points clear, press and hold with a dashed ring.
 ///
-/// Keyed, the sheet drops below the keyed gauges and shows the TX line and
-/// every station's reading of you. With a tuning dial on, the sheet stops
-/// above the 92-point strip that keeps PTT at the left and the dial at the
-/// right; keyed with a dial, the box steps aside and its draft is kept.
+/// Keyed, the sheet drops below the keyed gauges. On a legacy server it shows
+/// the TX line and every station's reading of you; on a frequency server it
+/// keeps the frequency view, with no TX line. With a tuning dial on, the sheet
+/// stops above the 92-point strip that keeps PTT at the left and the dial at
+/// the right. Keyed with a dial, the box steps aside on any server; on a legacy
+/// server the sheet also says its draft is kept.
 /// Before the station's first answer the sheet asks it
 /// (``RoundtableFirstRunSheet``) at full height and sends nothing until then.
 struct RoundtableSheet: View {
@@ -50,23 +61,45 @@ struct RoundtableSheet: View {
     let dialOn: Bool
     /// The session is up: PTT can be used.
     let linkUp: Bool
+    /// How tall the sheet is at full height on this band.
+    let fullHeight: CGFloat
     /// The station's callsign and grid, as the Core's settings give them.
     let stationCallsign: String
     let stationGrid: String
     /// The first-run note was shown on this phone.
     @Binding var firstRunNoteSeen: Bool
     let close: () -> Void
+    /// Back to your own frequency, in place: the sheet stays up (D35, D38).
+    let back: () -> Void
     var holdObserver: ((PttHold.Action) -> Void)?
     /// On an iPad the first-run question is a form sheet in the middle of
     /// the screen (spec 11.4): the sheet shows a line that asks it here,
     /// and this opens it. Nil asks in the sheet itself, as on a phone.
     var askFirstRun: (() -> Void)?
+    /// This client's pan at a frequency and family, for a view's Your pan.
+    var panLevel: ((Int64, String) -> Double?)?
+    /// Told each time the sheet has decided whether it is compact, after any
+    /// change of height that follows: tests wait on this, as on holdObserver.
+    var compactDecided: (() -> Void)?
 
     /// The question was answered here: no note follows it.
     @State private var answeredHere = false
     @State private var compactLandscape = false
 
     static let handleHeight: CGFloat = 22
+    /// The compact sheet needs this much width, which only a sideways band has...
+    static let compactMinimumWidth: CGFloat = 500
+    /// ...and a band that gives it less than this at full height, so half
+    /// height would leave no room. A phone's on its side does; an iPad's does not.
+    static let compactBelowFullHeight: CGFloat = 350
+
+    /// The sheet takes the compact layout, always at full height, on a band
+    /// too short for half height. This goes by the full height and not the
+    /// height the sheet has now: half height on an iPad's band is short too,
+    /// with room to go to full and back.
+    static func isCompact(width: CGFloat, fullHeight: CGFloat) -> Bool {
+        width > compactMinimumWidth && fullHeight < compactBelowFullHeight
+    }
 
     /// The first-run question asked in the sheet itself (a phone) takes the
     /// full height, so its two buttons show without a scroll. An iPad asks
@@ -86,10 +119,15 @@ struct RoundtableSheet: View {
     private var noting: Bool {
         roundtable.available && roundtable.firstRunAnswered && !firstRunNoteSeen && !answeredHere
     }
+    /// A frequency is being viewed, not your own (overlay design D21).
+    private var viewing: Bool { roundtable.isViewing }
+    /// A short landscape sheet needs its height for the reports: your own frequency's
+    /// greyed Tune, which has nothing to do there, sits with them, not pinned.
+    private var ownTuneScrolls: Bool { compactLandscape && !viewing }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Keyed, the sheet below the gauges is the TX line and the readings of you, as the board draws it.
+            // Keyed, the sheet stands below the gauges at its one height: no handle.
             if !keyed && !compactLandscape {
                 handle
             }
@@ -108,9 +146,15 @@ struct RoundtableSheet: View {
                 if noting {
                     RoundtableFirstRunNote(hidden: roundtable.hidden) { firstRunNoteSeen = true }
                 }
-                if !keyed {
-                    header
-                    if !compactLandscape { connection }
+                if viewing {
+                    inspectorBar
+                } else if !keyed {
+                    if roundtable.frequencyAvailable {
+                        inspectorBar
+                    } else {
+                        header
+                        if !compactLandscape { connection }
+                    }
                 }
                 content
                 if !(dialOn && keyed) {
@@ -127,10 +171,11 @@ struct RoundtableSheet: View {
             }
         }
         .onGeometryChange(for: Bool.self) { geometry in
-            geometry.size.width > 500 && geometry.size.height < 350
+            Self.isCompact(width: geometry.size.width, fullHeight: fullHeight)
         } action: { compact in
             compactLandscape = compact
             if compact { detent = .full }
+            compactDecided?()
         }
         .background(RoundtableColours.ground)
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: WorkspacePalette.panelRadius, topTrailingRadius: WorkspacePalette.panelRadius))
@@ -225,6 +270,13 @@ struct RoundtableSheet: View {
         .frame(height: compactLandscape ? 44 : 40)
     }
 
+    /// The one sheet's head: Back or your frequency, then more and close (overlay.js renderInsSheet).
+    private var inspectorBar: some View {
+        RoundtableInspectorBar(roundtable: roundtable, viewing: viewing, closeId: "roundtableClose",
+                               onBack: back, onClose: close)
+            .frame(height: compactLandscape ? 44 : 40)
+    }
+
     private var connection: some View {
         RoundtableConnectionLine(roundtable: roundtable, room: room)
     }
@@ -235,6 +287,28 @@ struct RoundtableSheet: View {
     private var content: some View {
         if let reason = roundtable.coreReason {
             message(reason, detail: nil)
+        } else if roundtable.frequencyAvailable, let room {
+            // One sheet on every frequency (D38). Your own keeps its earlier turns at full height, where they can be named.
+            RoundtableRoomView(roundtable: roundtable, room: room, full: true, keyed: keyed,
+                               keyedSince: nil, keyedForSeconds: 0, tunedHere: tunedHere,
+                               stationCallsign: stationCallsign, ownDbm: nil, sliceLetter: activeLetter,
+                               compact: compactLandscape,
+                               frequencyHead: AnyView(
+                                RoundtableFrequencyHost(roundtable: roundtable, slices: slices, contextId: room.id,
+                                                        viewing: viewing, keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                        panLevel: panLevel, showsBack: false, showsTune: ownTuneScrolls,
+                                                        onTune: { _, _ in }, onBack: back)),
+                               frequencyFoot: ownTuneScrolls ? nil : AnyView(
+                                RoundtableFrequencyTuneBar(roundtable: roundtable, slices: slices, contextId: room.id,
+                                                           viewing: viewing, keyed: transmit.ptt.transmitting, linkUp: linkUp,
+                                                           onTune: { hz, family in
+                                                               slices.tune(toHz: hz, family: family)
+                                                               close()
+                                                           })),
+                               showsEarlier: !viewing && detent == .full, viewing: viewing)
+                // Your own frequency's id changes with every tune step, and its received
+                // messages do not: the view keeps its scroll, seen state and typed name.
+                .id(viewing ? room.id : RoundtableFrequencyView.ownViewId)
         } else if let room {
             RoundtableRoomView(roundtable: roundtable, room: room, full: detent == .full, keyed: keyed,
                                keyedSince: PttButton.keyedSince(transmit.ptt),
@@ -245,7 +319,8 @@ struct RoundtableSheet: View {
                                expand: { detent = .full }, compact: compactLandscape)
         } else {
             message("Nobody on Roundtable is tuned here.",
-                    detail: "Tap a tag on the band to tune there.")
+                    detail: roundtable.frequencyAvailable ? "Tap a tag on the band to view that frequency."
+                        : "Tap a tag on the band to tune there.")
         }
     }
 
@@ -265,7 +340,7 @@ struct RoundtableSheet: View {
     }
 
     private func tuneHere(_ room: RoundtableModel.Room) {
-        slices.tap(to: Double(room.hz))
+        slices.tune(toHz: room.hz, family: room.family)
         Task { await roundtable.backToSlice() }
     }
 
@@ -312,9 +387,90 @@ extension RoundtableModel {
         return frequencyAvailable ? activeContext?.id == shownRoomId : sliceRooms.values.contains(shownRoomId)
     }
 
+    /// A frequency is being viewed without tuning there (overlay design D21). A
+    /// legacy server's read bar is the room's own.
+    var isViewing: Bool { frequencyAvailable && readingRoomId != nil }
+
     /// The station has not answered Roundtable's first question yet.
     var askingFirstRun: Bool {
         available && linkState != .off && !firstRunAnswered
+    }
+}
+
+/// The one inspector's head on a sheet or a panel: Back on a viewed frequency, or
+/// Roundtable and your frequency on your own, then more and close (overlay.js renderInsSheet).
+struct RoundtableInspectorBar: View {
+    @ObservedObject var roundtable: RoundtableModel
+    let viewing: Bool
+    let closeId: String
+    let onBack: () -> Void
+    let onClose: () -> Void
+
+    @State private var moreOpen = false
+
+    static func signalTitle(_ format: RoundtableSignalFormat) -> String {
+        "Signal: \(format.title) \u{00B7} Change"
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if viewing {
+                RoundtableBackButton(chip: true, action: onBack)
+            } else {
+                // The word gives way on a narrow panel, so the frequency is never cut.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Roundtable").font(.system(size: 14, weight: .bold)).foregroundStyle(RoundtableColours.bright)
+                            .fixedSize()
+                        ownHead.fixedSize()
+                    }
+                    ownHead
+                }
+                .layoutPriority(1)
+            }
+            Spacer(minLength: 4)
+            HStack(spacing: 0) {
+                icon("ellipsis") { moreOpen = true }
+                    .accessibilityLabel("More")
+                    .accessibilityIdentifier("roundtableMore")
+                icon("xmark", action: onClose)
+                    .accessibilityLabel(viewing ? "Close" : "Close Roundtable")
+                    .accessibilityIdentifier(closeId)
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 4)
+        .confirmationDialog(roundtable.room.map { RoundtableTagLayout.frequencyText($0.hz) + " MHz" } ?? "Roundtable",
+                            isPresented: $moreOpen, titleVisibility: .visible) {
+            Button(Self.signalTitle(roundtable.signalFormat)) { roundtable.cycleSignalFormat() }
+            // The system's popover menu drops a cancel-role row, and the design shows Cancel (D36).
+            if #available(iOS 26, *) {
+                Button("Cancel") {}
+            } else {
+                Button("Cancel", role: .cancel) {}
+            }
+        }
+    }
+
+    /// Who the frequency's own list counts, as the view below does, before its stream names them.
+    @ViewBuilder
+    private var ownHead: some View {
+        if let room = roundtable.room {
+            RoundtableRoomHead(room: room, stations: roundtable.cardData(context: room.id).onFrequency.count)
+        }
+    }
+
+    private func icon(_ name: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(RoundtableColours.text)
+                .frame(width: 30, height: 30)
+                .background(Color.white.opacity(0.08), in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -322,6 +478,10 @@ extension RoundtableModel {
 /// as the sheet's header and the applet's head show them.
 struct RoundtableRoomHead: View {
     let room: RoundtableModel.Room
+    /// Who the frequency's own list counts, before its stream names them.
+    var stations: Int? = nil
+
+    private var count: Int { stations ?? room.members.count }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -331,7 +491,7 @@ struct RoundtableRoomHead: View {
             Text(RoundtableText.modeLabel(room.family))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(RoundtableColours.you)
-            Text("\(room.members.count) station\(room.members.count == 1 ? "" : "s")")
+            Text("\(count) station\(count == 1 ? "" : "s")")
                 .font(.system(size: 11)).foregroundStyle(RoundtableColours.dim)
             if room.members.first(where: \.you)?.away == true {
                 Text("AWAY").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.dim)
@@ -346,6 +506,8 @@ struct RoundtableRoomHead: View {
 struct RoundtableConnectionLine: View {
     @ObservedObject var roundtable: RoundtableModel
     let room: RoundtableModel.Room?
+    /// Viewing another frequency, this slice stays put (overlay.js padHead).
+    var viewingLetter: String? = nil
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -361,8 +523,10 @@ struct RoundtableConnectionLine: View {
             }
             HStack(spacing: 6) {
                 Circle().fill(colour).frame(width: 6, height: 6)
-                Text(line.text).font(.system(size: 11)).foregroundStyle(line.tone == .live ? RoundtableColours.dim
-                                                                         : colour)
+                Text(line.tone == .live ? viewingLetter.map { "Live \u{00B7} viewing \u{00B7} slice \($0) stays put" } ?? line.text
+                     : line.text)
+                    .font(.system(size: 11)).foregroundStyle(line.tone == .live ? RoundtableColours.dim
+                                                             : colour)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }

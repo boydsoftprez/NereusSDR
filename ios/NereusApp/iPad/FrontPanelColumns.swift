@@ -1,19 +1,21 @@
-// NereusSDR for iOS: the iPad upright: the S-meter, RX and TX in three columns below the band, like a radio's front panel
+// NereusSDR for iOS: the iPad upright: the S-meter and Band Stack, RX and TX in three columns below the band, like a radio's front panel
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 
 import SwiftUI
 
 /// The front panel (spec section 5.6 item 2, D31, picture 19): with the
 /// iPad upright the band keeps the whole width, so both flags stay full,
-/// and the applets sit below it in three equal columns: the analog S-meter,
-/// RX, and TX with the amp and tuner. RX and TX each scroll on their own,
-/// under their title bars. Turned on its side, the screen goes back to the
+/// and the applets sit below it in three equal columns: the analog S-meter
+/// with Band Stack under it, RX, and TX with the amp and tuner. Band Stack,
+/// RX and TX each scroll on their own, under their title bars. Turned on its side, the screen goes back to the
 /// applet column.
 struct FrontPanelColumns: View {
     @ObservedObject var main: MainScreenModel
     /// Opens the Radio tab, where an amplifier or tuner is set up.
     var openRadio: () -> Void = {}
     var openSettings: () -> Void = {}
+    /// Opens Setup's Band Stack page.
+    var openBandStackSetup: () -> Void = {}
 
     /// The three columns, in the board's order.
     enum Column: CaseIterable {
@@ -32,10 +34,15 @@ struct FrontPanelColumns: View {
         GeometryReader { proxy in
             let column = Self.columnWidth(panelWidth: proxy.size.width)
             HStack(spacing: 0) {
-                AnalogSMeter(model: main.sMeter)
-                    .frame(width: column)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .background(ChromeColours.panel)
+                VStack(spacing: 0) {
+                    AnalogSMeter(model: main.sMeter)
+                    BandStackApplet(model: main.controls(for: main.toolbarPan).bandStack, width: column,
+                                    openSetup: openBandStackSetup)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                }
+                .frame(width: column)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(ChromeColours.panel)
                 divider
                 RxPanel(model: main.rx, sliceColour: main.sliceColour, width: nil)
                     .frame(width: column - 1)

@@ -4,27 +4,22 @@
 //
 // NereusSDR-original test file. No Thetis port at this layer.
 //
-// Verifies the pre-connect Mic_Source persistence fallback added in
-// eager-borg-d64bed on 2026-05-06.
-//
-// Bug being guarded against: when the user opens Setup -> Audio ->
-// TX Input and clicks the "VAX TX (virtual device)" radio button
-// BEFORE connecting to a radio, m_persistMac is empty so persistOne
-// early-returns.  The choice survives only in memory and is lost on
-// app restart (loadFromSettings then re-applies the per-MAC default,
-// "Pc").  Fix: setMicSource writes to a global "tx/preconnect/Mic_Source"
-// fallback key when m_persistMac is empty, and loadFromSettings reads
-// the fallback when the per-MAC key is absent.
+// Verifies the old pre-connect Mic_Source keys. setMicSource wrote a global
+// "tx/preconnect/Mic_Source" key from eager-borg-d64bed (2026-05-06) until
+// 2026-11-05, when a pick with no radio joined every other transmit edit in
+// the held area. Existing installs still carry the old key, never cleared, so
+// loadFromSettings keeps reading it when the per-MAC key is absent, and it
+// must never beat a per-MAC value.
 //
 // Coverage:
-//   preconnectClick_writesGlobalKey      — Vax click pre-connect lands in
-//                                           tx/preconnect/Mic_Source
-//   load_emptyPerMac_usesPreconnect      — load with no per-MAC value
-//                                           picks up preconnect fallback
-//   load_perMacOverridesPreconnect       — explicit per-MAC value wins
-//   perMacWrite_doesNotTouchPreconnect   — post-connect write goes only
+//   preconnectClick_isHeldNotWrittenToTheOldKey - Vax click with no radio goes
+//                                           to the held area, not the old key
+//   load_emptyPerMac_usesPreconnect      - load with no per-MAC value
+//                                           picks up the old key
+//   load_perMacOverridesPreconnect       - explicit per-MAC value wins
+//   perMacWrite_doesNotTouchPreconnect   - post-connect write goes only
 //                                           to the per-MAC key
-//   load_neitherKey_defaultsToPc         — first-run baseline preserved
+//   load_neitherKey_defaultsToPc         - first-run baseline preserved
 // =================================================================
 //
 // Modification history (NereusSDR):
@@ -51,6 +46,11 @@ private:
         return QStringLiteral("tx/preconnect/Mic_Source");
     }
 
+    static QString heldKey()
+    {
+        return TransmitModel::heldEditsPrefix() + QStringLiteral("tx/Mic_Source");
+    }
+
     static QString perMacKey(const QString& mac)
     {
         return QStringLiteral("hardware/%1/tx/Mic_Source").arg(mac);
@@ -64,17 +64,16 @@ private:
     {
         auto& s = AppSettings::instance();
         s.remove(preconnectKey());
+        s.remove(heldKey());
         s.remove(perMacKey(mac));
     }
 
 private slots:
 
-    // ── 1. Pre-connect click writes the global key ──────────────────────
-    // setMicSource(Vax) with m_persistMac empty (no loadFromSettings call)
-    // should land the value in tx/preconnect/Mic_Source so it can survive
-    // to the next session.
+    // ── 1. A click with no radio is held, not written to the old key ───
+    // The per-MAC key must not be touched while no MAC is bound.
 
-    void preconnectClick_writesGlobalKey()
+    void preconnectClick_isHeldNotWrittenToTheOldKey()
     {
         const QString mac = QStringLiteral("tst-preconnect-aa-bb-cc-dd-ee-01");
         clearState(mac);
@@ -82,13 +81,14 @@ private slots:
         TransmitModel m;
         // Tests the VAX path itself, which Windows does not offer.
         m.setVaxSourceAvailable(true);
+        m.setKeepsEditsWithoutRadio(true);
         // No loadFromSettings call: m_persistMac is empty.
         m.setMicSource(MicSource::Vax);
 
-        QCOMPARE(AppSettings::instance().value(preconnectKey()).toString(),
-                 QStringLiteral("Vax"));
-        // Per-MAC key must NOT be touched when no MAC is bound.
+        QCOMPARE(AppSettings::instance().value(heldKey()).toString(), QStringLiteral("Vax"));
+        QVERIFY(!AppSettings::instance().contains(preconnectKey()));
         QVERIFY(AppSettings::instance().value(perMacKey(mac)).toString().isEmpty());
+        AppSettings::instance().remove(heldKey());
     }
 
     // ── 2. Load with no per-MAC value falls back to preconnect ──────────

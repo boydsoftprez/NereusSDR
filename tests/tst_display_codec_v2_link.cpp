@@ -28,6 +28,10 @@
 // NeedKeyframe asks once and recovers, as before.
 //
 // Modification history (NereusSDR):
+//   2026-11-05  J.J. Boyd / KG4VCF  Band stack plan Task 4: a window's
+//                                    bandStackVersion may come last before
+//                                    coreBuildInfo. AI-assisted via Claude
+//                                    Code.
 //   2026-10-26  J.J. Boyd / KG4VCF  The entry after displayCodecVersion
 //                                    is checked by name to be
 //                                    stationRoundtableVersion when it is
@@ -391,13 +395,14 @@ QStringList capabilityNamesOn(const Test::LoopbackTransport* link)
     return names;
 }
 
-// What follows displayCodecVersion on `names`: the Roundtable and NNR warning
-// entries, when this Core sends them, then what every peer gets.
+// What follows displayCodecVersion on `names`: the Roundtable, NNR warning
+// and band stack entries, when this Core sends them, then what every peer gets.
 QStringList expectedAfterCodecField(const QStringList& names)
 {
     QStringList expected;
     for (const QString& optional : {QStringLiteral("stationRoundtableVersion"),
-                                    QStringLiteral("nnrLoadWarningVersion")}) {
+                                    QStringLiteral("nnrLoadWarningVersion"),
+                                    QStringLiteral("bandStackVersion")}) {
         if (names.contains(optional)) {
             expected.append(optional);
         }

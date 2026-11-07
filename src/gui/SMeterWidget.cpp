@@ -14,6 +14,9 @@
 //     and renderNeedle's history wedge, for a container copy's dial)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - rxModeChanged: every real change of the RX mode, for the
+//                 flags (overlay design D40). J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (I6, M3): Max Bin takes no VHF S9
 //                 offset (only Signal and its average do); ALC Group maps
 //                 through ReadingSource's uneven calibration. J.J. Boyd
@@ -599,6 +602,7 @@ void SMeterWidget::setTxMode(const QString& mode)
 // per design doc ss5.4.2; "S-Meter" is the legacy external-caller form.
 void SMeterWidget::setRxMode(const QString& mode)
 {
+    const RxMode previous = m_rxMode;
     if (mode == "S-Meter" || mode == "Signal") {
         m_rxMode = RxMode::SMeter;
         m_source = "S-Meter";
@@ -628,6 +632,9 @@ void SMeterWidget::setRxMode(const QString& mode)
     }
     updateNeedleTarget();
     update();
+    if (m_rxMode != previous) {
+        emit rxModeChanged(rxModeToLabel(m_rxMode));
+    }
 }
 
 // --- Needle target -----------------------------------------------------------

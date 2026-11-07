@@ -10,9 +10,21 @@
 #include <QMetaObject>
 #include <QTimer>
 
+#include <chrono>
 #include <utility>
 
 namespace NereusSDR::Test {
+
+namespace {
+
+qint64 steadyNowNs()
+{
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+} // namespace
 
 LoopbackTransport::LoopbackTransport(const QString& description, QObject* parent)
     : NereusSDR::SessionTransport(parent)
@@ -47,8 +59,8 @@ void LoopbackTransport::sendText(const QByteArray& wire)
     // nothing in that case, and this fake has to behave the same or it
     // turns a correct production behaviour into a test crash.
     QPointer<LoopbackTransport> peer(m_peer);
-    sendOrHold([peer, wire]() {
-        if (!peer.isNull()) { peer->deliver(wire); }
+    sendOrHold([peer, wire, receivedNs = steadyNowNs()]() {
+        if (!peer.isNull()) { peer->deliver(wire, receivedNs); }
     });
 }
 
@@ -82,22 +94,31 @@ void LoopbackTransport::setHoldsOutgoing(bool holds)
     }
 }
 
-void LoopbackTransport::deliver(const QByteArray& wire)
+void LoopbackTransport::arriveFromAnyThreadForTest(const QByteArray& wire)
+{
+    QMetaObject::invokeMethod(
+        this, [this, wire, receivedNs = steadyNowNs()]() { deliver(wire, receivedNs); },
+        Qt::QueuedConnection);
+}
+
+void LoopbackTransport::deliver(const QByteArray& wire, qint64 receivedNs)
 {
     if (!m_open || m_severed) {
         return;
     }
-    if (!m_rewriteIncoming) {
-        m_received.append(wire);
-        emit textReceived(wire);
-        return;
-    }
-    const QByteArray arrived = m_rewriteIncoming(wire);
-    if (arrived.isEmpty()) {
+    const QByteArray arrived = m_rewriteIncoming ? m_rewriteIncoming(wire) : wire;
+    if (m_rewriteIncoming && arrived.isEmpty()) {
         return;
     }
     m_received.append(arrived);
+    if (m_measuresReceipt) {
+        m_deliveringWaitUs = (steadyNowNs() - receivedNs) / 1000;
+    }
+    const QPointer<LoopbackTransport> self(this);
     emit textReceived(arrived);
+    if (self) {
+        m_deliveringWaitUs.reset();
+    }
 }
 
 bool LoopbackTransport::sendBinary(const QByteArray& message)

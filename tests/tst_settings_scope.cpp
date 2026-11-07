@@ -611,12 +611,30 @@ private slots:
         // Brief-mandated worked examples.
         QTest::newRow("DisplayFftSize is Station (FftPoolConfig)")
             << QStringLiteral("DisplayFftSize") << int(SettingsScope::Station);
+        QTest::newRow("ContainerPanelHidden is OperatorLocal (this window's layout)")
+            << QStringLiteral("ContainerPanelHidden") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("FloatingPan_pan-1_Floating is OperatorLocal (this window's layout)")
+            << QStringLiteral("FloatingPan_pan-1_Floating") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("DisplayDecimation is OperatorLocal (each device's own control)")
+            << QStringLiteral("DisplayDecimation") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("Pan_pan-1_OverlayCollapsed is OperatorLocal (this window's layout)")
+            << QStringLiteral("Pan_pan-1_OverlayCollapsed") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("PanSplitter1Sizes is OperatorLocal (this window's layout)")
+            << QStringLiteral("PanSplitter1Sizes") << int(SettingsScope::OperatorLocal);
         QTest::newRow("DisplayNoiseFloorColor is OperatorLocal (rendering)")
             << QStringLiteral("DisplayNoiseFloorColor") << int(SettingsScope::OperatorLocal);
         QTest::newRow("ClarityEnabled is OperatorLocal (client-display master toggle)")
             << QStringLiteral("ClarityEnabled") << int(SettingsScope::OperatorLocal);
         // R-R3-42: the TCI server runs on this computer, in a remote window
         // as in a local one, so its settings are this computer's.
+        QTest::newRow("BandStackPanel/Open is OperatorLocal (per device, design V6)")
+            << QStringLiteral("BandStackPanel/Open") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("BandStackPanel/Width is OperatorLocal (per device, design V6)")
+            << QStringLiteral("BandStackPanel/Width") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("BandStackPanel/GroupByBand is OperatorLocal (per device, design V6)")
+            << QStringLiteral("BandStackPanel/GroupByBand") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("BandStackPanel/ShowOnSpectrum is OperatorLocal (per device, design V6)")
+            << QStringLiteral("BandStackPanel/ShowOnSpectrum") << int(SettingsScope::OperatorLocal);
         QTest::newRow("TciServerPort is OperatorLocal (this computer's TCI server)")
             << QStringLiteral("TciServerPort") << int(SettingsScope::OperatorLocal);
         QTest::newRow("TciEmulateSunSDR2Pro is OperatorLocal (this computer's TCI server)")
@@ -679,8 +697,10 @@ private slots:
             << QStringLiteral("DisplayFftSizingMode") << int(SettingsScope::Station);
         QTest::newRow("DisplayHzPerBinLastTarget is Station (the remembered target)")
             << QStringLiteral("DisplayHzPerBinLastTarget") << int(SettingsScope::Station);
-        QTest::newRow("DisplaySpectrumFps is Station (the straddle -- see SettingsScope.cpp)")
+        QTest::newRow("DisplaySpectrumFps is Station (the Core's one shared rate)")
             << QStringLiteral("DisplaySpectrumFps") << int(SettingsScope::Station);
+        QTest::newRow("DisplayPaintFps is OperatorLocal (each window's own paint rate)")
+            << QStringLiteral("DisplayPaintFps") << int(SettingsScope::OperatorLocal);
         // Parity ruling C12: the per-band grid dB max and min are the Core's.
         QTest::newRow("DisplayGridMax_20m is Station (the Core's per-band grid)")
             << QStringLiteral("DisplayGridMax_20m") << int(SettingsScope::Station);
@@ -911,6 +931,29 @@ private slots:
         QFETCH(QString, key);
         QFETCH(bool, owned);
         QCOMPARE(isModelOwnedNotchSettingsKey(key), owned);
+        QCOMPARE(isModelOwnedDspSettingsKey(key), owned);
+    }
+
+    // The rate a slice comes back at is the Core's. A device's settings write
+    // could otherwise set another device's, with no slice-owner check; a device
+    // changes a rate through requestSliceSampleRate.
+    void aSlicesSavedRateIsModelOwned_data()
+    {
+        QTest::addColumn<QString>("key");
+        QTest::addColumn<bool>("owned");
+        const QString mac = QStringLiteral("hardware/00:1C:2D:05:37:2A/");
+        QTest::newRow("rate") << mac + QStringLiteral("slices/1/SampleRate") << true;
+        QTest::newRow("any case") << mac + QStringLiteral("SLICES/1/samplerate") << true;
+        QTest::newRow("nnr still") << mac + QStringLiteral("slices/1/nnr/NnrAlpha") << true;
+        QTest::newRow("longer name") << mac + QStringLiteral("slices/1/SampleRateOld") << false;
+        QTest::newRow("deeper") << mac + QStringLiteral("slices/1/other/SampleRate") << false;
+        QTest::newRow("other field") << mac + QStringLiteral("slices/1/Other") << false;
+        QTest::newRow("radio's own") << mac + QStringLiteral("radioInfo/sampleRate") << false;
+    }
+    void aSlicesSavedRateIsModelOwned()
+    {
+        QFETCH(QString, key);
+        QFETCH(bool, owned);
         QCOMPARE(isModelOwnedDspSettingsKey(key), owned);
     }
 

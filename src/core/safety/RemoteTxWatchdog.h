@@ -35,8 +35,33 @@
 //   start again whenever watching starts.
 // - A keepalive is heard when it came off the network (its wait at the
 //   Core since its receipt is taken off; TX mic thread, JJ approved
-//   2026-10-01), so a stall of the Core's event loop, which holds both the
-//   keepalives and this watchdog, is never taken for a quiet link. The
+//   2026-10-01), so on a path that reports that wait a stall of the Core's
+//   event loop, which holds both the keepalives and this watchdog, is not
+//   taken for a quiet link, and a keepalive that waited behind it renews only
+//   from when it came. The "tx" channel reports it. So does the session's
+//   tx.keepalive on a data channel over a direct or TURN pair (the transport's
+//   deliveringMessageWaitUs), but only on a key with no "tx" copy read yet
+//   (txChannelHeard), since until then main has no "tx" copy showing the link
+//   is up (the guard may have receipts off main, a voice key mic packets). On a
+//   normal key that first-read window is under 100 ms, plus 100 ms for each lost
+//   "tx" copy. Over 400 ms of lag at key start can hold about one interval longer
+//   there; no stop unless "tx" copies stay unread for about 3 s. With none read,
+//   a real lag holds too: every keepalive read more than kLinkHoldMs old never
+//   ends the hold, and the stop comes at kLinkHoldMaxMs. Once a "tx" copy has
+//   been read, session copies count as heard when read for the rest of the key,
+//   so a channel that then dies leaves them ageless. These have no age that
+//   shows a stall and count as heard when read: the session's tx.keepalive with
+//   a "tx" copy read on this key; on a WebSocket, read on the thread that
+//   stalled; on a data channel over the web relay, no age for a
+//   stall that began before its leg's read, as the leg reads on that same
+//   thread (RelayLeg) and the transport receives it only then (one that begins
+//   between the leg's write and the delivery does give that message its age);
+//   every watch's frames; one a session move held on its new
+//   connection; and one a data channel delivers from its queue for before
+//   anything listened. A stall past the cut is still taken for a quiet link if
+//   only those arrive. The first copy read decides: one with no wait, read in
+//   time, renews a full count even if a copy with its wait follows, as that
+//   copy then changes nothing. The
 //   watchdog cannot run during such a stall: a link that went quiet in it
 //   is caught when the stall ends, as the silence is counted from the last
 //   keepalive's receipt. A check that fires late (more than
@@ -49,6 +74,24 @@
 //   restarted (TX watch follow-up): it runs in the turn it came due in,
 //   whatever order the event loop gives timers due together, so a
 //   device's keepalives on every turn cannot put it off.
+// - A keepalive heard past the cut (or past a hold's bound below) renews
+//   nothing and stops nothing itself. The check, already due, judges the
+//   watch after its one turn, so a release read behind that keepalive ends
+//   the key normally, and a dead link is still cut by that check: the second
+//   check from then, or the third past a hold's bound when a second stall
+//   makes the next check late (the RF is held silent throughout). This is no
+//   promise about RF before the check: the cut guard takes RF off the air in
+//   a stall only while it is judging, that is, after the "tx" channel was
+//   heard on this key.
+// - One exception to "no arriving packet renews a watch" (addendum G-73),
+//   by the maintainer's ruling of 2026-11-05: a release that ended the
+//   device's key, read while the watch stays only for its armed VOX, starts
+//   that watch's silence afresh from the read (releaseRead). The device's
+//   release fence stopped its keepalives, so the old count says nothing about
+//   the link, and VOX stays armed through a stall. Nothing else renews: a
+//   keepalive past the cut still does not, and a watch still keyed or sending
+//   CW is untouched. A device that then goes quiet is cut 3001 ms after the
+//   read, and a VOX key after it holds and cuts on the same count.
 // - The hold: more than 400 ms without one while keyed: hold(id, true)
 //   and holdStarted. The key stays on and nothing is stopped; the Core
 //   sends silence in place of the device's audio. A device watched only for
@@ -80,12 +123,14 @@
 //
 // ---- Paths ----
 // The rules do not depend on how a keepalive travelled. On the session's
-// WebSocket it is the tx.keepalive verb; on a media connection's data
-// channel labelled "tx" (unordered, never retransmitted, so a lost one is
-// simply overtaken by the next) it is channelKeepalive()'s 13 bytes. A
+// link, a WebSocket or a data channel, it is the tx.keepalive verb; on a
+// media connection's data channel labelled "tx" (unordered, never
+// retransmitted, so a lost one is simply overtaken by the next) it is
+// channelKeepalive()'s 13 bytes. A
 // transport added later (the rendezvous, a relay, the separate control
 // connection) hands its keepalives to keepalive() with its own Path and
-// changes nothing else. Path is for the log only.
+// changes nothing else. Path is for the log, and a "tx" copy marks the key
+// (txChannelHeard).
 //
 // Everything that reaches the clock, the timer and the radio is injected
 // (Hooks), so the rules are tested with fake ones.
@@ -126,6 +171,18 @@
 //               keepalives behind a lagging main thread cannot hold a key
 //               forever. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-11-05: a keepalive heard past the cut leaves the stop to the
+//               check. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-11-05: releaseRead (maintainer's ruling); the receipt-time rule says
+//               which paths it covers. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-11-05: the session's tx.keepalive reports its receipt wait on a data
+//               channel session; the rule names the paths that still do not.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06: a session keepalive carries its age only on a key with no "tx"
+//               copy read yet (txChannelHeard). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -179,9 +236,10 @@ public:
     static_assert(kKeepaliveIntervalMs * 3 < kLinkHoldMs,
                   "three keepalives in a row may be lost without a hold");
 
-    /// Which path a keepalive came by (for the log; the rules are the same).
+    /// Which path a keepalive came by. The rules are the same, except that a
+    /// "tx" copy marks the key as having a working channel (txChannelHeard).
     enum class Path {
-        /// The tx.keepalive verb on the session's WebSocket.
+        /// The tx.keepalive verb on the session's link.
         Session,
         /// The media connection's "tx" data channel.
         TxChannel,
@@ -245,9 +303,22 @@ public:
     /// The device's own release: its key is no longer watched (VOX armed
     /// still is).
     void released(const QByteArray& deviceId) { setKeyed(deviceId, false); }
+    /// The Core read a release from `deviceId` that ended its key. A watch
+    /// left only for its armed VOX counts its silence from now (see the
+    /// rules above); any other watch is untouched.
+    void releaseRead(const QByteArray& deviceId);
 
     void setCwActive(const QByteArray& deviceId, bool active, quint32 cwEpoch);
     bool isWatching(const QByteArray& deviceId) const;
+    /// Whether a "tx" channel copy has been read on this device's key, counted
+    /// or not: it shows the channel works. Set by any TxChannel copy not from an
+    /// older key's epoch, and read by the caller before it hands in a session
+    /// copy, as a session copy carries its age only while this is false. Starts
+    /// false with a watch, and again when a key or CW starts with neither
+    /// running, or a key takes a new epoch. A release does not clear it: a watch
+    /// left only for armed VOX has just shown its channel works. False with no
+    /// watch.
+    bool txChannelHeard(const QByteArray& deviceId) const;
     bool isWatchingAny() const { return !m_devices.isEmpty(); }
     /// Hold then cut: `deviceId`'s quiet link holds its RF silent now.
     bool isHeld(const QByteArray& deviceId) const;
@@ -322,6 +393,8 @@ private:
         /// The last keepalive that counted, or when watching began.
         qint64 lastMs{0};
         quint64 lastSequence{0};
+        // A "tx" copy has been read on this key (txChannelHeard).
+        bool txChannelHeard{false};
         // TX mic thread fix round 2: this overdue period's one turn for
         // the keepalives behind a stall has been given; the next check
         // judges. Cleared when a keepalive brings the device back within

@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: bandStackVersion, after nnrLoadWarningVersion and before
+//               coreBuildInfo, for a peer that declared bandStack.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-25: merge of main: stationRoundtableVersion moves after main's
 //               displayCodecVersion. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -655,6 +658,12 @@ QList<MirrorUpdate> StationCapabilities::toUpdates() const
     if (nnrLoadWarningVersion > 0) {
         updates.append(intEntry("nnrLoadWarningVersion", nnrLoadWarningVersion));
     }
+    // Band stack plan Task 4: the `bandStack` object and the bandStack.* verbs,
+    // before coreBuildInfo (which stays last), only for a peer that declared
+    // bandStack; any other peer is sent no entry.
+    if (bandStackVersion > 0) {
+        updates.append(intEntry("bandStackVersion", bandStackVersion));
+    }
     // SSB Mod Monitor: after every other entry and before coreBuildInfo
     // (which stays last), so no entry a peer already reads moves. Omitted at
     // 0, and sent only in the minor-11 block.
@@ -688,6 +697,7 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
     int nnrLoadWarningEntries = 0;
     int displayCodecEntries = 0;
     int stationRoundtableEntries = 0;
+    int bandStackEntries = 0;
     int stationCatEntries = 0;
     int radioSpeakerEntries = 0;
     int coreSpeakerEntries = 0;
@@ -739,6 +749,15 @@ StationCapabilities StationCapabilities::fromUpdates(const QList<MirrorUpdate>& 
                 && u.value.typeId() == QMetaType::LongLong) {
                 const qlonglong version = u.value.toLongLong();
                 caps.nnrLoadWarningVersion = version > 0 && version <= 65535
+                    ? static_cast<int>(version) : 0;
+            }
+        } else if (u.name == "bandStackVersion") {
+            // Band stack plan Task 4: one entry, an Int64 of 1 or more.
+            if (++bandStackEntries == 1 && u.ordinal == 0
+                && u.kind == MirrorWireKind::Int64
+                && u.value.typeId() == QMetaType::LongLong) {
+                const qlonglong version = u.value.toLongLong();
+                caps.bandStackVersion = version > 0 && version <= 65535
                     ? static_cast<int>(version) : 0;
             }
         } else if (u.name == "rxMeterStampsVersion") {

@@ -266,7 +266,7 @@ struct SetupDescribedPagesTests {
                                     .both, .thisPhone])
         func pages(_ title: String) -> [String] { tree.first { $0.title == title }?.pages.map(\.title) ?? [] }
         // A Core below description 30 lists General's Filters page greyed with its reason.
-        #expect(pages("General") == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options", "Filters"])
+        #expect(pages("General") == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options", "Band Stack", "Filters"])
         #expect(tree.first { $0.title == "General" }?.pages.last?.unavailableReason == SetupTree.filtersCoreOlderText)
         // A Core below description 12 lists 3D View greyed with its reason (the 3D View board).
         #expect(pages("Display") == ["On this phone", "Spectrum Defaults", "Spectrum Peaks", "Waterfall Defaults",
@@ -345,13 +345,13 @@ struct SetupDescribedPagesTests {
             SetupTree.categories(described: pages.categories, order: pages.order, unreadable: pages.unreadable)
                 .first { $0.title == "General" }?.pages.map(\.title) ?? []
         }
-        #expect(general() == ["Navigation", "Battery and sessions", "Options", "Filters"])
+        #expect(general() == ["Navigation", "Battery and sessions", "Options", "Band Stack", "Filters"])
         #expect(!SetupTree.categories(described: pages.categories, order: pages.order, unreadable: pages.unreadable)
             .contains { $0.title == "DSP" }, "a category with no page is left out")
         await rig.station.publishSetup("general", json: FakeStation.syntheticSetup(
             "general", title: "Options", version: 3, extraPage: "Startup & Preferences"), revision: 2)
-        #expect(await settle { general().count == 5 })
-        #expect(general() == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options", "Filters"])
+        #expect(await settle { general().count == 6 })
+        #expect(general() == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options", "Band Stack", "Filters"])
         try await Self.shoot("setup-described-general", rig: rig, path: [.category("General")])
         await rig.app.disconnect()
     }
@@ -711,7 +711,7 @@ struct SetupDescribedPagesTests {
             && app.setupPages.categories["general"] == app.setupFeed.description(for: "general") })
         let older = try #require(general())
         #expect(older.pages.map(\.title) == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options",
-                                             "Filters"])
+                                             "Band Stack", "Filters"])
         #expect(older.pages.last?.unavailableReason == SetupTree.filtersCoreOlderText)
         #expect(older.pages.dropLast().allSatisfy { $0.unavailableReason == nil })
 
@@ -722,7 +722,7 @@ struct SetupDescribedPagesTests {
             && app.setupPages.categories["general"] == app.setupFeed.description(for: "general") })
         let tree = try #require(general())
         #expect(tree.pages.map(\.title) == ["Startup & Preferences", "Navigation", "Battery and sessions", "Options",
-                                            "Filters"])
+                                            "Band Stack", "Filters"])
         #expect(tree.pages.allSatisfy { $0.unavailableReason == nil })
         #expect(tree.pages.last?.destination == .described(category: "general", page: SetupTree.filtersPageId))
         let page = try #require(app.setupPages.categories["general"]?.pages.first { $0.id == SetupTree.filtersPageId })

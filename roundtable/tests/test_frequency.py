@@ -141,6 +141,41 @@ def test_last_talker_path_survives_unkey_and_departure(h):
     assert row["bearingDeg"] == before and row["reading"]["turn"] in [t["id"] for t in full["earlier"]]
 
 
+def test_retained_measurement_keeps_current_key_state_during_overlap(h):
+    talker = station(h, keyed=True)
+    receiver = station(h, "W4XYZ", HZ+10, grid="FN20", address="192.0.2.2")
+    h.advance(10000)
+    viewer = watch(h)
+    measured_at = h.clock.wall_ms()
+    receiver.send(reading(0, -81, measured_at))
+
+    def snapshot():
+        viewer.send({"type":"resync", "room":f"usb-{HZ}", "view":"frequency"})
+        return viewer.take()[-1]
+
+    initial = snapshot()
+    measured = next(m for m in initial["members"] if m["callsign"] == "W4XYZ")
+    assert measured["keyed"] is False
+    assert measured["reading"]["t"] == measured_at
+    assert measured["reading"]["turn"] in [t["id"] for t in initial["now"]]
+    h.advance(1100)
+    receiver.send(presence("W4XYZ", "FN20", [slice_(0, HZ+10, keyed=True)]))
+    double = snapshot()
+    current = next(m for m in double["members"] if m["callsign"] == "W4XYZ")
+    assert current["keyed"] is True
+    assert {k: v for k, v in current.items() if k != "keyed"} == {k: v for k, v in measured.items() if k != "keyed"}
+    assert len(double["now"]) == 1 and double["now"][0]["kind"] == "doubled"
+    assert {t["callsign"] for t in double["now"][0]["talkers"]} == {"K4ABC", "W4XYZ"}
+    assert [m["reading"] for m in double["members"] if m["reading"] is not None] == [measured["reading"]]
+    h.advance(1100)
+    receiver.send(presence("W4XYZ", "FN20", [slice_(0, HZ+10)]))
+    after = snapshot()
+    current = next(m for m in after["members"] if m["callsign"] == "W4XYZ")
+    assert current["keyed"] is False
+    assert current == measured
+    assert any(t["id"] == measured["reading"]["turn"] for t in after["earlier"])
+
+
 def test_legacy_message_columns_upgrade_blank_and_new_context_survives_reopen(tmp_path):
     path = str(tmp_path/"rt.sqlite")
     s = Store(path)

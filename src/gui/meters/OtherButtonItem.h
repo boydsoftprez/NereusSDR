@@ -47,6 +47,9 @@
 //                 MAF+/-, Setup, Diversity and Linearity are named and
 //                 offered. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-11-06 - STACK+ and STACK- are named and offered (band stack plan
+//                 Task 8). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -172,7 +175,7 @@ public:
         Anf = 37, Nb = 38, Nb1 = 39, Nb2 = 40, Snb = 41, Mnf = 42, MnfPlus = 43,
         Nf = 53,
         Rit = 70, Rit0 = 71, Xit = 72, Xit0 = 73, LockA = 75,
-        TuneStepUp = 77, TuneStepDown = 78,
+        TuneStepUp = 77, TuneStepDown = 78, StackUp = 79, StackDown = 80,
         Avg = 96, PeakHold = 97, Ctun = 98,
         Spectrum = 99, Panadapter = 100, Scope = 101, Scope2 = 102, Phase = 103,
         Waterfall = 104, Histogram = 105, Panafall = 106, Panascope = 107,

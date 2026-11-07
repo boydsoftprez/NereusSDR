@@ -1,6 +1,12 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-05: A device's first slice is a new receiver, RIT and XIT off.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: Band stack plan Task 6: the bandStack.* verbs for the hosting desktop.
+//   2026-11-05: Band stack plan Task 4: bandStackVersion 1, the bandStack object and
+//               the bandStack.* gate (peerGetsBandStack).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-31: Strip legacy Roundtable fields by record type, preserving RF kind.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -1183,6 +1189,15 @@
 //                 AI-assisted via xAI Grok.
 //   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-05: a release that ended a key tells the watchdog it was read,
+//               so a watch left only for VOX counts its silence afresh. J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: on a key with no "tx" copy read yet, the session's
+//               tx.keepalive reaches the watchdog and the cut guard with its
+//               wait since receipt, where its link reports one (a data channel
+//               on a direct or TURN pair; over the web relay, whose leg reads on
+//               main, not for a stall that began before the leg's read). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationServer.h"
@@ -1263,6 +1278,7 @@
 #include "core/session/StationOpeningGate.h"
 #include "core/session/StateMirror.h"
 #include "core/session/StationCatalog.h"
+#include "core/session/BandStackFacade.h"
 #include "core/session/PaProfilesFacade.h"
 #include "core/PaProfileManager.h"
 #include "core/session/StationDevicesFacade.h"
@@ -1702,6 +1718,16 @@ bool isSetupDescriptionMessage(const SessionMessage& message)
 
 // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA Gain profiles.
 constexpr const char* kPaProfilesKey = "paProfiles";
+
+// Band stack plan Task 4 (bandStackVersion 1): the Core's band stack.
+constexpr const char* kBandStackKey = "bandStack";
+
+bool isBandStackMessage(const SessionMessage& message)
+{
+    return message.objectKey == kBandStackKey
+        || (message.kind == SessionMessageKind::Schema
+            && message.className == "BandStackFacade");
+}
 
 bool isPaProfilesMessage(const SessionMessage& message)
 {
@@ -2822,7 +2848,10 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                               // Core-slice take-over: 3.
                               {QByteArrayLiteral("sliceAccess"), 3},
                               {QByteArrayLiteral("diversityControl"), 1},
-                              {QByteArrayLiteral("diversityPattern"), 1}};
+                              {QByteArrayLiteral("diversityPattern"), 1},
+                              // Band stack plan Task 4: the hosting desktop's
+                              // own window uses the same verbs.
+                              {QByteArrayLiteral("bandStack"), 1}};
     m_stationPeer.deviceId = SliceOwnership::stationDevice();
     m_stationPeer.sessionDeviceId = SliceOwnership::stationDevice();
     m_stationPeer.placeSettled = true;
@@ -4198,14 +4227,14 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
             });
 
-    // JJ 2026-10-23: devices admitted to a Core inside a desktop window
-    // before its radio connected are placed once it has (after the other
+    // JJ 2026-10-23: devices admitted to a Core before its radio connected
+    // are placed once it has (after the other
     // Connected handlers, so the window's starting slice exists).
     if (m_radioModel) {
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,
                 [this](ConnectionState state) {
                     if (state != ConnectionState::Connected || m_placementAwaitingRadio.isEmpty()
-                        || m_radioModel.isNull() || m_radioModel->currentRadioMac().isEmpty()) {
+                        || m_radioModel.isNull()) {
                         return;
                     }
                     const QSet<QByteArray> waiting = std::exchange(m_placementAwaitingRadio, {});
@@ -4626,8 +4655,21 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 reply(result);
                 return;
             }
+            // Maintainer's ruling, 2026-11-05: a release that ended this
+            // device's key, read here, restarts the silence of a watch left
+            // only for its armed VOX (RemoteTxWatchdog::releaseRead).
+            const bool isRelease = command.verb == RemoteKeying::Verb::Unkey
+                || ((command.verb == RemoteKeying::Verb::Tune
+                     || command.verb == RemoteKeying::Verb::TwoTone)
+                    && !command.on);
+            const bool wasKeyed = isRelease && m_radioModel
+                && m_radioModel->keyedBy().deviceId == command.deviceId;
             // Task 36: a key waiting for its microphone buffer answers later.
             m_remoteKeying->handle(command, std::move(reply));
+            if (wasKeyed && m_txWatchdog && m_radioModel
+                && m_radioModel->keyedBy().deviceId != command.deviceId) {
+                m_txWatchdog->releaseRead(command.deviceId);
+            }
         };
         // Task 37: tx.keepalive on the session's own link.
         access.keepalive = [this](const QByteArray& requester, quint64 sequence, quint32 epoch) {
@@ -4635,15 +4677,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // Control logging lane: logged after, as it was watched,
                 // with its wait since the control link received it.
                 const bool watched = m_txWatchdog->isWatching(requester);
-                const std::optional<qint64> waitUs = m_dispatchingTransport != nullptr
-                    ? m_dispatchingTransport->deliveringMessageWaitUs()
-                    : std::nullopt;
+                // Heard when it came off the network, where the link says, on a
+                // key with no "tx" copy read yet. One answer for both halves.
+                const qint64 waitUs = dispatchingMessageAgeUs();
+                const qint64 ageUs = sessionKeepaliveAgeUs(requester, waitUs);
                 if (m_txWatchdog->keepalive(requester, sequence, epoch,
-                                            RemoteTxWatchdog::Path::Session)) {
-                    noteKeepaliveForCutGuard(requester, 0);
+                                            RemoteTxWatchdog::Path::Session, ageUs / 1000)) {
+                    noteKeepaliveForCutGuard(requester, ageUs);
                 }
                 controlLogKeepalive(requester, ControlLog::KeepaliveChannel::Control,
-                                    waitUs.value_or(0) / 1000, watched);
+                                    waitUs / 1000, watched);
             }
         };
         access.keepaliveV2 = [this](const QByteArray& requester, const TxKeepalive& value) {
@@ -4651,15 +4694,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 // Control logging lane: logged after, as it was watched,
                 // with its wait since the control link received it.
                 const bool watched = m_txWatchdog->isWatching(requester);
-                const std::optional<qint64> waitUs = m_dispatchingTransport != nullptr
-                    ? m_dispatchingTransport->deliveringMessageWaitUs()
-                    : std::nullopt;
-                if (m_txWatchdog->keepalive(requester, value,
-                                            RemoteTxWatchdog::Path::Session)) {
-                    noteCwKeepalive(requester, value, 0);
+                // Heard when it came off the network, where the link says, on a
+                // key with no "tx" copy read yet. One answer for both halves.
+                const qint64 waitUs = dispatchingMessageAgeUs();
+                const qint64 ageUs = sessionKeepaliveAgeUs(requester, waitUs);
+                if (m_txWatchdog->keepalive(requester, value, RemoteTxWatchdog::Path::Session,
+                                            ageUs / 1000)) {
+                    noteCwKeepalive(requester, value, ageUs);
                 }
                 controlLogKeepalive(requester, ControlLog::KeepaliveChannel::Control,
-                                    waitUs.value_or(0) / 1000, watched);
+                                    waitUs / 1000, watched);
             }
         };
         // Task 77 (ruling 7.7): the transmitter's own settings are the
@@ -5321,6 +5365,14 @@ void StationServer::invokeAsStationDevice(const SessionMessage& invoke, StationA
         QByteArrayLiteral("diversity.setTarget"),
         QByteArrayLiteral("slice.setListenLevel"), QByteArrayLiteral("confirm.proceed"),
         QByteArrayLiteral("confirm.cancel"),     QByteArrayLiteral("notice.takeBack"),
+        // Band stack plan Task 6: the hosting desktop's stack (design V15).
+        QByteArrayLiteral("bandStack.press"),    QByteArrayLiteral("bandStack.step"),
+        QByteArrayLiteral("bandStack.goTo"),     QByteArrayLiteral("bandStack.add"),
+        QByteArrayLiteral("bandStack.saveHere"), QByteArrayLiteral("bandStack.edit"),
+        QByteArrayLiteral("bandStack.delete"),   QByteArrayLiteral("bandStack.reorder"),
+        QByteArrayLiteral("bandStack.setReturn"), QByteArrayLiteral("bandStack.clear"),
+        QByteArrayLiteral("bandStack.reseed"),   QByteArrayLiteral("bandStack.options"),
+        QByteArrayLiteral("bandStack.restoreExpired"),
     };
     if (invoke.kind != SessionMessageKind::CommandInvoke
         || !kHostVerbs.contains(invoke.commandVerb)) {
@@ -6901,6 +6953,16 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                     message.commandVerb, message.commandId, false, refusal, {}));
                 break;
             }
+        }
+        // Band stack plan Task 4 (bandStackVersion 1): the bandStack.* verbs,
+        // to a peer that declared bandStack on a Core that runs the stack.
+        if (message.commandVerb.startsWith("bandStack.") && !peerGetsBandStack(transport)) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                !m_radioModel.isNull() && m_radioModel->role() == RadioModel::Role::Remote
+                    ? QStringLiteral("This Core cannot share band stacks with this app.")
+                    : QStringLiteral("Update this app to use band stacks on this Core."), {}));
+            break;
         }
         if (message.commandVerb == "tx.twoTonePreset"
             && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
@@ -8584,6 +8646,9 @@ void StationServer::buildMirror()
     // to a peer that declared paProfiles (sendToPeer).
     m_paProfiles->refresh();
     m_mirror->watch(QByteArray(kPaProfilesKey), m_paProfiles.get());
+    // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack, only
+    // to a peer that declared bandStack (sendToPeer).
+    m_mirror->watch(QByteArray(kBandStackKey), m_radioModel->bandStackFacade());
     m_setupDescription->setRadioContext(m_radioModel->boardCapabilities(),
                                         m_radioModel->hardwareProfile().model,
                                         m_radioModel->currentRadioInfo());
@@ -9503,8 +9568,9 @@ void StationServer::applyBandPlanSetting(const QString& key)
 QString StationServer::sliceSettingsRefusal(SessionTransport* transport, const QString& key) const
 {
     // Slice<N>/... is SliceModel's per-slice, per-band state (Station
-    // scope). A slice's NNR keys, hardware/<mac>/slices/<N>/nnr/..., are
-    // model-owned and refused to every writer already.
+    // scope). A slice's NNR keys, hardware/<mac>/slices/<N>/nnr/..., and its
+    // saved rate, hardware/<mac>/slices/<N>/SampleRate, are model-owned and
+    // refused to every writer already.
     static const QRegularExpression kSliceKey(QStringLiteral("^Slice(\\d+)/"));
     const QRegularExpressionMatch match = kSliceKey.match(key);
     if (!match.hasMatch() || m_radioModel.isNull()) {
@@ -10439,6 +10505,11 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
         if (isPaProfilesMessage(message) && !peerGetsPaProfiles(transport)) {
             return;
         }
+        // Band stack plan Task 4: nor the band stack to a peer that did not
+        // declare bandStack.
+        if (isBandStackMessage(message) && !peerGetsBandStack(transport)) {
+            return;
+        }
         // iPhone app Task 19: nor the catalogue to an older app.
         if (isCatalogMessage(message)
             && (minor < kRadioIdentitySessionProtocolMinor || stationCatalogVersion() < 1)) {
@@ -10513,6 +10584,16 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
 }
 
 // ── The read-only TX EQ curve (R-IOS-13, R-R3-49) ───────────────────────
+
+bool StationServer::peerGetsBandStack(SessionTransport* transport) const
+{
+    // peerPtr, not m_peers: the station device's own peer is not in m_peers.
+    const Peer* peer = peerPtr(transport);
+    return peer != nullptr && !m_radioModel.isNull()
+        && m_radioModel->role() != RadioModel::Role::Remote
+        && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(transport, QByteArrayLiteral("bandStack"), 1);
+}
 
 bool StationServer::peerGetsPaProfiles(SessionTransport* transport) const
 {
@@ -11367,6 +11448,19 @@ void StationServer::recoverRemoteCw(quint32 epoch)
     m_radioModel->resumeRemoteCw(epoch);
 }
 
+qint64 StationServer::sessionKeepaliveAgeUs(const QByteArray& deviceId, qint64 waitUs) const
+{
+    return m_txWatchdog && !m_txWatchdog->txChannelHeard(deviceId) ? waitUs : 0;
+}
+
+qint64 StationServer::dispatchingMessageAgeUs() const
+{
+    if (m_dispatchingTransport == nullptr) {
+        return 0;
+    }
+    return std::max<qint64>(0, m_dispatchingTransport->deliveringMessageWaitUs().value_or(0));
+}
+
 void StationServer::noteKeepaliveForCutGuard(const QByteArray& deviceId, qint64 ageUs)
 {
     if (!m_txCutGuard || deviceId.isEmpty() || deviceId != m_txCutGuardDevice) {
@@ -12138,6 +12232,9 @@ TxRefusal StationServer::freezeRefusalFor(const SessionMessage& message) const
     }
     if (message.kind == SessionMessageKind::CommandInvoke
         && (message.commandVerb == "removeSlice" || message.commandVerb == "slice.selectBand"
+            // Band stack plan Task 4: a recall retunes the slice.
+            || message.commandVerb == "bandStack.press" || message.commandVerb == "bandStack.step"
+            || message.commandVerb == "bandStack.goTo"
             // Slice control fix wave (whole-branch review, Critical 1):
             // leaving the frozen slice could close it under the key.
             || message.commandVerb == "slice.release"
@@ -12259,7 +12356,11 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     // device's letter from the saved layout, which it reads when the radio
     // connects (RadioModel::addStartingSlices). A device admitted before
     // that is placed when the radio connects, so it neither takes a letter
-    // kept for another device nor leaves the window without one. An older
+    // kept for another device nor leaves the window without one. A headless
+    // Core waits the same way: a device's saved slices are stored per radio,
+    // so with no radio it would get a new slice and not its own. A token
+    // window has no saved slices to wait for, and a connected radio with no
+    // MAC has no store to read, so those are placed now. An older
     // window (no sessionHolder) needs its slice at admission or it is
     // refused (olderWindowWithoutSliceReason), so it is placed now, as
     // before.
@@ -12270,8 +12371,10 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
             break;
         }
     }
-    if (holdsSessions && m_radioModel->hostsStationDevice()
-        && m_radioModel->currentRadioMac().isEmpty()) {
+    const bool waitsForItsLayout = m_radioModel->hostsStationDevice()
+        || (!deviceId.startsWith("token:")
+            && m_radioModel->connectionState() != ConnectionState::Connected);
+    if (holdsSessions && waitsForItsLayout && m_radioModel->currentRadioMac().isEmpty()) {
         m_placementAwaitingRadio.insert(deviceId);
         m_connectedDevices->refresh();
         return;
@@ -12334,7 +12437,8 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     //    it starts with none.
     if (ownership->ownedBy(deviceId).isEmpty()) {
         const SliceOwnership::CreatorScope creator(ownership, deviceId);
-        if (m_radioModel->addSlice(QString()) < 0) {
+        if (m_radioModel->addSlice(QString(), /*restoreSavedState=*/false,
+                                   /*newReceiver=*/true) < 0) {
             qCInfo(lcStation) << "A device was admitted with no slice: the slice cap is full";
         }
     }
@@ -12363,6 +12467,17 @@ bool StationServer::closeSliceFor(int sliceId, const QByteArray& saveFor, SavedS
     saved.frequencyHz = slice->frequency();
     saved.dspMode = slice->dspMode();
     const QString mac = m_radioModel->currentRadioMac();
+    // Persistence audit: with no radio connected there is no layout store to
+    // save in (as saveTakenSlicesFor), so the slice of a device that can come
+    // back stays, with its keys, held for it. Its next admission returns it,
+    // and the end of its next away period saves it. A device that was removed
+    // has nothing to come back to, so its slice closes.
+    if (unclaimed && !saveFor.isEmpty() && mac.isEmpty() && m_devices->find(saveFor)) {
+        m_radioModel->sliceOwnership()->hold(sliceId, saveFor);
+        if (!self || !m_radioModel) return false;
+        m_radioModel->requestSettingsSave();
+        return false;
+    }
     // Removing saves the slice's own settings to its keys first.
     if (unclaimed) {
         m_radioModel->closeUnclaimedSlice(sliceId);
@@ -15077,6 +15192,9 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // R-R3-49 / R-IOS-18: the PA Gain profiles, to a peer that
             // declared paProfiles 1.
             caps.paProfileVersion = peerGetsPaProfiles(transport) ? 1 : 0;
+            // Band stack plan Task 4: the Core's band stack, to a peer that
+            // declared bandStack 1 (before coreBuildInfo on the wire).
+            caps.bandStackVersion = peerGetsBandStack(transport) ? 1 : 0;
             // R-R3-47 / R-R3-22: the Tuner Genius's own settings.
             caps.remoteTgxlControlVersion = tgxlControlVersion();
             // iPhone app Task 12 (R-IOS-08): device sign-in by key, last.
