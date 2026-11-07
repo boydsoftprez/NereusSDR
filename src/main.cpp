@@ -7,6 +7,7 @@
 #include "core/AudioEngine.h"
 #include "core/BuildIdentity.h"
 #include "core/CoreInit.h"
+#include "core/LogCategories.h"
 #include "core/MacMicPermission.h"
 #include "core/audio/CaptureStandby.h"
 #include "core/audio/MacMicMode.h"
@@ -299,6 +300,29 @@ int main(int argc, char* argv[])
     NereusSDR::StationHandover ownership(activeProfile);
     QString handoverError;
     while (!ownership.reclaimFromBackground(15000, &handoverError)) {
+        if (ownership.lockedByOtherComputer()) {
+            // This folder could be reachable from the computer that wrote the
+            // lock, so only the operator can say that computer is done with it.
+            QMessageBox otherComputer(QMessageBox::Warning, QStringLiteral("NereusSDR"),
+                QStringLiteral("This profile is marked as in use on %1.")
+                    .arg(ownership.otherComputerName()));
+            otherComputer.setInformativeText(QStringLiteral(
+                "Its folder is on a network drive or a kind of disk NereusSDR does not "
+                "recognize, so NereusSDR cannot tell whether that computer is still using it.\n\n"
+                "If NereusSDR is running there, quit it first. Two computers using one profile "
+                "can overwrite each other's settings. If it is not running there, choose "
+                "Take Over."));
+            QPushButton* const takeOver = otherComputer.addButton(
+                QStringLiteral("Take Over"), QMessageBox::AcceptRole);
+            QPushButton* const quit = otherComputer.addButton(
+                QStringLiteral("Quit"), QMessageBox::RejectRole);
+            otherComputer.setDefaultButton(quit);
+            otherComputer.exec();
+            if (otherComputer.clickedButton() != takeOver) { return 1; }
+            if (ownership.takeOverFromOtherComputer(&handoverError)) { break; }
+            QMessageBox::warning(nullptr, QStringLiteral("NereusSDR"), handoverError);
+            continue;
+        }
         QMessageBox handover(QMessageBox::Warning, QStringLiteral("NereusSDR"),
             QStringLiteral("NereusSDR could not take ownership of this Core profile."));
         handover.setInformativeText(handoverError);
@@ -317,6 +341,11 @@ int main(int argc, char* argv[])
     // directory, it does not re-pin the override itself. See
     // src/core/CoreInit.h for the full contract and its idempotency guard.
     NereusSDR::CoreInit::initialize(activeProfile);
+
+    // Written here because the log opens only once the profile is owned.
+    if (!ownership.takeoverNote().isEmpty()) {
+        qCWarning(NereusSDR::lcApp).noquote() << ownership.takeoverNote();
+    }
 
     // The waterfall's stored Black Level and Color Gain, converted once to
     // the level model used under Clarity so the waterfall looks the same

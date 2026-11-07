@@ -201,16 +201,14 @@ final class BandStackModel: ObservableObject {
         !label.isEmpty && label.allSatisfy(\.isNumber) ? label + "m" : label
     }
 
-    /// A band number outside the grid that a slice can still stand on.
-    // From src/models/Band.h:119-133 (enum class Band: GEN 11, XVTR 13)
-    private static let offGridBandKeys = [11: "GEN", 13: "XVTR"]
-
     /// The Core's key for a slice's band number, nil for one this phone cannot name.
+    /// A band with no grid button (GEN, XVTR, a shortwave broadcast band)
+    /// takes the app's shared band name, which is the Core's key for it.
     static func bandKey(id: Int?, bands: [(id: Int, label: String)]) -> String? {
         guard let id else {
             return nil
         }
-        return bands.first { $0.id == id }.map { bandKey(label: $0.label) } ?? offGridBandKeys[id]
+        return bands.first { $0.id == id }.map { bandKey(label: $0.label) } ?? SetupDescription.bandName(id)
     }
 
     /// The bands "40m \u{25BE}" lists: the Core's grid in its order, then any

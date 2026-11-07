@@ -505,6 +505,14 @@ struct BandStackModelTests {
         #expect(BandStackModel.bandKey(id: nil, bands: bands) == nil)
     }
 
+    @Test("a slice on a shortwave broadcast band has that band's key, as the Core's store keys it")
+    func shortwaveBandKey() {
+        let bands = FakeStation.bands
+        #expect(BandStackModel.bandKey(id: 14, bands: bands) == "120m")
+        #expect(BandStackModel.bandKey(id: 19, bands: bands) == "31m")
+        #expect(BandStackModel.bandKey(id: 26, bands: bands) == "11m")
+    }
+
     @Test("with the capability a band's press goes through the stack, lit or not, and a menu showing it stays open")
     func pressThroughTheStack() async throws {
         let rig = try await withBands()
