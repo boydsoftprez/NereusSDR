@@ -14,6 +14,8 @@
 // 2026-10-25: Roundtable fix wave: the swipes' model is a @StateObject, made
 // once when the screen makes its own. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
+// 2026-11-05: The Roundtable sheet is told its full height on this band.
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -445,6 +447,8 @@ struct MainScreen: View {
                                     detent: Binding(get: { roundtableSheet ?? .half },
                                                     set: { roundtableSheet = $0 }),
                                     dialOn: dialStrip, linkUp: pttLinkUp,
+                                    fullHeight: Self.roundtablePlace(bandHeight: proxy.size.height, detent: .full,
+                                                                     gaugesFoot: nil, dialStrip: dialStrip).height,
                                     stationCallsign: app.freedv.callsign, stationGrid: app.freedv.gridSquare,
                                     firstRunNoteSeen: firstRunNoteSeenBinding,
                                     close: closeRoundtable, holdObserver: holdObserver,
