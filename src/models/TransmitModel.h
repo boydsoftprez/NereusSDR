@@ -343,6 +343,15 @@
 //                 (transmitSettingsVersion 16, R-CW-03), with their ranges,
 //                 defaults and hardware/<mac>/tx/ keys. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06 - A PWR or tune power edit with no radio and no transmit slice
+//                 is held with no band and becomes the band the radio comes up
+//                 on: holdPowerForNextBand, setTunePowerWithNoBand,
+//                 takePowerHeldForNextBand. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
+//   2026-11-05 - Transmit edits made with no radio are kept in a held area
+//                 for the next radio (JJ's ruling): setKeepsEditsWithoutRadio,
+//                 heldEditsPrefix, HeldEditPause. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-27 - CW transmit final fix wave F2: cwQskUnavailableReason,
 //                 the Core's reason QSK is not offered (empty while it is),
 //                 outbound only, declared last; a write of QSK while it is
@@ -367,6 +376,8 @@
 #include <QStringList>
 #include <QVariant>
 #include <array>
+#include <optional>
+#include <utility>
 #include <atomic>
 #include <cmath>
 
@@ -564,6 +575,24 @@ public:
     ///   hardware/<mac>/powerByBand/<bandKeyName>
     /// (mirrors the per-MAC tx/ namespace pattern).
     void setPowerForBand(Band band, int watts);
+
+    /// Who holds a temporary FIXED power in PWR. TUNE and two-tone hold
+    /// separately, since a TUNE off can still be completing as two-tone starts.
+    enum class BandPowerSaveHolder : unsigned { Tune = 1U, TwoTone = 2U };
+
+    /// While any holder is set, setPowerForBand still changes memory and
+    /// signals, but the hardware/<mac>/powerByBand/<band> write waits, and the
+    /// bulk save skips a band with a write waiting. Ending the last hold
+    /// writes what memory then holds for those bands. Call it after the
+    /// power has been restored.
+    ///
+    /// NereusSDR's own, no Thetis equivalent: Thetis keeps power_by_band in
+    /// memory and writes it only at SaveState on a clean exit
+    /// (console.cs:3087-3093, 28241-28242 [v2.10.3.15]). The timed AppSettings save
+    /// would otherwise put a temporary power on disk, and a crash would load it
+    /// as the band's normal drive at the next launch.
+    void setBandPowerSaveHeld(BandPowerSaveHolder holder, bool held);
+    bool isBandPowerSaveHeld() const { return m_bandPowerSaveHolders != 0U; }
 
     // ── Per-band slider limits and FM TX offset (R-R3-49) ─────────────────
     //
@@ -975,6 +1004,54 @@ public:
     /// start at their safety defaults regardless of any stored value.
     /// micGainDb defaults to -6 on first run (plan §0 row 11).
     void loadFromSettings(const QString& mac);
+
+    // ── Edits made before any radio has connected ─────────────────────────
+    //
+    // JJ's ruling, 2026-11-05: a transmit value set before any radio has
+    // connected in this run stays, replaces the saved value of whichever
+    // radio connects next, and is saved for that radio. It waits on disk under
+    // heldEditsPrefix(), keeping its path relative to hardware/<mac>/, and
+    // load() and loadFromSettings() move it there before they read.
+    //
+    // A setter also runs from code, and a held write nobody made would
+    // replace a radio's saved value, its drive included. So nothing is held
+    // until the owner says startup is done, a remote window's mirror is never
+    // told, and code that derives a setting from something else takes a
+    // HeldEditPause.
+    void setKeepsEditsWithoutRadio(bool keep) { m_keepsEditsWithoutRadio = keep; }
+    bool keepsEditsWithoutRadio() const { return m_keepsEditsWithoutRadio; }
+    static QString heldEditsPrefix();
+
+    // A PWR or tune power edit with no radio and no transmit slice has no band:
+    // the band is whichever the radio comes up on. It waits under the held
+    // area with no band, and load() and loadFromSettings() leave it there, so a
+    // connect that drops before the radio answers keeps it for the next.
+    // RadioModel hands it its band once the radio has answered.
+    bool holdsWithNoBand() const;
+    bool heldEditsPaused() const { return m_heldEditPauses > 0; }
+    bool holdPowerForNextBand(int power);
+    // The Tune slider and button with no transmit band: held with no band when
+    // that applies, and `shownBand`'s value in memory either way, as it was,
+    // so what they show still adds up. Never held for `shownBand`.
+    void setTunePowerWithNoBand(Band shownBand, int watts);
+    bool hasPowerHeldForNextBand() const;
+    // Those values become `band`'s for the bound radio, in memory and on disk,
+    // and leave the held area. Only that band changes.
+    void takePowerHeldForNextBand(Band band);
+
+    class HeldEditPause {
+    public:
+        explicit HeldEditPause(TransmitModel& model) : m_model(model)
+        {
+            ++m_model.m_heldEditPauses;
+        }
+        ~HeldEditPause() { --m_model.m_heldEditPauses; }
+        HeldEditPause(const HeldEditPause&) = delete;
+        HeldEditPause& operator=(const HeldEditPause&) = delete;
+
+    private:
+        TransmitModel& m_model;
+    };
 
     /// Bulk-write all 15 persisted mic/VOX/MON properties to AppSettings.
     /// (Excluding voxEnabled, monEnabled, micMute — never persisted.)
@@ -2470,6 +2547,12 @@ public slots:
     int filterLow()  const noexcept { return m_filterLow; }
     int filterHigh() const noexcept { return m_filterHigh; }
 
+    /// The filter the operator had before RADE's passband replaced it, kept
+    /// beside the filter's own keys so it survives a restart while in RADE.
+    /// RadioModel::snapTransmitFilterForMode sets and clears it.
+    std::optional<std::pair<int, int>> filterBeforeRade() const { return m_filterBeforeRade; }
+    void setFilterBeforeRade(std::optional<std::pair<int, int>> filter);
+
     void setFilterLow(int hz);
     void setFilterHigh(int hz);
 
@@ -2953,6 +3036,7 @@ private:
     // spec §Task 2). Persisted under hardware/<mac>/tx/FilterLow and FilterHigh.
     int m_filterLow{100};
     int m_filterHigh{2900};
+    std::optional<std::pair<int, int>> m_filterBeforeRade;
     float m_micGain{0.0f};
     bool m_pureSigEnabled{false};
     // SWR-foldback multiplier; default 1.0 = no foldback.  Clamped 0..1
@@ -2997,6 +3081,9 @@ private:
     // the dBm compensator (Phase 3A scaffolding for #167 Phase 3C math
     // kernel).  Initialised in the constructor.
     std::array<int, static_cast<std::size_t>(kPerBandStateCount)> m_powerByBand{};  // per-band state slots (2 m at 14)
+    // setBandPowerSaveHeld: the holders set, and the bands with a write waiting.
+    unsigned m_bandPowerSaveHolders{0U};
+    std::array<bool, static_cast<std::size_t>(kPerBandStateCount)> m_powerByBandSaveWaiting{};
 
     // R-R3-49: per-band slider limits and FM TX offsets, and the current
     // slider limits and offset (see limitPowerForBand).  Filled in the
@@ -3083,13 +3170,18 @@ private:
     QString m_mac;
 
     // Per-MAC scope for mic/VOX/MON auto-persist (L.2).
-    // Empty until loadFromSettings(mac) is called; setters no-op their
-    // persistOne() call when this is empty.
+    // Empty until loadFromSettings(mac) is called.
     QString m_persistMac;
 
+    bool m_keepsEditsWithoutRadio{false};
+    int m_heldEditPauses{0};
+
     /// Write a single key under hardware/<m_persistMac>/tx/<key> to AppSettings.
-    /// No-op when m_persistMac is empty (before loadFromSettings is called).
     void persistOne(const QString& key, const QVariant& value) const;
+    /// hardware/<m_persistMac>/<relativeKey>; with no radio bound yet, the
+    /// held area if edits are being kept, otherwise nowhere.
+    void writeForRadio(const QString& relativeKey, const QString& text) const;
+    void moveHeldEditsToRadio(const QString& mac);
 
     // Requests validate before applying. A trusted per-radio restore must
     // retain an unplugged selection, without re-persisting it or temporarily

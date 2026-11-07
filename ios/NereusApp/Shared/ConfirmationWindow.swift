@@ -131,9 +131,10 @@ final class ConfirmationPresenter: ObservableObject {
         window.rootViewController = root
         window.isHidden = true
         self.window = window
-        watch = devices.$question.combineLatest(main.take.$asked).sink { [weak self] question, asked in
-            self?.show(question, asked: asked)
-        }
+        watch = devices.$question.combineLatest(main.take.$asked, main.bandStackRegion.$asked)
+            .sink { [weak self] question, asked, region in
+                self?.show(question, asked: asked, region: region)
+            }
         follow()
     }
 
@@ -165,11 +166,13 @@ final class ConfirmationPresenter: ObservableObject {
         window.coveredHeight = top
     }
 
-    private func show(_ question: SeveralDevices.Question?, asked: TransmitTakeModel.Asked?) {
+    private func show(_ question: SeveralDevices.Question?, asked: TransmitTakeModel.Asked?,
+                      region: BandStackRegionPrompt.Asked?) {
         guard let window else {
             return
         }
-        let shows = asked != nil || (question.map { ConfirmationLayer.shows($0.kind, takesTransmit: true) } ?? false)
+        let shows = asked != nil || region != nil
+            || (question.map { ConfirmationLayer.shows($0.kind, takesTransmit: true) } ?? false)
         if shows {
             follow()
         }
@@ -206,17 +209,20 @@ private struct ConfirmationWindowContent: View {
     @ObservedObject var devices: SeveralDevicesClient
     let main: MainScreenModel
     @ObservedObject private var take: TransmitTakeModel
+    @ObservedObject private var bandStackRegion: BandStackRegionPrompt
 
     init(presenter: ConfirmationPresenter, devices: SeveralDevicesClient, main: MainScreenModel) {
         self.presenter = presenter
         self.devices = devices
         self.main = main
         take = main.take
+        bandStackRegion = main.bandStackRegion
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            ConfirmationLayer(devices: devices, modeLabel: main.modeLabel, kindOf: main.foreign.kind(of:), take: take)
+            ConfirmationLayer(devices: devices, modeLabel: main.modeLabel, kindOf: main.foreign.kind(of:),
+                              bandStackRegion: bandStackRegion, take: take)
                 .frame(height: presenter.coveredHeight)
             Spacer(minLength: 0)
         }
@@ -224,5 +230,6 @@ private struct ConfirmationWindowContent: View {
         .ignoresSafeArea()
         .animation(.easeOut(duration: 0.2), value: devices.question?.id)
         .animation(.easeOut(duration: 0.2), value: take.asked?.id)
+        .animation(.easeOut(duration: 0.2), value: bandStackRegion.asked?.id)
     }
 }

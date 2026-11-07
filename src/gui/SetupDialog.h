@@ -241,6 +241,8 @@ signals:
     // Task 3.6: forwarded from GeneralOptionsPage — CPU meter rate spinbox.
     // MainWindow::setCpuTimerIntervalHz() is the handler.
     void cpuMeterRateChanged(int hz);
+    // Band stack plan Task 12: forwarded from GeneralOptionsPage.
+    void bandStackRegionEdited();
     void hideFeedbackLevelChanged(bool hidden);
     void invertRedBluePsaChanged(bool inverted);
 

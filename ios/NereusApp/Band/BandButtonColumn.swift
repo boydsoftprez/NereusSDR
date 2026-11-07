@@ -68,14 +68,23 @@ enum BandColumnLayout {
     /// `.dp-bandgrid`), the flag's antenna menu, the VAX channels, the step
     /// attenuator, and the pill (the board's `.dp-pill`, 340).
     static let bandMenuWidth: CGFloat = 236
+    static let bandMenuPadding: CGFloat = 8
     static let antennaMenuWidth = FlagPopoverLayer.antennaMenuWidth
     static let vaxMenuWidth: CGFloat = 270
     static let attenuatorMenuWidth: CGFloat = 290
     static let pillWidth: CGFloat = 340
 
-    static func width(of menu: BandColumnMenu) -> CGFloat {
+    /// How many panels the BAND menu's grid and band stack take: side by side
+    /// on the phone held sideways and on any band short enough for two
+    /// columns, with a hairline between them, and stacked otherwise.
+    static func bandMenuPanels(columns: Int, leadingInset: CGFloat) -> Int {
+        columns == 2 || leadingInset > 0 ? 2 : 1
+    }
+
+    /// The width of `menu`, the BAND menu's in `panels` panels.
+    static func width(of menu: BandColumnMenu, panels: Int = 1) -> CGFloat {
         switch menu {
-        case .band: bandMenuWidth
+        case .band: panels == 2 ? 2 * bandMenuWidth + 1 : bandMenuWidth
         case .antenna: antennaMenuWidth
         case .display: pillWidth
         case .vax: vaxMenuWidth
@@ -476,7 +485,7 @@ struct BandButtonColumn: View {
                 .padding(.leading, x)
                 .padding(.top, y)
                 if let open, !folded {
-                    menu(open)
+                    menu(open, columns: columns)
                         .frame(maxHeight: maxHeight, alignment: .top)
                         .padding(.leading, x + columnWidth + BandColumnLayout.menuGap)
                         .padding(.top, y)
@@ -560,7 +569,8 @@ struct BandButtonColumn: View {
         if let open, !folded {
             // The menu's full height: what it draws is never taller.
             avoid.append(CGRect(x: column.maxX + BandColumnLayout.menuGap, y: y,
-                                width: BandColumnLayout.width(of: open), height: maxHeight))
+                                width: BandColumnLayout.width(of: open, panels: bandMenuPanels(columns: columns)),
+                                height: maxHeight))
         }
         let flags = slices.flagRects
         let home = PttButton.frame(bandSize: bandSize, leadingInset: leadingInset)
@@ -764,8 +774,9 @@ struct BandButtonColumn: View {
     /// The open menu, as wide as its kind, its frame on ``BandColumnFrameKey``.
     /// The caller caps its height at the band's; inside that it scrolls.
     @ViewBuilder
-    private func menu(_ menu: BandColumnMenu) -> some View {
-        let width = BandColumnLayout.width(of: menu)
+    private func menu(_ menu: BandColumnMenu, columns: Int) -> some View {
+        let panels = bandMenuPanels(columns: columns)
+        let width = BandColumnLayout.width(of: menu, panels: panels)
         switch menu {
         case .display:
             displayPill
@@ -774,11 +785,12 @@ struct BandButtonColumn: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("bandColumnMenu.display")
         case .band:
-            ColumnMenuShell(identifier: "bandColumnMenu.band", padding: 8) {
-                BandSelectGrid(model: sheet) { open = nil }
-            }
-            .frame(width: width)
-            .reportsBandColumnFrame()
+            bandMenu(panels: panels)
+                .frame(width: width)
+                .reportsBandColumnFrame()
+                .onDisappear {
+                    controls.bandStack.endViewing()
+                }
         case .antenna:
             ColumnMenuShell(identifier: "bandColumnMenu.antenna", padding: 6) {
                 if let entry = slices.active, let modes = controls.flagControls.modes {
@@ -816,6 +828,40 @@ struct BandButtonColumn: View {
         }
     }
 
+    private func bandMenuPanels(columns: Int) -> Int {
+        BandColumnLayout.bandMenuPanels(columns: columns, leadingInset: leadingInset)
+    }
+
+    /// The BAND menu: the grid and the band stack, side by side in two panels,
+    /// each scrolling on its own, and stacked in one. It stays open on a press
+    /// the stack takes, and closes on one it does not.
+    @ViewBuilder
+    private func bandMenu(panels: Int) -> some View {
+        let stack = controls.bandStack
+        let blockWidth = BandColumnLayout.bandMenuWidth - 2 * BandColumnLayout.bandMenuPadding
+        if panels == 2 {
+            ColumnMenuShell(identifier: "bandColumnMenu.band", padding: 0, scrolls: false) {
+                HStack(alignment: .top, spacing: 0) {
+                    ColumnMenuPane {
+                        BandSelectGrid(model: sheet, stack: stack) { open = nil }
+                    }
+                    Rectangle().fill(ChromeColours.sheetBorder).frame(width: 1)
+                    ColumnMenuPane {
+                        BandStackBlock(model: stack, width: blockWidth)
+                    }
+                }
+            }
+        } else {
+            ColumnMenuShell(identifier: "bandColumnMenu.band", padding: BandColumnLayout.bandMenuPadding) {
+                VStack(alignment: .leading, spacing: 9) {
+                    BandSelectGrid(model: sheet, stack: stack) { open = nil }
+                    BandMenuTapNote(model: stack)
+                    BandStackBlock(model: stack, width: blockWidth)
+                }
+            }
+        }
+    }
+
     /// The pill from a Core that describes the version 29 Display pages,
     /// today's sheet with its note from an older one, as the toolbar's
     /// Display opens it (spec section 9).
@@ -826,22 +872,63 @@ struct BandButtonColumn: View {
                              device: DisplayDropSheet.deviceWord, openSetup: openSetup,
                              onSetupDefaults: onSetupDefaults, onOpenPage: onOpenPage, onOpen: onOpen, pan: pan)
         } else {
-            DisplaySheet(model: controls.display, core: main.coreDisplay, openSetup: openSetup)
+            DisplaySheet(model: controls.display, core: main.coreDisplay, bandStack: controls.bandStack,
+                         settings: main.phoneSettings, openSetup: openSetup)
         }
     }
 }
 
-/// A menu beside the column: the workspace panel, scrolling only when the
-/// band is too short for it.
-private struct ColumnMenuShell<Content: View>: View {
-    let identifier: String
-    let padding: CGFloat
+/// One side of the BAND menu in two panels, scrolling only when the band is
+/// too short for it.
+private struct ColumnMenuPane<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         ViewThatFits(in: .vertical) {
             inner
             ScrollView { inner }
+        }
+        .frame(width: BandColumnLayout.bandMenuWidth)
+    }
+
+    private var inner: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            content()
+        }
+        .padding(BandColumnLayout.bandMenuPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The note under the BAND menu's grid where the stack takes a press.
+private struct BandMenuTapNote: View {
+    @ObservedObject var model: BandStackModel
+
+    var body: some View {
+        if model.availability == .ready {
+            SheetNote("Tap the lit band for the next entry.")
+        }
+    }
+}
+
+/// A menu beside the column: the workspace panel, scrolling only when the
+/// band is too short for it. With `scrolls` off its content scrolls for itself.
+private struct ColumnMenuShell<Content: View>: View {
+    let identifier: String
+    let padding: CGFloat
+    var scrolls = true
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Group {
+            if scrolls {
+                ViewThatFits(in: .vertical) {
+                    inner
+                    ScrollView { inner }
+                }
+            } else {
+                inner
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: WorkspacePalette.panelRadius, style: .continuous))
         .workspacePanel()

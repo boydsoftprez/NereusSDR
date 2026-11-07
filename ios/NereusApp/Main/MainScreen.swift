@@ -145,12 +145,13 @@ struct MainScreen: View {
     @State private var txPanelEntry = Edge.trailing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
+    @Environment(\.keyboardRoom) private var keyboardRoom
 
     /// `rxPanelOpen` and `txPanelOpen` open the screen with that panel out,
     /// `sheet` with that sheet open.
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
-         txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab = .spectrum,
-         columnShown: Bool = true, columnMenu: BandColumnMenu? = nil, columnPan: PanIdentity = .first,
+         txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab? = nil,
+         columnShown: Bool? = nil, columnMenu: BandColumnMenu? = nil, columnPan: PanIdentity = .first,
          roundtableSheet: RoundtableSheet.Detent? = nil, holdObserver: ((PttHold.Action) -> Void)? = nil,
          swipes: SwipeShortcutModel? = nil, roundtableWide: Bool = false,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
@@ -177,15 +178,19 @@ struct MainScreen: View {
         offline = flow?.offline ?? false
         _rxPanelOpen = State(initialValue: rxPanelOpen)
         _sheet = State(initialValue: sheet)
-        _displayTab = State(initialValue: displayTab)
-        _columnShown = State(initialValue: columnShown)
+        // The layout comes back as it was left; a test's picture may name its own.
+        let kept = app.phoneSettings
+        _displayTab = State(initialValue: displayTab ?? kept.displayPillTab)
+        _columnShown = State(initialValue: columnShown ?? kept.appletColumnShown)
+        _columnFolded = State(initialValue: kept.buttonColumnFolded)
+        _foldedPans = State(initialValue: Set(kept.foldedPanColumns.map(PanIdentity.init(number:))))
         _columnMenu = State(initialValue: columnMenu)
     }
 
     var body: some View {
         GeometryReader { proxy in
-            let sideways = proxy.size.width > proxy.size.height
-            let layout = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size)
+            let layout = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size, keyboardRoom: keyboardRoom)
+            let sideways = proxy.size.width > proxy.size.height + keyboardRoom
             Group {
                 switch layout {
                 case .phone:
@@ -204,6 +209,7 @@ struct MainScreen: View {
                             band(sideways: true, leadingInset: 0, trailingInset: 0, column: true)
                             if columnShown {
                                 AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                             openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) },
                                              roundtable: roundtable.available ? appletConfig : nil)
                                     .transition(.move(edge: .trailing))
                             }
@@ -215,7 +221,8 @@ struct MainScreen: View {
                         toolbar(sideways: false, layout: layout)
                         ConnectionSummaryRow(app: app)
                         band(sideways: false, leadingInset: 0, trailingInset: 0, column: true)
-                        FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings)
+                        FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                          openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) })
                             .frame(height: IPadLayout.frontPanelHeight(underToolbar: proxy.size.height - Toolbar.height))
                     }
                 }
@@ -604,7 +611,7 @@ struct MainScreen: View {
             }
         }
         // A pan closing takes its open menu and band menu with it.
-        .onChange(of: panStack.open) { _, open in
+        .onChange(of: panStack.open) { closedFrom, open in
             if !open.contains(columnPan) || open.count < 2 && columnPan != .first {
                 columnMenu = nil
                 columnPan = .first
@@ -613,8 +620,13 @@ struct MainScreen: View {
                 bandMenu = nil
                 bandMenuPan = .first
             }
-            foldedPans.formIntersection(open)
+            // Only a pan closing forgets its fold: a kept one waits for its pan to open.
+            foldedPans.subtract(Set(closedFrom).subtracting(open))
         }
+        .onChange(of: displayTab) { _, tab in app.phoneSettings.displayPillTab = tab }
+        .onChange(of: columnShown) { _, shown in app.phoneSettings.appletColumnShown = shown }
+        .onChange(of: columnFolded) { _, folded in app.phoneSettings.buttonColumnFolded = folded }
+        .onChange(of: foldedPans) { _, pans in app.phoneSettings.foldedPanColumns = Set(pans.map(\.number)) }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: roundtableSheet)
         .onChange(of: roundtableSheet == nil) { _, closed in
             if closed {
@@ -916,7 +928,8 @@ struct MainScreen: View {
                              roundtableLines: first ? roundtableLines : [:],
                              openRoundtable: first ? { id in openRoundtable(id) } : nil,
                              dialStrip: strip, roundtable: first ? roundtable : nil,
-                             swipes: swipesHere ? swipes : nil)
+                             swipes: swipesHere ? swipes : nil,
+                             bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
@@ -964,7 +977,10 @@ struct MainScreen: View {
             // The pan last touched's sheet, with Add a pan and Close this pan.
             let controls = main.controls(for: main.toolbarPan)
             PanSheet(model: controls.sheet, sliceColour: main.sliceColour, pan: controls.pan, stack: main.panStack,
-                     slices: controls.band.slices)
+                     slices: controls.band.slices, bandStack: controls.bandStack, openBandStackSetup: {
+                sheet = nil
+                app.phoneNavigation?.openPage(.bandStack)
+            })
         case .display:
             if let source = main.displayPillSource {
                 DisplayDropSheet(pages: source.pages, source: source, main: main, tab: $displayTab,
@@ -979,7 +995,8 @@ struct MainScreen: View {
                     app.phoneNavigation?.followDisplayPan(pan)
                 })
             } else {
-                DisplaySheet(model: main.display, core: main.coreDisplay) {
+                DisplaySheet(model: main.display, core: main.coreDisplay, bandStack: main.controls(for: .first).bandStack,
+                             settings: main.phoneSettings) {
                     sheet = nil
                     openSetup()
                 }

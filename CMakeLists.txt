@@ -1454,6 +1454,9 @@ set(CORE_SOURCES
     src/core/session/MirrorEnumDomain.cpp
     src/core/session/MirrorPolicy.cpp
     src/core/session/StateMirror.cpp
+    # Settings persistence audit (W11): what a window changed with the link
+    # down, so it can say the change did not stick.
+    src/core/session/LinkDownEditWatch.cpp
     # iPhone app Task 72 (R-IOS-02): one device's view of the mirror, with
     # its own coalescer, burst and sink; echo withheld from the writer only.
     src/core/session/MirrorView.cpp
@@ -1628,6 +1631,7 @@ list(APPEND CORE_SOURCES
     src/core/session/RxOnlyLinkFit.cpp
     # R-R3-49 / R-IOS-18: the Core's PA Gain profiles for a phone.
     src/core/session/PaProfilesFacade.cpp
+    src/core/session/BandStackFacade.cpp
     # iPhone app Task 25 (D41): the unbuilt features list the catalogue's
     # tools read (the desktop's hide helpers stay in src/gui).
     src/core/UnbuiltFeatureList.cpp
@@ -1761,6 +1765,13 @@ set(MODEL_SOURCES
     src/models/ReceiverDspLoadSampler.cpp
     src/models/Band.cpp
     src/models/BandDefaults.cpp
+    src/models/bandstack/BandStackSeeds.cpp
+    src/models/bandstack/BandStackStore.cpp
+    src/models/bandstack/BandStackController.cpp
+    src/models/bandstack/BandStackAccess.h
+    src/models/bandstack/BandStackCommand.cpp
+    src/models/bandstack/LocalBandStackAccess.cpp
+    src/models/bandstack/RemoteBandStackAccess.cpp
     src/models/BandPlanManager.cpp
     src/models/PureSignalSettings.cpp
     src/models/PureSignalSettings.h
@@ -1789,6 +1800,12 @@ set(GUI_SOURCES
     src/gui/SessionEndSave.h
     src/gui/DesktopStationController.cpp
     src/gui/DesktopStationController.h
+    src/gui/bandstack/BandStackPanel.cpp
+    src/gui/bandstack/BandStackPanel.h
+    src/gui/bandstack/BandStackPopup.cpp
+    src/gui/bandstack/BandStackPopup.h
+    src/gui/bandstack/BandStackRowList.cpp
+    src/gui/bandstack/BandStackRowList.h
     src/gui/HostingSliceActions.cpp
     src/gui/HostingSliceActions.h
     src/gui/GuiDesktopStationRuntime.cpp
@@ -2299,6 +2316,9 @@ set(GUI_SOURCES
 if(APPLE)
     list(APPEND GUI_SOURCES src/gui/QtCocoaAccessibilityOwnershipGuard.mm)
     set_source_files_properties(src/gui/QtCocoaAccessibilityOwnershipGuard.mm
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    list(APPEND GUI_SOURCES src/gui/bandstack/BandStackReducedMotion.mm)
+    set_source_files_properties(src/gui/bandstack/BandStackReducedMotion.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 qt_add_resources(RESOURCES resources.qrc)

@@ -18,6 +18,11 @@ struct BatteryAndSessionsPage: View {
     var body: some View {
         SetupPageContainer {
             SetupPanelSection {
+                ReconnectSwitchRow(settings: settings)
+            } header: {
+                Text("Opening the app")
+            }
+            SetupPanelSection {
                 SetupSwitchRow(title: "Sound only", detail: Self.soundOnlyDetail,
                                isOn: Binding(get: { settings.soundOnlyWhenAway },
                                              set: { settings.soundOnlyWhenAway = $0 }), id: "soundOnly")
@@ -82,5 +87,20 @@ struct BatteryAndSessionsPage: View {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
         return "Disconnects at \(formatter.string(from: endsAt))."
+    }
+}
+
+/// Reconnect automatically, on Setup's Battery and sessions page and under
+/// Your Cores, so it can be reached with no Core connected.
+struct ReconnectSwitchRow: View {
+    @ObservedObject var settings: PhoneSettings
+
+    static let title = "Reconnect automatically"
+    static let detail = "Opening the app connects to the last Core, unless you disconnected from it"
+
+    var body: some View {
+        SetupSwitchRow(title: Self.title, detail: Self.detail,
+                       isOn: Binding(get: { settings.autoReconnect }, set: { settings.autoReconnect = $0 }),
+                       id: "autoReconnect")
     }
 }

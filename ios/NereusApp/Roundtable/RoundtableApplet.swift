@@ -17,17 +17,18 @@ import SwiftUI
 enum AppletKind: String, CaseIterable, Equatable {
     case sMeter
     case roundtable
+    case bandStack
     case rx
     case tx
 }
 
 /// Where the Roundtable applet sits among the column's applets (spec
 /// 11.4): second, after the S-Meter, unless moved. The others keep their
-/// order around it.
+/// order around it, Band Stack after the S-Meter as it is upright.
 enum AppletOrder {
     /// Second, after the S-Meter.
     static let roundtableDefault = 1
-    static let lastPosition = 3
+    static let lastPosition = 4
 
     static func clamped(_ position: Int) -> Int {
         min(max(position, 0), lastPosition)
@@ -35,7 +36,7 @@ enum AppletOrder {
 
     /// The column's applets with Roundtable at `position`.
     static func order(roundtableAt position: Int) -> [AppletKind] {
-        var kinds: [AppletKind] = [.sMeter, .rx, .tx]
+        var kinds: [AppletKind] = [.sMeter, .bandStack, .rx, .tx]
         kinds.insert(.roundtable, at: clamped(position))
         return kinds
     }

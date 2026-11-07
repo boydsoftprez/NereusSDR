@@ -189,6 +189,7 @@
         {"id": "session-verbs-transmit-settings", "file": "sessions/verbs-transmit-settings.json", "kind": "session", "requires": {"transmitSettingsVersion": 2}},
         {"id": "session-verbs-tx-profiles", "file": "sessions/verbs-tx-profiles.json", "kind": "session", "requires": {"transmitSettingsVersion": 3}},
         {"id": "session-verbs-pa-profiles", "file": "sessions/verbs-pa-profiles.json", "kind": "session", "requires": {"paProfileVersion": 1}},
+        {"id": "session-verbs-band-stack", "file": "sessions/verbs-band-stack.json", "kind": "session", "requires": {"bandStackVersion": 1}},
         {"id": "session-verbs-band-select", "file": "sessions/verbs-band-select.json", "kind": "session", "requires": {"bandSelectVersion": 1}},
         {"id": "session-verbs-radio-hardware", "file": "sessions/verbs-radio-hardware.json", "kind": "session", "requires": {"radioHardwareVersion": 3}},
         {"id": "session-adc-attenuators", "file": "sessions/adc-attenuators.json", "kind": "session", "requires": {"adcAttenuatorVersion": 1}},

@@ -945,7 +945,7 @@ void GuiConnectionController::connectTarget(const QString& key)
         AppSettings& settings = AppSettings::instance();
         const HPSDRModel modelOverride = settings.modelOverride(mac);
         if (modelOverride != HPSDRModel::FIRST) { radio.modelOverride = modelOverride; }
-        settings.saveRadio(radio, saved ? saved->pinToMac : false, true);
+        settings.saveRadioOnConnect(radio);
         settings.setLastConnected(radio.macAddress);
         if (!settings.save()) { m_selector->setNotice(tr("The local radio preference could not be saved.")); }
         if (radio.inUse) { m_selector->setNotice(tr("This radio reports in use; attempting the explicitly selected connection.")); }

@@ -396,6 +396,25 @@ struct BandSubscriberTests {
         #expect(first.windowType == 2)
     }
 
+    @Test("the phone's own rate is what it asks for; the Core's rate moving does not move it, and with none it takes the Core's")
+    func ownPaintRate() async throws {
+        let rig = rig(budget: false)
+        rig.settings.apply(.settingsSnapshot(LinkMessage.SettingsSnapshot(properties: [
+            .init(ordinal: 0, name: "DisplaySpectrumFps", value: .utf8("20")),
+        ])))
+        rig.subscriber.receive(.mediaState(.connected))
+        #expect(await settle { rig.sent.subscriptions.last?.fps == 20 })
+        rig.subscriber.paintFps = 12
+        #expect(await settle { rig.sent.subscriptions.last?.fps == 12 })
+        let asked = rig.sent.subscriptions.count
+        rig.settings.apply(.settingsValue(LinkMessage.SettingsValue(
+            key: "DisplaySpectrumFps", origin: "another-window",
+            properties: [.init(name: "DisplaySpectrumFps", value: .utf8("25"))])))
+        await quiet()
+        #expect(rig.sent.subscriptions.count == asked)
+        #expect(rig.sent.subscriptions.last?.fps == 12)
+    }
+
     @Test("a long session's mode caps the frames and halves the width; with none the band unsubscribes and comes back as a new endpoint")
     func longSession() async throws {
         let rig = rig(budget: false)

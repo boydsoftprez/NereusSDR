@@ -1277,7 +1277,7 @@ public final class BandRenderer {
         if backgroundImageKey != path {
             backgroundImageKey = path
             backgroundTextureKey = nil
-            backgroundImage = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil)
+            backgroundImage = CGImageSourceCreateWithURL(BandBackgroundPicture.url(forStored: path) as CFURL, nil)
                 .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
         }
         guard let image = backgroundImage else { return }
