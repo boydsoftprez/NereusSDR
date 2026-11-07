@@ -1325,6 +1325,34 @@ private slots:
         QCOMPARE(rig.worker.radeRxRouteCount(), 1);
     }
 
+    // The same when the refused slice was a restored letter saved in RADE:
+    // the restore makes it the owner before the bind refuses it, so the owner
+    // to give back is the one from before the restore.
+    void aRefusedRestoreGivesTheRadeOwnerBack()
+    {
+        AppSettings::instance().clear();
+        GrowRig rig;
+        QVERIFY(rig.setUp(/*streams=*/1));
+        rig.radio.prepareReceiveLayout(QString());  // the layout is managed
+        rig.sliceA->setDspMode(DSPMode::RADE_U);
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.radio.restoredRadeReceiveOwner(), std::optional<int>(rig.a));
+
+        auto& settings = AppSettings::instance();
+        const QString letter = QStringLiteral("Slice%1/").arg(rig.a + 1);
+        settings.setValue(letter + QStringLiteral("LastBand"), QStringLiteral("40m"));
+        settings.setValue(letter + QStringLiteral("Band40m/Frequency"), 7'177'000.0);
+        settings.setValue(letter + QStringLiteral("Band40m/DspMode"),
+                          static_cast<int>(DSPMode::RADE_U));
+
+        const int b = rig.radio.addSlice(QStringLiteral("pan-new"), /*restoreSavedState=*/true);
+        QCOMPARE(b, -1);
+        QCoreApplication::processEvents();
+        QCOMPARE(rig.radio.slices().size(), 1);
+        QCOMPARE(rig.radio.restoredRadeReceiveOwner(), std::optional<int>(rig.a));
+        QCOMPARE(rig.worker.radeRxRouteCount(), 1);
+    }
+
     // Fix round 1: every route is queued after its mode is committed, and
     // queueRadeRxRoute hands the worker the RADE-mode slices first, so the
     // mute is on the worker before the route (and its first block). Seen

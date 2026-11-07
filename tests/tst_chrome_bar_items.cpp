@@ -27,6 +27,8 @@ private:
         g.panelToggle      = w(18);
         g.placeholderGroup = w(132);
         g.placeholderSep   = w(14);
+        g.bandStackLabel   = w(10);
+        g.bandStackNumber  = w(70);
         g.chain0           = w(52);
         g.rxDashRow        = w(96);
         g.psaIndicator     = w(66);
@@ -101,6 +103,19 @@ private slots:
                                         .arg(width)));
             }
         }
+    }
+
+    void stackNumberFoldsWithTheDots() {
+        ChromeBarController c;
+        ChromeBarWidgets g = makeWidgets();
+        registerChromeBarItems(c, g);
+        bool folded = false;
+        for (int width = 2400; width >= 200; --width) {
+            c.relayout(width);
+            QCOMPARE(g.bandStackNumber->isHidden(), g.bandStackLabel->isHidden());
+            folded = folded || g.bandStackNumber->isHidden();
+        }
+        QVERIFY2(folded, "the stack number never folded");
     }
 
     void ladderFoldsInTheDesignedOrder() {

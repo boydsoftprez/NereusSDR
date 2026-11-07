@@ -18,16 +18,18 @@ final class PanControls {
     let sheet: PanSheetModel
     let display: DisplaySheetModel
     let bandScale: CoreBandScale
+    let bandStack: BandStackModel
 
     var pan: PanIdentity { band.pan }
 
     init(band: PanBand, tuning: BandTuningModel, flagControls: FlagControls, sheet: PanSheetModel,
-         display: DisplaySheetModel, bandScale: CoreBandScale) {
+         display: DisplaySheetModel, bandScale: CoreBandScale, bandStack: BandStackModel) {
         self.band = band
         self.tuning = tuning
         self.flagControls = flagControls
         self.sheet = sheet
         self.display = display
         self.bandScale = bandScale
+        self.bandStack = bandStack
     }
 }

@@ -328,4 +328,81 @@ struct FakeStationAdditionsTests {
         older.feeding.cancel()
         await older.session.disconnect()
     }
+
+    /// The fake Core's band stack: only with its addition, and every verb the
+    /// surface declares, held to the surface's arguments.
+    @Test("a Core before band stacks has none, and its verbs are unknown")
+    func noFakeBandStackWithoutTheAddition() async throws {
+        let rig = try await connected([])
+        defer { rig.feeding.cancel() }
+        #expect(rig.mirror.capabilityVersion(BandStack.capability) == 0)
+        #expect(rig.mirror.bandStack == nil)
+        #expect(!FakeStation.Additions.all.contains(.bandStack))
+        let result = try await invoke(rig, "bandStack.reseed", [])
+        #expect(!result.accepted)
+        #expect(result.reason == FakeStation.unknownVerbReason)
+        #expect(rig.station.bandStackCommands.isEmpty)
+        await rig.session.disconnect()
+    }
+
+    @Test("with the addition the Core sends its band stack and takes every verb")
+    func theFakeBandStackServesEveryVerb() async throws {
+        let rig = try await connected(.bandStack)
+        defer { rig.feeding.cancel() }
+        #expect(rig.mirror.capabilityVersion(BandStack.capability) == 1)
+        let sample = try LinkFixtureLoader.bandStackDocument()
+        #expect(rig.mirror.bandStack == BandStack(json: sample, revision: 1))
+
+        let surface = try LinkFixtureLoader.jsonObject(at: LinkFixtureLoader.root.appendingPathComponent("surface.json"))
+        let commands = try #require(surface["commands"] as? [[String: Any]])
+        let verbs = commands.filter { ($0["verb"] as? String)?.hasPrefix("bandStack.") == true }
+        #expect(verbs.count == 13)
+        for command in verbs {
+            let verb = try #require(command["verb"] as? String)
+            let declared = try #require(command["arguments"] as? [[String: Any]])
+            let arguments = try declared.map { argument -> CommandArgument in
+                let name = try #require(argument["name"] as? String)
+                switch try #require(argument["kind"] as? String) {
+                case "i64":
+                    return CommandArgument(name: name, value: .int(0))
+                case "bool":
+                    return CommandArgument(name: name, value: .bool(true))
+                default:
+                    // Reorder ids go as JSON text: the link has no list kind.
+                    return CommandArgument(name: name, value: .text(name == "ids" ? #"["40m-net"]"# : "40m"))
+                }
+            }
+            let accepted = try await invoke(rig, verb, arguments)
+            #expect(accepted.accepted, "\(verb)")
+            #expect(rig.station.bandStackCommands.last?.verb == verb)
+            #expect(rig.station.bandStackCommands.last?.args.map(\.name) == arguments.map(\.name))
+
+            let wrong = try await invoke(rig, verb, arguments + [CommandArgument(name: "wrongName", value: .bool(true))])
+            #expect(!wrong.accepted, "\(verb)")
+            #expect(wrong.reason == FakeStation.bandStackNotUnderstoodReason, "\(verb)")
+        }
+        #expect(rig.station.bandStackCommands.count == 13)
+
+        // Optional arguments may be left out, required ones may not.
+        #expect(try await invoke(rig, "bandStack.clear", []).accepted)
+        #expect(try await !invoke(rig, "bandStack.delete", []).accepted)
+        // Ids that are not JSON text.
+        let badIds = try await invoke(rig, "bandStack.reorder", [CommandArgument(name: "band", value: .text("40m")),
+                                                                 CommandArgument(name: "ids", value: .text("40m-net"))])
+        #expect(badIds.reason == FakeStation.bandStackNotUnderstoodReason)
+
+        let reason = "That band stack entry no longer exists."
+        rig.station.refuseNext("bandStack.reseed", reason: reason)
+        let refused = try await invoke(rig, "bandStack.reseed", [])
+        #expect(!refused.accepted)
+        #expect(refused.reason == reason)
+        #expect(try await invoke(rig, "bandStack.reseed", []).accepted)
+
+        // A change reaches the mirror with the revision moved.
+        let changed = sample.replacingOccurrences(of: "Evening net", with: "Morning net")
+        await rig.station.deliverBandStack(changed)
+        #expect(await poll { rig.mirror.bandStack?.revision == 2 })
+        #expect(rig.mirror.bandStack == BandStack(json: changed, revision: 2))
+        await rig.session.disconnect()
+    }
 }

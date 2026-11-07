@@ -29,6 +29,25 @@ assert.equal(sameStation[0].stations.length,1,"two same-station slices are one c
 assert.equal(sameStation[0].stations[0].slices.length,2,"every colocated slice remains represented");
 const room={now:[{id:1,kind:"talking",hz:14212000,start:10,talkers:[{sourceRoom:"usb-14212000",ref:"abcdefgh",callsign:"K4ABC"}]}],earlier:[],members:[{sourceRoom:"usb-14212000",ref:"bcdefghi",callsign:"W4XYZ",km:10,reading:{turn:1,dbm:-81}},{sourceRoom:"usb-14213000",ref:"bcdefghi",callsign:"N4XYZ",km:1,reading:{turn:2,dbm:-30}}]};
 assert.equal(F.readings(room,room.now[0]).length,1,"reading.turn decides attribution, refs are scoped");
+const overlapTalkers = ["aaaaaaaa", "bbbbbbbb", "cccccccc"].map((ref,index)=>({sourceRoom:"usb-14212000",ref,callsign:index===2?"N3XYZ":"W4KZO",nth:index+1}));
+const overlap={id:90,kind:"doubled",start:10,end:null,talkers:overlapTalkers};
+const overlapRoom={now:[overlap],earlier:[],members:[
+  {...overlapTalkers[0],keyed:true,reading:{turn:90,dbm:-60}},
+  {...overlapTalkers[1],keyed:true,reading:{turn:90,dbm:-61}},
+  {...overlapTalkers[2],keyed:false,reading:{turn:90,dbm:-73}},
+  {sourceRoom:"usb-14212000",ref:"dddddddd",callsign:"KK4NZD",nth:1,keyed:false,reading:{turn:90,dbm:-81}},
+]};
+assert.deepEqual(Array.from(F.readings(overlapRoom,overlap),m=>m.ref).sort(),["cccccccc","dddddddd"],"an unkeyed former third participant can receive the current combined RF");
+assert.deepEqual(Array.from(F.activeTalkers(overlapRoom,overlap),m=>m.ref),["aaaaaaaa","bbbbbbbb"],"live double names describe currently keyed participants, not all historical participants");
+assert.equal(F.turnCaption(overlap),"DOUBLE");
+const endedOverlap={...overlap,end:20};
+assert.equal(F.activeTalkers(overlapRoom,endedOverlap).length,3,"ended overlap retains its participant history");
+const departedHistory={...endedOverlap,talkers:overlapTalkers.map(t=>({...t,ref:null}))};
+assert.deepEqual(Array.from(F.activeTalkers(overlapRoom,departedHistory),t=>[t.callsign,t.nth]),overlapTalkers.map(t=>[t.callsign,t.nth]),"historical overlap retains departed callsigns and suffixes without live references");
+assert.equal(F.turnCaption(endedOverlap),"LAST DOUBLE");
+const single={id:91,kind:"talking",start:20,end:null,talkers:[overlapTalkers[0]]};
+assert.equal(F.readings(overlapRoom,single).length,0,"combined samples cannot become individual reports after one participant unkeys");
+assert.equal(F.turnCaption(single),"CURRENT TALKER");
 room.earlier=room.now;room.now=[];assert.equal(F.lastTurn(room,ctx).id,1,"quiet retains identified last turn");
 assert.equal(F.path(128,82,"mi",true).distance,"80");assert.equal(F.path(128,82,"mi",true).bearing,"082°T");
 assert.equal(F.path(128,82,"km",true).distance,"128");assert.equal(F.path(null,82,"mi",true).bearing,"");
@@ -56,6 +75,32 @@ assert.equal(refreshed.length,1,"history cannot discover new messages");
 assert.equal(refreshed[0].callsign,"K4ABC");assert.equal(refreshed[0].hz,14212000,"history changes state and text only");
 assert.equal(refreshed[0].state,"removed");assert.equal(refreshed[0].text,null);
 assert.equal(F.historyUpdates(cached,[{id:1,state:"shown",text:"actual restored text"}],true)[0].text,"actual restored text");
+// 2026-11-04: Roundtable overlay truth rules on the web page, J.J. Boyd / KG4VCF, AI-assisted via Claude Code.
+const absentRoom={now:[overlap],earlier:[],members:[
+  {sourceRoom:"usb-14212000",ref:"eeeeeeee",callsign:"W1OFF",nth:1,keyed:false,reading:{turn:90,dbm:-70,present:false}},
+  {sourceRoom:"usb-14212000",ref:"ffffffff",callsign:"W1ON",nth:1,keyed:false,reading:{turn:90,dbm:-70,present:true}},
+]};
+assert.deepEqual(Array.from(F.readings(absentRoom,overlap),m=>m.callsign),["W1ON"],"an absent listener is never a reading row");
+const roomA="usb-14212000",roomB="usb-14213000";
+const st=(ref,sourceRoom,keyed)=>({ref,sourceRoom,keyed,callsign:ref.toUpperCase(),nth:1,hz:14212000,family:"usb",slice:0});
+const groupOf=(...stations)=>({id:"usb-14212000",stations});
+const two=[{id:roomA,state:"talking",stations:[st("a",roomA,true),st("b",roomA,true)]}];
+assert.equal(F.groupState(groupOf(st("a",roomA,true)),two),"double","two keyed in one source room is a Double from the directory");
+assert.equal(F.groupState(groupOf(st("a",roomA,true)),new Map(two.map(r=>[r.id,r]))),"double","a Map by room id reads the same");
+assert.equal(F.groupState(groupOf(st("a",roomA,true),st("b",roomB,true)),[{id:roomA,state:"talking",stations:[st("a",roomA,true)]},{id:roomB,state:"talking",stations:[st("b",roomB,true)]}]),"talking","keyed in different source rooms is no Double");
+assert.equal(F.groupState(groupOf({...st("a",roomA,true),slice:0},{...st("a",roomA,true),slice:1}),[{id:roomA,state:"talking",stations:[{...st("a",roomA,true),slice:0},{...st("a",roomA,true),slice:1}]}]),"talking","one station's two slices are one transmitter");
+assert.equal(F.groupState(groupOf(st("a",roomA,true)),[{id:roomA,state:"doubled",stations:[st("a",roomA,true)]}]),"double","an open doubled turn is a Double while one participant stays");
+assert.equal(F.groupState(groupOf(st("c",roomA,false)),[{id:roomA,state:"doubled",stations:[st("a",roomA,true),st("b",roomA,true),st("c",roomA,false)]}]),"quiet","a listener's frequency is not the Double");
+assert.equal(F.groupState(groupOf(st("a",roomA,true)),[{id:roomA,state:"talking",stations:[st("a",roomA,true)]}]),"talking");
+assert.equal(F.groupState(groupOf(st("c",roomA,false)),[{id:roomA,state:"unknown",stations:[st("c",roomA,false)]}]),"unknown");
+assert.equal(F.groupState(groupOf(st("c",roomA,false)),[{id:roomA,state:"quiet",stations:[st("c",roomA,false)]}]),"quiet");
+assert.deepEqual(Array.from(F.doubleNames(groupOf(st("a",roomA,true)),two)),["A","B"],"a Double names both keyed stations from its source room");
+for(const [dbm,fraction] of [[-121,0],[-33,1],[-77,0.5],[-200,0],[20,1],[NaN,0],[null,0]]) assert.equal(F.meterFraction(dbm),fraction);
+let held=F.peakHold(undefined,-60,1000);assert.equal(held.peak,-60);
+held=F.peakHold(held,-80,2000);assert.equal(held.peak,-62,"falls 2 dB a second");
+held=F.peakHold(held,-50,2500);assert.equal(held.peak,-50,"rises at once");
+held=F.peakHold(held,-90,12500);assert.equal(held.peak,-70);
+assert.equal(F.turnCaption(overlap),"DOUBLE");
 console.log("frequency-unit: all assertions passed");
 assert.equal(RT.signalFormat, "both");
 RT.setSignalFormat("dbm");
@@ -63,7 +108,7 @@ assert.equal(RT.signalText(-81), "-81.0");
 RT.setSignalFormat("s");
 assert.equal(RT.signalText(-81), RT.sText(-81));
 RT.setSignalFormat("both");
-assert.equal(RT.signalText(-81), RT.sText(-81)+"\n-81.0");
+assert.equal(RT.signalText(-81), RT.sText(-81)+" -81.0");
 assert.equal(storage.get("roundtable.signalFormat"), "both");
 RT.cycleSignalFormat();
 assert.equal(RT.signalFormat, "dbm");

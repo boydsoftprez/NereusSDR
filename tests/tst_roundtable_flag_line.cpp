@@ -33,6 +33,7 @@
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QDir>
 #include <QFontInfo>
 #include <QFontMetrics>
 #include <QImage>
@@ -176,7 +177,7 @@ private slots:
 
         const RoundtableFlagLine doubled = roundtableFlagLineFor(&station.model, 1);
         QCOMPARE(doubled.text, QStringLiteral("Roundtable") + kDot + QStringLiteral("4") + kDot
-                                   + QStringLiteral("Doubled"));
+                                   + QStringLiteral("Double"));
         QCOMPARE(doubled.glyph, glyph(RoundtableGlyph::Doubled));
         const RoundtableFlagLine unknown = roundtableFlagLineFor(&station.model, 2);
         QCOMPARE(unknown.text, QStringLiteral("Roundtable") + kDot + QStringLiteral("3") + kDot
@@ -403,14 +404,14 @@ private slots:
             QStringLiteral("Roundtable") + kDot + QStringLiteral("Reconnecting"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("Nobody here"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("Unknown"),
-            QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("Doubled"),
+            QStringLiteral("Roundtable") + kDot + QStringLiteral("99") + kDot + QStringLiteral("Double"),
             QStringLiteral("Roundtable") + kDot + QStringLiteral("99 hear you"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
                 + QStringLiteral("KC1ABC/MM"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
                 + QStringLiteral("Unknown"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("99") + kDot
-                + QStringLiteral("Doubled"),
+                + QStringLiteral("Double"),
             QStringLiteral("Hidden") + kDot + QStringLiteral("Nobody here")};
         for (const QString& text : longest) {
             // In the font the widget draws this text in.
@@ -455,6 +456,89 @@ private slots:
         QCOMPARE(static_cast<int>(drawn.weight()), static_cast<int>(QFont::Normal));
         QCOMPARE(drawn.pixelSize(), 11);
         QVERIFY(QFontMetrics(drawn).horizontalAdvance(text) <= atNormal);
+    }
+
+    // While the inspector shows the line's frequency it reads open, as the board
+    // has it. Closed draws exactly as it did, and nothing else about it moves.
+    void theLineReadsOpenAndClosedDrawsAsBefore()
+    {
+        QWidget host;
+        host.resize(400, 600);
+        auto* flagWidget = new VfoWidget(&host);
+        VfoWidget& flag = *flagWidget;
+        host.show();
+        RoundtableFlagLine line;
+        line.visible = true;
+        line.glyph = glyph(RoundtableGlyph::Talking);
+        line.text = QStringLiteral("Roundtable") + kDot + QStringLiteral("9") + kDot + QStringLiteral("K4ABC");
+        flag.setRoundtableLine(line);
+        QAbstractButton* button = flag.roundtableLineButtonForTest();
+        QVERIFY(button != nullptr);
+        const auto drawn = [&]() {
+            QImage image(button->size(), QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::black);
+            button->render(&image, QPoint(), QRegion(), QWidget::RenderFlags());
+            return image;
+        };
+        const auto captured = [&](const QString& stem) {
+            const QString dir = qEnvironmentVariable("NEREUS_FLAG_CAPTURE_DIR");
+            if (!dir.isEmpty()) {
+                QDir().mkpath(dir);
+                button->grab().save(QStringLiteral("%1/%2.png").arg(dir, stem));
+            }
+        };
+        const auto chevronBox = [&]() {
+            const int width = 16;
+            return QRect(button->width() - width, 2, width - 2, button->height() - 4);
+        };
+        const QSize size = button->size();
+        const QImage closed = drawn();
+        captured(QStringLiteral("line-closed"));
+        QVERIFY(!flag.roundtableLineOpen());
+
+        flag.setRoundtableLineOpen(true);
+        QVERIFY(flag.roundtableLineOpen());
+        const QImage open = drawn();
+        captured(QStringLiteral("line-open"));
+        QVERIFY(open != closed);
+        QCOMPARE(button->size(), size);
+        QCOMPARE(button->accessibleName(), line.text);
+        QCOMPARE(button->accessibleDescription(), QStringLiteral("Inspector open"));
+        // The chevron brightens: its strongest point is lighter than closed's.
+        const auto brightest = [&](const QImage& image) {
+            int best = 0;
+            const QRect box = chevronBox();
+            for (int y = box.top(); y <= box.bottom(); ++y) {
+                for (int x = box.left(); x <= box.right(); ++x) {
+                    best = std::max(best, qGray(image.pixel(x, y)));
+                }
+            }
+            return best;
+        };
+        QVERIFY(brightest(open) > brightest(closed));
+        // A new line's words do not close it; only the state says so.
+        line.text = QStringLiteral("Roundtable") + kDot + QStringLiteral("8") + kDot + QStringLiteral("K4ABC");
+        flag.setRoundtableLine(line);
+        QVERIFY(flag.roundtableLineOpen());
+        line.text = QStringLiteral("Roundtable") + kDot + QStringLiteral("9") + kDot + QStringLiteral("K4ABC");
+        flag.setRoundtableLine(line);
+
+        flag.setRoundtableLineOpen(false);
+        QCOMPARE(drawn(), closed);
+        QCOMPARE(button->accessibleDescription(), QString());
+
+        // With @N there is no chevron, and the line still reads open.
+        line.mentions = 2;
+        flag.setRoundtableLine(line);
+        const QImage badge = drawn();
+        flag.setRoundtableLineOpen(true);
+        QVERIFY(drawn() != badge);
+        captured(QStringLiteral("line-open-mentions"));
+
+        // It is still a line you click.
+        QSignalSpy clicked(&flag, &VfoWidget::roundtableLineClicked);
+        QTest::mouseClick(button, Qt::LeftButton, Qt::NoModifier, button->rect().center());
+        QCOMPARE(clicked.count(), 1);
     }
 
     void aClickAsksForThePanel()

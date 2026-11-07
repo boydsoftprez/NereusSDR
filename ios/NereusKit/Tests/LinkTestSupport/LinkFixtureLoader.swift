@@ -17,6 +17,14 @@ public enum LinkFixtureLoader {
         return url.appendingPathComponent("tests/data/link/v1", isDirectory: true)
     }()
 
+    /// The band stack document the Core's facade sends for the saved stack in
+    /// `tests/data/bandstack/facade-document.json`. `tst_bandstack_link` holds
+    /// the facade to this file, so the phone decodes what the Core really sends.
+    public static func bandStackDocument() throws -> String {
+        let suite = root.deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: suite.appendingPathComponent("bandstack/facade-document.json"), encoding: .utf8)
+    }
+
     /// A fixture the suite does not describe the way the link document says.
     public struct Malformed: Error, CustomStringConvertible {
         public let description: String

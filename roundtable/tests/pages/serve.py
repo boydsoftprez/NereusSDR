@@ -303,6 +303,7 @@ class World:
     def plan_rooms(self) -> None:
         special = {
             14212000: ("20m", "USB", "special-talk"),
+            14216000: ("20m", "USB", "special-neighbor"),
             14250000: ("20m", "USB", "special-stale"),
             7185000: ("40m", "LSB", "special-corpus"),
         }
@@ -335,6 +336,10 @@ class World:
         for room in self.rooms:
             if room.kind == "special-talk":
                 self.special_talk(room)
+            elif room.kind == "special-neighbor":
+                # 4 kHz above K4ABC, in a source room of its own; the overlap
+                # control keys it. Never a Double with K4ABC.
+                self.add_sim(room, "mute", "K2OTH", "FN20")
             elif room.kind == "special-stale":
                 self.special_stale(room)
             elif room.kind == "special-corpus":
@@ -704,6 +709,48 @@ class World:
         name = path[len("/__test/") :]
         if name == "facts":
             return 200, self.facts
+        if name == "overlap":
+            # Disposable scripted stations exercise real key/turn/read paths.
+            actors = {sim.call: sim for sim in self.sims if sim.call in ("K4ABC", "N4RDR", "W9ABC", "AA4QQ", "KD8LMN", "K2OTH", "W5STL")}
+            action = q.get("act", "double")
+            with self.service.event():
+                actors["K4ABC"].key(True)
+                if action == "double":
+                    actors["N4RDR"].key(True)
+                elif action == "third":
+                    actors["W9ABC"].key(True)
+                elif action == "third-receives":
+                    actors["W9ABC"].key(False)
+                elif action in ("single", "reset"):
+                    actors["N4RDR"].key(False)
+                    actors["W9ABC"].key(False)
+                    if action == "reset":
+                        actors["KD8LMN"].role = "reader"
+                        actors["K2OTH"].key(False)
+                elif action == "other":
+                    actors["K2OTH"].key(True)
+                elif action == "stale":
+                    # W5STL's one reading of the turn now open, and no more:
+                    # 20 s on, its row is stale whatever ran before.
+                    actors["W5STL"].readings_until = 0
+                    self.clock.advance(1100)
+                    actors["W5STL"].st.send({"type": "reading", "slice": 0, "dbm": -81.0,
+                                             "t": self.clock.wall_ms(), "present": True})
+                elif action == "absent":
+                    # A receiver that hears nothing: every reading from it says
+                    # present false while K4ABC's turn stays open.
+                    actors["KD8LMN"].role = "quiet"
+                    self.clock.advance(1100)
+                    actors["KD8LMN"].st.send({"type": "reading", "slice": 0, "dbm": -111.0,
+                                              "t": self.clock.wall_ms(), "present": False})
+                else:
+                    return 400, {"error": "unknown-overlap-action"}
+                if action in ("double", "third", "third-receives"):
+                    self.clock.advance(1100)
+                    reader = actors["W9ABC"] if action == "third-receives" else actors["AA4QQ"]
+                    reader.st.send({"type": "reading", "slice": 0, "dbm": -63.2,
+                                    "t": self.clock.wall_ms(), "present": True})
+            return 200, {"action": action}
         if name == "signin":
             # 2026-10-30: real owner-follow fixture identity, retaining desks.
             # J.J. Boyd / KG4VCF, AI-assisted via Codex.

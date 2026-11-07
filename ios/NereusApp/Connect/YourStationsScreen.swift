@@ -97,6 +97,12 @@ struct YourStationsScreen: View {
                         ConnectChrome.Note(text: flow.madeNewKey || (flow.keyUnreadable && !flow.cores.isEmpty)
                                            ? Self.oldEntriesNote : Self.footnote)
                             .padding(.top, 12)
+                        ReconnectSwitchRow(settings: flow.phoneSettings)
+                            .padding(12)
+                            .background(ConnectChrome.rowFill, in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
+                            .overlay(RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius)
+                                .strokeBorder(ConnectChrome.rowBorder, lineWidth: 1))
+                            .padding(.top, 12)
                         Button("About this app") { showingAbout = true }
                             .font(.footnote)
                             .foregroundStyle(ChromeColours.accentText)
