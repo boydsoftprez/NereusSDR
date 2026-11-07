@@ -100,6 +100,10 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-07  J.J. Boyd / KG4VCF  DaemonMediaController forwards
+//                                    kRetireReasonViewOffReceiver, whose
+//                                    words SpectrumEndpoint.h's entry scans.
+//                                    AI tooling: Claude Code.
 //   2026-11-05  J.J. Boyd / KG4VCF  Band stack plan: the bandStack.* refusals
 //                                    are scanned (BandStackController.cpp,
 //                                    BandStackStore::add, the words of
@@ -341,9 +345,6 @@
 //                                    and StationServer's forward of
 //                                    RoundtableState::readOnlyReason named.
 //                                    AI tooling: Claude Code.
-//   2026-11-07  J.J. Boyd / KG4VCF  DaemonMediaController's forward of
-//                                    kRetireReasonViewOffReceiver named
-//                                    (PR 751). AI tooling: Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1639,8 +1640,8 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("QString::fromLatin1(kRetireReasonSourceRetune)"),
           QStringLiteral("QString::fromLatin1(kRetireReasonStreamBindingChanged)"),
           QStringLiteral("QString::fromLatin1(kRetireReasonSliceRemoved)"),
-          // PR 751: a view held off a receiver wideband cannot fill,
-          // SpectrumEndpoint.h (scanned below).
+          // A view wholly off the receiver once control of the slice went;
+          // its words are in SpectrumEndpoint.h (scanned below).
           QStringLiteral("QString::fromLatin1(kRetireReasonViewOffReceiver)"),
           // Fix wave 2: the budget refusal, shared with the client,
           // DisplayBudget.h (scanned below).
