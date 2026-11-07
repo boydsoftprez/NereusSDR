@@ -42,7 +42,7 @@ if (@($manifest).Count -ne 16) { throw 'Expected exactly sixteen controlled runt
 $env:PATH = "$runtime;$env:PATH"
 [ordered]@{ path=$env:PATH; providers=@($manifest) } | ConvertTo-Json -Depth 5 |
     Tee-Object -FilePath (Join-Path $build 'windows-audio-runtime-manifest.json')
-$selection = '^(tst_wasapi_notifier_lifetime(_native)?|tst_wasapi_policy|tst_audio_device_catalog)$'
+$selection = '^(tst_wasapi_notifier_lifetime(_native)?|tst_wasapi_policy|tst_audio_device_catalog|tst_station_foreign_lock|tst_station_handover)$'
 & ctest --version
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & ctest --test-dir $build -N -V -R $selection |

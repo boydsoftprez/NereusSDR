@@ -66,6 +66,9 @@ struct DaemonConfig;
 struct StationControlReply {
     bool ok = false;
     QString text;
+    /// Set by request() only: a Core sent this reply, as opposed to the reply
+    /// standing for nothing having answered.
+    bool answered = false;
 };
 
 class StationControlSocket : public QObject {
