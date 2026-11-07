@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-11-05  J.J. Boyd / KG4VCF  aLastingSpeakerFaultLeavesTheMediaConnectionAlone,
+//               coreSilenceAfterASpeakerFaultStillRecovers: a stopped speaker is
+//               not a dead path, and a dead path is still found after one.
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-30  J.J. Boyd / KG4VCF  R-R3-21: observe every retry decision,
 //               including canceled startup steps, and test the hold boundary.
 //               AI-assisted via OpenAI Codex.
@@ -12314,6 +12318,7 @@ private slots:
         RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
         DaemonMediaController daemonMedia(&h.server, &h.station);
         QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        QSignalSpy recoveries(&remoteMedia, &RemoteMediaController::recoveryRequested);
         int enabledContexts = 0;
         connect(&remoteMedia, &RemoteMediaController::audioContextAccepted, this, [&] {
             const std::optional<RemoteAudioContextMessage> context =
@@ -12342,14 +12347,17 @@ private slots:
         QVERIFY(status.retryAvailable);
 
         // The speaker comes back: the next automatic attempt plays, and the
-        // problem clears.
+        // problem clears. The attempt is at most a 4 s backoff step away;
+        // what follows is a media start, so it has that wait's bound.
         h.remoteBus->setOutputPacingAvailableForTesting(true);
         QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
-                                  h.mediaStage(remoteMedia).constData(), 10000);
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
         status = remoteMedia.audioStatus();
         QVERIFY(!status.problem.has_value());
         QVERIFY(!status.retryAvailable);
         QCOMPARE(errors.size(), 1);
+        QCOMPARE(recoveries.size(), 0);
         QVERIFY(!h.remote.audioEngine()->masterMuted());
 
         // A failure after the recovery is news: the operator is told again.
@@ -12360,6 +12368,97 @@ private slots:
                  remoteAudioProblemText(RemoteAudioReceiver::Fault::SpeakerTimingUnavailable));
         QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
         h.remoteBus->setOutputPacingAvailableForTesting(true);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: the window stops its own audio when its speaker fails, so
+    // the Core's silence says nothing about the path. Before, that silence
+    // moved media back to the tunnel after 5 s and 3 s later ended the whole
+    // session ("Audio from the Core stopped"), racing the 4 s retry step on
+    // a speaker that had already come back. The retry step is held here so
+    // no attempt can land first: this is the order that lost on CI. The wait
+    // is real time because both silence clocks are; the rules' tick runs
+    // every 500 ms, so two ticks past both limits covers them. A loaded
+    // machine can only run the rules late, which cannot fail this test.
+    void aLastingSpeakerFaultLeavesTheMediaConnectionAlone()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        QSignalSpy recoveries(&remoteMedia, &RemoteMediaController::recoveryRequested);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        const QString connectionId = remoteMedia.mediaConnectionId();
+        QVERIFY(!connectionId.isEmpty());
+
+        remoteMedia.holdAudioRestartForTest(true);
+        QTest::ignoreMessage(QtWarningMsg, speakerTimingLostLog());
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+
+        QTest::qWait(RemoteMediaController::kDirectMediaSilenceFallbackMs
+                     + RemoteMediaController::kMediaStallMs + 1000);
+        QCOMPARE(recoveries.size(), 0);
+        QCOMPARE(remoteMedia.mediaConnectionId(), connectionId);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
+
+        // The speaker is back and the attempt that was waiting plays on the
+        // connection that was there all along.
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        remoteMedia.holdAudioRestartForTest(false);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QVERIFY(!remoteMedia.audioStatus().problem.has_value());
+        QCOMPARE(recoveries.size(), 0);
+        QCOMPARE(remoteMedia.mediaConnectionId(), connectionId);
+        QCOMPARE(errors.size(), 1);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: the other side of the rule above. Once the speaker works
+    // and a retry asks the Core, a Core that sends nothing is the path's
+    // fault again: the silence rules run and the window recovers, without
+    // waiting for ICE's 30 s consent check. Real time for the same reason.
+    void coreSilenceAfterASpeakerFaultStillRecovers()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        QSignalSpy recoveries(&remoteMedia, &RemoteMediaController::recoveryRequested);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+
+        QTest::ignoreMessage(QtWarningMsg, speakerTimingLostLog());
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 5000);
+
+        // The Core goes quiet, and the speaker comes back to nothing.
+        audio.source.stop();
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        // About 11 s: the retry and the receiver running dry, media moves at
+        // 5 s, the tunnel's rule fires at 3 s. A limit that beats ICE's 30 s, with room for load.
+        QElapsedTimer quiet;
+        quiet.start();
+        QTRY_COMPARE_WITH_TIMEOUT(recoveries.size(), 1, 20000);
+        qInfo().noquote() << QStringLiteral("recovery %1 ms after the Core went quiet")
+                                 .arg(quiet.elapsed());
 
         audio.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));
@@ -16882,6 +16981,8 @@ const QStringList kAudioFunctions{
     QStringLiteral("anIntentionalCollectorPauseIsNotReportedAsAStall"),
     QStringLiteral("playsOnTheSpeakerFormatThisComputerChose"),
     QStringLiteral("speakerFaultRetriesOnItsOwnUntilItPlays"),
+    QStringLiteral("aLastingSpeakerFaultLeavesTheMediaConnectionAlone"),
+    QStringLiteral("coreSilenceAfterASpeakerFaultStillRecovers"),
     QStringLiteral("speakerProblemClearsOncePlayingOnANewConnection"),
     QStringLiteral("speakersWaitForTheDeviceListWithoutAProblem"),
     QStringLiteral("aDeviceListThatNeverComesShowsTheProblemAfterTheWait"),
