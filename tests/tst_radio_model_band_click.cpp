@@ -284,7 +284,8 @@ private slots:
 
         ContainerButtonDispatcher dispatcher(&radio, ContainerButtonDispatcher::Hooks{});
         BandButtonItem grid;
-        // The string form: BandButtonItem is not exported from the GUI DLL.
+        // The string form. BandButtonItem is exported, so a member pointer
+        // would work here too.
         QSignalSpy clicks(&grid, SIGNAL(bandClicked(int)));
         QVERIFY(clicks.isValid());
         // What MainWindow does with a container's band grid.

@@ -1,7 +1,18 @@
 // Modification history (NereusSDR):
+//   2026-11-04: The one inspector's routing (overlay design D21, D25, D27, D34, D36,
+//                 D37): setRoundtableInspectorRect, roundtableInspectorSpot, the
+//                 short menu, a fold asks for its list, and the band no longer ends
+//                 a view. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-01: The waterfall clock is a small label. Its one-second tick
 //               no longer rebuilds the static GPU overlay.
 //               Brian Sutton (W4KZO).
+//   2026-11-03: Roundtable view of another frequency: roundtablePanLevel,
+//                 roundtableViewAnchor, the viewed tag's outline and the card's
+//                 menu (overlay design D21 to D25). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-03: The live Roundtable card on the pan (setRoundtableCard), and
+//                 a hit list that tells the card from the tags. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-01: Roundtable tags are a child widget (m_roundtableTagLayer).
 //               A report does not repaint the spectrum or its GPU overlays.
 //               Brian Sutton (W4KZO).
@@ -1794,6 +1805,7 @@ public:
     // and the trace and fill vertices exactly as renderGpuFrame() uploads
     // them.
     void setRenderedPixelsForTest(const QVector<float>& dbm) { m_renderedPixels = dbm; }
+    float fftTraceShiftDbForTest() const { return fftTraceShiftDb(); }
     void drawSpectrumForTest(QPainter& p, const QRect& r) { drawSpectrum(p, r); }
     bool drawsSpectrumBackgroundForTest() const { return drawsSpectrumBackground(); }
     void paintSpectrumBackgroundForTest(QPainter& p, const QRect& r) {
@@ -2832,19 +2844,30 @@ public:
 
     // ---- Roundtable room tags (Roundtable plan Task 14, design 11.2) ----
     // One tag per room along the foot of the spectrum, above the band
-    // plan: the state glyph, the talker (or Unknown, Doubled, Quiet) and
+    // plan: the state glyph, the talker (or Unknown, Double, Quiet) and
     // the member count. Crowded tags fold into +N (layoutRoundtableTags).
-    // `display` Hidden draws none, Stale greys them as last known. Display
-    // only: a click asks for a tune through roundtableRoomClicked.
+    // `display` Hidden draws none, Frozen greys them as last known. Display
+    // only: a legacy server's tag asks for a tune through roundtableRoomClicked,
+    // and a frequency tag asks to be viewed through roundtableReadRequested.
     void setRoundtableTags(const QList<RoundtableTag>& tags, RoundtableTagDisplay display);
+    /// The live card for the active slice's frequency on this pan (overlay
+    /// design D10). A Quiet card draws none. `roomId` is the frequency a click
+    /// on it reads, and the tag it stands in for.
+    void setRoundtableCard(const RoundtableCardModel& card, const QString& roomId);
     const QList<RoundtableTag>& roundtableTags() const { return m_roundtableTags; }
     RoundtableTagDisplay roundtableTagDisplay() const { return m_roundtableTagDisplay; }
-    /// A drawn tag or fold, in this widget's coordinates.
+    /// A drawn card, tag or fold, in this widget's coordinates.
     struct RoundtableTagHit {
+        enum class Kind { Tag, Card };
         QRect rect;
         QStringList roomIds;
         bool folded = false;
+        Kind kind = Kind::Tag;
+        qint64 hz = 0;  // the frequency it speaks for; a fold's first
     };
+    /// How many times the card has been placed: a value-only change places it no
+    /// more (overlay design D14).
+    int roundtableCardPlacementsForTest() const { return m_roundtableCardPlacements; }
     /// What the last tag pass drew (it is redrawn with the overlay).
     const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
     void drawRoundtableTagsForTest(QPainter& p, const QRect& specRect) { drawRoundtableTags(p, specRect); }
@@ -2853,9 +2876,67 @@ public:
     /// The textures are premultiplied, so the source color takes One.
     static QRhiGraphicsPipeline::TargetBlend overlayTargetBlend();
 #endif
+    /// This client's own level in the family's sideband window at `hz`, 2.7 kHz
+    /// wide (overlay design D23): nullopt off the pan, before the first frame and
+    /// while transmitting.
+    std::optional<double> roundtablePanLevel(quint64 hz, const QString& family) const;
+    /// Where the inspector stands on this pan: see placeRoundtableInspector.
+    struct RoundtableInspectorSpot {
+        QRect pan;
+        int dialX = 0;
+        QVector<QRect> flags;
+        bool flagFlipped = false;
+    };
+    /// By `sliceId`'s flag when it is on this pan, else by this pan's own slice,
+    /// else by `fallbackHz`, the clicked tag (overlay design D37). It needs no card
+    /// or tag pass, so a quiet frequency has one too.
+    RoundtableInspectorSpot roundtableInspectorSpot(int sliceId, qint64 fallbackHz) const;
+    /// Where the open inspector is, in this widget's coordinates; null while closed.
+    /// The card is not drawn while it is set and tags keep clear of it (D34, D37). It
+    /// touches only the tag child, never the static overlay.
+    void setRoundtableInspectorRect(const QRect& rect);
+    const QRect& roundtableInspectorRect() const { return m_roundtableInspectorRect; }
+    /// A fold's rooms as the inspector lists them.
+    QVector<RoundtableFoldRow> roundtableFoldRows(const QStringList& roomIds) const;
+    /// The tag of the frequency being viewed gets an outline. Empty for none. Set to
+    /// your own frequency, your compact tag goes (D37). `fold` says the inspector lists
+    /// a fold holding this room: the fold's tag takes the outline and every tag stays.
+    void setRoundtableViewedRoom(const QString& room, bool fold = false);
+    const QString& roundtableViewedRoom() const { return m_roundtableViewedRoom; }
+    /// The active slice's letter, for "Tune slice A here".
+    void setRoundtableActiveSliceName(const QString& name) { m_roundtableSliceName = name; }
+    /// Tune's words. Empty name: this window controls no slice, and Tune is greyed.
+    QString roundtableTuneText() const
+    {
+        return m_roundtableSliceName.isEmpty() ? QStringLiteral("Tune slice here")
+                                               : QStringLiteral("Tune slice %1 here").arg(m_roundtableSliceName);
+    }
+    /// The short menu (overlay design D36).
+    struct RoundtableMenuOptions {
+        bool inspectorOpen = false;  // says Close inspector, not Open inspector
+        bool fromInspector = false;  // the inspector's own ⋯: Read reports, no Open or Close
+        bool transmitting = false;   // what only the window knows: keyed on another pan or device
+        bool connected = true;       // what only the window knows: there is a radio to tune
+    };
+    /// Open or Close inspector, Tune, Messages and Signal for `room`. `alreadyThere`
+    /// greys Tune as keying does, as the inspector's button does: never hidden.
+    void buildRoundtableCardMenu(const QString& room, qint64 hz, bool alreadyThere, QMenu& menu,
+                                 const RoundtableMenuOptions& options);
+    void buildRoundtableCardMenu(const QString& room, qint64 hz, bool alreadyThere, QMenu& menu)
+    {
+        buildRoundtableCardMenu(room, hz, alreadyThere, menu, RoundtableMenuOptions{});
+    }
+    /// Whether this window is keyed, on whichever pan: a Roundtable Tune waits.
+    bool roundtableKeyed() const;
     /// The rows a fold's list holds: a heading, then one row per room in
     /// `roomIds` (by frequency), each emitting roundtableRoomClicked.
     void buildRoundtableFoldMenu(const QStringList& roomIds, QMenu& menu);
+    /// The short menu's Signal row: cycles the format, then calls `cycled`, on `context`.
+    static void addRoundtableSignalRow(QMenu& menu, QObject* context, std::function<void()> cycled);
+    /// The short menu's form for a slice with no frequency to open: greyed, not gone.
+    /// Signal is a display choice and still works.
+    static void buildRoundtableUnavailableMenu(const QString& heading, QMenu& menu, QObject* context,
+                                               std::function<void()> signalCycled);
     /// The spectrum rectangle the tags are drawn against, and the band
     /// plan strip's height at its foot.
     QRect roundtableTagSpectrumRectForTest() const;
@@ -3154,6 +3235,18 @@ signals:
     // emitted while the transmit view shows (as requestTune).
     void roundtableRoomClicked(const QString& roomId);
     void roundtableReadRequested(const QString& context);
+    // A frequency server's "+N" fold was clicked: list it in the inspector (D37).
+    void roundtableFoldClicked(const QStringList& roomIds);
+    // A frequency tag or the card was right-clicked (D36).
+    void roundtableTagMenuRequested(const QString& context, QPoint globalPos);
+    // The short menu's Messages.
+    void roundtableMessagesRequested(const QString& context);
+    // What roundtableInspectorSpot says may have changed: a resize or a flag's move.
+    void roundtableInspectorSpotChanged();
+    // The card menu's Read reports.
+    void roundtableReportsRequested();
+    // The card menu's Signal: the shared format key just moved on.
+    void roundtableSignalFormatCycled();
     // Rotor control plan Task 8: the operator tuned to a spot (a label
     // click, a cluster popup entry or the menu's Tune), with its call and
     // its Core-served bearing (-1 when none). MainWindow hands it to
@@ -4576,6 +4669,31 @@ private:
     QVector<SpotCluster> m_spotClusters;
     // Roundtable plan Task 14: the room tags and what the last pass drew.
     QList<RoundtableTag> m_roundtableTags;
+    // The tags as the pan draws them: one per double (roundtableMergeDoubleTags).
+    QList<RoundtableTag> m_roundtablePanTags;
+    // Tag widths, measured once per tag text and font (measureRoundtableTags).
+    void measureRoundtableTags(const QFont& labelFont, const QFont& countFont, const QPaintDevice* device);
+    QHash<QString, int> m_roundtableTagWidths;
+    QFont m_roundtableTagMeasuredFont;
+    int m_roundtableFoldWidth{0};
+    bool m_roundtableTagsMeasured{false};
+    RoundtableCardModel m_roundtableCard;
+    QString m_roundtableCardRoom;
+    QString m_roundtableCardFormat;
+    // Where the card last went, and what decided it (D14).
+    RoundtableCardPlacement m_roundtableCardPlaced;
+    QRect m_roundtableCardPlacedPan;
+    QVector<QRect> m_roundtableCardPlacedControls;
+    QFont m_roundtableCardPlacedFont;
+    int m_roundtableCardPlacedDialX = 0;
+    bool m_roundtableCardPlacedFlipped = false;
+    bool m_roundtableCardPlacedValid = false;
+    int m_roundtableCardPlacements = 0;
+    QString m_roundtableViewedRoom;
+    bool m_roundtableViewedIsFold{false};
+    QString m_roundtableSliceName{QStringLiteral("A")};
+    QVector<QRect> roundtableControlRects() const;
+    QRect m_roundtableInspectorRect;
     // GPU path: tags paint here, above the spectrum and under the flags.
     // A reading updates this widget only, not the panadapter frame.
     QWidget* m_roundtableTagLayer{nullptr};

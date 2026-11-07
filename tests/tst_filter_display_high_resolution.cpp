@@ -3,6 +3,10 @@
 // No upstream attribution required (NereusSDR FilterDisplayItem high-res test).
 //
 // Modification history (NereusSDR):
+//   2026-11-05 - File-local copies of the filter labels: binding the class's static
+//                 constexpr member to a reference does not link on Windows
+//                 once the class is exported. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-10-26 - Palette load, Thetis new-item defaults and editor ranges.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //
@@ -27,6 +31,14 @@
 #include "gui/meters/FilterDisplayItem.h"
 
 using namespace NereusSDR;
+
+// CONTRIBUTING.md, Windows DLL Boundaries.
+namespace {
+const char* const kMnfLabel = FilterDisplayItem::kMnfLabel;
+const char* const kMnfPlusLabel = FilterDisplayItem::kMnfPlusLabel;
+const char* const kSnapLabel = FilterDisplayItem::kSnapLabel;
+const char* const kFitLabel = FilterDisplayItem::kFitLabel;
+}
 
 class TestFilterDisplayHighResolution : public QObject {
     Q_OBJECT
@@ -264,10 +276,10 @@ private slots:
         QCOMPARE(item.snapLineColour(), QColor(0x80, 0x80, 0x80));
         QCOMPARE(item.settingOnColour(), QColor(0x64, 0x95, 0xed));   // CornflowerBlue
         QCOMPARE(item.buttonHighlightColour(), QColor(0x80, 0x80, 0x80));
-        QCOMPARE(QString::fromLatin1(FilterDisplayItem::kMnfLabel), QStringLiteral(" MNF "));
-        QCOMPARE(QString::fromLatin1(FilterDisplayItem::kMnfPlusLabel), QStringLiteral(" +MNF "));
-        QCOMPARE(QString::fromLatin1(FilterDisplayItem::kSnapLabel), QStringLiteral(" SNAP "));
-        QCOMPARE(QString::fromLatin1(FilterDisplayItem::kFitLabel), QStringLiteral(" FIT "));
+        QCOMPARE(QString::fromLatin1(kMnfLabel), QStringLiteral(" MNF "));
+        QCOMPARE(QString::fromLatin1(kMnfPlusLabel), QStringLiteral(" +MNF "));
+        QCOMPARE(QString::fromLatin1(kSnapLabel), QStringLiteral(" SNAP "));
+        QCOMPARE(QString::fromLatin1(kFitLabel), QStringLiteral(" FIT "));
     }
 
     // The editor offers the Thetis ranges and writes through to the item.
