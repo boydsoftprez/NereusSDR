@@ -137,6 +137,7 @@ private:
 
     QString m_wanted;            // empty when nothing is wanted
     QString m_openName;          // empty when nothing is open
+    qsizetype m_openNameCount{0};   // ports with that name, since two controllers can share one
     quint64 m_generation{0};     // a message queued before a close has an old one
     bool m_learning{false};
     bool m_connected{false};

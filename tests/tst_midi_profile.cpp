@@ -705,6 +705,62 @@ private slots:
 
     // ---- Unplug ----
 
+    // Two controllers with one name, on CoreMIDI or Windows: the open one goes and its
+    // name is still on the list. The count is all that shows it.
+    void unplug_oneOfTwoSameNamedDropsTheHoldAndComesBack()
+    {
+        m_layer->ports->setNames({kPad, kPad});
+        MidiInput input;
+        wire(input);
+        QSignalSpy connection(&input, &MidiInput::connectionChanged);
+        input.openPort(kPad);
+        QCOMPARE(m_layer->ports->opened(), kPad);
+        host().setMidiProfile(profileWith({button(kNote60, QStringLiteral("tx.hold"))}));
+
+        m_layer->ports->send(0x90, 60, 64);
+        deliverQueued(input);
+        QCOMPARE(t().keyHolds, QList<bool>{true});
+
+        m_layer->ports->setNames({kPad});
+        input.checkPorts();
+        QCOMPARE(t().keyHolds, QList<bool>({true, false}));
+        QCOMPARE(m_layer->ports->opened(), QString());
+        QCOMPARE(connection.last().at(0).toBool(), false);
+        QCOMPARE(connection.last().at(1).toString(), QStringLiteral("Not plugged in."));
+
+        // The normal path reopens what is left, and the one left is the new count.
+        input.checkPorts();
+        QCOMPARE(m_layer->ports->opened(), kPad);
+        QCOMPARE(connection.last().at(0).toBool(), true);
+        const int closes = m_layer->ports->closes;
+        input.checkPorts();
+        QCOMPARE(m_layer->ports->closes, closes);
+        QCOMPARE(t().keyHolds, QList<bool>({true, false}));
+    }
+
+    void unplug_aSecondOfTheNameArrivingChangesNothingAndItsLeavingCounts()
+    {
+        m_layer->ports->setNames({kPad});
+        MidiInput input;
+        wire(input);
+        QSignalSpy connection(&input, &MidiInput::connectionChanged);
+        input.openPort(kPad);
+        host().setMidiProfile(profileWith({button(kNote60, QStringLiteral("tx.hold"))}));
+        m_layer->ports->send(0x90, 60, 64);
+        deliverQueued(input);
+
+        m_layer->ports->setNames({kPad, kPad});
+        input.checkPorts();
+        QCOMPARE(t().keyHolds, QList<bool>{true});
+        QCOMPARE(m_layer->ports->opened(), kPad);
+        QCOMPARE(connection.size(), 1);
+
+        m_layer->ports->setNames({kPad});
+        input.checkPorts();
+        QCOMPARE(t().keyHolds, QList<bool>({true, false}));
+        QCOMPARE(connection.last().at(0).toBool(), false);
+    }
+
     void unplug_dropsTheHoldAndComesBack()
     {
         m_layer->ports->setNames({kPad});

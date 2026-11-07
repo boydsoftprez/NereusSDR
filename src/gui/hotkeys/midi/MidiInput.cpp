@@ -21,6 +21,9 @@
 //                 Claude Code (Claude Opus 5.5). Hot keys plan Task 10. Its own
 //                 thread instead of the main one, a port list comparison so an
 //                 unplug is seen, and a release is never eaten by learn.
+//   2026-11-06 - One fewer port with the open port's name counts as losing it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code (Claude
+//                 Opus 5.5).
 // =================================================================
 
 #include "gui/hotkeys/midi/MidiInput.h"
@@ -328,9 +331,18 @@ void MidiInput::checkPorts()
     const QStringList names = m_backend->portNames();
     if (m_openName.isEmpty()) {
         tryOpen(names);
-    } else if (!names.contains(m_openName)) {
+        return;
+    }
+    // CoreMIDI and Windows list two same-named controllers under one name (only ALSA
+    // adds an address; CMakeLists.txt sets RTMIDI_DO_NOT_ENSURE_UNIQUE_PORTNAMES), and the list
+    // doesn't say which left. If it might be the open one its hold has to drop, so one
+    // fewer closes the port and the next check opens what is left.
+    const qsizetype count = names.count(m_openName);
+    if (count < m_openNameCount) {
         closeDevice();
         notify(false, notPluggedInReason());
+    } else {
+        m_openNameCount = count;
     }
 }
 
@@ -367,6 +379,7 @@ void MidiInput::tryOpen(const QStringList& names)
             return;
         }
         m_openName = candidate;
+        m_openNameCount = names.count(candidate);
         m_wanted = withoutAlsaAddress(candidate);   // what comes back is this device, not a near name
         emit portOpened(candidate);
         notify(true, QString());
@@ -379,6 +392,7 @@ void MidiInput::closeDevice()
 {
     ++m_generation;
     m_openName.clear();
+    m_openNameCount = 0;
     if (m_backend) {
         m_backend->close();
     }
