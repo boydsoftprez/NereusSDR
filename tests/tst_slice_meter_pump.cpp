@@ -30,8 +30,8 @@
 //      that already holds a real reading.
 //   3. poll() against a REAL connected RxChannel (fakes/ConnectableRadioModel),
 //      proving the source selector actually reaches WDSP: SignalAverage
-//      (the default with no selector wired) and SignalPeak both match an
-//      independently-taken read of the SAME live meter; MaxBin, with no
+//      (the default with no selector wired) and SignalPeak both match the
+//      lane refresh the pump published (MeterPumpSnapshot.h); MaxBin, with no
 //      detector ever configured, passes the WdspEngine::getMaxBinDbm
 //      -400.0 "not active" sentinel straight through -- deterministic
 //      without needing a live FFT displayed at all.
@@ -55,6 +55,11 @@
 //   2026-10-25 -- Roundtable fix wave: a clear's new stamp comes after its
 //                 no-reading values. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Claude Code.
+//   2026-11-06 -- Comparisons with a connected channel are held to the lane
+//                 refresh the pump published (MeterPumpSnapshot.h), which
+//                 closes the flake this file used to document. J.J. Boyd
+//                 (KG4VCF), with AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -63,6 +68,7 @@
 
 #include <memory>
 
+#include "MeterPumpSnapshot.h"
 #include "core/ConnectionState.h"
 #include "core/RadioStatus.h"
 #include "core/RxChannel.h"
@@ -96,6 +102,7 @@ void pollSettled(RadioModel& model, SliceMeterPump* pump)
 }
 } // namespace
 using NereusSDR::Test::ConnectableRadioModel;
+using NereusSDR::Test::pollUntilPumpWroteSnapshot;
 
 class TestSliceMeterPump : public QObject {
     Q_OBJECT
@@ -317,11 +324,13 @@ private slots:
         model.setConnectionStateForTest(ConnectionState::Connected);
         pollSettled(model, pump);
 
+        RxChannel::MeterReadings readings;
+        QVERIFY(pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
         const double average =
-            ch->getMeter(RxMeterType::SignalAvg) + model.rxMeterOffsetDb();
+            readings.value(RxMeterType::SignalAvg) + model.rxMeterOffsetDb();
         QCOMPARE(slice->signalStrengthDbm(), average);
         QCOMPARE(slice->signalPeakDbm(),
-                 ch->getMeter(RxMeterType::SignalPeak) + model.rxMeterOffsetDb());
+                 readings.value(RxMeterType::SignalPeak) + model.rxMeterOffsetDb());
         QCOMPARE(slice->signalAverageDbm(), average);
         QVERIFY(slice->signalAverageDbm() > kNoReadingDbm);
 
@@ -395,20 +404,8 @@ private slots:
 
     // The default source (no selector ever wired) is SignalAverage, the
     // same fixed choice the pre-Task-12 pollSliceSMeters() made. Compares
-    // against a read of the SAME live meter taken immediately after
-    // poll() returns -- no intervening QTest::qWait or event-loop turn --
-    // so the two reads observe WDSP's accumulator at, for all practical
-    // purposes, the same instant.
-    //
-    // Known low-probability flake (fix round 1 review, Minor): this
-    // QCOMPARE takes two independent getMeter() reads a few statements
-    // apart on the SAME live channel; if the audio/DSP thread happens to
-    // land a new block between them the accumulator can have moved by the
-    // time the second read runs. The window is microseconds against a
-    // ~21 ms block period at 48 kHz, so this is expected to be rare, not
-    // wrong -- if this ever fails in isolation on an otherwise-unrelated
-    // CI run, suspect this race FIRST, rerun once to confirm, and do not
-    // treat a single such failure as evidence of a real regression here.
+    // against the lane refresh the pump published (MeterPumpSnapshot.h): the
+    // channel is receiving, so a later read may rightly differ.
     void pollWritesSignalAverageByDefaultForAConnectedSlice()
     {
         std::unique_ptr<ConnectableRadioModel> harness = ConnectableRadioModel::create();
@@ -424,11 +421,13 @@ private slots:
 
         pollSettled(model, pump);
 
+        RxChannel::MeterReadings readings;
+        QVERIFY(pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
         const double expected =
-            ch->getMeter(RxMeterType::SignalAvg) + model.rxMeterOffsetDb();
+            readings.value(RxMeterType::SignalAvg) + model.rxMeterOffsetDb();
         QCOMPARE(slice->signalStrengthDbm(), expected);
         QCOMPARE(slice->signalPeakDbm(),
-                 ch->getMeter(RxMeterType::SignalPeak) + model.rxMeterOffsetDb());
+                 readings.value(RxMeterType::SignalPeak) + model.rxMeterOffsetDb());
         QCOMPARE(slice->signalAverageDbm(), expected);
 
         harness.reset();
@@ -438,12 +437,8 @@ private slots:
     // report SignalPeak must change which WDSP meter type gets read,
     // exactly matching MeterPoller::pollSMeter()'s SMeter/SMeterPeak
     // branch (RxMeterType::SignalPeak), not the fixed SignalAvg the old
-    // pollSliceSMeters() always used.
-    //
-    // Carries the same low-probability two-independent-live-reads flake
-    // pollWritesSignalAverageByDefaultForAConnectedSlice() documents above
-    // -- if this fails in isolation, suspect that race before suspecting a
-    // regression in the source-selector wiring itself.
+    // pollSliceSMeters() always used. Compares against the lane refresh the
+    // pump published (MeterPumpSnapshot.h).
     void pollWritesSignalPeakWhenSelectorSaysSo()
     {
         std::unique_ptr<ConnectableRadioModel> harness = ConnectableRadioModel::create();
@@ -460,12 +455,14 @@ private slots:
         pump->setSourceSelector([]() { return SliceMeterPump::MeterSource::SignalPeak; });
         pollSettled(model, pump);
 
+        RxChannel::MeterReadings readings;
+        QVERIFY(pollUntilPumpWroteSnapshot(*pump, *ch, *slice, readings));
         const double expected =
-            ch->getMeter(RxMeterType::SignalPeak) + model.rxMeterOffsetDb();
+            readings.value(RxMeterType::SignalPeak) + model.rxMeterOffsetDb();
         QCOMPARE(slice->signalStrengthDbm(), expected);
         QCOMPARE(slice->signalPeakDbm(), expected);
         QCOMPARE(slice->signalAverageDbm(),
-                 ch->getMeter(RxMeterType::SignalAvg) + model.rxMeterOffsetDb());
+                 readings.value(RxMeterType::SignalAvg) + model.rxMeterOffsetDb());
 
         harness.reset();
     }
@@ -493,13 +490,14 @@ private slots:
         pump->setSourceSelector([]() { return SliceMeterPump::MeterSource::MaxBin; });
         pollSettled(model, pump);
 
+        RxChannel::MeterReadings readings;
+        QVERIFY(pollUntilPumpWroteSnapshot(
+            *pump, *model.wdspEngine()->rxChannel(slice->sliceIndex()), *slice, readings));
         QCOMPARE(slice->signalStrengthDbm(), -400.0);
         QCOMPARE(slice->signalPeakDbm(),
-                 model.wdspEngine()->rxChannel(slice->sliceIndex())
-                     ->getMeter(RxMeterType::SignalPeak) + model.rxMeterOffsetDb());
+                 readings.value(RxMeterType::SignalPeak) + model.rxMeterOffsetDb());
         QCOMPARE(slice->signalAverageDbm(),
-                 model.wdspEngine()->rxChannel(slice->sliceIndex())
-                     ->getMeter(RxMeterType::SignalAvg) + model.rxMeterOffsetDb());
+                 readings.value(RxMeterType::SignalAvg) + model.rxMeterOffsetDb());
 
         harness.reset();
     }
@@ -540,6 +538,9 @@ private slots:
         });
         pollSettled(model, pump);
 
+        RxChannel::MeterReadings onEightyReadings;
+        QVERIFY(pollUntilPumpWroteSnapshot(*pump, *engine->rxChannel(onEighty->sliceIndex()),
+                                           *onEighty, onEightyReadings));
         QCOMPARE(onTwenty->signalStrengthDbm(),
                  kQuietBandDbm + model.rxMeterOffsetDbForSlice(onTwenty->sliceIndex()));
         QCOMPARE(onEighty->signalStrengthDbm(),
@@ -547,7 +548,7 @@ private slots:
         QCOMPARE(notShown->signalStrengthDbm(), kNoReadingDbm);
         // The other two readings are still each channel's own.
         QCOMPARE(onEighty->signalPeakDbm(),
-                 engine->rxChannel(onEighty->sliceIndex())->getMeter(RxMeterType::SignalPeak)
+                 onEightyReadings.value(RxMeterType::SignalPeak)
                      + model.rxMeterOffsetDbForSlice(onEighty->sliceIndex()));
 
         // Another source than Max Bin does not ask the window at all.

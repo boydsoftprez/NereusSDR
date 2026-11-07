@@ -43,6 +43,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: 30 s bound on a helper's next line; sign-in waits as in
+//               MultiDeviceHarness. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-09-27: Cover code-only reconnect and in-flight device revocation.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-27: Diagnose helper startup failures without changing deadlines.
@@ -115,6 +118,12 @@ using namespace NereusSDR;
 using NereusSDR::Test::LoopbackTransport;
 
 namespace {
+
+// The same bounds as tests/MultiDeviceHarness.h: its kHarnessWaitMs for a
+// sign-in or an answer, its kHarnessStepWaitMs for a greeting. Each wait
+// returns as soon as the thing arrives.
+constexpr int kSignInWaitMs = 30000;
+constexpr int kGreetingWaitMs = 15000;
 
 // ── Every log line, for the check that no code reaches one ──────────────
 
@@ -273,7 +282,9 @@ private:
     QJsonObject readLine()
     {
         while (!m_process.canReadLine()) {
-            if (!m_process.waitForReadyRead(10000)) {
+            // 10 s was passed on a busy Linux CI machine by a helper still
+            // starting its Core (run 41764912150). Returns when a line arrives.
+            if (!m_process.waitForReadyRead(30000)) {
                 return {};
             }
         }
@@ -587,7 +598,7 @@ struct Core {
     static bool connect(LoopbackTransport* app, const SessionMessage& auth,
                         const QHash<QByteArray, int>& features = {{"deviceAuth", 1}})
     {
-        const bool greeted = QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, 5000);
+        const bool greeted = QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, kGreetingWaitMs);
         Q_UNUSED(greeted);
         app->sendText(SessionMessages::encode(SessionMessages::hello(
             kSessionProtocolMajor, kSessionProtocolMinor, 0, QStringLiteral("NereusSDR iPhone"),
@@ -598,7 +609,7 @@ struct Core {
                        return app->receivedKinds().contains(QByteArrayLiteral("snapshot.complete"))
                            || !app->isOpen();
                    },
-                   5000)
+                   kSignInWaitMs)
             && app->receivedKinds().contains(QByteArrayLiteral("snapshot.complete"));
     }
 
@@ -606,7 +617,7 @@ struct Core {
                                      const QHash<QByteArray, int>& features = {{"deviceAuth", 1}})
     {
         LoopbackTransport* app = open();
-        static_cast<void>(QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, 5000));
+        static_cast<void>(QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, kGreetingWaitMs));
         const QJsonObject hello = firstOfType(app->received(), QStringLiteral("hello"));
         const QByteArray challenge =
             StationIdentity::fromBase64Url(hello.value(QStringLiteral("challenge")).toString());
@@ -635,7 +646,7 @@ struct Core {
             }
             return QJsonObject{};
         };
-        const bool answered = QTest::qWaitFor([&find]() { return !find().isEmpty(); }, 5000);
+        const bool answered = QTest::qWaitFor([&find]() { return !find().isEmpty(); }, kSignInWaitMs);
         Q_UNUSED(answered);
         return find();
     }
@@ -1407,7 +1418,7 @@ private slots:
         Core core;
         QCOMPARE(core.server->pairingVersion(), 1);
         LoopbackTransport* app = core.open();
-        static_cast<void>(QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, 5000));
+        static_cast<void>(QTest::qWaitFor([app]() { return !app->received().isEmpty(); }, kGreetingWaitMs));
         const QJsonObject hello = firstOfType(app->received(), QStringLiteral("hello"));
         QCOMPARE(hello.value(QStringLiteral("features")).toObject()
                      .value(QStringLiteral("pairing")).toInt(),

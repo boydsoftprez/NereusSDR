@@ -7,6 +7,9 @@
 // 2026-10-25: Roundtable fix wave: scrolling the column does not redraw
 // the room per frame; the widened list's groups. J.J. Boyd (KG4VCF),
 // AI-assisted via Claude Code.
+// 2026-11-05: The sheet keeps half height on an iPad; only a band too short
+// for it, a phone's on its side, makes it full. J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -264,6 +267,56 @@ struct RoundtableAppletTests {
             try await shoot("ipad-06-first-run-line", model: model, size: side)
             await model.disconnect()
         }
+    }
+
+    // MARK: The sheet's height
+
+    @Test("the sheet keeps half height on an iPad's band; a phone's short band on its side takes it full")
+    func sheetHalfHeightByBand() async throws {
+        let (model, station) = try await shotStation()
+        model.phoneSettings.roundtableFirstRunNoteSeen = true
+        try await station.deliverRoundtable(RoundtableSheetTests.boardScene())
+        #expect(await settle { model.roundtable.room != nil })
+        // The iPad Pro 11-inch upright, and the iPad mini on its side with the
+        // column hidden and a Core's summary row: half height is under 350
+        // points tall, with room for it.
+        #expect(try await settledDetent(model, width: 834, fullHeight: 570) == .half)
+        #expect(try await settledDetent(model, width: 546, fullHeight: 571) == .half)
+        // The control, the tallest band a phone has on its side (a Pro Max with
+        // no Core's summary row): too short for half height.
+        #expect(try await settledDetent(model, width: 546, fullHeight: 340) == .full)
+        await model.disconnect()
+    }
+
+    /// The detent a sheet opened at half height holds once it has decided
+    /// whether it is compact, `width` across on a band `fullHeight` tall.
+    private func settledDetent(_ model: AppModel, width: CGFloat, fullHeight: CGFloat) async throws
+        -> RoundtableSheet.Detent {
+        let half = MainScreen.roundtablePlace(bandHeight: fullHeight, detent: .half, gaugesFoot: nil, dialStrip: false)
+        var detent = RoundtableSheet.Detent.half
+        var decided = false
+        let sheet = RoundtableSheet(roundtable: model.roundtable, transmit: model.main.transmit,
+                                    slices: model.main.slices,
+                                    detent: Binding(get: { detent }, set: { detent = $0 }),
+                                    dialOn: false, linkUp: true, fullHeight: fullHeight,
+                                    stationCallsign: "", stationGrid: "", firstRunNoteSeen: .constant(true),
+                                    close: {}, compactDecided: { decided = true })
+            .frame(width: width, height: half.height)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(origin: .zero, size: CGSize(width: 1400, height: 1400))
+        window.windowLevel = .alert + 1
+        let host = ShotHosting.host(sheet.preferredColorScheme(.dark))
+        host.view.frame = window.bounds
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        await ShotWait.laidOut(window)
+        #expect(await ShotWait.until { decided }, "the sheet never decided whether it is compact")
+        return detent
     }
 
     // MARK: Helpers

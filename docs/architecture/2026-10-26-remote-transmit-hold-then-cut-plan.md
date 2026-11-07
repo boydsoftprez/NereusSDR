@@ -420,6 +420,9 @@ none (independent of Task 1). Not parallel (rename touches many files).
   `keepalive()` trips only past `kLinkCutMs` and ends a hold only after its sequence
   and epoch checks pass; `trip`, `update`'s erase and `linkClosed` end a hold with
   the matching `HoldEnd`.
+  (Note, 2026-11-05: `keepalive()` no longer trips. Past `kLinkCutMs` or a hold's
+  bound it renews nothing and leaves the stop to the check already due. See
+  `RemoteTxWatchdog.h`.)
 - [ ] **Step 3:** The constants, asserts and renames; `RemoteMicReceiver.h:234`'s
   assert compares against `kLinkHoldMs`.
 - [ ] **Step 4:** Run the commands; write the list of timing failures into the task
