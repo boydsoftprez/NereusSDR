@@ -35,7 +35,7 @@ void BandStackFacade::refresh()
 
 QString BandStackFacade::jsonFor(const BandStackController& controller)
 {
-    QJsonObject document = controller.store().toJson();
+    QJsonObject document = controller.publishedDocument();
     document.insert(QStringLiteral("lastExpiry"),
                     QJsonObject{{QStringLiteral("batchId"), controller.lastExpiryBatchId()},
                                 {QStringLiteral("count"), controller.lastExpiryCount()}});

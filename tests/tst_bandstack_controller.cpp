@@ -30,6 +30,7 @@
 #include "core/RadioDiscovery.h"
 #include "core/WdspTypes.h"
 #include "core/safety/BandPlanGuard.h"
+#include "core/session/BandStackFacade.h"
 #include "models/Band.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
@@ -95,6 +96,19 @@ QByteArray snapshot(const BandStackController& controller)
 QString idAt(const BandStackController& controller, Band band, qint64 frequencyHz)
 {
     return controller.store().entryNear(band, frequencyHz);
+}
+
+// The slice's place on a band in the document every device reads.
+QString publishedPlace(const RadioModel& radio, QChar slice, const QString& bandKey)
+{
+    return QJsonDocument::fromJson(radio.bandStackFacade()->json().toUtf8())
+        .object()
+        .value(QStringLiteral("places"))
+        .toObject()
+        .value(QString(slice))
+        .toObject()
+        .value(bandKey)
+        .toString();
 }
 
 // A model with one slice and a known radio.
@@ -693,6 +707,225 @@ private slots:
         QVERIFY(bench.controller->setReturn(Band::Band40m, BandStackReturnMode::LastUsed, QString(),
                                             nullptr));
         QCOMPARE(bench.controller->planRecall(press(0, Band::Band40m)).frequencyHz, qint64(7290000));
+    }
+
+    // ── Tuning into a band (J.J.'s ruling, design section 5.3) ────────────
+
+    // Slice A's place on 20m is a seed, and A has left it for 40m by a press.
+    static QString placeOnASeedThenPress40(Bench& bench)
+    {
+        QString id;
+        const QList<BandStackEntry> entries = bench.controller->store().entries(Band::Band20m);
+        for (const BandStackEntry& entry : entries) {
+            if (entry.seeded && !entry.locked) {
+                id = entry.id;
+                break;
+            }
+        }
+        if (id.isEmpty() || !bench.controller->performRecall(goTo(0, id), nullptr)
+            || !bench.controller->performRecall(press(0, Band::Band40m), nullptr)) {
+            return {};
+        }
+        return id;
+    }
+
+    void tunedIntoABand_leaving_leavesTheSavedEntryAlone_andKeepsNothing_data()
+    {
+        QTest::addColumn<bool>("bySpot");
+        QTest::newRow("by hand") << false;
+        QTest::newRow("by a spot") << true;
+    }
+
+    void tunedIntoABand_leaving_leavesTheSavedEntryAlone_andKeepsNothing()
+    {
+        QFETCH(bool, bySpot);
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+        const BandStackEntry saved = *bench.controller->store().entry(id);
+        const qsizetype count = bench.controller->store().entries(Band::Band20m).size();
+
+        bench.a->setFrequency(14200000.0);
+        if (bySpot) {
+            // A spot's click reaches the Core as these two setters.
+            bench.a->setDspMode(DSPMode::CWU);
+        }
+        // While it is here it does not claim the place: the number reads -/N.
+        QCOMPARE(publishedPlace(bench.radio, QChar(u'A'), QStringLiteral("20m")), QString());
+        QCOMPARE(bench.controller->store().place(QChar(u'A'), Band::Band20m), id);
+
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band80m), nullptr));
+
+        const BandStackEntry* entry = bench.controller->store().entry(id);
+        QCOMPARE(entry->frequencyHz, saved.frequencyHz);
+        QCOMPARE(entry->mode, saved.mode);
+        QVERIFY(entry->seeded);
+        QCOMPARE(bench.controller->store().entries(Band::Band20m).size(), count);
+        QCOMPARE(idAt(*bench.controller, Band::Band20m, 14200000), QString());
+        // The place is back for everyone once the slice has gone.
+        QCOMPARE(publishedPlace(bench.radio, QChar(u'A'), QStringLiteral("20m")), id);
+    }
+
+    void tunedIntoABand_pressingIt_goesToThePlace_withNoSaveAndNoStep()
+    {
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+        const qint64 savedHz = bench.controller->store().entry(id)->frequencyHz;
+
+        bench.a->setFrequency(14200000.0);
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band20m), nullptr));
+
+        QCOMPARE(qRound64(bench.a->frequency()), savedHz);
+        QCOMPARE(bench.controller->store().place(QChar(u'A'), Band::Band20m), id);
+        QCOMPARE(bench.controller->store().entry(id)->frequencyHz, savedHz);
+        QVERIFY(bench.controller->store().entry(id)->seeded);
+        QCOMPARE(publishedPlace(bench.radio, QChar(u'A'), QStringLiteral("20m")), id);
+
+        // That ended it: tuning after a recall saves as it always has.
+        bench.a->setFrequency(14080000.0);
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band80m), nullptr));
+        QCOMPARE(bench.controller->store().entry(id)->frequencyHz, qint64(14080000));
+        QVERIFY(!bench.controller->store().entry(id)->seeded);
+    }
+
+    void tunedIntoABand_pressingIt_followsTheReturnMode()
+    {
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+        const QList<BandStackEntry> entries = bench.controller->store().entries(Band::Band20m);
+        QString other;
+        for (const BandStackEntry& entry : entries) {
+            if (entry.id != id) {
+                other = entry.id;
+                break;
+            }
+        }
+        QVERIFY(!other.isEmpty());
+        QVERIFY(bench.controller->setReturn(Band::Band20m, BandStackReturnMode::Specific, other,
+                                            nullptr));
+
+        bench.a->setFrequency(14200000.0);
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band20m), nullptr));
+        QCOMPARE(bench.controller->store().place(QChar(u'A'), Band::Band20m), other);
+        QCOMPARE(idAt(*bench.controller, Band::Band20m, 14200000), QString());
+    }
+
+    void tunedIntoABand_stepOrGoTo_endsIt_withNoSaveFirst_data()
+    {
+        QTest::addColumn<bool>("useStep");
+        QTest::newRow("step") << true;
+        QTest::newRow("goTo") << false;
+    }
+
+    void tunedIntoABand_stepOrGoTo_endsIt_withNoSaveFirst()
+    {
+        QFETCH(bool, useStep);
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+        const qint64 savedHz = bench.controller->store().entry(id)->frequencyHz;
+
+        bench.a->setFrequency(14200000.0);
+        QVERIFY(bench.controller->performRecall(useStep ? step(0) : goTo(0, id), nullptr));
+        QCOMPARE(bench.controller->store().entry(id)->frequencyHz, savedHz);
+        QVERIFY(bench.controller->store().entry(id)->seeded);
+
+        const QString place = bench.controller->store().place(QChar(u'A'), Band::Band20m);
+        QCOMPARE(publishedPlace(bench.radio, QChar(u'A'), QStringLiteral("20m")), place);
+        QCOMPARE(useStep, place != id);
+
+        bench.a->setFrequency(14080000.0);
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band80m), nullptr));
+        QCOMPARE(bench.controller->store().entry(place)->frequencyHz, qint64(14080000));
+    }
+
+    void tunedIntoABand_add_keepsTheFrequency_andEndsIt()
+    {
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+        const qint64 savedHz = bench.controller->store().entry(id)->frequencyHz;
+
+        bench.a->setFrequency(14200000.0);
+        QVERIFY(bench.controller->add(0, {}, nullptr));
+
+        const QString added = idAt(*bench.controller, Band::Band20m, 14200000);
+        QVERIFY(!added.isEmpty());
+        QCOMPARE(bench.controller->store().place(QChar(u'A'), Band::Band20m), added);
+        QCOMPARE(publishedPlace(bench.radio, QChar(u'A'), QStringLiteral("20m")), added);
+        QCOMPARE(bench.controller->store().entry(id)->frequencyHz, savedHz);
+        QVERIFY(bench.controller->store().entry(id)->seeded);
+
+        bench.a->setFrequency(14201000.0);
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band80m), nullptr));
+        QCOMPARE(bench.controller->store().entry(added)->frequencyHz, qint64(14201000));
+    }
+
+    void tunedIntoABand_saveHere_writesAtOnce_andEndsIt()
+    {
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+
+        bench.a->setFrequency(14200000.0);
+        QVERIFY(bench.controller->saveHere(0, id, {}, nullptr));
+        QCOMPARE(bench.controller->store().entry(id)->frequencyHz, qint64(14200000));
+        QCOMPARE(publishedPlace(bench.radio, QChar(u'A'), QStringLiteral("20m")), id);
+    }
+
+    void tunedIntoABand_doesNotHoldAPlaceAgainstTheSliceOnIt()
+    {
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+        const int b = bench.radio.addSlice();
+        SliceModel* sliceB = bench.radio.sliceById(b);
+        QVERIFY(bench.controller->performRecall(goTo(b, id), nullptr));
+        QVERIFY(bench.controller->performRecall(press(b, Band::Band15m), nullptr));
+
+        // A is back on the place by a recall; B tunes in, with the same place.
+        QVERIFY(bench.controller->performRecall(goTo(0, id), nullptr));
+        sliceB->setFrequency(14210000.0);
+        bench.a->setFrequency(14080000.0);
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band80m), nullptr));
+        QCOMPARE(bench.controller->store().entry(id)->frequencyHz, qint64(14080000));
+    }
+
+    void noCrossing_savesAsItAlwaysHas()
+    {
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+        QVERIFY(bench.controller->performRecall(goTo(0, id), nullptr));
+
+        // The same document read again, as after a restart: nothing has crossed.
+        bench.a->setFrequency(14080000.0);
+        bench.radio.announceRadioForTest(radioWith(kMacOne));
+        QCOMPARE(publishedPlace(bench.radio, QChar(u'A'), QStringLiteral("20m")), id);
+        bench.a->setFrequency(14081000.0);
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band80m), nullptr));
+        QCOMPARE(bench.controller->store().entry(id)->frequencyHz, qint64(14081000));
+    }
+
+    void restoringASliceAtConnect_isNotTuningIntoItsBand()
+    {
+        Bench bench;
+        const QString id = placeOnASeedThenPress40(bench);
+        QVERIFY(!id.isEmpty());
+        const QString place40 = bench.controller->store().place(QChar(u'A'), Band::Band40m);
+        QVERIFY(!place40.isEmpty());
+
+        // 40m is the band the slice was last saved on, so the restore lands there.
+        bench.a->setFrequency(14200000.0);
+        bench.radio.loadSliceStateForTest(bench.a);
+        QCOMPARE(bandFromFrequency(bench.a->frequency()), Band::Band40m);
+        QCOMPARE(publishedPlace(bench.radio, QChar(u'A'), QStringLiteral("40m")), place40);
+
+        bench.a->setFrequency(7111000.0);
+        QVERIFY(bench.controller->performRecall(press(0, Band::Band80m), nullptr));
+        QCOMPARE(bench.controller->store().entry(place40)->frequencyHz, qint64(7111000));
     }
 
     // ── Add and save here ────────────────────────────────────────────────

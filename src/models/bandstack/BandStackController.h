@@ -115,6 +115,11 @@ public:
     bool restoreExpired(const QString& batchId, QString* refusal);
 
     const BandStackStore& store() const { return m_store; }
+
+    /// The stack as clients see it: the store's document, without the place of
+    /// a detached slice on the band it tuned into (design section 5.3).
+    QJsonObject publishedDocument() const;
+
     BandStackLastRecall lastRecall() const { return m_lastRecall; }
     QString lastExpiryBatchId() const { return m_lastExpiryBatchId; }
     int lastExpiryCount() const { return m_lastExpiryCount; }
@@ -181,6 +186,12 @@ private:
     // A seed can sit outside the range of the band it is filed under (a GEN
     // row in 22m's range), so a slice recalled there is still on that band.
     QMap<QChar, RecalledBand> m_recalledBand;
+    // The stack band each slice was last seen on, and the slices that got there
+    // by anything but a recall, which stand detached from their place there: a
+    // leave saves nothing (J.J.'s ruling, design section 5.3). Not in the document,
+    // so every start begins with no slice detached.
+    QMap<QChar, Band> m_onBand;
+    QSet<QChar> m_detached;
     // Set when a fresh document started: slices that open later this session
     // bring their saved spots in too (design V8).
     bool m_adoptOpeningSlices{false};

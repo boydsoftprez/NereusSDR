@@ -182,6 +182,10 @@ public:
     BandStackTarget planPress(QChar slice, Band currentBand, Band band, BandStackDirection d) const;
     BandStackTarget planStep(QChar slice, Band band, BandStackDirection d) const;
 
+    /// Where the band's return mode sends a slice arriving on `band`, with no
+    /// step. A press from another band is this.
+    BandStackTarget planArrive(QChar slice, Band band) const;
+
     /// What Current entry would choose on `band`: the slice's place, or the
     /// first voice entry, or the first entry, or EmptyBand with no entries.
     BandStackTarget planCurrent(QChar slice, Band band) const;

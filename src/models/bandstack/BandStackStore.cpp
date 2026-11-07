@@ -346,6 +346,14 @@ BandStackTarget BandStackStore::planPress(QChar slice, Band currentBand, Band ba
         return planStep(slice, band, d);
     }
 
+    return planArrive(slice, band);
+}
+
+BandStackTarget BandStackStore::planArrive(QChar slice, Band band) const
+{
+    const auto state = m_bands.constFind(band);
+    const bool empty = state == m_bands.constEnd() || state->order.isEmpty();
+
     // From Thetis clsBandStackManager.cs:502-505 [v2.10.3.15]: last visited does
     // not need the list, so it is asked before the list is checked.
     if (state != m_bands.constEnd() && state->returnMode == BandStackReturnMode::LastUsed) {

@@ -173,11 +173,12 @@ shows and times out as designed, and the answer you give is the one that applies
 
 Status: pending
 
-Do: Tune by hand into a band you have a saved spot in. Then press a band button or a row somewhere
-else.
+Do: Recall a spot on one band, say 20m, then press another band's button. Tune by hand back into
+20m, away from that spot, without pressing 20m. Press a band button somewhere else. Then press 20m.
 
-See: Your hand-tuned frequency is saved over your place in that band, as spec section 5.3 says. Try
-it and say whether that feels right, since it replaces what was saved there.
+See: While you are tuned in, the status bar number reads with a dash, like `20m -/6`. The saved
+entry stays as it was, and the hand-tuned frequency is not kept unless you press Add first. The
+20m press goes back to the saved spot.
 
 ### 18. Going back to your own place
 

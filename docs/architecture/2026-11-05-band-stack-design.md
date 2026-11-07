@@ -105,8 +105,9 @@ them is cheap until the matching task runs.
 - **V3. Next and previous wrap within the band,** like re-pressing the band button. This covers M
   and N, the STACK+ and STACK- container buttons, and the phone's arrows. Thetis's keys go on to
   the next band at the end of the list.
-- **V4. Tuning across a band edge by hand** does not save into a spot and does not move your place.
-  It updates that band's last frequency used.
+- **V4. Tuning into a band** by anything but a recall (by hand, a spot, CAT, another client) does
+  not move your place, updates that band's last frequency used, and leaves that band's saved spots
+  alone: leaving the band saves nothing there. Section 5.3 has the rule. J.J.'s ruling, 2026-11-06.
 - **V5. Dwell and expiry run on the Core,** so a Core with no window still does them. Locked and
   seeded entries never expire, and neither does a spot a slice is on. Both are off by default.
   The undo for an expiry is on the device that shows the note, for 5 seconds.
@@ -186,6 +187,22 @@ frequency, mode, filter, center and zoom go into the spot you are on unless one 
 
 The last slice on a spot saves when it leaves, as usual. A saved change clears the seed mark, and
 that entry stops being replaced by a region change.
+
+**A slice that tuned into the band is not on its spot, so leaving saves nothing there.** Any way in
+other than a recall counts: hand tuning, a spot, CAT, another client's retune. If Slice A's place on
+20m is 14.074, and A tunes from 40m to 14.200 and then presses 80m, the entry stays on 14.074 with
+its seed mark and 14.200 is not kept. Until a recall the slice is detached: the status number reads
+as no place (`20m -/6`), and another slice leaving the spot does not count it as being on the spot.
+The band's last frequency used still follows it, as V4 says.
+
+A recall on that band ends this: a press goes where the band's return mode says, with no save first
+and no step; next, previous and a row click go where they always do, with no save first. From then
+on, tuning and leaving saves as above. Add and "Save current spot here" keep working, and each ends
+it too, because the slice then stands on that entry. This lives only on the running Core, so after
+a restart no slice is detached: a slice that has not crossed a band saves as it always has.
+
+This differs from Thetis, which saves on leaving wherever the frequency came from (`console.cs`
+`preBandSelect`, about 45660-45700 [v2.10.3.15]). J.J.'s ruling, 2026-11-06.
 
 Clicking the row or tick of the spot you are already on, or tapping its chip on the phone, takes you
 back to what the spot has saved. Nothing is saved, so tuning away and clicking your own row undoes

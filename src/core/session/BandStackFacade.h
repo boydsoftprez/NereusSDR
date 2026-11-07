@@ -12,7 +12,8 @@
 //   json      the stack's saved document (schema, region, options, bands,
 //             entries, places) plus lastExpiry {batchId, count} and lastRecall
 //             {seq, sliceId, applyView, centerHz, spanHz}, which are published
-//             but not saved. Empty until the Core knows a radio.
+//             but not saved. `places` leaves out a slice's place on a band it
+//             tuned into (design 5.3). Empty until the Core knows a radio.
 //   revision  moves by one each time `json` changes, and at no other time.
 //
 // On the Core it follows BandStackController. In a remote window it holds what

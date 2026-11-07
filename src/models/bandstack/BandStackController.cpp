@@ -154,6 +154,17 @@ BandStackController::BandStackController(RadioModel* model)
     connect(m_model, &RadioModel::bandPlanRegionChanged, this, &BandStackController::followRegion);
     connect(m_model, &RadioModel::currentRadioChanged, this,
             [this](const RadioInfo&) { loadDocument(); });
+    // Putting a slice back where it was at connect is not tuning into a band.
+    connect(m_model, &RadioModel::sliceStateRestored, this, [this](int sliceId) {
+        const SliceModel* slice = m_model->sliceById(sliceId);
+        if (slice == nullptr) {
+            return;
+        }
+        m_onBand[slice->sliceLetter()] = stackBandFor(slice);
+        if (m_detached.remove(slice->sliceLetter())) {
+            emit changed();
+        }
+    });
     if (QCoreApplication::instance() != nullptr) {
         connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this,
                 &BandStackController::flush);
@@ -256,7 +267,9 @@ QSet<QChar> BandStackController::slicesOnBand(Band band) const
 {
     QSet<QChar> letters;
     for (const SliceModel* slice : m_model->slices()) {
-        if (slice != nullptr && stackBandFor(slice) == band) {
+        // A detached slice is on the band but not on its place there (design 5.3).
+        if (slice != nullptr && stackBandFor(slice) == band
+            && !m_detached.contains(slice->sliceLetter())) {
             letters.insert(slice->sliceLetter());
         }
     }
@@ -357,14 +370,20 @@ BandStackController::resolve(const BandStackRecallRequest& request) const
     // to, and clear a seed's mark (design section 5.3).
     const bool goingBack =
         request.kind == BandStackRecallRequest::GoTo && request.entryId == placeId;
-    if (!goingBack) {
+    // J.J.'s ruling, 2026-11-06: a slice that tuned into this band never came to
+    // its place here, so leaving writes nothing into it (design section 5.3).
+    const bool detached = m_detached.contains(letter);
+    if (!goingBack && !detached) {
         after.saveOnLeave(letter, current, r.leftSpot, nowMs(), slicesOnBand(current));
     }
 
     BandStackTarget target;
     switch (request.kind) {
     case BandStackRecallRequest::Press:
-        target = after.planPress(letter, current, band, request.direction);
+        // Detached, a press of this band arrives at the place, not a step past it.
+        target = detached && band == current
+            ? after.planArrive(letter, band)
+            : after.planPress(letter, current, band, request.direction);
         break;
     case BandStackRecallRequest::Step:
         target = after.planStep(letter, band, request.direction);
@@ -517,6 +536,8 @@ bool BandStackController::performRecall(const BandStackRecallRequest& request, Q
     m_lastUsed[letter][r.leftBand] = r.leftSpot;
     m_lastUsed[letter][band] = currentSpot(slice, {}, nullptr);
     m_recalledBand[letter] = {band, BandDefaults::bandGridBandFromFrequency(targetHz)};
+    m_onBand[letter] = band;
+    m_detached.remove(letter);
 
     // Design section 5.5 step 5 is the device's to apply; here is what it needs.
     const BandStackEntry* entry = r.hasEntry ? m_store.entry(r.entryId) : nullptr;
@@ -553,6 +574,8 @@ bool BandStackController::add(int sliceId, const BandStackView& view, QString* r
     if (id.isEmpty()) {
         return false;
     }
+    // The new entry is the slice's place, and it is standing on it.
+    m_detached.remove(slice->sliceLetter());
     markChanged();
     return true;
 }
@@ -580,6 +603,8 @@ bool BandStackController::saveHere(int sliceId, const QString& entryId, const Ba
         return false;
     }
     m_store.saveHere(slice->sliceLetter(), entryId, currentSpot(slice, view, entry), nowMs());
+    // Same as Add: that entry is the slice's place now, and it is standing on it.
+    m_detached.remove(slice->sliceLetter());
     markChanged();
     return true;
 }
@@ -704,6 +729,25 @@ bool BandStackController::dwellArmedForTest(int sliceId) const
     return timer != nullptr && timer->isActive();
 }
 
+// What clients are told: the store, less the place of each detached slice on the
+// band it tuned into. Every device then reads "no place there" with no new field,
+// and the saved document keeps the place for the slice's next press.
+QJsonObject BandStackController::publishedDocument() const
+{
+    QJsonObject document = m_store.toJson();
+    if (m_detached.isEmpty()) {
+        return document;
+    }
+    QJsonObject places = document.value(QStringLiteral("places")).toObject();
+    for (const QChar letter : m_detached) {
+        QJsonObject held = places.value(QString(letter)).toObject();
+        held.remove(bandKeyName(m_onBand.value(letter)));
+        places.insert(QString(letter), held);
+    }
+    document.insert(QStringLiteral("places"), places);
+    return document;
+}
+
 QList<BandStackEntry> BandStackController::seedEntries() const
 {
     const FilterPresetStore* presets = m_model->filterPresetStore();
@@ -778,11 +822,15 @@ void BandStackController::wireSlices()
             adoptSavedSpots(slice);
             markChanged();
         }
+        // A letter can come back as a new slice, which has crossed nothing yet.
+        m_onBand[slice->sliceLetter()] = stackBandFor(slice);
+        m_detached.remove(slice->sliceLetter());
     }
 }
 
 // Design V4: tuning, across a band edge or not, only updates this band's last
-// frequency used and arms dwell. It saves no spot and moves no place.
+// frequency used and arms dwell. It saves no spot and moves no place. Arriving on
+// another band this way detaches the slice from its place there (design 5.3).
 void BandStackController::onSliceTuned(SliceModel* slice)
 {
     if (m_inRecall) {
@@ -794,8 +842,16 @@ void BandStackController::onSliceTuned(SliceModel* slice)
         && recalled->gridBand != BandDefaults::bandGridBandFromFrequency(slice->frequency())) {
         m_recalledBand.remove(letter);
     }
-    m_lastUsed[letter][stackBandFor(slice)] = currentSpot(slice, {}, nullptr);
+    const Band band = stackBandFor(slice);
+    m_lastUsed[letter][band] = currentSpot(slice, {}, nullptr);
     armDwell(slice);
+
+    if (m_onBand.value(letter, band) != band) {
+        m_onBand[letter] = band;
+        m_detached.insert(letter);
+        // The published document changed; the saved one did not.
+        emit changed();
+    }
 }
 
 void BandStackController::armDwell(const SliceModel* slice)
@@ -884,6 +940,7 @@ void BandStackController::loadDocument()
     m_mac = mac;
     m_lastUsed.clear();
     m_recalledBand.clear();
+    m_detached.clear();
     m_adoptOpeningSlices = false;
     m_adopted.clear();
     m_lastExpired.clear();
@@ -923,6 +980,13 @@ void BandStackController::loadDocument()
     }
     if (m_dirty) {
         m_saveTimer->start();
+    }
+    // Nothing has crossed a band on this document yet.
+    m_onBand.clear();
+    for (const SliceModel* slice : m_model->slices()) {
+        if (slice != nullptr) {
+            m_onBand[slice->sliceLetter()] = stackBandFor(slice);
+        }
     }
     emit changed();
 }
