@@ -1,5 +1,6 @@
 #include "gui/GuiConnectionController.h"
 #include "gui/GuiApplication.h"
+#include "gui/PortalThemeChoice.h"
 #include "gui/styles/AppTheme.h"
 #include "gui/styles/WorkspacePreview.h"
 #include "core/AppSettings.h"
@@ -112,6 +113,20 @@ int main(int argc, char* argv[])
             }
         }
     }
+
+#if defined(Q_OS_LINUX)
+    // On Cinnamon (X11) Qt's native file dialog is created but never mapped,
+    // leaving the window modal-blocked behind an invisible dialog. Routing
+    // dialogs through xdg-desktop-portal shows Cinnamon's own chooser. Only
+    // when no platform theme is set already, and not in an AppImage, whose
+    // runtime sets APPDIR and APPIMAGE (StationBinaryLocator.h reads them too).
+    if (NereusSDR::shouldUsePortalThemeOnThisDesktop(
+            qEnvironmentVariable("XDG_CURRENT_DESKTOP"),
+            qEnvironmentVariable("QT_QPA_PLATFORMTHEME"),
+            !qEnvironmentVariableIsEmpty("APPDIR") || !qEnvironmentVariableIsEmpty("APPIMAGE"))) {
+        qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
+    }
+#endif
 
     NereusSDR::GuiApplication app(argc, argv);
 #if defined(Q_OS_MAC)
