@@ -10284,6 +10284,9 @@ nereus_add_test(tst_roundtable_containers fakes/RemoteWindowHarness.cpp)
 # lone neighbor moves aside, folds widen only when the tags don't fit),
 # the tags a model gives, and how each link state shows them.
 nereus_add_test(tst_roundtable_tag_layout)
+# Overlay redesign D21 to D24: the floating view of another frequency: what it
+# says, the Tune gates, Your pan and how it closes, offscreen.
+nereus_add_test(tst_roundtable_frequency_peek)
 # Roundtable plan Task 14: the Roundtable line on a VFO flag: members and
 # who talks, @N, "N hear you" while keyed, the link state when not live,
 # its fit at the flag's width, the fold, and a click asking for the panel.
