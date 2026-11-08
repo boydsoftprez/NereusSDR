@@ -6667,6 +6667,12 @@ target_compile_definitions(tst_display_fft_sizing PRIVATE
 # applyFftBaseline() makes the Size control's choice every engine's floor.
 nereus_add_test(tst_display_fft_replan)
 
+# Issue 701: on Protocol 2 the wire-rate signal leaves each FFT engine and the
+# active pan on the rate of their own stream, so a band's saved slice rate
+# does not stretch the panadapter. Protocol 1 and an inactive stream keep the
+# wire rate.
+nereus_add_test(tst_pan_rate_follows_stream)
+
 # Display pill plan Task 9: PanModels, a per-band PanadapterModel for every
 # window pan. The pan's band follows its centre, the band's stored dB Max
 # and Min set its range, the store is shared, the per-band 3D Floor is

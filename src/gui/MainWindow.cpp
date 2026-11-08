@@ -11,12 +11,32 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: A pan raises the wideband flag only for a slice this window
+//               controls, not one it only listens to, JJ's decision.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: Wings go to the floor when capture on their ADC ends.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: A pan going away lowers its wideband flag while the widgets are
+//               whole, the CH labels are held rather than searched for, and a
+//               wing click retunes only a slice this window controls. Hosting
+//               starting or stopping rechecks the flag.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: A pan raises the wideband flag only for a slice this window
+//               controls or listens to, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: The wire-rate signal also updates every pan and the cached
+//               stream windows, so a live Setup change reaches inactive pans,
+//               a later slice switch and Clarity's source, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-06 - The Phone/CW panel is also container content
 //                 (registerPhoneCwSectionContent), with a hide toggle for
 //                 each row and for the page buttons. Brian Sutton,
 //                 AI-assisted via xAI Grok.
 //   2026-11-06: A desktop's fill at connect brings back the radio's saved
 //               layout. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: On Protocol 2 the FFT engines and the active pan take each
+//               stream's own rate from the wire-rate signal, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-05: The RX applet's setup hop is connected once, when the applet
 //               is created, so a right-click works before any connection.
 //               Corrections for review findings. J.J. Boyd (KG4VCF),
@@ -4116,6 +4136,10 @@ void MainWindow::setDesktopStationController(DesktopStationController* controlle
             if (!desktopHosting() && m_desktopTakeDialog) { m_desktopTakeDialog->close(); }
             if (!self) { return; }
             refreshDesktopStationState();
+            // Not while quitting: raising a flag here would bypass the filter
+            // and start wideband just before the radio is told to stop.
+            if (m_shuttingDown) { return; }
+            emit desktopHostingChanged();
         });
         // TX badge take: the badge's take ended after its call.
         connect(replacement, &DesktopStationController::takeFinished, this,
@@ -6275,12 +6299,15 @@ void MainWindow::configureSpectrumForPanForTest(SpectrumWidget* spectrum,
     spectrum->loadSettings();
 }
 
-void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
-                                              RadioModel* model,
-                                              PanadapterStack* stack,
-                                              const QString& panId)
+std::function<void()> MainWindow::wireWidebandExtensionForTest(
+    SpectrumWidget* spectrum,
+    RadioModel* model,
+    PanadapterStack* stack,
+    const QString& panId,
+    const std::function<bool(int)>& mayRaiseWideband,
+    const std::function<bool(int)>& mayRetune)
 {
-    if (!spectrum || !model || !stack) { return; }
+    if (!spectrum || !model || !stack) { return {}; }
     const QPointer<RadioModel> modelRef(model);
     const QPointer<PanadapterStack> stackRef(stack);
     const QPointer<SpectrumWidget> spectrumRef(spectrum);
@@ -6310,7 +6337,7 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         bool hasBoundSlice{false};
     };
     const auto requestOwner = std::make_shared<LocalRequestOwner>();
-    const auto reconcile = [modelRef, spectrumRef, resolve, requestOwner]() {
+    const auto reconcile = [modelRef, spectrumRef, resolve, requestOwner, mayRaiseWideband]() {
         if (!modelRef || !spectrumRef || modelRef->role() != RadioModel::Role::Local) {
             return;
         }
@@ -6359,7 +6386,12 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         if (available) { spectrumRef->setWidebandAdcIndex(adc); }
         spectrumRef->setLocalWidebandAvailable(available);
         if (modelRef && spectrumRef && next && requestOwner->slice == next) {
-            next->setWidebandExtensionRequested(spectrumRef->extendedMode());
+            // The bypass is per chain and takes the filter from every receiver
+            // on it, so a pan's wide view must not raise it for a slice its
+            // window may not use. The view itself stays.
+            next->setWidebandExtensionRequested(
+                spectrumRef->extendedMode()
+                && (!mayRaiseWideband || mayRaiseWideband(next->sliceIndex())));
         }
     };
     connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
@@ -6375,6 +6407,18 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
             [reconcile](int, const QVector<int>&) { reconcile(); });
     connect(model, &RadioModel::sliceRemoved, spectrum,
             [reconcile](int) { reconcile(); });
+    if (SliceOwnership* ownership = model->sliceOwnership()) {
+        connect(ownership, &SliceOwnership::markChanged, spectrum,
+                [reconcile](int, const QByteArray&, const QByteArray&) { reconcile(); });
+        // On a take the marker-only placement clears after this pan's markChanged
+        // recheck; the take also reorders the slice's devices, and that is the
+        // recheck that sees it clear.
+        connect(ownership, &SliceOwnership::listenersChanged, spectrum,
+                [reconcile](int) { reconcile(); });
+        // A take from no controller, with this desktop already the only one on
+        // the slice, leaves that list as it was; this comes last on every change.
+        connect(ownership, &SliceOwnership::activeChanged, spectrum, reconcile);
+    }
     const auto watchSlice = [modelRef, spectrumRef, reconcile](int sliceId) {
         if (!modelRef || !spectrumRef) { return; }
         if (SliceModel* slice = modelRef->sliceById(sliceId)) {
@@ -6391,15 +6435,32 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         if (requestOwner->slice) { (requestOwner->slice)->setWidebandExtensionRequested(false); }
         requestOwner->slice.clear();
     });
+    // A pan leaving the stack: it has gone from the map, so resolve() finds
+    // nothing and the flag falls here, with every widget still whole. Left to
+    // `destroyed` above, it fell during the deferred delete, and a filter change
+    // reaching a search of the window's children crashed the app with no stop
+    // frame sent to the radio. removePanadapter announces this for docked and
+    // floating pans alike.
+    connect(stack, &PanadapterStack::panRetired, spectrum,
+            [reconcile, panId](const QString& retiredId) {
+        if (retiredId == panId) { reconcile(); }
+    });
+    // A wing click moves the slice, so on a hosting desktop it answers to the
+    // same rule as any other tune: not another device's slice, nor one the
+    // window only listens to. On that device's transmit slice it would move its
+    // transmit frequency. A remote window goes on to setFrequency, whose hold
+    // tells the operator why nothing moved.
     connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
-            spectrum, [resolve](double freqHz) {
-        if (SliceModel* slice = resolve()) {
+            spectrum, [resolve, mayRetune](double freqHz) {
+        SliceModel* slice = resolve();
+        if (slice && (!mayRetune || mayRetune(slice->sliceIndex()))) {
             slice->setFrequency(freqHz);
         }
     });
     // Settings restore and rate seeding may have derived the actual state
     // before this bridge existed, so seed the resolved slice immediately.
     reconcile();
+    return reconcile;
 }
 
 void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
@@ -7482,8 +7543,8 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
     // DisplayHzPerBinTarget): it is per-stream and radio-connection-driven,
     // not a Setup -> Display setting, so it stays here. 768 kHz is the P2
     // default; RadioModel::wireSampleRateChanged and the streamCentreChanged
-    // handler below update it to the actual wire rate on each connect
-    // (P1=192k, P2=768k).
+    // handler below replace it on each connect: with the wire rate on
+    // Protocol 1, and with this stream's allocator rate on Protocol 2.
     engine->setSampleRate(768000.0);
 
     // Raw I/Q for this stream -> this engine.  The context object is the
@@ -9629,7 +9690,17 @@ void MainWindow::ensureOverlayPanels()
         // where click-to-tune always retuned flag A. Those copies are gone, so
         // this is the only wiring for them and nothing doubles.
         wireSpectrumSliceControls(sw, panId);
-        wireWidebandExtensionForTest(sw, m_radioModel, m_panStack, panId);
+        // The slices streamShownOnPan lets a pan show, whose stream it chose.
+        const std::function<void()> reconcileWideband = wireWidebandExtensionForTest(
+            sw, m_radioModel, m_panStack, panId,
+            [this](int sliceId) {
+                // Only the window controlling a receiver may bypass its filter
+                // (JJ: "No, controlling only").
+                return !markerOnlyPlacement(sliceId)
+                    && windowControlsSlice(sliceId);
+            },
+            [this](int sliceId) { return !desktopHosting() || windowControlsSlice(sliceId); });
+        connect(this, &MainWindow::desktopHostingChanged, sw, reconcileWideband);
 
         // Display pill plan Task 7: a zoom on this pan (and its
         // requestAutoZoomReplan(), which emits the same signal) replans the
@@ -11271,8 +11342,7 @@ void MainWindow::buildUI()
     auto refreshFilterIndicators = [this]() {
         for (int adc = 0; adc < 2; ++adc) {
             const auto& state = m_radioModel->filterChainState(adc);
-            auto* lbl = findChild<QLabel*>(
-                QStringLiteral("chainIndicator%1").arg(adc));
+            QLabel* lbl = m_chainIndicatorLabels[static_cast<std::size_t>(adc)];
             if (!lbl) { continue; }
             const bool available = m_radioModel->filterChainStateAvailable(adc);
             lbl->setText(available ? state.reasonText
@@ -12121,10 +12191,21 @@ void MainWindow::buildUI()
             [this](int adcIdx, const QVector<float>& dbmBins) {
         fanWidebandBinsForTest(m_panStack, adcIdx, dbmBins);
     });
+    // Capture on an ADC ending leaves no source for it. Drop the pans' stored bins
+    // so the wings go to the floor rather than freeze on the last frame and look
+    // live. A source being replaced keeps them, and so does another demand holding
+    // this capture, which never ends it. A restart shows the floor until its first
+    // frame, never the old level.
+    connect(m_radioModel, &RadioModel::widebandSourceChanged, this, [this](int adcIdx) {
+        if (!m_radioModel->widebandSourceDescriptor(adcIdx)) {
+            fanWidebandBinsForTest(m_panStack, adcIdx, {});
+        }
+    });
 
     // Create the FFT engine pool (spectrum thread from architecture).
     // Sample rate starts at P2 default (768k); RadioModel::wireSampleRateChanged
-    // updates it to the actual wire rate on each connect (P1=192k, P2=768k).
+    // updates it on each connect: to the wire rate on Protocol 1, and to each
+    // stream's allocator rate on Protocol 2.
     //
     // R1 Task 6: per-stream engine lifecycle, the four global display
     // AppSettings keys, and the shared FFT thread now live in FftEnginePool
@@ -12163,37 +12244,84 @@ void MainWindow::buildUI()
 
     connect(m_radioModel, &RadioModel::wireSampleRateChanged,
             this, [this](double rateHz) {
-        // Every stream on a P1 radio shares the wire rate, and on P2 the
-        // per-stream rate published by streamCentreChanged is derived from
-        // the same value, so the whole pool follows this signal.
+        // Every stream on a P1 radio shares the wire rate. On P2 each DDC
+        // runs at its allocator rate, which applySavedSliceSampleRates can
+        // move off the wire rate (R-R3-49: a band's saved slice rate), and
+        // that is the rate the DDC assignment sends the radio. Pushing the
+        // wire rate there mapped 192 kHz of bins across a 1536 kHz scale.
+        const auto rateForStream = [this, rateHz](int streamIndex) -> double {
+            if (m_radioModel && !m_radioModel->sampleRateIsRadioWide()) {
+                const auto& allocator = m_radioModel->streamAllocator();
+                if (allocator.isStreamActive(streamIndex)) {
+                    const int streamRate = allocator.streamSampleRateHz(streamIndex);
+                    if (streamRate > 0) {
+                        return static_cast<double>(streamRate);
+                    }
+                }
+            }
+            return rateHz;
+        };
         if (m_fftEnginePool) {
             for (int streamIndex : m_fftEnginePool->streams()) {
                 FFTEngine* engine = m_fftEnginePool->engineForStream(streamIndex);
                 if (!engine) { continue; }
-                QMetaObject::invokeMethod(engine, [engine, rateHz]() {
-                    engine->setSampleRate(rateHz);
+                const double engineRate = rateForStream(streamIndex);
+                QMetaObject::invokeMethod(engine, [engine, engineRate]() {
+                    engine->setSampleRate(engineRate);
                 });
             }
         }
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->setSampleRate(rateHz);
-            // Phase 3G-12: preserve the user's current zoom level across
-            // sample rate changes. Only reset the visible span if the
-            // current bandwidth would now exceed the new DDC sample rate
-            // (in which case we clamp to full-span).
-            // Against the EXTENDED ceiling, not the DDC rate.
-            //
-            // A span past the DDC rate is a legitimate state now: it is the
-            // one and only trigger for extended mode. Clamping to rateHz here
-            // meant any reconnect or rate change silently collapsed an
-            // extended view back onto the DDC, and the operator's zoom was
-            // gone with no wings and no explanation. setDisplayWindowClamped
-            // reads the DDC rate when extended view is switched off, so the
-            // ordinary case is unchanged. Codex, PR #318.
-            activeSpectrumWidget()->setDisplayWindowClamped(
-                activeSpectrumWidget()->centerFrequency(),
-                activeSpectrumWidget()->bandwidth());
+        // A live Setup change moves the allocator and publishes no
+        // streamCentreChanged (RadioModel::startSampleRateChange), so this
+        // handler is the only news of it. The cached windows take the rate
+        // too: showOwnStreamOnPan replays them when a pan changes stream and
+        // Clarity's source reads them.
+        for (auto window = m_streamWindows.begin(); window != m_streamWindows.end(); ++window) {
+            window->sampleRateHz = static_cast<int>(rateForStream(window.key()));
         }
+        // Every pan, not just the active one: each display follows its own
+        // receiver's rate.
+        //   From Thetis console.cs:19918,19959 [v2.10.3.15]
+        //     Display.SampleRateRX1 = value; ... Display.SampleRateRX2 = value;
+        // A pan nothing picks a stream for (showOwnStreamOnPan) still draws
+        // the streams it carries, and took its window from the last of them.
+        // A pan carrying none has no bins to scale. The active one takes the
+        // wire rate as it always has; the others keep their view until a
+        // stream reaches them.
+        if (m_panStack) {
+            const QString activePan = m_panStack->activePanId();
+            const QList<SpectrumSubscription> subscriptions = m_topology.subscriptions();
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
+                if (!sw) { continue; }
+                const QString panId = applet->panId();
+                int stream = m_panShownStream.value(panId, -1);
+                if (stream < 0) {
+                    for (const SpectrumSubscription& sub : subscriptions) {
+                        if (sub.consumerId == panId) { stream = sub.streamIndex; }
+                    }
+                }
+                if (stream < 0 && panId != activePan) { continue; }
+                sw->setSampleRate(rateForStream(stream));
+                // Phase 3G-12: preserve the user's current zoom level across
+                // sample rate changes. Only reset the visible span if the
+                // current bandwidth would now exceed the new DDC sample rate
+                // (in which case we clamp to full-span).
+                // Against the EXTENDED ceiling, not the DDC rate.
+                //
+                // A span past the DDC rate is a legitimate state now: it is the
+                // one and only trigger for extended mode. Clamping to rateHz here
+                // meant any reconnect or rate change silently collapsed an
+                // extended view back onto the DDC, and the operator's zoom was
+                // gone with no wings and no explanation. setDisplayWindowClamped
+                // reads the DDC rate when extended view is switched off, so the
+                // ordinary case is unchanged. Codex, PR #318. That is the rate
+                // the widget was just given, so the ceiling follows the stream
+                // this pan shows, not the wire.
+                sw->setDisplayWindowClamped(sw->centerFrequency(), sw->bandwidth());
+            }
+        }
+        reconcileClarityBindings();
     });
     // Spectrum/waterfall FPS — load persisted value (default 30), apply to
     // BOTH the FFT engine (row production cadence) and the SpectrumWidget
@@ -15966,6 +16094,7 @@ void MainWindow::buildStatusBar()
 
         auto* botLbl = new QLabel(QStringLiteral("idle"), w);
         botLbl->setObjectName(QStringLiteral("chainIndicator%1").arg(adc));
+        m_chainIndicatorLabels[static_cast<std::size_t>(adc)] = botLbl;
         botLbl->setStyleSheet(
             QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
                 .arg(Style::kTextInactive));
