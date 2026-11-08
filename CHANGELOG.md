@@ -13,9 +13,9 @@ The iPhone and iPad app is delivered separately. Changes in that app are listed
 under **iPhone and iPad app** and reach phones and iPads with its next build.
 <!-- CONFIRM at the cut: 741, 747, 748, 752 and 755 change the phone app and are
 listed under "iPhone and iPad app". Check whether 759 does too. -->
-<!-- CONFIRM at the cut: 741 also changes the Roundtable website page and one
-server line. Those reach visitors only when the Roundtable server is redeployed;
-add a website line only once that is confirmed. -->
+<!-- 741 also changes the Roundtable website page and one server line. The
+server has not been redeployed and a redeploy is not part of this cut, so the
+notes have no website line for 741 (release manager, 2026-11-08). -->
 
 [Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
 
@@ -47,13 +47,12 @@ add a website line only once that is confirmed. -->
   or the dots on the status bar, opens the list to rename, lock, reorder and
   delete spots, and the status bar shows your place, such as **40m 5/6**.
   Remote windows need the 2026.11.1 Core; on an older Core band buttons work
-  as before. Based on the band stack in Thetis. Keyboard shortcuts come with hot
-  keys. Not yet tried on a radio.
+  as before. Based on the band stack in Thetis by Richard Samphire (MW0LGE).
+  Keyboard shortcuts come with hot keys.
   ([#748](https://github.com/boydsoftprez/NereusSDR/pull/748))
 
-<!-- CONFIRM at the cut: the ported band stack rules carry Richard Samphire
-(MW0LGE) copyright; JJ may want to name Richard Samphire in the band stacks line. If 759
-lands, replace "Keyboard shortcuts come with hot keys" with the real keys. -->
+<!-- If 759 lands, replace "Keyboard shortcuts come with hot keys" with the
+real keys. -->
 
 ### Roundtable
 
@@ -199,9 +198,6 @@ confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
   replaced at connect. Not yet tried on a radio.
   ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
 
-<!-- CONFIRM at the cut: 747, 750 and 751 touch the receive path, transmit power
-or the band-pass filter and have not run on a radio; 747 asks for an HL2 run.
-Settle with the manager whether the notes need more than the transmit line. -->
 
 <!-- CONFIRM at the cut: 756 and 761 have hardware-run steps in their PR bodies.
 If a bench run happens, say so and drop "Not yet tried on a radio". -->
