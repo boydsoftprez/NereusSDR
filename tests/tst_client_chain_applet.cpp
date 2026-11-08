@@ -21,6 +21,9 @@
 //                                    Claude Code.
 //   2026-11-07  J.J. Boyd / KG4VCF  Local client row kept in place.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-07  J.J. Boyd / KG4VCF  A Core app's new last command keeps
+//                                    its row. AI-assisted via Anthropic
+//                                    Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -55,8 +58,9 @@ StationTciClient client(const QString& id, const QString& name, const QString& a
 
 QString rowText(const StationTciClient& c)
 {
-    return QStringLiteral("%1 (%2): %3; %4")
-        .arg(c.name, c.address, c.subscriptions.join(QStringLiteral(", ")), c.lastCommand);
+    return QStringLiteral("%1 (%2)%3: %4; %5")
+        .arg(c.name, c.address, c.transmitting ? QStringLiteral(" TX") : QString(),
+             c.subscriptions.join(QStringLiteral(", ")), c.lastCommand);
 }
 
 QWidget* corePanel(ClientChainApplet& applet)
@@ -175,6 +179,15 @@ private slots:
         refresh(applet);
         QCOMPARE(clientRowTexts(applet), QStringList({rowText(moved)}));
 
+        // It starts transmitting: the row is rebuilt and says TX.
+        StationTciClient sending = moved;
+        sending.transmitting = true;
+        window.stationTciModel()->setClients({sending});
+        refresh(applet);
+        QCOMPARE(coreRowWidgets(applet).size(), 2);
+        QCOMPARE(clientRowTexts(applet), QStringList({rowText(sending)}));
+        QVERIFY(clientRowTexts(applet).first().contains(QStringLiteral(" TX:")));
+
         // All gone.
         window.stationTciModel()->setClients({});
         refresh(applet);
@@ -183,6 +196,42 @@ private slots:
         auto* none = qobject_cast<QLabel*>(rows.last());
         QVERIFY(none);
         QCOMPARE(none->text(), QStringLiteral("No apps connected to the Core's TCI server."));
+    }
+
+    // A digital-mode app sends commands all the time: a new last command
+    // keeps the row widgets and the box's height, and the line shows it.
+    void coreClientNewCommandKeepsItsRow()
+    {
+        RadioModel window(RadioModel::Role::Remote);
+        FakeStationLink link;
+        window.attachStation(&link);
+        StationTciClient app =
+            client(QStringLiteral("1"), QStringLiteral("WSJT-X"), QStringLiteral("10.0.0.5:50001"));
+        window.stationTciModel()->setClients({app});
+
+        ClientChainApplet applet(nullptr);
+        applet.setStationModel(&window);
+        refresh(applet);
+        const QList<QWidget*> before = coreRowWidgets(applet);
+        QList<QPointer<QWidget>> guards;
+        for (QWidget* w : before) {
+            guards.append(w);
+        }
+        QPointer<QLabel> line = before.last()->findChild<QLabel*>();
+        QVERIFY(line);
+        const int height = corePanel(applet)->sizeHint().height();
+
+        app.lastCommand = QStringLiteral("vfo:0,0,7074000;");
+        window.stationTciModel()->setClients({app});
+        refresh(applet);
+
+        QCOMPARE(coreRowWidgets(applet), before);
+        for (const QPointer<QWidget>& w : guards) {
+            QVERIFY(!w.isNull());
+        }
+        QVERIFY(!line.isNull());
+        QCOMPARE(line->text(), rowText(app));
+        QCOMPARE(corePanel(applet)->sizeHint().height(), height);
     }
 
     // An app on this computer's own TCI server: two refreshes a second apart

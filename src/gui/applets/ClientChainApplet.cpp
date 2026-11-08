@@ -36,6 +36,9 @@
 //                connected in the same order, a refresh updates their
 //                text (connected time, last command) in place.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-07 - The Core's rows likewise: a changed last command updates
+//                the app's line in place.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -106,6 +109,19 @@ QLabel* makeTertiaryLabel(const QString& text, QWidget* parent)
         "QLabel { color: %1; font-size: 9px; }"
     ).arg(Style::kTextTertiary));
     return lbl;
+}
+
+// One Core app's line: name, address, TX, subscriptions, last command.
+QString coreClientText(const StationTciClient& client)
+{
+    const QString name = client.name.isEmpty() ? QStringLiteral("App") : client.name;
+    return QStringLiteral("%1 (%2)%3: %4; %5")
+        .arg(name, client.address,
+             client.transmitting ? QStringLiteral(" TX") : QString(),
+             client.subscriptions.isEmpty() ? QStringLiteral("no subscriptions")
+                                             : client.subscriptions.join(QStringLiteral(", ")),
+             client.lastCommand.isEmpty() ? QStringLiteral("no command")
+                                           : client.lastCommand.left(40));
 }
 
 // Horizontal divider — matches AppletWidget::divider() style.
@@ -236,15 +252,27 @@ void ClientChainApplet::rebuildCoreRows()
     CoreRowsShown next;
     next.panelShown = link && link->stationTciAvailable();
     next.serverAvailable = next.panelShown && link->stationTciServerAvailable();
+    QList<StationTciClient> clients;
     if (next.serverAvailable) {
         next.onAir = m_stationModel->isCoreOnAir();
-        next.clients = m_stationModel->stationTciModel()->clients();
+        clients = m_stationModel->stationTciModel()->clients();
+        for (const StationTciClient& client : std::as_const(clients)) {
+            next.clients.append({client.id, client.transmitting});
+        }
     }
-    // Nothing the rows show has changed: leave every widget as it is.
-    if (m_coreRowsShown && *m_coreRowsShown == next) {
+    // The same apps in the same order, transmitting as before: keep every
+    // widget and only update each app's text in place.
+    const bool labelsStillThere = std::all_of(
+        m_coreClientLabels.cbegin(), m_coreClientLabels.cend(),
+        [](const QPointer<QLabel>& label) { return !label.isNull(); });
+    if (m_coreRowsShown && *m_coreRowsShown == next && labelsStillThere) {
+        for (int i = 0; i < clients.size(); ++i) {
+            m_coreClientLabels.at(i)->setText(coreClientText(clients.at(i)));
+        }
         return;
     }
     m_coreRowsShown = next;
+    m_coreClientLabels.clear();
     while (QLayoutItem* item = m_coreRows->takeAt(0)) {
         if (QWidget* widget = item->widget()) {
             widget->hide();
@@ -266,7 +294,6 @@ void ClientChainApplet::rebuildCoreRows()
         m_coreRows->addWidget(reason);
         return;
     }
-    const QList<StationTciClient>& clients = next.clients;
     if (clients.isEmpty()) {
         m_coreRows->addWidget(makeTertiaryLabel(
             QStringLiteral("No apps connected to the Core's TCI server."), m_corePanel));
@@ -275,17 +302,10 @@ void ClientChainApplet::rebuildCoreRows()
         auto* row = new QWidget(m_corePanel);
         auto* line = new QHBoxLayout(row);
         line->setContentsMargins(0, 0, 0, 0);
-        const QString name = client.name.isEmpty() ? QStringLiteral("App") : client.name;
-        auto* label = makeSecondaryLabel(
-            QStringLiteral("%1 (%2)%3: %4; %5")
-                .arg(name, client.address,
-                     client.transmitting ? QStringLiteral(" TX") : QString(),
-                     client.subscriptions.isEmpty() ? QStringLiteral("no subscriptions")
-                                                     : client.subscriptions.join(QStringLiteral(", ")),
-                     client.lastCommand.isEmpty() ? QStringLiteral("no command")
-                                                   : client.lastCommand.left(40)), row);
+        auto* label = makeSecondaryLabel(coreClientText(client), row);
         label->setWordWrap(true);
         line->addWidget(label, 1);
+        m_coreClientLabels.append(label);
         auto* disconnect = new QPushButton(QStringLiteral("Disconnect"), row);
         disconnect->setObjectName(QStringLiteral("disconnectCoreTciClient"));
         const bool onAir = next.onAir;
@@ -376,11 +396,10 @@ QWidget* ClientChainApplet::buildClientRow(
 
         hbox->addStretch();
 
-        // Connection duration. One line, never wrapped: the counter grows
-        // every second and must not change the row's height.
+        // Connection duration. One line (QLabel's default, never wrapped):
+        // the counter grows every second and must not change the height.
         auto* durLbl = makeTertiaryLabel(QString(), row);
         durLbl->setObjectName(QStringLiteral("tciClientDuration"));
-        durLbl->setWordWrap(false);
         hbox->addWidget(durLbl);
 
         vbox->addLayout(hbox);
@@ -647,8 +666,7 @@ void ClientChainApplet::rebuildRows()
         return;
     }
 
-    const auto snapshot = m_server->clients();
-    const bool hasClients = !snapshot.isEmpty();
+    const bool hasClients = !entries.isEmpty();
 
     if (m_emptyStatePanel) {
         m_emptyStatePanel->setVisible(!hasClients);

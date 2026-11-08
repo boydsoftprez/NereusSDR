@@ -44,6 +44,7 @@
 #include <QPointer>
 #include <memory>
 #include <optional>
+#include <utility>
 
 class QCheckBox;
 class QLabel;
@@ -142,18 +143,21 @@ private:
     QWidget* m_corePanel{nullptr};
     QVBoxLayout* m_coreRows{nullptr};
 
-    // What the Core's rows show now. rebuildCoreRows() returns without
-    // touching a widget when the next look is the same, so a 1 Hz refresh
-    // with nothing new no longer deletes and re-adds every row (the box
-    // went short for one event-loop pass and the column below it jumped).
+    // The widgets the Core's rows are made of now: the section, the
+    // server's state, the on-air state and each app's id and transmit
+    // state, in order. rebuildCoreRows() keeps the rows while this stays the
+    // same and only updates each app's text (its last command changes all
+    // the time), so a refresh no longer deletes and re-adds every row (the
+    // box went short for one event-loop pass and the column below it jumped).
     struct CoreRowsShown {
         bool panelShown{false};
         bool serverAvailable{false};
         bool onAir{false};
-        QList<StationTciClient> clients;
+        QList<std::pair<QString, bool>> clients;   // id, transmitting
         bool operator==(const CoreRowsShown& other) const = default;
     };
     std::optional<CoreRowsShown> m_coreRowsShown;
+    QList<QPointer<QLabel>> m_coreClientLabels;   // one per app, in order
     QTimer*      m_refreshTimer{nullptr};
 
     // Top bar
