@@ -191,7 +191,6 @@ The operator-facing exclusions below explain common missing controls.
 | Missing/unimplemented surface | Supported alternative or boundary |
 | --- | --- |
 | Voice message keys (listed on the Keyboard page, grayed). | CW message keys and live transmit keys. |
-| CWX, Phone/CW keyer page, CW keyer settings. | CW receive mode/filter/APF controls remain separately usable. Do not infer a working software keyer from CW modes. |
 | Voice recorder/playback, DVK, macro buttons, Memory Manager and memory spots. | Use ordinary live receive/transmit and the implemented spot sources. |
 | FM TX/repeater/offset/reverse, CTCSS encode/tone squelch and FM Phone/CW page. | FM receive/squelch remain; do not plan repeater transmission with these shells. |
 | Transverters and VHF band/OC pages. | Current implemented band selection and HF hardware controls. |
