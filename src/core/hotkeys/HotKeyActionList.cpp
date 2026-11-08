@@ -4,6 +4,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-08 - J.J. Boyd (KG4VCF), hot keys: on a Mac CW message 5 has no
+//                default key, since Cmd+F5 is VoiceOver's.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original.
 #include "core/hotkeys/HotKeyActionList.h"
 
@@ -12,6 +15,11 @@
 namespace NereusSDR {
 
 namespace {
+
+#ifdef Q_OS_MAC
+// The CW message whose default, Cmd+F5, is macOS's VoiceOver key.
+constexpr int kMacVoiceOverMessage = 5;
+#endif
 
 QList<HotKeyAction> buildActions()
 {
@@ -79,8 +87,16 @@ QList<HotKeyAction> buildActions()
     add(QStringLiteral("vox.toggle"), QStringLiteral("VOX on or off"), transmit, G::Press, true, S::TransmitSlice, {});
 
     for (int n = 1; n <= 8; ++n) {
+        QStringList keys{QStringLiteral("Ctrl+F%1").arg(n)};
+#ifdef Q_OS_MAC
+        // macOS turns VoiceOver on or off with Cmd+F5 (Apple's VoiceOver guide,
+        // "Turn VoiceOver on or off"), so on a Mac CW message 5 has no default key.
+        if (n == kMacVoiceOverMessage) {
+            keys.clear();
+        }
+#endif
         add(QStringLiteral("cw.msg%1").arg(n), QStringLiteral("CW message %1").arg(n), cw, G::Press, true,
-            S::TransmitSlice, {QStringLiteral("Ctrl+F%1").arg(n)});
+            S::TransmitSlice, keys);
     }
     add(QStringLiteral("cw.stop"), QStringLiteral("Stop CW message"), cw, G::Press, false, S::TransmitSlice, {QStringLiteral("Ctrl+F10")});
     add(QStringLiteral("cw.dot"), QStringLiteral("CW dot"), cw, G::Hold, true, S::TransmitSlice, {QStringLiteral(",")});
