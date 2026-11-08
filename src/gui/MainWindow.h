@@ -23,6 +23,27 @@
 //               lock act on the slice they name, through vfoRequestSlice()
 //               (now any meter item). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-06: bandStackPanel(), bandStackReason(),
+//               refreshBandStackAvailability(), the panel beside the pan
+//               column; the placeholder reason retired (band stack plan
+//               Task 7). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-11-06: pressBand(), the one router for a band press;
+//               bandStackNext(), bandStackPrevious(), bandStackAdd(),
+//               viewForSlice() (band stack plan Task 8). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-06: the rows' context and the expiry note's Undo (band stack
+//               plan Task 9). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-11-06: the status bar's stack number, the pan rule a recall applies,
+//               and the region prompt (band stack plan Task 12). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06: refreshBandStackTicks() and the spectrum ticks' click and menu
+//               (band stack plan Task 11). J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-11-06: openBandStackPopup(), the popup a band's right-click and the
+//               VFO display's long press open (band stack plan Task 10). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-26: wireVfoDisplayRequests() and vfoRequestSlice(): a VFO
 //               display's clicks, wheel and keys act on the slice they
 //               name (Task 36). J.J. Boyd (KG4VCF), AI-assisted via
@@ -290,8 +311,11 @@
 //============================================================================================//
 
 #include "gui/widgets/CpuRowCycler.h"
+#include "models/Band.h"
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <map>
 #include <utility>
 #include <QMainWindow>
@@ -300,6 +324,7 @@
 #include <QActionGroup>
 #include <QKeySequence>
 #include <QPointer>
+#include <QDeadlineTimer>
 #include <QTimer>
 #include <QHash>
 #include <QSet>
@@ -399,6 +424,13 @@ class SystemTile;
 class StatusBadge;
 class MultiDeviceController;
 class HostingSliceActions;
+class BandStackAccess;
+class BandStackPanel;
+class BandStackPopup;
+class BandStackRowList;
+struct BandStackRowContext;
+struct BandStackView;
+enum class BandStackDirection;
 class NoticeCard;
 struct SessionMessage;
 class AdcOverloadBadge;
@@ -423,9 +455,6 @@ public:
     /// The preset a container's filter right-click edits, or -1 when the
     /// slice's filter is none of its mode's presets.
     static int containerFilterContextSlot(int index, int activePreset, int presetCount);
-    /// What a container's band-stack right-click says while band stacking
-    /// is not built.
-    static QString containerBandStackReason();
     enum class ConnectionStartup { Automatic, Deferred };
     explicit MainWindow(QWidget* parent = nullptr);
 
@@ -472,6 +501,23 @@ public:
     void setDesktopStationController(DesktopStationController* controller);
     void refreshDesktopStationState();
     FftEnginePool* fftEnginePoolForTest() const { return m_fftEnginePool; }
+    /// Why the band stack cannot be used now. Empty when it can.
+    QString bandStackReason() const;
+    /// Test seam: the window uses this access instead of its RadioModel's.
+    void setBandStackAccessForTest(BandStackAccess* access);
+    /// What `slice`'s pan shows now, for the band stack's saved view. Empty
+    /// when no pan shows it.
+    BandStackView viewForSlice(SliceModel* slice) const;
+    /// One band's rows for `slice` at the pointer, or the reason there are none.
+    void openBandStackPopup(SliceModel* slice, Band band, const QPoint& globalPos);
+    /// How long after a region edit the Core's new region still counts as that
+    /// edit's: 60 seconds for the question a region edit can raise, and 5 more
+    /// (band stack design V1).
+    static constexpr std::chrono::milliseconds kBandStackRegionEditWindow{65000};
+    /// This window changed the region in Setup. The document's next new region
+    /// within `window` asks whether to load its defaults. A change from another
+    /// device arrives without this, so it does not ask.
+    void noteBandStackRegionEdit(std::chrono::milliseconds window = kBandStackRegionEditWindow);
     // Display pill plan Task 9: the window's per-band pan models.
     PanModels* panModels() const { return m_panModels; }
 
@@ -727,6 +773,24 @@ public:
     static QString tnfAddRejectedNotice(const QString& reason);
 
 public slots:
+    /// Opens or closes the band stack panel: the status bar's dots, the Band
+    /// menu's Band Stacking... and the hot keys' entry point.
+    void bandStackPanel();
+    /// Every band press in this window: the Band menu, the BAND flyout, a
+    /// container's band grid and the VFO display's band screen. With the band
+    /// stack ready: on `slice`'s own band Ctrl (Cmd on Mac) adds the spot and
+    /// Shift goes to the previous entry; anything else presses for the next.
+    /// Otherwise RadioModel::onBandButtonClicked, as without a stack.
+    void pressBand(SliceModel* slice, Band band, Qt::KeyboardModifiers mods);
+    /// The next or previous entry on the selected slice's band, wrapping
+    /// within it, and adding its current spot. The hot keys' entry points.
+    void bandStackNext();
+    void bandStackPrevious();
+    void bandStackAdd();
+    /// Applies a change of the Core's capability or the connection: the panel's
+    /// greyed state and the dots' and menu entry's tooltip.
+    void refreshBandStackAvailability();
+
     // ── Phase 3M-0 Task 14 helper slots ──────────────────────────────────
     // Update PA status badge state. Wired by Task 17 to
     // RadioModel::paTrippedChanged.
@@ -2044,6 +2108,7 @@ private:
     // Band-stack dots. Head of the bar positionally, ahead of +PAN, but
     // registered at rung 10 so they fold with the other stubs.
     QWidget*    m_bandStackLabel{nullptr};
+    QLabel*     m_bandStackNumber{nullptr};
     QLabel*     m_placeholderSep{nullptr};
 
     // Right-side strip items — captured so they can be registered with
@@ -2110,6 +2175,54 @@ private:
     void connectProfileRail();
     int m_hDelta{0};
     int m_vDelta{0};
+    // Band stack plan Task 7: the column of pans and zoom bar beside the band
+    // stack panel. Free containers live on it, so opening the panel moves them
+    // as any change of the pane's size does.
+    QWidget* m_panColumn{nullptr};
+    BandStackPanel* m_bandStackPanel{nullptr};
+    BandStackPopup* m_bandStackPopup{nullptr};
+    QAction* m_bandStackAction{nullptr};
+    QPointer<BandStackAccess> m_bandStackAccess;
+    void bindBandStackAccess(BandStackAccess* access);
+    void refreshBandStackSlice();
+    void refreshBandStackDots();
+    /// "40m 5/6" for the selected slice (design section 7).
+    void refreshBandStackNumber();
+    /// The band the number was last worked out for: tuning inside it changes
+    /// nothing, so a tune does not read the document.
+    std::optional<Band> m_bandStackNumberBand;
+    /// Design section 5.5 step 5 and V14, once per lastRecall.seq, on the window
+    /// controlling the slice.
+    void applyBandStackRecall();
+    std::optional<qint64> m_bandStackRecallSeq;
+    /// Design V1.
+    void followBandStackRegion();
+    void askBandStackRegion(const QString& region);
+    QString m_bandStackRegion;
+    std::optional<QDeadlineTimer> m_bandStackRegionEdit;
+    QPointer<QDialog> m_bandStackRegionPrompt;
+    // Band stack plan Task 11: what every pan's spectrum ticks show.
+    void refreshBandStackTicks();
+    void recallBandStackTick(const QString& panId, const QString& entryId);
+    void showBandStackTickMenu(const QString& panId, const QString& entryId,
+                               const QPoint& globalPos);
+    void renameBandStackTick(const QString& entryId);
+    // The row menu's owner for a tick. Never shown: it holds the pan's slice,
+    // where the panel's rows hold the window's (V7). Rename goes to the popup.
+    BandStackRowList* m_bandStackTickRows{nullptr};
+    QPointer<SliceModel> m_bandStackTickSlice;
+    QPoint m_bandStackTickMenuAt;
+    void wireBandStackRows();
+    BandStackRowContext bandStackRowContext();
+    void refreshBandStackRows();
+    void watchBandStackSlice(SliceModel* slice);
+    /// Why a recall on this slice will be refused, for the rows to show.
+    QString bandStackBlockedReason(int sliceId) const;
+    /// "Removed N expired entries" with Undo, once per batch.
+    void showBandStackExpiryNote();
+    QString m_bandStackExpiryBatch;
+    /// bandStackNext, bandStackPrevious and a container's STACK+ and STACK-.
+    void stepBandStack(SliceModel* slice, BandStackDirection direction);
 
     void createDefaultContainers();
 

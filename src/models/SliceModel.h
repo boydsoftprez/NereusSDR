@@ -158,6 +158,8 @@
 //                 tune_step_list (TuneStep pairs) and ChangeTuneStepUp/Down
 //                 by J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                 Anthropic Claude Code.
+//   2026-11-05 - savedBandSpot, for the band stack.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1645,6 +1647,17 @@ public:
     // Used by RadioModel::onBandButtonClicked (#118) to decide whether a
     // band click should seed defaults or restore last-used state.
     bool hasSettingsFor(Band band) const;
+
+    // What this slice's per-band memory holds for `band`, as a band restore
+    // would read it: nullopt when the frequency or mode was never saved. The
+    // filter is 0 to 0 when none is saved for that mode.
+    struct SavedBandSpot {
+        double  frequencyHz{0.0};
+        DSPMode mode{DSPMode::USB};
+        int     filterLow{0};
+        int     filterHigh{0};
+    };
+    std::optional<SavedBandSpot> savedBandSpot(Band band) const;
 
     // R-R3-49: the sample rate saved for this receiver, on every band, or 0
     // when none is saved or the saved value is not a positive integer. Settings

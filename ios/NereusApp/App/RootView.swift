@@ -80,6 +80,10 @@ struct RootView: View {
             return true
         }
         navigation.followDisplayPan = { pan in setupRouter.followPill(shown(pan)) }
+        navigation.openPage = { page in
+            setupRouter.open(page)
+            selectSetup()
+        }
         return navigation
     }
 
@@ -168,8 +172,9 @@ struct RootView: View {
 
     private var tabs: some View {
         GeometryReader { proxy in
-            let sideways = proxy.size.width > proxy.size.height
-            let iPad = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size).isIPad
+            let keyboardRoom = IPadLayout.keyboardRoom(bottomInset: proxy.safeAreaInsets.bottom)
+            let sideways = proxy.size.width > proxy.size.height + keyboardRoom
+            let iPad = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size, keyboardRoom: keyboardRoom).isIPad
             VStack(spacing: 0) {
                 ZStack {
                     ForEach(AppTab.allCases) { tab in
@@ -206,6 +211,7 @@ struct RootView: View {
                     }
             }
             .environment(\.uprightBandWidth, proxy.uprightBandWidth)
+            .environment(\.keyboardRoom, keyboardRoom)
             .onReceive(model.swipes.$opened) { opened in
                 if let opened, opened.target.opensTools {
                     openTools(opened, size: proxy.size)

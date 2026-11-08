@@ -1,4 +1,4 @@
-// NereusSDR for iOS: the iPad's applet column on its side: the analog S-meter at its head, then RX, then TX with the amp and tuner
+// NereusSDR for iOS: the iPad's applet column on its side: the analog S-meter at its head, then Band Stack, RX, then TX with the amp and tuner
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // Modification history (NereusSDR):
 // 2026-10-25: Roundtable plan Task 19, the Roundtable applet second after
@@ -14,8 +14,8 @@ import SwiftUI
 /// The applet column (spec section 5.6 item 1, D30, picture 18): with the
 /// iPad on its side, one column on the band's right like the desktop's main
 /// window. The analog S-meter heads it; under it Roundtable (spec 11.4,
-/// second unless moved), then RX and then TX (with the amp and tuner), all
-/// in one scroll. RX and TX are the phone's panels, laid in the column
+/// second unless moved), Band Stack, then RX and then TX (with the amp and
+/// tuner), all in one scroll. RX and TX are the phone's panels, laid in the column
 /// instead of sliding over the band. While the Roundtable applet is in
 /// view its box is pinned at the column's foot. Widened, the column is
 /// Roundtable's room list beside the room. The toolbar's corner button
@@ -27,6 +27,8 @@ struct AppletColumn: View {
     /// Opens the Radio tab, where an amplifier or tuner is set up.
     var openRadio: () -> Void = {}
     var openSettings: () -> Void = {}
+    /// Opens Setup's Band Stack page.
+    var openBandStackSetup: () -> Void = {}
     /// Roundtable's applet; nil leaves it out.
     let roundtable: RoundtableAppletConfig?
 
@@ -42,12 +44,13 @@ struct AppletColumn: View {
     @State private var footHeight: CGFloat = 0
 
     init(main: MainScreenModel, openRadio: @escaping () -> Void = {}, openSettings: @escaping () -> Void = {},
-         roundtable: RoundtableAppletConfig? = nil) {
+         openBandStackSetup: @escaping () -> Void = {}, roundtable: RoundtableAppletConfig? = nil) {
         self.main = main
         rx = main.rx
         transmit = main.transmit
         self.openRadio = openRadio
         self.openSettings = openSettings
+        self.openBandStackSetup = openBandStackSetup
         self.roundtable = roundtable
         _roundtablePosition = State(initialValue: roundtable?.settings.roundtableAppletPosition
                                     ?? AppletOrder.roundtableDefault)
@@ -162,6 +165,9 @@ struct AppletColumn: View {
                         placeApplet()
                     }
             }
+        case .bandStack:
+            BandStackApplet(model: main.controls(for: main.toolbarPan).bandStack, width: Self.width, scrolls: false,
+                            openSetup: openBandStackSetup)
         case .rx:
             RxPanel(model: rx, sliceColour: main.sliceColour, width: nil, scrolls: false)
         case .tx:

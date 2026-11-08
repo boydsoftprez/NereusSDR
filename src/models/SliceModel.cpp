@@ -236,6 +236,8 @@
 //                change: recenterCwFilterOnPitch replaces
 //                shiftCwFilterForPitch (R-CW-28, D8). J.J. Boyd (KG4VCF),
 //                AI-assisted via Claude Code.
+//   2026-11-05 - savedBandSpot, for the band stack.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -3587,6 +3589,29 @@ bool SliceModel::hasSettingsFor(Band band) const
 {
     auto& s = AppSettings::instance();
     return s.contains(bandPrefix(m_sliceIndex, band) + QStringLiteral("DspMode"));
+}
+
+std::optional<SliceModel::SavedBandSpot> SliceModel::savedBandSpot(Band band) const
+{
+    auto& s = AppSettings::instance();
+    const QString bp = bandPrefix(m_sliceIndex, band);
+    if (!s.contains(bp + QStringLiteral("Frequency"))
+        || !s.contains(bp + QStringLiteral("DspMode"))) {
+        return std::nullopt;
+    }
+    SavedBandSpot spot;
+    spot.frequencyHz = s.value(bp + QStringLiteral("Frequency")).toDouble();
+    spot.mode = static_cast<DSPMode>(s.value(bp + QStringLiteral("DspMode")).toInt());
+    // As restoreFromSettings: the band and mode's filter, then the legacy one.
+    for (const QString& prefix : {bandModePrefix(m_sliceIndex, band, spot.mode), bp}) {
+        if (s.contains(prefix + QStringLiteral("FilterLow"))
+            && s.contains(prefix + QStringLiteral("FilterHigh"))) {
+            spot.filterLow = s.value(prefix + QStringLiteral("FilterLow")).toInt();
+            spot.filterHigh = s.value(prefix + QStringLiteral("FilterHigh")).toInt();
+            break;
+        }
+    }
+    return spot;
 }
 
 QString SliceModel::sampleRateSettingsKey() const

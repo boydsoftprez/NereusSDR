@@ -32,7 +32,7 @@ enum DisplayPillTab: String, CaseIterable {
 /// A row the phone draws itself: kept on this phone, or a Core value the
 /// description does not carry as a row (spec DC2, DC5).
 enum PhoneRow {
-    case spectrumHeight, lookBack, ctun, dup, paintFps, decimation
+    case spectrumHeight, lookBack, ctun, dup, paintFps, bandStack, decimation
 }
 
 /// One line of a tab: a group's caption, a row the Core describes (by the
@@ -208,6 +208,7 @@ enum DisplayPillRows {
         .group("On this phone"),
         .phone(.ctun),
         .phone(.dup),
+        .phone(.bandStack),
     ]
 
     // From src/gui/SpectrumOverlayPanel.cpp:3659 (buildPillFftPage)

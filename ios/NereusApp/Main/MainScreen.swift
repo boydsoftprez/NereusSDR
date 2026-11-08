@@ -157,6 +157,7 @@ struct MainScreen: View {
     @State private var txPanelEntry = Edge.trailing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var widthClass
+    @Environment(\.keyboardRoom) private var keyboardRoom
 
     /// `rxPanelOpen` and `txPanelOpen` open the screen with that panel out,
     /// `sheet` with that sheet open.
@@ -200,8 +201,8 @@ struct MainScreen: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let sideways = proxy.size.width > proxy.size.height
-            let layout = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size)
+            let layout = IPadLayout.arrangement(horizontal: widthClass, size: proxy.size, keyboardRoom: keyboardRoom)
+            let sideways = proxy.size.width > proxy.size.height + keyboardRoom
             Group {
                 switch layout {
                 case .phone:
@@ -220,6 +221,7 @@ struct MainScreen: View {
                             band(sideways: true, leadingInset: 0, trailingInset: 0, column: true)
                             if columnShown {
                                 AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                             openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) },
                                              roundtable: roundtable.available ? appletConfig : nil)
                                     .transition(.move(edge: .trailing))
                             }
@@ -231,7 +233,8 @@ struct MainScreen: View {
                         toolbar(sideways: false, layout: layout)
                         ConnectionSummaryRow(app: app)
                         band(sideways: false, leadingInset: 0, trailingInset: 0, column: true)
-                        FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings)
+                        FrontPanelColumns(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
+                                          openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) })
                             .frame(height: IPadLayout.frontPanelHeight(underToolbar: proxy.size.height - Toolbar.height))
                     }
                 }
@@ -1116,7 +1119,8 @@ struct MainScreen: View {
                              viewRoundtable: first ? { context in toggleRoundtable(target: roundtableTarget(context)) } : nil,
                              toggleRoundtableLine: first ? { id in toggleRoundtableLine(id) } : nil,
                              dialStrip: strip, roundtable: first ? roundtable : nil,
-                             swipes: swipesHere ? swipes : nil)
+                             swipes: swipesHere ? swipes : nil,
+                             bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)
@@ -1164,7 +1168,10 @@ struct MainScreen: View {
             // The pan last touched's sheet, with Add a pan and Close this pan.
             let controls = main.controls(for: main.toolbarPan)
             PanSheet(model: controls.sheet, sliceColour: main.sliceColour, pan: controls.pan, stack: main.panStack,
-                     slices: controls.band.slices)
+                     slices: controls.band.slices, bandStack: controls.bandStack, openBandStackSetup: {
+                sheet = nil
+                app.phoneNavigation?.openPage(.bandStack)
+            })
         case .display:
             if let source = main.displayPillSource {
                 DisplayDropSheet(pages: source.pages, source: source, main: main, tab: $displayTab,
@@ -1179,7 +1186,8 @@ struct MainScreen: View {
                     app.phoneNavigation?.followDisplayPan(pan)
                 })
             } else {
-                DisplaySheet(model: main.display, core: main.coreDisplay) {
+                DisplaySheet(model: main.display, core: main.coreDisplay, bandStack: main.controls(for: .first).bandStack,
+                             settings: main.phoneSettings) {
                     sheet = nil
                     openSetup()
                 }

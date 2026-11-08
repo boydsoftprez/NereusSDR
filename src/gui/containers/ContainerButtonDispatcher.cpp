@@ -13,6 +13,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - Band stack plan Task 8: a band grid press goes through the
+//                 window's router; STACK+ and STACK- step the container's
+//                 slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code.
 //   2026-10-26 - Band grids: the slice's band and group (setSliceBand), the
 //                 2 m reason kept with its band, clicks by band number; an
 //                 SWL band lights as itself (bandGridBandFromFrequency).
@@ -274,7 +278,7 @@ constexpr Id kConnected[] = {
     Id::Nr, Id::Nr1, Id::Nr2, Id::Nr3, Id::Nr4,
     Id::Nb, Id::Nb1, Id::Nb2, Id::MnfPlus,
     Id::Rit, Id::Rit0, Id::Xit, Id::Xit0, Id::LockA,
-    Id::TuneStepUp, Id::TuneStepDown, Id::MuteAll, Id::SqlVsql,
+    Id::TuneStepUp, Id::TuneStepDown, Id::StackUp, Id::StackDown, Id::MuteAll, Id::SqlVsql,
     Id::AfP5, Id::AfM5, Id::BalP5, Id::BalM5,
     Id::AgcFixed, Id::AgcLong, Id::AgcSlow, Id::AgcMedium, Id::AgcFast,
     Id::AgcCustom, Id::AgcAuto, Id::AgcP5, Id::AgcM5,
@@ -828,6 +832,18 @@ ContainerButtonDispatcher::stateOf(Id id, int rxSource) const
                            [](const SliceModel* s) { return s->muted(); });
         break;
     }
+    case Id::StackUp:
+    case Id::StackDown: {
+        const QString reason = m_hooks.stepBandStack
+            ? (m_hooks.bandStackReason ? m_hooks.bandStackReason() : QString())
+            : QStringLiteral("This button does nothing in this version.");
+        if (!reason.isEmpty()) {
+            unavailable(reason);
+        } else if (!sliceFor(rxSource)) {
+            unavailable(sliceUnavailableReason(rxSource));
+        }
+        break;
+    }
     default:
         if (isTransmitSetting(id)) {
             transmitSettingState(id, st);
@@ -960,6 +976,15 @@ QString ContainerButtonDispatcher::click(Id id, int rxSource)
         // From Thetis console.cs:51421 [v2.10.3.15]:
         //   case OtherButtonId.MUTE_ALL: SetMute(0, !GetMute(0)); break;
         for (SliceModel* slice : changeableSlices()) { slice->setMuted(turnOn); }
+        break;
+    case Id::StackUp:
+    case Id::StackDown:
+        // From Thetis console.cs:51615-51616 [v2.10.3.15]:
+        //   case OtherButtonId.STACK_U: SetBandStack(rx, 1); break;
+        //   case OtherButtonId.STACK_D: SetBandStack(rx, -1); break;
+        // On the container's slice, as Thetis acts on its rx. Unlike Thetis,
+        // the step wraps within the band (band stack design V3).
+        m_hooks.stepBandStack(sliceFor(rxSource), id == Id::StackUp);
         break;
     default:
         if (isTransmitSetting(id)) { return clickTransmitSetting(id, rxSource); }
@@ -1329,7 +1354,11 @@ QString ContainerButtonDispatcher::clickBand(int band, int rxSource)
     SliceModel* slice = sliceFor(rxSource);
     if (!slice) { return sliceUnavailableReason(rxSource); }
     if (band < 0 || band >= static_cast<int>(Band::Count)) { return QString(); }
-    m_model->onBandButtonClicked(slice, static_cast<Band>(band));
+    if (m_hooks.pressBand) {
+        m_hooks.pressBand(slice, static_cast<Band>(band));
+    } else {
+        m_model->onBandButtonClicked(slice, static_cast<Band>(band));
+    }
     return QString();
 }
 

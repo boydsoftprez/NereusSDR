@@ -164,6 +164,8 @@ enum DisplayPillLayout {
         .slider(key: "DisplayBackgroundOpacity", swatch: "DisplayBackgroundColor"),
         .caption("On this phone"),
         .chips([.phone(.ctun), .phone(.dup)], columns: 2),
+        // On a line of its own: a line shows only its first greyed chip's reason.
+        .chips([.phone(.bandStack)], columns: 2),
     ]
 
     private static let fft: [DisplayPillLine] = [
@@ -879,7 +881,7 @@ struct DisplayPillSettingLine: View {
     }
 }
 
-/// A line of toggles: the Core's rows and this phone's CTUN and DUP, each
+/// A line of toggles: the Core's rows and this phone's CTUN, DUP and Band stack, each
 /// lit green while on, the first greyed one's reason under the line.
 struct DisplayPillChipsLine: View {
     let chips: [DisplayPillChip]
@@ -890,10 +892,13 @@ struct DisplayPillChipsLine: View {
     @ObservedObject var display: DisplaySheetModel
     /// The pan's kept values move the chips' dots.
     @ObservedObject var band: BandModel
+    /// The pan's band stack, for the Band stack switch's state and reason.
+    @ObservedObject var bandStack: BandStackModel
+    @ObservedObject var settings: PhoneSettings
     @State private var problem: String?
 
     init(chips: [DisplayPillChip], columns: Int, source: DisplayPillSource, display: DisplaySheetModel,
-         band: BandModel) {
+         band: BandModel, bandStack: BandStackModel, settings: PhoneSettings) {
         self.chips = chips
         self.columns = columns
         self.source = source
@@ -901,6 +906,8 @@ struct DisplayPillChipsLine: View {
         dispatcher = source.dispatcher
         self.display = display
         self.band = band
+        self.bandStack = bandStack
+        self.settings = settings
     }
 
     private struct Chip {
@@ -976,6 +983,14 @@ struct DisplayPillChipsLine: View {
                         enabled: display.duplexAvailable,
                         reason: display.duplexAvailable ? nil : DisplaySheetModel.duplexUnavailableText) {
                 display.setDuplex(!display.duplex)
+            }
+        case .phone(.bandStack):
+            // Off and greyed with the reason on a Core without band stacks.
+            let reason = bandStack.unavailableReason
+            return Chip(id: "displayPillBandStack", label: "Band stack",
+                        on: settings.showBandStackMarkers && bandStack.availability == .ready,
+                        enabled: reason == nil, reason: reason) {
+                settings.showBandStackMarkers.toggle()
             }
         case .phone:
             return Chip(id: "displayPillPhone", label: "", on: false, enabled: false, reason: nil, action: {})

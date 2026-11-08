@@ -81,13 +81,48 @@ import Testing
     }
 
 
+    /// The band stack's thirteen verbs, whose names, kinds and optional
+    /// arguments the phone sends as the surface declares them. `ids` is JSON
+    /// text, since the link has no list kind.
+    @Test func bandStackVerbsKeepTheirTypedMetadata() throws {
+        let commands = try #require(try Self.surface()["commands"] as? [[String: Any]])
+        let expected: [(verb: String, names: [String], kinds: [String], optional: Set<String>)] = [
+            ("bandStack.press", ["sliceId", "band", "direction", "viewCenterHz", "viewSpanHz"], ["i64", "utf8", "utf8", "i64", "i64"], ["viewCenterHz", "viewSpanHz"]),
+            ("bandStack.step", ["sliceId", "direction", "viewCenterHz", "viewSpanHz"], ["i64", "utf8", "i64", "i64"], ["viewCenterHz", "viewSpanHz"]),
+            ("bandStack.goTo", ["sliceId", "entryId", "viewCenterHz", "viewSpanHz"], ["i64", "utf8", "i64", "i64"], ["viewCenterHz", "viewSpanHz"]),
+            ("bandStack.add", ["sliceId", "viewCenterHz", "viewSpanHz"], ["i64", "i64", "i64"], ["viewCenterHz", "viewSpanHz"]),
+            ("bandStack.saveHere", ["sliceId", "entryId", "viewCenterHz", "viewSpanHz"], ["i64", "utf8", "i64", "i64"], ["viewCenterHz", "viewSpanHz"]),
+            ("bandStack.edit", ["entryId", "name", "locked"], ["utf8", "utf8", "bool"], ["name", "locked"]),
+            ("bandStack.delete", ["entryId"], ["utf8"], []),
+            ("bandStack.reorder", ["band", "ids"], ["utf8", "utf8"], []),
+            ("bandStack.setReturn", ["band", "mode", "entryId"], ["utf8", "utf8", "utf8"], ["entryId"]),
+            ("bandStack.clear", ["band"], ["utf8"], ["band"]),
+            ("bandStack.reseed", [], [], []),
+            ("bandStack.options", ["dupeProtection", "expiryMinutes", "dwellSeconds"], ["bool", "i64", "i64"], ["dupeProtection", "expiryMinutes", "dwellSeconds"]),
+            ("bandStack.restoreExpired", ["batchId"], ["utf8"], []),
+        ]
+        #expect(commands.filter { ($0["verb"] as? String)?.hasPrefix("bandStack.") == true }.count == expected.count)
+        for entry in expected {
+            let command = try #require(commands.first { $0["verb"] as? String == entry.verb }, "\(entry.verb)")
+            #expect(command["capability"] as? String == "bandStackVersion", "\(entry.verb)")
+            #expect((command["capabilityVersion"] as? NSNumber)?.intValue == 1, "\(entry.verb)")
+            #expect((command["minMinor"] as? NSNumber)?.intValue == 11, "\(entry.verb)")
+            let arguments = try #require(command["arguments"] as? [[String: Any]], "\(entry.verb)")
+            #expect(arguments.compactMap { $0["name"] as? String } == entry.names, "\(entry.verb)")
+            #expect(arguments.compactMap { $0["kind"] as? String } == entry.kinds, "\(entry.verb)")
+            let optional = arguments.filter { $0["optional"] as? Bool == true }.compactMap { $0["name"] as? String }
+            #expect(Set(optional) == entry.optional, "\(entry.verb)")
+        }
+    }
+
     /// New verbs retain their exact minor, capability and typed argument contracts.
     @Test func integratedCommandsKeepTheirTypedMetadata() throws {
         let commands = try #require(try Self.surface()["commands"] as? [[String: Any]])
         // Core 31d51c0a4 adds the rotor's seven verbs; refreshRotorPorts is the eighth.
         // Roundtable adds its thirteen roundtable.* verbs.
         // Remote CW adds cw.send, cw.memory, cw.stop and cw.key.
-        #expect(commands.count == 193)
+        // The band stack adds its thirteen bandStack.* verbs.
+        #expect(commands.count == 206)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,

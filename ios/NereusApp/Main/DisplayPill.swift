@@ -319,7 +319,7 @@ struct DisplayPill: View {
             tabs
                 .modifier(DisplayPillPeekRow(draws: chrome, held: false))
             DisplayPillRowsView(tab: tab, source: main.displayPillSource, display: controls.display, core: core,
-                                main: main, band: controls.band.band, onOpenPage: onOpenPage)
+                                main: main, band: controls.band.band, bandStack: controls.bandStack, onOpenPage: onOpenPage)
                 .environment(\.panelButtonHeight, 30)
         }
         // The peek: the sheet's own face clears away with its chrome.
@@ -368,6 +368,8 @@ private struct DisplayPillRowsView: View {
     let main: MainScreenModel
     /// The pill's pan's band.
     @ObservedObject var band: BandModel
+    /// The pill's pan's band stack, for its switch.
+    let bandStack: BandStackModel
     let onOpenPage: (String) -> Void
 
     /// The row a finger holds; while one is, only it draws.
@@ -392,7 +394,7 @@ private struct DisplayPillRowsView: View {
             case .chips(let chips, let columns):
                 if let source {
                     DisplayPillChipsLine(chips: chips, columns: columns, source: source, display: display,
-                                         band: band)
+                                         band: band, bandStack: bandStack, settings: main.phoneSettings)
                 }
             case .phone(let row):
                 phone(row)
@@ -472,10 +474,10 @@ private struct DisplayPillRowsView: View {
                         .accessibilityIdentifier("displayPillLookBackLive")
                 }
             }
-        case .ctun, .dup:
+        case .ctun, .dup, .bandStack:
             if let source {
                 DisplayPillChipsLine(chips: [.phone(row)], columns: 1, source: source, display: display,
-                                     band: band)
+                                     band: band, bandStack: bandStack, settings: main.phoneSettings)
             }
         case .paintFps:
             DisplayPillPaintFpsRow(stack: main.panStack, core: core, holding: holding("phone.paintFps"))
@@ -623,8 +625,9 @@ struct DisplayDropSheet: View {
             DisplayPill(pan: pan, device: device, tab: $tab, main: main, core: main.coreDisplay,
                         onSetupDefaults: onSetupDefaults, onOpenPage: onOpenPage, onOpen: onOpen)
         } else {
-            DisplaySheet(model: main.controls(for: pan).display, core: main.coreDisplay, topNote: Self.olderCoreNote,
-                         openSetup: openSetup)
+            DisplaySheet(model: main.controls(for: pan).display, core: main.coreDisplay,
+                         bandStack: main.controls(for: pan).bandStack, settings: main.phoneSettings,
+                         topNote: Self.olderCoreNote, openSetup: openSetup)
         }
     }
 

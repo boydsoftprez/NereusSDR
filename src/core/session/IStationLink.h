@@ -46,6 +46,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: sliceControlledHere.
+//   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -338,6 +341,18 @@ public:
     virtual QString band2mUnavailableReason() const { return {}; }
     virtual CommandOutcome requestSelectBand(int /*sliceId*/, int /*band*/)
     { return { false, QStringLiteral("This Core cannot change bands for this app. Updating the Core may help.") }; }
+
+    /// Band stack plan Task 4 (bandStackVersion 1): the Core runs a band stack
+    /// with this window. `verb` is one of the bandStack.* verbs and `arguments`
+    /// holds its arguments by name; an `ids` array goes as the JSON text the
+    /// verb takes. The defaults refuse, for links that did not negotiate it.
+    virtual bool bandStackAvailable() const { return false; }
+    virtual CommandOutcome sendBandStackCommand(const QString& /*verb*/,
+                                                const QJsonObject& /*arguments*/)
+    { return { false, QStringLiteral("This Core does not have band stacks. Updating the Core may help.") }; }
+    /// Band stack plan Task 6: this window controls the slice. A link that does
+    /// not share slices has no other device to leave it to.
+    virtual bool sliceControlledHere(int /*sliceId*/) const { return true; }
 
     /// Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): the
     /// Core shares slices between devices with this window. Verbs

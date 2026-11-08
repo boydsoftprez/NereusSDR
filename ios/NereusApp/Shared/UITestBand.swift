@@ -7,6 +7,10 @@
 // the swipes' never-key tests. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable fix wave: the hold record names a quick tap's
 // unkey. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-06: band stack plan Task 15, a Core with a band stack for the UI
+// tests of the stack block. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-06: band stack plan Task 18, a Core that describes General and takes
+// region edits, for the region question. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #if DEBUG
 import Combine
@@ -51,6 +55,30 @@ enum UITestBand {
     /// Core, and the keyed meters show while keyed. The app keeps no
     /// microphone with it, so nothing asks iOS for one.
     static let keyedArgument = "-NereusKeyedFixture"
+    /// Beside ``bandMenuArgument`` and ``bandStackEnvironment``: a Core with a
+    /// band stack that opens bands. Each `bandStack.*` verb and
+    /// `slice.selectBand` is refused with its own arguments in the reason, so
+    /// the UI test reads what was sent.
+    static let bandStackArgument = "-NereusBandStackFixture"
+    /// Beside ``bandMenuArgument``: a Core that opens bands and has no band
+    /// stack, with `slice.selectBand` answered as ``bandStackArgument`` does.
+    static let bandSelectArgument = "-NereusBandSelectFixture"
+    /// The file holding the band stack's document (the shared sample).
+    static let bandStackEnvironment = "NEREUS_UITEST_BANDSTACK"
+    /// Beside ``bandStackArgument``: the Core describes Setup > General, read
+    /// from the file this names (`resources/setup/general.json`), and takes a
+    /// region edit, moving the band stack document's region to it. It refuses
+    /// ``regionRefused``, so a UI test can make a refused edit.
+    static let generalEnvironment = "NEREUS_UITEST_GENERAL"
+    static let regionSetting = "BandPlanRegion"
+    /// United States, the sample document's region, as the setting holds it.
+    private static let regionAtStart = "8"
+    /// Japan, as the setting holds it.
+    private static let regionRefused = "5"
+    /// The regions the UI test picks, as the setting holds them.
+    private static let regionWords = ["1": "Europe", "2": "India", "3": "Italy"]
+    /// The band stack document as it stands, and its revision.
+    @MainActor private static var regionDocument = (json: "", revision: Int64(1))
 
     /// Whether the launch arguments ask for ``keyedArgument``.
     static func keyed(_ arguments: [String]) -> Bool {
@@ -122,6 +150,14 @@ enum UITestBand {
             FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
         }
         let roundtable = arguments.contains(roundtableArgument)
+        let bandStack = arguments.contains(bandStackArgument) ? environment[bandStackEnvironment].flatMap { path in
+            FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
+        } : nil
+        let bandSelect = bandStack != nil || arguments.contains(bandSelectArgument)
+        let general = environment[generalEnvironment].flatMap { path in
+            FileManager.default.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }
+        }
+        regionDocument = (json: bandStack ?? "", revision: 1)
         let roundtableFrequency = roundtable && arguments.contains(roundtableFrequencyArgument)
         app.useBandFixturePropertySender { [weak mirror] write in
             guard write.properties.count == 1, let entry = write.properties.first,
@@ -154,7 +190,26 @@ enum UITestBand {
           + (twoPans ? [.init(ordinal: 9, name: "effectiveMaxSlices", value: .i64(4)),
                         .init(ordinal: 10, name: "userDdcCount", value: .i64(2))] : [])
           + (keyed ? [.init(ordinal: 11, name: "txPermitted", value: .bool(true))] : [])
-          + (roundtable ? [.init(ordinal: 12, name: RoundtableModel.capabilityName, value: .i64(roundtableFrequency ? 2 : 1))] : []))))
+          + (roundtable ? [.init(ordinal: 12, name: RoundtableModel.capabilityName, value: .i64(roundtableFrequency ? 2 : 1))] : [])
+          + (bandSelect ? [.init(ordinal: 13, name: PanSheetModel.bandSelectCapability, value: .i64(1))] : [])
+          + (bandStack == nil ? [] : [.init(ordinal: 14, name: BandStack.capability, value: .i64(1))])
+          + (general == nil ? [] : [.init(ordinal: 4, name: "setupDescriptionVersion", value: .i64(30)),
+                                    .init(ordinal: 15, name: "transmitSettingsVersion", value: .i64(9))]))))
+        if let bandStack {
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: BandStack.objectKey, className: "BandStackFacade",
+                                                               properties: [
+                .init(ordinal: 0, name: "json", value: .utf8(bandStack)),
+                .init(ordinal: 1, name: "revision", value: .i64(1)),
+            ])))
+        }
+        if let general {
+            mirror.apply(.schema(.init(className: "SetupDescription", fields: [
+                .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "general", kind: .utf8),
+            ])))
+            mirror.apply(.objectCreate(.init(key: "setup", className: "SetupDescription", properties: [
+                .init(ordinal: 0, name: "revision", value: .i64(1)), .init(ordinal: 1, name: "general", value: .utf8(general)),
+            ])))
+        }
         if let display {
             mirror.apply(.schema(.init(className: "SetupDescription", fields: [
                 .init(ordinal: 0, name: "revision", kind: .i64), .init(ordinal: 1, name: "display", kind: .utf8),
@@ -230,6 +285,14 @@ enum UITestBand {
                 .init(ordinal: 18, name: "holderDeviceId", value: .utf8("")),
             ])))
         }
+        if general != nil {
+            // Off the air: the region row locks while the radio is on it.
+            mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: "txState", className: "TransmitState", properties: [
+                .init(ordinal: 0, name: "keyed", value: .bool(false)),
+                .init(ordinal: 1, name: "tuning", value: .bool(false)),
+                .init(ordinal: 2, name: "twoTone", value: .bool(false)),
+            ])))
+        }
         if roundtable {
             let now = Int64(Date().timeIntervalSince1970 * 1000)
             mirror.apply(.objectCreate(LinkMessage.ObjectCreate(key: RoundtableModel.objectKey,
@@ -245,7 +308,7 @@ enum UITestBand {
         mirror.apply(.snapshotComplete)
         mirror.handle(.stateChanged(.ready))
         if bandMenu || keyed {
-            linkForBandMenu(app, keyed: keyed)
+            linkForBandMenu(app, keyed: keyed, takesRegion: general != nil)
         }
         if keyed {
             app.useBandFixtureLinkUpForTransmit()
@@ -315,14 +378,29 @@ enum UITestBand {
     /// The settings proxy and the command client up as on a live link, and
     /// the Core's answers to what they send (``bandMenuArgument``).
     @MainActor
-    private static func linkForBandMenu(_ app: AppModel, keyed: Bool) {
+    private static func linkForBandMenu(_ app: AppModel, keyed: Bool, takesRegion: Bool) {
         let settings = app.settings
+        let mirror = app.mirror
         let commands = app.commands
         let notchVerb = PanSheetModel.addNotchAtVerb
         let sliceVerb = PanSheetModel.addSliceVerb
         let notchAtSliceVerb = PanSheetModel.addNotchVerb
+        let selectBandVerb = PanSheetModel.selectBandVerb
         app.useBandFixtureCommandSender { [weak settings] message in
             switch message {
+            case .settingsWrite(let write) where takesRegion && write.key == regionSetting:
+                Task { @MainActor in
+                    guard case .utf8(let text)? = write.properties.first?.value, text != regionRefused,
+                          let region = regionWords[text] else {
+                        settings?.handle(.message(.settingsReject(.init(
+                            key: write.key, properties: [.init(name: write.key, value: .utf8(regionAtStart))],
+                            reason: "UI fixture: this region is refused"))))
+                        return
+                    }
+                    settings?.handle(.message(.settingsValue(.init(key: write.key, origin: write.origin,
+                                                                   properties: write.properties))))
+                    moveRegion(to: region, mirror: mirror)
+                }
             case .settingsWrite(let write):
                 // The Core keeps it and says so, after the write is sent.
                 Task { @MainActor in
@@ -340,7 +418,8 @@ enum UITestBand {
                 }
             case .commandInvoke(let invoke) where keyed && invoke.verb == "tx.keepalive":
                 break
-            case .commandInvoke(let invoke) where [notchVerb, sliceVerb, notchAtSliceVerb].contains(invoke.verb):
+            case .commandInvoke(let invoke) where [notchVerb, sliceVerb, notchAtSliceVerb, selectBandVerb]
+                .contains(invoke.verb) || invoke.verb.hasPrefix("bandStack."):
                 let reason = "UI fixture: " + (invoke.verb == notchVerb ? notchText(invoke.args)
                                                                         : argumentsText(invoke.verb, invoke.args))
                 Task {
@@ -354,8 +433,21 @@ enum UITestBand {
         }
         settings.handle(.stateChanged(.ready))
         settings.handle(.message(.authResult(.init(accepted: true, reason: "", retryable: false))))
-        settings.handle(.message(.settingsSnapshot(.init(properties: []))))
+        settings.handle(.message(.settingsSnapshot(.init(properties: takesRegion
+            ? [.init(name: regionSetting, value: .utf8(regionAtStart))] : []))))
         Task { await commands.handle(.stateChanged(.ready)) }
+    }
+
+    /// The document's new region, sent as the Core sends a change.
+    @MainActor
+    private static func moveRegion(to region: String, mirror: MirrorStore) {
+        let json = regionDocument.json.replacingOccurrences(of: #""region":"[^"]*""#, with: #""region":"\#(region)""#,
+                                                            options: .regularExpression)
+        regionDocument = (json: json, revision: regionDocument.revision + 1)
+        mirror.apply(.delta(.init(key: BandStack.objectKey, properties: [
+            .init(ordinal: 0, name: "json", value: .utf8(json)),
+            .init(ordinal: 1, name: "revision", value: .i64(regionDocument.revision)),
+        ])))
     }
 
     /// The band column's `addSliceOnPan` and `notch.addAtSlice` in words,

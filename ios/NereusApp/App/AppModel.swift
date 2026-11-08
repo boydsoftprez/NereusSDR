@@ -313,7 +313,8 @@ final class AppModel: ObservableObject {
                                displaySettings: displaySettings, meterSettings: meterSettings, devices: devices,
                                microphone: microphone?(media.uplink), uplink: media.uplink,
                                captureVoxSender: { route.captureVoxSender() },
-                               captureTakeSender: { route.captureCommandSender() }, platform: platform)
+                               captureTakeSender: { route.captureCommandSender() }, platform: platform,
+                               phoneSettings: phoneSettings)
         // MON's route on the media connection (D80, `monitor-audio`).
         main.transmit.monitorRouteSender = { route in await media.setMonitorRoute(route) }
         main.panStack.keptPans = phoneSettings

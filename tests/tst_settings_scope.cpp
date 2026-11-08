@@ -627,6 +627,14 @@ private slots:
             << QStringLiteral("ClarityEnabled") << int(SettingsScope::OperatorLocal);
         // R-R3-42: the TCI server runs on this computer, in a remote window
         // as in a local one, so its settings are this computer's.
+        QTest::newRow("BandStackPanel/Open is OperatorLocal (per device, design V6)")
+            << QStringLiteral("BandStackPanel/Open") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("BandStackPanel/Width is OperatorLocal (per device, design V6)")
+            << QStringLiteral("BandStackPanel/Width") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("BandStackPanel/GroupByBand is OperatorLocal (per device, design V6)")
+            << QStringLiteral("BandStackPanel/GroupByBand") << int(SettingsScope::OperatorLocal);
+        QTest::newRow("BandStackPanel/ShowOnSpectrum is OperatorLocal (per device, design V6)")
+            << QStringLiteral("BandStackPanel/ShowOnSpectrum") << int(SettingsScope::OperatorLocal);
         QTest::newRow("TciServerPort is OperatorLocal (this computer's TCI server)")
             << QStringLiteral("TciServerPort") << int(SettingsScope::OperatorLocal);
         QTest::newRow("TciEmulateSunSDR2Pro is OperatorLocal (this computer's TCI server)")

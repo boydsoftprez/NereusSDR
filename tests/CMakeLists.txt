@@ -1848,6 +1848,9 @@ nereus_add_test(tst_band_2m_stores)
 nereus_add_test(tst_band_link_fit EXTRA_LABELS session)
 nereus_add_test(tst_slice_has_settings_for)
 nereus_add_test(tst_band_defaults)
+nereus_add_test(tst_bandstack_seeds)
+nereus_add_test(tst_bandstack_store)
+nereus_add_test(tst_bandstack_controller)
 nereus_add_test(tst_radio_model_band_click)
 
 # ── About dialog ─────────────────────────────────────────────────────────
@@ -10618,6 +10621,44 @@ nereus_add_test(tst_tx_profile_select
 # runs the desktop's band restore on the Core (bandSelectVersion 1), with its
 # refusals. Loopback only, no RF, no audio device.
 nereus_add_test(tst_slice_select_band
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# Band stack plan Task 4: the band stack through a loopback link: the facade,
+# the feature gate and every bandStack.* verb.
+nereus_add_test(tst_bandstack_link
+    fakes/FakeBandStackAccess.h
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# tests/data/bandstack/facade-document.json is shared with the phone's BandStackTests.
+target_compile_definitions(tst_bandstack_link PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# Band stack plan Task 7: the panel shell and its place beside the pans, both
+# looks, real MainWindow offscreen.
+nereus_add_test(tst_bandstack_panel
+    fakes/FakeBandStackAccess.h)
+# 109 to 113 s as one entry on the GitHub Linux runner against the 120 s
+# limit; the cases that build a real MainWindow run as four more entries of
+# the same binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_bandstack_panel
+    ENV NEREUS_BANDSTACK_PANEL_GROUP GROUPS pane keys greyed window)
+
+# Band stack plan Task 8: every band press through MainWindow::pressBand, on a
+# real MainWindow offscreen with a fake access.
+nereus_add_test(tst_bandstack_router
+    fakes/FakeBandStackAccess.h
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_bandstack_router PRIVATE NEREUS_BUILD_TESTS)
+
+# Band stack plan Task 11: the spectrum ticks, at the widget and on a real
+# MainWindow offscreen with a fake access.
+nereus_add_test(tst_bandstack_overlay
+    fakes/FakeBandStackAccess.h)
+
+# Band stack plan Task 5: a recall on a shared receiver asks through the
+# confirm step, through a loopback link with fake peers.
+nereus_add_test(tst_bandstack_question
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 

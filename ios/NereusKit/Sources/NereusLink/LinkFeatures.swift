@@ -256,6 +256,11 @@
 /// memories). The Core then sends them at `transmitSettingsVersion` 16; a
 /// Core that sends none leaves the CW controls greyed with the update note.
 ///
+/// `bandStack` 1: the app reads the Core's band stack document. The Core then
+/// sends `bandStackVersion` and the `bandStack` object, and takes the
+/// `bandStack.*` verbs from this app; a Core that sends none leaves the band
+/// stack greyed with the update note.
+///
 /// The PA readings need no declaration: the Core sends its telemetry to
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
@@ -274,5 +279,6 @@ public enum LinkFeatures {
                                             "radioSpeaker": 1, "coreSpeaker": 1,
                                             "spectrumPicture": 1, "firmwareBeta": 1,
                                             "tuneDriveSource": 1, "displayCodec": 2,
-                                            "roundtable": 2, "remoteCw": 2, "cwSettings": 1, "nnrLoadWarning": 1]
+                                            "roundtable": 2, "remoteCw": 2, "cwSettings": 1, "nnrLoadWarning": 1,
+                                            "bandStack": 1]
 }

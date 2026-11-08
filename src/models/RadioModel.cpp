@@ -20,6 +20,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: bandStack(), local or remote by role.
+//   2026-11-05: Band stack plan Task 4: the `bandStack` facade, bound to the controller on the Core.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1636,6 +1639,11 @@
 //                early return, so a Stop All TX in the walk's ptt_out
 //                phase drops a held CAT TX. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05 - owns the BandStackController; retuneRefusalFor, saveBandMemory.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-07 - saveBandMemory writes nothing while sliceKeysAreHeld, as the
+//                 band click does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1990,6 +1998,9 @@ mw0lge@grange-lane.co.uk
 #include "core/safety/UnkeyGate.h"
 #include "core/FFTRouter.h"  // Phase 3F Sub-Epic D Task 13
 #include "models/FilterPresetStore.h"
+#include "models/bandstack/BandStackController.h"
+#include "models/bandstack/LocalBandStackAccess.h"
+#include "models/bandstack/RemoteBandStackAccess.h"
 #include "core/accessories/N2adrPreset.h"
 #include "core/codec/AlexFilterMap.h"  // Phase 3F: per-ADC BPF -> HPF bits
 #include "core/AlexSettingsKeys.h"
@@ -2108,6 +2119,7 @@ mw0lge@grange-lane.co.uk
 #include "models/RotorModel.h"
 #include "models/RoundtableModel.h"
 #include "core/roundtable/RoundtableState.h"
+#include "core/session/BandStackFacade.h"
 #include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
@@ -3543,6 +3555,17 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     applyRxOnly();
     connect(this, &RadioModel::currentRadioChanged, this,
             [this](const NereusSDR::RadioInfo&) { applyRxOnly(); });
+    // The band stack lives on the Core, one per radio, so it starts when the
+    // first radio is known. It follows later radios and reconnects itself.
+    if (m_role == Role::Local) {
+        connect(this, &RadioModel::currentRadioChanged, this,
+                [this](const NereusSDR::RadioInfo& info) {
+                    if (!m_bandStackController && !info.macAddress.isEmpty()) {
+                        m_bandStackController = std::make_unique<BandStackController>(this);
+                        m_bandStackFacade->bind(m_bandStackController.get());
+                    }
+                });
+    }
     connect(this, &RadioModel::stationSettingChanged, this,
             [this](const QString& key) {
                 if (key.isEmpty() || key == QLatin1String("RxOnly")) {
@@ -4004,6 +4027,14 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // screens' model, in every placement (wireRoundtable binds them here;
     // StationClient feeds them in a remote window).
     m_roundtableState = new RoundtableState(this);
+    // Band stack plan Task 4: the `bandStack` object, in every placement.
+    m_bandStackFacade = new BandStackFacade(this);
+    // Band stack plan Task 6: what the GUI talks to.
+    if (m_role == Role::Remote) {
+        m_bandStackAccess = new RemoteBandStackAccess(this);
+    } else {
+        m_bandStackAccess = new LocalBandStackAccess(this);
+    }
     m_roundtableModel = new RoundtableModel(this);
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
@@ -5565,6 +5596,8 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
 
 RadioModel::~RadioModel()
 {
+    // The band stack writes its last change while the model is whole.
+    m_bandStackController.reset();
     // A retained ingress handle stays alive, inhibited, after this model.
     m_autoAgcRetiring = true;
     m_autoAgcAcquisitionEpoch->fetch_or(1U);
@@ -10972,6 +11005,14 @@ void RadioModel::reportStationSliceCommandRejected(const QString& reason)
         return;
     }
     emit sliceAddRejected(reason);
+}
+
+void RadioModel::reportStationBandStackRefused(const QString& reason)
+{
+    if (m_role != Role::Remote) {
+        return;
+    }
+    emit stationBandStackRefused(reason);
 }
 
 void RadioModel::reportStationAccessoryRefusal(const QString& device, const QString& reason,
@@ -20788,6 +20829,44 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     slice->setDspMode(seed.mode);
     if (!sliceKeysAreHeld(slice->sliceIndex())) {
         slice->saveToSettings(band);   // Bake seed for next visit.
+    }
+}
+
+QString RadioModel::retuneRefusalFor(const SliceModel* slice, double frequencyHz) const
+{
+    if (slice == nullptr) {
+        return {};
+    }
+    const int stream = slice->streamIndex();
+    if (stream < 0 || !m_streamAllocator.isStreamActive(stream)) {
+        return {};
+    }
+    // The inputs bindSliceToStream gives the allocator, on a copy, as
+    // StationReceivers asks before a retune.
+    SliceStreamAllocator copy = m_streamAllocator;
+    const bool ddcPinned = streamCtunPinned(stream)
+        || (m_receiverManager && m_receiverManager->ddcFrequencyLocked());
+    const auto placement =
+        copy.retuneSlice(stream, slicesOnStream(stream).size() == 1, ddcPinned, frequencyHz);
+    if (placement.outcome != SliceStreamAllocator::Outcome::Rejected) {
+        return {};
+    }
+    return QStringLiteral("Slice %1 stayed on %2\u00A0MHz. %3")
+        .arg(slice->sliceLetter())
+        .arg(slice->frequency() / 1.0e6, 0, 'f', 4)
+        .arg(placement.reason);
+}
+
+void RadioModel::saveBandMemory(SliceModel* slice, Band band)
+{
+    if (slice == nullptr) {
+        return;
+    }
+    // As the band click: while the restore holds this slice's keys, a recall
+    // still moves the slice but writes none of them.
+    if (!sliceKeysAreHeld(slice->sliceIndex())) {
+        materializePendingBandSettings(slice->sliceIndex());
+        slice->saveToSettings(band);
     }
 }
 

@@ -3,6 +3,10 @@
 // Modification history (NereusSDR):
 //   2026-11-05: A device's first slice is a new receiver, RIT and XIT off.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: Band stack plan Task 6: the bandStack.* verbs for the hosting desktop.
+//   2026-11-05: Band stack plan Task 4: bandStackVersion 1, the bandStack object and
+//               the bandStack.* gate (peerGetsBandStack).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-31: Strip legacy Roundtable fields by record type, preserving RF kind.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -1268,6 +1272,7 @@
 #include "core/session/StationOpeningGate.h"
 #include "core/session/StateMirror.h"
 #include "core/session/StationCatalog.h"
+#include "core/session/BandStackFacade.h"
 #include "core/session/PaProfilesFacade.h"
 #include "core/PaProfileManager.h"
 #include "core/session/StationDevicesFacade.h"
@@ -1707,6 +1712,16 @@ bool isSetupDescriptionMessage(const SessionMessage& message)
 
 // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA Gain profiles.
 constexpr const char* kPaProfilesKey = "paProfiles";
+
+// Band stack plan Task 4 (bandStackVersion 1): the Core's band stack.
+constexpr const char* kBandStackKey = "bandStack";
+
+bool isBandStackMessage(const SessionMessage& message)
+{
+    return message.objectKey == kBandStackKey
+        || (message.kind == SessionMessageKind::Schema
+            && message.className == "BandStackFacade");
+}
 
 bool isPaProfilesMessage(const SessionMessage& message)
 {
@@ -2827,7 +2842,10 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                               // Core-slice take-over: 3.
                               {QByteArrayLiteral("sliceAccess"), 3},
                               {QByteArrayLiteral("diversityControl"), 1},
-                              {QByteArrayLiteral("diversityPattern"), 1}};
+                              {QByteArrayLiteral("diversityPattern"), 1},
+                              // Band stack plan Task 4: the hosting desktop's
+                              // own window uses the same verbs.
+                              {QByteArrayLiteral("bandStack"), 1}};
     m_stationPeer.deviceId = SliceOwnership::stationDevice();
     m_stationPeer.sessionDeviceId = SliceOwnership::stationDevice();
     m_stationPeer.placeSettled = true;
@@ -5338,6 +5356,14 @@ void StationServer::invokeAsStationDevice(const SessionMessage& invoke, StationA
         QByteArrayLiteral("diversity.setTarget"),
         QByteArrayLiteral("slice.setListenLevel"), QByteArrayLiteral("confirm.proceed"),
         QByteArrayLiteral("confirm.cancel"),     QByteArrayLiteral("notice.takeBack"),
+        // Band stack plan Task 6: the hosting desktop's stack (design V15).
+        QByteArrayLiteral("bandStack.press"),    QByteArrayLiteral("bandStack.step"),
+        QByteArrayLiteral("bandStack.goTo"),     QByteArrayLiteral("bandStack.add"),
+        QByteArrayLiteral("bandStack.saveHere"), QByteArrayLiteral("bandStack.edit"),
+        QByteArrayLiteral("bandStack.delete"),   QByteArrayLiteral("bandStack.reorder"),
+        QByteArrayLiteral("bandStack.setReturn"), QByteArrayLiteral("bandStack.clear"),
+        QByteArrayLiteral("bandStack.reseed"),   QByteArrayLiteral("bandStack.options"),
+        QByteArrayLiteral("bandStack.restoreExpired"),
     };
     if (invoke.kind != SessionMessageKind::CommandInvoke
         || !kHostVerbs.contains(invoke.commandVerb)) {
@@ -6914,6 +6940,16 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                     message.commandVerb, message.commandId, false, refusal, {}));
                 break;
             }
+        }
+        // Band stack plan Task 4 (bandStackVersion 1): the bandStack.* verbs,
+        // to a peer that declared bandStack on a Core that runs the stack.
+        if (message.commandVerb.startsWith("bandStack.") && !peerGetsBandStack(transport)) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                !m_radioModel.isNull() && m_radioModel->role() == RadioModel::Role::Remote
+                    ? QStringLiteral("This Core cannot share band stacks with this app.")
+                    : QStringLiteral("Update this app to use band stacks on this Core."), {}));
+            break;
         }
         if (message.commandVerb == "tx.twoTonePreset"
             && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
@@ -8597,6 +8633,9 @@ void StationServer::buildMirror()
     // to a peer that declared paProfiles (sendToPeer).
     m_paProfiles->refresh();
     m_mirror->watch(QByteArray(kPaProfilesKey), m_paProfiles.get());
+    // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack, only
+    // to a peer that declared bandStack (sendToPeer).
+    m_mirror->watch(QByteArray(kBandStackKey), m_radioModel->bandStackFacade());
     m_setupDescription->setRadioContext(m_radioModel->boardCapabilities(),
                                         m_radioModel->hardwareProfile().model,
                                         m_radioModel->currentRadioInfo());
@@ -10453,6 +10492,11 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
         if (isPaProfilesMessage(message) && !peerGetsPaProfiles(transport)) {
             return;
         }
+        // Band stack plan Task 4: nor the band stack to a peer that did not
+        // declare bandStack.
+        if (isBandStackMessage(message) && !peerGetsBandStack(transport)) {
+            return;
+        }
         // iPhone app Task 19: nor the catalogue to an older app.
         if (isCatalogMessage(message)
             && (minor < kRadioIdentitySessionProtocolMinor || stationCatalogVersion() < 1)) {
@@ -10527,6 +10571,16 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
 }
 
 // ── The read-only TX EQ curve (R-IOS-13, R-R3-49) ───────────────────────
+
+bool StationServer::peerGetsBandStack(SessionTransport* transport) const
+{
+    // peerPtr, not m_peers: the station device's own peer is not in m_peers.
+    const Peer* peer = peerPtr(transport);
+    return peer != nullptr && !m_radioModel.isNull()
+        && m_radioModel->role() != RadioModel::Role::Remote
+        && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(transport, QByteArrayLiteral("bandStack"), 1);
+}
 
 bool StationServer::peerGetsPaProfiles(SessionTransport* transport) const
 {
@@ -12165,6 +12219,9 @@ TxRefusal StationServer::freezeRefusalFor(const SessionMessage& message) const
     }
     if (message.kind == SessionMessageKind::CommandInvoke
         && (message.commandVerb == "removeSlice" || message.commandVerb == "slice.selectBand"
+            // Band stack plan Task 4: a recall retunes the slice.
+            || message.commandVerb == "bandStack.press" || message.commandVerb == "bandStack.step"
+            || message.commandVerb == "bandStack.goTo"
             // Slice control fix wave (whole-branch review, Critical 1):
             // leaving the frozen slice could close it under the key.
             || message.commandVerb == "slice.release"
@@ -15117,6 +15174,9 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // R-R3-49 / R-IOS-18: the PA Gain profiles, to a peer that
             // declared paProfiles 1.
             caps.paProfileVersion = peerGetsPaProfiles(transport) ? 1 : 0;
+            // Band stack plan Task 4: the Core's band stack, to a peer that
+            // declared bandStack 1 (before coreBuildInfo on the wire).
+            caps.bandStackVersion = peerGetsBandStack(transport) ? 1 : 0;
             // R-R3-47 / R-R3-22: the Tuner Genius's own settings.
             caps.remoteTgxlControlVersion = tgxlControlVersion();
             // iPhone app Task 12 (R-IOS-08): device sign-in by key, last.

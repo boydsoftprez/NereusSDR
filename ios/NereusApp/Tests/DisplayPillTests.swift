@@ -126,7 +126,7 @@ struct DisplayPillTests {
             .setting(key: "DisplayBackgroundImage"), .setting(key: "DisplayBackgroundEnabled"),
             .setting(key: "DisplayBackgroundOpacity"), .setting(key: "DisplayBackgroundColor"),
             .group("On this phone"),
-            .phone(.ctun), .phone(.dup),
+            .phone(.ctun), .phone(.dup), .phone(.bandStack),
         ],
         .fft: [
             .group("FFT"),

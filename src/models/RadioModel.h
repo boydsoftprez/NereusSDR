@@ -878,6 +878,11 @@
 //                Stop All TX that finds nothing to stop still drops a held
 //                CAT TX. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
+//   2026-11-05 - bandStackController, retuneRefusalFor, saveBandMemory.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - bandStack(), reportStationBandStackRefused (band stack plan Task 6).
+//   2026-11-05 - bandStackFacade, the `bandStack` object in every placement.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1135,6 +1140,8 @@ class TxDisplayFeed;
 class TransmitState;
 // Stage C2 filter preset editor — user-override layer over Thetis defaults.
 class FilterPresetStore;
+class BandStackAccess;
+class BandStackController;
 
 // Phase 3J-2 H2: spot-system forward declarations. RadioModel owns the
 // seven spot-ingest clients (DxCluster, RBN, WSJT-X, SpotCollector,
@@ -1184,6 +1191,7 @@ class StationRfKitController;
 class StationRotorController;
 namespace RotorLink { class RotorModel; }
 class RoundtableState;
+class BandStackFacade;
 class RoundtableModel;
 class StationTciController;
 class StationTciModel;
@@ -1597,6 +1605,9 @@ public:
     /// from the silent divergence this whole round exists to close: the
     /// click does nothing and nothing says why.
     void reportStationSliceCommandRejected(const QString& reason);
+    /// Band stack plan Task 6: the Core refused a bandStack.* verb. Routed to
+    /// stationBandStackRefused, which RemoteBandStackAccess turns into refused().
+    void reportStationBandStackRefused(const QString& reason);
 
     /// R-R3-47 / R-R3-22 / R-R3-48: the Core refused an accessory request,
     /// with its own reason. `device` says what it was about: "pgxl",
@@ -3524,6 +3535,26 @@ public:
     // for `slice` to a Core at bandSelectVersion 1 (a grid band), and the
     // Core runs this same function on its own slice.
     void onBandButtonClicked(SliceModel* slice, NereusSDR::Band band);
+
+    // The band stack (docs/architecture/2026-11-05-band-stack-design.md).
+    // Null on a Role::Remote model, and until a radio is known on a local one.
+    BandStackController* bandStackController() const { return m_bandStackController.get(); }
+    /// The `bandStack` object: it follows the controller on the Core and reads
+    /// the mirror in a remote window. Never null.
+    BandStackFacade* bandStackFacade() const { return m_bandStackFacade; }
+    /// What the GUI uses for the band stack, in every placement. Never null.
+    BandStackAccess* bandStack() const { return m_bandStackAccess; }
+
+    /// Why retuning `slice` to `frequencyHz` would be refused, in the words the
+    /// rollback in wireSliceSignals uses, or empty when it would not be. Asks
+    /// the allocator with the inputs bindSliceToStream gives it and changes
+    /// nothing. A slice with no live receiver is never refused here.
+    QString retuneRefusalFor(const SliceModel* slice, double frequencyHz) const;
+
+    /// A slice's held and current per-band memory for `band` goes to settings,
+    /// as a band change saves the band it leaves. Writes nothing while
+    /// sliceKeysAreHeld for the slice, as the band click does.
+    void saveBandMemory(SliceModel* slice, NereusSDR::Band band);
 
     // Panadapter management (client-side)
     QList<PanadapterModel*> panadapters() const { return m_panadapters; }
@@ -5731,6 +5762,13 @@ public:
         m_lastRadioInfo = info;
     }
 
+    // The radio becomes known, as a connect tells every listener, without the
+    // rest of the Connected handler. A second call stands in for a reconnect.
+    void announceRadioForTest(const NereusSDR::RadioInfo& info) {
+        m_lastRadioInfo = info;
+        emit currentRadioChanged(m_lastRadioInfo);
+    }
+
     // The version string a successful connect sets, which the seam above
     // leaves alone: tests of what a Core reports for its radio's firmware
     // pin both.
@@ -6830,6 +6868,8 @@ signals:
     // been reached; `reason` is sliceCapReason()'s words. MainWindow shows
     // it as a toast.
     void sliceAddRejected(QString reason);
+    /// See reportStationBandStackRefused().
+    void stationBandStackRefused(const QString& reason);
     /// R-R3-47 / R-R3-22: the Core refused a request for an accessory's own
     /// settings (`device` "pgxl" or "tgxl"); `reason` is the Core's words.
     /// Parity mini-round (ruling c): a local window's own switch refused on
@@ -9831,6 +9871,9 @@ private:
     // model's slices and receivers), not through Qt parenting.
     std::unique_ptr<StationTciController> m_stationTci;
     std::unique_ptr<RfKitBandFollow>      m_rfKitBandFollow;
+    std::unique_ptr<BandStackController>  m_bandStackController;
+    BandStackFacade*                      m_bandStackFacade{nullptr};
+    BandStackAccess*                      m_bandStackAccess{nullptr};
     // CAT setup from a connected desktop: the `stationCat` object and, on
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};

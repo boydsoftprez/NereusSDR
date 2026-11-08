@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 J.J. Boyd / KG4VCF : the band stack overlay, ticks in both
+//                 paint paths, their click, hover and right-click (band stack
+//                 plan Task 11). AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector's routing (overlay design D21, D25, D27, D34, D36,
 //               D37): a frequency tag or card asks to toggle, a fold asks for its list,
 //               a right-click asks for the short menu before the pan's own menus, the
@@ -7900,6 +7903,8 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     if (m_showSpots) {
         drawSpotMarkers(p, specRect);
     }
+    // Band stack plan Task 11: under the slice markers, which win a click too.
+    drawBandStackTicks(p, specRect);
     // Roundtable plan Task 14: the room tags, above the band plan and
     // under the VFO marker; the GPU overlay below draws them too.
     drawRoundtableTags(p, specRect);
@@ -11425,6 +11430,183 @@ void SpectrumWidget::drawForeignMarkers(QPainter& p, const QRect& specRect, cons
     p.restore();
 }
 
+// ── Band stack plan Task 11: the overlay (design section 7, V6, V11, V17) ──
+//
+// NereusSDR-original, drawn as desktop.html's draw() draws its ticks. The
+// entries come in as a list; everything here is QPainter in the overlay layer,
+// so the spectrum shaders do not change.
+QColor SpectrumWidget::bandStackTickColour(bool active)
+{
+    return active ? QColor(0xd8, 0xa5, 0x5f) : QColor(0x6e, 0xa5, 0xd8);
+}
+
+void SpectrumWidget::setBandStackTicks(const QVector<BandStackTick>& ticks)
+{
+    QVector<BandStackTick> ordered = ticks;
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const BandStackTick& a, const BandStackTick& b) { return a.hz < b.hz; });
+    if (ordered == m_bandStackTicks) {
+        return;
+    }
+    m_bandStackTicks = std::move(ordered);
+    const auto stillHere = [this](const QString& id) {
+        return std::any_of(m_bandStackTicks.cbegin(), m_bandStackTicks.cend(),
+                           [&id](const BandStackTick& tick) { return tick.entryId == id; });
+    };
+    if (!m_hoveredBandStackTick.isEmpty() && !stillHere(m_hoveredBandStackTick)) {
+        m_hoveredBandStackTick.clear();
+        QToolTip::hideText();
+    }
+    markOverlayDirty();
+}
+
+void SpectrumWidget::setBandStackTicksHidden(bool hidden)
+{
+    if (hidden == m_bandStackTicksHidden) {
+        return;
+    }
+    m_bandStackTicksHidden = hidden;
+    if (hidden) {
+        m_bandStackPressTick.clear();
+        if (!m_hoveredBandStackTick.isEmpty()) {
+            m_hoveredBandStackTick.clear();
+            QToolTip::hideText();
+        }
+    }
+    if (!m_bandStackTicks.isEmpty()) {
+        markOverlayDirty();
+    }
+}
+
+QString SpectrumWidget::bandStackTickAt(int mx, int my, const QRect& specRect) const
+{
+    if (m_bandStackTicksHidden || m_bandStackTicks.isEmpty()) {
+        return {};
+    }
+    QString nearest;
+    int nearestPx = kBandStackTickHitPx + 1;
+    for (const BandStackTick& tick : m_bandStackTicks) {
+        const int x = hzToX(tick.hz, specRect);
+        if (x < specRect.left() || x > specRect.right()) {
+            continue;
+        }
+        const int px = std::abs(mx - x);
+        if (px < nearestPx) {
+            nearestPx = px;
+            nearest = tick.entryId;
+        }
+    }
+    if (nearest.isEmpty()) {
+        return {};
+    }
+    // The spectrum only: not the band plan strip, nor the 6 px over the
+    // divider that its own press and cursor take (mouseMoveEvent's strip).
+    static constexpr int kDividerGrabPx = 6;
+    const int bottom = std::min(specRect.bottom() - bandPlanStripHeight(),
+                                specRect.bottom() - kDividerGrabPx);
+    if (my < specRect.top() || my > bottom) {
+        return {};
+    }
+    const ReceiverGrab grab = receiverGrabAt(mx, my, specRect);
+    if (grab.part == ReceiverGrabPart::LowEdge || grab.part == ReceiverGrabPart::HighEdge) {
+        return {};
+    }
+    if (grab.part == ReceiverGrabPart::Tune
+        && std::abs(mx - hzToX(grab.marker.centreHz, specRect)) <= kReceiverCenterGrabPx) {
+        return {};
+    }
+    return nearest;
+}
+
+void SpectrumWidget::drawBandStackTicks(QPainter& p, const QRect& specRect)
+{
+    if (m_bandStackTicksHidden || m_bandStackTicks.isEmpty()) {
+        return;
+    }
+    // desktop.html's draw(): the dot, the line down from it, and the label in
+    // one of three rows when ticks crowd.
+    static constexpr int kDotY = 10;
+    static constexpr qreal kDotRadius = 4.0;
+    static constexpr qreal kDotHoverRadius = 5.0;
+    static constexpr int kLineTop = 12;
+    static constexpr int kLabelBaseline = 26;
+    static constexpr int kLabelRowStep = 13;
+    static constexpr int kLabelRows = 3;
+    static constexpr int kCrowdedPx = 76;
+    static constexpr int kLineAlpha = 0x70;
+    static constexpr int kLineStrongAlpha = 0xc0;
+    const QColor washColour(110, 165, 216, 51);
+    const QColor labelBox(8, 8, 10, 184);
+    const QColor labelText(0xa9, 0xc7, 0xe4);
+    const QColor activeLabelText(0xec, 0xd3, 0xa9);
+    const QColor lockColour(0xc9, 0xa2, 0x4a);
+
+    const int bottom = specRect.bottom() - bandPlanStripHeight(p.device());
+    QFont labelFont = WorkspacePreview::readableFont(p.font(), p.device());
+    labelFont.setFamilies({QStringLiteral("Menlo"), QStringLiteral("DejaVu Sans Mono"),
+                           QStringLiteral("Consolas")});
+    labelFont.setStyleHint(QFont::Monospace);
+    labelFont.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
+    labelFont.setWeight(QFont::DemiBold);
+    const QFontMetrics fm(labelFont, p.device());
+
+    p.save();
+    p.setFont(labelFont);
+    int lastX = -999;
+    int row = 0;
+    for (const BandStackTick& tick : m_bandStackTicks) {
+        const int x = hzToX(tick.hz, specRect);
+        if (x < specRect.left() || x > specRect.right()) {
+            continue;
+        }
+        const bool hovered = tick.entryId == m_hoveredBandStackTick;
+
+        if (hovered) {
+            int xLo = hzToX(tick.hz + tick.filterLowHz, specRect);
+            int xHi = hzToX(tick.hz + tick.filterHighHz, specRect);
+            if (xLo > xHi) {
+                std::swap(xLo, xHi);
+            }
+            p.fillRect(QRect(xLo, specRect.top(), xHi - xLo, bottom - specRect.top()), washColour);
+        }
+
+        QColor line = tick.colour;
+        line.setAlpha(hovered || tick.active ? kLineStrongAlpha : kLineAlpha);
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.setPen(QPen(line, 1.0));
+        p.drawLine(x, specRect.top() + kLineTop, x, bottom);
+
+        row = x - lastX < kCrowdedPx ? (row + 1) % kLabelRows : 0;
+        lastX = x;
+        const int baseline = specRect.top() + kLabelBaseline + row * kLabelRowStep;
+
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(Qt::NoPen);
+        p.setBrush(tick.colour);
+        const qreal radius = hovered ? kDotHoverRadius : kDotRadius;
+        p.drawEllipse(QPointF(x, specRect.top() + kDotY), radius, radius);
+
+        const int textWidth = fm.horizontalAdvance(tick.label);
+        const int textX = std::min(specRect.right() - textWidth - 3,
+                                   std::max(specRect.left() + 2, x + 3));
+        p.setRenderHint(QPainter::Antialiasing, false);
+        p.fillRect(QRect(textX - 1, baseline - 9, textWidth + 2 + (tick.locked ? 10 : 0), 12),
+                   labelBox);
+        p.setPen(tick.active ? activeLabelText : labelText);
+        p.drawText(textX, baseline, tick.label);
+
+        if (tick.locked) {
+            const int lockX = textX + textWidth + 2;
+            p.fillRect(QRect(lockX, baseline - 5, 6, 5), lockColour);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(QPen(lockColour, 1.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawArc(QRectF(lockX + 1, baseline - 7, 4, 4), 0, 180 * 16);
+        }
+    }
+    p.restore();
+}
+
 // Ported from AetherSDR SpectrumWidget.cpp:3211-3294
 // Uses per-slice colors with exact alpha values from AetherSDR.
 //
@@ -14357,6 +14539,20 @@ void SpectrumWidget::beginReceiverDrag(int sliceIndex, bool viaFlag, double cent
 
 void SpectrumWidget::moveReceiverDrag(int mx, const QRect& specRect)
 {
+    // Band stack plan Task 11: within a click's travel of a tick this is still
+    // a recall and nothing moves. Past it, the slide starts as any other does.
+    if (!m_bandStackPressTick.isEmpty()) {
+        if (std::abs(mx - m_receiverDrag.pressX) <= kBandStackTickHitPx) {
+            return;
+        }
+        m_bandStackPressTick.clear();
+        if (m_bandStackPressActivates) {
+            m_bandStackPressActivates = false;
+            if (VfoWidget* flag = m_vfoWidgets.value(m_receiverDrag.sliceIndex, nullptr)) {
+                flag->requestActivation();
+            }
+        }
+    }
     // A press with no horizontal travel does not retune: snapping alone
     // would otherwise move a receiver that sits off the step grid. Once the
     // cursor has left the press column, every move tunes, a return to that
@@ -14397,6 +14593,10 @@ void SpectrumWidget::moveReceiverDrag(int mx, const QRect& specRect)
 
 void SpectrumWidget::mousePressEvent(QMouseEvent* event)
 {
+    m_bandStackPressTick.clear();
+    m_bandStackPressActivates = false;
+    m_bandStackTickMenuPressed = false;
+
     // Phase 3Q-8: while disconnected, swallow all left-clicks and signal
     // MainWindow to open the ConnectionPanel instead.
     if (m_connState != ConnectionState::Connected
@@ -14552,6 +14752,23 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
                 // Das Elternteil kann waehrend exec() gestorben sein — dann ist
                 // auch das Menue weg und `this` eine Leiche. Siehe ScopedChildWidget.h.
                 if (!menuOwner) { return; }
+                event->accept();
+                return;
+            }
+        }
+
+        // Band stack plan Task 11: a right-click on a tick opens its entry's
+        // menu (V17). The window may run the menu here, so the pan can be gone
+        // by the time it returns.
+        {
+            const QString tick = bandStackTickAt(mx, my, specRect);
+            if (!tick.isEmpty()) {
+                m_bandStackTickMenuPressed = true;
+                const QPointer<SpectrumWidget> guard(this);
+                emit bandStackTickContext(tick, event->globalPosition().toPoint());
+                if (!guard) {
+                    return;
+                }
                 event->accept();
                 return;
             }
@@ -14893,6 +15110,12 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
     // From AetherSDR SpectrumWidget.cpp:1112-1119
     // From AetherSDR src/gui/SpectrumWidget.cpp:9920-10010 [@1e0718ad]
     const ReceiverGrab grab = receiverGrabAt(mx, my, specRect);
+    // Band stack plan Task 11: a press on a tick is a recall until it travels
+    // past a click (mouseReleaseEvent), and otherwise the gesture it would have
+    // been. bandStackTickAt has already given way to a marker line or an edge.
+    if (event->button() == Qt::LeftButton) {
+        m_bandStackPressTick = bandStackTickAt(mx, my, specRect);
+    }
     if (grab.part == ReceiverGrabPart::LowEdge || grab.part == ReceiverGrabPart::HighEdge) {
         m_draggingFilter = (grab.part == ReceiverGrabPart::LowEdge)
             ? FilterEdge::Low : FilterEdge::High;
@@ -14917,8 +15140,12 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         // the pan's frequencyClicked resolves to (sliceForPan) need not be
         // the one grabbed (2026-10-21).
         const bool viaFlag = grab.marker.flag != nullptr;
+        // On a tick inside its passband, selecting waits for the press to
+        // become a drag (moveReceiverDrag): a recall selects nothing.
         if (!grab.marker.active && viaFlag) {
-            if (VfoWidget* flag = m_vfoWidgets.value(grab.marker.sliceIndex, nullptr)) {
+            if (!m_bandStackPressTick.isEmpty()) {
+                m_bandStackPressActivates = true;
+            } else if (VfoWidget* flag = m_vfoWidgets.value(grab.marker.sliceIndex, nullptr)) {
                 flag->requestActivation();
             }
         }
@@ -15437,6 +15664,32 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         }
     }
 
+    // Band stack plan Task 11: the wash and tooltip of the tick under the
+    // pointer. It marks the overlay on every move, not just a change of tick,
+    // as the notch hover above does, for the cursor readout in the same layer.
+    {
+        const QString hoverTick = bandStackTickAt(mx, my, specRect);
+        if (hoverTick != m_hoveredBandStackTick) {
+            m_hoveredBandStackTick = hoverTick;
+            if (hoverTick.isEmpty()) {
+                QToolTip::hideText();
+            }
+            markOverlayDirty();
+        }
+        if (!hoverTick.isEmpty()) {
+            for (const BandStackTick& tick : std::as_const(m_bandStackTicks)) {
+                if (tick.entryId == hoverTick) {
+                    QToolTip::showText(event->globalPosition().toPoint(), tick.tip, this);
+                    break;
+                }
+            }
+            setCursor(Qt::PointingHandCursor);
+            markOverlayDirty();
+            event->accept();
+            return;
+        }
+    }
+
     // Sub-epic E: hit-test against the actual dBm-strip width, not the
     // effectiveStripW() layout reservation (which widens to 72px when paused
     // to make room for the time-scale strip's UTC labels — but the dBm strip
@@ -15644,6 +15897,17 @@ void SpectrumWidget::contextMenuEvent(QContextMenuEvent* event)
         event->accept();
         return;
     }
+    // Band stack plan Task 11: the right press already opened the entry's menu
+    // (it can have deleted the entry, so the flag and not the tick says so).
+    // Reaching the applet would open the pan's menu after it.
+    if (event->reason() == QContextMenuEvent::Mouse
+        && (m_bandStackTickMenuPressed
+            || !bandStackTickAt(event->pos().x(), event->pos().y(),
+                                spectrumLayout().spectrum).isEmpty())) {
+        m_bandStackTickMenuPressed = false;
+        event->accept();
+        return;
+    }
     // A frequency tag's right press took its own menu (mousePressEvent); the pan's
     // would open on top of it.
     if (event->modifiers() == Qt::NoModifier && m_roundtableTagDisplay != RoundtableTagDisplay::Hidden) {
@@ -15694,6 +15958,13 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::LeftButton) {
+        // Band stack plan Task 11: the tick this click recalls, emitted last so
+        // whatever it starts finds the gesture ended. moveReceiverDrag has
+        // cleared it if this was a slide.
+        QString recallTick;
+        if (m_draggingVfo) {
+            recallTick = m_bandStackPressTick;
+        }
         // If pan drag was short (click, not real drag), treat as click-to-tune
         // From AetherSDR SpectrumWidget.cpp:1427-1457 — 4px Manhattan threshold
         if (m_draggingPan) {
@@ -15715,7 +15986,9 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
             // It stays because ddcRetuneRequested below is NOT one of them
             // and moves the slice just as surely: its own comment records
             // that MainWindow forwards it to slice frequency.
-            if (dx <= 4 && !m_moxOverlay) {
+            if (dx <= 4 && !m_bandStackPressTick.isEmpty()) {
+                recallTick = m_bandStackPressTick;
+            } else if (dx <= 4 && !m_moxOverlay) {
                 const QRect specRect = spectrumLayout().spectrum;
                 double hz = xToHz(static_cast<int>(event->position().x()), specRect);
                 hz = std::round(hz / m_stepHz) * m_stepHz;
@@ -15794,6 +16067,15 @@ void SpectrumWidget::mouseReleaseEvent(QMouseEvent* event)
             emit notchDragFinished();
         }
         setCursor(Qt::CrossCursor);
+        m_bandStackPressTick.clear();
+        m_bandStackPressActivates = false;
+        if (!recallTick.isEmpty()) {
+            const QPointer<SpectrumWidget> guard(this);
+            emit bandStackTickClicked(recallTick);
+            if (!guard) {
+                return;
+            }
+        }
     }
     QWidget::mouseReleaseEvent(event);
 }
@@ -15823,6 +16105,7 @@ void SpectrumWidget::leaveEvent(QEvent* event)
         m_selectedNotchId = -1;
         markOverlayDirty();
     }
+    m_hoveredBandStackTick.clear();
     QWidget::leaveEvent(event);
 }
 
@@ -17316,6 +17599,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             if (m_showSpots) {
                 drawSpotMarkers(p, specRect);
             }
+            // Band stack plan Task 11: under the slice markers, as in paintEvent.
+            drawBandStackTicks(p, specRect);
             // Roundtable tags are not baked here. A report or an age would
             // otherwise rebuild this whole chrome texture. Their child
             // widget paints independently of both GPU overlay textures.

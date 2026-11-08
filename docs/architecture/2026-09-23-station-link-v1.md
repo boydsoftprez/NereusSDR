@@ -950,6 +950,13 @@ the Core takes its `paProfile.*` verbs; a peer that does not sees none of
 them. The desktop's remote window does not declare it: its PA Gain page
 reads and writes the profile settings through the settings proxy.
 
+**`bandStack` 1** (design 2026-11-05-band-stack-design.md): the client shows
+and changes the Core's band stack. A peer that declares it at minor 11 is
+sent `bandStackVersion` (section 6.3) and the read-only `bandStack` object,
+and the Core takes its `bandStack.*` verbs; a peer that does not sees none
+of them and keeps `slice.selectBand`. The desktop's remote window declares
+it, and the hosting desktop's own session has it.
+
 **`txInhibitReason` 1** (HL2 I/O board fault): the client shows why the
 Core holds transmit off. A peer that declares it at minor 11 is sent
 `txInhibitReasonVersion` (section 6.3) and `radio`'s `txInhibitReason`
@@ -1303,6 +1310,7 @@ table.
 | `displayCodecVersion` | 2 |
 | `stationRoundtableVersion` | 2 |
 | `nnrLoadWarningVersion` | 1 |
+| `bandStackVersion` | 1 |
 
 <!-- /surface -->
 
@@ -1615,6 +1623,15 @@ When a feature is off, its version is 0:
   Core's capability, receive-only, transmit-permission and value-range
   checks still apply, with the reasons it gives the desktop's own PA
   profile writes. None keys the radio.
+- `bandStackVersion` (design 2026-11-05-band-stack-design.md): optional,
+  sent only at agreed minor 11 to a peer whose hello declared `bandStack` 1,
+  on a Core that runs its own radio, after `nnrLoadWarningVersion` (or after
+  the last entry before it when that is absent) and immediately before
+  `coreBuildInfo`. At 1 the Core sends `bandStack` (read-only, section 7.1)
+  and takes the `bandStack.*` verbs (section 9). The session protocol minor
+  did not change. A peer that gets no entry uses `slice.selectBand`; a client
+  on a Core that sends no entry shows band stack controls greyed, saying the
+  Core needs updating.
 - `radeStatusVersion` (RADE on the phone's VFO flag): optional, sent only
   at agreed minor 11 to a peer whose hello declared `radeStatus` 1, while
   the Core has a radio model, after `paProfileVersion` (or after the
@@ -2527,7 +2544,8 @@ declared `txEqCurve` (section 6.1); `remoteTxVersion` and the three
 `radioModels`; `coreAddressesVersion` only for a device signed in with its
 own key that declared `coreAddresses`; `adcAttenuatorVersion` only for
 a peer that declared `adcAttenuators`; `paProfileVersion` only for a
-peer that declared `paProfiles` (section 6.1); `radeStatusVersion` only
+peer that declared `paProfiles` (section 6.1); `bandStackVersion` only for
+a peer that declared `bandStack` (section 6.1); `radeStatusVersion` only
 for a peer that declared `radeStatus`; `txInhibitReasonVersion` only for a
 peer that declared `txInhibitReason` (section 6.1); `paTransmitBandVersion` only for a
 peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
@@ -2751,7 +2769,8 @@ older window sees only the values it was built for.
 | 117 | `displayCodecVersion` | `i64` |
 | 118 | `stationRoundtableVersion` | `i64` |
 | 119 | `nnrLoadWarningVersion` | `i64` |
-| 120 | `coreBuildInfo` | `utf8` |
+| 120 | `bandStackVersion` | `i64` |
+| 121 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -2914,6 +2933,13 @@ resume below 250 ms remains independent of warning presentation.
 | 17 | `drainCurrentA` | `f64` | outbound |  |
 | 18 | `efficiencyText` | `utf8` | outbound |  |
 | 19 | `bandFollow` | `enum` | outbound | 0, 1, 2, 3 |
+
+**BandStackFacade** (2 properties)
+
+| Ordinal | Property | Wire kind | Direction | Enum values |
+| --- | --- | --- | --- | --- |
+| 0 | `json` | `utf8` | outbound |  |
+| 1 | `revision` | `i64` | outbound |  |
 
 **ConnectedDevicesFacade** (3 properties)
 
@@ -3719,6 +3745,7 @@ destroyed during the session.
 | `vax` | `StationVax` |
 | `catalog` | `StationCatalog` |
 | `paProfiles` | `PaProfilesFacade` |
+| `bandStack` | `BandStackFacade` |
 | `setup` | `SetupDescription` |
 | `spotSources` | `SpotSourceHost` |
 | `pan:<i>` | `PanadapterModel` |
@@ -3730,6 +3757,22 @@ destroyed during the session.
 
 Notes on the keys:
 
+- **`bandStack`** (`BandStackFacade`, `bandStackVersion` 1). The Core's band
+  stack, read-only (a write is refused; the `bandStack.*` verbs change it),
+  sent only to a peer at agreed minor 11 that declared `bandStack` 1. `json`
+  is the document: `schema`, `region`, `options` (`dupeProtection`,
+  `expiryMinutes` 0, 5, 15, 30 or 60, `dwellSeconds` 0, 10, 30 or 60),
+  `bands` (by band key: `order`, `returnMode` `current`, `lastUsed` or
+  `specific`, `specificId`), `entries` (`id`, `band`, `frequencyHz`, `mode`,
+  `filterLowHz`, `filterHighHz`, `centerHz`, `spanHz` with 0 meaning no saved
+  zoom, `locked`, `seeded`, `name`, `lastUsedMs`), `places` (by slice letter,
+  then band key, the entry id that slice is on), and two fields published but
+  not saved: `lastExpiry` (`batchId`, `count`) and `lastRecall` (`seq`,
+  `sliceId`, `applyView`, `centerHz`, `spanHz`). A pan's view belongs to each
+  device, so only the device controlling `sliceId` applies `lastRecall` to its
+  own view when `seq` moves. `json` is empty until the Core knows a radio.
+  `revision` moves by one each time `json` changes and at no other time.
+  A window keeps no copy when the session ends.
 - **`roundtable`** (`RoundtableState`, `stationRoundtableVersion` 1). The
   Core's Roundtable connection, read-only (a write is refused; the
   `roundtable.*` verbs change it), sent only to a peer at agreed minor 11
@@ -6473,6 +6516,19 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `paProfile.setGain` | `band` i64, `value` f64 | `paProfileVersion` | 1 | 11 |
 | `paProfile.setAdjust` | `band` i64, `step` i64, `value` f64 | `paProfileVersion` | 1 | 11 |
 | `paProfile.setMaxPower` | `band` i64, `value` f64 | `paProfileVersion` | 1 | 11 |
+| `bandStack.press` | `sliceId` i64, `band` utf8, `direction` utf8, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.step` | `sliceId` i64, `direction` utf8, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.goTo` | `sliceId` i64, `entryId` utf8, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.add` | `sliceId` i64, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.saveHere` | `sliceId` i64, `entryId` utf8, `viewCenterHz` i64 (optional), `viewSpanHz` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.edit` | `entryId` utf8, `name` utf8 (optional), `locked` bool (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.delete` | `entryId` utf8 | `bandStackVersion` | 1 | 11 |
+| `bandStack.reorder` | `band` utf8, `ids` utf8 | `bandStackVersion` | 1 | 11 |
+| `bandStack.setReturn` | `band` utf8, `mode` utf8, `entryId` utf8 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.clear` | `band` utf8 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.reseed` | none | `bandStackVersion` | 1 | 11 |
+| `bandStack.options` | `dupeProtection` bool (optional), `expiryMinutes` i64 (optional), `dwellSeconds` i64 (optional) | `bandStackVersion` | 1 | 11 |
+| `bandStack.restoreExpired` | `batchId` utf8 | `bandStackVersion` | 1 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -6861,6 +6917,33 @@ These command groups need a sentence beyond the table:
   bundle." and "The Core could not read this request.". A window shows a
   refusal in its Support dialog; a bundle it could not get is written
   with the reason in `core/unavailable.txt`.
+- **The band stack** (`bandStackVersion` 1). `band` in every verb is a band
+  key as the `bandStack` document names it, so `bandStack.press` takes GEN and
+  the shortwave bands, which `slice.selectBand` does not. `viewCenterHz` and
+  `viewSpanHz` are the sender's own view; where they are missing an entry keeps
+  its stored values. `bandStack.press` goes to the band's next or previous spot
+  or wherever its return mode says, `bandStack.step` moves along the slice's own
+  band, and `bandStack.goTo` goes to one entry. Each of those three retunes the
+  slice, saves the spot it left, and moves `lastRecall` and the slice's place.
+  `bandStack.add` adds the slice's current spot and `bandStack.saveHere` writes
+  it over an entry; neither retunes. `bandStack.edit` changes `name` or `locked`
+  (one is needed), `bandStack.delete` removes an entry, `bandStack.reorder` takes
+  `ids`, a JSON array as text holding exactly that band's entries,
+  `bandStack.setReturn` takes `mode` `current`, `lastUsed` or `specific` (with
+  `entryId`), `bandStack.clear` removes unlocked entries from `band` or from
+  every band, `bandStack.reseed` applies the Core's current region and moves no
+  slice, `bandStack.options` takes any of its three values, and
+  `bandStack.restoreExpired` brings back `lastExpiry`'s `batchId` for 5 seconds
+  after it. A verb naming `sliceId` meets the slice checks: another device's
+  slice gets the usual refusal, a listener gets "You are only listening to Slice
+  %1. Take control of it to change its band.", and a recall of the frozen
+  transmit slice gets the on-air words. Other refusals: "Update this app to use
+  band stacks on this Core." without the feature, "Connect to a radio to use
+  band stacks." while the Core has no radio, "The request for the band stack was
+  not understood." for a missing or wrong argument, "That band stack entry no
+  longer exists." for an entry another device removed, and the desktop's words
+  for a locked or transmitting slice. A refusal changes nothing. None keys the
+  radio. `slice.selectBand` is unchanged.
 - **The AM Mod Monitor's reset** (R-IOS-13, R-R3-49, `txModMonitorVersion`
   1). `txModMonitor.reset` (`source` i64: 0 the transmit I/Q, 1 the PA
   feedback) starts the Core's analyzer for that source afresh (its carrier

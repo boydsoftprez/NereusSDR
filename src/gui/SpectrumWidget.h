@@ -1,4 +1,7 @@
 // Modification history (NereusSDR):
+//   2026-11-06: BandStackTick and the band stack overlay: ticks, their hit
+//               test, hover and on-air hide (band stack plan Task 11). J.J.
+//               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector's routing (overlay design D21, D25, D27, D34, D36,
 //                 D37): setRoundtableInspectorRect, roundtableInspectorSpot, the
 //                 short menu, a fold asks for its list, and the band no longer ends
@@ -590,6 +593,25 @@ class ImdSpectrumTestAccess;
 class WaterfallTicker;  // src/gui/spectrum/WaterfallTicker.h
 struct SpectrumEndpointContext;
 class DisplaySettingsModel;  // src/models/DisplaySettingsModel.h (3D Stacked-Trace Spectrum Plan Task 18)
+
+/// One saved band stack entry as a pan draws it (design section 7, Overlay).
+struct BandStackTick {
+    QString entryId;
+    double hz{0.0};
+    /// "7.185 LSB", beside the tick.
+    QString label;
+    /// What hovering says: frequency, mode and filter, N of M, name.
+    QString tip;
+    QColor colour;
+    bool locked{false};
+    /// This pan's slice has this entry as its place on the entry's band.
+    bool active{false};
+    // The entry's filter, relative to hz, for the hover wash.
+    int filterLowHz{0};
+    int filterHighHz{0};
+
+    bool operator==(const BandStackTick& other) const = default;
+};
 
 // Waterfall color scheme presets: extracted to core in R1 Task 4
 // (src/core/spectrum/ISpectrumSink.h) alongside AverageMode below, because
@@ -2489,6 +2511,22 @@ public:
     void drawForeignMarkersForTest(QPainter& p, const QRect& specRect, const QRect& wfRect)
     { drawForeignMarkers(p, specRect, wfRect); }
 
+    // ---- Band stack overlay (band stack plan Task 11, design section 7) ----
+    /// The entries to draw, in any order. Only a change repaints: a Core's
+    /// document can arrive often and the overlay bake is on the display path.
+    void setBandStackTicks(const QVector<BandStackTick>& ticks);
+    /// Ordered by frequency.
+    const QVector<BandStackTick>& bandStackTicks() const { return m_bandStackTicks; }
+    /// Hidden on air (V11). A hidden tick neither draws nor takes a click.
+    void setBandStackTicksHidden(bool hidden);
+    bool bandStackTicksHidden() const { return m_bandStackTicksHidden; }
+    /// The tick's color: desktop.html's draw, gold on the slice's place.
+    static QColor bandStackTickColour(bool active);
+    QString hoveredBandStackTick() const { return m_hoveredBandStackTick; }
+    /// Test seam: paints the ticks alone, as both paint paths do.
+    void drawBandStackTicksForTest(QPainter& p, const QRect& specRect)
+    { drawBandStackTicks(p, specRect); }
+
     /// Every RX marker this pan must paint, one per hosted slice, in paint
     /// order: the slices the operator has not selected first, in slice order,
     /// then the selected slice, so its marker lands on top where two overlap.
@@ -3189,6 +3227,10 @@ signals:
     void receiverFlagRegionChanged();
     /// Task 78: a click on another device's slice label, with what it says.
     void foreignMarkerClicked(int sliceId, const QString& explanation);
+    /// A click within kBandStackTickHitPx of a tick, in place of the tune.
+    void bandStackTickClicked(const QString& entryId);
+    /// A right-click on a tick, in place of the pan's own menu.
+    void bandStackTickContext(const QString& entryId, const QPoint& globalPos);
     // 3M-5b: emitted when any TX waterfall colormap property changes.
     // Setup page wires this to update the preview / UI state.
     void txWfSettingsChanged();
@@ -3634,6 +3676,21 @@ private:
     QVector<ForeignSliceMarker> m_foreignMarkers;
     bool m_ownSliceMarkerPresentationAllowed{true};
     QHash<int, QRect> m_foreignLabelRects;
+    // Band stack overlay. A click within this many pixels of a tick recalls.
+    static constexpr int kBandStackTickHitPx = 4;
+    void drawBandStackTicks(QPainter& p, const QRect& specRect);
+    /// The tick a press at this point would take, empty for none. A slice's
+    /// marker line and its filter edges win over a tick under them (V17).
+    QString bandStackTickAt(int mx, int my, const QRect& specRect) const;
+    QVector<BandStackTick> m_bandStackTicks;
+    bool m_bandStackTicksHidden{false};
+    QString m_hoveredBandStackTick;
+    // The tick this left press landed on, until it travels too far to be a click.
+    QString m_bandStackPressTick;
+    // The press also holds back selecting the receiver whose passband it is in.
+    bool m_bandStackPressActivates{false};
+    // This right press opened the entry's menu; Qt's own context event follows it.
+    bool m_bandStackTickMenuPressed{false};
     void drawCursorInfo(QPainter& p, const QRect& specRect);
 
     // ---- Spot overlay (Phase 3J-2 Task E1) ----
