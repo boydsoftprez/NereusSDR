@@ -11,6 +11,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - The Phone/CW panel is also container content
+//                 (registerPhoneCwSectionContent), with a hide toggle for
+//                 each row and for the page buttons. Brian Sutton,
+//                 AI-assisted via xAI Grok.
 //   2026-11-06: A desktop's fill at connect brings back the radio's saved
 //               layout. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-11-05: The RX applet's setup hop is connected once, when the applet
@@ -1524,6 +1528,7 @@ warren@wpratt.com
 #include "applets/TxApplet.h"
 #include "applets/TxSectionContent.h"
 #include "applets/RxSectionContent.h"
+#include "applets/PhoneCwSectionContent.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
@@ -14261,6 +14266,10 @@ void MainWindow::populateDefaultMeter()
         // The RX applet's jobs as independent container content. The
         // applet's own panel is unchanged.
         registerRxSectionContent(*registry, m_rxApplet);
+        // A copy of the Phone/CW panel. The docked applet is unchanged.
+        // The copy hides each row, and the Phone and CW buttons, from its
+        // entry, and opens on the page that entry names.
+        registerPhoneCwSectionContent(*registry, m_phoneCwApplet);
     }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {

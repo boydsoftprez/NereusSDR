@@ -4193,6 +4193,7 @@ nereus_add_test(tst_tx_applet_lev_eq_cfc)
 nereus_add_test(tst_tx_section_content)
 nereus_add_test(tst_rx_section_content)
 target_compile_definitions(tst_rx_section_content PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_phone_cw_section_content)
 
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".

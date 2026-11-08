@@ -2287,6 +2287,7 @@ set(GUI_SOURCES
     src/gui/applets/TxEqDialog.cpp
     src/gui/applets/TxCfcDialog.cpp
     src/gui/applets/PhoneCwApplet.cpp
+    src/gui/applets/PhoneCwSectionContent.cpp
     src/gui/applets/RadeApplet.cpp
     src/gui/applets/DisplayApplet.cpp
     src/gui/applets/EqApplet.cpp
