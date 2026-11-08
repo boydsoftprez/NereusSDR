@@ -2,6 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-08 - J.J. Boyd (KG4VCF), hot keys: with band stacking in main, a real
+//                window's band stack keys find its functions.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // Each non-transmit hot key on a real offscreen local window: fire the action
 // through the window's dispatcher, then read the model.
@@ -468,13 +471,13 @@ private slots:
         MainWindowHotKeyTargets targets(&w.window);
         QCOMPARE(targets.unavailableReason(QStringLiteral("voice.msg1")), kVoiceReason);
         QCOMPARE(targets.unavailableReason(QStringLiteral("voice.stop")), kVoiceReason);
-        QCOMPARE(targets.unavailableReason(QStringLiteral("bandstack.panel")), kBandStackReason);
+        // The window has band stacking now, and its own functions say why when
+        // the stack can't be used, so the hot key holds no reason of its own.
+        QCOMPARE(targets.unavailableReason(QStringLiteral("bandstack.panel")), QString());
         QCOMPARE(targets.unavailableReason(QStringLiteral("tune.up")), QString());
 
         w.press("voice.msg1");
         QVERIFY(toastShown(w.window, kVoiceReason));
-        w.press("bandstack.next");
-        QVERIFY(toastShown(w.window, kBandStackReason));
 
         QCOMPARE(frequency.count(), 0);
         QCOMPARE(mode.count(), 0);

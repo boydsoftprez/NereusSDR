@@ -4,6 +4,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-08 - J.J. Boyd (KG4VCF), hot keys: band stack rows can be set now
+//                that the window has band stacking.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // Setup > Keys and controllers > Keyboard: the map, the list, Set and its
 // refusals, Acts on, disabled rows with their reasons, import and export, and
@@ -1169,8 +1172,8 @@ private slots:
         QVERIFY2(w.ready(), qPrintable(NereusSDR::Test::activationState(&w.window)));
         QVERIFY(w.openPage());
         MainWindowHotKeyTargets targets(&w.window);
-        // Voice is not built, band stack is not there yet.
-        for (const char* id : {"voice.msg1", "voice.stop", "bandstack.next", "bandstack.panel"}) {
+        // Voice is not built.
+        for (const char* id : {"voice.msg1", "voice.stop"}) {
             const QString reason = targets.unavailableReason(QLatin1String(id));
             QVERIFY2(!reason.isEmpty(), id);
             auto* const set = button(w.page, QStringLiteral("hotKeySet:"), QLatin1String(id));
@@ -1179,8 +1182,9 @@ private slots:
             auto* const table = w.page->findChild<QTableWidget*>(QStringLiteral("hotKeyList"));
             QVERIFY2(!table->isRowHidden(rowOf(QLatin1String(id))), id);
         }
-        // On a local window, dot and dash are fine.
-        for (const char* id : {"cw.dot", "cw.dash", "tune.up", "tx.hold"}) {
+        // On a local window, dot and dash are fine. The window has band stacking,
+        // so its keys can be set.
+        for (const char* id : {"cw.dot", "cw.dash", "tune.up", "tx.hold", "bandstack.next", "bandstack.panel"}) {
             QVERIFY2(button(w.page, QStringLiteral("hotKeySet:"), QLatin1String(id))->isEnabled(), id);
         }
     }
