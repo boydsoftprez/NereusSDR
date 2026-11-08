@@ -11,6 +11,8 @@
 // tests of the stack block. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-06: band stack plan Task 18, a Core that describes General and takes
 // region edits, for the region question. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-08: band stack follow-up, the start-on-Panadapter flag for the UI
+// tests' band launches. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 #if DEBUG
 import Combine
@@ -55,6 +57,25 @@ enum UITestBand {
     /// Core, and the keyed meters show while keyed. The app keeps no
     /// microphone with it, so nothing asks iOS for one.
     static let keyedArgument = "-NereusKeyedFixture"
+    /// Beside ``ConnectionFlow/showBandArgument``: the launch's first return
+    /// to where the operator was keeps the Panadapter tab, whatever tab the
+    /// phone kept from an earlier run (the UI tests share one simulator).
+    /// It is read once, at that first return; the kept tab is not changed or
+    /// overridden, and a tab chosen later is kept as usual.
+    static let startOnPanadapterArgument = "-NereusStartOnPanadapter"
+    /// Whether this launch's first return to where the operator was is still to come.
+    @MainActor private static var startOnPanadapterPending = true
+
+    /// True once, at the first call, when `arguments` carry
+    /// ``startOnPanadapterArgument``; false after that and without it.
+    @MainActor
+    static func takeStartOnPanadapter(_ arguments: [String]) -> Bool {
+        guard startOnPanadapterPending else {
+            return false
+        }
+        startOnPanadapterPending = false
+        return arguments.contains(startOnPanadapterArgument)
+    }
     /// Beside ``bandMenuArgument`` and ``bandStackEnvironment``: a Core with a
     /// band stack that opens bands. Each `bandStack.*` verb and
     /// `slice.selectBand` is refused with its own arguments in the reason, so
