@@ -92,9 +92,11 @@ Each band keeps a list of saved spots. A spot holds a frequency, mode and filter
 - Hold Shift to move to the previous spot instead.
 - Hold Ctrl (Command on Mac) to add where you are now as a new spot.
 
+From the keyboard, **M** goes to the next spot on the selected slice's band and **N** to the previous one, wrapping at the ends. **Shift+M** adds where you are now as a new spot. These are hot keys; change them under **File > Settings... > Keys and controllers > Keyboard**.
+
 The BAND button's list stays open after a press, so you can keep pressing. Click elsewhere to close it. Each press shows a short note such as "40m: 7.185 LSB, 5 of 6". The status bar shows the band and your place, such as **40m 5/6**. A dash in place of the number, as in **40m -/6**, means the slice has no place on that band.
 
-**Open the list.** Choose **Band > Band Stacking...** or click the three dots on the status bar. The **BAND STACK** panel opens beside the panadapters, for the selected slice. Drag its edge to make it wider.
+**Open the list.** Choose **Band > Band Stacking...** or click the three dots on the status bar, or press **Shift+N**, which also closes it. The **BAND STACK** panel opens beside the panadapters, for the selected slice. Drag its edge to make it wider.
 
 - Click a band's header to open or close it.
 - Click a row to go to that spot.

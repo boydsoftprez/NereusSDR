@@ -367,6 +367,75 @@ The item can also show an externally supplied meter value. It keeps existing MMI
 
 The MMIO endpoint editor configures a data connection and exposes received variable values. It does not certify that a sender is connected or that arbitrary external devices are compatible. Start with a non-critical test value and confirm the value readback before relying on it at the operating position.
 
+## Keys, knobs and controllers
+
+The keyboard, MIDI controllers, USB knobs and Stream Deck style plugins all run the same list of actions. Keyboard keys work from the first launch with no setup. Hot key settings are kept on this computer, so they also apply in a window connected to a Core, and they are not shared through the Core.
+
+To see or change the keys, choose **View > Keyboard Shortcuts...** or **File > Settings... > Keys and controllers > Keyboard**. To turn every hot key off at once, clear **View > Use Shortcuts**, the same switch as **Use shortcuts** on the Keyboard page. Menu shortcuts such as Ctrl+R keep working either way.
+
+### Default keys
+
+On a Mac, Ctrl in this list is the Command key.
+
+| Key | Action |
+| --- | --- |
+| **Right** / **Left** | Tune up or down one step. Add **Shift** for ten steps. |
+| **]** / **[** | Tune step larger or smaller. |
+| **L** | Lock the slice. |
+| **G** | Go to frequency (opens the flag's frequency entry). |
+| Backtick | Next slice. |
+| **B** / **V** | Filter next or previous. |
+| **Up** / **Down**, keypad **+** / **-** | Volume up or down. |
+| **U**, keypad multiply | Mute. |
+| **J** / **H** | Next or previous band. |
+| **M** / **N** | Band stack next or previous spot. |
+| **Shift+M** | Add a band stack spot where you are. |
+| **Shift+N** | Open or close the band stack panel. |
+| **X** / **Z** | Mode next or previous. |
+| **=** / **-** | Zoom in or out on the panadapter you are using. |
+| **R**, **E**, **A** | Noise reduction, noise blanker, auto notch on or off. |
+| **I** / **O** | RIT or XIT on or off. |
+| **Space** (hold) | Talk while held. |
+| **Ctrl+Shift+M** | MOX on or off. |
+| **Ctrl+T** | TUNE on or off. |
+| **Ctrl+Shift+T** | Two-tone on or off. |
+| **Ctrl+F1** to **Ctrl+F8** | Send CW message 1 to 8. |
+| **Ctrl+F10** | Stop the CW message. |
+| Comma / period (hold) | CW dot and dash, in CW mode. |
+| Slash (hold) | CW straight key, in CW mode. |
+
+**VOX on or off** has no key until you give it one. It turns on the same VOX as the TX panel's **VOX** button. Voice message keys (**Ctrl+Shift+F1** to **F4**, **Ctrl+Shift+F10**) are listed but grayed, because voice messages are not built yet.
+
+### Where keys work
+
+Keys work in the main window, a floating panadapter and a floating container. They do nothing while Setup, another dialog or a menu is open. While a text box, a number box or a list you can type in has the cursor, every key types there. A control you reach with Tab keeps the arrow keys and Space until you move on. Holding a tuning or volume key repeats it; other keys act once per press.
+
+Slice keys act on the selected slice. To tie one to a slice, set its **Acts on** to **Slice A** to **Slice D**. Transmit keys always use the transmit slice. On a slice you only listen to, volume and mute change your own volume, and the other slice keys do nothing. A locked slice refuses tuning, band and mode keys.
+
+### Change, clear and reset a key
+
+1. In the **Actions** list, find the action. Type in **Search actions or keys** or choose a category to narrow the list.
+2. Click **Set** and press the new key. Press Esc to cancel. The new key replaces the action's keys.
+3. If another action has that key, the row says so, for example **B is already Filter next.** Click **Replace** to move the key, or **Cancel**.
+
+**Clear** removes an action's keys. **Default** puts one action back, and **Reset all to defaults** puts every key back. You can also click a key on the **Keyboard map**, with its **Plain**, **Shift**, **Ctrl** and **Ctrl+Shift** layers, to see what it does and change it. Changes are saved at once. **Export** saves your keys to a text file and **Import** reads one back, listing any lines it skipped and why.
+
+Some keys can't be used. Menu shortcuts are reserved, and the row names the menu item. A transmit, CW or voice action can't use a plain letter, number or arrow key, so a stray press can't key the radio; use Space, a function key or a combination. MOX, TUNE and Two-tone stay on after you let go, so they can't use Space.
+
+### Keys that transmit
+
+Space keys the radio while you hold it and unkeys when you let go. If MOX was already on, letting go leaves it on. MOX, TUNE and Two-tone work like their buttons and stay on until you press again. Each key is refused for the same reasons as its button, and the reason shows. A held key lets go if you switch to another window, open a dialog or menu, or the computer sleeps. In a window connected to a Core, CW dot and dash need the 2026.11.1 Core.
+
+### MIDI, knobs and deck plugins
+
+These have not been tried with real devices yet. Each page marks its devices **Untested**.
+
+- **MIDI:** **File > Settings... > Keys and controllers > MIDI**, or **Tools > MIDI Mapping...**. Choose the **Device:** and a **Profile:**. A controller starts empty: choose an action under **Learn:**, then move the control. Each control is a **Button**, **Fader** or **Endless knob**.
+- **Knobs:** the **Knobs** page lists the RC-28, PowerMate, ShuttleXpress, ShuttlePro v2, FlexControl, TMate 2, Stream Deck+ and Ulanzi Dial, with each one's state and its actions, which you can change. A knob you turn can't run a transmit action; a button can.
+- **Deck plugins:** the **Deck Plugins** page installs plugins for the Stream Deck app and Ulanzi Studio (macOS and Windows) and StreamController (Linux). They connect only to NereusSDR on the same computer. Clear **Let deck plugins connect** to stop them.
+
+Several knobs and decks start with transmit actions on their buttons, such as MOX and TUNE on the FlexControl, Stream Deck+ and Ulanzi Dial, and talk on the RC-28's TX bar. Check the Knobs page before you plug one in.
+
 ## Phone display scope
 
 The phone **Setup > Display** page separates **On this phone** rendering preferences from **Core** analyzer controls and any **Both** rows. The phone-local group includes band plan presentation, palette, levels, Clarity/NF, trace fill/line, passband, spectrum height, peaks, grid, CTUN and extended view. **More** contains local detector/averaging/decimation, overlays, rewind depth, time display, gradients and related display options. The **Core** group describes the shared FFT/analyzer choices that the Core supplies to clients. A local row affects this handset's rendering; it does not silently alter another operator's phone. If a requested local rendering choice is unavailable for the connected Core, the UI explains the reason.

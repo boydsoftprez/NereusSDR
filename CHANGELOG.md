@@ -4,15 +4,16 @@
 
 <!-- DRAFT, NOT RELEASED. The release workflow publishes this section as the
 GitHub release notes once the heading names the version, so this text is both
-the changelog entry and the operator notes. Written against main at dfa9e1c29.
+the changelog entry and the operator notes. Checked against main at each merge
+through 2026-11-08.
 At the cut: rename the heading, delete this comment and the "Still to come"
 block, settle the CONFIRM comments, then re-check main against the tag. -->
 
 Changes since desktop/Core 2026.11.0. Update the Core and desktop together.
 The iPhone and iPad app is delivered separately. Changes in that app are listed
 under **iPhone and iPad app** and reach phones and iPads with its next build.
-<!-- CONFIRM at the cut: 741, 747, 748, 752 and 755 change the phone app and are
-listed under "iPhone and iPad app". Check whether 759 does too. -->
+<!-- 741, 747, 748, 752 and 755 change the phone app and are listed under
+"iPhone and iPad app". 759 has no phone app change. -->
 <!-- 741 also changes the Roundtable website page and one server line. The
 server has not been redeployed and a redeploy is not part of this cut, so the
 notes have no website line for 741 (release manager, 2026-11-08). -->
@@ -48,11 +49,33 @@ notes have no website line for 741 (release manager, 2026-11-08). -->
   delete spots, and the status bar shows your place, such as **40m 5/6**.
   Remote windows need the 2026.11.1 Core; on an older Core band buttons work
   as before. Based on the band stack in Thetis by Richard Samphire (MW0LGE).
-  Keyboard shortcuts come with hot keys.
-  ([#748](https://github.com/boydsoftprez/NereusSDR/pull/748))
+  From the keyboard, **M** and **N** step to the next and previous spot,
+  **Shift+M** adds one and **Shift+N** opens the list.
+  ([#748](https://github.com/boydsoftprez/NereusSDR/pull/748),
+  [#759](https://github.com/boydsoftprez/NereusSDR/pull/759))
 
-<!-- If 759 lands, replace "Keyboard shortcuts come with hot keys" with the
-real keys. -->
+### Hot keys
+
+- **Keys that work from the first launch.** The arrows tune and set volume,
+  **B** and **V** change the filter, **J** and **H** the band, **X** and **Z**
+  the mode, **Space** talks while held, and **Ctrl+Shift+M**, **Ctrl+T** and
+  **Ctrl+Shift+T** are MOX, TUNE and two-tone (Command on Mac). Change any key
+  under **File > Settings... > Keys and controllers > Keyboard**, or **View >
+  Keyboard Shortcuts...**, and turn them all off with **View > Use Shortcuts**.
+  Keys are kept on this computer, so they also work in a window connected to a
+  Core. A transmit key can't be a plain letter or number, so a stray press
+  can't key the radio. Thanks to Ray (WD4X), who asked for hot keys, and Brian
+  Sutton (W4KZO), whose arrow-key tuning this replaces.
+  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759))
+- **VOX on or off.** A new action works the TX panel's **VOX** button. It has no
+  key until you give it one.
+  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759))
+- **MIDI, knobs and deck plugins.** MIDI controllers, eight USB knobs and
+  controllers, and plugins for the Stream Deck app, Ulanzi Studio and
+  StreamController use the same actions, from **Keys and controllers**. None
+  has been tried with a real device yet, and each is marked **Untested**. In a
+  window connected to a Core, CW dot and dash keys need the 2026.11.1 Core.
+  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759))
 
 ### Roundtable
 
@@ -190,7 +213,6 @@ confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
   before. Not yet tried on a radio.
   ([#756](https://github.com/boydsoftprez/NereusSDR/pull/756),
   [#761](https://github.com/boydsoftprez/NereusSDR/pull/761))
-
 - **Band power, and settings made with no radio.** A band change just after
   TUNE or two-tone could save the tune or two-tone power as that band's drive.
   Each band now keeps its own power. A transmit setting changed before any
@@ -198,11 +220,10 @@ confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
   replaced at connect. Not yet tried on a radio.
   ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
 
-
 <!-- CONFIRM at the cut: 756 and 761 have hardware-run steps in their PR bodies.
 If a bench run happens, say so and drop "Not yet tried on a radio". -->
 
-### Startup
+### Startup and settings
 
 - **A profile marked as in use on another computer.** A profile folder that
   reached this computer after a crash on another one, or from a backup, stayed
@@ -289,13 +310,11 @@ These reach phones and iPads with the app's next build, not with this download.
   handle works. Phones are unchanged.
   ([#755](https://github.com/boydsoftprez/NereusSDR/pull/755))
 
-<!-- Still to come. Delete this block at the cut. Not on main at 67530efee.
-Write each one up above only after it lands, checked against the code.
-- Receivers keep streams on the DDCs the radio reports having: PR 764.
-- Hot keys, with a VOX on/off action: PR 759, last. Then fix the band stacks
-  line's "Keyboard shortcuts come with hot keys".
+<!-- Still to come. Delete this block at the cut. Not on main at 163d08931.
+- Receivers keep streams on the DDCs the radio reports having: PR 764, the last
+  change for 2026.11.1. Write it up against the code when it lands.
 Open and not in the manager's list for this release: 753, 754.
-No note needed, on main: 749, 745, 762 and 763 (tests, CI, Windows exports).
+No note needed, on main: 749, 745, 762, 763 and 766 (tests, CI, Windows exports).
 -->
 
 ## [2026.11.0] - 2026-11-01

@@ -19,7 +19,7 @@ its version is independent of the desktop release. The
 
 ### On main since 2026.11.0, not released
 
-As of `67530efee` (2026-11-08). The next version resolves to 2026.11.1 if it
+As of `163d08931` (2026-11-08). The next version resolves to 2026.11.1 if it
 ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 [CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]` has the operator wording.
 
@@ -46,10 +46,11 @@ ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 | A failed speaker or an unmute no longer ends a Core session | 758 | Mac under load. Not run on hardware. |
 | SSB Mod Monitor, desktop, remote and phone (Brian Sutton W4KZO) | 742, 752 | Targeted Mac tests, iPhone and iPad simulators. Not run on a radio, Linux or Windows. |
 | TCI Clients panel no longer makes its column jump (reported by LB3AG) | 765 | Mac tests only; LB3AG has not confirmed. |
+| Hot keys: 51 keyboard actions with defaults, Keys and controllers setup, VOX on or off action, band stack keys; MIDI, knobs and deck plugins (untested on real devices) | 759 | Focused tests on a Mac; Windows and Linux lines compiled only on a Mac. Merged after a radio check (release manager). No real knob, MIDI device or deck plugin has run. Remote CW dot and dash need the 2026.11.1 Core. |
 
 Also on main, with no operator-facing change and so no release note: PR 749
 (test debts, CI and Windows DLL exports), PR 745 (iOS drag pace test scaling),
-PR 762 (meter pump tests) and PR 763 (CI runs the full test set when a pull
+PR 762 (meter pump tests), PR 766 (band stack test fix) and PR 763 (CI runs the full test set when a pull
 request is marked ready). After PR 763, nothing tests main between releases, so
 **a full CI and iOS run on main, started by hand from the Actions tab, is due
 before the cut.**
@@ -59,11 +60,10 @@ The Windows signal fix still needs a Windows test run; PR 749 names it.
 
 ### Still to come before the next release
 
-Open and not on main as of `67530efee`, and not described as done anywhere in the
-docs. Being open does not put a PR in the release; J.J. Boyd decides scope.
+Open and not on main as of `163d08931`:
 
-- Receivers keep streams on the DDCs the radio reports having (PR 764).
-- Hot keys, with a VOX on/off action (PR 759), after one more radio check.
+- Receivers keep streams on the DDCs the radio reports having (PR 764), the last
+  change for 2026.11.1.
 
 Also open, not in the release manager's list for 2026.11.1: 753 (Cinnamon file
 choosers), 754 (container dialog when adding a meter).

@@ -162,6 +162,8 @@ The 7 November 2026 update added chapter 11's section on a profile marked as in 
 
 The 8 November 2026 update, checked against source at `67530efee`, which is not a release, added text only: band stacks (chapter 3, and chapter 12's Band row and missing list), the right-click on **AUTO** and **AGC-T** (chapters 3 and 13), step, RIT and XIT on a new or restored slice (chapter 3), a new slice copying the current one, the per-receiver sample rate and a section on zooming a pan wider than its receiver (chapter 4), per-window FPS and Decimation (chapter 10), Auto-connect and the Core restart messages (chapter 1), the speaker row (chapter 11), the CW page and the SSB Mod Monitor (chapter 14), the TCI Clients name (chapter 9), and a rewrite of chapter 16's Roundtable card and inspector. No application was run for this text and no figure shows these changes. Phone-app changes in 741, 747, 748, 752 and 755 are not in the manual's phone chapters yet, because they reach phones only with the next phone build.
 
+The later 8 November 2026 update, checked against source at `163d08931`, added chapter 10's **Keys, knobs and controllers** section, the band stack keys in chapter 3, and the hot key menu items, shortcut note and availability rows in chapter 12. No application was run for this text, and no MIDI device, knob or deck plugin was tried.
+
 ## Evidence still required for publication
 
 Complete the [remaining release screenshot plan](images/README.md) and live
