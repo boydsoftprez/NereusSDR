@@ -65,8 +65,11 @@ notes have no website line for 741 (release manager, 2026-11-08). -->
   Keys are kept on this computer, so they also work in a window connected to a
   Core. A transmit key can't be a plain letter or number, so a stray press
   can't key the radio. Thanks to Ray (WD4X), who asked for hot keys, and Brian
-  Sutton (W4KZO), whose arrow-key tuning this replaces.
-  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759))
+  Sutton (W4KZO), whose arrow-key tuning this replaces. On a Mac, CW message 5
+  has no key until you give it one, because Command+F5 turns VoiceOver on or
+  off.
+  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759),
+  [#769](https://github.com/boydsoftprez/NereusSDR/pull/769))
 - **VOX on or off.** A new action works the TX panel's **VOX** button. It has no
   key until you give it one.
   ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759))

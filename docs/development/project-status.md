@@ -47,6 +47,7 @@ ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 | SSB Mod Monitor, desktop, remote and phone (Brian Sutton W4KZO) | 742, 752 | Targeted Mac tests, iPhone and iPad simulators. Not run on a radio, Linux or Windows. |
 | TCI Clients panel no longer makes its column jump (reported by LB3AG) | 765 | Mac tests only; LB3AG has not confirmed. |
 | Hot keys: 51 keyboard actions with defaults, Keys and controllers setup, VOX on or off action, band stack keys; MIDI, knobs and deck plugins (untested on real devices) | 759 | Focused tests on a Mac; Windows and Linux lines compiled only on a Mac. Merged after a radio check (release manager). No real knob, MIDI device or deck plugin has run. Remote CW dot and dash need the 2026.11.1 Core. |
+| On a Mac, CW message 5 has no default key (Command+F5 is VoiceOver's) | 769 | Focused hot key binding tests. |
 | Linux knobs access rule installed with the app, so the AppImage carries it | 768 | A stand-in CMake install per the PR; CI's Linux build is the first real run. The `.deb` packages carry only `nereusd`, so not this file. |
 | Streams kept on the receivers the radio reports, on Protocol 2 Angelia, Orion, Orion MkII family (Anvelina Pro 3) and Andromeda; a fourth separate pan on a radio reporting 5 is refused instead of black | 764 | 10 focused test programs on a Mac per the PR; packet counts on J.J. Boyd's Anvelina Pro 3 (gateware 22.15) showed DDC5 and DDC6 send nothing. The PR says the fix itself was not yet tried on a radio; no later result recorded here. Touches the core RX path. |
 
