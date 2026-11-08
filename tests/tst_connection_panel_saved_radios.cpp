@@ -167,6 +167,53 @@ private slots:
         QCOMPARE(saved->info.firmwareText(),      QStringLiteral("22"));
     }
 
+    // The radio's receiver count survives saving, so a connect from the saved
+    // entry sizes the stream pool as a connect from discovery does. An edit,
+    // which has no reply to read, leaves it alone.
+    void reportedReceiversRoundTrips() {
+        AppSettings settings = makeSettings();
+        settings.clearSavedRadios();
+        RadioInfo info = makeSaturnInfo();
+        info.boardType = HPSDRHW::OrionMKII;
+        info.reportedReceivers = 5;
+        settings.saveRadio(info, true, false);
+
+        std::optional<SavedRadio> saved = settings.savedRadio(info.macAddress);
+        QVERIFY(saved.has_value());
+        QCOMPARE(saved->info.reportedReceivers, 5);
+        QCOMPARE(saved->info.maxReceivers, 5);
+
+        info.reportedReceivers = 0;
+        settings.saveRadio(info, true, false);
+        saved = settings.savedRadio(info.macAddress);
+        QVERIFY(saved.has_value());
+        QCOMPARE(saved->info.reportedReceivers, 5);
+
+        // A new reply replaces it, as a firmware change would.
+        info.reportedReceivers = 8;
+        settings.saveRadio(info, true, false);
+        QCOMPARE(settings.savedRadio(info.macAddress)->info.reportedReceivers, 8);
+    }
+
+    // A radio saved before the count was kept has no such key and reads as
+    // reporting none, and seeing it on the network fills the key in.
+    void discoverySightingFillsAnOlderSavedEntry() {
+        AppSettings settings = makeSettings();
+        settings.clearSavedRadios();
+        const RadioInfo info = makeSaturnInfo();
+        settings.saveRadio(info, true, false);
+        QCOMPARE(settings.savedRadio(info.macAddress)->info.reportedReceivers, 0);
+
+        QVERIFY(settings.refreshRadioReportedReceivers(info.macAddress, 5));
+        QCOMPARE(settings.savedRadio(info.macAddress)->info.reportedReceivers, 5);
+
+        // Unchanged, no report, or a radio nobody saved: nothing to write.
+        QVERIFY(!settings.refreshRadioReportedReceivers(info.macAddress, 5));
+        QVERIFY(!settings.refreshRadioReportedReceivers(info.macAddress, 0));
+        QVERIFY(!settings.refreshRadioReportedReceivers(QStringLiteral("00:00:00:00:00:01"), 5));
+        QVERIFY(!settings.savedRadio(QStringLiteral("00:00:00:00:00:01")).has_value());
+    }
+
     // A radio saved before the number was kept has no such key and reads
     // as reporting none.
     void savedRadioWithoutABetaVersionKeyReadsNone() {
