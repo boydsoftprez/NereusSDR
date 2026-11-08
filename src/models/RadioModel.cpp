@@ -20,6 +20,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 — currentCodecContext hands the codec the radio's DDC limit
+//                 (BoardCapsTable::ddcIndexLimit). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - A desktop brings back every slice, its pans and its transmit
+//                slice from the radio's saved layout, as a Core does; the
+//                managed mode stays the Core's. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude.
 //   2026-11-05: Band stack plan Task 6: bandStack(), local or remote by role.
 //   2026-11-05: Band stack plan Task 4: the `bandStack` facade, bound to the controller on the Core.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -27,10 +34,6 @@
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude.
-//   2026-11-06 - A desktop brings back every slice, its pans and its transmit
-//                slice from the radio's saved layout, as a Core does; the
-//                managed mode stays the Core's. J.J. Boyd (KG4VCF),
-//                AI-assisted via Anthropic Claude.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -39451,6 +39454,10 @@ NereusSDR::CodecContext RadioModel::currentCodecContext() const
     // PureSignal transmits (P1CodecStandard::applyDdcAssignment). Seeded
     // before the test seam for the same reason as adcCtrl.
     ctx.model = m_hardwareProfile.model;
+    // Which DDCs the radio has. From the same RadioInfo as the stream pool, so
+    // the pool and the codec agree on every connect path.
+    ctx.ddcIndexLimit = BoardCapsTable::ddcIndexLimit(
+        boardCapabilities(), m_lastRadioInfo.protocol, m_lastRadioInfo.reportedReceivers);
     const SliceModel* diversityOwner = sliceById(m_diversityTargetSliceId);
     ctx.diversityStream = diversityOwner ? diversityOwner->streamIndex() : 0;
 
