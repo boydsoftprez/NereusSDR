@@ -32,6 +32,10 @@
 //   2026-11-07 - The Core's client rows are rebuilt only when what they
 //                show changes, so the box no longer resizes every second.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-07 - This computer's client rows too: while the same apps are
+//                connected in the same order, a refresh updates their
+//                text (connected time, last command) in place.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -58,6 +62,9 @@
 #include <QVBoxLayout>
 #include <QVariant>
 #include <QWebSocket>
+
+#include <algorithm>
+#include <utility>
 
 namespace NereusSDR {
 
@@ -352,11 +359,9 @@ QWidget* ClientChainApplet::buildClientRow(
             hbox->addWidget(spacer);
         }
 
-        // Peer: "ip:port"
-        auto* peerLbl = new QLabel(session->peer.isEmpty()
-                                       ? QStringLiteral("(unknown peer)")
-                                       : session->peer,
-                                   row);
+        // Peer: "ip:port" (text set by updateClientRowText()).
+        auto* peerLbl = new QLabel(row);
+        peerLbl->setObjectName(QStringLiteral("tciClientPeer"));
         peerLbl->setStyleSheet(QStringLiteral(
             "QLabel { color: %1; font-size: 10px; font-weight: bold; }"
         ).arg(Style::kTextPrimary));
@@ -364,16 +369,18 @@ QWidget* ClientChainApplet::buildClientRow(
         hbox->addWidget(peerLbl);
 
         // Name: User-Agent (best-effort)
-        auto* nameLbl = makeSecondaryLabel(
-            QStringLiteral("(%1)").arg(session->userAgent), row);
+        auto* nameLbl = makeSecondaryLabel(QString(), row);
+        nameLbl->setObjectName(QStringLiteral("tciClientName"));
         nameLbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
         hbox->addWidget(nameLbl);
 
         hbox->addStretch();
 
-        // Connection duration
-        auto* durLbl = makeTertiaryLabel(
-            formatDuration(session->connectedAt.elapsed()), row);
+        // Connection duration. One line, never wrapped: the counter grows
+        // every second and must not change the row's height.
+        auto* durLbl = makeTertiaryLabel(QString(), row);
+        durLbl->setObjectName(QStringLiteral("tciClientDuration"));
+        durLbl->setWordWrap(false);
         hbox->addWidget(durLbl);
 
         vbox->addLayout(hbox);
@@ -433,10 +440,8 @@ QWidget* ClientChainApplet::buildClientRow(
         hbox->setSpacing(6);
 
         // Last command in monospace, truncated to 40 chars.
-        const QString cmdSnippet = session->lastCommand.isEmpty()
-                                       ? QStringLiteral("(no command)")
-                                       : session->lastCommand.left(40);
-        auto* cmdLbl = new QLabel(cmdSnippet, row);
+        auto* cmdLbl = new QLabel(row);
+        cmdLbl->setObjectName(QStringLiteral("tciClientCommand"));
         const QFont monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
         cmdLbl->setFont(monoFont);
         cmdLbl->setStyleSheet(QStringLiteral(
@@ -447,8 +452,8 @@ QWidget* ClientChainApplet::buildClientRow(
 
         // Last command age
         if (session->lastCommandAt > 0) {
-            auto* ageLbl = makeTertiaryLabel(
-                formatLastCommandAge(session->lastCommandAt), row);
+            auto* ageLbl = makeTertiaryLabel(QString(), row);
+            ageLbl->setObjectName(QStringLiteral("tciClientCommandAge"));
             hbox->addWidget(ageLbl);
         }
 
@@ -457,8 +462,8 @@ QWidget* ClientChainApplet::buildClientRow(
         // Drop counter — combined outbound + TX drops shown in red.
         const int drops = session->sendQueue.dropCount() + session->txFramesDropped;
         if (drops > 0) {
-            auto* dropLbl = new QLabel(
-                QStringLiteral("%1 dropped").arg(drops), row);
+            auto* dropLbl = new QLabel(row);
+            dropLbl->setObjectName(QStringLiteral("tciClientDrops"));
             dropLbl->setStyleSheet(QStringLiteral(
                 "QLabel { color: %1; font-size: 9px; font-weight: bold; }"
             ).arg(Style::kRedBorder));
@@ -487,7 +492,57 @@ QWidget* ClientChainApplet::buildClientRow(
         vbox->addLayout(hbox);
     }
 
+    updateClientRowText(row, session);
     return row;
+}
+
+// The parts of a row that are separate widgets. While these stay the same a
+// refresh only changes the row's text.
+ClientChainApplet::LocalRowShape ClientChainApplet::shapeOf(
+    QWebSocket* socket,
+    const std::shared_ptr<TciClientSession>& session) const
+{
+    LocalRowShape shape;
+    shape.socket = socket;
+    shape.tx = m_server && socket == m_server->activeTxAudioClient();
+    shape.iq = session->iqStreamEnabled.values();
+    std::sort(shape.iq.begin(), shape.iq.end());
+    shape.audio = session->audioStreamEnabled.values();
+    std::sort(shape.audio.begin(), shape.audio.end());
+    shape.rxSensors = session->rxSensorsEnabled;
+    shape.txSensors = session->txSensorsEnabled;
+    shape.hasCommandAge = session->lastCommandAt > 0;
+    shape.hasDrops = (session->sendQueue.dropCount() + session->txFramesDropped) > 0;
+    return shape;
+}
+
+// Sets every changing text in a row built by buildClientRow(). Used when the
+// row is built and on each refresh that keeps it.
+void ClientChainApplet::updateClientRowText(
+    QWidget* row,
+    const std::shared_ptr<TciClientSession>& session) const
+{
+    if (auto* peerLbl = row->findChild<QLabel*>(QStringLiteral("tciClientPeer"))) {
+        peerLbl->setText(session->peer.isEmpty() ? QStringLiteral("(unknown peer)")
+                                                 : session->peer);
+    }
+    if (auto* nameLbl = row->findChild<QLabel*>(QStringLiteral("tciClientName"))) {
+        nameLbl->setText(QStringLiteral("(%1)").arg(session->userAgent));
+    }
+    if (auto* durLbl = row->findChild<QLabel*>(QStringLiteral("tciClientDuration"))) {
+        durLbl->setText(formatDuration(session->connectedAt.elapsed()));
+    }
+    if (auto* cmdLbl = row->findChild<QLabel*>(QStringLiteral("tciClientCommand"))) {
+        cmdLbl->setText(session->lastCommand.isEmpty() ? QStringLiteral("(no command)")
+                                                       : session->lastCommand.left(40));
+    }
+    if (auto* ageLbl = row->findChild<QLabel*>(QStringLiteral("tciClientCommandAge"))) {
+        ageLbl->setText(formatLastCommandAge(session->lastCommandAt));
+    }
+    if (auto* dropLbl = row->findChild<QLabel*>(QStringLiteral("tciClientDrops"))) {
+        const int drops = session->sendQueue.dropCount() + session->txFramesDropped;
+        dropLbl->setText(QStringLiteral("%1 dropped").arg(drops));
+    }
 }
 
 // ── Rebuild rows ──────────────────────────────────────────────────────────────
@@ -509,6 +564,49 @@ void ClientChainApplet::rebuildRows()
         return;
     }
     QScopedValueRollback<bool> guard(m_rebuildInProgress, true);
+
+    // Update bind-info label.
+    if (m_bindInfoLabel) {
+        if (m_server && m_server->isRunning()) {
+            m_bindInfoLabel->setText(
+                QStringLiteral("127.0.0.1:%1").arg(m_server->port()));
+        } else {
+            m_bindInfoLabel->setText(QStringLiteral("Server not running"));
+        }
+    }
+
+    const bool running = m_server && m_server->isRunning();
+    QList<std::pair<QWebSocket*, std::shared_ptr<TciClientSession>>> entries;
+    QList<LocalRowShape> shapes;
+    if (running) {
+        const auto snapshot = m_server->clients();
+        for (auto it = snapshot.cbegin(); it != snapshot.cend(); ++it) {
+            if (!it.key() || !it.value()) {
+                continue;
+            }
+            entries.append({it.key(), it.value()});
+            shapes.append(shapeOf(it.key(), it.value()));
+        }
+    }
+
+    // The same apps in the same order with the same badges: only text can
+    // have changed, so update it in place. Deleting and re-adding the rows
+    // made the box short for one event-loop pass and the column below it
+    // jumped once a second.
+    const bool rowsStillThere = std::all_of(
+        m_localRows.cbegin(), m_localRows.cend(),
+        [](const QPointer<QWidget>& row) { return !row.isNull(); });
+    if (shapes == m_localRowShapes && rowsStillThere) {
+        for (int i = 0; i < entries.size(); ++i) {
+            updateClientRowText(m_localRows.at(i), entries.at(i).second);
+        }
+        if (m_emptyStatePanel) {
+            m_emptyStatePanel->setVisible(entries.isEmpty());
+        }
+        return;
+    }
+    m_localRowShapes = shapes;
+    m_localRows.clear();
 
     // Remove all items except m_emptyStatePanel and the trailing stretch.
     // Iterate in reverse so indices stay valid while we remove.
@@ -542,17 +640,7 @@ void ClientChainApplet::rebuildRows()
         delete item;
     }
 
-    // Update bind-info label.
-    if (m_bindInfoLabel) {
-        if (m_server && m_server->isRunning()) {
-            m_bindInfoLabel->setText(
-                QStringLiteral("127.0.0.1:%1").arg(m_server->port()));
-        } else {
-            m_bindInfoLabel->setText(QStringLiteral("Server not running"));
-        }
-    }
-
-    if (!m_server || !m_server->isRunning()) {
+    if (!running) {
         if (m_emptyStatePanel) {
             m_emptyStatePanel->setVisible(true);
         }
@@ -571,14 +659,10 @@ void ClientChainApplet::rebuildRows()
         // Find the stretch's index (the trailing addStretch item).
         int stretchIdx = m_rowsLayout->count() - 1;
 
-        for (auto it = snapshot.cbegin(); it != snapshot.cend(); ++it) {
-            QWebSocket* socket = it.key();
-            const std::shared_ptr<TciClientSession>& session = it.value();
-            if (!socket || !session) {
-                continue;
-            }
+        for (const auto& [socket, session] : std::as_const(entries)) {
             QWidget* rowWidget = buildClientRow(socket, session);
             m_rowsLayout->insertWidget(stretchIdx, rowWidget);
+            m_localRows.append(rowWidget);
             ++stretchIdx;
         }
     }

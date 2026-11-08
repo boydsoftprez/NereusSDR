@@ -7,15 +7,20 @@
 // The TCI clients box (ClientChainApplet) on a window connected to a Core:
 // a refresh with the same Core client list leaves every row widget as it
 // is (the 1 Hz rebuild made the column below the box jump), and a client
-// connecting or leaving still changes the rows to match.
+// connecting or leaving still changes the rows to match. A row for an app
+// on this computer's own server keeps its widgets while its connected time
+// counts up, and the box keeps its height.
 //
 // No radio, Core or TCI app is contacted; FakeStationLink stands in for
-// the Core and the client list is set on the window's StationTciModel.
+// the Core and the client list is set on the window's StationTciModel. The
+// local app is a QWebSocket on loopback to a TciServer with no radio.
 //
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-07  J.J. Boyd / KG4VCF  Written. AI-assisted via Anthropic
 //                                    Claude Code.
+//   2026-11-07  J.J. Boyd / KG4VCF  Local client row kept in place.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -23,9 +28,11 @@
 #include <QLayout>
 #include <QPointer>
 #include <QPushButton>
+#include <QWebSocket>
 #include <QWidget>
 
 #include "fakes/FakeStationLink.h"
+#include "core/TciServer.h"
 #include "gui/applets/ClientChainApplet.h"
 #include "models/RadioModel.h"
 #include "models/StationTciModel.h"
@@ -176,6 +183,52 @@ private slots:
         auto* none = qobject_cast<QLabel*>(rows.last());
         QVERIFY(none);
         QCOMPARE(none->text(), QStringLiteral("No apps connected to the Core's TCI server."));
+    }
+
+    // An app on this computer's own TCI server: two refreshes a second apart
+    // keep the same row widgets, the connected time moves on, and the box's
+    // height does not change.
+    void localClientRowKeepsItsWidgets()
+    {
+        TciServer server(nullptr);
+        QVERIFY(server.start(QHostAddress(QHostAddress::LocalHost), 0));
+        ClientChainApplet applet(&server);
+
+        QWebSocket app;
+        QSignalSpy connected(&app, &QWebSocket::connected);
+        app.open(QUrl(QStringLiteral("ws://127.0.0.1:%1").arg(server.port())));
+        QVERIFY(connected.wait(2000));
+        QTRY_COMPARE(server.clientCount(), 1);
+
+        refresh(applet);
+        const QList<QWidget*> rows =
+            applet.findChildren<QWidget*>(QStringLiteral("tciClientRow"));
+        QCOMPARE(rows.size(), 1);
+        QPointer<QWidget> row = rows.first();
+        QPointer<QLabel> counter = row->findChild<QLabel*>(QStringLiteral("tciClientDuration"));
+        QVERIFY(counter);
+        QVERIFY(!counter->wordWrap());
+        const QString firstCount = counter->text();
+        const int height = applet.sizeHint().height();
+
+        QTest::qWait(1100);
+        refresh(applet);
+
+        QVERIFY(!row.isNull());
+        QVERIFY(!counter.isNull());
+        QVERIFY(!row->isHidden());
+        QCOMPARE(applet.findChildren<QWidget*>(QStringLiteral("tciClientRow")),
+                 QList<QWidget*>({row.data()}));
+        QVERIFY2(counter->text() != firstCount,
+                 qPrintable(QStringLiteral("still %1").arg(firstCount)));
+        QCOMPARE(applet.sizeHint().height(), height);
+
+        // The app leaves: its row goes.
+        app.close();
+        QTRY_COMPARE(server.clientCount(), 0);
+        refresh(applet);
+        QVERIFY(row.isNull());
+        server.stop();
     }
 };
 
