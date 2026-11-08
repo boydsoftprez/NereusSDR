@@ -1,22 +1,10 @@
 # Changelog
 
-## [Unreleased]
-
-<!-- DRAFT, NOT RELEASED. The release workflow publishes this section as the
-GitHub release notes once the heading names the version, so this text is both
-the changelog entry and the operator notes. Checked against main at each merge
-through 2026-11-08.
-At the cut: rename the heading, delete this comment and the "Still to come"
-block, settle the CONFIRM comments, then re-check main against the tag. -->
+## [2026.11.1] - 2026-11-08
 
 Changes since desktop/Core 2026.11.0. Update the Core and desktop together.
 The iPhone and iPad app is delivered separately. Changes in that app are listed
 under **iPhone and iPad app** and reach phones and iPads with its next build.
-<!-- 741, 747, 748, 752 and 755 change the phone app and are listed under
-"iPhone and iPad app". 759 has no phone app change. -->
-<!-- 741 also changes the Roundtable website page and one server line. The
-server has not been redeployed and a redeploy is not part of this cut, so the
-notes have no website line for 741 (release manager, 2026-11-08). -->
 
 [Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
 
@@ -126,8 +114,6 @@ notes have no website line for 741 (release manager, 2026-11-08). -->
 
 ### Receive
 
-<!-- CONFIRM: no live-radio result yet. Issue 720 is still open. Keep "not yet
-confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
 - **AUTO AGC holds through transmit.** While the station is on the air,
   including TUNE, two-tone and CW with QSK, AUTO stops measuring the noise floor
   and leaves AGC-T where it was. After you unkey, it measures again only from
@@ -236,9 +222,6 @@ confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
   replaced at connect. Not yet tried on a radio.
   ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
 
-<!-- CONFIRM at the cut: 756 and 761 have hardware-run steps in their PR bodies.
-If a bench run happens, say so and drop "Not yet tried on a radio". -->
-
 ### Startup and settings
 
 - **A profile marked as in use on another computer.** A profile folder that
@@ -325,12 +308,6 @@ These reach phones and iPads with the app's next build, not with this download.
   full on an iPad, so its handle did nothing. Half height now holds and the
   handle works. Phones are unchanged.
   ([#755](https://github.com/boydsoftprez/NereusSDR/pull/755))
-
-<!-- Still to come. Delete this block at the cut. Checked against main at 78323b43d.
-Nothing left for 2026.11.1. Open and not in the manager's list for this release:
-753, 754.
-No note needed, on main: 749, 745, 762, 763 and 766 (tests, CI, Windows exports).
--->
 
 ## [2026.11.0] - 2026-11-01
 

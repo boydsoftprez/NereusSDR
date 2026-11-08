@@ -19,6 +19,7 @@ you: a local desktop, another computer, or your phone or tablet.
 | What you want to do | Where to go |
 | --- | --- |
 | Install the desktop console and connect your radio | [Downloads](https://github.com/boydsoftprez/NereusSDR/releases) and [desktop setup](https://nereussdr.com/manual/01-desktop-connect.html) |
+| Upgrade from 2026.11.0 | [Release notes](CHANGELOG.md). Update the Core and desktop together. |
 | Upgrade from 2026.10.1 | [2026.11.0 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.11.0.html), [release notes](CHANGELOG.md) and [bench checklist](docs/guides/bench-2026.11.0.md) |
 | Upgrade from 2026.10.0 | [2026.10.1 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.10.1.html) and [release notes](CHANGELOG.md) |
 | Upgrade from 0.5.2 | [2026.10.0 upgrade checklist](https://nereussdr.com/guides/upgrading-to-2026.10.0.html) and [release notes](CHANGELOG.md) |
@@ -32,6 +33,38 @@ The [user guide](https://nereussdr.com/manual/) brings the operating instruction
 together, from the first connection to shared stations, digital modes and
 accessories. Join Discord for questions and discussion; use GitHub Issues
 for bug reports and feature requests that need tracking.
+
+## What's new in 2026.11.1
+
+- **Band stacks.** Save several spots on each band and step through them from
+  the band menu or with **M** and **N**, on the desktop and in a window
+  connected to a Core.
+- **Hot keys.** Keys for tuning, volume, filter, band, mode and transmit work
+  from the first launch, and you can change any of them under **Keys and
+  controllers**. MIDI controllers, USB knobs and deck plugins use the same
+  actions; none has been tried with a real device yet.
+- **Meters and containers.** Bar meters can use a **Modern** face, and the
+  Phone and CW sections can go into a container.
+- **Roundtable on the panadapter.** A card at your slice's frequency shows who
+  is talking and each listener's report, and you can look at another frequency
+  without tuning.
+- **Settings that stay put.** Each receiver keeps its sample rate, each slice
+  keeps its step, every slice comes back after a restart, and changes are saved
+  within seconds.
+- **Receive and remote fixes.** Protocol 2 pans follow their own receiver's
+  rate, separate pans no longer open black on radios that report fewer
+  receivers, and a failed speaker no longer ends a Core session. The
+  [release notes](CHANGELOG.md) list every change, including transmit and the
+  phone app.
+
+**Current release: 2026.11.1.** Download the desktop and Core packages from
+[the release page](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.11.1).
+Update the Core and desktop together; some changes for windows connected to a
+Core need the 2026.11.1 Core. The phone app is delivered separately, and its
+changes in the release notes reach phones and iPads with its next build. Coming
+from 2026.10.1? Read the
+[2026.11.0 upgrade note](https://nereussdr.com/guides/upgrading-to-2026.11.0.html)
+first.
 
 ## What's new in 2026.11.0
 
@@ -63,8 +96,8 @@ for bug reports and feature requests that need tracking.
   [release notes](CHANGELOG.md) cover the radio, tuner, PureSignal, remote
   audio and phone fixes in this release.
 
-**Current release: 2026.11.0.** Download the desktop and Core packages from
-[the release page](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.11.0).
+2026.11.0's desktop and Core packages are on
+[its release page](https://github.com/boydsoftprez/NereusSDR/releases/tag/v2026.11.0).
 The earlier signed 2026.10.2-rc1 tag is preserved. Read the
 [upgrade note](https://nereussdr.com/guides/upgrading-to-2026.11.0.html)
 before updating a station. Update the Core and desktop together. The separate
