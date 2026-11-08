@@ -6,7 +6,7 @@ For routine listening, start with the active slice's mode, filter and AGC contro
 
 ## Choose and tune receiver AGC
 
-Open the selected VFO's **DSP** tab or **Setup > DSP > AGC/ALC**. Confirm that you are editing **RX1 AGC** for the intended receiver. **Mode** offers Off, Long, Slow, Med, Fast and Custom. Begin with a preset mode; Custom exposes the individual response controls.
+Open the selected VFO's **DSP** tab or **Setup > DSP > AGC/ALC**. You can also right-click **AUTO** in the RX applet, or an **AGC-T** slider, to open that page. Confirm that you are editing **RX1 AGC** for the intended receiver. **Mode** offers Off, Long, Slow, Med, Fast and Custom. Begin with a preset mode; Custom exposes the individual response controls.
 
 - **Attack** sets how quickly gain responds when signal level rises.
 - **Decay** sets the gain recovery time after a strong signal. Longer values hold down gain longer after a peak.

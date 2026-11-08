@@ -160,6 +160,8 @@ The 5 November 2026 draft for the next release added text only, checked against 
 
 The 7 November 2026 update added chapter 11's section on a profile marked as in use on another computer, checked against source at `468172af8`, which is not a release. No application was run for this text, and the Take Over dialog has not been seen in a real startup.
 
+The 8 November 2026 update, checked against source at `67530efee`, which is not a release, added text only: band stacks (chapter 3, and chapter 12's Band row and missing list), the right-click on **AUTO** and **AGC-T** (chapters 3 and 13), step, RIT and XIT on a new or restored slice (chapter 3), a new slice copying the current one, the per-receiver sample rate and a section on zooming a pan wider than its receiver (chapter 4), per-window FPS and Decimation (chapter 10), Auto-connect and the Core restart messages (chapter 1), the speaker row (chapter 11), the CW page and the SSB Mod Monitor (chapter 14), the TCI Clients name (chapter 9), and a rewrite of chapter 16's Roundtable card and inspector. No application was run for this text and no figure shows these changes. Phone-app changes in 741, 747, 748, 752 and 755 are not in the manual's phone chapters yet, because they reach phones only with the next phone build.
+
 ## Evidence still required for publication
 
 Complete the [remaining release screenshot plan](images/README.md) and live

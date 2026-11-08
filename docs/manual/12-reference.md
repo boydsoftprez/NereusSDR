@@ -105,7 +105,7 @@ sessions, Data use, PTT buttons, Devices, Logs and About pages are covered in
 | **File** | Settings, profile editor routes, configuration Import/Export routes, Quit. |
 | **Radio** | Connect last target, Disconnect, Manage Radios, state-dependent radio management and Protocol Info. |
 | **View** | Pan Layout, add slice, float pan, display duplex, Band Plan and performance presentation. |
-| **Band** | Choose available HF/GEN/WWV band targets. |
+| **Band** | Choose available HF/GEN/WWV band targets, and open **Band Stacking...**. |
 | **Mode** | Set active slice's demodulation. FM availability here is receive support, not FM transmit. |
 | **DSP** | Quick NR/NB/ANF/SNB/APF/AGC/TNF actions for the selected receiver or stated master function. |
 | **Containers** | Applet visibility, container creation/editing, default-layout reset, Arrange Workspace, Align to 8 px Grid, Manage Workspace Profiles… and the Hidden list. |
@@ -194,7 +194,7 @@ The operator-facing exclusions below explain common missing controls.
 | CWX, Phone/CW keyer page, CW keyer settings. | CW receive mode/filter/APF controls remain separately usable. Do not infer a working software keyer from CW modes. |
 | Voice recorder/playback, DVK, macro buttons, Memory Manager and memory spots. | Use ordinary live receive/transmit and the implemented spot sources. |
 | FM TX/repeater/offset/reverse, CTCSS encode/tone squelch and FM Phone/CW page. | FM receive/squelch remain; do not plan repeater transmission with these shells. |
-| Transverters, VHF band/OC pages and band stacking. | Current implemented band selection and HF hardware controls. |
+| Transverters and VHF band/OC pages. | Current implemented band selection and HF hardware controls. |
 | Minimal Mode, UI Scale/Theme page, desktop Navigation editor, skins and keyboard remapping. | Actual fixed menu shortcuts, supported layout/colors and phone Navigation. |
 | Receive DSP Equalizer. | TX Equalizer is a separate implemented feature. |
 | SAM advanced options and APF bandwidth/gain fields. | SAM demodulation and APF enable/frequency have their own implemented paths. |

@@ -19,7 +19,7 @@ its version is independent of the desktop release. The
 
 ### On main since 2026.11.0, not released
 
-As of `468172af8` (2026-11-07). The next version resolves to 2026.11.1 if it
+As of `67530efee` (2026-11-08). The next version resolves to 2026.11.1 if it
 ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 [CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]` has the operator wording.
 
@@ -37,6 +37,15 @@ ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 | A release during a Core stall no longer counts as a lost link, and VOX stays armed; session keepalives on a data channel count from arrival on a key with no "tx" copy read | 756, 761 | Forced-stall tests with red-first proof. Touches transmit. Not run on a radio, a real stall, hosted Linux or Windows; hardware steps are in each PR. |
 | A profile marked as in use on another computer: taken over on a local disk, Take Over or Quit on a network drive, a Core stops with a log message | 744 | Lock tests on macOS and in Windows CI; real SMB share between a Mac and a Pi 5. Not tried: NFS, AFP, Windows as a share client, the dialog in a real startup. |
 | Roundtable sheet's half height holds on an iPad (phone app) | 755 | iPad Pro 11-inch and iPhone 17 UI tests. Ships with the next phone build. |
+| Roundtable inspector (look without tuning), redrawn card, Double only for a real double, frozen Last known state, flag S-meter menu; phone frequency view | 741 | Unit tests; all hands-on testing on a Mac. No radio, no real double, Windows and Linux not run on screen. Phone part ships with the next phone build; website part needs a Roundtable server redeploy. |
+| Settings that revert: per-receiver sample rate, per-slice step, new slice copies the current one with RIT/XIT off, every slice restored, held transmit edits, TUNE power not saved as drive, 2-second saves, layout, per-window FPS; phone reopening | 747, 750 | Mac offscreen tests only. No radio, HL2 run asked for. Touches the core RX path and transmit power. Phone part ships with the next phone build. |
+| Band stacks on desktop, remote desktop and phone | 748 | Focused tests and captures. Full suite not run, no radio; hardware run pending. Phone part ships with the next phone build. |
+| Right-click AUTO opens AGC/ALC setup (Brian Sutton W4KZO) | 740, 746 | Focused test on macOS. |
+| Phone / CW sections container item (Brian Sutton W4KZO) | 757, 760 | Offscreen on a Mac. Not run on a radio. |
+| Protocol 2 pans follow their receiver's rate; wide zoom kept across reconnect; only the controller can bypass the filter; wide-pan crash fixed | 751 | Offscreen Mac tests; tropo1234 tested the connect patch on an ANAN-G2 (issue 701). Not run on a radio. Listener filter rule needs the 2026.11.1 Core. |
+| A failed speaker or an unmute no longer ends a Core session | 758 | Mac under load. Not run on hardware. |
+| SSB Mod Monitor, desktop, remote and phone (Brian Sutton W4KZO) | 742, 752 | Targeted Mac tests, iPhone and iPad simulators. Not run on a radio, Linux or Windows. |
+| TCI Clients panel no longer makes its column jump (reported by LB3AG) | 765 | Mac tests only; LB3AG has not confirmed. |
 
 Also on main, with no operator-facing change and so no release note: PR 749
 (test debts, CI and Windows DLL exports), PR 745 (iOS drag pace test scaling),
@@ -50,24 +59,14 @@ The Windows signal fix still needs a Windows test run; PR 749 names it.
 
 ### Still to come before the next release
 
-Open and not on main as of `468172af8`, and not described as done anywhere in the
+Open and not on main as of `67530efee`, and not described as done anywhere in the
 docs. Being open does not put a PR in the release; J.J. Boyd decides scope.
 
-- Roundtable overlay redesign and frequency view (PR 741).
-- A docked column no longer twitches every second with the TCI box in it (PR 765,
-  reported on Discord by LB3AG).
-- SSB Mod Monitor (PR 752: Brian Sutton W4KZO's PR 742 with review corrections).
-- Right-click AUTO to open AGC/ALC setup (PR 746: Brian Sutton W4KZO's PR 740, corrected).
-- Phone / CW container sections (PR 760: Brian Sutton W4KZO's panel with review corrections).
-- Hot keys, with a VOX on/off action (PR 759).
-- Band stacks (PR 748).
+- Receivers keep streams on the DDCs the radio reports having (PR 764).
+- Hot keys, with a VOX on/off action (PR 759), after one more radio check.
 
-Also open, listed by PR title and not yet read for the notes: 747 (settings that
-revert; carries 750, new receivers start with RIT and XIT off), 751 (FFT and pan
-on the stream's rate on Protocol 2), 753 (Cinnamon file choosers), 754 (container
-dialog when adding a meter), 757 (hide rows of a
-Phone/CW container copy, Brian Sutton W4KZO), 758 (a failed speaker or an
-unmute), 764 (streams on the DDCs the radio reports).
+Also open, not in the release manager's list for 2026.11.1: 753 (Cinnamon file
+choosers), 754 (container dialog when adding a meter).
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be

@@ -95,6 +95,7 @@ NereusSDR never moves your microphone or a VAX channel to another device on its 
 | A Bluetooth headset sounds thin, for listening too, after you pick it as the mic | Bluetooth headsets switch to phone-call quality while they are the mic. Listen on the headset and talk on a wired or built-in mic, or listen on another device for the best sound. |
 | The sound lags the signal | **Audio > Outputs**, **Device details**, **Delay**. Read **Now N ms from the radio to <device>**. **Automatic** lets NereusSDR choose. An older driver adds delay; choose the system's own driver if the device offers one. |
 | A device you plugged in is missing from the list | The system's own drivers update within about a second. For an older driver press **Rescan devices**. |
+| In a window connected to a Core, the speaker is unplugged or fails and there is no other device to play on | The window shows the speaker problem and stays connected; the panadapter keeps running. Audio returns by itself when the device comes back, or press **Retry audio** or choose another device under **Audio > Outputs**. |
 
 ## Audio is distorted, noisy or breaks up
 

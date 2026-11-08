@@ -91,8 +91,6 @@ For FreeDV station status, filtering, messages and QSY, use [Chapter 15](15-rade
 
 ## Read live Roundtable reports
 
-<!-- PENDING PR 741: the Roundtable overlay redesign and frequency view will change this section. Revise it against the code once that lands, and remove this comment at the cut. -->
-
 Roundtable is a public list of who is on each frequency and how each station hears the talker. This section covers starting it on the desktop and reading its live reports on the panadapter.
 
 ### Start Roundtable
@@ -101,27 +99,33 @@ Open **Tools > Spot Hub**, select the **Roundtable** tab and select **Start**. T
 
 ### Read the card on your frequency
 
-On a pan, each frequency with stations has a tag along the foot of the display. Tags that would overlap fold into one `+N` tag; click it to list the frequencies it holds.
+On a pan, each frequency with stations has a tag along the foot of the display. Tags that would overlap fold into one `+N` tag. Click it to list its frequencies in a box at the foot of the pan, and click a row to look at that frequency.
 
-On the frequency your active slice is tuned to in the current mode, the tag opens into a card by itself, with nothing to click. The card shows the frequency, then who is talking, then a **Heard by** list with each listener's callsign, signal and age. Listeners are listed nearest first. If the card cannot fit every row, its last line counts what is left out, such as **+2 reports · details ›**.
+On the frequency your slice is tuned to, in its current mode, a card stands at the foot of the pan beside the slice's flag whenever someone is talking or has just talked. A quiet frequency shows only its tag. The card's top line shows who it is about and the frequency. Under it, a caption heads one row per listener: callsign, signal and age, with a small meter under each reading. Listeners are listed nearest first. If the card cannot fit every row, its last line counts the rest, such as **+2 more ›**.
 
-| The card says | What it means |
+| The card shows | What it means |
 | --- | --- |
-| **Talking:** and a callsign | One known station is on the air. The rows are that station's reports. |
-| **Last talker:** and a callsign | The turn has ended. The reports stay, with their ages. |
-| **Double:** and two or more callsigns | Stations are keyed together. The rows are headed **Combined RF**: each reading measures the signals together, not any one station, and the keyed stations are left out of the list. |
-| **Last double:** and the callsigns | The overlap has ended. When one station keeps talking, its new turn uses only readings taken after the overlap. |
-| **Double** with **updating** or **unavailable** beside the names | A double is on the air and its callsigns are still arriving or are not available. |
-| **Unattributed signal** | A turn is on the air that cannot be matched to one callsign. |
-| **Unknown signal** or **Last unknown signal** | Listeners are hearing a signal nobody has been identified on. Roundtable does not guess who it is. |
-| **No matching reports** | Nobody has a report for this turn yet. It is not a reading of zero. |
+| A callsign, with **Heard by** | That station is on the air. The rows are its reports. |
+| A callsign, with **Last heard 6s ago** | The turn has ended. The reports stay, with their ages. |
+| **You · on the air**, with **Hearing you** | You are transmitting. The rows are how others hear you. |
+| **Double**, the keyed callsigns and a clock, with **Combined RF** | Two or more stations are keyed together in the same Roundtable room. Each reading measures the signals together, not any one station, so there is no distance or bearing, and the keyed stations are left out of the list. Three or more read **Double · 3**. |
+| **Last double**, with **Combined RF** | The overlap has ended. |
+| **Double ended 3s ago** | Shown for 8 seconds on the remaining talker's card. Its readings start fresh after the overlap. |
+| **Unknown** | A signal is on the air that nobody has been identified on. Roundtable does not guess who it is. |
+| **No readings** or **Waiting for readings** | Nobody has a report for this turn yet. It is not a reading of zero. |
 
-An age past 20 seconds is marked **stale**. Each row keeps its own age, so read a report alongside its age rather than assuming it is current. While Roundtable is offline the tags turn gray, and while it is connecting they are hidden. While it is reconnecting, the slice's flag says **Reconnecting** and the card keeps its last state, so a heading such as **Talking:** may be out of date.
+Two stations keyed a few kilohertz apart in different rooms are not a double.
 
-To change the units, open the **Roundtable** tab in Spot Hub and set **Signal format:** to **dBm**, **S-units** or **Both**. The choice applies to this computer only.
+A reading older than 20 seconds turns gray and its age turns amber. Read each report alongside its age rather than assuming it is current. While Roundtable is connecting, the tags are hidden. While it is reconnecting or offline, the card and tags freeze in gray and the caption reads **Last known**, so nothing claims to be live. The card adds **Reconnecting** in amber, or **Offline since** and the time in UTC, and the slice's flag says **Reconnecting** or **Offline**. While you are hidden, everything is dimmed and the card says **You are hidden**.
 
-### Open the details without tuning
+To change the units, open the **Roundtable** tab in Spot Hub and set **Signal format:** to **dBm**, **S-units** or **Both**, or right-click a tag and choose **Signal: dBm · Change**. The choice applies to this computer only.
 
-Click a tag or the card to read that frequency in the **Roundtable** applet. This does not tune your radio. **Tune A here** in the applet tunes the slice, and **Back to my slice** returns the applet to the frequency you are on. Clicking the band itself still tunes as usual. You can read a frequency while you are transmitting.
+### Look at a frequency without tuning
+
+Click any tag, your own card, or the Roundtable line on any slice's flag. A box opens at the foot of the pan, in the card's place, showing that frequency. Your radio does not move. When it is not your frequency, the box says **Viewing** and how far away it is, with **‹ Back to my slice**. It lists who is **On frequency**, with **keyed** and each station's offset, then the readings with distance and bearing. When someone is on the air there, a **Your pan** row first shows the strongest signal your own panadapter sees in that sideband. It is blank while you transmit or when the frequency is off your pan.
+
+**Tune slice A here** moves your slice there and closes the box. It is grayed while you transmit, when no radio is connected, and when the slice is already there. **Messages** opens the Roundtable panel on that frequency. The **⋯** button offers the same choices plus **Read reports**. Click the same thing again, select **×**, or press Escape to close the box. Clicking another tag switches the box to it. Clicking or dragging the band still tunes as usual and leaves the box open. You can look at a frequency while you are transmitting.
+
+Right-click a tag for **Open inspector**, **Tune slice A here**, **Messages** and **Signal**.
 
 A desktop signed in to a Core over the network shows the same reports.
