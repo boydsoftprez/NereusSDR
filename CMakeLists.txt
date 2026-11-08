@@ -3859,6 +3859,13 @@ else()
     install(DIRECTORY "${NEREUS_DECK_PLUGINS_DIR}/"
             DESTINATION share/nereussdr/plugins
             COMPONENT deck-plugins)
+    # The Linux access rule for knobs and controllers. The Knobs page and the
+    # device messages tell the operator to copy it to /etc/udev/rules.d, which
+    # an AppImage can't do itself, so it travels as a data file. The AppImage
+    # job's plain `cmake --install` puts it in AppDir/usr/share/nereussdr/udev.
+    install(FILES packaging/linux/60-nereussdr-controllers.rules
+            DESTINATION share/nereussdr/udev
+            COMPONENT controller-access)
 endif()
 
 # Bundle third-party license notices + NereusSDR's LICENSE into release artifacts.
