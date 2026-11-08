@@ -4,6 +4,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-08 - J.J. Boyd (KG4VCF), hot keys: on a Mac CW message 5 has no
+//                default key.
+//                AI-assisted implementation via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 //
 // The action list, chord text and bindings, against the plan's Action ids table
@@ -75,7 +78,12 @@ QList<ExpectedAction> expectedActions()
         {"cw.msg2", "CW", G::Press, true, {"Ctrl+F2"}},
         {"cw.msg3", "CW", G::Press, true, {"Ctrl+F3"}},
         {"cw.msg4", "CW", G::Press, true, {"Ctrl+F4"}},
+#ifdef Q_OS_MAC
+        // JJ, 2026-11-08: Cmd+F5 is macOS's VoiceOver key, so no default on a Mac.
+        {"cw.msg5", "CW", G::Press, true, {}},
+#else
         {"cw.msg5", "CW", G::Press, true, {"Ctrl+F5"}},
+#endif
         {"cw.msg6", "CW", G::Press, true, {"Ctrl+F6"}},
         {"cw.msg7", "CW", G::Press, true, {"Ctrl+F7"}},
         {"cw.msg8", "CW", G::Press, true, {"Ctrl+F8"}},
@@ -164,6 +172,30 @@ private slots:
                 QCOMPARE(chord->toString(), key);
             }
         }
+    }
+
+    void cwMessage5HasNoDefaultOnAMac()
+    {
+        // Only the default changes: a key the user saved still loads, and a
+        // reset goes back to the platform's default.
+        const HotKeyAction* const action = HotKeyActionList::find(QStringLiteral("cw.msg5"));
+        QVERIFY(action != nullptr);
+        HotKeyBindings b;
+        b.load();
+#ifdef Q_OS_MAC
+        QVERIFY(action->defaultKeys.isEmpty());
+        QVERIFY(b.keysFor(QStringLiteral("cw.msg5")).isEmpty());
+        QCOMPARE(b.actionForChord("Ctrl+F5"), QString());
+#else
+        QCOMPARE(action->defaultKeys, QStringList{QStringLiteral("Ctrl+F5")});
+        QCOMPARE(b.actionForChord("Ctrl+F5"), QStringLiteral("cw.msg5"));
+#endif
+        AppSettings::instance().setValue(QStringLiteral("HotKeys/Binding/cw.msg5"), QStringLiteral("Ctrl+F5"));
+        HotKeyBindings saved;
+        saved.load();
+        QCOMPARE(saved.keysFor(QStringLiteral("cw.msg5")), QStringList{QStringLiteral("Ctrl+F5")});
+        saved.resetToDefault(QStringLiteral("cw.msg5"));
+        QCOMPARE(saved.keysFor(QStringLiteral("cw.msg5")), action->defaultKeys);
     }
 
     void freshSettingsUseTheDefaults()
