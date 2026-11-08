@@ -23,6 +23,9 @@
 //                1 Hz refresh with auto-refresh checkbox at top.
 //                TciServer accessors clients() + activeTxAudioClient()
 //                added in same commit (Phase 22).
+//   2026-11-07 - The Core's client rows are rebuilt only when what they
+//                show changes, so the box no longer resizes every second.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -31,8 +34,12 @@
 
 #include "AppletWidget.h"
 
+#include "models/StationTciModel.h"
+
+#include <QList>
 #include <QPointer>
 #include <memory>
+#include <optional>
 
 class QCheckBox;
 class QLabel;
@@ -109,6 +116,19 @@ private:
     QPointer<RadioModel> m_stationModel;
     QWidget* m_corePanel{nullptr};
     QVBoxLayout* m_coreRows{nullptr};
+
+    // What the Core's rows show now. rebuildCoreRows() returns without
+    // touching a widget when the next look is the same, so a 1 Hz refresh
+    // with nothing new no longer deletes and re-adds every row (the box
+    // went short for one event-loop pass and the column below it jumped).
+    struct CoreRowsShown {
+        bool panelShown{false};
+        bool serverAvailable{false};
+        bool onAir{false};
+        QList<StationTciClient> clients;
+        bool operator==(const CoreRowsShown& other) const = default;
+    };
+    std::optional<CoreRowsShown> m_coreRowsShown;
     QTimer*      m_refreshTimer{nullptr};
 
     // Top bar

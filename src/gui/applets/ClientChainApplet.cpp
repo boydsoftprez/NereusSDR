@@ -29,6 +29,9 @@
 //   2026-10-09 - A client row names its own style rule, so its bottom line
 //                no longer repeats under every label and badge in it.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-07 - The Core's client rows are rebuilt only when what they
+//                show changes, so the box no longer resizes every second.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #ifdef HAVE_WEBSOCKETS
@@ -222,6 +225,19 @@ void ClientChainApplet::rebuildCoreRows()
     if (!m_coreRows) {
         return;
     }
+    IStationLink* link = m_stationModel ? m_stationModel->stationLink() : nullptr;
+    CoreRowsShown next;
+    next.panelShown = link && link->stationTciAvailable();
+    next.serverAvailable = next.panelShown && link->stationTciServerAvailable();
+    if (next.serverAvailable) {
+        next.onAir = m_stationModel->isCoreOnAir();
+        next.clients = m_stationModel->stationTciModel()->clients();
+    }
+    // Nothing the rows show has changed: leave every widget as it is.
+    if (m_coreRowsShown && *m_coreRowsShown == next) {
+        return;
+    }
+    m_coreRowsShown = next;
     while (QLayoutItem* item = m_coreRows->takeAt(0)) {
         if (QWidget* widget = item->widget()) {
             widget->hide();
@@ -229,22 +245,21 @@ void ClientChainApplet::rebuildCoreRows()
         }
         delete item;
     }
-    IStationLink* link = m_stationModel ? m_stationModel->stationLink() : nullptr;
-    if (!link || !link->stationTciAvailable()) {
+    if (!next.panelShown) {
         m_corePanel->hide();
         return;
     }
     m_corePanel->show();
     auto* heading = makeSecondaryLabel(QStringLiteral("The Core's TCI server"), m_corePanel);
     m_coreRows->addWidget(heading);
-    if (!link->stationTciServerAvailable()) {
+    if (!next.serverAvailable) {
         auto* reason = makeTertiaryLabel(IStationLink::stationTciServerUnavailableReason(),
                                         m_corePanel);
         reason->setWordWrap(true);
         m_coreRows->addWidget(reason);
         return;
     }
-    const QList<StationTciClient> clients = m_stationModel->stationTciModel()->clients();
+    const QList<StationTciClient>& clients = next.clients;
     if (clients.isEmpty()) {
         m_coreRows->addWidget(makeTertiaryLabel(
             QStringLiteral("No apps connected to the Core's TCI server."), m_corePanel));
@@ -266,7 +281,7 @@ void ClientChainApplet::rebuildCoreRows()
         line->addWidget(label, 1);
         auto* disconnect = new QPushButton(QStringLiteral("Disconnect"), row);
         disconnect->setObjectName(QStringLiteral("disconnectCoreTciClient"));
-        const bool onAir = m_stationModel->isCoreOnAir();
+        const bool onAir = next.onAir;
         disconnect->setEnabled(!onAir);
         if (onAir) {
             disconnect->setToolTip(QStringLiteral("The radio is on the air. Try again when it stops."));
