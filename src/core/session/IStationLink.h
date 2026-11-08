@@ -46,6 +46,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: sliceControlledHere.
+//   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -270,6 +273,8 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  dxOutputsUnavailableReason
 //                                    (radioHardwareVersion 14).
 //                                    AI-assisted: Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include <QString>
@@ -338,6 +343,18 @@ public:
     virtual QString band2mUnavailableReason() const { return {}; }
     virtual CommandOutcome requestSelectBand(int /*sliceId*/, int /*band*/)
     { return { false, QStringLiteral("This Core cannot change bands for this app. Updating the Core may help.") }; }
+
+    /// Band stack plan Task 4 (bandStackVersion 1): the Core runs a band stack
+    /// with this window. `verb` is one of the bandStack.* verbs and `arguments`
+    /// holds its arguments by name; an `ids` array goes as the JSON text the
+    /// verb takes. The defaults refuse, for links that did not negotiate it.
+    virtual bool bandStackAvailable() const { return false; }
+    virtual CommandOutcome sendBandStackCommand(const QString& /*verb*/,
+                                                const QJsonObject& /*arguments*/)
+    { return { false, QStringLiteral("This Core does not have band stacks. Updating the Core may help.") }; }
+    /// Band stack plan Task 6: this window controls the slice. A link that does
+    /// not share slices has no other device to leave it to.
+    virtual bool sliceControlledHere(int /*sliceId*/) const { return true; }
 
     /// Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): the
     /// Core shares slices between devices with this window. Verbs
@@ -992,6 +1009,16 @@ public:
     virtual void setModMonitorSource(int /*source*/) {}
     virtual CommandOutcome requestModMonitorReset(int /*source*/)
     { return { false, modMonitorUnavailableReason() }; }
+
+    // SSB Mod Monitor. The Core sends envelope readings while keyed in
+    // USB or LSB. 0 on txSsbModMonitorVersion (or no such entry) means
+    // this Core does not.
+    static QString ssbModMonitorUnavailableReason()
+    { return QStringLiteral("This Core does not send the SSB modulation monitor. Updating the Core may help."); }
+    virtual bool txSsbModMonitorAvailable() const { return false; }
+    virtual void setSsbModMonitorSource(int /*source*/) {}
+    virtual CommandOutcome requestSsbModMonitorReset(int /*source*/)
+    { return { false, ssbModMonitorUnavailableReason() }; }
 
     // R-R3-46 / R-R3-21 (radioHardwareVersion 4): the filter policy dialog
     // in a remote window. Whether the Core takes a filter policy change from

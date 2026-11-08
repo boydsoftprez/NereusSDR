@@ -11,6 +11,56 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: A pan raises the wideband flag only for a slice this window
+//               controls, not one it only listens to, JJ's decision.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: Wings go to the floor when capture on their ADC ends.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: A pan going away lowers its wideband flag while the widgets are
+//               whole, the CH labels are held rather than searched for, and a
+//               wing click retunes only a slice this window controls. Hosting
+//               starting or stopping rechecks the flag.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: A pan raises the wideband flag only for a slice this window
+//               controls or listens to, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06: The wire-rate signal also updates every pan and the cached
+//               stream windows, so a live Setup change reaches inactive pans,
+//               a later slice switch and Clarity's source, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06 - The Phone/CW panel is also container content
+//                 (registerPhoneCwSectionContent), with a hide toggle for
+//                 each row and for the page buttons. Brian Sutton,
+//                 AI-assisted via xAI Grok.
+//   2026-11-06: A desktop's fill at connect brings back the radio's saved
+//               layout. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: On Protocol 2 the FFT engines and the active pan take each
+//               stream's own rate from the wire-rate signal, issue 701.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-05: The RX applet's setup hop is connected once, when the applet
+//               is created, so a right-click works before any connection.
+//               Corrections for review findings. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Each window on a Core keeps its own paint rate (the Display
+//               pill's FPS, DisplayPaintFps). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-11-05: A window's fill at connect keeps a receiver's RIT and XIT.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-04 - The RX applet's setup hop covers a right-click on AUTO
+//                 as well as on the AGC-T slider. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-04: The flags' S-meter source follows the window's one S-meter, and
+//               a flag can set it (overlay design D40, D41). Display only: nothing
+//               reaches a slice or the radio. A flag line shows open while the
+//               inspector shows its frequency. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-11-04: The one inspector's routing (overlay design D21, D24 to D27, D34, D36,
+//               D37): a toggle, a swap in place, Back and ⋯, the fold's list and the
+//               short menu. A band click leaves it open. New GUI-thread routes only.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-03: A tag or another slice's flag line views a frequency without tuning
+//               (overlay design D21 to D27): viewRoundtableFrequency and the card's
+//               menu. A click no longer forces the applet open. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Prioritize passive reports at the selected listening context.
@@ -1081,6 +1131,34 @@
 //                Thetis's MatchTXFilterToRXFilter has no NereusSDR
 //                equivalent yet (noted at the click). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - Band stack plan Task 6: while this desktop hosts, its band
+//               stack runs as the station device (bindBandStack). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 7: the band stack panel beside the pan
+//               column, the dots and menu entry open it, refusals and reports
+//               toast, the placeholder is gone. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 9: the rows' context (view, slices, band
+//                 plan colour, blocked reason) and the expiry note's Undo.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 11: the spectrum ticks, from the panel's
+//               Show on the spectrum, pushed to every pan, hidden on air; a
+//               click recalls on the pan's slice and a right-click opens the
+//               row menu. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
+//   2026-11-06 - Band stack plan Task 12: the status bar's stack number, the pan
+//               rule a recall applies on the window controlling the slice, and
+//               the region prompt. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
+//   2026-11-06 - Band stack plan Task 10: openBandStackPopup, from a flyout
+//               button's right-click, a container band button's and the VFO
+//               display's long press; it replaces the container's stopgap of
+//               opening the panel. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
+//   2026-11-06 - Band stack plan Task 8: pressBand routes every band press in
+//               the window, the flyout stays open across presses, and the
+//               four hot key entry points. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (C2, I1, I2, M6): a filter display
 //                 learns whether its slice is the transmit slice; the VFO
 //                 display's TX box asks requestTransmitSlice and shows
@@ -1088,6 +1166,10 @@
 //                 dial on another radio's entry is cleared with that
 //                 reason; one VOX line reason (voxLineReason) for the
 //                 container button and the applets. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -1317,6 +1399,10 @@ warren@wpratt.com
 #include "gui/multidevice/MultiDeviceController.h"
 #include "gui/multidevice/NoticeCard.h"
 #include "gui/HostingSliceActions.h"
+#include "gui/bandstack/BandStackPanel.h"
+#include "gui/bandstack/BandStackPopup.h"
+#include "gui/bandstack/BandStackRowList.h"
+#include "models/bandstack/LocalBandStackAccess.h"
 #include "gui/LevelCalGridFollowGuard.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/session/PathRacer.h"
@@ -1400,6 +1486,7 @@ warren@wpratt.com
 #include "gui/multidevice/TakeTransmitDialog.h"
 #include "models/PanadapterModel.h"
 #include "models/Band.h"
+#include "models/BandDefaults.h"
 #include "models/TransmitModel.h"
 #include "core/LogCategories.h"
 #include "containers/ContainerManager.h"
@@ -1465,10 +1552,12 @@ warren@wpratt.com
 #include "applets/TxApplet.h"
 #include "applets/TxSectionContent.h"
 #include "applets/RxSectionContent.h"
+#include "applets/PhoneCwSectionContent.h"
 #include "applets/TxEqDialog.h"
 // Phase 3J-2 H1: Tools menu modeless singletons (Spot Hub + FreeDV Reporter).
 #include "SpotHubDialog.h"
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
+#include "gui/roundtable/RoundtableFrequencyPeek.h"
 #include "gui/roundtable/RoundtablePanel.h"
 #include "core/SpotSourceHost.h"
 #include "core/station/StationRadios.h"
@@ -1501,6 +1590,7 @@ warren@wpratt.com
 #include "applets/DigitalApplet.h"
 #include "applets/PureSignalApplet.h"
 #include "applets/ModMonitorApplet.h"
+#include "applets/SsbModMonitorApplet.h"
 #include "applets/DiversityApplet.h"
 #include "applets/CwxApplet.h"
 #include "core/CwxSender.h"
@@ -2114,6 +2204,38 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         refreshContainerControls();
     });
 
+    // Band stack plan Task 7: the panel's state follows the access, the link
+    // and the connection, and every refusal and report toasts, once.
+    bindBandStackAccess(m_radioModel->bandStack());
+    connect(m_radioModel, &RadioModel::stationLinkStateChanged,
+            this, &MainWindow::refreshBandStackAvailability);
+    connect(m_radioModel, &RadioModel::connectionStateChanged,
+            this, &MainWindow::refreshBandStackAvailability);
+    connect(m_radioModel, &RadioModel::activeSliceChanged,
+            this, &MainWindow::refreshBandStackSlice);
+    // Band stack plan Task 11: a tick's highlight follows its pan's slice, and
+    // the overlay goes on air with every pan (V11).
+    connect(m_radioModel, &RadioModel::activeSliceChanged,
+            this, &MainWindow::refreshBandStackTicks);
+    connect(m_radioModel, &RadioModel::sliceAdded,
+            this, &MainWindow::refreshBandStackTicks);
+    connect(m_radioModel, &RadioModel::sliceRemoved,
+            this, &MainWindow::refreshBandStackTicks);
+    connect(m_radioModel, &RadioModel::transmittingChanged, this, [this](bool onAir) {
+        if (!m_panStack) {
+            return;
+        }
+        for (PanadapterApplet* applet : m_panStack->allApplets()) {
+            if (SpectrumWidget* spectrum = applet ? applet->spectrumWidget() : nullptr) {
+                spectrum->setBandStackTicksHidden(onAir);
+            }
+        }
+    });
+    connect(m_radioModel, &RadioModel::sliceAdded,
+            this, &MainWindow::refreshBandStackSlice);
+    connect(m_radioModel, &RadioModel::sliceRemoved,
+            this, &MainWindow::refreshBandStackSlice);
+
     // Issue #118 — show a transient status-bar message when a band-button
     // click short-circuits (locked slice, XVTR without transverter config).
     // Prevents silent failure — the user sees why nothing happened.
@@ -2231,9 +2353,7 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
     // inside openSpotHub() is now a defensive guard kept for the case
     // where the spectrum widget races construction; see lines below.
     QTimer::singleShot(0, this, [this] {
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->loadSpotDisplaySettings();
-        }
+        reloadSpotDisplaySettingsOnAllPans();
         if (m_radioModel) {
             m_radioModel->restoreSpotClientAutoStartState();
         }
@@ -2324,6 +2444,17 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         m_shuttingDown = true;
         if (m_clarityRegistry) { m_clarityRegistry->retireAll(); }
         if (m_desktopStationController) { m_desktopStationController->stop(); }
+        // What the pans show, read before the disconnect as closeEvent reads
+        // it; a save only writes the in-memory map, so the stop frame below
+        // is not held up. A pending 500 ms display save would otherwise be
+        // dropped here.
+        if (!m_closeSavesDone && m_panStack) {
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                if (applet && applet->spectrumWidget()) {
+                    applet->spectrumWidget()->saveSettings();
+                }
+            }
+        }
         // 2026-05-22 bench-finding: graceful radio disconnect MUST happen
         // before the process tears down so the SendStop frame (run=0
         // CmdHighPriority) actually reaches the wire.  Without this,
@@ -2338,6 +2469,10 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         }
         if (m_containerManager) {
             m_containerManager->saveState();
+        }
+        if (!m_closeSavesDone && m_panStack) {
+            m_panStack->saveSplitterState();
+            m_panStack->saveFloatingGeometry();
         }
         // Issue #206 — also flush window geometry on signal-based
         // shutdown (SIGTERM / force-quit). Idempotent with the
@@ -2376,6 +2511,9 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         AppSettings::instance().save();
     }, this);
 
+    // The status bar's ☰ and the panel it hides both exist by now.
+    restoreContainerPanelHidden();
+
     // Issue #206 — restore last session's window position, size, and
     // maximized/fullscreen state. The 1280×800 set in buildUI() stays as the
     // first-launch fallback; restoreMainWindowGeometry() returns false
@@ -2409,6 +2547,12 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 
     ensureRemoteSession();
     if (startup == ConnectionStartup::Automatic) { startInitialConnection(); }
+
+    // Queued so it runs after show() and after the zero timers above: all of
+    // startup, and none of it counts as an operator's edit.
+    QTimer::singleShot(0, this, [this] {
+        if (m_radioModel) { m_radioModel->keepTransmitEditsWithoutRadio(); }
+    });
 }
 
 MainWindow::~MainWindow()
@@ -2528,6 +2672,791 @@ bool MainWindow::desktopListensTo(int sliceId) const
     const SliceOwnership& ownership = *m_radioModel->sliceOwnership();
     return !ownership.mark(sliceId).isHeld()
         && ownership.isListening(SliceOwnership::stationDevice(), sliceId);
+}
+
+void MainWindow::bandStackPanel()
+{
+    if (m_bandStackPanel) {
+        m_bandStackPanel->setOpen(!m_bandStackPanel->isOpen());
+    }
+}
+
+QString MainWindow::bandStackReason() const
+{
+    return m_bandStackAccess ? m_bandStackAccess->unavailableReason()
+                             : BandStackAccess::notConnectedReason();
+}
+
+void MainWindow::setBandStackAccessForTest(BandStackAccess* access)
+{
+    bindBandStackAccess(access);
+}
+
+BandStackView MainWindow::viewForSlice(SliceModel* slice) const
+{
+    BandStackView view;
+    const SpectrumWidget* spectrum = slice ? spectrumForSlice(slice) : nullptr;
+    if (spectrum) {
+        view.centerHz = qRound64(spectrum->centerFrequency());
+        view.spanHz = qRound64(spectrum->bandwidth());
+    }
+    return view;
+}
+
+void MainWindow::openBandStackPopup(SliceModel* slice, Band band, const QPoint& globalPos)
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    if (!m_bandStackPopup) {
+        m_bandStackPopup = new BandStackPopup(m_bandStackAccess, this);
+        m_bandStackPopup->rows()->setContext(bandStackRowContext());
+    }
+    m_bandStackPopup->setUnavailableReason(bandStackReason());
+    m_bandStackPopup->showFor(slice, band, globalPos);
+}
+
+void MainWindow::pressBand(SliceModel* slice, Band band, Qt::KeyboardModifiers mods)
+{
+    if (!m_radioModel) { return; }
+    if (!m_bandStackAccess || m_bandStackAccess->state() != BandStackAccess::State::Ready) {
+        m_radioModel->onBandButtonClicked(slice, band);
+        return;
+    }
+    if (!slice) { return; }
+    const int sliceId = slice->sliceIndex();
+    const BandStackView view = viewForSlice(slice);
+    const bool sameBand = BandDefaults::bandGridBandFromFrequency(slice->frequency()) == band;
+    if (sameBand && mods.testFlag(Qt::ControlModifier)) {
+        m_bandStackAccess->add(sliceId, view);
+    } else if (sameBand && mods.testFlag(Qt::ShiftModifier)) {
+        m_bandStackAccess->press(sliceId, band, BandStackDirection::Previous, view);
+    } else {
+        m_bandStackAccess->press(sliceId, band, BandStackDirection::Next, view);
+    }
+}
+
+void MainWindow::stepBandStack(SliceModel* slice, BandStackDirection direction)
+{
+    if (!m_bandStackAccess || m_bandStackAccess->state() != BandStackAccess::State::Ready) {
+        showContainerButtonReason(bandStackReason());
+        return;
+    }
+    if (slice) {
+        m_bandStackAccess->step(slice->sliceIndex(), direction, viewForSlice(slice));
+    }
+}
+
+void MainWindow::bandStackNext()
+{
+    stepBandStack(activeSliceForWindow(), BandStackDirection::Next);
+}
+
+void MainWindow::bandStackPrevious()
+{
+    stepBandStack(activeSliceForWindow(), BandStackDirection::Previous);
+}
+
+void MainWindow::bandStackAdd()
+{
+    if (!m_bandStackAccess || m_bandStackAccess->state() != BandStackAccess::State::Ready) {
+        showContainerButtonReason(bandStackReason());
+        return;
+    }
+    if (SliceModel* slice = activeSliceForWindow()) {
+        m_bandStackAccess->add(slice->sliceIndex(), viewForSlice(slice));
+    }
+}
+
+void MainWindow::bindBandStackAccess(BandStackAccess* access)
+{
+    if (m_bandStackAccess) {
+        m_bandStackAccess->disconnect(this);
+    }
+    m_bandStackAccess = access;
+    if (m_bandStackPanel) {
+        m_bandStackPanel->setAccess(access);
+    }
+    if (m_bandStackPopup) {
+        m_bandStackPopup->setAccess(access);
+    }
+    if (m_bandStackTickRows) {
+        m_bandStackTickRows->setAccess(access);
+    }
+    m_bandStackExpiryBatch.clear();
+    m_bandStackRecallSeq.reset();
+    m_bandStackRegion.clear();
+    m_bandStackRegionEdit.reset();
+    if (m_bandStackRegionPrompt) {
+        m_bandStackRegionPrompt->close();
+    }
+    if (access) {
+        // A note already there when this access arrives is not news.
+        m_bandStackExpiryBatch = access->document()
+                                     .value(QStringLiteral("lastExpiry")).toObject()
+                                     .value(QStringLiteral("batchId")).toString();
+        // Nor is a recall or a region it already carries.
+        const QJsonObject document = access->document();
+        if (!document.isEmpty()) {
+            m_bandStackRecallSeq = document.value(QStringLiteral("lastRecall")).toObject()
+                                       .value(QStringLiteral("seq")).toInteger();
+            m_bandStackRegion = document.value(QStringLiteral("region")).toString();
+        }
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::showBandStackExpiryNote);
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::applyBandStackRecall);
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::followBandStackRegion);
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::refreshBandStackNumber);
+        connect(access, &BandStackAccess::documentChanged,
+                this, &MainWindow::refreshBandStackTicks);
+        connect(access, &BandStackAccess::stateChanged,
+                this, &MainWindow::refreshBandStackAvailability);
+        connect(access, &BandStackAccess::refused, this, [this](const QString& reason) {
+            showToast(reason, ToastSeverity::Warning, 3000);
+        });
+        connect(access, &BandStackAccess::reported, this, [this](const QString& text) {
+            showToast(text, ToastSeverity::Info, 3000);
+        });
+    }
+    refreshBandStackAvailability();
+}
+
+void MainWindow::applyBandStackRecall()
+{
+    if (m_shuttingDown || !m_bandStackAccess || !m_radioModel) {
+        return;
+    }
+    const QJsonObject document = m_bandStackAccess->document();
+    if (document.isEmpty()) {
+        m_bandStackRecallSeq.reset();
+        return;
+    }
+    const QJsonObject recall = document.value(QStringLiteral("lastRecall")).toObject();
+    const qint64 seq = recall.value(QStringLiteral("seq")).toInteger();
+    // The first document says what has already happened, not what just did.
+    const bool isNew = m_bandStackRecallSeq.has_value() && *m_bandStackRecallSeq != seq;
+    m_bandStackRecallSeq = seq;
+    if (!isNew || !recall.value(QStringLiteral("applyView")).toBool()) {
+        return;
+    }
+    const int sliceId = recall.value(QStringLiteral("sliceId")).toInt(-1);
+    SliceModel* slice = m_radioModel->sliceById(sliceId);
+    // A pan's view belongs to each window: only the one controlling the slice
+    // applies this.
+    if (!slice || !windowControlsSlice(sliceId)) {
+        return;
+    }
+    const bool local = m_radioModel->ownsLocalDsp();
+    // A remote record publishes the slice before its pan key, and the pane it
+    // borrows until then is not its own (frequencyChanged's rule).
+    if (!local && slice->panKey().isEmpty()) {
+        return;
+    }
+    SpectrumWidget* host = spectrumForSlice(slice);
+    // The pan keeps its own slice's view when this slice's stream is another
+    // band's, as a band change leaves it.
+    if (!host || sliceIsOffPanStream(panIdOfSpectrum(host), slice)) {
+        return;
+    }
+
+    // The 1 kHz floor of the operator's zoom controls, and their ceiling.
+    constexpr double kMinimumSpanHz = 1000.0;
+    const double hz = slice->frequency();
+    const double savedSpanHz = static_cast<double>(recall.value(QStringLiteral("spanHz")).toInteger());
+    double spanHz = host->bandwidth();
+    if (savedSpanHz > 0.0) {
+        spanHz = std::max(savedSpanHz, kMinimumSpanHz);
+        const double ceilingHz = host->maxZoomOutBandwidthHz();
+        if (ceilingHz > 0.0) {
+            spanHz = std::min(spanHz, ceilingHz);
+        }
+    }
+    const bool zoomChanged = !qFuzzyCompare(spanHz, host->bandwidth());
+
+    // V14: a pan without click tune always sits on its slice. With click tune
+    // the saved center comes back, unless the frequency would be off screen.
+    const bool clickTune = host->ctunEnabled();
+    double viewHz = hz;
+    if (clickTune) {
+        const double savedCenterHz =
+            static_cast<double>(recall.value(QStringLiteral("centerHz")).toInteger());
+        if (savedCenterHz > 0.0 && std::abs(hz - savedCenterHz) <= spanHz / 2.0) {
+            viewHz = savedCenterHz;
+        }
+    }
+
+    m_handlingBandJump = true;
+    if (!local) {
+        // Core alone moves the DDC; this is the window's own view, as
+        // followRemoteSliceFrequency moves it.
+        host->setDisplayWindowPreservingHistory(viewHz, spanHz);
+    } else if (!clickTune) {
+        host->setDisplayWindowClamped(viewHz, spanHz);
+    } else if (m_radioModel->requestStreamCentre(sliceId, std::round(viewHz))) {
+        host->setDisplayWindowClamped(viewHz, spanHz);
+        host->setDdcCenterFrequency(m_radioModel->streamCentreHz(slice->streamIndex()));
+    } else {
+        // Refused: another slice on the stream would leave the moved window. The
+        // DDC stays, and the view follows only as far as the DDC has data, as a
+        // refused move past the view does in frequencyChanged's rule.
+        const double ddcHz = host->ddcCenterFrequency();
+        m_radioModel->applySliceStreamCentre(slice, ddcHz);
+        const double halfWindow = m_radioModel->streamSampleRateHz(slice->streamIndex()) / 2.0;
+        const double halfView = spanHz / 2.0;
+        double keptHz = ddcHz;
+        if (halfWindow > 0.0 && halfView < halfWindow) {
+            keptHz = std::clamp(viewHz, ddcHz - halfWindow + halfView, ddcHz + halfWindow - halfView);
+        }
+        host->setDisplayWindowClamped(keptHz, spanHz);
+    }
+    host->setVfoFrequency(hz);
+    m_handlingBandJump = false;
+    if (zoomChanged) {
+        emit host->bandwidthChangeRequested(host->bandwidth());
+    }
+}
+
+void MainWindow::noteBandStackRegionEdit(std::chrono::milliseconds window)
+{
+    // No band stacks on this Core, so nothing to ask about.
+    if (m_bandStackAccess && m_bandStackAccess->state() == BandStackAccess::State::Ready) {
+        m_bandStackRegionEdit = QDeadlineTimer(window);
+    } else {
+        m_bandStackRegionEdit.reset();
+    }
+}
+
+void MainWindow::followBandStackRegion()
+{
+    if (m_shuttingDown || !m_bandStackAccess) {
+        return;
+    }
+    const QString region = m_bandStackAccess->document().value(QStringLiteral("region")).toString();
+    const QString before = m_bandStackRegion;
+    m_bandStackRegion = region;
+    if (m_bandStackRegionEdit.has_value() && m_bandStackRegionEdit->hasExpired()) {
+        m_bandStackRegionEdit.reset();
+    }
+    if (region.isEmpty() || before.isEmpty() || region == before) {
+        return;
+    }
+    const bool edited = m_bandStackRegionEdit.has_value();
+    m_bandStackRegionEdit.reset();
+    if (edited && m_bandStackAccess->state() == BandStackAccess::State::Ready) {
+        askBandStackRegion(region);
+    }
+}
+
+void MainWindow::askBandStackRegion(const QString& region)
+{
+    // A newer answer is the one that counts: the older question's region is gone.
+    if (m_bandStackRegionPrompt) {
+        m_bandStackRegionPrompt->close();
+    }
+    auto* dialog = new QDialog(this);
+    m_bandStackRegionPrompt = dialog;
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setObjectName(QStringLiteral("bandStackRegionPrompt"));
+    dialog->setWindowTitle(QStringLiteral("Band stack"));
+    dialog->setWindowModality(Qt::ApplicationModal);
+    // BandStackPanel::confirm's look, which asks the same thing from its menu.
+    dialog->setStyleSheet(WorkspacePreview::lookQss(QStringLiteral(
+        "#bandStackRegionPrompt { background: #0f0f1a; }"
+        "QLabel { color: #c8d8e8; font-size: 13px; }"
+        "QPushButton { color: #c8d8e8; background: #1a2a3a; border: 1px solid #304050;"
+        " border-radius: 4px; padding: 4px 12px; font-size: 12px; font-weight: 600; }"
+        "#bandStackRegionReplace { color: #f0dcdc; background: #7a2c2e; border-color: #a86b6d; }"),
+        dialog));
+    auto* layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(16, 16, 16, 16);
+    layout->setSpacing(14);
+    auto* message = new QLabel(
+        QStringLiteral("You changed the region to %1. Replace the unlocked entries with the "
+                       "defaults for %1? Your locked entries stay.").arg(region),
+        dialog);
+    message->setObjectName(QStringLiteral("bandStackRegionPromptText"));
+    message->setWordWrap(true);
+    message->setMinimumWidth(388);
+    layout->addWidget(message);
+    auto* buttons = new QHBoxLayout;
+    buttons->setSpacing(6);
+    buttons->addStretch(1);
+    auto* keep = new QPushButton(QStringLiteral("Keep my entries"), dialog);
+    keep->setObjectName(QStringLiteral("bandStackRegionKeep"));
+    keep->setDefault(true);
+    connect(keep, &QPushButton::clicked, dialog, &QDialog::reject);
+    buttons->addWidget(keep);
+    auto* replace = new QPushButton(QStringLiteral("Replace"), dialog);
+    replace->setObjectName(QStringLiteral("bandStackRegionReplace"));
+    replace->setAutoDefault(false);
+    connect(replace, &QPushButton::clicked, dialog, &QDialog::accept);
+    buttons->addWidget(replace);
+    layout->addLayout(buttons);
+    connect(dialog, &QDialog::accepted, this, [this] {
+        if (m_bandStackAccess && m_bandStackAccess->state() == BandStackAccess::State::Ready) {
+            m_bandStackAccess->reseed();
+        } else {
+            showToast(bandStackReason(), ToastSeverity::Warning, 3000);
+        }
+    });
+    // Not exec(): this runs inside the document's own change signal.
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+}
+
+void MainWindow::showBandStackExpiryNote()
+{
+    if (!m_bandStackAccess) {
+        return;
+    }
+    const QJsonObject note =
+        m_bandStackAccess->document().value(QStringLiteral("lastExpiry")).toObject();
+    const QString batchId = note.value(QStringLiteral("batchId")).toString();
+    if (batchId == m_bandStackExpiryBatch) {
+        return;
+    }
+    m_bandStackExpiryBatch = batchId;
+    const int count = note.value(QStringLiteral("count")).toInt();
+    if (batchId.isEmpty() || count <= 0) {
+        return;
+    }
+    // Design V5: the undo is on the device that shows the note, for 5 seconds.
+    constexpr int kUndoMs = 5000;
+    const QString text = count == 1 ? QStringLiteral("Removed 1 expired entry")
+                                    : QStringLiteral("Removed %1 expired entries").arg(count);
+    if (StatusToast* toast = showToast(text, ToastSeverity::Info, kUndoMs)) {
+        toast->setAction(QStringLiteral("Undo"), [this, batchId] {
+            if (m_bandStackAccess) {
+                m_bandStackAccess->restoreExpired(batchId);
+            }
+        });
+    }
+}
+
+QString MainWindow::bandStackBlockedReason(int sliceId) const
+{
+    SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
+    if (!slice) {
+        return {};
+    }
+    if (slice->isReadOnlyListener()) {
+        return slice->readOnlyListenerReason();
+    }
+    if (desktopListensTo(sliceId)) {
+        return QStringLiteral("You are only listening to Slice %1. Take control of it to change "
+                              "its band.").arg(slice->sliceLetter());
+    }
+    if (slice->locked()) {
+        return QStringLiteral("Slice %1 is locked. Unlock it to change bands.")
+            .arg(slice->sliceLetter());
+    }
+    return {};
+}
+
+BandStackRowContext MainWindow::bandStackRowContext()
+{
+    BandStackRowContext context;
+    context.viewForSlice = [this](int sliceId) {
+        return viewForSlice(m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr);
+    };
+    context.slices = [this] {
+        QList<BandStackSliceInfo> slices;
+        if (m_radioModel) {
+            for (const SliceModel* slice : m_radioModel->slices()) {
+                if (slice) {
+                    slices.append({slice->sliceIndex(), slice->sliceLetter(), slice->frequency()});
+                }
+            }
+        }
+        return slices;
+    };
+    context.planColourAt = [this](qint64 frequencyHz) {
+        const double mhz = frequencyHz / 1.0e6;
+        for (const BandSegment& segment : m_radioModel->bandPlanManager().segments()) {
+            if (mhz >= segment.lowMhz && mhz <= segment.highMhz) {
+                return segment.color;
+            }
+        }
+        return QColor();
+    };
+    context.blockedReason = [this](int sliceId) { return bandStackBlockedReason(sliceId); };
+    return context;
+}
+
+void MainWindow::refreshBandStackRows()
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    if (m_bandStackPanel) {
+        m_bandStackPanel->rows()->refreshSlices();
+    }
+    if (m_bandStackPopup) {
+        m_bandStackPopup->rows()->refreshSlices();
+    }
+}
+
+void MainWindow::wireBandStackRows()
+{
+    m_bandStackPanel->rows()->setContext(bandStackRowContext());
+
+    connect(&m_radioModel->bandPlanManagerMutable(), &BandPlanManager::planChanged, this,
+            &MainWindow::refreshBandStackRows);
+    for (SliceModel* slice : m_radioModel->slices()) {
+        watchBandStackSlice(slice);
+    }
+    connect(m_radioModel, &RadioModel::sliceAdded, this, [this](int sliceId) {
+        watchBandStackSlice(m_radioModel->sliceById(sliceId));
+        refreshBandStackRows();
+    });
+    connect(m_radioModel, &RadioModel::sliceRemoved, this, [this](int sliceId) {
+        if (m_bandStackPopup && m_bandStackPopup->rows()->sliceId() == sliceId) {
+            m_bandStackPopup->close();
+        }
+        refreshBandStackRows();
+    });
+}
+
+void MainWindow::watchBandStackSlice(SliceModel* slice)
+{
+    if (!slice) {
+        return;
+    }
+    connect(slice, &SliceModel::frequencyChanged, this, &MainWindow::refreshBandStackRows);
+    connect(slice, &SliceModel::lockedChanged, this, &MainWindow::refreshBandStackRows);
+    connect(slice, &SliceModel::frequencyChanged, this, [this, slice](double hz) {
+        if (slice == activeSliceForWindow()
+            && m_bandStackNumberBand != BandDefaults::bandGridBandFromFrequency(hz)) {
+            refreshBandStackNumber();
+        }
+    });
+}
+
+void MainWindow::refreshBandStackAvailability()
+{
+    const QString reason = bandStackReason();
+    if (m_bandStackPanel) {
+        m_bandStackPanel->setUnavailableReason(reason);
+    }
+    if (m_bandStackPopup) {
+        m_bandStackPopup->setUnavailableReason(reason);
+    }
+    if (m_bandStackLabel) {
+        m_bandStackLabel->setToolTip(reason.isEmpty() ? QStringLiteral("Band stack") : reason);
+    }
+    if (m_bandStackAction) {
+        m_bandStackAction->setToolTip(reason);
+    }
+    refreshBandStackDots();
+    refreshBandStackSlice();
+    refreshBandStackTicks();
+    // STACK+ and STACK- are disabled with the same reason.
+    refreshContainerControls();
+}
+
+namespace {
+
+// The ticks of a band stack document, for a pan whose slice has this letter
+// (null for a pan with no slice). desktop.html's draw() and its tooltip.
+QVector<BandStackTick> bandStackTicksFromDocument(const QJsonObject& document, QChar sliceLetter)
+{
+    const QJsonObject bands = document.value(QStringLiteral("bands")).toObject();
+    const QJsonObject places = sliceLetter.isNull()
+        ? QJsonObject{}
+        : document.value(QStringLiteral("places")).toObject()
+              .value(QString(sliceLetter)).toObject();
+    const QJsonArray entries = document.value(QStringLiteral("entries")).toArray();
+
+    // A band's own order, then any entry it does not list, as the rows do.
+    QHash<QString, QString> bandOfEntry;
+    for (const QJsonValue& value : entries) {
+        const QJsonObject entry = value.toObject();
+        bandOfEntry.insert(entry.value(QStringLiteral("id")).toString(),
+                           entry.value(QStringLiteral("band")).toString());
+    }
+    QHash<QString, QStringList> listedByBand;
+    for (auto band = bands.constBegin(); band != bands.constEnd(); ++band) {
+        const QJsonArray order = band.value().toObject().value(QStringLiteral("order")).toArray();
+        for (const QJsonValue& id : order) {
+            if (bandOfEntry.value(id.toString()) == band.key()) {
+                listedByBand[band.key()].append(id.toString());
+            }
+        }
+    }
+    for (auto entry = bandOfEntry.constBegin(); entry != bandOfEntry.constEnd(); ++entry) {
+        QStringList& listed = listedByBand[entry.value()];
+        if (!listed.contains(entry.key())) {
+            listed.append(entry.key());
+        }
+    }
+
+    QVector<BandStackTick> ticks;
+    ticks.reserve(entries.size());
+    for (const QJsonValue& value : entries) {
+        const QJsonObject entry = value.toObject();
+        const QString band = entry.value(QStringLiteral("band")).toString();
+        if (!BandStackStore::bandFromKey(band).has_value()) {
+            continue;
+        }
+        const QString id = entry.value(QStringLiteral("id")).toString();
+        const qint64 hz = entry.value(QStringLiteral("frequencyHz")).toInteger();
+        const QString mode = entry.value(QStringLiteral("mode")).toString();
+        const QString name = entry.value(QStringLiteral("name")).toString();
+        const int low = entry.value(QStringLiteral("filterLowHz")).toInt();
+        const int high = entry.value(QStringLiteral("filterHighHz")).toInt();
+        const QStringList listed = listedByBand.value(band);
+        const QString frequency = BandStackStore::displayFrequency(hz);
+
+        BandStackTick tick;
+        tick.entryId = id;
+        tick.hz = static_cast<double>(hz);
+        tick.label = QStringLiteral("%1 %2").arg(frequency, mode);
+        tick.tip = QStringLiteral("<b>%1 MHz</b><br>%2, %3<br>%4 of %5 on %6")
+                       .arg(frequency, mode, BandStackRowList::filterText(low, high))
+                       .arg(listed.indexOf(id) + 1)
+                       .arg(listed.size())
+                       .arg(band);
+        if (!name.isEmpty()) {
+            tick.tip += QStringLiteral("<br><i>%1</i>").arg(name.toHtmlEscaped());
+        }
+        tick.locked = entry.value(QStringLiteral("locked")).toBool();
+        if (tick.locked) {
+            tick.tip += QStringLiteral("<br>Locked");
+        }
+        tick.active = places.value(band).toString() == id;
+        tick.colour = SpectrumWidget::bandStackTickColour(tick.active);
+        tick.filterLowHz = low;
+        tick.filterHighHz = high;
+        ticks.append(tick);
+    }
+    return ticks;
+}
+
+} // namespace
+
+void MainWindow::refreshBandStackTicks()
+{
+    if (m_shuttingDown || !m_panStack || !m_radioModel) {
+        return;
+    }
+    // Off by default and per device (V6). An older Core has no stack to show.
+    const bool show = m_bandStackPanel && m_bandStackPanel->showOnSpectrum()
+        && m_bandStackAccess && m_bandStackAccess->state() == BandStackAccess::State::Ready;
+    const QJsonObject document = show ? m_bandStackAccess->document() : QJsonObject{};
+    const bool onAir = m_radioModel->isTransmitting();
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        SpectrumWidget* spectrum = applet ? applet->spectrumWidget() : nullptr;
+        if (!spectrum) {
+            continue;
+        }
+        const SliceModel* slice = show ? sliceForPan(applet->panId()) : nullptr;
+        spectrum->setBandStackTicks(
+            show ? bandStackTicksFromDocument(document, slice ? slice->sliceLetter() : QChar())
+                 : QVector<BandStackTick>{});
+        spectrum->setBandStackTicksHidden(onAir);
+    }
+}
+
+void MainWindow::recallBandStackTick(const QString& panId, const QString& entryId)
+{
+    if (!m_bandStackAccess) {
+        return;
+    }
+    // V7: a tick on a pan acts on that pan's active slice.
+    SliceModel* slice = sliceForPan(panId);
+    if (!slice) {
+        showToast(QStringLiteral("Select a slice first."), ToastSeverity::Warning, 3000);
+        return;
+    }
+    m_bandStackAccess->goTo(slice->sliceIndex(), entryId, viewForSlice(slice));
+}
+
+void MainWindow::showBandStackTickMenu(const QString& panId, const QString& entryId,
+                                       const QPoint& globalPos)
+{
+    if (m_shuttingDown || !m_bandStackAccess) {
+        return;
+    }
+    if (!m_bandStackTickRows) {
+        m_bandStackTickRows = new BandStackRowList(m_bandStackAccess, this);
+        m_bandStackTickRows->setObjectName(QStringLiteral("bandStackTickRows"));
+        m_bandStackTickRows->setContext(bandStackRowContext());
+        m_bandStackTickRows->hide();
+        connect(m_bandStackTickRows, &BandStackRowList::renameElsewhereRequested,
+                this, &MainWindow::renameBandStackTick);
+    }
+    SliceModel* slice = sliceForPan(panId);
+    m_bandStackTickSlice = slice;
+    m_bandStackTickMenuAt = globalPos;
+    m_bandStackTickRows->setSliceId(slice ? slice->sliceIndex() : -1);
+    m_bandStackTickRows->setSliceFrequency(slice ? std::optional<double>(slice->frequency())
+                                                 : std::nullopt);
+    ScopedChildWidget<QMenu> menuOwner(this);
+    QMenu& menu = *menuOwner.get();
+    m_bandStackTickRows->fillRowMenu(menu, entryId);
+    menu.exec(globalPos);
+}
+
+void MainWindow::renameBandStackTick(const QString& entryId)
+{
+    if (!m_bandStackAccess) {
+        return;
+    }
+    const QJsonArray entries = m_bandStackAccess->document()
+                                   .value(QStringLiteral("entries")).toArray();
+    for (const QJsonValue& value : entries) {
+        const QJsonObject entry = value.toObject();
+        if (entry.value(QStringLiteral("id")).toString() != entryId) {
+            continue;
+        }
+        const std::optional<Band> band =
+            BandStackStore::bandFromKey(entry.value(QStringLiteral("band")).toString());
+        if (band.has_value()) {
+            openBandStackPopup(m_bandStackTickSlice, *band, m_bandStackTickMenuAt);
+            if (m_bandStackPopup) {
+                m_bandStackPopup->rows()->beginRename(entryId);
+            }
+        }
+        return;
+    }
+}
+
+void MainWindow::refreshBandStackSlice()
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    refreshBandStackNumber();
+    if (m_bandStackPanel) {
+        m_bandStackPanel->setSlice(activeSliceForWindow());
+    }
+}
+
+namespace {
+
+// desktop.html's #sBand: the band in bold green, the number small beside it. With
+// no usable stack it is the band alone, dimmed.
+QString bandStackNumberMarkup(const QString& band, const QString& number)
+{
+    if (number.isEmpty()) {
+        return QStringLiteral("<span style=\"color:%1;font-size:13px;font-weight:700;\">%2</span>")
+            .arg(WorkspacePreview::roleColourName("#404858", "text-inactive"), band);
+    }
+    return QStringLiteral("<span style=\"color:%1;font-size:13px;font-weight:700;\">%2</span>"
+                          " <span style=\"color:%3;font-size:11px;font-weight:600;\">%4</span>")
+        .arg(WorkspacePreview::roleColourName("#4caf6a", "ok"), band,
+             WorkspacePreview::roleColourName("#a6a6ac", "text-secondary"), number);
+}
+
+// The ids on `band` in the order its rows show: its own list, then any entry the
+// list does not name.
+QStringList bandStackIdsOn(const QJsonObject& document, const QString& band)
+{
+    QStringList onBand;
+    const QJsonArray entries = document.value(QStringLiteral("entries")).toArray();
+    for (const QJsonValue& value : entries) {
+        const QJsonObject entry = value.toObject();
+        if (entry.value(QStringLiteral("band")).toString() == band) {
+            onBand.append(entry.value(QStringLiteral("id")).toString());
+        }
+    }
+    QStringList ids;
+    const QJsonArray order = document.value(QStringLiteral("bands")).toObject()
+                                 .value(band).toObject()
+                                 .value(QStringLiteral("order")).toArray();
+    for (const QJsonValue& id : order) {
+        if (onBand.contains(id.toString())) {
+            ids.append(id.toString());
+        }
+    }
+    for (const QString& id : std::as_const(onBand)) {
+        if (!ids.contains(id)) {
+            ids.append(id);
+        }
+    }
+    return ids;
+}
+
+} // namespace
+
+void MainWindow::refreshBandStackNumber()
+{
+    if (m_shuttingDown || !m_bandStackNumber) {
+        return;
+    }
+    const SliceModel* slice = activeSliceForWindow();
+    const QString reason = bandStackReason();
+    QString shown = QStringLiteral("-");
+    QString number;
+    QString tip = reason;
+    m_bandStackNumberBand.reset();
+    if (slice) {
+        const Band band = BandDefaults::bandGridBandFromFrequency(slice->frequency());
+        m_bandStackNumberBand = band;
+        const QString key = bandKeyName(band);
+        shown = key;
+        if (reason.isEmpty()) {
+            const QJsonObject document = m_bandStackAccess->document();
+            const QStringList ids = bandStackIdsOn(document, key);
+            const QString place = document.value(QStringLiteral("places")).toObject()
+                                      .value(QString(slice->sliceLetter())).toObject()
+                                      .value(key).toString();
+            const int index = ids.indexOf(place);
+            number = QStringLiteral("%1/%2")
+                         .arg(index < 0 ? QStringLiteral("-") : QString::number(index + 1))
+                         .arg(ids.size());
+            tip = index < 0
+                ? QStringLiteral("Slice %1 has no place among the %2 saved on %3.")
+                      .arg(slice->sliceLetter()).arg(ids.size()).arg(key)
+                : QStringLiteral("Slice %1 is on %2 of %3 saved on %4.")
+                      .arg(slice->sliceLetter()).arg(index + 1).arg(ids.size()).arg(key);
+        }
+    } else if (reason.isEmpty()) {
+        tip = QStringLiteral("Select a slice first.");
+    }
+    const bool usable = slice != nullptr && reason.isEmpty();
+    m_bandStackNumber->setEnabled(usable);
+    m_bandStackNumber->setText(bandStackNumberMarkup(shown, number));
+    m_bandStackNumber->setToolTip(tip);
+    m_bandStackNumber->setAccessibleName(number.isEmpty() ? shown : shown + u' ' + number);
+    // A very long list can outgrow the width kept for it.
+    if (m_chromeBar && m_chromeBarWidget) {
+        m_chromeBar->setNaturalWidth(m_bandStackNumber,
+                                     std::max(m_bandStackNumber->sizeHint().width(),
+                                              m_bandStackNumber->minimumWidth()));
+        m_chromeBar->relayout(m_chromeBarWidget->width());
+    }
+}
+
+void MainWindow::refreshBandStackDots()
+{
+    auto* dots = qobject_cast<QLabel*>(m_bandStackLabel);
+    if (!dots) {
+        return;
+    }
+    // desktop.html's dots: grey, the selection colour while the panel is open,
+    // and dark while the stack cannot be used.
+    QColor colour = WorkspacePreview::roleColour(QColor(0x40, 0x48, 0x58), "text-inactive");
+    if (!bandStackReason().isEmpty()) {
+        colour = WorkspacePreview::roleColour(QColor(0x28, 0x2c, 0x34), "border");
+    } else if (m_bandStackPanel && m_bandStackPanel->isOpen()) {
+        colour = WorkspacePreview::roleColour(QColor(0x00, 0xb4, 0xd8), "accent");
+    }
+    QPixmap pm(10, 22);
+    pm.fill(Qt::transparent);
+    QPainter painter(&pm);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setBrush(colour);
+    painter.setPen(Qt::NoPen);
+    for (int i = 0; i < 3; ++i) {
+        painter.drawEllipse(0, i * 7, 9, 6);
+    }
+    painter.end();
+    dots->setPixmap(pm);
 }
 
 SliceModel* MainWindow::activeSliceForWindow() const
@@ -2968,32 +3897,6 @@ QHash<int, VfoWidget::SliceAccess> windowSliceAccess(const QList<SliceChooser::R
     return access;
 }
 
-// The Main Panel's first-launch order: the S-Meter first, the Mod Monitor
-// second at the time it is placed, every other applet after the ones
-// already there. The first launch and Reset Default Layout both place
-// through this, so a reset draws what a first launch draws.
-void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry& entry)
-{
-    if (entry.typeId == QLatin1String("applet:s_meter")) {
-        contents.prepend(entry);
-    } else if (entry.typeId == QLatin1String("applet:mod_monitor")) {
-        contents.insert(qMin(1, contents.size()), entry);
-    } else {
-        contents.append(entry);
-    }
-}
-
-// CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
-// (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
-// says; every other applet keeps its first-launch state.
-ContentEntry firstLaunchEntry(ContentEntry entry)
-{
-    if (entry.typeId == QLatin1String("applet:cwx")) {
-        entry.visible = false;
-    }
-    return entry;
-}
-
 QList<SliceChooser::Row> windowSliceRows(RadioModel& model, StationServer* server,
                                          StationClient* client)
 {
@@ -3212,6 +4115,10 @@ void MainWindow::setDesktopStationController(DesktopStationController* controlle
             if (!desktopHosting() && m_desktopTakeDialog) { m_desktopTakeDialog->close(); }
             if (!self) { return; }
             refreshDesktopStationState();
+            // Not while quitting: raising a flag here would bypass the filter
+            // and start wideband just before the radio is told to stop.
+            if (m_shuttingDown) { return; }
+            emit desktopHostingChanged();
         });
         // TX badge take: the badge's take ended after its call.
         connect(replacement, &DesktopStationController::takeFinished, this,
@@ -3280,6 +4187,9 @@ void MainWindow::refreshDesktopStationState()
     // that pan retirement may already have destroyed during shutdown.
     if (m_shuttingDown) { return; }
     if (!m_radioModel || m_radioModel->role() != RadioModel::Role::Local) { return; }
+    refreshBandStackSlice();
+    // Hosting starting or stopping changes which slice is this window's.
+    if (m_roundtableApplet) { m_roundtableApplet->syncFromModel(); }
     const quint64 bindingGeneration = m_desktopBindingGeneration;
     const bool hosting = desktopHosting();
     StationServer* server = hosting ? m_desktopStationController->server() : nullptr;
@@ -3303,6 +4213,9 @@ void MainWindow::refreshDesktopStationState()
         if (server) {
             m_hostingSlices = std::make_unique<HostingSliceActions>(server, m_radioModel);
             wireHostingSlices();
+            // Band stack plan Task 6: its stack runs as the station device too.
+            m_hostingSlices->bindBandStack(
+                qobject_cast<LocalBandStackAccess*>(m_radioModel->bandStack()));
         }
         if (server && server->transmitHolder()) {
             m_desktopHolderConnection = connect(server->transmitHolder(),
@@ -4179,7 +5092,7 @@ void MainWindow::addSliceForWindow(const QString& panId)
         actions->addOnPan(panId);
         return;
     }
-    m_radioModel->addSliceOnPan(panId);
+    m_radioModel->addSliceOnPan(panId, /*restoreSavedState=*/false, /*newReceiver=*/true);
 }
 
 void MainWindow::closeSliceForWindow(int sliceId)
@@ -4302,7 +5215,7 @@ void MainWindow::runSliceChooserAction(SliceChooserAction action, int sliceId)
         if (m_panStack) {
             addSliceForWindow(m_panStack->activePanId());
         } else {
-            m_radioModel->addSlice(QString());
+            m_radioModel->addSlice(QString(), /*restoreSavedState=*/false, /*newReceiver=*/true);
         }
         return;
     }
@@ -5077,11 +5990,12 @@ void MainWindow::ensureRemoteSession()
         // toast listing "hardware/aa:bb:.../alex/hpf/..." twelve times is
         // noise the operator will learn to dismiss unread.
         connect(proxy, &SettingsProxy::offlineEditsSuperseded, this,
-                [this](const QStringList& keys) {
-            showToast(tr("%n Core setting(s) you changed while the link was down "
-                         "did not stick. See the log for which.", "", keys.size()),
-                      ToastSeverity::Warning, 8000);
-        });
+                [this](const QStringList& keys) { showOfflineEditsToast(keys.size()); });
+        // Settings persistence audit (W11): the same message for the applet
+        // and slice properties. The settings snapshot lands first, moments
+        // before the state snapshot, so the two add up to one toast.
+        connect(m_stationClient, &StationClient::linkDownEditsSuperseded, this,
+                [this](const QStringList& keys) { showOfflineEditsToast(keys.size()); });
 
         // Task 19: the Disconnect side must pass attemptReconnect = false so a
         // deliberate quit does not schedule a surprise redial during teardown.
@@ -5105,6 +6019,18 @@ void MainWindow::disconnectFromStation()
     m_stationDisconnectRequested = false;
     clearStationLinkToastMemory();
     showToast(tr("Disconnected from the Core"), ToastSeverity::Info, 3000);
+}
+
+void MainWindow::showOfflineEditsToast(int count)
+{
+    if (m_offlineEditsToast) {
+        count += m_offlineEditsToastCount;
+        m_offlineEditsToast->close();
+    }
+    m_offlineEditsToastCount = count;
+    m_offlineEditsToast = showToast(tr("%n Core setting(s) you changed while the link was down "
+                                       "did not stick. See the log for which.", "", count),
+                                    ToastSeverity::Warning, 8000);
 }
 
 void MainWindow::clearStationLinkToastMemory()
@@ -5352,12 +6278,15 @@ void MainWindow::configureSpectrumForPanForTest(SpectrumWidget* spectrum,
     spectrum->loadSettings();
 }
 
-void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
-                                              RadioModel* model,
-                                              PanadapterStack* stack,
-                                              const QString& panId)
+std::function<void()> MainWindow::wireWidebandExtensionForTest(
+    SpectrumWidget* spectrum,
+    RadioModel* model,
+    PanadapterStack* stack,
+    const QString& panId,
+    const std::function<bool(int)>& mayRaiseWideband,
+    const std::function<bool(int)>& mayRetune)
 {
-    if (!spectrum || !model || !stack) { return; }
+    if (!spectrum || !model || !stack) { return {}; }
     const QPointer<RadioModel> modelRef(model);
     const QPointer<PanadapterStack> stackRef(stack);
     const QPointer<SpectrumWidget> spectrumRef(spectrum);
@@ -5387,7 +6316,7 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         bool hasBoundSlice{false};
     };
     const auto requestOwner = std::make_shared<LocalRequestOwner>();
-    const auto reconcile = [modelRef, spectrumRef, resolve, requestOwner]() {
+    const auto reconcile = [modelRef, spectrumRef, resolve, requestOwner, mayRaiseWideband]() {
         if (!modelRef || !spectrumRef || modelRef->role() != RadioModel::Role::Local) {
             return;
         }
@@ -5436,7 +6365,12 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         if (available) { spectrumRef->setWidebandAdcIndex(adc); }
         spectrumRef->setLocalWidebandAvailable(available);
         if (modelRef && spectrumRef && next && requestOwner->slice == next) {
-            next->setWidebandExtensionRequested(spectrumRef->extendedMode());
+            // The bypass is per chain and takes the filter from every receiver
+            // on it, so a pan's wide view must not raise it for a slice its
+            // window may not use. The view itself stays.
+            next->setWidebandExtensionRequested(
+                spectrumRef->extendedMode()
+                && (!mayRaiseWideband || mayRaiseWideband(next->sliceIndex())));
         }
     };
     connect(spectrum, &SpectrumWidget::widebandExtensionStateChanged,
@@ -5452,6 +6386,18 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
             [reconcile](int, const QVector<int>&) { reconcile(); });
     connect(model, &RadioModel::sliceRemoved, spectrum,
             [reconcile](int) { reconcile(); });
+    if (SliceOwnership* ownership = model->sliceOwnership()) {
+        connect(ownership, &SliceOwnership::markChanged, spectrum,
+                [reconcile](int, const QByteArray&, const QByteArray&) { reconcile(); });
+        // On a take the marker-only placement clears after this pan's markChanged
+        // recheck; the take also reorders the slice's devices, and that is the
+        // recheck that sees it clear.
+        connect(ownership, &SliceOwnership::listenersChanged, spectrum,
+                [reconcile](int) { reconcile(); });
+        // A take from no controller, with this desktop already the only one on
+        // the slice, leaves that list as it was; this comes last on every change.
+        connect(ownership, &SliceOwnership::activeChanged, spectrum, reconcile);
+    }
     const auto watchSlice = [modelRef, spectrumRef, reconcile](int sliceId) {
         if (!modelRef || !spectrumRef) { return; }
         if (SliceModel* slice = modelRef->sliceById(sliceId)) {
@@ -5468,15 +6414,32 @@ void MainWindow::wireWidebandExtensionForTest(SpectrumWidget* spectrum,
         if (requestOwner->slice) { (requestOwner->slice)->setWidebandExtensionRequested(false); }
         requestOwner->slice.clear();
     });
+    // A pan leaving the stack: it has gone from the map, so resolve() finds
+    // nothing and the flag falls here, with every widget still whole. Left to
+    // `destroyed` above, it fell during the deferred delete, and a filter change
+    // reaching a search of the window's children crashed the app with no stop
+    // frame sent to the radio. removePanadapter announces this for docked and
+    // floating pans alike.
+    connect(stack, &PanadapterStack::panRetired, spectrum,
+            [reconcile, panId](const QString& retiredId) {
+        if (retiredId == panId) { reconcile(); }
+    });
+    // A wing click moves the slice, so on a hosting desktop it answers to the
+    // same rule as any other tune: not another device's slice, nor one the
+    // window only listens to. On that device's transmit slice it would move its
+    // transmit frequency. A remote window goes on to setFrequency, whose hold
+    // tells the operator why nothing moved.
     connect(spectrum, &SpectrumWidget::ddcRetuneRequested,
-            spectrum, [resolve](double freqHz) {
-        if (SliceModel* slice = resolve()) {
+            spectrum, [resolve, mayRetune](double freqHz) {
+        SliceModel* slice = resolve();
+        if (slice && (!mayRetune || mayRetune(slice->sliceIndex()))) {
             slice->setFrequency(freqHz);
         }
     });
     // Settings restore and rate seeding may have derived the actual state
     // before this bridge existed, so seed the resolved slice immediately.
     reconcile();
+    return reconcile;
 }
 
 void MainWindow::fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
@@ -5595,6 +6558,15 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
     if (!newFlag) { return nullptr; }
     m_vfoWidgetsBySlice.insert(sliceIndex, newFlag);
+    // A flag can die with its pan while its entry remains: the map never holds a
+    // dead flag. m_vfoFlagLifetime goes before the map and before the children,
+    // so this never runs on the map once it is gone (see ~MainWindow's toasts).
+    connect(newFlag, &QObject::destroyed, &m_vfoFlagLifetime, [this, sliceIndex, newFlag]() {
+        const auto entry = m_vfoWidgetsBySlice.constFind(sliceIndex);
+        if (entry != m_vfoWidgetsBySlice.constEnd() && entry.value() == newFlag) {
+            m_vfoWidgetsBySlice.remove(sliceIndex);
+        }
+    });
 
     // Initial slice state push so the flag paints the right freq/mode/filter
     // on first show (mirrors wireSliceToSpectrum for Slice A).
@@ -5671,6 +6643,18 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
         connect(slice, &SliceModel::signalStrengthDbmChanged, newFlag, &VfoWidget::setSmeter);
     }
     newFlag->setSmeter(slice->signalStrengthDbm());
+    // Overlay design D40, D41: the flag shows the window's one S-meter choice
+    // and can set it. It reaches the meter and the other flags, nothing else.
+    refreshFlagSMeterSource(newFlag, slice);
+    connect(newFlag, &VfoWidget::sMeterSourceRequested, this, [this](const QString& source) {
+        if (SMeterWidget* sm = m_appletPanel ? m_appletPanel->smeterWidget() : nullptr) {
+            sm->setRxMode(source);
+        }
+    });
+    connect(newFlag, &VfoWidget::flagMenuAboutToOpen, this,
+            [this, newFlag, id = slice->sliceIndex()]() {
+        refreshFlagSMeterSource(newFlag, m_radioModel ? m_radioModel->sliceById(id) : nullptr);
+    });
     newFlag->setFilter(slice->filterLow(), slice->filterHigh());
     newFlag->setAgcMode(slice->agcMode());
     newFlag->setAfGain(slice->afGain());
@@ -5795,7 +6779,9 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // Roundtable plan Task 14 (design 11.2): the flag's Roundtable line
     // opens the panel on this slice; the line itself follows the model.
     connect(newFlag, &VfoWidget::roundtableLineClicked, this,
-            [this, sliceIndex]() { openRoundtableForSlice(sliceIndex); });
+            [this, sliceIndex]() { toggleRoundtableForSlice(sliceIndex); });
+    connect(newFlag, &VfoWidget::roundtableLineMenuRequested, this,
+            [this, sliceIndex](QPoint at) { openRoundtableMenuForSlice(sliceIndex, at); });
     connect(slice, &SliceModel::frequencyChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
     connect(slice, &SliceModel::dspModeChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
     scheduleRoundtableRefresh();
@@ -6304,6 +7290,114 @@ void MainWindow::refreshAutoAgcVisuals(RadioModel* model, SliceModel* slice,
     }
 }
 
+namespace {
+
+// The bottom bar's menu icon: whether the container panel is hidden, and in
+// the classic look the splitter sizes to show it at again. The workspace look
+// keeps its width in the arrangement while the strip is collapsed; a hidden
+// pane's width saves as 0 in the classic look, so it needs its own record.
+constexpr auto kContainerPanelHiddenKey = "ContainerPanelHidden";
+constexpr auto kContainerPanelSizesKey = "ContainerPanelSizesBeforeHide";
+
+} // namespace
+
+bool MainWindow::containerPanelHidden() const
+{
+    if (m_edgeDockArea) {
+        return m_edgeDockArea->userCollapsed(DockEdge::Right);
+    }
+    return m_mainSplitter && m_mainSplitter->count() >= 2
+        && m_mainSplitter->widget(1)->isHidden();
+}
+
+void MainWindow::applyContainerPanelHidden(bool hidden)
+{
+    if (m_edgeDockArea) {
+        // Workspace preview: collapse the right strip, keep its contents.
+        m_edgeDockArea->setUserCollapsed(DockEdge::Right, hidden);
+    } else {
+        // Toggle QSplitter right pane (index 1) visibility.
+        if (!m_mainSplitter || m_mainSplitter->count() < 2) { return; }
+        QWidget* rightPane = m_mainSplitter->widget(1);
+        if (hidden) {
+            rightPane->hide();
+        } else {
+            // Show: restore saved sizes (or default 80/20 if none saved)
+            rightPane->show();
+            if (!m_splitterSizesBeforeHide.isEmpty()) {
+                m_mainSplitter->setSizes(m_splitterSizesBeforeHide);
+            } else {
+                m_mainSplitter->setSizes({1024, 256});
+            }
+        }
+    }
+    if (m_panelToggleLabel) {
+        m_panelToggleLabel->setStyleSheet(hidden
+            ? QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 16px; }")
+            : QStringLiteral("QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
+    }
+}
+
+void MainWindow::toggleContainerPanel()
+{
+    const bool hidden = !containerPanelHidden();
+    auto& s = AppSettings::instance();
+    if (hidden && !m_edgeDockArea && m_mainSplitter) {
+        // Hide: save current sizes, then collapse right to 0
+        m_splitterSizesBeforeHide = m_mainSplitter->sizes();
+        QStringList parts;
+        for (int size : std::as_const(m_splitterSizesBeforeHide)) {
+            parts << QString::number(size);
+        }
+        s.setValue(QLatin1String(kContainerPanelSizesKey), parts.join(QLatin1Char(',')));
+    }
+    applyContainerPanelHidden(hidden);
+    s.setValue(QLatin1String(kContainerPanelHiddenKey),
+               hidden ? QStringLiteral("True") : QStringLiteral("False"));
+}
+
+void MainWindow::restoreContainerPanelHidden()
+{
+    auto& s = AppSettings::instance();
+    if (s.value(QLatin1String(kContainerPanelHiddenKey), QStringLiteral("False")).toString()
+        != QStringLiteral("True")) {
+        return;
+    }
+    if (!m_edgeDockArea && m_mainSplitter) {
+        const QStringList parts = s.value(QLatin1String(kContainerPanelSizesKey), QString())
+                                      .toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+        QVector<int> sizes;
+        for (const QString& part : parts) {
+            sizes << part.toInt();
+        }
+        // None usable: showing it falls back to the default split.
+        if (sizes.size() == m_mainSplitter->count() && sizes.last() > 0) {
+            m_splitterSizesBeforeHide = sizes;
+        }
+    }
+    applyContainerPanelHidden(true);
+}
+
+void MainWindow::syncZoomBarToActivePan()
+{
+    const SpectrumWidget* pan = activeSpectrumWidget();
+    if (!m_zoomBar || !pan) { return; }
+    const QSignalBlocker blocker(m_zoomBar);
+    // A span outside the slider's range pins the thumb at that end.
+    m_zoomBar->setValue(qBound(m_zoomBar->minimum(), qRound(pan->bandwidth() / 1000.0),
+                               m_zoomBar->maximum()));
+}
+
+void MainWindow::reloadSpotDisplaySettingsOnAllPans()
+{
+    if (!m_panStack) { return; }
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (applet && applet->spectrumWidget()) {
+            applet->spectrumWidget()->loadSpotDisplaySettings();
+        }
+    }
+}
+
 void MainWindow::refreshFftPoolConfig()
 {
     if (!m_fftEnginePool) { return; }
@@ -6356,6 +7450,37 @@ void MainWindow::refreshFftPoolConfig()
     cfg.fftSize = sizing.baseline();
     cfg.hzPerBinTarget = sizing.hzPerBinTarget;
     m_fftEnginePool->setConfigForNewStreams(cfg);
+    applyDecimationFromSettings();
+}
+
+void MainWindow::applyDecimationFromSettings()
+{
+    if (!m_fftEnginePool) { return; }
+    const bool remote = m_radioModel && !m_radioModel->ownsLocalDsp();
+    if (remote && !(m_stationClient && m_stationClient->spectrumDecimationAvailable())) {
+        return;
+    }
+    auto& s = AppSettings::instance();
+    const QString stored = s.value(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                                   QString::number(ControlRanges::kDisplayDecimationDefault))
+                               .toString();
+    bool ok = false;
+    int decimation = stored.toInt(&ok);
+    // As for DisplayFftSize above: the default is used, and the key, this
+    // device's own, is put right.
+    if (!ok || decimation < ControlRanges::kDisplayDecimationMin
+        || decimation > ControlRanges::kDisplayDecimationMax) {
+        decimation = ControlRanges::kDisplayDecimationDefault;
+        qCWarning(lcSpectrum) << "Stored" << ControlRanges::kDisplayDecimationKey << stored
+                              << "is not a decimation; using" << decimation;
+        s.setValue(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                   QString::number(decimation));
+    }
+    if (decimation != m_fftEnginePool->decimation()) {
+        m_fftEnginePool->setDecimation(decimation);
+        // Each local pan's hold length follows its engine's decimation.
+        refreshLocalFftShapes();
+    }
 }
 
 // ── Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream ────────────────
@@ -6397,8 +7522,8 @@ FFTEngine* MainWindow::ensureStreamWired(int streamIndex)
     // DisplayHzPerBinTarget): it is per-stream and radio-connection-driven,
     // not a Setup -> Display setting, so it stays here. 768 kHz is the P2
     // default; RadioModel::wireSampleRateChanged and the streamCentreChanged
-    // handler below update it to the actual wire rate on each connect
-    // (P1=192k, P2=768k).
+    // handler below replace it on each connect: with the wire rate on
+    // Protocol 1, and with this stream's allocator rate on Protocol 2.
     engine->setSampleRate(768000.0);
 
     // Raw I/Q for this stream -> this engine.  The context object is the
@@ -6775,6 +7900,21 @@ void MainWindow::refreshPanNotchMinWidth()
     }
 }
 
+namespace {
+
+// A frequency context, "frequency:usb-14200000", as its frequency and family.
+bool parseRoundtableContext(const QString& context, qint64& hz, QString& family)
+{
+    const QString address = context.mid(QStringLiteral("frequency:").size());
+    const qsizetype dash = address.indexOf(QLatin1Char('-'));
+    if (!RoundtableModel::isFrequencyContext(context) || dash <= 0) { return false; }
+    family = address.left(dash);
+    hz = address.mid(dash + 1).toLongLong();
+    return hz > 0;
+}
+
+} // namespace
+
 void MainWindow::wirePanRoundtableTags()
 {
     if (!m_panStack) { return; }
@@ -6787,10 +7927,35 @@ void MainWindow::wirePanRoundtableTags()
                 Qt::UniqueConnection);
         if (!sw->property("roundtableReadWired").toBool()) {
             sw->setProperty("roundtableReadWired", true);
-            connect(sw, &SpectrumWidget::roundtableReadRequested, this, [this](const QString& context) {
+            connect(sw, &SpectrumWidget::roundtableReadRequested, this, [this, sw](const QString& context) {
+                const RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+                // A frequency-capable server views without tuning or opening
+                // anything else (overlay design D21); a legacy room reads in the panel.
+                if (model && model->frequencyAvailable() && RoundtableModel::isFrequencyContext(context)) {
+                    qint64 hz = 0;
+                    QString family;
+                    if (parseRoundtableContext(context, hz, family)) { toggleRoundtableInspector(sw, hz, family); }
+                    return;
+                }
                 if (m_roundtableApplet && m_roundtableApplet->panel()) {
                     m_roundtableApplet->panel()->readRoom(context);
                     if (m_appletVis) { m_appletVis->setVisible(QStringLiteral("Roundtable"), true); }
+                }
+            });
+            connect(sw, &SpectrumWidget::roundtableFoldClicked, this, [this, sw](const QStringList& roomIds) {
+                toggleRoundtableFold(sw, roomIds);
+            });
+            connect(sw, &SpectrumWidget::roundtableTagMenuRequested, this, [this, sw](const QString& context, QPoint at) {
+                openRoundtableMenu(sw, context, at, false);
+            });
+            connect(sw, &SpectrumWidget::roundtableMessagesRequested, this, &MainWindow::openRoundtableMessages);
+            connect(sw, &SpectrumWidget::roundtableReportsRequested, this, &MainWindow::openRoundtableReports);
+            connect(sw, &SpectrumWidget::roundtableInspectorSpotChanged, this, [this, sw]() {
+                if (m_roundtablePeek && m_roundtablePeek->parentWidget() == sw) { updateRoundtableInspectorSpot(); }
+            });
+            connect(sw, &SpectrumWidget::roundtableSignalFormatCycled, this, [this]() {
+                if (RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr) {
+                    model->noteSettingChanged(QStringLiteral("Roundtable/SignalFormat"));
                 }
             });
         }
@@ -6853,33 +8018,46 @@ void MainWindow::scheduleRoundtableRefresh()
     m_roundtableRefreshTimer->start(200);
 }
 
+namespace {
+
+// The Roundtable family a slice's mode is in (wire spec 6.3).
+QString familyOfSlice(const SliceModel* slice)
+{
+    QString family;
+    if (slice) {
+        switch (slice->dspMode()) {
+        case DSPMode::LSB: family = QStringLiteral("lsb"); break;
+        case DSPMode::USB: family = QStringLiteral("usb"); break;
+        case DSPMode::DIGL: family = QStringLiteral("digl"); break;
+        case DSPMode::DIGU: family = QStringLiteral("digu"); break;
+        case DSPMode::AM: case DSPMode::SAM: family = QStringLiteral("am"); break;
+        case DSPMode::FM: family = QStringLiteral("fm"); break;
+        case DSPMode::CWL: case DSPMode::CWU: family = QStringLiteral("cw"); break;
+        case DSPMode::RADE_U: case DSPMode::RADE2_U: family = QStringLiteral("fdvu"); break;
+        case DSPMode::RADE_L: case DSPMode::RADE2_L: family = QStringLiteral("fdvl"); break;
+        default: break;
+        }
+    }
+    return family;
+}
+
+// The view refreshes itself at this rate while open, for Your pan (overlay
+// design D23: about five times a second, never per frame).
+constexpr int kRoundtablePeekRefreshMs = 200;
+
+} // namespace
+
 void MainWindow::refreshRoundtableTags()
 {
+    // Pan retirement may already have destroyed the flags and pans this reads.
+    if (m_shuttingDown) { return; }
     if (!m_panStack || !m_radioModel) { return; }
     const RoundtableModel* roundtable = m_radioModel->roundtableModel();
     QList<int> sliceIds;
     for (SliceModel* slice : m_radioModel->slices()) {
         if (slice) { sliceIds.append(slice->sliceIndex()); }
     }
-    const auto familyOfSlice = [](const SliceModel* slice) {
-        QString family;
-        if (slice) {
-                switch (slice->dspMode()) {
-                case DSPMode::LSB: family = QStringLiteral("lsb"); break;
-                case DSPMode::USB: family = QStringLiteral("usb"); break;
-                case DSPMode::DIGL: family = QStringLiteral("digl"); break;
-                case DSPMode::DIGU: family = QStringLiteral("digu"); break;
-                case DSPMode::AM: case DSPMode::SAM: family = QStringLiteral("am"); break;
-                case DSPMode::FM: family = QStringLiteral("fm"); break;
-                case DSPMode::CWL: case DSPMode::CWU: family = QStringLiteral("cw"); break;
-                case DSPMode::RADE_U: case DSPMode::RADE2_U: family = QStringLiteral("fdvu"); break;
-                case DSPMode::RADE_L: case DSPMode::RADE2_L: family = QStringLiteral("fdvl"); break;
-                default: break;
-                }
-        }
-        return family;
-    };
-    const SliceModel* active = m_radioModel->activeSlice();
+    const SliceModel* active = activeSliceForWindow();
     const QString activeFamily = familyOfSlice(active);
     const QString activeContext = active && !activeFamily.isEmpty()
         ? RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily) : QString();
@@ -6898,17 +8076,491 @@ void MainWindow::refreshRoundtableTags()
             }
             it.value()->setRoundtableLine(roundtableFlagLineFor(roundtable, it.key(),
                 slice ? std::llround(slice->frequency()) : 0, family));
+            it.value()->setRoundtableLineMenuEnabled(roundtable && roundtable->frequencyAvailable());
         }
+    }
+    // The card stands on the pan that hosts the active slice's flag. A legacy
+    // server has no frequency card and keeps its tags (overlay design D21).
+    RoundtableCardModel card;
+    if (active && !activeContext.isEmpty() && roundtable && roundtable->frequencyAvailable()) {
+        card = roundtableCardModelFor(roundtable, sliceIds, activeContext,
+                                      static_cast<quint64>(std::llround(active->frequency())), &m_roundtablePeaks);
     }
     for (PanadapterApplet* applet : m_panStack->allApplets()) {
         SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
-        if (sw) { sw->setRoundtableTags(tags, display); }
+        if (sw) {
+            sw->setRoundtableTags(tags, display);
+            const bool hosts = active && sw->vfoWidget(active->sliceIndex()) != nullptr;
+            sw->setRoundtableCard(hosts ? card : RoundtableCardModel{}, activeContext);
+            sw->setRoundtableActiveSliceName(active ? QString(active->sliceLetter()) : QString());
+        }
     }
+    refreshRoundtablePeek();
+    refreshRoundtableLineOpenStates();
+}
+
+void MainWindow::refreshRoundtableLineOpenStates()
+{
+    if (m_shuttingDown || !m_radioModel) { return; }
+    // A fold lists several frequencies, so no line is its own.
+    const bool showing = m_roundtablePeek && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsFold();
+    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+        if (!it.value()) { continue; }
+        const SliceModel* slice = m_radioModel->sliceById(it.key());
+        it.value()->setRoundtableLineOpen(showing && slice
+            && std::llround(slice->frequency()) == static_cast<qint64>(m_roundtablePeek->hz())
+            && familyOfSlice(slice) == m_roundtablePeek->family());
+    }
+}
+
+void MainWindow::refreshFlagSMeterSource(VfoWidget* flag, const SliceModel* slice)
+{
+    const SMeterWidget* sm = m_appletPanel ? m_appletPanel->smeterWidget() : nullptr;
+    if (!flag || !sm) { return; }
+    flag->setSMeterSource(sm->rxModeLabel(), maxBinSpectrumFor(slice) != nullptr);
+}
+
+void MainWindow::refreshFlagSMeterSources()
+{
+    if (m_shuttingDown || !m_radioModel) { return; }
+    for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
+        refreshFlagSMeterSource(it.value(), m_radioModel->sliceById(it.key()));
+    }
+}
+
+bool MainWindow::viewRoundtableFrequency(SpectrumWidget* pan, const QString& context)
+{
+    RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
+    // A window that controls no slice still views (active is null): Tune greys.
+    const SliceModel* active = activeSliceForWindow();
+    qint64 hz = 0;
+    QString family;
+    if (!pan || !panel || !parseRoundtableContext(context, hz, family)) { return false; }
+    const QString activeFamily = familyOfSlice(active);
+    if (active && !activeFamily.isEmpty()
+        && context == RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily)) {
+        // readRoom would take your own room back to the slice and look refused.
+        showOwnRoundtableInspector(pan);
+        return true;
+    }
+
+    adoptRoundtablePeek(pan);
+
+    // Through the panel, which owns the one reading slot and otherwise takes it
+    // back for the slice. The active frequency's own slot stays live. It holds the
+    // read while the slice tunes, so a band click leaves this view as it is (D27).
+    m_roundtablePeekContext = context;
+    m_roundtablePeekFold.clear();
+    m_roundtablePeekOpening = true;
+    panel->setHoldRead(true);
+    panel->readRoom(context);
+    m_roundtablePeekOpening = false;
+    if (!panel->isReading() || panel->roomId() != context) {
+        // Refused: the status bar has said why (D27). The slice is untouched.
+        m_roundtablePeekContext.clear();
+        panel->setHoldRead(false);
+        closeRoundtablePeek();
+        return true;
+    }
+
+    m_roundtablePeekMessages = false;
+    m_roundtablePeekAnchorHz = hz;
+    updateRoundtableInspectorSpot();
+    m_roundtablePeek->showFor(static_cast<quint64>(hz), family);
+    pan->setRoundtableViewedRoom(context);
+    m_roundtablePeekTimer->start();
+    sampleRoundtablePeekPan();
+    refreshRoundtableLineOpenStates();
+    return true;
+}
+
+void MainWindow::adoptRoundtablePeek(SpectrumWidget* pan)
+{
+    if (m_roundtablePeek && m_roundtablePeek->parentWidget() != pan) {
+        m_roundtablePeek->closePeek();
+        m_roundtablePeek->deleteLater();
+        m_roundtablePeek = nullptr;
+    }
+    if (!m_roundtablePeekTimer) {
+        m_roundtablePeekTimer = new QTimer(this);
+        m_roundtablePeekTimer->setObjectName(QStringLiteral("roundtablePeekTimer"));
+        m_roundtablePeekTimer->setInterval(kRoundtablePeekRefreshMs);
+        connect(m_roundtablePeekTimer, &QTimer::timeout, this, &MainWindow::sampleRoundtablePeekPan);
+    }
+    if (m_roundtablePeek) { return; }
+    auto* peek = new RoundtableFrequencyPeek(pan);
+    m_roundtablePeek = peek;
+    connect(peek, &RoundtableFrequencyPeek::closed, this, &MainWindow::onRoundtablePeekClosed);
+    connect(peek, &RoundtableFrequencyPeek::tuneRequested, this, [this]() { tuneRoundtableRoom(m_roundtablePeekContext); });
+    connect(peek, &RoundtableFrequencyPeek::messagesRequested, this, [this]() {
+        openRoundtableMessages(m_roundtablePeekContext);
+    });
+    // Back moves nothing: it is your own frequency, in place (D35).
+    connect(peek, &RoundtableFrequencyPeek::backRequested, this, [this, pan]() { showOwnRoundtableInspector(pan); });
+    connect(peek, &RoundtableFrequencyPeek::moreRequested, this, [this, pan](QPoint at) {
+        openRoundtableMenu(pan, m_roundtablePeekContext, at, true);
+    });
+    connect(peek, &RoundtableFrequencyPeek::foldRowClicked, this, [this, pan](const QString& roomId) {
+        viewRoundtableFrequency(pan, roomId);
+    });
+    // Flags raise themselves on every pass; the view stays over them.
+    connect(pan, &SpectrumWidget::flagsRaised, peek, [peek]() {
+        if (peek->isOpen()) { peek->raise(); }
+    });
+}
+
+void MainWindow::releaseRoundtablePeekRead()
+{
+    RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
+    if (!panel) { return; }
+    panel->setHoldRead(false);
+    if (!m_roundtablePeekContext.isEmpty() && panel->isReading() && panel->roomId() == m_roundtablePeekContext) {
+        m_roundtablePeekOpening = true;
+        panel->backToSlice();
+        m_roundtablePeekOpening = false;
+    }
+}
+
+void MainWindow::showOwnRoundtableInspector(SpectrumWidget* pan)
+{
+    const SliceModel* active = activeSliceForWindow();
+    const QString family = familyOfSlice(active);
+    if (!pan || !active || family.isEmpty()) { return; }
+    adoptRoundtablePeek(pan);
+    // It stands where it was opened, and follows only when your slice changes pans.
+    m_roundtablePeekSlicePan = panHoldingRoundtableSlice(active->sliceIndex());
+    // Your own room needs no read of its own: the panel's readRoom would call
+    // backToSlice for it. Only a view's read has to end, with no close (D34).
+    releaseRoundtablePeekRead();
+    const qint64 hz = std::llround(active->frequency());
+    const QString context = RoundtableModel::frequencyContextId(hz, family);
+    m_roundtablePeekContext = context;
+    m_roundtablePeekFold.clear();
+    m_roundtablePeekMessages = false;
+    m_roundtablePeekAnchorHz = hz;
+    updateRoundtableInspectorSpot();
+    m_roundtablePeek->showOwn(static_cast<quint64>(hz), family);
+    pan->setRoundtableViewedRoom(context);
+    m_roundtablePeekTimer->start();
+    sampleRoundtablePeekPan();
+    refreshRoundtableLineOpenStates();
+}
+
+void MainWindow::toggleRoundtableInspector(SpectrumWidget* pan, qint64 hz, const QString& family)
+{
+    if (!pan || hz <= 0 || family.isEmpty()) { return; }
+    if (m_roundtablePeek && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsFold()
+        && m_roundtablePeek->parentWidget() == pan && m_roundtablePeek->hz() == static_cast<quint64>(hz)
+        && m_roundtablePeek->family() == family) {
+        closeRoundtablePeek();
+        return;
+    }
+    viewRoundtableFrequency(pan, RoundtableModel::frequencyContextId(hz, family));
+}
+
+void MainWindow::toggleRoundtableFold(SpectrumWidget* pan, const QStringList& roomIds)
+{
+    if (!pan || roomIds.isEmpty()) { return; }
+    // Opening the list re-lays the tags, so the same fold can come back with fewer or
+    // more members. Measured against the fold as opened: part of it, or all of it and
+    // more, is the same fold; one that only shares a room is another (D37).
+    const auto sameFold = [this, &roomIds]() {
+        const QSet<QString> opened(m_roundtablePeekFold.cbegin(), m_roundtablePeekFold.cend());
+        const QSet<QString> clicked(roomIds.cbegin(), roomIds.cend());
+        return opened.contains(clicked) || clicked.contains(opened);
+    };
+    if (m_roundtablePeek && m_roundtablePeek->showsFold() && m_roundtablePeek->parentWidget() == pan && sameFold()) {
+        closeRoundtablePeek();
+        return;
+    }
+    const QVector<RoundtableFoldRow> rows = pan->roundtableFoldRows(roomIds);
+    if (rows.isEmpty()) { return; }
+    adoptRoundtablePeek(pan);
+    releaseRoundtablePeekRead();
+    m_roundtablePeekContext.clear();
+    m_roundtablePeekFold = roomIds;
+    m_roundtablePeekMessages = false;
+    m_roundtablePeekAnchorHz = rows.first().hz;
+    if (m_roundtablePeekTimer) { m_roundtablePeekTimer->stop(); }
+    updateRoundtableInspectorSpot();
+    m_roundtablePeek->showFold(rows);
+    // The fold's tag takes the outline. Your compact tag stays, even when its room is first.
+    pan->setRoundtableViewedRoom(roomIds.first(), true);
+    updateRoundtableInspectorSpot();
+    refreshRoundtableLineOpenStates();
+}
+
+void MainWindow::updateRoundtableInspectorSpot()
+{
+    auto* pan = m_roundtablePeek ? qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr;
+    if (!pan) { return; }
+    const SliceModel* active = activeSliceForWindow();
+    const SpectrumWidget::RoundtableInspectorSpot spot
+        = pan->roundtableInspectorSpot(active ? active->sliceIndex() : -1, m_roundtablePeekAnchorHz);
+    m_roundtablePeek->setInspectorSpot(spot.pan, spot.dialX, spot.flags, spot.flagFlipped);
+    pan->setRoundtableInspectorRect(m_roundtablePeek->inspectorRect());
+}
+
+void MainWindow::openRoundtableMenu(SpectrumWidget* pan, const QString& context, const QPoint& at, bool fromInspector)
+{
+    qint64 hz = 0;
+    QString family;
+    if (!pan || !m_radioModel || !parseRoundtableContext(context, hz, family)) { return; }
+    const SliceModel* active = activeSliceForWindow();
+    SpectrumWidget::RoundtableMenuOptions options;
+    options.fromInspector = fromInspector;
+    options.inspectorOpen = m_roundtablePeek && m_roundtablePeek->isOpen() && m_roundtablePeek->parentWidget() == pan
+        && m_roundtablePeekContext == context;
+    // What the inspector's own button waits on (refreshRoundtablePeek).
+    options.transmitting = m_radioModel->isTransmitting();
+    options.connected = m_radioModel->isConnected();
+    const bool alreadyThere = active
+        && roundtableTuneWritesNothing(hz, family, std::llround(active->frequency()), familyOfSlice(active));
+    // On the top level window: a pan's native window cannot be a popup's transient parent.
+    auto* menu = new QMenu(this);
+    menu->setObjectName(QStringLiteral("roundtableShortMenu"));
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    pan->buildRoundtableCardMenu(context, hz, alreadyThere, *menu, options);
+    menu->popup(at);
+}
+
+void MainWindow::openRoundtableMenuForSlice(int sliceId, const QPoint& at)
+{
+    const SliceModel* slice = m_radioModel ? m_radioModel->sliceById(sliceId) : nullptr;
+    if (!slice) { return; }
+    const QString family = familyOfSlice(slice);
+    SpectrumWidget* pan = panHoldingRoundtableSlice(sliceId);
+    if (pan && !family.isEmpty()) {
+        openRoundtableMenu(pan, RoundtableModel::frequencyContextId(std::llround(slice->frequency()), family), at, false);
+        return;
+    }
+    // A mode with no Roundtable frequency: the same menu, greyed, but for Signal,
+    // which is a display choice and needs no frequency.
+    auto* menu = new QMenu(this);
+    menu->setObjectName(QStringLiteral("roundtableShortMenu"));
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    SpectrumWidget::buildRoundtableUnavailableMenu(QStringLiteral("Roundtable"), *menu, this, [this]() {
+        if (RoundtableModel* model = m_radioModel ? m_radioModel->roundtableModel() : nullptr) {
+            model->noteSettingChanged(QStringLiteral("Roundtable/SignalFormat"));
+        }
+    });
+    menu->popup(at);
+}
+
+void MainWindow::openRoundtableMessages(const QString& context)
+{
+    RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
+    if (!panel || context.isEmpty()) { return; }
+    const bool open = m_roundtablePeek && m_roundtablePeek->isOpen();
+    const bool viewing = open && !m_roundtablePeek->showsOwn() && !m_roundtablePeek->showsFold();
+    auto* pan = open ? qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr;
+    const SliceModel* active = activeSliceForWindow();
+    const QString activeFamily = familyOfSlice(active);
+    const bool own = active && !activeFamily.isEmpty()
+        && context == RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily);
+    // The panel has one reading slot. A view on another frequency follows it, so
+    // the two never disagree and the view is never closed for it.
+    if (own) {
+        if (viewing) { showOwnRoundtableInspector(pan); }
+        panel->backToSlice();
+    } else if (viewing && context != m_roundtablePeekContext) {
+        viewRoundtableFrequency(pan, context);
+        if (!m_roundtablePeek || !m_roundtablePeek->isOpen()) { return; }
+    } else if (!viewing) {
+        m_roundtablePeekOpening = true;
+        panel->readRoom(context);
+        m_roundtablePeekOpening = false;
+        if (!panel->isReading()) { return; }
+    }
+    // The panel stays on this frequency, with Back to my slice.
+    m_roundtablePeekMessages = true;
+    showRoundtablePanel();
+}
+
+void MainWindow::openRoundtableReports()
+{
+    const SliceModel* active = activeSliceForWindow();
+    if (!active) { return; }
+    // Your own room is the panel's now: a view of another turns to it in place.
+    if (m_roundtablePeek && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsOwn() && !m_roundtablePeek->showsFold()) {
+        showOwnRoundtableInspector(qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget()));
+    }
+    openRoundtableForSlice(active->sliceIndex());
+}
+
+void MainWindow::tuneRoundtableRoom(const QString& context)
+{
+    if (m_radioModel && m_radioModel->isTransmitting()) { return; }
+    m_roundtablePeekMessages = false;
+    if (m_roundtableApplet) { m_roundtableApplet->tuneToRoom(context); }
+    closeRoundtablePeek();
+}
+
+// Your pan is read here only, on the view's timer and as it opens (overlay
+// design D23: about five times a second, however often the tags refresh).
+void MainWindow::sampleRoundtablePeekPan()
+{
+    const auto* pan = m_roundtablePeek ? qobject_cast<const SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr;
+    // Keyed, a pan with no overlay still has a level, and it is not one to come
+    // back to: holding it would show it on unkey and latch the peak tick.
+    m_roundtablePeekPanDbm = pan && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsFold()
+            && !m_roundtablePeek->showsOwn() && !(m_radioModel && m_radioModel->isTransmitting())
+        ? pan->roundtablePanLevel(m_roundtablePeek->hz(), m_roundtablePeek->family()) : std::nullopt;
+    refreshRoundtablePeek();
+}
+
+void MainWindow::refreshRoundtablePeek()
+{
+    if (!m_roundtablePeek) {
+        // Its pan went away while it was open: end the view here.
+        if (!m_roundtablePeekContext.isEmpty() || !m_roundtablePeekFold.isEmpty()) { onRoundtablePeekClosed(); }
+        return;
+    }
+    if (!m_roundtablePeek->isOpen()) { return; }
+    const RoundtableModel* roundtable = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+    const SliceModel* active = activeSliceForWindow();
+    if (!roundtable) {
+        closeRoundtablePeek();
+        return;
+    }
+    auto* pan = qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget());
+    if (m_roundtablePeek->showsFold()) {
+        const QVector<RoundtableFoldRow> rows = pan ? pan->roundtableFoldRows(m_roundtablePeekFold) : QVector<RoundtableFoldRow>{};
+        if (rows.isEmpty()) {
+            closeRoundtablePeek();
+            return;
+        }
+        m_roundtablePeek->setFoldRows(rows);
+        updateRoundtableInspectorSpot();
+        return;
+    }
+    const qint64 activeHz = active ? std::llround(active->frequency()) : 0;
+    const QString activeFamily = familyOfSlice(active);
+    const bool activeHere = active && !activeFamily.isEmpty();
+    if (m_roundtablePeek->showsOwn()) {
+        // Your own frequency is wherever your slice is: it follows a band click (D27).
+        if (!activeHere) {
+            closeRoundtablePeek();
+            return;
+        }
+        // It follows your slice to another pan, and only then: opened on a pan without
+        // your slice, it stays, so its tag closes it and Back stays in place (D34, D35).
+        SpectrumWidget* holder = panHoldingRoundtableSlice(active->sliceIndex());
+        const bool sliceChangedPans = holder != m_roundtablePeekSlicePan;
+        m_roundtablePeekSlicePan = holder;
+        if (sliceChangedPans && holder && holder != pan) {
+            showOwnRoundtableInspector(holder);
+            return;
+        }
+        const QString context = RoundtableModel::frequencyContextId(activeHz, activeFamily);
+        if (context != m_roundtablePeekContext) {
+            m_roundtablePeekContext = context;
+            m_roundtablePeekAnchorHz = activeHz;
+            m_roundtablePeekPanDbm.reset();
+            m_roundtablePeek->showOwn(static_cast<quint64>(activeHz), activeFamily);
+            if (pan) { pan->setRoundtableViewedRoom(context); }
+        }
+    } else if (activeHere && activeHz == static_cast<qint64>(m_roundtablePeek->hz()) && activeFamily == m_roundtablePeek->family()) {
+        // Your slice moved onto the viewed frequency: it is your own now, in place (D27).
+        showOwnRoundtableInspector(pan);
+        return;
+    }
+    const quint64 hz = m_roundtablePeek->hz();
+    updateRoundtableInspectorSpot();
+    QList<int> sliceIds;
+    for (SliceModel* slice : m_radioModel->slices()) {
+        if (slice) { sliceIds.append(slice->sliceIndex()); }
+    }
+    m_roundtablePeek->setSlice(static_cast<quint64>(activeHz), activeFamily, active ? QString(active->sliceLetter()) : QString());
+    m_roundtablePeek->setPathPreferences(
+        roundtable->stationSetting(QStringLiteral("DistanceUnits")) != QLatin1String("km"),
+        roundtable->stationSetting(QStringLiteral("ShowBearing")) != QLatin1String("False"));
+    const bool transmitting = m_radioModel->isTransmitting();
+    // A pan other than the transmitting one has no overlay of its own, and on a
+    // remote window only the Core says who is keyed: blank at once, on any pan.
+    m_roundtablePeek->refresh(roundtableCardModelFor(roundtable, sliceIds, m_roundtablePeekContext, hz, &m_roundtablePeaks),
+                              transmitting ? std::nullopt : m_roundtablePeekPanDbm,
+                              // Tune also waits on the radio itself, whatever Roundtable's link is doing.
+                              transmitting, m_radioModel->isConnected());
+    // A change of who is listed can change its height.
+    if (pan) { pan->setRoundtableInspectorRect(m_roundtablePeek->inspectorRect()); }
+}
+
+void MainWindow::closeRoundtablePeek()
+{
+    if (m_roundtablePeek) { m_roundtablePeek->closePeek(); }
+}
+
+void MainWindow::onRoundtablePeekClosed()
+{
+    if (m_roundtablePeekTimer) { m_roundtablePeekTimer->stop(); }
+    if (auto* pan = m_roundtablePeek ? qobject_cast<SpectrumWidget*>(m_roundtablePeek->parentWidget()) : nullptr) {
+        pan->setRoundtableViewedRoom(QString());
+        pan->setRoundtableInspectorRect(QRect());
+    }
+    const QString context = m_roundtablePeekContext;
+    m_roundtablePeekContext.clear();
+    m_roundtablePeekFold.clear();
+    m_roundtablePeekSlicePan = nullptr;
+    m_roundtablePeekAnchorHz = 0;
+    // After Messages the panel stays on this frequency until Back to my slice.
+    RoundtablePanel* panel = m_roundtableApplet ? m_roundtableApplet->panel() : nullptr;
+    if (panel) { panel->setHoldRead(false); }
+    if (panel && !m_roundtablePeekMessages && panel->isReading() && panel->roomId() == context) {
+        panel->backToSlice();
+    }
+    m_roundtablePeekMessages = false;
+    refreshRoundtableLineOpenStates();
+}
+
+SpectrumWidget* MainWindow::panHoldingRoundtableSlice(int sliceId) const
+{
+    for (PanadapterApplet* applet : m_panStack ? m_panStack->allApplets() : QList<PanadapterApplet*>{}) {
+        SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
+        if (sw && sw->vfoWidget(sliceId) != nullptr) { return sw; }
+    }
+    return nullptr;
+}
+
+void MainWindow::toggleRoundtableForSlice(int sliceId)
+{
+    const RoundtableModel* roundtable = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+    if (!roundtable || !roundtable->frequencyAvailable()) {
+        openRoundtableForSlice(sliceId);
+        return;
+    }
+    // This window's own slice: a hosted window selects for itself, whichever
+    // slice the radio's other devices have active.
+    const SliceModel* active = activeSliceForWindow();
+    const SliceModel* slice = m_radioModel->sliceById(sliceId);
+    const QString family = familyOfSlice(slice);
+    SpectrumWidget* pan = panHoldingRoundtableSlice(sliceId);
+    if (slice && !family.isEmpty() && pan) {
+        // Any slice's line, your own too: it leaves the active slice alone (D26).
+        toggleRoundtableInspector(pan, std::llround(slice->frequency()), family);
+        return;
+    }
+    // No slice of this window's to view from, and nothing here to view: a line
+    // never selects a slice for a window that controls none.
+    if (!active) {
+        showRoundtablePanel();
+        return;
+    }
+    openRoundtableForSlice(sliceId);
 }
 
 void MainWindow::openRoundtableForSlice(int sliceId)
 {
+    const RoundtableModel* roundtable = m_radioModel ? m_radioModel->roundtableModel() : nullptr;
+    if (roundtable && roundtable->frequencyAvailable() && m_roundtableApplet && m_roundtableApplet->panel()) {
+        m_roundtableApplet->panel()->backToSlice();
+    }
     selectSliceForWindow(sliceId);
+    showRoundtablePanel();
+}
+
+void MainWindow::showRoundtablePanel()
+{
     if (!m_roundtableApplet) { return; }
     if (m_roundtableApplet->isPoppedOut()) {
         if (QWidget* window = m_roundtableApplet->floatingWindow()) {
@@ -6928,7 +8580,8 @@ void MainWindow::openRoundtableForSlice(int sliceId)
 
 void MainWindow::onRoundtableRoomClicked(const QString& roomId)
 {
-    if (m_roundtableApplet) { m_roundtableApplet->tuneToRoom(roomId); }
+    // The short menu's Tune, as the inspector's own (D27); a legacy tag has no view.
+    tuneRoundtableRoom(roomId);
 }
 
 void MainWindow::wirePanNotchHandlers()
@@ -7194,6 +8847,9 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
 {
     if (!sw || !m_radioModel) { return; }
 
+    // A new pan starts from the saved spot settings, not the widget's defaults.
+    sw->loadSpotDisplaySettings();
+
     // iPhone app plan Task 78: other devices' slices on this pan, and what a
     // click on one's label says.
     connect(sw, &SpectrumWidget::foreignMarkerClicked, this,
@@ -7454,18 +9110,49 @@ void MainWindow::applyDisplayFps(int fps)
     // The engine's own clamp (FftEnginePool::setOutputFps).
     fps = qBound(1, fps, 60);
     m_fftEnginePool->setOutputFps(fps);
-    // Each pan draws at the rate its rows arrive.
-    if (m_panStack) {
-        for (PanadapterApplet* applet : m_panStack->allApplets()) {
-            if (SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr) {
-                sw->setDisplayFps(fps);
-            }
-        }
-    }
     AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
                                      QString::number(fps));
+    applyWindowPaintFps();
     refreshDisplayPillFftStates();
     emit stationFftSettingsChanged();
+}
+
+int MainWindow::windowPaintFps() const
+{
+    const AppSettings& s = AppSettings::instance();
+    if (m_radioModel && !m_radioModel->ownsLocalDsp()) {
+        return readDisplayPaintFps(s);
+    }
+    return qBound(1,
+        s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
+                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
+        60);
+}
+
+void MainWindow::applyWindowPaintFps()
+{
+    if (!m_panStack) { return; }
+    const int fps = windowPaintFps();
+    // Each pan draws at the rate its rows arrive.
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr) {
+            sw->setDisplayFps(fps);
+        }
+    }
+}
+
+void MainWindow::applyDisplayPillFps(int fps)
+{
+    if (m_radioModel && m_radioModel->ownsLocalDsp()) {
+        applyDisplayFps(fps);
+        return;
+    }
+    // A window on a Core: its own rate, saved in its own file. The Core's
+    // rate is Setup's to set, and the pan requests follow on their own.
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplayPaintFpsKey),
+                                     QString::number(qBound(1, fps, 60)));
+    applyWindowPaintFps();
+    refreshDisplayPillFftStates();
 }
 
 void MainWindow::applyDisplayFftWindow(int windowType)
@@ -7520,6 +9207,8 @@ void MainWindow::applyDisplayDecimation(int decimation)
     // decimation the Core runs when the Core's answer arrives
     // (SpectrumWidget::setRemoteDecimation, from the accepted context).
     m_fftEnginePool->setDecimation(decimation);
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                                     QString::number(decimation));
     // Each local pan's hold length follows its engine's decimation.
     refreshLocalFftShapes();
     emit stationFftSettingsChanged();
@@ -7535,17 +9224,14 @@ DisplayPillFftState MainWindow::displayPillFftState(const QString& panId) const
     state.sizingMode = sizing.mode;
     state.baselineSize = sizing.storedSize;
     state.lastHzPerBinTarget = sizing.lastHzPerBinTarget;
-    state.fps = qBound(1,
-        s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
-        60);
+    state.fps = windowPaintFps();
     state.windowType = qBound(0,
         s.value(QLatin1String(ControlRanges::kDisplayFftWindowKey),
                 QString::number(ControlRanges::kDisplayFftWindowDefault)).toString().toInt(),
         static_cast<int>(WindowFunction::Count) - 1);
     // Above 0 in HzPerBin only.
     state.hzPerBinTarget = sizing.hzPerBinTarget;
-    // Decimation has no key: it is what the engines were last given.
+    // Decimation: what the engines hold, which is the saved value.
     state.decimation = m_fftEnginePool ? m_fftEnginePool->decimation()
                                        : ControlRanges::kDisplayDecimationDefault;
 
@@ -7923,6 +9609,17 @@ void MainWindow::ensureOverlayPanels()
             if (m_fftEnginePool && sizingKey) {
                 applyFftSizingFromSettings(/*replan=*/false);
             }
+            // Decimation is this device's own, so no Core value is followed. The
+            // whole snapshot is when a Core's control becomes reachable, and the
+            // value saved here is what the next request for each pan carries.
+            if (key.isEmpty()) {
+                applyDecimationFromSettings();
+            }
+            // A window with no rate of its own paints at the Core's. One
+            // with its own reads the same number again and stays.
+            if (key.isEmpty() || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
+                applyWindowPaintFps();
+            }
             if (sizingKey
                 || key == QLatin1String(ControlRanges::kDisplayFftWindowKey)
                 || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
@@ -7972,7 +9669,17 @@ void MainWindow::ensureOverlayPanels()
         // where click-to-tune always retuned flag A. Those copies are gone, so
         // this is the only wiring for them and nothing doubles.
         wireSpectrumSliceControls(sw, panId);
-        wireWidebandExtensionForTest(sw, m_radioModel, m_panStack, panId);
+        // The slices streamShownOnPan lets a pan show, whose stream it chose.
+        const std::function<void()> reconcileWideband = wireWidebandExtensionForTest(
+            sw, m_radioModel, m_panStack, panId,
+            [this](int sliceId) {
+                // Only the window controlling a receiver may bypass its filter
+                // (JJ: "No, controlling only").
+                return !markerOnlyPlacement(sliceId)
+                    && windowControlsSlice(sliceId);
+            },
+            [this](int sliceId) { return !desktopHosting() || windowControlsSlice(sliceId); });
+        connect(this, &MainWindow::desktopHostingChanged, sw, reconcileWideband);
 
         // Display pill plan Task 7: a zoom on this pan (and its
         // requestAutoZoomReplan(), which emits the same signal) replans the
@@ -7982,6 +9689,11 @@ void MainWindow::ensureOverlayPanels()
         // of all the stream's pans from the widgets.
         connect(sw, &SpectrumWidget::bandwidthChangeRequested, this,
                 [this, panId](double) { replanFftForPan(panId); });
+
+        // The zoom slider under the pans follows the active pan's span.
+        connect(sw, &SpectrumWidget::viewSpanChanged, this, [this, sw](double) {
+            if (sw == activeSpectrumWidget()) { syncZoomBarToActivePan(); }
+        });
 
         // Parity Task 31 (A11): the keyed trace's calibration
         // (SpectrumWidget::displayCalOffsetDb; Thetis display.cs:4820-4850
@@ -8099,9 +9811,24 @@ void MainWindow::ensureOverlayPanels()
             SliceModel* s = sliceForPan(panId);
             if (s == nullptr) { return; }
             selectSliceForWindow(s->sliceIndex());
-            m_radioModel->onBandButtonClicked(s, bandFromName(name));
+            pressBand(s, bandFromName(name), QGuiApplication::keyboardModifiers());
         });
+        // The pan's own slice, as a press has; looking at its stack selects nothing.
+        connect(panel, &SpectrumOverlayPanel::bandContextRequested, this,
+                [this, panId](const QString& name, const QPoint& globalPos) {
+            openBandStackPopup(sliceForPan(panId), bandFromName(name), globalPos);
+        });
+        // Band stack plan Task 11: this pan's ticks, on this pan's slice.
+        connect(sw, &SpectrumWidget::bandStackTickClicked, this,
+                [this, panId](const QString& entryId) { recallBandStackTick(panId, entryId); });
+        connect(sw, &SpectrumWidget::bandStackTickContext, this,
+                [this, panId](const QString& entryId, const QPoint& globalPos) {
+            showBandStackTickMenu(panId, entryId, globalPos);
+        });
+        connect(applet, &PanadapterApplet::activeSliceChanged, this,
+                [this] { refreshBandStackTicks(); });
     }
+    refreshBandStackTicks();
     // Parity Task 18 (C8): a pan created after connect says so when empty.
     refreshNoSliceHints();
     reconcileClarityBindings();
@@ -8129,7 +9856,7 @@ void MainWindow::wirePanDisplayFlyout(SpectrumOverlayPanel* panel, SpectrumWidge
         [this](ControlRanges::DisplayFftSizingMode mode, double hzPerBinIfNoneRemembered) {
             applyDisplayFftSizingMode(mode, hzPerBinIfNoneRemembered);
         };
-    hooks.applyFps = [this](int fps) { applyDisplayFps(fps); };
+    hooks.applyFps = [this](int fps) { applyDisplayPillFps(fps); };
     hooks.applyWindowType = [this](int windowType) { applyDisplayFftWindow(windowType); };
     hooks.applyHzPerBinTarget = [this](double hz) { applyDisplayHzPerBinTarget(hz); };
     hooks.applyDecimation = [this](int decimation) { applyDisplayDecimation(decimation); };
@@ -8989,8 +10716,26 @@ void MainWindow::buildUI()
 
     // Left side: spectrum + zoom bar
     auto* spectrumPane = new QWidget(m_mainSplitter);
-    spectrumPane->setMinimumWidth(400);
-    auto* layout = new QVBoxLayout(spectrumPane);
+    // Band stack plan Task 7: the panel sits inside this pane, left of the pan
+    // column, not as a splitter child: restoreSplitterState drops saved sizes
+    // when the splitter's count differs.
+    auto* paneLayout = new QHBoxLayout(spectrumPane);
+    paneLayout->setContentsMargins(0, 0, 0, 0);
+    paneLayout->setSpacing(0);
+    m_bandStackPanel = new BandStackPanel(m_radioModel->bandStack(), spectrumPane);
+    paneLayout->addWidget(m_bandStackPanel);
+    connect(m_bandStackPanel, &BandStackPanel::closeRequested, this,
+            [this] { m_bandStackPanel->setOpen(false); });
+    connect(m_bandStackPanel, &BandStackPanel::openChanged, this,
+            [this] { refreshBandStackDots(); });
+    connect(m_bandStackPanel, &BandStackPanel::showOnSpectrumChanged, this,
+            [this] { refreshBandStackTicks(); });
+    wireBandStackRows();
+    m_panColumn = new QWidget(spectrumPane);
+    m_panColumn->setObjectName(QStringLiteral("panColumn"));
+    m_panColumn->setMinimumWidth(400);
+    paneLayout->addWidget(m_panColumn, 1);
+    auto* layout = new QVBoxLayout(m_panColumn);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
@@ -8999,7 +10744,7 @@ void MainWindow::buildUI()
     // "pan-0" containing a PanadapterApplet whose embedded SpectrumWidget
     // becomes the new single-pan default. activeSpectrumWidget() resolves
     // to that widget for backward-compat call sites.
-    m_panStack = new PanadapterStack(spectrumPane);
+    m_panStack = new PanadapterStack(m_panColumn);
     m_panStack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     layout->addWidget(m_panStack, 1);
 
@@ -9229,6 +10974,13 @@ void MainWindow::buildUI()
         m_panStack->applyLayout(restoredLayout, panIdsForLayout(restoredLayout));
         m_panStack->restoreSplitterState();
 
+        // Pans left floating last session go back out, a tick later so the
+        // main window they are parented to is up first, as it is for every
+        // float made from a menu.
+        QTimer::singleShot(0, this, [this]() {
+            if (m_panStack && !m_shuttingDown) { m_panStack->restoreFloatingPans(); }
+        });
+
         // ...and finish the job once there IS a radio. Skipping the slice
         // add-loop above is right, but nothing used to pick it up afterwards,
         // so a persisted 2v layout came back with pan-1 permanently dead: no
@@ -9356,7 +11108,7 @@ void MainWindow::buildUI()
     }
 
     // Zoom slider bar below spectrum
-    auto* zoomBar = new QSlider(Qt::Horizontal, spectrumPane);
+    auto* zoomBar = new QSlider(Qt::Horizontal, m_panColumn);
     zoomBar->setRange(1, 768);
     zoomBar->setValue(768);
     zoomBar->setFixedHeight(20);
@@ -9374,6 +11126,12 @@ void MainWindow::buildUI()
         activeSpectrumWidget()->setFrequencyRange(activeSpectrumWidget()->centerFrequency(), bwHz);
         emit activeSpectrumWidget()->bandwidthChangeRequested(bwHz);
     });
+    m_zoomBar = zoomBar;
+    connect(m_panStack, &PanadapterStack::activePanChanged, this,
+            [this](const QString&) { syncZoomBarToActivePan(); });
+    // After the saved span is in and the first wiring has judged it.
+    syncZoomBarToActivePan();
+    QTimer::singleShot(0, this, [this]() { syncZoomBarToActivePan(); });
 
     m_mainSplitter->addWidget(spectrumPane);
 
@@ -9387,7 +11145,7 @@ void MainWindow::buildUI()
     }
 
     // --- Container Infrastructure (Phase 3G-1) ---
-    m_containerManager = new ContainerManager(spectrumPane, m_mainSplitter, this);
+    m_containerManager = new ContainerManager(m_panColumn, m_mainSplitter, this);
     if (m_edgeDockArea) {
         m_containerManager->setEdgeDockArea(m_edgeDockArea);
     }
@@ -9458,8 +11216,9 @@ void MainWindow::buildUI()
             if (c.id != workspace.mainContainerId) { continue; }
             for (const auto& descriptor : contentRegistry->descriptors()) {
                 if (!descriptor.singleton || placed.contains(descriptor.typeId)) { continue; }
-                placeFirstLaunchApplet(c.contents,
-                                       firstLaunchEntry(contentRegistry->makeEntry(descriptor.typeId)));
+                ContainerContentRegistry::placeFirstLaunchApplet(
+                    c.contents,
+                    ContainerContentRegistry::firstLaunchEntry(contentRegistry->makeEntry(descriptor.typeId)));
             }
         }
         // Project old per-applet floating intent into committed shells, retaining
@@ -9563,8 +11322,7 @@ void MainWindow::buildUI()
     auto refreshFilterIndicators = [this]() {
         for (int adc = 0; adc < 2; ++adc) {
             const auto& state = m_radioModel->filterChainState(adc);
-            auto* lbl = findChild<QLabel*>(
-                QStringLiteral("chainIndicator%1").arg(adc));
+            QLabel* lbl = m_chainIndicatorLabels[static_cast<std::size_t>(adc)];
             if (!lbl) { continue; }
             const bool available = m_radioModel->filterChainStateAvailable(adc);
             lbl->setText(available ? state.reasonText
@@ -9686,6 +11444,14 @@ void MainWindow::buildUI()
         // Desktop remote transmit: the Core's own reason when it gave one.
         hooks.remoteTransmitReasonNow = [this] { return remoteTransmitReason(); };
         hooks.spectrumFor = [this](SliceModel* s) { return spectrumForSlice(s); };
+        // Band stack plan Task 8: a band grid press, STACK+ and STACK-.
+        hooks.pressBand = [this](SliceModel* s, Band band) {
+            pressBand(s, band, QGuiApplication::keyboardModifiers());
+        };
+        hooks.bandStackReason = [this] { return bandStackReason(); };
+        hooks.stepBandStack = [this](SliceModel* s, bool next) {
+            stepBandStack(s, next ? BandStackDirection::Next : BandStackDirection::Previous);
+        };
         // Parity Task 31 (A11): DUP, the window's DisplayDuplex setting, as
         // View > Display duplex (DUP) sets it.
         hooks.displayDuplexOn = [this] { return m_displayDuplexSetting; };
@@ -10405,10 +12171,21 @@ void MainWindow::buildUI()
             [this](int adcIdx, const QVector<float>& dbmBins) {
         fanWidebandBinsForTest(m_panStack, adcIdx, dbmBins);
     });
+    // Capture on an ADC ending leaves no source for it. Drop the pans' stored bins
+    // so the wings go to the floor rather than freeze on the last frame and look
+    // live. A source being replaced keeps them, and so does another demand holding
+    // this capture, which never ends it. A restart shows the floor until its first
+    // frame, never the old level.
+    connect(m_radioModel, &RadioModel::widebandSourceChanged, this, [this](int adcIdx) {
+        if (!m_radioModel->widebandSourceDescriptor(adcIdx)) {
+            fanWidebandBinsForTest(m_panStack, adcIdx, {});
+        }
+    });
 
     // Create the FFT engine pool (spectrum thread from architecture).
     // Sample rate starts at P2 default (768k); RadioModel::wireSampleRateChanged
-    // updates it to the actual wire rate on each connect (P1=192k, P2=768k).
+    // updates it on each connect: to the wire rate on Protocol 1, and to each
+    // stream's allocator rate on Protocol 2.
     //
     // R1 Task 6: per-stream engine lifecycle, the four global display
     // AppSettings keys, and the shared FFT thread now live in FftEnginePool
@@ -10447,37 +12224,84 @@ void MainWindow::buildUI()
 
     connect(m_radioModel, &RadioModel::wireSampleRateChanged,
             this, [this](double rateHz) {
-        // Every stream on a P1 radio shares the wire rate, and on P2 the
-        // per-stream rate published by streamCentreChanged is derived from
-        // the same value, so the whole pool follows this signal.
+        // Every stream on a P1 radio shares the wire rate. On P2 each DDC
+        // runs at its allocator rate, which applySavedSliceSampleRates can
+        // move off the wire rate (R-R3-49: a band's saved slice rate), and
+        // that is the rate the DDC assignment sends the radio. Pushing the
+        // wire rate there mapped 192 kHz of bins across a 1536 kHz scale.
+        const auto rateForStream = [this, rateHz](int streamIndex) -> double {
+            if (m_radioModel && !m_radioModel->sampleRateIsRadioWide()) {
+                const auto& allocator = m_radioModel->streamAllocator();
+                if (allocator.isStreamActive(streamIndex)) {
+                    const int streamRate = allocator.streamSampleRateHz(streamIndex);
+                    if (streamRate > 0) {
+                        return static_cast<double>(streamRate);
+                    }
+                }
+            }
+            return rateHz;
+        };
         if (m_fftEnginePool) {
             for (int streamIndex : m_fftEnginePool->streams()) {
                 FFTEngine* engine = m_fftEnginePool->engineForStream(streamIndex);
                 if (!engine) { continue; }
-                QMetaObject::invokeMethod(engine, [engine, rateHz]() {
-                    engine->setSampleRate(rateHz);
+                const double engineRate = rateForStream(streamIndex);
+                QMetaObject::invokeMethod(engine, [engine, engineRate]() {
+                    engine->setSampleRate(engineRate);
                 });
             }
         }
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->setSampleRate(rateHz);
-            // Phase 3G-12: preserve the user's current zoom level across
-            // sample rate changes. Only reset the visible span if the
-            // current bandwidth would now exceed the new DDC sample rate
-            // (in which case we clamp to full-span).
-            // Against the EXTENDED ceiling, not the DDC rate.
-            //
-            // A span past the DDC rate is a legitimate state now: it is the
-            // one and only trigger for extended mode. Clamping to rateHz here
-            // meant any reconnect or rate change silently collapsed an
-            // extended view back onto the DDC, and the operator's zoom was
-            // gone with no wings and no explanation. setDisplayWindowClamped
-            // reads the DDC rate when extended view is switched off, so the
-            // ordinary case is unchanged. Codex, PR #318.
-            activeSpectrumWidget()->setDisplayWindowClamped(
-                activeSpectrumWidget()->centerFrequency(),
-                activeSpectrumWidget()->bandwidth());
+        // A live Setup change moves the allocator and publishes no
+        // streamCentreChanged (RadioModel::startSampleRateChange), so this
+        // handler is the only news of it. The cached windows take the rate
+        // too: showOwnStreamOnPan replays them when a pan changes stream and
+        // Clarity's source reads them.
+        for (auto window = m_streamWindows.begin(); window != m_streamWindows.end(); ++window) {
+            window->sampleRateHz = static_cast<int>(rateForStream(window.key()));
         }
+        // Every pan, not just the active one: each display follows its own
+        // receiver's rate.
+        //   From Thetis console.cs:19918,19959 [v2.10.3.15]
+        //     Display.SampleRateRX1 = value; ... Display.SampleRateRX2 = value;
+        // A pan nothing picks a stream for (showOwnStreamOnPan) still draws
+        // the streams it carries, and took its window from the last of them.
+        // A pan carrying none has no bins to scale. The active one takes the
+        // wire rate as it always has; the others keep their view until a
+        // stream reaches them.
+        if (m_panStack) {
+            const QString activePan = m_panStack->activePanId();
+            const QList<SpectrumSubscription> subscriptions = m_topology.subscriptions();
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
+                if (!sw) { continue; }
+                const QString panId = applet->panId();
+                int stream = m_panShownStream.value(panId, -1);
+                if (stream < 0) {
+                    for (const SpectrumSubscription& sub : subscriptions) {
+                        if (sub.consumerId == panId) { stream = sub.streamIndex; }
+                    }
+                }
+                if (stream < 0 && panId != activePan) { continue; }
+                sw->setSampleRate(rateForStream(stream));
+                // Phase 3G-12: preserve the user's current zoom level across
+                // sample rate changes. Only reset the visible span if the
+                // current bandwidth would now exceed the new DDC sample rate
+                // (in which case we clamp to full-span).
+                // Against the EXTENDED ceiling, not the DDC rate.
+                //
+                // A span past the DDC rate is a legitimate state now: it is the
+                // one and only trigger for extended mode. Clamping to rateHz here
+                // meant any reconnect or rate change silently collapsed an
+                // extended view back onto the DDC, and the operator's zoom was
+                // gone with no wings and no explanation. setDisplayWindowClamped
+                // reads the DDC rate when extended view is switched off, so the
+                // ordinary case is unchanged. Codex, PR #318. That is the rate
+                // the widget was just given, so the ceiling follows the stream
+                // this pan shows, not the wire.
+                sw->setDisplayWindowClamped(sw->centerFrequency(), sw->bandwidth());
+            }
+        }
+        reconcileClarityBindings();
     });
     // Spectrum/waterfall FPS — load persisted value (default 30), apply to
     // BOTH the FFT engine (row production cadence) and the SpectrumWidget
@@ -10493,11 +12317,7 @@ void MainWindow::buildUI()
     // on the same display knobs, including ones created later.  Only the
     // SpectrumWidget half is left here.
     {
-        const int persistedFps = qBound(1,
-            AppSettings::instance().value(
-                QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
-            60);
+        const int persistedFps = windowPaintFps();
         if (activeSpectrumWidget()) {
             activeSpectrumWidget()->setDisplayFps(persistedFps);
         }
@@ -10951,15 +12771,21 @@ void MainWindow::buildUI()
     // that status from its station wiring; this is the same notice through
     // the same toast for a window with no Core, so a closure is never silent.
     if (!m_station.isRemote()) {
+        // The status is read when it changes and shown a turn later: read then,
+        // a closure was replaced by a "stays saved" of the same connect, and the
+        // operator saw only the second.
         connect(m_radioModel, &RadioModel::receiveLayoutRestoreStatusChanged, this,
                 [this] {
-            const QString toast = m_receiveLayoutNotices.toastFor(
-                m_radioModel->receiveLayoutRestoreState(),
-                m_radioModel->receiveLayoutRestoreMessage(), /*viaCore*/ false);
-            if (!toast.isEmpty()) {
-                showToast(toast, ToastSeverity::Warning, 10000);
-            }
-        }, Qt::QueuedConnection);
+            const QString state = m_radioModel->receiveLayoutRestoreState();
+            const QString message = m_radioModel->receiveLayoutRestoreMessage();
+            QMetaObject::invokeMethod(this, [this, state, message] {
+                const QString toast =
+                    m_receiveLayoutNotices.toastFor(state, message, /*viaCore*/ false);
+                if (!toast.isEmpty()) {
+                    showToast(toast, ToastSeverity::Warning, 10000);
+                }
+            }, Qt::QueuedConnection);
+        });
         // Each connect is told its own closures, even one worded exactly as
         // the last connect's.
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,
@@ -11399,9 +13225,9 @@ void MainWindow::resetDefaultLayout()
                 for (int i=0;i<retained.size();++i) {
                     if (retained[i].typeId==descriptor.typeId) { entry=retained.takeAt(i); found=true; break; }
                 }
-                if (!found) { entry=firstLaunchEntry(registry->makeEntry(descriptor.typeId)); }
+                if (!found) { entry=ContainerContentRegistry::firstLaunchEntry(registry->makeEntry(descriptor.typeId)); }
                 if (descriptor.typeId=="applet:s_meter") { entry.visible=true; }
-                placeFirstLaunchApplet(main.contents, entry);
+                ContainerContentRegistry::placeFirstLaunchApplet(main.contents, entry);
             }
         }
         // Applet records no descriptor names (and a duplicate placement) stay recoverable.
@@ -11487,6 +13313,12 @@ void MainWindow::populateDefaultMeter()
     m_appletPanel->setArrangeController(m_containerManager->arrangeController());
     m_appletPanel->hide();
     auto* panel = m_appletPanel;
+    // Overlay design D40: every flag in this window shows the meter's RX mode,
+    // however it changes. The panel's own menu and a flag land here alike.
+    if (SMeterWidget* sm = m_appletPanel->smeterWidget()) {
+        connect(sm, &SMeterWidget::rxModeChanged, this, &MainWindow::refreshFlagSMeterSources);
+        refreshFlagSMeterSources();
+    }
 
     // Task 41 (Phase 3P-II): wire the SMeterWidget (installed by the
     // AppletPanelWidget constructor) into MeterPoller.  WdspEngine is
@@ -11674,6 +13506,19 @@ void MainWindow::populateDefaultMeter()
     // RxApplet — Tier 1 wired to SliceModel (slice attached in wireSliceToSpectrum)
     m_rxApplet = new RxApplet(nullptr, m_radioModel, nullptr);
     panel->addApplet(m_rxApplet);
+
+    // Right-click the AGC-T slider or AUTO (this panel or an RX AGC
+    // copy) → open Setup dialog to the AGC/ALC page. Connected here, once,
+    // rather than with the slice wiring: Setup opens in every state, so the
+    // right-click works before the first connection, as the tooltip says.
+    connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
+        auto* dialog = createSetupDialog();
+        if (dialog == nullptr) {
+            return;
+        }
+        dialog->selectPage(QStringLiteral("AGC/ALC"));
+        dialog->show();
+    });
 
     // Phase 3P-I-a T16 — push board caps into RxApplet so ANT buttons
     // hide on HL2/Atlas. Matches the VFO Flag wiring below (T15).
@@ -11900,6 +13745,10 @@ void MainWindow::populateDefaultMeter()
     m_modMonApplet = new ModMonitorApplet(m_radioModel, nullptr);
     panel->insertApplet(0, m_modMonApplet);   // directly below the S-Meter
 
+    // SSB Mod Monitor: envelope, peak hold and crest for USB and LSB.
+    m_ssbModMonApplet = new SsbModMonitorApplet(m_radioModel, nullptr);
+    panel->insertApplet(1, m_ssbModMonApplet);
+
     m_catApplet = new CatApplet(m_radioModel, nullptr);
     panel->addApplet(m_catApplet);
 
@@ -11978,11 +13827,53 @@ void MainWindow::populateDefaultMeter()
     // Roundtable tab.
     m_roundtableApplet = new RoundtableApplet(m_radioModel);
     panel->addApplet(m_roundtableApplet);
+    // This window's own slice, so the label, the stream and Tune agree and a hosting
+    // window never moves a slice another device controls. activeSliceChanged is not
+    // enough: it stays silent when only this station's choice changes while a phone
+    // holds transmit, and every change of an owner's choice fires activeChanged.
+    m_roundtableApplet->setSliceSource([this]() { return activeSliceForWindow(); });
+    if (SliceOwnership* ownership = m_radioModel->sliceOwnership()) {
+        connect(ownership, &SliceOwnership::activeChanged, this, [this]() {
+            if (m_shuttingDown) { return; }
+            m_roundtableApplet->syncFromModel();
+            refreshRoundtableTagsImmediately();
+        });
+    }
     // Roundtable plan Task 14 (design 11.2): the tags on every pan follow
     // the band list, the link, the slices' rooms and mentions of you.
     if (RoundtableModel* roundtable = m_radioModel->roundtableModel()) {
         connect(roundtable, &RoundtableModel::roomsChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
         connect(roundtable, &RoundtableModel::roomChanged, this, &MainWindow::onRoundtableRoomChanged);
+        // A refused or lost read closes the view and says why (overlay design D27).
+        // Automatic reads of the slice's own frequency stay silent, as they are.
+        connect(roundtable, &RoundtableModel::actionRefused, this, [this](const QString& verb, const QString& reason) {
+            if (verb != QLatin1String("readAt")) { return; }
+            const bool viewing = m_roundtablePeekOpening || m_roundtablePeekJustLost
+                || (m_roundtablePeek && m_roundtablePeek->isOpen() && !m_roundtablePeek->showsOwn()
+                    && !m_roundtablePeek->showsFold());
+            if (viewing) {
+                statusBar()->showMessage(reason.isEmpty() ? QStringLiteral("That frequency could not be read right now.")
+                                                          : OperatorReasonText::forDisplay(reason),
+                                         5000);
+            }
+        });
+        if (RoundtablePanel* readPanel = m_roundtableApplet->panel()) {
+            // The panel left the viewed frequency: a refusal, a closed room, or its own
+            // Back to my slice (D27). A tune does not: the panel holds the read for an
+            // open view. Your own frequency and a fold's list read nothing to lose.
+            connect(readPanel, &RoundtablePanel::shownRoomChanged, this, [this, readPanel]() {
+                if (m_roundtablePeekOpening || !m_roundtablePeek || !m_roundtablePeek->isOpen()
+                    || m_roundtablePeek->showsOwn() || m_roundtablePeek->showsFold()
+                    || readPanel->roomId() == m_roundtablePeekContext) {
+                    return;
+                }
+                m_roundtablePeekMessages = false;
+                m_roundtablePeekJustLost = true;
+                closeRoundtablePeek();
+                QTimer::singleShot(0, this, [this]() { m_roundtablePeekJustLost = false; });
+            });
+        }
+        connect(m_radioModel, &RadioModel::transmittingChanged, this, &MainWindow::refreshRoundtablePeek);
         connect(roundtable, &RoundtableModel::linkChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
         connect(roundtable, &RoundtableModel::mentionsChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
         connect(roundtable, &RoundtableModel::sliceRoomsChanged, this, &MainWindow::refreshRoundtableTagsImmediately);
@@ -12242,6 +14133,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Vax")]        = m_vaxApplet;
     m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
     m_appletsById[QStringLiteral("ModMon")]     = m_modMonApplet;
+    m_appletsById[QStringLiteral("SsbModMon")]  = m_ssbModMonApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
@@ -12294,6 +14186,9 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("PureSignal"),   true);
     m_appletVis->registerApplet(QStringLiteral("ModMon"),
                                 QStringLiteral("AM Mod Monitor"), true);
+    m_appletVis->registerApplet(QStringLiteral("SsbModMon"),
+                                QStringLiteral("SSB Mod Monitor"),
+                                SsbModMonitorApplet::kShownByDefault);
     m_appletVis->registerApplet(QStringLiteral("Amp"),
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
@@ -12487,6 +14382,10 @@ void MainWindow::populateDefaultMeter()
         // The RX applet's jobs as independent container content. The
         // applet's own panel is unchanged.
         registerRxSectionContent(*registry, m_rxApplet);
+        // A copy of the Phone/CW panel. The docked applet is unchanged.
+        // The copy hides each row, and the Phone and CW buttons, from its
+        // entry, and opens on the page that entry names.
+        registerPhoneCwSectionContent(*registry, m_phoneCwApplet);
     }
     if (auto* host = m_containerManager->contentHost(c0->id())) { host->setBannerMenu(m_bannerAppletsMenu); }
     if (!m_containerManager->storageError().isEmpty()) {
@@ -13341,6 +15240,7 @@ void MainWindow::buildMenuBar()
     // BAND
     // =========================================================================
     QMenu* bandMenu = menuBar()->addMenu(QStringLiteral("&Band"));
+    bandMenu->setToolTipsVisible(true);
 
     {
         QMenu* hfMenu = bandMenu->addMenu(QStringLiteral("&HF"));
@@ -13369,7 +15269,7 @@ void MainWindow::buildMenuBar()
         for (const auto& entry : hfBands) {
             const Band band = entry.band;
             hfMenu->addAction(QString::fromUtf8(entry.label), this, [this, band]() {
-                if (m_radioModel) { m_radioModel->onBandButtonClicked(band); }
+                pressBand(activeSliceForWindow(), band, QGuiApplication::keyboardModifiers());
             });
         }
     }
@@ -13388,22 +15288,18 @@ void MainWindow::buildMenuBar()
         QAction* genAction = bandMenu->addAction(QStringLiteral("&GEN"));
         genAction->setToolTip(QStringLiteral("General coverage"));
         connect(genAction, &QAction::triggered, this, [this]() {
-            if (m_radioModel) { m_radioModel->onBandButtonClicked(Band::GEN); }
+            pressBand(activeSliceForWindow(), Band::GEN, QGuiApplication::keyboardModifiers());
         });
     }
 
     bandMenu->addAction(QStringLiteral("&WWV"), this, [this]() {
-        if (m_radioModel) { m_radioModel->onBandButtonClicked(Band::WWV); }
+        pressBand(activeSliceForWindow(), Band::WWV, QGuiApplication::keyboardModifiers());
     });
 
     bandMenu->addSeparator();
 
-    {
-        QAction* bandStackAction = bandMenu->addAction(QStringLiteral("Band &Stacking..."));
-        bandStackAction->setEnabled(false);
-        // R-R3-49: hidden until band stacking is built.
-        UnbuiltFeatures::hideUnlessBuilt(bandStackAction, UnbuiltFeature::BandStack);
-    }
+    m_bandStackAction = bandMenu->addAction(QStringLiteral("Band &Stacking..."));
+    connect(m_bandStackAction, &QAction::triggered, this, &MainWindow::bandStackPanel);
 
     // =========================================================================
     // MODE
@@ -14099,28 +15995,19 @@ void MainWindow::buildStatusBar()
 
     // ── Left section ──────────────────────────────────────────────────────────
 
-    // Band Stack: three grey circles (NYI — clickable placeholder). Added to
-    // m_placeholderGroup below rather than hbox directly, so it folds
-    // together with TNF/CWX/DVK/FDX at rung 10 (design §6) instead of
-    // sitting at its own fixed early position.
+    // Band Stack: three circles that open and close the panel (band stack plan
+    // Task 7; refreshBandStackDots paints them). Added to m_placeholderGroup
+    // below rather than hbox directly, so it folds together with
+    // TNF/CWX/DVK/FDX at rung 10 (design §6) instead of sitting at its own
+    // fixed early position.
     auto* bandStackLabel = new QLabel(barWidget);
     bandStackLabel->setFixedSize(10, 22);
-    {
-        QPixmap pm(10, 22);
-        pm.fill(Qt::transparent);
-        QPainter painter(&pm);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(WorkspacePreview::roleColour(QColor(0x40, 0x48, 0x58), "text-inactive"));
-        painter.setPen(Qt::NoPen);
-        for (int i = 0; i < 3; ++i) {
-            painter.drawEllipse(0, i * 7, 9, 6);
-        }
-        painter.end();
-        bandStackLabel->setPixmap(pm);
-    }
     bandStackLabel->setToolTip(QStringLiteral("Band stack"));
     bandStackLabel->setCursor(Qt::PointingHandCursor);
     bandStackLabel->setObjectName(QStringLiteral("statusBandStackDots"));
+    // QLabel has no click: the same event filter path as the panel toggle below.
+    bandStackLabel->installEventFilter(this);
+    bandStackLabel->setProperty("isBandStackToggle", true);
 
     // +PAN icon. From AetherSDR MainWindow.cpp:4368-4396 [@c6481cb]: a jagged
     // spectrum polyline with a plus in the upper right. An icon reads as a
@@ -14162,6 +16049,16 @@ void MainWindow::buildStatusBar()
     hbox->addWidget(panBtn);
     m_addPanButton = panBtn;
     m_bandStackLabel = bandStackLabel;
+
+    // The stack number after +PAN, where desktop.html has it. Its width is kept
+    // for the widest usual reading so the bar does not shift on a press, and
+    // refreshBandStackNumber fills it once the bar's items are registered.
+    m_bandStackNumber = new QLabel(barWidget);
+    m_bandStackNumber->setObjectName(QStringLiteral("statusBandStackNumber"));
+    m_bandStackNumber->setTextFormat(Qt::RichText);
+    m_bandStackNumber->setText(bandStackNumberMarkup(QStringLiteral("160m"), QStringLiteral("88/88")));
+    m_bandStackNumber->setMinimumWidth(m_bandStackNumber->sizeHint().width());
+    hbox->addWidget(m_bandStackNumber);
     updateAddPanButtonState();
 
     // Phase 3F Sub-Epic D Task 11: per-chain (ADC) BPF state indicators
@@ -14185,6 +16082,7 @@ void MainWindow::buildStatusBar()
 
         auto* botLbl = new QLabel(QStringLiteral("idle"), w);
         botLbl->setObjectName(QStringLiteral("chainIndicator%1").arg(adc));
+        m_chainIndicatorLabels[static_cast<std::size_t>(adc)] = botLbl;
         botLbl->setStyleSheet(
             QStringLiteral("color: %1; font-size: 9px; font-weight: bold;")
                 .arg(Style::kTextInactive));
@@ -14218,6 +16116,7 @@ void MainWindow::buildStatusBar()
     // We need to store the label pointer to recognise it in eventFilter.
     // Use a property to mark it.
     panelToggleLabel->setProperty("isPanelToggle", true);
+    m_panelToggleLabel = panelToggleLabel;
 
     // TNF light. Click toggles every notch at once; colour and tooltip follow
     // NotchModel::globalEnabled.
@@ -14950,12 +16849,14 @@ void MainWindow::buildStatusBar()
     bar.placeholderGroup = m_placeholderGroup;
     bar.placeholderSep   = m_placeholderSep;
     bar.bandStackLabel   = m_bandStackLabel;
+    bar.bandStackNumber  = m_bandStackNumber;
     bar.tnfLabel         = m_tnfLabel;
     for (int rung = 5; rung <= 9; ++rung) {
         bar.pillByRung[rung] = m_rxDashboard->badgeForRung(rung);
     }
 
     registerChromeBarItems(*m_chromeBar, bar);
+    refreshBandStackNumber();
 
     // registerChromeBarItems just measured w.rxDashRow's raw sizeHint(),
     // which at this point in construction happens to equal tag + mode +
@@ -14984,8 +16885,6 @@ void MainWindow::buildStatusBar()
     // R-R3-49: items whose feature is not built yet never show. Reported as
     // availability, the controller's one side channel, so the fold ladder
     // neither shows them nor charges their width.
-    m_chromeBar->setItemAvailable(m_bandStackLabel,
-                                  UnbuiltFeatures::isBuilt(UnbuiltFeature::BandStack));
     m_chromeBar->setItemAvailable(m_placeholderGroup,
                                   UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)
                                       || UnbuiltFeatures::isBuilt(UnbuiltFeature::Voice)
@@ -15743,10 +17642,21 @@ void MainWindow::wireContainerControls(ContainerWidget* c)
             [this, c]() { onContainerFilterContext(c, -1); });
     // From Thetis MeterManager.cs:13216 and :14593 [v2.10.3.15]: a band
     // button's or the VFO display's right-click opens console.PopupBandstack
-    // (console.cs:48529). Band stacking is not built in NereusSDR (the Band
-    // menu's entry waits for it too), so the right-click says so.
-    connect(c, &ContainerWidget::bandStackRequested, this,
-            [this](int) { showContainerButtonReason(containerBandStackReason()); });
+    // (console.cs:48529). NereusSDR's popup shows that band's rows at the pointer.
+    connect(c, &ContainerWidget::bandStackRequested, this, [this, c](int band) {
+        openBandStackPopup(containerSlice(c), static_cast<Band>(band), QCursor::pos());
+    });
+    // The VFO display names no band: it is the band the slice is on.
+    connect(c, &ContainerWidget::vfoBandStackRequested, this, [this, c] {
+        SliceModel* slice = containerSlice(c);
+        if (!slice) {
+            showContainerButtonReason(
+                ContainerButtonDispatcher::noSliceReason(containerControlRxSource(c)));
+            return;
+        }
+        openBandStackPopup(slice, BandDefaults::bandGridBandFromFrequency(slice->frequency()),
+                           QCursor::pos());
+    });
     connect(c, &ContainerWidget::antennaSelected, this,
             [this, c](int index) { onContainerAntennaSelected(c, index); });
     connect(c, &ContainerWidget::tuneStepSelected, this,
@@ -15949,7 +17859,7 @@ void MainWindow::wireVfoDisplayRequests(VfoDisplayItem* vfo)
             [this, guard](int sliceId, Band band) {
         SliceModel* slice = vfoRequestSlice(guard, sliceId);
         if (!slice || slice->locked()) { return; }
-        m_radioModel->onBandButtonClicked(slice, band);
+        pressBand(slice, band, QGuiApplication::keyboardModifiers());
     });
     // From Thetis MeterManager.cs:14991-15028 [v2.10.3.15] (setMode).
     connect(vfo, &VfoDisplayItem::modeRequested, this,
@@ -16572,11 +18482,6 @@ void MainWindow::onContainerFilterClicked(ContainerWidget* c, int index)
     slice->setFilter(presets[index].low, presets[index].high);
 }
 
-QString MainWindow::containerBandStackReason()
-{
-    return tr("Band stacking is not ready.");
-}
-
 int MainWindow::containerFilterContextSlot(int index, int activePreset, int presetCount)
 {
     const int slot = index >= 0 ? index : activePreset;
@@ -16898,6 +18803,9 @@ void MainWindow::wireSetupDialog(SetupDialog* dialog)
     // Task 3.6: CPU meter rate live-apply.
     connect(dialog, &SetupDialog::cpuMeterRateChanged,
             this,   &MainWindow::setCpuTimerIntervalHz);
+    // Band stack plan Task 12: design V1.
+    connect(dialog, &SetupDialog::bandStackRegionEdited, this,
+            [this] { noteBandStackRegionEdit(); });
     connect(dialog, &SetupDialog::hideFeedbackLevelChanged, this, [this](bool hidden) {
         if (m_psaIndicator) { m_psaIndicator->setHideFeedback(hidden); }
     });
@@ -17462,16 +19370,6 @@ void MainWindow::wireSliceToSpectrum()
         // shows (RxApplet's AUTO click), so it is not routed through the
         // window's active slice here.
 
-        // Right-click AGC-T slider → open Setup dialog to AGC/ALC page
-        connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
-            auto* dialog = createSetupDialog();
-            if (dialog == nullptr) {
-                return;  // the gate refused and has already said why
-            }
-            dialog->selectPage(QStringLiteral("AGC/ALC"));
-            dialog->show();
-        });
-
         // RxApplet openNbSetupRequested wiring removed 2026-04-22 —
         // RxApplet no longer hosts any NB controls (strict Thetis parity).
         // VfoWidget::openNbSetupRequested above handles the NB→Setup hop.
@@ -17804,11 +19702,10 @@ void MainWindow::resizeEvent(QResizeEvent* event)
 
     // Update axis-lock positions for overlay-docked containers
     if (m_mainSplitter && m_containerManager) {
-        // Use the spectrum pane (first splitter child) as reference
-        QWidget* spectrumPane = m_edgeDockArea ? m_edgeDockArea->center() : m_mainSplitter->widget(0);
-        if (spectrumPane) {
-            m_hDelta = spectrumPane->width();
-            m_vDelta = spectrumPane->height();
+        // Use the pan column, the free containers' parent, as reference
+        if (m_panColumn) {
+            m_hDelta = m_panColumn->width();
+            m_vDelta = m_panColumn->height();
             m_containerManager->updateDockedPositions(m_hDelta, m_vDelta);
         }
     }
@@ -17938,39 +19835,15 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     // Handle ☰ panel toggle click — label has property "isPanelToggle"
     if (event->type() == QEvent::MouseButtonPress) {
         auto* label = qobject_cast<QLabel*>(watched);
+        if (label && label->property("isBandStackToggle").toBool()) {
+            bandStackPanel();
+            return true;
+        }
         if (label && label->property("isPanelToggle").toBool()) {
-            if (m_edgeDockArea) {
-                // Workspace preview: collapse the right strip, keep its contents.
-                const bool collapse = !m_edgeDockArea->userCollapsed(DockEdge::Right);
-                m_edgeDockArea->setUserCollapsed(DockEdge::Right, collapse);
-                label->setStyleSheet(collapse
-                    ? QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 16px; }")
-                    : QStringLiteral("QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
-                return true;
-            }
-            // Toggle QSplitter right pane (index 1) visibility.
-            // Save/restore sizes so spectrum expands when panel is hidden.
-            if (!m_mainSplitter || m_mainSplitter->count() < 2) {
+            if (!m_edgeDockArea && (!m_mainSplitter || m_mainSplitter->count() < 2)) {
                 return QMainWindow::eventFilter(watched, event);
             }
-            QWidget* rightPane = m_mainSplitter->widget(1);
-            if (rightPane->isVisible()) {
-                // Hide: save current sizes, then collapse right to 0
-                m_splitterSizesBeforeHide = m_mainSplitter->sizes();
-                rightPane->hide();
-                label->setStyleSheet(QStringLiteral(
-                    "QLabel { color: #404858; font-weight: bold; font-size: 16px; }"));
-            } else {
-                // Show: restore saved sizes (or default 80/20 if none saved)
-                rightPane->show();
-                if (!m_splitterSizesBeforeHide.isEmpty()) {
-                    m_mainSplitter->setSizes(m_splitterSizesBeforeHide);
-                } else {
-                    m_mainSplitter->setSizes({1024, 256});
-                }
-                label->setStyleSheet(QStringLiteral(
-                    "QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
-            }
+            toggleContainerPanel();
             return true;  // event consumed
         }
     }
@@ -19934,11 +21807,7 @@ void MainWindow::openSpotHub()
         // NereusSDR shape lives on the widget so the test seam is local
         // (see tst_spothub_display_knobs).
         connect(m_spotHubDialog.data(), &SpotHubDialog::settingsChanged,
-                this, [this] {
-                    if (activeSpectrumWidget()) {
-                        activeSpectrumWidget()->loadSpotDisplaySettings();
-                    }
-                });
+                this, [this] { reloadSpotDisplaySettingsOnAllPans(); });
         // Defensive re-seed.  The primary seed runs at MainWindow startup
         // (see the QTimer::singleShot(0, ...) lambda earlier in this file
         // that pairs loadSpotDisplaySettings + restoreSpotClientAutoStartState),
@@ -19949,9 +21818,7 @@ void MainWindow::openSpotHub()
         // is now -- loadSpotDisplaySettings re-reads AppSettings and the
         // setter is no-op when the value is unchanged, so the cost is
         // bounded and the behaviour is correct either way.
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->loadSpotDisplaySettings();
-        }
+        reloadSpotDisplaySettingsOnAllPans();
 
         // Phase 3R K-bench (bench feedback): wire the FreeDV tab's
         // Start / Stop button signals to the actual client lifecycle.
@@ -20282,7 +22149,8 @@ void MainWindow::applyPanLayout(const QString& layoutId)
                 if (HostingSliceActions* hosting = hostingSlices()) {
                     hosting->addOnPan(emptyPan);
                 } else {
-                    m_radioModel->addSliceOnPan(emptyPan);
+                    m_radioModel->addSliceOnPan(emptyPan, /*restoreSavedState=*/false,
+                                                /*newReceiver=*/true);
                 }
             }
         }
@@ -20379,16 +22247,23 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
     // Restoring a client layout is never permission to create station slices.
     // Capabilities report radio connectivity before slice snapshot hydration.
     if (!model->ownsLocalDsp() && (!operatorRequested || !snapshotReady)) { return; }
+    // A desktop's fill at connect brings back the radio's saved layout (JJ's
+    // ruling 2026-11-05). With one, a pan left empty was empty when saved: only
+    // what was open comes back. A layout change is not a restore.
+    if (!operatorRequested && !hosting && model->restoreDesktopLayoutSlices(panIds)) {
+        return;
+    }
     for (const QString& emptyPan : model->pansWithoutSlices(panIds)) {
         // Slice control plan Task 11: a hosting window's new slice is the
         // station device's, asked for the way its +RX asks.
+        // Not asked for is the fill at connect, which brings back a saved
+        // layout's receiver and keeps its RIT and XIT. Asked for is a new
+        // receiver: a copy of the slice the operator is on, with RIT and XIT
+        // off and nothing from the letter.
         if (hosting) {
-            hosting->addOnPan(emptyPan);
+            hosting->addOnPan(emptyPan, !operatorRequested);
         } else {
-            // A saved letter comes back whether or not the operator asked
-            // for the slice. addSliceImpl restores it. A letter with
-            // nothing saved still opens on the active slice.
-            model->addSliceOnPan(emptyPan, !operatorRequested);
+            model->addSliceOnPan(emptyPan, !operatorRequested, operatorRequested);
         }
     }
 }
@@ -21404,6 +23279,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         // never reached the disk. Codex, PR #318.
         m_panStack->saveFloatingGeometry();
     }
+    m_closeSavesDone = true;
 
     // Issue #206 — persist window geometry + maximized/fullscreen
     // state. Captured BEFORE close so the saved blob reflects the

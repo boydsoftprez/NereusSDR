@@ -26,6 +26,8 @@
 
 // 2026-10-30: Exact-frequency contexts, scoped reports, paths and native renders.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Pins follow the overlay redesign truth rules and wording (design D2, D3, D5, D6, D8).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -92,13 +94,45 @@ struct RoundtableSheetTests {
                                         mentions: 0)?.text == "Roundtable \u{00B7} Nobody here")
     }
 
-    @Test("the flag line reads members and talker, Doubled, Quiet, @N, and N hear you while you talk")
+    @Test("D3: the flag line follows the card's turn, so a slice 40 Hz off a talker names them")
+    func flagLineFollowsTheNearbyTurn() {
+        let quiet = Self.summary(members: 2, state: "quiet", talkers: [])
+        func view(_ kind: String, talkers: [RoundtableModel.Talker], ended: Bool = false,
+                  keyed: Bool = true) -> RoundtableModel.Room {
+            let turn = RoundtableModel.Turn(id: 7, kind: kind, talkers: talkers, start: 0, end: ended ? 5 : nil, ending: false,
+                                            names: [], heard: 0, mine: nil, hz: 7_236_440, sourceRoom: "lsb-7236000")
+            var members = talkers.map { talker -> RoundtableModel.Member in
+                var one = Self.member(talker.ref ?? "", talker.callsign, keyed: keyed)
+                one.sourceRoom = "lsb-7236000"
+                return one
+            }
+            members.append(Self.member("me", "KG4VCF"))
+            return RoundtableModel.Room(id: Self.room, band: "40m", family: "lsb", hz: 7_236_400, members: members,
+                                        now: ended ? [] : [turn], earlier: ended ? [turn] : [], messages: [], frequencyView: true)
+        }
+        func text(_ room: RoundtableModel.Room, summary: RoundtableModel.RoomSummary? = nil) -> String? {
+            RoundtableFlagLine.line(available: true, link: .live, summary: summary ?? quiet, room: room, mentions: 0)?.text
+        }
+        let k4abc = RoundtableModel.Talker(ref: "k", callsign: "K4ABC", nth: 2, hz: 7_236_440, sourceRoom: "lsb-7236000")
+        let n4xyz = RoundtableModel.Talker(ref: "n", callsign: "N4XYZ", nth: 1, hz: 7_236_440, sourceRoom: "lsb-7236000")
+        #expect(text(view("talking", talkers: [k4abc])) == "Roundtable \u{00B7} 2 \u{00B7} " + RoundtableText.withNth("K4ABC", 2))
+        #expect(text(view("doubled", talkers: [k4abc, n4xyz])) == "Roundtable \u{00B7} 2 \u{00B7} Double")
+        #expect(text(view("unknown", talkers: [])) == "Roundtable \u{00B7} 2 \u{00B7} Unknown")
+        // An ended turn is not on the air: the row's own word stands.
+        #expect(text(view("talking", talkers: [k4abc], ended: true)) == "Roundtable \u{00B7} 2 \u{00B7} Quiet")
+        // Nobody on this exact frequency, and the card still names the talker.
+        let alone = view("talking", talkers: [k4abc])
+        #expect(RoundtableFlagLine.line(available: true, link: .live, summary: nil, room: alone, mentions: 0)?.text
+            == "Roundtable \u{00B7} 2 \u{00B7} " + RoundtableText.withNth("K4ABC", 2))
+    }
+
+    @Test("the flag line reads members and talker, Double, Quiet, @N, and N hear you while you talk")
     func flagLineWords() {
         let talking = RoundtableFlagLine.line(available: true, link: .live, summary: Self.summary(members: 9),
                                               room: nil, mentions: 2)
         #expect(talking == RoundtableFlagLine(glyph: .talking, text: "Roundtable \u{00B7} 9 \u{00B7} K4ABC", mentions: 2))
         #expect(RoundtableFlagLine.line(available: true, link: .live, summary: Self.summary(members: 6, state: "doubled"),
-                                        room: nil, mentions: 0)?.text == "Roundtable \u{00B7} 6 \u{00B7} Doubled")
+                                        room: nil, mentions: 0)?.text == "Roundtable \u{00B7} 6 \u{00B7} Double")
         #expect(RoundtableFlagLine.line(available: true, link: .live,
                                         summary: Self.summary(members: 3, state: "quiet", talkers: []),
                                         room: nil, mentions: 0)?.glyph == .quiet)
@@ -120,7 +154,7 @@ struct RoundtableSheetTests {
         #expect(hidden == RoundtableFlagLine(glyph: .talking, text: "Hidden \u{00B7} 9 \u{00B7} K4ABC", mentions: 2,
                                              dimmed: true))
         #expect(RoundtableFlagLine.line(available: true, link: .hidden, summary: Self.summary(members: 6, state: "doubled"),
-                                        room: nil, mentions: 0)?.text == "Hidden \u{00B7} 6 \u{00B7} Doubled")
+                                        room: nil, mentions: 0)?.text == "Hidden \u{00B7} 6 \u{00B7} Double")
         #expect(RoundtableFlagLine.line(available: true, link: .hidden, summary: nil, room: nil,
                                         mentions: 0) == RoundtableFlagLine(glyph: .quiet,
                                                                            text: "Hidden \u{00B7} Nobody here",
@@ -341,7 +375,7 @@ struct RoundtableSheetTests {
         var doubledRoom = room
         doubledRoom.members[0].you = true
         let doubledText = RoundtableText.lastTurnText(room: doubledRoom, turn: doubledTurn, now: 4000)
-        #expect(doubledText.contains("doubled · combined RF") && doubledText.contains("K4ABC + W1AW"))
+        #expect(doubledText.contains("Last double · combined RF") && doubledText.contains("K4ABC + W1AW"))
         #expect(!doubledText.contains("was yours") && !doubledText.contains("Last turn by K4ABC"))
         var liveRoom = room
         var older = turn
@@ -1208,18 +1242,12 @@ struct RoundtableSheetTests {
         let tags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
         #expect(tags.count == 3 && tags[0].label.contains("\n"))
         #expect(tags[0].card?.state == .known("K4ABC"))
-        let dbmPlan = RoundtableTagLayout.cardPlan(tags[0], width: 176)
-        #expect(dbmPlan.reports.first?.reporter == "N4XYZ" && dbmPlan.reports.first?.signal == ["-43"])
-        model.roundtable.setSignalFormat(.sUnits)
-        let sTags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
-        #expect(RoundtableTagLayout.cardPlan(sTags[0], width: 176).reports.first?.signal == ["S9 +30"])
-        model.roundtable.setSignalFormat(.both)
-        let bothTags = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0, 1])
-        #expect(RoundtableTagLayout.cardPlan(bothTags[0], width: 176).reports.first?.signal == ["S9 +30", "-43 dBm"])
-        model.roundtable.setSignalFormat(.dbm)
-        let narrow = RoundtableTagLayout.cardPlan(tags[0], width: 80)
-        #expect(narrow.stateCaption == "Last talker" && narrow.stateTitle == "K4ABC")
-        #expect(narrow.reports.isEmpty && narrow.showsDetails)
+        #expect(tags[0].card?.reports.first?.reporter == "N4XYZ")
+        #expect(tags[0].card?.reports.first.map { RoundtableText.signalLines($0.reading, format: .dbm) } == ["-43"])
+        #expect(RoundtableTagLayout.cardSignal(-43, format: .dbm, narrow: false) == "\u{2212}43")
+        #expect(RoundtableTagLayout.cardSignal(-43, format: .sUnits, narrow: false) == "S9 +30")
+        #expect(RoundtableTagLayout.cardSignal(-43, format: .both, narrow: false) == "S9 +30 \u{2212}43")
+        #expect(RoundtableTagLayout.cardSignal(-43, format: .both, narrow: true) == "S9 +30")
         let summary = try #require(model.roundtable.frequencyRows.first)
         var reportView = try #require(model.roundtable.room)
         reportView.earlier = []
@@ -1227,14 +1255,65 @@ struct RoundtableSheetTests {
         reportView.now[0].hz = 7_242_800
         #expect(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow)?.state == .waiting)
         reportView.now[0].hz = summary.hz
+        // A turn in another source room still shows (D3), with no readings:
+        // its turn id means nothing to this room's listeners.
         reportView.now[0].sourceRoom = "another-source"
-        #expect(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow)?.state == .waiting)
+        let elsewhere = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(elsewhere.state == .known("K4ABC") && elsewhere.reports.isEmpty)
         reportView.now[0].sourceRoom = source
         reportView.now[0].kind = "doubled"
+        for i in reportView.members.indices where reportView.members[i].callsign == "K4ABC" {
+            reportView.members[i].keyed = true
+        }
         let doubled = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
-        #expect(doubled.state == .doubled && doubled.reports.isEmpty)
+        #expect(doubled.state == .doubled && doubled.reports.first?.reporter == "N4XYZ")
+        #expect(doubled.participants == ["K4ABC"])
+        #expect(doubled.accessibilityText.contains("combined RF"))
+        var singleStation = summary
+        singleStation.stations = Array(summary.stations.prefix(1))
+        #expect(RoundtableTagLayout.card(for: singleStation, view: reportView, now: reportNow)?.reports.isEmpty == false)
+        var second = reportView.now[0].talkers[0]
+        second.callsign = "N4XYZ"
+        second.ref = reportView.members.first(where: { $0.callsign == "N4XYZ" })?.ref
+        second.sourceRoom = source
+        second.nth = 2
+        reportView.now[0].talkers.append(second)
+        for i in reportView.members.indices where reportView.members[i].callsign == "N4XYZ" {
+            reportView.members[i].keyed = true
+        }
+        let overlapping = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(overlapping.participants == ["K4ABC", "N4XYZ (2)"])
+        #expect(!overlapping.reports.contains(where: { $0.reporter == "N4XYZ" }))
+        var third = second
+        third.callsign = "W3XYZ"
+        third.ref = "third"
+        reportView.now[0].talkers.append(third)
+        var thirdMember = reportView.members[0]
+        thirdMember.ref = "third"
+        thirdMember.callsign = "W3XYZ"
+        thirdMember.keyed = true
+        reportView.members.append(thirdMember)
+        let three = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(RoundtableTagLayout.cardHead(RoundtableCardData(kind: .double, hz: three.reports.isEmpty ? 0 : 1, keyed: three.participants),
+                                             narrow: false) == "Double \u{00B7} 3")
+        reportView.now[0].end = reportNow
+        reportView.earlier = [reportView.now[0]]
+        reportView.now = []
+        let endedDouble = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(endedDouble.ended && endedDouble.caption == "Last double")
+        reportView.now = [try #require(model.roundtable.room?.now.first)]
+        reportView.now[0].id += 1
+        let remaining = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
+        #expect(remaining.state == .known("K4ABC") && remaining.reports.isEmpty)
+        reportView.earlier = []
+        // The unknown turn these readings belong to, with N4XYZ no longer
+        // transmitting: a keyed station is never a listener (D2).
+        reportView.now[0].id = 12
         reportView.now[0].kind = "unknown"
         reportView.now[0].talkers = []
+        for i in reportView.members.indices where reportView.members[i].callsign == "N4XYZ" {
+            reportView.members[i].keyed = false
+        }
         let unknown = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
         #expect(unknown.state == .unknown && unknown.reports.first?.reporter == "N4XYZ")
         reportView.now[0] = try #require(model.roundtable.room?.now.first)
@@ -1246,8 +1325,9 @@ struct RoundtableSheetTests {
         duplicate.km = 0
         reportView.members.append(duplicate)
         let scoped = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
-        #expect(scoped.state == .known("K4ABC") && scoped.reports.first?.reporter == "K4ABC (2)")
-        #expect(scoped.reports.first?.id == "another-source/k/1")
+        // Turn ids are local to a source room: the same id elsewhere is another turn.
+        #expect(scoped.state == .known("K4ABC") && scoped.reports.first?.reporter == "N4XYZ")
+        #expect(!scoped.reports.contains { $0.id == "another-source/k/1" })
         for i in reportView.members.indices { reportView.members[i].reading?.turn = 999 }
         let mismatched = try #require(RoundtableTagLayout.card(for: summary, view: reportView, now: reportNow))
         #expect(mismatched.reports.isEmpty)
@@ -1542,10 +1622,11 @@ struct RoundtableSheetTests {
         if name.hasPrefix("overlay-"), let tag = RoundtableTagLayout.tags(model.roundtable, sliceIds: [0]).first {
             let node = try #require(SetupTypedEntryTests.element("roundtableTag.\(tag.roomId)", in: window))
             let frame = window.convert(node.accessibilityFrame, from: window.screen.coordinateSpace)
-            reportsRect = CGRect(x: frame.minX + 4, y: frame.maxY - 22, width: frame.width - 8, height: 18)
-            let width = frame.width
-            let plan = RoundtableTagLayout.cardPlan(tag, width: Double(width))
-            print("Overlay native bounds name=\(name) width=\(width) font=\(plan.stateFontSize) title=\(plan.stateTitle ?? "none")")
+            // The head's frequency, in the card's blue, says the card has drawn.
+            if model.roundtable.cardData(context: tag.roomId).kind != .quiet, frame.width >= RoundtableTagLayout.cardTightBelow {
+                reportsRect = CGRect(x: frame.midX, y: frame.minY + 5, width: frame.width / 2 - 2, height: 15)
+            }
+            print("Overlay native bounds name=\(name) width=\(frame.width) height=\(frame.height)")
         }
         func save(_ captureName: String) async throws {
             var completed: UIImage?

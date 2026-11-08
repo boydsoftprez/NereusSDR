@@ -6,6 +6,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: The station device's fill at connect restores the receiver, on its
+//                own frequency, mode, filter and sample rate.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: A new receiver asks for RIT and XIT off; the station device's fill does not.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: Band stack plan Task 5: parseBandStackRecall.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -347,6 +356,8 @@
 //                                    roundtable.* verbs, read here and
 //                                    answered by the station server.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/roundtable/RoundtableWire.h"
@@ -355,6 +366,14 @@
 #include "core/TxSliceArbiter.h"
 
 #include "core/SliceOwnership.h"
+#include "core/session/SliceAccessPolicy.h"
+#include "models/bandstack/BandStackController.h"
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <algorithm>
+#include <optional>
 #include "core/SpotSourceHost.h"
 #include "core/LogCategories.h"
 #include "core/station/StationRadios.h"
@@ -859,6 +878,47 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          "paProfileVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"paProfile.setMaxPower", {arg("band", kInt), arg("value", kDouble)},
          "paProfileVersion", 1, kRadioIdentitySessionProtocolMinor},
+        // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack.
+        // `band` is a band key name, shortwave and GEN included; `ids` is a
+        // JSON array of entry ids, as text.
+        {"bandStack.press",
+         {arg("sliceId", kInt), arg("band", kUtf8), arg("direction", kUtf8),
+          optionalArg("viewCenterHz", kInt), optionalArg("viewSpanHz", kInt)},
+         "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.step",
+         {arg("sliceId", kInt), arg("direction", kUtf8), optionalArg("viewCenterHz", kInt),
+          optionalArg("viewSpanHz", kInt)},
+         "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.goTo",
+         {arg("sliceId", kInt), arg("entryId", kUtf8), optionalArg("viewCenterHz", kInt),
+          optionalArg("viewSpanHz", kInt)},
+         "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.add",
+         {arg("sliceId", kInt), optionalArg("viewCenterHz", kInt), optionalArg("viewSpanHz", kInt)},
+         "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.saveHere",
+         {arg("sliceId", kInt), arg("entryId", kUtf8), optionalArg("viewCenterHz", kInt),
+          optionalArg("viewSpanHz", kInt)},
+         "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.edit",
+         {arg("entryId", kUtf8), optionalArg("name", kUtf8), optionalArg("locked", kBool)},
+         "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.delete", {arg("entryId", kUtf8)}, "bandStackVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"bandStack.reorder", {arg("band", kUtf8), arg("ids", kUtf8)}, "bandStackVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"bandStack.setReturn",
+         {arg("band", kUtf8), arg("mode", kUtf8), optionalArg("entryId", kUtf8)},
+         "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.clear", {optionalArg("band", kUtf8)}, "bandStackVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"bandStack.reseed", {}, "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.options",
+         {optionalArg("dupeProtection", kBool), optionalArg("expiryMinutes", kInt),
+          optionalArg("dwellSeconds", kInt)},
+         "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"bandStack.restoreExpired", {arg("batchId", kUtf8)}, "bandStackVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's RF-Kit RF2K-S and the station TCI server (R-R3-47,
@@ -1089,6 +1149,8 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // The AM Mod Monitor's RESET (R-IOS-13, R-R3-49): the Core's
         // analyzer for a source, 0 TX I/Q or 1 PA feedback.
         {"txModMonitor.reset", {arg("source", kInt)}, "txModMonitorVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"txSsbModMonitor.reset", {arg("source", kInt)}, "txSsbModMonitorVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's radio (R-IOS-18, R-R3-49, parity Task 21).
         {"station.selectRadio", {arg("mac", kUtf8)}, "stationRadiosVersion", 1,
@@ -1720,6 +1782,18 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
                || invoke.commandVerb == "paProfile.setMaxPower"
                || invoke.commandVerb == "paProfile.setUseMax") {
         handlePaProfile(invoke);
+    } else if (invoke.commandVerb == "bandStack.press" || invoke.commandVerb == "bandStack.step"
+               || invoke.commandVerb == "bandStack.goTo" || invoke.commandVerb == "bandStack.add"
+               || invoke.commandVerb == "bandStack.saveHere"
+               || invoke.commandVerb == "bandStack.edit"
+               || invoke.commandVerb == "bandStack.delete"
+               || invoke.commandVerb == "bandStack.reorder"
+               || invoke.commandVerb == "bandStack.setReturn"
+               || invoke.commandVerb == "bandStack.clear"
+               || invoke.commandVerb == "bandStack.reseed"
+               || invoke.commandVerb == "bandStack.options"
+               || invoke.commandVerb == "bandStack.restoreExpired") {
+        handleBandStack(invoke);
     } else if (invoke.commandVerb == "requestIoBoardProbe") {
         handleRequestIoBoardProbe(invoke);
     } else if (invoke.commandVerb == "setAlexRxAntenna") {
@@ -1762,7 +1836,8 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         handleFilterResponse(invoke);
     } else if (invoke.commandVerb == "records.subscribe"
                || invoke.commandVerb == "records.unsubscribe"
-               || invoke.commandVerb == "txModMonitor.reset") {
+               || invoke.commandVerb == "txModMonitor.reset"
+               || invoke.commandVerb == "txSsbModMonitor.reset") {
         handleRecords(invoke);
     } else if (invoke.commandVerb == "station.selectRadio"
                || invoke.commandVerb == "station.rescanRadios"
@@ -2273,7 +2348,11 @@ bool SessionCommandDispatcher::refusedForAnotherDevice(const SessionMessage& inv
         QByteArrayLiteral("nnr.tryAgain"), QByteArrayLiteral("notch.add"),
         QByteArrayLiteral("requestSliceSampleRate"), QByteArrayLiteral("requestStreamCentre"),
         QByteArrayLiteral("requestStreamCtunPinned"), QByteArrayLiteral("slice.selectBand"),
-        QByteArrayLiteral("notch.addAtSlice"), QByteArrayLiteral("startLevelCalibration")};
+        QByteArrayLiteral("notch.addAtSlice"), QByteArrayLiteral("startLevelCalibration"),
+        // Band stack plan Task 4: a recall or a save acts on its own slice only.
+        QByteArrayLiteral("bandStack.press"), QByteArrayLiteral("bandStack.step"),
+        QByteArrayLiteral("bandStack.goTo"), QByteArrayLiteral("bandStack.add"),
+        QByteArrayLiteral("bandStack.saveHere")};
     if (m_requester.isEmpty() || !m_sliceAccess || !kSliceVerbs.contains(invoke.commandVerb)) {
         return false;
     }
@@ -2281,7 +2360,9 @@ bool SessionCommandDispatcher::refusedForAnotherDevice(const SessionMessage& inv
     if (findIntArgument(invoke.arguments, "sliceId", &sliceId) != ArgumentStatus::Ok) {
         return false;
     }
-    const QString reason = m_sliceAccess(m_requester, sliceId);
+    const QByteArray& verb = invoke.commandVerb;
+    const QString reason = verb.startsWith("bandStack.") ? bandStackSliceRefusal(sliceId)
+                                                         : m_sliceAccess(m_requester, sliceId);
     if (reason.isEmpty()) {
         return false;
     }
@@ -2626,7 +2707,9 @@ void SessionCommandDispatcher::handleAddSlice(const SessionMessage& invoke)
     {
         // iPhone app Task 73: the new slice is the requesting device's.
         const SliceOwnership::CreatorScope creator(m_radioModel->sliceOwnership(), m_requester);
-        id = m_radioModel->addSlice(panIdArg.toString());
+        // A requested slice is a new receiver: RIT and XIT off.
+        id = m_radioModel->addSlice(panIdArg.toString(), /*restoreSavedState=*/false,
+                                    /*newReceiver=*/true);
     }
     QObject::disconnect(conn);
 
@@ -2801,10 +2884,21 @@ void SessionCommandDispatcher::handleAddSliceOnPan(const SessionMessage& invoke)
         m_radioModel, &RadioModel::sliceAddRejected, this,
         [&rejectionReason](const QString& reason) { rejectionReason = reason; });
 
+    // A requested slice is a new receiver: RIT and XIT off. The exception is
+    // the station device's own window filling its pans at connect, which
+    // brings back a saved layout's receiver (HostingSliceActions::addOnPan) on
+    // its own frequency, mode, filter and sample rate, as a window without a
+    // Core does. Any other device's request is new whatever it sends, so a
+    // device on the link cannot take a letter back this way.
+    QVariant restoredFillArg;
+    const bool restoredFill = m_requester == SliceOwnership::stationDevice()
+        && findArgument(invoke.arguments, "restoredFill", &restoredFillArg)
+        && restoredFillArg.toBool();
     {
         // iPhone app Task 73: the new slice is the requesting device's.
         const SliceOwnership::CreatorScope creator(m_radioModel->sliceOwnership(), m_requester);
-        m_radioModel->addSliceOnPan(panIdArg.toString());
+        m_radioModel->addSliceOnPan(panIdArg.toString(), /*restoreSavedState=*/restoredFill,
+                                    /*newReceiver=*/!restoredFill);
     }
 
     QObject::disconnect(addedConn);
@@ -2862,6 +2956,18 @@ void SessionCommandDispatcher::handleRequestSliceSampleRate(const SessionMessage
     if (askedSlice.isNull()) {
         emitResult(invoke.commandVerb, invoke.commandId, false,
                    QStringLiteral("That receiver is no longer on the Core."), {});
+        return;
+    }
+
+    // A rate off the radio's ladder is refused here, as handleSetRadioSampleRate
+    // refuses it. Taken, a stale or hand-made request moves the radio off its
+    // ladder: the wire saturates at the board's top rate while WDSP and the
+    // display run at the rate asked for. With no radio connected there is no
+    // ladder and no wire to move: the change is the model's, as before.
+    const QVector<int> allowed = m_radioModel->allowedStreamSampleRates();
+    if (!allowed.isEmpty() && !allowed.contains(rateHz)) {
+        emitResult(invoke.commandVerb, invoke.commandId, false,
+                   QStringLiteral("This radio cannot run at that sample rate."), {});
         return;
     }
 
@@ -4594,6 +4700,296 @@ void SessionCommandDispatcher::handlePaProfile(const SessionMessage& invoke)
     emitResult(verb, invoke.commandId, true, QString(), {});
 }
 
+// ── bandStack.* ──────────────────────────────────────────────────────────
+
+namespace {
+
+// Each argument is one the verb's row in verbSpecs() names, with that row's
+// kind, once; every required one is there.
+bool bandStackArgumentsFit(const QList<MirrorUpdate>& arguments, const QByteArray& verb)
+{
+    const QList<CommandVerbSpec>& specs = SessionCommandDispatcher::verbSpecs();
+    const auto spec = std::find_if(specs.cbegin(), specs.cend(), [&verb](const CommandVerbSpec& row) {
+        return row.verb == verb;
+    });
+    if (spec == specs.cend()) {
+        return false;
+    }
+    QSet<QByteArray> seen;
+    for (const MirrorUpdate& argument : arguments) {
+        const auto row = std::find_if(spec->arguments.cbegin(), spec->arguments.cend(),
+                                      [&argument](const CommandArgumentSpec& candidate) {
+                                          return candidate.name == argument.name;
+                                      });
+        if (row == spec->arguments.cend() || row->kind != argument.kind
+            || seen.contains(argument.name)) {
+            return false;
+        }
+        const int expected = argument.kind == MirrorWireKind::Int64 ? QMetaType::LongLong
+            : argument.kind == MirrorWireKind::Bool                 ? QMetaType::Bool
+                                                                    : QMetaType::QString;
+        if (argument.value.typeId() != expected) {
+            return false;
+        }
+        seen.insert(argument.name);
+    }
+    return std::all_of(spec->arguments.cbegin(), spec->arguments.cend(),
+                       [&seen](const CommandArgumentSpec& row) {
+                           return row.optional || seen.contains(row.name);
+                       });
+}
+
+// The arguments as BandStackController::parseRecall reads them. Already checked
+// by bandStackArgumentsFit.
+QJsonObject bandStackArgumentsAsJson(const QList<MirrorUpdate>& arguments)
+{
+    QJsonObject object;
+    for (const MirrorUpdate& argument : arguments) {
+        const QString name = QString::fromUtf8(argument.name);
+        if (argument.kind == MirrorWireKind::Int64) {
+            object.insert(name, argument.value.toLongLong());
+        } else if (argument.kind == MirrorWireKind::Bool) {
+            object.insert(name, argument.value.toBool());
+        } else {
+            object.insert(name, argument.value.toString());
+        }
+    }
+    return object;
+}
+
+// Nullopt for a view that could not be real. A frequency or a span below zero
+// would be saved into the document, so it does not get that far.
+std::optional<BandStackView> bandStackViewFrom(const QList<MirrorUpdate>& arguments)
+{
+    BandStackView view;
+    for (const MirrorUpdate& argument : arguments) {
+        if (argument.name != "viewCenterHz" && argument.name != "viewSpanHz") {
+            continue;
+        }
+        const qint64 hz = argument.value.toLongLong();
+        if (hz < 0) {
+            return std::nullopt;
+        }
+        (argument.name == "viewCenterHz" ? view.centerHz : view.spanHz) = hz;
+    }
+    return view;
+}
+
+std::optional<QStringList> bandStackIdList(const QString& text)
+{
+    const QJsonDocument document = QJsonDocument::fromJson(text.toUtf8());
+    if (!document.isArray()) {
+        return std::nullopt;
+    }
+    QStringList ids;
+    for (const QJsonValue& id : document.array()) {
+        if (!id.isString()) {
+            return std::nullopt;
+        }
+        ids.append(id.toString());
+    }
+    return ids;
+}
+
+std::optional<BandStackReturnMode> bandStackReturnModeFrom(const QString& name)
+{
+    if (name == QLatin1String("current")) {
+        return BandStackReturnMode::Current;
+    }
+    if (name == QLatin1String("lastUsed")) {
+        return BandStackReturnMode::LastUsed;
+    }
+    if (name == QLatin1String("specific")) {
+        return BandStackReturnMode::Specific;
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+std::optional<BandStackRecallRequest> SessionCommandDispatcher::parseBandStackRecall(
+    const SessionMessage& invoke)
+{
+    if (!bandStackArgumentsFit(invoke.arguments, invoke.commandVerb)
+        || !bandStackViewFrom(invoke.arguments).has_value()) {
+        return std::nullopt;
+    }
+    return BandStackController::parseRecall(bandStackArgumentsAsJson(invoke.arguments),
+                                            QString::fromLatin1(invoke.commandVerb));
+}
+
+QString SessionCommandDispatcher::bandStackSliceRefusal(int sliceId) const
+{
+    if (m_requester.isEmpty() || m_radioModel.isNull()) {
+        return {};
+    }
+    const SliceOwnership* ownership = m_radioModel->sliceOwnership();
+    if (!ownership->isLive(sliceId) || SliceAccessPolicy::mayChange(*ownership, m_requester, sliceId)) {
+        return {};
+    }
+    if (ownership->isListening(m_requester, sliceId)) {
+        return QStringLiteral("You are only listening to Slice %1. Take control of it to change its band.")
+            .arg(QChar(QLatin1Char('A').unicode() + sliceId));
+    }
+    return m_sliceAccess ? m_sliceAccess(m_requester, sliceId) : QString();
+}
+
+// Design section 6.3. Every verb runs on BandStackController, on the main
+// thread, and none reaches the I/Q, WDSP or audio path. A recall retunes through
+// the setters a band button uses. StationServer has already applied the feature
+// gate and, for a recall, the frozen transmit slice.
+void SessionCommandDispatcher::handleBandStack(const SessionMessage& invoke)
+{
+    const QByteArray& verb = invoke.commandVerb;
+    const auto refuse = [&](const QString& reason) {
+        emitResult(verb, invoke.commandId, false, reason, {});
+    };
+    const auto answer = [&](bool accepted, const QString& reason) {
+        emitResult(verb, invoke.commandId, accepted, reason,
+                   accepted ? QList<QByteArray>{QByteArrayLiteral("bandStack")}
+                            : QList<QByteArray>{});
+    };
+    const QString notUnderstood =
+        QStringLiteral("The request for the band stack was not understood.");
+
+    if (!bandStackArgumentsFit(invoke.arguments, verb)) {
+        refuse(notUnderstood);
+        return;
+    }
+    const std::optional<BandStackView> view = bandStackViewFrom(invoke.arguments);
+    if (!view.has_value()) {
+        refuse(notUnderstood);
+        return;
+    }
+    BandStackController* const controller = m_radioModel->bandStackController();
+    if (controller == nullptr) {
+        refuse(QStringLiteral("Connect to a radio to use band stacks."));
+        return;
+    }
+
+    const QJsonObject arguments = bandStackArgumentsAsJson(invoke.arguments);
+    const QString entryId = arguments.value(QStringLiteral("entryId")).toString();
+    const auto bandArgument = [&arguments]() {
+        return BandStackStore::bandFromKey(arguments.value(QStringLiteral("band")).toString());
+    };
+
+    // Design section 5.5 step 1: who may act on this slice. dispatch() asked
+    // first; this is here so a recall that proceeds later is asked again.
+    int sliceId = -1;
+    const ArgumentStatus sliceStatus = findIntArgument(invoke.arguments, "sliceId", &sliceId);
+    if (sliceStatus == ArgumentStatus::NotRepresentable) {
+        refuse(notUnderstood);
+        return;
+    }
+    if (sliceStatus == ArgumentStatus::Ok) {
+        const QString access = bandStackSliceRefusal(sliceId);
+        if (!access.isEmpty()) {
+            refuse(access);
+            return;
+        }
+    }
+
+    QString refusal;
+    if (verb == "bandStack.press" || verb == "bandStack.step" || verb == "bandStack.goTo") {
+        const std::optional<BandStackRecallRequest> request =
+            BandStackController::parseRecall(arguments, QString::fromLatin1(verb));
+        if (!request.has_value()) {
+            refuse(notUnderstood);
+            return;
+        }
+        proceedBandStackRecall(invoke, *request);
+    } else if (verb == "bandStack.add") {
+        answer(controller->add(sliceId, *view, &refusal), refusal);
+    } else if (verb == "bandStack.saveHere") {
+        answer(controller->saveHere(sliceId, entryId, *view, &refusal), refusal);
+    } else if (verb == "bandStack.edit") {
+        const QJsonValue name = arguments.value(QStringLiteral("name"));
+        const QJsonValue locked = arguments.value(QStringLiteral("locked"));
+        if (name.isUndefined() && locked.isUndefined()) {
+            refuse(notUnderstood);
+            return;
+        }
+        answer(controller->edit(entryId,
+                                name.isUndefined() ? std::nullopt
+                                                   : std::make_optional(name.toString()),
+                                locked.isUndefined() ? std::nullopt
+                                                     : std::make_optional(locked.toBool()),
+                                &refusal),
+               refusal);
+    } else if (verb == "bandStack.delete") {
+        answer(controller->remove(entryId, &refusal), refusal);
+    } else if (verb == "bandStack.reorder") {
+        const std::optional<Band> band = bandArgument();
+        const std::optional<QStringList> ids =
+            bandStackIdList(arguments.value(QStringLiteral("ids")).toString());
+        if (!band.has_value() || !ids.has_value()) {
+            refuse(notUnderstood);
+            return;
+        }
+        answer(controller->reorder(*band, *ids, &refusal), refusal);
+    } else if (verb == "bandStack.setReturn") {
+        const std::optional<Band> band = bandArgument();
+        const std::optional<BandStackReturnMode> mode =
+            bandStackReturnModeFrom(arguments.value(QStringLiteral("mode")).toString());
+        if (!band.has_value() || !mode.has_value()) {
+            refuse(notUnderstood);
+            return;
+        }
+        answer(controller->setReturn(*band, *mode, entryId, &refusal), refusal);
+    } else if (verb == "bandStack.clear") {
+        std::optional<Band> band;
+        if (arguments.contains(QStringLiteral("band"))) {
+            band = bandArgument();
+            if (!band.has_value()) {
+                refuse(notUnderstood);
+                return;
+            }
+        }
+        answer(controller->clear(band, &refusal), refusal);
+    } else if (verb == "bandStack.reseed") {
+        answer(controller->reseed(&refusal), refusal);
+    } else if (verb == "bandStack.options") {
+        std::optional<bool> dupes;
+        if (arguments.contains(QStringLiteral("dupeProtection"))) {
+            dupes = arguments.value(QStringLiteral("dupeProtection")).toBool();
+        }
+        std::optional<int> expiry;
+        int number = 0;
+        if (findIntArgument(invoke.arguments, "expiryMinutes", &number) == ArgumentStatus::Ok) {
+            expiry = number;
+        }
+        std::optional<int> dwell;
+        if (findIntArgument(invoke.arguments, "dwellSeconds", &number) == ArgumentStatus::Ok) {
+            dwell = number;
+        }
+        // A value too large for an int is no more an option than any other.
+        const bool wideValue =
+            (arguments.contains(QStringLiteral("expiryMinutes")) && !expiry.has_value())
+            || (arguments.contains(QStringLiteral("dwellSeconds")) && !dwell.has_value());
+        if (wideValue) {
+            refuse(notUnderstood);
+            return;
+        }
+        answer(controller->options(dupes, expiry, dwell, &refusal), refusal);
+    } else {
+        answer(controller->restoreExpired(arguments.value(QStringLiteral("batchId")).toString(),
+                                          &refusal),
+               refusal);
+    }
+}
+
+void SessionCommandDispatcher::proceedBandStackRecall(const SessionMessage& invoke,
+                                                      const BandStackRecallRequest& request)
+{
+    QString refusal;
+    if (!m_radioModel->bandStackController()->performRecall(request, &refusal)) {
+        emitResult(invoke.commandVerb, invoke.commandId, false, refusal, {});
+        return;
+    }
+    emitResult(invoke.commandVerb, invoke.commandId, true, QString(),
+               {QByteArrayLiteral("bandStack"), ObjectRegistry::keyForSlice(request.sliceId)});
+}
+
 // R-R3-49 (parity Task 3): the RADE applet's Reset vocoder, on the Core's
 // RADE channel as the local button does. Keys nothing.
 void SessionCommandDispatcher::handleRadeResetVocoder(const SessionMessage& invoke)
@@ -4912,7 +5308,10 @@ void SessionCommandDispatcher::handleRecords(const SessionMessage& invoke)
                invoke.commandVerb == "txModMonitor.reset"
                    ? QStringLiteral("This Core does not send the modulation monitor. "
                                     "Updating the Core may help.")
-                   : QStringLiteral("This Core does not send its spots or console lines."),
+                   : invoke.commandVerb == "txSsbModMonitor.reset"
+                       ? QStringLiteral("This Core does not send the SSB modulation monitor. "
+                                        "Updating the Core may help.")
+                       : QStringLiteral("This Core does not send its spots or console lines."),
                {});
 }
 

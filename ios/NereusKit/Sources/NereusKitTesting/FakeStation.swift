@@ -193,6 +193,8 @@ public final class FakeStation: @unchecked Sendable {
         case client(LinkMessage.Kind)
         /// The `devices` object, made as it is played, with the Core's name then.
         case devices
+        /// The `bandStack` object, made as it is played, with the document then.
+        case bandStack
     }
 
     /// Where the fake answers; each fake has its own, so pairings with
@@ -269,6 +271,11 @@ public final class FakeStation: @unchecked Sendable {
     private var devicesRevision: Int64 = 1
     /// `devices`' `coreAddresses`, sent with ``Additions/coreAddresses``.
     var coreAddressesJson = FakeStation.noCoreAddresses
+    /// The band stack document and its revision (``Additions/bandStack``,
+    /// FakeStation+BandStack.swift).
+    var bandStackDocument = (json: "", revision: Int64(0))
+    /// The band stack commands the fake took, oldest first.
+    var bandStackCommandLog: [LinkMessage.CommandInvoke] = []
     /// The fake takes the Core's device commands: it advertises `deviceAdminVersion` 1.
     private let takesDeviceCommands: Bool
     /// The last revision the app subscribed each display endpoint at.
@@ -289,6 +296,8 @@ public final class FakeStation: @unchecked Sendable {
     let spotState = SpotState()
     /// The AM Mod Monitor's streams (``Additions/modMonitor``, FakeStation+ModMonitor.swift).
     let modMonitorState = ModMonitorState()
+    /// The SSB Mod Monitor's streams (``Additions/ssbModMonitor``, FakeStation+SsbModMonitor.swift).
+    let ssbModMonitorState = ModMonitorState()
     /// The transmit monitor's state (``Additions/monitorAudio``).
     let monitorAudioState = MonitorAudioState()
     /// The per-device audio quality's state (``Additions/audioQuality``).
@@ -328,10 +337,12 @@ public final class FakeStation: @unchecked Sendable {
     /// suite has no such fixture or it does not read as the link document
     /// describes. With `requiresPairing`, only a device key paired with the
     /// fake signs in. `pairingClock` controls only the waits after burned codes.
+    /// `startingPans` puts a slice of the snapshot on another pan, by its Core key.
     public init(fixture fixtureId: String = FakeStation.defaultFixture, requiresPairing: Bool = false,
                 additions: Additions = [], stationLabel: String? = nil,
                 withoutCapabilities: Set<String> = [],
-                pairingClock: any LinkClock = SystemLinkClock()) throws {
+                pairingClock: any LinkClock = SystemLinkClock(),
+                startingPans: [Int: String] = [:]) throws {
         self.pairingClock = pairingClock
         guard let fixture = try SessionFixtures.all().first(where: { $0.id == fixtureId }) else {
             throw LinkFixtureLoader.Malformed(description: "the suite has no session fixture \(fixtureId)")
@@ -379,6 +390,10 @@ public final class FakeStation: @unchecked Sendable {
                     steps.append(.station(try Self.devicesSchema(filled, additions: additions)))
                     steps.append(.devices)
                 }
+                if object["type"] as? String == "snapshot.complete", additions.contains(.bandStack) {
+                    steps.append(.station(LinkCodec.encode(.schema(try Self.schema(ofClass: Self.bandStackClass)))))
+                    steps.append(.bandStack)
+                }
                 object = try Self.withWireBatchProperties(object, added: snapshotAdditions)
                 message = object
                 if withoutCapabilities.contains(Self.freedvCapability) {
@@ -387,7 +402,14 @@ public final class FakeStation: @unchecked Sendable {
                     message = object
                 }
                 if object["type"] as? String == "object.create", object["class"] as? String == "SliceModel" {
-                    let properties = object["properties"] as? [[String: Any]] ?? []
+                    var properties = object["properties"] as? [[String: Any]] ?? []
+                    if let index = properties.first(where: { $0["name"] as? String == "sliceIndex" })?["value"] as? Int,
+                       let pan = startingPans[index],
+                       let at = properties.firstIndex(where: { $0["name"] as? String == "panKey" }) {
+                        properties[at]["value"] = pan
+                        object["properties"] = properties
+                        message = object
+                    }
                     if let index = properties.first(where: { $0["name"] as? String == "sliceIndex" })?["value"] as? Int {
                         sliceIds.insert(Int64(index))
                         if let pan = properties.first(where: { $0["name"] as? String == "panKey" })?["value"] as? String {
@@ -425,6 +447,9 @@ public final class FakeStation: @unchecked Sendable {
         challenge = placeholders.challenge
         freedvState.runs = !withoutCapabilities.contains(Self.freedvCapability)
         displayState.seed(slices: sliceIds, pans: slicePans)
+        if additions.contains(.bandStack) {
+            bandStackDocument = (try LinkFixtureLoader.bandStackDocument(), 1)
+        }
     }
 
     // MARK: What the app connects with
@@ -799,6 +824,9 @@ public final class FakeStation: @unchecked Sendable {
         if additions.contains(.band2m) {
             set("band2mVersion", 1)
         }
+        for (name, value) in bandStackCapabilityVersions(additions) {
+            set(name, value)
+        }
         if additions.contains(.setupDescription) {
             set("setupDescriptionVersion", setupDescriptionVersion)
         }
@@ -837,6 +865,14 @@ public final class FakeStation: @unchecked Sendable {
         } else if !additions.contains(.spots) {
             // A Core before record streams has no monitor either.
             lower("txModMonitorVersion", to: 0)
+        }
+        if additions.contains(.ssbModMonitor) {
+            let streams = properties.first { $0["name"] as? String == "recordStreamVersion" }?["value"] as? Int
+            set("recordStreamVersion", max(1, streams ?? 0))
+            set("txSsbModMonitorVersion", 1)
+        } else {
+            // A fake without it plays a Core before the SSB monitor.
+            lower("txSsbModMonitorVersion", to: 0)
         }
         for (name, value) in stationRadioCapabilityVersions(additions) where !removed.contains(name) {
             set(name, value)
@@ -1017,7 +1053,13 @@ public final class FakeStation: @unchecked Sendable {
         if let replies = modMonitorReplies(invoke) {
             return replies
         }
+        if let replies = ssbModMonitorReplies(invoke) {
+            return replies
+        }
         if let replies = vaxReplies(invoke) {
+            return replies
+        }
+        if let replies = bandStackReplies(invoke) {
             return replies
         }
         if let replies = roundtableReplies(invoke) {
@@ -1639,6 +1681,8 @@ public final class FakeStation: @unchecked Sendable {
                 texts.append(text)
             case .devices:
                 texts.append(devicesObject())
+            case .bandStack:
+                texts.append(bandStackObject())
             case .client:
                 return (texts, index)
             }

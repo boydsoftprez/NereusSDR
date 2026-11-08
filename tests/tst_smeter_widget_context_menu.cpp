@@ -40,6 +40,8 @@ class SMeterWidgetContextMenuTest : public QObject {
 private slots:
     void menuHasFourRxModes();
     void settingTxModePersistsToAppSettings();
+    void rxModeChangedFiresOnEveryRealChange();
+    void rxModeChangedInAnInstanceMeterToo();
 };
 
 // Verify that the RX Mode submenu contains exactly the four entries
@@ -84,6 +86,45 @@ void SMeterWidgetContextMenuTest::settingTxModePersistsToAppSettings()
     w.setTxMode("SWR");
 
     QCOMPARE(AppSettings::instance().value("SMeter_TxSelect", -1).toInt(), 1);
+}
+
+// Overlay design D40: the flags follow this signal, and the meter's menu, a
+// flag and a load all come through setRxMode. SMeter_RxSelect keeps its values.
+void SMeterWidgetContextMenuTest::rxModeChangedFiresOnEveryRealChange()
+{
+    AppSettings::instance().setValue(QStringLiteral("SMeter_RxSelect"), 3);
+    SMeterWidget w;
+    QCOMPARE(w.rxMode(), SMeterWidget::RxMode::MaxBin);  // loaded
+    QSignalSpy spy(&w, &SMeterWidget::rxModeChanged);
+
+    const struct { const char* set; const char* label; int stored; } changes[] = {
+        {"Signal", "Signal", 0},
+        {"Sig Avg", "Sig Avg", 1},
+        {"Signal Peak", "Signal Peak", 2},
+        {"Max Bin", "Max Bin", 3},
+        {"S-Meter", "Signal", 0},  // the legacy form is the same mode's label
+    };
+    int fired = 0;
+    for (const auto& change : changes) {
+        w.setRxMode(QString::fromLatin1(change.set));
+        ++fired;
+        QCOMPARE(spy.count(), fired);
+        QCOMPARE(spy.last().at(0).toString(), QString::fromLatin1(change.label));
+        QCOMPARE(AppSettings::instance().value(QStringLiteral("SMeter_RxSelect")).toInt(), change.stored);
+        // The same mode again is no change.
+        w.setRxMode(QString::fromLatin1(change.set));
+        QCOMPARE(spy.count(), fired);
+    }
+    AppSettings::instance().remove(QStringLiteral("SMeter_RxSelect"));
+}
+
+void SMeterWidgetContextMenuTest::rxModeChangedInAnInstanceMeterToo()
+{
+    SMeterWidget w(SMeterWidget::SettingsStore::Instance);
+    QSignalSpy spy(&w, &SMeterWidget::rxModeChanged);
+    w.setRxMode(QStringLiteral("Sig Avg"));
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.last().at(0).toString(), QStringLiteral("Sig Avg"));
 }
 
 QTEST_MAIN(SMeterWidgetContextMenuTest)

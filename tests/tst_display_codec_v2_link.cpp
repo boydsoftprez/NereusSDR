@@ -28,6 +28,10 @@
 // NeedKeyframe asks once and recovers, as before.
 //
 // Modification history (NereusSDR):
+//   2026-11-05  J.J. Boyd / KG4VCF  Band stack plan Task 4: a window's
+//                                    bandStackVersion may come last before
+//                                    coreBuildInfo. AI-assisted via Claude
+//                                    Code.
 //   2026-10-26  J.J. Boyd / KG4VCF  The entry after displayCodecVersion
 //                                    is checked by name to be
 //                                    stationRoundtableVersion when it is
@@ -61,6 +65,8 @@
 
 #include <cmath>
 #include <numbers>
+
+#include "CapabilityOrder.h"
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
@@ -389,6 +395,21 @@ QStringList capabilityNamesOn(const Test::LoopbackTransport* link)
     return names;
 }
 
+// What follows displayCodecVersion on `names`: the Roundtable, NNR warning
+// and band stack entries, when this Core sends them, then what every peer gets.
+QStringList expectedAfterCodecField(const QStringList& names)
+{
+    QStringList expected;
+    for (const QString& optional : {QStringLiteral("stationRoundtableVersion"),
+                                    QStringLiteral("nnrLoadWarningVersion"),
+                                    QStringLiteral("bandStackVersion")}) {
+        if (names.contains(optional)) {
+            expected.append(optional);
+        }
+    }
+    return expected + kCapabilitiesAfterPeerGatedWithBuildInfo;
+}
+
 } // namespace
 
 class TstDisplayCodecV2Link : public QObject {
@@ -481,15 +502,7 @@ private slots:
         const qsizetype field = names.indexOf(kField);
         QVERIFY(field >= 1);
         QCOMPARE(names.at(field - 1), QStringLiteral("rxMeterStampsVersion"));
-        const bool roundtable = names.contains(QStringLiteral("stationRoundtableVersion"));
-        if (roundtable) {
-            QCOMPARE(names.at(field + 1), QStringLiteral("stationRoundtableVersion"));
-        }
-        const bool nnrWarning = names.contains(QStringLiteral("nnrLoadWarningVersion"));
-        if (nnrWarning) {
-            QCOMPARE(names.at(field + (roundtable ? 2 : 1)), QStringLiteral("nnrLoadWarningVersion"));
-        }
-        QCOMPARE(field + (roundtable ? 3 : 2) + (nnrWarning ? 1 : 0), names.size());
+        QCOMPARE(capabilityEntriesAfter(names, kField), expectedAfterCodecField(names));
         QVERIFY(h.server.displayCodecV2Available(h.server.mediaSessionEpoch()));
         QVERIFY(h.startWith(2));
         QTRY_VERIFY_WITH_TIMEOUT(!h.mediaTransport.isNull(), 10'000);
@@ -743,17 +756,7 @@ private slots:
         QCOMPARE(names.last(), QStringLiteral("coreBuildInfo"));
         QCOMPARE(names.contains(kField), v2);
         if (v2) {
-            // Optional Roundtable and NNR warning capabilities precede build info.
-            const bool roundtable = names.contains(QStringLiteral("stationRoundtableVersion"));
-            const bool nnrWarning = names.contains(QStringLiteral("nnrLoadWarningVersion"));
-            if (nnrWarning) {
-                QCOMPARE(names.at(names.size() - 2), QStringLiteral("nnrLoadWarningVersion"));
-            }
-            if (roundtable) {
-                QCOMPARE(names.at(names.size() - 2 - (nnrWarning ? 1 : 0)),
-                         QStringLiteral("stationRoundtableVersion"));
-            }
-            QCOMPARE(names.at(names.size() - (roundtable ? 3 : 2) - (nnrWarning ? 1 : 0)), kField);
+            QCOMPARE(capabilityEntriesAfter(names, kField), expectedAfterCodecField(names));
         }
         const QJsonObject start = lastOp(outbound, QStringLiteral("start"));
         QVERIFY(!start.isEmpty());

@@ -103,6 +103,9 @@
 //                                    sliceUnavailableReason is public, for
 //                                    the VFO display's requests.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-06  J.J. Boyd / KG4VCF  Band stack plan Task 8: hooks for the
+//                                    band press router, STACK+ and STACK-.
+//                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #pragma once
@@ -196,6 +199,13 @@ public:
         // window whose Core has not advertised PureSignal 3), empty when it
         // is enabled.
         std::function<QString()> linearityRefusal;
+        // Band stack plan Task 8: a band grid press goes through the window's
+        // router. Without it, RadioModel::onBandButtonClicked.
+        std::function<void(SliceModel*, Band)> pressBand;
+        // Task 8: STACK+ and STACK-. Why the band stack cannot be used now,
+        // empty when it can, and one step on the container's slice.
+        std::function<QString()> bandStackReason;
+        std::function<void(SliceModel*, bool next)> stepBandStack;
     };
 
     struct State {

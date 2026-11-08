@@ -6,7 +6,7 @@
 // Shared-input filters, ruling (d), on the wire: radio's
 // rxFilter0LowPassReason and rxFilter0LowPassSlice reach only a peer that
 // declared rxFilterLowPass 1, rxFilterLowPassVersion 1 is advertised to
-// that peer only, as the last entry before coreBuildInfo, and a remote
+// that peer only, as the last of the peer-gated entries, and a remote
 // window's RadioModel shows the reason next to the WIDE reason without
 // the optional fields changing whether the chain is available.
 //
@@ -29,6 +29,7 @@
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "CapabilityOrder.h"
 
 #include <QSignalSpy>
 
@@ -94,7 +95,7 @@ class TstSharedInputFiltersLink : public QObject {
     Q_OBJECT
 
 private slots:
-    // The version reaches a declaring peer, last before coreBuildInfo, and
+    // The version reaches a declaring peer, last of the peer-gated entries, and
     // a peer that did not declare it is sent none; the entry reads back.
     void rxFilterLowPassVersion_onlyToADeclaringPeer()
     {
@@ -120,13 +121,16 @@ private slots:
         QVERIFY(!capability(appB->received(), QStringLiteral("rxFilterLowPassVersion")).has_value());
         const QJsonArray caps = firstOfType(appA->received(), QStringLiteral("capabilities"))
                                     .value(QStringLiteral("properties")).toArray();
-        QVERIFY(caps.size() >= 3);
-        QCOMPARE(caps.at(caps.size() - 3).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("radioMicVersion"));
-        QCOMPARE(caps.at(caps.size() - 2).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("rxFilterLowPassVersion"));
-        QCOMPARE(caps.last().toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreBuildInfo"));
+        const QStringList names = capabilityEntryNames(caps);
+        QCOMPARE(capabilityEntriesAfter(names, QStringLiteral("rxFilterLowPassVersion")),
+                 kCapabilitiesAfterPeerGatedWithBuildInfo);
+        QCOMPARE(names.indexOf(QStringLiteral("radioMicVersion")) + 1,
+                 names.indexOf(QStringLiteral("rxFilterLowPassVersion")));
+        const QJsonArray plainCaps = firstOfType(appB->received(), QStringLiteral("capabilities"))
+                                         .value(QStringLiteral("properties")).toArray();
+        QVERIFY(!plainCaps.isEmpty());
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("radioMicVersion"), QStringLiteral("rxFilterLowPassVersion"), QStringLiteral("coreBuildInfo")}),
+                 capabilityBytesWithout(plainCaps));
 
         StationCapabilities sent;
         sent.rxFilterLowPassVersion = 1;

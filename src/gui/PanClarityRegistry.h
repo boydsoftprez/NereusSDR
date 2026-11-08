@@ -1,6 +1,8 @@
 // =================================================================
 // PanClarityRegistry — NereusSDR-original GUI ownership, GPLv3.
 // Modification history (NereusSDR):
+// 2026-11-06 J.J. Boyd (KG4VCF), AI-assisted via Claude Code:
+//   sourceForPanForTest(), issue 701.
 // 2026-10-12 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   Requested Clarity is each pan's choice; setEnabled is a master broadcast.
 // 2026-10-05 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -66,6 +68,9 @@ public:
     void setEnabled(bool);
     void setKeyed(bool);
     void retunePan(const QString&);
+    // Read-only test seam: the stream, centre and rate this pan's Clarity is
+    // bound to.
+    std::optional<SourceAssociation> sourceForPanForTest(const QString&) const;
     // Read-only test seam; production reads the model's local MOX controller.
     void setLocalKeyedQueryForTest(std::function<bool()> query);
     // How long a pan holds its Clarity level after an un-key or a same-band

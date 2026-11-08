@@ -7,6 +7,7 @@
 // 2026-10-26: CW transmit, the cwx tool opens the CWX page (R-CW-50).
 //             J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
+import NereusMirror
 import SwiftUI
 
 @MainActor
@@ -25,6 +26,25 @@ final class ToolsRouter: ObservableObject {
     @Published private(set) var listRequest: UInt64 = 0
     /// Shows the Tools list itself, every page closed (a swipe mapped to Tools).
     func openList() { listRequest &+= 1 }
+    /// Told each change of the open pages, for them to be kept on this phone.
+    var keep: (@MainActor ([ToolsTab.Page]) -> Void)?
+    /// The place kept from last time, until the Core's list says whether it
+    /// exists here, or the operator goes somewhere first.
+    @Published private(set) var pendingRestore: [ToolsTab.Page]?
+
+    /// A session reached ready: `saved` is shown once the tab finds it on the Core's list.
+    func restore(_ saved: [ToolsTab.Page]) {
+        pendingRestore = saved.isEmpty ? nil : saved
+    }
+
+    func restoreDone() {
+        pendingRestore = nil
+    }
+
+    func routeChanged(_ route: [ToolsTab.Page]) {
+        pendingRestore = nil
+        keep?(route)
+    }
 }
 
 /// The Tools tab (spec section 5.2 items 3 to 5, R-IOS-18, D41, D42): the
@@ -145,6 +165,33 @@ struct ToolsTab: View {
         })
     }
 
+    /// `saved` when the tool it opens is on the list and can open here; the
+    /// list itself otherwise. CAT channels are the Core's fixed four.
+    static func restored(_ saved: [Page], entries: [StationToolList.Entry]) -> [Page] {
+        guard let top = saved.first,
+              entries.contains(where: { $0.enabled && $0.page.map(Page.init) == top }) else {
+            return []
+        }
+        return Array(saved.prefix { page in
+            if case .catControlPage(.channel(let number)) = page {
+                return StationCat.channels.contains(number)
+            }
+            return true
+        })
+    }
+
+    private func restorePlace() {
+        guard let saved = router.pendingRestore, app.mirror.isSnapshotComplete, !app.mirror.isStale,
+              app.main.catalogFeed.catalog != nil || app.main.catalogFeed.needsNewerCore else {
+            return
+        }
+        router.restoreDone()
+        let found = Self.restored(saved, entries: list.entries)
+        guard route.isEmpty, !found.isEmpty else { return }
+        cat.follow(found)
+        route = found
+    }
+
     /// Opens a page; CAT Control's model is made as its first page opens.
     private func open(_ page: Page) {
         cat.follow(route + [page])
@@ -220,7 +267,11 @@ struct ToolsTab: View {
         .onChange(of: flow.attempt) { _, next in performance.setAttempt(next) }
         .onChange(of: route) { _, next in
             cat.follow(next)
+            router.routeChanged(next)
         }
+        // The place kept from last time, once the Core's list says it exists.
+        .onChange(of: router.pendingRestore, initial: true) { _, _ in restorePlace() }
+        .onChange(of: list.entries) { _, _ in restorePlace() }
         .confirmationDialog("Clear all spots?", isPresented: $askingToClear, titleVisibility: .visible) {
             Button("Clear all spots", role: .destructive) {
                 spots.clearAll()

@@ -146,6 +146,8 @@ final class MainScreenModel: ObservableObject {
     /// The TX panel's AM Mod Monitor (D102); the app sets it once its
     /// record streams exist, and a screen test may leave it out.
     var modMonitor: ModMonitorModel?
+    /// The TX panel's SSB Mod Monitor, set and left out the same way.
+    var ssbModMonitor: SsbModMonitorModel?
     /// The Display pill's rows and their dispatcher; the app sets and
     /// holds it, and a screen test may leave it out.
     weak var displayPillSource: DisplayPillSource?
@@ -199,6 +201,8 @@ final class MainScreenModel: ObservableObject {
     @Published private(set) var toolbarPan: PanIdentity = .first
 
     private let mirror: MirrorStore
+    /// The settings this device keeps for itself, for the switches the screens' models do not hold.
+    let phoneSettings: PhoneSettings
     private let settingsProxy: SettingsProxyClient
     private let commands: CommandClient?
     /// The open pans' controls below Pan 1, made as each is first shown.
@@ -233,7 +237,9 @@ final class MainScreenModel: ObservableObject {
          microphone: (any MicrophoneSource)? = nil, uplink: MediaUplink? = nil,
          captureVoxSender: (@Sendable () -> MirrorStore.BoundSender)? = nil,
          captureTakeSender: CommandClient.CaptureSender? = nil,
-         platform: TransmitModel.Platform = TransmitModel.Platform()) {
+         platform: TransmitModel.Platform = TransmitModel.Platform(),
+         phoneSettings: PhoneSettings = PhoneSettings()) {
+        self.phoneSettings = phoneSettings
         self.mirror = mirror
         settingsProxy = settings
         self.commands = commands
@@ -433,6 +439,10 @@ final class MainScreenModel: ObservableObject {
 
     // MARK: The pans
 
+    /// The question after this device's region edit (spec V1). The options
+    /// and defaults are the Core's, so Pan 1's stack speaks for all of them.
+    lazy var bandStackRegion = BandStackRegionPrompt(model: controls(for: .first).bandStack)
+
     /// `pan`'s controls: Pan 1's are the main screen's own models; an open
     /// pan below it has its own, made the first time it is asked for and
     /// kept while it stays open. A pan not open gets Pan 1's.
@@ -443,7 +453,9 @@ final class MainScreenModel: ObservableObject {
                 return firstControls
             }
             let made = PanControls(band: shown, tuning: tuning, flagControls: flagControls, sheet: self.pan,
-                                   display: display, bandScale: bandScale)
+                                   display: display, bandScale: bandScale,
+                                   bandStack: BandStackModel(store: mirror, slices: shown.slices, commands: commands,
+                                                             band: shown.band))
             firstControls = made
             return made
         }
@@ -470,7 +482,9 @@ final class MainScreenModel: ObservableObject {
                                         bandScale: scale, changeDisplay: change)
         display.focusPan = { [weak self] in self?.displayEditScope = .pan(key) }
         let made = PanControls(band: shown, tuning: tuning, flagControls: flags, sheet: sheet, display: display,
-                               bandScale: scale)
+                               bandScale: scale,
+                               bandStack: BandStackModel(store: mirror, slices: shown.slices, commands: commands,
+                                                         band: shown.band))
         otherControls[key] = made
         return made
     }

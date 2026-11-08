@@ -59,6 +59,9 @@ struct ChromeBarWidgets {
     /// Band-stack dots. Lead the bar positionally but fold at rung 10 with
     /// the other stubs; rung governs visibility, layout governs position.
     QWidget* bandStackLabel{nullptr};
+    /// The stack number beside them ("40m 5/6"). It folds with the dots: the
+    /// two are one thing on the bar, and the Band menu still reaches the panel.
+    QWidget* bandStackNumber{nullptr};
     /// TNF indicator. Live since #313, so it folds at rung 11, after the
     /// stubs, because its amber state warns that notches are bypassed.
     QWidget* tnfLabel{nullptr};

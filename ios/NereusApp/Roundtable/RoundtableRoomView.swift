@@ -17,6 +17,8 @@
 
 // 2026-10-30: Approved frequency-first people, reports and phone interactions.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Overlay redesign truth rules and wording (design D2, D3, D5, D6, D8).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import SwiftUI
 import UIKit
@@ -116,7 +118,7 @@ enum RoundtableText {
         let ago = ageText(now - (turn.end ?? now))
         if turn.kind == "doubled" {
             let people = turn.talkers.map { withNth($0.callsign, $0.nth) }.joined(separator: " + ")
-            return "Last turn was doubled · combined RF" + (people.isEmpty ? "" : " (" + people + ")") + ", \(ago) ago"
+            return "Last double · combined RF" + (people.isEmpty ? "" : " (" + people + ")") + ", \(ago) ago"
         }
         if RoundtableFlagLine.turnIsYours(room, turn, open: false) {
             return "Last turn was yours, \(ago) ago"
@@ -258,9 +260,21 @@ enum RoundtableReadings {
         var id: String { member.ref.isEmpty ? "own" : member.id }
     }
 
+    /// The line above the readings: who is on the air, or who was last.
+    static func talkerTitle(room: RoundtableModel.Room, keyed: Bool) -> String {
+        if keyed { return "Talking: You" }
+        guard let chosen = RoundtableTagLayout.chosenTurn(in: room) else { return "No last talker" }
+        // Overlay design D6: a live talker is never captioned as past.
+        let last = chosen.turn
+        if last.kind == "doubled" { return (chosen.historical ? "Last double" : "Double") + " · combined RF" }
+        let lead = chosen.historical ? "Last talker: " : "Talking: "
+        if last.kind == "unknown" { return lead + "Unknown signal" }
+        return lead + last.talkers.map { RoundtableText.withNth($0.callsign, $0.nth) }.joined(separator: " + ")
+    }
+
     /// The section's title: whose readings these are.
     static func title(room: RoundtableModel.Room, keyed: Bool) -> String {
-        let turn = room.now.last ?? room.earlier.first
+        let turn = RoundtableTagLayout.chosenTurn(in: room)?.turn
         if keyed {
             return "READINGS OF YOU"
         }
@@ -280,10 +294,14 @@ enum RoundtableReadings {
     /// nearest first, then those with no distance by callsign. Hidden, your
     /// own reading joins them, marked NOT SENT.
     static func rows(room: RoundtableModel.Room, keyed: Bool, ownUnsent: RoundtableModel.Member? = nil) -> [Row] {
-        let selectedTurn = room.now.last ?? room.earlier.first
-        let talkers = Set((selectedTurn?.talkers ?? []).compactMap(\.identity))
+        let chosen = RoundtableTagLayout.chosenTurn(in: room)
+        let selectedTurn = chosen?.turn
+        // A former talker of a live double is a listener again; anyone keyed
+        // during a live turn never is (overlay design D2).
+        let talkers = selectedTurn.map { RoundtableTagLayout.talkerIds(of: $0, in: room) } ?? []
+        let live = chosen?.historical == false
         var rows = room.members.filter { member in
-            !talkers.contains(member.id) && !(keyed && member.you) && member.reading != nil
+            !talkers.contains(member.id) && !(keyed && member.you) && member.reading != nil && !(live && member.keyed)
                 && (selectedTurn == nil || member.reading?.turn == selectedTurn?.id
                     || (member.reading?.turn == nil && member.sourceRoom == nil && member.hz == nil))
         }.map { Row(member: $0) }
@@ -482,6 +500,15 @@ struct RoundtableRoomView: View {
     var embedded: RoundtableRoomEmbedding?
     /// Short landscape sheet: reserve its height for reports and conversation.
     var compact = false
+    /// Takes the place of the read bar, the talker and the readings: a frequency's
+    /// view leads, and the room's earlier turns and messages follow (overlay design D22, D28).
+    var frequencyHead: AnyView? = nil
+    /// Pinned under the scrolling room, above the composer: a view's Tune.
+    var frequencyFoot: AnyView? = nil
+    /// The iPad's applet shows the earlier turns; a view of a frequency elsewhere does not.
+    var showsEarlier = true
+    /// A frequency being viewed: its messages are read only until you tune here.
+    var viewing = false
 
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.bandOnScreen) private var bandOnScreen
@@ -514,6 +541,8 @@ struct RoundtableRoomView: View {
     /// Each pass of a room's body (the tests: a scroll of the iPad's column
     /// must not redraw the room per frame).
     static var passesForTesting = 0
+    /// Each time the view comes up new, which also asks the Core for history at full height.
+    static var appearsForTesting = 0
     #endif
 
     var body: some View {
@@ -532,30 +561,38 @@ struct RoundtableRoomView: View {
                         arrived(count: count, reader: embedded.reader)
                     }
                 } else {
-                    ScrollViewReader { reader in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 0) {
-                                sections(now: now)
+                    VStack(spacing: 0) {
+                        ScrollViewReader { reader in
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 0) {
+                                    sections(now: now)
+                                }
+                            }
+                            .scrollIndicators(.hidden)
+                            .accessibilityIdentifier("roundtableRoomScroll")
+                            .overlay(alignment: .bottom) {
+                                // Keyed, the readings of you fill the sheet; the pills wait for the key to come off.
+                                if !keyed && !compact {
+                                    pills(reader: reader)
+                                }
+                            }
+                            .onChange(of: compactJumpSerial) { _, _ in
+                                if let id = unreadMentions.first { reader.scrollTo(id, anchor: .top) }
+                            }
+                            .onChange(of: room.messages.count) { _, count in
+                                arrived(count: count, reader: reader)
                             }
                         }
-                        .scrollIndicators(.hidden)
-                        .accessibilityIdentifier("roundtableRoomScroll")
-                        .overlay(alignment: .bottom) {
-                            // Keyed, the readings of you fill the sheet; the pills wait for the key to come off.
-                            if !keyed && !compact {
-                                pills(reader: reader)
-                            }
-                        }
-                        .onChange(of: compactJumpSerial) { _, _ in
-                            if let id = unreadMentions.first { reader.scrollTo(id, anchor: .top) }
-                        }
-                        .onChange(of: room.messages.count) { _, count in
-                            arrived(count: count, reader: reader)
+                        if let frequencyFoot {
+                            frequencyFoot
                         }
                     }
                 }
             }
             .onAppear {
+                #if DEBUG
+                Self.appearsForTesting += 1
+                #endif
                 if full { roundtable.refreshReceivedHistory() }
                 if firstSeen == nil {
                     firstSeen = Set(room.messages.map(\.id))
@@ -583,17 +620,23 @@ struct RoundtableRoomView: View {
         if roundtable.linkState == .hidden {
             hiddenBanner
         }
-        if roundtable.readingRoomId != nil {
-            readBar
+        if let frequencyHead {
+            frequencyHead
+        } else {
+            if roundtable.readingRoomId != nil {
+                readBar
+            }
+            if keyed {
+                txLine
+            } else if !compact || ["unknown", "doubled"].contains(openTurn?.kind ?? "") {
+                talker(now: now)
+            }
+            readings(now: now)
         }
-        if keyed {
-            txLine
-        } else if !compact || ["unknown", "doubled"].contains(openTurn?.kind ?? "") {
-            talker(now: now)
-        }
-        readings(now: now)
         if full {
-            earlierTurns
+            if showsEarlier {
+                earlierTurns
+            }
             messages(now: now)
         }
         tracked(Color.clear.frame(height: 1).id(Self.endId),
@@ -695,7 +738,13 @@ struct RoundtableRoomView: View {
 
     // MARK: Talker
 
-    private var openTurn: RoundtableModel.Turn? { room.now.last }
+    /// Overlay design D3: the exact-Hz turn, else the nearest in the window.
+    private var openTurn: RoundtableModel.Turn? {
+        RoundtableTagLayout.liveTurn(hz: room.hz, family: room.family, view: room)
+    }
+
+    /// The turn on show: the open one, else the one that ended last.
+    private var shownTurn: RoundtableModel.Turn? { RoundtableTagLayout.chosenTurn(in: room)?.turn }
 
     private func gridOf(_ ref: String?) -> String {
         room.members.first { $0.ref == ref }?.grid ?? ""
@@ -707,15 +756,17 @@ struct RoundtableRoomView: View {
             if let turn = openTurn {
                 let clock = RoundtableText.clockText(now - turn.start)
                 if turn.kind == "doubled" {
-                    caption("TWO AT ONCE")
+                    let keyedNames = RoundtableTagLayout.participants(of: turn, in: room)
+                        .map { RoundtableText.withNth($0.callsign, $0.nth) }
+                    caption("COMBINED RF")
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         RoundtableGlyphView(glyph: .doubled, size: 10)
-                        Text(turn.talkers.map { RoundtableText.withNth($0.callsign, $0.nth) }.joined(separator: " + "))
+                        Text(keyedNames.isEmpty ? "Keyed identities unavailable" : keyedNames.joined(separator: " + "))
                             .font(.system(size: 15, weight: .bold).monospaced())
                             .foregroundStyle(RoundtableColours.doubled)
                             .lineLimit(2)
                         Spacer(minLength: 4)
-                        Text("DOUBLED").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.bright)
+                        Text("Double").font(.system(size: 11, weight: .bold)).foregroundStyle(RoundtableColours.bright)
                             .padding(.horizontal, 4)
                             .background(RoundtableColours.doubled.opacity(0.35), in: RoundedRectangle(cornerRadius: WorkspacePalette.chipRadius))
                     }
@@ -873,13 +924,7 @@ struct RoundtableRoomView: View {
         .accessibilityIdentifier("roundtableReadings")
     }
 
-    private var lastTalkerTitle: String {
-        guard let last = room.now.last ?? room.earlier.first else { return "No last talker" }
-        if keyed { return "Last talker: You" }
-        if last.kind == "unknown" { return "Last talker: Unknown signal" }
-        if last.kind == "doubled" { return "Last talker: Doubled signal · combined RF" }
-        return "Last talker: " + last.talkers.map { RoundtableText.withNth($0.callsign, $0.nth) }.joined(separator: " + ")
-    }
+    private var lastTalkerTitle: String { RoundtableReadings.talkerTitle(room: room, keyed: keyed) }
 
     /// Hidden: your own reading of the talker, shown to you only.
     private var ownUnsent: RoundtableModel.Member? {
@@ -935,10 +980,10 @@ struct RoundtableRoomView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 1) {
-                let identified = (room.now.last ?? room.earlier.first).map { !["unknown", "doubled"].contains($0.kind) } ?? false
+                let identified = shownTurn.map { !["unknown", "doubled"].contains($0.kind) } ?? false
                 Text(identified ? RoundtableText.distance(member.km, units: roundtable.distanceUnits) : "")
                 if roundtable.showBearing, let bearing = member.bearingDeg,
-                   let turn = room.now.last ?? room.earlier.first, !["unknown", "doubled"].contains(turn.kind) {
+                   let turn = shownTurn, !["unknown", "doubled"].contains(turn.kind) {
                     Text(String(format: "%03d°T", Int(bearing))).font(.system(size: 10))
                 }
             }
@@ -1182,7 +1227,8 @@ struct RoundtableRoomView: View {
         let fresh = room.messages.filter(isNew).count
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                caption(roundtable.frequencyAvailable ? "RECEIVED CONVERSATION" : "MESSAGES")
+                caption(viewing ? "MESSAGES \u{00B7} READ ONLY UNTIL YOU TUNE HERE"
+                        : roundtable.frequencyAvailable && frequencyHead == nil ? "RECEIVED CONVERSATION" : "MESSAGES")
                 small(fresh > 0 ? "\(room.messages.count), \(fresh) new" : "\(room.messages.count)")
             }
             .padding(.horizontal, 12)
@@ -1329,7 +1375,11 @@ struct RoundtableRoomView: View {
             return
         }
         if embedded?.scroll.atEnd ?? atEnd {
-            withAnimation { reader.scrollTo(Self.endId, anchor: .bottom) }
+            // A frequency being viewed keeps its head in sight: its stream
+            // arriving is no reason to scroll to its last message.
+            if !viewing {
+                withAnimation { reader.scrollTo(Self.endId, anchor: .bottom) }
+            }
         } else if let embedded {
             embedded.scroll.waiting += added
         } else {

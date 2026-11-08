@@ -19,6 +19,7 @@
 // =================================================================
 
 #include "MultiDeviceHarness.h"
+#include "CapabilityOrder.h"
 
 #include <QSignalSpy>
 
@@ -63,7 +64,7 @@ class TstRadeReasonLink : public QObject {
 private slots:
     void init() { AppSettings::instance().clear(); }
 
-    // The version reaches a declaring peer, last before coreBuildInfo, and
+    // The version reaches a declaring peer, last of the peer-gated entries, and
     // a peer that did not declare it is sent none; the entry reads back.
     void radeReasonVersion_onlyToADeclaringPeer()
     {
@@ -89,13 +90,16 @@ private slots:
         QVERIFY(!capability(appB->received(), QStringLiteral("radeReasonVersion")).has_value());
         const QJsonArray caps = firstOfType(appA->received(), QStringLiteral("capabilities"))
                                     .value(QStringLiteral("properties")).toArray();
-        QVERIFY(caps.size() >= 3);
-        QCOMPARE(caps.at(caps.size() - 3).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("rxFilterLowPassVersion"));
-        QCOMPARE(caps.at(caps.size() - 2).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("radeReasonVersion"));
-        QCOMPARE(caps.last().toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreBuildInfo"));
+        const QStringList names = capabilityEntryNames(caps);
+        QCOMPARE(capabilityEntriesAfter(names, QStringLiteral("radeReasonVersion")),
+                 kCapabilitiesAfterPeerGatedWithBuildInfo);
+        QCOMPARE(names.indexOf(QStringLiteral("rxFilterLowPassVersion")) + 1,
+                 names.indexOf(QStringLiteral("radeReasonVersion")));
+        const QJsonArray plainCaps = firstOfType(appB->received(), QStringLiteral("capabilities"))
+                                         .value(QStringLiteral("properties")).toArray();
+        QVERIFY(!plainCaps.isEmpty());
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("rxFilterLowPassVersion"), QStringLiteral("radeReasonVersion"), QStringLiteral("coreBuildInfo")}),
+                 capabilityBytesWithout(plainCaps));
 
         StationCapabilities sent;
         sent.radeReasonVersion = 1;

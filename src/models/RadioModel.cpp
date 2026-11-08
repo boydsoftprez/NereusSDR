@@ -20,9 +20,23 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: bandStack(), local or remote by role.
+//   2026-11-05: Band stack plan Task 4: the `bandStack` facade, bound to the controller on the Core.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//                letter used before too; a restored receiver keeps its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
+//   2026-11-06 - A desktop brings back every slice, its pans and its transmit
+//                slice from the radio's saved layout, as a Core does; the
+//                managed mode stays the Core's. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+//   2026-11-05 - A band change leaves the slice's tune step alone (JJ's
+//                ruling). NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 //   2026-10-29 - Keep fresh creation on its creator/station VFO seed while
 //                restoring saved receiver preferences. Explicit startup
 //                restoration keeps its own NR; fresh +RX inherits NR.
@@ -964,6 +978,21 @@
 //                applySavedSliceSampleRates), and a rate change saves it.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-11-05 - One sample rate per receiver on every band, so a band
+//                change leaves the rate alone (JJ's ruling). A new slice with
+//                a receiver of its own opens at the rate of the slice it was
+//                seeded from; a device's slice made again and a slice leaving
+//                a shared receiver keep theirs; a radio-wide change saves on
+//                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-11-05 - A slice's saved rate asks for nothing on a radio-wide rate or
+//                off the radio's ladder (sampleRateIsOnLadder); slices sharing
+//                a receiver bring it back at the highest saved; a slice leaving
+//                a receiver keeps its rate on every path (streamClaimRateHzFor);
+//                an unreadable layout keeps every letter with saved keys, and a
+//                band button respects a kept letter (sliceKeysAreHeld).
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 //   2026-09-27 - iPhone plan Task 22 / parity Task 20 (R-IOS-26, R-R3-49,
 //                B7.3, B7.4): FreeDV Reporter runs through the spot source
 //                host (the Core's own start, a remote window's requests to
@@ -1610,6 +1639,11 @@
 //                early return, so a Stop All TX in the walk's ptt_out
 //                phase drops a held CAT TX. J.J. Boyd (KG4VCF), with
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05 - owns the BandStackController; retuneRefusalFor, saveBandMemory.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-07 - saveBandMemory writes nothing while sliceKeysAreHeld, as the
+//                 band click does. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 // =================================================================
 
 //=================================================================
@@ -1913,6 +1947,10 @@ mw0lge@grange-lane.co.uk
 //                 only. Trunk's CW pitch property (R-CW-02) and its pitch
 //                 follow (applyCwPitchChange, the APF centre from
 //                 cwPitchHz) are its own.]
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -1921,7 +1959,9 @@ mw0lge@grange-lane.co.uk
 #include "core/ClarityController.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/AmModulationAnalyzer.h"
+#include "core/SsbModulationAnalyzer.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorRecord.h"
 #include "BandDefaults.h"
 #include "BandGrid.h"
 #include "RxDspWorker.h"
@@ -1964,6 +2004,9 @@ mw0lge@grange-lane.co.uk
 #include "core/safety/UnkeyGate.h"
 #include "core/FFTRouter.h"  // Phase 3F Sub-Epic D Task 13
 #include "models/FilterPresetStore.h"
+#include "models/bandstack/BandStackController.h"
+#include "models/bandstack/LocalBandStackAccess.h"
+#include "models/bandstack/RemoteBandStackAccess.h"
 #include "core/accessories/N2adrPreset.h"
 #include "core/codec/AlexFilterMap.h"  // Phase 3F: per-ADC BPF -> HPF bits
 #include "core/AlexSettingsKeys.h"
@@ -2082,6 +2125,7 @@ mw0lge@grange-lane.co.uk
 #include "models/RotorModel.h"
 #include "models/RoundtableModel.h"
 #include "core/roundtable/RoundtableState.h"
+#include "core/session/BandStackFacade.h"
 #include "models/StationCatModel.h"
 #include "models/AccessoryDataModel.h"
 #include "models/AccessorySettingsModel.h"
@@ -3304,6 +3348,11 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // with the transmitter unkeyed.
     connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged,
             this, [this](int, int newId) {
+        // A desktop's transmit slice reaches the file with the rest of its
+        // layout, not only at the disconnect (JJ's ruling, 2026-11-05).
+        if (desktopLayoutSaves()) {
+            m_txSliceArbiter->save();
+        }
         // RADE threads: only the new TX slice's RADE channel encodes.
         refreshRadeTxSelection(mox());
         rebindAccessorySlice();
@@ -3512,6 +3561,17 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     applyRxOnly();
     connect(this, &RadioModel::currentRadioChanged, this,
             [this](const NereusSDR::RadioInfo&) { applyRxOnly(); });
+    // The band stack lives on the Core, one per radio, so it starts when the
+    // first radio is known. It follows later radios and reconnects itself.
+    if (m_role == Role::Local) {
+        connect(this, &RadioModel::currentRadioChanged, this,
+                [this](const NereusSDR::RadioInfo& info) {
+                    if (!m_bandStackController && !info.macAddress.isEmpty()) {
+                        m_bandStackController = std::make_unique<BandStackController>(this);
+                        m_bandStackFacade->bind(m_bandStackController.get());
+                    }
+                });
+    }
     connect(this, &RadioModel::stationSettingChanged, this,
             [this](const QString& key) {
                 if (key.isEmpty() || key == QLatin1String("RxOnly")) {
@@ -3973,6 +4033,14 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // screens' model, in every placement (wireRoundtable binds them here;
     // StationClient feeds them in a remote window).
     m_roundtableState = new RoundtableState(this);
+    // Band stack plan Task 4: the `bandStack` object, in every placement.
+    m_bandStackFacade = new BandStackFacade(this);
+    // Band stack plan Task 6: what the GUI talks to.
+    if (m_role == Role::Remote) {
+        m_bandStackAccess = new RemoteBandStackAccess(this);
+    } else {
+        m_bandStackAccess = new LocalBandStackAccess(this);
+    }
     m_roundtableModel = new RoundtableModel(this);
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
@@ -4660,6 +4728,45 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
         }
     }, Qt::DirectConnection);
 
+    // ── SSB Mod Monitor (NereusSDR-original) ──────────────────────────────
+    // transmittingChanged follows the whole key: isTransmitting() is already
+    // true when the key commits and stays true through the walk back to
+    // receive. Waiting for moxStateChanged would miss the start of the over.
+    m_ssbModTx = std::make_unique<SsbModulationAnalyzer>();
+    m_ssbModFb = std::make_unique<SsbModulationAnalyzer>();
+    connect(this, &RadioModel::transmittingChanged,
+            this, &RadioModel::refreshSsbModulationTap);
+    if (m_txSliceArbiter != nullptr) {
+        connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged,
+                this, &RadioModel::refreshSsbModulationTap);
+    }
+    const auto watchSsbSlice = [this](SliceModel* slice) {
+        if (slice != nullptr) {
+            connect(slice, &SliceModel::dspModeChanged,
+                    this, &RadioModel::refreshSsbModulationTap);
+        }
+    };
+    for (SliceModel* const slice : m_slices) {
+        watchSsbSlice(slice);
+    }
+    connect(this, &RadioModel::sliceAdded, this, [this, watchSsbSlice](int index) {
+        watchSsbSlice(sliceById(index));
+        refreshSsbModulationTap();
+    });
+    connect(this, &RadioModel::sliceRemoved, this, &RadioModel::refreshSsbModulationTap);
+    connect(this, &RadioModel::pureSignalCoordinatorReady, this, [this](PureSignal* coordinator) {
+        if (coordinator != nullptr) {
+            connect(coordinator, &PureSignal::psEnabledChanged,
+                    this, &RadioModel::refreshSsbModulationTap, Qt::UniqueConnection);
+        }
+        refreshSsbModulationTap();
+    });
+    // A remote window hears PureSignal's state in the Core's status.
+    if (m_role == Role::Remote && m_pureSignalFacade != nullptr) {
+        connect(m_pureSignalFacade, &PureSignalSessionFacade::statusChanged,
+                this, &RadioModel::refreshSsbModulationTap);
+    }
+
     // Amp state cache: amplifierChanged(bool) and ampStateChanged() together
     // carry the m_hasAmplifier / m_ampOperate snapshot. We can't connect them
     // directly (different signatures) so use a lambda that reads current values
@@ -5207,8 +5314,18 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // that band becomes _tx_band and the save lands there. The MOX-edge
     // restore, which sets nothing, saves nothing until a band is known.
     connect(&m_transmitModel, &TransmitModel::powerChanged, this,
-            [this](int /*power*/) {
-        if (ownsLocalDsp() && !m_txBandKnown) {
+            [this](int power) {
+        // With no radio and no slice, no band is the radio's: m_lastBand is a
+        // default, and a save to it would replace that band's power on a radio
+        // that then comes up on another. It waits for the band the radio comes
+        // up on (applyPowerHeldForNextBand), and no band is adopted for it.
+        if (!txBoundSlice() && m_transmitModel.holdPowerForNextBand(power)) {
+            applyDriveSliderPower();
+            return;
+        }
+        // A paused set is no edit of a band's value, so with no slice it adopts none.
+        if (ownsLocalDsp() && !m_txBandKnown
+            && (txBoundSlice() || !m_transmitModel.heldEditsPaused())) {
             // The initializing TXBand pass for the adopted band, less the
             // power load (this PWR set is the band's value): its limits,
             // tune power and FM TX offset (console.cs:17539-17550
@@ -5230,6 +5347,12 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // the air reaches its windows (paTransmitBandVersion 1).
     connect(this, &RadioModel::transmitBandChanged,
             this, &RadioModel::announcePaTransmitBand);
+    // A desktop saves which slice it is on with its layout.
+    connect(this, &RadioModel::activeSliceChanged, this, [this] {
+        if (desktopLayoutSaves()) {
+            scheduleSettingsSave();
+        }
+    });
 
     // From mi0bot console.cs:30272 [v2.10.3.13-beta2]: the drive byte is
     // recomputed through the normal path on every MOX-to-TX transition, so a
@@ -5518,6 +5641,8 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
 
 RadioModel::~RadioModel()
 {
+    // The band stack writes its last change while the model is whole.
+    m_bandStackController.reset();
     // A retained ingress handle stays alive, inhibited, after this model.
     m_autoAgcRetiring = true;
     m_autoAgcAcquisitionEpoch->fetch_or(1U);
@@ -6028,6 +6153,19 @@ void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
         }
         return;
     }
+    const int ssbModSource = SsbModMonitorRecord::sourceOfStream(batch.stream);
+    if (ssbModSource >= 0) {
+        auto& held = m_stationSsbModMonitor[static_cast<std::size_t>(ssbModSource)];
+        if (batch.reset || !batch.removes.isEmpty()) {
+            held.reset();
+        }
+        for (const RecordUpsert& u : batch.upserts) {
+            if (u.id == QLatin1String(SsbModMonitorRecord::kRecordId)) {
+                held = SsbModMonitorRecord::fromFields(u.fields);
+            }
+        }
+        return;
+    }
     // Parity Task 21 (R-IOS-18): the Core's radios, in the Core's order.
     if (batch.stream == QLatin1String("stationRadios")) {
         QList<StationRadioEntry> entries = batch.reset ? QList<StationRadioEntry>{}
@@ -6186,6 +6324,7 @@ void RadioModel::clearStationRecords()
     clearStationSpots();
     clearStationFreedv();
     clearStationModMonitor();
+    clearStationSsbModMonitor();
     if (!m_stationCoreLog.isEmpty()) {
         m_stationCoreLog.clear();
         emit stationCoreLogChanged();
@@ -8029,6 +8168,10 @@ bool RadioModel::setTunePowerForTxBandForStation(int watts, QString* reason, boo
     }
     refreshTransmitTuneBand();
     if (!m_transmitModel.setTunePowerForTxBand(watts)) {
+        if (m_transmitModel.holdsWithNoBand()) {
+            m_transmitModel.setTunePowerWithNoBand(m_lastBand, watts);
+            return true;
+        }
         if (reason) { *reason = QStringLiteral("The Core has no transmit band."); }
         return false;
     }
@@ -8438,7 +8581,37 @@ void RadioModel::refreshTransmitTuneBand()
     if (m_role != Role::Local) {
         return;
     }
+    // The last slice went with no radio: no band is the radio's now, and the
+    // next edit waits for one.
+    if (!txBoundSlice() && m_transmitModel.holdsWithNoBand()) {
+        if (m_txBandKnown) {
+            m_txBandKnown = false;
+            emit transmitBandChanged();
+        }
+        m_transmitModel.clearTuneTxBand();
+        return;
+    }
     applyTransmitBand(transmitSliceBand(), /*initializing=*/false);
+}
+
+// A PWR or tune power edit made with no radio and no slice becomes the transmit
+// band's, through the TXBand pass a connect makes, so the limits and the drive
+// follow as they do for a band's own power. Connecting never keys: this keys
+// nothing, and sends no drive beyond that pass. On the air it does not run, and
+// the value waits for the next connect.
+void RadioModel::applyPowerHeldForNextBand()
+{
+    if (m_role != Role::Local || !txBoundSlice()
+        || !m_transmitModel.hasPowerHeldForNextBand()) {
+        return;
+    }
+    if ((m_moxController && m_moxController->isMox()) || m_isTuning
+        || (m_twoToneController && m_twoToneController->holdsFixedPower())) {
+        return;
+    }
+    const Band band = transmitSliceBand();
+    m_transmitModel.takePowerHeldForNextBand(band);
+    applyTransmitBand(band, /*initializing=*/true);
 }
 
 Band RadioModel::transmitSliceBand() const
@@ -8526,6 +8699,21 @@ void RadioModel::applyTransmitBand(Band band, bool initializing)
     if (initializing) {
         oldPwr = m_transmitModel.powerForBand(oldBand); // we cant use what is set on the trackbar if we are initialisting, becase it is irrelevent, old_band will = value at this point MW0LGE
     }
+    // Ours differs on purpose from console.cs:17533-17537 [v2.10.3.15], which
+    // saves ptbPWR.Value here. MOX is down from the start of TUNE's off (about
+    // 130 ms before its restore) and two-tone's stop (200 ms), and PWR still
+    // holds the FIXED temporary power, so Thetis makes that power the old
+    // band's. Its restore then sets PreviousPWR on the new band. Here the old
+    // band gets the power from before the temporary one, and the restore (below)
+    // gets the new band's.
+    const bool tuneHoldsPwr = !initializing && m_isTuning && m_tuneSetFixedPwr;
+    const bool twoToneHoldsPwr = !initializing && !tuneHoldsPwr
+        && m_twoToneController && m_twoToneController->holdsFixedPower();
+    if (tuneHoldsPwr) {
+        oldPwr = m_savedPowerPct;
+    } else if (twoToneHoldsPwr) {
+        oldPwr = m_twoToneController->savedFixedPower();
+    }
     m_transmitModel.setPowerForBand(oldBand, oldPwr);
 
     // ptbPWR.LimitValue = limitPower_by_band[(int)value];
@@ -8540,6 +8728,13 @@ void RadioModel::applyTransmitBand(Band band, bool initializing)
     // ptbPWR_Scroll even when the value is unchanged, so the new band's
     // limit and gain reach the drive; setPower only signals a change.
     const int newPwr = m_transmitModel.powerForBand(band);
+    // What the restore still to come puts back is the new band's power (see
+    // the note on the save above, console.cs:17533-17537 [v2.10.3.15]).
+    if (tuneHoldsPwr) {
+        m_savedPowerPct = newPwr;
+    } else if (twoToneHoldsPwr) {
+        m_twoToneController->transmitBandMoved(newPwr);
+    }
     if (m_transmitModel.power() == newPwr) {
         drivePowerScroll();
     } else {
@@ -10869,6 +11064,14 @@ void RadioModel::reportStationSliceCommandRejected(const QString& reason)
         return;
     }
     emit sliceAddRejected(reason);
+}
+
+void RadioModel::reportStationBandStackRefused(const QString& reason)
+{
+    if (m_role != Role::Remote) {
+        return;
+    }
+    emit stationBandStackRefused(reason);
 }
 
 void RadioModel::reportStationAccessoryRefusal(const QString& device, const QString& reason,
@@ -13797,6 +14000,15 @@ int RadioModel::sliceChannelLimit() const
 QString RadioModel::closedSliceSentence(const SliceModel* slice, int channelLimit) const
 {
     const QString mhz = QString::number(slice->frequency() / 1.0e6, 'f', 4);
+    // A desktop keeps the letter in its record and brings it back by itself
+    // (closeSlicesPastChannelLimit).
+    if (desktopLayoutKeepsClosedLetters()) {
+        return tr("Receiver %1 (%2\u00A0MHz %3) was closed because this radio supports "
+                  "only %4. It stays saved and comes back on a later connect when there "
+                  "is room.")
+            .arg(QString(slice->sliceLetter()), mhz, SliceModel::modeName(slice->dspMode()),
+                 supportedReceivers(channelLimit));
+    }
     return tr("Receiver %1 (%2\u00A0MHz %3) was closed because this radio supports "
               "only %4. Add it again with +RX after closing another receiver.")
         .arg(QString(slice->sliceLetter()), mhz, SliceModel::modeName(slice->dspMode()),
@@ -13856,6 +14068,20 @@ void RadioModel::closeSlicesPastChannelLimit()
         ids.append(slice->sliceIndex());
         victims.append(const_cast<SliceModel*>(slice));
     }
+    // JJ's ruling: on a desktop, extras that do not fit stay saved and come back
+    // on a later connect with room. A restore still to run tries them and keeps
+    // them; with none to come they are kept now. Another radio's letters are not
+    // this radio's to keep: its record would promise them at every connect.
+    if (desktopLayoutKeepsClosedLetters()) {
+        QList<ReceiveSliceState>& keep =
+            m_desktopLayoutRestorePending ? m_desktopLayoutWaiting : m_desktopLayoutKept;
+        for (const SliceModel* slice : std::as_const(past)) {
+            const SliceOwnership::Mark mark = m_sliceOwnership->mark(slice->sliceIndex());
+            keep.prepend({slice->sliceIndex(), slice->panKey(), slice->frequency(),
+                          slice->dspMode(), mark.owner, mark.heldFor});
+            m_desktopLayoutToldClosed.insert(slice->sliceIndex());
+        }
+    }
     const bool allClosed = past.size() == m_slices.size();
     if (allClosed) {
         installReceiveFallbackSlice();
@@ -13864,6 +14090,10 @@ void RadioModel::closeSlicesPastChannelLimit()
     // A saved layout is a per-radio record a temporary limit must not erase.
     if (m_receiveLayoutManaged && m_receiveLayoutOverridesCount) {
         m_receiveLayoutProtected = true;
+        // The record still names these receivers, so their keys wait for them.
+        for (const int id : std::as_const(ids)) {
+            m_receiveLayoutKeptSliceIds.insert(id);
+        }
     }
     for (const QPointer<SliceModel>& victim : std::as_const(victims)) {
         if (!victim || sliceById(victim->sliceIndex()) != victim.data()) { continue; }
@@ -14017,6 +14247,10 @@ void RadioModel::bindReceiveLayoutSlices()
     // would only lose the slices that remain.
     if (fromSavedLayout) {
         m_receiveLayoutProtected = true;
+        // The record still names these receivers, so their keys wait for them.
+        for (const int id : std::as_const(refusedIds)) {
+            m_receiveLayoutKeptSliceIds.insert(id);
+        }
     }
     const bool allRefused = refusedIds.size() == m_slices.size();
     if (allRefused) {
@@ -14713,6 +14947,16 @@ bool RadioModel::sampleRateIsRadioWide() const
     return qobject_cast<NereusSDR::P1RadioConnection*>(m_connection) != nullptr;
 }
 
+bool RadioModel::sampleRateIsOnLadder(int rateHz) const
+{
+    const NereusSDR::ProtocolVersion proto =
+        sampleRateIsRadioWide() ? NereusSDR::ProtocolVersion::Protocol1
+                                : NereusSDR::ProtocolVersion::Protocol2;
+    const std::vector<int> allowed = NereusSDR::allowedSampleRates(
+        proto, boardCapabilities(), m_hardwareProfile.model);
+    return std::find(allowed.cbegin(), allowed.cend(), rateHz) != allowed.cend();
+}
+
 QVector<int> RadioModel::allowedStreamSampleRates() const
 {
     // Disconnected: no board to ask, so no list. Callers decide what to show
@@ -14770,6 +15014,17 @@ void RadioModel::applyRestoredSampleRate(SliceModel* slice)
         return;
     }
 
+    // One rate for the whole radio (Protocol 1), or a rate this radio does not
+    // have: a slice's saved preference asks for nothing. It would move every
+    // other receiver, or leave the wire saturated while WDSP and the display run
+    // at the asked rate. The slice shows the rate its receiver is running.
+    if (m_role == Role::Local && (sampleRateIsRadioWide() || !sampleRateIsOnLadder(restored))) {
+        if (effective > 0) {
+            slice->setSampleRateHz(effective);
+        }
+        return;
+    }
+
     const int sliceId = slice->sliceIndex();
     if (m_role == Role::Local && effective > 0) {
         // Until the request commits, the property describes the effective
@@ -14793,7 +15048,7 @@ void RadioModel::applyRestoredSampleRate(SliceModel* slice)
     requestSliceSampleRate(sliceId, restored);
 }
 
-// R-R3-49. NereusSDR-original: per-slice per-band rates are a Phase 3F
+// R-R3-49. NereusSDR-original: per-slice rates are a Phase 3F
 // concept; Thetis carries one rate for the whole radio.
 QHash<int, int> RadioModel::savedSliceSampleRates() const
 {
@@ -14802,7 +15057,7 @@ QHash<int, int> RadioModel::savedSliceSampleRates() const
         if (slice == nullptr) {
             continue;
         }
-        const int rate = slice->savedSampleRateHz(slice->band());
+        const int rate = slice->savedSampleRateHz();
         if (rate > 0) {
             saved.insert(slice->sliceIndex(), rate);
         }
@@ -14821,34 +15076,66 @@ void RadioModel::applySavedSliceSampleRates(const QHash<int, int>& saved,
     }
     const std::vector<int> allowed = NereusSDR::allowedSampleRates(
         proto, boardCapabilities(), m_hardwareProfile.model);
-    const QList<SliceModel*> slices = m_slices;
-    for (SliceModel* slice : slices) {
-        if (slice == nullptr) {
+    QHash<int, int> usable;
+    for (const SliceModel* slice : std::as_const(m_slices)) {
+        if (slice == nullptr || slice->streamIndex() < 0) {
             continue;
         }
         const auto it = saved.constFind(slice->sliceIndex());
         if (it == saved.cend()) {
             continue;
         }
-        const int rate = it.value();
-        const int stream = slice->streamIndex();
-        if (stream < 0) {
-            continue;
-        }
-        if (std::find(allowed.cbegin(), allowed.cend(), rate) == allowed.cend()) {
+        if (std::find(allowed.cbegin(), allowed.cend(), it.value()) == allowed.cend()) {
             qCWarning(lcConnection) << "Slice" << slice->sliceIndex()
-                                    << "saved sample rate" << rate
+                                    << "saved sample rate" << it.value()
                                     << "is not supported by this radio; staying at"
-                                    << m_streamAllocator.streamSampleRateHz(stream);
+                                    << m_streamAllocator.streamSampleRateHz(slice->streamIndex());
             continue;
         }
-        if (m_streamAllocator.streamSampleRateHz(stream) == rate) {
-            continue;
+        usable.insert(slice->sliceIndex(), it.value());
+    }
+
+    // One rate per receiver: the highest saved among the slices on it, so the
+    // rate the operator chose cannot lose to an old default. Worked out again
+    // after each change, because narrowing a receiver can move a slice it no
+    // longer covers onto another one. Each receiver is asked for a rate once, so
+    // a refused change is not asked for again.
+    const QPointer<RadioModel> self(this);
+    QSet<QPair<int, int>> asked;
+    for (;;) {
+        struct Wanted {
+            int rateHz{0};
+            int sliceId{-1};
+        };
+        QMap<int, Wanted> wanted;
+        for (const SliceModel* slice : std::as_const(m_slices)) {
+            if (slice == nullptr || slice->streamIndex() < 0) {
+                continue;
+            }
+            const int rate = usable.value(slice->sliceIndex(), 0);
+            Wanted& entry = wanted[slice->streamIndex()];
+            if (rate > entry.rateHz) {
+                entry = {rate, slice->sliceIndex()};
+            }
         }
-        qCInfo(lcConnection) << "Slice" << slice->sliceIndex()
-                             << "comes back at its saved sample rate" << rate
-                             << "for" << bandLabel(slice->band());
-        requestSliceSampleRate(slice->sliceIndex(), rate);
+        bool changed = false;
+        for (auto it = wanted.cbegin(); it != wanted.cend() && !changed; ++it) {
+            const QPair<int, int> request(it.key(), it.value().rateHz);
+            if (it.value().rateHz <= 0
+                || m_streamAllocator.streamSampleRateHz(it.key()) == it.value().rateHz
+                || asked.contains(request)) {
+                continue;
+            }
+            asked.insert(request);
+            qCInfo(lcConnection) << "Receiver" << it.key()
+                                 << "comes back at its saved sample rate" << it.value().rateHz;
+            requestSliceSampleRate(it.value().sliceId, it.value().rateHz);
+            if (!self) { return; }
+            changed = true;
+        }
+        if (!changed) {
+            return;
+        }
     }
 }
 
@@ -14993,6 +15280,18 @@ QList<int> RadioModel::moveStreamWindowFor(int stream, double centreHz, int exem
     return unplaced;
 }
 
+int RadioModel::streamClaimRateHzFor(const QList<int>& sliceIds) const
+{
+    int rateHz = 0;
+    for (const int id : sliceIds) {
+        const SliceModel* slice = sliceById(id);
+        if (slice != nullptr && slice->streamIndex() >= 0) {
+            rateHz = std::max(rateHz, m_streamAllocator.streamSampleRateHz(slice->streamIndex()));
+        }
+    }
+    return rateHz > 0 ? rateHz : newStreamSampleRateHz();
+}
+
 // iPhone app Task 74 (ruling 6.6): a device that does not anchor its
 // receiver takes its pan, with its slices, to `stream` centred on
 // `centreHz`: claimed when free (the allocator's own-window path), and
@@ -15007,7 +15306,7 @@ bool RadioModel::moveSlicesToStream(const QList<int>& sliceIds, int stream, doub
     }
     const bool wasActive = m_streamAllocator.isStreamActive(stream);
     const int rateHz = wasActive ? m_streamAllocator.streamSampleRateHz(stream)
-                                 : newStreamSampleRateHz();
+                                 : streamClaimRateHzFor(sliceIds);
     const double halfWindow = static_cast<double>(rateHz) / 2.0;
     const double centre = wasActive ? m_streamAllocator.streamCentreHz(stream) : centreHz;
     for (const int id : sliceIds) {
@@ -15021,7 +15320,8 @@ bool RadioModel::moveSlicesToStream(const QList<int>& sliceIds, int stream, doub
         }
     }
     if (!wasActive) {
-        activateStreamAt(stream, centreHz);
+        // Slices leaving a receiver keep their rate (JJ's ruling 2026-11-05).
+        activateStreamAt(stream, centreHz, rateHz);
     }
     bool all = true;
     for (const int id : sliceIds) {
@@ -15305,9 +15605,12 @@ RadioModel::planStreamSampleRateChange(int streamIndex, int rateHz,
                     ? rateHz
                     : ((streamAlreadyLive && existingRateHz > 0)
                            ? existingRateHz
-                           : (m_connectionSampleRateHz > 0
-                                  ? m_connectionSampleRateHz
-                                  : m_streamDefaultRateHz));
+                           // A slice pushed off a receiver keeps the rate it
+                           // was running (JJ's ruling 2026-11-05); the live
+                           // allocator still holds it.
+                           : (m_streamAllocator.streamSampleRateHz(previousStream) > 0
+                                  ? m_streamAllocator.streamSampleRateHz(previousStream)
+                                  : newStreamSampleRateHz()));
             plan.allocator.activateStream(
                 placement.streamIndex, placement.newStreamCentreHz,
                 rateForStream);
@@ -15385,7 +15688,7 @@ void RadioModel::commitStreamSampleRateChange(
         slice->setStreamEpoch(streamEpoch(planned.placement.streamIndex));
         slice->setShiftOffsetHz(planned.placement.shiftOffsetHz);
         slice->setSampleRateHz(planned.resolvedRateHz);
-        // R-R3-49: save the slice's per-band rate. On Protocol 2 it is the
+        // R-R3-49: save the slice's rate. On Protocol 2 it is the
         // only record of a window's rate change, and connect puts it back
         // (applySavedSliceSampleRates); nothing else saved it until some
         // other slice setting happened to change.
@@ -15578,7 +15881,7 @@ void RadioModel::syncReceiverToStream(int streamIndex, bool live)
 // already live) and centres it on `centreHz`: the NewStream and
 // RetunedStream arm of bindSliceToStream, which calls it, and the arm a
 // confirmed pan move to a free receiver uses (moveSlicesToStream).
-void RadioModel::activateStreamAt(int streamIndex, double centreHz)
+void RadioModel::activateStreamAt(int streamIndex, double centreHz, int claimRateHz)
 {
     const QPointer<RadioModel> self(this);
     // Claim or move the DDC, then centre it on the slice.
@@ -15596,7 +15899,7 @@ void RadioModel::activateStreamAt(int streamIndex, double centreHz)
     const int rateForStream =
         (streamAlreadyLive && existingRateHz > 0)
             ? existingRateHz
-            : newStreamSampleRateHz();
+            : (claimRateHz > 0 ? claimRateHz : newStreamSampleRateHz());
 
     if (!streamAlreadyLive) {
         claimStreamEpoch(streamIndex);
@@ -15971,7 +16274,9 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
         // status-bar line about adding a slice when all the operator did was
         // turn the knob. The frequencyChanged handler emits
         // sliceRetuneRejected instead, after it has rolled the VFO back.
-        if (previousStream < 0) {
+        // A desktop's restore says what stayed saved in one message of its own
+        // (restoreDesktopLayoutSlices), once, whatever the number of slices.
+        if (previousStream < 0 && !m_desktopLayoutRestoring) {
             emit sliceAddRejected(placement.reason);
         }
         return false;
@@ -15979,7 +16284,10 @@ bool RadioModel::bindSliceToStream(SliceModel* slice, double frequencyHz,
 
     if (placement.outcome == Outcome::NewStream
         || placement.outcome == Outcome::RetunedStream) {
-        activateStreamAt(placement.streamIndex, placement.newStreamCentreHz);
+        // A slice leaving a shared receiver for one of its own keeps its rate
+        // (a receiver's rate stays what was set, JJ's ruling 2026-11-05).
+        activateStreamAt(placement.streamIndex, placement.newStreamCentreHz,
+                         previousStream >= 0 ? slice->sampleRateHz() : 0);
         if (!current()) { return false; }
     }
 
@@ -16743,7 +17051,7 @@ bool RadioModel::requestTxHandoffToSlice(int sliceId)
     return true;
 }
 
-int RadioModel::addSlice(const QString& initialPanId, bool restoreSavedState)
+int RadioModel::addSlice(const QString& initialPanId, bool restoreSavedState, bool newReceiver)
 {
     // Remote-daemon R2: a remote client must not mint a slice id. Ids are
     // the STATION's (addSliceWithStationId's comment has the full reason),
@@ -16802,7 +17110,7 @@ int RadioModel::addSlice(const QString& initialPanId, bool restoreSavedState)
     // it does now. The body moved to addSliceImpl so a remote client can
     // reproduce the STATION's ids verbatim (addSliceWithStationId); no
     // behaviour changed on this path.
-    return addSliceImpl(-1, initialPanId, nullptr, false, restoreSavedState);
+    return addSliceImpl(-1, initialPanId, nullptr, false, restoreSavedState, newReceiver);
 }
 
 QString RadioModel::sliceCapReason(int cap) const
@@ -16862,7 +17170,7 @@ void RadioModel::publishReadySlices(int id)
 
 int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
                              const ReceiveSliceState* restoreSeed, bool bindRestored,
-                             bool restoreSavedState)
+                             bool restoreSavedState, bool newReceiver)
 {
     // iPhone app Task 73: `bindRestored` makes a device's saved slice again
     // while the radio runs (restoreSliceFor). It restores `restoreSeed`'s
@@ -16930,7 +17238,8 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // letter is left.
     int index = requestedId >= 0 ? requestedId : 0;
     if (requestedId < 0) {
-        index = m_deviceSliceReservations.isEmpty()
+        // So is a letter a desktop's saved layout still waits for.
+        index = m_deviceSliceReservations.isEmpty() && m_desktopLayoutKept.isEmpty()
             ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
         if (index < 0) {
             index = 0;
@@ -16975,7 +17284,13 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // follow-up) and, R-R3-45, speakers or headphones, all before the
         // first block reaches AudioEngine so the receiver starts on its own
         // output and VAX channel.
-        slice->loadFromSettings();
+        // A new receiver does not take its letter's NR selection (JJ's
+        // ruling, 2026-11-05); its VAX channel and output route stay as here.
+        if (newReceiver && !restoreSavedState) {
+            slice->loadAudioRoutingFromSettings();
+        } else {
+            slice->loadFromSettings();
+        }
         if (!self || !added) { return -1; }
         wireNnrSettings(slice);
         if (!self || !added) { return -1; }
@@ -17023,6 +17338,11 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         if (!self || !added) { return -1; }
         slice->setProperty("initialPanId", initialPanId);
     }
+    // RADE gaps fix round 1: a RADE seed makes this slice the restored RADE
+    // owner (installRadeRxRoute); a rollback below gives the owner back. Taken
+    // before either restore below, which can do the same from a saved RADE
+    // mode; after them the owner "given back" was the refused slice itself.
+    const std::optional<int> radeOwnerBeforeSeed = m_restoredRadeReceiveOwner;
     if (restoreSeed && bindRestored) {
         // iPhone app Task 73: a device's slice made again while the radio
         // runs. restoreReceiveState is the offline startup seam (it refuses
@@ -17041,10 +17361,11 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         if (!self || !added) { return -1; }
         if (!restored) { delete slice; return -1; }
     }
-    // A letter that has been saved comes back on every local mint, before
+    // With restoreSavedState, a letter that has been saved comes back before
     // the slice binds and before a Core saves it. Same restore as
     // loadSliceState: the band the slice was last saved on, then that
-    // band's stored state, frequency and mode included.
+    // band's stored state, frequency and mode included. Without it, the
+    // letter's preferences come back below, after the creator's seed.
     //
     // Callers that pass restoreSavedState false (+RX, a layout change, the
     // session verbs) and a Core that manages the receive layout used to
@@ -17057,6 +17378,10 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // Fresh creation restores receiver preferences after its creator seed
     // below, without applying stale tuning, mode, filter or DDC rate from a reused
     // numeric letter (and without temporarily starting that saved RADE mode).
+    // 2026-11-05: JJ's ruling, a new receiver (newReceiver) starts with RIT
+    // and XIT off, so it transmits on its dial. Any other path keeps them.
+    // 2026-11-05, JJ's ruling: a new receiver is a copy of the slice you are
+    // on, and a letter's saved settings are for a true restore only.
     bool restoredSavedState = false;
     const auto savedLetterBand = SliceModel::loadLastBandFromSettings(index);
     if (!restoreSeed && role() == Role::Local && restoreSavedState) {
@@ -17134,9 +17459,6 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // iPhone app Task 73 (ruling 5.2 step 4): a device's new slice opens on
     // its own active slice; a device with none opens on the station-level
     // active slice, whose receiver it then joins (D48) at no cost.
-    // RADE gaps fix round 1: a RADE seed makes this slice the restored RADE
-    // owner (installRadeRxRoute); a rollback below gives the owner back.
-    const std::optional<int> radeOwnerBeforeSeed = m_restoredRadeReceiveOwner;
     SliceModel* seedFrom = m_activeSlice;
     if (role() == Role::Local && !m_sliceOwnership->creator().isEmpty()) {
         const int own = m_sliceOwnership->activeFor(m_sliceOwnership->creator());
@@ -17144,7 +17466,9 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
             seedFrom = mine;
         }
     }
-    if (!restoreSeed && !restoredSavedState) {
+    const bool hasSeed = seedFrom && seedFrom != slice;
+    const bool isFreshCreation = !restoreSeed && !restoredSavedState;
+    if (isFreshCreation) {
         // A letter with nothing saved opens on this slice's frequency and
         // mode. Either way the new slice takes this slice's noise
         // reduction: which reducer is on, and that family's knobs, NNR
@@ -17153,23 +17477,42 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         // operator had open.
         // 2026-10-29 correction: this is fresh creation only. Explicit
         // startup restoration retains the letter's independent reducer.
-        if (seedFrom && seedFrom != slice) {
+        if (hasSeed) {
             const double seedFrequency = seedFrom->frequency();
             const DSPMode seedMode = seedFrom->dspMode();
             slice->setFrequency(seedFrequency);
             if (!currentAdded()) { return -1; }
-            slice->setDspMode(seedMode);
+            if (newReceiver) {
+                slice->setDspModeForNewReceiver(seedMode);
+            } else {
+                slice->setDspMode(seedMode);
+            }
             if (!currentAdded()) { return -1; }
         }
-        if (role() == Role::Local && savedLetterBand) {
-            // Restore Locked only after the seed, so a stale saved lock
-            // cannot leave the new device on the constructor frequency.
-            slice->restoreFromSettings(*savedLetterBand, false);
-            if (!currentAdded()) { return -1; }
-        }
-        if (seedFrom && seedFrom != slice) {
-            slice->copyNoiseReductionFrom(*seedFrom);
-            if (!currentAdded()) { return -1; }
+        if (newReceiver) {
+            // The copy (JJ's ruling, 2026-11-05). The letter's saved values
+            // are not read: a reused letter used to bring another band's AGC,
+            // NB and step, open locked or muted, and then save them over this
+            // band's memory. With no slice to copy it stays on defaults.
+            if (hasSeed) {
+                slice->copyReceiverSettingsFrom(*seedFrom);
+                if (!currentAdded()) { return -1; }
+            }
+        } else {
+            if (role() == Role::Local && savedLetterBand) {
+                // Restore Locked only after the seed, so a stale saved lock
+                // cannot leave the new device on the constructor frequency.
+                slice->restoreFromSettings(*savedLetterBand, false);
+                if (!currentAdded()) { return -1; }
+                // Only a caller that says the slice is new loses the letter's
+                // RIT and XIT, so a path nobody thought about keeps them.
+                slice->restoreRitXitFromSettings();
+                if (!currentAdded()) { return -1; }
+            }
+            if (hasSeed) {
+                slice->copyNoiseReductionFrom(*seedFrom);
+                if (!currentAdded()) { return -1; }
+            }
         }
     }
 
@@ -17226,7 +17569,19 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // Binding makes the property describe the effective DDC rate. Keep the
     // restored preference separately until the ordinary rate transaction
     // below can apply it to the bound receiver.
-    const int restoredSampleRateHz = restoredSavedState ? slice->sampleRateHz() : 0;
+    const int restoredSampleRateHz = restoredSavedState ? slice->savedSampleRateHz() : 0;
+    // A device's slice made again keeps the rate saved for it. A new slice
+    // takes the rate of the slice it was seeded from, as it takes that slice's
+    // frequency and mode. Without these, a receiver claimed for either opens
+    // at the radio-wide connect rate, and the next save writes that over what
+    // the operator chose.
+    const int madeAgainSampleRateHz =
+        (restoreSeed && bindRestored) ? slice->savedSampleRateHz() : 0;
+    const int seedSampleRateHz =
+        (!restoreSeed && !restoredSavedState && seedFrom != nullptr && seedFrom != slice
+         && m_slices.contains(seedFrom))
+        ? m_streamAllocator.streamSampleRateHz(seedFrom->streamIndex())
+        : 0;
     // Review fix round 1, finding 1(c): `&& role() == Role::Local` is a
     // second, independent guard against the same destructive interaction
     // documented on bindSliceToStream's role check above -- if this
@@ -17240,8 +17595,33 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // behave the same way here regardless of how its pool got sized: the
     // slice survives unbound, exactly as it does before any pool exists.
     const bool placementAttempted = !restoreSeed || bindRestored;
+    // A desktop's saved slice is placed as a Core places its saved layout
+    // (bindReceiveLayoutSlices): on a receiver of its own pan that covers it,
+    // else on a new one. Two pans a little apart do not end up on one receiver,
+    // which would tune them in lockstep.
+    const bool placedByPan = bindRestored && m_desktopLayoutRestoring;
+    int panCovering = -1;
+    if (placedByPan) {
+        QList<int> panStreams;
+        for (const SliceModel* other : slicesOnPan(initialPanId, slice)) {
+            if (other->streamIndex() >= 0 && !panStreams.contains(other->streamIndex())) {
+                panStreams.append(other->streamIndex());
+            }
+        }
+        panCovering = panStreamCovering(m_streamAllocator, panStreams, slice->frequency());
+    }
+    // No receiver of its own pan covers it and none is free: it joins any that
+    // covers it, as placeSlice does for a live slice without preferOwnStream.
+    // Without this, a layout built on a small radio with a slice inside another
+    // pan's receiver was refused at every start.
+    const bool noneOfItsOwn = placedByPan && panCovering < 0
+        && m_streamAllocator.placeSlice(slice->frequency(), /*preferOwnStream=*/true).outcome
+            == SliceStreamAllocator::Outcome::Rejected;
     const bool bound = !placementAttempted
-        || bindSliceToStream(slice, slice->frequency(), openingANewPan);
+        || (panCovering >= 0
+                ? bindSliceToStream(slice, slice->frequency(), false, panCovering)
+                : bindSliceToStream(slice, slice->frequency(),
+                                    (placedByPan && !noneOfItsOwn) || openingANewPan));
     if (!currentAdded()) { return -1; }
     if (!bound && poolReady && role() == Role::Local) {
         // bindSliceToStream already emitted sliceAddRejected with the
@@ -17280,6 +17660,36 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
         }
         delete slice;
         return -1;
+    }
+
+    // A new receiver on a used letter: the old offsets must not return at the
+    // next start, even on a receiver that saves nothing of its own. After the
+    // rollback above, because a refused add made no receiver and the letter
+    // loses nothing. While a saved layout is held the store stays as it is,
+    // like every other save: the refusal text sends the operator to +RX in
+    // just that state, and the held letter must keep its values.
+    //
+    // With no slice to copy, the save names no slice, and this runs before a
+    // first slice becomes active. It writes the removal without writing this
+    // slice's band values: before connect it sits on the constructor's
+    // frequency, which must not replace the letter's band memory or the band
+    // connect restores.
+    //
+    // A copy saves under its own keys now, so what it took reaches the disk,
+    // and a band change or a restart cannot bring back the letter's lock, mute
+    // or anything else. Only the band it opens on is written; the letter's
+    // memory on every other band stays until the operator goes there.
+    if (isFreshCreation && newReceiver && role() == Role::Local
+        && !sliceKeysAreHeld(index) && !m_receiveLayoutProtected) {
+        if (savedLetterBand) {
+            slice->forgetSavedRitXit();
+        }
+        if (hasSeed) {
+            slice->copyFilterMemoryFrom(*seedFrom, bandFromFrequency(slice->frequency()));
+            scheduleSettingsSave(slice);
+        } else if (savedLetterBand) {
+            scheduleSettingsSave();
+        }
     }
 
     // Retuning re-runs the allocator: the slice may stay on its stream
@@ -17630,15 +18040,29 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     // a slice whose controls are already live.
     wireSliceSignals(slice);
     connect(slice, &SliceModel::panKeyChanged, this, [this, slice] {
-        if (m_receiveLayoutManaged) {
+        if (m_receiveLayoutManaged || desktopLayoutSaves()) {
             scheduleSettingsSave(slice);
         }
     });
-    if (restoredSavedState) {
-        // And put the restored rate on the DDC, not just on the menu, as
-        // loadSliceState does for slice A. No-op when the slice has no
-        // stream or its stream already runs at that rate.
+    // Joined a running receiver for want of any other: it takes that receiver's
+    // rate and moves nothing, here or in the restore's pass over saved rates.
+    if (noneOfItsOwn) {
+        m_desktopLayoutJoinedRunning.insert(index);
+    }
+    if (restoredSampleRateHz > 0 && !noneOfItsOwn) {
+        // And put the restored rate on the DDC, not just on the menu. No-op
+        // when the slice has no stream or its stream already runs at that rate.
         slice->setSampleRateHz(restoredSampleRateHz);
+        if (!currentAdded()) { return -1; }
+        applyRestoredSampleRate(slice);
+        if (!currentAdded()) { return -1; }
+    } else if (const int preferredRateHz = madeAgainSampleRateHz > 0 ? madeAgainSampleRateHz
+                                                                     : seedSampleRateHz;
+               preferredRateHz > 0 && slice->streamIndex() >= 0
+               && slicesOnStream(slice->streamIndex()).size() == 1) {
+        // On a receiver of its own only. A slice joining a receiver takes that
+        // receiver's rate, and must not move it for whoever else is on it.
+        slice->setSampleRateHz(preferredRateHz);
         if (!currentAdded()) { return -1; }
         applyRestoredSampleRate(slice);
         if (!currentAdded()) { return -1; }
@@ -17650,7 +18074,7 @@ int RadioModel::addSliceImpl(int requestedId, const QString& initialPanId,
     m_slicePublications.insert(slice, publication);
     publishReadySlices(index);
     if (!currentAdded()) { return -1; }
-    if (m_receiveLayoutManaged) {
+    if (m_receiveLayoutManaged || desktopLayoutSaves()) {
         scheduleSettingsSave(slice);
     }
     return index;
@@ -17765,7 +18189,11 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
             self->remarkActiveSlicesForOwnership();
             if (!self) { return; }
         }
-        if (self->m_receiveLayoutManaged && persist) { self->scheduleSettingsSave(); }
+        // The close's own flush ran while the slice was still in the list, so
+        // the layout is saved again now that it has left.
+        if ((self->m_receiveLayoutManaged || self->desktopLayoutSaves()) && persist) {
+            self->scheduleSettingsSave();
+        }
     });
     // Ruling 5.10: the add/remove sequence count, closed before the
     // re-mark below or, on an early return, before finishRemoval runs
@@ -18026,7 +18454,7 @@ void RadioModel::removeSliceImpl(int sliceId, bool persist, bool mayCloseLast, b
 // Phase 3F Sub-Epic C Task 7: AetherSDR-faithful +RX entry point.
 // Pattern from AetherSDR MainWindow.cpp:6849-6859 [@0cd4559a]
 // (+RX button handler).
-void RadioModel::addSliceOnPan(const QString& panId, bool restoreSavedState)
+void RadioModel::addSliceOnPan(const QString& panId, bool restoreSavedState, bool newReceiver)
 {
     // Remote-daemon R2: sent as its own verb rather than falling through
     // to addSlice's Role::Remote branch, because the two are not the same
@@ -18077,7 +18505,7 @@ void RadioModel::addSliceOnPan(const QString& panId, bool restoreSavedState)
     // pan", so it must not assert either answer: passing a bare `true` here
     // is what made ordinary +RX slices demand a third DDC and get refused on
     // a 2-DDC HL2 (Codex P1, PR #311).
-    addSlice(panId, restoreSavedState);
+    addSlice(panId, restoreSavedState, newReceiver);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -19642,6 +20070,10 @@ QList<int> RadioModel::reservedSliceLetters() const
 
 bool RadioModel::sliceLetterReserved(int id) const
 {
+    if (std::any_of(m_desktopLayoutKept.cbegin(), m_desktopLayoutKept.cend(),
+                    [id](const ReceiveSliceState& state) { return state.id == id; })) {
+        return true;
+    }
     return std::any_of(m_deviceSliceReservations.cbegin(), m_deviceSliceReservations.cend(),
                        [id](const DeviceSliceReservation& reservation) {
                            return reservation.letterKept && reservation.state.id == id;
@@ -19759,6 +20191,9 @@ int RadioModel::addStartingSlices(const QString& radioMac)
         if (m_hostsStationDevice && !m_receiveLayoutManaged && m_deviceReservationsMac != mac) {
             reserveDeviceSlices(radioMac);
         }
+        if (!m_hostsStationDevice && !m_receiveLayoutManaged) {
+            prepareDesktopLayout(radioMac, /*liveSlices=*/true);
+        }
         return -1;
     }
     // JJ 2026-10-23, the open behavior ruling: at every local connect, the
@@ -19792,10 +20227,32 @@ int RadioModel::addStartingSlices(const QString& radioMac)
     const int unkept = m_deviceSliceReservations.isEmpty()
         ? -1 : lowestUnreservedFreeSliceId(sliceChannelLimit());
     m_windowSliceId = unkept >= 0 ? unkept : 0;
-    const int id = addSlice();
+    // A desktop starts on the first slice of the radio's saved layout, on its
+    // letter: with A closed last time, that is not A. The rest come back once
+    // the stream pool is sized (restoreDesktopLayoutSlices).
+    std::optional<ReceiveSliceState> savedStart;
+    if (!m_hostsStationDevice && !m_receiveLayoutManaged) {
+        prepareDesktopLayout(radioMac, /*liveSlices=*/false);
+        const int cap = startingSliceCap();
+        for (const ReceiveSliceState& state : std::as_const(m_desktopLayoutWaiting)) {
+            if (state.id < cap) {
+                savedStart = state;
+                break;
+            }
+        }
+    }
+    if (savedStart) {
+        m_windowSliceId = savedStart->id;
+    }
+    const int id = savedStart ? addSliceImpl(savedStart->id, QString()) : addSlice();
     SliceModel* slice = sliceById(id);
     if (!slice) {
         return -1;
+    }
+    m_startingSliceAwaitingLoad = id;
+    if (savedStart) {
+        slice->setPanKey(savedStart->panKey);
+        return id;
     }
     if (id != m_windowSliceId) {
         qCWarning(lcConnection) << "Starting slice" << receiverLetter(id)
@@ -19943,9 +20400,22 @@ bool RadioModel::captureHostedReceiveLayout()
             ids.insert(entry.id);
         }
     }
+    stageKeptReceiveLayout(mac, existing, slices);
+    return true;
+}
+
+void RadioModel::stageKeptReceiveLayout(const QString& mac,
+                                        const ReceiveLayoutStore::LoadResult& existing,
+                                        const QList<ReceiveSliceState>& slices)
+{
+    AppSettings& store = AppSettings::instance();
     if (slices.isEmpty()) {
         ReceiveLayoutStore::forget(store, mac);
-        return true;
+        return;
+    }
+    QSet<int> ids;
+    for (const ReceiveSliceState& entry : slices) {
+        ids.insert(entry.id);
     }
     // Two RADE slices need a named audio owner (ReceiveLayoutStore::validate):
     // the one the layout named, else the lowest letter.
@@ -19966,8 +20436,244 @@ bool RadioModel::captureHostedReceiveLayout()
             ? existing.diversityOwnerId : std::nullopt;
     QString reason;
     if (!ReceiveLayoutStore::stage(store, mac, slices, &reason, radeOwner, diversityOwner)) {
-        qCWarning(lcConnection) << "Receive layout: paired devices' slices not saved:" << reason;
+        qCWarning(lcConnection) << "Receive layout: not saved:" << reason;
     }
+}
+
+// JJ's ruling 2026-11-05: a desktop brings back every slice, its pans and its
+// transmit slice from the same per-radio record a Core keeps. The store and the
+// restore are shared; the Core's managed mode is not. That mode holds the
+// radio's slice keys through admission, holds back saves when a slice is
+// refused, and refuses a save over an unclear RADE owner, none of which a
+// window with no Core does today.
+namespace {
+// Beside TxBoundSliceId, which keeps the transmit slice the same way.
+QString desktopActiveSliceKey(const QString& normalizedMac)
+{
+    return QStringLiteral("hardware/%1/ActiveSliceId").arg(normalizedMac);
+}
+} // namespace
+
+bool RadioModel::desktopLayoutSaves() const
+{
+    return role() == Role::Local && !m_receiveLayoutManaged && !m_hostsStationDevice
+        && !m_desktopLayoutMac.isEmpty();
+}
+
+bool RadioModel::desktopLayoutKeepsClosedLetters() const
+{
+    return desktopLayoutSaves() && !m_desktopLayoutSlicesFromElsewhere;
+}
+
+void RadioModel::prepareDesktopLayout(const QString& radioMac, bool liveSlices)
+{
+    const QString mac = AppSettings::normalizedRadioMac(radioMac);
+    m_desktopLayoutToldClosed.clear();
+    // Connecting again to this radio keeps the slices on screen, and tries
+    // again for what had no room. It does not read the record back: that
+    // would reopen a slice closed while the radio was off.
+    if (liveSlices && !mac.isEmpty() && mac == m_desktopLayoutMac) {
+        // Still pending: the last connect dropped before its restore ran, and
+        // what it read is still waiting.
+        if (!m_desktopLayoutRestorePending) {
+            m_desktopLayoutWaiting = m_desktopLayoutKept;
+            m_desktopLayoutRuled = true;
+            m_desktopLayoutRestorePending = true;
+        }
+        return;
+    }
+    m_desktopLayoutMac.clear();
+    m_desktopLayoutKept.clear();
+    m_desktopLayoutWaiting.clear();
+    m_desktopLayoutRuled = false;
+    m_desktopLayoutRestorePending = false;
+    m_desktopLayoutSlicesFromElsewhere = false;
+    m_desktopLayoutActiveId = -1;
+    if (mac.isEmpty()) {
+        return;
+    }
+    const ReceiveLayoutStore::LoadResult layout =
+        ReceiveLayoutStore::load(AppSettings::instance(), radioMac);
+    if (layout.state != ReceiveLayoutStore::LoadState::Loaded
+        && layout.state != ReceiveLayoutStore::LoadState::Missing) {
+        // Left as it is, never replaced: with no radio to save under, this run
+        // saves no layout.
+        qCWarning(lcConnection) << "Receive layout: saved layout not loaded:" << layout.error;
+        setReceiveLayoutRestoreStatus(QStringLiteral("invalid"),
+            withKeptLayout({tr("The saved receive layout could not be loaded."),
+                            plainReceiveLayoutProblem(layout.error)}));
+        return;
+    }
+    // A paired device's slice waits for that device, as it always has.
+    QList<ReceiveSliceState> waiting;
+    for (const ReceiveSliceState& state : layout.slices) {
+        if (!isPairedDeviceSubject(layoutSubject(state.owner, state.heldFor))) {
+            waiting.append(state);
+        }
+    }
+    // Another radio's slices are on screen. They stay, as they always have,
+    // and this radio's record is neither applied over them nor replaced by them.
+    if (liveSlices && !waiting.isEmpty()) {
+        return;
+    }
+    m_desktopLayoutMac = mac;
+    m_desktopLayoutWaiting = waiting;
+    m_desktopLayoutRuled = !waiting.isEmpty();
+    m_desktopLayoutRestorePending = true;
+    m_desktopLayoutSlicesFromElsewhere = liveSlices;
+    // Slices already on screen keep the one they are on.
+    m_desktopLayoutActiveId = liveSlices
+        ? -1 : AppSettings::instance().value(desktopActiveSliceKey(mac), -1).toInt();
+}
+
+bool RadioModel::restoreDesktopLayoutSlices(const QStringList& panIds)
+{
+    if (role() != Role::Local || !m_desktopLayoutRestorePending) {
+        return false;
+    }
+    const QPointer<RadioModel> self(this);
+    const bool ruled = m_desktopLayoutRuled;
+    if (ruled) {
+        // A slice on a pan this window does not show goes on its first pan, as
+        // shrinking a layout puts it. The window keeps its own layout.
+        rehomeSlicesToPans(panIds);
+        if (!self) { return true; }
+    }
+    QList<ReceiveSliceState> unplaced;
+    bool added = false;
+    m_desktopLayoutRestoring = true;
+    const QList<ReceiveSliceState> waiting = std::exchange(m_desktopLayoutWaiting, {});
+    for (const ReceiveSliceState& entry : waiting) {
+        if (sliceById(entry.id) != nullptr) {
+            continue;
+        }
+        ReceiveSliceState state = entry;
+        state.owner.clear();
+        state.heldFor.clear();
+        if (!panIds.isEmpty() && !panIds.contains(state.panKey)) {
+            state.panKey = panIds.first();
+        }
+        const int cap = sliceChannelLimit();
+        const bool room = entry.id < cap && m_slices.size() < cap;
+        const int id = room ? addSliceImpl(entry.id, state.panKey, &state, /*bindRestored=*/true)
+                            : -1;
+        if (!self) { return true; }
+        if (id < 0) {
+            unplaced.append(entry);
+        } else {
+            added = true;
+        }
+    }
+    m_desktopLayoutRestoring = false;
+    m_desktopLayoutKept = unplaced;
+    m_desktopLayoutRestorePending = false;
+    m_desktopLayoutSlicesFromElsewhere = false;
+    // One rate per receiver, the highest saved among the slices on it. The
+    // connect's own pass ran with only the starting slice there. Protocol 1
+    // moves nothing, and a rate off the ladder asks for nothing.
+    if (added) {
+        QHash<int, int> saved = savedSliceSampleRates();
+        for (const int id : std::as_const(m_desktopLayoutJoinedRunning)) {
+            saved.remove(id);
+        }
+        m_desktopLayoutJoinedRunning.clear();
+        applySavedSliceSampleRates(saved, m_lastRadioInfo.protocol);
+        if (!self) { return true; }
+    }
+    // A letter this connect's closure named has already been told it stays saved.
+    QStringList letters;
+    for (const ReceiveSliceState& state : std::as_const(unplaced)) {
+        if (!m_desktopLayoutToldClosed.contains(state.id)) {
+            letters.append(QString(receiverLetter(state.id)));
+        }
+    }
+    m_desktopLayoutToldClosed.clear();
+    if (!letters.isEmpty()) {
+        setReceiveLayoutRestoreStatus(QStringLiteral("degraded"),
+            letters.size() == 1
+                ? tr("Receiver %1 stays saved because this radio has no room for it now. "
+                     "It comes back on a later connect when there is room.")
+                      .arg(letters.first())
+                : tr("Receivers %1 stay saved because this radio has no room for them now. "
+                     "They come back on a later connect when there is room.")
+                      .arg(letters.join(QStringLiteral(", "))));
+    }
+    // The slice the operator was on, now its slice is here. A letter that did
+    // not come back leaves the starting slice active. It moves the selection
+    // only: the transmit slice is the arbiter's (finishRestore, after this).
+    const int savedActive = std::exchange(m_desktopLayoutActiveId, -1);
+    if (savedActive >= 0 && sliceById(savedActive)) {
+        setActiveSliceById(savedActive);
+        if (!self) { return true; }
+    }
+    if (desktopLayoutSaves()) {
+        scheduleSettingsSave();
+    }
+    return ruled;
+}
+
+bool RadioModel::captureDesktopReceiveLayout()
+{
+    // Nothing until the restore has run: a save with only the starting slice
+    // up would close every other slice in the record.
+    if (m_desktopLayoutRestorePending || !desktopLayoutSaves()) {
+        return true;
+    }
+    AppSettings& store = AppSettings::instance();
+    if (m_activeSlice) {
+        store.setValue(desktopActiveSliceKey(m_desktopLayoutMac), m_activeSlice->sliceIndex());
+    }
+    const ReceiveLayoutStore::LoadResult existing = ReceiveLayoutStore::load(store, m_desktopLayoutMac);
+    if (existing.state != ReceiveLayoutStore::LoadState::Loaded
+        && existing.state != ReceiveLayoutStore::LoadState::Missing) {
+        qCWarning(lcConnection) << "Receive layout: kept unread, receivers not saved:"
+                                << existing.error;
+        return true;
+    }
+    QList<ReceiveSliceState> slices;
+    QSet<int> ids;
+    for (const SliceModel* slice : std::as_const(m_slices)) {
+        const SliceOwnership::Mark mark = m_sliceOwnership->mark(slice->sliceIndex());
+        slices.append({slice->sliceIndex(), slice->panKey(), slice->frequency(), slice->dspMode(),
+                       mark.owner, mark.heldFor});
+        ids.insert(slice->sliceIndex());
+    }
+    // What had no room stays in the record, unless a slice has its letter now
+    // (the radio ran out of other letters).
+    QList<ReceiveSliceState> kept;
+    for (const ReceiveSliceState& state : std::as_const(m_desktopLayoutKept)) {
+        if (!ids.contains(state.id)) {
+            kept.append(state);
+            slices.append(state);
+            ids.insert(state.id);
+        }
+    }
+    m_desktopLayoutKept = kept;
+    // A paired device's entry stays too. When the window has its letter, as a
+    // window with Run Core off may, the device's saved slices keep it with the
+    // letter's settings from before the window wrote them (as
+    // captureHostedReceiveLayout does for a letter it could not keep).
+    const bool snapshotHere =
+        AppSettings::normalizedRadioMac(m_deviceLetterSnapshotMac) == m_desktopLayoutMac;
+    if (existing.state == ReceiveLayoutStore::LoadState::Loaded) {
+        for (const ReceiveSliceState& entry : existing.slices) {
+            const QByteArray device = layoutSubject(entry.owner, entry.heldFor);
+            if (!isPairedDeviceSubject(device)) {
+                continue;
+            }
+            if (!ids.contains(entry.id)) {
+                slices.append(entry);
+                ids.insert(entry.id);
+            } else if (snapshotHere && m_deviceLetterSnapshot.contains(entry.id)) {
+                DeviceLayoutStore::append(store, m_desktopLayoutMac, device,
+                                          {entry.id, entry.panKey, entry.frequencyHz, entry.dspMode,
+                                           m_deviceLetterSnapshot.value(entry.id)},
+                                          deviceLayoutLimit());
+                m_deviceLetterSnapshot.remove(entry.id);
+            }
+        }
+    }
+    stageKeptReceiveLayout(m_desktopLayoutMac, existing, slices);
     return true;
 }
 
@@ -20144,16 +20850,15 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     // mode, filter, AGC tuple, NB, step, antennas, etc.) before we
     // overwrite the slice. See SliceModel::saveToSettings for the exact
     // key set persisted.
-    materializePendingBandSettings(slice->sliceIndex());
-    slice->saveToSettings(current);
+    if (!sliceKeysAreHeld(slice->sliceIndex())) {
+        materializePendingBandSettings(slice->sliceIndex());
+        slice->saveToSettings(current);
+    }
 
     if (slice->hasSettingsFor(band)) {
-        // Second+ visit: restore last-used state for the clicked band.
-        slice->restoreFromSettings(band);
-        // And put the restored rate on the DDC, not just on the menu.
-        // Codex review round 7, PR #293: restoreFromSettings sets the
-        // display property; this is the half that reaches the radio.
-        applyRestoredSampleRate(slice);
+        // Second+ visit: restore last-used state for the clicked band. The
+        // step is one per slice and stays what it is.
+        slice->restoreFromSettingsForBandChange(band);
         return;
     }
 
@@ -20181,7 +20886,47 @@ void RadioModel::onBandButtonClicked(SliceModel* slice, Band band)
     // Alex switch earlier in the signal chain.
     slice->setFrequency(seed.frequencyHz);
     slice->setDspMode(seed.mode);
-    slice->saveToSettings(band);   // Bake seed for next visit.
+    if (!sliceKeysAreHeld(slice->sliceIndex())) {
+        slice->saveToSettings(band);   // Bake seed for next visit.
+    }
+}
+
+QString RadioModel::retuneRefusalFor(const SliceModel* slice, double frequencyHz) const
+{
+    if (slice == nullptr) {
+        return {};
+    }
+    const int stream = slice->streamIndex();
+    if (stream < 0 || !m_streamAllocator.isStreamActive(stream)) {
+        return {};
+    }
+    // The inputs bindSliceToStream gives the allocator, on a copy, as
+    // StationReceivers asks before a retune.
+    SliceStreamAllocator copy = m_streamAllocator;
+    const bool ddcPinned = streamCtunPinned(stream)
+        || (m_receiverManager && m_receiverManager->ddcFrequencyLocked());
+    const auto placement =
+        copy.retuneSlice(stream, slicesOnStream(stream).size() == 1, ddcPinned, frequencyHz);
+    if (placement.outcome != SliceStreamAllocator::Outcome::Rejected) {
+        return {};
+    }
+    return QStringLiteral("Slice %1 stayed on %2\u00A0MHz. %3")
+        .arg(slice->sliceLetter())
+        .arg(slice->frequency() / 1.0e6, 0, 'f', 4)
+        .arg(placement.reason);
+}
+
+void RadioModel::saveBandMemory(SliceModel* slice, Band band)
+{
+    if (slice == nullptr) {
+        return;
+    }
+    // As the band click: while the restore holds this slice's keys, a recall
+    // still moves the slice but writes none of them.
+    if (!sliceKeysAreHeld(slice->sliceIndex())) {
+        materializePendingBandSettings(slice->sliceIndex());
+        slice->saveToSettings(band);
+    }
 }
 
 // --- Panadapter Management ---
@@ -21100,9 +21845,18 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     if (!preserveSlices && !m_receiveLayoutOverridesCount) {
         const qsizetype startingIndex =
             startingSliceId >= 0 ? m_slices.indexOf(sliceById(startingSliceId)) : 0;
-        setActiveSlice(static_cast<int>(std::max<qsizetype>(0, startingIndex)));
-        loadSliceState(m_activeSlice);
+        const int index = static_cast<int>(std::max<qsizetype>(0, startingIndex));
+        // A desktop's reconnect keeps the slice the operator is on. The load
+        // stays on the first slice, which is what fills the first pan.
+        const bool keepsActive = startingSliceId < 0 && role() == Role::Local
+            && !m_receiveLayoutManaged && !m_hostsStationDevice && m_activeSlice
+            && m_slices.contains(m_activeSlice);
+        if (!keepsActive) {
+            setActiveSlice(index);
+        }
+        loadSliceState(keepsActive ? m_slices.at(index) : m_activeSlice);
     }
+    m_startingSliceAwaitingLoad = -1;
 
     // ── 3M-1c L.2: TwoToneController transmit-slice mode source ────────────
     //
@@ -21170,7 +21924,7 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
         }
     }
 
-    // R-R3-49: read each slice's saved per-band rate before the bind below
+    // R-R3-49: read each slice's saved rate before the bind below
     // makes it adopt the connect rate (applied once WDSP is up, further
     // down, by applySavedSliceSampleRates).
     const QHash<int, int> savedSliceRates = savedSliceSampleRates();
@@ -21437,6 +22191,10 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 m_amModTx->setSampleRate(txOutRate);
                 m_txChannel->setAmModulationTap(
                     m_amModTxTapEnabled.load() ? m_amModTx.get() : nullptr);
+            }
+            if (m_ssbModTx) {
+                m_ssbModTx->setSampleRate(txOutRate);
+                refreshSsbModulationTap();
             }
 
             // Task 4.2: give TxChannel a handle to WdspEngine so onModeChanged()
@@ -22570,8 +23328,8 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
     // decoder says why.
     refreshRadeReasons();
 
-    // R-R3-49: on Protocol 2 each slice comes back at the rate saved for its
-    // band. WDSP is up (its channels take the new rate) and the codec exists
+    // R-R3-49: on Protocol 2 each receiver comes back at the rate saved for
+    // its slices. WDSP is up (its channels take the new rate) and the codec exists
     // (the DDC assignment carries it); the assignment is queued ahead of the
     // connection's start below. Protocol 1 keeps the radio-wide rate.
     applySavedSliceSampleRates(savedSliceRates, info.protocol);
@@ -22921,6 +23679,7 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                                          txMonDdc, txMonSamples);
         }
     });
+    connectSsbModFeedback();
 
     // Protocol 2 codec injection remains live for ReceiverManager's
     // ddcConfigChanged observation consumers (notably PsccPump). The P2 wire
@@ -25668,16 +26427,41 @@ void RadioModel::pushTxFrequencyFromTxSlice()
 // Snap the transmit filter for a transmitter entering or leaving RADE mode.
 void RadioModel::snapTransmitFilterForMode(DSPMode mode)
 {
+    // Follows the slice's mode: not an edit of the transmit filter, so with no
+    // radio it must not replace the filter the next radio has saved.
+    const TransmitModel::HeldEditPause notAnEdit(m_transmitModel);
     // 2026-05-12 bench fix (PR #238): snap TX BW to the RADE modem
     // audio passband only when the transmitter's mode changes.
+    const auto applyFilter = [this](int low, int high) {
+        // setFilterLow swaps with the high edge when it would pass it, so the
+        // edge that would cross the other goes second.
+        if (low > m_transmitModel.filterHigh()) {
+            m_transmitModel.setFilterHigh(high);
+            m_transmitModel.setFilterLow(low);
+        } else {
+            m_transmitModel.setFilterLow(low);
+            m_transmitModel.setFilterHigh(high);
+        }
+    };
+    const bool atRadePassband = m_transmitModel.filterLow() == 650
+        && m_transmitModel.filterHigh() == 2350;
     if (isRadeDspMode(mode)) {
-        m_transmitModel.setFilterLow(650);
-        m_transmitModel.setFilterHigh(2350);
-    } else if (m_transmitModel.filterLow() == 650
-               && m_transmitModel.filterHigh() == 2350) {
+        // Keep the operator's filter to put back on leaving. One already at
+        // the passband is RADE's own: this snap repeated, or a slice restored
+        // in RADE, whose kept filter (if any) came back from the store.
+        if (!atRadePassband && !m_transmitModel.filterBeforeRade()) {
+            m_transmitModel.setFilterBeforeRade(
+                std::make_pair(m_transmitModel.filterLow(), m_transmitModel.filterHigh()));
+        }
+        applyFilter(650, 2350);
+    } else if (atRadePassband) {
         // Leaving RADE: preserve custom voice bandwidths.
-        m_transmitModel.setFilterLow(100);
-        m_transmitModel.setFilterHigh(3900);
+        const auto before = m_transmitModel.filterBeforeRade();
+        m_transmitModel.setFilterBeforeRade(std::nullopt);
+        applyFilter(before ? before->first : 100, before ? before->second : 3900);
+    } else {
+        // A filter edited while in RADE stays, and nothing is left to put back.
+        m_transmitModel.setFilterBeforeRade(std::nullopt);
     }
 }
 
@@ -26616,6 +27400,11 @@ void RadioModel::wireSliceSignals(SliceModel* slice)
     connect(slice, &SliceModel::ritHzChanged,     this, [this, slice](int) { scheduleSettingsSave(slice); });
     connect(slice, &SliceModel::xitEnabledChanged, this, [this, slice](bool) { scheduleSettingsSave(slice); });
     connect(slice, &SliceModel::xitHzChanged,     this, [this, slice](int) { scheduleSettingsSave(slice); });
+    // Diversity's blend is saved with the band (captureBandSettings), and its
+    // own connects (blendChanged) reconfigure and publish only.
+    connect(slice, &SliceModel::diversityPhaseDegChanged, this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::diversityGainDbChanged,   this, [this, slice]() { scheduleSettingsSave(slice); });
+    connect(slice, &SliceModel::diversityFineNullEnabledChanged, this, [this, slice]() { scheduleSettingsSave(slice); });
     // The FM, DIG offset and RTTY values had no handler that saved them
     // (settings restore audit 2026-10-11): the DIG and RTTY connects above
     // push the shift and the filter only, and nothing listened to the FM
@@ -26829,15 +27618,20 @@ void RadioModel::loadSliceState(SliceModel* slice)
 
     slice->restoreFromSettings(currentBand);
 
+    // The starting slice was made on the constructor's 14.225 MHz, holding its
+    // last band's values, and has only now reached that band. What was captured
+    // on the way (its pan key, its noise reduction, the restore's own steps) is
+    // no edit, and would be written over the 20 m memory and this band's other
+    // modes' filters. The slice stays due a save, which writes what it holds now.
+    if (slice->sliceIndex() == m_startingSliceAwaitingLoad) {
+        m_startingSliceAwaitingLoad = -1;
+        m_pendingBandSettings.remove(slice->sliceIndex());
+    }
+
     // The restored band's antennas come from Setup's antenna table. The
     // slice used to restore a saved label of its own here and write it
     // over that band's row of the table when the radio connected again.
     refreshSliceAntennasFromAlex(slice);
-
-    // And put the restored rate on the DDC, not just on the menu. Codex
-    // review round 7, PR #293. Same call as the band-change path: this is
-    // the launch-time restore, and it was equally display-only.
-    applyRestoredSampleRate(slice);
 
     // Push restored frequency to the panadapter so the spectrum display
     // lands on the same band as the slice. Without this the panadapter
@@ -26967,6 +27761,119 @@ void RadioModel::clearStationModMonitor()
 {
     m_stationModMonitor[0].reset();
     m_stationModMonitor[1].reset();
+}
+
+SsbModulationAnalyzer* RadioModel::ssbModulationAnalyzer(int source) const
+{
+    return source == 1 ? m_ssbModFb.get() : m_ssbModTx.get();
+}
+
+void RadioModel::setSsbModFeedbackWanted(bool wanted)
+{
+    m_ssbModFbWanted.store(wanted, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::setSsbModTxTapEnabled(bool enabled)
+{
+    m_ssbModTxTapEnabled.store(enabled, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::setSsbModCoreWanted(int source, bool wanted)
+{
+    (source == 1 ? m_ssbModFbCoreWanted : m_ssbModTxTapCoreWanted)
+        .store(wanted, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::refreshSsbModulationTap()
+{
+    const bool active = ssbTxActive();
+    if (active && !m_ssbModWasActive) {
+        // Each over starts fresh.
+        if (m_ssbModTx) { m_ssbModTx->reset(); }
+        if (m_ssbModFb) { m_ssbModFb->reset(); }
+    }
+    m_ssbModWasActive = active;
+    if (m_txChannel) {
+        m_txChannel->setSsbModulationTap(
+            active && ssbModTxTapEnabled() && m_ssbModTx ? m_ssbModTx.get() : nullptr);
+    }
+    const bool inUse = ssbModFeedbackInUse();
+    const bool feed = active && inUse && ssbModFeedbackWanted();
+    if (feed && !m_ssbModFbFeed.load() && m_ssbModFb && m_pureSignal) {
+        // Protocol 1 has one wire rate for all DDCs, the pair included.
+        // Protocol 2 runs the pair at PureSignal's own clock.
+        const int rate = m_lastRadioInfo.protocol == ProtocolVersion::Protocol1
+            ? connectionSampleRateHz()
+            : m_pureSignal->calccSampleRateHz();
+        if (rate > 0) {
+            m_ssbModFb->setSampleRate(rate);
+        }
+    }
+    m_ssbModFbFeed.store(feed, std::memory_order_release);
+    if (inUse != m_ssbModFbInUseAnnounced) {
+        m_ssbModFbInUseAnnounced = inUse;
+        emit ssbModFeedbackInUseChanged(inUse);
+    }
+}
+
+bool RadioModel::ssbModFeedbackInUse() const
+{
+    if (m_role == Role::Remote) {
+        return m_pureSignalFacade != nullptr && m_pureSignalFacade->statusSnapshot().psEnabled;
+    }
+    // The same fact that picks the DDC assignment (currentCodecContext's
+    // puresignalRun) on both protocols.
+    return m_pureSignal != nullptr && m_pureSignal->isPsEnabled();
+}
+
+void RadioModel::connectSsbModFeedback()
+{
+    // SSB Mod Monitor's PA FB: the same feedback samples PureSignal corrects
+    // from, the only place they arrive. No logical stream carries them: at
+    // PureSignal + MOX the pair is outside every streamDdc entry (P1CodecHl2,
+    // P1CodecStandard, P2CodecHermes, P2CodecOrionMkII applyDdcAssignment).
+    // On the connection thread, one atomic read when the monitor is not fed.
+    connect(m_connection, &RadioConnection::psPairedIqDataReceived,
+            this, [this](int, const QVector<float>& psFbSamples, int, const QVector<float>&) {
+        feedSsbModFeedback(psFbSamples);
+    }, Qt::DirectConnection);
+}
+
+void RadioModel::feedSsbModFeedback(const QVector<float>& samples)
+{
+    if (m_ssbModFbFeed.load(std::memory_order_acquire) && m_ssbModFb) {
+        m_ssbModFb->pushIq(samples.constData(), samples.size() / 2);
+    }
+}
+
+bool RadioModel::ssbTxActive() const
+{
+    if (!isTransmitting()) {
+        return false;
+    }
+    const SliceModel* slice = txBoundSlice();
+    if (slice == nullptr) {
+        return false;
+    }
+    const DSPMode mode = slice->dspMode();
+    return mode == DSPMode::USB || mode == DSPMode::LSB;
+}
+
+std::optional<SsbModulationAnalyzer::Snapshot> RadioModel::stationSsbModMonitorSnapshot(int source) const
+{
+    if (source != 0 && source != 1) {
+        return std::nullopt;
+    }
+    return m_stationSsbModMonitor[static_cast<std::size_t>(source)];
+}
+
+void RadioModel::clearStationSsbModMonitor()
+{
+    m_stationSsbModMonitor[0].reset();
+    m_stationSsbModMonitor[1].reset();
 }
 
 void RadioModel::refreshSliceAntennasFromAlex(SliceModel* slice)
@@ -28935,6 +29842,7 @@ void RadioModel::prepareReceiveLayout(const QString& radioMac)
         return;
     }
     m_receiveLayoutProtected = true;
+    m_receiveLayoutUnreadable = true;
     // The operator reads a plain sentence; the store's own reason is logged.
     qCWarning(lcConnection) << "Receive layout: saved layout not loaded:" << error;
     setReceiveLayoutRestoreStatus(QStringLiteral("invalid"),
@@ -29064,6 +29972,18 @@ void RadioModel::completeReceiveLayoutStartup()
             setReceiveLayoutRestoreStatus(QStringLiteral("fallback"), m_sliceClosureNotice);
         }
     }
+    if (m_receiveLayoutUnreadable) {
+        // The record may name any letter and nothing can say which, so a letter
+        // with saved keys waits for it. The receivers this run started are
+        // running, and save their own, as they do beside a record that loaded.
+        for (int id = 0; id < WdspEngine::kMaxSliceChannels; ++id) {
+            if (sliceById(id) == nullptr
+                && AppSettings::instance().contains(
+                       QStringLiteral("Slice%1/LastBand").arg(id))) {
+                m_receiveLayoutKeptSliceIds.insert(id);
+            }
+        }
+    }
     m_receiveLayoutPendingAdmission = false;
     if (m_txSliceArbiter) {
         const QPointer<RadioModel> self(this);
@@ -29097,7 +30017,9 @@ bool RadioModel::captureReceiveLayout(QString* error)
     if (!m_receiveLayoutManaged) {
         // A Core inside a desktop window keeps its paired devices' slices
         // in the layout too, so a restart either way gives them back.
-        return m_hostsStationDevice ? captureHostedReceiveLayout() : true;
+        // A desktop keeps its own slices there, for the same reason.
+        return m_hostsStationDevice ? captureHostedReceiveLayout()
+                                    : captureDesktopReceiveLayout();
     }
     // Slice control plan Task 7 (ruling Q10): a Core left with no slice
     // saves no layout, so a restart starts as a first start does, with one
@@ -29198,6 +30120,8 @@ bool RadioModel::hydrateReceiveLayout(const QString& radioMac,
     const QPointer<RadioModel> self(this);
     m_pendingBandSettings.clear();
     m_receiveLayoutHydrating = true;
+    // Hydration establishes state from the store; it is nobody's edit.
+    const AppSettings::TimedSaveHold timedSaveHold(AppSettings::instance());
     const auto finishHydration = qScopeGuard([self] {
         if (self) { self->m_receiveLayoutHydrating = false; }
     });
@@ -29347,14 +30271,17 @@ void RadioModel::scheduleSettingsSave(SliceModel* slice)
     if (role() != Role::Local) {
         return;
     }
-    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
+    if (!slice) {
+        slice = m_activeSlice;
+    }
+    // A protected layout holds back its own record (flushPendingSettingsSave),
+    // not the keys of the receivers that are running. Only a letter the
+    // record still waits on keeps its keys as they are.
+    if (m_receiveLayoutPendingAdmission || (slice && sliceKeysAreHeld(slice->sliceIndex()))) {
         if (m_stationHandoverTrackSuppressedReceiverEdits && !m_receiveLayoutHydrating) {
             m_stationHandoverSuppressedReceiverEdits = true;
         }
         return;
-    }
-    if (!slice) {
-        slice = m_activeSlice;
     }
     if (slice) {
         const int id = slice->sliceIndex();
@@ -29394,7 +30321,15 @@ void RadioModel::beginStationHandoverEditTracking()
 void RadioModel::noteOfflineReceiverPropertyEdit()
 {
     if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
-        scheduleSettingsSave();
+        // The edited slice, which need not be the active one.
+        auto* slice = qobject_cast<SliceModel*>(sender());
+        // A slice being made is not an edit: its pan key arrives while it is
+        // still on the constructor's 14.225 MHz, and a capture then wrote that
+        // over the letter's 20 m memory. addSliceImpl's own save ends the job.
+        if (slice && !m_slicePublications.value(slice).ready) {
+            return;
+        }
+        scheduleSettingsSave(slice);
     }
 }
 
@@ -29437,7 +30372,7 @@ void RadioModel::flushPendingSettingsSave(SettingsSaveMode mode)
         }
         return;
     }
-    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected || !m_settingsSaveScheduled) {
+    if (m_receiveLayoutPendingAdmission || !m_settingsSaveScheduled) {
         return;
     }
     m_settingsSaveScheduled = false;
@@ -29452,7 +30387,9 @@ void RadioModel::flushPendingSettingsSave(SettingsSaveMode mode)
         saveSliceState(nullptr);
     }
     QString error;
-    bool saved = captureReceiveLayout(&error);
+    // A saved layout a temporary limit must not erase stays as it is; the
+    // slice keys above and the rest of the store still go to the file.
+    bool saved = m_receiveLayoutProtected || captureReceiveLayout(&error);
     if (saved && mode == SettingsSaveMode::Background) {
         // The file's result comes later; the reason shown stays as it is
         // until then.
@@ -29530,6 +30467,11 @@ bool RadioModel::saveForStationHandover(QString* error)
             }
             return false;
         }
+        // Protected alone: the receivers' own keys are saved now, so what is
+        // waiting goes to the store first. The layout record stays as it is.
+        if (!m_receiveLayoutPendingAdmission) {
+            flushPendingSettingsSave();
+        }
         if (m_stationHandoverSuppressedReceiverEdits || m_settingsSaveScheduled
             || !m_dirtySettingsSliceIds.isEmpty() || m_alexControllerDirty) {
             if (error) {
@@ -29586,7 +30528,7 @@ void RadioModel::applyStationSettingsSaveError(const QString& reason)
 // them through a failed file write and the existing background/retry path.
 void RadioModel::materializePendingBandSettings(int sliceId)
 {
-    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
+    if (m_receiveLayoutPendingAdmission) {
         return;
     }
     const QMap<QString, QVariant> pending = m_pendingBandSettings.take(sliceId);
@@ -29619,10 +30561,10 @@ void RadioModel::onSettingsKeyWritten(const QString& key)
 // see the antennaChanged / blockTxChanged handlers in wireSliceSignals.
 void RadioModel::saveSliceState(SliceModel* slice)
 {
-    if (m_receiveLayoutPendingAdmission || m_receiveLayoutProtected) {
+    if (m_receiveLayoutPendingAdmission) {
         return;
     }
-    if (slice) {
+    if (slice && !m_receiveLayoutKeptSliceIds.contains(slice->sliceIndex())) {
         materializePendingBandSettings(slice->sliceIndex());
         slice->saveToSettings(bandFromFrequency(slice->frequency()));
     }
@@ -29862,6 +30804,9 @@ void RadioModel::teardownConnection()
         setTune(false);
         completeTuneOff();
     }
+    // The hold on the band-power write never outlives the session, even if
+    // the restore above was cut short.
+    m_transmitModel.setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::Tune, false);
     // PA on-air gate branch review, Important 1: the two-tone test ends
     // here, at once. From Thetis console.cs:27473 [v2.10.3.15]:
     //   SetupForm.TestIMD = false;
@@ -30664,6 +31609,17 @@ void RadioModel::onConnectionStateChanged(ConnectionState state)
         // the connected radio's fields (Radio Info labels, sample rate,
         // capability-gated tab visibility, per-MAC settings restore).
         emit currentRadioChanged(m_lastRadioInfo);
+        // Queued after a window's own step on this state, which brings back
+        // the saved slices and the transmit slice: the band is known then. A
+        // connect that has dropped by then leaves the value waiting.
+        if (m_role == Role::Local && m_transmitModel.hasPowerHeldForNextBand()) {
+            QMetaObject::invokeMethod(this, [this, mac = m_lastRadioInfo.macAddress] {
+                if (m_connectionState == ConnectionState::Connected
+                    && m_lastRadioInfo.macAddress == mac) {
+                    applyPowerHeldForNextBand();
+                }
+            }, Qt::QueuedConnection);
+        }
         // Phase 3P-I-a T11 — apply persisted per-band Alex antenna to the
         // fresh connection. Matches Thetis's initial UpdateAlexAntSelection
         // call path on radio startup (HPSDR/Alex.cs:310 [@501e3f5]).
@@ -31866,6 +32822,13 @@ void RadioModel::setTune(bool on)
             m_pendingTuneOff = false;
             m_transmitModel.setTune(true);
             if (!lifetime || !tuneCycleCurrent(serial)) { return; }
+            // A band change in the off window ran its scroll with TUNE down, so
+            // the drive on the wire is that band's PWR, and nothing below or on
+            // the MOX edge (which returns on isTune) puts the tune drive back.
+            // With TUNE up again this computes txMode 1, as SetPowerUsingTargetDBM
+            // does (console.cs:46724-46747 [v2.10.3.15]).
+            applyDriveSliderPower();
+            if (!lifetime || !tuneCycleCurrent(serial)) { return; }
             if (pendingOff || !m_moxController->isMox()) { m_moxController->setTune(true, requester); }
             return;
         }
@@ -31930,6 +32893,8 @@ void RadioModel::setTune(bool on)
         // Only the FIXED source sets PWR during TUNE, so only it saves and
         // restores PWR (m_tuneSetFixedPwr, set with the PWR push below).
         m_tuneSetFixedPwr = false;
+        // A latch a superseded off left set has no restore coming now.
+        m_transmitModel.setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::Tune, false);
         const bool tuneFixedSource =
             (m_transmitModel.tuneDrivePowerSource() == DrivePowerSource::Fixed);
         if (tuneFixedSource) {
@@ -32152,6 +33117,9 @@ void RadioModel::setTune(bool on)
             // CAT review X5: latched before the limit drops, so a start cut
             // short from here on still puts the limit and the power back.
             m_tuneSetFixedPwr = true;
+            // NereusSDR's own (Thetis has no timed save): the tune power is
+            // kept in power_by_band, but stays off disk until the restore.
+            m_transmitModel.setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::Tune, true);
             m_transmitModel.setPowerSliderLimitEnabled(false);
             if (!lifetime || !tuneCycleCurrent(serial)) { return; }
             m_transmitModel.setPower(tuneNewPwr);
@@ -33350,6 +34318,7 @@ void RadioModel::completeTuneOff()
         m_transmitModel.setPower(m_savedPowerPct);
         if (!lifetime || !tuneCycleCurrent(serial)) { return; }
         m_tuneSetFixedPwr = false;
+        m_transmitModel.setBandPowerSaveHeld(TransmitModel::BandPowerSaveHolder::Tune, false);
     }
     //
     // Codex P1 follow-up to PR #178 — route the restore through the
@@ -34384,6 +35353,8 @@ void RadioModel::syncCwKeying()
     // writes, as applyCwPitchChange's ownsSettings rule says.
     const bool ownsSettings = m_role != Role::Remote;
     if (inCw != m_cwTxSliceInCw) {
+        // Follows the slice's mode: not an edit of the break-in setting.
+        const TransmitModel::HeldEditPause notAnEdit(tm);
         m_cwTxSliceInCw = inCw;
         if (!ownsSettings) {
             // Nothing to remember or select: the Core does both.
@@ -35510,6 +36481,13 @@ void RadioModel::finishSampleRateChange(int newRateHz, bool reconcileDiversity,
             m_lastRadioInfo.macAddress,
             QStringLiteral("radioInfo/sampleRate"),
             newRateHz);
+    }
+    // And on each slice, or a saved rate from before this change puts
+    // the old rate back at the next connect (applySavedSliceSampleRates).
+    for (SliceModel* slice : std::as_const(m_slices)) {
+        if (slice != nullptr && slice->streamIndex() >= 0) {
+            scheduleSettingsSave(slice);
+        }
     }
 
     qCInfo(lcConnection) << "setSampleRateLive: done in" << elapsedMs << "ms";

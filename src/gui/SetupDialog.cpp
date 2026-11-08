@@ -1787,6 +1787,8 @@ void SetupDialog::buildTree()
         }
         connect(genOpts, &GeneralOptionsPage::cpuMeterRateChanged,
                 this,    &SetupDialog::cpuMeterRateChanged);
+        connect(genOpts, &GeneralOptionsPage::bandStackRegionEdited,
+                this,    &SetupDialog::bandStackRegionEdited);
         connect(genOpts, &GeneralOptionsPage::hideFeedbackLevelChanged,
                 this, &SetupDialog::hideFeedbackLevelChanged);
         connect(genOpts, &GeneralOptionsPage::invertRedBluePsaChanged,

@@ -1212,6 +1212,167 @@ private slots:
                  "saveFloatingGeometry wrote nothing while the pan was still "
                  "floating, so closeEvent's flush would miss it");
     }
+
+    // Persistence audit 2026-11: a pan left floating comes back floating, in
+    // its own place; one the operator docked, or a layout change docked, stays
+    // in the main window.
+    void floating_pan_comes_back_floating_after_a_restart()
+    {
+        const QStringList ids = MainWindow::panIdsForLayout(QStringLiteral("2v"));
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("2v"), ids);
+            stack.floatPanadapter(QStringLiteral("pan-1"));
+            PanFloatingWindow* floater = stack.floatingWindowForTest(QStringLiteral("pan-1"));
+            QVERIFY(floater);
+            floater->resize(640, 360);
+            stack.saveFloatingGeometry();
+        }   // the teardown a quit ends in
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"), ids);
+        QVERIFY(!stack.isFloating(QStringLiteral("pan-1")));
+        stack.restoreFloatingPans();
+        QVERIFY(stack.isFloating(QStringLiteral("pan-1")));
+        QVERIFY(!stack.isFloating(QStringLiteral("pan-0")));
+        QCOMPARE(stack.floatingWindowForTest(QStringLiteral("pan-1"))->size(), QSize(640, 360));
+    }
+
+    // The close sweep of an application quit reaches the floating window with
+    // a close that is not spontaneous. It hides the window; the pan was still
+    // floating when the session ended.
+    void quit_close_sweep_keeps_the_pan_floating_after_a_restart()
+    {
+        const QStringList ids = MainWindow::panIdsForLayout(QStringLiteral("2v"));
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("2v"), ids);
+            stack.floatPanadapter(QStringLiteral("pan-1"));
+            stack.floatingWindowForTest(QStringLiteral("pan-1"))->close();
+        }
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"), ids);
+        stack.restoreFloatingPans();
+        QVERIFY(stack.isFloating(QStringLiteral("pan-1")));
+    }
+
+    void docked_pan_stays_docked_after_a_restart_data()
+    {
+        QTest::addColumn<int>("how");
+        QTest::newRow("Dock button or close box") << 0;
+        QTest::newRow("a layout that keeps the pan") << 1;
+        QTest::newRow("a layout that retires the pan") << 2;
+        QTest::newRow("the pan removed") << 3;
+    }
+
+    void docked_pan_stays_docked_after_a_restart()
+    {
+        QFETCH(int, how);
+        const QStringList ids = MainWindow::panIdsForLayout(QStringLiteral("2v"));
+        {
+            PanadapterStack stack;
+            stack.applyLayout(QStringLiteral("2v"), ids);
+            stack.floatPanadapter(QStringLiteral("pan-1"));
+            switch (how) {
+            case 0: stack.dockPanadapter(QStringLiteral("pan-1")); break;
+            case 1: stack.applyLayout(QStringLiteral("2h"), ids); break;
+            case 2: stack.applyLayout(QStringLiteral("1"), {QStringLiteral("pan-0")}); break;
+            default: stack.removePanadapter(QStringLiteral("pan-1")); break;
+            }
+        }
+        PanadapterStack stack;
+        stack.applyLayout(QStringLiteral("2v"), ids);
+        stack.restoreFloatingPans();
+        QVERIFY(!stack.isFloating(QStringLiteral("pan-1")));
+    }
+
+    // Persistence audit 2026-11: the dividers inside a row come back too.
+    void nested_dividers_round_trip_data()
+    {
+        QTest::addColumn<QString>("layoutId");
+        QTest::addColumn<int>("rows");
+        QTest::newRow("12h") << QStringLiteral("12h") << 1;
+        QTest::newRow("2x2") << QStringLiteral("2x2") << 2;
+        QTest::newRow("2h1") << QStringLiteral("2h1") << 1;
+        QTest::newRow("3h2") << QStringLiteral("3h2") << 2;
+    }
+
+    void nested_dividers_round_trip()
+    {
+        QFETCH(QString, layoutId);
+        QFETCH(int, rows);
+        const QStringList ids = MainWindow::panIdsForLayout(layoutId);
+        const QSize kStackSize(1000, 800);
+
+        QList<QList<int>> saved;
+        {
+            PanadapterStack stack;
+            stack.resize(kStackSize);
+            stack.applyLayout(layoutId, ids);
+            stack.show();
+            QTest::qWait(10);
+            QCOMPARE(stack.nestedSplitterSizes().size(), rows);
+            for (int row = 0; row < rows; ++row) {
+                // The first pan of the row narrow, the rest sharing the remainder.
+                const int count = stack.nestedSplitterSizes().at(row).size();
+                QList<int> skewed{150};
+                for (int i = 1; i < count; ++i) { skewed << 700 / (count - 1); }
+                stack.nestedSplitterSetSizesForTest(row, skewed);
+            }
+            saved = stack.nestedSplitterSizes();
+            QVERIFY(saved.first().first() < saved.first().last());
+            stack.saveSplitterState();
+        }
+
+        // After a restart the sizes are applied before the window has been
+        // laid out, as MainWindow's buildUI applies them.
+        PanadapterStack restored;
+        restored.resize(kStackSize);
+        restored.applyLayout(layoutId, ids);
+        restored.restoreSplitterState();
+        restored.show();
+        QTest::qWait(10);
+        const QList<QList<int>> sizes = restored.nestedSplitterSizes();
+        QCOMPARE(sizes.size(), saved.size());
+        for (int row = 0; row < sizes.size(); ++row) {
+            QCOMPARE(sizes.at(row).size(), saved.at(row).size());
+            for (int i = 0; i < sizes.at(row).size(); ++i) {
+                QVERIFY2(qAbs(sizes.at(row).at(i) - saved.at(row).at(i)) <= 2,
+                         qPrintable(QStringLiteral("row %1 pan %2: %3 against %4").arg(row).arg(i)
+                                        .arg(sizes.at(row).at(i)).arg(saved.at(row).at(i))));
+            }
+        }
+    }
+
+    // A row key left by an earlier layout, or sizes that do not fit the row,
+    // are not applied.
+    void nested_dividers_ignore_what_does_not_fit()
+    {
+        auto& s = AppSettings::instance();
+        const QStringList quad = MainWindow::panIdsForLayout(QStringLiteral("2x2"));
+        {
+            PanadapterStack stack;
+            stack.resize(1000, 800);
+            stack.applyLayout(QStringLiteral("2x2"), quad);
+            stack.show();
+            QTest::qWait(10);
+            stack.saveSplitterState();
+            QVERIFY(!s.value(QStringLiteral("PanSplitter2Sizes")).toString().isEmpty());
+            stack.applyLayout(QStringLiteral("12h"), MainWindow::panIdsForLayout(QStringLiteral("12h")));
+            QTest::qWait(10);
+            stack.saveSplitterState();
+        }
+        QVERIFY(!s.contains(QStringLiteral("PanSplitter2Sizes")));
+
+        s.setValue(QStringLiteral("PanSplitter1Sizes"), QStringLiteral("100,200,300"));
+        PanadapterStack stack;
+        stack.resize(1000, 800);
+        stack.applyLayout(QStringLiteral("12h"), MainWindow::panIdsForLayout(QStringLiteral("12h")));
+        stack.show();
+        QTest::qWait(10);
+        const QList<int> before = stack.nestedSplitterSizes().first();
+        stack.restoreSplitterState();
+        QCOMPARE(stack.nestedSplitterSizes().first(), before);
+    }
 };
 
 // CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet

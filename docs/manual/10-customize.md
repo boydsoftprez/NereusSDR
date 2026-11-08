@@ -166,6 +166,16 @@ and the **Button text**, **Background top**, **Background bottom**, **Selected
 top** and **Selected bottom** colors for those buttons. The RX applet itself
 keeps every row.
 
+**Phone / CW sections** is one copy of the whole Phone/CW panel. **Page** picks
+whether it shows Phone or CW, and it stays there when you change the slice's
+mode. Each row has its own **Hide** box, as do the Phone and CW buttons
+(**Hide page buttons**), and the block shortens to fit what's left. **Hide PROC
+and VAX** takes both, because they share a row. The copy shows and sets the same
+state as the Phone/CW panel and follows the same transmit rules, so a grayed
+control in the panel is grayed in the copy too. Clicking the Phone or CW button
+in the copy turns its page for now; **Page** is what comes back after a restart.
+The Phone/CW panel itself keeps every row.
+
 **Nereus Band Buttons**, under **Controls** in the add-item menu beside **Band
 Buttons**, draws the band buttons with the raised look of the PureSignal
 button. It has the same settings as **Band Buttons**, plus a **Nereus colours**
