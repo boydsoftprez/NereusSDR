@@ -158,6 +158,8 @@ The 16 October 2026 text update for the PRs merged on 15 and 16 October reran `p
 
 The 5 November 2026 draft for the next release added text only, checked against source at `dfa9e1c29`, which is not a release: Classic and Modern bar faces (chapter 10), AUTO holding through transmit (chapters 3 and 13), the Graphic Legacy Hz boxes (chapter 14), the PureSignal default peak (chapter 18) and a first Roundtable section (chapter 16). No application was run for this text. No figure shows these changes, and the TX EQ capture predates the Hz box arrows. It also removed chapter 14's stale references to a candidate header and an older **Legacy EQ** figure. Chapter 16's Roundtable section covers starting the connection and reading live reports only; messages, naming turns, the archive and moderation are still not documented in this manual.
 
+The 7 November 2026 update added chapter 11's section on a profile marked as in use on another computer, checked against source at `468172af8`, which is not a release. No application was run for this text, and the Take Over dialog has not been seen in a real startup.
+
 ## Evidence still required for publication
 
 Complete the [remaining release screenshot plan](images/README.md) and live

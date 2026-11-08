@@ -19,7 +19,7 @@ its version is independent of the desktop release. The
 
 ### On main since 2026.11.0, not released
 
-As of `354f1a453` (2026-11-07). The next version resolves to 2026.11.1 if it
+As of `468172af8` (2026-11-07). The next version resolves to 2026.11.1 if it
 ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 [CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]` has the operator wording.
 
@@ -35,6 +35,8 @@ ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 | ANAN-G2E radio microphone controls shown, desktop and remote Setup | 736, 738 | Tests only. Microphone audio unconfirmed; issue 730 open. |
 | Roundtable website: helper Review link, Station settings wording | 728 | Server test suite. Station settings wording seen on the live site on 2026-11-05. |
 | A release during a Core stall no longer counts as a lost link, and VOX stays armed; session keepalives on a data channel count from arrival on a key with no "tx" copy read | 756, 761 | Forced-stall tests with red-first proof. Touches transmit. Not run on a radio, a real stall, hosted Linux or Windows; hardware steps are in each PR. |
+| A profile marked as in use on another computer: taken over on a local disk, Take Over or Quit on a network drive, a Core stops with a log message | 744 | Lock tests on macOS and in Windows CI; real SMB share between a Mac and a Pi 5. Not tried: NFS, AFP, Windows as a share client, the dialog in a real startup. |
+| Roundtable sheet's half height holds on an iPad (phone app) | 755 | iPad Pro 11-inch and iPhone 17 UI tests. Ships with the next phone build. |
 
 Also on main, with no operator-facing change and so no release note: PR 749
 (test debts, CI and Windows DLL exports), PR 745 (iOS drag pace test scaling),
@@ -48,11 +50,12 @@ The Windows signal fix still needs a Windows test run; PR 749 names it.
 
 ### Still to come before the next release
 
-Open and not on main as of `354f1a453`, and not described as done anywhere in the
+Open and not on main as of `468172af8`, and not described as done anywhere in the
 docs. Being open does not put a PR in the release; J.J. Boyd decides scope.
 
 - Roundtable overlay redesign and frequency view (PR 741).
-- Station lock from another computer (PR 744).
+- A docked column no longer twitches every second with the TCI box in it (PR 765,
+  reported on Discord by LB3AG).
 - SSB Mod Monitor (PR 752: Brian Sutton W4KZO's PR 742 with review corrections).
 - Right-click AUTO to open AGC/ALC setup (PR 746: Brian Sutton W4KZO's PR 740, corrected).
 - Phone / CW container sections (PR 760: Brian Sutton W4KZO's panel with review corrections).
@@ -62,7 +65,7 @@ docs. Being open does not put a PR in the release; J.J. Boyd decides scope.
 Also open, listed by PR title and not yet read for the notes: 747 (settings that
 revert; carries 750, new receivers start with RIT and XIT off), 751 (FFT and pan
 on the stream's rate on Protocol 2), 753 (Cinnamon file choosers), 754 (container
-dialog when adding a meter), 755 (iPad Roundtable sheet), 757 (hide rows of a
+dialog when adding a meter), 757 (hide rows of a
 Phone/CW container copy, Brian Sutton W4KZO), 758 (a failed speaker or an
 unmute), 764 (streams on the DDCs the radio reports).
 

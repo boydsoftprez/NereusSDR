@@ -9,8 +9,8 @@ At the cut: rename the heading, delete this comment and the "Still to come"
 block, settle the CONFIRM comments, then re-check main against the tag. -->
 
 Changes since desktop/Core 2026.11.0. Update the Core and desktop together.
-The iPhone and iPad app is delivered separately; nothing here needs a new phone
-build.
+The iPhone and iPad app is delivered separately. One fix here, the Roundtable
+sheet on an iPad, is in that app and reaches iPads with its next build.
 <!-- CONFIRM at the cut: hot keys, band stacking and PR 741 may touch the phone. -->
 
 [Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
@@ -51,6 +51,10 @@ build.
   signed-in stations get **Station settings** with clearer wording about keys.
   This is on the website and is not part of the download.
   ([#728](https://github.com/boydsoftprez/NereusSDR/pull/728))
+- **Roundtable sheet on an iPad.** The sheet's half height snapped straight to
+  full on an iPad, so its handle did nothing. Half height now holds and the
+  handle works. Phones are unchanged. This is in the iPhone and iPad app.
+  ([#755](https://github.com/boydsoftprez/NereusSDR/pull/755))
 
 ### Receive
 
@@ -99,18 +103,33 @@ confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
 <!-- CONFIRM at the cut: 756 and 761 have hardware-run steps in their PR bodies.
 If a bench run happens, say so and drop "Not yet tried on a radio". -->
 
+### Startup
+
+- **A profile marked as in use on another computer.** A profile folder that
+  reached this computer after a crash on another one, or from a backup, stayed
+  marked as in use there. The window stopped on **No Core answered** with a
+  **Retry** that never worked, and a Core would not start. Now, when the folder
+  is on a disk in or plugged into this computer, NereusSDR takes the profile
+  over and notes it in the log. On a network drive the window names the other
+  computer and offers **Take Over** or **Quit**, and a Core stops with a log
+  message saying what to do. Tested on a real network share from a Mac and a
+  Raspberry Pi; Windows network drives are not yet tried.
+  ([#744](https://github.com/boydsoftprez/NereusSDR/pull/744))
+
 <!-- Still to come. Delete this block at the cut. None of these are on main at
-354f1a453. Write each one up above only after it lands, checked against the
+468172af8. Write each one up above only after it lands, checked against the
 code, and credit Brian Sutton (W4KZO) on his work: 752 carries 742, 746 carries
 740, 760 carries his Phone / CW panel, and 757 is his.
 - Roundtable overlay redesign and frequency view: PR 741. The Roundtable entries
-  above and chapter 16 will need revising when it lands.
-- Station lock from another computer: PR 744.
+  above and chapter 16 will need revising when it lands. 755 says 741 needs a
+  merge fix in the iPad tests.
+- TCI box no longer makes a docked column twitch every second: PR 765. Reported
+  on Discord by LB3AG; credit LB3AG.
 - SSB Mod Monitor: PR 752, from Brian Sutton's PR 742.
 - Right-click AUTO to open AGC/ALC setup: PR 746, from Brian Sutton's PR 740.
 - Hot keys: PR 759, with a VOX on/off action.
 - Band stacks: PR 748.
-- Also open, not yet read for the notes: 747 (carries 750), 751, 753, 754, 755,
+- Also open, not yet read for the notes: 747 (carries 750), 751, 753, 754,
   757, 758, 760, 764.
 No note needed, on main: 749, 745, 762 and 763 (tests, CI, Windows exports).
 -->
