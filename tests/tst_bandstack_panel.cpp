@@ -19,6 +19,9 @@
 //                 implementation via Anthropic Claude Code.
 //   2026-11-06 - The rows, menus, keys and drag (band stack plan Task 9).
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-07 - Five ctest entries of this binary (TestFunctionGroups),
+//                 near the 120 s limit as one on the Linux runner.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -46,11 +49,13 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "core/AppSettings.h"
 #include "core/RadioDiscovery.h"
 #include "core/UnbuiltFeatureList.h"
 #include "core/settings/SettingsScope.h"
+#include "TestFunctionGroups.h"
 #include "fakes/FakeBandStackAccess.h"
 #include "gui/MainWindow.h"
 #include "gui/bandstack/BandStackPanel.h"
@@ -1574,5 +1579,34 @@ private slots:
     }
 };
 
-QTEST_MAIN(TstBandStackPanel)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TstBandStackPanel test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // 2026-11-07: 109 to 113 s as one entry on the GitHub Linux runner,
+    // against ctest's 120 s limit, and past it once. The time is the real
+    // MainWindows (sixteen of them over the cases that build one). Those
+    // cases run as four entries of the same binary, tst_bandstack_panel_pane,
+    // _keys, _greyed and _window (tests/CMakeLists.txt), each building three
+    // or four windows; tst_bandstack_panel keeps the cases on a bare panel or
+    // row list and whatever is added next. The limit is not raised.
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_BANDSTACK_PANEL_GROUP",
+        {{QStringLiteral("pane"),
+          {QStringLiteral("thePaneHoldsThePanelAndThePanColumn"),
+           QStringLiteral("freeContainersAndSavedSizesSurviveARoundTrip")}},
+         {QStringLiteral("keys"),
+          {QStringLiteral("keysSurviveARelaunchAndStayOnThisDevice"),
+           QStringLiteral("dotsMenuAndCloseToggleIt")}},
+         {QStringLiteral("greyed"),
+          {QStringLiteral("greyedStatesCarryTheirReasons"),
+           QStringLiteral("refusalsAndReportsToastOnce")}},
+         {QStringLiteral("window"),
+          {QStringLiteral("anExpiryNoteOffersUndoForFiveSeconds"),
+           QStringLiteral("theRowsReachTheWindowsSliceAndFlags"),
+           QStringLiteral("capturesOfTheRowsAndMenus")}}});
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_bandstack_panel.moc"
