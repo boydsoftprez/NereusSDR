@@ -13,11 +13,18 @@
 // Modification history (NereusSDR):
 //   2026-11-06: A desktop's fill at connect brings back the radio's saved
 //               layout. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: The RX applet's setup hop is connected once, when the applet
+//               is created, so a right-click works before any connection.
+//               Corrections for review findings. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Each window on a Core keeps its own paint rate (the Display
 //               pill's FPS, DisplayPaintFps). J.J. Boyd (KG4VCF), AI-assisted
 //               via Anthropic Claude Code.
 //   2026-11-05: A window's fill at connect keeps a receiver's RIT and XIT.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-04 - The RX applet's setup hop covers a right-click on AUTO
+//                 as well as on the AGC-T slider. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 //   2026-11-04: The flags' S-meter source follows the window's one S-meter, and
 //               a flag can set it (overlay design D40, D41). Display only: nothing
 //               reaches a slice or the radio. A flag line shows open while the
@@ -13387,6 +13394,19 @@ void MainWindow::populateDefaultMeter()
     m_rxApplet = new RxApplet(nullptr, m_radioModel, nullptr);
     panel->addApplet(m_rxApplet);
 
+    // Right-click the AGC-T slider or AUTO (this panel or an RX AGC
+    // copy) → open Setup dialog to the AGC/ALC page. Connected here, once,
+    // rather than with the slice wiring: Setup opens in every state, so the
+    // right-click works before the first connection, as the tooltip says.
+    connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
+        auto* dialog = createSetupDialog();
+        if (dialog == nullptr) {
+            return;
+        }
+        dialog->selectPage(QStringLiteral("AGC/ALC"));
+        dialog->show();
+    });
+
     // Phase 3P-I-a T16 — push board caps into RxApplet so ANT buttons
     // hide on HL2/Atlas. Matches the VFO Flag wiring below (T15).
     // B3: also push SKU profile so AntennaPopupBuilder knows rxOnlyLabels.
@@ -19223,16 +19243,6 @@ void MainWindow::wireSliceToSpectrum()
         // AUTO button toggle → SliceModel: the applet writes the slice it
         // shows (RxApplet's AUTO click), so it is not routed through the
         // window's active slice here.
-
-        // Right-click AGC-T slider → open Setup dialog to AGC/ALC page
-        connect(m_rxApplet, &RxApplet::openSetupRequested, this, [this]() {
-            auto* dialog = createSetupDialog();
-            if (dialog == nullptr) {
-                return;  // the gate refused and has already said why
-            }
-            dialog->selectPage(QStringLiteral("AGC/ALC"));
-            dialog->show();
-        });
 
         // RxApplet openNbSetupRequested wiring removed 2026-04-22 —
         // RxApplet no longer hosts any NB controls (strict Thetis parity).
