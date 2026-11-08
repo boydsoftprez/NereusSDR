@@ -16,10 +16,21 @@ extension XCUIApplication {
     /// again: a repeat must be seen, not hidden. The app logs each process's
     /// arguments as it starts (`NereusSDRApp.logLaunch`), which tells the two
     /// possible causes apart.
+    ///
+    /// A launch that asks for the band also starts on the Panadapter tab.
+    /// The app keeps the tab last shown and goes back to it when a session
+    /// is connected (``PhoneSettings/navTab``), and the tests share one
+    /// simulator: after a test that ended on Setup, a fixture that starts
+    /// connected (`-NereusKeyedFixture`) opened on Setup's About page, with
+    /// the band's toolbar behind it. The argument covers only this launch's
+    /// reading of the tab; nothing is written.
     @MainActor
     func launchFresh(file: StaticString = #filePath, line: UInt = #line) {
         if state != .notRunning {
             terminate()
+        }
+        if launchArguments.contains("-NereusShowBand") && !launchArguments.contains(Self.startTabKey) {
+            launchArguments += [Self.startTabKey, "panadapter"]
         }
         launch()
         guard launchArguments.contains("-NereusShowBand") else {
@@ -40,4 +51,8 @@ extension XCUIApplication {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
     }
+
+    /// The tab the app goes back to on a connected launch, as a launch
+    /// argument: `PhoneSettings.keyPrefix` + `PhoneSettings.navTabKey`.
+    static let startTabKey = "-phone.nav.tab"
 }
