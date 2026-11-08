@@ -525,7 +525,7 @@ final class BandStackUITests: XCTestCase {
         try skipOnIPad()
         let reason = "This Core does not have band stacks. Updating the Core may help."
         let app = launch(stack: false)
-        app.buttons["display"].tap()
+        tapWhenHittable(app.buttons["display"], timeout: 30, "The toolbar has no Display button")
         let sheet = app.buttons["bandStackMarkersSwitch"]
         reach(sheet, scrolling: element(app, "displaySheet"))
         XCTAssertFalse(sheet.isEnabled, "An older Core's switch can be pressed")
@@ -533,10 +533,8 @@ final class BandStackUITests: XCTestCase {
         save("band-stack-markers-older-sheet")
 
         let pill = launch(stack: false, pill: true)
-        pill.buttons["display"].tap()
-        let tab = element(pill, "displayPillTab.view")
-        XCTAssertTrue(tab.waitForExistence(timeout: 10))
-        tab.tap()
+        tapWhenHittable(pill.buttons["display"], timeout: 30, "The toolbar has no Display button")
+        tapWhenHittable(element(pill, "displayPillTab.view"), timeout: 10, "The pill has no view tab")
         let chip = pill.buttons["displayPillBandStack"]
         reach(chip, scrolling: element(pill, "displayPill"))
         XCTAssertFalse(chip.isEnabled, "An older Core's switch can be pressed")
@@ -800,12 +798,9 @@ final class BandStackUITests: XCTestCase {
     private func setMarkers(_ app: XCUIApplication, on: Bool, id: String, pillTab: String? = nil,
                             opener: String = "display", container: String? = nil) {
         let display = app.buttons[opener]
-        XCTAssertTrue(display.waitForExistence(timeout: 30), "The toolbar has no Display button")
-        display.tap()
+        tapWhenHittable(display, timeout: 30, "The toolbar has no Display button")
         if let pillTab {
-            let tab = element(app, "displayPillTab.\(pillTab)")
-            XCTAssertTrue(tab.waitForExistence(timeout: 10), "The pill has no \(pillTab) tab")
-            tab.tap()
+            tapWhenHittable(element(app, "displayPillTab.\(pillTab)"), timeout: 10, "The pill has no \(pillTab) tab")
         }
         let button = app.buttons[id]
         reach(button, scrolling: element(app, container ?? (pillTab == nil ? "displaySheet" : "displayPill")))
@@ -874,6 +869,17 @@ final class BandStackUITests: XCTestCase {
     @MainActor
     private func choice(_ app: XCUIApplication, _ title: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+    }
+
+    /// Taps `button` once it is there and can be tapped. A button that has
+    /// just appeared after a launch can still be moving into place, and a tap
+    /// then reaches nothing: on a loaded CI runner Display existed but had no
+    /// hit point ("Computed hit point {-1, -1}"), so its sheet never opened.
+    @MainActor
+    private func tapWhenHittable(_ button: XCUIElement, timeout: TimeInterval, _ missing: String) {
+        XCTAssertTrue(button.waitForExistence(timeout: timeout), missing)
+        XCTAssertTrue(waitUntil { button.exists && button.isHittable }, "\(button) is there but cannot be tapped")
+        button.tap()
     }
 
     @MainActor
