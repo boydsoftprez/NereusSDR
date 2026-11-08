@@ -1165,6 +1165,7 @@ set(CORE_SOURCES
     src/core/TxDisplayFeed.cpp
     src/core/TxDisplayFeed.h
     src/core/AmModulationAnalyzer.cpp
+    src/core/SsbModulationAnalyzer.cpp
     src/core/NoiseFloorEstimator.cpp
     src/core/NoiseFloorTracker.cpp
     src/core/ClarityController.cpp
@@ -1460,6 +1461,9 @@ set(CORE_SOURCES
     src/core/session/MirrorEnumDomain.cpp
     src/core/session/MirrorPolicy.cpp
     src/core/session/StateMirror.cpp
+    # Settings persistence audit (W11): what a window changed with the link
+    # down, so it can say the change did not stick.
+    src/core/session/LinkDownEditWatch.cpp
     # iPhone app Task 72 (R-IOS-02): one device's view of the mirror, with
     # its own coalescer, burst and sink; echo withheld from the writer only.
     src/core/session/MirrorView.cpp
@@ -1634,6 +1638,7 @@ list(APPEND CORE_SOURCES
     src/core/session/RxOnlyLinkFit.cpp
     # R-R3-49 / R-IOS-18: the Core's PA Gain profiles for a phone.
     src/core/session/PaProfilesFacade.cpp
+    src/core/session/BandStackFacade.cpp
     # iPhone app Task 25 (D41): the unbuilt features list the catalogue's
     # tools read (the desktop's hide helpers stay in src/gui).
     src/core/UnbuiltFeatureList.cpp
@@ -1645,6 +1650,8 @@ list(APPEND CORE_SOURCES
     # readings on two record streams, and the Core's side that feeds them.
     src/core/session/ModMonitorRecord.cpp
     src/core/session/ModMonitorPublisher.cpp
+    src/core/session/SsbModMonitorRecord.cpp
+    src/core/session/SsbModMonitorPublisher.cpp
     # Parity Task 21 (R-IOS-18): the Core's radios and its choice of one.
     src/core/station/StationRadios.cpp
     # iPhone app Task 71 (R-IOS-02): who holds a place on the Core, and the
@@ -1767,6 +1774,13 @@ set(MODEL_SOURCES
     src/models/ReceiverDspLoadSampler.cpp
     src/models/Band.cpp
     src/models/BandDefaults.cpp
+    src/models/bandstack/BandStackSeeds.cpp
+    src/models/bandstack/BandStackStore.cpp
+    src/models/bandstack/BandStackController.cpp
+    src/models/bandstack/BandStackAccess.h
+    src/models/bandstack/BandStackCommand.cpp
+    src/models/bandstack/LocalBandStackAccess.cpp
+    src/models/bandstack/RemoteBandStackAccess.cpp
     src/models/BandPlanManager.cpp
     src/models/PureSignalSettings.cpp
     src/models/PureSignalSettings.h
@@ -1795,6 +1809,12 @@ set(GUI_SOURCES
     src/gui/SessionEndSave.h
     src/gui/DesktopStationController.cpp
     src/gui/DesktopStationController.h
+    src/gui/bandstack/BandStackPanel.cpp
+    src/gui/bandstack/BandStackPanel.h
+    src/gui/bandstack/BandStackPopup.cpp
+    src/gui/bandstack/BandStackPopup.h
+    src/gui/bandstack/BandStackRowList.cpp
+    src/gui/bandstack/BandStackRowList.h
     src/gui/HostingSliceActions.cpp
     src/gui/HostingSliceActions.h
     src/gui/GuiDesktopStationRuntime.cpp
@@ -2043,6 +2063,7 @@ set(GUI_SOURCES
     src/gui/SpotHubDialog.h
     src/gui/roundtable/RoundtableFirstRunDialog.cpp
     src/gui/roundtable/RoundtableFirstRunDialog.h
+    src/gui/roundtable/RoundtableFrequencyPeek.cpp
     src/gui/roundtable/RoundtablePanel.cpp
     src/gui/roundtable/RoundtablePanel.h
     src/gui/roundtable/RoundtableTagLayout.cpp
@@ -2304,6 +2325,7 @@ set(GUI_SOURCES
     src/gui/applets/TxEqDialog.cpp
     src/gui/applets/TxCfcDialog.cpp
     src/gui/applets/PhoneCwApplet.cpp
+    src/gui/applets/PhoneCwSectionContent.cpp
     src/gui/applets/RadeApplet.cpp
     src/gui/applets/DisplayApplet.cpp
     src/gui/applets/EqApplet.cpp
@@ -2312,6 +2334,7 @@ set(GUI_SOURCES
     src/gui/applets/DigitalApplet.cpp
     src/gui/applets/PureSignalApplet.cpp
     src/gui/applets/ModMonitorApplet.cpp
+    src/gui/applets/SsbModMonitorApplet.cpp
     src/gui/applets/AppletFloatingWindow.cpp
     src/gui/VintageModMeterWidget.cpp
     src/gui/applets/DiversityApplet.cpp
@@ -2336,6 +2359,9 @@ if(APPLE)
         src/gui/hotkeys/MacMenuTrackingWatch.mm)
     set_source_files_properties(src/gui/QtCocoaAccessibilityOwnershipGuard.mm
         src/gui/hotkeys/MacMenuTrackingWatch.mm
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    list(APPEND GUI_SOURCES src/gui/bandstack/BandStackReducedMotion.mm)
+    set_source_files_properties(src/gui/bandstack/BandStackReducedMotion.mm
         PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 # RtMidi: desktop only, never NereusCore or nereusd (R-HK-18). On Linux it needs

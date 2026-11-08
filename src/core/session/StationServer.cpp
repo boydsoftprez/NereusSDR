@@ -1,6 +1,12 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-05: A device's first slice is a new receiver, RIT and XIT off.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: Band stack plan Task 6: the bandStack.* verbs for the hosting desktop.
+//   2026-11-05: Band stack plan Task 4: bandStackVersion 1, the bandStack object and
+//               the bandStack.* gate (peerGetsBandStack).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Hot keys (R-HK-13), remote dot and dash: cw.paddle, remoteCwVersion 3.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-31: Strip legacy Roundtable fields by record type, preserving RF kind.
@@ -1181,6 +1187,10 @@
 //               the taker through it: on a Core no desktop hosts the
 //               Core's own position was named with nothing. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-05: a release that ended a key tells the watchdog it was read,
 //               so a watch left only for VOX counts its silence afresh. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1206,6 +1216,8 @@
 #include "core/session/MediaTunnel.h"
 #include "core/session/ModMonitorPublisher.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorPublisher.h"
+#include "core/session/SsbModMonitorRecord.h"
 
 #include "core/AppSettings.h"
 #include "core/BuildIdentity.h"
@@ -1268,6 +1280,7 @@
 #include "core/session/StationOpeningGate.h"
 #include "core/session/StateMirror.h"
 #include "core/session/StationCatalog.h"
+#include "core/session/BandStackFacade.h"
 #include "core/session/PaProfilesFacade.h"
 #include "core/PaProfileManager.h"
 #include "core/session/StationDevicesFacade.h"
@@ -1707,6 +1720,16 @@ bool isSetupDescriptionMessage(const SessionMessage& message)
 
 // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA Gain profiles.
 constexpr const char* kPaProfilesKey = "paProfiles";
+
+// Band stack plan Task 4 (bandStackVersion 1): the Core's band stack.
+constexpr const char* kBandStackKey = "bandStack";
+
+bool isBandStackMessage(const SessionMessage& message)
+{
+    return message.objectKey == kBandStackKey
+        || (message.kind == SessionMessageKind::Schema
+            && message.className == "BandStackFacade");
+}
 
 bool isPaProfilesMessage(const SessionMessage& message)
 {
@@ -2827,7 +2850,10 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                               // Core-slice take-over: 3.
                               {QByteArrayLiteral("sliceAccess"), 3},
                               {QByteArrayLiteral("diversityControl"), 1},
-                              {QByteArrayLiteral("diversityPattern"), 1}};
+                              {QByteArrayLiteral("diversityPattern"), 1},
+                              // Band stack plan Task 4: the hosting desktop's
+                              // own window uses the same verbs.
+                              {QByteArrayLiteral("bandStack"), 1}};
     m_stationPeer.deviceId = SliceOwnership::stationDevice();
     m_stationPeer.sessionDeviceId = SliceOwnership::stationDevice();
     m_stationPeer.placeSettled = true;
@@ -3766,6 +3792,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     setUpCoreLogStream();
     // R-IOS-13 / R-R3-49: and the AM Mod Monitor's two streams.
     setUpModMonitorStreams();
+    setUpSsbModMonitorStreams();
     // Roundtable plan Task 11: and Roundtable's rooms.
     setUpRoundtable();
 
@@ -3920,6 +3947,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         // R-IOS-13 / R-R3-49: the Mod Monitor's reset is the Core's too.
         if (invoke.commandVerb == "txModMonitor.reset") {
             handleModMonitorReset(m_dispatchingTransport, invoke);
+        } else if (invoke.commandVerb == "txSsbModMonitor.reset") {
+            handleSsbModMonitorReset(m_dispatchingTransport, invoke);
         } else {
             handleRecordsCommand(m_dispatchingTransport, invoke);
         }
@@ -4200,14 +4229,14 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 }
             });
 
-    // JJ 2026-10-23: devices admitted to a Core inside a desktop window
-    // before its radio connected are placed once it has (after the other
+    // JJ 2026-10-23: devices admitted to a Core before its radio connected
+    // are placed once it has (after the other
     // Connected handlers, so the window's starting slice exists).
     if (m_radioModel) {
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,
                 [this](ConnectionState state) {
                     if (state != ConnectionState::Connected || m_placementAwaitingRadio.isEmpty()
-                        || m_radioModel.isNull() || m_radioModel->currentRadioMac().isEmpty()) {
+                        || m_radioModel.isNull()) {
                         return;
                     }
                     const QSet<QByteArray> waiting = std::exchange(m_placementAwaitingRadio, {});
@@ -5365,6 +5394,14 @@ void StationServer::invokeAsStationDevice(const SessionMessage& invoke, StationA
         QByteArrayLiteral("diversity.setTarget"),
         QByteArrayLiteral("slice.setListenLevel"), QByteArrayLiteral("confirm.proceed"),
         QByteArrayLiteral("confirm.cancel"),     QByteArrayLiteral("notice.takeBack"),
+        // Band stack plan Task 6: the hosting desktop's stack (design V15).
+        QByteArrayLiteral("bandStack.press"),    QByteArrayLiteral("bandStack.step"),
+        QByteArrayLiteral("bandStack.goTo"),     QByteArrayLiteral("bandStack.add"),
+        QByteArrayLiteral("bandStack.saveHere"), QByteArrayLiteral("bandStack.edit"),
+        QByteArrayLiteral("bandStack.delete"),   QByteArrayLiteral("bandStack.reorder"),
+        QByteArrayLiteral("bandStack.setReturn"), QByteArrayLiteral("bandStack.clear"),
+        QByteArrayLiteral("bandStack.reseed"),   QByteArrayLiteral("bandStack.options"),
+        QByteArrayLiteral("bandStack.restoreExpired"),
     };
     if (invoke.kind != SessionMessageKind::CommandInvoke
         || !kHostVerbs.contains(invoke.commandVerb)) {
@@ -6094,6 +6131,10 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
     // R-IOS-13 / R-R3-49: the Mod Monitor stops with its last watcher.
     if (m_modMonitor) {
         m_modMonitor->subscriptionsChanged();
+        if (!self) { return; }
+    }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->subscriptionsChanged();
         if (!self) { return; }
     }
     if (!view.isNull()) {
@@ -6962,6 +7003,16 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                     message.commandVerb, message.commandId, false, refusal, {}));
                 break;
             }
+        }
+        // Band stack plan Task 4 (bandStackVersion 1): the bandStack.* verbs,
+        // to a peer that declared bandStack on a Core that runs the stack.
+        if (message.commandVerb.startsWith("bandStack.") && !peerGetsBandStack(transport)) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                !m_radioModel.isNull() && m_radioModel->role() == RadioModel::Role::Remote
+                    ? QStringLiteral("This Core cannot share band stacks with this app.")
+                    : QStringLiteral("Update this app to use band stacks on this Core."), {}));
+            break;
         }
         if (message.commandVerb == "tx.twoTonePreset"
             && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
@@ -8649,6 +8700,9 @@ void StationServer::buildMirror()
     // to a peer that declared paProfiles (sendToPeer).
     m_paProfiles->refresh();
     m_mirror->watch(QByteArray(kPaProfilesKey), m_paProfiles.get());
+    // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack, only
+    // to a peer that declared bandStack (sendToPeer).
+    m_mirror->watch(QByteArray(kBandStackKey), m_radioModel->bandStackFacade());
     m_setupDescription->setRadioContext(m_radioModel->boardCapabilities(),
                                         m_radioModel->hardwareProfile().model,
                                         m_radioModel->currentRadioInfo());
@@ -9568,8 +9622,9 @@ void StationServer::applyBandPlanSetting(const QString& key)
 QString StationServer::sliceSettingsRefusal(SessionTransport* transport, const QString& key) const
 {
     // Slice<N>/... is SliceModel's per-slice, per-band state (Station
-    // scope). A slice's NNR keys, hardware/<mac>/slices/<N>/nnr/..., are
-    // model-owned and refused to every writer already.
+    // scope). A slice's NNR keys, hardware/<mac>/slices/<N>/nnr/..., and its
+    // saved rate, hardware/<mac>/slices/<N>/SampleRate, are model-owned and
+    // refused to every writer already.
     static const QRegularExpression kSliceKey(QStringLiteral("^Slice(\\d+)/"));
     const QRegularExpressionMatch match = kSliceKey.match(key);
     if (!match.hasMatch() || m_radioModel.isNull()) {
@@ -10504,6 +10559,11 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
         if (isPaProfilesMessage(message) && !peerGetsPaProfiles(transport)) {
             return;
         }
+        // Band stack plan Task 4: nor the band stack to a peer that did not
+        // declare bandStack.
+        if (isBandStackMessage(message) && !peerGetsBandStack(transport)) {
+            return;
+        }
         // iPhone app Task 19: nor the catalogue to an older app.
         if (isCatalogMessage(message)
             && (minor < kRadioIdentitySessionProtocolMinor || stationCatalogVersion() < 1)) {
@@ -10578,6 +10638,16 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
 }
 
 // ── The read-only TX EQ curve (R-IOS-13, R-R3-49) ───────────────────────
+
+bool StationServer::peerGetsBandStack(SessionTransport* transport) const
+{
+    // peerPtr, not m_peers: the station device's own peer is not in m_peers.
+    const Peer* peer = peerPtr(transport);
+    return peer != nullptr && !m_radioModel.isNull()
+        && m_radioModel->role() != RadioModel::Role::Remote
+        && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(transport, QByteArrayLiteral("bandStack"), 1);
+}
 
 bool StationServer::peerGetsPaProfiles(SessionTransport* transport) const
 {
@@ -12216,6 +12286,9 @@ TxRefusal StationServer::freezeRefusalFor(const SessionMessage& message) const
     }
     if (message.kind == SessionMessageKind::CommandInvoke
         && (message.commandVerb == "removeSlice" || message.commandVerb == "slice.selectBand"
+            // Band stack plan Task 4: a recall retunes the slice.
+            || message.commandVerb == "bandStack.press" || message.commandVerb == "bandStack.step"
+            || message.commandVerb == "bandStack.goTo"
             // Slice control fix wave (whole-branch review, Critical 1):
             // leaving the frozen slice could close it under the key.
             || message.commandVerb == "slice.release"
@@ -12337,7 +12410,11 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     // device's letter from the saved layout, which it reads when the radio
     // connects (RadioModel::addStartingSlices). A device admitted before
     // that is placed when the radio connects, so it neither takes a letter
-    // kept for another device nor leaves the window without one. An older
+    // kept for another device nor leaves the window without one. A headless
+    // Core waits the same way: a device's saved slices are stored per radio,
+    // so with no radio it would get a new slice and not its own. A token
+    // window has no saved slices to wait for, and a connected radio with no
+    // MAC has no store to read, so those are placed now. An older
     // window (no sessionHolder) needs its slice at admission or it is
     // refused (olderWindowWithoutSliceReason), so it is placed now, as
     // before.
@@ -12348,8 +12425,10 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
             break;
         }
     }
-    if (holdsSessions && m_radioModel->hostsStationDevice()
-        && m_radioModel->currentRadioMac().isEmpty()) {
+    const bool waitsForItsLayout = m_radioModel->hostsStationDevice()
+        || (!deviceId.startsWith("token:")
+            && m_radioModel->connectionState() != ConnectionState::Connected);
+    if (holdsSessions && waitsForItsLayout && m_radioModel->currentRadioMac().isEmpty()) {
         m_placementAwaitingRadio.insert(deviceId);
         m_connectedDevices->refresh();
         return;
@@ -12412,7 +12491,8 @@ void StationServer::placeSlicesForAdmission(const QByteArray& deviceId)
     //    it starts with none.
     if (ownership->ownedBy(deviceId).isEmpty()) {
         const SliceOwnership::CreatorScope creator(ownership, deviceId);
-        if (m_radioModel->addSlice(QString()) < 0) {
+        if (m_radioModel->addSlice(QString(), /*restoreSavedState=*/false,
+                                   /*newReceiver=*/true) < 0) {
             qCInfo(lcStation) << "A device was admitted with no slice: the slice cap is full";
         }
     }
@@ -12441,6 +12521,17 @@ bool StationServer::closeSliceFor(int sliceId, const QByteArray& saveFor, SavedS
     saved.frequencyHz = slice->frequency();
     saved.dspMode = slice->dspMode();
     const QString mac = m_radioModel->currentRadioMac();
+    // Persistence audit: with no radio connected there is no layout store to
+    // save in (as saveTakenSlicesFor), so the slice of a device that can come
+    // back stays, with its keys, held for it. Its next admission returns it,
+    // and the end of its next away period saves it. A device that was removed
+    // has nothing to come back to, so its slice closes.
+    if (unclaimed && !saveFor.isEmpty() && mac.isEmpty() && m_devices->find(saveFor)) {
+        m_radioModel->sliceOwnership()->hold(sliceId, saveFor);
+        if (!self || !m_radioModel) return false;
+        m_radioModel->requestSettingsSave();
+        return false;
+    }
     // Removing saves the slice's own settings to its keys first.
     if (unclaimed) {
         m_radioModel->closeUnclaimedSlice(sliceId);
@@ -13850,6 +13941,11 @@ int StationServer::txModMonitorVersion() const
     return recordStreamVersion() >= 1 && m_modMonitor != nullptr ? 1 : 0;
 }
 
+int StationServer::txSsbModMonitorVersion() const
+{
+    return recordStreamVersion() >= 1 && m_ssbModMonitor != nullptr ? 1 : 0;
+}
+
 int StationServer::mediaReplaceVersion() const
 {
     // iPhone app plan Task 29 (R-IOS-16): the media `replace` operation,
@@ -15150,6 +15246,9 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // R-R3-49 / R-IOS-18: the PA Gain profiles, to a peer that
             // declared paProfiles 1.
             caps.paProfileVersion = peerGetsPaProfiles(transport) ? 1 : 0;
+            // Band stack plan Task 4: the Core's band stack, to a peer that
+            // declared bandStack 1 (before coreBuildInfo on the wire).
+            caps.bandStackVersion = peerGetsBandStack(transport) ? 1 : 0;
             // R-R3-47 / R-R3-22: the Tuner Genius's own settings.
             caps.remoteTgxlControlVersion = tgxlControlVersion();
             // iPhone app Task 12 (R-IOS-08): device sign-in by key, last.
@@ -15273,6 +15372,7 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // R-IOS-13 / R-R3-49: the AM Mod Monitor's readings, appended
             // after remoteIqVersion by StationCapabilities::toUpdates().
             caps.txModMonitorVersion = txModMonitorVersion();
+            caps.txSsbModMonitorVersion = txSsbModMonitorVersion();
             // Optional and last: old peers retain their exact descriptor.
             caps.miniDisplayVersion = media && peerDeclares(
                 transport, QByteArrayLiteral("miniDisplay"), 1) ? 1 : 0;
@@ -15682,6 +15782,9 @@ void StationServer::flushRecordStreams()
     if (m_modMonitor) {
         m_modMonitor->flushed();
     }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->flushed();
+    }
 }
 
 void StationServer::handleRecordsCommand(SessionTransport* transport, const SessionMessage& message)
@@ -15762,6 +15865,9 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
         if (m_modMonitor) {
             m_modMonitor->subscriptionsChanged();
         }
+        if (m_ssbModMonitor) {
+            m_ssbModMonitor->subscriptionsChanged();
+        }
         return;
     }
     // The answer, then the backlog as a reset: the peer's copy starts from
@@ -15772,6 +15878,9 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
     send(transport, SessionMessages::recordBatch(fitRecordBatchToPeer(transport, first)));
     if (m_modMonitor) {
         m_modMonitor->subscriptionsChanged();
+    }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->subscriptionsChanged();
     }
     // Parity Task 33: a viewer of the CFC display may start the reads.
     updateCfcCompressionPolling();
@@ -16486,6 +16595,55 @@ void StationServer::handleModMonitorReset(SessionTransport* transport,
         && message.arguments.first().kind == MirrorWireKind::Int64;
     const qlonglong source = readable ? message.arguments.first().value.toLongLong() : -1;
     if ((source != 0 && source != 1) || !m_modMonitor->resetSource(static_cast<int>(source))) {
+        answer(false, QStringLiteral("The Core could not read this request."));
+        return;
+    }
+    answer(true, QString());
+}
+
+void StationServer::setUpSsbModMonitorStreams()
+{
+    if (m_radioModel.isNull() || recordStreamVersion() < 1) {
+        return;
+    }
+    if (m_recordFlushTimer == nullptr) {
+        m_recordFlushTimer = new QTimer(this);
+        m_recordFlushTimer->setSingleShot(true);
+        m_recordFlushTimer->setInterval(kDefaultDeltaFlushMs);
+        connect(m_recordFlushTimer, &QTimer::timeout, this, &StationServer::flushRecordStreams);
+    }
+    std::array<RecordStream*, 2> streams{};
+    for (int source = 0; source < 2; ++source) {
+        const QString name = SsbModMonitorRecord::streamName(source);
+        auto stream = std::make_unique<RecordStream>(name, SsbModMonitorRecord::kCapacity);
+        streams[static_cast<std::size_t>(source)] = stream.get();
+        m_recordStreams.emplace(name, std::move(stream));
+    }
+    m_ssbModMonitor = std::make_unique<SsbModMonitorPublisher>(
+        m_radioModel.data(), streams[0], streams[1], [this]() { scheduleRecordFlush(); });
+}
+
+void StationServer::handleSsbModMonitorReset(SessionTransport* transport,
+                                             const SessionMessage& message)
+{
+    const auto answer = [this, transport, &message](bool accepted, const QString& reason) {
+        send(transport, SessionMessages::commandResult(message.commandVerb, message.commandId,
+                                                       accepted, reason, {}));
+    };
+    if (peerFor(transport).agreedMinor < kRadioIdentitySessionProtocolMinor) {
+        answer(false, QStringLiteral("Update this app to see the Core's SSB modulation monitor."));
+        return;
+    }
+    if (txSsbModMonitorVersion() < 1 || m_ssbModMonitor == nullptr) {
+        answer(false, QStringLiteral("This Core does not send the SSB modulation monitor. "
+                                     "Updating the Core may help."));
+        return;
+    }
+    const bool readable = message.arguments.size() == 1
+        && message.arguments.first().name == "source"
+        && message.arguments.first().kind == MirrorWireKind::Int64;
+    const qlonglong source = readable ? message.arguments.first().value.toLongLong() : -1;
+    if ((source != 0 && source != 1) || !m_ssbModMonitor->resetSource(static_cast<int>(source))) {
         answer(false, QStringLiteral("The Core could not read this request."));
         return;
     }

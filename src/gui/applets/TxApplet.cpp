@@ -2877,7 +2877,7 @@ void TxApplet::wirePowerSection(TxPowerSection* s)
         // Thetis ptbTune_Scroll (console.cs:46607-46630 [v2.10.3.15]) writes
         // tunePower_by_band and never _tuneDrivePowerSource.
         if (tx.setTunePowerForTxBand(val)) { return; }
-        tx.setTunePowerForBand(m_currentBand, val);
+        tx.setTunePowerWithNoBand(m_currentBand, val);
     });
 
     connectRow(s, s->tunePowerSlider(), &QSlider::sliderReleased, [this, s]() {

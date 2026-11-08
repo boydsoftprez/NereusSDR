@@ -51,6 +51,7 @@
 #include "core/wdsp_api.h"
 #include "gui/meters/MeterPoller.h"
 #include "models/RadioModel.h"
+#include "core/AppSettings.h"
 #include "models/SliceModel.h"
 
 using namespace NereusSDR;
@@ -584,6 +585,41 @@ private slots:
         engine.shutdown();
         engine.setReceiveLane(nullptr);
         lane.stop();
+    }
+
+    // Setup changes every receiver and the radio's rate. Each slice's saved
+    // rate has to follow, or the next connect puts the old one back
+    // (applySavedSliceSampleRates) though the operator never touched the slice.
+    void aRadioWideRateChangeIsSavedOnEachSlice()
+    {
+        AppSettings::instance().clear();
+        RadioModel model;
+        P1RadioConnection conn;
+        model.injectConnectionForTest(&conn);
+        DetachConnection detach{&model};
+
+        WdspEngine* engine = model.wdspEngine();
+        engine->m_initialized = true;   // friend access (NEREUS_BUILD_TESTS)
+        model.configureStreamPool(1, 1, kRateHz);
+        const int id = model.addSlice();
+        QVERIFY(id >= 0);
+        model.openRxChannelPool(1, bufferSizeForRate(kRateHz), kRateHz);
+        QVERIFY(model.waitForReceiveLaneForTest(kLaneIdleTimeoutMs));
+
+        SliceModel* slice = model.sliceById(id);
+        QVERIFY(slice != nullptr);
+        // The saved rate is per radio, so a slice with no radio saves none.
+        slice->setSettingsRadioIdentity(QStringLiteral("00:1c:c0:a2:13:dd"));
+        slice->saveToSettings(bandFromFrequency(slice->frequency()));
+        QCOMPARE(slice->savedSampleRateHz(), kRateHz);
+
+        QSignalSpy finished(&model, &RadioModel::sampleRateChangeFinished);
+        model.setSampleRateLiveAsync(kRateHz * 2);
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, kLaneIdleTimeoutMs);
+        QCOMPARE(slice->sampleRateHz(), kRateHz * 2);
+
+        model.flushPendingSettingsSave();
+        QCOMPARE(slice->savedSampleRateHz(), kRateHz * 2);
     }
 
     // setSampleRateLiveAsync returns at once and finishes exactly once; a

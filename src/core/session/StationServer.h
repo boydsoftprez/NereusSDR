@@ -182,6 +182,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 5: isBandStackRecall, handleBandStackRecall.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Band stack plan Task 4: peerGetsBandStack.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCwVersion 3.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-30: Negotiate frequency chat only with version2 peers.
@@ -621,6 +625,8 @@
 //               answers remembered per session (their copies); the CW
 //               settings on `transmit` only to a peer that declared
 //               cwSettings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -686,6 +692,7 @@ class SliceAccessController;
 class ConnectedDevicesFacade;
 class DeviceSessionRegistry;
 class ModMonitorPublisher;
+class SsbModMonitorPublisher;
 class RadioModel;
 class SessionCommandDispatcher;
 class SessionTransport;
@@ -1430,6 +1437,10 @@ public:
     int txModMonitorVersion() const;
     /// For a test: the Core's side of the Mod Monitor streams, or null.
     ModMonitorPublisher* modMonitorPublisherForTest() const { return m_modMonitor.get(); }
+    /// 1 when the SSB Mod Monitor streams are up. Readings go out while a
+    /// subscriber watches and the radio is keyed in USB or LSB.
+    int txSsbModMonitorVersion() const;
+    SsbModMonitorPublisher* ssbModMonitorPublisherForTest() const { return m_ssbModMonitor.get(); }
     // iPhone app plan Task 29 (R-IOS-16; link section 21): mediaReplaceVersion
     // 1 whenever media is on (the media `replace` operation);
     // controlSwitchVersion 1 always (session.pathTicket, path.join and
@@ -2019,6 +2030,8 @@ private:
     // R-IOS-13 / R-R3-49: the Mod Monitor's two streams and txModMonitor.reset.
     void setUpModMonitorStreams();
     void handleModMonitorReset(SessionTransport* transport, const SessionMessage& message);
+    void setUpSsbModMonitorStreams();
+    void handleSsbModMonitorReset(SessionTransport* transport, const SessionMessage& message);
     // R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     // txEq.resetCurve, applied as this peer's txEqParaEqData write
     // (applyPropertyWrite), so every rule that write meets applies.
@@ -2160,6 +2173,9 @@ private:
     /// R-R3-49 / R-IOS-18: paProfileVersion 1 reaches `transport` (minor 11,
     /// a Core with its own PA profile bank, and paProfiles 1 declared).
     bool peerGetsPaProfiles(SessionTransport* transport) const;
+    /// Band stack plan Task 4: bandStackVersion 1 reaches `transport` (minor 11,
+    /// a Core that runs the stack, and bandStack 1 declared).
+    bool peerGetsBandStack(SessionTransport* transport) const;
     /// The refusal a PA profile change from `transport` meets, the one the
     /// settings path gives the desktop's own hardware/<mac>/pa/... writes
     /// (receive-only refusal unless transmit settings were offered; the
@@ -2284,7 +2300,10 @@ private:
     /// request, saving it for `saveFor` when set; false (nothing done)
     /// when it is the Core's last slice. Slice control plan Task 8:
     /// `unclaimed` closes only a slice nobody controls or listens to,
-    /// whatever the count (RadioModel::closeUnclaimedSlice).
+    /// whatever the count (RadioModel::closeUnclaimedSlice). With no radio
+    /// connected such a slice is not closed when it would be saved for a
+    /// paired device: it is held for that device instead, and this returns
+    /// false.
     bool closeSliceFor(int sliceId, const QByteArray& saveFor, SavedSlice* closed = nullptr,
                        bool unclaimed = false);
     /// Fix wave C2 (ruling 5.2, its last paragraph): the paired device a
@@ -2536,6 +2555,13 @@ private:
     /// A command about receivers (the pin, a C-Tune move, adding a slice or
     /// a pan) under the anchor and take rules. True when it answered.
     bool handleReceiverCommand(SessionTransport* transport, const SessionMessage& message);
+    /// Band stack plan Task 5: bandStack.press, bandStack.step or bandStack.goTo.
+    static bool isBandStackRecall(const SessionMessage& message);
+    /// A recall under the anchor and take rules (design 5.6), checked against
+    /// where planRecall says it would go. True when it answered; false for the
+    /// dispatcher to run it or refuse it.
+    bool handleBandStackRecall(SessionTransport* transport, const SessionMessage& message,
+                               const QByteArray& requester);
     /// A slice retune that leaves its shared receiver (ruling 6.5). True
     /// when it answered.
     bool handleSliceRetune(SessionTransport* transport, const SessionMessage& message);
@@ -3068,6 +3094,7 @@ private:
     QJsonObject m_lastVaxLevels;
     // R-IOS-13 / R-R3-49: the Core's side of the Mod Monitor streams.
     std::unique_ptr<ModMonitorPublisher> m_modMonitor;
+    std::unique_ptr<SsbModMonitorPublisher> m_ssbModMonitor;
     // Parity Task 21: the Core's radios and their stream.
     QPointer<StationRadios> m_stationRadios;
     void publishStationRadios();

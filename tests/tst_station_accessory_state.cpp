@@ -701,6 +701,8 @@ private slots:
                     QByteArrayLiteral("accessoryTxVersion"),
                     // Rotor control plan Task 4b: the Core's rotor.
                     QByteArrayLiteral("remoteRotorControlVersion"),
+                    // SSB Mod Monitor: after the rotor.
+                    QByteArrayLiteral("txSsbModMonitorVersion"),
                 };
                 QList<QByteArray> actualTail;
                 QVERIFY(m.updates.size() >= expectedTail.size());

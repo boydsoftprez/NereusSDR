@@ -290,6 +290,15 @@ bool DaemonApp::start(const DaemonConfig& cfg)
         m_selectedRadioMac = !pending.isEmpty() ? pending
             : !saved.isEmpty()                 ? saved
                                                : cfg.radioMac;
+        // Editing radio_mac does nothing once a radio has been chosen, so
+        // say which one is in use, like the sample rate and speaker device.
+        if (pending.isEmpty() && !saved.isEmpty() && !cfg.radioMac.isEmpty()
+            && saved.compare(cfg.radioMac, Qt::CaseInsensitive) != 0) {
+            qCInfo(lcApp).noquote()
+                << QStringLiteral("DaemonApp: using the saved radio %1 (the config "
+                                  "file's %2 is only a starting value)")
+                       .arg(saved, cfg.radioMac);
+        }
         m_stationRadios->setTarget(m_selectedRadioMac);
     }
     m_radioAttempted = false;
@@ -520,6 +529,9 @@ bool DaemonApp::start(const DaemonConfig& cfg)
     // edits must be tracked even if layout writeback awaits radio admission.
     m_radioModel->beginStationHandoverEditTracking();
     m_stationHost->start();
+    // Startup is done: a client's transmit write from here is an edit, kept
+    // for the radio if none has connected yet.
+    m_radioModel->keepTransmitEditsWithoutRadio();
     const QPointer<DaemonApp> catStartSelf(this);
     const QPointer<RadioModel> catStartModel(m_radioModel.get());
     m_radioModel->catService()->startConfigured();
@@ -608,6 +620,12 @@ void DaemonApp::stop()
     if (!m_radioModel) {
         m_stepAttController.reset();
         m_stepAttControllerConfigured = false;
+        // No model teardown and no final save below, and a window or phone
+        // may have written a value the timed save has not reached yet.
+        QString error;
+        if (!AppSettings::instance().flushTimedSave(&error)) {
+            qCWarning(lcApp) << "DaemonApp: settings not saved at stop:" << error;
+        }
         return;
     }
 

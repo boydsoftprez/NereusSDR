@@ -1851,6 +1851,9 @@ nereus_add_test(tst_band_2m_stores)
 nereus_add_test(tst_band_link_fit EXTRA_LABELS session)
 nereus_add_test(tst_slice_has_settings_for)
 nereus_add_test(tst_band_defaults)
+nereus_add_test(tst_bandstack_seeds)
+nereus_add_test(tst_bandstack_store)
+nereus_add_test(tst_bandstack_controller)
 nereus_add_test(tst_radio_model_band_click)
 
 # ── About dialog ─────────────────────────────────────────────────────────
@@ -2058,6 +2061,13 @@ nereus_add_test(tst_mic_profile_manager)
 # peak-reading analyzer: +/- peak %, carrier tracking, no-carrier, peak
 # hold vs window peaks, reset; applet flasher latch + carrier lamp.
 nereus_add_test(tst_am_modulation_analyzer)
+nereus_add_test(tst_ssb_modulation_analyzer)
+# The SSB Mod Monitor's gating, publisher, record and applet.
+nereus_add_test(tst_ssb_mod_monitor
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_ssb_mod_monitor PRIVATE NEREUS_BUILD_TESTS)
 
 # ── AppletPanelWidget float / dock round-trip (AM Mod Monitor pop-out) ──
 nereus_add_test(tst_applet_float_dock)
@@ -3110,6 +3120,11 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # Structurally ported from AetherSDR src/gui/PanadapterStack.{h,cpp}
 # [@0cd4559]; applyLayout / floatPanadapter / rebuildSplitters stubbed for
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
+# Persistence audit 2026-11: what the main window brings back after a restart.
+# A file of its own because these build the whole window more than once per
+# function, and tst_panadapter_stack_layouts is already split for load.
+nereus_add_test(tst_window_layout_restart)
+
 nereus_add_test(tst_panadapter_stack_layouts fakes/LoopbackTransport.cpp)
 # CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet Linux
 # runner and timed out in a busy one (PR 657, run 40260509791), so four
@@ -4188,6 +4203,7 @@ nereus_add_test(tst_tx_applet_lev_eq_cfc)
 nereus_add_test(tst_tx_section_content)
 nereus_add_test(tst_rx_section_content)
 target_compile_definitions(tst_rx_section_content PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_phone_cw_section_content)
 
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".
@@ -5712,12 +5728,15 @@ nereus_add_test(tst_vax_tx_mic_source)
 target_compile_definitions(tst_vax_tx_mic_source PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Mic_Source pre-connect persistence fallback (eager-borg-d64bed) ──────────
-# Verifies the pre-connect global key fallback added so the user's
-# Setup -> Audio -> TX Input click survives even when no radio is
-# bound at click time.  Cases: pre-connect click writes global,
-# load with no per-MAC uses fallback, per-MAC overrides preconnect,
-# post-connect writes don't touch preconnect, first-run defaults to Pc.
+# The old pre-connect global key, read only since 2026-11-05: a click with no
+# radio is held instead, load with no per-MAC uses the old key, per-MAC
+# overrides it, post-connect writes don't touch it, first-run defaults to Pc.
 nereus_add_test(tst_transmit_model_mic_source_preconnect)
+
+# Transmit edits made with no radio: kept for the next radio (JJ's ruling
+# 2026-11-05), and no startup path, window or Core, holds a write nobody made.
+nereus_add_test(tst_transmit_held_edits)
+target_compile_definitions(tst_transmit_held_edits PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-VAX-toggle: TransmitModel previousNonVaxMicSource + toggleVaxSource ──
 # Verifies the model-layer plumbing for the PhoneCwApplet VAX button:
@@ -6658,6 +6677,12 @@ target_compile_definitions(tst_display_fft_sizing PRIVATE
 # zoom on the second pan sizes the engine of the stream it shows, and
 # applyFftBaseline() makes the Size control's choice every engine's floor.
 nereus_add_test(tst_display_fft_replan)
+
+# Issue 701: on Protocol 2 the wire-rate signal leaves each FFT engine and the
+# active pan on the rate of their own stream, so a band's saved slice rate
+# does not stretch the panadapter. Protocol 1 and an inactive stream keep the
+# wire rate.
+nereus_add_test(tst_pan_rate_follows_stream)
 
 # Display pill plan Task 9: PanModels, a per-band PanadapterModel for every
 # window pan. The pan's band follows its centre, the band's stored dB Max
@@ -8140,6 +8165,12 @@ if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_station_tci_server fakes/LoopbackTransport.cpp)
     target_link_libraries(tst_station_tci_server PRIVATE Qt6::WebSockets Qt6::Network)
 endif()
+# The TCI clients box keeps its Core client rows when a refresh brings the
+# same list, and changes them when an app connects, leaves or changes.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_client_chain_applet)
+    target_link_libraries(tst_client_chain_applet PRIVATE Qt6::WebSockets)
+endif()
 # CAT setup from a connected desktop (stationCatVersion 1): the Core's
 # `stationCat` object follows CatService, its four commands apply and refuse,
 # a binding resolves to the live slice, only a peer that declared stationCat
@@ -8560,6 +8591,11 @@ target_compile_definitions(tst_spectrum_widget_cal_offset PRIVATE
 # property setter, so the VFO menu reported the saved rate while the receiver,
 # codec and wire stayed on the previous band's.
 nereus_add_test(tst_restored_sample_rate_reaches_the_ddc)
+
+# The sample rate an operator chose has to stick: a new slice on its own
+# receiver opens at the rate in use, and a device's slice made again on a
+# running Core comes back at its saved rate.
+nereus_add_test(tst_sample_rate_sticks)
 
 # Codex review round 6, PR #293: Phase 3F gave TCI more slices than TCI ever
 # agreed to talk about. tx_frequency must come from the slice TxSliceArbiter
@@ -10289,6 +10325,9 @@ nereus_add_test(tst_roundtable_containers fakes/RemoteWindowHarness.cpp)
 # lone neighbor moves aside, folds widen only when the tags don't fit),
 # the tags a model gives, and how each link state shows them.
 nereus_add_test(tst_roundtable_tag_layout)
+# Overlay redesign D21 to D24: the floating view of another frequency: what it
+# says, the Tune gates, Your pan and how it closes, offscreen.
+nereus_add_test(tst_roundtable_frequency_peek)
 # Roundtable plan Task 14: the Roundtable line on a VFO flag: members and
 # who talks, @N, "N hear you" while keyed, the link state when not live,
 # its fit at the flag's width, the fold, and a click asking for the panel.
@@ -10606,6 +10645,44 @@ nereus_add_test(tst_tx_profile_select
 # runs the desktop's band restore on the Core (bandSelectVersion 1), with its
 # refusals. Loopback only, no RF, no audio device.
 nereus_add_test(tst_slice_select_band
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# Band stack plan Task 4: the band stack through a loopback link: the facade,
+# the feature gate and every bandStack.* verb.
+nereus_add_test(tst_bandstack_link
+    fakes/FakeBandStackAccess.h
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# tests/data/bandstack/facade-document.json is shared with the phone's BandStackTests.
+target_compile_definitions(tst_bandstack_link PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# Band stack plan Task 7: the panel shell and its place beside the pans, both
+# looks, real MainWindow offscreen.
+nereus_add_test(tst_bandstack_panel
+    fakes/FakeBandStackAccess.h)
+# 109 to 113 s as one entry on the GitHub Linux runner against the 120 s
+# limit; the cases that build a real MainWindow run as four more entries of
+# the same binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_bandstack_panel
+    ENV NEREUS_BANDSTACK_PANEL_GROUP GROUPS pane keys greyed window)
+
+# Band stack plan Task 8: every band press through MainWindow::pressBand, on a
+# real MainWindow offscreen with a fake access.
+nereus_add_test(tst_bandstack_router
+    fakes/FakeBandStackAccess.h
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_bandstack_router PRIVATE NEREUS_BUILD_TESTS)
+
+# Band stack plan Task 11: the spectrum ticks, at the widget and on a real
+# MainWindow offscreen with a fake access.
+nereus_add_test(tst_bandstack_overlay
+    fakes/FakeBandStackAccess.h)
+
+# Band stack plan Task 5: a recall on a shared receiver asks through the
+# confirm step, through a loopback link with fake peers.
+nereus_add_test(tst_bandstack_question
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 

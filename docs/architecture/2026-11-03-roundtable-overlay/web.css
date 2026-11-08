@@ -1,0 +1,64 @@
+/* The proposal's additions to the real web page. Only applied with body.rw. */
+.rw-tag { display: inline-flex; align-items: center; gap: 6px; font: 700 11px/16px var(--ui); padding: 0 6px; border-radius: 3px; border: 1px solid; white-space: nowrap; }
+.rw-tag .gl { width: 8px; height: 8px; }
+.rw-tag.dbl { color: #e06c6e; border-color: var(--red); background: #2a1618; }
+.rw-tag.unk { color: var(--amb); border-color: #6e5530; background: #241c10; }
+.frequency-group.rw-dbl { box-shadow: inset 3px 0 0 var(--red); }
+.frequency-group.rw-dbl.selected { box-shadow: inset 3px 0 0 var(--red), inset 4px 0 0 var(--sel-top); }
+.person-row.rw-d .person-call { color: #e06c6e; }
+.person-row.rw-d .person-state { color: #e06c6e; }
+.maptag.rw-dbl { border-color: var(--red); padding-top: 7px; }
+.maptag.rw-dbl::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: repeating-linear-gradient(135deg, #e06c6e 0 4px, #3a1a1b 4px 7px); }
+.maptag.rw-dbl .rw-dw { color: #e06c6e; }
+
+.rw-rail { height: 3px; flex: none; }
+.rw-rail.talk { background: var(--grn); } .rw-rail.unk { background: var(--amb); } .rw-rail.quiet { background: #606066; }
+.rw-rail.dbl { background: repeating-linear-gradient(135deg, #e06c6e 0 5px, #3a1a1b 5px 9px); }
+body.rw .attributed-talker.doubled strong { color: #e06c6e; }
+.rw-clock { font-family: var(--mono); }
+.rw-people { display: grid; gap: 1px; padding: 2px 12px 2px; }
+.rw-p { display: grid; grid-template-columns: 12px minmax(78px, 1fr) 48px 60px; gap: 6px; align-items: center; min-height: 22px; font: 12px var(--mono); color: var(--t2); }
+.rw-p .c { font-weight: 700; }
+.rw-p.on .c { color: #80d99a; }
+.rw-p.on.d .c, .rw-p.on.d .k { color: #e06c6e; }
+.rw-p .k { font: 11px var(--ui); color: #80d99a; }
+.rw-p .o { font-size: 11px; color: var(--t3); text-align: right; }
+.rw-p .gl { width: 9px; height: 9px; }
+
+.rd.attributed-reading.rw-m { grid-template-columns: minmax(78px, 1fr) 96px 46px 96px 33px; grid-template-rows: auto 3px; row-gap: 3px; min-height: 0; padding: 5px 12px 6px; }
+.rd.reading-head.rw-mh { grid-template-columns: minmax(78px, 1fr) 96px 46px 96px 33px; }
+.rw-m .v { white-space: nowrap !important; }
+.rw-m .path-value { display: flex; justify-content: flex-end; gap: 6px; }
+.rw-m .path-value small { display: inline; }
+.rw-meter {
+  grid-column: 1 / -1; position: relative; height: 3px; border-radius: 1px; overflow: hidden;
+  background:
+    linear-gradient(90deg,
+      transparent calc(13.6% - 0.5px), #000 calc(13.6% - 0.5px), #000 calc(13.6% + 0.5px), transparent calc(13.6% + 0.5px),
+      transparent calc(27.3% - 0.5px), #000 calc(27.3% - 0.5px), #000 calc(27.3% + 0.5px), transparent calc(27.3% + 0.5px),
+      transparent calc(40.9% - 0.5px), #000 calc(40.9% - 0.5px), #000 calc(40.9% + 0.5px), transparent calc(40.9% + 0.5px),
+      transparent calc(54.5% - 0.5px), #000 calc(54.5% - 0.5px), #000 calc(54.5% + 0.5px), transparent calc(54.5% + 0.5px),
+      transparent calc(77.3% - 0.5px), #000 calc(77.3% - 0.5px), #000 calc(77.3% + 0.5px), transparent calc(77.3% + 0.5px)),
+    #26262a;
+}
+.rw-meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--grn); transition: width 180ms linear; }
+.rw-meter u { position: absolute; top: 0; bottom: 0; width: 1px; background: #f4f4f6; opacity: 0.85; transition: left 300ms linear; }
+.rw-k-dbl .rw-meter i { background: repeating-linear-gradient(135deg, #e06c6e 0 3px, #5d2c2e 3px 6px); }
+.rw-k-unk .rw-meter i { background: var(--amb); }
+.rw-k-last .rw-meter i { background: #7e7e85; }
+.rd.stale .rw-meter i { background: #606066 !important; }
+.rd.stale .rw-meter u { display: none; }
+.roundtable-offline .rw-meter i { background: #606066 !important; }
+.roundtable-offline .rw-meter u, .roundtable-offline .rw-p .gl { display: none; }
+
+/* The same room, in the phone-width frame. */
+@media (max-width: 760px) {
+  .rd.attributed-reading.rw-m, .rd.reading-head.rw-mh { grid-template-columns: minmax(76px, 1fr) 62px 102px 32px; gap: 5px; }
+  .rw-m .path-value { display: block; }
+  .rw-m .path-value small { display: block; }
+}
+
+/* At full width the list beside the room already says who is on frequency. */
+@media (min-width: 761px) {
+  .rw-onfreq { display: none; }
+}

@@ -5,6 +5,8 @@
 //   2026-10-16 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
 //              the saved span is read from pan 0's own key, where the
 //              per-pan display settings save it.
+//   2026-11-05 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//              each window on a Core keeps its own paint rate.
 
 #include <QtTest/QtTest>
 #include <QFile>
@@ -13,10 +15,12 @@
 #include <memory>
 
 #include "core/AppSettings.h"
+#include "core/ControlRanges.h"
 #include "core/settings/PanDisplayKeys.h"
 #include "core/settings/SettingsProxy.h"
 #include "fakes/MainWindowTestSettings.h"
 #include "gui/MainWindow.h"
+#include "gui/SpectrumOverlayPanel.h"
 #include "gui/SpectrumWidget.h"
 #include "gui/widgets/StatusToast.h"
 #include "models/RadioModel.h"
@@ -65,6 +69,30 @@ private:
         return {frame.right() - 20 - toast.width(),
                 frame.bottom() - 60 - belowHeight - toast.height()};
     }
+
+    // The FPS row of the active pan's Display pill.
+    static SpectrumOverlayPanel* pillOf(SpectrumWidget* spectrum)
+    {
+        return spectrum ? spectrum->findChild<SpectrumOverlayPanel*>() : nullptr;
+    }
+
+    // A Core's settings, as a remote window holds them. Only the Core's rate
+    // is named, so a window with no key of its own has something to read.
+    static void holdCoreRate(SettingsProxy& proxy, const char* fps)
+    {
+        proxy.applySnapshot({{QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
+                              QLatin1String(fps)}});
+        proxy.setReady(true);
+    }
+
+    static void arriveFromCore(MainWindow& window, SettingsProxy& proxy, const char* fps)
+    {
+        const QString key = QLatin1String(ControlRanges::kDisplaySpectrumFpsKey);
+        proxy.applyRemoteValue(key, QLatin1String(fps), QStringLiteral("another-window"));
+        emit window.radioModel()->stationSettingChanged(key);
+    }
+
+    static int paintPeriodMs(int fps) { return 1000 / fps; }
 
     static void addToastRows()
     {
@@ -172,6 +200,124 @@ private slots:
         QCOMPARE(outbound.count(), 0);
         QVERIFY(!proxy.ready());
         QVERIFY(window->radioModel()->connection() == nullptr);
+    }
+
+    // JJ's ruling of 2026-11-05: each window keeps its own paint rate; the
+    // Core's rate stays one shared setting.
+    void remoteWindowsPillSetsItsOwnRateAndLeavesTheCores()
+    {
+        SettingsProxy proxy;
+        AppSettings::instance().setRemoteBackend(&proxy);
+        const auto dropBackend = qScopeGuard([] { AppSettings::instance().setRemoteBackend(nullptr); });
+        holdCoreRate(proxy, "30");
+        QSignalSpy outbound(&proxy, &SettingsProxy::outboundWriteRequested);
+        auto window = makeWindow();
+        SpectrumWidget* spectrum = window->activeSpectrumWidget();
+        QVERIFY(spectrum);
+        SpectrumOverlayPanel* pill = pillOf(spectrum);
+        QVERIFY(pill);
+
+        emit pill->fftFpsRequested(45);
+
+        auto& s = AppSettings::instance();
+        QCOMPARE(s.value(QLatin1String(ControlRanges::kDisplayPaintFpsKey)).toString(),
+                 QStringLiteral("45"));
+        QCOMPARE(s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)).toString(),
+                 QStringLiteral("30"));
+        QCOMPARE(outbound.count(), 0);
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(45));
+        QCOMPARE(pill->fftState().fps, 45);
+    }
+
+    void remoteWindowsOwnRateSurvivesRestartAndTheCoresValueArriving()
+    {
+        SettingsProxy proxy;
+        AppSettings::instance().setRemoteBackend(&proxy);
+        const auto dropBackend = qScopeGuard([] { AppSettings::instance().setRemoteBackend(nullptr); });
+        holdCoreRate(proxy, "30");
+        {
+            auto window = makeWindow();
+            emit pillOf(window->activeSpectrumWidget())->fftFpsRequested(45);
+        }
+        QVERIFY(AppSettings::instance().save());
+        AppSettings::instance().load();
+
+        auto window = makeWindow();
+        SpectrumWidget* spectrum = window->activeSpectrumWidget();
+        QVERIFY(spectrum);
+        SpectrumOverlayPanel* pill = pillOf(spectrum);
+        QVERIFY(pill);
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(45));
+        QCOMPARE(pill->fftState().fps, 45);
+
+        // Another window moves the Core's rate: this one keeps its own.
+        arriveFromCore(*window, proxy, "20");
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(45));
+        QCOMPARE(pill->fftState().fps, 45);
+        QCOMPARE(AppSettings::instance().value(
+                     QLatin1String(ControlRanges::kDisplayPaintFpsKey)).toString(),
+                 QStringLiteral("45"));
+
+        // Setup moves the Core's rate from this window: the Core's key moves,
+        // and this window keeps painting at its own.
+        QSignalSpy outbound(&proxy, &SettingsProxy::outboundWriteRequested);
+        window->applyDisplayFps(25);
+        QCOMPARE(AppSettings::instance().value(
+                     QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)).toString(),
+                 QStringLiteral("25"));
+        QCOMPARE(outbound.count(), 1);
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(45));
+        QCOMPARE(pill->fftState().fps, 45);
+    }
+
+    void remoteWindowWithNoKeyOfItsOwnTakesTheCoresRate()
+    {
+        SettingsProxy proxy;
+        AppSettings::instance().setRemoteBackend(&proxy);
+        const auto dropBackend = qScopeGuard([] { AppSettings::instance().setRemoteBackend(nullptr); });
+        holdCoreRate(proxy, "20");
+        auto window = makeWindow();
+        SpectrumWidget* spectrum = window->activeSpectrumWidget();
+        QVERIFY(spectrum);
+        SpectrumOverlayPanel* pill = pillOf(spectrum);
+        QVERIFY(pill);
+        QVERIFY(!AppSettings::instance().contains(QLatin1String(ControlRanges::kDisplayPaintFpsKey)));
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(20));
+        QCOMPARE(pill->fftState().fps, 20);
+
+        // Still the Core's: a new value is followed, and no key appears.
+        arriveFromCore(*window, proxy, "15");
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(15));
+        QCOMPARE(pill->fftState().fps, 15);
+        window->applyDisplayFps(25);
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(25));
+        QCOMPARE(pill->fftState().fps, 25);
+        QVERIFY(!AppSettings::instance().contains(QLatin1String(ControlRanges::kDisplayPaintFpsKey)));
+    }
+
+    void directToARadioThePillStillSetsTheOneRate()
+    {
+        auto& s = AppSettings::instance();
+        // A key left from a session on a Core is not read here.
+        s.setValue(QLatin1String(ControlRanges::kDisplayPaintFpsKey), QStringLiteral("12"));
+        s.setValue(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey), QStringLiteral("20"));
+        MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+        QVERIFY(window.radioModel()->ownsLocalDsp());
+        SpectrumWidget* spectrum = window.activeSpectrumWidget();
+        QVERIFY(spectrum);
+        SpectrumOverlayPanel* pill = pillOf(spectrum);
+        QVERIFY(pill);
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(20));
+        QCOMPARE(pill->fftState().fps, 20);
+
+        emit pill->fftFpsRequested(45);
+
+        QCOMPARE(s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)).toString(),
+                 QStringLiteral("45"));
+        QCOMPARE(s.value(QLatin1String(ControlRanges::kDisplayPaintFpsKey)).toString(),
+                 QStringLiteral("12"));
+        QCOMPARE(spectrum->displayTimerIntervalForTest(), paintPeriodMs(45));
+        QCOMPARE(pill->fftState().fps, 45);
     }
 
     void activeToastsFollowWindowMove_data() { addToastRows(); }

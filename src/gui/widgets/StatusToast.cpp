@@ -26,8 +26,13 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPushButton>
 #include <QStyle>
 #include <QStyleOption>
+
+#include <utility>
+
+#include "gui/styles/WorkspacePreview.h"
 
 namespace NereusSDR {
 
@@ -113,6 +118,34 @@ void StatusToast::refresh(int timeoutMs)
         return;
     }
     m_dismissTimer.start(timeoutMs);
+}
+
+void StatusToast::setAction(const QString& label, std::function<void()> action)
+{
+    m_action = std::move(action);
+    if (!m_actionButton) {
+        m_actionButton = new QPushButton(this);
+        m_actionButton->setObjectName(QStringLiteral("statusToastAction"));
+        m_actionButton->setFocusPolicy(Qt::NoFocus);
+        // desktop.html's .toast button.
+        const bool workspace = WorkspacePreview::enabled();
+        m_actionButton->setStyleSheet(QStringLiteral(
+            "QPushButton { color: #ffffff; font-size: 12px; font-weight: 600; padding: 2px 8px;"
+            " border: 1px solid %1; border-radius: 3px;"
+            " background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %2, stop:1 %3); }")
+            .arg(QString::fromLatin1(workspace ? "#4d89c1" : "#00b4d8"),
+                 QString::fromLatin1(workspace ? "#2f5f92" : "#2a5a8a"),
+                 QString::fromLatin1(workspace ? "#1e3d5f" : "#1a3a5a")));
+        connect(m_actionButton, &QPushButton::clicked, this, [this] {
+            if (m_action) {
+                m_action();
+            }
+            close();
+        });
+        layout()->addWidget(m_actionButton);
+    }
+    m_actionButton->setText(label);
+    adjustSize();
 }
 
 void StatusToast::mousePressEvent(QMouseEvent* event)

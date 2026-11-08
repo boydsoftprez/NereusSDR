@@ -208,6 +208,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: sliceControlledHere.
+//   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCwPaddleAvailable.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-02: Track active and detail frequency record streams separately.
@@ -507,6 +510,8 @@
 //               `roundtable` object, the room streams and the thirteen
 //               Roundtable requests. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -529,6 +534,7 @@
 #include <optional>
 
 #include "core/session/IStationLink.h"
+#include "core/session/LinkDownEditWatch.h"
 #include "core/session/RemoteTransmitClient.h"
 #include "core/session/LinkVersion.h"
 #include "models/Band.h"
@@ -1434,6 +1440,10 @@ public:
     static QString station2mUnavailableReason();
     QString band2mUnavailableReason() const override;
     CommandOutcome requestSelectBand(int sliceId, int band) override;
+    // Band stack plan Task 4: see IStationLink.
+    bool bandStackAvailable() const override;
+    CommandOutcome sendBandStackCommand(const QString& verb, const QJsonObject& arguments) override;
+    bool sliceControlledHere(int sliceId) const override;
     // Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): listen
     // to, stop listening to, take control of and release a slice. The
     // answers arrive on deviceCommandFinished; the access objects follow.
@@ -1666,6 +1676,9 @@ public:
     void setModMonitorSource(int source) override;
     /// txModMonitor.reset for a source.
     CommandOutcome requestModMonitorReset(int source) override;
+    bool txSsbModMonitorAvailable() const override;
+    void setSsbModMonitorSource(int source) override;
+    CommandOutcome requestSsbModMonitorReset(int source) override;
     /// Parity Task 21 (R-IOS-18): minor 11 and stationRadiosVersion at
     /// least 1 on a ready session.
     bool stationRadiosAvailable() const override;
@@ -1822,6 +1835,11 @@ signals:
     /// Every full state publication, including reseeding an existing session.
     /// Does not recreate media or reset the session epoch.
     void stateSnapshotApplied();
+    /// Applet and slice properties ("object.property") the operator changed
+    /// while the link was down, which this snapshot replaced with the Core's
+    /// values. The properties' counterpart to
+    /// SettingsProxy::offlineEditsSuperseded(). See LinkDownEditWatch.
+    void linkDownEditsSuperseded(const QStringList& keys);
     void audioOpusBitratesChanged();
 
     /// The session ended, with the station's own reason where it gave one
@@ -2087,6 +2105,9 @@ private:
     int m_modMonitorSource = -1;
     QString m_modMonitorStream;
     void syncModMonitorSubscription();
+    int m_ssbModMonitorSource = -1;
+    QString m_ssbModMonitorStream;
+    void syncSsbModMonitorSubscription();
     /// Task 78: this session's hello declared sessionHolder 1.
     bool m_declaredSessionHolder = false;
     bool m_declaresSessionHolder = true;
@@ -2184,6 +2205,9 @@ private:
     QSet<QByteArray> m_unheldDeltaKeys;
 
     QHash<QByteArray, QPointer<QObject>> m_objects;
+    /// Parented to this. Runs only from a lost ready session until the next
+    /// session's first frame.
+    LinkDownEditWatch* m_linkDownEdits = nullptr;
 
     /// RX meter stamps: one slice delta's held RX meter readings.
     struct HeldRxMeterReadings {

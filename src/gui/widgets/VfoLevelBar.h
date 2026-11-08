@@ -14,6 +14,14 @@ public:
     bool hasReading() const { return !m_noReading; }
     // The dBm readout drawn right of the bar ("-65 dBm", or "-- dBm").
     QString readoutText() const;
+    // Which reading this is, off the default (overlay design D41): "MAX" or
+    // "AV", printed above the readout in the tick strip. Empty prints nothing.
+    // Only this bar repaints, and nothing it already draws moves.
+    void setSourceTag(const QString& tag);
+    QString sourceTag() const { return m_sourceTag; }
+    // Where the tag and the readout are drawn.
+    QRect sourceTagRect() const;
+    QRect readoutRect() const;
     // Same sentinel MeterPoller feeds and SMeterWidget treats as no reading.
     static constexpr float kNoReadingDbm = -400.0f;
     // 2026-05-12 (PR #238): +4 px height for the kTopPad padding
@@ -24,6 +32,15 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override;
 private:
+    struct Layout {
+        int tickH;
+        int dbmWidth;
+        int barW;
+        int barTop;
+    };
+    Layout barLayout() const;
+
+    QString m_sourceTag;
     float m_value{-130.0f};
     bool  m_noReading{false};
     static constexpr float kFloorDbm   = -130.0f;

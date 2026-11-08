@@ -72,13 +72,16 @@ struct RoundtableAppletTests {
 
     // MARK: The column's order
 
-    @Test("Roundtable sits second after the S-Meter, moves anywhere, and the others keep their order")
+    @Test("Roundtable sits second after the S-Meter, moves anywhere, and the others keep their order, Band Stack under the S-Meter")
     func appletOrder() {
-        #expect(AppletOrder.order(roundtableAt: AppletOrder.roundtableDefault) == [.sMeter, .roundtable, .rx, .tx])
-        #expect(AppletOrder.order(roundtableAt: 0) == [.roundtable, .sMeter, .rx, .tx])
-        #expect(AppletOrder.order(roundtableAt: 3) == [.sMeter, .rx, .tx, .roundtable])
-        #expect(AppletOrder.order(roundtableAt: -4) == [.roundtable, .sMeter, .rx, .tx])
-        #expect(AppletOrder.order(roundtableAt: 9) == [.sMeter, .rx, .tx, .roundtable])
+        #expect(AppletOrder.order(roundtableAt: AppletOrder.roundtableDefault)
+            == [.sMeter, .roundtable, .bandStack, .rx, .tx])
+        #expect(AppletOrder.order(roundtableAt: 0) == [.roundtable, .sMeter, .bandStack, .rx, .tx])
+        #expect(AppletOrder.order(roundtableAt: 2) == [.sMeter, .bandStack, .roundtable, .rx, .tx])
+        #expect(AppletOrder.order(roundtableAt: 4) == [.sMeter, .bandStack, .rx, .tx, .roundtable])
+        #expect(AppletOrder.order(roundtableAt: -4) == [.roundtable, .sMeter, .bandStack, .rx, .tx])
+        #expect(AppletOrder.order(roundtableAt: 9) == [.sMeter, .bandStack, .rx, .tx, .roundtable])
+        #expect(AppletOrder.lastPosition == AppletKind.allCases.count - 1)
     }
 
     @Test("the applet's place is saved on the device and read back clamped")
@@ -89,7 +92,7 @@ struct RoundtableAppletTests {
         settings.roundtableAppletPosition = 3
         #expect(PhoneSettings(defaults: store, isPad: true).roundtableAppletPosition == 3)
         settings.roundtableAppletPosition = 12
-        #expect(PhoneSettings(defaults: store, isPad: true).roundtableAppletPosition == 3)
+        #expect(PhoneSettings(defaults: store, isPad: true).roundtableAppletPosition == 4)
         store.set(-2, forKey: PhoneSettings.keyPrefix + PhoneSettings.roundtableAppletPositionKey)
         #expect(PhoneSettings(defaults: store, isPad: true).roundtableAppletPosition == 0)
     }
@@ -300,7 +303,7 @@ struct RoundtableAppletTests {
                                     detent: Binding(get: { detent }, set: { detent = $0 }),
                                     dialOn: false, linkUp: true, fullHeight: fullHeight,
                                     stationCallsign: "", stationGrid: "", firstRunNoteSeen: .constant(true),
-                                    close: {}, compactDecided: { decided = true })
+                                    close: {}, back: {}, compactDecided: { decided = true })
             .frame(width: width, height: half.height)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)

@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//                letter used before too; a restored receiver keeps its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -527,6 +531,16 @@
 //                applySavedSliceSampleRates), and a rate change saves it.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-11-06 - restoreDesktopLayoutSlices: a desktop brings back every slice
+//                from the radio's saved layout. J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude.
+//   2026-11-05 - One sample rate per receiver on every band, so a band
+//                change leaves the rate alone (JJ's ruling). A new slice with
+//                a receiver of its own opens at the rate of the slice it was
+//                seeded from; a device's slice made again and a slice leaving
+//                a shared receiver keep theirs; a radio-wide change saves on
+//                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 //   2026-09-27 - iPhone plan Task 22 / parity Task 20 (R-IOS-26):
 //                clearStationFreedv(). NereusSDR-original. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -864,6 +878,11 @@
 //                Stop All TX that finds nothing to stop still drops a held
 //                CAT TX. J.J. Boyd (KG4VCF), with AI-assisted
 //                implementation via Anthropic Claude Code.
+//   2026-11-05 - bandStackController, retuneRefusalFor, saveBandMemory.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - bandStack(), reportStationBandStackRefused (band stack plan Task 6).
+//   2026-11-05 - bandStackFacade, the `bandStack` object in every placement.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -940,6 +959,10 @@
 //                 carried this Longpath code; the entry describes Longpath
 //                 only. Trunk's cwPitchHz()/setCwPitchHz()/cwPitchChanged
 //                 are its own (R-CW-02).]
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-05 - Hot keys plan Task 4: setHoldToTalk, reportRemoteKeyWentOff,
 //                transmitKeyWentOff. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
@@ -961,6 +984,7 @@
 #include "core/TgxlConnection.h"
 #include "core/FaultLog.h"
 #include "core/AmModulationAnalyzer.h"
+#include "core/SsbModulationAnalyzer.h"
 #include "core/session/IStationLink.h"
 #include "core/station/StationRadios.h"
 // Remote-daemon R2 Task 18: the handshake descriptor applyStationCapabilities()
@@ -1127,6 +1151,8 @@ class TxDisplayFeed;
 class TransmitState;
 // Stage C2 filter preset editor — user-override layer over Thetis defaults.
 class FilterPresetStore;
+class BandStackAccess;
+class BandStackController;
 
 // Phase 3J-2 H2: spot-system forward declarations. RadioModel owns the
 // seven spot-ingest clients (DxCluster, RBN, WSJT-X, SpotCollector,
@@ -1176,6 +1202,7 @@ class StationRfKitController;
 class StationRotorController;
 namespace RotorLink { class RotorModel; }
 class RoundtableState;
+class BandStackFacade;
 class RoundtableModel;
 class StationTciController;
 class StationTciModel;
@@ -1589,6 +1616,9 @@ public:
     /// from the silent divergence this whole round exists to close: the
     /// click does nothing and nothing says why.
     void reportStationSliceCommandRejected(const QString& reason);
+    /// Band stack plan Task 6: the Core refused a bandStack.* verb. Routed to
+    /// stationBandStackRefused, which RemoteBandStackAccess turns into refused().
+    void reportStationBandStackRefused(const QString& reason);
 
     /// R-R3-47 / R-R3-22 / R-R3-48: the Core refused an accessory request,
     /// with its own reason. `device` says what it was about: "pgxl",
@@ -2488,6 +2518,14 @@ public:
     // Inert model-owned CAT service; policy-ready lifecycle callers start it.
     CatService* catService() const { return m_catService; }
     TransmitModel&    transmitModel()    { return m_transmitModel; }
+    // Startup is done: from here a transmit edit with no radio is kept for the
+    // next radio. A remote window's model only mirrors the Core, and holds nothing.
+    void keepTransmitEditsWithoutRadio()
+    {
+        if (m_role == Role::Local) {
+            m_transmitModel.setKeepsEditsWithoutRadio(true);
+        }
+    }
 
     // Slice management (client-side — radio has no slice concept)
     QList<SliceModel*> slices() const { return m_slices; }
@@ -2906,22 +2944,15 @@ public:
     /// a device coming back keeps its pins.
     void clearStreamCtunPinsAnchoredBy(const QByteArray& device);
 
-    /// Push a slice's just-restored per-band sample rate onto its DDC.
+    /// Push a slice's just-restored sample rate onto its DDC.
     ///
-    /// Codex review round 7, PR #293. SliceModel::restoreFromSettings reads
-    /// the persisted per-band SampleRate and calls setSampleRateHz, which is
-    /// a plain property setter: it moves the number the VFO menu displays
-    /// and nothing else. The rate the receiver, codec and wire actually run
-    /// at only changes through requestSliceSampleRate. So returning to a
-    /// band you had left at 384 kHz showed 384 kHz while the DDC stayed on
-    /// whatever the previous band was using, and the saved preference was in
-    /// effect never restored.
-    ///
-    /// Called after restoreFromSettings rather than inside it: the restore
-    /// sets the frequency first, which completes the allocator rebind, and
-    /// the rate transaction has to run against the stream the slice ended up
-    /// on. SliceModel also holds no RadioModel handle by design, and the
-    /// rate is a stream-wide transaction rather than a slice property.
+    /// Codex review round 7, PR #293. setSampleRateHz is a plain property
+    /// setter: it moves the number the VFO menu displays and nothing else. The
+    /// rate the receiver, codec and wire actually run at only changes through
+    /// requestSliceSampleRate. addSliceImpl sets the property to the rate the
+    /// slice should come back at, then calls this once the slice has its stream.
+    /// On a radio-wide rate (Protocol 1), or for a rate this radio does not have,
+    /// it asks for no change and puts the property back to the receiver's rate.
     void applyRestoredSampleRate(SliceModel* slice);
 
     /// Slice control plan Task 5: on a Remote model, true (and announced)
@@ -2929,17 +2960,17 @@ public:
     /// request for it is held back instead of sent.
     bool holdSliceRequestForListener(int sliceId);
 
-    /// R-R3-49: each slice's saved per-band sample rate for the band it is
-    /// on (SliceModel::savedSampleRateHz), keyed by slice id; slices with
+    /// R-R3-49: each slice's saved sample rate
+    /// (SliceModel::savedSampleRateHz), keyed by slice id; slices with
     /// none saved are left out. connectToRadio reads it before it binds the
     /// slices, because a bind makes a slice adopt its stream's rate and a
     /// later save would then write that over the saved one.
     QHash<int, int> savedSliceSampleRates() const;
 
-    /// R-R3-49: Protocol 2 only. Puts each bound slice's saved rate from
-    /// `saved` on its DDC through requestSliceSampleRate, the same path a
-    /// window's rate change takes (allocator, WDSP channel rate, DDC
-    /// assignment). A rate the board does not allow for `proto` is logged and
+    /// R-R3-49: Protocol 2 only. Puts each receiver's saved rate from `saved`
+    /// on its DDC through requestSliceSampleRate, the same path a window's rate
+    /// change takes (allocator, WDSP channel rate, DDC assignment). Slices
+    /// sharing a receiver give it the highest rate saved among them. A rate the board does not allow for `proto` is logged and
     /// skipped, leaving the slice at the connect rate, as resolveSampleRate
     /// does for the radio-wide key. Protocol 1 carries one rate for the whole
     /// radio, so it keeps the radio-wide key and this does nothing.
@@ -2957,6 +2988,18 @@ public:
     /// that offers the rate from a per-slice surface has to disclose the P1
     /// scope rather than imply a private rate. False when disconnected.
     bool sampleRateIsRadioWide() const;
+
+    /// True when this radio has `rateHz` on the ladder for its protocol. Asks
+    /// the board directly, so unlike allowedStreamSampleRates it also answers
+    /// before a connection exists, as Protocol 2.
+    bool sampleRateIsOnLadder(int rateHz) const;
+
+    /// True while slice `sliceId`'s Slice<N>/ keys must stay as they are: the
+    /// layout is still being admitted, or the saved layout still names the letter.
+    bool sliceKeysAreHeld(int sliceId) const
+    {
+        return m_receiveLayoutPendingAdmission || m_receiveLayoutKeptSliceIds.contains(sliceId);
+    }
 
     /// Sample rates the connected radio accepts, ascending; empty when
     /// disconnected.
@@ -2992,7 +3035,8 @@ public:
     /// is a host and sharing it is the point. It was briefly a caller-
     /// supplied flag; every caller that forgot it silently reintroduced the
     /// coupled-pan defect, so the decision lives with the data it depends on.
-    int addSlice(const QString& initialPanId = QString(), bool restoreSavedState = false);
+    int addSlice(const QString& initialPanId = QString(), bool restoreSavedState = false,
+                 bool newReceiver = false);
 
     /// Takes a slice ID (see sliceById), not a list position. sliceRemoved
     /// carries the same id.
@@ -3309,6 +3353,15 @@ public:
     /// -1 when none was made. Local only.
     int addStartingSlices(const QString& radioMac);
 
+    /// A desktop's connect, once the stream pool is sized: brings back every
+    /// slice the radio's saved layout has beyond the starting one, on its own
+    /// letter and pan (a pan not in `panIds` becomes the first of them). What
+    /// has no room stays saved and the receive-layout status says so once.
+    /// Returns true when a saved layout decided the slices, so an empty pan is
+    /// left as it was saved; false when there is none and the caller fills
+    /// empty pans as on a first run. Does nothing for a Core or a hosted window.
+    bool restoreDesktopLayoutSlices(const QStringList& panIds);
+
     /// StationServer admission, before a device's saved slices: makes the
     /// slices kept for `device` (addStartingSlices), each on its letter when
     /// free, else the lowest free letter, with the settings kept for it,
@@ -3342,13 +3395,22 @@ public:
     /// check is deliberately skipped on that path: the station
     /// owns the slice list and enforces its own cap, with its own reason,
     /// which comes back through reportStationSliceCommandRejected().
-    // A saved letter (Slice<N>/LastBand and that band's keys, plus the
-    // letter's own keys such as Auto AGC) comes back on every local mint,
-    // whether or not `restoreSavedState` is set and whether or not a Core
-    // manages the receive layout. A letter with nothing saved still opens
-    // on the active slice's frequency and mode. The remote client only
-    // sends the verb; the Core mints the slice and mirrors it back.
-    Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false);
+    // A saved letter's preferences (Slice<N>/LastBand and that band's keys,
+    // plus the letter's own keys such as Auto AGC) come back on every local
+    // mint, whether or not `restoreSavedState` is set and whether or not a
+    // Core manages the receive layout. Only `restoreSavedState` brings its
+    // frequency and mode. A letter with nothing saved still opens on the
+    // active slice's frequency and mode.
+    //
+    // `newReceiver` is for a slice someone asked for (+RX, a device's
+    // request). It is a copy of the slice the operator is on, with lock,
+    // mute, RIT and XIT off, and reads nothing the letter saved; with no
+    // slice to copy it opens on defaults. The letter's saved RIT and XIT are
+    // removed, unless a saved layout is held. Without it a letter's
+    // preferences, RIT and XIT come back. The remote client only sends the verb; the Core mints
+    // the slice and mirrors it back.
+    Q_INVOKABLE void addSliceOnPan(const QString& panId, bool restoreSavedState = false,
+                                   bool newReceiver = false);
 
     /// Re-point any slice whose pan is not in `livePanIds` at the first one
     /// that is. Returns how many moved.
@@ -3489,6 +3551,26 @@ public:
     // for `slice` to a Core at bandSelectVersion 1 (a grid band), and the
     // Core runs this same function on its own slice.
     void onBandButtonClicked(SliceModel* slice, NereusSDR::Band band);
+
+    // The band stack (docs/architecture/2026-11-05-band-stack-design.md).
+    // Null on a Role::Remote model, and until a radio is known on a local one.
+    BandStackController* bandStackController() const { return m_bandStackController.get(); }
+    /// The `bandStack` object: it follows the controller on the Core and reads
+    /// the mirror in a remote window. Never null.
+    BandStackFacade* bandStackFacade() const { return m_bandStackFacade; }
+    /// What the GUI uses for the band stack, in every placement. Never null.
+    BandStackAccess* bandStack() const { return m_bandStackAccess; }
+
+    /// Why retuning `slice` to `frequencyHz` would be refused, in the words the
+    /// rollback in wireSliceSignals uses, or empty when it would not be. Asks
+    /// the allocator with the inputs bindSliceToStream gives it and changes
+    /// nothing. A slice with no live receiver is never refused here.
+    QString retuneRefusalFor(const SliceModel* slice, double frequencyHz) const;
+
+    /// A slice's held and current per-band memory for `band` goes to settings,
+    /// as a band change saves the band it leaves. Writes nothing while
+    /// sliceKeysAreHeld for the slice, as the band click does.
+    void saveBandMemory(SliceModel* slice, NereusSDR::Band band);
 
     // Panadapter management (client-side)
     QList<PanadapterModel*> panadapters() const { return m_panadapters; }
@@ -4303,6 +4385,36 @@ public:
     std::optional<AmModulationAnalyzer::Snapshot> stationModMonitorSnapshot(int source) const;
     /// The Core's Mod Monitor readings leave this window.
     void clearStationModMonitor();
+
+    // ── SSB Mod Monitor (NereusSDR-original) ──────────────────────────────
+    /// source 0 = TX I/Q leaving WDSP, 1 = PureSignal's feedback samples.
+    /// Fed only while ssbTxActive(), and only for a source that is wanted.
+    SsbModulationAnalyzer* ssbModulationAnalyzer(int source) const;
+    void setSsbModFeedbackWanted(bool wanted);
+    bool ssbModFeedbackWanted() const { return m_ssbModFbWanted.load() || m_ssbModFbCoreWanted.load(); }
+    /// What this Core's publisher wants for a source, held apart from what a
+    /// panel on this model wants: a desktop can do both on one model.
+    void setSsbModCoreWanted(int source, bool wanted);
+    /// Off until a shown panel or a watching device asks for it. The tap is
+    /// attached only while this is on and ssbTxActive(), so the transmit
+    /// worker takes no extra lock otherwise.
+    void setSsbModTxTapEnabled(bool enabled);
+    bool ssbModTxTapEnabled() const { return m_ssbModTxTapEnabled.load() || m_ssbModTxTapCoreWanted.load(); }
+    /// Attach or detach the TX tap and the feedback feed from the current
+    /// state. Runs on keying, TX slice, mode and PureSignal changes.
+    void refreshSsbModulationTap();
+    /// The one definition of "SSB voice keyed": transmitting, and the TX
+    /// slice is USB or LSB. DIGU and DIGL are not.
+    bool ssbTxActive() const;
+    /// PureSignal is running on this radio (a remote window: on the Core's),
+    /// so a key will carry a feedback stream.
+    bool ssbModFeedbackInUse() const;
+    void feedSsbModFeedbackForTest(const QVector<float>& samples) { feedSsbModFeedback(samples); }
+    /// The production connection -> analyzer feed, for a test that injects a
+    /// connection (injectConnectionForTest does no wiring).
+    void wireSsbModFeedbackForTest() { connectSsbModFeedback(); }
+    std::optional<SsbModulationAnalyzer::Snapshot> stationSsbModMonitorSnapshot(int source) const;
+    void clearStationSsbModMonitor();
 
     // Phase 3F Sub-Epic J Task 11: the one place GUI code may resolve a
     // slice's WDSP channel. Mirrors txChannel()'s shape. Added so MainWindow
@@ -5367,6 +5479,10 @@ public:
     // a fake RadioConnection. Production transitions go through the
     // private setConnectionState() called from connection signals.
     void setConnectionStateForTest(ConnectionState s) { setConnectionState(s); }
+    // connectToRadioImpl's TXBand initializing pass, after the per-radio load.
+    void applyConnectTransmitBandForTest() {
+        applyTransmitBand(transmitSliceBand(), /*initializing=*/true);
+    }
     // From Longpath src/models/RadioModel.h:1685-1690 [@383f058]
     // Stands in for the connectToRadio() write of the wire rate / RX count
     // so a test can replay the state sequence around it without a radio.
@@ -5504,6 +5620,16 @@ public:
     // call this.
     // Isolate route-lifecycle tests from board/resource admission. Never a production caller.
     void setDiversityAdmissionBypassForTest() { m_diversityAdmissionBypassForTest = true; }
+    bool hasPendingBandSettingsForTest(int sliceId) const
+    {
+        return m_pendingBandSettings.contains(sliceId);
+    }
+    void setReceiveLayoutHoldForTest(bool isProtected, bool pendingAdmission)
+    {
+        m_receiveLayoutManaged = true;
+        m_receiveLayoutProtected = isProtected;
+        m_receiveLayoutPendingAdmission = pendingAdmission;
+    }
     void setDdcContextForTest(bool mox, bool puresignalRun, bool diversity) {
         m_ddcCtxForTest    = true;
         m_ddcCtxMoxForTest = mox;
@@ -5514,6 +5640,7 @@ public:
     // injecting a mock connection, mirroring what wireConnectionSignals() does
     // when a real radio connects.
     void wireSliceSignalsForTest() { wireSliceSignals(m_activeSlice); }
+    void snapTransmitFilterForModeForTest(DSPMode mode) { snapTransmitFilterForMode(mode); }
     // The connect-time restore of a slice's last band, for the antenna
     // table tests (a radio switched off and on again).
     void loadSliceStateForTest(SliceModel* slice) { loadSliceState(slice); }
@@ -5679,6 +5806,13 @@ public:
     // the connection-thread handshake.
     void setLastRadioInfoForTest(const NereusSDR::RadioInfo& info) {
         m_lastRadioInfo = info;
+    }
+
+    // The radio becomes known, as a connect tells every listener, without the
+    // rest of the Connected handler. A second call stands in for a reconnect.
+    void announceRadioForTest(const NereusSDR::RadioInfo& info) {
+        m_lastRadioInfo = info;
+        emit currentRadioChanged(m_lastRadioInfo);
     }
 
     // The version string a successful connect sets, which the seam above
@@ -6722,6 +6856,8 @@ signals:
     void rfKitEnabledChanged(bool enabled);
     // R-R3-49: isTransmitting() changed.
     void transmittingChanged(bool transmitting);
+    // ssbModFeedbackInUse() changed.
+    void ssbModFeedbackInUseChanged(bool inUse);
     // RADE end-of-over callsigns: endOfOverTailActive() changed.
     void endOfOverTailChanged(bool active);
     // R-R3-49 (parity Task 1): isCoreOnAir() changed.
@@ -6790,6 +6926,8 @@ signals:
     // been reached; `reason` is sliceCapReason()'s words. MainWindow shows
     // it as a toast.
     void sliceAddRejected(QString reason);
+    /// See reportStationBandStackRefused().
+    void stationBandStackRefused(const QString& reason);
     /// R-R3-47 / R-R3-22: the Core refused a request for an accessory's own
     /// settings (`device` "pgxl" or "tgxl"); `reason` is the Core's words.
     /// Parity mini-round (ruling c): a local window's own switch refused on
@@ -7311,6 +7449,7 @@ private:
     // R-R3-49 (parity Task 2): the transmit band for tunePowerForTxBand,
     // and the Core's transmit chain wiring (moved from connectToRadio()).
     void refreshTransmitTuneBand();
+    void applyPowerHeldForNextBand();
     // The transmit slice's band, else m_lastBand: the band refreshTransmitTuneBand
     // hands the TUNE path and applyTransmitBand.
     Band transmitSliceBand() const;
@@ -7418,10 +7557,12 @@ private:
     QList<QByteArray> devicesListeningThroughRelay(const SliceModel* tuner) const;
     void wireBandTrackingForTest(SliceModel* slice);
 
-    /// The transmitter's RADE passband snap: entering RADE_U/RADE_L sets the
-    /// transmit filter to 650..2350 Hz; leaving RADE restores 100..3900 Hz
-    /// only when the filter is still exactly the RADE passband. Callers own
-    /// the "is this the TX-bound slice" check.
+    /// The transmitter's RADE passband snap: entering RADE_U/RADE_L keeps the
+    /// operator's filter (TransmitModel::filterBeforeRade) and sets the
+    /// transmit filter to 650..2350 Hz; leaving RADE puts the kept filter
+    /// back, or 100..3900 Hz with none kept, only when the filter is still
+    /// exactly the RADE passband. Callers own the "is this the TX-bound
+    /// slice" check.
     void snapTransmitFilterForMode(DSPMode mode);
 
     /// Connect NotchModel's mutation signals to the per-channel WDSP
@@ -7627,6 +7768,7 @@ private:
     // bandOutputsByte (onBandOutputsComposed). Called from
     // wireConnectionSignals.
     void connectBandOutputsReport();
+    void connectSsbModFeedback();
     // Pushes the saved HL2 options to a P1 connection now and again each
     // time they change (applyHl2Options). Nothing without one.
     void connectHl2OptionsToConnection();
@@ -8017,7 +8159,7 @@ public:
     void retireStream(int streamIndex);
     // iPhone app Task 74: claim a stream, or move a live one, centred on
     // `centreHz` (bindSliceToStream's NewStream / RetunedStream arm).
-    void activateStreamAt(int streamIndex, double centreHz);
+    void activateStreamAt(int streamIndex, double centreHz, int claimRateHz = 0);
 
     /// Emit ddcAssignmentRequested and drive the per-board codec recompute.
     void requestDdcAssignment();
@@ -8134,6 +8276,10 @@ public:
     int newStreamSampleRateHz() const {
         return m_connectionSampleRateHz > 0 ? m_connectionSampleRateHz : m_streamDefaultRateHz;
     }
+    /// Rate a free DDC opens at for these slices moving onto it: the highest
+    /// they are running now, since a slice leaving a receiver keeps its rate.
+    /// newStreamSampleRateHz for slices with no receiver.
+    int streamClaimRateHzFor(const QList<int>& sliceIds) const;
     bool streamActive(int streamIndex) const {
         return m_streamAllocator.isStreamActive(streamIndex);
     }
@@ -8226,7 +8372,7 @@ private:
     int addSliceImpl(int requestedId, const QString& initialPanId,
                      const ReceiveSliceState* restoreSeed = nullptr,
                      bool bindRestored = false,
-                     bool restoreSavedState = false);
+                     bool restoreSavedState = false, bool newReceiver = false);
 
     /// iPhone app Task 73: every slice's `active` from its owner's active
     /// slice, and activeSlice() moved to the station-level one (emitting
@@ -8297,6 +8443,20 @@ private:
     // devices' slices and kept letters, never the window's own, with every
     // other entry of the saved layout carried through.
     bool captureHostedReceiveLayout();
+    // What captureHostedReceiveLayout and captureDesktopReceiveLayout share:
+    // stages `slices` with the RADE and diversity owners the layout named.
+    void stageKeptReceiveLayout(const QString& mac,
+                                const ReceiveLayoutStore::LoadResult& existing,
+                                const QList<ReceiveSliceState>& slices);
+    // A desktop's use of the record (restoreDesktopLayoutSlices). True when
+    // this run's slices are saved under a radio's record.
+    bool desktopLayoutSaves() const;
+    // Saves, and the slices on screen are this radio's own: a letter closed for
+    // want of room stays in its record.
+    bool desktopLayoutKeepsClosedLetters() const;
+    // addStartingSlices: reads the record for this connect.
+    void prepareDesktopLayout(const QString& radioMac, bool liveSlices);
+    bool captureDesktopReceiveLayout();
 
     // RADE threads (2026-09-30): one receive route per RADE slice. The
     // channel decodes on its own thread; the DSP worker feeds it and plays
@@ -9004,6 +9164,28 @@ private:
     QHash<int, QMap<QString, QString>> m_deviceLetterSnapshot;
     // windowSliceId.
     int m_windowSliceId{0};
+    // prepareDesktopLayout: the radio this run's slices are saved under, empty
+    // when none (a record that cannot be read, another radio's slices on screen).
+    QString m_desktopLayoutMac;
+    // The record's slices still to bring back at this connect.
+    QList<ReceiveSliceState> m_desktopLayoutWaiting;
+    // The record's slices with no room this run. They stay in the record, and
+    // their letters go last to a new slice.
+    QList<ReceiveSliceState> m_desktopLayoutKept;
+    // prepareDesktopLayout to restoreDesktopLayoutSlices: the saved active
+    // slice, for a connect that reads the record. -1 for a reconnect.
+    int m_desktopLayoutActiveId{-1};
+    // addStartingSlices to loadSliceState: the slice just made, which has not
+    // reached its saved band yet. -1 at any other time.
+    int m_startingSliceAwaitingLoad{-1};
+    // From the connect's start until the restore has run, no layout is saved.
+    bool m_desktopLayoutRestorePending{false};
+    // prepareDesktopLayout to restoreDesktopLayoutSlices: this radio took on
+    // slices another radio left on screen, and has no record of its own.
+    bool m_desktopLayoutSlicesFromElsewhere{false};
+    // A saved layout decides the slices, so empty pans are not filled.
+    bool m_desktopLayoutRuled{false};
+    bool m_desktopLayoutRestoring{false};
     bool m_receiveLayoutOverridesCount{false};
     // Slice ids the saved layout hydrated, until admission completes: a
     // slice refused at admission is "restored" only if its id is here.
@@ -9012,7 +9194,19 @@ private:
     // for the one run of admission that reports them. Kept so a later
     // admission step does not report an accepted restore over it.
     QString m_sliceClosureNotice;
+    // A desktop's letters this connect's closure notice already said stay saved.
+    QSet<int> m_desktopLayoutToldClosed;
+    // During restoreDesktopLayoutSlices: slices that joined a running receiver
+    // because none of their own pan's covered them and none was free.
+    QSet<int> m_desktopLayoutJoinedRunning;
     bool m_receiveLayoutProtected{false};
+    // Receivers the saved layout still names but this run refused or closed.
+    // Their Slice<N>/ keys wait for them, so no slice that takes the same
+    // letter this run writes over those keys.
+    QSet<int> m_receiveLayoutKeptSliceIds;
+    // The saved record could not be read or applied, so which letters it names
+    // is unknown.
+    bool m_receiveLayoutUnreadable{false};
     QString m_receiveLayoutMac;
     std::optional<int> m_restoredRadeReceiveOwner;
     // RADE reason: each RADE slice's last failed decoder start, and the
@@ -9184,7 +9378,8 @@ private:
     //   //MW0LGE_22b  [original inline comment from console.cs:30033]
     //   Saved and restored only under the FIXED tune source
     //   (console.cs:30094-30104 and 30180-30185 [v2.10.3.15]); see
-    //   m_tuneSetFixedPwr.
+    //   m_tuneSetFixedPwr. A band change before the restore replaces it with
+    //   the new band's power (applyTransmitBand).
     // Default 100 matches TransmitModel::m_power default (TransmitModel.h).
     // G.4 fixup: changed from 50 (initial value mismatch with TransmitModel);
     // harmless after the cold-off guard in setTune(false) but kept for hygiene.
@@ -9376,6 +9571,21 @@ private:
     std::atomic<bool> m_amModTxTapEnabled{true};
     // R-IOS-13 / R-R3-49: a remote window's copy of the Core's readings.
     std::array<std::optional<AmModulationAnalyzer::Snapshot>, 2> m_stationModMonitor;
+
+    // SSB Mod Monitor analyzers: [0] TX I/Q tap, [1] PS feedback receiver.
+    std::unique_ptr<SsbModulationAnalyzer> m_ssbModTx;
+    std::unique_ptr<SsbModulationAnalyzer> m_ssbModFb;
+    void feedSsbModFeedback(const QVector<float>& samples);
+    std::atomic<bool> m_ssbModFbWanted{false};
+    std::atomic<bool> m_ssbModTxTapEnabled{false};
+    std::atomic<bool> m_ssbModFbCoreWanted{false};
+    std::atomic<bool> m_ssbModTxTapCoreWanted{false};
+    // Read on the connection thread. The rest of this state is the main
+    // thread's.
+    std::atomic<bool> m_ssbModFbFeed{false};
+    bool m_ssbModWasActive{false};
+    bool m_ssbModFbInUseAnnounced{false};
+    std::array<std::optional<SsbModulationAnalyzer::Snapshot>, 2> m_stationSsbModMonitor;
 
     // TX mic source — strategy interface for silence (3M-1a) or real mic (3M-1b).
     // Owned by RadioModel via unique_ptr. NullMicSource for 3M-1a; replaced with
@@ -9739,6 +9949,9 @@ private:
     // model's slices and receivers), not through Qt parenting.
     std::unique_ptr<StationTciController> m_stationTci;
     std::unique_ptr<RfKitBandFollow>      m_rfKitBandFollow;
+    std::unique_ptr<BandStackController>  m_bandStackController;
+    BandStackFacade*                      m_bandStackFacade{nullptr};
+    BandStackAccess*                      m_bandStackAccess{nullptr};
     // CAT setup from a connected desktop: the `stationCat` object and, on
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};

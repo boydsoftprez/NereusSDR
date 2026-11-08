@@ -52,8 +52,6 @@ const QList<Entry>& all()
          QStringLiteral("DSP > Equalizer")},
         {F::Transverters, QStringLiteral("transverters"),
          QStringLiteral("Radio > Transverters; Band > VHF; Hardware > XVTR; OC Outputs VHF tab")},
-        {F::BandStack, QStringLiteral("band-stack"),
-         QStringLiteral("Band > Band Stacking; the band stack dots on the status bar")},
         {F::Cwx, QStringLiteral("cwx"),
          QStringLiteral("Tools > CWX; Phone/CW applet CW page; the CW keyer settings; "
                         "CWX on the status bar")},

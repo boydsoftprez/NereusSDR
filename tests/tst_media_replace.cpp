@@ -31,6 +31,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: the silence rules around a speaker fault and an unmute;
+//               giveTheWindowASpeaker; DisplayedSessionHarness. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-22: NSDC v2 interop (display codec v2, Task 6): a window that
 //               replaces its media connection keeps display codec v2; the
 //               Core still reports version 2, the replacement's display
@@ -145,6 +148,7 @@
 #include "core/settings/SettingsProxy.h"
 #include "fakes/LoopbackTransport.h"
 #include "fakes/DisplayVersionTap.h"
+#include "fakes/DisplayedSessionHarness.h"
 #include "fakes/RemoteAudioSessionHarness.h"
 #include "fakes/UpgradedCoreToken.h"
 #include "fakes/NoCaptureHelper.h"
@@ -579,6 +583,15 @@ struct GuiHarness {
         audioOn(0);
         feeder.start();
         return true;
+    }
+
+    // 2026-11-05: this harness's window has no speaker by default, so its
+    // audio fails to open and it turns its own audio off. A window in that
+    // state is exempt from the silence rules, so a test of the stall tick
+    // needs one that can play.
+    void giveTheWindowASpeaker()
+    {
+        core.remote.audioEngine()->setSpeakersBusForTest(std::make_unique<PacedAudioBus>());
     }
 
     // One audio packet on connection `index`, under its own main SSRC.
@@ -1144,6 +1157,7 @@ private slots:
     void mediaLeftOnTheWebRelayAfterAMoveKeepsTheStallRule()
     {
         GuiHarness g;
+        g.giveTheWindowASpeaker();
         QVERIFY(connectOnWebRelay(g));
         const QString firstId = g.gui->mediaConnectionId();
         const int rank = g.core.client.pathRank();
@@ -1412,6 +1426,7 @@ private slots:
     void theStallRuleWaitsForTheRadio()
     {
         GuiHarness g;
+        g.giveTheWindowASpeaker();
         QVERIFY(g.connect(tunnelShimPath()));
         QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
         g.feeding = false;
@@ -1420,11 +1435,345 @@ private slots:
         QTest::qWait(RemoteMediaController::kMediaStallMs + 600);
         QVERIFY(recovery.isEmpty());
         QElapsedTimer back;
-        g.core.remote.setConnectionStateForTest(ConnectionState::Connected);
         back.start();
+        g.core.remote.setConnectionStateForTest(ConnectionState::Connected);
         QTRY_COMPARE_WITH_TIMEOUT(recovery.size(), 1,
                                   RemoteMediaController::kMediaStallMs + 1500);
-        QVERIFY(back.elapsed() >= RemoteMediaController::kMediaStallMs - 50);
+        QVERIFY(back.elapsed() >= RemoteMediaController::kMediaStallMs);
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: on the tunnel a speaker fault is not an outage: the 3 s
+    // stall rule, which ended the session here, waits. The retry is held so
+    // no attempt can land first. Real time: the stall clock is.
+    void aSpeakerFaultOnTheTunnelKeepsTheSession()
+    {
+        GuiHarness g;
+        g.giveTheWindowASpeaker();
+        QVERIFY(g.connect(tunnelShimPath()));
+        QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
+        g.feeding = false;
+        g.audioOn(0);
+        g.gui->holdAudioRestartForTest(true);
+        g.gui->raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QTest::qWait(RemoteMediaController::kMediaStallMs + 1000);
+        QVERIFY(recovery.isEmpty());
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: a speaker fault says nothing about display. On a direct
+    // path with a display showing, display still running moves nothing; a
+    // display that stops moves media to the tunnel at the direct rule's 5 s,
+    // and display coming back there keeps the session. The fault can last the
+    // whole session, so waiting it out would leave the display frozen. Real
+    // time: this is a real session, on the window's own clock.
+    void aDisplayThatStopsDuringASpeakerFaultMovesMedia()
+    {
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.display.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(!s.frames.isEmpty(),
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        const QString firstId = s.remoteMedia.mediaConnectionId();
+        QVERIFY(!firstId.isEmpty());
+
+        // The speaker stays out for the whole test: its retry step is held.
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+
+        // Display still running with audio silent: nothing moves.
+        QTest::qWait(RemoteMediaController::kDirectMediaSilenceFallbackMs + 1000);
+        QCOMPARE(s.remoteMedia.mediaConnectionId(), firstId);
+        QVERIFY(!s.remoteMedia.replacingConnection());
+        QVERIFY(s.recovery.isEmpty());
+
+        // The display stops: media moves at the direct rule's 5 s, no sooner.
+        QElapsedTimer dark;
+        dark.start();
+        s.display.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.replacingConnection()
+                                     || s.remoteMedia.mediaConnectionId() != firstId,
+                                 RemoteMediaController::kDirectMediaSilenceFallbackMs + 5000);
+        const qint64 moved = dark.elapsed();
+        qInfo().noquote() << QStringLiteral("media moved %1 ms after the display stopped")
+                                 .arg(moved);
+        // Measured from just after the last frame, which a busy event loop can
+        // make later than the clock's own start, so this allows half a second.
+        // A run on a loaded Mac saw 4990 ms. The wait above already proves
+        // nothing moves while display runs.
+        QVERIFY2(moved >= RemoteMediaController::kDirectMediaSilenceFallbackMs - 500,
+                 qPrintable(QString::number(moved)));
+
+        // The move finishes with the display still stopped, then display
+        // comes back on the new connection and the session stands.
+        QTRY_VERIFY_WITH_TIMEOUT(!s.remoteMedia.replacingConnection()
+                                     && s.remoteMedia.mediaConnectionId() != firstId,
+                                 20000);
+        // The finished move counts as a new start for the display's clock too.
+        QTest::qWait(1000);
+        QVERIFY(s.recovery.isEmpty());
+        s.display.start();
+        const int framesAtMove = s.frames.count();
+        QTRY_VERIFY_WITH_TIMEOUT(s.frames.count() > framesAtMove + 2, 10000);
+        QTest::qWait(RemoteMediaController::kDirectMediaSilenceFallbackMs + 1000);
+        QVERIFY(s.recovery.isEmpty());
+
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-06: display that does not come back after that move ends the
+    // session at the stall rule, as it does with no fault. Real time: a real
+    // session on its clock.
+    void aDisplayThatStaysOutAfterTheMoveRecoversAtTheStallRule()
+    {
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.display.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(!s.frames.isEmpty(),
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        const QString firstId = s.remoteMedia.mediaConnectionId();
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        s.display.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(!s.remoteMedia.replacingConnection()
+                                     && s.remoteMedia.mediaConnectionId() != firstId,
+                                 20000);
+        QElapsedTimer moved;
+        moved.start();
+        QTRY_COMPARE_WITH_TIMEOUT(s.recovery.size(), 1, 10000);
+        qInfo().noquote() << QStringLiteral("recovery %1 ms after the move finished")
+                                 .arg(moved.elapsed());
+        // This timer starts once the wait above sees the move, up to a loaded
+        // event loop's delay after it finished.
+        QVERIFY2(moved.elapsed() >= RemoteMediaController::kMediaStallMs - 1000,
+                 qPrintable(QString::number(moved.elapsed())));
+        QCOMPARE(s.recovery.constFirst().at(1).toString(),
+                 QStringLiteral("The display from the Core stopped. Starting audio and display "
+                                "again."));
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: a display the Core has not accepted yet sends nothing, so
+    // its silence is no news during a speaker fault. The Core's answer is
+    // dropped to hold it unaccepted. Real time: a real session on its clock.
+    void aDisplayNotAcceptedYetIsNotExpectedDuringASpeakerFault()
+    {
+        Test::DisplayedSessionHarness s;
+        s.source.start();
+        s.speaker.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(s.remoteMedia.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        const QString firstId = s.remoteMedia.mediaConnectionId();
+        s.h.stationLink->setDropsOutgoing(true);
+        QVERIFY(s.addPan());
+        QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.activeEndpointCount() == 1, 5000);
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QTest::qWait(RemoteMediaController::kDirectMediaSilenceFallbackMs + 1000);
+        QVERIFY(s.frames.isEmpty());
+        QCOMPARE(s.remoteMedia.activeEndpointCount(), 1);
+        QVERIFY(!s.remoteMedia.replacingConnection());
+        QCOMPARE(s.remoteMedia.mediaConnectionId(), firstId);
+        QVERIFY(s.recovery.isEmpty());
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-06: a finished move restarts the display's clock only if it was
+    // running. A session with no frame keeps none, so a later speaker fault
+    // finds nothing to have stopped.
+    void aMoveWithNoFrameLeavesTheDisplaysClockUnstarted()
+    {
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(s.remoteMedia.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        const QString firstId = s.remoteMedia.mediaConnectionId();
+        QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.activeEndpointCount() == 1, 5000);
+        // Audio stops, so the direct rule moves media with no fault standing.
+        s.source.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(!s.remoteMedia.replacingConnection()
+                                     && s.remoteMedia.mediaConnectionId() != firstId,
+                                 20000);
+        s.source.start();
+        QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.audioStatus().state
+                                     == RemoteAudioStatus::State::Playing, 20000);
+        QVERIFY(s.recovery.isEmpty());
+        s.remoteMedia.markDisplaysAcceptedForTest();
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QTest::qWait(RemoteMediaController::kMediaStallMs + 1000);
+        QVERIFY(s.frames.isEmpty());
+        QVERIFY(s.recovery.isEmpty());
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-06: a display with no frame in this session has nothing to have
+    // stopped, so it moves nothing on a direct path. Otherwise the move, the
+    // recovery after it, and the same again in the next session would repeat
+    // for as long as the fault lasts. The test's Core answers a display only
+    // from a frame, so a test mark stands in for its answer.
+    void aDisplayWithNoFrameMovesNothingDuringASpeakerFault()
+    {
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(s.remoteMedia.audioStatus().state
+                                      == RemoteAudioStatus::State::Playing,
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        const QString firstId = s.remoteMedia.mediaConnectionId();
+        QTRY_VERIFY_WITH_TIMEOUT(s.remoteMedia.activeEndpointCount() == 1, 5000);
+        s.remoteMedia.markDisplaysAcceptedForTest();
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QTest::qWait(RemoteMediaController::kDirectMediaSilenceFallbackMs + 1000);
+        QVERIFY(s.frames.isEmpty());
+        QVERIFY(!s.remoteMedia.replacingConnection());
+        QCOMPARE(s.remoteMedia.mediaConnectionId(), firstId);
+        QVERIFY(s.recovery.isEmpty());
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: nor is a display being closed for the budget, which the
+    // Core stops sending. Real time: a real session on its clock.
+    void aSuspendingDisplayIsNotExpectedDuringASpeakerFault()
+    {
+        Test::DisplayedSessionHarness s;
+        QVERIFY(s.addPan());
+        s.source.start();
+        s.speaker.start();
+        s.display.start();
+        s.h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(!s.frames.isEmpty(),
+                                  s.h.mediaStage(s.remoteMedia).constData(),
+                                  s.h.kMediaConnectionWaitMs);
+        const QString firstId = s.remoteMedia.mediaConnectionId();
+        s.display.stop();
+        s.remoteMedia.setDisplaysSuspendingForTest(true);
+        s.remoteMedia.holdAudioRestartForTest(true);
+        s.remoteMedia.raiseAudioFailureForTest(RemoteAudioReceiver::Fault::SpeakerStalled);
+        QTest::qWait(RemoteMediaController::kDirectMediaSilenceFallbackMs + 1000);
+        QVERIFY(!s.remoteMedia.replacingConnection());
+        QCOMPARE(s.remoteMedia.mediaConnectionId(), firstId);
+        QVERIFY(s.recovery.isEmpty());
+        s.stopAll();
+        s.h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: a muted window asks the Core for nothing, so the silence
+    // while muted says nothing about the path. Before, the clock kept running
+    // and the unmute found it long expired: the next tick, at most 500 ms
+    // later, ended the session unless the first packet got there first. The
+    // Core here sends nothing after the unmute, so the rule still fires, a
+    // full wait from the unmute. The stall tick runs on its own 500 ms timer
+    // and wall clock, as in the test above.
+    void theStallRuleCountsFromTheUnmute()
+    {
+        GuiHarness g;
+        g.giveTheWindowASpeaker();
+        QVERIFY(g.connect(tunnelShimPath()));
+        QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
+        g.feeding = false;
+        g.audioOn(0);
+        AudioEngine* const audio = g.core.remote.audioEngine();
+        audio->setMasterMuted(true);
+        QTest::qWait(RemoteMediaController::kMediaStallMs + 600);
+        QVERIFY(recovery.isEmpty());
+        // Started first: the unmute restarts the clock, so nothing can fire
+        // inside this timer's count, however long the unmute itself takes.
+        QElapsedTimer back;
+        back.start();
+        audio->setMasterMuted(false);
+        QTRY_COMPARE_WITH_TIMEOUT(recovery.size(), 1,
+                                  RemoteMediaController::kMediaStallMs + 1500);
+        QVERIFY2(back.elapsed() >= RemoteMediaController::kMediaStallMs,
+                 qPrintable(QStringLiteral("%1 ms after the unmute").arg(back.elapsed())));
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: the same for the direct path's 5 s rule, on the test's
+    // clock: a long mute moves nothing at the unmute, and a Core still silent
+    // falls back a full wait after it.
+    void theDirectSilenceRuleCountsFromTheUnmute()
+    {
+        GuiHarness g;
+        g.giveTheWindowASpeaker();
+        QVERIFY(g.connect(tunnelShimPath()));
+        MediaIcePath hostPath;
+        hostPath.remoteAddress = QStringLiteral("127.0.0.1");
+        g.feeding = false;
+        g.guiTransports.first()->path = hostPath;
+        g.audioOn(0);
+        AudioEngine* const audio = g.core.remote.audioEngine();
+        audio->setMasterMuted(true);
+        g.now += 2 * RemoteMediaController::kDirectMediaSilenceFallbackMs;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        audio->setMasterMuted(false);
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        g.now += RemoteMediaController::kDirectMediaSilenceFallbackMs - 1;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 1);
+        g.now += 1;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 2);
+        g.core.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: and for the wait after a fallback finished, whose expiry
+    // asks for recovery.
+    void aFinishedFallbacksWaitCountsFromTheUnmute()
+    {
+        GuiHarness g;
+        g.giveTheWindowASpeaker();
+        QVERIFY(g.connect(tunnelShimPath()));
+        QSignalSpy recovery(g.gui.get(), &RemoteMediaController::recoveryRequested);
+        MediaIcePath hostPath;
+        hostPath.remoteAddress = QStringLiteral("127.0.0.1");
+        g.feeding = false;
+        g.guiTransports.first()->path = hostPath;
+        g.audioOn(0);
+        g.now += RemoteMediaController::kDirectMediaSilenceFallbackMs;
+        g.gui->checkMediaSilence();
+        QCOMPARE(g.guiTransports.size(), 2);
+        g.guiTransports.at(1)->close();
+        QVERIFY(!g.gui->replacingConnection());
+        AudioEngine* const audio = g.core.remote.audioEngine();
+        audio->setMasterMuted(true);
+        g.now += 2 * RemoteMediaController::kDirectMediaSilenceFallbackMs;
+        audio->setMasterMuted(false);
+        g.gui->checkMediaSilence();
+        QVERIFY(recovery.isEmpty());
+        g.now += RemoteMediaController::kDirectMediaSilenceFallbackMs - 1;
+        g.gui->checkMediaSilence();
+        QVERIFY(recovery.isEmpty());
+        g.now += 1;
+        g.gui->checkMediaSilence();
+        QCOMPARE(recovery.size(), 1);
         g.core.client.disconnectFromStation(QStringLiteral("test complete"));
     }
 

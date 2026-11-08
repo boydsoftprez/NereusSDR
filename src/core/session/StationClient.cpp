@@ -9,6 +9,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 6: sliceControlledHere; a bandStack.* refusal goes
+//               to BandStackAccess::refused.
+//   2026-11-05: Band stack plan Task 4: bandStack declared, the `bandStack` mirror and
+//               sendBandStackCommand.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCw 3.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-02: Keep independent active/detail frequency streams acknowledged.
@@ -607,6 +612,8 @@
 //   2026-10-26: CW transmit, a refused CWPitch write settles the window's
 //               cwPitchHz on the Core's value (R-CW-02). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 //   2026-11-05: hot keys plan Task 4: this window's MOX key ending reaches
 //               the model. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
@@ -625,6 +632,7 @@
 #include "core/session/RemoteStationOptions.h"
 #include "core/session/BandLinkFit.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorRecord.h"
 
 #include "core/AppSettings.h"
 #include "core/CfcProfile.h"
@@ -666,6 +674,7 @@
 #include "models/AccessorySettingsModel.h"
 #include "models/RoundtableModel.h"
 #include "core/roundtable/RoundtableState.h"
+#include "core/session/BandStackFacade.h"
 #include "core/session/RecordStream.h"
 
 #include <QAuthenticator>
@@ -1052,6 +1061,9 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     // `roundtable` object, its room streams and the roundtable.* verbs;
     // stationRoundtableVersion 1).
     m_declaredFeatures.insert(QByteArrayLiteral("roundtable"), 2);
+    // Band stack plan Task 4: this window shows the Core's band stack (the
+    // `bandStack` object and the bandStack.* verbs; bandStackVersion 1).
+    m_declaredFeatures.insert(QByteArrayLiteral("bandStack"), 1);
     // R-R3-46 / R-R3-11: this window shows and sets the other ADC's own
     // attenuator for the slices on it (stepAtt rx2AttenuationDb,
     // rx2SliceMask; adcAttenuatorVersion 1).
@@ -1277,6 +1289,7 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
                 });
     }
 
+    m_linkDownEdits = new LinkDownEditWatch(this);
     m_outboundMirror = new StateMirror(this);
     connect(m_outboundMirror, &StateMirror::propertiesChanged, this,
             [this](const QByteArray& objectKey, const QList<MirrorUpdate>& updates) {
@@ -1489,6 +1502,8 @@ void StationClient::connectToStation(const QUrl& url, const QString& token,
     // to station A instead, unprompted. Stopped here, unconditionally,
     // before any other logic runs, so it also covers the refusal path.
     m_reconnectTimer->stop();
+    // A connect the operator asked for is not this outage's redial.
+    m_linkDownEdits->clear();
 
     // FIRST error wins for the rest of this connection attempt. A pinning
     // refusal is followed immediately by the socket errors it causes
@@ -2374,6 +2389,9 @@ void StationClient::disconnectFromStation(const QString& reason, bool attemptRec
     // radio change is being waited out any more.
     if (!attemptReconnect) {
         m_radioChangeReason.clear();
+        // The window is no longer on a Core: nothing is coming to replace
+        // what the operator changes, so nothing "did not stick".
+        m_linkDownEdits->clear();
     }
     // Task 19: cancel a PENDING retry even when no session is active at
     // all -- the backoff-wait state has m_sessionActive already false
@@ -2468,6 +2486,10 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
         return;  // already reported for this attach
     }
     const quint32 retiringEpoch = m_sessionEpoch;
+    // Settings persistence audit (W11). Read before the teardown below: the
+    // window watches these retained objects once the link is down.
+    const bool wasReady = m_handshakeComplete;
+    const QHash<QByteArray, QPointer<QObject>> retainedObjects = m_objects;
     // Retire the operation now, but notify only as this teardown returns.
     // A completion handler may destroy this client or reconnect it. Emitting
     // before clearing mirrors/proxy/coalescer let that new session inherit
@@ -2673,6 +2695,8 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
             if (RoundtableModel* rooms = m_radioModel->roundtableModel()) {
                 rooms->clearStationRooms();
             }
+            // Band stack plan Task 4: so does the Core's band stack.
+            m_radioModel->bandStackFacade()->clearStationValues();
         }
     }
     m_roundtableStreams.clear();
@@ -2687,6 +2711,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     // R-IOS-13 / R-R3-49: that session's Mod Monitor subscription ended
     // with it; the window's choice of source stays for the next.
     m_modMonitorStream.clear();
+    m_ssbModMonitorStream.clear();
 
     if (!m_settingsProxy.isNull()) {
         m_settingsProxy->setReady(false);
@@ -2759,7 +2784,18 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     const bool pairedRaceRoute = m_raceMode && m_stationIdentity.size() == 32
         && !m_lastAllowUnpinned && (!m_dialPlan.isEmpty() || !m_serviceRoute.servers.isEmpty());
     if (attemptReconnect && (m_lastUrl.isValid() || pairedRaceRoute)) {
+        // Settings persistence audit (W11). Last, so the teardown above and
+        // sessionEnded()'s handlers are not taken for edits. Only a session
+        // that reached ready: a first connect has shown nothing yet to edit.
+        // A redial that failed partway keeps the outage's edits and watch.
+        if (m_sessionPurpose == SessionPurpose::Ordinary && wasReady) {
+            m_linkDownEdits->start(retainedObjects);
+        } else {
+            m_linkDownEdits->resume();
+        }
         scheduleReconnect();
+    } else {
+        m_linkDownEdits->clear();
     }
     emit connectionActivityChanged();
 }
@@ -3002,6 +3038,9 @@ void StationClient::onTransportText(const QByteArray& wire)
     // starts meaning something. See attachTransport().
     if (!m_linkUp) {
         m_linkUp = true;
+        // Settings persistence audit (W11): what moves from here on is this
+        // session's capabilities, settings and snapshot landing.
+        m_linkDownEdits->pause();
         if (m_heartbeatIntervalMs > 0 && m_sessionActive) {
             m_heartbeatTimer->setInterval(effectiveHeartbeatIntervalMs());
             m_heartbeatTimer->start();
@@ -3165,6 +3204,20 @@ void StationClient::onTransportText(const QByteArray& wire)
         // the station its own state back.
         m_forwardLocalChanges = m_sessionPurpose == SessionPurpose::Ordinary;
         if (m_forwardLocalChanges) { m_writeFlushTimer->start(); }
+        // Settings persistence audit (W11): same words and same log level as
+        // SettingsProxy::applySnapshot() gives a Setup value.
+        if (m_sessionPurpose == SessionPurpose::Ordinary && m_linkDownEdits->isArmed()) {
+            const QStringList lost = m_linkDownEdits->takeSuperseded();
+            if (!lost.isEmpty()) {
+                qCWarning(lcStationClient).noquote()
+                    << QStringLiteral("%1 setting(s) changed while the station link was "
+                                      "down did not reach the station and have been "
+                                      "replaced by its own values: %2")
+                           .arg(lost.size())
+                           .arg(lost.join(QStringLiteral(", ")));
+                emit linkDownEditsSuperseded(lost);
+            }
+        }
         refreshRemoteTransmit();
         // Parity Task 19 (R-IOS-25): the Core's spots and its spot sources'
         // console lines, each backlog first. Each (re)connect starts from
@@ -3256,10 +3309,13 @@ void StationClient::onTransportText(const QByteArray& wire)
         // R-IOS-13 / R-R3-49: the Mod Monitor's stream, when the window
         // shows it; a new snapshot is a new subscription.
         m_modMonitorStream.clear();
+        m_ssbModMonitorStream.clear();
         if (!m_radioModel.isNull()) {
             m_radioModel->clearStationModMonitor();
+            m_radioModel->clearStationSsbModMonitor();
         }
         syncModMonitorSubscription();
+        syncSsbModMonitorSubscription();
         if (firstSnapshot) {
             qCInfo(lcStationClient) << "Session established with" << m_capabilities.stationName;
             // iPhone app plan Task 27: where the Core was reached, tried
@@ -3383,7 +3439,8 @@ void StationClient::onTransportText(const QByteArray& wire)
             }
             break;
         }
-        if ((spotSourcesAvailable() || stationRadiosAvailable() || stationTciServerAvailable() || txModMonitorAvailable())
+        if ((spotSourcesAvailable() || stationRadiosAvailable() || stationTciServerAvailable()
+             || txModMonitorAvailable() || txSsbModMonitorAvailable())
             && !m_radioModel.isNull()) {
             m_radioModel->applyStationRecordBatch(message.recordBatch);
         }
@@ -4171,6 +4228,20 @@ void StationClient::handleCapabilities(const SessionMessage& message)
         } else {
             m_objects.remove(QByteArrayLiteral("roundtable"));
             roundtable->clearStationValues();
+        }
+    }
+
+    // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack, read
+    // only; never written back. Against a Core that does not offer it the key
+    // is not held.
+    if (m_radioModel->role() == RadioModel::Role::Remote) {
+        BandStackFacade* bandStack = m_radioModel->bandStackFacade();
+        if (m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+            && m_capabilities.bandStackVersion >= 1) {
+            m_objects.insert(QByteArrayLiteral("bandStack"), bandStack);
+        } else {
+            m_objects.remove(QByteArrayLiteral("bandStack"));
+            bandStack->clearStationValues();
         }
     }
 
@@ -5504,6 +5575,12 @@ bool StationClient::applyClientOnlyProperty(QObject* target, const QByteArray& c
         auto* roundtable = qobject_cast<RoundtableState*>(target);
         return roundtable != nullptr && roundtable->applyStationValue(propertyName, native);
     }
+    // Band stack plan Task 4: a plain state apply; changes only by the
+    // bandStack.* verbs.
+    if (className == "BandStackFacade") {
+        auto* bandStack = qobject_cast<BandStackFacade*>(target);
+        return bandStack != nullptr && bandStack->applyStationValue(propertyName, native);
+    }
     if (className != "SliceModel") {
         return false;
     }
@@ -5976,6 +6053,62 @@ StationClient::CommandOutcome StationClient::requestSelectBand(int sliceId, int 
     return sendCommand("slice.selectBand", sliceId,
                        { intArgument("sliceId", sliceId), intArgument("band", band) },
                        QStringLiteral("the band change"));
+}
+
+bool StationClient::bandStackAvailable() const
+{
+    // Band stack plan Task 4: the Core sends bandStackVersion only to a window
+    // that declared bandStack.
+    return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && m_capabilities.bandStackVersion >= 1;
+}
+
+StationClient::CommandOutcome StationClient::sendBandStackCommand(const QString& verb,
+                                                                  const QJsonObject& arguments)
+{
+    if (!bandStackAvailable()) {
+        return IStationLink::sendBandStackCommand(verb, arguments);
+    }
+    const QString notSent = QStringLiteral("The band stack change could not be sent.");
+    if (!verb.startsWith(QLatin1String("bandStack."))) {
+        return {false, notSent};
+    }
+    QList<MirrorUpdate> wire;
+    int sliceId = -1;
+    for (auto it = arguments.constBegin(); it != arguments.constEnd(); ++it) {
+        const QByteArray name = it.key().toUtf8();
+        const QJsonValue value = it.value();
+        if (value.isString()) {
+            wire.append(stringArgument(name, value.toString()));
+        } else if (value.isBool()) {
+            wire.append(boolArgument(name, value.toBool()));
+        } else if (value.isDouble()) {
+            wire.append(MirrorUpdate{0, name, MirrorWireKind::Int64,
+                                     QVariant(static_cast<qlonglong>(value.toInteger()))});
+            if (name == "sliceId") {
+                sliceId = value.toInt(-1);
+            }
+        } else if (value.isArray()) {
+            wire.append(stringArgument(name, QString::fromUtf8(QJsonDocument(value.toArray())
+                                                                   .toJson(QJsonDocument::Compact))));
+        } else {
+            return {false, notSent};
+        }
+    }
+    return sendCommand(verb.toUtf8(), sliceId, wire, QStringLiteral("the band stack change"));
+}
+
+bool StationClient::sliceControlledHere(int sliceId) const
+{
+    // Band stack plan Task 6: a slice is another device's only when the Core
+    // says so and this window has an identity to compare it with.
+    if (m_sliceAccess == nullptr || !remoteSliceAccessAvailable()
+        || m_sliceAccess->selfDeviceId().isEmpty()) {
+        return true;
+    }
+    const std::optional<SliceAccessMirror::Entry> entry = m_sliceAccess->entry(sliceId);
+    return !entry.has_value() || entry->controllerDeviceId.isEmpty()
+        || m_sliceAccess->controlledHere(sliceId);
 }
 
 bool StationClient::remoteSliceAccessAvailable() const
@@ -6635,6 +6768,59 @@ StationClient::CommandOutcome StationClient::requestModMonitorReset(int source)
                        {MirrorUpdate{0, "source", MirrorWireKind::Int64,
                                      QVariant(static_cast<qlonglong>(source))}},
                        QStringLiteral("the modulation monitor reset"));
+}
+
+bool StationClient::txSsbModMonitorAvailable() const
+{
+    return spotSourcesAvailable() && m_capabilities.txSsbModMonitorVersion >= 1;
+}
+
+void StationClient::setSsbModMonitorSource(int source)
+{
+    m_ssbModMonitorSource = source == 0 || source == 1 ? source : -1;
+    syncSsbModMonitorSubscription();
+}
+
+void StationClient::syncSsbModMonitorSubscription()
+{
+    const QString wanted = txSsbModMonitorAvailable()
+        ? SsbModMonitorRecord::streamName(m_ssbModMonitorSource)
+        : QString();
+    if (wanted == m_ssbModMonitorStream) {
+        return;
+    }
+    const auto streamArgument = [](const QString& stream) {
+        return MirrorUpdate{0, "stream", MirrorWireKind::Utf8, QVariant(stream)};
+    };
+    if (!m_ssbModMonitorStream.isEmpty() && stationLinkReady()) {
+        invokeCommand("records.unsubscribe", {streamArgument(m_ssbModMonitorStream)});
+    }
+    if (!m_radioModel.isNull()) {
+        m_radioModel->clearStationSsbModMonitor();
+    }
+    m_ssbModMonitorStream = wanted;
+    if (!wanted.isEmpty()) {
+        invokeCommand("records.subscribe",
+                      {streamArgument(wanted),
+                       MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
+                                    QVariant(static_cast<qlonglong>(SsbModMonitorRecord::kCapacity))}});
+    }
+}
+
+StationClient::CommandOutcome StationClient::requestSsbModMonitorReset(int source)
+{
+    if (!txSsbModMonitorAvailable()) {
+        return {false, stationLinkReady() ? ssbModMonitorUnavailableReason()
+                                          : QStringLiteral("Not connected to the Core, so the "
+                                                           "reset was not sent.")};
+    }
+    if (source != 0 && source != 1) {
+        return {false, QStringLiteral("This app does not know that monitor source.")};
+    }
+    return sendCommand("txSsbModMonitor.reset", -1,
+                       {MirrorUpdate{0, "source", MirrorWireKind::Int64,
+                                     QVariant(static_cast<qlonglong>(source))}},
+                       QStringLiteral("the SSB modulation monitor reset"));
 }
 
 bool StationClient::stationRadiosAvailable() const
@@ -8790,6 +8976,11 @@ void StationClient::handleCommandResult(const SessionMessage& message)
             // own route (the pages that sent it show it; MainWindow says
             // it), never the slice one.
             m_radioModel->reportStationAccessoryRefusal(device, reason, message.commandId);
+        } else if (message.commandVerb.startsWith("bandStack.")) {
+            // Band stack plan Task 6: BandStackAccess::refused is the one place
+            // the GUI hears these. `message.commandVerb`, as a question's final
+            // answer finds no pending entry.
+            m_radioModel->reportStationBandStackRefused(reason);
         } else {
             m_radioModel->reportStationSliceCommandRejected(reason);
         }

@@ -12,6 +12,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Band stack plan Task 4: and bandStack, so bandStackVersion and the `bandStack`
+//               object are captured.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Capture negotiated frequency Roundtable version2 surface.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-28: Capture the current remoteCw v2 provider and negotiated
@@ -292,6 +295,7 @@
 #include "core/session/MirrorEnumDomain.h"
 #include "core/session/MirrorPolicy.h"
 #include "core/session/MirrorSchema.h"
+#include "core/session/BandStackFacade.h"
 #include "core/session/PaProfilesFacade.h"
 #include "core/session/PureSignalSessionFacade.h"
 #include "core/session/SessionCommandDispatcher.h"
@@ -741,6 +745,8 @@ std::optional<QList<QByteArray>> liveSessionWire(
                                   {"adcAttenuators", 1},
                                   // R-R3-49 / R-IOS-18: the `paProfiles` object.
                                   {"paProfiles", 1},
+                                  // Band stack plan Task 4: the `bandStack` object.
+                                  {"bandStack", 1},
                                   // RADE status: each slice's radeSynced
                                   // and radeFreqOffsetHz.
                                   {"radeStatus", 1},
@@ -842,6 +848,9 @@ QJsonArray captureCapabilities()
     caps.coreBuildInfo = CoreBuildInfo{QStringLiteral("0.5.2"), QStringLiteral("link-surface@fixture")};
     caps.settingsBackupVersion = 1;
     caps.remoteIqVersion = 1;
+    // SSB Mod Monitor: sent by a Core whose record streams are up, after
+    // every other entry but the build info.
+    caps.txSsbModMonitorVersion = 1;
     caps.waveformVersion = 1;
     caps.setupDescriptionVersion = 1;
     caps.miniDisplayVersion = 1;
@@ -874,6 +883,8 @@ QJsonArray captureCapabilities()
     caps.adcAttenuatorVersion = 1;
     // R-R3-49 / R-IOS-18: sent to a peer that declared paProfiles.
     caps.paProfileVersion = 1;
+    // Band stack plan Task 4: sent to a peer that declared bandStack.
+    caps.bandStackVersion = 1;
     // RADE status: sent to a peer that declared radeStatus.
     caps.radeStatusVersion = 1;
     // HL2 port part 2: sent to a peer that declared txInhibitReason.
@@ -2091,6 +2102,7 @@ QList<const QMetaObject*> LinkSurface::mirroredMetaObjects()
             &TransmitState::staticMetaObject,
             &StationVax::staticMetaObject,
             &PaProfilesFacade::staticMetaObject,
+            &BandStackFacade::staticMetaObject,
             &RotorLink::RotorModel::staticMetaObject,
             &RoundtableState::staticMetaObject};
 }
