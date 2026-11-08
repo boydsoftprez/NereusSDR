@@ -75,7 +75,10 @@ notes have no website line for 741 (release manager, 2026-11-08). -->
   StreamController use the same actions, from **Keys and controllers**. None
   has been tried with a real device yet, and each is marked **Untested**. In a
   window connected to a Core, CW dot and dash keys need the 2026.11.1 Core.
-  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759))
+  On Linux, a knob needs an access rule, which the AppImage now carries; the
+  **Knobs** page says where to copy it.
+  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759),
+  [#768](https://github.com/boydsoftprez/NereusSDR/pull/768))
 
 ### Roundtable
 
@@ -172,6 +175,16 @@ confirmed on the air" unless JJ or the reporter confirms it before the cut. -->
   only a slice this window controls, and the sides go dark when wideband
   capture ends instead of freezing.
   ([#751](https://github.com/boydsoftprez/NereusSDR/pull/751))
+- **Separate pans no longer open black on radios that report fewer
+  receivers.** On Protocol 2, Angelia, Orion, Orion MkII family radios
+  (including the Anvelina Pro 3) and Andromeda now get streams only on the
+  receivers the radio says it has. Before, on a radio whose firmware reports
+  five receivers, a third separate pan could stay black while showing LIVE.
+  When every receiver is taken, a new separate pan is refused with "All 3 of
+  the radio's receivers are in use" instead of opening black. Slices that
+  share a pan's receiver still work. ANAN-G2 and Saturn radios are not
+  affected.
+  ([#764](https://github.com/boydsoftprez/NereusSDR/pull/764))
 
 ### Transmit
 
@@ -310,10 +323,9 @@ These reach phones and iPads with the app's next build, not with this download.
   handle works. Phones are unchanged.
   ([#755](https://github.com/boydsoftprez/NereusSDR/pull/755))
 
-<!-- Still to come. Delete this block at the cut. Not on main at 163d08931.
-- Receivers keep streams on the DDCs the radio reports having: PR 764, the last
-  change for 2026.11.1. Write it up against the code when it lands.
-Open and not in the manager's list for this release: 753, 754.
+<!-- Still to come. Delete this block at the cut. Checked against main at 78323b43d.
+Nothing left for 2026.11.1. Open and not in the manager's list for this release:
+753, 754.
 No note needed, on main: 749, 745, 762, 763 and 766 (tests, CI, Windows exports).
 -->
 

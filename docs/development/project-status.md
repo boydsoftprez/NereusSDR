@@ -19,7 +19,7 @@ its version is independent of the desktop release. The
 
 ### On main since 2026.11.0, not released
 
-As of `163d08931` (2026-11-08). The next version resolves to 2026.11.1 if it
+As of `78323b43d` (2026-11-08). The next version resolves to 2026.11.1 if it
 ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 [CHANGELOG.md](../../CHANGELOG.md) under `[Unreleased]` has the operator wording.
 
@@ -47,6 +47,8 @@ ships in November (`scripts/release-version.py next`). J.J. Boyd calls the cut.
 | SSB Mod Monitor, desktop, remote and phone (Brian Sutton W4KZO) | 742, 752 | Targeted Mac tests, iPhone and iPad simulators. Not run on a radio, Linux or Windows. |
 | TCI Clients panel no longer makes its column jump (reported by LB3AG) | 765 | Mac tests only; LB3AG has not confirmed. |
 | Hot keys: 51 keyboard actions with defaults, Keys and controllers setup, VOX on or off action, band stack keys; MIDI, knobs and deck plugins (untested on real devices) | 759 | Focused tests on a Mac; Windows and Linux lines compiled only on a Mac. Merged after a radio check (release manager). No real knob, MIDI device or deck plugin has run. Remote CW dot and dash need the 2026.11.1 Core. |
+| Linux knobs access rule installed with the app, so the AppImage carries it | 768 | A stand-in CMake install per the PR; CI's Linux build is the first real run. The `.deb` packages carry only `nereusd`, so not this file. |
+| Streams kept on the receivers the radio reports, on Protocol 2 Angelia, Orion, Orion MkII family (Anvelina Pro 3) and Andromeda; a fourth separate pan on a radio reporting 5 is refused instead of black | 764 | 10 focused test programs on a Mac per the PR; packet counts on J.J. Boyd's Anvelina Pro 3 (gateware 22.15) showed DDC5 and DDC6 send nothing. The PR says the fix itself was not yet tried on a radio; no later result recorded here. Touches the core RX path. |
 
 Also on main, with no operator-facing change and so no release note: PR 749
 (test debts, CI and Windows DLL exports), PR 745 (iOS drag pace test scaling),
@@ -60,12 +62,9 @@ The Windows signal fix still needs a Windows test run; PR 749 names it.
 
 ### Still to come before the next release
 
-Open and not on main as of `163d08931`:
+Nothing left for 2026.11.1 as of `78323b43d`.
 
-- Receivers keep streams on the DDCs the radio reports having (PR 764), the last
-  change for 2026.11.1.
-
-Also open, not in the release manager's list for 2026.11.1: 753 (Cinnamon file
+Open, not in the release manager's list for 2026.11.1: 753 (Cinnamon file
 choosers), 754 (container dialog when adding a meter).
 
 The remaining text is an archived reference copied from the earlier agent
