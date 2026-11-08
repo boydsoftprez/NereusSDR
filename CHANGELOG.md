@@ -1,6 +1,313 @@
 # Changelog
 
-## [Unreleased]
+## [2026.11.1] - 2026-11-08
+
+Changes since desktop/Core 2026.11.0. Update the Core and desktop together.
+The iPhone and iPad app is delivered separately. Changes in that app are listed
+under **iPhone and iPad app** and reach phones and iPads with its next build.
+
+[Website](https://nereussdr.com/) · [User guide](https://nereussdr.com/manual/) · [Discord](https://discord.gg/m35ERjwRe)
+
+### Meters and containers
+
+- **Classic and Modern bar meters.** Bar meters in a container can now use a
+  **Modern** face: a rounded track with a band up to the meter's high mark, an
+  accent fill and a marker, in the style of the PureSignal feedback meter. Set
+  **Meter face** for the whole container, set **Face** on a single meter, and
+  use **Use for all meters** to clear the exceptions. **Classic** stays the
+  default and your existing bars keep it until you change them. Only the
+  drawing changes: readings, scales and calibration stay the same. Thanks to
+  Brian Sutton (W4KZO), whose original proposal this is built on.
+  ([#731](https://github.com/boydsoftprez/NereusSDR/pull/731),
+  [#739](https://github.com/boydsoftprez/NereusSDR/pull/739))
+- **The Phone/CW panel in a container.** A container can now hold a copy of the
+  Phone/CW panel. Add **Phone / CW sections** from **Panel sections**, choose
+  its **Page** (**Phone** or **CW**), and hide any of its rows. The docked panel
+  keeps every row. Desktop only. Thanks to Brian Sutton (W4KZO).
+  ([#757](https://github.com/boydsoftprez/NereusSDR/pull/757),
+  [#760](https://github.com/boydsoftprez/NereusSDR/pull/760))
+
+### Band stacks
+
+- **Saved spots on every band.** Each band now keeps a list of saved spots,
+  shared by every window and phone on the Core. Press a band to go to your
+  place on it, press it again for the next spot, Shift for the previous one,
+  and Ctrl (Command on Mac) to add where you are. **Band > Band Stacking...**,
+  or the dots on the status bar, opens the list to rename, lock, reorder and
+  delete spots, and the status bar shows your place, such as **40m 5/6**.
+  Remote windows need the 2026.11.1 Core; on an older Core band buttons work
+  as before. Based on the band stack in Thetis by Richard Samphire (MW0LGE).
+  From the keyboard, **M** and **N** step to the next and previous spot,
+  **Shift+M** adds one and **Shift+N** opens the list.
+  ([#748](https://github.com/boydsoftprez/NereusSDR/pull/748),
+  [#759](https://github.com/boydsoftprez/NereusSDR/pull/759))
+
+### Hot keys
+
+- **Keys that work from the first launch.** The arrows tune and set volume,
+  **B** and **V** change the filter, **J** and **H** the band, **X** and **Z**
+  the mode, **Space** talks while held, and **Ctrl+Shift+M**, **Ctrl+T** and
+  **Ctrl+Shift+T** are MOX, TUNE and two-tone (Command on Mac). Change any key
+  under **File > Settings... > Keys and controllers > Keyboard**, or **View >
+  Keyboard Shortcuts...**, and turn them all off with **View > Use Shortcuts**.
+  Keys are kept on this computer, so they also work in a window connected to a
+  Core. A transmit key can't be a plain letter or number, so a stray press
+  can't key the radio. Thanks to Ray (WD4X), who asked for hot keys, and Brian
+  Sutton (W4KZO), whose arrow-key tuning this replaces. On a Mac, CW message 5
+  has no key until you give it one, because Command+F5 turns VoiceOver on or
+  off.
+  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759),
+  [#769](https://github.com/boydsoftprez/NereusSDR/pull/769))
+- **VOX on or off.** A new action works the TX panel's **VOX** button. It has no
+  key until you give it one.
+  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759))
+- **MIDI, knobs and deck plugins.** MIDI controllers, eight USB knobs and
+  controllers, and plugins for the Stream Deck app, Ulanzi Studio and
+  StreamController use the same actions, from **Keys and controllers**. None
+  has been tried with a real device yet, and each is marked **Untested**. In a
+  window connected to a Core, CW dot and dash keys need the 2026.11.1 Core.
+  On Linux, a knob needs an access rule, which the AppImage now carries; the
+  **Knobs** page says where to copy it.
+  ([#759](https://github.com/boydsoftprez/NereusSDR/pull/759),
+  [#768](https://github.com/boydsoftprez/NereusSDR/pull/768))
+
+### Roundtable
+
+- **Live reports on the spectrum.** On the frequency your active slice is
+  tuned to, a card on the panadapter now shows who is talking and each
+  listener's signal report with its age, with nothing to open. When two
+  stations key together it shows **Double** with both callsigns and labels the
+  readings **Combined RF**, because they measure the two signals together and
+  not either station alone. Click the card to read the details without tuning.
+  ([#739](https://github.com/boydsoftprez/NereusSDR/pull/739))
+- **Look at any frequency without tuning.** Click a tag, your card or a flag's
+  Roundtable line to open a box on the pan with who is there, their readings
+  and, when someone is on the air, what your own pan sees. **Tune slice A here**
+  is the only thing in it that moves your radio, and it is grayed while you
+  transmit. Right-click a tag for the same choices. The card is redrawn with a
+  small meter under each reading.
+  ([#741](https://github.com/boydsoftprez/NereusSDR/pull/741))
+- **A double means a real double.** A frequency reads **Double** only when
+  stations are keyed together in the same Roundtable room, so two stations
+  keyed close together in different rooms are no longer called one. While
+  Roundtable is reconnecting or offline, the card and tags freeze in gray and
+  say **Last known** instead of looking live.
+  ([#741](https://github.com/boydsoftprez/NereusSDR/pull/741))
+- **S-meter choice from the flag.** A **⋯** button under the flag's lock opens
+  the flag's menu, which now has an **S-meter** item. It sets the meter choice
+  for the S-meter panel and every flag in this window.
+  ([#741](https://github.com/boydsoftprez/NereusSDR/pull/741))
+- **Reports are back on remote desktops.** A desktop signed in to a Core over
+  the network showed who was on a frequency but lost the received reports and
+  frequency messages. They now arrive and keep updating.
+  ([#733](https://github.com/boydsoftprez/NereusSDR/pull/733))
+- **Less work for the panadapter.** Incoming reports and the waterfall clock's
+  tick no longer redraw the panadapter's overlay or rebuild the Roundtable
+  panel, which removes a cause of hitching on a busy frequency. Thanks to Brian
+  Sutton (W4KZO).
+  ([#732](https://github.com/boydsoftprez/NereusSDR/pull/732),
+  [#739](https://github.com/boydsoftprez/NereusSDR/pull/739))
+- **Roundtable website.** Helpers can now find **Review** from every page, and
+  signed-in stations get **Station settings** with clearer wording about keys.
+  This is on the website and is not part of the download.
+  ([#728](https://github.com/boydsoftprez/NereusSDR/pull/728))
+
+### Receive
+
+- **AUTO AGC holds through transmit.** While the station is on the air,
+  including TUNE, two-tone and CW with QSK, AUTO stops measuring the noise floor
+  and leaves AGC-T where it was. After you unkey, it measures again only from
+  signal received entirely after the transmission. This addresses loud audio on
+  the return to receive, reported by rsaue (LB2EG). It has not yet been confirmed
+  on the air.
+  ([#739](https://github.com/boydsoftprez/NereusSDR/pull/739), issue
+  [#720](https://github.com/boydsoftprez/NereusSDR/issues/720))
+- **Right-click AUTO for AGC setup.** Right-click **AUTO** in the RX panel, or in
+  an **RX AGC** container copy, to open **DSP > AGC/ALC** in Settings. A
+  left-click still turns AUTO on and off. The AGC-T slider's right-click now
+  works before the first connection too. Thanks to Brian Sutton (W4KZO).
+  ([#740](https://github.com/boydsoftprez/NereusSDR/pull/740),
+  [#746](https://github.com/boydsoftprez/NereusSDR/pull/746))
+- **Sample rate and step stay put.** A receiver's sample rate and a slice's tune
+  step were saved per band, so changing band could put an old rate back, and a
+  new slice opened at 192 kHz. Each receiver now keeps one rate on every band,
+  saved for each radio, and each slice keeps one step. A new slice opens at the
+  rate of the slice you were on, and slices sharing a receiver come back at the
+  highest rate saved on them.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+- **A new slice copies the one you are on.** Adding a slice (**+RX**, Ctrl+R or
+  the pan menu) copies the current slice's filter, AGC, noise blanker and noise
+  reduction, squelch, step, volume and mode settings. RIT, XIT, lock and mute
+  start off. Before, a slice letter used earlier could bring back its old XIT
+  and transmit off frequency.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747),
+  [#750](https://github.com/boydsoftprez/NereusSDR/pull/750))
+- **Every slice comes back.** The desktop now brings back every slice it had,
+  each on its own pan and frequency, with the transmit and active slice. A
+  slice the radio has no room for stays saved, and the window says so. A locked
+  slice no longer comes back on 14.225 MHz.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747),
+  [#750](https://github.com/boydsoftprez/NereusSDR/pull/750))
+- **Protocol 2 pans at the right width.** After a reconnect, or a change on the
+  Radio Info page, a pan could draw signals about 8 times too wide. Every pan
+  now follows its own receiver's rate. Reported and diagnosed by tropo1234, who
+  tested the fix on an ANAN-G2 (issue
+  [#701](https://github.com/boydsoftprez/NereusSDR/issues/701)).
+  ([#751](https://github.com/boydsoftprez/NereusSDR/pull/751))
+- **Zoomed-out pans and the band-pass filter.** A pan zoomed out past its
+  receiver's rate keeps that zoom across a reconnect, so the radio's band-pass
+  filter stays bypassed until you zoom back in. Only the window or device
+  controlling a slice can bypass its filter; a listener's wide view no longer
+  does. Removing a wide pan, for example by choosing a layout with fewer pans,
+  could crash the app without telling the radio to stop, and a G2E could then
+  need a power cycle. That is fixed. A click on a wide pan's sides now moves
+  only a slice this window controls, and the sides go dark when wideband
+  capture ends instead of freezing.
+  ([#751](https://github.com/boydsoftprez/NereusSDR/pull/751))
+- **Separate pans no longer open black on radios that report fewer
+  receivers.** On Protocol 2, Angelia, Orion, Orion MkII family radios
+  (including the Anvelina Pro 3) and Andromeda now get streams only on the
+  receivers the radio says it has. Before, on a radio whose firmware reports
+  five receivers, a third separate pan could stay black while showing LIVE.
+  When every receiver is taken, a new separate pan is refused with "All 3 of
+  the radio's receivers are in use" instead of opening black. Slices that
+  share a pan's receiver still work. ANAN-G2 and Saturn radios are not
+  affected.
+  ([#764](https://github.com/boydsoftprez/NereusSDR/pull/764))
+
+### Transmit
+
+- **Graphic Legacy EQ frequencies.** The Hz boxes under the band sliders show
+  their frequency again and accept a typed value. They now have step arrows and
+  are wide enough for five digits. Thanks to Brian Sutton (W4KZO).
+  ([#737](https://github.com/boydsoftprez/NereusSDR/pull/737),
+  [#739](https://github.com/boydsoftprez/NereusSDR/pull/739))
+- **PureSignal on ANAN-100 and ANAN-200D.** PureSignal could stay in collecting
+  forever because its hardware peak was zero or belonged to the other protocol.
+  The default now follows the protocol in use, a value you set yourself is kept,
+  and an invalid peak is refused. Thanks to KC5L, who reported this and confirmed
+  feedback working on an ANAN-200D (Protocol 2) and an ANAN-100 (Protocol 1).
+  ([#735](https://github.com/boydsoftprez/NereusSDR/pull/735))
+- **ANAN-G2E microphone controls.** The radio microphone controls now appear in
+  Setup for the G2E, on the desktop and on clients connected to the Core,
+  including the phone. This only makes the controls available; we have not yet
+  confirmed microphone audio on a G2E. Reported by lb5va.
+  ([#736](https://github.com/boydsoftprez/NereusSDR/pull/736),
+  [#738](https://github.com/boydsoftprez/NereusSDR/pull/738), issue
+  [#730](https://github.com/boydsoftprez/NereusSDR/issues/730))
+- **SSB Mod Monitor.** A new panel shows how hard your USB or LSB signal is
+  driven: peak and average level against full scale, a held peak, crest
+  factor, an OVER lamp and a live envelope trace. Turn it on from **Containers >
+  Applets > SSB Mod Monitor**; it sits under the AM Mod Monitor. It reads only
+  while you transmit in USB or LSB and never keys the radio. **PA FB** reads
+  PureSignal's feedback and is grayed while PureSignal is off. Windows connected
+  to a Core need the 2026.11.1 Core. Not yet tried on a radio. Written by Brian
+  Sutton (W4KZO).
+  ([#742](https://github.com/boydsoftprez/NereusSDR/pull/742),
+  [#752](https://github.com/boydsoftprez/NereusSDR/pull/752))
+- **Remote transmit through a pause on the Core.** If the Core paused for more
+  than about 3 seconds, an ordinary release from a remote device could be counted
+  as a lost link. The device was told its link had gone quiet, and VOX turned
+  off. A release now ends the key as usual and VOX stays armed. A related case is
+  fixed for devices connected over the internet before their audio connection is
+  up: a pause no longer stops a live key, and a device that really drops is
+  stopped sooner. A real lost link still stops transmit, with the same limits as
+  before. Not yet tried on a radio.
+  ([#756](https://github.com/boydsoftprez/NereusSDR/pull/756),
+  [#761](https://github.com/boydsoftprez/NereusSDR/pull/761))
+- **Band power, and settings made with no radio.** A band change just after
+  TUNE or two-tone could save the tune or two-tone power as that band's drive.
+  Each band now keeps its own power. A transmit setting changed before any
+  radio connects is now kept and sent to the next radio, instead of being
+  replaced at connect. Not yet tried on a radio.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+
+### Startup and settings
+
+- **A profile marked as in use on another computer.** A profile folder that
+  reached this computer after a crash on another one, or from a backup, stayed
+  marked as in use there. The window stopped on **No Core answered** with a
+  **Retry** that never worked, and a Core would not start. Now, when the folder
+  is on a disk in or plugged into this computer, NereusSDR takes the profile
+  over and notes it in the log. On a network drive the window names the other
+  computer and offers **Take Over** or **Quit**, and a Core stops with a log
+  message saying what to do. Tested on a real network share from a Mac and a
+  Raspberry Pi; Windows network drives are not yet tried.
+  ([#744](https://github.com/boydsoftprez/NereusSDR/pull/744))
+- **Settings saved within seconds.** Settings are now written about 2 seconds
+  after a change, on the desktop and the Core, so a crash or power cut no longer
+  loses most recent changes. Window size and the pan layout choice are still
+  saved only when NereusSDR closes.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+- **The layout comes back as you left it.** A panel hidden with the bottom bar's
+  menu icon stays hidden, a floating pan floats again, dividers inside a pan
+  row and each pan's overlay strip come back, and the zoom slider follows the
+  active pan. Spot settings reach every pan, not only the first.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+- **Auto-connect keeps your choice.** Connecting no longer turns a radio's
+  Auto-connect back on after you turned it off.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+
+### Digital programs
+
+- **The TCI Clients panel no longer makes its column jump.** With the TCI
+  Clients panel in a docked column, the panels below it jumped up and down every
+  second. It now updates its counters in place and rebuilds its rows only when
+  a program connects, leaves or changes. Thanks to LB3AG for the report.
+  ([#765](https://github.com/boydsoftprez/NereusSDR/pull/765))
+
+### Windows connected to a Core
+
+- **A speaker problem no longer drops the Core.** A speaker that failed with
+  nothing to fall back to, or unmuting after a long mute, could end the session
+  and restart audio and display. The window now stays connected, shows the
+  speaker problem and keeps the panadapter running. If the Core's display
+  stops, the window says so and restarts audio and display.
+  ([#758](https://github.com/boydsoftprez/NereusSDR/pull/758))
+- **Each window has its own display speed.** The Display pill's **FPS** now sets
+  this window's own redraw rate and no longer changes other windows and phones.
+  **FPS** on **FFT & Engine** stays the Core's shared rate. **Decimation** is
+  remembered for each window.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+- **Changes made while the link was down.** The message saying a change made
+  while the link was down did not stick now covers panels and slices, not only
+  Setup. ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+- **The Core with its radio off.** A device that leaves while the Core's radio is
+  off keeps its slices. A device signing in to a headless Core with its radio
+  off gets its own slices once the radio connects.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+
+### iPhone and iPad app
+
+These reach phones and iPads with the app's next build, not with this download.
+
+- **Reopening the app.** A new **Reconnect automatically** switch, off by
+  default, is in **Setup > General > Battery and sessions** and on **Your
+  Cores**. With it on, opening the app connects to the last Core you used,
+  unless you disconnected from it. Either way the last Core you used is listed
+  first, and connecting returns you to your tab and page, mute, layouts and the
+  iPad's open pans. **Play the band through** and a background picture are kept
+  too. The phone's **FPS** is its own, under **On this phone**.
+  ([#747](https://github.com/boydsoftprez/NereusSDR/pull/747))
+- **Band stacks on the phone and iPad.** A stack under the band grid in **Pan 1**
+  and the **BAND** menu, marks on the band, **Setup > General > Band Stack**,
+  and a **Band Stack** applet on iPad. Needs the 2026.11.1 Core. Today's app
+  keeps working as before on the new Core.
+  ([#748](https://github.com/boydsoftprez/NereusSDR/pull/748))
+- **SSB Mod Monitor on the phone and iPad.** It appears in the TX panel while
+  the transmitting slice is in USB or LSB, with its own settings kept on each
+  phone. Needs the 2026.11.1 Core. Written by Brian Sutton (W4KZO).
+  ([#752](https://github.com/boydsoftprez/NereusSDR/pull/752))
+- **Roundtable on the phone and iPad.** The same redrawn card, **Double** and
+  frozen **Last known** state as the desktop. Tapping your card, a tag or a
+  flag's Roundtable line opens a frequency view that tunes nothing until you
+  choose **Tune slice A here**, which now sets the slice's mode first when the
+  frequency is in another mode.
+  ([#741](https://github.com/boydsoftprez/NereusSDR/pull/741))
+- **Roundtable sheet on an iPad.** The sheet's half height snapped straight to
+  full on an iPad, so its handle did nothing. Half height now holds and the
+  handle works. Phones are unchanged.
+  ([#755](https://github.com/boydsoftprez/NereusSDR/pull/755))
 
 ## [2026.11.0] - 2026-11-01
 

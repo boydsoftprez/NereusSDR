@@ -25,11 +25,11 @@ Use this sequence when a signal is present in audio or known to be in the receiv
 
 ### Set spectrum resolution, update rate, and smoothing
 
-Open **File > Settings... > Display > FFT & Engine**, or the **FFT** tab of the pan's Display pill. Read both **FFT Size** and **Bin Width (Hz)**. The sizes run from 4096 to 262144 in powers of two. Bin width is sample rate divided by FFT size: a larger transform makes narrower bins and finer frequency detail, at greater processing cost. **Sizing** chooses what sets the FFT size. **Auto** lets the zoom pick the size to keep the picture sharp. **Hz/bin** makes the size follow the bin width in **Hz/bin Target** (0.5 to 200 Hz) at every zoom. **Fixed** uses the **FFT Size** slider's size whatever the zoom. **FFT Size** is live in **Fixed** only and **Hz/bin Target** in **Hz/bin** only; grayed, each shows what is running or remembered and says which **Sizing** choice frees it. These FFT settings are shared: one value serves every pan and every window connected to the Core, and a change on one pan's FFT tab shows on all of them. The **Window** choice changes leakage versus main-lobe width: Rectangular is narrow but has stronger sidelobes; Hann/Hamming/Blackman-Harris/Kaiser trade some width for sidelobe reduction; Flat-Top favors amplitude accuracy. After a change, read the actual FFT/bin-width value; remote display may show a Core grant different from the request.
+Open **File > Settings... > Display > FFT & Engine**, or the **FFT** tab of the pan's Display pill. Read both **FFT Size** and **Bin Width (Hz)**. The sizes run from 4096 to 262144 in powers of two. Bin width is sample rate divided by FFT size: a larger transform makes narrower bins and finer frequency detail, at greater processing cost. **Sizing** chooses what sets the FFT size. **Auto** lets the zoom pick the size to keep the picture sharp. **Hz/bin** makes the size follow the bin width in **Hz/bin Target** (0.5 to 200 Hz) at every zoom. **Fixed** uses the **FFT Size** slider's size whatever the zoom. **FFT Size** is live in **Fixed** only and **Hz/bin Target** in **Hz/bin** only; grayed, each shows what is running or remembered and says which **Sizing** choice frees it. These FFT settings are shared: one value serves every pan and every window connected to the Core, and a change on one pan's FFT tab shows on all of them. FPS and Decimation are the exceptions, described below. The **Window** choice changes leakage versus main-lobe width: Rectangular is narrow but has stronger sidelobes; Hann/Hamming/Blackman-Harris/Kaiser trade some width for sidelobe reduction; Flat-Top favors amplitude accuracy. After a change, read the actual FFT/bin-width value; remote display may show a Core grant different from the request.
 
-**FPS** (on **FFT & Engine**, and the pill's **FFT** tab; 10 to 60) sets the approximate redraw rate, trading animation smoothness against CPU work. **Detector** (on **Spectrum**, in the **Trace** group) selects how input bins become display pixels: **Peak** keeps the maximum, **Rosenfell** alternates max/min for a classic trace, **Average** averages bins, **Sample** selects one bin, and **RMS** computes root-mean-square power. **Averaging** is time smoothing across frames: **None** shows each frame; **Recursive** smooths linear power; **Time Window** approximates a sliding window; **Log Recursive** smooths in dB. **Avg Time** sets the smoothing time constant (1 to 9999 ms in Setup; the pill's slider stops at 500 ms); longer time smooths more and responds more slowly. Try a detector for the view shape first, then choose averaging and time based on how quickly you want the trace to follow changes.
+**FPS** (on **FFT & Engine**, and the pill's **FFT** tab; 10 to 60) sets the approximate redraw rate, trading animation smoothness against CPU work. In a window signed in to a Core, the pill's **FPS** is this window's own rate and does not change other windows or phones; **FPS** on **FFT & Engine** is the Core's shared rate, which a window or phone follows until its own pill's **FPS** has been moved. **Detector** (on **Spectrum**, in the **Trace** group) selects how input bins become display pixels: **Peak** keeps the maximum, **Rosenfell** alternates max/min for a classic trace, **Average** averages bins, **Sample** selects one bin, and **RMS** computes root-mean-square power. **Averaging** is time smoothing across frames: **None** shows each frame; **Recursive** smooths linear power; **Time Window** approximates a sliding window; **Log Recursive** smooths in dB. **Avg Time** sets the smoothing time constant (1 to 9999 ms in Setup; the pill's slider stops at 500 ms); longer time smooths more and responds more slowly. Try a detector for the view shape first, then choose averaging and time based on how quickly you want the trace to follow changes.
 
-**Normalize to 1 Hz** is available for Average, Sample, or RMS detectors. It scales displayed noise power to a 1 Hz reference bandwidth; it is not a receiver calibration adjustment. The checkbox is grayed, with the reason, when the chosen detector does not support it. **Decimation** (on **FFT & Engine**) reduces display resolution as its value increases. Decimation is applied to the FFT engines across pans; use it only when lower display detail is acceptable to reduce processing load. **Cal Offset** (Spectrum page, **Calibration** group) shifts displayed levels on a local radio, but is disabled in a remote window because the Core already calibrates its radio data. **Peak Hold** and **Peak Delay** (Spectrum page, **Peak hold** group) are a separate whole-trace maximum hold; the delay controls when the held trace starts to decay. For the peak trace with decay and the labeled peak markers, use **Configure peaks →** to open **Peaks & Markers**.
+**Normalize to 1 Hz** is available for Average, Sample, or RMS detectors. It scales displayed noise power to a 1 Hz reference bandwidth; it is not a receiver calibration adjustment. The checkbox is grayed, with the reason, when the chosen detector does not support it. **Decimation** (on **FFT & Engine**) reduces display resolution as its value increases. Decimation is applied to the FFT engines across this window's pans and is remembered on this computer; on a Core, each window and phone has its own. Use it only when lower display detail is acceptable to reduce processing load. **Cal Offset** (Spectrum page, **Calibration** group) shifts displayed levels on a local radio, but is disabled in a remote window because the Core already calibrates its radio data. **Peak Hold** and **Peak Delay** (Spectrum page, **Peak hold** group) are a separate whole-trace maximum hold; the delay controls when the held trace starts to decay. For the peak trace with decay and the labeled peak markers, use **Configure peaks →** to open **Peaks & Markers**.
 
 The **Noise Floor (NF)** overlay is a visual estimate. Its shift moves the rendered line, line width changes its visibility, and color controls change its appearance. It is not a calibrated measurement or receiver threshold. **Cursor Freq** is under **Readouts** on **Spectrum**. **Bin Width**, **Peak Value** and **Noise Floor** are on **Peaks & Markers**: **Peak Value** can be placed in a corner and given an update interval (the corner list and the ms box beside it), and **Noise Floor** has **NF shift**, line width and color settings. These overlays are presentation aids, not receiver thresholds or calibrated measurements.
 
@@ -243,6 +243,38 @@ specific operating procedure. **Presets…**, **Copy settings** and **Paste
 settings** from the earlier editor are hidden in this draft editor;
 choose its offered faces or duplicate a compatible ordinary object instead.
 
+### Choose Classic or Modern bar meters
+
+Bar meters in a container have two faces. **Classic** is the familiar bar and is
+the default. **Modern** draws the same reading on a rounded track, with a band up
+to the meter's high mark, an accent fill, a marker and ticks below, in the style
+of the PureSignal feedback meter. Switching changes only the drawing: the
+reading, label, scale, calibration and thresholds stay as they are, and a live
+reading and its history carry on without a reset. The choice applies to the
+ready-made bars and **Custom bar face**. Analog faces, composite meters and other
+objects are not affected. This is a desktop container setting, separate from the
+phone's **Meter Face** menu and from **Appearance > Meter Styles**.
+
+1. Open the container in **Container Settings** (**Containers > Edit Container**).
+2. Set **Meter face:** to **Classic** or **Modern** for this container.
+3. To make one meter different, select it under **Contents** and find **Face** at
+   the top of **Appearance and behavior**. Choose **Classic** or **Modern**, or
+   **Use container setting**, which names the container's current face in brackets.
+4. To clear the exceptions, select **Use for all meters**. Every bar in this
+   container then follows the container's setting.
+5. Check the preview, then select **Apply**. **Cancel** discards the changes.
+
+New bars you add follow the container's setting. Bars saved before these faces
+existed are set to **Classic** themselves, so changing **Meter face:** alone does
+not change them: select **Use for all meters**, or set each bar's **Face**. A bar
+copied or moved to another container keeps its own **Classic** or **Modern**
+choice; one that follows the container takes on the new container's setting.
+
+**Modern** honors the bar's existing appearance choices, such as its title, value
+readouts, history, marker, fill style and scale colors. In a narrow meter it
+drops scale captions that would collide and shortens values that do not fit, so
+read a small meter at the size you will use it.
+
 ### Work with the workspace look
 
 The workspace look is how the main window opens. Its container headers, Arrange mode and profiles are introduced in [chapter 2](02-desktop-window.md#arrange-the-workspace); this section covers what they change when you build containers.
@@ -334,6 +366,75 @@ A **Rotator** item can render azimuth, elevation, or both. It shows the rotor of
 The item can also show an externally supplied meter value. It keeps existing MMIO bindings and exposes the object's **MMIO source UUID** and **MMIO variable** under **Advanced bindings**, but **Meter Data Sources (MMIO)…** is disabled in its draft editor, so this chapter cannot give a supported route for a new endpoint there. Existing verified feeds can still supply indication: use the retained source UUID and exact variable name in **Advanced bindings**; entering text alone does not establish a feed. In older builds where the endpoint editor is available, add or select a source, give it a name, choose its connection type (**UDP listener**, **TCP listener**, **TCP client**, or **Serial**), choose **JSON**, **XML**, or **RAW (key:value)**, enter the host/port or serial device/baud rate, click **Apply changes**, and inspect **Values received** for the variable and changing value before binding it. If no external value appears, check endpoint status, transport, format, host/port/device, and incoming variable name.
 
 The MMIO endpoint editor configures a data connection and exposes received variable values. It does not certify that a sender is connected or that arbitrary external devices are compatible. Start with a non-critical test value and confirm the value readback before relying on it at the operating position.
+
+## Keys, knobs and controllers
+
+The keyboard, MIDI controllers, USB knobs and Stream Deck style plugins all run the same list of actions. Keyboard keys work from the first launch with no setup. Hot key settings are kept on this computer, so they also apply in a window connected to a Core, and they are not shared through the Core.
+
+To see or change the keys, choose **View > Keyboard Shortcuts...** or **File > Settings... > Keys and controllers > Keyboard**. To turn every hot key off at once, clear **View > Use Shortcuts**, the same switch as **Use shortcuts** on the Keyboard page. Menu shortcuts such as Ctrl+R keep working either way.
+
+### Default keys
+
+On a Mac, Ctrl in this list is the Command key.
+
+| Key | Action |
+| --- | --- |
+| **Right** / **Left** | Tune up or down one step. Add **Shift** for ten steps. |
+| **]** / **[** | Tune step larger or smaller. |
+| **L** | Lock the slice. |
+| **G** | Go to frequency (opens the flag's frequency entry). |
+| Backtick | Next slice. |
+| **B** / **V** | Filter next or previous. |
+| **Up** / **Down**, keypad **+** / **-** | Volume up or down. |
+| **U**, keypad multiply | Mute. |
+| **J** / **H** | Next or previous band. |
+| **M** / **N** | Band stack next or previous spot. |
+| **Shift+M** | Add a band stack spot where you are. |
+| **Shift+N** | Open or close the band stack panel. |
+| **X** / **Z** | Mode next or previous. |
+| **=** / **-** | Zoom in or out on the panadapter you are using. |
+| **R**, **E**, **A** | Noise reduction, noise blanker, auto notch on or off. |
+| **I** / **O** | RIT or XIT on or off. |
+| **Space** (hold) | Talk while held. |
+| **Ctrl+Shift+M** | MOX on or off. |
+| **Ctrl+T** | TUNE on or off. |
+| **Ctrl+Shift+T** | Two-tone on or off. |
+| **Ctrl+F1** to **Ctrl+F8** | Send CW message 1 to 8. |
+| **Ctrl+F10** | Stop the CW message. |
+| Comma / period (hold) | CW dot and dash, in CW mode. |
+| Slash (hold) | CW straight key, in CW mode. |
+
+On a Mac, CW message 5 has no key until you give it one, because Command+F5 turns VoiceOver on or off. A key you set yourself is kept. **VOX on or off** has no key until you give it one. It turns on the same VOX as the TX panel's **VOX** button. Voice message keys (**Ctrl+Shift+F1** to **F4**, **Ctrl+Shift+F10**) are listed but grayed, because voice messages are not built yet.
+
+### Where keys work
+
+Keys work in the main window, a floating panadapter and a floating container. They do nothing while Setup, another dialog or a menu is open. While a text box, a number box or a list you can type in has the cursor, every key types there. A control you reach with Tab keeps the arrow keys and Space until you move on. Holding a tuning or volume key repeats it; other keys act once per press.
+
+Slice keys act on the selected slice. To tie one to a slice, set its **Acts on** to **Slice A** to **Slice D**. Transmit keys always use the transmit slice. On a slice you only listen to, volume and mute change your own volume, and the other slice keys do nothing. A locked slice refuses tuning, band and mode keys.
+
+### Change, clear and reset a key
+
+1. In the **Actions** list, find the action. Type in **Search actions or keys** or choose a category to narrow the list.
+2. Click **Set** and press the new key. Press Esc to cancel. The new key replaces the action's keys.
+3. If another action has that key, the row says so, for example **B is already Filter next.** Click **Replace** to move the key, or **Cancel**.
+
+**Clear** removes an action's keys. **Default** puts one action back, and **Reset all to defaults** puts every key back. You can also click a key on the **Keyboard map**, with its **Plain**, **Shift**, **Ctrl** and **Ctrl+Shift** layers, to see what it does and change it. Changes are saved at once. **Export** saves your keys to a text file and **Import** reads one back, listing any lines it skipped and why.
+
+Some keys can't be used. Menu shortcuts are reserved, and the row names the menu item. A transmit, CW or voice action can't use a plain letter, number or arrow key, so a stray press can't key the radio; use Space, a function key or a combination. MOX, TUNE and Two-tone stay on after you let go, so they can't use Space.
+
+### Keys that transmit
+
+Space keys the radio while you hold it and unkeys when you let go. If MOX was already on, letting go leaves it on. MOX, TUNE and Two-tone work like their buttons and stay on until you press again. Each key is refused for the same reasons as its button, and the reason shows. A held key lets go if you switch to another window, open a dialog or menu, or the computer sleeps. In a window connected to a Core, CW dot and dash need the 2026.11.1 Core.
+
+### MIDI, knobs and deck plugins
+
+These have not been tried with real devices yet. Each page marks its devices **Untested**.
+
+- **MIDI:** **File > Settings... > Keys and controllers > MIDI**, or **Tools > MIDI Mapping...**. Choose the **Device:** and a **Profile:**. A controller starts empty: choose an action under **Learn:**, then move the control. Each control is a **Button**, **Fader** or **Endless knob**.
+- **Knobs:** the **Knobs** page lists the RC-28, PowerMate, ShuttleXpress, ShuttlePro v2, FlexControl, TMate 2, Stream Deck+ and Ulanzi Dial, with each one's state and its actions, which you can change. A knob you turn can't run a transmit action; a button can. On Linux, a knob needs an access rule: copy `60-nereussdr-controllers.rules` to `/etc/udev/rules.d`, then plug the knob in again. The AppImage carries the file in `usr/share/nereussdr/udev/` (run the AppImage with `--appimage-extract` to unpack it), and a build you install yourself puts it in `share/nereussdr/udev/` under its install folder.
+- **Deck plugins:** the **Deck Plugins** page installs plugins for the Stream Deck app and Ulanzi Studio (macOS and Windows) and StreamController (Linux). They connect only to NereusSDR on the same computer. Clear **Let deck plugins connect** to stop them.
+
+Several knobs and decks start with transmit actions on their buttons, such as MOX and TUNE on the FlexControl, Stream Deck+ and Ulanzi Dial, and talk on the RC-28's TX bar. Check the Knobs page before you plug one in.
 
 ## Phone display scope
 

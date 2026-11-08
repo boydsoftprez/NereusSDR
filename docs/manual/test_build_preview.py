@@ -233,7 +233,7 @@ class RendererTest(unittest.TestCase):
             result = render(RENDERER, Path(directory))
             self.assertEqual(result.returncode, 0, result.stderr)
             index = Path(directory) / 'index.html'
-            self.assertIn('User manual<br>NereusSDR 2026.11.0', index.read_text())
+            self.assertIn('User manual<br>NereusSDR 2026.11.1', index.read_text())
             self.assertEqual(Page(index.read_text()).styles, ['site.css', 'manual.css'])
             check = subprocess.run([sys.executable, str(ROOT / 'docs/manual/check_manual.py'),
                                     '--preview', directory], capture_output=True, text=True)

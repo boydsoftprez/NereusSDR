@@ -6,7 +6,16 @@ NereusSDR is an independent cross-platform SDR client deeply informed by the wor
 
 ---
 
-## Latest stable release: 2026.11.0
+## Latest stable release: 2026.11.1
+
+2026.11.1 follows 2026.11.0 with band stacks, hot keys (MIDI, knobs and deck
+plugins untested on real devices), Classic and Modern meter faces, the
+Roundtable card and inspector on the panadapter, settings that persist per
+receiver and per slice, Protocol 2 receiver-rate and reported-receiver fixes,
+and remote session fixes. Update Core and desktop together. Phone changes ship
+with the next phone build. See the [release notes](../CHANGELOG.md).
+
+### 2026.11.0
 
 The combined work since 2026.10.1 includes frequency-first Roundtable across
 desktop, phone and website, with S-units, dBm or both; CW transmit and remote

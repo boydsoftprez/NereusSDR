@@ -7,7 +7,8 @@ verbatim from `CLAUDE.md` as of commit 86a1b20d6.
 
 ## Current status
 
-2026.11.0 is the current desktop and Core release. It combines the work since 2026.10.1,
+2026.11.1 is the current desktop and Core release; the table below lists what it adds
+to 2026.11.0. 2026.11.0 combined the work since 2026.10.1,
 including remote display codec v2, audio-aligned remote RX meters, CW and
 remote transmit recovery, frequency-first Roundtable and signal units,
 receiver and container state, and phone display fixes. NNR retains the
@@ -16,6 +17,54 @@ also labels **Previous band** and recognizes the Core's empty default-pan
 identity for Max Bin. Phone 2026.10.1 build 9645 is in TestFlight testing;
 its version is independent of the desktop release. The
 [release summary](../MASTER-PLAN.md) records the scope and deferred work.
+
+### In 2026.11.1, since 2026.11.0
+
+As of the 2026.11.1 release PR (2026-11-08).
+[CHANGELOG.md](../../CHANGELOG.md) under `[2026.11.1]` has the operator wording.
+
+| Work | PRs | Verification so far |
+| --- | --- | --- |
+| Classic and Modern bar meter faces, with container setting, per-meter override and Use for all meters (desktop only) | 731, 739 | Focused tests and rendered captures; Classic captures byte-identical. |
+| Roundtable live reports on the desktop panadapter, doubles as combined RF | 739 | 179 desktop Roundtable cases per the PR. No live on-air check recorded here. |
+| Roundtable reports restored on remote desktops | 733 | Real loopback regression; overlay renders. |
+| Roundtable no longer rebuilds the panadapter overlay or panel per report | 732, 739 | Zero rebuilds under replay in tests; live smoothness not measured here. |
+| AUTO AGC holds through transmit, including QSK, on desktop and Core | 739 | Focused tests. No live-radio result; issue 720 open. Touches the core RX path. |
+| Graphic Legacy EQ Hz boxes visible and editable | 737, 739 | EQ layout test and a rendered check. |
+| PureSignal hardware peak follows the active protocol | 735 | Native WDSP regression; KC5L confirmed on ANAN-200D (P2) and ANAN-100 (P1); issue 734 closed. |
+| ANAN-G2E radio microphone controls shown, desktop and remote Setup | 736, 738 | Tests only. Microphone audio unconfirmed; issue 730 open. |
+| Roundtable website: helper Review link, Station settings wording | 728 | Server test suite. Station settings wording seen on the live site on 2026-11-05. |
+| A release during a Core stall no longer counts as a lost link, and VOX stays armed; session keepalives on a data channel count from arrival on a key with no "tx" copy read | 756, 761 | Forced-stall tests with red-first proof. Touches transmit. Not run on a radio, a real stall, hosted Linux or Windows; hardware steps are in each PR. |
+| A profile marked as in use on another computer: taken over on a local disk, Take Over or Quit on a network drive, a Core stops with a log message | 744 | Lock tests on macOS and in Windows CI; real SMB share between a Mac and a Pi 5. Not tried: NFS, AFP, Windows as a share client, the dialog in a real startup. |
+| Roundtable sheet's half height holds on an iPad (phone app) | 755 | iPad Pro 11-inch and iPhone 17 UI tests. Ships with the next phone build. |
+| Roundtable inspector (look without tuning), redrawn card, Double only for a real double, frozen Last known state, flag S-meter menu; phone frequency view | 741 | Unit tests; all hands-on testing on a Mac. No radio, no real double, Windows and Linux not run on screen. Phone part ships with the next phone build; website part needs a Roundtable server redeploy. |
+| Settings that revert: per-receiver sample rate, per-slice step, new slice copies the current one with RIT/XIT off, every slice restored, held transmit edits, TUNE power not saved as drive, 2-second saves, layout, per-window FPS; phone reopening | 747, 750 | Mac offscreen tests; ran on J.J. Boyd's radios in the 2026-11-08 test builds (release manager). Touches the core RX path and transmit power. Phone part ships with the next phone build. |
+| Band stacks on desktop, remote desktop and phone | 748 | Focused tests and captures; ran on J.J. Boyd's radios in the 2026-11-08 test builds (release manager). Phone part ships with the next phone build. |
+| Right-click AUTO opens AGC/ALC setup (Brian Sutton W4KZO) | 740, 746 | Focused test on macOS. |
+| Phone / CW sections container item (Brian Sutton W4KZO) | 757, 760 | Offscreen on a Mac. Not run on a radio. |
+| Protocol 2 pans follow their receiver's rate; wide zoom kept across reconnect; only the controller can bypass the filter; wide-pan crash fixed | 751 | Offscreen Mac tests; tropo1234 tested the connect patch on an ANAN-G2 (issue 701); ran on J.J. Boyd's radios in the 2026-11-08 test builds (release manager). Listener filter rule needs the 2026.11.1 Core. |
+| A failed speaker or an unmute no longer ends a Core session | 758 | Mac under load. Not run on hardware. |
+| SSB Mod Monitor, desktop, remote and phone (Brian Sutton W4KZO) | 742, 752 | Targeted Mac tests, iPhone and iPad simulators. Not run on a radio, Linux or Windows. |
+| TCI Clients panel no longer makes its column jump (reported by LB3AG) | 765 | Mac tests only; LB3AG has not confirmed. |
+| Hot keys: 51 keyboard actions with defaults, Keys and controllers setup, VOX on or off action, band stack keys; MIDI, knobs and deck plugins (untested on real devices) | 759 | Focused tests on a Mac; Windows and Linux lines compiled only on a Mac. Merged after a radio check (release manager). No real knob, MIDI device or deck plugin has run. Remote CW dot and dash need the 2026.11.1 Core. |
+| On a Mac, CW message 5 has no default key (Command+F5 is VoiceOver's) | 769 | Focused hot key binding tests. |
+| Linux knobs access rule installed with the app, so the AppImage carries it | 768 | A stand-in CMake install per the PR; CI's Linux build is the first real run. The `.deb` packages carry only `nereusd`, so not this file. |
+| Streams kept on the receivers the radio reports, on Protocol 2 Angelia, Orion, Orion MkII family (Anvelina Pro 3) and Andromeda; a fourth separate pan on a radio reporting 5 is refused instead of black | 764 | 10 focused test programs on a Mac per the PR; packet counts on J.J. Boyd's Anvelina Pro 3 (gateware 22.15) showed DDC5 and DDC6 send nothing. The PR says the fix itself was not yet tried on a radio; no later result recorded here. Touches the core RX path. |
+
+Also on main, with no operator-facing change and so no release note: PR 749
+(test debts, CI and Windows DLL exports), PR 745 (iOS drag pace test scaling),
+PR 762 (meter pump tests), PR 766 (band stack test fix) and PR 763 (CI runs the full test set when a pull
+request is marked ready). After PR 763, nothing tests main between releases, so
+**a full CI and iOS run on main, started by hand from the Actions tab, is due
+before the cut.**
+PR 749's exports reach no production connection across a DLL, and its certificate
+key seam has no production caller, so Windows and Core behavior stay as they were.
+The Windows signal fix still needs a Windows test run; PR 749 names it.
+
+### Open, not in 2026.11.1
+
+Open pull requests left out of 2026.11.1: 753 (Cinnamon file
+choosers), 754 (container dialog when adding a meter).
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
