@@ -7,6 +7,23 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06 - A copy measures itself as the host will leave it: themed for
+//                 text, with every layout level's height fresh, so
+//                 its free canvas size holds in the workspace look too.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - PR 757 corrections: a copy asks only for the page it shows
+//                 and shortens as rows hide; the gap after compression goes
+//                 with that row; the row label says PROC and VAX; a reading
+//                 keeps the compression gauge's reason; the DEXP marker stays
+//                 in step between the panel and its copies; a copy takes the
+//                 panel's iambic memory; a free canvas copy reports a size
+//                 that holds either page. The docked panel's layout is
+//                 unchanged. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
+//   2026-11-06 - A container copy hides each row and the Phone and CW
+//                 buttons from its entry, and opens on the page that entry
+//                 names. The docked panel is unchanged. Brian Sutton,
+//                 AI-assisted via xAI Grok.
 //   2026-10-12 - Fit live inset threshold/hold readouts to the actual
 //                 slider range and resolved workspace font/style metrics.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -135,6 +152,7 @@
 //============================================================================================//
 
 #include "PhoneCwApplet.h"
+#include "SectionParts.h"
 #include "gui/QtCocoaAccessibleTableCache.h"
 #include "gui/HGauge.h"
 #include "gui/meters/MeterPoller.h"
@@ -161,6 +179,7 @@
 #include "models/CwKeyerController.h"
 #include "models/SliceModel.h"
 
+#include <QBoxLayout>
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QHBoxLayout>
@@ -194,6 +213,86 @@ static constexpr int kCwPitchValueW = 48;
 static constexpr int kCwLampW       = 52;   // the approved mockup's lamps
 static constexpr int kCwRowH        = 22;   // AetherSDR's 22 px rows
 
+
+namespace {
+
+// A row of a container copy, wrapped so the copy can hide it. On the docked
+// applet `parts` is null and the row is parented exactly as it was.
+class SectionColumn {
+public:
+    SectionColumn(QWidget* page, QBoxLayout* column, SectionParts* parts)
+        : m_page(page), m_column(column), m_parts(parts) {}
+
+    QWidget* parentFor(const char* id, const QString& label) {
+        m_id = QString::fromLatin1(id);
+        m_label = label;
+        if (!m_parts) {
+            m_host = nullptr;
+            return m_page;
+        }
+        m_host = new QWidget(m_page);
+        m_host->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+        return m_host;
+    }
+
+    void commitLayout(QLayout* layout) {
+        if (!m_host) {
+            m_column->addLayout(layout);
+            return;
+        }
+        const QMargins margins = layout->contentsMargins();
+        const int spacing = layout->spacing();
+        m_host->setLayout(layout);
+        layout->setContentsMargins(margins);
+        layout->setSpacing(spacing);
+        finish();
+    }
+
+    void commitWidget(QWidget* widget) {
+        if (!m_host) {
+            m_column->addWidget(widget);
+            return;
+        }
+        auto* layout = new QVBoxLayout(m_host);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        layout->addWidget(widget);
+        finish();
+    }
+
+    // Extra room under the row just committed. The docked applet keeps its
+    // spacer in the column. A copy puts the room inside the row's wrapper,
+    // so it goes when the row is hidden.
+    void addGapBelow(int pixels) {
+        if (!m_parts) {
+            m_column->addSpacing(pixels);
+            return;
+        }
+        if (m_committed && m_committed->layout()) {
+            QMargins margins = m_committed->layout()->contentsMargins();
+            margins.setBottom(margins.bottom() + pixels);
+            m_committed->layout()->setContentsMargins(margins);
+        }
+    }
+
+private:
+    void finish() {
+        m_column->addWidget(m_host);
+        m_parts->add(m_id, m_label, -1, {m_host});
+        m_committed = m_host;
+        m_host = nullptr;
+    }
+
+    QWidget* m_page = nullptr;
+    QBoxLayout* m_column = nullptr;
+    SectionParts* m_parts = nullptr;
+    QWidget* m_host = nullptr;
+    QWidget* m_committed = nullptr;
+    QString m_id;
+    QString m_label;
+};
+
+} // namespace
 
 // Phone/CW-specific button background — bluer (#1a3a5a) than the
 // canonical kButtonBg (#1a2a3a) used by Style::buttonBaseStyle().
@@ -234,10 +333,24 @@ static const QStringList kCtcssTones = {
 // ── PhoneCwApplet ─────────────────────────────────────────────────────────────
 
 PhoneCwApplet::PhoneCwApplet(RadioModel* model, QWidget* parent)
+    : PhoneCwApplet(model, parent, Surface::Applet)
+{
+}
+
+PhoneCwApplet::PhoneCwApplet(RadioModel* model, QWidget* parent, Surface surface)
     : AppletWidget(model, parent)
 {
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    if (surface != Surface::Applet) {
+        setObjectName(QStringLiteral("PhoneCwPanelCopy"));
+        m_parts = std::make_unique<SectionParts>(this);
+    }
     buildUI();
+    // A container preview is inert: built, not wired, and disabled.
+    if (surface == Surface::Preview) {
+        setEnabled(false);
+        return;
+    }
     wireControls();
     if (model && model->role() == RadioModel::Role::Remote) {
         setTransmitPermitted(false);
@@ -262,16 +375,18 @@ void PhoneCwApplet::buildUI()
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
+    SectionColumn sections(this, root, m_parts.get());
 
     // ── Phone/CW/FM tab button row ───────────────────────────────────────────
     m_tabGroup = new QButtonGroup(this);
     m_tabGroup->setExclusive(true);
     {
+        QWidget* tabParent = sections.parentFor("pageButtons", QStringLiteral("page buttons"));
         auto* tabRow = new QHBoxLayout;
         tabRow->setSpacing(2);
         tabRow->setContentsMargins(4, 2, 4, 2);
 
-        m_phoneTabBtn = new QPushButton(QStringLiteral("Phone"), this);
+        m_phoneTabBtn = new QPushButton(QStringLiteral("Phone"), tabParent);
         m_phoneTabBtn->setCheckable(true);
         m_phoneTabBtn->setChecked(true);
         m_phoneTabBtn->setFixedHeight(20);
@@ -280,7 +395,7 @@ void PhoneCwApplet::buildUI()
         m_tabGroup->addButton(m_phoneTabBtn, 0);
         tabRow->addWidget(m_phoneTabBtn);
 
-        m_cwTabBtn = new QPushButton(QStringLiteral("CW"), this);
+        m_cwTabBtn = new QPushButton(QStringLiteral("CW"), tabParent);
         m_cwTabBtn->setCheckable(true);
         m_cwTabBtn->setFixedHeight(20);
         m_cwTabBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -290,7 +405,7 @@ void PhoneCwApplet::buildUI()
 
         // FM is a separate FmApplet per reconciled design spec
 
-        root->addLayout(tabRow);
+        sections.commitLayout(tabRow);
     }
 
     // ── Stacked widget: Phone (0) / CW (1) ──────────────────────────────────
@@ -310,6 +425,11 @@ void PhoneCwApplet::buildUI()
 
     m_stack->setCurrentIndex(0);
     root->addWidget(m_stack);
+    if (m_parts) {
+        connect(m_stack, &QStackedWidget::currentChanged, this,
+                [this](int) { fitCopyToCurrentPage(); });
+        fitCopyToCurrentPage();
+    }
 
     // R-R3-49: controls whose feature is not built yet are hidden. The CW
     // and FM pages are never shown (showPage falls back to Phone), and with
@@ -344,11 +464,13 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     auto* vbox = new QVBoxLayout(page);
     vbox->setContentsMargins(4, 2, 4, 2);
     vbox->setSpacing(2);
+    SectionColumn sections(page, vbox, m_parts.get());
 
     // ── Control 1: Mic level gauge ───────────────────────────────────────────
     // HGauge(-40, +10, redStart=0, yellowStart=-10)
     // Ticks: -40/-30/-20/-10/0/+5/+10
-    m_levelGauge = new HGauge(page);
+    QWidget* levelParent = sections.parentFor("level", QStringLiteral("level gauge"));
+    m_levelGauge = new HGauge(levelParent);
     // The values are ControlRanges.h's, which the Core's catalogue reads too
     // (iPhone app Task 19).
     m_levelGauge->setRange(ControlRanges::kMicLevelMinDb, ControlRanges::kMicLevelMaxDb);
@@ -361,7 +483,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
                                   QStringLiteral("0"),    QStringLiteral("+5"),
                                   QStringLiteral("+10")});
     m_levelGauge->setAccessibleName(QStringLiteral("Microphone level gauge"));
-    vbox->addWidget(m_levelGauge);
+    sections.commitWidget(m_levelGauge);
 
     // ── Control 2: Compression gauge ─────────────────────────────────────────
     // HGauge(-25, 0, redStart=1), ticks -25/-20/-15/-10/-5/0.
@@ -371,7 +493,8 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     // (at rest, PROC off), fuller as the level rises. AetherSDR's reversed
     // face (PhoneCwApplet.cpp:928-933 [@1e0718ad]) takes a compression
     // amount from the radio, which this reading is not.
-    m_compGauge = new HGauge(page);
+    QWidget* compressionParent = sections.parentFor("compression", QStringLiteral("compression gauge"));
+    m_compGauge = new HGauge(compressionParent);
     m_compGauge->setRange(-25.0, 0.0);
     m_compGauge->setRedStart(1.0);
     m_compGauge->setTitle(QStringLiteral("Compression"));
@@ -382,11 +505,12 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     m_compGauge->setToolTip(QStringLiteral(
         "Speech compression while transmitting, as the Compression meter shows it"));
     m_compGauge->setValue(-25.0);  // empty until a transmit reading arrives
-    vbox->addWidget(m_compGauge);
-    vbox->addSpacing(4);
+    sections.commitWidget(m_compGauge);
+    sections.addGapBelow(4);
 
     // ── Control 3: Mic profile combo ─────────────────────────────────────────
-    m_micProfileCombo = new QComboBox(page);
+    QWidget* profileParent = sections.parentFor("profile", QStringLiteral("mic profile"));
+    m_micProfileCombo = new QComboBox(profileParent);
     m_micProfileCombo->setFixedHeight(22);
     m_micProfileCombo->addItems({QStringLiteral("Default"), QStringLiteral("DX"),
                                  QStringLiteral("Contest"), QStringLiteral("Custom")});
@@ -394,15 +518,16 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     m_micProfileCombo->setToolTip(QStringLiteral(
         "Transmit profile (the same list as the TX applet's profile)"));
     applyComboStyle(m_micProfileCombo);
-    vbox->addWidget(m_micProfileCombo);
+    sections.commitWidget(m_micProfileCombo);
 
     // ── Control 4: Mic source + Control 5: Mic level slider + Control 6: +ACC ─
     {
+        QWidget* micParent = sections.parentFor("mic", QStringLiteral("mic source and gain"));
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
         // Control 4: Mic source combo (fixedWidth 55, fixedHeight 22)
-        m_micSourceCombo = new QComboBox(page);
+        m_micSourceCombo = new QComboBox(micParent);
         m_micSourceCombo->setFixedWidth(55);
         m_micSourceCombo->setFixedHeight(22);
         m_micSourceCombo->addItems({QStringLiteral("MIC"), QStringLiteral("BAL"),
@@ -420,7 +545,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         // Range and initial value set in wireControls() once RadioModel is ready.
         // Placeholder range (0,100) is overwritten before the widget is visible.
         // Phase 3M-1b: bidirectional with TransmitModel::micGainDb.
-        m_micLevelSlider = new QSlider(Qt::Horizontal, page);
+        m_micLevelSlider = new QSlider(Qt::Horizontal, micParent);
         m_micLevelSlider->setRange(0, 100);
         m_micLevelSlider->setValue(50);
         m_micLevelSlider->setStyleSheet(NereusSDR::Style::sliderHStyle());
@@ -430,14 +555,14 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
 
         // Control 5b: Value label — widened to 35px for "-40 dB" / "+10 dB" strings.
         // Phase 3M-1b: shows dB value e.g. "-6 dB".
-        m_micLevelLabel = new QLabel(QStringLiteral("-6 dB"), page);
+        m_micLevelLabel = new QLabel(QStringLiteral("-6 dB"), micParent);
         m_micLevelLabel->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextPrimary));
         m_micLevelLabel->setFixedWidth(35);
         m_micLevelLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         row->addWidget(m_micLevelLabel);
 
         // Control 6: +ACC button (green, checkable, fixedWidth 48, fixedHeight 22)
-        m_accBtn = new QPushButton(QStringLiteral("+ACC"), page);
+        m_accBtn = new QPushButton(QStringLiteral("+ACC"), micParent);
         m_accBtn->setCheckable(true);
         m_accBtn->setFixedWidth(48);
         m_accBtn->setFixedHeight(22);
@@ -445,18 +570,19 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_accBtn->setAccessibleName(QStringLiteral("Accessory mic input"));
         row->addWidget(m_accBtn);
 
-        vbox->addLayout(row);
+        sections.commitLayout(row);
     }
 
     // ── Control 7: PROC + Control 8: PROC slider + Control 9: VAX ───────────
     {
+        QWidget* procParent = sections.parentFor("proc", QStringLiteral("PROC and VAX"));
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
         // Control 7: PROC button (green, checkable, fixedWidth 48, fixedHeight 22)
         // Phase 3M-3a-ii post-bench cleanup: bidirectional with
         // TransmitModel::cpdrOn (wired in wireControls()).
-        m_procBtn = new QPushButton(QStringLiteral("PROC"), page);
+        m_procBtn = new QPushButton(QStringLiteral("PROC"), procParent);
         m_procBtn->setCheckable(true);
         m_procBtn->setFixedWidth(48);
         m_procBtn->setFixedHeight(22);
@@ -472,7 +598,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         // (console.Designer.cs:6042-6043 [v2.10.3.13]):
         //   ptbCPDR.Maximum = 20;  ptbCPDR.Minimum = 0;
         // Replaces the previous 3-position NOR/DX/DX+ placeholder.
-        auto* procGroup = new QWidget(page);
+        auto* procGroup = new QWidget(procParent);
         auto* procVbox = new QVBoxLayout(procGroup);
         procVbox->setContentsMargins(0, 0, 0, 0);
         procVbox->setSpacing(0);
@@ -503,7 +629,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         row->addWidget(procGroup, 1);
 
         // Control 9: VAX button (blue, checkable, fixedWidth 48, fixedHeight 22)
-        m_vaxBtn = new QPushButton(QStringLiteral("VAX"), page);
+        m_vaxBtn = new QPushButton(QStringLiteral("VAX"), procParent);
         m_vaxBtn->setCheckable(true);
         m_vaxBtn->setFixedWidth(48);
         m_vaxBtn->setFixedHeight(22);
@@ -511,7 +637,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_vaxBtn->setAccessibleName(QStringLiteral("VAX digital audio"));
         row->addWidget(m_vaxBtn);
 
-        vbox->addLayout(row);
+        sections.commitLayout(row);
     }
 
     // ── Control 10: MON button + level slider ────────────────────────────────
@@ -559,10 +685,11 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     // Slider is DECORATIVE — see wireControls() for the verbatim Thetis
     // quirk quote.
     {
+        QWidget* dexpParent = sections.parentFor("dexp", QStringLiteral("DEXP"));
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
-        m_dexpBtn = new QPushButton(QStringLiteral("DEXP"), page);
+        m_dexpBtn = new QPushButton(QStringLiteral("DEXP"), dexpParent);
         m_dexpBtn->setCheckable(true);
         m_dexpBtn->setFixedWidth(48);
         m_dexpBtn->setFixedHeight(22);
@@ -572,7 +699,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         row->addWidget(m_dexpBtn);
 
         // Threshold slider-stack: slider on top, DexpPeakMeter strip below.
-        auto* dexpStackGroup = new QWidget(page);
+        auto* dexpStackGroup = new QWidget(dexpParent);
         auto* dexpStackVbox = new QVBoxLayout(dexpStackGroup);
         dexpStackVbox->setContentsMargins(0, 0, 0, 0);
         dexpStackVbox->setSpacing(1);
@@ -596,14 +723,14 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
 
         row->addWidget(dexpStackGroup, 1);
 
-        m_dexpLabel = new QLabel(QStringLiteral("-50 dB"), page);
+        m_dexpLabel = new QLabel(QStringLiteral("-50 dB"), dexpParent);
         m_dexpLabel->setStyleSheet(NereusSDR::Style::insetValueStyle());
         m_dexpLabel->setFixedWidth(38);
         m_dexpLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_dexpLabel);
         new InsetValueLabelFit(m_dexpLabel, m_dexpSlider, QStringLiteral(" dB"), 38);
 
-        vbox->addLayout(row);
+        sections.commitLayout(row);
     }
 
     // TX filter Low/High Cut sliders removed — superseded by the Lo/Hi
@@ -614,10 +741,11 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
     // ── Control 13: AM Carrier level slider (0-100) + inset "25" ────────────
     // Spec: Phase 3I-3
     {
+        QWidget* carrierParent = sections.parentFor("amCarrier", QStringLiteral("AM carrier"));
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
 
-        auto* lbl = new QLabel(QStringLiteral("AM Car:"), page);
+        auto* lbl = new QLabel(QStringLiteral("AM Car:"), carrierParent);
         lbl->setStyleSheet(QStringLiteral("QLabel { color: %1; font-size: 10px; }").arg(NereusSDR::Style::kTextSecondary));
         lbl->setFixedWidth(40);
         if (WorkspacePreview::enabled()) {
@@ -628,7 +756,7 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         }
         row->addWidget(lbl);
 
-        m_amCarSlider = new QSlider(Qt::Horizontal, page);
+        m_amCarSlider = new QSlider(Qt::Horizontal, carrierParent);
         m_amCarSlider->setRange(0, 100);
         m_amCarSlider->setValue(25);
         m_amCarSlider->setStyleSheet(NereusSDR::Style::sliderHStyle());
@@ -636,13 +764,19 @@ void PhoneCwApplet::buildPhonePage(QWidget* page)
         m_amCarSlider->setToolTip(QStringLiteral("AM carrier level, in percent"));
         row->addWidget(m_amCarSlider, 1);
 
-        m_amCarLabel = new QLabel(QStringLiteral("25"), page);
+        m_amCarLabel = new QLabel(QStringLiteral("25"), carrierParent);
         m_amCarLabel->setStyleSheet(NereusSDR::Style::insetValueStyle());
         m_amCarLabel->setFixedWidth(30);
         m_amCarLabel->setAlignment(Qt::AlignCenter);
         row->addWidget(m_amCarLabel);
 
-        vbox->addLayout(row);
+        sections.commitLayout(row);
+    }
+
+    // A copy's spare room goes under its rows, so they stay together when a
+    // free canvas makes it taller than it asks to be.
+    if (m_parts) {
+        vbox->addStretch();
     }
 
     // ── Phone controls with nothing behind them yet (wired ones are live) ───
@@ -722,36 +856,39 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
     auto* vbox = new QVBoxLayout(page);
     vbox->setContentsMargins(4, 2, 4, 6);
     vbox->setSpacing(4);
+    SectionColumn sections(page, vbox, m_parts.get());
 
     const QString labelStyle = QStringLiteral("QLabel { color: %1; font-size: 10px; }")
                                    .arg(NereusSDR::Style::kTextSecondary);
-    const auto sliderRow = [&](QWidget* lead, QSlider*& slider, QLabel*& value,
-                               const char* name, int lo, int hi) {
+    const auto sliderRow = [&](const char* id, const QString& partLabel, QWidget* lead,
+                               QSlider*& slider, QLabel*& value, const char* name, int lo, int hi) {
+        QWidget* host = sections.parentFor(id, partLabel);
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
         lead->setFixedWidth(kLeftColW);
         row->addWidget(lead);
         row->addSpacing(kGap);
-        slider = new QSlider(Qt::Horizontal, page);
+        slider = new QSlider(Qt::Horizontal, host);
         slider->setObjectName(QLatin1String(name));
         slider->setRange(lo, hi);
         slider->setStyleSheet(NereusSDR::Style::sliderHStyle());
         row->addWidget(slider, 1);
-        value = new QLabel(page);
+        value = new QLabel(host);
         value->setStyleSheet(NereusSDR::Style::insetValueStyle());
         value->setFixedWidth(kValueW);
         value->setAlignment(Qt::AlignCenter);
         row->addWidget(value);
-        vbox->addLayout(row);
+        sections.commitLayout(row);
     };
-    const auto label = [&](const QString& text) {
-        auto* lbl = new QLabel(text, page);
+    const auto label = [&](const QString& text, QWidget* parent) {
+        auto* lbl = new QLabel(text, parent);
         lbl->setStyleSheet(labelStyle);
         return lbl;
     };
 
     // ── Delay: break-in delay, 0 to 1000 ms (R-CW-01) ────────────────────────
-    sliderRow(label(QStringLiteral("Delay:")), m_cwDelaySlider, m_cwDelayValue,
+    sliderRow("cwDelay", QStringLiteral("CW delay"),
+              label(QStringLiteral("Delay:"), page), m_cwDelaySlider, m_cwDelayValue,
               "cwDelaySlider", TransmitModel::kCwBreakInDelayMsMin,
               TransmitModel::kCwBreakInDelayMsMax);
     m_cwDelaySlider->setSingleStep(10);
@@ -759,7 +896,8 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
     m_cwDelaySlider->setAccessibleName(QStringLiteral("CW break-in delay"));
 
     // ── Speed: 1 to 60 WPM (R-CW-41) ─────────────────────────────────────────
-    sliderRow(label(QStringLiteral("Speed:")), m_cwSpeedSlider, m_cwSpeedValue,
+    sliderRow("cwSpeed", QStringLiteral("CW speed"),
+              label(QStringLiteral("Speed:"), page), m_cwSpeedSlider, m_cwSpeedValue,
               "cwSpeedSlider", TransmitModel::kCwKeyerSpeedMin,
               TransmitModel::kCwKeyerSpeedMax);
     m_cwSpeedSlider->setAccessibleName(QStringLiteral("CW speed"));
@@ -771,7 +909,8 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
     m_cwSidetoneBtn->setFixedHeight(kCwRowH);
     m_cwSidetoneBtn->setStyleSheet(phoneButtonStyle() + NereusSDR::Style::greenCheckedStyle());
     m_cwSidetoneBtn->setAccessibleName(QStringLiteral("CW sidetone"));
-    sliderRow(m_cwSidetoneBtn, m_cwSidetoneSlider, m_cwSidetoneValue,
+    sliderRow("cwSidetone", QStringLiteral("CW sidetone"),
+              m_cwSidetoneBtn, m_cwSidetoneSlider, m_cwSidetoneValue,
               "cwSidetoneSlider", 0, 100);
     m_cwSidetoneSlider->setAccessibleName(QStringLiteral("CW sidetone level"));
 
@@ -781,10 +920,11 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
     // shown disabled with the reason (the operator's rule: disabled, never
     // hidden).
     {
+        QWidget* panParent = sections.parentFor("cwPan", QStringLiteral("CW pan"));
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
-        row->addWidget(label(QStringLiteral("L")));
-        m_cwPanSlider = new QSlider(Qt::Horizontal, page);
+        row->addWidget(label(QStringLiteral("L"), panParent));
+        m_cwPanSlider = new QSlider(Qt::Horizontal, panParent);
         m_cwPanSlider->setObjectName(QStringLiteral("cwPanSlider"));
         m_cwPanSlider->setRange(0, 100);
         m_cwPanSlider->setValue(50);
@@ -794,17 +934,18 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
         m_cwPanSlider->setToolTip(QLatin1String(kCwPanReason));
         m_cwPanSlider->setAccessibleDescription(QLatin1String(kCwPanReason));
         row->addWidget(m_cwPanSlider, 1);
-        row->addWidget(label(QStringLiteral("R")));
-        vbox->addLayout(row);
+        row->addWidget(label(QStringLiteral("R"), panParent));
+        sections.commitLayout(row);
     }
 
     // ── Break-in, Iambic, Pitch ──────────────────────────────────────────────
     // From AetherSDR PhoneCwApplet.cpp:643-724 [@1e0718ad]: the two buttons,
     // a stretch, then "Pitch:" with its arrows around a 48 px value.
     {
+        QWidget* keyingParent = sections.parentFor("cwKeying", QStringLiteral("break-in, Iambic and pitch"));
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
-        m_cwBreakInBtn = new QPushButton(QStringLiteral("Semi BK"), page);
+        m_cwBreakInBtn = new QPushButton(QStringLiteral("Semi BK"), keyingParent);
         m_cwBreakInBtn->setObjectName(QStringLiteral("cwBreakInButton"));
         m_cwBreakInBtn->setCheckable(true);
         m_cwBreakInBtn->setFixedHeight(kCwRowH);
@@ -812,7 +953,7 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
         m_cwBreakInBtn->setAccessibleName(QStringLiteral("CW break-in"));
         row->addWidget(m_cwBreakInBtn);
 
-        m_cwIambicBtn = new QPushButton(QStringLiteral("Iambic"), page);
+        m_cwIambicBtn = new QPushButton(QStringLiteral("Iambic"), keyingParent);
         m_cwIambicBtn->setObjectName(QStringLiteral("cwIambicButton"));
         m_cwIambicBtn->setCheckable(true);
         m_cwIambicBtn->setFixedHeight(kCwRowH);
@@ -821,31 +962,32 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
         row->addWidget(m_cwIambicBtn);
 
         row->addStretch();
-        row->addWidget(label(QStringLiteral("Pitch:")));
-        m_cwPitchDown = new TriBtn(TriBtn::Left, page);
+        row->addWidget(label(QStringLiteral("Pitch:"), keyingParent));
+        m_cwPitchDown = new TriBtn(TriBtn::Left, keyingParent);
         m_cwPitchDown->setObjectName(QStringLiteral("cwPitchDownButton"));
         m_cwPitchDown->setAccessibleName(QStringLiteral("CW pitch down"));
         row->addWidget(m_cwPitchDown);
-        m_cwPitchValue = new QLabel(page);
+        m_cwPitchValue = new QLabel(keyingParent);
         m_cwPitchValue->setObjectName(QStringLiteral("cwPitchValue"));
         m_cwPitchValue->setStyleSheet(NereusSDR::Style::insetValueStyle());
         m_cwPitchValue->setFixedWidth(kCwPitchValueW);
         m_cwPitchValue->setAlignment(Qt::AlignCenter);
         m_cwPitchValue->setAccessibleName(QStringLiteral("CW pitch"));
         row->addWidget(m_cwPitchValue);
-        m_cwPitchUp = new TriBtn(TriBtn::Right, page);
+        m_cwPitchUp = new TriBtn(TriBtn::Right, keyingParent);
         m_cwPitchUp->setObjectName(QStringLiteral("cwPitchUpButton"));
         m_cwPitchUp->setAccessibleName(QStringLiteral("CW pitch up"));
         row->addWidget(m_cwPitchUp);
-        vbox->addLayout(row);
+        sections.commitLayout(row);
     }
 
     // ── KEY and TX lamps and the keyer lamp ──────────────────────────────────
     {
+        QWidget* lampParent = sections.parentFor("cwLamps", QStringLiteral("KEY, TX and keyer lamps"));
         auto* row = new QHBoxLayout;
         row->setSpacing(4);
         const auto lamp = [&](const QString& text, const char* name, int width) {
-            auto* l = new QLabel(text, page);
+            auto* l = new QLabel(text, lampParent);
             l->setObjectName(QLatin1String(name));
             l->setAlignment(Qt::AlignCenter);
             l->setFixedHeight(kCwRowH);
@@ -864,15 +1006,16 @@ void PhoneCwApplet::buildCwPage(QWidget* page)
         row->addWidget(m_cwKeyLamp);
         row->addWidget(m_cwTxLamp);
         row->addWidget(m_cwKeyerLamp, 1);
-        vbox->addLayout(row);
+        sections.commitLayout(row);
     }
 
     // ── The keyer's state line ───────────────────────────────────────────────
-    m_cwStatusLine = new QLabel(page);
+    QWidget* statusParent = sections.parentFor("cwStatus", QStringLiteral("keyer status"));
+    m_cwStatusLine = new QLabel(statusParent);
     m_cwStatusLine->setObjectName(QStringLiteral("cwStatusLine"));
     m_cwStatusLine->setWordWrap(true);
     m_cwStatusLine->setStyleSheet(labelStyle);
-    vbox->addWidget(m_cwStatusLine);
+    sections.commitWidget(m_cwStatusLine);
     vbox->addStretch();
 }
 
@@ -1103,6 +1246,9 @@ void PhoneCwApplet::setCwSettingsPermitted(bool permitted, const QString& reason
     m_cwSettingsReason = reason.isEmpty() ? IStationLink::transmitSettingsUnavailableReason()
                                           : reason;
     applyCwSettingsGate();
+    for (PhoneCwApplet* copy : std::as_const(m_copies)) {
+        if (copy) { copy->setCwSettingsPermitted(permitted, m_cwSettingsReason); }
+    }
 }
 
 // Each control's own state (Delay in Off and QSK, the level with Sidetone
@@ -1855,6 +2001,10 @@ void PhoneCwApplet::syncFromModel()
 
     // CW transmit (R-CW-41): the CW page.
     showCwFromModel();
+
+    for (PhoneCwApplet* copy : std::as_const(m_copies)) {
+        if (copy) { copy->syncFromModel(); }
+    }
 }
 
 void PhoneCwApplet::setTransmitPermitted(bool permitted, const QString& reason)
@@ -1864,6 +2014,9 @@ void PhoneCwApplet::setTransmitPermitted(bool permitted, const QString& reason)
         ? tr("Transmit controls are unavailable until the Core confirms transmit permission.")
         : reason;
     updateTransmitControlAvailability();
+    for (PhoneCwApplet* copy : std::as_const(m_copies)) {
+        if (copy) { copy->setTransmitPermitted(permitted, m_transmitPermissionReason); }
+    }
 }
 
 // R-R3-49 (parity Task 2): the transmit settings that key nothing. The two
@@ -1875,6 +2028,9 @@ void PhoneCwApplet::setTransmitSettingsPermitted(bool permitted, const QString& 
         ? IStationLink::transmitSettingsUnavailableReason()
         : reason;
     updateTransmitControlAvailability();
+    for (PhoneCwApplet* copy : std::as_const(m_copies)) {
+        if (copy) { copy->setTransmitSettingsPermitted(permitted, m_transmitSettingsReason); }
+    }
 }
 
 // R-R3-49 (parity Task 3): the mic profile combo's own gate.
@@ -1885,6 +2041,9 @@ void PhoneCwApplet::setTxProfilePermitted(bool permitted, const QString& reason)
         ? IStationLink::transmitSettingsUnavailableReason()
         : reason;
     updateTransmitControlAvailability();
+    for (PhoneCwApplet* copy : std::as_const(m_copies)) {
+        if (copy) { copy->setTxProfilePermitted(permitted, m_txProfileReason); }
+    }
 }
 
 void PhoneCwApplet::updateTransmitControlAvailability()
@@ -1944,33 +2103,167 @@ void PhoneCwApplet::updateTransmitControlAvailability()
 
 void PhoneCwApplet::setCompressionReading(double dB)
 {
-    if (!m_compGauge) { return; }
-    // Gauge range -25..0 dB (AetherSDR PhoneCwApplet layout). The reading
-    // is floored at -30 by the poller; anything at or below -25, and a
-    // non-finite value, draws an empty gauge.
-    const double v = std::isfinite(dB) ? std::clamp(dB, -25.0, 0.0) : -25.0;
-    m_compGauge->setValue(v);
+    m_compressionSeen = true;
+    m_compressionDb = dB;
+    if (m_compGauge) {
+        // Gauge range -25..0 dB (AetherSDR PhoneCwApplet layout). The reading
+        // is floored at -30 by the poller; anything at or below -25, and a
+        // non-finite value, draws an empty gauge.
+        const double v = std::isfinite(dB) ? std::clamp(dB, -25.0, 0.0) : -25.0;
+        m_compGauge->setValue(v);
+    }
+    for (PhoneCwApplet* copy : std::as_const(m_copies)) {
+        if (copy) { copy->setCompressionReading(dB); }
+    }
 }
 
 void PhoneCwApplet::setCompressionUnavailable(const QString& reason)
 {
-    if (!m_compGauge) { return; }
-    static constexpr auto kSavedTooltip = "PhoneCwSavedCompressionTooltip";
-    if (!reason.isEmpty()) {
-        if (!m_compGauge->property(kSavedTooltip).isValid()) {
-            m_compGauge->setProperty(kSavedTooltip, m_compGauge->toolTip());
+    m_compressionUnavailable = !reason.isEmpty();
+    m_compressionReason = reason;
+    if (m_compGauge) {
+        static constexpr auto kSavedTooltip = "PhoneCwSavedCompressionTooltip";
+        if (!reason.isEmpty()) {
+            if (!m_compGauge->property(kSavedTooltip).isValid()) {
+                m_compGauge->setProperty(kSavedTooltip, m_compGauge->toolTip());
+            }
+            m_compGauge->setUnavailable(true);
+            m_compGauge->setToolTip(reason);
+            m_compGauge->setAccessibleDescription(reason);
+        } else {
+            m_compGauge->setUnavailable(false);
+            if (m_compGauge->property(kSavedTooltip).isValid()) {
+                m_compGauge->setToolTip(m_compGauge->property(kSavedTooltip).toString());
+                m_compGauge->setProperty(kSavedTooltip, QVariant());
+            }
+            m_compGauge->setAccessibleDescription(QString());
         }
-        m_compGauge->setUnavailable(true);
-        m_compGauge->setToolTip(reason);
-        m_compGauge->setAccessibleDescription(reason);
+    }
+    for (PhoneCwApplet* copy : std::as_const(m_copies)) {
+        if (copy) { copy->setCompressionUnavailable(reason); }
+    }
+}
+
+PhoneCwApplet* PhoneCwApplet::createPanelCopy(QWidget* parent, bool preview)
+{
+    auto* copy = new PhoneCwApplet(m_model, parent,
+                                   preview ? Surface::Preview : Surface::LiveCopy);
+    if (preview) {
+        return copy;
+    }
+    copy->setTransmitPermitted(m_transmitPermitted, m_transmitPermissionReason);
+    copy->setTransmitSettingsPermitted(m_transmitSettingsPermitted, m_transmitSettingsReason);
+    copy->setTxProfilePermitted(m_txProfilePermitted, m_txProfileReason);
+    copy->setCwSettingsPermitted(m_cwSettingsPermitted, m_cwSettingsReason);
+    // Iambic turns back on to the letter this panel would pick, even when
+    // the copy is built in straight-key mode.
+    copy->m_cwLastIambicMode = m_cwLastIambicMode;
+    if (m_compressionUnavailable) {
+        copy->setCompressionUnavailable(m_compressionReason);
+    } else if (m_compressionSeen) {
+        copy->setCompressionReading(m_compressionDb);
+    }
+    connect(copy, &PhoneCwApplet::openSetupRequested,
+            this, &PhoneCwApplet::openSetupRequested);
+    // The DEXP marker is in no model, so the sliders pass it to each other:
+    // this panel's slider to and from each copy's. Setting a slider to the
+    // value it has does nothing, so this stops by itself.
+    copy->m_dexpSlider->setValue(m_dexpSlider->value());
+    connect(m_dexpSlider, &QSlider::valueChanged, copy->m_dexpSlider, &QSlider::setValue);
+    connect(copy->m_dexpSlider, &QSlider::valueChanged, m_dexpSlider, &QSlider::setValue);
+    m_copies.append(copy);
+    connect(copy, &QObject::destroyed, this, [this, copy]() {
+        m_copies.removeAll(copy);
+    });
+    return copy;
+}
+
+QSize PhoneCwApplet::freeCanvasSizeFor(const QJsonObject& config)
+{
+    const std::unique_ptr<PhoneCwApplet> probe(createPanelCopy(nullptr, true));
+    probe->m_cwStatusLine->setText(m_cwStatusLine->text());
+    probe->applyContainerConfig(config);
+    return probe->property("freeCanvasHint").toSize();
+}
+
+void PhoneCwApplet::applyContainerConfig(const QJsonObject& config)
+{
+    if (m_parts) {
+        m_parts->apply(config);
+    }
+    const QString page = config.value(QStringLiteral("page")).toString();
+    showPage(page == QLatin1String("cw") ? 1 : 0);
+    fitCopyToCurrentPage();
+    reportFreeCanvasSize();
+}
+
+// A free canvas sizes an entry once, from these two properties, and a page
+// click doesn't resize it. With the page buttons showing, the rect must hold
+// either page; with them hidden the page can't change.
+void PhoneCwApplet::reportFreeCanvasSize()
+{
+    if (!m_parts || !m_stack) {
         return;
     }
-    m_compGauge->setUnavailable(false);
-    if (m_compGauge->property(kSavedTooltip).isValid()) {
-        m_compGauge->setToolTip(m_compGauge->property(kSavedTooltip).toString());
-        m_compGauge->setProperty(kSavedTooltip, QVariant());
+    // The host reads this before the copy is first shown, so measure what
+    // the copy will be by then. The host themes its copies for text only,
+    // which raises small text in the workspace look (the 8 px PROC value and
+    // the 10 px CW status line to 11 px). The skip mark goes back after: a
+    // settings preview's copy isn't marked and takes the whole look.
+    const QVariant skipMark = property(WorkspacePreview::kSkipProperty);
+    setProperty(WorkspacePreview::kSkipProperty, true);
+    WorkspacePreview::themeSubtree(this);
+    setProperty(WorkspacePreview::kSkipProperty, skipMark);
+    // Every level, since each parent layout keeps a widget's old height until
+    // that widget says otherwise, and a change climbs one level per pass of
+    // the event loop (the PROC value's height).
+    const QList<QWidget*> children = findChildren<QWidget*>();
+    for (QWidget* child : children) {
+        child->updateGeometry();
     }
-    m_compGauge->setAccessibleDescription(QString());
+    // A hidden row tells no one, and a page's sublayouts would still count it.
+    // Activating a page refreshes them all (the MON row's old height).
+    for (int i = 0; i < m_stack->count(); ++i) {
+        m_stack->widget(i)->layout()->activate();
+    }
+    m_stack->updateGeometry();
+    QSize hint = sizeHint();
+    QSize minimum = minimumSizeHint();
+    const QList<QWidget*> buttons = m_parts->widgets(QStringLiteral("pageButtons"));
+    if (!m_parts->isHidden(QStringLiteral("pageButtons")) && !buttons.isEmpty()
+        && UnbuiltFeatures::isBuilt(UnbuiltFeature::Cwx)) {
+        QWidget* phone = m_stack->widget(0);
+        QWidget* cw = m_stack->widget(1);
+        hint.setHeight(buttons.first()->sizeHint().height()
+                       + qMax(phone->sizeHint().height(), cw->sizeHint().height()));
+        minimum.setHeight(buttons.first()->minimumSizeHint().height()
+                          + qMax(phone->minimumSizeHint().height(), cw->minimumSizeHint().height()));
+    }
+    setProperty("freeCanvasHint", hint);
+    setProperty("freeCanvasMinimum", QSizeF(minimum));
+}
+
+// A stacked widget asks for its tallest page, and the docked panel keeps
+// that. A copy asks only for the page it shows, so it shortens as rows hide.
+void PhoneCwApplet::fitCopyToCurrentPage()
+{
+    if (!m_parts || !m_stack) {
+        return;
+    }
+    for (int i = 0; i < m_stack->count(); ++i) {
+        QWidget* page = m_stack->widget(i);
+        QSizePolicy policy = page->sizePolicy();
+        policy.setVerticalPolicy(i == m_stack->currentIndex() ? QSizePolicy::Preferred
+                                                              : QSizePolicy::Ignored);
+        page->setSizePolicy(policy);
+    }
+    m_stack->updateGeometry();
+    updateGeometry();
+}
+
+const SectionParts* PhoneCwApplet::containerParts() const
+{
+    return m_parts.get();
 }
 
 void PhoneCwApplet::rebuildMicProfileCombo()

@@ -193,6 +193,11 @@ const QStringList kDataSurfaceClasses = {
     QStringLiteral("DiversityRadarWidget"),
     QStringLiteral("ParametricEqWidget"),
     QStringLiteral("AmpViewChart"),
+    // The keyboard map and its legend: the group colors are data, one color per
+    // kind of action, as a trace's is. The keys' chrome is checked by the map's
+    // own test (tst_hot_key_setup_keyboard).
+    QStringLiteral("KeyboardMapWidget"),
+    QStringLiteral("KeyGroupSwatch"),
 };
 // Data surfaces by object name: the remote diagnostics traffic graphs
 // (RemoteDiagnosticsDialog.cpp:147-150), whose traces are ink.

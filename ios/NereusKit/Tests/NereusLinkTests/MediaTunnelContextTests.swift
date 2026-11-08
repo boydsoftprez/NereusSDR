@@ -89,7 +89,14 @@ import Testing
         #expect(ingress.queuedCount == 0)
         ingress.offer(frame)
         await gate.release()
-        for _ in 0..<100 where received.count < 2 { await Task.yield() }
+        // The drain runs on its own task, so a count of yields says nothing about how far
+        // it got on a busy machine. Wait on the clock; the assertions below still catch a
+        // frame that never comes.
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(10))
+        while received.count < 2, clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
         #expect(received.values.count == 2)
         #expect(received.values[0] === old)
         #expect(received.values[1] === newer)

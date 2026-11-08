@@ -256,9 +256,16 @@
 //                m_remoteRigctl, refreshRigctlRemoteTransmit,
 //                applyRemoteRigctldSettings. AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3: hotKeyDispatcher, hotKeyBindings, windowSliceTabs.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 10: controllerHost. AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: hotKeyStateFeed. AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 7: keyboard router, containerManager.
+//                AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-26 - Final review fix wave (M6): voxLineReason, one VOX
 //                 line reason for the container button and the applets.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 //=================================================================
@@ -312,6 +319,7 @@
 
 #include "gui/widgets/CpuRowCycler.h"
 #include "models/Band.h"
+#include <array>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -366,6 +374,13 @@ class MeterItem;
 class VfoDisplayItem;
 class DialItem;
 class ContainerButtonDispatcher;
+class HotKeyBindings;
+class ControllerHost;
+class DeckLink;
+class HotKeyStateFeed;
+class HotKeyDispatcher;
+class KeyboardRouter;
+class MainWindowHotKeyTargets;
 class ConnectionPanel;
 class SupportDialog;
 class WdspEngine;
@@ -581,6 +596,13 @@ public:
     /// Call it after changing one from anywhere else.
     void refreshDisplayPillFftStates();
     int miniProducerCountForTest() const { return int(m_miniProducers.size()); }
+    // Hot keys: the one place every source runs an action, and the user's keys.
+    HotKeyDispatcher* hotKeyDispatcher() const { return m_hotKeyDispatcher.get(); }
+    HotKeyBindings* hotKeyBindings() const { return m_hotKeyBindings.get(); }
+    ControllerHost* controllerHost() const { return m_controllerHost.get(); }
+    HotKeyStateFeed* hotKeyStateFeed() const { return m_hotKeyStateFeed.get(); }
+    DeckLink* deckLink() const { return m_deckLink.get(); }
+    ContainerManager* containerManager() const { return m_containerManager; }
     // Slice control plan Task 15 fix round 1: drops the hosting slice
     // requests so a test reaches selectSliceForWindow's fallback path.
     void dropHostingSliceActionsForTest();
@@ -596,6 +618,9 @@ public:
     static bool firstRunPromptsBarredForTestRun();
 
 signals:
+    /// This window started or stopped hosting, so the slices it controls changed
+    /// with no slice or ownership signal to say so.
+    void desktopHostingChanged();
     void connectionsRequested();
     void hostedInitialConnectionRequested();
     void setupDialogCreated(NereusSDR::SetupDialog* dialog);
@@ -723,10 +748,17 @@ public:
                                     int sliceId);
     static void configureSpectrumForPanForTest(SpectrumWidget* spectrum,
                                                 const QString& panId);
-    static void wireWidebandExtensionForTest(SpectrumWidget* spectrum,
-                                             RadioModel* model,
-                                             PanadapterStack* stack,
-                                             const QString& panId);
+    /// mayRaiseWideband, when set, says whether this pan may raise the wideband
+    /// flag for a slice id. mayRetune, when set, says whether a click in a wing
+    /// may retune a slice id. Returns the pan's reconcile step, for a change the
+    /// wiring has no signal of its own for.
+    static std::function<void()> wireWidebandExtensionForTest(
+        SpectrumWidget* spectrum,
+        RadioModel* model,
+        PanadapterStack* stack,
+        const QString& panId,
+        const std::function<bool(int)>& mayRaiseWideband = {},
+        const std::function<bool(int)>& mayRetune = {});
     static void fanWidebandBinsForTest(PanadapterStack* stack, int adcIndex,
                                        const QVector<float>& bins);
     /// 3D Stacked-Trace Spectrum Plan Task 14 fix-forward (recall) + Task 15
@@ -1382,6 +1414,7 @@ private slots:
 
 private:
     friend class ImdPanelTestAccess;
+    friend class MainWindowHotKeyTargets;
 #ifdef NEREUS_BUILD_TESTS
     friend class TxLetterTakeWindowAccess;
     friend class DisplaySettingsCorrectnessAccess;
@@ -1730,6 +1763,8 @@ private:
     // slice this window controls or listens to and shows, each saying who
     // controls it; the applet binds windowRxSlice() with its access.
     void refreshRxAppletSlices();
+    // The slices the RX applet shows a tab for, in order (ruling U7).
+    QVector<SliceModel*> windowSliceTabs() const;
     // TX rulings (JJ, 2026-09-30, item 3): each pan's ATT flyout is held
     // with sliceChangeRefusal()'s reason while the pan's slice is one this
     // window only listens to.
@@ -1883,6 +1918,18 @@ private:
     // R-R3-21 / R-R3-49: maps each container function and band button to
     // its target on the container's own slice.
     std::unique_ptr<ContainerButtonDispatcher> m_containerButtons;
+    // Hot keys. In this order, so the dispatcher goes before what it calls.
+    std::unique_ptr<HotKeyBindings> m_hotKeyBindings;
+    std::unique_ptr<MainWindowHotKeyTargets> m_hotKeyTargets;
+    std::unique_ptr<HotKeyDispatcher> m_hotKeyDispatcher;
+    // Declared after what it calls, so it stops watching events before they go.
+    std::unique_ptr<KeyboardRouter> m_keyboardRouter;
+    // Declared after the dispatcher, so its worker has stopped before that goes.
+    std::unique_ptr<ControllerHost> m_controllerHost;
+    std::unique_ptr<HotKeyStateFeed> m_hotKeyStateFeed;
+    // After what it calls and reads, and reset first of them in ~MainWindow: a plugin's hold
+    // has to go while the radio model can still hear it.
+    std::unique_ptr<DeckLink> m_deckLink;
     // TX safety fix round 4 (2026-09-30): a local window's Radio >
     // Disconnect is available while a link is Connected or the lost-link
     // lock holds (the operator's way to lift it and stop recovery).
@@ -2049,7 +2096,8 @@ private:
     // (FFTEngine for RX, TxAnalyzer for TX).  See TxAnalyzer.h header.
     TxAnalyzer*         m_txAnalyzer{nullptr};
 
-    /// Last centre + sample rate RadioModel published for each stream, kept
+    /// Last centre + sample rate RadioModel published for each stream (the
+    /// wire-rate handler keeps the rate current on a live change), kept
     /// so a pan that subscribes AFTER the stream was centred still learns
     /// where its bins sit. RadioModel::bindSliceToStream emits
     /// streamCentreChanged BEFORE SliceModel::streamIndex is updated and
@@ -2158,6 +2206,11 @@ private:
     // stop flag and runs a fresh ~5 s NIC walk on the main thread mid-
     // close. Symptom: ⌘Q beach-balls for the full SafeDefault scan time.
     bool m_shuttingDown{false};
+    // The two CH labels in the status bar. Held, not looked up: a filter state
+    // change can arrive while a pan's widgets are being deleted, and a search of
+    // the window's children walks into them (wireWidebandExtensionForTest).
+    std::array<QPointer<QLabel>, 2> m_chainIndicatorLabels;
+
     // closeEvent has handed the layout and display values to AppSettings. By
     // the aboutToQuit that follows the window is hidden and the radio gone,
     // so that handler leaves them as they were.
@@ -2507,6 +2560,7 @@ private:
     class DigitalApplet*    m_digitalApplet{nullptr};
     class PureSignalApplet* m_pureSignalApplet{nullptr};
     class ModMonitorApplet* m_modMonApplet{nullptr};   // AM Mod Monitor
+    class SsbModMonitorApplet* m_ssbModMonApplet{nullptr}; // SSB Mod Monitor
     class DiversityApplet*  m_diversityApplet{nullptr};
     class CwxApplet*        m_cwxApplet{nullptr};
     QLabel*                 m_statusCwxLabel{nullptr};

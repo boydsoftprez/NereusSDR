@@ -320,8 +320,8 @@ private slots:
     }
 
     // ── section 10.2: fixed accelerator, because there is nothing to
-    //    register with (KeyboardSetupPages.cpp is a 100% NYI stub and no
-    //    ShortcutManager exists anywhere in src/) ───────────────────────
+    //    register with (Setup's Keyboard page edits hot key actions, not menu
+    //    items, and no ShortcutManager exists anywhere in src/) ───────────────────────
 
     void tnf_toggle_accelerator_is_fixed_and_unclaimed()
     {

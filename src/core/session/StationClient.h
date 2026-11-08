@@ -211,6 +211,8 @@
 //   2026-11-05: Band stack plan Task 6: sliceControlledHere.
 //   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCwPaddleAvailable.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-02: Track active and detail frequency record streams separately.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -508,6 +510,8 @@
 //               `roundtable` object, the room streams and the thirteen
 //               Roundtable requests. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -1672,6 +1676,9 @@ public:
     void setModMonitorSource(int source) override;
     /// txModMonitor.reset for a source.
     CommandOutcome requestModMonitorReset(int source) override;
+    bool txSsbModMonitorAvailable() const override;
+    void setSsbModMonitorSource(int source) override;
+    CommandOutcome requestSsbModMonitorReset(int source) override;
     /// Parity Task 21 (R-IOS-18): minor 11 and stationRadiosVersion at
     /// least 1 on a ready session.
     bool stationRadiosAvailable() const override;
@@ -1739,6 +1746,8 @@ public:
     /// CW transmit (R-CW-48): the cw.* verbs, while remote transmit is
     /// available and the Core told this window remoteCwVersion 1.
     bool remoteCwAvailable() const;
+    /// Hot keys (R-HK-13): dot and dash can go to this Core (remoteCwVersion 3).
+    bool remoteCwPaddleAvailable() const;
     bool remoteMicSourceAvailable() const override;
     CommandOutcome requestMicSource(MicSource desired, std::function<void()> accepted = {}) override;
 
@@ -2096,6 +2105,9 @@ private:
     int m_modMonitorSource = -1;
     QString m_modMonitorStream;
     void syncModMonitorSubscription();
+    int m_ssbModMonitorSource = -1;
+    QString m_ssbModMonitorStream;
+    void syncSsbModMonitorSubscription();
     /// Task 78: this session's hello declared sessionHolder 1.
     bool m_declaredSessionHolder = false;
     bool m_declaresSessionHolder = true;

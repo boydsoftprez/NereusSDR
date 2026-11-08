@@ -22,15 +22,16 @@ extension XCUIApplication {
     /// is connected (``PhoneSettings/navTab``), and the tests share one
     /// simulator: after a test that ended on Setup, a fixture that starts
     /// connected (`-NereusKeyedFixture`) opened on Setup's About page, with
-    /// the band's toolbar behind it. The argument covers only this launch's
-    /// reading of the tab; nothing is written.
+    /// the band's toolbar behind it. The flag is a debug build's fixture flag
+    /// the app reads once, at the launch's first return to the kept tab; the
+    /// kept tab is not changed or overridden for the rest of the run.
     @MainActor
     func launchFresh(file: StaticString = #filePath, line: UInt = #line) {
         if state != .notRunning {
             terminate()
         }
-        if launchArguments.contains("-NereusShowBand") && !launchArguments.contains(Self.startTabKey) {
-            launchArguments += [Self.startTabKey, "panadapter"]
+        if launchArguments.contains("-NereusShowBand") && !launchArguments.contains(Self.startOnPanadapterFlag) {
+            launchArguments += [Self.startOnPanadapterFlag]
         }
         launch()
         guard launchArguments.contains("-NereusShowBand") else {
@@ -52,7 +53,6 @@ extension XCUIApplication {
         }
     }
 
-    /// The tab the app goes back to on a connected launch, as a launch
-    /// argument: `PhoneSettings.keyPrefix` + `PhoneSettings.navTabKey`.
-    static let startTabKey = "-phone.nav.tab"
+    /// The app's `UITestBand.startOnPanadapterArgument`.
+    static let startOnPanadapterFlag = "-NereusStartOnPanadapter"
 }

@@ -90,6 +90,8 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: cw.paddle.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-26  J.J. Boyd / KG4VCF  CW transmit (R-CW-49): cw.send,
@@ -461,7 +463,7 @@ public:
     /// the Core routes it by verb and id to the session that asked.
     /// CW transmit (R-CW-49): a cw.* request, its arguments read.
     struct CwRequest {
-        enum class Kind { Send, Memory, Stop, Key };
+        enum class Kind { Send, Memory, Stop, Key, Paddle };
         Kind kind{Kind::Stop};
         /// cw.send's text.
         QString text;
@@ -469,6 +471,9 @@ public:
         int number{0};
         /// cw.key's down.
         bool down{false};
+        /// cw.paddle's dot and dash (remoteCwVersion 3).
+        bool dot{false};
+        bool dash{false};
     };
     struct TransmitAccess {
         std::function<SessionMessage(const SessionMessage&, const QString&, const QByteArray&,

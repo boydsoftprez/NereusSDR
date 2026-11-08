@@ -298,6 +298,13 @@
 //                 in CW as the approved mockup's right strip does;
 //                 dialog-setup-cw--scrolled steps DSP > CW.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: dialog-setup-keyboard-full.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: dialog-setup-midi-rows.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 18: dialog-setup-knobs scenes.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 21: dialog-setup-deck-plugins at both sizes.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys CI fixes: dialog-setup-keyboard--min and
+//                --wide, for the map that reflows.
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -396,6 +403,11 @@
 #include "ControlsSheet.h"
 #include "PreviewData.h"
 #include "core/AppSettings.h"
+#include "core/hotkeys/HotKeyDeviceBindings.h"
+#include "gui/hotkeys/ControllerHost.h"
+#include "gui/hotkeys/devices/DeviceInput.h"
+#include "gui/hotkeys/midi/MidiInput.h"
+#include "gui/hotkeys/midi/MidiProfile.h"
 #include "core/ControlRanges.h"
 #include "core/RadioDiscovery.h"
 #include "core/audio/VirtualCableDetector.h"
@@ -430,6 +442,7 @@
 #include "gui/multidevice/TakeTransmitDialog.h"
 #include "gui/setup/AppearanceSetupPages.h"
 #include "gui/setup/HardwarePage.h"
+#include "gui/setup/KnobsSetupPage.h"
 #include "gui/setup/TciLogWindow.h"
 #include "gui/widgets/FilterPolicyDialog.h"
 #include "gui/widgets/FilterPresetEditDialog.h"
@@ -11368,11 +11381,17 @@ QVector<SetupSizeSpec> setupSizeSpecs()
         {QStringLiteral("nr-anf"), {QStringLiteral("MNR")}, saturn, min, kSetupMinimumSize},
         {QStringLiteral("4o3a"), {}, saturn, min, kSetupMinimumSize},
         {QStringLiteral("rf-kit"), {QStringLiteral("RF2K-S")}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("keyboard"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("knobs"), {}, saturn, min, kSetupMinimumSize},
+        {QStringLiteral("deck-plugins"), {}, saturn, min, kSetupMinimumSize},
         {hardware, {alex}, saturn, wide, kSetupWideSize},
         {hardware, {alex, alex1}, saturn, wide, kSetupWideSize},
         {hardware, {alex, alex2}, saturn, wide, kSetupWideSize},
         {hardware, {oc}, saturn, wide, kSetupWideSize},
         {hardware, {oc, swl}, saturn, wide, kSetupWideSize},
+        {QStringLiteral("keyboard"), {}, saturn, wide, kSetupWideSize},
+        {QStringLiteral("knobs"), {}, saturn, wide, kSetupWideSize},
+        {QStringLiteral("deck-plugins"), {}, saturn, wide, kSetupWideSize},
     };
 }
 
@@ -11384,11 +11403,21 @@ struct SetupFullSpec {
     QString name;
 };
 
+// A device layer with one port that never opens, for a MIDI page with a device.
+class PreviewMidiBackend : public MidiPortBackend {
+public:
+    QStringList portNames() override { return {QStringLiteral("X-TOUCH MINI")}; }
+    bool open(const QString&, MessageHandler, QString*) override { return false; }
+    void close() override {}
+};
+
 QVector<SetupFullSpec> setupFullSpecs()
 {
     return {
         // desktop-modes-audio: the VAX 1 to 4 cards and the TCI audio settings.
         {QStringLiteral("digital-modes"), QStringLiteral("digital-modes-full")},
+        // Hot keys: the keyboard map and the action list together.
+        {QStringLiteral("keyboard"), QStringLiteral("keyboard-full")},
     };
 }
 
@@ -11923,6 +11952,94 @@ QVector<Scene> setupPageScenes(MainWindow* window)
                     {QStringLiteral("from"), QJsonArray{start.width(), start.height()}},
                     {QStringLiteral("to"), QJsonArray{d->width(), d->height()}}};
             }
+        }});
+    }
+    // Each knob device's drawing and rows, then one with a plain fix to read.
+    if (leafByStem.contains(QStringLiteral("knobs"))) {
+        const SetupLeaf leaf = leafByStem.value(QStringLiteral("knobs"));
+        const QString title = where(leaf, {});
+        for (const DeviceId id : HotKeyDeviceBindings::devices()) {
+            if (id == DeviceId::Rc28) {
+                continue;   // the page's own scene
+            }
+            const QString name = QStringLiteral("dialog-setup-knobs-") + HotKeyDeviceBindings::deviceKey(id).toLower();
+            scenes.append({name, QStringLiteral("2v"), true, [name, leaf, title, id](SceneContext& ctx) {
+                SetupDialog* d = openSetupPageScene(ctx, leaf.index);
+                if (d == nullptr) {
+                    return;
+                }
+                auto* const page = d->findChild<KnobsSetupPage*>();
+                if (page == nullptr || !page->selectDevice(id)) {
+                    ctx.failure = QStringLiteral("%1: the device could not be chosen").arg(title);
+                    return;
+                }
+                pump(kFinalSettleMs);
+                clearScrollBarHover(d);
+                ctx.notes.append(QStringLiteral("%1 (registry index %2), %3")
+                                     .arg(title).arg(leaf.index).arg(HotKeyDeviceBindings::deviceName(id)));
+                captureDialog(ctx, d, name);
+                page->selectDevice(DeviceId::Rc28);
+            }});
+        }
+        const QString name = QStringLiteral("dialog-setup-knobs-states");
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, title](SceneContext& ctx) {
+            SetupDialog* d = openSetupPageScene(ctx, leaf.index);
+            if (d == nullptr) {
+                return;
+            }
+            auto* const page = d->findChild<KnobsSetupPage*>();
+            ControllerHost* const host = page != nullptr ? page->controllerHost() : nullptr;
+            if (host == nullptr) {
+                ctx.failure = QStringLiteral("%1: the page has no controller host").arg(title);
+                return;
+            }
+            // What the device layer would say. Nothing is opened: the preview allows no real device.
+            host->onDeviceStateChanged(DeviceId::Rc28, true, {});
+            host->onDeviceStateChanged(DeviceId::StreamDeckPlus, false, deviceOpenFailureReason(QStringLiteral("exclusive access")));
+            host->onDeviceStateChanged(DeviceId::PowerMate, false, deviceOpenFailureReason(QStringLiteral("not permitted")));
+            page->selectDevice(DeviceId::StreamDeckPlus);
+            pump(kFinalSettleMs);
+            clearScrollBarHover(d);
+            ctx.notes.append(QStringLiteral("%1 (registry index %2), one device connected and two with a fix")
+                                 .arg(title).arg(leaf.index));
+            captureDialog(ctx, d, name);
+            page->selectDevice(DeviceId::Rc28);
+            const QString gone = QStringLiteral("Not plugged in");
+            for (const DeviceId id : {DeviceId::Rc28, DeviceId::StreamDeckPlus, DeviceId::PowerMate}) {
+                host->onDeviceStateChanged(id, false, gone);
+            }
+        }});
+    }
+    if (leafByStem.contains(QStringLiteral("midi"))) {
+        const SetupLeaf leaf = leafByStem.value(QStringLiteral("midi"));
+        const QString name = QStringLiteral("dialog-setup-midi-rows");
+        const QString title = where(leaf, {});
+        scenes.append({name, QStringLiteral("2v"), true, [name, leaf, title](SceneContext& ctx) {
+            // A device and a learned profile, in this process's throwaway test profile.
+            MidiInput::setBackendFactoryForTest([] { return std::make_unique<PreviewMidiBackend>(); });
+            MidiProfile profile(QStringLiteral("Default"));
+            const QChar noPin;
+            profile.bind({QStringLiteral("ch1.cc16"), MidiControlKind::RelativeKnob, QStringLiteral("tune.up"),
+                          QStringLiteral("tune.down"), noPin});
+            profile.bind({QStringLiteral("ch1.cc7"), MidiControlKind::AbsoluteKnob, QStringLiteral("volume.up"),
+                          QStringLiteral("volume.down"), QLatin1Char('B')});
+            profile.bind({QStringLiteral("ch1.note8"), MidiControlKind::Button, QStringLiteral("tx.hold"),
+                          QString(), noPin});
+            profile.bind({QStringLiteral("ch1.note9"), MidiControlKind::Button, QStringLiteral("nr.toggle"),
+                          QString(), noPin});
+            profile.save();
+            MidiProfile::setActiveName(profile.name());
+            AppSettings::instance().setValue(QStringLiteral("HotKeys/Midi/Device"), QStringLiteral("X-TOUCH MINI"));
+            SetupDialog* d = openSetupPageScene(ctx, leaf.index);
+            if (d != nullptr) {
+                ctx.notes.append(QStringLiteral("%1 (registry index %2), a device and four learned controls")
+                                     .arg(title).arg(leaf.index));
+                captureDialog(ctx, d, name);
+            }
+            MidiInput::setBackendFactoryForTest(nullptr);
+            MidiProfile::removeSaved(profile.name());
+            MidiProfile::setActiveName({});
+            AppSettings::instance().remove(QStringLiteral("HotKeys/Midi/Device"));
         }});
     }
     if (leafByStem.contains(QStringLiteral("tx-profile"))) {

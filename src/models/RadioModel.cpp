@@ -1950,6 +1950,16 @@ mw0lge@grange-lane.co.uk
 //                 only. Trunk's CW pitch property (R-CW-02) and its pitch
 //                 follow (applyCwPitchChange, the APF centre from
 //                 cwPitchHz) are its own.]
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - Hot keys plan Task 4: setHoldToTalk, reportRemoteKeyWentOff,
+//                transmitKeyWentOff. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
+//   2026-11-05 - Hot keys plan Task 5: wireCwSoftPaddle, and the soft paddle
+//                at every stop. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -1958,7 +1968,9 @@ mw0lge@grange-lane.co.uk
 #include "core/ClarityController.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/AmModulationAnalyzer.h"
+#include "core/SsbModulationAnalyzer.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorRecord.h"
 #include "BandDefaults.h"
 #include "BandGrid.h"
 #include "RxDspWorker.h"
@@ -1981,6 +1993,7 @@ mw0lge@grange-lane.co.uk
 #include "core/CwxSender.h"
 #include "core/safety/RemoteCwSafetyState.h"
 #include "core/CwSerialKeyInput.h"
+#include "core/CwSoftPaddle.h"
 #include "core/DspCacheLocation.h"
 #include "core/dsp/DspAssetService.h"
 #include "core/session/PureSignalSessionFacade.h"
@@ -3216,6 +3229,15 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
         // The Radio Status page's PTT source follows the key itself.
         connect(m_moxController, &MoxController::moxStateChanged, this,
                 [this](bool) { refreshRadioStatusPtt(); });
+        // moxChanging, not moxChanged: moxChanged waits for the TX to RX walk,
+        // and a key pressed during the walk would be taken for the old one.
+        // The keyer still names the key going off while this is emitted.
+        connect(m_moxController, &MoxController::moxChanging, this,
+                [this](int, bool oldMox, bool newMox) {
+            if (oldMox && !newMox && m_moxController->currentKeyer().isStation()) {
+                emit transmitKeyWentOff();
+            }
+        });
     }
 
     connect(m_moxController, &MoxController::stateChanged, this,
@@ -4725,6 +4747,45 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
         }
     }, Qt::DirectConnection);
 
+    // ── SSB Mod Monitor (NereusSDR-original) ──────────────────────────────
+    // transmittingChanged follows the whole key: isTransmitting() is already
+    // true when the key commits and stays true through the walk back to
+    // receive. Waiting for moxStateChanged would miss the start of the over.
+    m_ssbModTx = std::make_unique<SsbModulationAnalyzer>();
+    m_ssbModFb = std::make_unique<SsbModulationAnalyzer>();
+    connect(this, &RadioModel::transmittingChanged,
+            this, &RadioModel::refreshSsbModulationTap);
+    if (m_txSliceArbiter != nullptr) {
+        connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged,
+                this, &RadioModel::refreshSsbModulationTap);
+    }
+    const auto watchSsbSlice = [this](SliceModel* slice) {
+        if (slice != nullptr) {
+            connect(slice, &SliceModel::dspModeChanged,
+                    this, &RadioModel::refreshSsbModulationTap);
+        }
+    };
+    for (SliceModel* const slice : m_slices) {
+        watchSsbSlice(slice);
+    }
+    connect(this, &RadioModel::sliceAdded, this, [this, watchSsbSlice](int index) {
+        watchSsbSlice(sliceById(index));
+        refreshSsbModulationTap();
+    });
+    connect(this, &RadioModel::sliceRemoved, this, &RadioModel::refreshSsbModulationTap);
+    connect(this, &RadioModel::pureSignalCoordinatorReady, this, [this](PureSignal* coordinator) {
+        if (coordinator != nullptr) {
+            connect(coordinator, &PureSignal::psEnabledChanged,
+                    this, &RadioModel::refreshSsbModulationTap, Qt::UniqueConnection);
+        }
+        refreshSsbModulationTap();
+    });
+    // A remote window hears PureSignal's state in the Core's status.
+    if (m_role == Role::Remote && m_pureSignalFacade != nullptr) {
+        connect(m_pureSignalFacade, &PureSignalSessionFacade::statusChanged,
+                this, &RadioModel::refreshSsbModulationTap);
+    }
+
     // Amp state cache: amplifierChanged(bool) and ampStateChanged() together
     // carry the m_hasAmplifier / m_ampOperate snapshot. We can't connect them
     // directly (different signatures) so use a lambda that reads current values
@@ -5595,6 +5656,8 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // CW transmit (R-CW-36, R-CW-37): the serial key reader and the auto
     // mode switch.
     wireCwSerialKey(nullptr);
+    // Hot keys (R-HK-13): dot and dash from a key.
+    wireCwSoftPaddle();
 }
 
 RadioModel::~RadioModel()
@@ -5608,6 +5671,8 @@ RadioModel::~RadioModel()
     // its thread first; then the keyer controller goes, so nothing the
     // teardown below signals re-evaluates it or pushes to a connection
     // going away.
+    // The hot keys' paddle lets go while the connection's line is still there.
+    m_cwSoftPaddle.reset();
     // The serial key reader first: its straight key keys through the
     // sender.
     m_cwSerialKey.reset();
@@ -6111,6 +6176,19 @@ void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
         }
         return;
     }
+    const int ssbModSource = SsbModMonitorRecord::sourceOfStream(batch.stream);
+    if (ssbModSource >= 0) {
+        auto& held = m_stationSsbModMonitor[static_cast<std::size_t>(ssbModSource)];
+        if (batch.reset || !batch.removes.isEmpty()) {
+            held.reset();
+        }
+        for (const RecordUpsert& u : batch.upserts) {
+            if (u.id == QLatin1String(SsbModMonitorRecord::kRecordId)) {
+                held = SsbModMonitorRecord::fromFields(u.fields);
+            }
+        }
+        return;
+    }
     // Parity Task 21 (R-IOS-18): the Core's radios, in the Core's order.
     if (batch.stream == QLatin1String("stationRadios")) {
         QList<StationRadioEntry> entries = batch.reset ? QList<StationRadioEntry>{}
@@ -6269,6 +6347,7 @@ void RadioModel::clearStationRecords()
     clearStationSpots();
     clearStationFreedv();
     clearStationModMonitor();
+    clearStationSsbModMonitor();
     if (!m_stationCoreLog.isEmpty()) {
         m_stationCoreLog.clear();
         emit stationCoreLogChanged();
@@ -22136,6 +22215,10 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 m_txChannel->setAmModulationTap(
                     m_amModTxTapEnabled.load() ? m_amModTx.get() : nullptr);
             }
+            if (m_ssbModTx) {
+                m_ssbModTx->setSampleRate(txOutRate);
+                refreshSsbModulationTap();
+            }
 
             // Task 4.2: give TxChannel a handle to WdspEngine so onModeChanged()
             // can call rebuild() when the active mode's DSP-Options settings change.
@@ -23619,6 +23702,7 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                                          txMonDdc, txMonSamples);
         }
     });
+    connectSsbModFeedback();
 
     // Protocol 2 codec injection remains live for ReceiverManager's
     // ddcConfigChanged observation consumers (notably PsccPump). The P2 wire
@@ -27702,6 +27786,119 @@ void RadioModel::clearStationModMonitor()
     m_stationModMonitor[1].reset();
 }
 
+SsbModulationAnalyzer* RadioModel::ssbModulationAnalyzer(int source) const
+{
+    return source == 1 ? m_ssbModFb.get() : m_ssbModTx.get();
+}
+
+void RadioModel::setSsbModFeedbackWanted(bool wanted)
+{
+    m_ssbModFbWanted.store(wanted, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::setSsbModTxTapEnabled(bool enabled)
+{
+    m_ssbModTxTapEnabled.store(enabled, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::setSsbModCoreWanted(int source, bool wanted)
+{
+    (source == 1 ? m_ssbModFbCoreWanted : m_ssbModTxTapCoreWanted)
+        .store(wanted, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::refreshSsbModulationTap()
+{
+    const bool active = ssbTxActive();
+    if (active && !m_ssbModWasActive) {
+        // Each over starts fresh.
+        if (m_ssbModTx) { m_ssbModTx->reset(); }
+        if (m_ssbModFb) { m_ssbModFb->reset(); }
+    }
+    m_ssbModWasActive = active;
+    if (m_txChannel) {
+        m_txChannel->setSsbModulationTap(
+            active && ssbModTxTapEnabled() && m_ssbModTx ? m_ssbModTx.get() : nullptr);
+    }
+    const bool inUse = ssbModFeedbackInUse();
+    const bool feed = active && inUse && ssbModFeedbackWanted();
+    if (feed && !m_ssbModFbFeed.load() && m_ssbModFb && m_pureSignal) {
+        // Protocol 1 has one wire rate for all DDCs, the pair included.
+        // Protocol 2 runs the pair at PureSignal's own clock.
+        const int rate = m_lastRadioInfo.protocol == ProtocolVersion::Protocol1
+            ? connectionSampleRateHz()
+            : m_pureSignal->calccSampleRateHz();
+        if (rate > 0) {
+            m_ssbModFb->setSampleRate(rate);
+        }
+    }
+    m_ssbModFbFeed.store(feed, std::memory_order_release);
+    if (inUse != m_ssbModFbInUseAnnounced) {
+        m_ssbModFbInUseAnnounced = inUse;
+        emit ssbModFeedbackInUseChanged(inUse);
+    }
+}
+
+bool RadioModel::ssbModFeedbackInUse() const
+{
+    if (m_role == Role::Remote) {
+        return m_pureSignalFacade != nullptr && m_pureSignalFacade->statusSnapshot().psEnabled;
+    }
+    // The same fact that picks the DDC assignment (currentCodecContext's
+    // puresignalRun) on both protocols.
+    return m_pureSignal != nullptr && m_pureSignal->isPsEnabled();
+}
+
+void RadioModel::connectSsbModFeedback()
+{
+    // SSB Mod Monitor's PA FB: the same feedback samples PureSignal corrects
+    // from, the only place they arrive. No logical stream carries them: at
+    // PureSignal + MOX the pair is outside every streamDdc entry (P1CodecHl2,
+    // P1CodecStandard, P2CodecHermes, P2CodecOrionMkII applyDdcAssignment).
+    // On the connection thread, one atomic read when the monitor is not fed.
+    connect(m_connection, &RadioConnection::psPairedIqDataReceived,
+            this, [this](int, const QVector<float>& psFbSamples, int, const QVector<float>&) {
+        feedSsbModFeedback(psFbSamples);
+    }, Qt::DirectConnection);
+}
+
+void RadioModel::feedSsbModFeedback(const QVector<float>& samples)
+{
+    if (m_ssbModFbFeed.load(std::memory_order_acquire) && m_ssbModFb) {
+        m_ssbModFb->pushIq(samples.constData(), samples.size() / 2);
+    }
+}
+
+bool RadioModel::ssbTxActive() const
+{
+    if (!isTransmitting()) {
+        return false;
+    }
+    const SliceModel* slice = txBoundSlice();
+    if (slice == nullptr) {
+        return false;
+    }
+    const DSPMode mode = slice->dspMode();
+    return mode == DSPMode::USB || mode == DSPMode::LSB;
+}
+
+std::optional<SsbModulationAnalyzer::Snapshot> RadioModel::stationSsbModMonitorSnapshot(int source) const
+{
+    if (source != 0 && source != 1) {
+        return std::nullopt;
+    }
+    return m_stationSsbModMonitor[static_cast<std::size_t>(source)];
+}
+
+void RadioModel::clearStationSsbModMonitor()
+{
+    m_stationSsbModMonitor[0].reset();
+    m_stationSsbModMonitor[1].reset();
+}
+
 void RadioModel::refreshSliceAntennasFromAlex(SliceModel* slice)
 {
     // Setup's per-band antenna table (AlexController) is the only store of
@@ -30527,6 +30724,9 @@ void RadioModel::teardownConnection()
     // bits and lets go of this connection's key line before anything below
     // can destroy the connection. The serial key reader goes first, as its
     // straight key keys through the sender.
+    if (m_cwSoftPaddle) {
+        m_cwSoftPaddle->setLine(nullptr);
+    }
     if (m_cwSerialKey) {
         m_cwSerialKey->stopReading();
         m_cwSerialKey->setKeyLine(nullptr);
@@ -32044,6 +32244,10 @@ void RadioModel::stopTransmitNow(const QString& reason)
     if (m_cwSerialKey) {
         m_cwSerialKey->releaseKeys();
     }
+    // Hot keys (R-HK-13): and so do comma and period.
+    if (m_cwSoftPaddle) {
+        m_cwSoftPaddle->releaseKeys();
+    }
 
     // No further TX I/Q block reaches the connection after this returns,
     // and a queued channel-on no longer opens the gate.
@@ -32151,7 +32355,9 @@ void RadioModel::stopAllTx(const QString& message)
         && ((m_cwxSender && m_cwxSender->isSending())
             // R-CW-36: likewise a serial paddle or straight key. A serial
             // PTT that really keyed MOX is already counted by moxOn.
-            || (m_cwSerialKey && m_cwSerialKey->isKeying()));
+            || (m_cwSerialKey && m_cwSerialKey->isKeying())
+            // Hot keys (R-HK-13): and comma and period.
+            || (m_cwSoftPaddle && m_cwSoftPaddle->isKeying()));
     if (!moxOn && !manualMoxOn && !tuneOn && !twoToneOn && !tailOn && !releasing
         && !cwKeyed && !cwxOn) {
         // F7: Off without MOX may still have logical CWX text, its hang,
@@ -32162,6 +32368,9 @@ void RadioModel::stopAllTx(const QString& message)
         }
         if (m_cwSerialKey) {
             m_cwSerialKey->releaseKeys();
+        }
+        if (m_cwSoftPaddle) {
+            m_cwSoftPaddle->releaseKeys();
         }
         return;
     }
@@ -32225,7 +32434,9 @@ void RadioModel::catchUpTransmitCut(const QString& stopText)
         // CW transmit: the CWX sender, which keys with MOX off too.
         || (m_cwxSender && m_cwxSender->isSending())
         // R-CW-36: and the serial key reader.
-        || (m_cwSerialKey && m_cwSerialKey->isKeying());
+        || (m_cwSerialKey && m_cwSerialKey->isKeying())
+        // Hot keys (R-HK-13): and comma and period.
+        || (m_cwSoftPaddle && m_cwSoftPaddle->isKeying());
     if (stillKeyed || !transmitReleaseInProgress()) {
         stopAllTx(stopText);
     }
@@ -32241,6 +32452,10 @@ void RadioModel::catchUpTransmitCut(const QString& stopText)
     // through the cut keys nothing when it clears until it moves again.
     if (m_cwSerialKey) {
         m_cwSerialKey->releaseKeys();
+    }
+    // Hot keys (R-HK-13): and comma and period.
+    if (m_cwSoftPaddle) {
+        m_cwSoftPaddle->releaseKeys();
     }
     // Early fix wave C1: while the radio still reports a CW key down the
     // cut stays, so the next frame cannot key it again; it clears with the
@@ -33316,6 +33531,35 @@ void RadioModel::setTwoTone(bool on)
     if (m_twoToneController) {
         m_twoToneController->setActive(on);
     }
+}
+
+void RadioModel::reportRemoteKeyWentOff()
+{
+    emit transmitKeyWentOff();
+}
+
+void RadioModel::setHoldToTalk(bool down)
+{
+    if (remoteTransmitRouted()) {
+        RemoteTransmitClient* remote = m_station->remoteTransmit();
+        // setScreenKey(false) at idle releases any epoch of this device
+        // (a VOX key, say), which a hold's release must not touch.
+        if (down || remote->screenKeyDown()) {
+            remote->setScreenKey(down);
+        }
+        return;
+    }
+    // A remote window's own controller never keys.
+    if (m_role == Role::Remote || m_moxController == nullptr) {
+        return;
+    }
+    // As setMoxFromButton (Task 7 fix wave, M9): a TUN-off still completing
+    // finishes first, so the key is checked against the restored mode and the
+    // tune tone does not run on under it.
+    if (down && m_pendingTuneOff) {
+        completeTuneOff();
+    }
+    m_moxController->onSpacePtt(down);
 }
 
 bool RadioModel::moxPressAsksOn(bool toggledOn) const
@@ -34622,6 +34866,9 @@ TxRefusal RadioModel::requestRemoteCwxFor(const QByteArray& device, bool replace
             safety->invalidate(previous);
             m_connection->cwKeyLine()->setCwx(false);
             m_connection->cwKeyLine()->setCwxPtt(false);
+            // R-HK-13: a remote paddle's intent is host intent too.
+            m_connection->cwKeyLine()->setSoftDot(false);
+            m_connection->cwKeyLine()->setSoftDash(false);
             m_connection->finishRemoteCw(previous);
         }
         m_remoteCwActivity = {device, epoch};
@@ -34778,6 +35025,10 @@ void RadioModel::refreshComputerSidetone()
 
 void RadioModel::syncCwxKeyLine()
 {
+    // Hot keys (R-HK-13): the soft paddle keys the same connection's line.
+    if (m_cwSoftPaddle) {
+        m_cwSoftPaddle->setLine(m_connection != nullptr ? m_connection->cwKeyLine().get() : nullptr);
+    }
     if (!m_cwxSender) {
         return;
     }
@@ -34876,6 +35127,38 @@ void RadioModel::wireCwSerialKey(std::unique_ptr<CwSerialKeyInput> input)
         connect(m_catService, &CatService::globalConfigurationChanged, reader, resync);
     }
     syncCwSerialKey();
+}
+
+// Hot keys (R-HK-13): dot and dash from a key. NereusSDR-original. The line
+// comes from syncCwxKeyLine and goes in teardownConnection; the stops are
+// stopTransmitNow, stopAllTx and catchUpTransmitCut.
+void RadioModel::wireCwSoftPaddle()
+{
+    m_cwSoftPaddle = std::make_unique<CwSoftPaddle>();
+    CwSoftPaddle* const paddle = m_cwSoftPaddle.get();
+    connect(paddle, &CwSoftPaddle::keyRefused, this, [this](const TxRefusal& refusal) {
+        if (m_moxController) {
+            m_moxController->reportCwRefusal(refusal);
+        }
+    });
+    const auto followKeyer = [this, paddle]() {
+        paddle->setGateAllowed(m_cwKeyerController && m_cwKeyerController->keyerAllowed(),
+                               m_cwKeyerController ? m_cwKeyerController->refusal() : TxRefusal{});
+    };
+    if (m_cwKeyerController) {
+        connect(m_cwKeyerController.get(), &CwKeyerController::keyerStateChanged,
+                paddle, followKeyer);
+    }
+    followKeyer();
+    // Another device taking transmit, as the CWX sender (wireCwxSender).
+    connect(this, &RadioModel::transmitHolderChanged, paddle, [this, paddle]() {
+        if (!cwxHolderRefusal(QByteArray()).isEmpty()) {
+            paddle->releaseKeys();
+        }
+    });
+    if (m_connection != nullptr) {
+        paddle->setLine(m_connection->cwKeyLine().get());
+    }
 }
 
 void RadioModel::replaceCwSerialKeyInputForTest(std::unique_ptr<CwSerialKeyInput> input)
@@ -35022,7 +35305,9 @@ void RadioModel::cwAutoModeTick()
 {
     // A dot or dash still down: Thetis restarts the wait every 1 ms while
     // one is (update_for_auto_mode_return from the poll).
-    if (m_cwRadioPaddleDown || (m_cwSerialKey && m_cwSerialKey->paddleDown())) {
+    // Hot keys (R-HK-13): comma and period too, as the serial paddles.
+    if (m_cwRadioPaddleDown || (m_cwSerialKey && m_cwSerialKey->paddleDown())
+        || (m_cwSoftPaddle && m_cwSoftPaddle->isKeying())) {
         if (m_cwAutoModeTimer) {
             m_cwAutoModeTimer->start(m_transmitModel.cwAutoModeReturnMs());
         }

@@ -1,5 +1,12 @@
 // no-port-check: NereusSDR-original. Authenticated GUI subscription lifecycle.
 // Modification history (NereusSDR):
+//   2026-11-06  J.J. Boyd / KG4VCF  A remote listener's wide view: the Core raises no
+//               wideband, the span collapses to the receiver's rate, and control
+//               returning reopens it. AI-assisted via Claude Code.
+//   2026-11-05  J.J. Boyd / KG4VCF  aLastingSpeakerFaultLeavesTheMediaConnectionAlone,
+//               coreSilenceAfterASpeakerFaultStillRecovers: a stopped speaker is
+//               not a dead path, and a dead path is still found after one.
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-30  J.J. Boyd / KG4VCF  R-R3-21: observe every retry decision,
 //               including canceled startup steps, and test the hold boundary.
 //               AI-assisted via OpenAI Codex.
@@ -3785,6 +3792,295 @@ private slots:
         QVERIFY(clarity->isPaused());
         QCOMPARE(clarity->lastLow(),retainedLow); QCOMPARE(clarity->smoothedFloor(),retainedFloor);
         client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // JJ: "No, controlling only". The Core gives a device that only listens no
+    // wideband, so the filter stays in. For now the window adopts the receiver's
+    // crop the Core sends, so its span collapses to the receiver's rate. The Core
+    // still holds the wide request, so control returning reopens the wide view
+    // with nothing asked of the window. Keeping the span is its own PR, which
+    // changes what this row pins.
+    void aListeningWindowsSpanCollapsesToTheReceiverAndControlReopensIt_data()
+    {
+        QTest::addColumn<bool>("budget");
+        QTest::newRow("no display budget") << false;
+        QTest::newRow("display budget") << true;
+    }
+
+    void aListeningWindowsSpanCollapsesToTheReceiverAndControlReopensIt()
+    {
+        QFETCH(bool, budget);
+        constexpr double kCentreHz = 50'300'000.0;
+        constexpr double kSpanHz = 768'000.0;
+        QTemporaryDir keyDir;
+        const auto identity = std::make_shared<const ClientDeviceIdentity>(
+            ClientDeviceIdentity::loadOrCreate(keyDir.path()));
+        QVERIFY(identity->isValid());
+        const QByteArray kDevice = identity->fingerprint();
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath(QStringLiteral("station.settings")));
+        P2RadioConnection p2;
+        IsolatedRadioModel station;
+        station.setBoardForTest(HPSDRHW::Saturn);
+        station.configureStreamPool(5, 5, 192000);
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        const int sliceId = station.addSlice();
+        SliceModel* slice = station.sliceById(sliceId);
+        QVERIFY(slice);
+        slice->setFrequency(kCentreHz);
+        p2.setBoardForTest(HPSDRHW::Saturn);
+        station.injectConnectionForTest(&p2);
+        RadioInfo info;
+        info.protocol = ProtocolVersion::Protocol2;
+        station.setLastRadioInfoForTest(info);
+        station.wireWidebandConnectionForTest();
+        StationServer server(&station, settings, NereusSDR::Test::seedUpgradedCoreToken(dir.path()));
+        server.setMediaEnabled(true);
+        if (budget) {
+            QVERIFY(server.setDisplayBudgetLimits({10'000'000, 10'000'000, 1}));
+        }
+        PairedDevice paired;
+        paired.id = identity->fingerprint();
+        paired.publicKeySpki = identity->publicKeySpki();
+        paired.name = QStringLiteral("Listening window");
+        paired.kind = QStringLiteral("computer");
+        QVERIFY(server.deviceStore()->add(paired));
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QVERIFY(station.sliceOwnership()->join(kDevice, sliceId));
+        QPointer<DisplayTransport> sourceMedia;
+        DaemonMediaController daemon(&server, &station, nullptr,
+            [&sourceMedia](QObject* owner) -> IMediaTransport* {
+                sourceMedia = new DisplayTransport(owner);
+                return sourceMedia;
+            });
+        IsolatedRadioModel remote(RadioModel::Role::Remote);
+        remote.audioEngine()->setMasterMuted(true);
+        SettingsProxy proxy;
+        StationClient client(&remote, &proxy);
+        client.setDeviceIdentity(identity, paired.name, QStringLiteral("Window"));
+        PanadapterStack stack;
+        auto* pan = stack.addPanadapter(QStringLiteral("pan"));
+        stack.setActivePan(QStringLiteral("pan"));
+        pan->addSlice(sliceId);
+        pan->setActiveSliceIndex(sliceId);
+        auto* widget = pan->spectrumWidget();
+        widget->setDisplayWindowPreservingHistory(kCentreHz, 96'000.0);
+        widget->setVfoFrequency(kCentreHz);
+        widget->setConnectionState(ConnectionState::Connected);
+        stack.resize(600, 700);
+        stack.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&stack));
+        QPointer<DisplayTransport> sinkMedia;
+        RemoteMediaController gui(&client, &remote, &stack, nullptr,
+            [&sinkMedia](QObject* owner) -> IMediaTransport* {
+                sinkMedia = new DisplayTransport(owner);
+                return sinkMedia;
+            });
+        QSignalSpy frames(&gui, &RemoteMediaController::displayFrameReceived);
+        QSignalSpy windowControls(&client, &StationClient::mediaControlReceived);
+        int subscribes = 0;
+        connect(&server, &StationServer::mediaControlReceived, &station,
+                [&subscribes](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) == QLatin1String("subscribe")) { ++subscribes; }
+        });
+        // Asks repeating the last one. A pan's dBm window settling changes the
+        // request, which is a new ask for a reason of its own.
+        int repeatedAsks = 0;
+        QJsonObject lastAsk;
+        connect(&server, &StationServer::mediaControlReceived, &station,
+                [&repeatedAsks, &lastAsk](const QJsonObject& control) {
+            if (control.value(QStringLiteral("op")) != QLatin1String("subscribe")) { return; }
+            QJsonObject ask = control;
+            ask.remove(QStringLiteral("revision"));
+            ask.remove(QStringLiteral("endpointId"));
+            if (ask == lastAsk) { ++repeatedAsks; }
+            lastAsk = ask;
+        });
+        int wideLocks = 0;
+        connect(&station.alexController(), &AlexController::bpfStateChanged, &station,
+                [&wideLocks](int, const AlexController::AlexAdcState& state) {
+            if (state.effective == AlexController::BpfEffective::WidebandLocked) { ++wideLocks; }
+        });
+        auto* stationLink = new Test::LoopbackTransport(QStringLiteral("station"));
+        auto* clientLink = new Test::LoopbackTransport(QStringLiteral("client"));
+        QString certificatePin = server.certificateFingerprint();
+        certificatePin.remove(QLatin1Char(':'));
+        clientLink->setPeerCertificateSha256(QByteArray::fromHex(certificatePin.toLatin1()));
+        stationLink->setPeerAddress(QStringLiteral("192.0.2.30"));
+        stationLink->linkTo(clientLink);
+        client.startSession(clientLink, QString(), QString(),
+                            server.stationIdentity().fingerprint());
+        server.acceptTransport(stationLink);
+        QTRY_VERIFY(sourceMedia && sinkMedia);
+        sourceMedia->other = sinkMedia;
+        sourceMedia->activate();
+        sinkMedia->activate();
+        QTRY_VERIFY(client.stationLinkReady());
+        QTRY_VERIFY(remote.sliceById(sliceId));
+        QTRY_VERIFY(client.sliceAccess()->listeningHere(sliceId));
+        QVERIFY(client.remoteWidebandAvailable());
+        QVector<float> iq(2048, 0.001f);
+        const auto feed = [&] {
+            for (int block = 0; block < kFeedBlocksPerPoll; ++block) {
+                QMetaObject::invokeMethod(&station, "rawIqDataForStream", Qt::DirectConnection,
+                    Q_ARG(int, slice->streamIndex()), Q_ARG(QVector<float>, iq));
+            }
+        };
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() >= 3), 10000);
+        QVERIFY(widget->remoteWidebandAvailable());
+
+        const double receiverRateHz = station.streamSampleRateHz(slice->streamIndex());
+        const auto refusals = [&windowControls] {
+            int count = 0;
+            for (const auto& call : windowControls) {
+                const QJsonObject control = call.at(0).toJsonObject();
+                const QString op = control.value(QStringLiteral("op")).toString();
+                if (op == QLatin1String("rejected")
+                    || (op == QLatin1String("allocation-result")
+                        && !control.value(QStringLiteral("accepted")).toBool())) { ++count; }
+            }
+            return count;
+        };
+
+        widget->setDisplayWindowPreservingHistory(kCentreHz, kSpanHz);
+        QCOMPARE(widget->bandwidth(), kSpanHz);
+        gui.planNowForTest();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), qFuzzyCompare(widget->bandwidth(), receiverRateHz)),
+                                 10000);
+        QCOMPARE(wideLocks, 0);
+        QCOMPARE(p2.wbEnableMask(), quint8(0));
+        QVERIFY(widget->extendedViewAllowed());
+        QVERIFY(widget->remoteWidebandAvailable());
+        QVERIFY(!widget->remoteWidebandActive());
+
+        // Drawing goes on with the request settled, and nothing was refused.
+        int framesBefore = frames.count();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() >= framesBefore + 3), 10000);
+        QTest::qWait(300);
+        const int asked = subscribes;
+        framesBefore = frames.count();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), frames.count() >= framesBefore + 5), 10000);
+        gui.planNowForTest();
+        QCOMPARE(subscribes, asked);
+        QCOMPARE(refusals(), 0);
+
+        // Control arrives: the wide view reopens, with nothing asked of the window.
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_COMPARE(p2.wbEnableMask(), quint8(1));
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), qFuzzyCompare(widget->bandwidth(), kSpanHz)), 10000);
+        QVERIFY(wideLocks > 0);
+
+        // Control goes, and this window still listens: the demand goes and the
+        // span collapses again, with nothing asked of the window.
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QVERIFY(station.sliceOwnership()->isListening(kDevice, sliceId));
+        QTRY_COMPARE(p2.wbEnableMask(), quint8(0));
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), !widget->remoteWidebandActive()), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), qFuzzyCompare(widget->bandwidth(), receiverRateHz)),
+                                 10000);
+        QVERIFY(widget->extendedViewAllowed());
+        QCOMPARE(refusals(), 0);
+
+        // Control again, the view dragged so the receiver is off it, and control
+        // goes: nothing can be drawn, so the pan gets its status line, once, and
+        // does not sit on its last frame looking live.
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        const auto contextAtOffReceiverCentre = [&windowControls] {
+            for (const auto& call : windowControls) {
+                const QJsonObject control = call.at(0).toJsonObject();
+                if (control.value(QStringLiteral("op")) == QLatin1String("context")
+                    && qFuzzyCompare(control.value(QStringLiteral("centreHz")).toDouble(),
+                                     kCentreHz + 700'000.0)) { return true; }
+            }
+            return false;
+        };
+        widget->setDisplayWindowPreservingHistory(kCentreHz + 700'000.0, kSpanHz);
+        gui.planNowForTest();
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), contextAtOffReceiverCentre()), 10000);
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QTRY_COMPARE_WITH_TIMEOUT(gui.panDisplayState(pan->panId()).phase,
+                                  PanDisplayState::Phase::Refused, 10000);
+        QVERIFY(!widget->remoteWidebandActive());
+        QVERIFY(!widget->extendedMode());
+        QTRY_COMPARE(p2.wbEnableMask(), quint8(0));
+        // With a budget the retire is not a refusal: the window asks once more,
+        // and that is refused, for the view reaching past the receiver.
+        const int refusalsSettled = budget ? 2 : 1;
+        QTRY_COMPARE(refusals(), refusalsSettled);
+        const int repeatedAfter = repeatedAsks;
+        for (int i = 0; i < 5; ++i) {
+            feed();
+            gui.planNowForTest();
+            QTest::qWait(30);
+        }
+        QCOMPARE(repeatedAsks, repeatedAfter);
+        QCOMPARE(gui.panDisplayState(pan->panId()).phase, PanDisplayState::Phase::Refused);
+        QVERIFY(!widget->remoteWidebandActive());
+
+        // Control comes back: the view can be granted now, and the window asks
+        // with nothing else having changed.
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_COMPARE_WITH_TIMEOUT(p2.wbEnableMask(), quint8(1), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        QVERIFY(gui.panDisplayState(pan->panId()).phase != PanDisplayState::Phase::Refused);
+        QVERIFY(repeatedAsks <= repeatedAfter + 1);
+
+        // A refused pan on a slice this window controls: nothing in the slice's
+        // access entry but the arrival of control asks again. With Protocol 1
+        // reported the Core has no wideband for the ask control arrives with.
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QTRY_VERIFY(!client.sliceAccess()->controlledHere(sliceId));
+        QTRY_COMPARE_WITH_TIMEOUT(gui.panDisplayState(pan->panId()).phase,
+                                  PanDisplayState::Phase::Refused, 10000);
+        RadioInfo protocol1;
+        protocol1.protocol = ProtocolVersion::Protocol1;
+        station.setLastRadioInfoForTest(protocol1);
+        int refused = refusals();
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_VERIFY(client.sliceAccess()->controlledHere(sliceId));
+        QTRY_COMPARE_WITH_TIMEOUT(refusals(), refused + 1, 10000);
+        const int repeatedWhileControlled = repeatedAsks;
+        const qsizetype listenersBefore = client.sliceAccess()->entry(sliceId)->listeners.size();
+        QVERIFY(station.sliceOwnership()->join(QByteArrayLiteral("another-device"), sliceId));
+        QTRY_COMPARE(client.sliceAccess()->entry(sliceId)->listeners.size(), listenersBefore + 1);
+        MoxController* const mox = station.moxController();
+        mox->setMoxCheck({});
+        for (const bool keyed : {true, false, true, false}) {
+            mox->setMox(keyed);
+            QTRY_COMPARE(mox->state(), keyed ? MoxState::Tx : MoxState::Rx);
+            QTest::qWait(30);
+        }
+        gui.planNowForTest();
+        QCOMPARE(repeatedAsks, repeatedWhileControlled);
+        QVERIFY(station.sliceOwnership()->leave(QByteArrayLiteral("another-device"), sliceId));
+
+        // A reconnect with this off-receiver view up, on a radio with wideband:
+        // the question is whether the rate is ready at the ask.
+        station.setLastRadioInfoForTest(info);
+        station.sliceOwnership()->setOwner(sliceId, SliceOwnership::stationDevice());
+        QTRY_VERIFY(!client.sliceAccess()->controlledHere(sliceId));
+        station.sliceOwnership()->setOwner(sliceId, kDevice);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        std::optional<double> rateAtConnected;
+        connect(&station, &RadioModel::connectionStateChanged, this,
+                [&station, &rateAtConnected, sliceId](ConnectionState state) {
+            if (state == ConnectionState::Connected) {
+                rateAtConnected = station.widebandAdcRateHz(station.sliceAdcIndex(sliceId));
+            }
+        });
+        station.setConnectionStateForTest(ConnectionState::Disconnected);
+        QTRY_VERIFY(!remote.isConnected() || daemon.activeEndpointCount() == 0);
+        QTRY_COMPARE(p2.wbEnableMask(), quint8(0));
+        station.wireWidebandConnectionForTest();
+        station.setConnectionStateForTest(ConnectionState::Connected);
+        QVERIFY(rateAtConnected.has_value());
+        QTRY_COMPARE_WITH_TIMEOUT(p2.wbEnableMask(), quint8(1), 10000);
+        QTRY_VERIFY_WITH_TIMEOUT((feed(), widget->remoteWidebandActive()), 10000);
+        QVERIFY(gui.panDisplayState(pan->panId()).phase != PanDisplayState::Phase::Refused);
+        QCOMPARE(widget->centerFrequency(), kCentreHz + 700'000.0);
+        QCOMPARE(widget->bandwidth(), kSpanHz);
     }
 
     // A slice that shares its receiver and changes band is put on another
@@ -12394,6 +12690,7 @@ private slots:
         RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
         DaemonMediaController daemonMedia(&h.server, &h.station);
         QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        QSignalSpy recoveries(&remoteMedia, &RemoteMediaController::recoveryRequested);
         int enabledContexts = 0;
         connect(&remoteMedia, &RemoteMediaController::audioContextAccepted, this, [&] {
             const std::optional<RemoteAudioContextMessage> context =
@@ -12422,14 +12719,17 @@ private slots:
         QVERIFY(status.retryAvailable);
 
         // The speaker comes back: the next automatic attempt plays, and the
-        // problem clears.
+        // problem clears. The attempt is at most a 4 s backoff step away;
+        // what follows is a media start, so it has that wait's bound.
         h.remoteBus->setOutputPacingAvailableForTesting(true);
         QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
-                                  h.mediaStage(remoteMedia).constData(), 10000);
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
         status = remoteMedia.audioStatus();
         QVERIFY(!status.problem.has_value());
         QVERIFY(!status.retryAvailable);
         QCOMPARE(errors.size(), 1);
+        QCOMPARE(recoveries.size(), 0);
         QVERIFY(!h.remote.audioEngine()->masterMuted());
 
         // A failure after the recovery is news: the operator is told again.
@@ -12440,6 +12740,97 @@ private slots:
                  remoteAudioProblemText(RemoteAudioReceiver::Fault::SpeakerTimingUnavailable));
         QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
         h.remoteBus->setOutputPacingAvailableForTesting(true);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: the window stops its own audio when its speaker fails, so
+    // the Core's silence says nothing about the path. Before, that silence
+    // moved media back to the tunnel after 5 s and 3 s later ended the whole
+    // session ("Audio from the Core stopped"), racing the 4 s retry step on
+    // a speaker that had already come back. The retry step is held here so
+    // no attempt can land first: this is the order that lost on CI. The wait
+    // is real time because both silence clocks are; the rules' tick runs
+    // every 500 ms, so two ticks past both limits covers them. A loaded
+    // machine can only run the rules late, which cannot fail this test.
+    void aLastingSpeakerFaultLeavesTheMediaConnectionAlone()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        QSignalSpy recoveries(&remoteMedia, &RemoteMediaController::recoveryRequested);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        const QString connectionId = remoteMedia.mediaConnectionId();
+        QVERIFY(!connectionId.isEmpty());
+
+        remoteMedia.holdAudioRestartForTest(true);
+        QTest::ignoreMessage(QtWarningMsg, speakerTimingLostLog());
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 5000);
+        QTRY_COMPARE_WITH_TIMEOUT(remoteMedia.audioRestartStepsHeldForTest(), 1, 5000);
+
+        QTest::qWait(RemoteMediaController::kDirectMediaSilenceFallbackMs
+                     + RemoteMediaController::kMediaStallMs + 1000);
+        QCOMPARE(recoveries.size(), 0);
+        QCOMPARE(remoteMedia.mediaConnectionId(), connectionId);
+        QCOMPARE(errors.size(), 1);
+        QCOMPARE(remoteMedia.audioStatus().state, State::PlaybackProblem);
+
+        // The speaker is back and the attempt that was waiting plays on the
+        // connection that was there all along.
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        remoteMedia.holdAudioRestartForTest(false);
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QVERIFY(!remoteMedia.audioStatus().problem.has_value());
+        QCOMPARE(recoveries.size(), 0);
+        QCOMPARE(remoteMedia.mediaConnectionId(), connectionId);
+        QCOMPARE(errors.size(), 1);
+
+        audio.stop();
+        h.client.disconnectFromStation(QStringLiteral("test complete"));
+    }
+
+    // 2026-11-05: the other side of the rule above. Once the speaker works
+    // and a retry asks the Core, a Core that sends nothing is the path's
+    // fault again: the silence rules run and the window recovers, without
+    // waiting for ICE's 30 s consent check. Real time for the same reason.
+    void coreSilenceAfterASpeakerFaultStillRecovers()
+    {
+        using State = RemoteAudioStatus::State;
+        Test::RemoteAudioSessionHarness h;
+        RemoteMediaController remoteMedia(&h.client, &h.remote, nullptr);
+        DaemonMediaController daemonMedia(&h.server, &h.station);
+        QSignalSpy errors(&remoteMedia, &RemoteMediaController::errorOccurred);
+        QSignalSpy recoveries(&remoteMedia, &RemoteMediaController::recoveryRequested);
+        PacedRemoteAudio audio(h);
+        h.connectSession();
+        QTRY_VERIFY2_WITH_TIMEOUT(remoteMedia.audioStatus().state == State::Playing,
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+
+        QTest::ignoreMessage(QtWarningMsg, speakerTimingLostLog());
+        h.remoteBus->setOutputPacingAvailableForTesting(false);
+        QTRY_COMPARE_WITH_TIMEOUT(errors.size(), 1, 5000);
+
+        // The Core goes quiet, and the speaker comes back to nothing.
+        audio.source.stop();
+        h.remoteBus->setOutputPacingAvailableForTesting(true);
+        // About 11 s: the retry and the receiver running dry, media moves at
+        // 5 s, the tunnel's rule fires at 3 s. A limit that beats ICE's 30 s, with room for load.
+        QElapsedTimer quiet;
+        quiet.start();
+        QTRY_COMPARE_WITH_TIMEOUT(recoveries.size(), 1, 20000);
+        qInfo().noquote() << QStringLiteral("recovery %1 ms after the Core went quiet")
+                                 .arg(quiet.elapsed());
 
         audio.stop();
         h.client.disconnectFromStation(QStringLiteral("test complete"));
@@ -16962,6 +17353,8 @@ const QStringList kAudioFunctions{
     QStringLiteral("anIntentionalCollectorPauseIsNotReportedAsAStall"),
     QStringLiteral("playsOnTheSpeakerFormatThisComputerChose"),
     QStringLiteral("speakerFaultRetriesOnItsOwnUntilItPlays"),
+    QStringLiteral("aLastingSpeakerFaultLeavesTheMediaConnectionAlone"),
+    QStringLiteral("coreSilenceAfterASpeakerFaultStillRecovers"),
     QStringLiteral("speakerProblemClearsOncePlayingOnANewConnection"),
     QStringLiteral("speakersWaitForTheDeviceListWithoutAProblem"),
     QStringLiteral("aDeviceListThatNeverComesShowsTheProblemAfterTheWait"),

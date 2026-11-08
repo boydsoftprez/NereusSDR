@@ -15,6 +15,8 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: cw.paddle.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -356,6 +358,8 @@
 //                                    roundtable.* verbs, read here and
 //                                    answered by the station server.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/roundtable/RoundtableWire.h"
@@ -1103,6 +1107,10 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         {"cw.stop", {}, "remoteCwVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"cw.key", {arg("down", kBool)}, "remoteCwVersion", 1,
          kRadioIdentitySessionProtocolMinor},
+        // Hot keys (R-HK-13): dot and dash on the radio's own keyer, released
+        // 3 s after the last press as cw.key is.
+        {"cw.paddle", {arg("dot", kBool), arg("dash", kBool)}, "remoteCwVersion", 3,
+         kRadioIdentitySessionProtocolMinor},
         {"setAlexTxAntenna", {arg("band", kInt), arg("antenna", kInt)},
          "radioHardwareVersion", 6, kRadioIdentitySessionProtocolMinor},
         {"setAlexTxAntennaForRadio", {arg("mac", kUtf8), arg("band", kInt), arg("antenna", kInt)},
@@ -1147,6 +1155,8 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // The AM Mod Monitor's RESET (R-IOS-13, R-R3-49): the Core's
         // analyzer for a source, 0 TX I/Q or 1 PA feedback.
         {"txModMonitor.reset", {arg("source", kInt)}, "txModMonitorVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"txSsbModMonitor.reset", {arg("source", kInt)}, "txSsbModMonitorVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's radio (R-IOS-18, R-R3-49, parity Task 21).
         {"station.selectRadio", {arg("mac", kUtf8)}, "stationRadiosVersion", 1,
@@ -1648,7 +1658,8 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         return;
     }
     if (invoke.commandVerb == "cw.send" || invoke.commandVerb == "cw.memory"
-        || invoke.commandVerb == "cw.stop" || invoke.commandVerb == "cw.key") {
+        || invoke.commandVerb == "cw.stop" || invoke.commandVerb == "cw.key"
+        || invoke.commandVerb == "cw.paddle") {
         handleCw(invoke);
         return;
     }
@@ -1832,7 +1843,8 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         handleFilterResponse(invoke);
     } else if (invoke.commandVerb == "records.subscribe"
                || invoke.commandVerb == "records.unsubscribe"
-               || invoke.commandVerb == "txModMonitor.reset") {
+               || invoke.commandVerb == "txModMonitor.reset"
+               || invoke.commandVerb == "txSsbModMonitor.reset") {
         handleRecords(invoke);
     } else if (invoke.commandVerb == "station.selectRadio"
                || invoke.commandVerb == "station.rescanRadios"
@@ -2149,6 +2161,15 @@ void SessionCommandDispatcher::handleCw(const SessionMessage& invoke)
     } else if (invoke.commandVerb == "cw.stop") {
         request.kind = CwRequest::Kind::Stop;
         readable = hasExactlyArguments(invoke.arguments, {});
+    } else if (invoke.commandVerb == "cw.paddle") {
+        request.kind = CwRequest::Kind::Paddle;
+        QVariant dot;
+        QVariant dash;
+        readable = hasExactlyArguments(invoke.arguments, {"dot", "dash"})
+            && findArgument(invoke.arguments, "dot", &dot) && dot.typeId() == QMetaType::Bool
+            && findArgument(invoke.arguments, "dash", &dash) && dash.typeId() == QMetaType::Bool;
+        request.dot = readable && dot.toBool();
+        request.dash = readable && dash.toBool();
     } else {
         request.kind = CwRequest::Kind::Key;
         QVariant down;
@@ -5303,7 +5324,10 @@ void SessionCommandDispatcher::handleRecords(const SessionMessage& invoke)
                invoke.commandVerb == "txModMonitor.reset"
                    ? QStringLiteral("This Core does not send the modulation monitor. "
                                     "Updating the Core may help.")
-                   : QStringLiteral("This Core does not send its spots or console lines."),
+                   : invoke.commandVerb == "txSsbModMonitor.reset"
+                       ? QStringLiteral("This Core does not send the SSB modulation monitor. "
+                                        "Updating the Core may help.")
+                       : QStringLiteral("This Core does not send its spots or console lines."),
                {});
 }
 

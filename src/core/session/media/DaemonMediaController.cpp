@@ -4,6 +4,11 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-11-06: Wideband demand counts only for the device controlling the
+//               slice, and is recomputed when access to a slice changes and
+//               at the fall. A device with no control of a slice whose view
+//               lies off its receiver is refused, with its own reason.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-27: Remote transmit hold then cut, fix wave B: the line's
 //               watchEnded and audioArrived reach StationServer (a line
 //               ending mid-key is no audio returning), starved carries its
@@ -1042,6 +1047,10 @@ DaemonMediaController::DaemonMediaController(StationServer* server,
         if (self && m_epoch != 0 && m_radioModel && m_radioModel->sliceById(sliceId) != nullptr
             && !seesSlice(sliceId)) {
             retireSliceDisplays(sliceId);
+        }
+        // Wideband demand follows control, with nothing asked of the device.
+        if (self && m_peer.get() == peer && m_epoch == epoch) {
+            onWidebandSourceChanged(-1);
         }
     };
     connect(m_radioModel->sliceOwnership(), &SliceOwnership::markChanged, this,
@@ -4035,7 +4044,8 @@ bool DaemonMediaController::handleSubscribe(const QJsonObject& control)
     // The pixel grant is fixed here, where the source geometry and granted
     // FFT size are known, and the display budget charges what is granted.
     const bool extendedActive = widebandNegotiated && request.extendedView
-        && extendedAllowed && needsWideband(request, sourceCentreHz, sourceSampleRateHz);
+        && extendedAllowed && needsWideband(request, sourceCentreHz, sourceSampleRateHz)
+        && controlsSlice(sliceId);
     grant.grantedPixels = SpectrumEndpoint::grantedPixels(
         request, grant.grantedFftSize, sourceCentreHz, sourceSampleRateHz, extendedActive);
     if (grant.grantedPixels <= 0) {
@@ -7387,6 +7397,13 @@ void DaemonMediaController::reconcileTransmitDisplay()
             entry.contextSent = false;
             entry.latestInput.reset();
             entry.forceKeyframe = true;
+            // Keyed endpoints are skipped when access changes, so a slice taken
+            // while keyed is looked at here; a demand it no longer has must not
+            // hold the filter bypassed until the stream next moves.
+            if (entry.widebandNegotiated) {
+                reconcileWidebandDemand(entry);
+                if (viewHasNothingToDraw(entry)) { scheduleRetireOfUndrawableViews(); }
+            }
         }
     }
     // Each viewer's context follows the view and whether it governs.
@@ -7609,8 +7626,13 @@ bool DaemonMediaController::reconcileWidebandDemand(EndpointEntry& entry)
     const auto rate = m_radioModel->widebandAdcRateHz(adc);
     const double centre = m_radioModel->streamCentreHz(entry.request.source.streamIndex);
     const double ddcRate = m_radioModel->streamSampleRateHz(entry.request.source.streamIndex);
+    // Only the device controlling a receiver may bypass its filter (JJ: "No,
+    // controlling only"). For a device that only listens the Core keeps the
+    // request and sends the receiver's own width, with wideband available and
+    // inactive.
     entry.widebandWanted = entry.widebandNegotiated && entry.request.extendedView
-        && rate.has_value() && needsWideband(entry.request, centre, ddcRate);
+        && rate.has_value() && needsWideband(entry.request, centre, ddcRate)
+        && controlsSlice(entry.sliceId);
     if (!entry.widebandWanted) {
         entry.widebandDemand.reset();
         return true;
@@ -7670,6 +7692,10 @@ void DaemonMediaController::onWidebandSourceChanged(int)
             entry.latestInput.reset();
             continue;
         }
+        if (viewHasNothingToDraw(entry)) {
+            scheduleRetireOfUndrawableViews();
+            continue;
+        }
         const auto context = widebandContext(entry);
         if (!context || (entry.endpoint.configured()
                          && entry.endpoint.context().wideband != *context)) {
@@ -7681,6 +7707,55 @@ void DaemonMediaController::onWidebandSourceChanged(int)
             configureEndpointFromFrame(entry, frame);
             if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
         }
+    }
+}
+
+// A view wholly off the receiver, for a device with no control of the slice: with
+// none of the receiver in it and no wideband for it, configure refuses it on every
+// frame. A controller is left out and its endpoint held: its demand comes back when
+// wideband does, whether a capture restarting or its slice's route returning to a
+// wideband ADC. While the route offers none it draws nothing, with no status.
+bool DaemonMediaController::viewHasNothingToDraw(const EndpointEntry& entry) const
+{
+    if (!m_radioModel || entry.txViewer || !entry.request.extendedView || entry.widebandWanted) {
+        return false;
+    }
+    if (controlsSlice(entry.sliceId)) {
+        return false;
+    }
+    const int stream = entry.request.source.streamIndex;
+    const double rateHz = m_radioModel->streamSampleRateHz(stream);
+    return rateHz > 0.0
+        && !requestOverlapsSource(entry.request, m_radioModel->streamCentreHz(stream), rateHz);
+}
+
+// Queued: this is reached from inside a demand change, which can re-enter from
+// the model while a caller still holds an endpoint it is walking.
+void DaemonMediaController::scheduleRetireOfUndrawableViews()
+{
+    if (m_undrawableRetireQueued) { return; }
+    m_undrawableRetireQueued = true;
+    QMetaObject::invokeMethod(this, [this] {
+        m_undrawableRetireQueued = false;
+        retireUndrawableViews();
+    }, Qt::QueuedConnection);
+}
+
+void DaemonMediaController::retireUndrawableViews()
+{
+    const auto displayHold = displayGuard();
+    MediaPeer* const peer = m_peer.get();
+    const quint64 epoch = m_epoch;
+    const QPointer<DaemonMediaController> self(this);
+    for (quint32 endpointId : endpointIds()) {
+        auto it = m_endpoints.find(endpointId);
+        if (it == m_endpoints.end() || !viewHasNothingToDraw(it->second)) { continue; }
+        const quint32 revision = displayBudgetWireAvailable()
+            ? it->second.allocation.revision : it->second.revision;
+        removeEndpoint(endpointId);
+        sendRejected(m_peer ? m_peer->connectionId() : QString(), endpointId, revision,
+                     QString::fromLatin1(kRetireReasonViewOffReceiver));
+        if (!self || m_peer.get() != peer || m_epoch != epoch) { return; }
     }
 }
 
@@ -7979,7 +8054,7 @@ void DaemonMediaController::onStreamGeometryChanged(int streamIndex, double, int
                 : std::nullopt;
             if (entry.request.source == key
                 && !requestOverlapsSource(entry.request, centreHz, sampleRateHz)
-                && !(entry.request.extendedView && adcRate)) {
+                && !(entry.request.extendedView && adcRate && controlsSlice(entry.sliceId))) {
                 const quint32 revision = displayBudgetWireAvailable()
                     ? entry.allocation.revision : entry.revision;
                 removeEndpoint(endpointId);
