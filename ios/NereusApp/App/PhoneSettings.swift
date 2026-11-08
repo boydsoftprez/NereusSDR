@@ -181,12 +181,36 @@ final class PhoneSettings: ObservableObject {
         set { setBool(newValue, for: Self.muteBandWhileTalkingKey) }
     }
 
+    /// The band's sound is muted on this phone: kept across launches, so a
+    /// mute set in a quiet room still holds when the app opens again.
+    var audioMuted: Bool {
+        get { bool(Self.audioMutedKey, default: false) }
+        set { setBool(newValue, for: Self.audioMutedKey) }
+    }
+
+    static let audioMutedKey = "audio.muted"
+
     /// The audio quality this phone asks for: High unless chosen. A value
     /// this build does not know reads as High.
     var audioQuality: AudioQualityChoice {
         get { AudioQualityChoice(rawValue: string(Self.audioQualityKey, default: "")) ?? AudioQualityChoice.standard }
         set { setString(newValue.rawValue, for: Self.audioQualityKey) }
     }
+
+    /// Play the band through, as ``AudioRoute/storedForm`` keeps it: nil
+    /// until the operator chooses, which leaves it to iOS.
+    var audioRoute: String? {
+        get { defaults.string(forKey: Self.keyPrefix + Self.audioRouteKey) }
+        set {
+            if let newValue {
+                setString(newValue, for: Self.audioRouteKey)
+            } else {
+                reset(Self.audioRouteKey)
+            }
+        }
+    }
+
+    static let audioRouteKey = "audio.route"
 
     static let microphoneKey = "audio.microphone"
     static let audioQualityKey = "audio.quality"
@@ -228,6 +252,49 @@ final class PhoneSettings: ObservableObject {
         get { bool(Self.madeNewKeyKey, default: false) }
         set { setBool(newValue, for: Self.madeNewKeyKey) }
     }
+
+    /// What Reconnect automatically starts as until the operator sets it: off,
+    /// JJ's ruling of 2026-11-05. A phone left alone opens on Your Cores.
+    static let autoReconnectDefault = false
+
+    /// Opening the app connects to the last Core again, unless the operator
+    /// left it with Disconnect or removed it.
+    var autoReconnect: Bool {
+        get { bool(Self.autoReconnectKey, default: Self.autoReconnectDefault) }
+        set { setBool(newValue, for: Self.autoReconnectKey) }
+    }
+
+    /// The Core a session last reached ready on, by its identity key in
+    /// base64url (a public key); nil after Disconnect or Remove Core.
+    var lastCore: String? {
+        get { defaults.string(forKey: Self.keyPrefix + Self.lastCoreKey) }
+        set {
+            if let newValue {
+                setString(newValue, for: Self.lastCoreKey)
+            } else {
+                reset(Self.lastCoreKey)
+            }
+        }
+    }
+
+    /// The Core a session last reached ready on, by its identity key in
+    /// base64url, for the top of Your Cores. It is not ``lastCore``: leaving
+    /// with Disconnect keeps this, and only Remove Core clears it. Nothing
+    /// dials because of it.
+    var lastUsedCore: String? {
+        get { defaults.string(forKey: Self.keyPrefix + Self.lastUsedCoreKey) }
+        set {
+            if let newValue {
+                setString(newValue, for: Self.lastUsedCoreKey)
+            } else {
+                reset(Self.lastUsedCoreKey)
+            }
+        }
+    }
+
+    static let autoReconnectKey = "connect.autoReconnect"
+    static let lastCoreKey = "connect.lastCore"
+    static let lastUsedCoreKey = "connect.lastUsedCore"
 
     static let deviceNameKey = "connect.deviceName"
     static let coresNeedingPairingKey = "connect.coresNeedingPairing"
@@ -280,6 +347,37 @@ final class PhoneSettings: ObservableObject {
     static let sleepTimerKey = "session.sleepTimer"
     static let lowPowerDropsToSaverKey = "session.lowPowerDropsToSaver"
     static let hotPhoneSlowsKey = "session.hotPhoneSlows"
+
+    // MARK: Where the operator was (restored when a session reaches ready)
+
+    /// The tab last shown; nil before any.
+    var navTab: AppTab? {
+        get { AppTab(rawValue: string(Self.navTabKey, default: "")) }
+        set { storeQuietly(newValue?.rawValue ?? "", for: Self.navTabKey) }
+    }
+
+    /// Setup's open pages, in ``SavedPlaces``' stable form.
+    var navSetup: [String] {
+        get { defaults.stringArray(forKey: Self.keyPrefix + Self.navSetupKey) ?? [] }
+        set { storeQuietly(newValue, for: Self.navSetupKey) }
+    }
+
+    /// The Tools tab's open pages, in ``SavedPlaces``' stable form.
+    var navTools: [String] {
+        get { defaults.stringArray(forKey: Self.keyPrefix + Self.navToolsKey) ?? [] }
+        set { storeQuietly(newValue, for: Self.navToolsKey) }
+    }
+
+    /// The Radio tab's open pages, in ``SavedPlaces``' stable form.
+    var navRadio: [String] {
+        get { defaults.stringArray(forKey: Self.keyPrefix + Self.navRadioKey) ?? [] }
+        set { storeQuietly(newValue, for: Self.navRadioKey) }
+    }
+
+    static let navTabKey = "nav.tab"
+    static let navSetupKey = "nav.setup"
+    static let navToolsKey = "nav.tools"
+    static let navRadioKey = "nav.radio"
 
     // MARK: Data use (Setup, CAT & Network; spec section 5.4 items 11 to 13, D28)
 
@@ -344,6 +442,17 @@ final class PhoneSettings: ObservableObject {
 
     static let roundtableAppletPositionKey = "applets.roundtablePosition"
 
+    // MARK: The iPad's pans
+
+    /// The pans below Pan 1 the operator left open, by number: the ones
+    /// with no slice on them come back from this list.
+    var openPans: [Int] {
+        get { defaults.array(forKey: Self.keyPrefix + Self.openPansKey) as? [Int] ?? [] }
+        set { storeQuietly(newValue, for: Self.openPansKey) }
+    }
+
+    static let openPansKey = "layout.openPans"
+
     // MARK: Swipes on the panadapter (Setup, General, Navigation; spec 11.3, S1)
 
     /// What a swipe in from the band's left edge opens: the RX panel unless
@@ -407,6 +516,52 @@ final class PhoneSettings: ObservableObject {
             return swipeUpTabBarKey
         }
     }
+
+    // MARK: The band screen's layout (whether a panel is open is never kept)
+
+    /// The Display pill's tab last shown. A value this build does not know
+    /// reads as Spectrum.
+    var displayPillTab: DisplayPillTab {
+        get { DisplayPillTab(rawValue: string(Self.displayPillTabKey, default: "")) ?? .spectrum }
+        set { storeQuietly(newValue.rawValue, for: Self.displayPillTabKey) }
+    }
+
+    /// On an iPad on its side, the applet column shows.
+    var appletColumnShown: Bool {
+        get { bool(Self.appletColumnShownKey, default: true) }
+        set { storeQuietly(newValue, for: Self.appletColumnShownKey) }
+    }
+
+    /// Pan 1's button column is folded to its one button.
+    var buttonColumnFolded: Bool {
+        get { bool(Self.buttonColumnFoldedKey, default: false) }
+        set { storeQuietly(newValue, for: Self.buttonColumnFoldedKey) }
+    }
+
+    /// The pans below Pan 1 whose button column is folded, by number.
+    var foldedPanColumns: Set<Int> {
+        get { Set(defaults.array(forKey: Self.keyPrefix + Self.foldedPanColumnsKey) as? [Int] ?? []) }
+        set { storeQuietly(newValue.sorted(), for: Self.foldedPanColumnsKey) }
+    }
+
+    /// The Display pill's FPS: this phone's own rate, unset until it is
+    /// moved. The Core's one rate is Setup's (`DisplaySpectrumFps`).
+    var displayPaintFps: Int? {
+        get { defaults.object(forKey: Self.keyPrefix + Self.displayPaintFpsKey) as? Int }
+        set {
+            if let newValue {
+                storeQuietly(newValue, for: Self.displayPaintFpsKey)
+            } else {
+                reset(Self.displayPaintFpsKey)
+            }
+        }
+    }
+
+    static let displayPaintFpsKey = "display.paintFps"
+    static let displayPillTabKey = "layout.displayPillTab"
+    static let appletColumnShownKey = "layout.appletColumnShown"
+    static let buttonColumnFoldedKey = "layout.buttonColumnFolded"
+    static let foldedPanColumnsKey = "layout.foldedPanColumns"
 
     /// Keeps a value without telling the screens: for counters that change
     /// every few seconds and that only their owner reads.

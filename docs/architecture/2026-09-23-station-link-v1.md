@@ -5830,6 +5830,10 @@ subscribe, page, group, label, kind, default}` and, by `kind`, either
   a device reads and writes with `settings.write` (section 8); `device` for
   each device's own value, which it keeps per pan and sends in its spectrum
   subscription.
+  `DisplaySpectrumFps` is the Core's one shared rate: a device's Display pill
+  keeps that device's own rate on the device (a desktop's `DisplayPaintFps`),
+  and once it has one the device subscribes at it. No Core runs its engines
+  from this key; an engine runs at the highest `fps` its endpoints ask.
 - `subscribe`: the spectrum subscription field the value reaches (remote
   media control v1): `fftSize` (by the rule below), `windowType`, `fps`,
   `trace.detector`, `trace.averageMode`, `waterfall.detector`,
@@ -6150,6 +6154,8 @@ computer, never sent). `classifySettingsKey` (`SettingsScope.cpp`) decides:
 | 3. whole key | `RemoteMoxTimeOutSeconds` | station |
 | 3. whole key | `RxOnly` | station |
 | 3. whole key | `ModMon/FbStream` | station |
+| 3. whole key | `DisplayDecimation` | operatorLocal |
+| 3. whole key | `DisplayPaintFps` | operatorLocal |
 | 3. whole key | `ExtendedTxAllowed` | operatorLocal |
 
 <!-- /surface -->

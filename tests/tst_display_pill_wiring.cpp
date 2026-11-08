@@ -479,6 +479,59 @@ private slots:
         QCOMPARE(pan.gridEnabled(), gridDefault);
     }
 
+    // Persistence audit 2026-11: Decimation has a station key beside the other
+    // FFT knobs. Set from a pill, it comes back after a restart on the pool
+    // and every engine; what does not fit the range is the default.
+    void decimationComesBackAfterARestart()
+    {
+        Test::markAudioFirstRunDone();
+        auto& s = AppSettings::instance();
+        s.setValue(QStringLiteral("PanLayoutId"), QStringLiteral("1"));
+        const QString key = QLatin1String(ControlRanges::kDisplayDecimationKey);
+        {
+            MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+            window.show();
+            PanadapterStack* stack = window.findChild<PanadapterStack*>();
+            QVERIFY(stack);
+            auto* pill = stack->spectrum(QStringLiteral("pan-0"))->findChild<SpectrumOverlayPanel*>();
+            QVERIFY(pill);
+            emit pill->decimationRequested(4);
+            QCOMPARE(window.fftEnginePoolForTest()->decimation(), 4);
+            QCOMPARE(s.value(key).toString(), QStringLiteral("4"));
+            // Refused: the key keeps what the engines hold.
+            emit pill->decimationRequested(99);
+            QCOMPARE(s.value(key).toString(), QStringLiteral("4"));
+        }
+        {
+            MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+            FftEnginePool* pool = window.fftEnginePoolForTest();
+            QVERIFY(pool);
+            QCOMPARE(pool->decimation(), 4);
+            QVERIFY(!pool->streams().isEmpty());
+            for (int stream : pool->streams()) {
+                QCOMPARE(pool->engineForStream(stream)->decimation(), 4);
+            }
+            PanadapterStack* stack = window.findChild<PanadapterStack*>();
+            auto* pill = stack->spectrum(QStringLiteral("pan-0"))->findChild<SpectrumOverlayPanel*>();
+            QVERIFY(pill);
+            QCOMPARE(pill->fftState().decimation, 4);
+
+            // Each device has its own: another window's value on the Core
+            // does not move this one.
+            s.setValue(key, QStringLiteral("6"));
+            emit window.radioModel()->stationSettingChanged(key);
+            QCOMPARE(pool->decimation(), 4);
+            s.setValue(key, QStringLiteral("4"));
+        }
+        for (const QString& bad : {QStringLiteral("99"), QStringLiteral("0"), QStringLiteral("many")}) {
+            s.setValue(key, bad);
+            QTest::ignoreMessage(QtWarningMsg, QRegularExpression(QStringLiteral("Stored.*DisplayDecimation")));
+            MainWindow window({}, nullptr, MainWindow::ConnectionStartup::Deferred);
+            QCOMPARE(window.fftEnginePoolForTest()->decimation(), ControlRanges::kDisplayDecimationDefault);
+            QCOMPARE(s.value(key).toString(), QString::number(ControlRanges::kDisplayDecimationDefault));
+        }
+    }
+
     // The window's own hooks, on a real local window with two pans, each
     // showing its own slice (no radio, no Core). A request from one pan's
     // pill reaches every engine and saves the station key, and both pans'

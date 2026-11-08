@@ -1267,6 +1267,7 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
                 });
     }
 
+    m_linkDownEdits = new LinkDownEditWatch(this);
     m_outboundMirror = new StateMirror(this);
     connect(m_outboundMirror, &StateMirror::propertiesChanged, this,
             [this](const QByteArray& objectKey, const QList<MirrorUpdate>& updates) {
@@ -1479,6 +1480,8 @@ void StationClient::connectToStation(const QUrl& url, const QString& token,
     // to station A instead, unprompted. Stopped here, unconditionally,
     // before any other logic runs, so it also covers the refusal path.
     m_reconnectTimer->stop();
+    // A connect the operator asked for is not this outage's redial.
+    m_linkDownEdits->clear();
 
     // FIRST error wins for the rest of this connection attempt. A pinning
     // refusal is followed immediately by the socket errors it causes
@@ -2364,6 +2367,9 @@ void StationClient::disconnectFromStation(const QString& reason, bool attemptRec
     // radio change is being waited out any more.
     if (!attemptReconnect) {
         m_radioChangeReason.clear();
+        // The window is no longer on a Core: nothing is coming to replace
+        // what the operator changes, so nothing "did not stick".
+        m_linkDownEdits->clear();
     }
     // Task 19: cancel a PENDING retry even when no session is active at
     // all -- the backoff-wait state has m_sessionActive already false
@@ -2458,6 +2464,10 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
         return;  // already reported for this attach
     }
     const quint32 retiringEpoch = m_sessionEpoch;
+    // Settings persistence audit (W11). Read before the teardown below: the
+    // window watches these retained objects once the link is down.
+    const bool wasReady = m_handshakeComplete;
+    const QHash<QByteArray, QPointer<QObject>> retainedObjects = m_objects;
     // Retire the operation now, but notify only as this teardown returns.
     // A completion handler may destroy this client or reconnect it. Emitting
     // before clearing mirrors/proxy/coalescer let that new session inherit
@@ -2749,7 +2759,18 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     const bool pairedRaceRoute = m_raceMode && m_stationIdentity.size() == 32
         && !m_lastAllowUnpinned && (!m_dialPlan.isEmpty() || !m_serviceRoute.servers.isEmpty());
     if (attemptReconnect && (m_lastUrl.isValid() || pairedRaceRoute)) {
+        // Settings persistence audit (W11). Last, so the teardown above and
+        // sessionEnded()'s handlers are not taken for edits. Only a session
+        // that reached ready: a first connect has shown nothing yet to edit.
+        // A redial that failed partway keeps the outage's edits and watch.
+        if (m_sessionPurpose == SessionPurpose::Ordinary && wasReady) {
+            m_linkDownEdits->start(retainedObjects);
+        } else {
+            m_linkDownEdits->resume();
+        }
         scheduleReconnect();
+    } else {
+        m_linkDownEdits->clear();
     }
     emit connectionActivityChanged();
 }
@@ -2992,6 +3013,9 @@ void StationClient::onTransportText(const QByteArray& wire)
     // starts meaning something. See attachTransport().
     if (!m_linkUp) {
         m_linkUp = true;
+        // Settings persistence audit (W11): what moves from here on is this
+        // session's capabilities, settings and snapshot landing.
+        m_linkDownEdits->pause();
         if (m_heartbeatIntervalMs > 0 && m_sessionActive) {
             m_heartbeatTimer->setInterval(effectiveHeartbeatIntervalMs());
             m_heartbeatTimer->start();
@@ -3155,6 +3179,20 @@ void StationClient::onTransportText(const QByteArray& wire)
         // the station its own state back.
         m_forwardLocalChanges = m_sessionPurpose == SessionPurpose::Ordinary;
         if (m_forwardLocalChanges) { m_writeFlushTimer->start(); }
+        // Settings persistence audit (W11): same words and same log level as
+        // SettingsProxy::applySnapshot() gives a Setup value.
+        if (m_sessionPurpose == SessionPurpose::Ordinary && m_linkDownEdits->isArmed()) {
+            const QStringList lost = m_linkDownEdits->takeSuperseded();
+            if (!lost.isEmpty()) {
+                qCWarning(lcStationClient).noquote()
+                    << QStringLiteral("%1 setting(s) changed while the station link was "
+                                      "down did not reach the station and have been "
+                                      "replaced by its own values: %2")
+                           .arg(lost.size())
+                           .arg(lost.join(QStringLiteral(", ")));
+                emit linkDownEditsSuperseded(lost);
+            }
+        }
         refreshRemoteTransmit();
         // Parity Task 19 (R-IOS-25): the Core's spots and its spot sources'
         // console lines, each backlog first. Each (re)connect starts from

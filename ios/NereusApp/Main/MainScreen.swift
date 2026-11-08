@@ -161,8 +161,8 @@ struct MainScreen: View {
     /// `rxPanelOpen` and `txPanelOpen` open the screen with that panel out,
     /// `sheet` with that sheet open.
     init(app: AppModel, main: MainScreenModel, flow: ConnectionFlow? = nil, rxPanelOpen: Bool = false,
-         txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab = .spectrum,
-         columnShown: Bool = true, columnMenu: BandColumnMenu? = nil, columnPan: PanIdentity = .first,
+         txPanelOpen: Bool = false, sheet: OpenSheet? = nil, displayTab: DisplayPillTab? = nil,
+         columnShown: Bool? = nil, columnMenu: BandColumnMenu? = nil, columnPan: PanIdentity = .first,
          roundtableSheet: RoundtableSheet.Detent? = nil, holdObserver: ((PttHold.Action) -> Void)? = nil,
          swipes: SwipeShortcutModel? = nil, roundtableWide: Bool = false,
          openSetup: @escaping () -> Void = {}, openRadio: @escaping () -> Void = {},
@@ -189,8 +189,12 @@ struct MainScreen: View {
         offline = flow?.offline ?? false
         _rxPanelOpen = State(initialValue: rxPanelOpen)
         _sheet = State(initialValue: sheet)
-        _displayTab = State(initialValue: displayTab)
-        _columnShown = State(initialValue: columnShown)
+        // The layout comes back as it was left; a test's picture may name its own.
+        let kept = app.phoneSettings
+        _displayTab = State(initialValue: displayTab ?? kept.displayPillTab)
+        _columnShown = State(initialValue: columnShown ?? kept.appletColumnShown)
+        _columnFolded = State(initialValue: kept.buttonColumnFolded)
+        _foldedPans = State(initialValue: Set(kept.foldedPanColumns.map(PanIdentity.init(number:))))
         _columnMenu = State(initialValue: columnMenu)
     }
 
@@ -636,7 +640,7 @@ struct MainScreen: View {
             }
         }
         // A pan closing takes its open menu and band menu with it.
-        .onChange(of: panStack.open) { _, open in
+        .onChange(of: panStack.open) { closedFrom, open in
             if !open.contains(columnPan) || open.count < 2 && columnPan != .first {
                 columnMenu = nil
                 columnPan = .first
@@ -645,8 +649,13 @@ struct MainScreen: View {
                 bandMenu = nil
                 bandMenuPan = .first
             }
-            foldedPans.formIntersection(open)
+            // Only a pan closing forgets its fold: a kept one waits for its pan to open.
+            foldedPans.subtract(Set(closedFrom).subtracting(open))
         }
+        .onChange(of: displayTab) { _, tab in app.phoneSettings.displayPillTab = tab }
+        .onChange(of: columnShown) { _, shown in app.phoneSettings.appletColumnShown = shown }
+        .onChange(of: columnFolded) { _, folded in app.phoneSettings.buttonColumnFolded = folded }
+        .onChange(of: foldedPans) { _, pans in app.phoneSettings.foldedPanColumns = Set(pans.map(\.number)) }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: roundtableSheet)
         .onChange(of: roundtableSheet == nil) { _, closed in
             if closed {

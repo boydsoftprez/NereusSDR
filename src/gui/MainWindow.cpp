@@ -11,6 +11,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: A desktop's fill at connect brings back the radio's saved
+//               layout. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
+//   2026-11-05: Each window on a Core keeps its own paint rate (the Display
+//               pill's FPS, DisplayPaintFps). J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
+//   2026-11-05: A window's fill at connect keeps a receiver's RIT and XIT.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-11-04: The flags' S-meter source follows the window's one S-meter, and
 //               a flag can set it (overlay design D40, D41). Display only: nothing
 //               reaches a slice or the radio. A flag line shows open while the
@@ -2244,9 +2251,7 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
     // inside openSpotHub() is now a defensive guard kept for the case
     // where the spectrum widget races construction; see lines below.
     QTimer::singleShot(0, this, [this] {
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->loadSpotDisplaySettings();
-        }
+        reloadSpotDisplaySettingsOnAllPans();
         if (m_radioModel) {
             m_radioModel->restoreSpotClientAutoStartState();
         }
@@ -2337,6 +2342,17 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         m_shuttingDown = true;
         if (m_clarityRegistry) { m_clarityRegistry->retireAll(); }
         if (m_desktopStationController) { m_desktopStationController->stop(); }
+        // What the pans show, read before the disconnect as closeEvent reads
+        // it; a save only writes the in-memory map, so the stop frame below
+        // is not held up. A pending 500 ms display save would otherwise be
+        // dropped here.
+        if (!m_closeSavesDone && m_panStack) {
+            for (PanadapterApplet* applet : m_panStack->allApplets()) {
+                if (applet && applet->spectrumWidget()) {
+                    applet->spectrumWidget()->saveSettings();
+                }
+            }
+        }
         // 2026-05-22 bench-finding: graceful radio disconnect MUST happen
         // before the process tears down so the SendStop frame (run=0
         // CmdHighPriority) actually reaches the wire.  Without this,
@@ -2351,6 +2367,10 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         }
         if (m_containerManager) {
             m_containerManager->saveState();
+        }
+        if (!m_closeSavesDone && m_panStack) {
+            m_panStack->saveSplitterState();
+            m_panStack->saveFloatingGeometry();
         }
         // Issue #206 — also flush window geometry on signal-based
         // shutdown (SIGTERM / force-quit). Idempotent with the
@@ -2389,6 +2409,9 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
         AppSettings::instance().save();
     }, this);
 
+    // The status bar's ☰ and the panel it hides both exist by now.
+    restoreContainerPanelHidden();
+
     // Issue #206 — restore last session's window position, size, and
     // maximized/fullscreen state. The 1280×800 set in buildUI() stays as the
     // first-launch fallback; restoreMainWindowGeometry() returns false
@@ -2422,6 +2445,12 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 
     ensureRemoteSession();
     if (startup == ConnectionStartup::Automatic) { startInitialConnection(); }
+
+    // Queued so it runs after show() and after the zero timers above: all of
+    // startup, and none of it counts as an operator's edit.
+    QTimer::singleShot(0, this, [this] {
+        if (m_radioModel) { m_radioModel->keepTransmitEditsWithoutRadio(); }
+    });
 }
 
 MainWindow::~MainWindow()
@@ -4194,7 +4223,7 @@ void MainWindow::addSliceForWindow(const QString& panId)
         actions->addOnPan(panId);
         return;
     }
-    m_radioModel->addSliceOnPan(panId);
+    m_radioModel->addSliceOnPan(panId, /*restoreSavedState=*/false, /*newReceiver=*/true);
 }
 
 void MainWindow::closeSliceForWindow(int sliceId)
@@ -4317,7 +4346,7 @@ void MainWindow::runSliceChooserAction(SliceChooserAction action, int sliceId)
         if (m_panStack) {
             addSliceForWindow(m_panStack->activePanId());
         } else {
-            m_radioModel->addSlice(QString());
+            m_radioModel->addSlice(QString(), /*restoreSavedState=*/false, /*newReceiver=*/true);
         }
         return;
     }
@@ -5092,11 +5121,12 @@ void MainWindow::ensureRemoteSession()
         // toast listing "hardware/aa:bb:.../alex/hpf/..." twelve times is
         // noise the operator will learn to dismiss unread.
         connect(proxy, &SettingsProxy::offlineEditsSuperseded, this,
-                [this](const QStringList& keys) {
-            showToast(tr("%n Core setting(s) you changed while the link was down "
-                         "did not stick. See the log for which.", "", keys.size()),
-                      ToastSeverity::Warning, 8000);
-        });
+                [this](const QStringList& keys) { showOfflineEditsToast(keys.size()); });
+        // Settings persistence audit (W11): the same message for the applet
+        // and slice properties. The settings snapshot lands first, moments
+        // before the state snapshot, so the two add up to one toast.
+        connect(m_stationClient, &StationClient::linkDownEditsSuperseded, this,
+                [this](const QStringList& keys) { showOfflineEditsToast(keys.size()); });
 
         // Task 19: the Disconnect side must pass attemptReconnect = false so a
         // deliberate quit does not schedule a surprise redial during teardown.
@@ -5120,6 +5150,18 @@ void MainWindow::disconnectFromStation()
     m_stationDisconnectRequested = false;
     clearStationLinkToastMemory();
     showToast(tr("Disconnected from the Core"), ToastSeverity::Info, 3000);
+}
+
+void MainWindow::showOfflineEditsToast(int count)
+{
+    if (m_offlineEditsToast) {
+        count += m_offlineEditsToastCount;
+        m_offlineEditsToast->close();
+    }
+    m_offlineEditsToastCount = count;
+    m_offlineEditsToast = showToast(tr("%n Core setting(s) you changed while the link was down "
+                                       "did not stick. See the log for which.", "", count),
+                                    ToastSeverity::Warning, 8000);
 }
 
 void MainWindow::clearStationLinkToastMemory()
@@ -6342,6 +6384,114 @@ void MainWindow::refreshAutoAgcVisuals(RadioModel* model, SliceModel* slice,
     }
 }
 
+namespace {
+
+// The bottom bar's menu icon: whether the container panel is hidden, and in
+// the classic look the splitter sizes to show it at again. The workspace look
+// keeps its width in the arrangement while the strip is collapsed; a hidden
+// pane's width saves as 0 in the classic look, so it needs its own record.
+constexpr auto kContainerPanelHiddenKey = "ContainerPanelHidden";
+constexpr auto kContainerPanelSizesKey = "ContainerPanelSizesBeforeHide";
+
+} // namespace
+
+bool MainWindow::containerPanelHidden() const
+{
+    if (m_edgeDockArea) {
+        return m_edgeDockArea->userCollapsed(DockEdge::Right);
+    }
+    return m_mainSplitter && m_mainSplitter->count() >= 2
+        && m_mainSplitter->widget(1)->isHidden();
+}
+
+void MainWindow::applyContainerPanelHidden(bool hidden)
+{
+    if (m_edgeDockArea) {
+        // Workspace preview: collapse the right strip, keep its contents.
+        m_edgeDockArea->setUserCollapsed(DockEdge::Right, hidden);
+    } else {
+        // Toggle QSplitter right pane (index 1) visibility.
+        if (!m_mainSplitter || m_mainSplitter->count() < 2) { return; }
+        QWidget* rightPane = m_mainSplitter->widget(1);
+        if (hidden) {
+            rightPane->hide();
+        } else {
+            // Show: restore saved sizes (or default 80/20 if none saved)
+            rightPane->show();
+            if (!m_splitterSizesBeforeHide.isEmpty()) {
+                m_mainSplitter->setSizes(m_splitterSizesBeforeHide);
+            } else {
+                m_mainSplitter->setSizes({1024, 256});
+            }
+        }
+    }
+    if (m_panelToggleLabel) {
+        m_panelToggleLabel->setStyleSheet(hidden
+            ? QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 16px; }")
+            : QStringLiteral("QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
+    }
+}
+
+void MainWindow::toggleContainerPanel()
+{
+    const bool hidden = !containerPanelHidden();
+    auto& s = AppSettings::instance();
+    if (hidden && !m_edgeDockArea && m_mainSplitter) {
+        // Hide: save current sizes, then collapse right to 0
+        m_splitterSizesBeforeHide = m_mainSplitter->sizes();
+        QStringList parts;
+        for (int size : std::as_const(m_splitterSizesBeforeHide)) {
+            parts << QString::number(size);
+        }
+        s.setValue(QLatin1String(kContainerPanelSizesKey), parts.join(QLatin1Char(',')));
+    }
+    applyContainerPanelHidden(hidden);
+    s.setValue(QLatin1String(kContainerPanelHiddenKey),
+               hidden ? QStringLiteral("True") : QStringLiteral("False"));
+}
+
+void MainWindow::restoreContainerPanelHidden()
+{
+    auto& s = AppSettings::instance();
+    if (s.value(QLatin1String(kContainerPanelHiddenKey), QStringLiteral("False")).toString()
+        != QStringLiteral("True")) {
+        return;
+    }
+    if (!m_edgeDockArea && m_mainSplitter) {
+        const QStringList parts = s.value(QLatin1String(kContainerPanelSizesKey), QString())
+                                      .toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+        QVector<int> sizes;
+        for (const QString& part : parts) {
+            sizes << part.toInt();
+        }
+        // None usable: showing it falls back to the default split.
+        if (sizes.size() == m_mainSplitter->count() && sizes.last() > 0) {
+            m_splitterSizesBeforeHide = sizes;
+        }
+    }
+    applyContainerPanelHidden(true);
+}
+
+void MainWindow::syncZoomBarToActivePan()
+{
+    const SpectrumWidget* pan = activeSpectrumWidget();
+    if (!m_zoomBar || !pan) { return; }
+    const QSignalBlocker blocker(m_zoomBar);
+    // A span outside the slider's range pins the thumb at that end.
+    m_zoomBar->setValue(qBound(m_zoomBar->minimum(), qRound(pan->bandwidth() / 1000.0),
+                               m_zoomBar->maximum()));
+}
+
+void MainWindow::reloadSpotDisplaySettingsOnAllPans()
+{
+    if (!m_panStack) { return; }
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (applet && applet->spectrumWidget()) {
+            applet->spectrumWidget()->loadSpotDisplaySettings();
+        }
+    }
+}
+
 void MainWindow::refreshFftPoolConfig()
 {
     if (!m_fftEnginePool) { return; }
@@ -6394,6 +6544,37 @@ void MainWindow::refreshFftPoolConfig()
     cfg.fftSize = sizing.baseline();
     cfg.hzPerBinTarget = sizing.hzPerBinTarget;
     m_fftEnginePool->setConfigForNewStreams(cfg);
+    applyDecimationFromSettings();
+}
+
+void MainWindow::applyDecimationFromSettings()
+{
+    if (!m_fftEnginePool) { return; }
+    const bool remote = m_radioModel && !m_radioModel->ownsLocalDsp();
+    if (remote && !(m_stationClient && m_stationClient->spectrumDecimationAvailable())) {
+        return;
+    }
+    auto& s = AppSettings::instance();
+    const QString stored = s.value(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                                   QString::number(ControlRanges::kDisplayDecimationDefault))
+                               .toString();
+    bool ok = false;
+    int decimation = stored.toInt(&ok);
+    // As for DisplayFftSize above: the default is used, and the key, this
+    // device's own, is put right.
+    if (!ok || decimation < ControlRanges::kDisplayDecimationMin
+        || decimation > ControlRanges::kDisplayDecimationMax) {
+        decimation = ControlRanges::kDisplayDecimationDefault;
+        qCWarning(lcSpectrum) << "Stored" << ControlRanges::kDisplayDecimationKey << stored
+                              << "is not a decimation; using" << decimation;
+        s.setValue(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                   QString::number(decimation));
+    }
+    if (decimation != m_fftEnginePool->decimation()) {
+        m_fftEnginePool->setDecimation(decimation);
+        // Each local pan's hold length follows its engine's decimation.
+        refreshLocalFftShapes();
+    }
 }
 
 // ── Phase 3F Sub-Epic I Task 8: one FFTEngine per DDC stream ────────────────
@@ -7760,6 +7941,9 @@ void MainWindow::wireSpectrumForPan(SpectrumWidget* sw, const QString& panId)
 {
     if (!sw || !m_radioModel) { return; }
 
+    // A new pan starts from the saved spot settings, not the widget's defaults.
+    sw->loadSpotDisplaySettings();
+
     // iPhone app plan Task 78: other devices' slices on this pan, and what a
     // click on one's label says.
     connect(sw, &SpectrumWidget::foreignMarkerClicked, this,
@@ -8020,18 +8204,49 @@ void MainWindow::applyDisplayFps(int fps)
     // The engine's own clamp (FftEnginePool::setOutputFps).
     fps = qBound(1, fps, 60);
     m_fftEnginePool->setOutputFps(fps);
-    // Each pan draws at the rate its rows arrive.
-    if (m_panStack) {
-        for (PanadapterApplet* applet : m_panStack->allApplets()) {
-            if (SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr) {
-                sw->setDisplayFps(fps);
-            }
-        }
-    }
     AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
                                      QString::number(fps));
+    applyWindowPaintFps();
     refreshDisplayPillFftStates();
     emit stationFftSettingsChanged();
+}
+
+int MainWindow::windowPaintFps() const
+{
+    const AppSettings& s = AppSettings::instance();
+    if (m_radioModel && !m_radioModel->ownsLocalDsp()) {
+        return readDisplayPaintFps(s);
+    }
+    return qBound(1,
+        s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
+                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
+        60);
+}
+
+void MainWindow::applyWindowPaintFps()
+{
+    if (!m_panStack) { return; }
+    const int fps = windowPaintFps();
+    // Each pan draws at the rate its rows arrive.
+    for (PanadapterApplet* applet : m_panStack->allApplets()) {
+        if (SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr) {
+            sw->setDisplayFps(fps);
+        }
+    }
+}
+
+void MainWindow::applyDisplayPillFps(int fps)
+{
+    if (m_radioModel && m_radioModel->ownsLocalDsp()) {
+        applyDisplayFps(fps);
+        return;
+    }
+    // A window on a Core: its own rate, saved in its own file. The Core's
+    // rate is Setup's to set, and the pan requests follow on their own.
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplayPaintFpsKey),
+                                     QString::number(qBound(1, fps, 60)));
+    applyWindowPaintFps();
+    refreshDisplayPillFftStates();
 }
 
 void MainWindow::applyDisplayFftWindow(int windowType)
@@ -8086,6 +8301,8 @@ void MainWindow::applyDisplayDecimation(int decimation)
     // decimation the Core runs when the Core's answer arrives
     // (SpectrumWidget::setRemoteDecimation, from the accepted context).
     m_fftEnginePool->setDecimation(decimation);
+    AppSettings::instance().setValue(QLatin1String(ControlRanges::kDisplayDecimationKey),
+                                     QString::number(decimation));
     // Each local pan's hold length follows its engine's decimation.
     refreshLocalFftShapes();
     emit stationFftSettingsChanged();
@@ -8101,17 +8318,14 @@ DisplayPillFftState MainWindow::displayPillFftState(const QString& panId) const
     state.sizingMode = sizing.mode;
     state.baselineSize = sizing.storedSize;
     state.lastHzPerBinTarget = sizing.lastHzPerBinTarget;
-    state.fps = qBound(1,
-        s.value(QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
-        60);
+    state.fps = windowPaintFps();
     state.windowType = qBound(0,
         s.value(QLatin1String(ControlRanges::kDisplayFftWindowKey),
                 QString::number(ControlRanges::kDisplayFftWindowDefault)).toString().toInt(),
         static_cast<int>(WindowFunction::Count) - 1);
     // Above 0 in HzPerBin only.
     state.hzPerBinTarget = sizing.hzPerBinTarget;
-    // Decimation has no key: it is what the engines were last given.
+    // Decimation: what the engines hold, which is the saved value.
     state.decimation = m_fftEnginePool ? m_fftEnginePool->decimation()
                                        : ControlRanges::kDisplayDecimationDefault;
 
@@ -8489,6 +8703,17 @@ void MainWindow::ensureOverlayPanels()
             if (m_fftEnginePool && sizingKey) {
                 applyFftSizingFromSettings(/*replan=*/false);
             }
+            // Decimation is this device's own, so no Core value is followed. The
+            // whole snapshot is when a Core's control becomes reachable, and the
+            // value saved here is what the next request for each pan carries.
+            if (key.isEmpty()) {
+                applyDecimationFromSettings();
+            }
+            // A window with no rate of its own paints at the Core's. One
+            // with its own reads the same number again and stays.
+            if (key.isEmpty() || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
+                applyWindowPaintFps();
+            }
             if (sizingKey
                 || key == QLatin1String(ControlRanges::kDisplayFftWindowKey)
                 || key == QLatin1String(ControlRanges::kDisplaySpectrumFpsKey)) {
@@ -8548,6 +8773,11 @@ void MainWindow::ensureOverlayPanels()
         // of all the stream's pans from the widgets.
         connect(sw, &SpectrumWidget::bandwidthChangeRequested, this,
                 [this, panId](double) { replanFftForPan(panId); });
+
+        // The zoom slider under the pans follows the active pan's span.
+        connect(sw, &SpectrumWidget::viewSpanChanged, this, [this, sw](double) {
+            if (sw == activeSpectrumWidget()) { syncZoomBarToActivePan(); }
+        });
 
         // Parity Task 31 (A11): the keyed trace's calibration
         // (SpectrumWidget::displayCalOffsetDb; Thetis display.cs:4820-4850
@@ -8695,7 +8925,7 @@ void MainWindow::wirePanDisplayFlyout(SpectrumOverlayPanel* panel, SpectrumWidge
         [this](ControlRanges::DisplayFftSizingMode mode, double hzPerBinIfNoneRemembered) {
             applyDisplayFftSizingMode(mode, hzPerBinIfNoneRemembered);
         };
-    hooks.applyFps = [this](int fps) { applyDisplayFps(fps); };
+    hooks.applyFps = [this](int fps) { applyDisplayPillFps(fps); };
     hooks.applyWindowType = [this](int windowType) { applyDisplayFftWindow(windowType); };
     hooks.applyHzPerBinTarget = [this](double hz) { applyDisplayHzPerBinTarget(hz); };
     hooks.applyDecimation = [this](int decimation) { applyDisplayDecimation(decimation); };
@@ -9795,6 +10025,13 @@ void MainWindow::buildUI()
         m_panStack->applyLayout(restoredLayout, panIdsForLayout(restoredLayout));
         m_panStack->restoreSplitterState();
 
+        // Pans left floating last session go back out, a tick later so the
+        // main window they are parented to is up first, as it is for every
+        // float made from a menu.
+        QTimer::singleShot(0, this, [this]() {
+            if (m_panStack && !m_shuttingDown) { m_panStack->restoreFloatingPans(); }
+        });
+
         // ...and finish the job once there IS a radio. Skipping the slice
         // add-loop above is right, but nothing used to pick it up afterwards,
         // so a persisted 2v layout came back with pan-1 permanently dead: no
@@ -9940,6 +10177,12 @@ void MainWindow::buildUI()
         activeSpectrumWidget()->setFrequencyRange(activeSpectrumWidget()->centerFrequency(), bwHz);
         emit activeSpectrumWidget()->bandwidthChangeRequested(bwHz);
     });
+    m_zoomBar = zoomBar;
+    connect(m_panStack, &PanadapterStack::activePanChanged, this,
+            [this](const QString&) { syncZoomBarToActivePan(); });
+    // After the saved span is in and the first wiring has judged it.
+    syncZoomBarToActivePan();
+    QTimer::singleShot(0, this, [this]() { syncZoomBarToActivePan(); });
 
     m_mainSplitter->addWidget(spectrumPane);
 
@@ -11059,11 +11302,7 @@ void MainWindow::buildUI()
     // on the same display knobs, including ones created later.  Only the
     // SpectrumWidget half is left here.
     {
-        const int persistedFps = qBound(1,
-            AppSettings::instance().value(
-                QLatin1String(ControlRanges::kDisplaySpectrumFpsKey),
-                QString::number(ControlRanges::kDisplaySpectrumFpsDefault)).toString().toInt(),
-            60);
+        const int persistedFps = windowPaintFps();
         if (activeSpectrumWidget()) {
             activeSpectrumWidget()->setDisplayFps(persistedFps);
         }
@@ -11517,15 +11756,21 @@ void MainWindow::buildUI()
     // that status from its station wiring; this is the same notice through
     // the same toast for a window with no Core, so a closure is never silent.
     if (!m_station.isRemote()) {
+        // The status is read when it changes and shown a turn later: read then,
+        // a closure was replaced by a "stays saved" of the same connect, and the
+        // operator saw only the second.
         connect(m_radioModel, &RadioModel::receiveLayoutRestoreStatusChanged, this,
                 [this] {
-            const QString toast = m_receiveLayoutNotices.toastFor(
-                m_radioModel->receiveLayoutRestoreState(),
-                m_radioModel->receiveLayoutRestoreMessage(), /*viaCore*/ false);
-            if (!toast.isEmpty()) {
-                showToast(toast, ToastSeverity::Warning, 10000);
-            }
-        }, Qt::QueuedConnection);
+            const QString state = m_radioModel->receiveLayoutRestoreState();
+            const QString message = m_radioModel->receiveLayoutRestoreMessage();
+            QMetaObject::invokeMethod(this, [this, state, message] {
+                const QString toast =
+                    m_receiveLayoutNotices.toastFor(state, message, /*viaCore*/ false);
+                if (!toast.isEmpty()) {
+                    showToast(toast, ToastSeverity::Warning, 10000);
+                }
+            }, Qt::QueuedConnection);
+        });
         // Each connect is told its own closures, even one worded exactly as
         // the last connect's.
         connect(m_radioModel, &RadioModel::connectionStateChanged, this,
@@ -14832,6 +15077,7 @@ void MainWindow::buildStatusBar()
     // We need to store the label pointer to recognise it in eventFilter.
     // Use a property to mark it.
     panelToggleLabel->setProperty("isPanelToggle", true);
+    m_panelToggleLabel = panelToggleLabel;
 
     // TNF light. Click toggles every notch at once; colour and tooltip follow
     // NotchModel::globalEnabled.
@@ -18553,38 +18799,10 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::MouseButtonPress) {
         auto* label = qobject_cast<QLabel*>(watched);
         if (label && label->property("isPanelToggle").toBool()) {
-            if (m_edgeDockArea) {
-                // Workspace preview: collapse the right strip, keep its contents.
-                const bool collapse = !m_edgeDockArea->userCollapsed(DockEdge::Right);
-                m_edgeDockArea->setUserCollapsed(DockEdge::Right, collapse);
-                label->setStyleSheet(collapse
-                    ? QStringLiteral("QLabel { color: #404858; font-weight: bold; font-size: 16px; }")
-                    : QStringLiteral("QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
-                return true;
-            }
-            // Toggle QSplitter right pane (index 1) visibility.
-            // Save/restore sizes so spectrum expands when panel is hidden.
-            if (!m_mainSplitter || m_mainSplitter->count() < 2) {
+            if (!m_edgeDockArea && (!m_mainSplitter || m_mainSplitter->count() < 2)) {
                 return QMainWindow::eventFilter(watched, event);
             }
-            QWidget* rightPane = m_mainSplitter->widget(1);
-            if (rightPane->isVisible()) {
-                // Hide: save current sizes, then collapse right to 0
-                m_splitterSizesBeforeHide = m_mainSplitter->sizes();
-                rightPane->hide();
-                label->setStyleSheet(QStringLiteral(
-                    "QLabel { color: #404858; font-weight: bold; font-size: 16px; }"));
-            } else {
-                // Show: restore saved sizes (or default 80/20 if none saved)
-                rightPane->show();
-                if (!m_splitterSizesBeforeHide.isEmpty()) {
-                    m_mainSplitter->setSizes(m_splitterSizesBeforeHide);
-                } else {
-                    m_mainSplitter->setSizes({1024, 256});
-                }
-                label->setStyleSheet(QStringLiteral(
-                    "QLabel { color: #8aa8c0; font-weight: bold; font-size: 16px; }"));
-            }
+            toggleContainerPanel();
             return true;  // event consumed
         }
     }
@@ -20548,11 +20766,7 @@ void MainWindow::openSpotHub()
         // NereusSDR shape lives on the widget so the test seam is local
         // (see tst_spothub_display_knobs).
         connect(m_spotHubDialog.data(), &SpotHubDialog::settingsChanged,
-                this, [this] {
-                    if (activeSpectrumWidget()) {
-                        activeSpectrumWidget()->loadSpotDisplaySettings();
-                    }
-                });
+                this, [this] { reloadSpotDisplaySettingsOnAllPans(); });
         // Defensive re-seed.  The primary seed runs at MainWindow startup
         // (see the QTimer::singleShot(0, ...) lambda earlier in this file
         // that pairs loadSpotDisplaySettings + restoreSpotClientAutoStartState),
@@ -20563,9 +20777,7 @@ void MainWindow::openSpotHub()
         // is now -- loadSpotDisplaySettings re-reads AppSettings and the
         // setter is no-op when the value is unchanged, so the cost is
         // bounded and the behaviour is correct either way.
-        if (activeSpectrumWidget()) {
-            activeSpectrumWidget()->loadSpotDisplaySettings();
-        }
+        reloadSpotDisplaySettingsOnAllPans();
 
         // Phase 3R K-bench (bench feedback): wire the FreeDV tab's
         // Start / Stop button signals to the actual client lifecycle.
@@ -20896,7 +21108,8 @@ void MainWindow::applyPanLayout(const QString& layoutId)
                 if (HostingSliceActions* hosting = hostingSlices()) {
                     hosting->addOnPan(emptyPan);
                 } else {
-                    m_radioModel->addSliceOnPan(emptyPan);
+                    m_radioModel->addSliceOnPan(emptyPan, /*restoreSavedState=*/false,
+                                                /*newReceiver=*/true);
                 }
             }
         }
@@ -20993,16 +21206,23 @@ void MainWindow::populatePanSlices(RadioModel* model, const QStringList& panIds,
     // Restoring a client layout is never permission to create station slices.
     // Capabilities report radio connectivity before slice snapshot hydration.
     if (!model->ownsLocalDsp() && (!operatorRequested || !snapshotReady)) { return; }
+    // A desktop's fill at connect brings back the radio's saved layout (JJ's
+    // ruling 2026-11-05). With one, a pan left empty was empty when saved: only
+    // what was open comes back. A layout change is not a restore.
+    if (!operatorRequested && !hosting && model->restoreDesktopLayoutSlices(panIds)) {
+        return;
+    }
     for (const QString& emptyPan : model->pansWithoutSlices(panIds)) {
         // Slice control plan Task 11: a hosting window's new slice is the
         // station device's, asked for the way its +RX asks.
+        // Not asked for is the fill at connect, which brings back a saved
+        // layout's receiver and keeps its RIT and XIT. Asked for is a new
+        // receiver: a copy of the slice the operator is on, with RIT and XIT
+        // off and nothing from the letter.
         if (hosting) {
-            hosting->addOnPan(emptyPan);
+            hosting->addOnPan(emptyPan, !operatorRequested);
         } else {
-            // A saved letter comes back whether or not the operator asked
-            // for the slice. addSliceImpl restores it. A letter with
-            // nothing saved still opens on the active slice.
-            model->addSliceOnPan(emptyPan, !operatorRequested);
+            model->addSliceOnPan(emptyPan, !operatorRequested, operatorRequested);
         }
     }
 }
@@ -22018,6 +22238,7 @@ void MainWindow::closeEvent(QCloseEvent* event)
         // never reached the disk. Codex, PR #318.
         m_panStack->saveFloatingGeometry();
     }
+    m_closeSavesDone = true;
 
     // Issue #206 — persist window geometry + maximized/fullscreen
     // state. Captured BEFORE close so the saved blob reflects the

@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: applyDisplayPillFps(), windowPaintFps(), applyWindowPaintFps():
+//               each window on a Core keeps its own paint rate. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector's routing: toggleRoundtableInspector,
 //               showOwnRoundtableInspector, the fold's list and the short menu.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -321,6 +324,7 @@
 #include "gui/roundtable/RoundtableTagLayout.h"
 
 class QProgressDialog;
+class QSlider;
 class QSplitter;
 class QMenu;
 class QDialog;
@@ -509,8 +513,14 @@ public:
     /// every pan's Display pill up to date. A value out of range, or a
     /// station that cannot be reached, changes nothing. In a remote window
     /// the key goes to the Core and the pan requests follow on their own.
-    /// Frames per second, also every pan's own drawing rate.
+    /// Frames per second, also every pan's own drawing rate. On a Core this
+    /// is the Core's one shared rate, and a window that has its own keeps
+    /// drawing at that.
     void applyDisplayFps(int fps);
+    /// The Display pill's FPS. Direct to a radio, applyDisplayFps. In a window
+    /// on a Core, that window's own rate (DisplayPaintFps), which writes
+    /// nothing to the Core.
+    void applyDisplayPillFps(int fps);
     /// A ControlRanges::kDisplayFftWindows value.
     void applyDisplayFftWindow(int windowType);
     /// The Hz/bin control's value, through the sizing mode: above 0 sets
@@ -1105,6 +1115,9 @@ private slots:
     /// these." while disconnected, "The Core has not sent its settings."
     /// while connected without them).
     bool stationSettingsAvailable() const;
+    /// The rate this window's pans draw at, and every pan is told it.
+    int windowPaintFps() const;
+    void applyWindowPaintFps();
     QString stationSettingsReason() const;
     // Parity Task 19 (R-IOS-25, B7.2): the Spot Hub's Core settings and the
     // station's spot sources, available or disabled with a reason.
@@ -1434,6 +1447,27 @@ private:
     /// reasoning.
     void refreshFftPoolConfig();
 
+    /// The spot settings are global, so every pan reads them again, as the
+    /// Spot Hub's own Spots switch already has every pan do.
+    void reloadSpotDisplaySettingsOnAllPans();
+
+    /// Give the pool the saved Decimation, range checked. A Core with no
+    /// decimation control has nothing for this window to keep.
+    void applyDecimationFromSettings();
+
+    /// The zoom slider under the pans shows the active pan's span. Only ever
+    /// moves the thumb; the slider's own signal is blocked, so following
+    /// never writes a span.
+    void syncZoomBarToActivePan();
+
+    /// The bottom bar's menu icon. Hidden or shown is saved at the click and
+    /// comes back at startup, in both looks: the workspace look collapses the
+    /// right strip, the classic look hides the splitter's right pane.
+    bool containerPanelHidden() const;
+    void applyContainerPanelHidden(bool hidden);
+    void toggleContainerPanel();
+    void restoreContainerPanelHidden();
+
 
     /// R1 Task 6: wires a pool-provided engine into MainWindow's other
     /// subsystems the first time streamIndex is seen -- the raw I/Q feed
@@ -1760,6 +1794,10 @@ private:
     QString m_lastReconnectToastReason;
     bool m_stationLinkLostSeen{false};
     bool m_reconnectToastSeen{false};
+    /// The toast for edits lost to the link being down, while it is up, and
+    /// the count it shows, so a later report from the same outage adds to it.
+    QPointer<class StatusToast> m_offlineEditsToast;
+    int m_offlineEditsToastCount{0};
     bool m_stationDisconnectRequested{false};
     bool m_initialConnectionStarted{false};
     bool m_retiringSession{false};
@@ -2055,6 +2093,10 @@ private:
     // stop flag and runs a fresh ~5 s NIC walk on the main thread mid-
     // close. Symptom: ⌘Q beach-balls for the full SafeDefault scan time.
     bool m_shuttingDown{false};
+    // closeEvent has handed the layout and display values to AppSettings. By
+    // the aboutToQuit that follows the window is hidden and the radio gone,
+    // so that handler leaves them as they were.
+    bool m_closeSavesDone{false};
 
     // Container infrastructure (Phase 3G-1)
     ContainerManager* m_containerManager{nullptr};
@@ -2155,7 +2197,9 @@ private:
     // System-CPU delta state (host_processor_info). Same reset rule as above.
     quint64 m_cpuSysPrevTotal{0};
     quint64 m_cpuSysPrevIdle{0};
+    QSlider* m_zoomBar{nullptr};             // the slider under the pans
     QVector<int> m_splitterSizesBeforeHide;  // saved splitter sizes for ☰ toggle
+    QLabel* m_panelToggleLabel{nullptr};     // the ☰ itself, dimmed while hidden
 
     // Status bar safety indicators (Phase 3M-0 Task 14 / sub-PR-8 restyle;
     // reserved safety slots added per design §4.5).
@@ -2428,6 +2472,7 @@ private:
 
 
 
+    void showOfflineEditsToast(int count);
     /// Show a transient notice without disturbing the bottom bar.
     /// Repeats of a message already on screen restart that toast's
     /// countdown instead of stacking a duplicate beneath it.

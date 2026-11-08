@@ -147,6 +147,18 @@ struct MainScreenTests {
         #expect(!model.audioMuted)
     }
 
+    @Test("Mute this phone is still set after a relaunch, and the Core is asked for no sound")
+    func muteComesBack() throws {
+        let defaults = try #require(UserDefaults(suiteName: "MainScreenTests-\(UUID().uuidString)"))
+        let settings = PhoneSettings(defaults: defaults)
+        let model = AppModel(phoneSettings: settings)
+        #expect(!model.audioMuted)
+        model.setAudioMuted(true)
+        #expect(AppModel(phoneSettings: PhoneSettings(defaults: defaults)).audioMuted)
+        model.setAudioMuted(false)
+        #expect(!AppModel(phoneSettings: PhoneSettings(defaults: defaults)).audioMuted)
+    }
+
     // MARK: The RX panel
 
     @Test("the RX panel shows the Core's values with the catalogue's ranges and lists")

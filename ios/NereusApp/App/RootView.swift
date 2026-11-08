@@ -26,6 +26,7 @@ struct RootView: View {
     /// The Setup tab's stack, so the Display sheet can open Display's page.
     @StateObject private var setupRouter: SetupRouter
     @StateObject private var toolsRouter = ToolsRouter()
+    @StateObject private var radioRouter = RadioRouter()
     @StateObject private var txSettingsRouter = TxSettingsRouter()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// A drag on the tab bar is the swipe up, or nothing of the swipes'.
@@ -86,6 +87,39 @@ struct RootView: View {
         model.phoneNavigation = Self.navigation(setupRouter: setupRouter, toolsRouter: toolsRouter,
                                                 selectSetup: { selection = .setup },
                                                 selectTools: { selection = .tools })
+        let flow = flow
+        Self.keepPlaces(setupRouter: setupRouter, toolsRouter: toolsRouter, radioRouter: radioRouter,
+                        settings: model.phoneSettings, onBand: { [weak flow] in flow?.screen == .band })
+    }
+
+    /// Each router's page, kept on this phone as it changes while the tabs
+    /// show: nothing on Your Cores or any other connecting screen touches them.
+    static func keepPlaces(setupRouter: SetupRouter, toolsRouter: ToolsRouter, radioRouter: RadioRouter,
+                           settings: PhoneSettings, onBand: @escaping @MainActor () -> Bool) {
+        setupRouter.keep = { [weak settings] path in
+            guard onBand() else { return }
+            settings?.navSetup = path.map(SavedPlaces.stored)
+        }
+        toolsRouter.keep = { [weak settings] route in
+            guard onBand() else { return }
+            settings?.navTools = SavedPlaces.stored(route)
+        }
+        radioRouter.keep = { [weak settings] route in
+            guard onBand() else { return }
+            settings?.navRadio = route.map(SavedPlaces.stored)
+        }
+    }
+
+    /// A session reached ready and the tabs appear: back where the operator was.
+    private func restorePlaces() {
+        guard model.connection == .connected else { return }
+        let settings = model.phoneSettings
+        if let tab = settings.navTab {
+            selection = tab
+        }
+        setupRouter.restore(SavedPlaces.setupPath(settings.navSetup))
+        toolsRouter.restore(SavedPlaces.toolsRoute(settings.navTools))
+        radioRouter.restore(SavedPlaces.radioRoute(settings.navRadio))
     }
 
     var body: some View {
@@ -103,6 +137,8 @@ struct RootView: View {
                 }
             case .cores:
                 YourStationsScreen(flow: flow)
+            case .connectingOnOpen:
+                ConnectingOnOpenScreen(flow: flow)
             case .typeAddress:
                 TypeAddressScreen(flow: flow)
             case .addresses:
@@ -180,6 +216,12 @@ struct RootView: View {
         .onAppear {
             txSettingsRouter.selectModes = { selection = .modes }
             txSettingsRouter.selectPanadapter = { selection = .panadapter }
+            restorePlaces()
+        }
+        .onChange(of: selection) { _, tab in
+            if flow.screen == .band {
+                model.phoneSettings.navTab = tab
+            }
         }
         // Keep the screen on counts only while the band itself is showing.
         .onChange(of: selection, initial: true) { _, tab in
@@ -309,7 +351,7 @@ struct RootView: View {
             ToolsTab(app: model, flow: flow, spots: model.spots,
                      router: toolsRouter, isActive: selection == .tools)
         case .radio:
-            RadioView(app: model, main: model.main, flow: flow, isActive: selection == .radio)
+            RadioView(app: model, main: model.main, flow: flow, isActive: selection == .radio, router: radioRouter)
         case .modes:
             ModesTab(app: model, main: model.main, flow: flow, txRouter: txSettingsRouter)
         }

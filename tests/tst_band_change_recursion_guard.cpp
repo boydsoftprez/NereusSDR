@@ -62,6 +62,7 @@ private:
         }
         const QString sp = QStringLiteral("Slice0/");
         for (const QString& field : {
+                 QStringLiteral("StepHz"),
                  QStringLiteral("Locked"),     QStringLiteral("Muted"),
                  QStringLiteral("RitEnabled"), QStringLiteral("RitHz"),
                  QStringLiteral("XitEnabled"), QStringLiteral("XitHz"),

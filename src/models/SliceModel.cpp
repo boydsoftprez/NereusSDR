@@ -9,6 +9,15 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
+//                letter used before too; a restored receiver keeps its own.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
+//   2026-11-06 - A new receiver is a copy of the slice the operator is on:
+//                copyReceiverSettingsFrom, copyFilterMemoryFrom,
+//                setDspModeForNewReceiver, loadAudioRoutingFromSettings.
+//                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude.
 //   2026-10-29 - Restore receiver preferences separately from fresh-slice
 //                VFO seeding; skip saved frequency, mode, filter and rate when
 //                restoreTuning is false. NereusSDR-original. J.J. Boyd
@@ -156,6 +165,21 @@
 //                                    Claude Code.
 //   2026-09-27 - R-R3-49: savedSampleRateHz, the rate saved for a band,
 //                read at connect. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - One sample rate per receiver on every band, so a band
+//                change leaves the rate alone (JJ's ruling). A new slice with
+//                a receiver of its own opens at the rate of the slice it was
+//                seeded from; a device's slice made again and a slice leaving
+//                a shared receiver keep theirs; a radio-wide change saves on
+//                each slice. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                Claude Code.
+//   2026-11-05 - The saved rate moves to hardware/<mac>/slices/<N>/SampleRate,
+//                one for each radio. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - One tune step per slice on every band, saved at
+//                Slice<N>/StepHz (JJ's ruling); a band change leaves it alone.
+//                Settings from before this supply the step of the band the
+//                slice was last on. NereusSDR-original. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
 //   2026-09-28 - Slice control and shared listening plan Task 5: the
 //                read-only listener mark; every setter of a property a
@@ -699,6 +723,12 @@ void SliceModel::applyRadeModeChange(DSPMode oldMode, DSPMode newMode)
     }
 }
 
+void SliceModel::setDspModeForNewReceiver(DSPMode mode)
+{
+    const QScopedValueRollback<bool> skip(m_skipFilterMemory, true);
+    setDspMode(mode);
+}
+
 void SliceModel::setDspMode(DSPMode mode)
 {
     if (isRade2DspMode(mode) && !(m_stationApplyProbe && m_stationApplyProbe())) {
@@ -754,7 +784,11 @@ void SliceModel::setDspMode(DSPMode mode)
     // shouldn't block on disk I/O.
     auto& s = AppSettings::instance();
     int low = 0, high = 0;
-    if (modeChanged) {
+    if (modeChanged && m_skipFilterMemory) {
+        const auto pair = defaultFilterForMode(mode);
+        low  = pair.first;
+        high = pair.second;
+    } else if (modeChanged) {
         const Band currentBand = bandFromFrequency(m_frequency);
         // 1. Save current filter under (currentBand, OLD mode)
         const QString oldPrefix =
@@ -2376,6 +2410,61 @@ void SliceModel::copyNoiseReductionFrom(const SliceModel& source)
     setActiveNr(source.activeNr());
 }
 
+void SliceModel::copyReceiverSettingsFrom(const SliceModel& source)
+{
+    if (this == &source) {
+        return;
+    }
+    setFilter(source.filterLow(), source.filterHigh());
+    // Same order as restoreFromSettings: the threshold before AGC-T AUTO.
+    setAgcThreshold(source.agcThreshold());
+    setAgcHang(source.agcHang());
+    setAgcSlope(source.agcSlope());
+    setAgcAttack(source.agcAttack());
+    setAgcDecay(source.agcDecay());
+    setAutoAgcEnabled(source.autoAgcEnabled());
+    setAutoAgcOffset(source.autoAgcOffset());
+    setAgcFixedGain(source.agcFixedGain());
+    setAgcHangThreshold(source.agcHangThreshold());
+    setAgcMaxGain(source.agcMaxGain());
+    setAgcMode(source.agcMode());
+    // rfGain is the AGC-T, the WDSP AGC top (setRfGain).
+    setRfGain(source.rfGain());
+    setStepHz(source.stepHz());
+    setAfGain(source.afGain());
+    setNbMode(source.nbMode());
+    setNb1Threshold(source.nb1Threshold());
+    setNb1TransitionMs(source.nb1TransitionMs());
+    setNb1LeadMs(source.nb1LeadMs());
+    setNb1LagMs(source.nb1LagMs());
+    setNb2Mode(source.nb2Mode());
+    setSnbK1(source.snbK1());
+    setSnbK2(source.snbK2());
+    setSnbOutputBandwidthHz(source.snbOutputBandwidthHz());
+    // Each threshold before its enable, as restoreFromSettings does.
+    setSsqlThresh(source.ssqlThresh());
+    setSsqlEnabled(source.ssqlEnabled());
+    setAmsqThresh(source.amsqThresh());
+    setAmsqEnabled(source.amsqEnabled());
+    setFmsqThresh(source.fmsqThresh());
+    setFmsqEnabled(source.fmsqEnabled());
+    // These go with the mode: a DIGU copy with the seed's filter and a zero
+    // offset does not demodulate the same. Audio pan, binaural and diversity
+    // stay at their defaults.
+    setDiglOffsetHz(source.diglOffsetHz());
+    setDiguOffsetHz(source.diguOffsetHz());
+    setRttyMarkHz(source.rttyMarkHz());
+    setRttyShiftHz(source.rttyShiftHz());
+    setApfTuneHz(source.apfTuneHz());
+    setApfEnabled(source.apfEnabled());
+    setFmCtcssMode(source.fmCtcssMode());
+    setFmCtcssValueHz(source.fmCtcssValueHz());
+    setFmOffsetHz(source.fmOffsetHz());
+    setFmTxMode(source.fmTxMode());
+    setFmReverse(source.fmReverse());
+    copyNoiseReductionFrom(source);
+}
+
 // NR1
 void SliceModel::setNr1Taps(int v)
 {
@@ -3500,16 +3589,60 @@ bool SliceModel::hasSettingsFor(Band band) const
     return s.contains(bandPrefix(m_sliceIndex, band) + QStringLiteral("DspMode"));
 }
 
-int SliceModel::savedSampleRateHz(Band band) const
+QString SliceModel::sampleRateSettingsKey() const
+{
+    // Per radio, beside the NNR keys: one computer can run several radios, and
+    // each has its own rates. With no radio known there is no key.
+    if (m_settingsRadioMac.isEmpty() || m_sliceIndex < 0) {
+        return {};
+    }
+    return QStringLiteral("hardware/%1/slices/%2/SampleRate")
+        .arg(m_settingsRadioMac)
+        .arg(m_sliceIndex);
+}
+
+int SliceModel::savedSampleRateHz() const
 {
     auto& s = AppSettings::instance();
-    const QString key = bandPrefix(m_sliceIndex, band) + QStringLiteral("SampleRate");
-    if (!s.contains(key)) {
-        return 0;
+    QString key = sampleRateSettingsKey();
+    if (key.isEmpty() || !s.contains(key)) {
+        // Saved before a receiver had one rate: the rate from the band it was
+        // last on. The first save with a radio known replaces this with the
+        // key above.
+        const auto lastBand = loadLastBandFromSettings(m_sliceIndex);
+        if (!lastBand) {
+            return 0;
+        }
+        key = bandPrefix(m_sliceIndex, *lastBand) + QStringLiteral("SampleRate");
+        if (!s.contains(key)) {
+            return 0;
+        }
     }
     bool ok = false;
     const int rate = s.value(key).toInt(&ok);
     return ok && rate > 0 ? rate : 0;
+}
+
+void SliceModel::restoreFromSettingsForBandChange(Band band)
+{
+    const QScopedValueRollback<bool> keepStep(m_keepStepOnRestore, true);
+    restoreFromSettings(band);
+}
+
+void SliceModel::restoreStepFromSettings(Band band)
+{
+    auto& s = AppSettings::instance();
+    QString key = slicePrefix(m_sliceIndex) + QStringLiteral("StepHz");
+    if (!s.contains(key)) {
+        // Saved before a slice had one step: the step of the band it was last
+        // on, or with no LastBand in the file, of the band being restored. The
+        // first save writes the key above; the older values stay on disk.
+        const Band olderBand = loadLastBandFromSettings(m_sliceIndex).value_or(band);
+        key = bandPrefix(m_sliceIndex, olderBand) + QStringLiteral("StepHz");
+    }
+    if (s.contains(key)) {
+        setStepHz(s.value(key).toInt());
+    }
 }
 
 QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
@@ -3540,7 +3673,12 @@ QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
     }
     values.append({bp + QStringLiteral("DspMode"),      static_cast<int>(m_dspMode)});
     values.append({bp + QStringLiteral("AgcMode"),      static_cast<int>(m_agcMode)});
-    values.append({bp + QStringLiteral("StepHz"),       m_stepHz});
+    // One step per slice, on every band (JJ's ruling, 2026-11-05), like the
+    // sample rate below. Here, not with the session keys in saveToSettings, so
+    // a coalesced save keeps the step it was scheduled for. Thetis keeps one
+    // step as well: tune_step_index (console.cs:1984 [v2.10.3.15]), saved as
+    // wheel_tune_index (console.cs:3205 [v2.10.3.15]).
+    values.append({slicePrefix(m_sliceIndex) + QStringLiteral("StepHz"), m_stepHz});
 
     // Noise-blanker mode (per-band). Tri-state Off/NB/NB2 mirrors Thetis
     // chkNB state per-receiver. NB TUNING (threshold / tau / lag / lead) is
@@ -3548,10 +3686,15 @@ QList<QPair<QString, QVariant>> SliceModel::captureBandSettings(Band band) const
     // SliceModel.h for the 2026-04-22 removal note.
     values.append({bp + QStringLiteral("NbMode"), static_cast<int>(m_nbMode)});
 
-    // Phase 3F: per-slice DDC sample rate, persisted per-band so each band
-    // can independently remember its preferred rate (e.g. 192 kHz on 40m,
-    // 1536 kHz on 10m for a wider pan). NereusSDR-original (no Thetis cite).
-    values.append({bp + QStringLiteral("SampleRate"), m_sampleRateHz});
+    // Phase 3F: per-slice DDC sample rate. One rate per receiver, on every band
+    // (JJ's ruling, 2026-11-05: it used to be per band, which put an old rate
+    // back on each band change). NereusSDR-original: Thetis has only Setup's
+    // rate, and a band change leaves it alone (setup.cs:7066 [v2.10.3.15]).
+    // Saved for each radio (hardware/<mac>/slices/<N>/SampleRate); with no radio
+    // known it is not saved.
+    if (const QString rateKey = sampleRateSettingsKey(); !rateKey.isEmpty()) {
+        values.append({rateKey, m_sampleRateHz});
+    }
 
     // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. The 8-memory
     // slots (T3) + direction-finding fields (T11) join this block when they
@@ -3712,6 +3855,54 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("LastBand"), bandKeyName(band));
 }
 
+void SliceModel::copyFilterMemoryFrom(const SliceModel& source, Band band)
+{
+    if (this == &source) {
+        return;
+    }
+    auto& s = AppSettings::instance();
+    for (int m = static_cast<int>(DSPMode::LSB); m <= static_cast<int>(DSPMode::RADE2_L); ++m) {
+        const DSPMode mode = static_cast<DSPMode>(m);
+        const QString from = bandModePrefix(source.m_sliceIndex, band, mode);
+        const QString to = bandModePrefix(m_sliceIndex, band, mode);
+        for (const QString& edge : {QStringLiteral("FilterLow"), QStringLiteral("FilterHigh")}) {
+            if (s.contains(from + edge)) {
+                s.setValue(to + edge, s.value(from + edge));
+            } else {
+                s.remove(to + edge);
+            }
+        }
+    }
+}
+
+void SliceModel::restoreRitXitFromSettings()
+{
+    auto& s = AppSettings::instance();
+    const QString sp = slicePrefix(m_sliceIndex);
+    if (s.contains(sp + QStringLiteral("RitEnabled"))) {
+        setRitEnabled(s.value(sp + QStringLiteral("RitEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("RitHz"))) {
+        setRitHz(s.value(sp + QStringLiteral("RitHz")).toInt());
+    }
+    if (s.contains(sp + QStringLiteral("XitEnabled"))) {
+        setXitEnabled(s.value(sp + QStringLiteral("XitEnabled")).toString() == QLatin1String("True"));
+    }
+    if (s.contains(sp + QStringLiteral("XitHz"))) {
+        setXitHz(s.value(sp + QStringLiteral("XitHz")).toInt());
+    }
+}
+
+void SliceModel::forgetSavedRitXit()
+{
+    auto& s = AppSettings::instance();
+    const QString sp = slicePrefix(m_sliceIndex);
+    s.remove(sp + QStringLiteral("RitEnabled"));
+    s.remove(sp + QStringLiteral("RitHz"));
+    s.remove(sp + QStringLiteral("XitEnabled"));
+    s.remove(sp + QStringLiteral("XitHz"));
+}
+
 void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
 {
     // Slice control plan Task 5: a band's saved state is a change a
@@ -3725,7 +3916,14 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
     // Each key: if absent, leave the current SliceModel default unchanged.
 
     if (restoreTuning && s.contains(bp + QStringLiteral("Frequency"))) {
-        setFrequency(s.value(bp + QStringLiteral("Frequency")).toDouble());
+        // A restore is not a tune. The Lock an earlier restore of this slice
+        // brought back must not veto its saved frequency (restoreReceiveState
+        // above assigns past it for the same reason). A band change on a
+        // locked slice never reaches here: RadioModel refuses it first.
+        const double savedFrequency = s.value(bp + QStringLiteral("Frequency")).toDouble();
+        if (!holdsListenerWrite(frequency(), savedFrequency)) {
+            applyFrequency(savedFrequency);
+        }
     }
     if (s.contains(bp + QStringLiteral("AgcThreshold"))) {
         setAgcThreshold(s.value(bp + QStringLiteral("AgcThreshold")).toInt());
@@ -3836,8 +4034,8 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
         setAgcMode(static_cast<AGCMode>(
             s.value(bp + QStringLiteral("AgcMode")).toInt()));
     }
-    if (s.contains(bp + QStringLiteral("StepHz"))) {
-        setStepHz(s.value(bp + QStringLiteral("StepHz")).toInt());
+    if (!m_keepStepOnRestore) {
+        restoreStepFromSettings(band);
     }
 
     // Noise blanker mode (per-band). Tuning keys (NbThreshold/NbTauMs/
@@ -3847,12 +4045,6 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
     if (s.contains(bp + QStringLiteral("NbMode"))) {
         setNbMode(static_cast<NereusSDR::NbMode>(
             s.value(bp + QStringLiteral("NbMode")).toInt()));
-    }
-
-    // Phase 3F: per-slice DDC sample rate (per-band). Default 192000 when key
-    // absent (new install or pre-3F settings file).
-    if (restoreTuning && s.contains(bp + QStringLiteral("SampleRate"))) {
-        setSampleRateHz(s.value(bp + QStringLiteral("SampleRate")).toInt());
     }
 
     // Phase 3F Sub-Epic G Task 2: per-band diversity tuning. Defaults match
@@ -4096,17 +4288,8 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
     if (s.contains(sp + QStringLiteral("Muted"))) {
         setMuted(s.value(sp + QStringLiteral("Muted")).toString() == QLatin1String("True"));
     }
-    if (s.contains(sp + QStringLiteral("RitEnabled"))) {
-        setRitEnabled(s.value(sp + QStringLiteral("RitEnabled")).toString() == QLatin1String("True"));
-    }
-    if (s.contains(sp + QStringLiteral("RitHz"))) {
-        setRitHz(s.value(sp + QStringLiteral("RitHz")).toInt());
-    }
-    if (s.contains(sp + QStringLiteral("XitEnabled"))) {
-        setXitEnabled(s.value(sp + QStringLiteral("XitEnabled")).toString() == QLatin1String("True"));
-    }
-    if (s.contains(sp + QStringLiteral("XitHz"))) {
-        setXitHz(s.value(sp + QStringLiteral("XitHz")).toInt());
+    if (restoreTuning) {
+        restoreRitXitFromSettings();
     }
     if (s.contains(sp + QStringLiteral("AfGain"))) {
         setAfGain(s.value(sp + QStringLiteral("AfGain")).toInt());
@@ -4261,8 +4444,9 @@ void SliceModel::migrateLegacyKeys()
         s.setValue(bp + QStringLiteral("AgcMode"),
                    s.value(QStringLiteral("VfoAgcMode")));
     }
+    // The step has no band part (2026-11-05).
     if (s.contains(QStringLiteral("VfoStepHz"))) {
-        s.setValue(bp + QStringLiteral("StepHz"),
+        s.setValue(sp + QStringLiteral("StepHz"),
                    s.value(QStringLiteral("VfoStepHz")));
     }
 
@@ -4454,6 +4638,11 @@ void SliceModel::setLastRadeRxCallsign(const QString& callsign)
 void SliceModel::loadFromSettings()
 {
     restoreNnrSettings();
+    loadAudioRoutingFromSettings();
+}
+
+void SliceModel::loadAudioRoutingFromSettings()
+{
     auto& s = AppSettings::instance();
 
     // ── VAX channel (Phase 3O) ────────────────────────────────────────────────

@@ -32,7 +32,7 @@ enum DisplayPillTab: String, CaseIterable {
 /// A row the phone draws itself: kept on this phone, or a Core value the
 /// description does not carry as a row (spec DC2, DC5).
 enum PhoneRow {
-    case spectrumHeight, lookBack, ctun, dup, decimation
+    case spectrumHeight, lookBack, ctun, dup, paintFps, decimation
 }
 
 /// One line of a tab: a group's caption, a row the Core describes (by the
@@ -217,9 +217,9 @@ enum DisplayPillRows {
         .setting(key: "DisplayFftSize"), // :3745
         .setting(key: "DisplayHzPerBinTarget"), // :3823
         .fftReadout, // :3854 (pillFftReadout)
-        .setting(key: "DisplaySpectrumFps"), // :3859
         .setting(key: "DisplayFftWindow"), // :3880
         .group("On this phone"),
+        .phone(.paintFps), // :3859 (this phone's own rate; Setup sets the Core's DisplaySpectrumFps)
         .phone(.decimation), // :3901 (DisplayDecimation)
     ]
 }
