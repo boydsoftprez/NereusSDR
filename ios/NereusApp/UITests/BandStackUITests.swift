@@ -878,7 +878,16 @@ final class BandStackUITests: XCTestCase {
     @MainActor
     private func tapWhenHittable(_ button: XCUIElement, timeout: TimeInterval, _ missing: String) {
         XCTAssertTrue(button.waitForExistence(timeout: timeout), missing)
-        XCTAssertTrue(waitUntil { button.exists && button.isHittable }, "\(button) is there but cannot be tapped")
+        guard waitUntil({ button.exists && button.isHittable }) else {
+            // What covers it, for a CI run that keeps no result bundle.
+            let app = XCUIApplication()
+            let picture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            picture.name = "cannot-tap-\(button.identifier)"
+            picture.lifetime = .keepAlways
+            add(picture)
+            XCTFail("\(button) is there but cannot be tapped. The screen:\n\(app.debugDescription)")
+            return
+        }
         button.tap()
     }
 
