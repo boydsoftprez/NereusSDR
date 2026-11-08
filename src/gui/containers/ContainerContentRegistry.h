@@ -33,6 +33,8 @@
 //                 type its content resolves to (a BarPreset entry is the bar
 //                 its flavor names). J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 #include "ContainerDocument.h"
 #include <QObject>
 #include <QMetaType>
@@ -124,6 +126,10 @@ public:
     bool claimSingleton(const QString& typeId, const QString& entryId);
     quint64 generation() const { return m_generation; }
     static QString appletTypeForVisibilityId(const QString& id);
+    /// The Main Panel's first-launch order and first-launch shown or hidden
+    /// state, shared by the first launch and Reset Default Layout.
+    static void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry& entry);
+    static ContentEntry firstLaunchEntry(ContentEntry entry);
     // The heading text for a group ("Ready-made meters", ...).
     static QString groupTitle(ContentGroup group);
     QVector<ContentDescriptor> descriptors() const;

@@ -959,6 +959,10 @@
 //                 carried this Longpath code; the entry describes Longpath
 //                 only. Trunk's cwPitchHz()/setCwPitchHz()/cwPitchChanged
 //                 are its own (R-CW-02).]
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -975,6 +979,7 @@
 #include "core/TgxlConnection.h"
 #include "core/FaultLog.h"
 #include "core/AmModulationAnalyzer.h"
+#include "core/SsbModulationAnalyzer.h"
 #include "core/session/IStationLink.h"
 #include "core/station/StationRadios.h"
 // Remote-daemon R2 Task 18: the handshake descriptor applyStationCapabilities()
@@ -4370,6 +4375,36 @@ public:
     /// The Core's Mod Monitor readings leave this window.
     void clearStationModMonitor();
 
+    // ── SSB Mod Monitor (NereusSDR-original) ──────────────────────────────
+    /// source 0 = TX I/Q leaving WDSP, 1 = PureSignal's feedback samples.
+    /// Fed only while ssbTxActive(), and only for a source that is wanted.
+    SsbModulationAnalyzer* ssbModulationAnalyzer(int source) const;
+    void setSsbModFeedbackWanted(bool wanted);
+    bool ssbModFeedbackWanted() const { return m_ssbModFbWanted.load() || m_ssbModFbCoreWanted.load(); }
+    /// What this Core's publisher wants for a source, held apart from what a
+    /// panel on this model wants: a desktop can do both on one model.
+    void setSsbModCoreWanted(int source, bool wanted);
+    /// Off until a shown panel or a watching device asks for it. The tap is
+    /// attached only while this is on and ssbTxActive(), so the transmit
+    /// worker takes no extra lock otherwise.
+    void setSsbModTxTapEnabled(bool enabled);
+    bool ssbModTxTapEnabled() const { return m_ssbModTxTapEnabled.load() || m_ssbModTxTapCoreWanted.load(); }
+    /// Attach or detach the TX tap and the feedback feed from the current
+    /// state. Runs on keying, TX slice, mode and PureSignal changes.
+    void refreshSsbModulationTap();
+    /// The one definition of "SSB voice keyed": transmitting, and the TX
+    /// slice is USB or LSB. DIGU and DIGL are not.
+    bool ssbTxActive() const;
+    /// PureSignal is running on this radio (a remote window: on the Core's),
+    /// so a key will carry a feedback stream.
+    bool ssbModFeedbackInUse() const;
+    void feedSsbModFeedbackForTest(const QVector<float>& samples) { feedSsbModFeedback(samples); }
+    /// The production connection -> analyzer feed, for a test that injects a
+    /// connection (injectConnectionForTest does no wiring).
+    void wireSsbModFeedbackForTest() { connectSsbModFeedback(); }
+    std::optional<SsbModulationAnalyzer::Snapshot> stationSsbModMonitorSnapshot(int source) const;
+    void clearStationSsbModMonitor();
+
     // Phase 3F Sub-Epic J Task 11: the one place GUI code may resolve a
     // slice's WDSP channel. Mirrors txChannel()'s shape. Added so MainWindow
     // and the Setup pages can stop calling wdspEngine()->rxChannel()
@@ -6800,6 +6835,8 @@ signals:
     void rfKitEnabledChanged(bool enabled);
     // R-R3-49: isTransmitting() changed.
     void transmittingChanged(bool transmitting);
+    // ssbModFeedbackInUse() changed.
+    void ssbModFeedbackInUseChanged(bool inUse);
     // RADE end-of-over callsigns: endOfOverTailActive() changed.
     void endOfOverTailChanged(bool active);
     // R-R3-49 (parity Task 1): isCoreOnAir() changed.
@@ -7706,6 +7743,7 @@ private:
     // bandOutputsByte (onBandOutputsComposed). Called from
     // wireConnectionSignals.
     void connectBandOutputsReport();
+    void connectSsbModFeedback();
     // Pushes the saved HL2 options to a P1 connection now and again each
     // time they change (applyHl2Options). Nothing without one.
     void connectHl2OptionsToConnection();
@@ -9508,6 +9546,21 @@ private:
     std::atomic<bool> m_amModTxTapEnabled{true};
     // R-IOS-13 / R-R3-49: a remote window's copy of the Core's readings.
     std::array<std::optional<AmModulationAnalyzer::Snapshot>, 2> m_stationModMonitor;
+
+    // SSB Mod Monitor analyzers: [0] TX I/Q tap, [1] PS feedback receiver.
+    std::unique_ptr<SsbModulationAnalyzer> m_ssbModTx;
+    std::unique_ptr<SsbModulationAnalyzer> m_ssbModFb;
+    void feedSsbModFeedback(const QVector<float>& samples);
+    std::atomic<bool> m_ssbModFbWanted{false};
+    std::atomic<bool> m_ssbModTxTapEnabled{false};
+    std::atomic<bool> m_ssbModFbCoreWanted{false};
+    std::atomic<bool> m_ssbModTxTapCoreWanted{false};
+    // Read on the connection thread. The rest of this state is the main
+    // thread's.
+    std::atomic<bool> m_ssbModFbFeed{false};
+    bool m_ssbModWasActive{false};
+    bool m_ssbModFbInUseAnnounced{false};
+    std::array<std::optional<SsbModulationAnalyzer::Snapshot>, 2> m_stationSsbModMonitor;
 
     // TX mic source — strategy interface for silence (3M-1a) or real mic (3M-1b).
     // Owned by RadioModel via unique_ptr. NullMicSource for 3M-1a; replaced with

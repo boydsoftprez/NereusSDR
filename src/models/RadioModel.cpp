@@ -1947,6 +1947,10 @@ mw0lge@grange-lane.co.uk
 //                 only. Trunk's CW pitch property (R-CW-02) and its pitch
 //                 follow (applyCwPitchChange, the APF centre from
 //                 cwPitchHz) are its own.]
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -1955,7 +1959,9 @@ mw0lge@grange-lane.co.uk
 #include "core/ClarityController.h"
 #include "core/session/RemoteDevicesState.h"
 #include "core/AmModulationAnalyzer.h"
+#include "core/SsbModulationAnalyzer.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorRecord.h"
 #include "BandDefaults.h"
 #include "BandGrid.h"
 #include "RxDspWorker.h"
@@ -4722,6 +4728,45 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
         }
     }, Qt::DirectConnection);
 
+    // ── SSB Mod Monitor (NereusSDR-original) ──────────────────────────────
+    // transmittingChanged follows the whole key: isTransmitting() is already
+    // true when the key commits and stays true through the walk back to
+    // receive. Waiting for moxStateChanged would miss the start of the over.
+    m_ssbModTx = std::make_unique<SsbModulationAnalyzer>();
+    m_ssbModFb = std::make_unique<SsbModulationAnalyzer>();
+    connect(this, &RadioModel::transmittingChanged,
+            this, &RadioModel::refreshSsbModulationTap);
+    if (m_txSliceArbiter != nullptr) {
+        connect(m_txSliceArbiter, &TxSliceArbiter::txBoundSliceChanged,
+                this, &RadioModel::refreshSsbModulationTap);
+    }
+    const auto watchSsbSlice = [this](SliceModel* slice) {
+        if (slice != nullptr) {
+            connect(slice, &SliceModel::dspModeChanged,
+                    this, &RadioModel::refreshSsbModulationTap);
+        }
+    };
+    for (SliceModel* const slice : m_slices) {
+        watchSsbSlice(slice);
+    }
+    connect(this, &RadioModel::sliceAdded, this, [this, watchSsbSlice](int index) {
+        watchSsbSlice(sliceById(index));
+        refreshSsbModulationTap();
+    });
+    connect(this, &RadioModel::sliceRemoved, this, &RadioModel::refreshSsbModulationTap);
+    connect(this, &RadioModel::pureSignalCoordinatorReady, this, [this](PureSignal* coordinator) {
+        if (coordinator != nullptr) {
+            connect(coordinator, &PureSignal::psEnabledChanged,
+                    this, &RadioModel::refreshSsbModulationTap, Qt::UniqueConnection);
+        }
+        refreshSsbModulationTap();
+    });
+    // A remote window hears PureSignal's state in the Core's status.
+    if (m_role == Role::Remote && m_pureSignalFacade != nullptr) {
+        connect(m_pureSignalFacade, &PureSignalSessionFacade::statusChanged,
+                this, &RadioModel::refreshSsbModulationTap);
+    }
+
     // Amp state cache: amplifierChanged(bool) and ampStateChanged() together
     // carry the m_hasAmplifier / m_ampOperate snapshot. We can't connect them
     // directly (different signatures) so use a lambda that reads current values
@@ -6108,6 +6153,19 @@ void RadioModel::applyStationRecordBatch(const RecordBatch& batch)
         }
         return;
     }
+    const int ssbModSource = SsbModMonitorRecord::sourceOfStream(batch.stream);
+    if (ssbModSource >= 0) {
+        auto& held = m_stationSsbModMonitor[static_cast<std::size_t>(ssbModSource)];
+        if (batch.reset || !batch.removes.isEmpty()) {
+            held.reset();
+        }
+        for (const RecordUpsert& u : batch.upserts) {
+            if (u.id == QLatin1String(SsbModMonitorRecord::kRecordId)) {
+                held = SsbModMonitorRecord::fromFields(u.fields);
+            }
+        }
+        return;
+    }
     // Parity Task 21 (R-IOS-18): the Core's radios, in the Core's order.
     if (batch.stream == QLatin1String("stationRadios")) {
         QList<StationRadioEntry> entries = batch.reset ? QList<StationRadioEntry>{}
@@ -6266,6 +6324,7 @@ void RadioModel::clearStationRecords()
     clearStationSpots();
     clearStationFreedv();
     clearStationModMonitor();
+    clearStationSsbModMonitor();
     if (!m_stationCoreLog.isEmpty()) {
         m_stationCoreLog.clear();
         emit stationCoreLogChanged();
@@ -22133,6 +22192,10 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
                 m_txChannel->setAmModulationTap(
                     m_amModTxTapEnabled.load() ? m_amModTx.get() : nullptr);
             }
+            if (m_ssbModTx) {
+                m_ssbModTx->setSampleRate(txOutRate);
+                refreshSsbModulationTap();
+            }
 
             // Task 4.2: give TxChannel a handle to WdspEngine so onModeChanged()
             // can call rebuild() when the active mode's DSP-Options settings change.
@@ -23616,6 +23679,7 @@ void RadioModel::wireConnectionSignals(int wdspInSize)
                                          txMonDdc, txMonSamples);
         }
     });
+    connectSsbModFeedback();
 
     // Protocol 2 codec injection remains live for ReceiverManager's
     // ddcConfigChanged observation consumers (notably PsccPump). The P2 wire
@@ -27697,6 +27761,119 @@ void RadioModel::clearStationModMonitor()
 {
     m_stationModMonitor[0].reset();
     m_stationModMonitor[1].reset();
+}
+
+SsbModulationAnalyzer* RadioModel::ssbModulationAnalyzer(int source) const
+{
+    return source == 1 ? m_ssbModFb.get() : m_ssbModTx.get();
+}
+
+void RadioModel::setSsbModFeedbackWanted(bool wanted)
+{
+    m_ssbModFbWanted.store(wanted, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::setSsbModTxTapEnabled(bool enabled)
+{
+    m_ssbModTxTapEnabled.store(enabled, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::setSsbModCoreWanted(int source, bool wanted)
+{
+    (source == 1 ? m_ssbModFbCoreWanted : m_ssbModTxTapCoreWanted)
+        .store(wanted, std::memory_order_release);
+    refreshSsbModulationTap();
+}
+
+void RadioModel::refreshSsbModulationTap()
+{
+    const bool active = ssbTxActive();
+    if (active && !m_ssbModWasActive) {
+        // Each over starts fresh.
+        if (m_ssbModTx) { m_ssbModTx->reset(); }
+        if (m_ssbModFb) { m_ssbModFb->reset(); }
+    }
+    m_ssbModWasActive = active;
+    if (m_txChannel) {
+        m_txChannel->setSsbModulationTap(
+            active && ssbModTxTapEnabled() && m_ssbModTx ? m_ssbModTx.get() : nullptr);
+    }
+    const bool inUse = ssbModFeedbackInUse();
+    const bool feed = active && inUse && ssbModFeedbackWanted();
+    if (feed && !m_ssbModFbFeed.load() && m_ssbModFb && m_pureSignal) {
+        // Protocol 1 has one wire rate for all DDCs, the pair included.
+        // Protocol 2 runs the pair at PureSignal's own clock.
+        const int rate = m_lastRadioInfo.protocol == ProtocolVersion::Protocol1
+            ? connectionSampleRateHz()
+            : m_pureSignal->calccSampleRateHz();
+        if (rate > 0) {
+            m_ssbModFb->setSampleRate(rate);
+        }
+    }
+    m_ssbModFbFeed.store(feed, std::memory_order_release);
+    if (inUse != m_ssbModFbInUseAnnounced) {
+        m_ssbModFbInUseAnnounced = inUse;
+        emit ssbModFeedbackInUseChanged(inUse);
+    }
+}
+
+bool RadioModel::ssbModFeedbackInUse() const
+{
+    if (m_role == Role::Remote) {
+        return m_pureSignalFacade != nullptr && m_pureSignalFacade->statusSnapshot().psEnabled;
+    }
+    // The same fact that picks the DDC assignment (currentCodecContext's
+    // puresignalRun) on both protocols.
+    return m_pureSignal != nullptr && m_pureSignal->isPsEnabled();
+}
+
+void RadioModel::connectSsbModFeedback()
+{
+    // SSB Mod Monitor's PA FB: the same feedback samples PureSignal corrects
+    // from, the only place they arrive. No logical stream carries them: at
+    // PureSignal + MOX the pair is outside every streamDdc entry (P1CodecHl2,
+    // P1CodecStandard, P2CodecHermes, P2CodecOrionMkII applyDdcAssignment).
+    // On the connection thread, one atomic read when the monitor is not fed.
+    connect(m_connection, &RadioConnection::psPairedIqDataReceived,
+            this, [this](int, const QVector<float>& psFbSamples, int, const QVector<float>&) {
+        feedSsbModFeedback(psFbSamples);
+    }, Qt::DirectConnection);
+}
+
+void RadioModel::feedSsbModFeedback(const QVector<float>& samples)
+{
+    if (m_ssbModFbFeed.load(std::memory_order_acquire) && m_ssbModFb) {
+        m_ssbModFb->pushIq(samples.constData(), samples.size() / 2);
+    }
+}
+
+bool RadioModel::ssbTxActive() const
+{
+    if (!isTransmitting()) {
+        return false;
+    }
+    const SliceModel* slice = txBoundSlice();
+    if (slice == nullptr) {
+        return false;
+    }
+    const DSPMode mode = slice->dspMode();
+    return mode == DSPMode::USB || mode == DSPMode::LSB;
+}
+
+std::optional<SsbModulationAnalyzer::Snapshot> RadioModel::stationSsbModMonitorSnapshot(int source) const
+{
+    if (source != 0 && source != 1) {
+        return std::nullopt;
+    }
+    return m_stationSsbModMonitor[static_cast<std::size_t>(source)];
+}
+
+void RadioModel::clearStationSsbModMonitor()
+{
+    m_stationSsbModMonitor[0].reset();
+    m_stationSsbModMonitor[1].reset();
 }
 
 void RadioModel::refreshSliceAntennasFromAlex(SliceModel* slice)

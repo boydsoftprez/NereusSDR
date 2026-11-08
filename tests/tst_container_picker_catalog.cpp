@@ -147,6 +147,7 @@ const Expected kExpected[] = {
     {"applet:vax", "VAX", kPanels},
     {"applet:pure_signal", "PureSignal", kPanels},
     {"applet:mod_monitor", "AM Mod Monitor", kPanels},
+    {"applet:ssb_mod_monitor", "SSB Mod Monitor", kPanels},
     {"applet:cat", "CAT", kPanels},
     {"applet:cwx", "CWX", kPanels},
     {"applet:roundtable", "Roundtable", kPanels},

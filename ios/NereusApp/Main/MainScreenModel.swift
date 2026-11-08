@@ -146,6 +146,8 @@ final class MainScreenModel: ObservableObject {
     /// The TX panel's AM Mod Monitor (D102); the app sets it once its
     /// record streams exist, and a screen test may leave it out.
     var modMonitor: ModMonitorModel?
+    /// The TX panel's SSB Mod Monitor, set and left out the same way.
+    var ssbModMonitor: SsbModMonitorModel?
     /// The Display pill's rows and their dispatcher; the app sets and
     /// holds it, and a screen test may leave it out.
     weak var displayPillSource: DisplayPillSource?

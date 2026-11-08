@@ -38,7 +38,9 @@ import Testing
 
     @Test func theAppRunsTheFixturesMarkedForIt() throws {
         let fixtures = try Self.appFixtures()
-        #expect(fixtures.count == 91)
+        #expect(fixtures.count == 92)
+        // The SSB Mod Monitor's subscribe and reset.
+        #expect(fixtures.contains { $0.id == "session-verbs-ssb-mod-monitor" })
         // The band stack's thirteen verbs (bandStackVersion 1), now the app
         // declares bandStack 1.
         #expect(fixtures.contains { $0.id == "session-verbs-band-stack" })

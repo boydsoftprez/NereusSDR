@@ -623,6 +623,8 @@
 //               answers remembered per session (their copies); the CW
 //               settings on `transmit` only to a peer that declared
 //               cwSettings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -688,6 +690,7 @@ class SliceAccessController;
 class ConnectedDevicesFacade;
 class DeviceSessionRegistry;
 class ModMonitorPublisher;
+class SsbModMonitorPublisher;
 class RadioModel;
 class SessionCommandDispatcher;
 class SessionTransport;
@@ -1432,6 +1435,10 @@ public:
     int txModMonitorVersion() const;
     /// For a test: the Core's side of the Mod Monitor streams, or null.
     ModMonitorPublisher* modMonitorPublisherForTest() const { return m_modMonitor.get(); }
+    /// 1 when the SSB Mod Monitor streams are up. Readings go out while a
+    /// subscriber watches and the radio is keyed in USB or LSB.
+    int txSsbModMonitorVersion() const;
+    SsbModMonitorPublisher* ssbModMonitorPublisherForTest() const { return m_ssbModMonitor.get(); }
     // iPhone app plan Task 29 (R-IOS-16; link section 21): mediaReplaceVersion
     // 1 whenever media is on (the media `replace` operation);
     // controlSwitchVersion 1 always (session.pathTicket, path.join and
@@ -2020,6 +2027,8 @@ private:
     // R-IOS-13 / R-R3-49: the Mod Monitor's two streams and txModMonitor.reset.
     void setUpModMonitorStreams();
     void handleModMonitorReset(SessionTransport* transport, const SessionMessage& message);
+    void setUpSsbModMonitorStreams();
+    void handleSsbModMonitorReset(SessionTransport* transport, const SessionMessage& message);
     // R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     // txEq.resetCurve, applied as this peer's txEqParaEqData write
     // (applyPropertyWrite), so every rule that write meets applies.
@@ -3082,6 +3091,7 @@ private:
     QJsonObject m_lastVaxLevels;
     // R-IOS-13 / R-R3-49: the Core's side of the Mod Monitor streams.
     std::unique_ptr<ModMonitorPublisher> m_modMonitor;
+    std::unique_ptr<SsbModMonitorPublisher> m_ssbModMonitor;
     // Parity Task 21: the Core's radios and their stream.
     QPointer<StationRadios> m_stationRadios;
     void publishStationRadios();

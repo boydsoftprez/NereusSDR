@@ -22,7 +22,9 @@ import Testing
     @Test func everyAppFixturePassesThroughTheMirror() async throws {
         let classes = try SessionFixtures.mirrorClasses()
         let fixtures = try SessionFixtures.forApp()
-        #expect(fixtures.count == 91)
+        #expect(fixtures.count == 92)
+        // The SSB Mod Monitor's subscribe and reset.
+        #expect(fixtures.contains { $0.id == "session-verbs-ssb-mod-monitor" })
         // Roundtable's thirteen verbs and the roundtable object.
         #expect(fixtures.contains { $0.id == "session-verbs-roundtable" })
         #expect(fixtures.contains { $0.id == "session-verbs-roundtable-frequency" })

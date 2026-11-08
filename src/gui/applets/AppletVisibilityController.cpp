@@ -14,6 +14,8 @@
 //   2026-10-08 — Bench fix: missing workspace entries are added (see the
 //                 header), by J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //
 // =================================================================
 
@@ -262,6 +264,28 @@ bool AppletVisibilityController::placeInWorkspace(WorkspaceDocument& document,
             if (content.typeId == type) { return false; }
         }
     }
+    ContentEntry entry;
+    if (m_registry) {
+        entry = m_registry->makeEntry(type);
+    } else {
+        entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        entry.typeId = type;
+        entry.name = type;
+    }
+    entry.visible = visible;
+    // The SSB Mod Monitor sits directly under the AM Mod Monitor, wherever
+    // that panel is, unless it is popped out.
+    if (type == QLatin1String("applet:ssb_mod_monitor")) {
+        for (auto& c : document.containers) {
+            if (c.popOutShell) { continue; }
+            for (int i = 0; i < c.contents.size(); ++i) {
+                if (c.contents[i].typeId == QLatin1String("applet:mod_monitor")) {
+                    c.contents.insert(i + 1, entry);
+                    return true;
+                }
+            }
+        }
+    }
     // The panel the station accessory applets (Power Genius, Tuner Genius,
     // RF-Kit) live in; a popped-out applet's own shell does not count.
     static const QStringList kAccessoryTypes = {
@@ -284,15 +308,6 @@ bool AppletVisibilityController::placeInWorkspace(WorkspaceDocument& document,
     }
     if (!target) { target = &document.containers.first(); }
 
-    ContentEntry entry;
-    if (m_registry) {
-        entry = m_registry->makeEntry(type);
-    } else {
-        entry.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        entry.typeId = type;
-        entry.name = type;
-    }
-    entry.visible = visible;
     target->contents.append(entry);
     return true;
 }

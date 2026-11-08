@@ -1167,6 +1167,10 @@
 //                 reason; one VOX line reason (voxLineReason) for the
 //                 container button and the applets. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1586,6 +1590,7 @@ warren@wpratt.com
 #include "applets/DigitalApplet.h"
 #include "applets/PureSignalApplet.h"
 #include "applets/ModMonitorApplet.h"
+#include "applets/SsbModMonitorApplet.h"
 #include "applets/DiversityApplet.h"
 #include "applets/CwxApplet.h"
 #include "core/CwxSender.h"
@@ -3890,32 +3895,6 @@ QHash<int, VfoWidget::SliceAccess> windowSliceAccess(const QList<SliceChooser::R
         access.insert(row.sliceId, SliceChooser::flagAccessFor(row));
     }
     return access;
-}
-
-// The Main Panel's first-launch order: the S-Meter first, the Mod Monitor
-// second at the time it is placed, every other applet after the ones
-// already there. The first launch and Reset Default Layout both place
-// through this, so a reset draws what a first launch draws.
-void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry& entry)
-{
-    if (entry.typeId == QLatin1String("applet:s_meter")) {
-        contents.prepend(entry);
-    } else if (entry.typeId == QLatin1String("applet:mod_monitor")) {
-        contents.insert(qMin(1, contents.size()), entry);
-    } else {
-        contents.append(entry);
-    }
-}
-
-// CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
-// (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
-// says; every other applet keeps its first-launch state.
-ContentEntry firstLaunchEntry(ContentEntry entry)
-{
-    if (entry.typeId == QLatin1String("applet:cwx")) {
-        entry.visible = false;
-    }
-    return entry;
 }
 
 QList<SliceChooser::Row> windowSliceRows(RadioModel& model, StationServer* server,
@@ -11237,8 +11216,9 @@ void MainWindow::buildUI()
             if (c.id != workspace.mainContainerId) { continue; }
             for (const auto& descriptor : contentRegistry->descriptors()) {
                 if (!descriptor.singleton || placed.contains(descriptor.typeId)) { continue; }
-                placeFirstLaunchApplet(c.contents,
-                                       firstLaunchEntry(contentRegistry->makeEntry(descriptor.typeId)));
+                ContainerContentRegistry::placeFirstLaunchApplet(
+                    c.contents,
+                    ContainerContentRegistry::firstLaunchEntry(contentRegistry->makeEntry(descriptor.typeId)));
             }
         }
         // Project old per-applet floating intent into committed shells, retaining
@@ -13245,9 +13225,9 @@ void MainWindow::resetDefaultLayout()
                 for (int i=0;i<retained.size();++i) {
                     if (retained[i].typeId==descriptor.typeId) { entry=retained.takeAt(i); found=true; break; }
                 }
-                if (!found) { entry=firstLaunchEntry(registry->makeEntry(descriptor.typeId)); }
+                if (!found) { entry=ContainerContentRegistry::firstLaunchEntry(registry->makeEntry(descriptor.typeId)); }
                 if (descriptor.typeId=="applet:s_meter") { entry.visible=true; }
-                placeFirstLaunchApplet(main.contents, entry);
+                ContainerContentRegistry::placeFirstLaunchApplet(main.contents, entry);
             }
         }
         // Applet records no descriptor names (and a duplicate placement) stay recoverable.
@@ -13765,6 +13745,10 @@ void MainWindow::populateDefaultMeter()
     m_modMonApplet = new ModMonitorApplet(m_radioModel, nullptr);
     panel->insertApplet(0, m_modMonApplet);   // directly below the S-Meter
 
+    // SSB Mod Monitor: envelope, peak hold and crest for USB and LSB.
+    m_ssbModMonApplet = new SsbModMonitorApplet(m_radioModel, nullptr);
+    panel->insertApplet(1, m_ssbModMonApplet);
+
     m_catApplet = new CatApplet(m_radioModel, nullptr);
     panel->addApplet(m_catApplet);
 
@@ -14149,6 +14133,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Vax")]        = m_vaxApplet;
     m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
     m_appletsById[QStringLiteral("ModMon")]     = m_modMonApplet;
+    m_appletsById[QStringLiteral("SsbModMon")]  = m_ssbModMonApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
@@ -14201,6 +14186,9 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("PureSignal"),   true);
     m_appletVis->registerApplet(QStringLiteral("ModMon"),
                                 QStringLiteral("AM Mod Monitor"), true);
+    m_appletVis->registerApplet(QStringLiteral("SsbModMon"),
+                                QStringLiteral("SSB Mod Monitor"),
+                                SsbModMonitorApplet::kShownByDefault);
     m_appletVis->registerApplet(QStringLiteral("Amp"),
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),

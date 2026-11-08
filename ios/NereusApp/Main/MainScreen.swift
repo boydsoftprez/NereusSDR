@@ -531,7 +531,7 @@ struct MainScreen: View {
                     TxPanel(transmit: transmit, accessories: main.accessories, micLevel: main.micLevel, modes: main.modes, meters: main.band.catalog?.meters, openRadio: {
                         txPanelOpen = false
                         openRadio()
-                    }, modMonitor: main.modMonitor, take: main.take, openSettings: openTransmitSettings)
+                    }, modMonitor: main.modMonitor, ssbModMonitor: main.ssbModMonitor, take: main.take, openSettings: openTransmitSettings)
                         .padding(txSide == .trailing ? .trailing : .leading,
                                  sideways ? (txSide == .trailing ? trailingInset : leadingInset) : 0)
                         .background(ChromeColours.panel)
