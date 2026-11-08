@@ -10638,6 +10638,11 @@ target_compile_definitions(tst_bandstack_link PRIVATE
 # looks, real MainWindow offscreen.
 nereus_add_test(tst_bandstack_panel
     fakes/FakeBandStackAccess.h)
+# 109 to 113 s as one entry on the GitHub Linux runner against the 120 s
+# limit; the cases that build a real MainWindow run as four more entries of
+# the same binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_bandstack_panel
+    ENV NEREUS_BANDSTACK_PANEL_GROUP GROUPS pane keys greyed window)
 
 # Band stack plan Task 8: every band press through MainWindow::pressBand, on a
 # real MainWindow offscreen with a fake access.
