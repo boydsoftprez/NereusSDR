@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original content catalog and lossless meter adapter.
 // Modification history (NereusSDR):
+//   2026-11-06 - A factory widget can report its own free canvas hint and
+//                 minimum, and a type can name a new entry's rect size
+//                 (setNewEntryCanvasSize). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//                 Claude Code.
 //   2026-11-01 - Original PureSignal-style bar proposal by Brian Sutton
 //                 (PR #731). Adapted as an existing bar face option on
 //                 2026-11-03 by J.J. Boyd (KG4VCF), with OpenAI Codex.
@@ -637,7 +641,7 @@ void ContainerContentRegistry::registerWidgetFactory(const QString& typeId, cons
         stored.group = ContentGroup::ReadyMadeMeters;
     }
     if (!m_widgetFactories.contains(typeId)) { m_widgetFactoryOrder.append(typeId); }
-    m_widgetFactories.insert(typeId, {stored, std::move(factory), properties});
+    m_widgetFactories.insert(typeId, {stored, std::move(factory), properties, {}});
     ++m_generation;
     emit runtimeChanged();
 }
@@ -653,6 +657,16 @@ QVector<ContentProperty> ContainerContentRegistry::declaredProperties(const QStr
 {
     const auto it = m_widgetFactories.constFind(typeId);
     return it == m_widgetFactories.constEnd() ? QVector<ContentProperty>{} : it->properties;
+}
+void ContainerContentRegistry::setNewEntryCanvasSize(const QString& typeId, std::function<QSize(const ContentEntry&)> size)
+{
+    const auto it = m_widgetFactories.find(typeId);
+    if (it != m_widgetFactories.end()) { it->newEntryCanvasSize = std::move(size); }
+}
+QSize ContainerContentRegistry::newEntryCanvasSize(const ContentEntry& entry) const
+{
+    const auto it = m_widgetFactories.constFind(entry.typeId);
+    return it != m_widgetFactories.constEnd() && it->newEntryCanvasSize ? it->newEntryCanvasSize(entry) : QSize();
 }
 QWidget* ContainerContentRegistry::createWidget(const ContentEntry& entry, QWidget* parent,
                                                 ContentRenderMode mode) const
@@ -680,8 +694,13 @@ QWidget* ContainerContentRegistry::createPreview(const ContentEntry& entry, QWid
         effective.context = context;
         if (QWidget* view = createWidget(effective, parent, ContentRenderMode::Preview)) {
             view->setAttribute(Qt::WA_TransparentForMouseEvents);
-            view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
-            view->setProperty("freeCanvasHint", view->sizeHint());
+            // As in the live host: a widget may have set these already.
+            if (!view->property("freeCanvasMinimum").isValid()) {
+                view->setProperty("freeCanvasMinimum", QSizeF(view->minimumSizeHint()));
+            }
+            if (!view->property("freeCanvasHint").isValid()) {
+                view->setProperty("freeCanvasHint", view->sizeHint());
+            }
             return view;
         }
     }

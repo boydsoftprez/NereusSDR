@@ -20,8 +20,8 @@
 //     checked, and so is every literal of any length in a reason position:
 //     a sender's reason argument (emitResult, commandResult, sessionEnd,
 //     authResult, settingsReject, dropPeer, sendRejected,
-//     sendAllocationResult, rejectAllocation, and the reject, rejectDetail
-//     and fail helpers) or the right-hand side of an assignment to a
+//     sendAllocationResult, rejectAllocation, and the reject, rejectDetail,
+//     fail and setRefusal helpers) or the right-hand side of an assignment to a
 //     reason (…reason, …refusal, m_lastError, m_lastActionError). A
 //     reason of one word is not a sentence an operator can act on and
 //     fails. What .arg() inserts into a reason is part of it: an inserted
@@ -100,6 +100,18 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-07  J.J. Boyd / KG4VCF  DaemonMediaController forwards
+//                                    kRetireReasonViewOffReceiver, whose
+//                                    words SpectrumEndpoint.h's entry scans.
+//                                    AI tooling: Claude Code.
+//   2026-11-05  J.J. Boyd / KG4VCF  Band stack plan: the bandStack.* refusals
+//                                    are scanned (BandStackController.cpp,
+//                                    BandStackStore::add, the words of
+//                                    BandStackAccess.h and IStationLink.h),
+//                                    with RadioModel::retuneRefusalFor and
+//                                    StationReceivers' forward of it; the
+//                                    access classes' own sites are app side.
+//                                    AI tooling: Claude Code.
 //   2026-10-27  J.J. Boyd / KG4VCF  StationTransmitTake.cpp forwards
 //                                    sessionTransmitRefusal(it.key()), the
 //                                    tuner give-back's permission recheck.
@@ -540,6 +552,8 @@ const QList<ReasonSender>& reasonSenders()
         // Text the station sends as a property value (propertyTextSources).
         {"connectionFailed", 0}, {"failIdentityAdmission", 1}, {"setLastLoadError", 0},
         {"setNnrLastError", 0}, {"publish", 1}, {"setReceiveLayoutRestoreStatus", 1},
+        // Band stack plan: BandStackController's refusal helper.
+        {"setRefusal", 1},
     };
     return senders;
 }
@@ -1226,6 +1240,10 @@ const QList<ReasonSource>& reasonSources()
           // Slice control plan Task 8: the same, the anchor not connected.
           QStringLiteral("awayPinReason(sliceHolderWords(anchor))"),
           QStringLiteral("olderWindowAskReason(namesOf(check.named))"),
+          // Band stack plan: a recall's retune the allocator would refuse.
+          // RadioModel::retuneRefusalFor is scanned in its entry below.
+          QStringLiteral("m_radioModel->retuneRefusalFor(slice, target->frequencyHz)"),
+          QStringLiteral("withHolderNames(refusal, requester)"),
           // takerName and moverName are sliceHolderWords' (StationServer.cpp,
           // scanned there): a name, or the Core's own words for a device
           // with none. theDeviceWordsTheNoticesForwardAreSliceHolderWords
@@ -1317,8 +1335,12 @@ const QList<ReasonSource>& reasonSources()
         // The device's name ("Power Genius", "Tuner Genius") and what the
         // request asked, both this file's own literals
         // (handleAccessoryDeviceSettings).
-        {"src/core/session/SessionCommandDispatcher.cpp", {}, {}, 30,
-         {QStringLiteral("device"), QStringLiteral("what")},
+        // "bandStack." is the verbs' prefix, tested to choose the refusal; it
+        // never reaches an app. A slice letter, in bandStackSliceRefusal.
+        {"src/core/session/SessionCommandDispatcher.cpp", {},
+         {QStringLiteral("bandStack.")}, 30,
+         {QStringLiteral("device"), QStringLiteral("what"),
+          QStringLiteral("QChar(QLatin1Char('A').unicode() + sliceId)")},
          {// Out-parameters and results of the scanned model, facade and
           // allocator functions each verb calls (RadioModel, the PureSignal
           // facade, SliceModel, AlexAntennaFacade, DspAssetService,
@@ -1618,6 +1640,9 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("QString::fromLatin1(kRetireReasonSourceRetune)"),
           QStringLiteral("QString::fromLatin1(kRetireReasonStreamBindingChanged)"),
           QStringLiteral("QString::fromLatin1(kRetireReasonSliceRemoved)"),
+          // A view wholly off the receiver once control of the slice went;
+          // its words are in SpectrumEndpoint.h (scanned below).
+          QStringLiteral("QString::fromLatin1(kRetireReasonViewOffReceiver)"),
           // Fix wave 2: the budget refusal, shared with the client,
           // DisplayBudget.h (scanned below).
           QStringLiteral("QString::fromLatin1(kDisplayBudgetRefusalReason)"),
@@ -1730,6 +1755,45 @@ const QList<ReasonSource>& reasonSources()
         // Roundtable plan Task 11: Roundtable not running on this computer
         // (no Core link and no local Roundtable), the model's own words.
         {"src/models/RoundtableModel.cpp", {QStringLiteral("notRunningReason")}, {}, 1},
+        // Band stack plan: the bandStack.* refusals the Core answers with.
+        // Inserted: a band's name, a slice letter, a frequency as shown
+        // (7.185), an entry's mode name, and its place on the band.
+        {"src/models/bandstack/BandStackController.cpp", {}, {}, 15,
+         {QStringLiteral("bandLabel(band)"), QStringLiteral("bandLabel(band), QString(letter)"),
+          QStringLiteral("bandKeyName(band)"),
+          QStringLiteral("bandKeyName(band), BandStackStore::displayFrequency(entry->frequencyHz), "
+                         "entry->mode"),
+          QStringLiteral("bandKeyName(band), BandStackStore::displayFrequency(last->frequencyHz), "
+                         "last->mode"),
+          QStringLiteral("position + 1"), QStringLiteral("onBand.size()"),
+          QStringLiteral("QString(slice->sliceLetter()), "
+                         "BandStackStore::displayFrequency(qRound64(slice->frequency()))"),
+          QStringLiteral("QString(slice->sliceLetter()), bandLabel(entry->band)")},
+         {// setRefusal's own parameter; every caller's words are scanned here.
+          QStringLiteral("text"),
+          // This file's constant, its literal scanned here.
+          QStringLiteral("kNoEntry"),
+          // The plan's refusal, scanned here, and RadioModel's words for a
+          // retune the allocator would refuse (retuneRefusalFor, below).
+          QStringLiteral("r.plan.refusal"), QStringLiteral("retuneRefusal"),
+          QStringLiteral("m_model->retuneRefusalFor(slice, targetHz)")}},
+        // Band stack plan: the Add refusal for a duplicate, from the store.
+        // A frequency as shown (7.185) and a band's name.
+        {"src/models/bandstack/BandStackStore.cpp", {QStringLiteral("add")}, {}, 1,
+         {QStringLiteral("displayFrequency(spot.frequencyHz), bandKeyName(band)")}},
+        // Band stack plan: what a retune the allocator would refuse says. A
+        // slice letter, a frequency in MHz, and the allocator's refusal
+        // (SliceStreamAllocator.cpp, scanned).
+        {"src/models/RadioModel.cpp", {QStringLiteral("retuneRefusalFor")}, {}, 1,
+         {QStringLiteral("slice->sliceLetter()"),
+          QStringLiteral("slice->frequency() / 1.0e6, 0, 'f', 4"),
+          QStringLiteral("placement.reason")}},
+        // Band stack plan: a window whose Core has no band stack, or that is
+        // not connected to a radio. The window's own words, read here so
+        // that they are checked like the Core's.
+        {"src/core/session/IStationLink.h", {QStringLiteral("sendBandStackCommand")}, {}, 1},
+        {"src/models/bandstack/BandStackAccess.h",
+         {QStringLiteral("needsNewerCoreReason"), QStringLiteral("notConnectedReason")}, {}, 2},
         // Remote rotor control: a window's rotor commands. They pass on the
         // controller's refusal (scanned above) or the Core's command.result
         // through the link, or IStationLink's words; the setup check is
@@ -2294,6 +2358,14 @@ const QList<AppSideReason>& appSideReasons()
         // or its own notRunningReason (scanned).
         {"src/models/RoundtableModel.cpp", "applyRefusal",
          "a window shows the Core's Roundtable refusal it was given"},
+        // Band stack plan Task 6: the window's access classes. Their words
+        // are BandStackAccess.h's (scanned) or a refusal they were given.
+        {"src/models/bandstack/LocalBandStackAccess.cpp", "unavailableReason",
+         "the reason shown on a disabled control, in BandStackAccess.h's words"},
+        {"src/models/bandstack/RemoteBandStackAccess.cpp", "unavailableReason",
+         "the reason shown on a disabled control, in BandStackAccess.h's words"},
+        {"src/models/bandstack/LocalBandStackAccess.cpp", "reportInvokerRefusal",
+         "a window shows the refusal the band press's invoker gave it"},
         // R-R3-49 (parity Task 22): the Core's log, logging and bundle. The
         // Core also answers a coreLog subscribe with it when it keeps no
         // log stream; tst_remote_core_log checks it is plain.

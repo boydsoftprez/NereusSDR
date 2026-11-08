@@ -2,6 +2,9 @@
 // Modification history (NereusSDR):
 //   2026-11-06 - Issue 743: the anchor's comment names the Qt bug it avoids,
 //                 QTBUG-139109. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-06 - Seeding a free canvas from a stack gives a Phone/CW copy its
+//                 measured rect and moves what's below it down to clear it.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05 - Issue 743: a hidden QRhiWidget gives the dialog its RHI
 //                 surface from the first show on Linux, so the first meter
 //                 added does not replace the dialog's native window.
@@ -245,10 +248,18 @@ ContainerDocument ContainerPreviewWidget::seededFromStack() const
     if(result.locked || result.layout!=ContentLayout::VerticalStack || !m_registry) {return result;}
     m_layout->activate();
     QRectF extent;
+    int pushedDown=0;
     for(auto& entry:result.contents) {
         if(!entry.visible || !m_registry->isAvailable(entry)) {continue;}
-        if(!entry.typeId.startsWith("applet:") && !qobject_cast<MeterWidget*>(m_views.value(entry.id).data())) {continue;}
-        const QRect boundary=entryBoundary(entry.id);if(boundary.isEmpty()) {continue;}
+        const QSize measured=m_registry->newEntryCanvasSize(entry);
+        if(!measured.isValid() && !entry.typeId.startsWith("applet:") && !qobject_cast<MeterWidget*>(m_views.value(entry.id).data())) {continue;}
+        QRect boundary=entryBoundary(entry.id);if(boundary.isEmpty()) {continue;}
+        boundary.translate(0,pushedDown);
+        // A stack shows a Phone/CW copy at one page's height; its rect holds either page, as it does when added. What's below moves down to clear it.
+        if(measured.isValid()) {
+            boundary.setWidth(qMax(boundary.width(),measured.width()));
+            if(measured.height()>boundary.height()) {pushedDown+=measured.height()-boundary.height();boundary.setHeight(measured.height());}
+        }
         entry.setFreeCanvasRect(boundary);extent=extent.united(boundary);
     }
     result.setFreeCanvasExtent(QSizeF(qMax(0.,extent.right()),qMax(0.,extent.bottom())));

@@ -1,8 +1,25 @@
 name: CI
 
+# The full battery runs once, right before a pull request goes to main:
+#
+#   draft pull request        the quick jobs only (compliance, rendezvous,
+#                             Roundtable). The build jobs do not start, so the
+#                             required checks stay "expected" rather than green.
+#   ready pull request        everything. Marking a draft ready starts it, and
+#                             so does a push to a pull request that is ready.
+#   push to main              no tests. It builds what keeps the hosted compiler
+#                             caches warm, since a pull request can only restore
+#                             a cache main saved.
+#   by hand (Actions tab)     everything, on any branch. Run on main, it also
+#                             refreshes the saved test times.
+#
+# Asked for by J.J. Boyd, 2026-11-06.
 on:
   pull_request:
     branches: [main]
+    # ready_for_review is what starts the full run when a draft is marked
+    # ready. Naming any types replaces the default three, so they are listed.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   # Run by hand from the Actions tab; the traversal harness runs only then.
@@ -161,6 +178,12 @@ jobs:
         # space before CGImageCreate uses it: the 2026-09-25 / 09-26 desktop
         # crashes from the container title bar. Native shapes only.
         run: python3 scripts/verify-no-image-cursors.py
+
+      - name: Signals that cross a Windows DLL are on exported classes
+        # An unexported class's &Class::signal from another binary is MinGW's
+        # import thunk: QSignalSpy and connect() fail on Windows only, and
+        # Windows CI runs only its audio tests. Text parsing, no build.
+        run: python3 scripts/verify-dll-signal-exports.py
 
       # ------------------------------------------------------------------
       # Inline author-tag preservation (added 2026-04-21 after DH1KLM drop)
@@ -516,8 +539,17 @@ jobs:
   # hosted, macOS and Windows only for self-hosted, where the linux-box,
   # linux-realtime, build-notests and linux-report jobs take the Linux
   # legs' place.
+  #
+  # On a draft pull request this job is skipped, and with it every job that
+  # needs it. This is on purpose different from documentation-only, where the
+  # build jobs run and pass as no-ops: a draft's no-op pass would stay on the
+  # commit when it is marked ready, so the required checks would read green
+  # until the real run reached them, and for good if that run's first job
+  # failed. Not reporting at all means only a real run can turn them green.
+  # A draft cannot merge, so the missing checks block nothing.
   # --------------------------------------------------------------------
   changes:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-24.04
     name: Change scope
     outputs:
@@ -542,7 +574,8 @@ jobs:
       # all four shards run concurrently.
       #
       # macOS + Windows stay single-job. macOS builds the app only;
-      # Windows also builds the named audio catalogue/notifier tests.
+      # Windows also builds the named audio catalogue/notifier tests and
+      # the station lock tests.
       #
       # `shard` / `shards` only apply on Linux entries; macOS / Windows
       # leave them unset so CMake's NEREUS_TEST_SHARDS defaults to 0 (no
@@ -619,8 +652,8 @@ jobs:
     # report: the first step then fails the job instead of skipping it.
     # (When the job failed before it chose the legs, the matrix cannot
     # expand and the required checks stay pending, which blocks a merge
-    # just the same.)
-    if: ${{ !cancelled() }}
+    # just the same.) Not on a draft: see the changes job.
+    if: ${{ !cancelled() && !github.event.pull_request.draft }}
     strategy:
       fail-fast: false
       matrix:
@@ -1191,7 +1224,7 @@ jobs:
           case "$RUNNER_OS" in
             Linux)   cmake --build build -j"$(nproc)" --target all all_tests ;;
             macOS)   cmake --build build -j"$(sysctl -n hw.ncpu)" ;;
-            Windows) cmake --build build -j"$NUMBER_OF_PROCESSORS" --target all tst_wasapi_notifier_lifetime tst_wasapi_policy tst_audio_device_catalog ;;
+            Windows) cmake --build build -j"$NUMBER_OF_PROCESSORS" --target all tst_wasapi_notifier_lifetime tst_wasapi_policy tst_audio_device_catalog tst_station_foreign_lock tst_station_handover ;;
           esac
 
       # Every libcrypto or libssl the built binaries link must be openssl@3's
@@ -1205,7 +1238,8 @@ jobs:
       # Test
       # ------------------------------------------------------------------
       - name: Test
-        if: env.HEAVY == 'true'
+        # Not on a push to main: the pull request ran these before it merged.
+        if: env.HEAVY == 'true' && github.event_name != 'push'
         working-directory: build
         shell: bash
         # 2026-05-12 (PR #238 review P1 #4): drop --no-tests=ignore so
@@ -1261,6 +1295,8 @@ jobs:
             export NEREUS_HAMLIB_RIGCTL=/usr/bin/rigctl
             status=0
             xvfb-run -a ctest -LE realtime -j"$(nproc)" --output-on-failure --no-tests=error || status=1
+            # Before the next pass, which writes its own LastTest.log.
+            "$GITHUB_WORKSPACE/scripts/ci/warn-handover-over-limit.sh" || true
             xvfb-run -a ctest -L realtime --output-on-failure --no-tests=ignore || status=1
             exit "$status"
           elif [ "${{ runner.os }}" = "Windows" ]; then
@@ -1273,7 +1309,7 @@ jobs:
           fi
 
       - name: Preserve Windows audio test diagnostics
-        if: ${{ !cancelled() && env.HEAVY == 'true' && runner.os == 'Windows' && steps.build.outcome == 'success' }}
+        if: ${{ !cancelled() && env.HEAVY == 'true' && github.event_name != 'push' && runner.os == 'Windows' && steps.build.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-audio-tests-pr${{ github.event.number || github.run_id }}
@@ -1287,6 +1323,8 @@ jobs:
             build/tests/tst_wasapi_policy.exe
             build/tests/tst_wasapi_notifier_lifetime.exe
             build/tests/tst_audio_device_catalog.exe
+            build/tests/tst_station_foreign_lock.exe
+            build/tests/tst_station_handover.exe
             build/*.dll
             third_party/fftw3/bin/*.dll
           retention-days: 7
@@ -1446,17 +1484,22 @@ jobs:
   # when no times are saved, still goes by name hash. The realtime tests (572 s, one at a
   # time) do not run here: other runs' jobs share this machine, so they run
   # in linux-realtime on an idle GitHub-hosted runner, as on the hosted
-  # path. Every test runs exactly once, as on the hosted legs.
+  # path. Every test entry runs exactly once, as on the hosted legs; a binary
+  # with two entries, like tst_station_handover_roundtrip and its realtime
+  # _limit entry, runs once for each.
   #
   # Time to green on this path, estimated with warm caches: about 13
   # minutes for these two jobs (a 4 minute build and 8 to 9 of tests) and
   # about 18 for linux-realtime (setup, a 4-core build, 10 minutes of
   # realtime tests), so about 18 in all, set by linux-realtime.
+  #
+  # Not on a push to main: its compiler cache lives on the machine and every
+  # pull request's run fills it, so main has nothing to keep warm here.
   # --------------------------------------------------------------------
   linux-box:
     needs: changes
     # Never a fork's pull request, whatever the changes job says.
-    if: needs.changes.outputs.route == 'box' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.changes.outputs.route == 'box' && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, nereus-linux]
     name: Linux on the self-hosted runners (${{ matrix.part }})
     timeout-minutes: 90
@@ -1499,6 +1542,8 @@ jobs:
         run: scripts/ci/box-run.sh run "$BOX build"
 
       - name: Test
+        env:
+          NEREUS_BOX_TMP_IN_MEMORY: 1
         run: scripts/ci/box-run.sh run "$BOX test"
 
       # This part's test times, for the next run's split. Only main's are
@@ -1549,9 +1594,13 @@ jobs:
   # split the next run's tests by. Only from a run whose tests all passed,
   # so a hung or failed test does not skew the split. The prune-caches job
   # keeps the newest. CI speed round, 2026-10-17.
+  #
+  # A push to main no longer runs the tests, so only a run by hand on main
+  # refreshes these. Old times only make the two parts less even; a test with
+  # no time still goes by name hash, and every test still runs.
   box-test-times:
     needs: [changes, linux-box]
-    if: ${{ !cancelled() && needs.linux-box.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ !cancelled() && needs.linux-box.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     name: Save the self-hosted test times
     steps:
@@ -1677,8 +1726,10 @@ jobs:
         id: build
         run: cmake --build build -j"$(nproc)" --target all tests_realtime
 
-      # The build job's Test step, realtime pass only.
+      # The build job's Test step, realtime pass only. Not on a push to main,
+      # where this job only keeps its compiler cache warm.
       - name: Test
+        if: github.event_name != 'push'
         working-directory: build
         run: |
           # Permit the existing audio/CWX FIFO request (rtMax - 1), only
@@ -1737,11 +1788,12 @@ jobs:
   # under those names: each passes only if both linux-box jobs,
   # linux-realtime and the build with tests off all passed. On the hosted
   # path this job is skipped and the build job's Linux legs report under
-  # the same names (shard 1/4 runs the build with tests off there).
+  # the same names (shard 1/4 runs the build with tests off there). Not on a
+  # push to main, where linux-box does not run and nothing requires these.
   # --------------------------------------------------------------------
   linux-report:
     needs: [changes, linux-box, linux-realtime, build-notests]
-    if: ${{ !cancelled() && needs.changes.outputs.route == 'box' }}
+    if: ${{ !cancelled() && needs.changes.outputs.route == 'box' && github.event_name != 'push' }}
     runs-on: ubuntu-24.04
     name: Build (${{ matrix.name }})
     strategy:

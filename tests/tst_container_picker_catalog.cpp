@@ -1,6 +1,8 @@
 // no-port-check: NereusSDR-original tests of the container picker's names
 // and headings.
 // Modification history (NereusSDR):
+//   2026-11-06 - Phone / CW sections (phcw.panel) is a panel section.
+//                 Brian Sutton, AI-assisted via xAI Grok.
 //   2026-10-26 - Written: every type's picker title and heading, the
 //                 grouped Available list, and old default names taking the
 //                 new labels on load. J.J. Boyd (KG4VCF), AI-assisted via
@@ -17,6 +19,8 @@
 
 #include "core/AppSettings.h"
 #include "gui/applets/RxApplet.h"
+#include "gui/applets/PhoneCwApplet.h"
+#include "gui/applets/PhoneCwSectionContent.h"
 #include "gui/applets/RxSectionContent.h"
 #include "gui/applets/TxApplet.h"
 #include "gui/applets/TxSectionContent.h"
@@ -170,6 +174,7 @@ const Expected kExpected[] = {
     {"rx.agc", "RX AGC", kSections},
     {"rx.rit", "RX RIT", kSections},
     {"rx.xit", "RX XIT", kSections},
+    {"phcw.panel", "Phone / CW sections", kSections},
     {"longpath.frequency", "Frequency", kLongpath},
     {"longpath.frequencyCustom", "Custom frequency", kLongpath},
     {"longpath.needle", "Needle meter", kLongpath},
@@ -245,11 +250,13 @@ struct FullRegistry {
     RadioModel radio;
     TxApplet txApplet{&radio};
     RxApplet rxApplet{nullptr, &radio};
+    PhoneCwApplet phoneCwApplet{&radio};
     ContainerContentRegistry registry;
     FullRegistry()
     {
         registerTxSectionContent(registry, &txApplet);
         registerRxSectionContent(registry, &rxApplet);
+        registerPhoneCwSectionContent(registry, &phoneCwApplet);
         LongpathContent::registerAll(registry, {});
         SMeterDialContent::registerDial(registry, {});
     }

@@ -91,6 +91,7 @@ private:
         // Session keys.
         const QString sp = QStringLiteral("Slice0/");
         for (const QString& field : {
+                 QStringLiteral("StepHz"),
                  QStringLiteral("Locked"),     QStringLiteral("Muted"),
                  QStringLiteral("RitEnabled"), QStringLiteral("RitHz"),
                  QStringLiteral("XitEnabled"), QStringLiteral("XitHz"),
@@ -281,11 +282,12 @@ private slots:
         QVERIFY(s.contains(bp20 + QStringLiteral("AgcMode")));
         QCOMPARE(s.value(bp20 + QStringLiteral("AgcMode")).toInt(),
                  static_cast<int>(AGCMode::Fast));
-        QVERIFY(s.contains(bp20 + QStringLiteral("StepHz")));
-        QCOMPARE(s.value(bp20 + QStringLiteral("StepHz")).toInt(), 500);
 
         // Session keys must exist under Slice0/.
         const QString sp = QStringLiteral("Slice0/");
+        // The step is the slice's own, with no band part (2026-11-05).
+        QCOMPARE(s.value(sp + QStringLiteral("StepHz")).toInt(), 500);
+        QVERIFY(!s.contains(bp20 + QStringLiteral("StepHz")));
         QVERIFY(s.contains(sp + QStringLiteral("AfGain")));
         QCOMPARE(s.value(sp + QStringLiteral("AfGain")).toInt(), 65);
         QVERIFY(s.contains(sp + QStringLiteral("RfGain")));

@@ -13,11 +13,16 @@
 
 // 2026-10-31: Capture quiet and joining people with canonical frequency records.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-03: Pins follow the overlay redesign (design D7, D8).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: One sheet on iPhone and iPad: toggle, swap, Back in place, and a tap never tunes
+// (design D22, D24 to D27, D36, D38). J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
 import NereusKitTesting
 import NereusLink
+import NereusMedia
 import NereusMirror
 @testable import NereusSDR
 import SwiftUI
@@ -220,8 +225,8 @@ struct RoundtableToolsPageTests {
                                             mentionCounts: ["lsb-7212000": 2], room: { _ in nil })
         try #require(tags.count == 4)
         #expect(tags[0] == RoundtableTag(roomId: "lsb-7185000", hz: 7_185_000, glyph: .talking, label: "W1TLK",
-                                         members: 9, mine: true, mentionsMe: false))
-        #expect(tags[1].label == "Doubled" && tags[1].glyph == .doubled)
+                                         members: 9, mine: true, mentionsMe: false, keyed: ["W1TLK"]))
+        #expect(tags[1].label == "Double" && tags[1].glyph == .doubled)
         #expect(tags[2].label == "Unknown" && tags[2].glyph == .unknown && tags[2].mentionsMe && !tags[2].mine)
         #expect(tags[3].label == "Quiet" && tags[3].glyph == .quiet)
         // Your own turn in your slice's room: You, in cyan (U8).
@@ -249,7 +254,7 @@ struct RoundtableToolsPageTests {
         #expect(RoundtableTagLayout.display(available: false, link: .hidden) == .hidden)
         // You are hidden: every room as when live, its marking dimmed.
         let cases: [(RoundtableModel.LinkState, RoundtableTagDisplay)] = [
-            (.off, .hidden), (.connecting, .hidden), (.live, .live), (.reconnecting, .live), (.hidden, .dimmed),
+            (.off, .hidden), (.connecting, .hidden), (.live, .live), (.reconnecting, .stale), (.hidden, .dimmed),
             (.offline, .stale),
         ]
         for (link, display) in cases {
@@ -281,14 +286,14 @@ struct RoundtableToolsPageTests {
         #expect(RoundtableTagLayout.foldWho(Self.tagAt("K4ABC", 1)) == "K4ABC")
     }
 
-    @Test("one width for every tag, the widest label's, between 56 and 128 points")
+    @Test("each tag is as wide as its own words, up to 128 points, and a fold holds three glyphs and +99")
     func tagWidths() {
-        #expect(RoundtableTagLayout.tagWidth([]) == RoundtableTagLayout.minWidth)
-        #expect(RoundtableTagLayout.tagWidth([Self.tagAt("Q", 1)]) == RoundtableTagLayout.minWidth)
+        let short = RoundtableTagLayout.itemWidth(RoundtableTag(roomId: "x", hz: 1, label: "Q", members: 1))
+        let call = RoundtableTagLayout.itemWidth(RoundtableTag(roomId: "x", hz: 1, label: "KG4VCF", members: 9))
+        #expect(short < call && call < RoundtableTagLayout.maxWidth)
         let long = RoundtableTag(roomId: "x", hz: 1, label: String(repeating: "W", count: 40), members: 12)
-        #expect(RoundtableTagLayout.tagWidth([long]) == RoundtableTagLayout.maxWidth)
-        let mid = RoundtableTagLayout.tagWidth([RoundtableTag(roomId: "x", hz: 1, label: "KG4VCF", members: 9)])
-        #expect(mid > RoundtableTagLayout.minWidth && mid < RoundtableTagLayout.maxWidth)
+        #expect(RoundtableTagLayout.itemWidth(long) == RoundtableTagLayout.maxWidth)
+        #expect(RoundtableTagLayout.foldWidth() >= RoundtableTagLayout.minWidth)
     }
 
     @Test("a flag in the tag row keeps the tags off its span; one that only meets the row's edge does not")
@@ -332,7 +337,7 @@ struct RoundtableToolsPageTests {
         try #require(rows.count == 4)
         #expect(rows.map(\.id) == ["lsb-7185000", "lsb-7200000", "lsb-7212000", "lsb-7236400"])
         #expect(rows[0].who == "Quiet" && rows[0].sub == "last W2ABC, 18 min ago" && rows[0].quiet)
-        #expect(rows[1].who == "Doubled: N4XYZ" && rows[1].sub == "1 station \u{00B7} 1 message")
+        #expect(rows[1].who == "Double: N4XYZ" && rows[1].sub == "1 station \u{00B7} 1 message")
         #expect(rows[2].who == "Unknown talker" && rows[2].sub == "4 stations")
         #expect(rows[3] == RoundtableToolsList.Row(id: "lsb-7236400", hz: 7_236_400, frequency: "7.236",
                                                    glyph: .talking, who: "K4ABC",
@@ -642,7 +647,7 @@ struct RoundtableToolsPageTests {
         let tag = try #require(SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window))
         await MainQueue.drained()
         let messages = station.messages.count
-        let initialHeight = tag.accessibilityFrame.height
+        let initialFrame = tag.accessibilityFrame
         #expect(SetupTypedEntryTests.perform("Change signal display", on: tag))
         #expect(model.roundtable.signalFormat == .sUnits)
         await ShotWait.laidOut(window)
@@ -659,7 +664,8 @@ struct RoundtableToolsPageTests {
         #expect(model.roundtable.signalFormat == .both)
         await ShotWait.laidOut(window)
         let bothTag = try #require(SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window))
-        #expect(bothTag.accessibilityFrame.height >= initialHeight + 20)
+        // S and dBm share one line (D11): nothing shifts when the format changes (D14).
+        #expect(bothTag.accessibilityFrame == initialFrame)
         #expect(bothTag.accessibilityLabel?.contains("N4XYZ heard K4ABC") == true)
         #expect(bothTag.accessibilityLabel?.contains("-43 dBm") == true)
         try write("roundtable-overlay-card-both", window)
@@ -669,6 +675,1022 @@ struct RoundtableToolsPageTests {
         #expect(tag.accessibilityLabel?.contains("K4ABC") == true)
         #expect(tag.accessibilityLabel?.contains("N4XYZ") == true)
         #expect(tag.accessibilityFrame.width <= 177 && tag.accessibilityFrame.height > 40)
+        await model.disconnect()
+    }
+
+    /// The active frequency's scene for the card's pictures, with a double, a
+    /// talker and a quiet frequency elsewhere on the band, and a frequency slice B's flag speaks for.
+    private static func cardScene(double: Bool, link: FakeStation.RoundtableLink = .live,
+                                  wideNames: Bool = false) -> FakeStation.RoundtableScene {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let source = sliceRoom
+        let listeners: [(String, String, Double, Int64, Double, Int64, Bool)] = [
+            ("n/2", "N4RDR", 179, 39, -67, 1_000, false), ("y/4", "KG4VCF", 212, 135, -73, 2_000, true),
+            ("d/5", "KD8LMN", 496, 12, -78, 3_000, false), ("a/6", "AA4QQ", 565, 50, -110, 1_000, false),
+            ("s/7", "N0SPM", 872, 333, -78, 26_000, false), ("w/8", "W5ABC", 901, 281, -88, 2_000, false),
+        ]
+        var records: [LinkMessage.RecordBatch.Record] = []
+        func member(_ ref: String, _ call: String, km: Double?, keyed: Bool, you: Bool, seq: Int) {
+            records.append(.init(id: "member:\(source)/\(ref)", fields: [
+                "record": .string("member"), "ref": .string(ref), "sourceRoom": .string(source), "hz": .number(7_236_400),
+                "callsign": .string(call), "nth": .number(1), "grid": .string("EM73"), "km": km.map(LinkJSON.number) ?? .null,
+                "offsetHz": .number(0), "joining": .bool(false), "away": .bool(false), "keyed": .bool(keyed),
+                "software": .string("NereusSDR"), "softwareVersion": .string("26.10.3"), "you": .bool(you),
+                "seq": .number(Double(seq)),
+            ]))
+        }
+        let talkers = wideNames ? [("k/1", "VE3WIDE/MM"), ("n/9", "KG4WIDE/QRP")]
+            : double ? [("k/1", "K4ABC"), ("n/9", "N4XYZ")] : [("k/1", "K4ABC")]
+        for (index, talker) in talkers.enumerated() {
+            member(talker.0, talker.1, km: nil, keyed: true, you: false, seq: index)
+        }
+        for (index, listener) in listeners.enumerated() {
+            member(listener.0, listener.1, km: listener.2, keyed: false, you: listener.6, seq: 10 + index)
+            var reading = FakeStation.roundtableReading(ref: listener.0, dbm: listener.4, t: now - listener.5, turn: 12)
+            reading.id = "reading:\(source)/\(listener.0)"
+            reading.fields["sourceRoom"] = .string(source)
+            records.append(reading)
+        }
+        records.append(.init(id: "turn:12", fields: [
+            "record": .string("turn"), "id": .number(12), "kind": .string(double ? "doubled" : "talking"),
+            "talkers": .array(talkers.map { .object(["ref": .string($0.0), "callsign": .string($0.1), "nth": .number(1),
+                                                     "hz": .number(7_236_400), "sourceRoom": .string(source)]) }),
+            "start": .number(Double(now - 83_000)), "end": .null, "ending": .bool(false), "heard": .number(6),
+            "mine": .null, "sourceRoom": .string(source), "hz": .number(7_236_400),
+        ]))
+        func room(_ id: String, hz: Int64, state: String, _ people: [(String, Bool)]) -> [String: LinkJSON] {
+            var summary = FakeStation.roundtableSummary(id: id, members: people.count, state: state,
+                                                        talkers: people.filter(\.1).map(\.0))
+            summary["band"] = .string("40m")
+            summary["stations"] = .array(people.map {
+                FakeStation.roundtableStation(ref: $0.0, callsign: $0.0, sourceRoom: id, hz: hz, keyed: $0.1)
+            })
+            return summary
+        }
+        var mine = room(source, hz: 7_236_400, state: double ? "doubled" : "talking",
+                        talkers.map { ($0.1, true) } + listeners.map { ($0.1, false) })
+        mine["stations"] = .array(talkers.map {
+            FakeStation.roundtableStation(ref: $0.0, callsign: $0.1, sourceRoom: source, hz: 7_236_400, keyed: true)
+        } + listeners.map {
+            FakeStation.roundtableStation(ref: $0.0, callsign: $0.1, sourceRoom: source, hz: 7_236_400)
+        })
+        var scene = FakeStation.RoundtableScene(rooms: [
+            mine,
+            room("lsb-7225000", hz: 7_225_000, state: "doubled", [("AA5ABC", true), ("K0ABC", true), ("W2ABC", false)]),
+            room("lsb-7249000", hz: 7_249_000, state: "talking", [("K1SAID", true)]),
+            room("lsb-7254000", hz: 7_254_000, state: "talking", [("W6ABC", true), ("KC2ABC", false)]),
+            room("lsb-7261000", hz: 7_261_000, state: "quiet", [("W2DEF", false), ("N5ABC", false), ("K7ABC", false)]),
+        ], roomRecords: [source: records], link: link, linkSince: now - 12_000, sliceRooms: [0: source])
+        scene.frequencyPresences = [0: source, 1: "lsb-7249000"]
+        return scene
+    }
+
+    // MARK: Viewing a frequency (overlay design D21 to D29)
+
+    /// The frequency tapped. A phone's short pan has room for one tag, past its card.
+    private static var viewedHz: Int64 { UIDevice.current.userInterfaceIdiom == .pad ? 7_225_000 : 7_249_000 }
+    private static var viewedRoom: String { "lsb-\(viewedHz)" }
+
+    /// The card's scene, plus a viewed double with readings, and messages here and elsewhere.
+    private static func viewScene(double: Bool = true, link: FakeStation.RoundtableLink = .live) -> FakeStation.RoundtableScene {
+        var scene = cardScene(double: double, link: link)
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let source = viewedRoom
+        let viewed = Double(viewedHz)
+        var summary = FakeStation.roundtableSummary(id: source, members: 3, state: "doubled", talkers: ["AA5ABC", "K0ABC"])
+        summary["band"] = .string("40m")
+        summary["stations"] = .array([("AA5ABC", true), ("K0ABC", true), ("W2ABC", false)].map {
+            FakeStation.roundtableStation(ref: $0.0, callsign: $0.0, sourceRoom: source, hz: Int64(viewed), keyed: $0.1)
+        })
+        scene.rooms = scene.rooms.filter { $0["id"] != .string(source) } + [summary]
+        var records: [LinkMessage.RecordBatch.Record] = []
+        func member(_ ref: String, _ call: String, hz: Double, km: Double?, keyed: Bool, seq: Int) {
+            records.append(.init(id: "member:\(source)/\(ref)", fields: [
+                "record": .string("member"), "ref": .string(ref), "sourceRoom": .string(source), "hz": .number(hz),
+                "callsign": .string(call), "nth": .number(1), "grid": .string("EM73"), "km": km.map(LinkJSON.number) ?? .null,
+                "bearingDeg": .number(39), "offsetHz": .number(0), "joining": .bool(false), "away": .bool(false),
+                "keyed": .bool(keyed), "software": .string("NereusSDR"), "softwareVersion": .string("26.10.3"),
+                "you": .bool(false), "seq": .number(Double(seq)),
+            ]))
+        }
+        member("a/1", "AA5ABC", hz: viewed, km: nil, keyed: true, seq: 0)
+        member("k/2", "K0ABC", hz: viewed + 20, km: nil, keyed: true, seq: 1)
+        member("w/3", "W2ABC", hz: viewed - 40, km: 340, keyed: false, seq: 2)
+        var reading = FakeStation.roundtableReading(ref: "w/3", dbm: -71, t: now - 1_000, turn: 40)
+        reading.id = "reading:\(source)/w/3"
+        reading.fields["sourceRoom"] = .string(source)
+        records.append(reading)
+        records.append(.init(id: "turn:40", fields: [
+            "record": .string("turn"), "id": .number(40), "kind": .string("doubled"),
+            "talkers": .array([("a/1", "AA5ABC"), ("k/2", "K0ABC")].map {
+                .object(["ref": .string($0.0), "callsign": .string($0.1), "nth": .number(1),
+                         "hz": .number(viewed), "sourceRoom": .string(source)])
+            }),
+            "start": .number(Double(now - 95_000)), "end": .null, "ending": .bool(false), "heard": .number(1),
+            "mine": .null, "sourceRoom": .string(source), "hz": .number(viewed),
+        ]))
+        var here = FakeStation.roundtableMessage(id: 501, t: now - 30_000, callsign: "W2ABC", text: "Good signal into Albany.")
+        here.fields["hz"] = .number(viewed)
+        here.fields["family"] = .string("lsb")
+        records.append(here)
+        scene.roomRecords[source] = records
+        var elsewhere = FakeStation.roundtableMessage(id: 502, t: now - 20_000, callsign: "N4RDR", text: "Good copy into Knoxville.")
+        elsewhere.fields["hz"] = .number(7_236_400)
+        elsewhere.fields["family"] = .string("lsb")
+        scene.roomRecords[sliceRoom, default: []].append(elsewhere)
+        return scene
+    }
+
+    private func viewStation(double: Bool = true) async throws -> (AppModel, FakeStation) {
+        let (model, station) = try await shotStation(frequency: true)
+        model.phoneSettings.roundtableFirstRunNoteSeen = true
+        model.roundtable.activeSliceId = 0
+        try await station.deliverRoundtable(Self.viewScene(double: double))
+        #expect(await settle { model.roundtable.room?.id == Self.sliceRoom
+            && model.roundtable.cardData(context: Self.sliceRoom).rows.count == 6 })
+        return (model, station)
+    }
+
+    /// Tunes 100 Hz under your own frequency's open view: it keeps its typed name and
+    /// its scroll, comes up once, and only the model's one refresh for a new frequency asks the Core.
+    private func tuneUnderOwnFrequency(_ model: AppModel, _ station: FakeStation, window: UIWindow, box: String,
+                                       toFull: Bool) async throws {
+        func element(_ id: String) -> NSObject? { SetupTypedEntryTests.element(id, in: window) }
+        func activate(_ id: String) async -> Bool {
+            var found: NSObject?
+            let ok = await settle { found = element(id); return found != nil }
+            return ok && found?.accessibilityActivate() == true
+        }
+        func views<V: UIView>(_ type: V.Type, in view: UIView) -> [V] {
+            (view as? V).map { [$0] } ?? [] + view.subviews.flatMap { views(type, in: $0) }
+        }
+        #expect(await activate("roundtableTag.\(Self.sliceRoom)"))
+        #expect(await settle { element(box) != nil })
+        if toFull {
+            #expect(await activate("roundtableHandle"))
+        }
+        #expect(await activate("roundtableName-77"))
+        var found: UITextField?
+        #expect(await settle { found = views(UITextField.self, in: window).first; return found != nil })
+        let field = try #require(found)
+        field.insertText("W1A")
+        let sheet = try #require(element(box)).accessibilityFrame
+        var scroller: UIScrollView?
+        func longScroller() -> UIScrollView? {
+            views(UIScrollView.self, in: window).first {
+                $0.contentSize.height > $0.bounds.height + 100 && $0.convert($0.bounds, to: nil).intersects(sheet)
+                    && !$0.isKind(of: UITextView.self)
+            }
+        }
+        #expect(await settle { scroller = longScroller(); return scroller != nil })
+        let scroll = try #require(scroller)
+        scroll.setContentOffset(CGPoint(x: 0, y: 40), animated: false)
+        try await Task.sleep(for: .milliseconds(300))
+
+        let appears = RoundtableRoomView.appearsForTesting
+        let asks = station.roundtableHistoryRequests.count
+        let next = "lsb-7236500"
+        await station.deliver(.delta(.init(key: "slice:0", properties: [.init(name: "frequency", value: .f64(7_236_500))])))
+        #expect(await settle { model.roundtable.room?.id == next })
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(model.roundtable.readingRoomId == nil)
+        #expect(RoundtableRoomView.appearsForTesting == appears, "the tune brought the view up new")
+        #expect(station.roundtableHistoryRequests.count - asks <= 1, "more than one history ask after the tune")
+        #expect(views(UITextField.self, in: window).first?.text == "W1A", "the tune lost a half-typed name")
+        let after = longScroller()
+        #expect(after === scroll, "the tune made a new scroll view")
+        #expect((after?.contentOffset.y ?? 0) > 0, "the tune lost the scroll")
+    }
+
+    /// Both frequencies carry the turn to name, as a nearby turn does, and the messages to scroll.
+    private func nameableStation() async throws -> (AppModel, FakeStation) {
+        let (model, station) = try await viewStation()
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let turn = FakeStation.roundtableTurn(id: 77, start: now - 120_000, end: now - 60_000)
+        let messages = (0 ..< 30).map { index -> LinkMessage.RecordBatch.Record in
+            var record = FakeStation.roundtableMessage(id: Int64(600 + index), t: now - 200_000 + Int64(index),
+                                                       callsign: "W1AW", text: "Message \(index)")
+            record.fields["hz"] = .number(7_236_400)
+            record.fields["family"] = .string("lsb")
+            return record
+        }
+        await station.deliverRoundtableRoom(Self.sliceRoom, upserts: [turn] + messages)
+        await station.deliverRoundtableRoom("lsb-7236500", upserts: [turn])
+        #expect(await settle { model.roundtable.receivedMessages.count >= 30 })
+        return (model, station)
+    }
+
+    @Test("D27, D38: tuning under your own sheet keeps its scroll and typed name and adds no history ask")
+    func tuneKeepsOwnSheetState() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await nameableStation()
+        let (window, _) = try host(BandShotRoot(model: model))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        try await tuneUnderOwnFrequency(model, station, window: window, box: "roundtableSheet", toFull: true)
+    }
+
+    @Test("the real iPhone 17 band on its side: your card stands clear of the flag, its round buttons and the column")
+    func sidewaysCardClearsTheRealBand() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, _) = try await viewStation()
+        let (window, _) = try host(BandShotRoot(model: model), size: CGSize(width: 874, height: 402))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        func frame(_ id: String) -> CGRect? { SetupTypedEntryTests.element(id, in: window)?.accessibilityFrame }
+        let tag = "roundtableTag.\(Self.sliceRoom)"
+        #expect(await settle { frame(tag) != nil && frame("flagA") != nil && frame("bandColumn") != nil })
+        let card = try #require(frame(tag))
+        #expect(card.width > 0 && card.height > 0)
+        for id in ["flagA", "flagCloseA", "flagLockA", "flagMoreA", "bandColumn"] {
+            let block = try #require(frame(id), "\(id) is not on the band")
+            #expect(!card.intersects(block), "\(card) meets \(id) \(block)")
+        }
+    }
+
+    @Test("D38: tuning under your own panel on an iPad keeps its scroll and typed name too")
+    func tuneKeepsOwnPanelState() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await nameableStation()
+        let (window, _) = try host(ViewShotRoot(model: model, columnShown: false, wide: false),
+                                   size: CGSize(width: 1376, height: 1032))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        try await tuneUnderOwnFrequency(model, station, window: window, box: "roundtableFrequencyPopover", toFull: false)
+    }
+
+    private final class Viewed {
+        var ids: [String] = []
+        var tuned: [Int64] = []
+    }
+
+    @Test("a tag's tap views on a capable server, your own as well, and a legacy server keeps today's")
+    func tagTapRules() {
+        typealias Layer = RoundtableTagLayer
+        #expect(Layer.tagTap(roomId: "x", canView: true, activeContext: "me", hasDetails: true) == .view("x"))
+        #expect(Layer.tagTap(roomId: "x", canView: true, activeContext: "me", hasDetails: false) == .view("x"))
+        #expect(Layer.tagTap(roomId: "me", canView: true, activeContext: "me", hasDetails: false) == .view("me"))
+        #expect(Layer.tagTap(roomId: "x", canView: false, activeContext: "me", hasDetails: true) == .legacyDetails("x"))
+        #expect(Layer.tagTap(roomId: "x", canView: false, activeContext: "me", hasDetails: false) == .tune("x"))
+        #expect(Layer.foldRowTap(roomId: "x", canView: true) == .view("x"))
+        #expect(Layer.foldRowTap(roomId: "x", canView: false) == .tune("x"))
+    }
+
+    @Test("the same target closes, another swaps, and the iPad's column returns to your own and stays")
+    func toggleSteps() {
+        typealias Screen = MainScreen
+        let viewed = Screen.RoundtableTarget.viewed("x")
+        let other = Screen.RoundtableTarget.viewed("y")
+        #expect(Screen.roundtableStep(target: .own, shown: nil, inColumn: false) == .show(.own))
+        #expect(Screen.roundtableStep(target: viewed, shown: nil, inColumn: false) == .show(viewed))
+        #expect(Screen.roundtableStep(target: .own, shown: .own, inColumn: false) == .close)
+        #expect(Screen.roundtableStep(target: viewed, shown: viewed, inColumn: false) == .close)
+        #expect(Screen.roundtableStep(target: other, shown: viewed, inColumn: false) == .show(other))
+        #expect(Screen.roundtableStep(target: .own, shown: viewed, inColumn: false) == .show(.own))
+        #expect(Screen.roundtableStep(target: viewed, shown: .own, inColumn: false) == .show(viewed))
+        #expect(Screen.roundtableStep(target: viewed, shown: viewed, inColumn: true) == .show(.own))
+        #expect(Screen.roundtableStep(target: .own, shown: .own, inColumn: true) == .show(.own))
+        #expect(Screen.roundtableStep(target: other, shown: viewed, inColumn: true) == .show(other))
+    }
+
+    @Test("a hosted tag's tap reads and no slice moves; your own card asks for your own and reads nothing")
+    func hostedTagViews() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await viewStation()
+        let before = model.main.slices.active?.slice.frequencyHz
+        let viewed = Viewed(), legacy = Tuned()
+        let layer = RoundtableTagLayer(roundtable: model.roundtable, sliceIds: [0], geometryWidth: 402,
+            lowHz: BandFlagShotTests.centre - BandFlagShotTests.span / 2, hzPerPoint: BandFlagShotTests.span / 402,
+            top: 300, tickFoot: 330, flagRects: [], keyed: false, sliceLetter: "A", compact: true, readReports: { _ in },
+            viewFrequency: { viewed.ids.append($0) }) { room in legacy.ids.append(room.id) }
+        let (window, _) = try host(layer.frame(width: 402, height: 400).background(Color.black))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        await ShotWait.laidOut(window)
+        var tag: NSObject?
+        #expect(await settle { tag = SetupTypedEntryTests.element("roundtableTag.lsb-7225000", in: window); return tag != nil })
+        let sent = station.messages.count
+        #expect(tag?.accessibilityActivate() == true)
+        #expect(viewed.ids == ["lsb-7225000"])
+        var card: NSObject?
+        #expect(await settle { card = SetupTypedEntryTests.element("roundtableTag.\(Self.sliceRoom)", in: window); return card != nil })
+        #expect(card?.accessibilityActivate() == true)
+        #expect(viewed.ids == ["lsb-7225000", Self.sliceRoom])
+        #expect(legacy.ids.isEmpty)
+        #expect(model.main.slices.active?.slice.frequencyHz == before)
+        #expect(station.messages.count == sent)
+        await model.disconnect()
+    }
+
+    /// The real main screen on a phone: tap, look, Back, Tune; the slice moves only on Tune.
+    @Test("on a phone a tag opens the sheet, Back stays up on your own, the same tag closes, and Tune tunes and closes")
+    func phoneViewFlow() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, _) = try await viewStation()
+        let (window, _) = try host(BandShotRoot(model: model))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        let before = try #require(model.main.slices.active?.slice.frequencyHz)
+        func activate(_ id: String) async -> Bool {
+            var found: NSObject?
+            let ok = await settle { found = SetupTypedEntryTests.element(id, in: window); return found != nil }
+            return ok && found?.accessibilityActivate() == true
+        }
+        #expect(await activate("roundtableTag.\(Self.viewedRoom)"))
+        #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+        #expect(await settle { SetupTypedEntryTests.element("roundtableViewHead", in: window) != nil })
+        #expect(model.main.slices.active?.slice.frequencyHz == before)
+        // D22: read only, and only this frequency's messages.
+        #expect(await settle { model.roundtable.room?.messages.map(\.id) == [501] })
+        // Back to your own, in place: the sheet stays up, on your frequency.
+        #expect(await activate("roundtableBackToSlice"))
+        #expect(await settle { model.roundtable.readingRoomId == nil })
+        #expect(await settle { SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil })
+        #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
+        #expect(SetupTypedEntryTests.element("roundtableViewHead", in: window) != nil)
+        #expect(model.main.slices.active?.slice.frequencyHz == before)
+        // The same tag twice: opens, then closes.
+        #expect(await activate("roundtableTag.\(Self.viewedRoom)"))
+        #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+        #expect(await activate("roundtableTag.\(Self.viewedRoom)"))
+        #expect(await settle { model.roundtable.readingRoomId == nil })
+        #expect(await settle { SetupTypedEntryTests.element("roundtableSheet", in: window) == nil })
+        #expect(model.main.slices.active?.slice.frequencyHz == before)
+        #expect(await activate("roundtableTag.\(Self.viewedRoom)"))
+        #expect(await settle { SetupTypedEntryTests.element("roundtableViewTune", in: window) != nil })
+        #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+        #expect(await activate("roundtableViewTune"))
+        #expect(await settle { model.main.slices.active?.slice.frequencyHz == Double(Self.viewedHz) })
+        #expect(await settle { model.roundtable.readingRoomId == nil })
+        #expect(await settle { SetupTypedEntryTests.element("roundtableViewHead", in: window) == nil })
+        await model.disconnect()
+    }
+
+    /// Spec D38 and the rule that a tap never tunes: the slice's frequency and mode hold
+    /// across a toggle, a swap and Back, and a swap keeps the height the sheet has.
+    @Test("one sheet on a phone: your card opens it with Tune greyed and the box kept; a swap keeps its height")
+    func phoneOneSheet() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await viewStation()
+        let (window, _) = try host(BandShotRoot(model: model))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        let hz = try #require(model.main.slices.active?.slice.frequencyHz)
+        let mode = try #require(model.main.slices.active?.modeLabel)
+        func unmoved() -> Bool {
+            model.main.slices.active?.slice.frequencyHz == hz && model.main.slices.active?.modeLabel == mode
+        }
+        func activate(_ id: String) async -> Bool {
+            var found: NSObject?
+            let ok = await settle { found = SetupTypedEntryTests.element(id, in: window); return found != nil }
+            return ok && found?.accessibilityActivate() == true
+        }
+        func exists(_ id: String) async -> Bool {
+            await settle { SetupTypedEntryTests.element(id, in: window) != nil }
+        }
+        func sheetTop() -> CGFloat {
+            SetupTypedEntryTests.element("roundtableSheet", in: window)?.accessibilityFrame.minY ?? -1
+        }
+        let writes = station.messages.count
+        let own = "roundtableTag.\(Self.sliceRoom)", tag = "roundtableTag.\(Self.viewedRoom)"
+        // Your own card opens your own frequency: the same view, Tune greyed with the reason, and the box.
+        #expect(await activate(own))
+        #expect(await exists("roundtableViewHead"))
+        #expect(await exists("roundtableViewTuneReason"))
+        #expect(await exists("roundtableBox"))
+        #expect(await exists("roundtableMore"))
+        #expect(model.roundtable.readingRoomId == nil)
+        let tune = try #require(SetupTypedEntryTests.element("roundtableViewTune", in: window))
+        #expect(tune.accessibilityTraits.contains(.notEnabled))
+        #expect(tune.accessibilityActivate() == false || unmoved())
+        #expect(unmoved())
+        // The same card closes it.
+        #expect(await activate(own))
+        #expect(await settle { SetupTypedEntryTests.element("roundtableSheet", in: window) == nil })
+        // Full height, then a swap each way: the height stays.
+        #expect(await activate(own))
+        #expect(await exists("roundtableHandle"))
+        #expect(await activate("roundtableHandle"))
+        await ShotWait.laidOut(window)
+        #expect(await settle { sheetTop() >= 0 })
+        try await Task.sleep(for: .milliseconds(400))
+        let full = sheetTop()
+        #expect(await activate(tag))
+        #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(abs(sheetTop() - full) < 2, "\(sheetTop()) was \(full)")
+        #expect(model.roundtable.lostReads == 0)
+        #expect(unmoved())
+        #expect(await activate("roundtableBackToSlice"))
+        #expect(await settle { model.roundtable.readingRoomId == nil })
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(abs(sheetTop() - full) < 2, "\(sheetTop()) was \(full)")
+        #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
+        #expect(unmoved())
+        // Nothing wrote to the slice: the frequency's reads are the only traffic.
+        let sliceWrites = station.messages.dropFirst(writes).filter { "\($0)".contains("slice:0") }
+        #expect(sliceWrites.isEmpty, "\(sliceWrites)")
+        await model.disconnect()
+    }
+
+    /// D24, D38 on an iPad: the panel with the column hidden, the applet with it.
+    @Test("an iPad's panel takes your own frequency and toggles; its column views and returns, in the applet")
+    func iPadOneInspector() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, _) = try await viewStation()
+        let hz = try #require(model.main.slices.active?.slice.frequencyHz)
+        let mode = try #require(model.main.slices.active?.modeLabel)
+        func unmoved() -> Bool {
+            model.main.slices.active?.slice.frequencyHz == hz && model.main.slices.active?.modeLabel == mode
+        }
+        let size = CGSize(width: 1376, height: 1032)
+        let own = "roundtableTag.\(Self.sliceRoom)", tag = "roundtableTag.\(Self.viewedRoom)"
+        do {
+            let (window, _) = try host(ViewShotRoot(model: model, columnShown: false, wide: false), size: size)
+            defer { window.isHidden = true; window.rootViewController = nil }
+            _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+            func activate(_ id: String) async -> Bool {
+                var found: NSObject?
+                let ok = await settle { found = SetupTypedEntryTests.element(id, in: window); return found != nil }
+                return ok && found?.accessibilityActivate() == true
+            }
+            func panel() -> NSObject? { SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) }
+            #expect(await activate(own))
+            #expect(await settle { panel() != nil })
+            #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) == nil)
+            #expect(await settle { SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil })
+            #expect(await settle { SetupTypedEntryTests.element("roundtableBox", in: window) != nil })
+            #expect(await settle { SetupTypedEntryTests.element("roundtableMore", in: window) != nil })
+            // Your card again closes; a tag swaps in; Back stays up; the close button closes.
+            #expect(await activate(own))
+            #expect(await settle { panel() == nil })
+            #expect(await activate(own))
+            #expect(await settle { panel() != nil })
+            #expect(await activate(tag))
+            #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+            #expect(panel() != nil)
+            #expect(await activate("roundtableBackToSlice"))
+            #expect(await settle { model.roundtable.readingRoomId == nil })
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(panel() != nil)
+            #expect(await activate(tag))
+            #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+            #expect(await activate(tag))
+            #expect(await settle { model.roundtable.readingRoomId == nil })
+            #expect(await settle { panel() == nil })
+            #expect(await activate(own))
+            #expect(await settle { panel() != nil })
+            #expect(await activate("roundtableViewClose"))
+            #expect(await settle { panel() == nil })
+            #expect(unmoved())
+        }
+        do {
+            let (window, _) = try host(ViewShotRoot(model: model, columnShown: true, wide: false), size: size)
+            defer { window.isHidden = true; window.rootViewController = nil }
+            _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+            func activate(_ id: String) async -> Bool {
+                var found: NSObject?
+                let ok = await settle { found = SetupTypedEntryTests.element(id, in: window); return found != nil }
+                return ok && found?.accessibilityActivate() == true
+            }
+            #expect(await activate(tag))
+            #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+            // The same tag returns to your own, in the applet, with no sheet or panel.
+            #expect(await activate(tag))
+            #expect(await settle { model.roundtable.readingRoomId == nil })
+            #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) == nil)
+            #expect(SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) == nil)
+            #expect(await settle { SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil })
+            #expect(await activate(tag))
+            #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+            // Your own card returns as well.
+            #expect(await activate(own))
+            #expect(await settle { model.roundtable.readingRoomId == nil })
+            #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) == nil)
+            #expect(unmoved())
+        }
+        await model.disconnect()
+    }
+
+    @Test("at half height Tune is pinned above the composer, on the screen, however long the readings")
+    func tuneIsPinnedAtHalfHeight() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, _) = try await viewStation()
+        let (window, _) = try host(BandShotRoot(model: model))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        let tag = try await requireElement("roundtableTag.\(Self.viewedRoom)", in: window)
+        #expect(tag.accessibilityActivate())
+        _ = try await requireElement("roundtableViewHead", in: window)
+        // Shorter, so half height leaves the readings far less than they need.
+        window.frame.size.height = 640
+        window.layoutIfNeeded()
+        let tune = try await requireElement("roundtableViewTune", in: window)
+        let composer = try await requireElement("roundtableBox", in: window)
+        let head = try await requireElement("roundtableViewHead", in: window)
+        try await Task.sleep(for: .milliseconds(500))
+        func frame(_ element: NSObject) -> CGRect { (element as? UIAccessibilityElement)?.accessibilityFrame ?? element.accessibilityFrame }
+        let tuneFrame = frame(tune), composerFrame = frame(composer), headFrame = frame(head)
+        #expect(tuneFrame.maxY <= composerFrame.minY + 1, "Tune \(tuneFrame) composer \(composerFrame)")
+        #expect(tuneFrame.minY >= headFrame.minY, "Tune \(tuneFrame) head \(headFrame)")
+        #expect(window.bounds.contains(tuneFrame))
+        await model.disconnect()
+    }
+
+    @Test("another slice's flag line views its frequency and leaves the active slice; your own opens your room")
+    func flagLines() async throws {
+        // An iPad's slice B has a full flag, with its line; a phone's short pan folds it.
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, _) = try await viewStation()
+        let (window, _) = try host(ViewShotRoot(model: model, columnShown: true, wide: false),
+                                   size: CGSize(width: 1376, height: 1032))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        let active = model.main.slices.activeSliceId
+        var line: NSObject?
+        #expect(await settle { line = SetupTypedEntryTests.element("roundtableLineB", in: window); return line != nil })
+        #expect(line?.accessibilityActivate() == true)
+        #expect(await settle { model.roundtable.readingRoomId == "lsb-7249000" })
+        #expect(model.main.slices.activeSliceId == active)
+        line = nil
+        #expect(await settle { line = SetupTypedEntryTests.element("roundtableLineA", in: window); return line != nil })
+        #expect(line?.accessibilityActivate() == true)
+        #expect(await settle { model.roundtable.readingRoomId == nil })
+        #expect(model.main.slices.activeSliceId == active)
+        await model.disconnect()
+    }
+
+    @Test("a band tune leaves the view open, landing on it makes it your own, and a lost read closes it with the usual status line")
+    func viewEnds() async throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await viewStation()
+        let (window, _) = try host(BandShotRoot(model: model))
+        defer { window.isHidden = true; window.rootViewController = nil }
+        _ = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+        var tag: NSObject?
+        #expect(await settle { tag = SetupTypedEntryTests.element("roundtableTag.\(Self.viewedRoom)", in: window); return tag != nil })
+        #expect(tag?.accessibilityActivate() == true)
+        #expect(await settle { model.roundtable.isViewing })
+        // D27, D38: a band drag tunes your slice elsewhere. The view stays on what it shows.
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_240_000)),
+        ])))
+        #expect(await settle { model.main.slices.active?.slice.frequencyHz == 7_240_000 })
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(model.roundtable.readingRoomId == Self.viewedRoom)
+        #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
+        // Your slice lands on the viewed frequency: the sheet becomes your own, in place.
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(Double(Self.viewedHz))),
+        ])))
+        #expect(await settle { !model.roundtable.isViewing })
+        #expect(await settle { SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil })
+        #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
+        await station.deliver(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 1, name: "frequency", value: .f64(7_236_400)),
+        ])))
+        #expect(await settle { model.roundtable.activeContext?.id == Self.sliceRoom
+            && model.main.slices.active?.slice.frequencyHz == 7_236_400 })
+        await ShotWait.laidOut(window)
+        tag = nil
+        #expect(await settle { tag = SetupTypedEntryTests.element("roundtableTag.\(Self.viewedRoom)", in: window); return tag != nil })
+        #expect(tag?.accessibilityActivate() == true)
+        #expect(await settle { model.roundtable.isViewing })
+        // The server stops offering frequency views.
+        await station.deliverRoundtableFrequencyCapability(false)
+        #expect(await settle { model.roundtable.readingRoomId == nil })
+        #expect(model.roundtable.lostReads == 1)
+        #expect(await settle { SetupTypedEntryTests.element("roundtableViewHead", in: window) == nil })
+        #expect(await settle { SetupTypedEntryTests.element("roundtableSheet", in: window) == nil })
+        await model.disconnect()
+    }
+
+    @Test("Widen's rows say Double with its names, and a row reads and never tunes")
+    func wideRows() throws {
+        let base = RoundtableToolsList.Row(id: "lsb-7225000", hz: 7_225_000, frequency: "7.225", glyph: .doubled, who: "",
+                                           sub: "3 stations", letters: [], mentions: 0, quiet: false)
+        let double = RoundtableToolsList.wideRow(base, keyedNames: ["AA5ABC", "K0ABC"])
+        #expect(double.who == "Double" && double.sub == "AA5ABC + K0ABC")
+        var mine = base
+        mine.glyph = .talking
+        mine.letters = ["A"]
+        let talking = RoundtableToolsList.wideRow(mine, keyedNames: ["K4ABC"])
+        #expect(talking.who == "K4ABC" && talking.sub == "3 stations \u{00B7} you")
+        var quiet = base
+        quiet.glyph = .quiet
+        #expect(RoundtableToolsList.wideRow(quiet, keyedNames: []).who == "Quiet")
+        quiet.glyph = .unknown
+        #expect(RoundtableToolsList.wideRow(quiet, keyedNames: []).who == "Unknown talker")
+    }
+
+    @Test("Your pan: the peak in the sideband window, nil off pan, before a frame and while transmitting")
+    func panLevel() throws {
+        let band = BandModel()
+        band.endpointId = 1
+        band.receive(.context(try #require(BandFlagShotTests.context())))
+        let hz: Int64 = 7_240_000
+        #expect(band.panLevel(hz: hz, family: "lsb") == nil) // before a frame
+        let samples = 1_206
+        let coverage = BandCoverage(centerHz: BandFlagShotTests.centre, spanHz: BandFlagShotTests.span)
+        var trace = [Float](repeating: -120, count: samples)
+        func put(_ at: Double, _ dbm: Float) {
+            if let index = coverage.sample(forHz: at, samples: samples) { trace[index] = dbm }
+        }
+        put(Double(hz) - 1_500, -60) // lower sideband's window
+        put(Double(hz) + 1_500, -50) // upper sideband's window
+        put(Double(hz) + 8_000, -20) // in neither
+        band.receive(.displayFrame(DisplayFrame(endpointId: 1, contextGeneration: 1, encoderSequence: 1,
+                                                producerTimestamp: 1, isKeyframe: true, waterfallAdvance: true,
+                                                minDbm: -160, maxDbm: 0, traceDbm: trace, waterfallDbm: trace, wideDbm: [])))
+        #expect(band.panLevel(hz: hz, family: "lsb") == -60)
+        #expect(band.panLevel(hz: hz, family: "usb") == -50)
+        #expect(band.panLevel(hz: hz, family: "am") == -120) // 1.35 kHz each side misses both
+        #expect(band.panLevel(hz: 14_200_000, family: "usb") == nil) // off this pan
+        band.transmit.keyedHere = true
+        #expect(band.panLevel(hz: hz, family: "lsb") == nil)
+    }
+
+    @Test("the view's words: offsets, the path, the head, and Your pan only for now")
+    func viewWords() {
+        typealias Words = RoundtableFrequencyText
+        #expect(Words.sub(hz: 7_225_000, family: "lsb", sliceHz: 7_236_400, sliceLetter: "A")
+                == "Viewing, not tuned \u{00B7} \u{2212}11.4 kHz from slice A \u{00B7} LSB")
+        #expect(Words.sub(hz: 7_225_000, family: "lsb", sliceHz: 7_225_000, sliceLetter: "A")
+                == "Viewing, not tuned \u{00B7} LSB")
+        #expect(Words.alreadyHere(sliceLetter: "A") == "Slice A is already here")
+        #expect(Words.offset(0) == "on freq" && Words.offset(20) == "+20 Hz" && Words.offset(-40) == "\u{2212}40 Hz")
+        #expect(Words.path(km: 340, bearing: 39, units: "mi", showBearing: true) == "211 mi 039\u{00B0}")
+        #expect(Words.path(km: 340, bearing: 39, units: "km", showBearing: false) == "340 km")
+        #expect(Words.path(km: nil, bearing: nil, units: "mi", showBearing: true).isEmpty)
+        var card = RoundtableCardData(hz: 7_225_000)
+        #expect(Words.head(card) == "Nobody talking")
+        card.kind = .lastTalker
+        #expect(Words.head(card) == "Nobody talking")
+        card.kind = .unknown
+        #expect(Words.head(card) == "Unknown signal")
+        #expect(!Words.showsPath(card))
+        card.kind = .double
+        #expect(!Words.showsPath(card))
+        // Your pan comes first when someone is on the air.
+        #expect(Words.rows(card, panDbm: -70, panPeak: -68).first?.label == "Your pan")
+        #expect(Words.rows(card, panDbm: nil, panPeak: nil).isEmpty)
+        card.kind = .quiet
+        #expect(Words.rows(card, panDbm: -70, panPeak: -68).isEmpty)
+        card.kind = .double
+        card.frozen = true
+        #expect(Words.rows(card, panDbm: -70, panPeak: -68).isEmpty)
+        // Tune.
+        func can(hz: Int64 = 1, family: String = "lsb", sliceHz: Int64? = 2, sliceFamily: String? = "lsb",
+                 keyed: Bool = false, tunable: Bool = true, linkUp: Bool = true) -> Bool {
+            Words.canTune(hz: hz, family: family, sliceHz: sliceHz, sliceFamily: sliceFamily, keyed: keyed,
+                          tunable: tunable, linkUp: linkUp)
+        }
+        #expect(can())
+        #expect(!can(keyed: true))
+        #expect(!can(sliceHz: 1))
+        #expect(!can(tunable: false))
+        #expect(!can(linkUp: false))
+        // The same frequency in another family is not "already there".
+        #expect(can(sliceHz: 1, sliceFamily: "usb"))
+        #expect(!can(sliceHz: nil, sliceFamily: nil))
+        // A FreeDV view writes no mode: from any family on this frequency, nothing to do.
+        #expect(!can(family: "fdvu", sliceHz: 1, sliceFamily: "usb"))
+        #expect(!can(family: "fdvl", sliceHz: 1, sliceFamily: "lsb"))
+        #expect(!can(family: "fdvl", sliceHz: 1, sliceFamily: "fdvl"))
+        #expect(can(family: "fdvu", sliceHz: 2, sliceFamily: "usb"))
+        // With no mode to reach the family, off.
+        #expect(!Words.canTune(hz: 1, family: "lsb", sliceHz: 2, sliceFamily: "usb", keyed: false, tunable: true,
+                               linkUp: true, familyReachable: false))
+    }
+
+    @Test("a RADE slice has a frequency context, and Tune is off when it is already there")
+    func radeSliceHasAContext() async throws {
+        let (model, station) = try await viewStation()
+        for (mode, family) in [(Int64(14), "fdvu"), (Int64(15), "fdvl")] {
+            await station.deliver(.delta(LinkMessage.Delta(key: "slice:1", properties: [
+                .init(ordinal: 2, name: "dspMode", value: .enumeration(mode)),
+            ])))
+            #expect(await settle { model.roundtable.sliceContexts[1]?.family == family })
+        }
+        let context = try #require(model.roundtable.sliceContexts[1])
+        let entry = try #require(model.main.slices.entries.first { $0.id == 1 })
+        var data = RoundtableCardData(hz: context.hz)
+        data.family = context.family
+        #expect(!RoundtableFrequencyHost.canTune(data, active: entry, keyed: false, tunable: true, linkUp: true,
+                                                 modes: model.main.slices.catalog?.offeredModes ?? []))
+        await model.disconnect()
+    }
+
+    @Test("an unviewed slice's flag names who is on the air within 5 kHz, through the model")
+    func unviewedSliceFlagFollowsTheNearestKeyed() async throws {
+        let (model, station) = try await viewStation()
+        let context = try #require(model.roundtable.sliceContexts[1])
+        #expect(model.roundtable.view(of: context.id) == nil)
+        var scene = Self.viewScene()
+        let source = "lsb-\(context.hz + 3_000)"
+        var summary = FakeStation.roundtableSummary(id: source, members: 1, state: "talking", talkers: ["W9XYZ"])
+        summary["stations"] = .array([FakeStation.roundtableStation(ref: "x/1", callsign: "W9XYZ", sourceRoom: source,
+                                                                    hz: context.hz + 3_000, keyed: true)])
+        // Only this neighbor: on iPad the scene's own rooms sit nearer slice B.
+        scene.rooms = [summary]
+        scene.roomRecords = [:]
+        try await station.deliverRoundtable(scene)
+        #expect(await settle { RoundtableFlagLine.line(model.roundtable, sliceId: 1)?.text.hasSuffix("W9XYZ") == true })
+        await model.disconnect()
+    }
+
+    /// Set NEREUS_ROUNDTABLE_VIEW_SHOTS to a folder to run this and write its pictures there.
+    @Test("shots: a view before its stream beside a double, and a FreeDV view with Tune off",
+          .enabled(if: !(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_VIEW_SHOTS"] ?? "").isEmpty))
+    func secondRoundViewShots() async throws {
+        let directory = try #require(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_VIEW_SHOTS"])
+        func station(_ ref: String, _ source: String, _ hz: Int64, _ keyed: Bool) -> RoundtableModel.Station {
+            .init(ref: ref, sourceRoom: source, slice: 0, hz: hz, family: "lsb", callsign: ref, nth: 1, keyed: keyed,
+                  away: false, joining: false)
+        }
+        func summary(_ id: String, _ hz: Int64, _ stations: [RoundtableModel.Station]) -> RoundtableModel.RoomSummary {
+            .init(id: id, band: "40m", family: "lsb", hz: hz, state: "quiet", talkers: [], members: Int64(stations.count),
+                  messages: 0, last: 0, folded: false, heard: 0, readings: [], stations: stations)
+        }
+        let directoryStations = [station("W2QQQ", "lsb-7236000", 7_236_000, false)]
+        let doubled = [station("W1AW", "lsb-7239000", 7_239_000, true), station("K4ABC", "lsb-7239000", 7_239_040, true)]
+        let rows = RoundtableModel.frequencyRows(of: [summary("lsb-7236000", 7_236_000, directoryStations),
+                                                      summary("lsb-7239000", 7_239_000, doubled)])
+        var pending = RoundtableTagLayout.cardData(summary: try #require(rows.first { $0.hz == 7_236_000 }), view: nil, now: 0,
+                                                   link: .live, linkSince: 0, directory: directoryStations + doubled, rows: rows)
+        pending.family = "lsb"
+        #expect(pending.kind == .double)
+        var freedv = pending
+        freedv.family = "fdvu"
+        let cannot = !RoundtableFrequencyText.canTune(hz: 7_236_000, family: "fdvu", sliceHz: 7_236_000, sliceFamily: "usb",
+                                                      keyed: false, tunable: true, linkUp: true)
+        #expect(cannot)
+        for (name, card, canTune, sliceHz) in [("pending-next-to-double", pending, true, Int64(7_224_600)),
+                                               ("freedv-same-frequency", freedv, false, Int64(7_236_000))] {
+            let view = RoundtableFrequencyView(data: card, viewing: true, canTune: canTune, sliceHz: sliceHz, sliceLetter: "A",
+                                               format: .dbm, units: "mi", showBearing: true, panDbm: nil, panPeak: nil,
+                                               reconnecting: false, showsBack: false, onTune: {}, onBack: {})
+                .background(Color.black)
+            let (window, _) = try host(view, size: CGSize(width: 402, height: 420))
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            try await Task.sleep(for: .milliseconds(600))
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            try #require(image.pngData()).write(to: URL(fileURLWithPath: directory).appendingPathComponent("view-\(name).png"))
+        }
+    }
+
+    @Test("a live double's view has a clock and blank paths; a frozen one has no clock")
+    func viewClockAndPaths() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        var card = RoundtableCardData(hz: 7_225_000)
+        card.kind = .double
+        card.keyed = ["AA5ABC", "K0ABC"]
+        card.clock = 95_000
+        card.family = "lsb"
+        card.rows = [.init(call: "W2ABC", dbm: -71, age: 1_000, km: nil, bearing: nil, offsetHz: 0, you: false, old: false,
+                           peak: -70)]
+        card.onFrequency = [.init(name: "AA5ABC", keyed: true, you: false, offsetHz: 0),
+                            .init(name: "K0ABC", keyed: true, you: false, offsetHz: 20)]
+        func clockShown(_ data: RoundtableCardData) async throws -> Bool {
+            let view = RoundtableFrequencyView(data: data, viewing: true, canTune: false, sliceHz: 7_236_400,
+                                               onTune: {}, onBack: {})
+            let (window, _) = try host(view.frame(width: 300).background(Color.black))
+            defer { window.isHidden = true; window.rootViewController = nil }
+            await ShotWait.laidOut(window)
+            #expect(SetupTypedEntryTests.element("roundtableViewTune", in: window) != nil)
+            let head = SetupTypedEntryTests.element("roundtableViewHead", in: window)
+            return head?.accessibilityLabel?.contains("1:35") == true
+        }
+        #expect(try await clockShown(card))
+        card.frozen = true
+        card.note = "Reconnecting"
+        #expect(try await !clockShown(card))
+    }
+
+    @Test("a pending view and pan card show no clock until a turn start is known")
+    func pendingViewHasNoClock() async throws {
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        func clockShown(_ data: RoundtableCardData) async throws -> Bool {
+            let view = RoundtableFrequencyView(data: data, viewing: true, canTune: false, sliceHz: 7_236_400,
+                                               onTune: {}, onBack: {})
+            let (window, _) = try host(view.frame(width: 300).background(Color.black))
+            defer { window.isHidden = true; window.rootViewController = nil }
+            await ShotWait.laidOut(window)
+            return SetupTypedEntryTests.element("roundtableViewClock", in: window) != nil
+                || SetupTypedEntryTests.element("roundtableViewHead", in: window)?.accessibilityLabel?.contains("0:00") == true
+        }
+        // Known only from the directory: Double and Talking, with nothing to time.
+        var pending = RoundtableCardData(hz: 7_225_000)
+        pending.family = "lsb"
+        pending.keyed = ["AA5ABC", "K0ABC"]
+        pending.kind = .double
+        #expect(RoundtableTagLayout.cardClockText(pending) == nil)
+        #expect(try await !clockShown(pending))
+        pending.kind = .talking
+        pending.keyed = ["AA5ABC"]
+        #expect(RoundtableTagLayout.cardClockText(pending) == nil)
+        #expect(try await !clockShown(pending))
+        // The turn's start arrives with the stream.
+        pending.clock = 95_000
+        #expect(RoundtableTagLayout.cardClockText(pending) == "1:35")
+    }
+
+    /// Set NEREUS_ROUNDTABLE_VIEW_SHOTS to a folder to run this and write its pictures there.
+    @Test("shots: the frequency view on the phone sheet, the iPad applet, Widen, the popover and portrait",
+          .enabled(if: !(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_VIEW_SHOTS"] ?? "").isEmpty))
+    func viewShots() async throws {
+        let directory = try #require(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_VIEW_SHOTS"])
+        let accessibility = SetupTypedEntryTests.applicationAccessibility()
+        SetupTypedEntryTests.setApplicationAccessibility(true)
+        defer { SetupTypedEntryTests.setApplicationAccessibility(accessibility) }
+        let (model, station) = try await viewStation()
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        let landscape = CGSize(width: 1376, height: 1032)
+        let portrait = pad ? CGSize(width: 1032, height: 1376) : CGSize(width: 402, height: 874)
+        func shoot(_ name: String, size: CGSize, columnShown: Bool = true, wide: Bool = false, tag: Bool = true,
+                   own: Bool = false, release: Bool = true, check: ((UIWindow) -> Void)? = nil) async throws {
+            let (window, _) = try host(ViewShotRoot(model: model, columnShown: columnShown, wide: wide), size: size)
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            if wide {
+                await ShotWait.laidOut(window)
+            } else {
+                let bandDraw = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+                BandFlagShotTests.feed(model.main.band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
+                try await ShotWait.requireBandShown(model.main.band, in: window, after: bandDraw)
+            }
+            if tag {
+                if wide {
+                    let row = try await requireElement("roundtableWide.row.\(Self.viewedRoom)", in: window)
+                    #expect(row.accessibilityActivate())
+                } else {
+                    let found = try await requireElement("roundtableTag.\(Self.viewedRoom)", in: window)
+                    #expect(found.accessibilityActivate())
+                }
+                #expect(await settle { model.roundtable.readingRoomId == Self.viewedRoom })
+            }
+            if own {
+                let found = try await requireElement("roundtableTag.\(Self.sliceRoom)", in: window)
+                #expect(found.accessibilityActivate())
+            }
+            try await Task.sleep(for: .milliseconds(900))
+            check?(window)
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("view-\(name).png")
+            try #require(image.pngData()).write(to: url)
+            print("View shot \(url.lastPathComponent) reading=\(model.roundtable.readingRoomId ?? "none")")
+            if release {
+                await model.roundtable.backToSlice()
+                #expect(await settle { model.roundtable.readingRoomId == nil })
+            }
+        }
+        if pad {
+            try await shoot("ipad-applet", size: landscape) { window in
+                #expect(SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) == nil)
+                #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) == nil)
+                #expect(SetupTypedEntryTests.element("roundtableViewHead", in: window) != nil)
+            }
+            try await shoot("ipad-applet-own", size: landscape, tag: false)
+            try await shoot("ipad-widen", size: landscape, wide: true) { window in
+                #expect(SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) == nil)
+            }
+            try await shoot("ipad-popover", size: landscape, columnShown: false) { window in
+                #expect(SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) != nil)
+            }
+            try await shoot("ipad-portrait", size: portrait) { window in
+                #expect(SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) != nil)
+            }
+            try await shoot("ipad-portrait-own", size: portrait, tag: false)
+            // D24: your own frequency in the panel, with the column hidden.
+            try await shoot("ipad-panel-own", size: landscape, columnShown: false, tag: false, own: true) { window in
+                #expect(SetupTypedEntryTests.element("roundtableFrequencyPopover", in: window) != nil)
+                #expect(SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil)
+            }
+        } else {
+            // The sheet opens at half height, with Tune pinned above the composer.
+            try await shoot("iphone-sheet-double", size: portrait) { window in
+                #expect(SetupTypedEntryTests.element("roundtableSheet", in: window) != nil)
+                #expect(SetupTypedEntryTests.element("roundtableViewTune", in: window) != nil)
+            }
+            // One sheet: your own frequency, Tune greyed with its reason, and the box.
+            try await shoot("iphone-sheet-own", size: portrait, tag: false, own: true) { window in
+                #expect(SetupTypedEntryTests.element("roundtableViewTuneReason", in: window) != nil)
+            }
+            try await shoot("iphone-sideways-own", size: CGSize(width: 874, height: 402), tag: false, own: true)
+            try await shoot("iphone-sideways-closed", size: CGSize(width: 874, height: 402), tag: false)
+        }
+        _ = station
+        await model.disconnect()
+    }
+
+    private func requireElement(_ id: String, in window: UIWindow) async throws -> NSObject {
+        var found: NSObject?
+        _ = await settle { found = SetupTypedEntryTests.element(id, in: window); return found != nil }
+        return try #require(found, "no \(id)")
+    }
+
+    /// Set NEREUS_ROUNDTABLE_CARD_SHOTS to a folder to run this and write its pictures there.
+    @Test("shots: the card and tags on the real band",
+          .enabled(if: !(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_CARD_SHOTS"] ?? "").isEmpty))
+    func cardShots() async throws {
+        let directory = try #require(ProcessInfo.processInfo.environment["NEREUS_ROUNDTABLE_CARD_SHOTS"])
+        let (model, station) = try await shotStation(frequency: true)
+        model.phoneSettings.roundtableFirstRunNoteSeen = true
+        model.roundtable.activeSliceId = 0
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        let portrait = pad ? CGSize(width: 1032, height: 1376) : CGSize(width: 402, height: 874)
+        let landscape = pad ? CGSize(width: 1376, height: 1032) : CGSize(width: 874, height: 402)
+        func shoot(_ name: String, size: CGSize) async throws {
+            let (window, _) = try host(BandShotRoot(model: model), size: size)
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            let bandDraw = try await ShotWait.requireBandLaidOut(model.main.band, in: window)
+            BandFlagShotTests.feed(model.main.band, width: bandDraw.requestedPixels, lines: Int(size.height * 3))
+            try await ShotWait.requireBandShown(model.main.band, in: window, after: bandDraw)
+            try await Task.sleep(for: .milliseconds(600))
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let url = URL(fileURLWithPath: directory).appendingPathComponent("\(pad ? "ipad" : "iphone")-\(name).png")
+            try #require(image.pngData()).write(to: url)
+            let summary = model.roundtable.cardData(context: Self.sliceRoom)
+            print("Card shot \(url.lastPathComponent) kind=\(summary.kind) keyed=\(summary.keyed) rows=\(summary.rows.count) frozen=\(summary.frozen)")
+        }
+        try await station.deliverRoundtable(Self.cardScene(double: false))
+        #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).kind == .talking
+            && model.roundtable.cardData(context: Self.sliceRoom).rows.count == 6 })
+        try await shoot(pad ? "landscape-talking" : "short-talking", size: pad ? landscape : portrait)
+        try await station.deliverRoundtable(Self.cardScene(double: true))
+        #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).kind == .double
+            && model.roundtable.cardData(context: Self.sliceRoom).rows.count == 6 })
+        try await shoot(pad ? "landscape-double" : "short-double", size: pad ? landscape : portrait)
+        if !pad {
+            // Names too wide to share a line: stacked, the double still has a reading.
+            try await station.deliverRoundtable(Self.cardScene(double: true, wideNames: true))
+            #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).keyed.contains("VE3WIDE/MM") })
+            try await shoot("short-double-wide", size: portrait)
+            try await station.deliverRoundtable(Self.cardScene(double: true))
+            #expect(await settle { !model.roundtable.cardData(context: Self.sliceRoom).keyed.contains("VE3WIDE/MM") })
+        }
+        if pad {
+            try await shoot("portrait-double", size: portrait)
+        } else {
+            // A taller pan: the display sheet's Spectrum height.
+            model.main.display.setSpectrumHeight(65)
+            try await shoot("tall-double", size: portrait)
+            try await station.deliverRoundtable(Self.cardScene(double: false))
+            #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).kind == .talking })
+            try await shoot("tall-talking", size: portrait)
+            model.main.display.setSpectrumHeight(40)
+            try await station.deliverRoundtable(Self.cardScene(double: true))
+            try await shoot("sideways-double", size: landscape)
+        }
+        try await station.deliverRoundtable(Self.cardScene(double: true, link: .reconnecting))
+        #expect(await settle { model.roundtable.cardData(context: Self.sliceRoom).frozen })
+        try await shoot(pad ? "landscape-frozen" : "short-frozen", size: pad ? landscape : portrait)
         await model.disconnect()
     }
 
@@ -863,6 +1885,22 @@ private struct BandShotRoot: View {
         GeometryReader { proxy in
             VStack(spacing: 0) {
                 MainScreen(app: model, main: model.main)
+                TabBar(selection: .constant(.panadapter), sideways: proxy.size.width > proxy.size.height)
+            }
+        }
+        .background(ChromeColours.bar.ignoresSafeArea())
+    }
+}
+
+private struct ViewShotRoot: View {
+    @ObservedObject var model: AppModel
+    let columnShown: Bool
+    let wide: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                MainScreen(app: model, main: model.main, columnShown: columnShown, roundtableWide: wide)
                 TabBar(selection: .constant(.panadapter), sideways: proxy.size.width > proxy.size.height)
             }
         }

@@ -4,6 +4,8 @@
 // 2026-10-24: General's Filters page after Options, listed greyed with a
 //   reason on a Core that does not describe it. J.J. Boyd (KG4VCF),
 //   AI-assisted via Claude Code.
+// 2026-11-06: General's Band Stack page after Options (band stack plan Task
+//   18). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -23,6 +25,8 @@ enum SetupTree {
         case devices
         case navigation
         case batteryAndSessions
+        /// General, Band Stack: the Core's band stack options, its defaults and clearing it.
+        case bandStack
         case audioOnThisPhone
         case displayOnThisPhone
         case pttButtons
@@ -117,9 +121,10 @@ enum SetupTree {
                  native: [PageEntry(page: .devices, title: "Devices", tag: .core)], opensPage: .devices),
         Skeleton(coreId: "general", title: "General", tag: .both,
                  pageOrder: ["Startup & Preferences", "UI Scale & Theme", "Navigation", "Battery and sessions",
-                             "Options", "Filters"],
+                             "Options", "Band Stack", "Filters"],
                  native: [PageEntry(page: .navigation, title: "Navigation", tag: .thisPhone),
-                          PageEntry(page: .batteryAndSessions, title: "Battery and sessions", tag: .thisPhone)],
+                          PageEntry(page: .batteryAndSessions, title: "Battery and sessions", tag: .thisPhone),
+                          PageEntry(page: .bandStack, title: "Band Stack", tag: .core)],
                  opensPage: nil),
         Skeleton(coreId: "hardware", title: "Hardware", tag: .core, pageOrder: ["Hardware Config", "DDC Routing"],
                  native: [], opensPage: nil),

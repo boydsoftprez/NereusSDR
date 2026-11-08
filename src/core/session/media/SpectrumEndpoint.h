@@ -46,6 +46,10 @@ inline constexpr double kMaxDbmLimit = 100.0;
 inline constexpr char kRetireReasonSliceRemoved[] = "slice removed";
 inline constexpr char kRetireReasonStreamBindingChanged[] = "slice stream binding changed";
 inline constexpr char kRetireReasonSourceRetune[] = "The receiver was retuned away from this view.";
+/// A view wholly off the receiver, when control of the slice went, so wideband
+/// cannot fill it. Nothing was retuned.
+inline constexpr char kRetireReasonViewOffReceiver[] =
+    "This view is off the receiver, and no wideband spectrum can fill it.";
 
 /// Why Core granted less than a spectrum subscription asked for.
 enum class SpectrumLimitReason {

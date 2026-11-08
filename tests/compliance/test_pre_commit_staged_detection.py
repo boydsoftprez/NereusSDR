@@ -33,6 +33,9 @@ SOURCE_GATES = [
 ]
 LICENSE_GATE = "check-third-party-licenses.py"
 REGISTRATION_GATE = "verify-test-registration.py"
+# Only C++ under src/ or tests/, the root CMakeLists.txt or the script itself.
+DLL_GATE = "verify-dll-signal-exports.py"
+CODE_GATES = [DLL_GATE, *SOURCE_GATES]
 
 # These stand-ins record the actual hook's dispatch and optionally fail. They
 # avoid unrelated whole-tree/upstream checks in a deliberately tiny fixture.
@@ -55,7 +58,7 @@ class HookRepo:
         self.git("init", "-b", "main")
         self.write("pre-commit", HOOK.read_text())
         for name in {call.split()[0] for call in SOURCE_GATES} | {
-            LICENSE_GATE, REGISTRATION_GATE,
+            LICENSE_GATE, REGISTRATION_GATE, DLL_GATE,
         }:
             self.write(f"scripts/{name}", VERIFIER)
         # Keep the existing upstream-discovery path active, with no clones.
@@ -141,7 +144,7 @@ class PreCommitStagedDetectionTests(unittest.TestCase):
                         "src/Fixture.cpp", large=True)
         result, calls = self.repo.run()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(calls, [LICENSE_GATE, REGISTRATION_GATE, *SOURCE_GATES])
+        self.assertEqual(calls, [LICENSE_GATE, REGISTRATION_GATE, *CODE_GATES])
 
     def test_large_nonmatching_index_skips_gates(self) -> None:
         self.repo.stage(large=True)
@@ -159,6 +162,10 @@ class PreCommitStagedDetectionTests(unittest.TestCase):
             ("scripts/verify-test-registration.py", [REGISTRATION_GATE, *SOURCE_GATES]),
             ("docs/fixture.md", SOURCE_GATES),
             ("src/Fixture.hpp", SOURCE_GATES),
+            ("src/Fixture.cpp", CODE_GATES),
+            ("tests/fixture.h", CODE_GATES),
+            ("CMakeLists.txt", [LICENSE_GATE, DLL_GATE]),
+            ("scripts/verify-dll-signal-exports.py", CODE_GATES),
             ("assets/fixture.txt", []),
         ]
         for path, expected in cases:
@@ -189,7 +196,7 @@ class PreCommitStagedDetectionTests(unittest.TestCase):
 
     def test_applicable_verifier_failure_still_blocks_commit(self) -> None:
         self.repo.stage("CMakeLists.txt", "tests/CMakeLists.txt", "src/Fixture.cpp")
-        expected = [LICENSE_GATE, REGISTRATION_GATE, *SOURCE_GATES]
+        expected = [LICENSE_GATE, REGISTRATION_GATE, *CODE_GATES]
         for name in dict.fromkeys(call.split()[0] for call in expected):
             with self.subTest(verifier=name):
                 (self.repo.path / "verifier-calls").unlink(missing_ok=True)

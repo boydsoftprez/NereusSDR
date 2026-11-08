@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-03: One word for a double (overlay design D8). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-30: Approved frequency-first Roundtable desktop surfaces.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-24: original implementation for NereusSDR by J.J. Boyd
@@ -296,7 +298,7 @@ QString RoundtableWindow::stateText(const QJsonObject& summary) const
         return QStringLiteral("%1 talking").arg(talkers.join(QStringLiteral(", ")));
     }
     if (state == QLatin1String("doubled")) {
-        return QStringLiteral("%1 doubled").arg(talkers.join(QStringLiteral(" + ")));
+        return QStringLiteral("Double · %1").arg(talkers.join(QStringLiteral(" + ")));
     }
     if (state == QLatin1String("unknown")) {
         return QStringLiteral("unknown talker");

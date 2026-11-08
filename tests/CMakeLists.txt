@@ -187,6 +187,18 @@ if(FFTW3_FOUND)
         NEREUS_TEST_FFTW_WISDOM_FILE="${CMAKE_CURRENT_BINARY_DIR}/test-fftw-wisdom")
 endif()
 
+# ── One TLS key for the tests (2026-11-05) ─────────────────────────────
+# TestSharedTlsKey.cpp: every test's CertificateStore takes its RSA key from
+# one file per build directory instead of generating one, which cost about a
+# second a Core and several under load. An OBJECT library for the same reason
+# as nereus_test_sandbox: it is all static constructor. Only nereus_add_test
+# tests and the helpers that start a Core link it. A test about the key itself
+# opts out with OWN_TLS_KEYS.
+add_library(nereus_test_shared_tls_key OBJECT EXCLUDE_FROM_ALL TestSharedTlsKey.cpp)
+target_link_libraries(nereus_test_shared_tls_key PRIVATE NereusCore)
+target_compile_definitions(nereus_test_shared_tls_key PRIVATE
+    NEREUS_TEST_TLS_KEY_FILE="${CMAKE_CURRENT_BINARY_DIR}/test-tls-key.pem")
+
 function(nereus_add_test name)
     # EXTRA_LABELS <label...> for the handful of tests whose subject
     # cannot be derived from their own #include lines. Guard tests are
@@ -223,7 +235,7 @@ function(nereus_add_test name)
     # (tests/RealtimeTestLoad.h).
     # DEPENDENCY_ISOLATED compiles a production module with test dependency
     # doubles, without application linkage, settings helpers or the app PCH.
-    cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME;DEPENDENCY_ISOLATED" "" "EXTRA_LABELS" ${ARGN})
+    cmake_parse_arguments(_nat "NATIVE_WINDOW;CORE_ONLY;REALTIME;DEPENDENCY_ISOLATED;OWN_TLS_KEYS" "" "EXTRA_LABELS" ${ARGN})
     set(_extra_sources ${_nat_UNPARSED_ARGUMENTS})
 
     # all_tests and the per-label targets are built from the list once,
@@ -301,6 +313,9 @@ function(nereus_add_test name)
     else()
         add_executable(${name} EXCLUDE_FROM_ALL ${name}.cpp $<TARGET_OBJECTS:nereus_test_sandbox>
             $<TARGET_OBJECTS:nereus_test_home_guard> ${_extra_sources})
+    endif()
+    if(NOT _nat_DEPENDENCY_ISOLATED AND NOT _nat_OWN_TLS_KEYS)
+        target_sources(${name} PRIVATE $<TARGET_OBJECTS:nereus_test_shared_tls_key>)
     endif()
     # R-R3-49 parity mini-round: a test that starts WDSP without its wisdom
     # step gets the shared FFTW wisdom cache (nereus_test_fftw_wisdom above).
@@ -1835,6 +1850,9 @@ nereus_add_test(tst_band_2m_stores)
 nereus_add_test(tst_band_link_fit EXTRA_LABELS session)
 nereus_add_test(tst_slice_has_settings_for)
 nereus_add_test(tst_band_defaults)
+nereus_add_test(tst_bandstack_seeds)
+nereus_add_test(tst_bandstack_store)
+nereus_add_test(tst_bandstack_controller)
 nereus_add_test(tst_radio_model_band_click)
 
 # ── About dialog ─────────────────────────────────────────────────────────
@@ -3094,6 +3112,11 @@ nereus_add_test(tst_panadapter_applet_slice_assoc)
 # Structurally ported from AetherSDR src/gui/PanadapterStack.{h,cpp}
 # [@0cd4559]; applyLayout / floatPanadapter / rebuildSplitters stubbed for
 # Tasks 4-8.  See docs/attribution/aethersdr-reconciliation.md Bucket A.
+# Persistence audit 2026-11: what the main window brings back after a restart.
+# A file of its own because these build the whole window more than once per
+# function, and tst_panadapter_stack_layouts is already split for load.
+nereus_add_test(tst_window_layout_restart)
+
 nereus_add_test(tst_panadapter_stack_layouts fakes/LoopbackTransport.cpp)
 # CI load round, 2026-10-26: the whole run took 63 to 73 s on a quiet Linux
 # runner and timed out in a busy one (PR 657, run 40260509791), so four
@@ -4172,6 +4195,7 @@ nereus_add_test(tst_tx_applet_lev_eq_cfc)
 nereus_add_test(tst_tx_section_content)
 nereus_add_test(tst_rx_section_content)
 target_compile_definitions(tst_rx_section_content PRIVATE NEREUS_BUILD_TESTS)
+nereus_add_test(tst_phone_cw_section_content)
 
 # ── Phase 3M-VAX-toggle: TxApplet mic-source badge 3-way ────────────────────
 # The badge above the gauges previously read "PC mic" or "Radio mic".
@@ -5696,12 +5720,15 @@ nereus_add_test(tst_vax_tx_mic_source)
 target_compile_definitions(tst_vax_tx_mic_source PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Mic_Source pre-connect persistence fallback (eager-borg-d64bed) ──────────
-# Verifies the pre-connect global key fallback added so the user's
-# Setup -> Audio -> TX Input click survives even when no radio is
-# bound at click time.  Cases: pre-connect click writes global,
-# load with no per-MAC uses fallback, per-MAC overrides preconnect,
-# post-connect writes don't touch preconnect, first-run defaults to Pc.
+# The old pre-connect global key, read only since 2026-11-05: a click with no
+# radio is held instead, load with no per-MAC uses the old key, per-MAC
+# overrides it, post-connect writes don't touch it, first-run defaults to Pc.
 nereus_add_test(tst_transmit_model_mic_source_preconnect)
+
+# Transmit edits made with no radio: kept for the next radio (JJ's ruling
+# 2026-11-05), and no startup path, window or Core, holds a write nobody made.
+nereus_add_test(tst_transmit_held_edits)
+target_compile_definitions(tst_transmit_held_edits PRIVATE NEREUS_BUILD_TESTS)
 
 # ── Phase 3M-VAX-toggle: TransmitModel previousNonVaxMicSource + toggleVaxSource ──
 # Verifies the model-layer plumbing for the PhoneCwApplet VAX button:
@@ -6641,6 +6668,12 @@ target_compile_definitions(tst_display_fft_sizing PRIVATE
 # zoom on the second pan sizes the engine of the stream it shows, and
 # applyFftBaseline() makes the Size control's choice every engine's floor.
 nereus_add_test(tst_display_fft_replan)
+
+# Issue 701: on Protocol 2 the wire-rate signal leaves each FFT engine and the
+# active pan on the rate of their own stream, so a band's saved slice rate
+# does not stretch the panadapter. Protocol 1 and an inactive stream keep the
+# wire rate.
+nereus_add_test(tst_pan_rate_follows_stream)
 
 # Display pill plan Task 9: PanModels, a per-band PanadapterModel for every
 # window pan. The pan's band follows its centre, the band's stored dB Max
@@ -8544,6 +8577,11 @@ target_compile_definitions(tst_spectrum_widget_cal_offset PRIVATE
 # codec and wire stayed on the previous band's.
 nereus_add_test(tst_restored_sample_rate_reaches_the_ddc)
 
+# The sample rate an operator chose has to stick: a new slice on its own
+# receiver opens at the rate in use, and a device's slice made again on a
+# running Core comes back at its saved rate.
+nereus_add_test(tst_sample_rate_sticks)
+
 # Codex review round 6, PR #293: Phase 3F gave TCI more slices than TCI ever
 # agreed to talk about. tx_frequency must come from the slice TxSliceArbiter
 # bound TX to rather than from receiver 0, and tagged frames must stop at the
@@ -9599,7 +9637,8 @@ target_link_libraries(nereus_floor_probe PRIVATE NereusCore)
 set_target_properties(nereus_floor_probe PROPERTIES AUTOMOC ON)
 # The poll registry regression uses a separate test-only vendor archive.
 # No fixture fault injection or observer is present in shipping Core/RTC.
-nereus_add_test(tst_juice_poll_liveness CORE_ONLY EXTRA_LABELS session)
+# OWN_TLS_KEYS: its link list below leaves out Core, which the shared key needs.
+nereus_add_test(tst_juice_poll_liveness CORE_ONLY OWN_TLS_KEYS EXTRA_LABELS session)
 if(TEST tst_juice_poll_liveness)
     include("${CMAKE_CURRENT_SOURCE_DIR}/fakes/juice-poll/Instrument.cmake")
     # Keep standard sharding, sandbox, labels and aggregate registration, but
@@ -9611,7 +9650,8 @@ endif()
 
 # The startup regression compiles real pinned OpenSSL RTC with observers in
 # a separate generated copy. Shipping RTC contains no fixture access/hooks.
-nereus_add_test(tst_dtls_startup CORE_ONLY EXTRA_LABELS session)
+# OWN_TLS_KEYS: its link list below leaves out Core, which the shared key needs.
+nereus_add_test(tst_dtls_startup CORE_ONLY OWN_TLS_KEYS EXTRA_LABELS session)
 if(TEST tst_dtls_startup)
     include("${CMAKE_CURRENT_SOURCE_DIR}/fakes/dtls-startup/Instrument.cmake")
     set_property(TARGET tst_dtls_startup PROPERTY LINK_LIBRARIES
@@ -9779,6 +9819,19 @@ nereus_add_test(tst_daemon_app)
 nereus_add_test(tst_station_host fakes/LoopbackTransport.cpp)
 nereus_add_test(tst_station_handover EXTRA_LABELS session)
 nereus_add_test(tst_station_handover_roundtrip EXTRA_LABELS session)
+# The 15 s handover requirement is measured against the wall clock, so only
+# this second entry fails on it, labeled realtime so it runs alone on an idle
+# machine (linux-realtime in ci.yml). The first entry reports the time and
+# keeps the rest of the test on every runner.
+if(TEST tst_station_handover_roundtrip)
+    nereus_split_test(tst_station_handover_roundtrip ENV NEREUS_HANDOVER_LIMIT GROUPS limit)
+    if(TEST tst_station_handover_roundtrip_limit)
+        set_property(TEST tst_station_handover_roundtrip_limit APPEND PROPERTY LABELS "realtime")
+    endif()
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TEST_LABEL_NAMES "realtime")
+    set_property(GLOBAL APPEND PROPERTY NEREUS_TESTS_LABEL_realtime tst_station_handover_roundtrip)
+endif()
+nereus_add_test(tst_station_foreign_lock EXTRA_LABELS session)
 nereus_add_test(tst_desktop_station_controller)
 nereus_add_test(tst_desktop_station_window)
 # TX rulings review: MainWindow::hostingSliceActionsForTest and
@@ -9920,7 +9973,7 @@ nereus_add_test(tst_notch_visual_does_not_perturb_noise_floor_or_maxbin)
 # against. A prior revision gated this on OPENSSL_FOUND, which the review
 # flagged as losing both the class AND its only test with no signal on a
 # runner that happened to lack OpenSSL.
-nereus_add_test(tst_certificate_store)
+nereus_add_test(tst_certificate_store OWN_TLS_KEYS)
 
 # iPhone app Task 12 (R-IOS-08, R-IOS-02): the Core's identity key (created
 # once, mode 0600, reused), its label rules, and the paired-device store
@@ -10084,7 +10137,7 @@ if(TEST tst_tx_link_loss_each_path)
         RESOURCE_LOCK "tx-link-loss-each-path")
 endif()
 nereus_split_test(tst_tx_link_loss_each_path
-    ENV NEREUS_TX_LINK_LOSS_GROUP GROUPS starvation)
+    ENV NEREUS_TX_LINK_LOSS_GROUP GROUPS starvation receipt_age stalled)
 # iPhone app plan Task 39 (D14, R-IOS-13, R-IOS-21): the Core's transmit
 # meter pump, and the mirrored `txState` object (TransmitState): who keyed,
 # the time left, the meters ten times a second while keyed, and why the Core
@@ -10257,6 +10310,9 @@ nereus_add_test(tst_roundtable_containers fakes/RemoteWindowHarness.cpp)
 # lone neighbor moves aside, folds widen only when the tags don't fit),
 # the tags a model gives, and how each link state shows them.
 nereus_add_test(tst_roundtable_tag_layout)
+# Overlay redesign D21 to D24: the floating view of another frequency: what it
+# says, the Tune gates, Your pan and how it closes, offscreen.
+nereus_add_test(tst_roundtable_frequency_peek)
 # Roundtable plan Task 14: the Roundtable line on a VFO flag: members and
 # who talks, @N, "N hear you" while keyed, the link state when not live,
 # its fit at the flag's width, the fold, and a click asking for the panel.
@@ -10443,7 +10499,8 @@ nereus_add_test(tst_spake_exchange EXTRA_LABELS core)
 # sets of tools here when the two meet.
 add_executable(nereus_pairing_peer EXCLUDE_FROM_ALL
     tools/nereus_pairing_peer.cpp
-    $<TARGET_OBJECTS:nereus_test_sandbox>)
+    $<TARGET_OBJECTS:nereus_test_sandbox>
+    $<TARGET_OBJECTS:nereus_test_shared_tls_key>)
 target_link_libraries(nereus_pairing_peer PRIVATE NereusCore)
 set_target_properties(nereus_pairing_peer PROPERTIES AUTOMOC ON)
 set_property(GLOBAL APPEND PROPERTY NEREUS_ALL_TESTS nereus_pairing_peer)
@@ -10573,6 +10630,44 @@ nereus_add_test(tst_tx_profile_select
 # runs the desktop's band restore on the Core (bandSelectVersion 1), with its
 # refusals. Loopback only, no RF, no audio device.
 nereus_add_test(tst_slice_select_band
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
+# Band stack plan Task 4: the band stack through a loopback link: the facade,
+# the feature gate and every bandStack.* verb.
+nereus_add_test(tst_bandstack_link
+    fakes/FakeBandStackAccess.h
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+# tests/data/bandstack/facade-document.json is shared with the phone's BandStackTests.
+target_compile_definitions(tst_bandstack_link PRIVATE
+    NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
+
+# Band stack plan Task 7: the panel shell and its place beside the pans, both
+# looks, real MainWindow offscreen.
+nereus_add_test(tst_bandstack_panel
+    fakes/FakeBandStackAccess.h)
+# 109 to 113 s as one entry on the GitHub Linux runner against the 120 s
+# limit; the cases that build a real MainWindow run as four more entries of
+# the same binary (the limit is not raised; groups in the test's main()).
+nereus_split_test(tst_bandstack_panel
+    ENV NEREUS_BANDSTACK_PANEL_GROUP GROUPS pane keys greyed window)
+
+# Band stack plan Task 8: every band press through MainWindow::pressBand, on a
+# real MainWindow offscreen with a fake access.
+nereus_add_test(tst_bandstack_router
+    fakes/FakeBandStackAccess.h
+    fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_bandstack_router PRIVATE NEREUS_BUILD_TESTS)
+
+# Band stack plan Task 11: the spectrum ticks, at the widget and on a real
+# MainWindow offscreen with a fake access.
+nereus_add_test(tst_bandstack_overlay
+    fakes/FakeBandStackAccess.h)
+
+# Band stack plan Task 5: a recall on a shared receiver asks through the
+# confirm step, through a loopback link with fake peers.
+nereus_add_test(tst_bandstack_question
     fakes/LoopbackTransport.cpp
     EXTRA_LABELS session)
 
@@ -11896,6 +11991,22 @@ endif()
 add_subdirectory(portaudio_bounds)
 
 get_property(_all_tests GLOBAL PROPERTY NEREUS_ALL_TESTS)
+# TestSharedTlsKey.cpp calls CertificateStore, so a target with its object must
+# link Core. A test that replaces its LINK_LIBRARIES to keep Core out registers
+# with OWN_TLS_KEYS. Checked here so every configure says so, not just the link
+# of a target nobody built locally (PR 749, tst_juice_poll_liveness).
+foreach(_tls_target IN LISTS _all_tests)
+    if(TARGET ${_tls_target})
+        get_target_property(_tls_sources ${_tls_target} SOURCES)
+        get_target_property(_tls_libraries ${_tls_target} LINK_LIBRARIES)
+        if("${_tls_sources}" MATCHES "TARGET_OBJECTS:nereus_test_shared_tls_key"
+           AND NOT "${_tls_libraries}" MATCHES "(^|;)(NereusCore|NereusSDRLib)(;|$)")
+            message(FATAL_ERROR "${_tls_target} links TestSharedTlsKey.cpp's object "
+                "without NereusCore or NereusSDRLib, and will not link. "
+                "Register it with OWN_TLS_KEYS.")
+        endif()
+    endif()
+endforeach()
 add_custom_target(all_tests DEPENDS ${_all_tests})
 set_property(GLOBAL PROPERTY NEREUS_ALL_TESTS_SEALED TRUE)
 
