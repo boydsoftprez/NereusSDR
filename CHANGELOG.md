@@ -52,7 +52,7 @@ add a website line only once that is confirmed. -->
   ([#748](https://github.com/boydsoftprez/NereusSDR/pull/748))
 
 <!-- CONFIRM at the cut: the ported band stack rules carry Richard Samphire
-(MW0LGE) copyright; JJ may want to name him in the band stacks line. If 759
+(MW0LGE) copyright; JJ may want to name Richard Samphire in the band stacks line. If 759
 lands, replace "Keyboard shortcuts come with hot keys" with the real keys. -->
 
 ### Roundtable
