@@ -17,6 +17,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: holdRemotePaddle, setPaddleHeld.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-30: Use Qt's durable Linux semaphore wait to avoid timed
 //               libstdc++ backoff for J.J. Boyd (KG4VCF), AI-assisted via
 //               OpenAI Codex.
@@ -379,6 +381,28 @@ public:
     bool sendRemoteText(quint32 epoch, const QString& text, RemoteAdmission admit);
     bool sendRemoteMemory(quint32 epoch, int number, RemoteAdmission admit);
     bool holdRemoteKey(quint32 epoch, RemoteAdmission admit);
+    // R-HK-13: a remote window's dot and dash (cw.paddle). They go on the key
+    // line's soft bits and write no CWX bit and no PTT, so the radio's keyer
+    // does the timing and break-in, as for serial paddles. Otherwise the
+    // paddle is a held Key under the remote CW hold: its own activity, down
+    // only while that activity may key, kKeyWatchdogMs after its last press.
+    // What the sender runs stops first. Keeping the epoch of a paddle already
+    // down changes the keys without touching that activity. `keys` is the state
+    // reported and `rose` which of them are newly down: only a key that rose
+    // goes down, and only a rise renews the deadline. A key reported down that
+    // isn't down stays up. Nothing is done and false returned with both keys up:
+    // setPaddleHeld takes those. With nothing rising and no paddle left (its
+    // deadline just ended), nothing is done and true returned.
+    struct PaddleKeys {
+        bool dot{false};
+        bool dash{false};
+        bool any() const { return dot || dash; }
+    };
+    bool holdRemotePaddle(quint32 epoch, PaddleKeys keys, PaddleKeys rose, RemoteAdmission admit);
+    // Lets go of each key that is false; both up ends the activity. Never
+    // raises a key: only holdRemotePaddle, behind its gate, does.
+    void setPaddleHeld(bool dot, bool dash);
+    bool isRemotePaddleHeld() const;
     quint32 acceptedRemoteEpoch() const noexcept { return m_acceptedRemoteEpoch.load(std::memory_order_acquire); }
     void setMemories(const QStringList& eight);
     void stop();                                   // abort and clear
@@ -452,6 +476,7 @@ private:
     void tickLocked();
     void releaseKeyHeldLocked();
     void setKeyHeldStateLocked(bool held);
+    bool paddleHeldLocked() const { return m_paddleDot || m_paddleDash; }
     void abortLocked();
     void applyLineLocked();
     void setPttLocked(bool on);
@@ -524,6 +549,8 @@ private:
     bool m_mox{false};
     bool m_lineKey{false};       // what this sender last wrote
     bool m_linePtt{false};
+    bool m_lineDot{false};
+    bool m_lineDash{false};
     int m_speedWpm{kDefaultWpm};
     bool m_repeatOn{false};
     int m_repeatDelaySeconds{kDefaultRepeatDelaySeconds};
@@ -547,6 +574,10 @@ private:
     TimePoint m_keyDeadline{};
     TimePoint m_keyPressedAt{};
     std::atomic<bool> m_keyHeldNow{false};
+    // A remote window's dot and dash (holdRemotePaddle). They share the held
+    // Key's m_heldEpoch and m_keyDeadline; m_keyHeld stays false.
+    bool m_paddleDot{false};
+    bool m_paddleDash{false};
     // The serial straight key (setHandKey).
     bool m_handKey{false};
     // The key last told to m_keyListener (setKeyListener).

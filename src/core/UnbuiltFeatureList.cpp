@@ -48,8 +48,6 @@ const QList<Entry>& all()
          QStringLiteral("View > UI Scale; Setup > General > UI Scale & Theme")},
         {F::MinimalMode, QStringLiteral("minimal-mode"),
          QStringLiteral("View > Minimal Mode; Setup > Appearance > Collapsible Display")},
-        {F::Keyboard, QStringLiteral("keyboard"),
-         QStringLiteral("View > Keyboard Shortcuts; Setup > Keyboard > Shortcuts")},
         {F::Equalizer, QStringLiteral("equalizer"),
          QStringLiteral("DSP > Equalizer")},
         {F::Transverters, QStringLiteral("transverters"),
@@ -62,8 +60,6 @@ const QList<Entry>& all()
         {F::Cat, QStringLiteral("cat"),
          QStringLiteral("Tools > CAT Control; Setup > Serial Ports and TCP/IP CAT; "
                         "CAT on the status bar")},
-        {F::Midi, QStringLiteral("midi"),
-         QStringLiteral("Tools > MIDI Mapping; Setup > MIDI Control")},
         {F::Help, QStringLiteral("help"),
          QStringLiteral("Help > Getting Started, Help, Data Modes")},
         {F::Acc, QStringLiteral("acc"),

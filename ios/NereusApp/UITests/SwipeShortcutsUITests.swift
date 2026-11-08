@@ -84,8 +84,9 @@ final class SwipeShortcutsUITests: XCTestCase {
         let flag = app.descendants(matching: .any)["flagA"]
         let before = flag.frame
         drag(app, from: CGPoint(x: 6, y: y), to: CGPoint(x: 46, y: y))
-        Thread.sleep(forTimeInterval: 0.8)
-        XCTAssertNil(overPanel(app, "rxPanelDrawer"), "a short drag opened the panel")
+        // The panel is there while it follows the finger, and leaves when its spring
+        // back finishes. An opened one stays, so this wait is what tells them apart.
+        waitUntil("a short drag opened the panel") { self.overPanel(app, "rxPanelDrawer") == nil }
         XCTAssertEqual(flag.frame.minX, before.minX, accuracy: 1, "a short swipe moved the band")
     }
 

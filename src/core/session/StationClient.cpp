@@ -14,6 +14,8 @@
 //   2026-11-05: Band stack plan Task 4: bandStack declared, the `bandStack` mirror and
 //               sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCw 3.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-02: Keep independent active/detail frequency streams acknowledged.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -612,6 +614,9 @@
 //               (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
 //                 AI-assisted via xAI Grok.
+//   2026-11-05: hot keys plan Task 4: this window's MOX key ending reaches
+//               the model. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -1026,7 +1031,8 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     m_declaredFeatures.insert(QByteArrayLiteral("remoteTx"), 1);
     // CW transmit (R-CW-48): the cw.* verbs (remoteCwVersion) and the CW
     // settings on `transmit` (transmitSettingsVersion 16).
-    m_declaredFeatures.insert(QByteArrayLiteral("remoteCw"), 2);
+    // 3 (hot keys, R-HK-13): cw.paddle.
+    m_declaredFeatures.insert(QByteArrayLiteral("remoteCw"), 3);
     m_declaredFeatures.insert(QByteArrayLiteral("cwSettings"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("waveform"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("radioMic"), 2);
@@ -1276,6 +1282,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
         connect(m_remoteTransmit, &RemoteTransmitClient::refused, this,
                 [model](const QString& reason, const QString&, const QString&) {
                     if (model) { model->reportRemoteTransmitRefused(reason); }
+                });
+        connect(m_remoteTransmit, &RemoteTransmitClient::screenKeyDownChanged, this,
+                [model](bool down) {
+                    if (!down && model) { model->reportRemoteKeyWentOff(); }
                 });
     }
 
@@ -8199,6 +8209,11 @@ bool StationClient::remoteCwAvailable() const
     return remoteTransmitAvailable() && m_capabilities.remoteCwVersion >= 2;
 }
 
+bool StationClient::remoteCwPaddleAvailable() const
+{
+    return remoteTransmitAvailable() && m_capabilities.remoteCwVersion >= 3;
+}
+
 bool StationClient::directWatchReady() const
 {
     return !m_watchIsRelay && m_directWatch != nullptr && m_directWatch->isReady()
@@ -8657,6 +8672,7 @@ void StationClient::refreshRemoteTransmit()
         m_remoteTransmit->setAvailable(remoteTransmitAvailable());
         m_remoteTransmit->setCwAvailable(remoteCwAvailable());
         m_remoteTransmit->setCwReleaseAvailable(m_capabilities.remoteCwVersion >= 1);
+        m_remoteTransmit->setCwPaddleAvailable(remoteCwPaddleAvailable());
         m_remoteTransmit->setMicSourceCapability(remoteMicSourceAvailable());
     }
 }
@@ -8815,7 +8831,8 @@ void StationClient::handleCommandResult(const SessionMessage& message)
         || message.commandVerb == "tx.tune" || message.commandVerb == "tx.tunerTune"
         || message.commandVerb == "tx.twoTone" || message.commandVerb == "tx.setMicSource"
         || message.commandVerb == "cw.send" || message.commandVerb == "cw.memory"
-        || message.commandVerb == "cw.stop" || message.commandVerb == "cw.key") {
+        || message.commandVerb == "cw.stop" || message.commandVerb == "cw.key"
+        || message.commandVerb == "cw.paddle") {
         const QPointer<StationClient> self(this);
         if (m_remoteTransmit != nullptr) {
             m_remoteTransmit->commandFinished(message.commandId, message.commandVerb,

@@ -377,7 +377,7 @@
         {
             "kind": "i64",
             "name": "remoteCwVersion",
-            "value": 2
+            "value": 3
         },
         {
             "kind": "i64",
@@ -2714,6 +2714,24 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "cw.key"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "dot",
+                    "optional": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "dash",
+                    "optional": false
+                }
+            ],
+            "capability": "remoteCwVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "cw.paddle"
         },
         {
             "arguments": [

@@ -270,7 +270,8 @@ private slots:
         LoopbackTransport* older = rig.core.signIn(b, kTransmitter);
         QVERIFY(admitted(cw));
         QVERIFY(admitted(older));
-        QCOMPARE(capability(cw->received(), QStringLiteral("remoteCwVersion")), std::optional<qint64>(2));
+        // A peer that declared 2 is sent the Core's version (StationServer.cpp, buildCapabilities).
+        QCOMPARE(capability(cw->received(), QStringLiteral("remoteCwVersion")), std::optional<qint64>(3));
         const QStringList names = capabilityNames(cw);
         QCOMPARE(names.indexOf(QStringLiteral("remoteCwVersion")),
                  names.indexOf(QStringLiteral("txReadingsVersion")) + 1);

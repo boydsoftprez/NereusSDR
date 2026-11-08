@@ -15,6 +15,8 @@
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: cw.paddle.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -1105,6 +1107,10 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         {"cw.stop", {}, "remoteCwVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"cw.key", {arg("down", kBool)}, "remoteCwVersion", 1,
          kRadioIdentitySessionProtocolMinor},
+        // Hot keys (R-HK-13): dot and dash on the radio's own keyer, released
+        // 3 s after the last press as cw.key is.
+        {"cw.paddle", {arg("dot", kBool), arg("dash", kBool)}, "remoteCwVersion", 3,
+         kRadioIdentitySessionProtocolMinor},
         {"setAlexTxAntenna", {arg("band", kInt), arg("antenna", kInt)},
          "radioHardwareVersion", 6, kRadioIdentitySessionProtocolMinor},
         {"setAlexTxAntennaForRadio", {arg("mac", kUtf8), arg("band", kInt), arg("antenna", kInt)},
@@ -1652,7 +1658,8 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
         return;
     }
     if (invoke.commandVerb == "cw.send" || invoke.commandVerb == "cw.memory"
-        || invoke.commandVerb == "cw.stop" || invoke.commandVerb == "cw.key") {
+        || invoke.commandVerb == "cw.stop" || invoke.commandVerb == "cw.key"
+        || invoke.commandVerb == "cw.paddle") {
         handleCw(invoke);
         return;
     }
@@ -2154,6 +2161,15 @@ void SessionCommandDispatcher::handleCw(const SessionMessage& invoke)
     } else if (invoke.commandVerb == "cw.stop") {
         request.kind = CwRequest::Kind::Stop;
         readable = hasExactlyArguments(invoke.arguments, {});
+    } else if (invoke.commandVerb == "cw.paddle") {
+        request.kind = CwRequest::Kind::Paddle;
+        QVariant dot;
+        QVariant dash;
+        readable = hasExactlyArguments(invoke.arguments, {"dot", "dash"})
+            && findArgument(invoke.arguments, "dot", &dot) && dot.typeId() == QMetaType::Bool
+            && findArgument(invoke.arguments, "dash", &dash) && dash.typeId() == QMetaType::Bool;
+        request.dot = readable && dot.toBool();
+        request.dash = readable && dash.toBool();
     } else {
         request.kind = CwRequest::Kind::Key;
         QVariant down;

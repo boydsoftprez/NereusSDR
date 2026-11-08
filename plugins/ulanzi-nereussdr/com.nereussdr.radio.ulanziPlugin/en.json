@@ -1,0 +1,214 @@
+{
+  "Name": "NereusSDR",
+  "Description": "Untested. No real host has run this plugin yet. Runs NereusSDR's hot key actions from your keys and dials, through a private connection to the NereusSDR window on this computer.",
+  "Actions": [
+    {
+      "Name": "Tune up one step",
+      "Tooltip": "Tune up one step"
+    },
+    {
+      "Name": "Tune down one step",
+      "Tooltip": "Tune down one step"
+    },
+    {
+      "Name": "Tune up ten steps",
+      "Tooltip": "Tune up ten steps"
+    },
+    {
+      "Name": "Tune down ten steps",
+      "Tooltip": "Tune down ten steps"
+    },
+    {
+      "Name": "Tune step larger",
+      "Tooltip": "Tune step larger"
+    },
+    {
+      "Name": "Tune step smaller",
+      "Tooltip": "Tune step smaller"
+    },
+    {
+      "Name": "Lock",
+      "Tooltip": "Lock"
+    },
+    {
+      "Name": "Go to frequency",
+      "Tooltip": "Go to frequency"
+    },
+    {
+      "Name": "Next slice",
+      "Tooltip": "Next slice"
+    },
+    {
+      "Name": "Filter next",
+      "Tooltip": "Filter next"
+    },
+    {
+      "Name": "Filter previous",
+      "Tooltip": "Filter previous"
+    },
+    {
+      "Name": "Volume up",
+      "Tooltip": "Volume up"
+    },
+    {
+      "Name": "Volume down",
+      "Tooltip": "Volume down"
+    },
+    {
+      "Name": "Mute",
+      "Tooltip": "Mute"
+    },
+    {
+      "Name": "Band stack next",
+      "Tooltip": "Band stack next"
+    },
+    {
+      "Name": "Band stack previous",
+      "Tooltip": "Band stack previous"
+    },
+    {
+      "Name": "Next band",
+      "Tooltip": "Next band"
+    },
+    {
+      "Name": "Previous band",
+      "Tooltip": "Previous band"
+    },
+    {
+      "Name": "Add band stack entry",
+      "Tooltip": "Add band stack entry"
+    },
+    {
+      "Name": "Open band stack panel",
+      "Tooltip": "Open band stack panel"
+    },
+    {
+      "Name": "Mode next",
+      "Tooltip": "Mode next"
+    },
+    {
+      "Name": "Mode previous",
+      "Tooltip": "Mode previous"
+    },
+    {
+      "Name": "Zoom in",
+      "Tooltip": "Zoom in"
+    },
+    {
+      "Name": "Zoom out",
+      "Tooltip": "Zoom out"
+    },
+    {
+      "Name": "Noise reduction",
+      "Tooltip": "Noise reduction"
+    },
+    {
+      "Name": "Noise blanker",
+      "Tooltip": "Noise blanker"
+    },
+    {
+      "Name": "Auto notch",
+      "Tooltip": "Auto notch"
+    },
+    {
+      "Name": "RIT on or off",
+      "Tooltip": "RIT on or off"
+    },
+    {
+      "Name": "XIT on or off",
+      "Tooltip": "XIT on or off"
+    },
+    {
+      "Name": "Hold to talk",
+      "Tooltip": "Hold to talk"
+    },
+    {
+      "Name": "MOX",
+      "Tooltip": "MOX"
+    },
+    {
+      "Name": "TUNE",
+      "Tooltip": "TUNE"
+    },
+    {
+      "Name": "Two-tone",
+      "Tooltip": "Two-tone"
+    },
+    {
+      "Name": "VOX on or off",
+      "Tooltip": "VOX on or off"
+    },
+    {
+      "Name": "CW message 1",
+      "Tooltip": "CW message 1"
+    },
+    {
+      "Name": "CW message 2",
+      "Tooltip": "CW message 2"
+    },
+    {
+      "Name": "CW message 3",
+      "Tooltip": "CW message 3"
+    },
+    {
+      "Name": "CW message 4",
+      "Tooltip": "CW message 4"
+    },
+    {
+      "Name": "CW message 5",
+      "Tooltip": "CW message 5"
+    },
+    {
+      "Name": "CW message 6",
+      "Tooltip": "CW message 6"
+    },
+    {
+      "Name": "CW message 7",
+      "Tooltip": "CW message 7"
+    },
+    {
+      "Name": "CW message 8",
+      "Tooltip": "CW message 8"
+    },
+    {
+      "Name": "Stop CW message",
+      "Tooltip": "Stop CW message"
+    },
+    {
+      "Name": "CW dot",
+      "Tooltip": "CW dot"
+    },
+    {
+      "Name": "CW dash",
+      "Tooltip": "CW dash"
+    },
+    {
+      "Name": "CW straight key",
+      "Tooltip": "CW straight key"
+    },
+    {
+      "Name": "Voice message 1",
+      "Tooltip": "Voice message 1"
+    },
+    {
+      "Name": "Voice message 2",
+      "Tooltip": "Voice message 2"
+    },
+    {
+      "Name": "Voice message 3",
+      "Tooltip": "Voice message 3"
+    },
+    {
+      "Name": "Voice message 4",
+      "Tooltip": "Voice message 4"
+    },
+    {
+      "Name": "Stop voice message",
+      "Tooltip": "Stop voice message"
+    }
+  ],
+  "Localization": {
+    "Slice": "Slice",
+    "The slice the window is on": "The slice the window is on"
+  }
+}
