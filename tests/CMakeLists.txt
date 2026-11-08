@@ -8161,6 +8161,12 @@ if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_station_tci_server fakes/LoopbackTransport.cpp)
     target_link_libraries(tst_station_tci_server PRIVATE Qt6::WebSockets Qt6::Network)
 endif()
+# The TCI clients box keeps its Core client rows when a refresh brings the
+# same list, and changes them when an app connects, leaves or changes.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_client_chain_applet)
+    target_link_libraries(tst_client_chain_applet PRIVATE Qt6::WebSockets)
+endif()
 # CAT setup from a connected desktop (stationCatVersion 1): the Core's
 # `stationCat` object follows CatService, its four commands apply and refuse,
 # a binding resolves to the live slice, only a peer that declared stationCat
