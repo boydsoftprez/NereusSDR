@@ -104,6 +104,9 @@
 //                                    AI-assisted via Anthropic Claude Code.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-08  J.J. Boyd / KG4VCF  Hot keys: HotKeyDeviceBindings.cpp's
+//                                    turnRefusal is app-side (Knobs page).
+//                                    AI tooling: Claude Code.
 //   2026-11-07  J.J. Boyd / KG4VCF  DaemonMediaController forwards
 //                                    kRetireReasonViewOffReceiver, whose
 //                                    words SpectrumEndpoint.h's entry scans.
@@ -2134,6 +2137,10 @@ const QList<AppSideReason>& appSideReasons()
          "the serial CW key's failure, shown on the local CW Setup page only"},
         {"src/models/RadioModel.h", "cwSerialKeyRefusal",
          "the serial CW key's failure, shown on the local CW Setup page only"},
+        // Hot keys: a knob binding's refusal, shown on this window's Knobs
+        // Setup page only; never sent to an app.
+        {"src/core/hotkeys/HotKeyDeviceBindings.cpp", "turnRefusal",
+         "a knob binding's refusal, shown on the local Knobs Setup page only"},
         {"src/core/session/RemoteTransmitClient.h", "micSourceReason",
          "this window's pending/refused source getter; Core sentences scanned at their source"},
         {"src/models/RadioModel.cpp", "micSourceChangeReason",
