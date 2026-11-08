@@ -211,6 +211,8 @@
 //   2026-11-05: Band stack plan Task 6: sliceControlledHere.
 //   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCwPaddleAvailable.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-02: Track active and detail frequency record streams separately.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Versioned guarded frequency-context actions and records.
@@ -1744,6 +1746,8 @@ public:
     /// CW transmit (R-CW-48): the cw.* verbs, while remote transmit is
     /// available and the Core told this window remoteCwVersion 1.
     bool remoteCwAvailable() const;
+    /// Hot keys (R-HK-13): dot and dash can go to this Core (remoteCwVersion 3).
+    bool remoteCwPaddleAvailable() const;
     bool remoteMicSourceAvailable() const override;
     CommandOutcome requestMicSource(MicSource desired, std::function<void()> accepted = {}) override;
 

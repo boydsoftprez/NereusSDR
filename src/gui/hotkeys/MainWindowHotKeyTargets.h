@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Modification history (NereusSDR):
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 4: the transmit keys.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 5: CW messages and keys.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: setupUnavailableReason, for the Keyboard page.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), first-look fixes: confirmed TUNE, remote keys
+//                forgotten with their activity, a take not granted, the remote
+//                on-air reason. AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 12: the state feed's source.
+//                AI-assisted implementation via Anthropic Claude Code.
+// no-port-check: NereusSDR-original.
+// What hot keys do in the real window: the same entry points the on-screen
+// controls use, so local, hosting and remote windows behave as those do.
+#pragma once
+
+#include "gui/NereusGuiExport.h"
+#include "gui/hotkeys/HotKeyStateFeed.h"
+#include "gui/hotkeys/HotKeyTargets.h"
+
+#include <QElapsedTimer>
+
+class QObject;
+class QWidget;
+
+namespace NereusSDR {
+
+class MainWindow;
+class RemoteTransmitClient;
+class SpectrumWidget;
+class VfoWidget;
+
+class NEREUS_GUI_EXPORT MainWindowHotKeyTargets final : public HotKeyTargets, public HotKeyStateSource {
+public:
+    explicit MainWindowHotKeyTargets(MainWindow* window);
+
+    SliceModel* windowSlice() const override;
+    SliceModel* sliceByLetter(QChar letter) const override;
+    QChar letterOf(const SliceModel* slice) const override;
+    QString sliceRefusal(const SliceModel* slice) const override;
+    bool listened(const SliceModel* slice) const override;
+    bool tuneTo(SliceModel* slice, double hz) override;
+    void runSliceAction(const QString& id, SliceModel* slice, int steps) override;
+    void runWindowAction(const QString& id) override;
+    QString unavailableReason(const QString& id) const override;
+    // The Keyboard page's word on a row: as above, but a Core with no dot or
+    // dash says so whatever mode the transmit slice is in right now.
+    QString setupUnavailableReason(const QString& id) const;
+    bool transmitting() const override;
+    bool tuneOrTwoToneOn() const override;
+    bool keyHold(bool down) override;
+    void runTransmitAction(const QString& id) override;
+    void runCwMessage(const QString& id) override;
+    void setCwKeyDown(const QString& id, bool down) override;
+    void toast(const QString& text) override;
+    qint64 nowMs() const override;
+
+    // HotKeyStateSource. windowSlice above serves both.
+    bool transmitOn(const QString& id) const override;
+    bool muted(const SliceModel* slice) const override;
+    bool radioConnected() const override;
+    bool radioTransmitting() const override;
+
+    // The pan zoom acts on while `activeWindow` has focus: that floating pan,
+    // else the window's active pan.
+    SpectrumWidget* zoomTarget(const QWidget* activeWindow) const;
+
+    // The Core ended this window's CW, or its session retired: the dot and dash
+    // it reported are forgotten, and a key still held needs a fresh press.
+    void onRemoteCwEnded();
+    // A hosted take this hold's key was waiting on was not granted. True when
+    // that hold had a claim on the key, which is gone now.
+    bool onHostKeyTakeNotGranted(bool superseded);
+
+    // Band stack is reached by slot name, so these keys stay disabled with a
+    // reason until `window` has the slots.
+    static QString bandStackReason(const QObject* window, const QString& id);
+    static bool runBandStack(QObject* window, const QString& id);
+
+private:
+    VfoWidget* flagOf(const SliceModel* slice) const;
+    void clickContainerButton(const QString& id, SliceModel* slice);
+    void changeVolume(SliceModel* slice, int delta);
+    void toggleMute(SliceModel* slice);
+    void setListenVolume(int sliceId, int level, bool muted);
+    void beginFrequencyEdit(const SliceModel* slice);
+    void walkFilter(SliceModel* slice, int direction);
+    void walkMode(SliceModel* slice, int direction);
+    void walkBand(SliceModel* slice, int direction);
+    void selectNextSlice();
+    bool moxOn() const;
+    bool tuneOrTwoToneAsked() const;
+    QString otherDeviceOnAirReason() const;
+    bool keyHoldThroughHost(bool down);
+    bool transmitSliceInCw() const;
+    bool remotePaddleMissing(const QString& id) const;
+    RemoteTransmitClient* remoteCwClient() const;
+    QString remoteCwRefusal() const;
+    void setRemotePaddleKey(bool isDot, bool down);
+    void setStraightKeyDown(bool down);
+
+    MainWindow* m_window;
+    // The hold's key went through the hosted Core, so its release must too:
+    // the controller lets go only of a key it recorded.
+    bool m_holdThroughHost{false};
+    // The take under the press being made ended, within its own call.
+    bool m_hostTakeNotGranted{false};
+    // This key's press went down, so its release is ours to send. A release
+    // with no press must not lift the serial reader's straight key, nor send
+    // the Core a key-up.
+    bool m_straightDown{false};
+    // Dot and dash a remote window has told its Core are down (cw.paddle).
+    bool m_remoteDot{false};
+    bool m_remoteDash{false};
+    QElapsedTimer m_clock;
+};
+
+} // namespace NereusSDR

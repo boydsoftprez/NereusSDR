@@ -1261,6 +1261,9 @@ nereus_add_test(tst_tci_cw REALTIME)
 # remoteCwVersion capability and the CW settings' peer gate. The Key's 3 s
 # watchdog runs on the wall clock, hence REALTIME.
 nereus_add_test(tst_remote_cw fakes/LoopbackTransport.cpp REALTIME)
+# Hot keys (R-HK-13): the remote dot and dash verb on a test Core with a fake
+# connection, its watchdog on an injected clock.
+nereus_add_test(tst_remote_cw_paddle fakes/LoopbackTransport.cpp)
 
 # CW transmit Task 10 (R-CW-04, R-CW-36): the serial key reader on an
 # injected line source (paddles, the key and PTT lines, the gate, stops,
@@ -6620,7 +6623,8 @@ nereus_add_test(tst_clarity_smooth_defaults)
 # one test guarding the core boundary.
 nereus_add_test(tst_core_has_no_gui_includes EXTRA_LABELS core)
 target_compile_definitions(tst_core_has_no_gui_includes PRIVATE
-    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_BINARY_DIR="${CMAKE_BINARY_DIR}")
 
 # Phase 1B verification -- exhaustive sweep of every detector x averaging
 # combination through SpectrumWidget::updateSpectrumLinear():
@@ -11911,6 +11915,65 @@ nereus_add_test(tst_cat_catalog CORE_ONLY)
 nereus_add_test(tst_cat_parser CORE_ONLY)
 
 nereus_add_test(tst_cat_bindings CORE_ONLY)
+nereus_add_test(tst_midi_decoder)
+nereus_add_test(tst_midi_profile)
+nereus_add_test(tst_hot_key_setup_midi)
+nereus_add_test(tst_hot_key_setup_knobs)
+nereus_add_test(tst_hot_key_setup_deck)
+target_compile_definitions(tst_hot_key_setup_deck PRIVATE NEREUS_BUILD_TESTS NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_gesture_engine)
+nereus_add_test(tst_hot_key_device_bindings CORE_ONLY)
+nereus_add_test(tst_device_input)
+target_compile_definitions(tst_device_input PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_device_parser_rc28)
+nereus_add_test(tst_device_parser_powermate)
+nereus_add_test(tst_device_parser_shuttle)
+nereus_add_test(tst_device_parser_tmate2)
+nereus_add_test(tst_device_parser_streamdeck)
+nereus_add_test(tst_device_parser_flexcontrol)
+target_compile_definitions(tst_device_parser_flexcontrol PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_device_parser_ulanzi)
+target_compile_definitions(tst_device_parser_ulanzi PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_deck_link)
+target_compile_definitions(tst_deck_link PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_deck_plugin_actions)
+target_compile_definitions(tst_deck_plugin_actions PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_BUILD_DIR="${CMAKE_BINARY_DIR}"
+    NEREUS_CMAKE_COMMAND="${CMAKE_COMMAND}")
+add_dependencies(tst_deck_plugin_actions NereusDeckPlugins)
+nereus_add_test(tst_deck_plugin_clients)
+target_compile_definitions(tst_deck_plugin_clients PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_controller_host_lights)
+nereus_add_test(tst_device_output)
+target_compile_definitions(tst_device_output PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_hot_key_state_feed)
+nereus_add_test(tst_hot_key_bindings CORE_ONLY)
+nereus_add_test(tst_hot_key_dispatcher)
+nereus_add_test(tst_hot_key_window_actions)
+nereus_add_test(tst_hot_key_remote_actions fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_hot_key_remote_actions PRIVATE NEREUS_BUILD_TESTS)
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_hot_key_transmit
+        fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
+    target_compile_definitions(tst_hot_key_transmit PRIVATE NEREUS_BUILD_TESTS)
+    target_link_libraries(tst_hot_key_transmit PRIVATE Qt6::WebSockets)
+endif()
+nereus_add_test(tst_cw_soft_paddle)
+nereus_add_test(tst_hot_key_router fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_hot_key_router PRIVATE NEREUS_BUILD_TESTS)
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_hot_key_setup_keyboard
+        fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
+    target_compile_definitions(tst_hot_key_setup_keyboard PRIVATE NEREUS_BUILD_TESTS)
+    target_link_libraries(tst_hot_key_setup_keyboard PRIVATE Qt6::WebSockets)
+endif()
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_hot_key_cw
+        fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
+    target_compile_definitions(tst_hot_key_cw PRIVATE NEREUS_BUILD_TESTS)
+    target_link_libraries(tst_hot_key_cw PRIVATE Qt6::WebSockets)
+endif()
 nereus_add_test(tst_cat_settings CORE_ONLY)
 nereus_add_test(tst_cat_headless CORE_ONLY)
 

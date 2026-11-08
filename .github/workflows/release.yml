@@ -165,7 +165,7 @@ jobs:
             libgstreamer-gl1.0-0 libgstreamer-plugins-base1.0-0 \
             libfuse2 file desktop-file-utils xvfb \
             libfftw3-dev imagemagick \
-            libasound2-dev libjack-jackd2-dev \
+            libasound2-dev libudev-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
             libssl-dev
 
@@ -473,7 +473,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev \
             qt6-multimedia-dev qt6-base-private-dev qt6-shadertools-dev \
             qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libssl-dev \
-            libasound2-dev libjack-jackd2-dev libpipewire-0.3-dev libpulse-dev \
+            libasound2-dev libudev-dev libjack-jackd2-dev libpipewire-0.3-dev libpulse-dev \
             libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
       # The pinned dependency downloads (see "Dependency downloads" above
       # build-linux).
@@ -533,6 +533,7 @@ jobs:
           cd ..
           LD_LIBRARY_PATH="$PWD/$LIBDIR" ldd debroot/usr/bin/nereusd > package-ldd.txt
           ! grep -q 'not found' package-ldd.txt
+          ! grep -Eqi 'rtmidi|hidapi' package-ldd.txt
           DEBIAN_VERSION=$(python3 scripts/release-version.py debian-version "$VERSION")
           sed -e "s/@VERSION@/$DEBIAN_VERSION/g" -e "s/@ARCH@/$ARCH/g" \
             -e "s/@DEPENDS@/$DEPS/g" \
@@ -1666,6 +1667,8 @@ jobs:
           # (LICENSE and LICENSE-DUAL-LICENSING) into the portable deploy
           # tree so both the ZIP and the NSIS installer pick them up.
           Copy-Item -Recurse packaging\third-party-licenses deploy\licenses
+          # Deck plugins, laid out by the NereusDeckPlugins target.
+          Copy-Item -Recurse build\deck-plugins deploy\plugins
           Copy-Item LICENSE deploy\licenses\
           Copy-Item LICENSE-DUAL-LICENSING deploy\licenses\
           # DFNR (Apache-2.0 + MIT) and rnnoise (BSD) license files

@@ -287,26 +287,6 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// CAT > MIDI Control
-// Enable toggle, device combo, mapping table placeholder, learn button.
-// All controls are NYI / disabled.
-// ---------------------------------------------------------------------------
-class CatMidiControlPage : public SetupPage {
-    Q_OBJECT
-
-public:
-    explicit CatMidiControlPage(QWidget* parent = nullptr);
-
-private:
-    QCheckBox*  m_enableCheck{nullptr};
-    QComboBox*  m_deviceCombo{nullptr};
-    QLabel*     m_mappingLabel{nullptr};
-    QPushButton* m_learnButton{nullptr};
-
-    void buildUI();
-};
-
-// ---------------------------------------------------------------------------
 // Network > Peripherals
 // Two-row grid: TGXL (port 9010) and PGXL (port 9008).
 // Six columns per row: Name, Host IP, Port, Scan LAN, Connect, Status.

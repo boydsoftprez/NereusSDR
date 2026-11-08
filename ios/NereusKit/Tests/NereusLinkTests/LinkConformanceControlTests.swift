@@ -120,10 +120,10 @@ import Testing
         let commands = try #require(try Self.surface()["commands"] as? [[String: Any]])
         // Core 31d51c0a4 adds the rotor's seven verbs; refreshRotorPorts is the eighth.
         // Roundtable adds its thirteen roundtable.* verbs.
-        // Remote CW adds cw.send, cw.memory, cw.stop and cw.key.
+        // Remote CW adds cw.send, cw.memory, cw.stop and cw.key; hot keys add cw.paddle.
         // The band stack adds its thirteen bandStack.* verbs and the SSB Mod
         // Monitor adds txSsbModMonitor.reset.
-        #expect(commands.count == 207)
+        #expect(commands.count == 208)
         #expect(Set(commands.compactMap { $0["verb"] as? String }).count == commands.count)
         let expected: [(verb: String, capability: String, version: Int, names: [String], kinds: [String])] = [
             ("diversity.setTarget", "diversityControlVersion", 1,
@@ -160,6 +160,7 @@ import Testing
             ("cw.memory", "remoteCwVersion", 1, ["number"], ["i64"]),
             ("cw.stop", "remoteCwVersion", 1, [], []),
             ("cw.key", "remoteCwVersion", 1, ["down"], ["bool"]),
+            ("cw.paddle", "remoteCwVersion", 3, ["dot", "dash"], ["bool", "bool"]),
         ]
         for entry in expected {
             let command = try #require(commands.first { $0["verb"] as? String == entry.verb })

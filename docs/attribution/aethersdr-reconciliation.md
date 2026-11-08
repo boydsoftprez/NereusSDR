@@ -1540,3 +1540,66 @@ NereusSDR adds attribution and its existing producer annotation.
 | NereusSDR file | AetherSDR source | Notes |
 |---|---|---|
 | `src/gui/ScopedChildWidget.h` | `src/gui/ScopedChildWidget.h:15-19` [@9befcd2] | The forwarding constructor of the scoped owner, so stack dialogs and one QDrag are built through it. The rest of the file is Longpath's (LONGPATH-PROVENANCE.md), itself from AetherSDR [@b9e96a94]. Recorded in AETHERSDR-PROVENANCE.md. |
+
+## November 6, 2026 MIDI input (hot keys plan Task 10)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/midi/MidiRelativeDecoder.h` | `src/core/MidiRelativeCcDecoder.h:7-76` [@1e0718ad] | The relative CC decoder whole, comments verbatim; only the namespace differs. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/midi/MidiInput.h` | `src/core/MidiControlManager.cpp:325` [@1e0718ad] | The value ranges. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/midi/MidiInput.cpp` | `src/core/MidiControlManager.cpp:99-101, 112-121, 139-142, 271-298, 313-325, 345-375` [@1e0718ad] | RtMidi open sequence, callback hand-off, name match, message decoding and learn, on a worker thread with a port list comparison for unplug. Recorded in AETHERSDR-PROVENANCE.md. |
+
+## November 6, 2026 USB knobs (hot keys plan Task 12)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/DeviceInput.h` | `src/core/HidEncoderManager.h:189-190` [@1e0718ad] | The 5 ms poll and 3 s check. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/DeviceInput.cpp` | `src/core/HidEncoderManager.cpp:481-488, 568, 585-609, 615-632`, `src/core/HidDeviceParser.cpp:7-24`, `src/core/HidDeviceParser.h:46-126` [@1e0718ad] | hidapi open sequence, read loop, hotplug check, ids and report sizes, on a worker thread with one device per kind. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/GestureEngine.h` | `src/gui/MainWindow_Controllers.cpp:2476-2495` [@1e0718ad] | The 600 ms hold time, a fact with its cite. |
+| `src/core/hotkeys/HotKeyDeviceBindings.cpp` | `src/gui/MainWindow_Controllers.cpp:855-860` [@1e0718ad] | Which TMate 2 encoder index is printed E1 and E2, a fact with its cite. |
+
+## November 6, 2026 RC-28, PowerMate and Shuttles (hot keys plan Task 13)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/Rc28Parser.h` | `src/core/HidDeviceParser.h:39-50` [@1e0718ad] | Parser class shape. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/Rc28Parser.cpp` | `src/core/HidDeviceParser.cpp:43-90`, `src/core/HidEncoderManager.cpp:924-936` [@1e0718ad] | Report layout and light report. Button bits read singly, rotation reported with a button held. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/PowerMateParser.h` | `src/core/HidDeviceParser.h:51-59` [@1e0718ad] | Parser class shape. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/PowerMateParser.cpp` | `src/core/HidDeviceParser.cpp:92-113` [@1e0718ad] | Report layout. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/ShuttleParser.h` | `src/core/HidDeviceParser.h:60-81` [@1e0718ad] | Parser class shape, one class for both models. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/ShuttleParser.cpp` | `src/core/HidDeviceParser.cpp:115-195` [@1e0718ad] | Jog and its wrap. Buttons differ from upstream on other sources' evidence, cited in the file. Recorded in AETHERSDR-PROVENANCE.md. |
+
+## November 6, 2026 TMate 2 and Stream Deck+ (hot keys plan Task 14)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/TMate2Parser.h` | `src/core/HidDeviceParser.h:106-132` [@1e0718ad] | Parser class shape. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/TMate2Parser.cpp` | `src/core/HidDeviceParser.cpp:270-329`, `src/core/HidDeviceParser.h:108-116` [@1e0718ad] | Report layout. Every change in a report is given at once. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/StreamDeckPlusParser.h` | `src/core/HidDeviceParser.h:82-104` [@1e0718ad] | Parser class shape. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/StreamDeckPlusParser.cpp` | `src/core/HidDeviceParser.cpp:196-268` [@1e0718ad] | Report layout. All four dials and all keys from one report. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/DeviceOutput.h` | `src/core/HidEncoderManager.cpp:648-761`, `src/gui/MainWindow_Controllers.cpp:1111-1197` [@1e0718ad] | Output builders, returning bytes. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/DeviceOutput.cpp` | `src/core/HidEncoderManager.cpp:13-38,105-136,282-294,299-314,533-549,648-761`, `src/core/HidEncoderManager.h:93-95`, `src/gui/MainWindow_Controllers.cpp:1111-1197` [@1e0718ad] | Digit table, frame fields, packet layouts, JPEG settings. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/ControllerHost.cpp` | `src/gui/MainWindow_Controllers.cpp:1291` [@1e0718ad] | A key's idle color, a fact with its cite. |
+
+## November 6, 2026 FlexControl (hot keys plan Task 15)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/FlexControlParser.h` | `src/core/FlexControlManager.h:14-27` [@1e0718ad] | The token list as a class. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/FlexControlParser.cpp` | `src/core/FlexControlManager.cpp:249-344` [@1e0718ad] | Token grammar, buffer cap, light report, comments verbatim. Returns events. Direction follows upstream's code, not its header. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/FlexControlInput.h` | `src/core/FlexControlManager.h:16,57-70` [@1e0718ad] | The ids and retry bounds. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/FlexControlInput.cpp` | `src/core/FlexControlManager.cpp:11-247,312-344` [@1e0718ad] | Detect, open, recovery, lights, comments verbatim. Behind a seam, and it looks for the device from launch. Recorded in AETHERSDR-PROVENANCE.md. |
+
+## November 6, 2026 Ulanzi Dial (hot keys plan Task 16)
+
+| NereusSDR file | AetherSDR source | Notes |
+|---|---|---|
+| `src/gui/hotkeys/devices/UlanziChordDecoder.h` | `src/core/UlanziChordDecoder.h:8-50,61-67` [@1e0718ad] | Key codes and class, comments verbatim. `reset()` returns the releases. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziChordDecoder.cpp` | `src/core/UlanziChordDecoder.cpp`, `src/core/UlanziDialMacOSManager.cpp:20-44`, `src/gui/UlanziDialMapperDialog.cpp:88-97,109-118` [@1e0718ad] | The state machine, comments verbatim, with four fixes where upstream can lose a release. Events named for controls. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziLinuxInput.h` | `src/core/EvdevEncoderManager.cpp:55` [@1e0718ad] | Debounce. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziLinuxInput.cpp` | `src/core/EvdevEncoderManager.cpp:31-46,55,68,90-92,140-159,175-178,192-224` [@1e0718ad] | Name match, grab, read loop, comments verbatim. Behind a seam. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziMacInput.h` | `src/gui/MainWindow_Controllers.cpp:2737-2743`, `src/core/UlanziDialWindowsManager.h:81` [@1e0718ad] | Main thread, and the presence interval. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziMacInput.cpp` | `src/core/UlanziDialMacOSManager.cpp:46-57,84-97,107-116,159` [@1e0718ad] | Match, seize, close, comments verbatim. Opens only after the registry shows the dial and the application allows it. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziWindowsInput.h` | `src/core/UlanziDialWindowsManager.h:16-33,80-81` [@1e0718ad] | Notes verbatim, poll and hotplug intervals. Recorded in AETHERSDR-PROVENANCE.md. |
+| `src/gui/hotkeys/devices/UlanziWindowsInput.cpp` | `src/core/UlanziDialWindowsManager.cpp:46,89-95,137-158,164-215` [@1e0718ad] | Enumeration, poll, report shapes, comments verbatim. Decoding is a static function. Recorded in AETHERSDR-PROVENANCE.md. |
+| `tests/tst_device_parser_ulanzi.cpp` | `tests/ulanzi_chord_decoder_test.cpp` [@1e0718ad] | Upstream's cases over controls, plus the fixes, the backends and the gate. Recorded in AETHERSDR-PROVENANCE.md. |
