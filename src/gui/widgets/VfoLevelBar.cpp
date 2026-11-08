@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-04 - setSourceTag: MAX or AV above the readout, in the tick
+//                 strip (overlay design D41). NereusSDR-native. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-12 - JJ's option B: fit small workspace text to the approved
 //                 11 logical-pixel floor. J.J. Boyd (KG4VCF), AI-assisted
 //                 via OpenAI Codex. Classic geometry and colors retained.
@@ -59,6 +62,11 @@ void VfoLevelBar::setValue(float dbm) {
     m_value = dbm;
     update();
 }
+void VfoLevelBar::setSourceTag(const QString& tag) {
+    if (tag == m_sourceTag) { return; }
+    m_sourceTag = tag;
+    update();
+}
 QString VfoLevelBar::readoutText() const {
     if (m_noReading) {
         return QStringLiteral("-- dBm");
@@ -84,33 +92,53 @@ QSize VfoLevelBar::sizeHint() const {
                     + std::max(14, QFontMetrics(readout, this).height())};
 }
 QSize VfoLevelBar::minimumSizeHint() const { return {200, sizeHint().height()}; }
-void VfoLevelBar::paintEvent(QPaintEvent*) {
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, false);
-    // 2026-05-12 bench fix (PR #238): push the tick strip down by
-    // kTopPad pixels so the "S1 3 5 7 9 +20 +40" labels never sit
-    // flush against the bottom of the frequency-display border
-    // above this widget.  The earlier QVBoxLayout addSpacing(4)
-    // helped, but the user reported the s-meter still visually
-    // overlapped the rounded freq rectangle.  Pushing the tick
-    // strip down inside this widget guarantees clearance
-    // regardless of how Qt resolves the layout's stretch policy
-    // after the RADE SNR row was added below.
-    constexpr int kTopPad = 4;
-    QFont tickFont = p.font();
+namespace {
+// 2026-05-12 bench fix (PR #238): push the tick strip down by
+// kTopPad pixels so the "S1 3 5 7 9 +20 +40" labels never sit
+// flush against the bottom of the frequency-display border
+// above this widget.  The earlier QVBoxLayout addSpacing(4)
+// helped, but the user reported the s-meter still visually
+// overlapped the rounded freq rectangle.  Pushing the tick
+// strip down inside this widget guarantees clearance
+// regardless of how Qt resolves the layout's stretch policy
+// after the RADE SNR row was added below.
+constexpr int kTopPad = 4;
+}
+VfoLevelBar::Layout VfoLevelBar::barLayout() const {
+    QFont tickFont = font();
     tickFont.setPixelSize(WorkspacePreview::readableTextPixelSize(8));
-    QFont dbmFont = p.font();
+    QFont dbmFont = font();
     dbmFont.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
     dbmFont.setBold(true);
     const QFontMetrics tickMetrics(tickFont, this);
     const QFontMetrics dbmMetrics(dbmFont, this);
     const int tickH = WorkspacePreview::enabled() ? tickMetrics.height() + 2 : 8;
-
     // ── dBm readout width reservation ──────────────────────────────────
     const int kDbmWidth = WorkspacePreview::enabled()
         ? std::max(52, dbmMetrics.horizontalAdvance(QStringLiteral("-130 dBm")) + 2) : 52;
     const int readoutGap = WorkspacePreview::enabled() ? 4 : 2;
-    const int barW = width() - kDbmWidth - readoutGap;
+    return {tickH, kDbmWidth, width() - kDbmWidth - readoutGap, kTopPad + tickH};
+}
+QRect VfoLevelBar::readoutRect() const {
+    const Layout l = barLayout();
+    return {l.barW - 1 + 4, l.barTop, l.dbmWidth, height() - l.barTop};
+}
+QRect VfoLevelBar::sourceTagRect() const {
+    // Above the readout, on the tick labels' own line.
+    const Layout l = barLayout();
+    return {l.barW - 1 + 4, kTopPad, l.dbmWidth, l.tickH - 2};
+}
+void VfoLevelBar::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, false);
+    QFont tickFont = p.font();
+    tickFont.setPixelSize(WorkspacePreview::readableTextPixelSize(8));
+    QFont dbmFont = p.font();
+    dbmFont.setPixelSize(WorkspacePreview::readableTextPixelSize(10));
+    dbmFont.setBold(true);
+    const Layout layout = barLayout();
+    const int tickH = layout.tickH;
+    const int barW = layout.barW;
 
     // ── Tick strip above the bar ───────────────────────────────────────
     // Tick labels for S1, S3, S5, S7, S9, +20, +40
@@ -149,7 +177,7 @@ void VfoLevelBar::paintEvent(QPaintEvent*) {
         }
         p.drawText(labelRect, alignment, QString::fromLatin1(kTickTxt[i]));
     }
-    const int barTop = kTopPad + tickH;
+    const int barTop = layout.barTop;
     const QRect barRect(0, barTop, barW, height() - barTop);
 
     // ── Bar itself (ported from AetherSDR LevelBar::paintEvent) ────────
@@ -172,9 +200,22 @@ void VfoLevelBar::paintEvent(QPaintEvent*) {
         p.fillRect(x0, y0, fillW, h, QBrush(grad));
     }
 
+    // ── Which reading it is, above the readout (overlay design D41) ───
+    if (!m_sourceTag.isEmpty()) {
+        QFont tagFont = tickFont;
+        tagFont.setBold(true);
+        p.setFont(tagFont);
+        p.setPen(QColor(0xdc, 0xdc, 0xe1));
+        // Clipped because a glyph can draw outside its box on some fonts,
+        // and the tag must change nothing beyond its own box.
+        const QRect tagRect = sourceTagRect();
+        p.setClipRect(tagRect);
+        p.drawText(tagRect, Qt::AlignVCenter | Qt::AlignLeft, m_sourceTag);
+        p.setClipping(false);
+    }
+
     // ── dBm text to the right of the bar ──────────────────────────────
-    const QRect dbmRect(barRect.right() + 4, barRect.y(),
-                        kDbmWidth, barRect.height());
+    const QRect dbmRect = readoutRect();
     p.setPen(isAboveS9() ? kMeterGreen : kMeterCyan);
     p.setFont(dbmFont);
     p.drawText(dbmRect, Qt::AlignVCenter | Qt::AlignLeft, readoutText());

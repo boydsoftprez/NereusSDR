@@ -60,6 +60,14 @@ enum BandColumnLayout {
     static func columns(bandHeight: CGFloat) -> Int {
         columnHeight(rows: buttonCount) <= menuMaxHeight(bandHeight: bandHeight) ? 1 : 2
     }
+    /// Where the column stands on the band, which the Roundtable card and tags keep off.
+    static func frame(bandHeight: CGFloat, leadingInset: CGFloat, folded: Bool) -> CGRect {
+        let columns = folded ? 1 : columns(bandHeight: bandHeight)
+        let rows = folded ? 1 : buttonCount / columns
+        return CGRect(x: leadingInset + origin, y: origin, width: columnWidth(columns: columns),
+                      height: min(columnHeight(rows: rows), menuMaxHeight(bandHeight: bandHeight)))
+    }
+
     /// Between the column and a menu beside it.
     static let menuGap: CGFloat = 2
     /// The space the PTT and the keyed meters keep from what is open.

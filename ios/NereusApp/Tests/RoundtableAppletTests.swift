@@ -300,7 +300,7 @@ struct RoundtableAppletTests {
                                     detent: Binding(get: { detent }, set: { detent = $0 }),
                                     dialOn: false, linkUp: true, fullHeight: fullHeight,
                                     stationCallsign: "", stationGrid: "", firstRunNoteSeen: .constant(true),
-                                    close: {}, compactDecided: { decided = true })
+                                    close: {}, back: {}, compactDecided: { decided = true })
             .frame(width: width, height: half.height)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)

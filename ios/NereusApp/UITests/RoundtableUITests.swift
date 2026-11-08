@@ -10,6 +10,9 @@
 // 2026-10-25: JJ's answer: on a phone the first-run question opens at full
 // height, Stay hidden and Go live on screen without a scroll. J.J. Boyd
 // (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-04: One sheet on every frequency under a finger: toggle, Back in place, the more
+// button, and a band drag that leaves it open (overlay design D22, D27, D36, D38).
+// J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-05: These run upright on an iPad, where the flag line opens the
 // sheet; on its side it scrolls the column instead. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
@@ -23,6 +26,9 @@ import XCTest
 // and writes each press and release the hold makes in `pttHoldLog`, so a
 // swipe or a drag that keyed, or a release that never came, shows there.
 final class RoundtableUITests: XCTestCase {
+    /// Slice A's frequency in the fixture.
+    private static let ownRoom = "lsb-7236400"
+
     override func setUp() {
         continueAfterFailure = false
     }
@@ -49,6 +55,119 @@ final class RoundtableUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 10))
         XCTAssertEqual(app.descendants(matching: .any)["ptt"].label, "Push to talk, tap to key and tap again to unkey")
         XCTAssertEqual(holdLog(app), "none")
+    }
+
+    /// D38: the flag line, the card and a tag open one sheet. The same thing closes it,
+    /// Back stays up on your own, and the slice's flag never changes.
+    @MainActor
+    func testOneSheetTogglesAndBackStaysOnYourOwn() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        let flag = app.descendants(matching: .any)["flagA"]
+        let line = app.descendants(matching: .any)["roundtableLineA"]
+        XCTAssertTrue(line.waitForExistence(timeout: 30))
+        let before = flag.label
+        let sheet = try openSheet(app)
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableViewTuneReason"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableViewTune"].isEnabled)
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableBox"].exists, "your own keeps its box")
+        try save("roundtable-ui-one-sheet-own")
+        line.tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "the same line did not close the sheet")
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        tag.tap()
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let back = app.descendants(matching: .any)["roundtableBackToSlice"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        let half = sheet.frame
+        try save("roundtable-ui-one-sheet-viewed")
+        back.tap()
+        XCTAssertTrue(back.waitForNonExistence(timeout: 10), "Back did not return to your own")
+        XCTAssertTrue(sheet.exists, "Back closed the sheet")
+        XCTAssertEqual(sheet.frame.minY, half.minY, accuracy: 2, "Back moved the sheet")
+        tag.tap()
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        tag.tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 10), "the same tag did not close the sheet")
+        XCTAssertEqual(flag.label, before, "a tap moved the slice")
+        XCTAssertEqual(holdLog(app), "none")
+    }
+
+    /// D36: the sheet's more button has Signal and Cancel and nothing else.
+    @MainActor
+    func testTheMoreButtonHasSignalAndCancel() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        _ = try openSheet(app)
+        let more = app.buttons["roundtableMore"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        more.tap()
+        let signal = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Signal: '")).firstMatch
+        XCTAssertTrue(signal.waitForExistence(timeout: 10))
+        try save("roundtable-ui-more")
+        XCTAssertTrue(app.buttons["Cancel"].exists)
+        XCTAssertFalse(app.buttons["Read reports"].exists)
+        // The sheet's own Tune is the only one: the menu has none.
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Tune slice'")).count, 1)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(signal.waitForNonExistence(timeout: 10))
+    }
+
+    /// D27, D38: a drag on the slice's flag tunes and leaves the sheet open on what it shows.
+    @MainActor
+    func testDraggingTheSlicesFlagLeavesTheSheetOpen() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        let flag = app.descendants(matching: .any)["flagA"]
+        XCTAssertTrue(flag.waitForExistence(timeout: 30))
+        let before = flag.label
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 10))
+        tag.tap()
+        let sheet = app.descendants(matching: .any)["roundtableSheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let back = app.descendants(matching: .any)["roundtableBackToSlice"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        // A drag on the slice's flag is the band's own tuning gesture, above the sheet.
+        flag.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.05, thenDragTo: flag.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        waitUntil("the drag did not tune the slice") { flag.label != before }
+        XCTAssertTrue(sheet.exists, "the drag closed the sheet")
+        XCTAssertTrue(back.exists, "the drag ended the view")
+        XCTAssertEqual(holdLog(app), "none")
+        try save("roundtable-ui-drag-keeps-sheet")
+    }
+
+    /// D27, D38: a drag on the empty band moves the band and leaves the sheet open on a view.
+    @MainActor
+    func testDraggingTheEmptyBandLeavesTheSheetOpenOnAView() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        let tag = app.descendants(matching: .any)["roundtableTag.lsb-7225000"]
+        XCTAssertTrue(tag.waitForExistence(timeout: 30))
+        tag.tap()
+        let sheet = app.descendants(matching: .any)["roundtableSheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let back = app.descendants(matching: .any)["roundtableBackToSlice"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10))
+        try dragTheEmptyBand(app, under: sheet, shot: "roundtable-ui-band-drag-view")
+        XCTAssertTrue(back.exists, "the drag ended the view")
+    }
+
+    /// D27, D38: the same on your own frequency, where the sheet has no view to end.
+    @MainActor
+    func testDraggingTheEmptyBandLeavesTheSheetOpenOnYourOwn() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "An iPad shows the applet or the panel")
+        let app = launch(frequency: true)
+        let own = app.descendants(matching: .any)["roundtableTag.\(Self.ownRoom)"]
+        XCTAssertTrue(own.waitForExistence(timeout: 30))
+        own.tap()
+        let sheet = app.descendants(matching: .any)["roundtableSheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["roundtableViewHead"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["roundtableBackToSlice"].exists)
+        try dragTheEmptyBand(app, under: sheet, shot: "roundtable-ui-band-drag-own")
     }
 
     /// U2: with the sheet open PTT is press and hold beside the box, and
@@ -190,6 +309,29 @@ final class RoundtableUITests: XCTestCase {
         return sheet
     }
 
+    /// A drag across open band, clear of the flag, the tags and the sheet: the band moves
+    /// under its flag, nothing tunes and the sheet stays up.
+    @MainActor
+    private func dragTheEmptyBand(_ app: XCUIApplication, under sheet: XCUIElement, shot: String) throws {
+        let surface = app.descendants(matching: .any)["bandSurface"]
+        let flag = app.descendants(matching: .any)["flagA"]
+        XCTAssertTrue(surface.waitForExistence(timeout: 10))
+        XCTAssertTrue(flag.waitForExistence(timeout: 10))
+        let label = flag.label
+        let before = flag.frame.minX
+        let band = surface.frame
+        let y = (flag.frame.maxY + sheet.frame.minY) / 2
+        func at(_ x: CGFloat) -> XCUICoordinate {
+            surface.coordinate(withNormalizedOffset: CGVector(dx: x, dy: (y - band.minY) / band.height))
+        }
+        at(0.75).press(forDuration: 0.05, thenDragTo: at(0.55))
+        waitUntil("the drag did not move the band") { abs(flag.frame.minX - before) > 20 }
+        XCTAssertEqual(flag.label, label, "a drag on open band tuned the slice")
+        XCTAssertTrue(sheet.exists, "the drag closed the sheet")
+        XCTAssertEqual(holdLog(app), "none")
+        try save(shot)
+    }
+
     @MainActor
     private func holdLog(_ app: XCUIApplication) -> String {
         app.descendants(matching: .any)["pttHoldLog"].label
@@ -218,7 +360,7 @@ final class RoundtableUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(firstRun: Bool = false) -> XCUIApplication {
+    private func launch(firstRun: Bool = false, frequency: Bool = false) -> XCUIApplication {
         if UIDevice.current.userInterfaceIdiom == .pad {
             XCUIDevice.shared.orientation = .portrait
         }
@@ -226,6 +368,7 @@ final class RoundtableUITests: XCTestCase {
         // The band with slice A in a Roundtable room, with no Core (a debug build's launch arguments).
         app.launchArguments = ["-NereusShowBand", "-NereusFlagsOnBand", "-NereusRoundtableFixture"]
             + (firstRun ? ["-NereusRoundtableFirstRun"] : [])
+            + (frequency ? ["-NereusRoundtableFrequency"] : [])
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
