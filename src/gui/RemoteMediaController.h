@@ -662,6 +662,17 @@ public:
     /// as it does itself, so a test can raise a fault a real stream cannot
     /// produce on demand. No production caller.
     void raiseAudioRestartForTest(RemoteAudioReceiver::Fault fault);
+    /// Test only: every accepted display counts as being closed for the
+    /// budget, or no longer does, which a test cannot hold open on a real
+    /// session.
+    void setDisplaysSuspendingForTest(bool suspending);
+    /// Test only: `packet` arrives on the display channel, for the kinds a
+    /// test's Core doesn't send on demand.
+    void receiveDisplayForTest(const QByteArray& packet);
+    /// Test only: every display counts as accepted, as when the Core's answer
+    /// came and its frames are lost on the way. A test's Core answers only
+    /// from a frame it then delivers.
+    void markDisplaysAcceptedForTest();
     /// Test only: the speakers' receiver reports a failure with `fault`, as
     /// it does itself when playback cannot start, so a test can raise a
     /// fault a real stream cannot produce on demand. No production caller.
