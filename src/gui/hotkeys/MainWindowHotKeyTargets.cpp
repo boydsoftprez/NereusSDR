@@ -925,7 +925,7 @@ void MainWindowHotKeyTargets::walkMode(SliceModel* slice, int direction)
         return;
     }
     const int count = static_cast<int>(kModeWalk.size());
-    const auto* const found = std::find(kModeWalk.begin(), kModeWalk.end(), slice->dspMode());
+    const auto found = std::find(kModeWalk.begin(), kModeWalk.end(), slice->dspMode());
     int at = found != kModeWalk.end() ? static_cast<int>(found - kModeWalk.begin()) : -1;
     for (int tried = 0; tried < count; ++tried) {
         at = steppedIndex(at, direction, count);

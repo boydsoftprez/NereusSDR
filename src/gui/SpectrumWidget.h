@@ -5311,6 +5311,12 @@ private:
     // Default matches Style::kRxFilterOverlayFill = "rgba(0, 180, 216, 80)".
     QColor  m_rxFilterColor{0x00, 0xb4, 0xd8, 80};
 
+    // The dB the trace adds to every value (calibration and 1 Hz
+    // normalization, as dbmToYf). Outside the GPU block because the
+    // Roundtable pan level uses it on every build.
+    // From Longpath src/gui/SpectrumWidget.cpp:11648-11665 [@383f058]
+    float fftTraceShiftDb() const;
+
 #ifdef NEREUS_GPU_SPECTRUM
     bool m_rhiInitialized{false};
 
@@ -5435,7 +5441,6 @@ private:
     // (calibration and 1 Hz normalization, as dbmToYf).
     // From Longpath src/gui/SpectrumWidget.cpp:11648-11665 [@383f058]
     float fftTraceFloorNdc(const QRect& specRect) const;
-    float fftTraceShiftDb() const;
 
     // ---- Spectrum background layer (Display pill plan Task 5) ----
     // A texture and SRB of its own for the same overlay pipeline, drawn in
