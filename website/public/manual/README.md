@@ -65,7 +65,7 @@ when you need a specific answer.
 | [13. Receiver DSP and filter setup](13-receiver-dsp.md) | Adjust AGC, blankers, noise-reduction methods/models, notches, filter presets and DSP options. |
 | [14. Voice processing and profiles](14-voice-profiles.md) | Configure microphone/TX profiles, EQ, compression, leveler, expander, VOX and modulation monitoring. |
 | [15. RADE and FreeDV operation](15-rade-freedv.md) | Receive and transmit RADE voice, interpret decode status, and use the FreeDV Reporter. |
-| [16. Spots and reporters](16-spots-reporters.md) | Configure spot sources, filter and display results, tune from station lists, and turn the beam to a spot. |
+| [16. Spots and reporters](16-spots-reporters.md) | Configure spot sources, filter and display results, tune from station lists, turn the beam to a spot, and read live Roundtable reports. |
 | [17. Hardware, antennas and calibration](17-hardware-antennas-calibration.md) | Configure radio/ALEX/HL2/OC controls and supported level, PA and wattmeter calibration. |
 | [18. PureSignal and diversity](18-puresignal-diversity.md) | Configure supported feedback calibration and two-ADC diversity, and check status/results. |
 | [19. Amplifiers and tuners](19-amplifiers-tuners.md) | Configure and operate supported PGXL, TGXL and RF-Kit accessories with their interlocks and readbacks, and set up and turn a rotor. |

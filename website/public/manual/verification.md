@@ -156,6 +156,14 @@ The 15 October 2026 connected-window recapture reran `python3 docs/manual/check_
 
 The 16 October 2026 text update for the PRs merged on 15 and 16 October reran `python3 docs/manual/check_manual.py`. It passed for 20 chapters and 738 local manuscript links and images, and all 32 preserved screenshot originals matched their recorded hashes. No figures changed. No new browser inspection or release/runtime certification is claimed.
 
+The 5 November 2026 draft for the next release added text only, checked against source at `dfa9e1c29`, which is not a release: Classic and Modern bar faces (chapter 10), AUTO holding through transmit (chapters 3 and 13), the Graphic Legacy Hz boxes (chapter 14), the PureSignal default peak (chapter 18) and a first Roundtable section (chapter 16). No application was run for this text. No figure shows these changes, and the TX EQ capture predates the Hz box arrows. It also removed chapter 14's stale references to a candidate header and an older **Legacy EQ** figure. Chapter 16's Roundtable section covers starting the connection and reading live reports only; messages, naming turns, the archive and moderation are still not documented in this manual.
+
+The 7 November 2026 update added chapter 11's section on a profile marked as in use on another computer, checked against source at `468172af8`, which is not a release. No application was run for this text, and the Take Over dialog has not been seen in a real startup.
+
+The 8 November 2026 update, checked against source at `67530efee`, which is not a release, added text only: band stacks (chapter 3, and chapter 12's Band row and missing list), the right-click on **AUTO** and **AGC-T** (chapters 3 and 13), step, RIT and XIT on a new or restored slice (chapter 3), a new slice copying the current one, the per-receiver sample rate and a section on zooming a pan wider than its receiver (chapter 4), per-window FPS and Decimation (chapter 10), Auto-connect and the Core restart messages (chapter 1), the speaker row (chapter 11), the CW page and the SSB Mod Monitor (chapter 14), the TCI Clients name (chapter 9), and a rewrite of chapter 16's Roundtable card and inspector. No application was run for this text and no figure shows these changes. Phone-app changes in 741, 747, 748, 752 and 755 are not in the manual's phone chapters yet, because they reach phones only with the next phone build.
+
+The later 8 November 2026 update, checked against source at `163d08931`, added chapter 10's **Keys, knobs and controllers** section, the band stack keys in chapter 3, and the hot key menu items, shortcut note and availability rows in chapter 12. No application was run for this text, and no MIDI device, knob or deck plugin was tried.
+
 ## Evidence still required for publication
 
 Complete the [remaining release screenshot plan](images/README.md) and live

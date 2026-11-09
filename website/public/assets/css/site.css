@@ -1301,9 +1301,9 @@ pre {
   color: rgba(255, 255, 255, 0.314);
 }
 
-/* The floating lock button beside the flag (VfoWidget kFloatingBtn, 20 x 20,
-   radius 10). Close is hidden for slice 0, record and play need the voice
-   feature, so only the lock shows. */
+/* The floating buttons beside the flag (VfoWidget kFloatingBtn, 20 x 20,
+   radius 10, 22 px apart). Close is hidden for slice 0, record and play need
+   the voice feature, so the lock and the more button under it show. */
 .vfo-fbtns {
   position: absolute;
   top: 0;
@@ -1325,6 +1325,17 @@ pre {
   background: rgba(26, 26, 30, 0.902);
   border: 1px solid rgba(44, 44, 49, 0.706);
   border-radius: 10px;
+}
+
+/* VfoWidget kFloatingBtnMore: U+22EF at 13 px bold, padding 0 0 2px 0, its
+   #c8d8e8 text in the look's text role (#dcdce1) */
+.vfo-fbtns .vfo-fbtns__more {
+  padding-bottom: 2px;
+  font-family: var(--ui);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ws-text);
 }
 
 /* The pan's zoom slider: 20 px, #0a0a0c; groove 6 px #050507 with a 1 px
@@ -1390,6 +1401,28 @@ pre {
 
 .banner__pan {
   flex: none;
+}
+
+/* The band stack dots (MainWindow::refreshBandStackDots): a 10 x 22 label,
+   three 9 x 6 ellipses 7 px apart in the text-inactive role */
+.banner__stack {
+  flex: none;
+  fill: var(--ws-muted);
+}
+
+/* The stack number after +PAN (bandStackNumberMarkup): the band 13 px bold
+   in the ok role, the place 11 px semibold in text-secondary */
+.banner__band b {
+  font-size: 13px;
+  font-weight: 700;
+  color: #6fa384;
+}
+
+.banner__band i {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ws-text-2);
 }
 
 .banner__chain,
@@ -1601,7 +1634,7 @@ pre {
 }
 
 /* The fold ladder (ChromeBarItems rungs): the system tile leaves first, then
-   CAT and TCI, the channel chain, AGC and TNF. The overflow chip appears once
+   CAT and TCI, the channel chain, AGC, the band stack and TNF. The overflow chip appears once
    anything has folded. Rung 0 never folds in the program; on a phone the site
    also drops the station block and the overload slot (fold-site) and the
    title bar's RADIO, PC and name, so the rest stays readable. */
@@ -1624,8 +1657,12 @@ pre {
   .vol--pc { display: none; }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 800px) {
   .banner .fold-5 { display: none; }
+}
+
+@media (max-width: 760px) {
+  .banner .fold-6 { display: none; }
 }
 
 @media (max-width: 640px) {
