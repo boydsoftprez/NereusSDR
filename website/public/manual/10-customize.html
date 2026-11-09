@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Display, meters, and desktop layout | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/10-customize.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual<br>NereusSDR 2026.11.0</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html" aria-current=page>Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/upgrading-to-2026.10.1.html">Upgrading to NereusSDR 2026.10.1</a><a href="/guides/upgrading-to-2026.10.2.html">Upgrade note for the earlier 2026.10.2 candidate</a><a href="/guides/upgrading-to-2026.11.0.html">Upgrading to NereusSDR 2026.11.0</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="display-meters-and-desktop-layout">Display, meters, and desktop layout</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#read-the-display-without-changing-the-receiver">Read the display without changing the receiver</a></li><li><a href="#make-a-weak-signal-easier-to-see">Make a weak signal easier to see</a></li><li><a href="#waterfall-levels-timestamps-and-rewind">Waterfall levels, timestamps, and rewind</a></li><li><a href="#3d-duplex-and-transmit-display">3D, duplex, and transmit display</a></li><li><a href="#set-grid-range-and-labels">Set grid range and labels</a></li><li><a href="#colors-and-meter-styles">Colors and meter styles</a></li><li><a href="#arrange-applets-and-containers">Arrange applets and containers</a></li><li><a href="#phone-display-scope">Phone display scope</a></li><li><a href="#boundaries-to-keep-in-mind">Boundaries to keep in mind</a></li></ol></details>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Display, meters, and desktop layout | NereusSDR</title><link rel="canonical" href="https://nereussdr.com/manual/10-customize.html"><link rel="icon" href="/favicon.ico" sizes="any"><link rel="stylesheet" href="/assets/css/site.css"><link rel="stylesheet" href="/manual/manual.css"></head><body><a class="skip-link" href="#content">Skip to chapter</a><div class="manual-shell"><nav class="manual-nav" aria-label="Manual chapters"><a class="manual-brand" href="/">NereusSDR</a><a href="/">Home</a><p class="manual-draft">User manual<br>NereusSDR 2026.11.1</p><details open><summary>Browse all chapters</summary><a href="/manual/index.html">NereusSDR User Manual</a><a href="/manual/01-desktop-connect.html">Install, connect, and check desktop audio</a><a href="/manual/02-desktop-window.html">Get to know the desktop window</a><a href="/manual/03-receive.html">Tune and receive</a><a href="/manual/04-slices.html">Slices, receiver windows, and panadapters</a><a href="/manual/05-transmit.html">Set up and transmit</a><a href="/manual/06-iphone-connect.html">Connect an iPhone to a Core</a><a href="/manual/07-iphone-operate.html">Operate from an iPhone</a><a href="/manual/08-shared-core.html">Share a Core with other devices</a><a href="/manual/09-tools.html">Digital audio and external applications</a><a href="/manual/10-customize.html" aria-current=page>Display, meters, and desktop layout</a><a href="/manual/11-troubleshooting.html">Troubleshoot operation</a><a href="/manual/12-reference.html">Control reference</a><a href="/manual/13-receiver-dsp.html">Receiver DSP and filter setup</a><a href="/manual/14-voice-profiles.html">Voice processing and profiles</a><a href="/manual/15-rade-freedv.html">RADE and FreeDV Reporter</a><a href="/manual/16-spots-reporters.html">Spots and reporters</a><a href="/manual/17-hardware-antennas-calibration.html">Radio hardware, antennas, and calibration</a><a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a><a href="/manual/19-amplifiers-tuners.html">Amplifiers and tuners</a><a href="/manual/20-phone-preferences.html">Phone preferences and session care</a></details><details open><summary>How-to guides</summary><a href="/guides/install-core-sbc.html">Fresh Raspberry Pi or Armbian Core install</a><a href="/guides/tx-eq-cfc.html">Transmitter EQ and CFC</a><a href="/guides/upgrading-to-2026.10.0.html">Upgrading to NereusSDR 2026.10.0</a><a href="/guides/upgrading-to-2026.10.1.html">Upgrading to NereusSDR 2026.10.1</a><a href="/guides/upgrading-to-2026.10.2.html">Upgrade note for the earlier 2026.10.2 candidate</a><a href="/guides/upgrading-to-2026.11.0.html">Upgrading to NereusSDR 2026.11.0</a><a href="/guides/contributing-with-ai.html">Contribute to NereusSDR with AI</a><a href="/guides/remote-access.html">NereusSDR rendezvous</a></details></nav><main id="content"><h1 id="display-meters-and-desktop-layout">Display, meters, and desktop layout</h1><details class="page-contents" open><summary>On this page</summary><ol><li><a href="#read-the-display-without-changing-the-receiver">Read the display without changing the receiver</a></li><li><a href="#make-a-weak-signal-easier-to-see">Make a weak signal easier to see</a></li><li><a href="#waterfall-levels-timestamps-and-rewind">Waterfall levels, timestamps, and rewind</a></li><li><a href="#3d-duplex-and-transmit-display">3D, duplex, and transmit display</a></li><li><a href="#set-grid-range-and-labels">Set grid range and labels</a></li><li><a href="#colors-and-meter-styles">Colors and meter styles</a></li><li><a href="#arrange-applets-and-containers">Arrange applets and containers</a></li><li><a href="#keys-knobs-and-controllers">Keys, knobs and controllers</a></li><li><a href="#phone-display-scope">Phone display scope</a></li><li><a href="#boundaries-to-keep-in-mind">Boundaries to keep in mind</a></li></ol></details>
 <p>This chapter covers what the spectrum and waterfall show, how to make weak signals easier to read, how to inspect recent waterfall history, and how to build a desktop meter container. Display tuning changes presentation and analyzer requests. It does not change the receiver's demodulation, filter, transmit power, or RF path. Where a control changes a shared analyzer or Core setting, its scope is called out.</p>
 <p>For the main operating window, slice selection, spectrum tuning, and context menus, see <a href="/manual/02-desktop-window.html">chapter 2</a> and <a href="/manual/03-receive.html">chapter 3</a>. Receiver DSP and filter changes are in <a href="/manual/13-receiver-dsp.html">chapter 13</a>; transmit setup is in <a href="/manual/05-transmit.html">chapter 5</a>, voice processing in <a href="/manual/14-voice-profiles.html">chapter 14</a>, and radio calibration in <a href="/manual/17-hardware-antennas-calibration.html">chapter 17</a>. For the phone's full display and session preferences, see <a href="/manual/20-phone-preferences.html">chapter 20</a>, with touch operation in <a href="/manual/07-iphone-operate.html">chapter 7</a>. Chapter <a href="/manual/12-reference.html">12</a> indexes scopes and availability. Related advanced procedures: <a href="/manual/15-rade-freedv.html">RADE and FreeDV</a>, <a href="/manual/16-spots-reporters.html">spots and reporters</a>, <a href="/manual/18-puresignal-diversity.html">PureSignal and diversity</a>, and <a href="/manual/19-amplifiers-tuners.html">amplifiers and tuners</a>.</p>
 <h2 id="read-the-display-without-changing-the-receiver">Read the display without changing the receiver</h2>
@@ -15,9 +15,9 @@
 <li>Return to the panadapter and check the trace, passband, dBm labels, and waterfall together. If a peak disappears, widen the grid range or move the reference level. If waterfall noise is washed out, adjust the levels, <strong>Black Level</strong> and <strong>Color Gain</strong> on the pan's <strong>Levels</strong> tab. Change one group at a time so the useful setting is easy to identify and undo.</li>
 </ol>
 <h3 id="set-spectrum-resolution-update-rate-and-smoothing">Set spectrum resolution, update rate, and smoothing</h3>
-<p>Open <strong>File &gt; Settings... &gt; Display &gt; FFT &amp; Engine</strong>, or the <strong>FFT</strong> tab of the pan's Display pill. Read both <strong>FFT Size</strong> and <strong>Bin Width (Hz)</strong>. The sizes run from 4096 to 262144 in powers of two. Bin width is sample rate divided by FFT size: a larger transform makes narrower bins and finer frequency detail, at greater processing cost. <strong>Sizing</strong> chooses what sets the FFT size. <strong>Auto</strong> lets the zoom pick the size to keep the picture sharp. <strong>Hz/bin</strong> makes the size follow the bin width in <strong>Hz/bin Target</strong> (0.5 to 200 Hz) at every zoom. <strong>Fixed</strong> uses the <strong>FFT Size</strong> slider's size whatever the zoom. <strong>FFT Size</strong> is live in <strong>Fixed</strong> only and <strong>Hz/bin Target</strong> in <strong>Hz/bin</strong> only; grayed, each shows what is running or remembered and says which <strong>Sizing</strong> choice frees it. These FFT settings are shared: one value serves every pan and every window connected to the Core, and a change on one pan's FFT tab shows on all of them. The <strong>Window</strong> choice changes leakage versus main-lobe width: Rectangular is narrow but has stronger sidelobes; Hann/Hamming/Blackman-Harris/Kaiser trade some width for sidelobe reduction; Flat-Top favors amplitude accuracy. After a change, read the actual FFT/bin-width value; remote display may show a Core grant different from the request.</p>
-<p><strong>FPS</strong> (on <strong>FFT &amp; Engine</strong>, and the pill's <strong>FFT</strong> tab; 10 to 60) sets the approximate redraw rate, trading animation smoothness against CPU work. <strong>Detector</strong> (on <strong>Spectrum</strong>, in the <strong>Trace</strong> group) selects how input bins become display pixels: <strong>Peak</strong> keeps the maximum, <strong>Rosenfell</strong> alternates max/min for a classic trace, <strong>Average</strong> averages bins, <strong>Sample</strong> selects one bin, and <strong>RMS</strong> computes root-mean-square power. <strong>Averaging</strong> is time smoothing across frames: <strong>None</strong> shows each frame; <strong>Recursive</strong> smooths linear power; <strong>Time Window</strong> approximates a sliding window; <strong>Log Recursive</strong> smooths in dB. <strong>Avg Time</strong> sets the smoothing time constant (1 to 9999 ms in Setup; the pill's slider stops at 500 ms); longer time smooths more and responds more slowly. Try a detector for the view shape first, then choose averaging and time based on how quickly you want the trace to follow changes.</p>
-<p><strong>Normalize to 1 Hz</strong> is available for Average, Sample, or RMS detectors. It scales displayed noise power to a 1 Hz reference bandwidth; it is not a receiver calibration adjustment. The checkbox is grayed, with the reason, when the chosen detector does not support it. <strong>Decimation</strong> (on <strong>FFT &amp; Engine</strong>) reduces display resolution as its value increases. Decimation is applied to the FFT engines across pans; use it only when lower display detail is acceptable to reduce processing load. <strong>Cal Offset</strong> (Spectrum page, <strong>Calibration</strong> group) shifts displayed levels on a local radio, but is disabled in a remote window because the Core already calibrates its radio data. <strong>Peak Hold</strong> and <strong>Peak Delay</strong> (Spectrum page, <strong>Peak hold</strong> group) are a separate whole-trace maximum hold; the delay controls when the held trace starts to decay. For the peak trace with decay and the labeled peak markers, use <strong>Configure peaks →</strong> to open <strong>Peaks &amp; Markers</strong>.</p>
+<p>Open <strong>File &gt; Settings... &gt; Display &gt; FFT &amp; Engine</strong>, or the <strong>FFT</strong> tab of the pan's Display pill. Read both <strong>FFT Size</strong> and <strong>Bin Width (Hz)</strong>. The sizes run from 4096 to 262144 in powers of two. Bin width is sample rate divided by FFT size: a larger transform makes narrower bins and finer frequency detail, at greater processing cost. <strong>Sizing</strong> chooses what sets the FFT size. <strong>Auto</strong> lets the zoom pick the size to keep the picture sharp. <strong>Hz/bin</strong> makes the size follow the bin width in <strong>Hz/bin Target</strong> (0.5 to 200 Hz) at every zoom. <strong>Fixed</strong> uses the <strong>FFT Size</strong> slider's size whatever the zoom. <strong>FFT Size</strong> is live in <strong>Fixed</strong> only and <strong>Hz/bin Target</strong> in <strong>Hz/bin</strong> only; grayed, each shows what is running or remembered and says which <strong>Sizing</strong> choice frees it. These FFT settings are shared: one value serves every pan and every window connected to the Core, and a change on one pan's FFT tab shows on all of them. FPS and Decimation are the exceptions, described below. The <strong>Window</strong> choice changes leakage versus main-lobe width: Rectangular is narrow but has stronger sidelobes; Hann/Hamming/Blackman-Harris/Kaiser trade some width for sidelobe reduction; Flat-Top favors amplitude accuracy. After a change, read the actual FFT/bin-width value; remote display may show a Core grant different from the request.</p>
+<p><strong>FPS</strong> (on <strong>FFT &amp; Engine</strong>, and the pill's <strong>FFT</strong> tab; 10 to 60) sets the approximate redraw rate, trading animation smoothness against CPU work. In a window signed in to a Core, the pill's <strong>FPS</strong> is this window's own rate and does not change other windows or phones; <strong>FPS</strong> on <strong>FFT &amp; Engine</strong> is the Core's shared rate, which a window or phone follows until its own pill's <strong>FPS</strong> has been moved. <strong>Detector</strong> (on <strong>Spectrum</strong>, in the <strong>Trace</strong> group) selects how input bins become display pixels: <strong>Peak</strong> keeps the maximum, <strong>Rosenfell</strong> alternates max/min for a classic trace, <strong>Average</strong> averages bins, <strong>Sample</strong> selects one bin, and <strong>RMS</strong> computes root-mean-square power. <strong>Averaging</strong> is time smoothing across frames: <strong>None</strong> shows each frame; <strong>Recursive</strong> smooths linear power; <strong>Time Window</strong> approximates a sliding window; <strong>Log Recursive</strong> smooths in dB. <strong>Avg Time</strong> sets the smoothing time constant (1 to 9999 ms in Setup; the pill's slider stops at 500 ms); longer time smooths more and responds more slowly. Try a detector for the view shape first, then choose averaging and time based on how quickly you want the trace to follow changes.</p>
+<p><strong>Normalize to 1 Hz</strong> is available for Average, Sample, or RMS detectors. It scales displayed noise power to a 1 Hz reference bandwidth; it is not a receiver calibration adjustment. The checkbox is grayed, with the reason, when the chosen detector does not support it. <strong>Decimation</strong> (on <strong>FFT &amp; Engine</strong>) reduces display resolution as its value increases. Decimation is applied to the FFT engines across this window's pans and is remembered on this computer; on a Core, each window and phone has its own. Use it only when lower display detail is acceptable to reduce processing load. <strong>Cal Offset</strong> (Spectrum page, <strong>Calibration</strong> group) shifts displayed levels on a local radio, but is disabled in a remote window because the Core already calibrates its radio data. <strong>Peak Hold</strong> and <strong>Peak Delay</strong> (Spectrum page, <strong>Peak hold</strong> group) are a separate whole-trace maximum hold; the delay controls when the held trace starts to decay. For the peak trace with decay and the labeled peak markers, use <strong>Configure peaks →</strong> to open <strong>Peaks &amp; Markers</strong>.</p>
 <p>The <strong>Noise Floor (NF)</strong> overlay is a visual estimate. Its shift moves the rendered line, line width changes its visibility, and color controls change its appearance. It is not a calibrated measurement or receiver threshold. <strong>Cursor Freq</strong> is under <strong>Readouts</strong> on <strong>Spectrum</strong>. <strong>Bin Width</strong>, <strong>Peak Value</strong> and <strong>Noise Floor</strong> are on <strong>Peaks &amp; Markers</strong>: <strong>Peak Value</strong> can be placed in a corner and given an update interval (the corner list and the ms box beside it), and <strong>Noise Floor</strong> has <strong>NF shift</strong>, line width and color settings. These overlays are presentation aids, not receiver thresholds or calibrated measurements.</p>
 <h3 id="hold-peaks-and-label-strong-signals">Hold peaks and label strong signals</h3>
 <p>Open <strong>File &gt; Settings... &gt; Display &gt; Peaks &amp; Markers</strong>. Use <strong>Peak trace with decay</strong> for a second, dashed per-bin trace: enable it, choose <strong>Hold duration</strong>, then set <strong>Drop rate</strong> for the fall after each bin's hold expires. <strong>Fill to trace</strong>, <strong>Update during TX</strong>, and <strong>Trace color</strong> control its presentation and operation during transmit. Check that the colored held trace decays while the live trace continues.</p>
@@ -120,6 +120,15 @@ passband</strong>, so it can show just the filter buttons, plus <strong>Columns<
 and the <strong>Button text</strong>, <strong>Background top</strong>, <strong>Background bottom</strong>, <strong>Selected
 top</strong> and <strong>Selected bottom</strong> colors for those buttons. The RX applet itself
 keeps every row.</p>
+<p><strong>Phone / CW sections</strong> is one copy of the whole Phone/CW panel. <strong>Page</strong> picks
+whether it shows Phone or CW, and it stays there when you change the slice's
+mode. Each row has its own <strong>Hide</strong> box, as do the Phone and CW buttons
+(<strong>Hide page buttons</strong>), and the block shortens to fit what's left. <strong>Hide PROC
+and VAX</strong> takes both, because they share a row. The copy shows and sets the same
+state as the Phone/CW panel and follows the same transmit rules, so a grayed
+control in the panel is grayed in the copy too. Clicking the Phone or CW button
+in the copy turns its page for now; <strong>Page</strong> is what comes back after a restart.
+The Phone/CW panel itself keeps every row.</p>
 <p><strong>Nereus Band Buttons</strong>, under <strong>Controls</strong> in the add-item menu beside <strong>Band
 Buttons</strong>, draws the band buttons with the raised look of the PureSignal
 button. It has the same settings as <strong>Band Buttons</strong>, plus a <strong>Nereus colours</strong>
@@ -180,6 +189,35 @@ unavailable explanation, <a href="/manual/12-reference.html">the control referen
 specific operating procedure. <strong>Presets…</strong>, <strong>Copy settings</strong> and <strong>Paste
 settings</strong> from the earlier editor are hidden in this draft editor;
 choose its offered faces or duplicate a compatible ordinary object instead.</p>
+<h3 id="choose-classic-or-modern-bar-meters">Choose Classic or Modern bar meters</h3>
+<p>Bar meters in a container have two faces. <strong>Classic</strong> is the familiar bar and is
+the default. <strong>Modern</strong> draws the same reading on a rounded track, with a band up
+to the meter's high mark, an accent fill, a marker and ticks below, in the style
+of the PureSignal feedback meter. Switching changes only the drawing: the
+reading, label, scale, calibration and thresholds stay as they are, and a live
+reading and its history carry on without a reset. The choice applies to the
+ready-made bars and <strong>Custom bar face</strong>. Analog faces, composite meters and other
+objects are not affected. This is a desktop container setting, separate from the
+phone's <strong>Meter Face</strong> menu and from <strong>Appearance &gt; Meter Styles</strong>.</p>
+<ol>
+<li>Open the container in <strong>Container Settings</strong> (<strong>Containers &gt; Edit Container</strong>).</li>
+<li>Set <strong>Meter face:</strong> to <strong>Classic</strong> or <strong>Modern</strong> for this container.</li>
+<li>To make one meter different, select it under <strong>Contents</strong> and find <strong>Face</strong> at
+the top of <strong>Appearance and behavior</strong>. Choose <strong>Classic</strong> or <strong>Modern</strong>, or
+<strong>Use container setting</strong>, which names the container's current face in brackets.</li>
+<li>To clear the exceptions, select <strong>Use for all meters</strong>. Every bar in this
+container then follows the container's setting.</li>
+<li>Check the preview, then select <strong>Apply</strong>. <strong>Cancel</strong> discards the changes.</li>
+</ol>
+<p>New bars you add follow the container's setting. Bars saved before these faces
+existed are set to <strong>Classic</strong> themselves, so changing <strong>Meter face:</strong> alone does
+not change them: select <strong>Use for all meters</strong>, or set each bar's <strong>Face</strong>. A bar
+copied or moved to another container keeps its own <strong>Classic</strong> or <strong>Modern</strong>
+choice; one that follows the container takes on the new container's setting.</p>
+<p><strong>Modern</strong> honors the bar's existing appearance choices, such as its title, value
+readouts, history, marker, fill style and scale colors. In a narrow meter it
+drops scale captions that would collide and shortens values that do not fit, so
+read a small meter at the size you will use it.</p>
 <h3 id="work-with-the-workspace-look">Work with the workspace look</h3>
 <p>The workspace look is how the main window opens. Its container headers, Arrange mode and profiles are introduced in <a href="/manual/02-desktop-window.html#arrange-the-workspace">chapter 2</a>; this section covers what they change when you build containers.</p>
 <p><strong>Headers.</strong> Each container's header is either shown or hidden; there is no hover choice. The eye button on the header switches it: an open eye means the header stays, a crossed-out eye means it hides when you are not arranging. <strong>Keep Header Showing</strong> in the container's right-click menu is the same switch. A hidden header takes no room, so the content fills the container.</p>
@@ -248,6 +286,139 @@ or the optional second-axis selector does not provide missing telemetry.</p>
 <p>A <strong>Rotator</strong> item can render azimuth, elevation, or both. It shows the rotor of the window it sits in, which is set up under <strong>File &gt; Settings... &gt; CAT &amp; Network &gt; Rotor</strong> (see <a href="/manual/08-shared-core.html#play-the-core-speaker">chapter 8</a> for how that rotor is shared). Drag the pointer to a new heading and let go to turn the rotor; the turn is sent on release, not while you drag. Set its display mode to <strong>Azimuth</strong>, <strong>Elevation</strong>, or <strong>Both</strong>. If no rotor is set up, the item stays a visual object with no live value.</p>
 <p>The item can also show an externally supplied meter value. It keeps existing MMIO bindings and exposes the object's <strong>MMIO source UUID</strong> and <strong>MMIO variable</strong> under <strong>Advanced bindings</strong>, but <strong>Meter Data Sources (MMIO)…</strong> is disabled in its draft editor, so this chapter cannot give a supported route for a new endpoint there. Existing verified feeds can still supply indication: use the retained source UUID and exact variable name in <strong>Advanced bindings</strong>; entering text alone does not establish a feed. In older builds where the endpoint editor is available, add or select a source, give it a name, choose its connection type (<strong>UDP listener</strong>, <strong>TCP listener</strong>, <strong>TCP client</strong>, or <strong>Serial</strong>), choose <strong>JSON</strong>, <strong>XML</strong>, or <strong>RAW (key:value)</strong>, enter the host/port or serial device/baud rate, click <strong>Apply changes</strong>, and inspect <strong>Values received</strong> for the variable and changing value before binding it. If no external value appears, check endpoint status, transport, format, host/port/device, and incoming variable name.</p>
 <p>The MMIO endpoint editor configures a data connection and exposes received variable values. It does not certify that a sender is connected or that arbitrary external devices are compatible. Start with a non-critical test value and confirm the value readback before relying on it at the operating position.</p>
+<h2 id="keys-knobs-and-controllers">Keys, knobs and controllers</h2>
+<p>The keyboard, MIDI controllers, USB knobs and Stream Deck style plugins all run the same list of actions. Keyboard keys work from the first launch with no setup. Hot key settings are kept on this computer, so they also apply in a window connected to a Core, and they are not shared through the Core.</p>
+<p>To see or change the keys, choose <strong>View &gt; Keyboard Shortcuts...</strong> or <strong>File &gt; Settings... &gt; Keys and controllers &gt; Keyboard</strong>. To turn every hot key off at once, clear <strong>View &gt; Use Shortcuts</strong>, the same switch as <strong>Use shortcuts</strong> on the Keyboard page. Menu shortcuts such as Ctrl+R keep working either way.</p>
+<h3 id="default-keys">Default keys</h3>
+<p>On a Mac, Ctrl in this list is the Command key.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Right</strong> / <strong>Left</strong></td>
+<td>Tune up or down one step. Add <strong>Shift</strong> for ten steps.</td>
+</tr>
+<tr>
+<td><strong>]</strong> / <strong>[</strong></td>
+<td>Tune step larger or smaller.</td>
+</tr>
+<tr>
+<td><strong>L</strong></td>
+<td>Lock the slice.</td>
+</tr>
+<tr>
+<td><strong>G</strong></td>
+<td>Go to frequency (opens the flag's frequency entry).</td>
+</tr>
+<tr>
+<td>Backtick</td>
+<td>Next slice.</td>
+</tr>
+<tr>
+<td><strong>B</strong> / <strong>V</strong></td>
+<td>Filter next or previous.</td>
+</tr>
+<tr>
+<td><strong>Up</strong> / <strong>Down</strong>, keypad <strong>+</strong> / <strong>-</strong></td>
+<td>Volume up or down.</td>
+</tr>
+<tr>
+<td><strong>U</strong>, keypad multiply</td>
+<td>Mute.</td>
+</tr>
+<tr>
+<td><strong>J</strong> / <strong>H</strong></td>
+<td>Next or previous band.</td>
+</tr>
+<tr>
+<td><strong>M</strong> / <strong>N</strong></td>
+<td>Band stack next or previous spot.</td>
+</tr>
+<tr>
+<td><strong>Shift+M</strong></td>
+<td>Add a band stack spot where you are.</td>
+</tr>
+<tr>
+<td><strong>Shift+N</strong></td>
+<td>Open or close the band stack panel.</td>
+</tr>
+<tr>
+<td><strong>X</strong> / <strong>Z</strong></td>
+<td>Mode next or previous.</td>
+</tr>
+<tr>
+<td><strong>=</strong> / <strong>-</strong></td>
+<td>Zoom in or out on the panadapter you are using.</td>
+</tr>
+<tr>
+<td><strong>R</strong>, <strong>E</strong>, <strong>A</strong></td>
+<td>Noise reduction, noise blanker, auto notch on or off.</td>
+</tr>
+<tr>
+<td><strong>I</strong> / <strong>O</strong></td>
+<td>RIT or XIT on or off.</td>
+</tr>
+<tr>
+<td><strong>Space</strong> (hold)</td>
+<td>Talk while held.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+M</strong></td>
+<td>MOX on or off.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+T</strong></td>
+<td>TUNE on or off.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+T</strong></td>
+<td>Two-tone on or off.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+F1</strong> to <strong>Ctrl+F8</strong></td>
+<td>Send CW message 1 to 8.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+F10</strong></td>
+<td>Stop the CW message.</td>
+</tr>
+<tr>
+<td>Comma / period (hold)</td>
+<td>CW dot and dash, in CW mode.</td>
+</tr>
+<tr>
+<td>Slash (hold)</td>
+<td>CW straight key, in CW mode.</td>
+</tr>
+</tbody>
+</table>
+<p>On a Mac, CW message 5 has no key until you give it one, because Command+F5 turns VoiceOver on or off. A key you set yourself is kept. <strong>VOX on or off</strong> has no key until you give it one. It turns on the same VOX as the TX panel's <strong>VOX</strong> button. Voice message keys (<strong>Ctrl+Shift+F1</strong> to <strong>F4</strong>, <strong>Ctrl+Shift+F10</strong>) are listed but grayed, because voice messages are not built yet.</p>
+<h3 id="where-keys-work">Where keys work</h3>
+<p>Keys work in the main window, a floating panadapter and a floating container. They do nothing while Setup, another dialog or a menu is open. While a text box, a number box or a list you can type in has the cursor, every key types there. A control you reach with Tab keeps the arrow keys and Space until you move on. Holding a tuning or volume key repeats it; other keys act once per press.</p>
+<p>Slice keys act on the selected slice. To tie one to a slice, set its <strong>Acts on</strong> to <strong>Slice A</strong> to <strong>Slice D</strong>. Transmit keys always use the transmit slice. On a slice you only listen to, volume and mute change your own volume, and the other slice keys do nothing. A locked slice refuses tuning, band and mode keys.</p>
+<h3 id="change-clear-and-reset-a-key">Change, clear and reset a key</h3>
+<ol>
+<li>In the <strong>Actions</strong> list, find the action. Type in <strong>Search actions or keys</strong> or choose a category to narrow the list.</li>
+<li>Click <strong>Set</strong> and press the new key. Press Esc to cancel. The new key replaces the action's keys.</li>
+<li>If another action has that key, the row says so, for example <strong>B is already Filter next.</strong> Click <strong>Replace</strong> to move the key, or <strong>Cancel</strong>.</li>
+</ol>
+<p><strong>Clear</strong> removes an action's keys. <strong>Default</strong> puts one action back, and <strong>Reset all to defaults</strong> puts every key back. You can also click a key on the <strong>Keyboard map</strong>, with its <strong>Plain</strong>, <strong>Shift</strong>, <strong>Ctrl</strong> and <strong>Ctrl+Shift</strong> layers, to see what it does and change it. Changes are saved at once. <strong>Export</strong> saves your keys to a text file and <strong>Import</strong> reads one back, listing any lines it skipped and why.</p>
+<p>Some keys can't be used. Menu shortcuts are reserved, and the row names the menu item. A transmit, CW or voice action can't use a plain letter, number or arrow key, so a stray press can't key the radio; use Space, a function key or a combination. MOX, TUNE and Two-tone stay on after you let go, so they can't use Space.</p>
+<h3 id="keys-that-transmit">Keys that transmit</h3>
+<p>Space keys the radio while you hold it and unkeys when you let go. If MOX was already on, letting go leaves it on. MOX, TUNE and Two-tone work like their buttons and stay on until you press again. Each key is refused for the same reasons as its button, and the reason shows. A held key lets go if you switch to another window, open a dialog or menu, or the computer sleeps. In a window connected to a Core, CW dot and dash need the 2026.11.1 Core.</p>
+<h3 id="midi-knobs-and-deck-plugins">MIDI, knobs and deck plugins</h3>
+<p>These have not been tried with real devices yet. Each page marks its devices <strong>Untested</strong>.</p>
+<ul>
+<li><strong>MIDI:</strong> <strong>File &gt; Settings... &gt; Keys and controllers &gt; MIDI</strong>, or <strong>Tools &gt; MIDI Mapping...</strong>. Choose the <strong>Device:</strong> and a <strong>Profile:</strong>. A controller starts empty: choose an action under <strong>Learn:</strong>, then move the control. Each control is a <strong>Button</strong>, <strong>Fader</strong> or <strong>Endless knob</strong>.</li>
+<li><strong>Knobs:</strong> the <strong>Knobs</strong> page lists the RC-28, PowerMate, ShuttleXpress, ShuttlePro v2, FlexControl, TMate 2, Stream Deck+ and Ulanzi Dial, with each one's state and its actions, which you can change. A knob you turn can't run a transmit action; a button can. On Linux, a knob needs an access rule: copy <code>60-nereussdr-controllers.rules</code> to <code>/etc/udev/rules.d</code>, then plug the knob in again. The AppImage carries the file in <code>usr/share/nereussdr/udev/</code> (run the AppImage with <code>--appimage-extract</code> to unpack it), and a build you install yourself puts it in <code>share/nereussdr/udev/</code> under its install folder.</li>
+<li><strong>Deck plugins:</strong> the <strong>Deck Plugins</strong> page installs plugins for the Stream Deck app and Ulanzi Studio (macOS and Windows) and StreamController (Linux). They connect only to NereusSDR on the same computer. Clear <strong>Let deck plugins connect</strong> to stop them.</li>
+</ul>
+<p>Several knobs and decks start with transmit actions on their buttons, such as MOX and TUNE on the FlexControl, Stream Deck+ and Ulanzi Dial, and talk on the RC-28's TX bar. Check the Knobs page before you plug one in.</p>
 <h2 id="phone-display-scope">Phone display scope</h2>
 <p>The phone <strong>Setup &gt; Display</strong> page separates <strong>On this phone</strong> rendering preferences from <strong>Core</strong> analyzer controls and any <strong>Both</strong> rows. The phone-local group includes band plan presentation, palette, levels, Clarity/NF, trace fill/line, passband, spectrum height, peaks, grid, CTUN and extended view. <strong>More</strong> contains local detector/averaging/decimation, overlays, rewind depth, time display, gradients and related display options. The <strong>Core</strong> group describes the shared FFT/analyzer choices that the Core supplies to clients. A local row affects this handset's rendering; it does not silently alter another operator's phone. If a requested local rendering choice is unavailable for the connected Core, the UI explains the reason.</p>
 <p>The quick <strong>Display</strong> sheet opens from the Panadapter toolbar and labels itself <strong>Pan N · this phone</strong>. It adjusts the selected pan's local palette and levels, fill, trace line/height, reference <strong>Top</strong>, dynamic <strong>Range</strong>, and display extras. The waterfall levels row has five choices: <strong>Clarity</strong>, <strong>Auto</strong>, <strong>Floor</strong>, <strong>Manual</strong> and <strong>Scale</strong>. <strong>Sizing</strong>, <strong>FFT size</strong> and <strong>Hz/bin</strong> are Core-owned controls, shared by every device. <strong>Sizing</strong> chooses what sets the FFT size: <strong>Auto</strong> lets the zoom pick it, <strong>Hz/bin</strong> makes it follow the bin width you set, and <strong>Fixed</strong> uses the <strong>FFT size</strong> you set. <strong>FFT size</strong> can be changed in <strong>Fixed</strong> only and <strong>Hz/bin</strong> in <strong>Hz/bin</strong> only; a control that is not in charge is gray (in <strong>Auto</strong> both are), shows what is running or remembered, and a line under it says which <strong>Sizing</strong> choice frees it. Check the live bin-width readback after a change. With a Core that does not offer <strong>Sizing</strong>, the sheet shows <strong>FFT size</strong> and <strong>Hz/bin</strong> without it. <strong>LIVE</strong> returns from rewind. <strong>More display options in Setup</strong> opens <strong>Setup &gt; Display &gt; On this phone</strong>.</p>

@@ -12,6 +12,15 @@ Start with the indicator or message that changed. Check whether the problem is o
 
 Do not infer that a radio is connected merely because the application opened. The spectrum and radio status indicators should update after connection.
 
+## NereusSDR says the profile is in use on another computer
+
+A profile folder that came from another computer, after a crash there or from a backup, can still be marked as in use on that computer.
+
+- If the folder is on a disk in or plugged into this computer, NereusSDR takes the profile over without asking and notes it in the log. If the other computer can still reach this folder through a network share or a sync service, quit NereusSDR there. Two computers using one profile can overwrite each other's settings.
+- If the folder is on a network drive, or on a kind of disk NereusSDR does not recognize, the window names the other computer and offers **Take Over** or **Quit**. **Quit** is the default. If NereusSDR is running on the other computer, quit it there first. Choose **Take Over** only when it is not running there.
+- A Core does not ask. It stops, and its log names the other computer and the profile's lock file. Stop NereusSDR on the other computer, or, if it is not running there, move that file aside and start the Core again.
+- If NereusSDR could not remove the mark, or could not read which computer set it, the message names the file. Quit NereusSDR wherever it is running, then try again. If it is not running anywhere, move that file aside and start NereusSDR again.
+
 ## The iPhone cannot reach its Core
 
 Read the **Core isn't answering** sheet and its tried-path results. If it says local-network access is denied, open iOS **Settings > Privacy & Security > Local Network**, allow NereusSDR, then tap **Try again**. Otherwise check that the Core computer is awake, its NereusSDR Core switch is on, and the home internet or intended remote route is available. Reconnect on the same Wi-Fi first when at the station. If the app says the Core or app needs updating, follow the named side of the version message; the sheet says which one must be updated.
@@ -86,6 +95,7 @@ NereusSDR never moves your microphone or a VAX channel to another device on its 
 | A Bluetooth headset sounds thin, for listening too, after you pick it as the mic | Bluetooth headsets switch to phone-call quality while they are the mic. Listen on the headset and talk on a wired or built-in mic, or listen on another device for the best sound. |
 | The sound lags the signal | **Audio > Outputs**, **Device details**, **Delay**. Read **Now N ms from the radio to <device>**. **Automatic** lets NereusSDR choose. An older driver adds delay; choose the system's own driver if the device offers one. |
 | A device you plugged in is missing from the list | The system's own drivers update within about a second. For an older driver press **Rescan devices**. |
+| In a window connected to a Core, the speaker is unplugged or fails and there is no other device to play on | The window shows the speaker problem and stays connected; the panadapter keeps running. Audio returns by itself when the device comes back, or press **Retry audio** or choose another device under **Audio > Outputs**. |
 
 ## Audio is distorted, noisy or breaks up
 
