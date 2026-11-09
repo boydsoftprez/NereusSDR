@@ -26,8 +26,8 @@
     },
     {
       "output": "manual/05-transmit.md",
-      "output_sha256": "269b31cba4eed529a08126f30cd2a7bb01d9d9af18033369e8caf6ef702c49f2",
-      "sha256": "269b31cba4eed529a08126f30cd2a7bb01d9d9af18033369e8caf6ef702c49f2",
+      "output_sha256": "0649e77cd066114cd6c186ce1997c250513ff7bc5abefff8541a53f51b05d09d",
+      "sha256": "0649e77cd066114cd6c186ce1997c250513ff7bc5abefff8541a53f51b05d09d",
       "source": "docs/manual/05-transmit.md"
     },
     {
@@ -68,8 +68,8 @@
     },
     {
       "output": "manual/12-reference.md",
-      "output_sha256": "1775d55ab02b5eb8ca1a42c7a78fb711675dcf85804e8d1fa9531848161516c2",
-      "sha256": "1775d55ab02b5eb8ca1a42c7a78fb711675dcf85804e8d1fa9531848161516c2",
+      "output_sha256": "f0947ebf8708024bfd2197a6463ae3b26255fede4fadcceffe80cdea32403471",
+      "sha256": "f0947ebf8708024bfd2197a6463ae3b26255fede4fadcceffe80cdea32403471",
       "source": "docs/manual/12-reference.md"
     },
     {
@@ -80,8 +80,8 @@
     },
     {
       "output": "manual/14-voice-profiles.md",
-      "output_sha256": "dc760347ef38f4247fb56d9eeaf23ad199d79de18409d1b87250b2ad5de67e43",
-      "sha256": "dc760347ef38f4247fb56d9eeaf23ad199d79de18409d1b87250b2ad5de67e43",
+      "output_sha256": "5f06b30bf0d02b834cfb5d8c83dd7d8c46db72cad636222b3a97c389edb46812",
+      "sha256": "5f06b30bf0d02b834cfb5d8c83dd7d8c46db72cad636222b3a97c389edb46812",
       "source": "docs/manual/14-voice-profiles.md"
     },
     {
@@ -456,8 +456,8 @@
     },
     {
       "output": "manual/05-transmit.html",
-      "output_sha256": "20f1ea5009e69c2a873a9d4efd942d38c3b459c408f40e28e81f7727724d37e1",
-      "sha256": "269b31cba4eed529a08126f30cd2a7bb01d9d9af18033369e8caf6ef702c49f2",
+      "output_sha256": "dd971fa05b4e0f6eebc3022369b6808c98e36612d351e2ec125ea6dbd73ca6b5",
+      "sha256": "0649e77cd066114cd6c186ce1997c250513ff7bc5abefff8541a53f51b05d09d",
       "source": "docs/manual/05-transmit.md"
     },
     {
@@ -498,8 +498,8 @@
     },
     {
       "output": "manual/12-reference.html",
-      "output_sha256": "867e4740dd14272dec24d9d51bbf7ac68208fd7cfbdbe8e64908b22ae195e5a7",
-      "sha256": "1775d55ab02b5eb8ca1a42c7a78fb711675dcf85804e8d1fa9531848161516c2",
+      "output_sha256": "5ab674bc9e4fd702786db385ff27820db78ee7eef6af2c65a99898d799efbf72",
+      "sha256": "f0947ebf8708024bfd2197a6463ae3b26255fede4fadcceffe80cdea32403471",
       "source": "docs/manual/12-reference.md"
     },
     {
@@ -510,8 +510,8 @@
     },
     {
       "output": "manual/14-voice-profiles.html",
-      "output_sha256": "9e94b1b5e076745f427748ab7b5a73e2e230cd872da9649782ed4ffaf634de9c",
-      "sha256": "dc760347ef38f4247fb56d9eeaf23ad199d79de18409d1b87250b2ad5de67e43",
+      "output_sha256": "043204d37b3c39004d5d7c68fec90230847e94496e02f9c24f9eaceeded5fe63",
+      "sha256": "5f06b30bf0d02b834cfb5d8c83dd7d8c46db72cad636222b3a97c389edb46812",
       "source": "docs/manual/14-voice-profiles.md"
     },
     {
