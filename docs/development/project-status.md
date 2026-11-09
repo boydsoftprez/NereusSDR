@@ -20,7 +20,10 @@ its version is independent of the desktop release. The
 
 ### In 2026.11.1, since 2026.11.0
 
-As of the 2026.11.1 release PR (2026-11-08).
+Tagged `v2026.11.1` at `9014aead0` (2026-11-08). The release PR, 767, merged as
+`d87e023c0`; PR 770 then fixed the Windows and Linux ARM release builds, and the
+tag moved to its merge. The GitHub release stays a draft until J.J. Boyd
+publishes it.
 [CHANGELOG.md](../../CHANGELOG.md) under `[2026.11.1]` has the operator wording.
 
 | Work | PRs | Verification so far |
@@ -53,10 +56,11 @@ As of the 2026.11.1 release PR (2026-11-08).
 
 Also on main, with no operator-facing change and so no release note: PR 749
 (test debts, CI and Windows DLL exports), PR 745 (iOS drag pace test scaling),
-PR 762 (meter pump tests), PR 766 (band stack test fix) and PR 763 (CI runs the full test set when a pull
-request is marked ready). After PR 763, nothing tests main between releases, so
-**a full CI and iOS run on main, started by hand from the Actions tab, is due
-before the cut.**
+PR 762 (meter pump tests), PR 766 (band stack test fix), PR 763 (CI runs the full test set when a pull
+request is marked ready) and PR 770 (release build fixes for Windows and for Linux
+ARM's Qt 6.4, no behavior change). After PR 763, nothing tests main between
+releases, so **a full CI and iOS run on main, started by hand from the Actions tab,
+is due before each release.**
 PR 749's exports reach no production connection across a DLL, and its certificate
 key seam has no production caller, so Windows and Core behavior stay as they were.
 The Windows signal fix still needs a Windows test run; PR 749 names it.

@@ -109,7 +109,7 @@ sessions, Data use, PTT buttons, Devices, Logs and About pages are covered in
 | **Mode** | Set active slice's demodulation. FM availability here is receive support, not FM transmit. |
 | **DSP** | Quick NR/NB/ANF/SNB/APF/AGC/TNF actions for the selected receiver or stated master function. |
 | **Containers** | Applet visibility, container creation/editing, default-layout reset, Arrange Workspace, Align to 8 px Grid, Manage Workspace Profiles… and the Hidden list. |
-| **Tools** | VAX/TCI when built, CAT Control..., MIDI Mapping..., TX Equalizer..., Spot Hub, FreeDV Reporter, RADE-related operating surfaces, PureSignal, Diversity, Network Diagnostics and Support Bundle as offered. |
+| **Tools** | VAX/TCI when built, CAT Control..., CWX..., MIDI Mapping..., TX Equalizer..., Spot Hub, FreeDV Reporter, RADE-related operating surfaces, PureSignal, Diversity, Network Diagnostics and Support Bundle as offered. |
 | **Help** | What's New, About and platform-specific diagnostics. Integrated Getting Started/Help/Data Modes pages remain unbuilt. |
 
 The **Containers** menu's **Applets** section and the panel **☰** menu show
@@ -151,6 +151,7 @@ confirmation and an accepted readback are different states.
 | **Ctrl+Shift+S** | Open **Spot Hub...** |
 | **Ctrl+Shift+R** | Open **FreeDV Reporter...** |
 | **Ctrl+Shift+D** | Open **Diversity...** |
+| **Ctrl+X** | Show the **CWX** applet (**Tools > CWX...**). |
 | **Ctrl+Shift+X** | Clear all spots. |
 | **Ctrl+Shift+N** | Toggle TNF master processing. |
 | **Ctrl+Shift+A** | Arrange Workspace (on and off). |
