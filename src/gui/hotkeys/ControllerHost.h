@@ -182,7 +182,23 @@ private:
     QHash<QString, QString> m_buttonsDown;      // control, and the action its press ran
     QHash<QString, int> m_absoluteCarry;        // part steps not yet sent, by control
 
-    using DeviceControl = QPair<DeviceId, QString>;
+    // A device and one of its controls, as a hash key. A struct with its own
+    // qHash rather than QPair<DeviceId, QString>: Qt 6.4 (Ubuntu 24.04, the
+    // Linux ARM release build) cannot hash a pair whose first member is an
+    // enum class, because its pair hash does not see the enum hash.
+    struct DeviceControl {
+        DeviceId first;
+        QString second;
+
+        friend bool operator==(const DeviceControl& a, const DeviceControl& b) noexcept
+        {
+            return a.first == b.first && a.second == b.second;
+        }
+        friend size_t qHash(const DeviceControl& key, size_t seed = 0) noexcept
+        {
+            return qHashMulti(seed, static_cast<int>(key.first), key.second);
+        }
+    };
     struct DeviceState {
         bool connected{false};
         QString reason;
