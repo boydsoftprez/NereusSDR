@@ -28,16 +28,53 @@
 
 #include <QAction>
 #include <QContextMenuEvent>
+#include <QDateTime>
+#include <QDebug>
 #include <QHBoxLayout>
+#include <QHideEvent>
 #include <QLabel>
 #include <QMenu>
 #include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QScreen>
+#include <QShowEvent>
+#include <QTimer>
 #include <QVBoxLayout>
+#include <QWindow>
 #include <algorithm>
 
 namespace NereusSDR {
+
+void orderIntelDetachedWindow(QWidget* window, QWidget* host, bool restack);
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+void releaseIntelTopLevelRhiFlushIfIdle(QWidget* top);
+#endif
+
+namespace {
+
+// Tool, not a child QWindow. Qt creates a Qt::Tool as a transient top-level
+// and clears any QWindow parent. Reparenting that window afterwards rebuilds
+// its platform window, which drops the Metal layer. Qt also puts a tool
+// window at the floating level, above other applications. orderIntelDetachedWindow
+// lowers that level and attaches the existing NSWindow to its host once.
+// A later click must not reorder it: that is what flashes the placeholder.
+constexpr Qt::WindowFlags kDetachedSpectrumFlags =
+    Qt::Tool | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint
+    | Qt::WindowDoesNotAcceptFocus;
+
+void placeDetachedWindow(QWidget* window, const QPoint& globalTopLeft, const QSize& size)
+{
+    if (!window || size.isEmpty()) {
+        return;
+    }
+    const QRect next(globalTopLeft, size);
+    if (window->geometry() != next) {
+        window->setGeometry(next);
+    }
+}
+
+} // namespace
 
 PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
     : QWidget(parent)
@@ -120,6 +157,12 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
     m_spectrum->installEventFilter(this);
     m_statusOverlay->installEventFilter(this);
     installEventFilter(this);
+    connect(m_spectrum, &SpectrumWidget::panContextMenuRequested, this,
+            [this](const QPoint& globalPos) {
+                QContextMenuEvent forwarded(QContextMenuEvent::Mouse,
+                                            mapFromGlobal(globalPos), globalPos);
+                contextMenuEvent(&forwarded);
+            });
 
     connect(m_statusOverlay, &SpectrumStatusOverlay::txBadgeClicked, this,
             [this]() { emit txBadgeClicked(m_panId); });
@@ -144,19 +187,348 @@ PanadapterApplet::PanadapterApplet(const QString& panId, QWidget* parent)
 void PanadapterApplet::refreshImdPresentation()
 {
     const bool enabled = m_spectrum->imdMeasurementFrame().status != ImdStatus::Disabled;
-    m_imdRail->setVisible(enabled);
-    m_imdInspector->setVisible(enabled && m_spectrum->imdInspectorVisible());
+    const bool inspector = enabled && m_spectrum->imdInspectorVisible();
     const bool narrow = width() < 680;
-    m_imdBodyLayout->setDirection(narrow ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-    m_imdInspector->setMinimumWidth(narrow ? 0 : 296);
-    m_imdInspector->setMaximumWidth(narrow ? QWIDGETSIZE_MAX : 312);
+    const QBoxLayout::Direction direction = narrow ? QBoxLayout::TopToBottom
+                                                   : QBoxLayout::LeftToRight;
+    const int inspectorMin = narrow ? 0 : 296;
+    const int inspectorMax = narrow ? QWIDGETSIZE_MAX : 312;
+    // This runs on every remote spectrum frame. Activating the layout each
+    // time dirtied the main window, and its backing-store copy then landed
+    // in the middle of a waterfall row.
+    const bool geometryChanged = m_imdRail->isVisible() != enabled
+        || m_imdInspector->isVisible() != inspector
+        || m_imdBodyLayout->direction() != direction
+        || m_imdInspector->minimumWidth() != inspectorMin
+        || m_imdInspector->maximumWidth() != inspectorMax;
+    m_imdRail->setVisible(enabled);
+    m_imdInspector->setVisible(inspector);
+    m_imdBodyLayout->setDirection(direction);
+    m_imdInspector->setMinimumWidth(inspectorMin);
+    m_imdInspector->setMaximumWidth(inspectorMax);
     m_imdRail->setGuidesVisible(m_spectrum->imdGuidesVisible());
     m_imdRail->setInspectorVisible(m_spectrum->imdInspectorVisible());
     m_imdRail->setSelectedProduct(m_spectrum->imdSelectedProduct());
     m_imdInspector->setSelectedProduct(m_spectrum->imdSelectedProduct());
+    if (m_spectrumDetached && geometryChanged) {
+        if (QLayout* lay = layout()) {
+            lay->activate();
+        }
+        syncDetachedSpectrumGeometry();
+    }
 }
 
-PanadapterApplet::~PanadapterApplet() = default;
+PanadapterApplet::~PanadapterApplet()
+{
+    const auto hideSurface = [](QWidget* widget) {
+        if (widget && widget->isWindow()) {
+            widget->hide();
+        }
+    };
+    hideSurface(m_statusOverlayWindow);
+    hideSurface(m_noSliceHintWindow);
+    hideSurface(m_takeReceiverButtonWindow);
+    hideSurface(m_spectrum);
+}
+
+QRect PanadapterApplet::spectrumRectInApplet() const
+{
+    const QWidget* ref = m_spectrumHole ? m_spectrumHole : static_cast<const QWidget*>(m_spectrum);
+    if (!ref) {
+        return {};
+    }
+    return QRect(ref->mapTo(this, QPoint(0, 0)), ref->size());
+}
+
+QWidget* PanadapterApplet::ensureChipWindow(QWidget* chip, QWidget*& windowSlot, bool clickThrough)
+{
+    if (windowSlot) {
+        return windowSlot;
+    }
+    Qt::WindowFlags flags = kDetachedSpectrumFlags;
+    if (clickThrough) {
+        flags |= Qt::WindowTransparentForInput;
+    }
+    auto* window = new QWidget(m_spectrum, flags);
+    window->setAttribute(Qt::WA_ShowWithoutActivating, true);
+    window->setAttribute(Qt::WA_QuitOnClose, false);
+    window->setAttribute(Qt::WA_TranslucentBackground, true);
+    window->setAttribute(Qt::WA_NoSystemBackground, true);
+    window->setAutoFillBackground(false);
+    window->setFocusPolicy(Qt::NoFocus);
+    if (chip != m_takeReceiverButton) {
+        chip->setAttribute(Qt::WA_TranslucentBackground, true);
+        chip->setAttribute(Qt::WA_NoSystemBackground, true);
+        chip->setAutoFillBackground(false);
+    }
+    chip->setParent(window);
+    window->installEventFilter(this);
+    windowSlot = window;
+    return window;
+}
+
+void PanadapterApplet::placeChip(QWidget* chip, QWidget*& windowSlot, const QRect& appletRect,
+                                 bool visible, bool clickThrough)
+{
+    if (!chip) {
+        return;
+    }
+    if (!m_spectrumDetached) {
+        chip->setVisible(visible);
+        if (visible) {
+            chip->setGeometry(appletRect);
+            chip->raise();
+        }
+        return;
+    }
+    if (!visible || appletRect.isEmpty() || !m_spectrum || !m_spectrum->isVisible()) {
+        chip->hide();
+        if (windowSlot) {
+            windowSlot->hide();
+        }
+        return;
+    }
+    QWidget* window = ensureChipWindow(chip, windowSlot, clickThrough);
+    chip->setGeometry(0, 0, appletRect.width(), appletRect.height());
+    chip->show();
+    const bool wasHidden = !window->isVisible();
+    placeDetachedWindow(window, mapToGlobal(appletRect.topLeft()), appletRect.size());
+    if (wasHidden) {
+        window->show();
+    }
+    // show() orderFronts a newly visible chip above other applications.
+    orderIntelDetachedWindow(window, m_spectrum, wasHidden);
+    if (chip == m_statusOverlay) {
+        applyStatusOverlayMask();
+    }
+}
+
+void PanadapterApplet::watchDetachedHost(QWidget* host)
+{
+    QWidget* top = host ? host->window() : nullptr;
+    if (!top) {
+        return;
+    }
+    if (m_spectrumHost != top) {
+        if (m_spectrumHost) {
+            m_spectrumHost->removeEventFilter(this);
+        }
+        top->installEventFilter(this);
+        m_spectrumHost = top;
+    }
+    QWindow* hostWin = top->windowHandle();
+    if (!hostWin || hostWin == m_boundHostWindow) {
+        return;
+    }
+    if (m_boundHostWindow) {
+        QObject::disconnect(m_boundHostWindow, nullptr, this, nullptr);
+    }
+    m_boundHostWindow = hostWin;
+    connect(hostWin, &QWindow::screenChanged, this, [this](QScreen*) {
+        syncDetachedSpectrumGeometry();
+        if (m_spectrum) {
+            m_spectrum->update();
+        }
+    });
+    connect(hostWin, &QObject::destroyed, this, [this, hostWin] {
+        if (m_boundHostWindow == hostWin) {
+            m_boundHostWindow = nullptr;
+        }
+    });
+}
+
+void PanadapterApplet::syncDetachedSpectrumGeometry()
+{
+    if (!m_spectrumDetached || m_inSpectrumSync || !m_spectrum || !m_spectrumHole) {
+        return;
+    }
+    QWidget* host = window();
+    if (!host) {
+        return;
+    }
+    m_inSpectrumSync = true;
+    const bool showSurface = !m_spectrumHole->size().isEmpty()
+        && m_spectrumHole->isVisible()
+        && isVisible()
+        && host->isVisible()
+        && !host->isMinimized();
+    if (!showSurface) {
+        if (m_spectrum->isVisible()) {
+            m_spectrum->hide();
+        }
+        if (m_statusOverlayWindow) {
+            m_statusOverlayWindow->hide();
+        }
+        if (m_noSliceHintWindow) {
+            m_noSliceHintWindow->hide();
+        }
+        if (m_takeReceiverButtonWindow) {
+            m_takeReceiverButtonWindow->hide();
+        }
+        m_inSpectrumSync = false;
+        return;
+    }
+
+    watchDetachedHost(host);
+    const QPoint global = m_spectrumHole->mapToGlobal(QPoint(0, 0));
+    placeDetachedWindow(m_spectrum, global, m_spectrumHole->size());
+    m_spectrum->applyIntelDetachedPresentFormat();
+    // show() on a widget Qt already calls visible does not order the panel
+    // forward. A frameless tool window that AppKit has ordered out stays
+    // unmapped, and every later present is discarded.
+    const bool orderedOut = m_spectrum->isVisible()
+        && !m_spectrum->testAttribute(Qt::WA_Mapped);
+    bool broughtForward = false;
+    if (!m_spectrum->isVisible()) {
+        m_spectrum->show();
+        broughtForward = true;
+    } else if (orderedOut) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (nowMs - m_intelRemapAtMs >= 500) {
+            m_intelRemapAtMs = nowMs;
+            qDebug() << "SpectrumWidget: intel surface remapped";
+            // show() is a no-op while Qt still marks the widget visible.
+            m_spectrum->hide();
+            m_spectrum->show();
+            broughtForward = true;
+        }
+    }
+    // show() calls orderFront. Attach the waterfall to the radio so a later
+    // click on the frame cannot cover it. Already attached is a no-op.
+    orderIntelDetachedWindow(m_spectrum, host, broughtForward);
+    repositionStatusOverlay();
+    refreshNoSliceHint();
+    m_inSpectrumSync = false;
+}
+
+void PanadapterApplet::ensureDetachedSpectrumShown()
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    syncDetachedSpectrumGeometry();
+#endif
+}
+
+void PanadapterApplet::retargetDetachedSpectrum(QWidget* host)
+{
+    // The spectrum stays in the radio window. A separate window flashed the
+    // placeholder when the frame was clicked, and attaching it as a child
+    // kept unhidden containers and panels from appearing.
+    Q_UNUSED(host);
+    return;
+#if !defined(Q_OS_MACOS) || !defined(Q_PROCESSOR_X86_64)
+    Q_UNUSED(host);
+#else
+    if (!m_spectrum || !host || m_detachInProgress) {
+        return;
+    }
+    QWidget* top = host->window();
+    if (!top || !top->windowHandle()) {
+        if (!m_detachRetryQueued && isVisible()) {
+            m_detachRetryQueued = true;
+            QTimer::singleShot(0, this, [this] {
+                m_detachRetryQueued = false;
+                if (isVisible()) {
+                    retargetDetachedSpectrum(window());
+                }
+            });
+        }
+        return;
+    }
+    if (!m_spectrumDetached) {
+        m_detachInProgress = true;
+        m_spectrumHole = new QWidget(this);
+        m_spectrumHole->setObjectName(QStringLiteral("SpectrumHole"));
+        m_spectrumHole->setMinimumSize(m_spectrum->minimumSize());
+        m_spectrumHole->setSizePolicy(m_spectrum->sizePolicy());
+        m_spectrumHole->setFocusPolicy(Qt::NoFocus);
+        m_spectrumHole->setAutoFillBackground(true);
+        QPalette holePalette = m_spectrumHole->palette();
+        holePalette.setColor(QPalette::Window, QColor(0x0f, 0x0f, 0x1a));
+        m_spectrumHole->setPalette(holePalette);
+        m_spectrumHole->setCursor(Qt::CrossCursor);
+        m_spectrumHole->installEventFilter(this);
+        if (QLayoutItem* taken = m_imdBodyLayout->replaceWidget(m_spectrum, m_spectrumHole)) {
+            delete taken;
+        }
+        if (QLayout* lay = layout()) {
+            lay->activate();
+        }
+        // float/dock already released the GPU while hiding this widget.
+        // Sending WindowAboutToChangeInternal a second time is the crash
+        // that path was written to avoid.
+        if (m_spectrum->isVisible()) {
+            m_spectrum->hide();
+            m_spectrum->prepareForTopLevelChange();
+            m_spectrum->resetGpuResources();
+        }
+        m_spectrum->setAttribute(Qt::WA_DontCreateNativeAncestors, true);
+        m_spectrum->setWindowFlags(kDetachedSpectrumFlags);
+        m_spectrum->setAttribute(Qt::WA_ShowWithoutActivating, true);
+        m_spectrum->setAttribute(Qt::WA_QuitOnClose, false);
+        m_spectrum->setWindowTitle(QString());
+        if (!m_spectrum->windowHandle()) {
+            m_spectrum->winId();
+        }
+        if (QWindow* existing = m_spectrum->windowHandle()) {
+            existing->destroy();
+        }
+        // The swapchain copies this format the first time the window flushes.
+        // show() does that flush, so the interval has to be in place now.
+        m_spectrum->applyIntelDetachedPresentFormat();
+        m_spectrum->applyNativeWindowIsolationPolicy();
+        m_spectrumDetached = true;
+        m_detachInProgress = false;
+        qDebug() << "SpectrumWidget: intel surface detached" << m_spectrumHole->size();
+        releaseIntelTopLevelRhiFlushIfIdle(top);
+        QTimer::singleShot(0, this, [this] {
+            if (m_spectrumDetached) {
+                syncDetachedSpectrumGeometry();
+            }
+        });
+        QTimer::singleShot(50, this, [this] {
+            if (!m_spectrumDetached || !m_spectrum) {
+                return;
+            }
+            syncDetachedSpectrumGeometry();
+            m_spectrum->update();
+        });
+    }
+    watchDetachedHost(top);
+    syncDetachedSpectrumGeometry();
+#endif
+}
+
+void PanadapterApplet::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    QTimer::singleShot(0, this, [this] {
+        if (isVisible()) {
+            retargetDetachedSpectrum(window());
+        }
+    });
+#endif
+}
+
+void PanadapterApplet::hideEvent(QHideEvent* event)
+{
+    QWidget::hideEvent(event);
+    if (!m_spectrumDetached) {
+        return;
+    }
+    if (m_spectrum && m_spectrum->isVisible()) {
+        m_spectrum->hide();
+    }
+    if (m_statusOverlayWindow) {
+        m_statusOverlayWindow->hide();
+    }
+    if (m_noSliceHintWindow) {
+        m_noSliceHintWindow->hide();
+    }
+    if (m_takeReceiverButtonWindow) {
+        m_takeReceiverButtonWindow->hide();
+    }
+}
 
 void PanadapterApplet::addSlice(int sliceIndex)
 {
@@ -221,19 +593,23 @@ void PanadapterApplet::refreshNoSliceHint()
     const bool show = m_noSliceHintAllowed && m_associatedSlices.isEmpty();
     const bool offerTake = show && m_takeReceiverOffered;
     m_noSliceHint->setText(offerTake ? takeReceiverHintText() : noSliceHintText());
-    m_noSliceHint->setVisible(show);
+    const QRect spectrumRect = spectrumRectInApplet();
     if (show) {
-        const QRect spectrumRect(m_spectrum->mapTo(this, QPoint()), m_spectrum->size());
-        m_noSliceHint->setGeometry(spectrumRect.adjusted(16, 0, -16, offerTake ? -40 : 0));
-        m_noSliceHint->raise();
+        placeChip(m_noSliceHint, m_noSliceHintWindow,
+                  spectrumRect.adjusted(16, 0, -16, offerTake ? -40 : 0),
+                  true, true);
+    } else {
+        placeChip(m_noSliceHint, m_noSliceHintWindow, QRect(), false, true);
     }
     if (m_takeReceiverButton) {
-        m_takeReceiverButton->setVisible(offerTake);
         if (offerTake) {
             const QSize hint = m_takeReceiverButton->sizeHint();
-            m_takeReceiverButton->setGeometry(m_spectrum->x() + (m_spectrum->width() - hint.width()) / 2,
-                                              m_spectrum->y() + m_spectrum->height() / 2 + 16, hint.width(), hint.height());
-            m_takeReceiverButton->raise();
+            const QRect buttonRect(spectrumRect.x() + (spectrumRect.width() - hint.width()) / 2,
+                                   spectrumRect.y() + spectrumRect.height() / 2 + 16,
+                                   hint.width(), hint.height());
+            placeChip(m_takeReceiverButton, m_takeReceiverButtonWindow, buttonRect, true, false);
+        } else {
+            placeChip(m_takeReceiverButton, m_takeReceiverButtonWindow, QRect(), false, false);
         }
     }
 }
@@ -272,12 +648,75 @@ void PanadapterApplet::setBandwidthMhz(double bw) { m_bandwidthMhz = bw; }
 // so the spectrum keeps its own click handling (tune, drag, zoom).
 bool PanadapterApplet::eventFilter(QObject* obj, QEvent* ev)
 {
-    if (ev->type() == QEvent::MouseButtonPress) {
+    const bool panSurface = obj == m_spectrum || obj == m_statusOverlay
+        || obj == m_noSliceHint || obj == m_takeReceiverButton
+        || obj == m_spectrumHole || obj == m_statusOverlayWindow
+        || obj == m_noSliceHintWindow || obj == m_takeReceiverButtonWindow;
+    if ((panSurface || obj == this) && ev->type() == QEvent::MouseButtonPress) {
         emit activated(m_panId);
+        if (m_spectrumDetached && m_spectrum) {
+            QWidget* host = window();
+            if (host) {
+                orderIntelDetachedWindow(m_spectrum, host, true);
+            }
+            if (m_statusOverlayWindow) {
+                orderIntelDetachedWindow(m_statusOverlayWindow, m_spectrum, true);
+            }
+            if (m_noSliceHintWindow && m_noSliceHintWindow->isVisible()) {
+                orderIntelDetachedWindow(m_noSliceHintWindow, m_spectrum, true);
+            }
+            if (m_takeReceiverButtonWindow && m_takeReceiverButtonWindow->isVisible()) {
+                orderIntelDetachedWindow(m_takeReceiverButtonWindow, m_spectrum, true);
+            }
+        }
+    }
+    if (m_spectrumDetached && ev->type() == QEvent::ContextMenu
+        && panSurface && obj != m_spectrum) {
+        const auto* menuEvent = static_cast<const QContextMenuEvent*>(ev);
+        QContextMenuEvent forwarded(menuEvent->reason(),
+                                    mapFromGlobal(menuEvent->globalPos()),
+                                    menuEvent->globalPos(), menuEvent->modifiers());
+        contextMenuEvent(&forwarded);
+        return true;
+    }
+    if (m_spectrumDetached && (obj == m_spectrumHost || obj == m_spectrumHole)) {
+        switch (ev->type()) {
+        case QEvent::Move:
+        case QEvent::Resize:
+        case QEvent::Show:
+        case QEvent::Hide:
+        case QEvent::WindowStateChange:
+            syncDetachedSpectrumGeometry();
+            break;
+        case QEvent::WindowActivate:
+            // Repair a lost attachment. An attached waterfall is left where
+            // it is; ordering it here is the frame-click flash.
+            if (obj == m_spectrumHost && m_spectrum) {
+                orderIntelDetachedWindow(m_spectrum, m_spectrumHost, true);
+                if (m_statusOverlayWindow && m_statusOverlayWindow->isVisible()) {
+                    orderIntelDetachedWindow(m_statusOverlayWindow, m_spectrum, true);
+                }
+                if (m_noSliceHintWindow && m_noSliceHintWindow->isVisible()) {
+                    orderIntelDetachedWindow(m_noSliceHintWindow, m_spectrum, true);
+                }
+                if (m_takeReceiverButtonWindow && m_takeReceiverButtonWindow->isVisible()) {
+                    orderIntelDetachedWindow(m_takeReceiverButtonWindow, m_spectrum, true);
+                }
+            }
+            break;
+        case QEvent::Destroy:
+            if (obj == m_spectrumHost) {
+                m_spectrumHost = nullptr;
+            }
+            break;
+        default:
+            break;
+        }
     }
     // Task 26: the badge strip or the spectrum moved or resized, so the
-    // flags' area falls elsewhere on the strip.
-    if ((obj == m_statusOverlay || obj == m_spectrum)
+    // flags' area falls elsewhere on the strip. Geometry sync moves the
+    // spectrum itself and then places the strip, so it must not re-enter.
+    if (!m_inSpectrumSync && (obj == m_statusOverlay || obj == m_spectrum)
         && (ev->type() == QEvent::Move || ev->type() == QEvent::Resize)) {
         if (obj == m_spectrum) { repositionStatusOverlay(); refreshNoSliceHint(); }
         applyStatusOverlayMask();
@@ -289,6 +728,13 @@ void PanadapterApplet::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     refreshImdPresentation();
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    if (m_spectrumDetached) {
+        syncDetachedSpectrumGeometry();
+    } else if (isVisible()) {
+        retargetDetachedSpectrum(window());
+    }
+#endif
     repositionStatusOverlay();
     refreshNoSliceHint();
 }
@@ -410,22 +856,24 @@ void PanadapterApplet::repositionStatusOverlay()
     // badges, so any overlap makes the arrows both hard to read and hard to
     // hit.
     const int reserved = m_spectrum ? m_spectrum->reservedRightEdgeWidth() : 0;
-    const QRect spectrumRect(m_spectrum->mapTo(this, QPoint()), m_spectrum->size());
+    const QRect spectrumRect = spectrumRectInApplet();
     const int overlayWidth = m_statusOverlay->remoteDisplayStatus().isEmpty()
         ? hint.width() : std::min(hint.width(), std::max(44, spectrumRect.width() - reserved - 16));
     const int floatingTitleBottom = m_isFloating && m_floatTitleBar ? m_floatTitleBar->height() : 0;
     const int overlayTop = std::max(spectrumRect.top(), floatingTitleBottom) + 8;
-    m_statusOverlay->setGeometry(spectrumRect.right() - overlayWidth - 7 - reserved,
-                                 overlayTop,
-                                 overlayWidth, hint.height());
-
+    placeChip(m_statusOverlay, m_statusOverlayWindow,
+              QRect(spectrumRect.right() - overlayWidth - 7 - reserved,
+                    overlayTop, overlayWidth, hint.height()),
+              true, false);
 }
 
 void PanadapterApplet::applyStatusOverlayMask()
 {
     if (!m_statusOverlay || !m_spectrum) { return; }
-    const QPoint offset = m_spectrum->mapTo(this, QPoint(0, 0)) - m_statusOverlay->pos();
-    const QRegion flags = m_spectrum->receiverFlagRegion().translated(offset);
+    if (!m_statusOverlay->isVisible() || !m_spectrum->isVisible()) { return; }
+    const QPoint overlayInSpectrum =
+        m_spectrum->mapFromGlobal(m_statusOverlay->mapToGlobal(QPoint(0, 0)));
+    const QRegion flags = m_spectrum->receiverFlagRegion().translated(-overlayInSpectrum);
     const QRegion strip(m_statusOverlay->rect());
     if (!flags.intersects(strip)) {
         if (!m_statusOverlay->mask().isEmpty()) {
@@ -519,9 +967,17 @@ void PanadapterApplet::setFloatingState(bool floating)
     if (m_floatTitleBar) {
         m_floatTitleBar->setVisible(floating);
     }
+    if (m_spectrumDetached) {
+        if (QLayout* lay = layout()) {
+            lay->activate();
+        }
+    }
     // The status overlay is positioned against the applet rect, and the strip
     // just changed how much of that rect the spectrum owns.
     repositionStatusOverlay();
+    if (m_spectrumDetached) {
+        syncDetachedSpectrumGeometry();
+    }
 }
 
 // Phase 3F Sub-Epic F Task 13: operator-toggleable Extended view.

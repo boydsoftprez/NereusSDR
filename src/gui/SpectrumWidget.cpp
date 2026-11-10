@@ -8,6 +8,25 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-09: On Intel macOS the detached spectrum window presents
+//               without waiting for the panel. The layer was still vsynced,
+//               so a timer that drifted a millisecond waited another
+//               refresh and the row clock stepped.
+//   2026-11-09: On Intel macOS the spectrum is its own frameless window.
+//               Flushing it on the texture-only path still left the next
+//               sync copying the main window's backing store, and that copy
+//               stepped the waterfall. A separate window flushes only itself.
+//   2026-11-09: On Intel macOS the meters stay QWidget. Each QRhiWidget is
+//               its own Metal swapchain, and Qt waits for every other
+//               swapchain before the spectrum can present. A screen of
+//               meter swapchains held the waterfall row clock. Skipping the
+//               3D ridge outline did not change that, so the lines draw
+//               again. The spectrum stays the one Metal surface.
+//   2026-11-09: On Intel macOS the spectrum color buffer is logical pixels.
+//               A device-pixel frame on the scaled Retina framebuffer stayed
+//               open longer than a waterfall row, and the next paint blocked
+//               in Metal until it finished, so the row queue dropped the
+//               rows that wait. The window scales the smaller texture.
 //   2026-11-06 J.J. Boyd / KG4VCF : the band stack overlay, ticks in both
 //                 paint paths, their click, hover and right-click (band stack
 //                 plan Task 11). AI-assisted via Anthropic Claude Code.
@@ -690,8 +709,10 @@
 #include <QPropertyAnimation>
 #include <QScreen>
 #include <QSignalBlocker>
+#include <QSurfaceFormat>
 #include <QToolTip>
 #include <QUrl>
+#include <QWindow>
 
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -795,6 +816,11 @@ QRgb interpolateWfGradient(float t, const WfGradientStop* stops, int count)
 
 // ---- SpectrumWidget ----
 
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+bool presentIntelSpectrumFrame(QWidget* spectrum);
+void noteIntelSpectrumPainted(qint64 paintMs);
+#endif
+
 // Every SpectrumWidget, for the settings every pan shares (Spectrum Peaks:
 // reloadSpectrumPeaksSettingsOnAllPans; the rest: shareWithOtherPans).
 // GUI thread only.
@@ -883,9 +909,13 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
         // Trade-off: animation cadence is tied to FFT-arrival cadence
         // (not display cadence), but FFT arrival drives push too, so the
         // two stay locked in steady state.
+        // The scroll advance below has to land before the paint, so the
+        // request is held until the end of this tick. On Intel this tick
+        // presents the spectrum without a full-window flush.
+        bool paintSpectrum = false;
         if (m_hasNewSpectrum) {
             m_hasNewSpectrum = false;
-            update();
+            paintSpectrum = true;
         }
 
         // 3DSS: advance the continuous scroll-progress accumulator from
@@ -912,6 +942,15 @@ SpectrumWidget::SpectrumWidget(QWidget* parent)
             m_dssLastTickMs = nowTickMs;
         } else {
             m_dssLastTickMs = 0;
+        }
+        if (paintSpectrum) {
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+            if (!presentIntelSpectrumFrame(this)) {
+                repaint();
+            }
+#else
+            update();
+#endif
         }
     });
     m_displayTimer.start();
@@ -7841,6 +7880,8 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
     updateVfoPositions();
 }
 
+static void noteSpectrumPaintMs(qint64 ms);
+
 void SpectrumWidget::paintEvent(QPaintEvent* event)
 {
     // A remote pan's due rows go in on the frame that draws them, so the
@@ -7854,7 +7895,13 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
 #ifdef NEREUS_GPU_SPECTRUM
     // GPU mode: render() handles everything via QRhi.
     // Do NOT use QPainter on QRhiWidget — it doesn't support paintEngine.
+    // Set before QRhiWidget::paintEvent builds the color texture. A resize
+    // and the first Show both paint through here.
+    applySpectrumColorBufferSize();
+    QElapsedTimer spectrumPaintTimer;
+    spectrumPaintTimer.start();
     SpectrumBaseClass::paintEvent(event);
+    noteSpectrumPaintMs(spectrumPaintTimer.elapsed());
     return;
 #endif
     Q_UNUSED(event);
@@ -15931,6 +15978,13 @@ void SpectrumWidget::contextMenuEvent(QContextMenuEvent* event)
             }
         }
     }
+    // A detached spectrum is its own window, so ignoring this event walks to
+    // the host window and never reaches the pan applet.
+    if (isWindow()) {
+        event->accept();
+        emit panContextMenuRequested(event->globalPos());
+        return;
+    }
     // Anywhere else, let it reach the pan applet as before.
     event->ignore();
     // SpectrumBaseClass, not QRhiWidget: the CPU-only build
@@ -16257,6 +16311,59 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
 
 #ifdef NEREUS_GPU_SPECTRUM
 
+static void noteSpectrumPaintMs(qint64 ms)
+{
+    static qint64 totalMs = 0;
+    static int paints = 0;
+    static qint64 worstMs = 0;
+    static QElapsedTimer window;
+    if (!window.isValid()) {
+        window.start();
+    }
+    totalMs += ms;
+    ++paints;
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    noteIntelSpectrumPainted(ms);
+#endif
+    worstMs = qMax(worstMs, ms);
+    if (window.elapsed() < 1000) {
+        return;
+    }
+    qDebug() << "SpectrumWidget: paint" << paints << "totalMs" << totalMs
+             << "worstMs" << worstMs;
+    totalMs = 0;
+    paints = 0;
+    worstMs = 0;
+    window.restart();
+}
+
+void SpectrumWidget::applySpectrumColorBufferSize()
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    // This Mac's panel is 3072x1920, scaled so the window framebuffer is
+    // about twice the logical size. Shading the 3D trace and uploading the
+    // overlays at that device size kept a frame open past the 33 ms row
+    // period. Metal then blocked the GUI thread in the next beginFrame, and
+    // the row clock, which places at most two rows on a drawn frame, dropped
+    // the rest. Draw at logical pixels. The backing store scales the texture
+    // up to the widget. Apple silicon keeps device pixels.
+    const int w = width();
+    const int h = height();
+    if (w > 0 && h > 0) {
+        setFixedColorBufferSize(w, h);
+    }
+#endif
+}
+
+qreal SpectrumWidget::spectrumColorBufferRatio() const
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    return 1.0;
+#else
+    return devicePixelRatioF();
+#endif
+}
+
 // Fullscreen quad: position (x,y) + texcoord (u,v)
 // From AetherSDR SpectrumWidget.cpp:1779
 static const float kQuadData[] = {
@@ -16371,7 +16478,7 @@ void SpectrumWidget::initOverlayPipeline()
 
     int w = qMax(width(), 64);
     int h = qMax(height(), 64);
-    const qreal dpr = devicePixelRatioF();
+    const qreal dpr = spectrumColorBufferRatio();
     const int pw = static_cast<int>(w * dpr);
     const int ph = static_cast<int>(h * dpr);
     m_ovGpuTex = r->newTexture(QRhiTexture::RGBA8, QSize(pw, ph));
@@ -17038,7 +17145,9 @@ void SpectrumWidget::initialize(QRhiCommandBuffer* cb)
         qWarning() << "SpectrumWidget: QRhi init failed — no GPU backend";
         return;
     }
-    qDebug() << "SpectrumWidget: QRhi backend:" << r->backendName();
+    qDebug() << "SpectrumWidget: QRhi backend:" << r->backendName()
+             << "color buffer" << fixedColorBufferSize()
+             << "logical" << size();
 
     auto* batch = r->nextResourceUpdateBatch();
 
@@ -17250,7 +17359,7 @@ bool SpectrumWidget::prepareBackgroundLayer(QRhiResourceUpdateBatch* batch,
         || specRect.isEmpty()) {
         return false;
     }
-    const qreal dpr = devicePixelRatioF();
+    const qreal dpr = spectrumColorBufferRatio();
     const QSize px(qMax(1, qRound(specRect.width() * dpr)),
                    qMax(1, qRound(specRect.height() * dpr)));
 
@@ -17475,7 +17584,7 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
 
     // ---- Overlay texture (static, only on state change) ----
     {
-        const qreal dpr = devicePixelRatioF();
+        const qreal dpr = spectrumColorBufferRatio();
         const int pw = static_cast<int>(w * dpr);
         const int ph = static_cast<int>(h * dpr);
         if (m_overlayStatic.size() != QSize(pw, ph)) {
@@ -18383,6 +18492,16 @@ void SpectrumWidget::applyNativeWindowIsolationPolicy()
     // native (redundant window-sized Core Animation backing stores).
     setAttribute(Qt::WA_DontCreateNativeAncestors);
     setAttribute(Qt::WA_NativeWindow);
+#endif
+}
+
+void SpectrumWidget::applyIntelDetachedPresentFormat()
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    // The swap interval stays at the display default. An unsynced present
+    // landed between panel refreshes, so the same row sat for two refreshes
+    // and the next one jumped.
+    Q_UNUSED(this);
 #endif
 }
 

@@ -177,6 +177,7 @@ static void refreshAfterTopLevelChange(NereusSDR::SpectrumWidget* sw,
     if (QWindow* windowHandle = sw->windowHandle()) {
         windowHandle->destroy();
     }
+    sw->applyIntelDetachedPresentFormat();
     sw->applyNativeWindowIsolationPolicy();
     if (wantVisible) {
         sw->show();
@@ -545,7 +546,9 @@ void PanadapterStack::floatPanadapter(const QString& panId)
         if (!pendingApplet || !pendingWindow
             || m_pans.value(panId) != pendingApplet
             || m_floating.value(panId) != pendingWindow) { return; }
+        pendingApplet->retargetDetachedSpectrum(pendingWindow);
         refreshAfterTopLevelChange(pendingApplet->spectrumWidget(), /*wantVisible=*/true);
+        pendingApplet->retargetDetachedSpectrum(pendingWindow);
     });
 }
 
@@ -619,8 +622,10 @@ void PanadapterStack::refreshReturnedFromFloat(const QList<QPointer<PanadapterAp
     for (const QPointer<PanadapterApplet>& applet : applets) {
         if (!applet || m_pans.value(applet->panId()) != applet
             || m_floating.contains(applet->panId())) { continue; }
+        applet->retargetDetachedSpectrum(applet->window());
         refreshAfterTopLevelChange(applet->spectrumWidget(),
                                    /*wantVisible=*/true);
+        applet->retargetDetachedSpectrum(applet->window());
     }
 }
 
