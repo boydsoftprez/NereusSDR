@@ -28,6 +28,10 @@
 //               microphone line delivered on the transport's own thread
 //               with this peer's checks; txReceived carries heldUs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-10: setPlaybackPacketSink, received audio other than the
+//               microphone line delivered on the transport's own thread
+//               with this peer's SSRC checks. J.J. Boyd (KG4VCF),
+//               AI-assisted via xAI Grok.
 //   2026-10-01: TX mic thread fix round 2: the microphone sink's rejection
 //               is reported only while its start is still current, as on
 //               the owner's path. J.J. Boyd (KG4VCF), AI-assisted via
@@ -288,6 +292,8 @@ struct MediaPeer::Private {
     quint64 generation = 0;
     // TX mic thread: the microphone line's sink, installed on each start.
     IMediaTransport::MicPacketSink micSink;
+    // Speaker playback off the owner thread: installed on each start.
+    IMediaTransport::PlaybackPacketSink playbackSink;
     // Remote transmit cut off the main thread: the "tx" receipt hook, given
     // to each start's transport.
     IMediaTransport::TxReceiptHook txReceiptHook;
@@ -602,6 +608,9 @@ bool MediaPeer::start(IMediaTransport::Role role, const QString& connectionId,
     if (d->micSink) {
         installMicSink();
     }
+    if (d->playbackSink) {
+        installPlaybackSink();
+    }
     return true;
 }
 
@@ -609,6 +618,12 @@ bool MediaPeer::setMicPacketSink(IMediaTransport::MicPacketSink sink)
 {
     d->micSink = std::move(sink);
     return installMicSink();
+}
+
+bool MediaPeer::setPlaybackPacketSink(IMediaTransport::PlaybackPacketSink sink)
+{
+    d->playbackSink = std::move(sink);
+    return installPlaybackSink();
 }
 
 bool MediaPeer::setTxReceiptHook(IMediaTransport::TxReceiptHook hook)
@@ -651,6 +666,50 @@ bool MediaPeer::installMicSink()
                         }
                         emit peer->errorOccurred(
                             QStringLiteral("invalid microphone RTP packet rejected"));
+                    },
+                    Qt::QueuedConnection);
+                return;
+            }
+            sink(packet, heldUs);
+        });
+}
+
+bool MediaPeer::installPlaybackSink()
+{
+    if (!d->started || !d->transport) {
+        return false;
+    }
+    if (!d->playbackSink) {
+        d->transport->setPlaybackPacketSink({});
+        return false;
+    }
+    // On the transport's thread: only this start's declared SSRCs, copied in.
+    // A rejection is reported on the owner's thread, and only while this
+    // start is still current, as on the owner's path.
+    const quint32 main = d->audioSsrc;
+    const QList<quint32> receivers = d->receiverAudioSsrcs;
+    const quint32 headphones = d->headphonesAudioSsrc;
+    MediaPeer* const peer = this;
+    const IMediaTransport* const transport = d->transport;
+    const quint64 generation = d->generation;
+    IMediaTransport::PlaybackPacketSink sink = d->playbackSink;
+    return d->transport->setPlaybackPacketSink(
+        [main, receivers, headphones, peer, transport, generation, sink](
+            const QByteArray& packet, qint64 heldUs) {
+            const quint32 ssrc = packet.size() >= IMediaTransport::kMinRawRtpBytes
+                ? rtpSsrc(packet) : 0;
+            const bool declared = ssrc != 0
+                && (ssrc == main || receivers.contains(ssrc) || ssrc == headphones);
+            if (packet.size() < IMediaTransport::kMinRawRtpBytes
+                || packet.size() > IMediaTransport::kMaxRawRtpBytes || !declared) {
+                QMetaObject::invokeMethod(
+                    peer,
+                    [peer, transport, generation]() {
+                        if (!peer->isCurrent(transport, generation)) {
+                            return;
+                        }
+                        emit peer->errorOccurred(
+                            QStringLiteral("invalid raw RTP packet rejected"));
                     },
                     Qt::QueuedConnection);
                 return;

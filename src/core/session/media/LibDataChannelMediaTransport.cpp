@@ -63,6 +63,12 @@
 //               channel's messages carry their receipt (txReceived's
 //               heldUs). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-11-10: with a sink installed (setPlaybackPacketSink), received
+//               audio other than the microphone line goes to a thread of
+//               its own ("NereusPlaybackRx") and is not also queued for
+//               the owner's drain. A busy owner (a window move, a waterfall
+//               paint) no longer holds those packets. J.J. Boyd (KG4VCF),
+//               AI-assisted via xAI Grok.
 //   2026-10-01: TX diagnostics lane: the "media RTP timing" warning again
 //               covers the microphone line, from the line's own thread: a
 //               gap between the line's packet receipts, or a wait on the
@@ -105,6 +111,7 @@
 // =================================================================
 
 #include "core/session/media/LibDataChannelMediaTransport.h"
+#include "core/audio/RealtimeAudioPriority.h"
 #include "core/session/CandidateSourceLease.h"
 #include "core/session/IceDiagnostics.h"
 #include "core/session/media/PcmAudioCodec.h"
@@ -224,6 +231,26 @@ struct MicLane {
     IMediaTransport::MicPacketSink sink;
 };
 
+// Speaker playback off the owner thread (2026-11-10): received audio other
+// than the microphone line. The library's callback queues those packets here
+// instead of for the owner's 2 ms drain, and the thread hands them to the
+// installed sink, so a stall of the owner's event loop never holds them.
+// One thread per transport, from start() to stop(), asleep between packets.
+struct PlaybackLane {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<PendingRtpPacket> packets;
+    bool stopping = false;
+    std::size_t capacity = static_cast<std::size_t>(IMediaTransport::kReceivedRtpPacketsPerStream);
+    std::size_t dropped = 0;
+    // Whether a sink is installed (read by the callback without sinkMutex).
+    std::atomic<bool> hasSink{false};
+    // Held while the sink runs and while it is replaced, so a replaced sink
+    // is never called after setPlaybackPacketSink() returns.
+    std::mutex sinkMutex;
+    IMediaTransport::PlaybackPacketSink sink;
+};
+
 std::once_flag g_sctpSettingsOnce;
 std::atomic<int> g_sctpSettingsApplications{0};
 std::atomic<quint64> g_peersCreated{0};
@@ -263,6 +290,9 @@ struct CallbackBridge {
     bool micTrackAssigned = false;
     // TX mic thread: the line's own queue, while it has one.
     std::shared_ptr<MicLane> micLane;
+    // Speaker playback off the owner thread: received audio other than the
+    // microphone line, while a playback sink is installed.
+    std::shared_ptr<PlaybackLane> playbackLane;
     // Task 37: whether this side takes a "tx" channel, and the answerer's
     // once it arrived.
     bool txChannelWanted = false;
@@ -403,6 +433,23 @@ void queueRtp(const std::weak_ptr<CallbackBridge>& weak, rtc::binary data, bool 
                 ++bridge->droppedRtpPackets;
             }
             lane.packets.push_back({std::move(data), receivedAt, true});
+        }
+        lane.wake.notify_one();
+        return;
+    }
+    // Speaker playback off the owner thread: with a sink installed, received
+    // audio other than the microphone line goes to its own thread, never
+    // through the owner's drain, and is not also reported by rtpReceived().
+    if (!mic && bridge->playbackLane
+        && bridge->playbackLane->hasSink.load(std::memory_order_acquire)) {
+        PlaybackLane& lane = *bridge->playbackLane;
+        {
+            std::lock_guard laneLock(lane.mutex);
+            if (lane.packets.size() >= lane.capacity) {
+                lane.packets.pop_front();
+                ++lane.dropped;
+            }
+            lane.packets.push_back({std::move(data), receivedAt, false});
         }
         lane.wake.notify_one();
         return;
@@ -675,6 +722,63 @@ void runMicLane(const std::shared_ptr<MicLane>& lane)
                                  << warning->callbackGapMs
                                  << " laneWaitMs=" << warning->laneWaitMs
                                  << " batchPackets=" << warning->batchPackets;
+        }
+    }
+}
+
+// Speaker playback off the owner thread: the playback thread, until stop().
+void runPlaybackLane(const std::shared_ptr<PlaybackLane>& lane)
+{
+    elevateLatencyCriticalThreadPriority(/*logSuccess=*/false);
+    std::deque<PendingRtpPacket> batch;
+    // The owner's "media RTP timing" warning no longer sees these packets,
+    // so the lane warns on its own thread, after the batch is delivered.
+    MicLineTimingWatch timing;
+    auto lastDropLog = std::chrono::steady_clock::time_point {};
+    for (;;) {
+        std::size_t dropped = 0;
+        {
+            std::unique_lock lock(lane->mutex);
+            lane->wake.wait(lock, [&lane] { return lane->stopping || !lane->packets.empty(); });
+            if (lane->stopping) {
+                return;
+            }
+            batch.swap(lane->packets);
+            dropped = std::exchange(lane->dropped, 0);
+        }
+        std::optional<MicLineTimingWatch::Warning> warning;
+        if (!batch.empty()) {
+            const auto takenAt = std::chrono::steady_clock::now();
+            timing.beginBatch();
+            for (const PendingRtpPacket& packet : batch) {
+                timing.noteReceipt(packet.receivedAt);
+            }
+            warning = timing.endBatch(batch.front().receivedAt, takenAt,
+                                      static_cast<int>(batch.size()));
+        }
+        {
+            const std::lock_guard sinkLock(lane->sinkMutex);
+            for (const PendingRtpPacket& packet : batch) {
+                if (!lane->sink) {
+                    break;
+                }
+                lane->sink(toByteArray(packet.data), heldMicroseconds(packet.receivedAt));
+            }
+        }
+        batch.clear();
+        if (warning) {
+            qWarning().nospace() << "media RTP timing (playback): callbackGapMs="
+                                 << warning->callbackGapMs
+                                 << " laneWaitMs=" << warning->laneWaitMs
+                                 << " batchPackets=" << warning->batchPackets
+                                 << " droppedPending=" << dropped;
+        } else if (dropped > 0) {
+            const auto now = std::chrono::steady_clock::now();
+            if (lastDropLog == std::chrono::steady_clock::time_point {}
+                || now - lastDropLog >= MicLineTimingWatch::kInterval) {
+                lastDropLog = now;
+                qWarning().nospace() << "media RTP timing (playback): droppedPending=" << dropped;
+            }
         }
     }
 }
@@ -1043,6 +1147,9 @@ struct LibDataChannelMediaTransport::Private {
     // with a line to stop().
     std::shared_ptr<MicLane> micLane;
     std::unique_ptr<QThread> micThread;
+    // Speaker playback off the owner thread: from start() to stop().
+    std::shared_ptr<PlaybackLane> playbackLane;
+    std::unique_ptr<QThread> playbackThread;
     std::shared_ptr<CallbackBridge> bridge;
     // Remote transmit cut off the main thread: the "tx" receipt hook, kept
     // across starts and copied to each start's bridge.
@@ -1168,6 +1275,10 @@ bool LibDataChannelMediaTransport::start(const StartOptions& options)
         d->micThread->setObjectName(QStringLiteral("NereusMicRx"));
         d->micThread->start();
     }
+    // Speaker playback off the owner thread: the thread runs from here to
+    // stop(). It carries packets once a sink is installed.
+    d->playbackLane = std::make_shared<PlaybackLane>();
+    d->bridge->playbackLane = d->playbackLane;
     d->bridge->txChannelWanted = options.txChannel;
     d->bridge->txReceiptHook = d->txReceiptHook;
     d->bridge->iqChannelWanted = options.iqChannel;
@@ -1179,6 +1290,17 @@ bool LibDataChannelMediaTransport::start(const StartOptions& options)
         * static_cast<std::size_t>(1 + options.receiverAudioSsrcs.size()
                                    + (options.headphonesAudioSsrc != 0 ? 1 : 0)
                                    + (options.micAudioSsrc != 0 ? 1 : 0));
+    // The microphone line has its own lane. This one holds every other
+    // declared audio stream.
+    d->playbackLane->capacity = static_cast<std::size_t>(kReceivedRtpPacketsPerStream)
+        * static_cast<std::size_t>(1 + options.receiverAudioSsrcs.size()
+                                   + (options.headphonesAudioSsrc != 0 ? 1 : 0));
+    {
+        const std::shared_ptr<PlaybackLane> lane = d->playbackLane;
+        d->playbackThread.reset(QThread::create([lane]() { runPlaybackLane(lane); }));
+        d->playbackThread->setObjectName(QStringLiteral("NereusPlaybackRx"));
+        d->playbackThread->start();
+    }
     const std::weak_ptr<CallbackBridge> weak = d->bridge;
 
     try {
@@ -1653,6 +1775,17 @@ bool LibDataChannelMediaTransport::setMicPacketSink(MicPacketSink sink)
     return true;
 }
 
+bool LibDataChannelMediaTransport::setPlaybackPacketSink(PlaybackPacketSink sink)
+{
+    if (!d->playbackLane) {
+        return false;
+    }
+    const std::lock_guard sinkLock(d->playbackLane->sinkMutex);
+    d->playbackLane->hasSink.store(static_cast<bool>(sink), std::memory_order_release);
+    d->playbackLane->sink = std::move(sink);
+    return true;
+}
+
 bool LibDataChannelMediaTransport::setTxReceiptHook(TxReceiptHook hook)
 {
     d->txReceiptHook = std::move(hook);
@@ -1717,6 +1850,7 @@ void LibDataChannelMediaTransport::stopInternal(bool notify)
         d->bridge->iqBytes = 0;
         d->bridge->rtpPackets.clear();
         d->bridge->micLane.reset();
+        d->bridge->playbackLane.reset();
         pendingDisplay = std::move(d->bridge->dataChannel);
         pendingIq = std::move(d->bridge->iqChannel);
         pendingTx = std::move(d->bridge->txChannel);
@@ -1742,6 +1876,26 @@ void LibDataChannelMediaTransport::stopInternal(bool notify)
             d->micThread.reset();
         }
         d->micLane.reset();
+    }
+    // Speaker playback off the owner thread: the playback thread ends here,
+    // and its sink is never called again.
+    if (d->playbackLane) {
+        {
+            std::lock_guard laneLock(d->playbackLane->mutex);
+            d->playbackLane->stopping = true;
+            d->playbackLane->packets.clear();
+        }
+        d->playbackLane->wake.notify_all();
+        {
+            const std::lock_guard sinkLock(d->playbackLane->sinkMutex);
+            d->playbackLane->hasSink.store(false, std::memory_order_release);
+            d->playbackLane->sink = nullptr;
+        }
+        if (d->playbackThread) {
+            d->playbackThread->wait();
+            d->playbackThread.reset();
+        }
+        d->playbackLane.reset();
     }
 
     if (pendingTx && pendingTx != d->tx) {

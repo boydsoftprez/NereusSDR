@@ -361,6 +361,10 @@ public:
     {
         return m_inner->setMicPacketSink(std::move(sink));
     }
+    bool setPlaybackPacketSink(PlaybackPacketSink sink) override
+    {
+        return m_inner->setPlaybackPacketSink(std::move(sink));
+    }
     bool setTxReceiptHook(TxReceiptHook hook) override
     {
         return m_inner->setTxReceiptHook(std::move(hook));

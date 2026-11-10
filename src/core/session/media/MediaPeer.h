@@ -29,6 +29,10 @@
 //               microphone line delivered on the transport's own thread
 //               with this peer's checks; txReceived carries heldUs.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-10: setPlaybackPacketSink, received audio other than the
+//               microphone line delivered on the transport's own thread
+//               with this peer's SSRC checks. J.J. Boyd (KG4VCF),
+//               AI-assisted via xAI Grok.
 //   2026-10-01: Control logging lane: rttMs(). Logging only. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-10: R-AUD-SEND: audioRtpSink(), the receive audio lines'
@@ -237,6 +241,14 @@ public:
     /// current transport takes it; otherwise (or before a start) the line
     /// stays on micRtpReceived(). The sink must be safe on any thread.
     bool setMicPacketSink(IMediaTransport::MicPacketSink sink);
+    /// Speaker playback off the owner thread (2026-11-10): delivers received
+    /// audio other than the microphone line to `sink` on the transport's own
+    /// thread, with the checks rtpReceived() has (a declared SSRC and size),
+    /// for this start and every later one, until an empty sink is set. True
+    /// when the current transport takes it; otherwise (or before a start)
+    /// the packets stay on rtpReceived(). The sink must be safe on any thread
+    /// and must not call back into the transport.
+    bool setPlaybackPacketSink(IMediaTransport::PlaybackPacketSink sink);
     /// Remote transmit cut off the main thread (2026-10-15): every message
     /// the "tx" data channel takes is reported to `hook` on the transport's
     /// own thread at its receipt (IMediaTransport::setTxReceiptHook), for
@@ -279,6 +291,8 @@ private:
     void stopInternal(bool notify);
     /// TX mic thread: installs the stored sink on the current transport.
     bool installMicSink();
+    /// Speaker playback off the owner thread: installs the stored sink.
+    bool installPlaybackSink();
 };
 
 } // namespace NereusSDR

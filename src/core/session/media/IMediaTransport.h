@@ -37,6 +37,10 @@
 //               microphone line delivered on a transport's own thread;
 //               txReceived carries heldUs. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-10: setPlaybackPacketSink, speaker and receiver RTP delivered
+//               on a transport's own thread so a busy owner no longer
+//               starves the speaker buffer. J.J. Boyd (KG4VCF),
+//               AI-assisted via xAI Grok.
 //   2026-10-01: Control logging lane: MediaIcePath's candidate
 //               transports and rttMs(). Logging only. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -530,6 +534,25 @@ public:
     virtual std::optional<MediaTransportTelemetry> telemetry() const
     {
         return std::nullopt;
+    }
+
+    /// Speaker playback off the owner thread (2026-11-10): where a transport
+    /// with a thread of its own for received audio (everything but the
+    /// microphone line) delivers those packets, on that thread, as they
+    /// arrive: the packet and how long it waited since its receipt off the
+    /// network, in microseconds. Such a packet is never also reported by
+    /// rtpReceived(). The sink must be safe on that thread and must not call
+    /// back into the transport. With no sink, packets stay on rtpReceived().
+    /// Declared last so it does not move any earlier virtual.
+    using PlaybackPacketSink = std::function<void(const QByteArray& packet, qint64 heldUs)>;
+    /// Installs `sink` (an empty one goes back to rtpReceived()). After it
+    /// returns, the sink it replaced is never called again. False when this
+    /// transport has no such thread (playback stays on rtpReceived(), on the
+    /// owner's thread). Owner's thread only.
+    virtual bool setPlaybackPacketSink(PlaybackPacketSink sink)
+    {
+        Q_UNUSED(sink);
+        return false;
     }
 
 signals:
