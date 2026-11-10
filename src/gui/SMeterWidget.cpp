@@ -304,7 +304,7 @@ SMeterWidget::SMeterWidget(SettingsStore store, QWidget* parent)
             m_peakDecay.stop();
         }
         updateNeedleTarget();
-        update();
+        deferRepaint();
     });
 
     // Hard reset peak hold every 10 seconds
@@ -313,7 +313,7 @@ SMeterWidget::SMeterWidget(SettingsStore store, QWidget* parent)
     connect(&m_peakReset, &QTimer::timeout, this, [this]() {
         m_peakDbm = m_levelDbm;
         updateNeedleTarget();
-        update();
+        deferRepaint();
     });
 
     // An Instance dial (NereusSDR-native) starts at the defaults the
@@ -335,7 +335,7 @@ SMeterWidget::SMeterWidget(SettingsStore store, QWidget* parent)
             updatePaintOpacity();
             m_faceCache = QPixmap();
             m_faceCacheKey.clear();
-            update();
+            deferRepaint();
         });
         return;
     }
@@ -423,7 +423,7 @@ void SMeterWidget::setLevel(float dbm)
         m_peakHoldTimerRunning = false;
         updateNeedleTarget();
         if (!m_transmitting) {
-            update();
+            deferRepaint();
         }
         return;
     }
@@ -469,7 +469,7 @@ void SMeterWidget::setLevel(float dbm)
     updateNeedleTarget();
 
     if (!m_transmitting) {
-        update();
+        deferRepaint();
     }
 }
 
@@ -484,7 +484,7 @@ void SMeterWidget::setTxMeters(float fwdPower, float swr)
     // m_transmitting, or because RF power is flowing regardless (e.g. VOX,
     // hardware-keyed CW, or interlock race where setTransmitting arrives late).
     if (m_transmitting || m_txPower > 0.5f) {
-        update();
+        deferRepaint();
     }
 }
 
@@ -500,7 +500,7 @@ void SMeterWidget::setMicMeters(float micLevel, float compLevel, float micPeak, 
     updateNeedleTarget();
 
     if (m_transmitting && (m_txMode == TxMode::Level || m_txMode == TxMode::Compression)) {
-        update();
+        deferRepaint();
     }
 }
 
@@ -511,7 +511,7 @@ void SMeterWidget::setAlcMeters(float alcGain, float alcGroup)
     m_alcGroup = alcGroup;
     updateNeedleTarget();
     if (m_transmitting && (m_txMode == TxMode::Alc || m_txMode == TxMode::AlcGroup)) {
-        update();
+        deferRepaint();
     }
 }
 
@@ -521,7 +521,7 @@ void SMeterWidget::setSupplyMeters(float volts, float amps)
     m_amps = amps;
     updateNeedleTarget();
     if (m_transmitting && (m_txMode == TxMode::Volts || m_txMode == TxMode::Amps)) {
-        update();
+        deferRepaint();
     }
 }
 
@@ -533,7 +533,7 @@ void SMeterWidget::setAboveS9Frequency(bool above)
     }
     m_aboveS9Frequency = above;
     updateNeedleTarget();
-    update();
+    deferRepaint();
 }
 
 // A reading on the S scale: Thetis raises a signal-strength reading by
@@ -563,7 +563,7 @@ void SMeterWidget::setTransmitting(bool tx)
     }
     refreshTxToolTip();
     updateNeedleTarget();
-    update();
+    deferRepaint();
 }
 
 void SMeterWidget::setTxMode(const QString& mode)
@@ -590,7 +590,7 @@ void SMeterWidget::setTxMode(const QString& mode)
     }
     refreshTxToolTip();
     updateNeedleTarget();
-    update();
+    deferRepaint();
 }
 
 // NereusSDR extends upstream's 2-mode dispatch to 4 modes.
@@ -631,7 +631,7 @@ void SMeterWidget::setRxMode(const QString& mode)
         emit instanceSettingsChanged();
     }
     updateNeedleTarget();
-    update();
+    deferRepaint();
     if (m_rxMode != previous) {
         emit rxModeChanged(rxModeToLabel(m_rxMode));
     }
@@ -681,6 +681,24 @@ void SMeterWidget::updateNeedleTarget()
 }
 
 // From AetherSDR src/gui/SMeterWidget.cpp:181-211 [@0cd4559]
+void SMeterWidget::deferRepaint()
+{
+#if defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64)
+    // A posted repaint runs after the waterfall's own repaint, so the
+    // window sync that presents the waterfall does not also copy this meter.
+    if (m_repaintQueued) {
+        return;
+    }
+    m_repaintQueued = true;
+    QMetaObject::invokeMethod(this, [this] {
+        m_repaintQueued = false;
+        QWidget::update();
+    }, Qt::QueuedConnection);
+#else
+    QWidget::update();
+#endif
+}
+
 void SMeterWidget::animateNeedle()
 {
     const qint64 elapsedMs = m_needleElapsed.restart();
@@ -710,7 +728,7 @@ void SMeterWidget::animateNeedle()
     if (std::abs(m_needleFraction - m_lastDrawnNeedleFraction) > 0.005f
         || peakHoldAnimating) {
         m_lastDrawnNeedleFraction = m_needleFraction;
-        update();
+        deferRepaint();
     }
 }
 
@@ -919,7 +937,7 @@ void SMeterWidget::setTxModeUnavailable(TxMode mode, const QString& reason)
     slot = reason;
     refreshTxToolTip();
     updateNeedleTarget();
-    update();
+    deferRepaint();
 }
 
 QString SMeterWidget::txModeUnavailableReason(TxMode mode) const
@@ -1656,7 +1674,7 @@ void SMeterWidget::setFaceStyle(FaceStyle style)
         m_followsSetupFace = false;
         emit instanceSettingsChanged();
     }
-    update();
+    deferRepaint();
     emit settingsChanged();
 }
 
@@ -1671,7 +1689,7 @@ void SMeterWidget::setFollowsSetupFace(bool follow)
         updatePaintOpacity();
         m_faceCache = QPixmap();
         m_faceCacheKey.clear();
-        update();
+        deferRepaint();
     }
 }
 
@@ -1744,7 +1762,7 @@ void SMeterWidget::setPowerScale(int maxWatts, bool hasAmplifier)
         m_powerRedStart = 100.0f;
     }
     updateNeedleTarget();
-    update();
+    deferRepaint();
 }
 
 // --- Peak hold configuration -------------------------------------------------
@@ -1753,7 +1771,7 @@ void SMeterWidget::setPowerDisplayScale(double legalMarkerW, double scaleTopW)
     m_powerRedStart = static_cast<float>(legalMarkerW);
     m_powerScaleMax = static_cast<float>(scaleTopW);
     updateNeedleTarget();
-    update();
+    deferRepaint();
 }
 
 // From AetherSDR src/gui/SMeterWidget.cpp:660-698 [@0cd4559]
@@ -1774,7 +1792,7 @@ void SMeterWidget::setPeakHoldEnabled(bool enabled)
         emit instanceSettingsChanged();
     }
     updateNeedleTarget();
-    update();
+    deferRepaint();
     emit settingsChanged();
 }
 
@@ -1826,7 +1844,7 @@ void SMeterWidget::resetPeak()
     m_peakHoldDecayStartDbm = m_levelDbm;
     m_peakHoldTimerRunning = false;
     updateNeedleTarget();
-    update();
+    deferRepaint();
 }
 
 // --- Per-copy appearance and dynamics ----------------------------------------
@@ -1836,25 +1854,25 @@ void SMeterWidget::resetPeak()
 void SMeterWidget::setPeakHoldColor(const QColor& color)
 {
     m_peakHoldColor = color;
-    update();
+    deferRepaint();
 }
 
 void SMeterWidget::setNeedleColor(const QColor& color)
 {
     m_needleColor = color;
-    update();
+    deferRepaint();
 }
 
 void SMeterWidget::setSubNeedleColor(const QColor& color)
 {
     m_subNeedleColor = color;
-    update();
+    deferRepaint();
 }
 
 void SMeterWidget::setShadow(bool on)
 {
     m_shadow = on;
-    update();
+    deferRepaint();
 }
 
 void SMeterWidget::setPowerScaleColor(const QColor& color)
@@ -1862,7 +1880,7 @@ void SMeterWidget::setPowerScaleColor(const QColor& color)
     m_powerScaleColor = color;
     m_faceCache = QPixmap();
     m_faceCacheKey.clear();
-    update();
+    deferRepaint();
 }
 
 void SMeterWidget::setDarkMode(bool on)
@@ -1870,7 +1888,7 @@ void SMeterWidget::setDarkMode(bool on)
     m_darkMode = on;
     m_faceCache = QPixmap();
     m_faceCacheKey.clear();
-    update();
+    deferRepaint();
 }
 
 int SMeterWidget::updateIntervalMs() const
@@ -1906,13 +1924,13 @@ void SMeterWidget::setShowHistory(bool on)
         m_historyTimer.stop();
         m_history.clear();
     }
-    update();
+    deferRepaint();
 }
 
 void SMeterWidget::setHistoryColor(const QColor& color)
 {
     m_historyColor = color.isValid() ? color : QColor::fromRgba(kDefaultHistoryRgba);
-    update();
+    deferRepaint();
 }
 
 void SMeterWidget::setHistoryDurationMs(int ms)
@@ -1947,7 +1965,7 @@ void SMeterWidget::sampleHistory()
         m_history.remove(0, numberToRemove); // remove the oldest, the head of the list
     }
     if (historyRange() != before) {
-        update();
+        deferRepaint();
     }
 }
 

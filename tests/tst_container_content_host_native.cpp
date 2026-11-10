@@ -89,7 +89,8 @@ private slots:
 #else
             const QImage frame=monMeter->grab().toImage();
 #endif
-            return frame.pixelColor(QPoint(10,20)*monMeter->devicePixelRatioF());
+            const double scale=monMeter->width()>0 ? double(frame.width())/monMeter->width() : 1.0;
+            return frame.pixelColor(QPoint(qRound(10*scale),qRound(20*scale)));
         };
         QTRY_COMPARE_WITH_TIMEOUT(buttonPixel(),mon->button(mon->indexOf(OtherButtonItem::ButtonId::Mon)).onColour,500);
         capture(monMeter,"single-monitor-on");capture(qobject_cast<MeterWidget*>(host->entryRows()[0].widget.data()),"single-mox-unavailable");capture(qobject_cast<MeterWidget*>(host->entryRows()[3].widget.data()),"legacy-other-buttons");

@@ -73,6 +73,9 @@
 //                own style rule, so its bottom line no longer repeats under
 //                the grip and title labels. AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-09: On Intel macOS the spectrum is its own frameless window
+//               over a layout hole, so a waterfall frame no longer flushes
+//               the main window's backing store.
 // =================================================================
 #pragma once
 
@@ -86,10 +89,13 @@
 #include <QSet>
 
 class QContextMenuEvent;
+class QHideEvent;
 class QLabel;
 class QPushButton;
 class QMenu;
 class QBoxLayout;
+class QShowEvent;
+class QWindow;
 
 namespace NereusSDR {
 
@@ -114,6 +120,15 @@ public:
 
     QString panId() const { return m_panId; }
     SpectrumWidget* spectrumWidget() const { return m_spectrum; }
+
+    /// Intel macOS keeps the spectrum in its own frameless window, tracked to
+    /// this pan. `host` is the top-level it must follow: the console, or the
+    /// floated pan's window. No-op on every other build.
+    void retargetDetachedSpectrum(QWidget* host);
+    /// The frameless tool window can be ordered out while Qt still calls it
+    /// visible. Geometry sync is what shows it again; the display tick calls
+    /// this when a present finds it unmapped.
+    void ensureDetachedSpectrumShown();
     ImdMeasurementPanel* imdRail() const { return m_imdRail; }
     ImdMeasurementPanel* imdInspector() const { return m_imdInspector; }
 
@@ -278,6 +293,8 @@ protected:
     /// rightward, which walks the strip back under the dBm range arrows.
     void repositionStatusOverlay();
     void refreshNoSliceHint();
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     /// Delegates to buildContextMenu(). Task B5 added the add-slice / float
     /// entries at the top of the menu; the pre-existing Extended-view
@@ -315,6 +332,16 @@ private:
     void buildFloatTitleBar();
 
     void refreshImdPresentation();
+    /// The rectangle the spectrum occupies inside this applet. After the
+    /// Intel detach that is the layout hole; the spectrum window itself is
+    /// no longer in this coordinate space.
+    QRect spectrumRectInApplet() const;
+    void syncDetachedSpectrumGeometry();
+    void placeChip(QWidget* chip, QWidget*& windowSlot, const QRect& appletRect,
+                   bool visible, bool clickThrough);
+    void watchDetachedHost(QWidget* host);
+    QWidget* ensureChipWindow(QWidget* chip, QWidget*& windowSlot, bool clickThrough);
+
     QBoxLayout* m_imdBodyLayout{nullptr};
     ImdMeasurementPanel* m_imdRail{nullptr};
     ImdMeasurementPanel* m_imdInspector{nullptr};
@@ -333,6 +360,19 @@ private:
     double                  m_bandwidthMhz {0.192};
     bool                    m_extendedViewEnabled {true};  // Phase 3F Sub-Epic F Task 13
     bool                    m_isFloating {false};
+    // Intel macOS: the spectrum leaves this layout so its flush is not the
+    // main window's. The hole keeps the slot. Null everywhere else.
+    QWidget*                m_spectrumHole {nullptr};
+    QWidget*                m_spectrumHost {nullptr};
+    QWindow*                m_boundHostWindow {nullptr};
+    QWidget*                m_statusOverlayWindow {nullptr};
+    QWidget*                m_noSliceHintWindow {nullptr};
+    QWidget*                m_takeReceiverButtonWindow {nullptr};
+    bool                    m_spectrumDetached {false};
+    bool                    m_detachInProgress {false};
+    bool                    m_detachRetryQueued {false};
+    bool                    m_inSpectrumSync {false};
+    qint64                  m_intelRemapAtMs {0};
 };
 
 } // namespace NereusSDR

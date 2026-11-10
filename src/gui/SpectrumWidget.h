@@ -2745,6 +2745,10 @@ public slots:
     /// non-GPU builds.
     void applyNativeWindowIsolationPolicy();
 
+    /// Intel detached spectrum only. The window's Metal layer otherwise
+    /// waits on the panel, and one row a second lands late.
+    void applyIntelDetachedPresentFormat();
+
 private:
     friend class RemoteMediaController; // Private opt-in display provenance only.
     bool m_shutdownPrepared {false};
@@ -3429,6 +3433,10 @@ signals:
     void dssAngleChanged(int pct);
     void dssRowDividerChanged(int n);
     void threeDSliceDepthChanged(bool on);
+
+    /// The spectrum is its own window, so an ignored right-click no longer
+    /// walks up to the pan applet. The applet opens its menu from this.
+    void panContextMenuRequested(const QPoint& globalPos);
 
 protected:
 #ifdef NEREUS_GPU_SPECTRUM
@@ -5321,6 +5329,11 @@ private:
     bool m_rhiInitialized{false};
 
     // GPU pipeline init helpers
+    // Intel macOS draws this pan at logical pixels (applySpectrumColorBufferSize).
+    // The overlay and background textures use the same ratio so they land on
+    // that color buffer 1:1. Other platforms follow the widget's device pixels.
+    void applySpectrumColorBufferSize();
+    qreal spectrumColorBufferRatio() const;
     void initWaterfallPipeline();
     void initOverlayPipeline();
     void initSpectrumPipeline();
