@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 //
 // Modification history (NereusSDR):
+//   2026-11-10: speaker RTP is delivered on the transport's playback thread.
+//               A window move no longer holds those packets on the GUI.
+//               J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-10-30: bounded passive retry schedule history and a hold boundary
 //               for canceled startup steps. J.J. Boyd (KG4VCF),
 //               AI-assisted via OpenAI Codex.
@@ -898,6 +901,14 @@ private:
     void connectPeer(MediaPeer* peer, quint32 epoch);
     void routeRtp(const QByteArray& packet, const MediaPeer* from);
     void deliverRtp(const QByteArray& packet);
+    // 2026-11-10: speaker RTP off the GUI thread. The lane submits; the GUI
+    // only keeps the stall clocks and, during a path replacement, the dual
+    // merge.
+    void noteAudioArrived();
+    void publishPlaybackFeed();
+    void closePlaybackFeed();
+    void notePlaybackLane();
+    void armPlaybackSink(MediaPeer* peer);
     void receiveReplacementControl(const QJsonObject& payload);
     void promoteReplacement();
     // 2026-10-16: after a move, asks again for each audio stream, the

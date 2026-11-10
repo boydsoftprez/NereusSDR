@@ -1,5 +1,9 @@
 // no-port-check: NereusSDR-original. Remote daemon R3 receive display wiring.
 // Modification history (NereusSDR):
+//   2026-11-10: speaker RTP is delivered on the transport's playback thread
+//               (armPlaybackSink). The GUI publishes who may receive it and
+//               still keeps the stall clocks. A window move no longer holds
+//               the packets. J.J. Boyd (KG4VCF), AI-assisted via xAI Grok.
 //   2026-11-06: a display with no frame in its session moves nothing on a
 //               direct path during a speaker fault, so that path has no
 //               restart loop either. receiveDisplayForTest. J.J. Boyd
@@ -491,6 +495,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <utility>
 
@@ -1163,6 +1168,112 @@ QString allocationIdentity(const DisplayBudgetLimits& limits,
     }
     return key;
 }
+} // namespace
+
+namespace {
+
+// Speaker playback off the owner thread (2026-11-10). The GUI publishes an
+// immutable snapshot of who may receive a packet. The playback lane reads
+// that snapshot and submits while holding the feed mutex, so the GUI can
+// retire a receiver only after the snapshot no longer names it. Dual-path
+// packets (a media replacement) stay on the GUI: DualPathAudio is not safe
+// off this thread. One GUI note per turn keeps the stall clocks.
+struct PlaybackSnap {
+    bool audioEnabled = false;
+    RemoteAudioReceiver* speakers = nullptr;
+    quint32 headphonesSsrc = 0;
+    RemoteAudioReceiver* headphones = nullptr;
+    QList<quint32> receiverSsrcs;
+    QList<std::pair<quint32, RemoteAudioReceiver*>> streams;
+    QList<std::pair<quint32, quint32>> rewrite;
+    bool dual = false;
+};
+
+struct PlaybackHeld {
+    QByteArray packet;
+    MediaPeer* from = nullptr;
+};
+
+struct PlaybackFeed {
+    static constexpr std::size_t kMaxDualHeld = 512;
+    std::mutex mutex;
+    std::shared_ptr<const PlaybackSnap> snap;
+    std::deque<PlaybackHeld> dualHeld;
+    std::atomic<bool> noteQueued{false};
+    std::atomic<bool> closed{false};
+    // Set when a packet was submitted or held. The stall timer reads it so
+    // a long GUI stall is not counted as silence when audio was arriving.
+    std::atomic<bool> heard{false};
+};
+
+void submitPlayback(const PlaybackSnap& snap, const QByteArray& arrived)
+{
+    QByteArray packet = arrived;
+    if (packet.size() >= 12) {
+        const quint32 ssrc = qFromBigEndian<quint32>(packet.constData() + 8);
+        for (const auto& map : snap.rewrite) {
+            if (map.first == ssrc) {
+                qToBigEndian(map.second, packet.data() + 8);
+                break;
+            }
+        }
+    }
+    if ((!snap.receiverSsrcs.isEmpty() || snap.headphonesSsrc != 0) && packet.size() >= 12) {
+        const quint32 ssrc = qFromBigEndian<quint32>(packet.constData() + 8);
+        if (snap.headphonesSsrc != 0 && ssrc == snap.headphonesSsrc) {
+            if (snap.headphones && snap.headphones->isRunning()) {
+                snap.headphones->submit(packet);
+            }
+            return;
+        }
+        if (snap.receiverSsrcs.contains(ssrc)) {
+            for (const auto& stream : snap.streams) {
+                if (stream.first == ssrc && stream.second) {
+                    stream.second->submit(packet);
+                    break;
+                }
+            }
+            return;
+        }
+    }
+    if (snap.audioEnabled && snap.speakers) {
+        snap.speakers->submit(packet);
+    }
+}
+
+// True when the GUI should run notePlaybackLane(). The caller, a member of
+// RemoteMediaController, posts that. This function stays out here so it can
+// run on the playback thread without being a member.
+bool deliverPlayback(PlaybackFeed& feed, MediaPeer* from, const QByteArray& packet)
+{
+    if (feed.closed.load(std::memory_order_acquire)) {
+        return false;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(feed.mutex);
+        if (feed.closed.load(std::memory_order_acquire)) {
+            return false;
+        }
+        const std::shared_ptr<const PlaybackSnap> snap = feed.snap;
+        if (!snap) {
+            return false;
+        }
+        if (snap->dual) {
+            if (feed.dualHeld.size() >= PlaybackFeed::kMaxDualHeld) {
+                feed.dualHeld.pop_front();
+            }
+            feed.dualHeld.push_back({packet, from});
+        } else {
+            submitPlayback(*snap, packet);
+        }
+        feed.heard.store(true, std::memory_order_release);
+    }
+    if (feed.closed.load(std::memory_order_acquire)) {
+        return false;
+    }
+    return !feed.noteQueued.exchange(true, std::memory_order_acq_rel);
+}
+
 } // namespace
 
 // R-R3-21: the display arrival gap reported is the largest of the last 10 s.
@@ -1907,6 +2018,11 @@ struct RemoteMediaController::Private {
     quint32 audioGeneration = 0;
     bool preparingAudio = false;
     bool audioEnabled = false;
+    // 2026-11-10: who the playback lane may submit to. Closed while stop()
+    // tears the session down, so the lane drops packets instead of touching
+    // a receiver that is going away.
+    std::shared_ptr<PlaybackFeed> playback = std::make_shared<PlaybackFeed>();
+    bool playbackClosed = false;
     bool audioRetryPending = false;
     // Only a retry scheduled for a Core MediaNotReady answer is superseded
     // by a later accepted context; speaker failure retries are independent.
@@ -2195,6 +2311,12 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
         if (!d->client || !d->peer || !wanted || !d->lastAudio.isValid()) {
             return;
         }
+        // Packets may have arrived on the playback thread while this thread
+        // was busy. Count them before the silence rule, even if this timer
+        // runs before the lane's queued note.
+        if (d->playback && d->playback->heard.exchange(false, std::memory_order_acq_rel)) {
+            noteAudioArrived();
+        }
         // The tunnel counts only once ICE settled on it (a host pair on an
         // open network is not a slow path); the control heartbeat follows.
         // The ladder and the heartbeat count only media on the tunnel's own
@@ -2297,6 +2419,9 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             d->duplicatesDropped += d->dual->duplicatesDropped();
             d->dualTimer->stop();
         }
+        // active() can clear inside tick(). The lane must hear that, or the
+        // packets it is holding for the GUI stay there.
+        publishPlaybackFeed();
     });
     d->establishTimer = new QTimer(this);
     d->establishTimer->setObjectName(QStringLiteral("remoteMediaEstablishTimer"));
@@ -2401,6 +2526,7 @@ RemoteMediaController::RemoteMediaController(StationClient* client, RadioModel* 
             }
         }
         d->audioEnabled = false;
+        publishPlaybackFeed();
         d->audio->stop();
         // 2026-11-06: a display can be frozen, or just resumed, as the fault
         // begins. With no fault nothing was judging it, so its wait starts now.
@@ -4224,6 +4350,9 @@ void RemoteMediaController::setClarityRegistry(PanClarityRegistry* registry)
 
 void RemoteMediaController::stop()
 {
+    // Before any receiver is stopped: the lane drops packets instead of
+    // submitting into a receiver this tear-down is about to join.
+    closePlaybackFeed();
     if (d->clarityRegistry) { d->clarityRegistry->invalidateRemoteSession(); }
     // iPhone app plan Task 29: a replacement under way and a peer still
     // draining go with the media session.
@@ -4649,6 +4778,7 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
     d->replacementFallback = kind == ReplaceKind::TunnelFallback;
     d->replacementMoveFolded = carriesFoldedMove;
     peer->setIceConfiguration(nextIce);
+    armPlaybackSink(peer);
     const QPointer<MediaPeer> started(peer);
     const bool ok = peer->start(IMediaTransport::Role::Answerer, id,
                                 IMediaTransport::kDefaultAudioTargetBitrate,
@@ -4674,6 +4804,7 @@ bool RemoteMediaController::startReplacement(ReplaceKind kind, bool carriesFolde
     d->dualFromOld = 0;
     d->dual->start(d->dualClock.elapsed());
     d->dualTimer->start();
+    publishPlaybackFeed();
     d->replaceDeadline->start(d->descriptionDeadlineMs + IceConfiguration::kConnectDeadlineMs);
     qCInfo(lcRemoteMedia) << (direct ? "Trying audio and display on a direct connection"
                                      : "Moving audio and display to a new connection");
@@ -4752,6 +4883,7 @@ void RemoteMediaController::promoteReplacement()
         if (d->retiring == old) { receiveDisplay(packet); }
     });
     d->retiring = old;
+    publishPlaybackFeed();
     d->retireTimer->start(DaemonMediaController::kReplaceDrainMs);
     disconnect(next, nullptr, this, nullptr);
     d->replacement = nullptr;
@@ -4805,6 +4937,7 @@ void RemoteMediaController::promoteReplacement()
     }
     // The old connection sends nothing new now; the new one's lead eases.
     d->dual->oldPathDone(d->dualClock.elapsed());
+    publishPlaybackFeed();
     qCInfo(lcRemoteMedia).noquote()
         << QStringLiteral("Audio and display moved to the new connection (audio packets on "
                           "both: %1 on the old, %2 on the new, copies dropped %3, the new "
@@ -4983,6 +5116,7 @@ void RemoteMediaController::retireOldPeer()
         d->duplicatesDropped += d->dual->duplicatesDropped();
         d->dualTimer->stop();
     }
+    publishPlaybackFeed();
     if (d->replacePending) {
         QTimer::singleShot(0, this, &RemoteMediaController::tryPendingReplace);
     }
@@ -5129,6 +5263,7 @@ void RemoteMediaController::dropReplacement(const QString& why)
     d->dual->newPathGone();
     d->dualTimer->stop();
     d->dualNew = nullptr;
+    publishPlaybackFeed();
     qCInfo(lcRemoteMedia).noquote()
         << QStringLiteral("Audio and display stay on their connection: %1").arg(why.left(256));
 }
@@ -5353,6 +5488,10 @@ void RemoteMediaController::checkMediaSilence()
 
 void RemoteMediaController::connectPeer(MediaPeer* peer, quint32 epoch)
 {
+    // Before the peer starts, the sink is stored and installed on start().
+    // A peer that is already started takes it now. Retiring keeps the sink
+    // it was given here: disconnect() does not remove it.
+    armPlaybackSink(peer);
     const auto current = [this, peer, epoch] {
         return d->peer == peer && d->client && d->client->mediaAvailable()
             && d->client->sessionEpoch() == epoch;
@@ -5465,13 +5604,14 @@ void RemoteMediaController::connectPeer(MediaPeer* peer, quint32 epoch)
     connect(peer, &MediaPeer::displayErrorOccurred, this, onPeerError);
 }
 
-void RemoteMediaController::routeRtp(const QByteArray& arrived, const MediaPeer* from)
+void RemoteMediaController::noteAudioArrived()
 {
-    // Step 2b: the stall rule's clock.
+    // Step 2b: the stall rule's clock. The playback lane cannot touch these
+    // Qt timers, so it asks the GUI to do it once per turn.
     d->lastAudio.start();
     // 2026-11-05: packets still in flight when the speaker failed reach a
     // stopped receiver and change nothing; these answer a later request.
-    if (d->audio->isRunning()) { d->audioStoppedForSpeaker = false; }
+    if (d->audio && d->audio->isRunning()) { d->audioStoppedForSpeaker = false; }
     d->lastMediaMs = d->allocationClock();
     d->silenceFallbackFired = false;
     d->fallbackFinishedMs = -1;
@@ -5479,6 +5619,94 @@ void RemoteMediaController::routeRtp(const QByteArray& arrived, const MediaPeer*
     if (d->stallTimer && !d->stallTimer->isActive()) {
         d->stallTimer->start();
     }
+}
+
+void RemoteMediaController::publishPlaybackFeed()
+{
+    if (d->playbackClosed || !d->playback) { return; }
+    auto snap = std::make_shared<PlaybackSnap>();
+    snap->audioEnabled = d->audioEnabled;
+    snap->speakers = d->audio ? d->audio.get() : nullptr;
+    snap->headphonesSsrc = d->headphonesSsrc;
+    snap->headphones = d->headphones ? d->headphones.get() : nullptr;
+    snap->receiverSsrcs = d->receiverSsrcs;
+    for (const auto& [sliceId, stream] : d->receiverStreams) {
+        Q_UNUSED(sliceId);
+        if (stream.ssrc != 0 && stream.receiver) {
+            snap->streams.append({stream.ssrc, stream.receiver.get()});
+        }
+    }
+    for (auto it = d->toLogical.cbegin(); it != d->toLogical.cend(); ++it) {
+        snap->rewrite.append({it.key(), it.value()});
+    }
+    snap->dual = (d->dual && d->dual->active()) || static_cast<bool>(d->retiring);
+    const std::lock_guard<std::mutex> lock(d->playback->mutex);
+    if (d->playback->closed.load(std::memory_order_acquire)) { return; }
+    d->playback->snap = std::move(snap);
+}
+
+void RemoteMediaController::closePlaybackFeed()
+{
+    d->playbackClosed = true;
+    if (!d->playback) { return; }
+    d->playback->closed.store(true, std::memory_order_release);
+    const std::lock_guard<std::mutex> lock(d->playback->mutex);
+    d->playback->snap = std::make_shared<PlaybackSnap>();
+    d->playback->dualHeld.clear();
+    d->playback->noteQueued.store(false, std::memory_order_release);
+    d->playback->heard.store(false, std::memory_order_release);
+}
+
+void RemoteMediaController::notePlaybackLane()
+{
+    if (!d->playback) { return; }
+    d->playback->noteQueued.store(false, std::memory_order_release);
+    if (d->playbackClosed || d->playback->closed.load(std::memory_order_acquire) || !d->peer) {
+        const std::lock_guard<std::mutex> lock(d->playback->mutex);
+        d->playback->dualHeld.clear();
+        return;
+    }
+    noteAudioArrived();
+    std::deque<PlaybackHeld> held;
+    {
+        const std::lock_guard<std::mutex> lock(d->playback->mutex);
+        held.swap(d->playback->dualHeld);
+    }
+    for (const PlaybackHeld& item : held) {
+        if (d->playbackClosed || !d->peer) { break; }
+        routeRtp(item.packet, item.from);
+    }
+    bool more = false;
+    {
+        const std::lock_guard<std::mutex> lock(d->playback->mutex);
+        more = !d->playback->dualHeld.empty();
+        if (d->playbackClosed) {
+            d->playback->dualHeld.clear();
+            more = false;
+        }
+    }
+    if (more && !d->playback->noteQueued.exchange(true, std::memory_order_acq_rel)) {
+        QMetaObject::invokeMethod(this, [this] { notePlaybackLane(); }, Qt::QueuedConnection);
+    }
+}
+
+void RemoteMediaController::armPlaybackSink(MediaPeer* peer)
+{
+    if (!peer || !d->playback) { return; }
+    PlaybackFeed* const feed = d->playback.get();
+    RemoteMediaController* const controller = this;
+    peer->setPlaybackPacketSink([feed, controller, peer](const QByteArray& packet, qint64) {
+        if (!deliverPlayback(*feed, peer, packet)) {
+            return;
+        }
+        QMetaObject::invokeMethod(controller, &RemoteMediaController::notePlaybackLane,
+                                  Qt::QueuedConnection);
+    });
+}
+
+void RemoteMediaController::routeRtp(const QByteArray& arrived, const MediaPeer* from)
+{
+    noteAudioArrived();
     // iPhone app plan Task 29: every peer's packets as the streams this
     // media session started with (their own SSRCs), and while two
     // connections carry them, merged (DualPathAudio): each packet once, on
@@ -5538,6 +5766,10 @@ void RemoteMediaController::start()
     if (!self) { return; }
     if (!d->client || !d->client->mediaAvailable()) {
         return;
+    }
+    d->playbackClosed = false;
+    if (d->playback) {
+        d->playback->closed.store(false, std::memory_order_release);
     }
     d->recoveryRequested = false;
     d->epoch = d->client->sessionEpoch();
@@ -5605,6 +5837,7 @@ void RemoteMediaController::start()
     d->headphonesSsrc = started && startedPeer ? startedPeer->headphonesAudioSsrc() : 0;
     // Task 29: the streams' own SSRCs, which a replacement's map onto.
     d->logicalSsrcs = started && startedPeer ? audioSsrcsOf(startedPeer) : QList<quint32>{};
+    publishPlaybackFeed();
     const QString startError = std::exchange(d->startRefusal, QString());
     if (!started) {
         // R-R3-28, amended 2026-09-23: a refusal is never a silent stop, and
@@ -7215,8 +7448,9 @@ void RemoteMediaController::sendAudioDisable()
 
 void RemoteMediaController::requestAudio()
 {
-    d->audio->stop();
     d->audioEnabled = false;
+    publishPlaybackFeed();
+    d->audio->stop();
     d->audioRetryPending = false;
     d->audioRetryForMediaNotReady = false;
     ++d->audioRetryGeneration;
@@ -7650,13 +7884,18 @@ void RemoteMediaController::releaseReceiverAudio(int sliceId, IReceiverPcmSink* 
     // The last consumer went: stop the stream here and at the Core.
     std::unique_ptr<RemoteAudioReceiver> receiver = std::move(stream.receiver);
     stream.tciStage->invalidate();
-    receiver->stop();
+    stream.ssrc = 0;
     disconnect(receiver.get(), nullptr, this, nullptr);
-    // This may run inside the receiver's own signal; it goes when that is over.
-    receiver.release()->deleteLater();
     const bool askedThisConnection = d->receiverRevisions.contains(sliceId);
     const bool forgotten = stream.heldBy.has_value();
     d->receiverStreams.erase(found);
+    // The lane submits only while holding the feed mutex, and only to a
+    // receiver still named by the snapshot. Publish the removal first, so
+    // that submit finishes before this receiver is stopped and deleted.
+    publishPlaybackFeed();
+    receiver->stop();
+    // This may run inside the receiver's own signal; it goes when that is over.
+    receiver.release()->deleteLater();
     const QPointer<RemoteMediaController> self(this);
     if (askedThisConnection && !forgotten && d->peer && d->peer->isReady()
         && receiverAudioNegotiated()) {
@@ -7755,15 +7994,17 @@ void RemoteMediaController::receiveReceiverAudioContext(const QJsonObject& paylo
     // streams: the Core reuses slice ids, and a later slice must not
     // start with this one's audio.
     if (!context.enabled) { stream.tciStage->invalidate(); }
-    stream.receiver->stop();
     stream.ssrc = 0;
     stream.runningProfile.reset();
+    publishPlaybackFeed();
+    stream.receiver->stop();
     const QPointer<RemoteMediaController> self(this);
     if (context.enabled) {
         const RemoteAudioProfile profile = context.losslessEncoder
             ? RemoteAudioProfile::Lossless : RemoteAudioProfile::Opus;
         if (stream.receiver->start(context.ssrc, context.firstTimestamp, profile)) {
             stream.ssrc = context.ssrc;
+            publishPlaybackFeed();
             stream.runningProfile = profile;
             stream.stopped = false;
             stream.stopReason.clear();
@@ -7825,8 +8066,9 @@ void RemoteMediaController::onReceiverRestart(int sliceId, RemoteAudioReceiver* 
     // 2026-10-27: a restart keeps the apps' TCI streams too, as a new
     // context does (receiveReceiverAudioContext): nothing they were owed
     // is dropped while the stream is asked for again.
-    stream.receiver->stop();
     stream.ssrc = 0;
+    publishPlaybackFeed();
+    stream.receiver->stop();
     // R-R3-23: a lossless receiver stream's restart counts against the one
     // link trial, as the speakers' does.
     if (stream.context && stream.context->losslessEncoder && d->linkTrial.active()
@@ -7864,8 +8106,9 @@ void RemoteMediaController::onReceiverError(int sliceId, RemoteAudioReceiver* re
     qCWarning(lcRemoteMedia).noquote()
         << QStringLiteral("Remote receiver audio for slice %1 failed: %2").arg(sliceId).arg(reason);
     stream.tciStage->invalidate();
-    stream.receiver->stop();
     stream.ssrc = 0;
+    publishPlaybackFeed();
+    stream.receiver->stop();
     stream.runningProfile.reset();
     stream.faulted = true;
     stream.retryPending = false;
@@ -8191,8 +8434,9 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
         // Core has answered: any automatic retry in flight is over.
         d->audioRestarting = false;
         d->audioHeldForTransmit = false; // R-R3-51
-        d->audio->stop();
         d->audioEnabled = false;
+        publishPlaybackFeed();
+        d->audio->stop();
         // start() can report a speaker failure synchronously, and a listener
         // to that report, or to the status change, may retire this controller.
         const QPointer<RemoteMediaController> self(this);
@@ -8209,6 +8453,7 @@ void RemoteMediaController::receiveControl(const QJsonObject& payload, quint32 e
             const bool started = d->audio->start(context->ssrc, context->firstTimestamp, profile);
             if (!self) { return; }
             d->audioEnabled = started;
+            publishPlaybackFeed();
             d->preparingAudio = false;
             if (d->audioEnabled) {
                 d->audioAwaitingDevicesSinceMs = -1;
