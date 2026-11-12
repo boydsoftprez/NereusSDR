@@ -43,6 +43,9 @@
 //                 header for the ported constants and the clear on each
 //                 transmit change. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-12 - sMeter.dialScaled: the same dial, scaled into its widget,
+//                 and given the leftover height of a vertical stack.
+//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -346,6 +349,14 @@ void applyConfig(SMeterWidget& dial, const QJsonObject& config)
     if (const int limit = powerLimitW(config); limit > 0) {
         dial.setPowerDisplayScale(limit, limit * ControlRanges::kRfPowerGaugeHeadroom);
     }
+    const QString place = config.value(QLatin1String(kVerticalAlignKey)).toString();
+    if (place == QLatin1String("Top")) {
+        dial.setPlateAlign(Qt::AlignTop);
+    } else if (place == QLatin1String("Bottom")) {
+        dial.setPlateAlign(Qt::AlignBottom);
+    } else {
+        dial.setPlateAlign(Qt::AlignVCenter);
+    }
     applyAppearance(dial, config);
 }
 
@@ -460,7 +471,7 @@ QVector<ContentProperty> appearanceProperties()
     };
 }
 
-QVector<ContentProperty> dialProperties()
+QVector<ContentProperty> dialProperties(bool scaled)
 {
     const auto choices = [](const auto& names) {
         QVector<ContentPropertyChoice> out;
@@ -510,6 +521,19 @@ QVector<ContentProperty> dialProperties()
     limit.suffix = QObject::tr(" W");
     limit.defaultValue = 0;
     QVector<ContentProperty> out{tx, rx, peak, decay, face, limit};
+    if (scaled) {
+        ContentProperty align;
+        align.key = QLatin1String(kVerticalAlignKey);
+        align.label = QObject::tr("Alignment");
+        align.kind = ContentProperty::Kind::Choice;
+        align.choices = {
+            {QObject::tr("Top"), QStringLiteral("Top"), true, {}},
+            {QObject::tr("Center"), QStringLiteral("Center"), true, {}},
+            {QObject::tr("Bottom"), QStringLiteral("Bottom"), true, {}},
+        };
+        align.defaultValue = QStringLiteral("Center");
+        out.insert(out.begin(), align);
+    }
     out += appearanceProperties();
     out += ContentFade::properties();
     return out;
@@ -550,14 +574,20 @@ struct TxValues {
 };
 
 QWidget* makeDial(const ContentEntry& entry, QWidget* parent, const LongpathContent::Sources& sources,
-                  ContentRenderMode mode)
+                  ContentRenderMode mode, bool uniformScale)
 {
     auto* dial = new SMeterWidget(SMeterWidget::SettingsStore::Instance, parent);
     applyConfig(*dial, entry.config);
-    // Sized as the host sizes the Main Panel's dial (applet:s_meter row).
-    dial->setMaximumHeight(QWIDGETSIZE_MAX);
-    dial->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    dial->setMinimumHeight(130);
+    if (uniformScale) {
+        // The face scales with the widget. A vertical stack gives it the
+        // leftover height; a free canvas resize scales the same picture.
+        dial->setUniformScale(true);
+    } else {
+        // Sized as the host sizes the Main Panel's dial (applet:s_meter row).
+        dial->setMaximumHeight(QWIDGETSIZE_MAX);
+        dial->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        dial->setMinimumHeight(130);
+    }
     // No reading until the first one arrives: "--", as a Longpath needle
     // is offline until its first reading.
     dial->setLevel(static_cast<float>(kNoMeterReadingDbm));
@@ -714,14 +744,19 @@ QList<int> registeredBindings()
 void registerDial(ContainerContentRegistry& registry, const LongpathContent::Sources& sources)
 {
     // "S-Meter" is the Main Panel's dial (applet:s_meter), listed under
-    // Panels; this one is listed under Ready-made meters beside the
-    // S-Meter bar, so the heading says what "(additional)" used to.
-    registry.registerWidgetFactory(QLatin1String(kDialType),
-        {QLatin1String(kDialType), QStringLiteral("S-Meter dial"), false, true, {}},
-        [sources](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
-            return makeDial(entry, parent, sources, mode);
-        },
-        dialProperties());
+    // Panels; these two are listed under Ready-made meters beside the
+    // S-Meter bar. The scaled one is the same dial, grown and shrunk to
+    // the space it is given.
+    const auto add = [&registry, sources](const char* typeId, const QString& title, bool uniform) {
+        registry.registerWidgetFactory(QLatin1String(typeId),
+            {QLatin1String(typeId), title, false, true, {}},
+            [sources, uniform](const ContentEntry& entry, QWidget* parent, ContentRenderMode mode) -> QWidget* {
+                return makeDial(entry, parent, sources, mode, uniform);
+            },
+            dialProperties(uniform));
+    };
+    add(kDialType, QStringLiteral("S-Meter dial"), false);
+    add(kScaledDialType, QStringLiteral("S-Meter dial (scales)"), true);
 }
 
 } // namespace NereusSDR::SMeterDialContent

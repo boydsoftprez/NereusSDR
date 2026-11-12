@@ -146,6 +146,11 @@ public:
     bool isContainerFloating() const { return m_floating; }
     void setContainerFloating(bool floating);
 
+    // The window surface itself is clear, so the desktop shows around the
+    // meter. The container asks for this only while it is floating.
+    void setClearBackground(bool clear);
+    bool clearBackground() const { return m_clearBackground; }
+
     // From Thetis frmMeterDisplay.cs:114-139 [v2.10.3.15]
     // The main window was minimized or restored. A floating, enabled form
     // that minimizes hides with it, and on restore shows again unless a
@@ -204,6 +209,7 @@ private:
     bool m_containerHidesWhenRxNotUsed{true};
     bool m_formEnabled{true};
     bool m_floating{false};
+    bool m_clearBackground{false};
     bool m_hiddenByMacro{false};
     int  m_unminimisedHeight{0};   // cached height before minimise collapse
     const ScreenSource* m_screens{nullptr};
