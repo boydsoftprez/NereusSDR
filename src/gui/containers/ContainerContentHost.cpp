@@ -1,5 +1,8 @@
 // no-port-check: NereusSDR-original mixed-content projection, no radio actions.
 // Modification history (NereusSDR):
+//   2026-11-12 - A factory widget marked containerStackFill takes the
+//                 leftover stack height and may shrink to its minimum.
+//                 Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-06 - A factory widget can report its own free canvas hint and
 //                 minimum. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code.
@@ -150,6 +153,18 @@ int preferredWidgetHeight(const QWidget* widget, int width)
     const int preferred = wrapped >= 0 ? wrapped : widget->sizeHint().height();
     return qBound(widget->minimumHeight(), preferred, widget->maximumHeight());
 }
+// The scaled S-Meter dial. It takes leftover stack height and may shrink.
+bool stackFills(const QWidget* widget)
+{
+    return widget && widget->property("containerStackFill").toBool();
+}
+void addContentWidget(QVBoxLayout* layout, QWidget* widget)
+{
+    layout->addWidget(widget);
+    if (stackFills(widget)) {
+        layout->setStretch(layout->count() - 1, 1);
+    }
+}
 bool isClockFace(const MeterItem* item)
 {
     const auto* face = qobject_cast<const CompositePresetItem*>(item);
@@ -230,6 +245,35 @@ void presentAvailability(QWidget* view, const ContainerContentRegistry& registry
     }
 }
 } // namespace
+void ContainerContentHost::setClearBackground(bool clear)
+{
+    if (m_clearBackground == clear) {
+        return;
+    }
+    m_clearBackground = clear;
+    setAutoFillBackground(!clear);
+    setStyleSheet(clear ? QStringLiteral("ContainerContentHost { background: transparent; }") : QString());
+    m_scroll->setAutoFillBackground(!clear);
+    m_scroll->setStyleSheet(clear ? QStringLiteral("QScrollArea { background: transparent; border: none; }")
+                                  : QString());
+    m_scroll->viewport()->setObjectName(QStringLiteral("containerScrollViewport"));
+    m_scroll->viewport()->setAutoFillBackground(!clear);
+    m_scroll->viewport()->setStyleSheet(clear
+        ? QStringLiteral("QWidget#containerScrollViewport { background: transparent; }")
+        : QString());
+    m_body->setObjectName(QStringLiteral("containerContentBody"));
+    m_body->setAutoFillBackground(!clear);
+    m_body->setStyleSheet(clear
+        ? QStringLiteral("QWidget#containerContentBody { background: transparent; }")
+        : QString());
+    if (m_canvas) {
+        m_canvas->setAutoFillBackground(!clear);
+        m_canvas->setStyleSheet(clear
+            ? QStringLiteral("QWidget#freeCanvasSurface { background: transparent; }")
+            : QString());
+    }
+}
+
 ContainerContentHost::ContainerContentHost(ContainerContentRegistry& registry, QWidget* parent)
     : QWidget(parent), m_registry(registry)
 {
@@ -543,7 +587,7 @@ void ContainerContentHost::reconcile(const ContainerDocument& document)
                 widget->setProperty(WorkspacePreview::kSkipProperty, true);
                 connectConfigNotifier(widget, entry.id);
                 attachFade(widget, effective, row.context);
-                row.widget = widget; m_layout->addWidget(widget);
+                row.widget = widget; addContentWidget(m_layout, widget);
                 widget->setVisible(row.effectiveVisible);
                 m_rows.append(row); continue;
             }
@@ -1054,7 +1098,11 @@ void ContainerContentHost::projectStackRows()
             }
         } else if (!fixedWidgets.contains(row.widget)) {
             fixedWidgets.insert(row.widget);
-            fixedHeight += preferredWidgetHeight(row.widget, usableWidth);
+            // A scaled dial's preferred height is the size it starts at.
+            // The stack minimum is its floor, so the container can shrink
+            // and the leftover height still goes to the dial.
+            fixedHeight += stackFills(row.widget) ? qMax(1, row.widget->minimumHeight())
+                                                   : preferredWidgetHeight(row.widget, usableWidth);
         }
     }
     // A stack holding one button grid and nothing else, not auto height:

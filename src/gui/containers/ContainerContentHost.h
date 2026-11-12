@@ -104,6 +104,9 @@ public:
     // never keys the radio.
     void setTransmitting(bool transmitting);
     bool transmitting() const { return m_transmitting; }
+    // The scroll surface behind the entries is clear, so a floating window
+    // can show the desktop around a meter. The entries still paint themselves.
+    void setClearBackground(bool clear);
     // This window's session (radio) id. A row whose context names another
     // session stays in the receive state, as a meter item does
     // (MeterItem::setForeignSession).
@@ -173,6 +176,7 @@ private:
     int m_contentMinimumWidth = -1;  // last value announced; -1 before the first
     QPointer<QMenu> m_bannerMenu;
     bool m_transmitting = false;
+    bool m_clearBackground = false;
     std::function<QString()> m_sessionIdSource;
 };
 }

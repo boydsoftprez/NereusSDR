@@ -355,4 +355,32 @@ void FloatingContainer::setFormEnabled(bool enabled) { m_formEnabled = enabled; 
 void FloatingContainer::setHiddenByMacro(bool hidden) { m_hiddenByMacro = hidden; }
 void FloatingContainer::setContainerFloating(bool floating) { m_floating = floating; }
 
+void FloatingContainer::setClearBackground(bool clear)
+{
+    if (m_clearBackground == clear) {
+        return;
+    }
+    m_clearBackground = clear;
+    // The platform window has to be recreated for the translucent bit to
+    // take effect on macOS.
+    const bool shown = isVisible();
+    if (shown) {
+        hide();
+    }
+    setAttribute(Qt::WA_TranslucentBackground, clear);
+    setAttribute(Qt::WA_NoSystemBackground, clear);
+    setAutoFillBackground(!clear);
+    if (clear) {
+        setStyleSheet(QStringLiteral("FloatingContainer { background: transparent; }"));
+    } else if (WorkspacePreview::enabled()) {
+        setStyleSheet(QStringLiteral("background: %1;")
+                          .arg(Workspace::role("panel", "#0f0f1a")));
+    } else {
+        setStyleSheet(QStringLiteral("background: #0f0f1a;"));
+    }
+    if (shown) {
+        show();
+    }
+}
+
 } // namespace NereusSDR

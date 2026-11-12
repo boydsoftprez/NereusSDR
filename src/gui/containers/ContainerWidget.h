@@ -275,6 +275,11 @@ public:
     // --- Container Properties ---
     QColor backgroundColor() const {return m_backgroundColor;}
     void setBackgroundColor(const QColor& color);
+    // When set, a popped-out or floating window leaves the area around the
+    // meter clear. Docked containers keep their background. The meter still
+    // paints itself.
+    bool clearFloatingBackground() const { return m_clearFloatingBackground; }
+    void setClearFloatingBackground(bool clear);
     // The colour a container configured with `configured` paints behind
     // its content: `configured`, or with the workspace preview on the
     // panel role for the default background. The Container Settings
@@ -523,6 +528,9 @@ private:
     void updateTitleBar();
     void updateTitle();
     void setupBorder();
+    void applyContentBackground();
+    void applyFloatingClear();
+    bool floatingClearActive() const;
 
     void beginDrag(const QPoint& pos);
     void updateDrag(const QPoint& globalPos);
@@ -577,6 +585,7 @@ private:
     bool m_minimised{false};          // runtime only, not persisted
     bool m_highlighted{false};        // runtime only, not persisted
     QColor m_backgroundColor{0x0f, 0x0f, 0x1a};
+    bool m_clearFloatingBackground{false};
 
     // --- Drag/Resize state ---
     QPoint m_dragStartPos;

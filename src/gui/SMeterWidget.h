@@ -129,6 +129,10 @@
 //                 clearHistory() (Thetis ClearHistory).  Unset, each is the
 //                 dial as it was drawn before.  J.J. Boyd (KG4VCF), with
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-12  setUniformScale() paints the Main Panel plate and scales
+//                 that picture into the widget, for the container dial that
+//                 grows and shrinks with its container.  Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 // --- From MeterManager.cs ---
@@ -195,6 +199,7 @@ class QPainter;
 namespace NereusSDR {
 
 class RadioModel;
+struct VintageFaceTheme;
 
 // The face chosen on Setup > Appearance > Meter Styles (the SMeter_FaceStyle
 // key) changed.  Emitted by the page and by the Main Panel's dial, the two
@@ -251,7 +256,7 @@ public:
     explicit SMeterWidget(RadioModel* model, QWidget* parent = nullptr);
 
     QSize sizeHint() const override { return {280, 140}; }
-    QSize minimumSizeHint() const override { return {200, 100}; }
+    QSize minimumSizeHint() const override;
 
     // Current reading in dBm; -400 (kNoReadingDbm) when there is no reading.
     float levelDbm() const { return m_levelDbm; }
@@ -293,14 +298,33 @@ public:
     // in (NereusSDR-native): rect(), or for a widget wider than
     // kPlateMaxAspect times its height, a centred rectangle that wide, with
     // whatever is behind the widget showing on both sides.  Every dial (the
-    // Main Panel's and added copies alike) keeps the Main Panel dial's
-    // proportions this way.  The Classic face has no plate and ignores it.
+    // Main Panel's and the added S-Meter dial alike) keeps the Main Panel
+    // dial's proportions this way.  The Classic face has no plate and
+    // ignores it.  A dial with setUniformScale(true) reports the largest
+    // plate of that proportion that fits in the widget, centred.
     QRectF plateRect() const;
     // The Main Panel's dial at its normal width in the mixed-container and
     // profile-dx captures at mac-1512x869@2: the widget's rect, which the
     // plate is drawn in, is 298 x 140 logical px (596 x 280 device px; the
     // bezel's outer edge, 1 px inside, is 296 x 138).
     static constexpr double kPlateMaxAspect = 298.0 / 140.0;
+    // The plate a uniformly scaled dial paints, then scales into plateRect().
+    static constexpr int kUniformRefW = 298;
+    static constexpr int kUniformRefH = 140;
+
+    // Paint the Main Panel plate and scale that whole picture into this
+    // widget, so a container copy grows and shrinks without stretching.
+    // The widget then fills leftover stack height (containerStackFill) and
+    // may be resized down to minimumSizeHint().  Off for the Main Panel
+    // dial and for sMeter.dial.  NereusSDR-native.
+    void setUniformScale(bool on);
+    bool uniformScale() const { return m_uniformScale; }
+
+    // Where the scaled plate sits in the widget. AlignTop and AlignBottom
+    // pin it to that edge; anything else centres it. Ignored unless
+    // setUniformScale(true). NereusSDR-native.
+    void setPlateAlign(Qt::Alignment align);
+    Qt::Alignment plateAlign() const { return m_plateAlign; }
 
     // Current RX/TX mode accessors.
     // Used by MeterPoller::pollSMeter() (Task 41) to branch on the active
@@ -528,7 +552,10 @@ private:
     // paintEvent dispatches on m_faceStyle.  paintClassic is the AetherSDR
     // paint body, unchanged; paintVintage draws via gui/VintageMeterFace.
     void paintClassic(QPainter& p);
+    void paintClassicUniform(QPainter& p);
     void paintVintage(QPainter& p);
+    void paintVintageMoving(QPainter& p, const QRectF& bounds, const VintageFaceTheme& theme);
+    QRectF uniformPlate(const QRectF& full) const;
     // NereusSDR-native: the Classic face fills rect() and stays opaque; a
     // vintage face leaves its corners outside the bezel clear, so Qt
     // paints what is behind the widget first.  Call after m_faceStyle
@@ -659,6 +686,10 @@ private:
     FaceStyle m_faceStyle{FaceStyle::AgedCream};
     QPixmap   m_faceCache;
     QString   m_faceCacheKey;
+    // Scaled container dial: paint the reference plate, then scale it.
+    bool m_uniformScale{false};
+    bool m_logicalPaint{false};
+    Qt::Alignment m_plateAlign{Qt::AlignVCenter};
 
     // From AetherSDR src/gui/SMeterWidget.h:96-99 [@0cd4559]
     QTimer  m_needleAnimation;

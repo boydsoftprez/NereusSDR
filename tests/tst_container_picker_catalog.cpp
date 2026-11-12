@@ -93,6 +93,7 @@ const Expected kExpected[] = {
     {"meter.alc", "ALC bar", kMeters},
     {"meter.customBar", "Custom bar face", kMeters},
     {"sMeter.dial", "S-Meter dial", kMeters},
+    {"sMeter.dialScaled", "S-Meter dial (scales)", kMeters},
     {"BAR", "Bar", kBlocks},
     {"SOLID", "Solid color", kBlocks},
     {"IMAGE", "Image", kBlocks},
