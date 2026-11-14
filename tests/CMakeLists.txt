@@ -1130,10 +1130,26 @@ longpath_add_test(tst_begleitgeraet_regler)
 longpath_add_test(tst_cat_funkgeraet)
 # Rund 40 Faelle gegen ein rigctld-Doppel, viele warten auf die naechste
 # Abfragerunde. Lokal ~60 s; auf dem macOS-Laeufer liefen schon am 08.11.
-# (vor den Sprachspeicher-Faellen) die 120 s ab. 300 s nur fuer diesen.
+# (vor den Sprachspeicher-Faellen) die 120 s ab, danach 300 s.
 # Nur im Shard, der ihn baut (Linux teilt die Pruefstaende auf).
+#
+# 2026-11-14 auf 900 s. Die 300 waren von Anfang an zu knapp, was erst
+# auffiel, als sie rissen. Gemessen auf macOS Apple Silicon (2/2), jeweils
+# derselbe Pruefstand als Test #90:
+#
+#   d6bad415d (vor #452)   Passed  237,60 s
+#   240f4dc4d (mit #452)   Passed  254,49 s   <- 15 % Luft bei 300
+#   3da9e7b16 (mit #453)   ***Timeout 300,09 s
+#
+# Es haengt also nicht, es war zu eng bemessen: bei 254 s Grundlast reisst
+# eine Lastschwankung auf dem Laeufer die Frist, und zwar ohne dass sich
+# am Pruefstand etwas geaendert haette (#453 fasst ihn gar nicht an).
+# 900 s sind das Dreieinhalbfache der gemessenen Dauer, damit die naechsten
+# Faelle nicht gleich wieder dagegen laufen. Wer die Dauer selbst senken
+# will, muss an die Warterunden gegen das rigctld-Doppel -- das ist der
+# Posten, nicht der Fensteraufbau.
 if(TEST tst_cat_funkgeraet)
-    set_tests_properties(tst_cat_funkgeraet PROPERTIES TIMEOUT 300)
+    set_tests_properties(tst_cat_funkgeraet PROPERTIES TIMEOUT 900)
 endif()
 # Jeder Klick holt das Fenster nach vorne, auch aus der Spalte.
 longpath_add_test(tst_klick_holt_nach_vorne)
