@@ -8,6 +8,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14 - The RX Attenuator caption stays on the control's line
+//                 when the copy is taller than that line. Brian Sutton
+//                 (W4KZO), AI-assisted via xAI Grok.
 //   2026-11-05 - The AUTO right-click test delivers a real press and
 //                 context-menu event, and the window opens Setup before any
 //                 connection. Corrections for review findings. J.J. Boyd
@@ -559,6 +562,52 @@ private slots:
         QCOMPARE(stepAtt->attenuationDbForSlice(0), 10);
         stepAtt->setAttenuationDb(4);
         QCOMPARE(spin->value(), 4);
+    }
+
+    // A container object is often taller than the attenuator line. S-ATT
+    // stays on that line, with and without the preamp row under it.
+    void theAttenuatorLabelStaysOnTheControlLine()
+    {
+        RadioModel radio;
+        RxApplet applet(nullptr, &radio);
+        ContainerContentRegistry registry;
+        registerRxSectionContent(registry, &applet);
+        QWidget host;
+        auto* copy = qobject_cast<RxAttenuatorSection*>(
+            registry.createWidget(registry.makeEntry(QStringLiteral("rx.attenuator")), &host));
+        QVERIFY(copy);
+        copy->label()->setText(QStringLiteral("S-ATT"));
+
+        const auto staysInline = [](RxAttenuatorSection* section) -> QString {
+            section->setFixedWidth(kCopyWidth);
+            section->resize(kCopyWidth, 160);
+            section->layout()->activate();
+            const QRect label = section->label()->geometry();
+            const QRect control = section->stack()->geometry();
+            if (label.height() <= 0 || control.height() <= 0) {
+                return QStringLiteral("the caption or the control has no height");
+            }
+            if (label.height() > section->label()->sizeHint().height()) {
+                return QStringLiteral("the caption grew taller than its text: %1").arg(label.height());
+            }
+            if (control.height() > section->stack()->sizeHint().height()) {
+                return QStringLiteral("the control grew taller than its line: %1").arg(control.height());
+            }
+            const int mid = label.center().y();
+            if (mid < control.top() || mid > control.bottom() || control.bottom() >= 80) {
+                return QStringLiteral("S-ATT at %1,%2 %3x%4 is off the control at %5,%6 %7x%8")
+                    .arg(label.x()).arg(label.y()).arg(label.width()).arg(label.height())
+                    .arg(control.x()).arg(control.y()).arg(control.width()).arg(control.height());
+            }
+            return {};
+        };
+
+        const QString alone = staysInline(copy);
+        QVERIFY2(alone.isEmpty(), qPrintable(alone));
+        copy->rx1Preamp()->setVisible(true);
+        const QString withPreamp = staysInline(copy);
+        QVERIFY2(withPreamp.isEmpty(), qPrintable(withPreamp));
+        QVERIFY(copy->label()->geometry().bottom() < copy->rx1Preamp()->geometry().top());
     }
 
     void autoAgcOnACopy()
