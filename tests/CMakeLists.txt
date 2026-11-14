@@ -2408,6 +2408,9 @@ nereus_add_test(tst_audio_engine_vax_gain)
 # the MOX gate, before mute/gain/pan/mix/master volume) with no AF level in
 # it; the master tap and speakers stay byte-for-byte unchanged.
 nereus_add_test(tst_audio_engine_slice_tap)
+# Receive leveler (2026-11-14): VAX and the receiver taps stay plain with
+# RXL on, RXL off is bit-identical at the speakers, the AF slider stays 1:1.
+nereus_add_test(tst_audio_engine_rx_leveler)
 # iPhone app Task 76 (R-IOS-31, ruling 9.2): one mix per owner, and the
 # Core's local output playing the station device's slices only.
 nereus_add_test(tst_audio_engine_owner_mix)
@@ -3987,11 +3990,14 @@ target_compile_definitions(tst_tx_mic_latency PRIVATE NEREUS_BUILD_TESTS)
 # WDSP channels: the Setup > DSP filter type reaches TXASetMP / RXASetMP as
 # Thetis sends it (Low Latency is minimum phase).
 nereus_add_test(tst_tx_latency_dsp)
+# Receive leveler (2026-11-14): the leveler and its station check on
+# synthetic voice nets (tests/RxLevelerSynth.h); the measurement the Auto
+# values came from prints with NEREUS_RXL_MATRIX=1.
+nereus_add_test(tst_rx_leveler)
 # Leveler lane (2026-10-01): remote microphone audio (the phone's Opus, a
 # desktop remote window's Opus or L16, the local microphone) through the real
 # WDSP TX channel with the Leveler and PROC, offline; the measurement matrix
 # prints with NEREUS_LEVELER_MATRIX=1.
-nereus_add_test(tst_rx_leveler)
 nereus_add_test(tst_tx_leveler_remote_mic)
 target_compile_definitions(tst_tx_leveler_remote_mic PRIVATE
     NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

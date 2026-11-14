@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14 - Receive leveler settings: RX Leveler by Brian Sutton
+//                (W4KZO); maximum cut in place of pause hold and the live
+//                gain reading. NereusSDR-original. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1190,14 +1194,26 @@ void SliceModel::setRxLevelerReleaseMs(int ms)
     }
 }
 
-void SliceModel::setRxLevelerPauseHoldMs(int ms)
+void SliceModel::setRxLevelerMaxCutDb(int dB)
 {
-    ms = clampLevelerInt(ms, RxLeveler::kPauseHoldMsMin, RxLeveler::kPauseHoldMsMax);
-    if (holdsListenerWrite(rxLevelerPauseHoldMs(), ms)) { return; }
-    if (m_rxLevelerPauseHoldMs != ms) {
-        m_rxLevelerPauseHoldMs = ms;
-        emit rxLevelerPauseHoldMsChanged(ms);
+    dB = clampLevelerInt(dB, RxLeveler::kMaxCutDbMin, RxLeveler::kMaxCutDbMax);
+    if (holdsListenerWrite(rxLevelerMaxCutDb(), dB)) { return; }
+    if (m_rxLevelerMaxCutDb != dB) {
+        m_rxLevelerMaxCutDb = dB;
+        emit rxLevelerMaxCutDbChanged(dB);
     }
+}
+
+void SliceModel::setRxLevelerGainDb(double dB)
+{
+    // A tenth of a dB is as fine as the readout shows; finer changes would
+    // only cost signals and remote traffic.
+    const double rounded = std::isfinite(dB) ? std::round(dB * 10.0) / 10.0 : 0.0;
+    if (qFuzzyCompare(1.0 + m_rxLevelerGainDb, 1.0 + rounded)) {
+        return;
+    }
+    m_rxLevelerGainDb = rounded;
+    emit rxLevelerGainDbChanged(rounded);
 }
 
 // ---------------------------------------------------------------------------
@@ -1569,6 +1585,16 @@ QString SliceModel::applyMirroredValue(const QByteArray& propertyName, const QVa
     }
     if (propertyName == "agcPeakDb") {
         setAgcPeakDb(value.toDouble());
+        return QString();
+    }
+    // Receive leveler: the Core's live gain, applied as its readings are
+    // (policy keeps it Outbound, so a Core never takes it inbound).
+    if (propertyName == "rxLevelerGainDb") {
+        const double dB = value.toDouble();
+        if (!std::isfinite(dB)) {
+            return QStringLiteral("The leveler gain must be a number of decibels.");
+        }
+        setRxLevelerGainDb(dB);
         return QString();
     }
     // Parity Task 16: the Core's channel's minimum notch width.
@@ -2510,7 +2536,7 @@ void SliceModel::copyReceiverSettingsFrom(const SliceModel& source)
     setRxLevelerMaxBoostDb(source.rxLevelerMaxBoostDb());
     setRxLevelerAttackMs(source.rxLevelerAttackMs());
     setRxLevelerReleaseMs(source.rxLevelerReleaseMs());
-    setRxLevelerPauseHoldMs(source.rxLevelerPauseHoldMs());
+    setRxLevelerMaxCutDb(source.rxLevelerMaxCutDb());
     setRxLevelerMode(source.rxLevelerMode());
     // rfGain is the AGC-T, the WDSP AGC top (setRfGain).
     setRfGain(source.rfGain());
@@ -3877,7 +3903,7 @@ void SliceModel::saveToSettings(Band band)
     s.setValue(sp + QStringLiteral("RxLevelerMaxBoostDb"), m_rxLevelerMaxBoostDb);
     s.setValue(sp + QStringLiteral("RxLevelerAttackMs"), m_rxLevelerAttackMs);
     s.setValue(sp + QStringLiteral("RxLevelerReleaseMs"), m_rxLevelerReleaseMs);
-    s.setValue(sp + QStringLiteral("RxLevelerPauseHoldMs"), m_rxLevelerPauseHoldMs);
+    s.setValue(sp + QStringLiteral("RxLevelerMaxCutDb"), m_rxLevelerMaxCutDb);
     // Squelch, saved per receiver as Thetis does.
     // From Thetis console.cs:2830-2852 [v2.10.3.15]:
     //   a.Add("chkSquelch_checkstate/" + chkSquelch.CheckState.ToString());
@@ -4309,8 +4335,8 @@ void SliceModel::restoreFromSettings(Band band, bool restoreTuning)
     if (s.contains(sp + QStringLiteral("RxLevelerReleaseMs"))) {
         setRxLevelerReleaseMs(s.value(sp + QStringLiteral("RxLevelerReleaseMs")).toInt());
     }
-    if (s.contains(sp + QStringLiteral("RxLevelerPauseHoldMs"))) {
-        setRxLevelerPauseHoldMs(s.value(sp + QStringLiteral("RxLevelerPauseHoldMs")).toInt());
+    if (s.contains(sp + QStringLiteral("RxLevelerMaxCutDb"))) {
+        setRxLevelerMaxCutDb(s.value(sp + QStringLiteral("RxLevelerMaxCutDb")).toInt());
     }
     if (s.contains(sp + QStringLiteral("RxLevelerMode"))) {
         const int raw = s.value(sp + QStringLiteral("RxLevelerMode")).toInt();

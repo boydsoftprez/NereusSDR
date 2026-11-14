@@ -14,6 +14,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14 - RXL flag and popup (Brian Sutton, W4KZO): reset values
+//                follow the new Auto preset. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - The flag's ⋯ button opens the right-click list; the S-meter
 //                 item and the bar's source tag (overlay design D39 to D41);
 //                 the Roundtable line's open state. J.J. Boyd (KG4VCF),
@@ -5694,7 +5697,7 @@ void VfoWidget::showRxlPopup(const QPoint& globalPos)
 
     const Knob target = addKnob(
         QStringLiteral("Listening target"),
-        QStringLiteral("Loudness the rider aims for, in dBFS. Used when Mode is Custom."),
+        QStringLiteral("Speech level every station is moved toward, in dBFS before the AF slider. Used when Mode is Custom."),
         static_cast<int>(RxLeveler::kTargetDbMin),
         static_cast<int>(RxLeveler::kTargetDbMax),
         slice->rxLevelerTargetDb());
@@ -5755,6 +5758,9 @@ void VfoWidget::showRxlPopup(const QPoint& globalPos)
         }
         slice->setRxLevelerTargetDb(static_cast<int>(RxLeveler::kAutoTargetDb));
         slice->setRxLevelerMaxBoostDb(static_cast<int>(RxLeveler::kAutoMaxBoostDb));
+        slice->setRxLevelerMaxCutDb(static_cast<int>(RxLeveler::kAutoMaxCutDb));
+        slice->setRxLevelerAttackMs(static_cast<int>(RxLeveler::kAutoAttackMs));
+        slice->setRxLevelerReleaseMs(static_cast<int>(RxLeveler::kAutoReleaseMs));
         slice->setRxLevelerMode(RxLevelerMode::Off);
     });
     popup->showAt(globalPos);

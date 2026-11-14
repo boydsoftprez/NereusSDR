@@ -293,7 +293,6 @@ warren@wpratt.com
 #include "dsp/NnrSettings.h"
 #include "dsp/Notch.h"
 #include "dsp/RxChannelState.h"
-#include "dsp/RxLeveler.h"
 
 #ifdef HAVE_DFNR
 #include "DeepFilterFilter.h"
@@ -516,13 +515,6 @@ public:
 
     int agcMaxGain() const { return m_agcMaxGain.load(); }
     void setAgcMaxGain(int dB);
-
-    // Receive loudness rider. The panel gain stays at unity, so this runs
-    // on the demodulated block before AudioEngine applies AF. Off and the
-    // modes RxLeveler::modeAllows rejects leave the samples untouched.
-    void setRxLeveler(RxLevelerMode mode, int targetDb, int maxBoostDb,
-                      int attackMs, int releaseMs, int pauseHoldMs);
-    double rxLevelerBoostDb() const { return m_rxLeveler.boostDb(); }
 
     // --- Noise blanker ---
 
@@ -1388,9 +1380,6 @@ signals:
 private:
     // Shared body of setActive / deactivateWithoutDrain.
     void applyActive(bool active, bool drainOnStop);
-    // Receive leveler on the demodulated block. No-op (samples unchanged)
-    // when the rider is off or this mode is not a voice mode.
-    void applyRxLeveler(float* outI, float* outQ, int frames);
     // readBackAgcThresh at a given channel rate (a lane job reads the rate
     // the owner had when it asked).
     double readBackAgcThreshAt(int sampleRate) const;
@@ -1567,15 +1556,6 @@ private:
     std::atomic<int> m_agcFixedGain{kDefaultAgcFixedGainDb};
     // maxGain: From Thetis setup.Designer.cs:39443-39447 [v2.10.3.15] (kDefaultAgcMaxGainDb)
     std::atomic<int> m_agcMaxGain{kDefaultAgcMaxGainDb};
-    // Receive leveler. Written from the UI thread, read on the DSP thread
-    // at the start of each block. The rider object itself is DSP-thread only.
-    std::atomic<int> m_rxLevelerMode{static_cast<int>(RxLevelerMode::Off)};
-    std::atomic<int> m_rxLevelerTargetDb{-18};
-    std::atomic<int> m_rxLevelerMaxBoostDb{12};
-    std::atomic<int> m_rxLevelerAttackMs{400};
-    std::atomic<int> m_rxLevelerReleaseMs{1500};
-    std::atomic<int> m_rxLevelerPauseHoldMs{600};
-    RxLeveler m_rxLeveler;
 
     // ----- NR state (Sub-epic C-1) -----
     // From Thetis console.cs:43297-43450 SelectNR() [v2.10.3.13]

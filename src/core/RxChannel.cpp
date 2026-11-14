@@ -972,43 +972,6 @@ void RxChannel::setAgcFixedGain(int dB)
 #endif
 }
 
-void RxChannel::setRxLeveler(RxLevelerMode mode, int targetDb, int maxBoostDb,
-                             int attackMs, int releaseMs, int pauseHoldMs)
-{
-    const int raw = static_cast<int>(mode);
-    if (raw < static_cast<int>(RxLevelerMode::Off)
-        || raw > static_cast<int>(RxLevelerMode::Custom)) {
-        return;
-    }
-    m_rxLevelerMode.store(raw, std::memory_order_relaxed);
-    m_rxLevelerTargetDb.store(targetDb, std::memory_order_relaxed);
-    m_rxLevelerMaxBoostDb.store(maxBoostDb, std::memory_order_relaxed);
-    m_rxLevelerAttackMs.store(attackMs, std::memory_order_relaxed);
-    m_rxLevelerReleaseMs.store(releaseMs, std::memory_order_relaxed);
-    m_rxLevelerPauseHoldMs.store(pauseHoldMs, std::memory_order_relaxed);
-}
-
-void RxChannel::applyRxLeveler(float* outI, float* outQ, int frames)
-{
-    const auto mode = static_cast<RxLevelerMode>(
-        m_rxLevelerMode.load(std::memory_order_relaxed));
-    const auto dsp = static_cast<DSPMode>(m_mode.load(std::memory_order_relaxed));
-    if (mode == RxLevelerMode::Off || !RxLeveler::modeAllows(dsp) || frames <= 0) {
-        if (m_rxLeveler.boostDb() != 0.0) {
-            m_rxLeveler.reset();
-        }
-        return;
-    }
-    RxLevelerRequest request;
-    request.mode = mode;
-    request.targetDb = static_cast<double>(m_rxLevelerTargetDb.load(std::memory_order_relaxed));
-    request.maxBoostDb = static_cast<double>(m_rxLevelerMaxBoostDb.load(std::memory_order_relaxed));
-    request.attackMs = static_cast<double>(m_rxLevelerAttackMs.load(std::memory_order_relaxed));
-    request.releaseMs = static_cast<double>(m_rxLevelerReleaseMs.load(std::memory_order_relaxed));
-    request.pauseHoldMs = static_cast<double>(m_rxLevelerPauseHoldMs.load(std::memory_order_relaxed));
-    m_rxLeveler.process(outI, outQ, frames, 48000.0, request);
-}
-
 void RxChannel::setAgcMaxGain(int dB)
 {
     if (dB == m_agcMaxGain.load()) {
@@ -3273,11 +3236,6 @@ void RxChannel::processIq(float* inI, float* inQ,
     }
 #endif
 
-    // Receive leveler. Panel gain is unity; AudioEngine applies AF later,
-    // so this rides station loudness without fighting the volume knob.
-    // Digital, CW and FM modes skip it and the block stays as WDSP left it.
-    applyRxLeveler(outI, outQ, postCount);
-
     // Phase 3J-1 Task 16.2 — TCI audio tap.
     // Emit post-DSP stereo audio for any TCI clients subscribed via the
     // TciServer audio binary pipeline (Phase 16 Task 16.3). This fires
@@ -3713,12 +3671,6 @@ RxChannelState RxChannel::captureState() const
     s.nnrTuning           = nnrTuning();
     s.nnrLimit            = nnrLimit();
     s.anfEnabled          = m_anfEnabled.load();
-    s.rxLevelerMode       = m_rxLevelerMode.load();
-    s.rxLevelerTargetDb   = m_rxLevelerTargetDb.load();
-    s.rxLevelerMaxBoostDb = m_rxLevelerMaxBoostDb.load();
-    s.rxLevelerAttackMs   = m_rxLevelerAttackMs.load();
-    s.rxLevelerReleaseMs  = m_rxLevelerReleaseMs.load();
-    s.rxLevelerPauseHoldMs = m_rxLevelerPauseHoldMs.load();
 
     // EQ
     s.eqEnabled           = m_eqEnabled;
@@ -3773,10 +3725,6 @@ void RxChannel::applyState(const RxChannelState& s)
     setNnrTuning(s.nnrTuning);
     setActiveNr(s.activeNr);
     setAnfEnabled(s.anfEnabled);
-    setRxLeveler(static_cast<RxLevelerMode>(s.rxLevelerMode),
-                 s.rxLevelerTargetDb, s.rxLevelerMaxBoostDb,
-                 s.rxLevelerAttackMs, s.rxLevelerReleaseMs,
-                 s.rxLevelerPauseHoldMs);
 
     // EQ
     setEqEnabled(s.eqEnabled);

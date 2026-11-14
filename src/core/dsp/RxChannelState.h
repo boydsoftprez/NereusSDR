@@ -45,15 +45,6 @@ struct RxChannelState {
     int    nnrLimit                 = 0;
     bool   anfEnabled               = false;
 
-    // Receive loudness rider. Off leaves the rebuilt channel silent
-    // about it, which is also the operator default.
-    int    rxLevelerMode            = 0;
-    int    rxLevelerTargetDb        = -18;
-    int    rxLevelerMaxBoostDb      = 12;
-    int    rxLevelerAttackMs        = 400;
-    int    rxLevelerReleaseMs       = 1500;
-    int    rxLevelerPauseHoldMs     = 600;
-
     // EQ
     bool   eqEnabled                = false;
     int    eqPreampDb               = 0;
