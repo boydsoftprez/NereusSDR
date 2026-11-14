@@ -15,7 +15,9 @@
 // Modification history (NereusSDR):
 // 2026-11-14 - Receive leveler: RX Leveler settings per receiver (Brian
 //              Sutton, W4KZO); pause hold replaced by maximum cut, Auto
-//              preset defaults, and the live rxLevelerGainDb reading.
+//              preset defaults, and the live rxLevelerGainDb reading. The
+//              settings' properties moved to the end of the list so every
+//              earlier property keeps its wire ordinal.
 //              NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
 //              Anthropic Claude Code.
 // 2026-11-06 - copyReceiverSettingsFrom, copyFilterMemoryFrom,
@@ -459,20 +461,6 @@ private:
     Q_PROPERTY(int        filterLow    READ filterLow    WRITE setFilterLow    NOTIFY filterChanged)
     Q_PROPERTY(int        filterHigh   READ filterHigh   WRITE setFilterHigh   NOTIFY filterChanged)
     Q_PROPERTY(NereusSDR::AGCMode agcMode READ agcMode   WRITE setAgcMode      NOTIFY agcModeChanged)
-    // Receive loudness rider. Per receiver, off until the operator turns
-    // it on. Separate from the transmit leveler.
-    Q_PROPERTY(NereusSDR::RxLevelerMode rxLevelerMode READ rxLevelerMode
-               WRITE setRxLevelerMode NOTIFY rxLevelerModeChanged)
-    Q_PROPERTY(int rxLevelerTargetDb READ rxLevelerTargetDb
-               WRITE setRxLevelerTargetDb NOTIFY rxLevelerTargetDbChanged)
-    Q_PROPERTY(int rxLevelerMaxBoostDb READ rxLevelerMaxBoostDb
-               WRITE setRxLevelerMaxBoostDb NOTIFY rxLevelerMaxBoostDbChanged)
-    Q_PROPERTY(int rxLevelerAttackMs READ rxLevelerAttackMs
-               WRITE setRxLevelerAttackMs NOTIFY rxLevelerAttackMsChanged)
-    Q_PROPERTY(int rxLevelerReleaseMs READ rxLevelerReleaseMs
-               WRITE setRxLevelerReleaseMs NOTIFY rxLevelerReleaseMsChanged)
-    Q_PROPERTY(int rxLevelerMaxCutDb READ rxLevelerMaxCutDb
-               WRITE setRxLevelerMaxCutDb NOTIFY rxLevelerMaxCutDbChanged)
     Q_PROPERTY(int        stepHz       READ stepHz       WRITE setStepHz       NOTIFY stepHzChanged)
     Q_PROPERTY(int        afGain       READ afGain       WRITE setAfGain       NOTIFY afGainChanged)
     Q_PROPERTY(int        rfGain       READ rfGain       WRITE setRfGain       NOTIFY rfGainChanged)
@@ -844,6 +832,22 @@ private:
     // Append-only wire field: measured receive input pressure, never an
     // applied NNR limit and never persisted. Empty means no current warning.
     Q_PROPERTY(QString nnrLoadWarning READ nnrLoadWarning NOTIFY nnrLoadWarningChanged)
+    // Receive loudness rider. Per receiver, off until the operator turns
+    // it on. Separate from the transmit leveler.
+    // Appended after every earlier property so each keeps its wire ordinal
+    // (they first sat after agcMode, which moved every later ordinal).
+    Q_PROPERTY(NereusSDR::RxLevelerMode rxLevelerMode READ rxLevelerMode
+               WRITE setRxLevelerMode NOTIFY rxLevelerModeChanged)
+    Q_PROPERTY(int rxLevelerTargetDb READ rxLevelerTargetDb
+               WRITE setRxLevelerTargetDb NOTIFY rxLevelerTargetDbChanged)
+    Q_PROPERTY(int rxLevelerMaxBoostDb READ rxLevelerMaxBoostDb
+               WRITE setRxLevelerMaxBoostDb NOTIFY rxLevelerMaxBoostDbChanged)
+    Q_PROPERTY(int rxLevelerAttackMs READ rxLevelerAttackMs
+               WRITE setRxLevelerAttackMs NOTIFY rxLevelerAttackMsChanged)
+    Q_PROPERTY(int rxLevelerReleaseMs READ rxLevelerReleaseMs
+               WRITE setRxLevelerReleaseMs NOTIFY rxLevelerReleaseMsChanged)
+    Q_PROPERTY(int rxLevelerMaxCutDb READ rxLevelerMaxCutDb
+               WRITE setRxLevelerMaxCutDb NOTIFY rxLevelerMaxCutDbChanged)
     // Receive leveler: the gain it applies now (dB, + lift, - cut; 0 when
     // off). The Core's RadioModel writes it from AudioEngine on each meter
     // tick; the setup page's live reading, here and in a remote window,
