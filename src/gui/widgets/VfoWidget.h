@@ -1012,6 +1012,7 @@ private:
     void onActiveNrChanged(NereusSDR::NrSlot slot);
     void onNrSelectionRefused(const QString& reason);
     void showNr1Popup(const QPoint& globalPos);
+    void showRxlPopup(const QPoint& globalPos);
     void showNr2Popup(const QPoint& globalPos);
     void showNr3Popup(const QPoint& globalPos);
     void showNr4Popup(const QPoint& globalPos);

@@ -479,6 +479,7 @@ warren@wpratt.com
 #include "gui/widgets/AppIcon.h"
 #include "gui/TuneStepLabel.h"
 #include "DspParamPopup.h"
+#include "GuardedSlider.h"
 #include "NnrControls.h"
 #include "VaxChannelSelector.h"
 #include "gui/AntennaPopupBuilder.h"
@@ -517,6 +518,8 @@ warren@wpratt.com
 #include <QWheelEvent>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QButtonGroup>
+#include <QRadioButton>
 #include <QGridLayout>
 #include <QMenu>
 #include <QVariant>
@@ -2288,10 +2291,13 @@ void VfoWidget::buildDspTab()
     m_rxlToggle = makeToggle(QStringLiteral("RXL"));
     m_rxlToggle->setToolTip(QStringLiteral(
         "RX Leveler: evens station loudness on a net. Left-click turns it on or off. "
-        "Right-click opens Setup, DSP, AGC/ALC. Separate from the TX Leveler."));
+        "Right-click opens mode, listening target and maximum boost. "
+        "Separate from the TX Leveler."));
     m_rxlToggle->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_rxlToggle, &QWidget::customContextMenuRequested,
-            this, [this](const QPoint&) { emit openSetupRequested(); });
+            this, [this](const QPoint& pos) {
+                showRxlPopup(m_rxlToggle->mapToGlobal(pos));
+            });
     dspGrid->addWidget(m_rxlToggle, 2, 2);
 
     // Uniform size for all 9 grid buttons: 64×26 px.
@@ -3389,7 +3395,8 @@ void VfoWidget::updateRxlToolTip()
     }
     QString tip = QStringLiteral(
         "RX Leveler: evens station loudness on a net. Left-click turns it on or off. "
-        "Right-click opens Setup, DSP, AGC/ALC. Separate from the TX Leveler.");
+        "Right-click opens mode, listening target and maximum boost. "
+        "Separate from the TX Leveler.");
     if (!RxLeveler::modeAllows(m_currentMode)) {
         tip += QStringLiteral(
             " Bypassed in this mode, so CW, FM, and digital audio stay unaltered.");
@@ -5608,6 +5615,148 @@ void VfoWidget::showNnrPopup(const QPoint& globalPos)
                 emit openNnrModelsRequested(sliceId);
                 popup->close();
             });
+    popup->showAt(globalPos);
+}
+
+void VfoWidget::showRxlPopup(const QPoint& globalPos)
+{
+    if (!m_slice) {
+        return;
+    }
+    auto* popup = new DspParamPopup(this);
+    const QPointer<SliceModel> slice = m_slice;
+
+    auto* modeLabel = new QLabel(QStringLiteral("Mode"), popup);
+    modeLabel->setStyleSheet(QStringLiteral(
+        "QLabel { color: #8090a0; font-size: 10px; font-weight: bold; }"));
+    popup->addWidget(modeLabel);
+
+    auto* modeRow = new QWidget(popup);
+    auto* modeLay = new QHBoxLayout(modeRow);
+    modeLay->setContentsMargins(0, 0, 0, 0);
+    auto* modes = new QButtonGroup(popup);
+    const QStringList names{QStringLiteral("Off"), QStringLiteral("Auto"),
+                            QStringLiteral("Custom")};
+    for (int i = 0; i < names.size(); ++i) {
+        auto* button = new QRadioButton(names.at(i), modeRow);
+        modes->addButton(button, i);
+        modeLay->addWidget(button);
+    }
+    if (QAbstractButton* current = modes->button(static_cast<int>(slice->rxLevelerMode()))) {
+        current->setChecked(true);
+    }
+    popup->addWidget(modeRow);
+    connect(modes, &QButtonGroup::idClicked, popup, [slice](int id) {
+        if (!slice) {
+            return;
+        }
+        if (id >= static_cast<int>(RxLevelerMode::Off)
+            && id <= static_cast<int>(RxLevelerMode::Custom)) {
+            slice->setRxLevelerMode(static_cast<RxLevelerMode>(id));
+        }
+    });
+
+    const QString sliderStyle = QStringLiteral(
+        "QSlider::groove:horizontal { height: 4px; background: #304050; border-radius: 2px; }"
+        "QSlider::handle:horizontal { width: 10px; height: 10px; margin: -3px 0;"
+        "  background: #c8d8e8; border-radius: 5px; }"
+        "QSlider::handle:horizontal:hover { background: #00b4d8; }");
+
+    struct Knob {
+        QLabel* label{nullptr};
+        QSlider* slider{nullptr};
+        QLabel* value{nullptr};
+    };
+    const auto addKnob = [&](const QString& name, const QString& tip,
+                             int min, int max, int now) {
+        Knob knob;
+        auto* row = new QWidget(popup);
+        auto* lay = new QHBoxLayout(row);
+        lay->setContentsMargins(0, 0, 0, 0);
+        knob.label = new QLabel(name, row);
+        knob.label->setMinimumWidth(112);
+        knob.label->setToolTip(tip);
+        knob.slider = new GuardedSlider(Qt::Horizontal, row);
+        knob.slider->setRange(min, max);
+        knob.slider->setValue(now);
+        knob.slider->setStyleSheet(sliderStyle);
+        knob.slider->setToolTip(tip);
+        knob.value = new QLabel(QString::number(now) + QStringLiteral(" dB"), row);
+        knob.value->setMinimumWidth(42);
+        knob.value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        knob.value->setToolTip(tip);
+        lay->addWidget(knob.label);
+        lay->addWidget(knob.slider, 1);
+        lay->addWidget(knob.value);
+        popup->addWidget(row);
+        return knob;
+    };
+
+    const Knob target = addKnob(
+        QStringLiteral("Listening target"),
+        QStringLiteral("Loudness the rider aims for, in dBFS. Used when Mode is Custom."),
+        static_cast<int>(RxLeveler::kTargetDbMin),
+        static_cast<int>(RxLeveler::kTargetDbMax),
+        slice->rxLevelerTargetDb());
+    const Knob boost = addKnob(
+        QStringLiteral("Maximum boost"),
+        QStringLiteral("Most gain the rider may add. Used when Mode is Custom."),
+        static_cast<int>(RxLeveler::kMaxBoostDbMin),
+        static_cast<int>(RxLeveler::kMaxBoostDbMax),
+        slice->rxLevelerMaxBoostDb());
+
+    const auto showDb = [](QLabel* label, int dB) {
+        label->setText(QString::number(dB) + QStringLiteral(" dB"));
+    };
+    connect(target.slider, &QSlider::valueChanged, popup, [slice, target, showDb](int dB) {
+        showDb(target.value, dB);
+        if (slice) {
+            slice->setRxLevelerTargetDb(dB);
+        }
+    });
+    connect(boost.slider, &QSlider::valueChanged, popup, [slice, boost, showDb](int dB) {
+        showDb(boost.value, dB);
+        if (slice) {
+            slice->setRxLevelerMaxBoostDb(dB);
+        }
+    });
+
+    const auto gate = [slice, target, boost]() {
+        const bool custom = slice && slice->rxLevelerMode() == RxLevelerMode::Custom;
+        target.slider->setEnabled(custom);
+        boost.slider->setEnabled(custom);
+    };
+    gate();
+
+    connect(slice.data(), &SliceModel::rxLevelerModeChanged, popup,
+            [modes, gate](RxLevelerMode mode) {
+        QSignalBlocker block(modes);
+        if (QAbstractButton* button = modes->button(static_cast<int>(mode))) {
+            button->setChecked(true);
+        }
+        gate();
+    });
+    connect(slice.data(), &SliceModel::rxLevelerTargetDbChanged, popup,
+            [target, showDb](int dB) {
+        QSignalBlocker block(target.slider);
+        target.slider->setValue(dB);
+        showDb(target.value, dB);
+    });
+    connect(slice.data(), &SliceModel::rxLevelerMaxBoostDbChanged, popup,
+            [boost, showDb](int dB) {
+        QSignalBlocker block(boost.slider);
+        boost.slider->setValue(dB);
+        showDb(boost.value, dB);
+    });
+
+    popup->finalize([this]() { emit openSetupRequested(); }, [slice]() {
+        if (!slice) {
+            return;
+        }
+        slice->setRxLevelerTargetDb(static_cast<int>(RxLeveler::kAutoTargetDb));
+        slice->setRxLevelerMaxBoostDb(static_cast<int>(RxLeveler::kAutoMaxBoostDb));
+        slice->setRxLevelerMode(RxLevelerMode::Off);
+    });
     popup->showAt(globalPos);
 }
 
