@@ -7,6 +7,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14: Roundtable panadapter overlay S-meter readings are 12 px
+//               in the same fixed font. The row line is 14 px so the taller
+//               glyphs are not clipped. Brian Sutton, AI-assisted via xAI Grok.
 //   2026-11-04: A fold's list in the inspector (overlay design D37). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector's words (overlay design D19, D22, D34, D35, D37):
@@ -1698,7 +1701,7 @@ constexpr int kCardNameGap = 2;
 constexpr int kCardNamesPad = 2;
 constexpr int kCardSmallLine = 12;
 constexpr int kCardCaption = 16;  // a 1 px rule, 3 px, a 12 px line
-constexpr int kCardRowLine = 13;
+constexpr int kCardRowLine = 14;  // 12 px reading, same 2 px leading as the board's 11/13
 constexpr int kCardMeter = 3;
 constexpr int kCardRowGap = 3;
 constexpr int kCardFoot = 13;
@@ -1973,7 +1976,7 @@ struct CardRowFonts {
     QFontMetrics ageMetrics;
     explicit CardRowFonts(const QPaintDevice* device)
         : call(cardFont(device, 11, QFont::DemiBold))
-        , value(cardFont(device, 11, QFont::DemiBold, true))
+        , value(cardFont(device, 12, QFont::DemiBold, true))
         , age(cardFont(device, 10, QFont::Medium, true))
         , valueMetrics(value, device)
         , ageMetrics(age, device)
