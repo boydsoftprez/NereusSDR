@@ -28,6 +28,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05  Corrections for review findings. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-14  The OVER lamp and the scope line share one full-scale
+//               threshold. Brian Sutton (W4KZO), AI-assisted via xAI Grok.
 // =================================================================
 
 #include <QtTest>
@@ -885,6 +887,69 @@ private slots:
         s.scope.assign(4000, 50.0f);
         applet.applySnapshotForTest(s);
         QCOMPARE(applet.lampTextForTest(), QStringLiteral("NO RF"));
+    }
+
+    void overLampMatchesTheFullScaleThreshold()
+    {
+        std::unique_ptr<RadioModel> core = makeCore();
+        SsbModMonitorApplet applet(core.get());
+        // 100 percent is 0 dBFS. The default warning is 1 dB under that,
+        // which is 100 * 10^(-1/20) percent of full scale.
+        applet.setOverThresholdDbForTest(-1);
+        const double line = 100.0 * std::pow(10.0, -1.0 / 20.0);
+        QVERIFY(std::fabs(applet.scopeOverPercentForTest() - line) < 1e-9);
+        QCOMPARE(applet.overThresholdDbfs(), -1.0);
+
+        SsbModulationAnalyzer::Snapshot at;
+        at.signalPresent = true;
+        at.peakHoldDbfs = -1.0;
+        at.peakHoldPct = line;
+        applet.applySnapshotForTest(at);
+        QCOMPARE(applet.lampTextForTest(), QStringLiteral("OVER"));
+
+        SsbModulationAnalyzer::Snapshot under = at;
+        under.peakHoldDbfs = -1.01;
+        applet.applySnapshotForTest(under);
+        QCOMPARE(applet.lampTextForTest(), QStringLiteral("ON"));
+
+        // No carrier-style latch: silence puts the lamp out even at full scale.
+        SsbModulationAnalyzer::Snapshot quiet;
+        quiet.signalPresent = false;
+        quiet.peakHoldDbfs = 0.0;
+        applet.applySnapshotForTest(quiet);
+        QCOMPARE(applet.lampTextForTest(), QStringLiteral("NO RF"));
+
+        // A tone at the threshold, measured by the analyzer, follows the same rule.
+        applet.setOverThresholdDbForTest(-1);
+        SsbModulationAnalyzer* tx = core->ssbModulationAnalyzer(static_cast<int>(applet.source()));
+        tx->setSampleRate(kFs);
+        const float level = static_cast<float>(std::pow(10.0, -1.0 / 20.0));
+        feedSteady(*tx, 0.5, level);
+        applet.tickForTest();
+        const auto measured = tx->snapshot(SsbModulationAnalyzer::Consumer::Core);
+        QVERIFY(std::fabs(measured.peakHoldDbfs - (-1.0)) < 0.02);
+        QVERIFY(std::fabs(measured.peakHoldPct - line) < 0.2);
+        const bool over = measured.signalPresent && measured.peakHoldDbfs >= applet.overThresholdDbfs();
+        QCOMPARE(applet.lampTextForTest() == QStringLiteral("OVER"), over);
+
+        // One decibel further down stays under the default line.
+        tx->reset();
+        feedSteady(*tx, 0.5, static_cast<float>(std::pow(10.0, -2.0 / 20.0)));
+        applet.tickForTest();
+        QCOMPARE(applet.lampTextForTest(), QStringLiteral("ON"));
+
+        // Moving the control moves the line, and the lamp follows the new level.
+        applet.setOverThresholdDbForTest(-6);
+        const double sixDown = 100.0 * std::pow(10.0, -6.0 / 20.0);
+        QVERIFY(std::fabs(applet.scopeOverPercentForTest() - sixDown) < 1e-6);
+        SsbModulationAnalyzer::Snapshot six;
+        six.signalPresent = true;
+        six.peakHoldDbfs = -6.0;
+        applet.applySnapshotForTest(six);
+        QCOMPARE(applet.lampTextForTest(), QStringLiteral("OVER"));
+        six.peakHoldDbfs = -6.2;
+        applet.applySnapshotForTest(six);
+        QCOMPARE(applet.lampTextForTest(), QStringLiteral("ON"));
     }
 
     void crestShowsNoValueWhileTheOverGoesOn()
