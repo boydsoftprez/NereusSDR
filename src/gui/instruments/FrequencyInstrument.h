@@ -84,6 +84,26 @@ public:
     void setOtherFrequency(double hz);
     void setActiveIsThis(bool active);
 
+    // ── RIT/XIT in der VFO-Zeile (2026-11-12) ────────────────────────
+    //
+    // Stellen kann man beide laengst: RxApplet hat seit S2.8 je eine
+    // Reihe aus Ein/Aus, "0", Minus/Plus und einem "+0 Hz"-Schild
+    // (RxApplet.cpp:926ff und 995ff), live am SliceModel. ABLESEN kann
+    // man sie nur DORT -- wer das RX-Applet nicht offen hat, sieht
+    // einen eingeschalteten Versatz nirgends. Genau das ist die Falle:
+    // RIT bleibt an, die grossen Ziffern zeigen weiter die VFO-Zahl,
+    // und der Empfang liegt dauerhaft daneben (SliceModel::
+    // effectiveRxFrequency addiert den Versatz still).
+    //
+    // Darum steht er hier, wo die Frequenz steht -- aber NUR solange
+    // er eingeschaltet ist. Ist beides aus, bleibt die Zeile genau so
+    // lang wie bisher und kostet keine Breite.
+    //
+    // Ein Setter fuer alle vier Werte, nicht vier: sie kommen immer
+    // zusammen aus demselben SliceModel und sollen die Zeile einmal
+    // neu bauen, nicht viermal.
+    void setRitXit(bool ritOn, int ritHz, bool xitOn, int xitHz);
+
     void setForm(Form f);
     Form form() const { return m_form; }
 
@@ -122,6 +142,12 @@ public:
     /// 2026-08-18 auseinander.
     QString groupedText() const;
 
+    /// Die VFO-Zeile als Klartext ("A 7.164.781  B 14.074.000", dahinter
+    /// der Versatz, falls eingeschaltet). Derselbe Dienst wie
+    /// groupedText() fuer die Ziffern: der Pruefstand soll die ZEILE
+    /// nageln, nicht das HTML, in dem sie zufaellig gerade steckt.
+    QString vfoRowText() const;
+
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
@@ -148,6 +174,8 @@ private:
     static int fittingDigitFontPx(int availableWidth);
     void refreshDigits();
     void refreshVfoRow();
+    /// Baut den Klartext der VFO-Zeile; refreshVfoRow() faerbt ihn.
+    QString buildVfoRowPlain() const;
     void beginEdit();
     void commitEdit();
 
@@ -157,6 +185,10 @@ private:
     double m_hz{0.0};
     double m_otherHz{0.0};
     bool   m_activeIsThis{true};
+    bool   m_ritOn{false};
+    int    m_ritHz{0};
+    bool   m_xitOn{false};
+    int    m_xitHz{0};
     // War Form::BandStrip. Betreiber 2026-08-30, zum Streifen unter der
     // Zahl (der seit heute erst sichtbar wurde): "MHZ Balken benätige
     // ich nie, löschen!" -- die blosse Zahl ist die Vorgabe, keine

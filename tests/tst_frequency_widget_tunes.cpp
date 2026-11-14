@@ -117,6 +117,59 @@ private slots:
                      "Das Widget zeigt %1, das Modell steht auf "
                      "14.225.000").arg(shown)));
     }
+
+    // ── Der Versatz muss den WEG bis zur Zeile gehen (2026-11-14) ──
+    //
+    // Die Zeile selbst ist in tst_frequency_instrument genagelt, die
+    // Quellenwahl ebenso. Was dort NICHT gefahren wird, ist das
+    // Stueck dazwischen: `FrequencyApplet::versatzNachziehen()` und
+    // die vier Signale, an denen es haengt. Genau dort war die Luecke
+    // -- gestellt werden RIT/XIT seit S2.8 im RX-Applet, und
+    // SliceModel::effectiveRxFrequency rechnet sie still mit, aber
+    // bei der Frequenz stand nichts davon.
+    //
+    // Die zweite Quelle (das fremde Geraet) laesst sich hier nicht
+    // fahren -- dafuer braeuchte es einen laufenden CAT-Weg. Sie ist
+    // ueber `ritXitFuerDieZeile()` abgedeckt, mit fuenf Faellen.
+    void einVersatzAnDerScheibeErreichtDieVfoZeile()
+    {
+        RadioModel model;
+        if (model.slices().isEmpty()) { model.addSlice(); }
+        for (int i = 0; i < 4; ++i) { QCoreApplication::processEvents(); }
+        SliceModel& slice = *model.slices().first();
+        slice.setFrequency(7'164'781.0);
+
+        FrequencyApplet applet(&model);
+        applet.bindSlice(&slice);
+        applet.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&applet, kFensterFrist));
+        for (int i = 0; i < 4; ++i) { QCoreApplication::processEvents(); }
+
+        auto* inst = applet.findChild<FrequencyInstrument*>();
+        QVERIFY(inst);
+        QVERIFY2(!inst->vfoRowText().contains(QStringLiteral("RIT")),
+                 "ausgeschaltet darf nichts dastehen");
+
+        // Erst der Wert, dann der Schalter -- ein Wert allein aendert
+        // nichts, genau wie im Empfang.
+        slice.setRitHz(-1200);
+        for (int i = 0; i < 6; ++i) { QCoreApplication::processEvents(); }
+        QVERIFY2(!inst->vfoRowText().contains(QStringLiteral("RIT")),
+                 "ein Wert ohne Schalter darf nicht erscheinen");
+
+        slice.setRitEnabled(true);
+        for (int i = 0; i < 6; ++i) { QCoreApplication::processEvents(); }
+        QVERIFY2(inst->vfoRowText().contains(QStringLiteral("RIT \u22121200")),
+                 qPrintable(QStringLiteral(
+                     "die Zeile zeigt \"%1\" -- der Versatz der Scheibe "
+                     "kommt nicht an").arg(inst->vfoRowText())));
+
+        // Und zurueck: ausgeschaltet verschwindet er wieder, sonst
+        // behauptet die Zeile einen Versatz, den es nicht mehr gibt.
+        slice.setRitEnabled(false);
+        for (int i = 0; i < 6; ++i) { QCoreApplication::processEvents(); }
+        QVERIFY(!inst->vfoRowText().contains(QStringLiteral("RIT")));
+    }
     // ── Die Optionen muessen ERREICHBAR sein (2026-10-31) ────────
     //
     // Der Betreiber: „frequency widget bitte mit option ausstatten,

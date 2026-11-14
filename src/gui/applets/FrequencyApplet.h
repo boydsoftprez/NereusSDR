@@ -138,6 +138,9 @@ private slots:
 
 private:
     void applyRowVisibility();
+    /// Holt den Versatz aus der gueltigen Quelle (Scheibe oder Geraet)
+    /// und schreibt ihn an die VFO-Zeile. Siehe core/RitXitAnzeige.h.
+    void versatzNachziehen();
     /// Das Menue der Anzeigeschalter. Eine Quelle fuer das Zahnrad im
     /// Panelkopf und fuer die rechte Maustaste.
     QMenu* baueOptionsMenue(QWidget* parent);

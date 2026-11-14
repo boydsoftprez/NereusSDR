@@ -26,6 +26,7 @@
 #include <QWheelEvent>
 
 #include "gui/instruments/FrequencyInstrument.h"
+#include "core/RitXitAnzeige.h"
 #include "FensterFrist.h"
 
 using namespace Longpath;
@@ -256,6 +257,183 @@ private slots:
         const int hNumber = w.sizeHint().height();
         w.setForm(FrequencyInstrument::Form::FlatArc);
         QVERIFY(w.sizeHint().height() > hNumber);
+    }
+
+    // ── RIT/XIT gehoeren dorthin, wo die Frequenz steht (2026-11-12) ──
+    //
+    // STELLEN kann der Betreiber beide laengst: RxApplet hat seit S2.8
+    // je eine Reihe aus Ein/Aus, "0", Minus/Plus und einem "+0 Hz"-
+    // Schild. ABLESEN konnte er sie nur dort. Wer das RX-Applet nicht
+    // offen hat -- und am 2026-11-12 hatte er es nicht --, sieht einen
+    // eingeschalteten Versatz NIRGENDS, waehrend
+    // SliceModel::effectiveRxFrequency ihn still addiert: der Empfang
+    // liegt daneben, die grossen Ziffern zeigen weiter die VFO-Zahl.
+    void offsetsStayInvisibleUntilSwitchedOn()
+    {
+        FrequencyInstrument w;
+        w.resize(400, 120);
+        w.setFrequency(7'164'781.0);
+        w.setOtherFrequency(14'074'000.0);
+
+        // Aus: die Zeile ist genau so lang wie eh und je. Ein Versatz,
+        // der ausgeschaltet dastuende, kostet Breite und sagt nichts.
+        QCOMPARE(w.vfoRowText(),
+                 QStringLiteral("A 7.164.781  B 14.074.000"));
+
+        // Ein Wert OHNE eingeschaltet zu sein aendert nichts -- genau
+        // so rechnet effectiveRxFrequency() auch.
+        w.setRitXit(false, 1200, false, 0);
+        QCOMPARE(w.vfoRowText(),
+                 QStringLiteral("A 7.164.781  B 14.074.000"));
+    }
+
+    void switchedOnOffsetsAreReadableWithTheirSign()
+    {
+        FrequencyInstrument w;
+        w.resize(400, 120);
+        w.setFrequency(7'164'781.0);
+        w.setOtherFrequency(14'074'000.0);
+
+        w.setRitXit(true, 1200, false, 0);
+        QCOMPARE(w.vfoRowText(),
+                 QStringLiteral("A 7.164.781  B 14.074.000  RIT +1200"));
+
+        // Minus als echtes Minuszeichen (U+2212), nicht als Bindestrich
+        // -- dieselbe Schreibweise wie die Striche der leeren Anzeige.
+        w.setRitXit(true, -250, false, 0);
+        QCOMPARE(w.vfoRowText(),
+                 QStringLiteral("A 7.164.781  B 14.074.000  RIT \u2212250"));
+
+        // Null MIT Vorzeichen: "RIT +0" heisst eingeschaltet und steht
+        // gerade auf null. Ein nacktes "0" heisst das nicht, und ein
+        // verschwundener Eintrag erst recht nicht -- das ist die ganze
+        // Falle, gegen die dieser Test steht.
+        w.setRitXit(true, 0, false, 0);
+        QCOMPARE(w.vfoRowText(),
+                 QStringLiteral("A 7.164.781  B 14.074.000  RIT +0"));
+    }
+
+    void ritAndXitAppearTogetherAndInThatOrder()
+    {
+        FrequencyInstrument w;
+        w.resize(400, 120);
+        w.setFrequency(7'164'781.0);
+        w.setOtherFrequency(14'074'000.0);
+
+        w.setRitXit(true, 1200, true, -500);
+        QCOMPARE(w.vfoRowText(),
+                 QStringLiteral("A 7.164.781  B 14.074.000"
+                                "  RIT +1200  XIT \u2212500"));
+
+        // Nur XIT: RIT faellt weg, XIT rutscht NICHT an dessen Platz
+        // mit RIT-Beschriftung.
+        w.setRitXit(false, 1200, true, -500);
+        QCOMPARE(w.vfoRowText(),
+                 QStringLiteral("A 7.164.781  B 14.074.000  XIT \u2212500"));
+    }
+
+    // Die gefaerbte Zeile ist dieselbe Zeile. Sonst koennte der
+    // Klartext oben gruen sein, waehrend am Bildschirm etwas anderes
+    // steht -- genau die Spaltung, gegen die groupedText() seit dem
+    // 2026-08-18 steht.
+    void thePaintedRowCarriesTheSameOffset()
+    {
+        FrequencyInstrument w;
+        w.resize(400, 120);
+        w.setFrequency(7'164'781.0);
+        w.setOtherFrequency(14'074'000.0);
+        w.setRitXit(true, 1200, false, 0);
+
+        QLabel* vfoRow = nullptr;
+        for (QLabel* l : w.findChildren<QLabel*>()) {
+            if (l->text().contains(QStringLiteral("RIT"))) { vfoRow = l; break; }
+        }
+        QVERIFY2(vfoRow, "Die VFO-Zeile zeigt den Versatz nicht an");
+
+        // Das HTML traegt den Wert und die helle Farbe des aktiven
+        // Zustands (kAmberText), nicht die matte der stillen Scheibe.
+        QVERIFY(vfoRow->text().contains(QStringLiteral("+1200")));
+        QVERIFY(vfoRow->text().contains(QStringLiteral("#d8a55f")));
+        // Und ausgeschaltet verschwindet er auch aus dem HTML.
+        w.setRitXit(false, 1200, false, 0);
+        QVERIFY(!vfoRow->text().contains(QStringLiteral("RIT")));
+    }
+
+    // ── Welche der ZWEI Quellen die Zeile zeigt ───────────────────────
+    //
+    // Longpath kennt RIT/XIT an zwei Stellen: der eigenen Scheibe und
+    // dem fremden Geraet (TS-590). Die Zeile kann nur eine zeigen --
+    // addieren waere falsch, das sind zwei verschiedene Empfaenger.
+    // Die Regel sitzt in core/RitXitAnzeige.h; hier wird sie genagelt.
+    void withoutACatPathTheSliceOwnsTheRow()
+    {
+        Ts590Cat::Zustand geraet;          // nichts gesagt: alles -1
+        const RitXitAnzeige a =
+            ritXitFuerDieZeile(false, geraet, true, 1200, false, 0);
+        QCOMPARE(a.ritAn, true);
+        QCOMPARE(a.ritHz, 1200);
+        QCOMPARE(a.xitAn, false);
+    }
+
+    void aLiveCatPathOwnsTheRow()
+    {
+        // Ein Versatzregister fuer BEIDE, wie im Geraet: steht XIT an,
+        // traegt es denselben Betrag wie RIT.
+        Ts590Cat::Zustand geraet;
+        geraet.ritAn = 0;
+        geraet.ritHz = -250;
+        geraet.xitAn = 1;
+
+        // Die Scheibe meldet etwas voellig anderes -- es darf nicht
+        // durchschlagen, sonst zeigt die Zeile einen Versatz, den der
+        // Empfaenger, den der Betreiber hoert, gar nicht hat.
+        const RitXitAnzeige a =
+            ritXitFuerDieZeile(true, geraet, true, 1200, false, 0);
+        QCOMPARE(a.ritAn, false);
+        QCOMPARE(a.xitAn, true);
+        QCOMPARE(a.xitHz, -250);
+    }
+
+    // Ein eingestellter, aber TOTER CAT-Weg ist keine Quelle. Sonst
+    // stuende nach dem Ausschalten des Funkgeraets dessen letzter
+    // Versatz weiter in der Zeile.
+    void aDeadCatPathDoesNotTakeOver()
+    {
+        Ts590Cat::Zustand geraet;
+        geraet.ritAn = 1;
+        geraet.ritHz = 900;
+        const RitXitAnzeige a =
+            ritXitFuerDieZeile(false, geraet, false, 0, false, 0);
+        QCOMPARE(a.ritAn, false);
+        QCOMPARE(a.ritHz, 0);
+    }
+
+    // Abwesenheit ist keine Aussage: solange das Geraet zu KEINER der
+    // beiden Stellen geantwortet hat (beide -1), ist es als Quelle
+    // nicht da -- auch bei offener Verbindung.
+    void aSilentRadioIsNotYetASource()
+    {
+        Ts590Cat::Zustand stumm;           // ritAn = xitAn = -1
+        const RitXitAnzeige a =
+            ritXitFuerDieZeile(true, stumm, true, 1200, false, 0);
+        QCOMPARE(a.ritAn, true);
+        QCOMPARE(a.ritHz, 1200);
+    }
+
+    // Und die halbe Antwort: der TS-590 laesst xitAn auf -1, wenn die
+    // IF-Antwort zu kurz war (Ts590Cat.h). Dann gilt RIT vom Geraet,
+    // und zu XIT behauptet die Zeile NICHTS -- weder an noch aus.
+    void anUnknownXitIsNotClaimedToBeOff()
+    {
+        Ts590Cat::Zustand halb;
+        halb.ritAn = 1;
+        halb.ritHz = 600;
+        halb.xitAn = -1;
+        const RitXitAnzeige a =
+            ritXitFuerDieZeile(true, halb, false, 0, true, 3000);
+        QCOMPARE(a.ritAn, true);
+        QCOMPARE(a.ritHz, 600);
+        QCOMPARE(a.xitAn, false);   // nicht gezeigt, nicht behauptet
     }
 };
 

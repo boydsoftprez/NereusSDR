@@ -11,6 +11,8 @@
 #include "models/SliceModel.h"
 
 #include "core/AppSettings.h"
+#include "core/CompanionRigController.h"
+#include "core/RitXitAnzeige.h"
 #include "gui/meters/MeterPoller.h"
 
 #include <QActionGroup>
@@ -82,6 +84,18 @@ FrequencyApplet::FrequencyApplet(RadioModel* model, QWidget* parent)
             this, [this](double hz) {
         if (m_slice) { m_slice->setFrequency(hz); }
     });
+
+    // Die zweite Versatzquelle: das fremde Geraet. Sie haengt am
+    // Modell, nicht an der Scheibe, darum hier und nicht in
+    // bindSlice(). Verbindung und Zustand beide -- faellt der CAT-Weg
+    // aus, muss die Zeile wieder die Scheibe zeigen, statt den letzten
+    // Geraetewert stehen zu lassen.
+    if (auto* rig = model ? model->companionRig() : nullptr) {
+        connect(rig, &CompanionRigController::catZustandGeaendert,
+                this, &FrequencyApplet::versatzNachziehen);
+        connect(rig, &CompanionRigController::verbindungGeaendert,
+                this, [this](bool) { versatzNachziehen(); });
+    }
 }
 
 void FrequencyApplet::bindSlice(SliceModel* slice)
@@ -94,7 +108,23 @@ void FrequencyApplet::bindSlice(SliceModel* slice)
     connect(slice, &SliceModel::frequencyChanged, this, [this](double hz) {
         m_instrument->setFrequency(hz);
     });
+    // RIT/XIT: zwei Quellen, ein Schild. Gestellt werden sie im
+    // RX-Applet (eigener Empfaenger) oder im CAT-Applet bzw. am Geraet
+    // selbst (TS-590) -- hier werden sie nur sichtbar, damit ein
+    // eingeschalteter Versatz auch dem auffaellt, der keines der beiden
+    // Applets offen hat. Welche Quelle gilt, entscheidet
+    // ritXitFuerDieZeile() (core/RitXitAnzeige.h).
+    connect(slice, &SliceModel::ritEnabledChanged, this,
+            &FrequencyApplet::versatzNachziehen);
+    connect(slice, &SliceModel::ritHzChanged,      this,
+            &FrequencyApplet::versatzNachziehen);
+    connect(slice, &SliceModel::xitEnabledChanged, this,
+            &FrequencyApplet::versatzNachziehen);
+    connect(slice, &SliceModel::xitHzChanged,      this,
+            &FrequencyApplet::versatzNachziehen);
+
     m_instrument->setFrequency(slice->frequency());
+    versatzNachziehen();
     syncFromModel();
 }
 
@@ -110,6 +140,22 @@ void FrequencyApplet::syncFromModel()
     m_instrument->setOtherFrequency(other ? other->frequency()
                                           : m_slice->frequency());
     m_instrument->setActiveIsThis(true);
+    versatzNachziehen();
+}
+
+void FrequencyApplet::versatzNachziehen()
+{
+    if (!m_slice) { return; }
+    auto* rig = m_model ? m_model->companionRig() : nullptr;
+    // Ein eingestellter, aber toter CAT-Weg darf die Scheibe nicht
+    // verdraengen -- darum catBetrieb() UND verbunden().
+    const bool catLaeuft = rig != nullptr && rig->catBetrieb() && rig->verbunden();
+    const Ts590Cat::Zustand leer{};
+    const RitXitAnzeige a = ritXitFuerDieZeile(
+        catLaeuft, rig ? rig->catZustand() : leer,
+        m_slice->ritEnabled(), m_slice->ritHz(),
+        m_slice->xitEnabled(), m_slice->xitHz());
+    m_instrument->setRitXit(a.ritAn, a.ritHz, a.xitAn, a.xitHz);
 }
 
 

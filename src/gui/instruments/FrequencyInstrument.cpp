@@ -451,10 +451,9 @@ QString FrequencyInstrument::groupedText() const
     return out;
 }
 
-void FrequencyInstrument::refreshVfoRow()
+QString FrequencyInstrument::buildVfoRowPlain() const
 {
-    // Beide Scheiben, die aktive hervorgehoben — Split ist damit ohne
-    // ein zweites Feld zu sehen.
+    // Beide Scheiben, dahinter der Versatz, falls einer laeuft.
     auto fmt = [](double hz) {
         const qint64 v = static_cast<qint64>(std::llround(hz));
         // Ohne Frequenz ein Strich, keine Nullen (Regel 7) — wie die
@@ -465,13 +464,69 @@ void FrequencyInstrument::refreshVfoRow()
             .arg((v / 1000) % 1000, 3, 10, QLatin1Char('0'))
             .arg(v % 1000, 3, 10, QLatin1Char('0'));
     };
+    QString out = QStringLiteral("A %1  B %2").arg(fmt(m_hz), fmt(m_otherHz));
+    // Vorzeichen immer, auch bei 0: "RIT +0" sagt "eingeschaltet, steht
+    // gerade auf null" — ein nacktes "0" sagt das nicht.
+    auto versatz = [](const QString& name, int hz) {
+        return QStringLiteral("  %1 %2%3")
+            .arg(name, hz < 0 ? QStringLiteral("\u2212") : QStringLiteral("+"))
+            .arg(std::abs(hz));
+    };
+    if (m_ritOn) { out += versatz(QStringLiteral("RIT"), m_ritHz); }
+    if (m_xitOn) { out += versatz(QStringLiteral("XIT"), m_xitHz); }
+    return out;
+}
+
+QString FrequencyInstrument::vfoRowText() const
+{
+    return buildVfoRowPlain();
+}
+
+void FrequencyInstrument::setRitXit(bool ritOn, int ritHz, bool xitOn, int xitHz)
+{
+    if (m_ritOn == ritOn && m_ritHz == ritHz
+        && m_xitOn == xitOn && m_xitHz == xitHz) {
+        return;
+    }
+    m_ritOn = ritOn;
+    m_ritHz = ritHz;
+    m_xitOn = xitOn;
+    m_xitHz = xitHz;
+    refreshVfoRow();
+}
+
+void FrequencyInstrument::refreshVfoRow()
+{
+    // Beide Scheiben, die aktive hervorgehoben — Split ist damit ohne
+    // ein zweites Feld zu sehen. Der Versatz haengt hinten dran und
+    // traegt dieselbe helle Farbe wie die aktive Scheibe: er ist ein
+    // eingeschalteter Zustand, der auffallen MUSS, sonst hoert der
+    // Betreiber daneben, ohne zu wissen warum.
     const QString on  = QString::fromLatin1(Style::kAmberText);
     const QString off = QString::fromLatin1(Style::kAmberDim);
-    m_vfoRow->setText(
-        QStringLiteral("<font color='%1'>A %2</font>"
-                       "&nbsp;&nbsp;<font color='%3'>B %4</font>")
-            .arg(m_activeIsThis ? on : off, fmt(m_hz),
-                 m_activeIsThis ? off : on, fmt(m_otherHz)));
+
+    const QString plain = buildVfoRowPlain();
+    // Der Klartext ist die eine Quelle; hier bekommt er nur Farbe.
+    // Getrennt wird an den zwei Leerzeichen, die buildVfoRowPlain
+    // zwischen die Stuecke setzt.
+    const QStringList teile = plain.split(QStringLiteral("  "), Qt::SkipEmptyParts);
+    QString html;
+    for (int i = 0; i < teile.size(); ++i) {
+        if (i > 0) { html += QStringLiteral("&nbsp;&nbsp;"); }
+        // Stueck 0 ist A, Stueck 1 ist B, alles danach ist Versatz.
+        const QString farbe = (i == 0) ? (m_activeIsThis ? on : off)
+                            : (i == 1) ? (m_activeIsThis ? off : on)
+                                       : on;
+        html += QStringLiteral("<font color='%1'>%2</font>")
+                    .arg(farbe, teile.at(i).toHtmlEscaped());
+    }
+    m_vfoRow->setText(html);
+    m_vfoRow->setToolTip(
+        (m_ritOn || m_xitOn)
+            ? tr("RIT shifts the receive frequency, XIT the transmit "
+                 "frequency. Set them in the RX applet, or — with a "
+                 "companion radio — in the CAT applet.")
+            : QString());
 }
 
 // ── Bedienen ─────────────────────────────────────────────────────────
