@@ -9545,7 +9545,7 @@ void SpectrumWidget::loadSpotDisplaySettings()
         QStringLiteral("Cluster"),       QStringLiteral("RBN"),
         QStringLiteral("WSJT-X"),        QStringLiteral("SpotCollector"),
         QStringLiteral("POTA"),          QStringLiteral("FreeDV"),
-        QStringLiteral("PSK"),
+        QStringLiteral("PSK"),           QStringLiteral("Roundtable"),
     };
     for (const QString& source : kSpotSources) {
         const QString key = QStringLiteral("SpotSourceVisible/") + source;

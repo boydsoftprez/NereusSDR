@@ -1,0 +1,26 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "welcome",
+    "station": "EZP4X6P5D6D3OPYK7LM2WUFLHK",
+    "kind": "core",
+    "callsign": null,
+    "grid": null,
+    "time": 1800000000000,
+    "limits": {
+      "readingsPerSecond": 2,
+      "presencePerSecond": 1,
+      "messagesPerMinute": 6,
+      "messagesPerHour": 60,
+      "messageCodePoints": 500,
+      "messageLines": 10,
+      "namesPerMinute": 10,
+      "reportsPerHour": 10,
+      "slices": 4,
+      "reads": 4
+    },
+    "mentions": []
+  },
+  "decodes": false
+}

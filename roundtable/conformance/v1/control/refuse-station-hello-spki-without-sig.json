@@ -1,0 +1,11 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "hello",
+    "v": 1,
+    "software": "NereusSDR",
+    "softwareVersion": "26.10.3",
+    "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w"
+  },
+  "decodes": false
+}

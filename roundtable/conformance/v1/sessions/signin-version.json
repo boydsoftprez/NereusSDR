@@ -1,0 +1,46 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "scripted",
+      "message": {
+        "type": "hello",
+        "v": 2,
+        "software": "NereusSDR",
+        "softwareVersion": "27.1.1",
+        "spki": "$key:a:spki",
+        "sig": "$hello:a:challenge:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "error",
+        "code": "version",
+        "reason": "This version of the Roundtable protocol is not supported. Updating the software may help.",
+        "about": "hello",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "expectClosed": "station",
+      "code": 4001
+    }
+  ]
+}

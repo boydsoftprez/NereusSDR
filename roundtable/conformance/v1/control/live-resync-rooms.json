@@ -1,0 +1,8 @@
+{
+  "from": "live",
+  "wire": {
+    "type": "resync",
+    "room": null
+  },
+  "decodes": true
+}

@@ -1,0 +1,40 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "welcome",
+    "station": "yb6crq5mjstuq2ng3sl2g7cb27",
+    "kind": "key",
+    "callsign": "W4XYZ",
+    "grid": "EM73",
+    "time": 1800000000000,
+    "limits": {
+      "readingsPerSecond": 2,
+      "presencePerSecond": 1,
+      "messagesPerMinute": 6,
+      "messagesPerHour": 60,
+      "messageCodePoints": 500,
+      "messageLines": 10,
+      "namesPerMinute": 10,
+      "reportsPerHour": 10,
+      "slices": 4,
+      "reads": 4
+    },
+    "mentions": [
+      {
+        "room": "usb-14212000",
+        "message": {
+          "id": 990,
+          "ref": "w2c6tz7e",
+          "callsign": "W4XYZ",
+          "nth": 1,
+          "t": 1800000003000,
+          "state": "shown",
+          "text": "KG4VCF are you copying K4ABC?",
+          "dbm": -91.5
+        }
+      }
+    ]
+  },
+  "decodes": true
+}

@@ -1,0 +1,13 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "posted",
+    "clientId": "c1",
+    "ok": "yes",
+    "msg": 981,
+    "code": null,
+    "reason": null
+  },
+  "decodes": false
+}

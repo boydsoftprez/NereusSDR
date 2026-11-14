@@ -1,0 +1,8 @@
+{
+  "from": "live",
+  "wire": {
+    "type": "watchBand",
+    "band": "all"
+  },
+  "decodes": true
+}

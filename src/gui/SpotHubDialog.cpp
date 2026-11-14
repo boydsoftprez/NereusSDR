@@ -160,6 +160,9 @@
 #include <QVBoxLayout>
 #include <QVector>
 
+#include "core/roundtable/RoundtableClient.h"
+#include "models/RoundtableHub.h"
+
 #include <cmath>
 #include <memory>
 #include <utility>
@@ -291,6 +294,7 @@ SpotHubDialog::SpotHubDialog(DxClusterClient* clusterClient,
     root->setContentsMargins(4, 4, 4, 4);
 
     auto* tabs = new QTabWidget;
+    m_tabs = tabs;
     tabs->setStyleSheet(QLatin1String(Style::kTabStyle));   // Haus-Reiter (Glas & Tiefe, 2026-09-18)
 
     // Tab order matches AetherSDR upstream
@@ -2611,6 +2615,7 @@ void SpotHubDialog::buildSpotListTab(QTabWidget* tabs)
         {"POT", "POTA"},
         {"FDR", "FreeDV"},
         {"PSK", "PSK"},
+        {"RT",  "Roundtable"},   // 2026-11-14
     };
     auto* srcRow = new QHBoxLayout;
     srcRow->setSpacing(3);
@@ -3631,6 +3636,7 @@ void SpotHubDialog::buildDisplayTab(QTabWidget* tabs)
         {QStringLiteral("POTA"),          QStringLiteral("POTA")},
         {QStringLiteral("FreeDV"),        QStringLiteral("FreeDV")},
         {QStringLiteral("PSK"),           QStringLiteral("PSK Reporter")},
+        {QStringLiteral("Roundtable"),    QStringLiteral("Roundtable")},
     };
     auto* visGrid = new QGridLayout;
     visGrid->setColumnStretch(1, 1);
@@ -3832,6 +3838,182 @@ void SpotHubDialog::setHoveredPanadapterSpot(int spotIdx)
         }
         return;
     }
+}
+
+
+// ── Roundtable (2026-11-14) ──────────────────────────────────────────
+//
+// Upstream NereusSDR fragt beim ersten Mal in einer eigenen Karte
+// (RoundtablePanel, "Go live" / "Stay hidden"); Longpath stellt dieselbe
+// Frage hier, im Spot Hub, gebaut wie die anderen Quellen-Reiter. Vor der
+// Antwort geht nichts hinaus — nicht einmal eine Verbindung
+// (RoundtableHub.h). Die Wahl ist spaeter umkehrbar.
+//
+// Gestaltung vorlaeufig: dieselben Bausteine wie der POTA-Reiter, keine
+// neue Farbe ausser der Vorgabe der Spots (Style::kSpotRoundtableDefault).
+void SpotHubDialog::attachRoundtable(RoundtableHub* hub)
+{
+    if (hub == nullptr || m_roundtable != nullptr || m_tabs == nullptr) {
+        return;
+    }
+    m_roundtable = hub;
+
+    auto* page = new QWidget;
+    page->setObjectName(QStringLiteral("roundtableTab"));
+    auto* layout = new QVBoxLayout(page);
+    layout->setSpacing(8);
+
+    auto* group = new QGroupBox(tr("Roundtable"));
+    auto* groupLayout = new QVBoxLayout(group);
+    groupLayout->setSpacing(6);
+
+    auto* about = new QLabel(tr(
+        "Roundtable shows who else is on your frequency, and lets them see you. "
+        "Live, your callsign, locator, frequency and mode become public on the "
+        "Roundtable server. Hidden, Longpath only reads. Nothing is sent until you "
+        "choose, and you can change your mind at any time."));
+    about->setWordWrap(true);
+    groupLayout->addWidget(about);
+
+    auto* grid = new QGridLayout;
+    grid->setColumnStretch(1, 1);
+    grid->addWidget(new QLabel(tr("Server:")), 0, 0);
+    m_rtServerLabel = new QLabel;
+    m_rtServerLabel->setObjectName(QStringLiteral("roundtableServerLabel"));
+    m_rtServerLabel->setStyleSheet(kStatusIdleStyle);
+    grid->addWidget(m_rtServerLabel, 0, 1);
+    grid->addWidget(new QLabel(tr("Station:")), 1, 0);
+    m_rtCallLabel = new QLabel;
+    m_rtCallLabel->setObjectName(QStringLiteral("roundtableCallLabel"));
+    grid->addWidget(m_rtCallLabel, 1, 1);
+    groupLayout->addLayout(grid);
+
+    auto* answerRow = new QHBoxLayout;
+    m_rtGoLiveBtn = new QPushButton(tr("Go live"));
+    m_rtGoLiveBtn->setObjectName(QStringLiteral("roundtableGoLiveBtn"));
+    m_rtGoLiveBtn->setStyleSheet(kStartBtnStyle);
+    connect(m_rtGoLiveBtn, &QPushButton::clicked, this, [this] {
+        if (m_roundtable) {
+            m_roundtable->answerFirstRun(true);
+        }
+    });
+    answerRow->addWidget(m_rtGoLiveBtn);
+    m_rtStayHiddenBtn = new QPushButton(tr("Stay hidden"));
+    m_rtStayHiddenBtn->setObjectName(QStringLiteral("roundtableStayHiddenBtn"));
+    m_rtStayHiddenBtn->setStyleSheet(kStartBtnStyle);
+    connect(m_rtStayHiddenBtn, &QPushButton::clicked, this, [this] {
+        if (m_roundtable) {
+            m_roundtable->answerFirstRun(false);
+        }
+    });
+    answerRow->addWidget(m_rtStayHiddenBtn);
+    m_rtHiddenToggleBtn = new QPushButton;
+    m_rtHiddenToggleBtn->setObjectName(QStringLiteral("roundtableHiddenToggleBtn"));
+    m_rtHiddenToggleBtn->setStyleSheet(kStartBtnStyle);
+    connect(m_rtHiddenToggleBtn, &QPushButton::clicked, this, [this] {
+        if (m_roundtable) {
+            m_roundtable->setHidden(!m_roundtable->hidden());
+        }
+    });
+    answerRow->addWidget(m_rtHiddenToggleBtn);
+    answerRow->addStretch();
+    groupLayout->addLayout(answerRow);
+
+    auto* stateRow = new QHBoxLayout;
+    m_rtAutoStartBtn = new QPushButton;
+    m_rtAutoStartBtn->setObjectName(QStringLiteral("roundtableAutoStartBtn"));
+    m_rtAutoStartBtn->setCheckable(true);
+    m_rtAutoStartBtn->setStyleSheet(kAutoToggleStyle);
+    connect(m_rtAutoStartBtn, &QPushButton::toggled, this, [this](bool on) {
+        if (m_roundtable && m_roundtable->enabled() != on) {
+            m_roundtable->setEnabled(on);
+        }
+        refreshRoundtableTab();
+    });
+    stateRow->addWidget(m_rtAutoStartBtn);
+    m_rtStatusLabel = new QLabel;
+    m_rtStatusLabel->setObjectName(QStringLiteral("roundtableStatusLabel"));
+    m_rtStatusLabel->setWordWrap(true);
+    stateRow->addWidget(m_rtStatusLabel, 1);
+    groupLayout->addLayout(stateRow);
+
+    layout->addWidget(group);
+
+    auto* colorRow = new QHBoxLayout;
+    colorRow->addStretch();
+    auto* colorLabel = new QLabel(tr("Spot Color:"));
+    colorLabel->setStyleSheet(kStatusIdleStyle);
+    colorRow->addWidget(colorLabel);
+    const auto currentColor = [] {
+        return QColor(AppSettings::instance()
+                          .value(QStringLiteral("Roundtable/SpotColor"),
+                                 QString::fromLatin1(Style::kSpotRoundtableDefault))
+                          .toString());
+    };
+    auto* colorBtn = new QPushButton;
+    colorBtn->setObjectName(QStringLiteral("roundtableColorBtn"));
+    colorBtn->setFixedSize(18, 18);
+    colorBtn->setStyleSheet(swatchStyle(currentColor()));
+    connect(colorBtn, &QPushButton::clicked, this, [this, colorBtn, currentColor] {
+        const QColor c = QColorDialog::getColor(currentColor(), this, tr("Roundtable Spot Color"),
+                                                QColorDialog::DontUseNativeDialog);
+        if (c.isValid()) {
+            colorBtn->setStyleSheet(swatchStyle(c));
+            AppSettings::instance().setValue(QStringLiteral("Roundtable/SpotColor"), c.name());
+            AppSettings::instance().save();
+        }
+    });
+    colorRow->addWidget(colorBtn);
+    layout->addLayout(colorRow);
+    layout->addStretch();
+
+    int at = m_tabs->count();
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (m_tabs->tabText(i) == QLatin1String("Spot List")) {
+            at = i;
+            break;
+        }
+    }
+    m_tabs->insertTab(at, page, tr("Roundtable"));
+
+    connect(hub, &RoundtableHub::statusChanged, this, &SpotHubDialog::refreshRoundtableTab);
+    // Neues Rufzeichen oder neuer Locator aus dem Settings-Reiter.
+    connect(this, &SpotHubDialog::settingsChanged, hub, &RoundtableHub::reloadSettings);
+    refreshRoundtableTab();
+}
+
+void SpotHubDialog::refreshRoundtableTab()
+{
+    if (m_roundtable == nullptr || m_rtStatusLabel == nullptr) {
+        return;
+    }
+    const bool answered = m_roundtable->answered();
+    m_rtGoLiveBtn->setVisible(!answered);
+    m_rtStayHiddenBtn->setVisible(!answered);
+    m_rtHiddenToggleBtn->setVisible(answered);
+    m_rtHiddenToggleBtn->setText(m_roundtable->hidden() ? tr("Go live") : tr("Go hidden"));
+
+    const QString call = m_roundtable->callsign();
+    if (call.isEmpty()) {
+        m_rtCallLabel->setText(tr("Enter your callsign in the Settings tab first."));
+    } else {
+        const QString grid = m_roundtable->grid();
+        m_rtCallLabel->setText(grid.isEmpty() ? call : tr("%1, locator %2").arg(call, grid));
+    }
+    m_rtServerLabel->setText(m_roundtable->client()->serverUrl().host());
+
+    const bool on = m_roundtable->enabled();
+    {
+        const QSignalBlocker block(m_rtAutoStartBtn);
+        m_rtAutoStartBtn->setChecked(on);
+    }
+    m_rtAutoStartBtn->setText(on ? tr("Auto-Start: ON") : tr("Auto-Start: OFF"));
+
+    m_rtStatusLabel->setText(m_roundtable->statusText());
+    const bool live =
+        m_roundtable->client()->linkState() == RoundtableClient::LinkState::Live;
+    m_rtStatusLabel->setStyleSheet(live ? QString::fromLatin1(kStatusActiveStyle)
+                                        : kStatusIdleStyle);
 }
 
 } // namespace Longpath

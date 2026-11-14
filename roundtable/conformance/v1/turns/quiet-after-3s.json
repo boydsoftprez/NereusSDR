@@ -1,0 +1,198 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {
+    "stations": [
+      {
+        "name": "A",
+        "callsign": "K4ABC",
+        "grid": "EM73"
+      },
+      {
+        "name": "B",
+        "callsign": "KG4VCF",
+        "grid": "EM73tu"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": false
+      }
+    },
+    {
+      "advanceMs": 1999
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 11000,
+          "endMs": null
+        }
+      ]
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 11000,
+          "endMs": 12000,
+          "readings": {
+            "B": 2
+          }
+        }
+      ]
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 11000,
+          "endMs": 12000
+        },
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 16000,
+          "endMs": null
+        }
+      ]
+    },
+    {
+      "advanceMs": 2000
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 2999
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 11000,
+          "endMs": 12000
+        },
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 16000,
+          "endMs": null,
+          "readings": {
+            "B": 2
+          }
+        }
+      ]
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 11000,
+          "endMs": 12000
+        },
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 16000,
+          "endMs": 18000,
+          "readings": {
+            "B": 2
+          }
+        }
+      ]
+    }
+  ]
+}

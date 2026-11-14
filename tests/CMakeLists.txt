@@ -5629,6 +5629,37 @@ target_link_libraries(tst_whisper_server_launcher PRIVATE Qt6::Network)
 #    an einer festen Schwelle (im Pileup lief jeder Abschnitt bis zum
 #    20-s-Deckel), und die Sprache hinter dem Zahnrad der Mitschrift. --
 longpath_add_test(tst_asr_rauschboden)
+# ── Roundtable (2026-11-14): Draht und Stationsschluessel gegen Upstreams
+#    Pruefdaten (roundtable/conformance/v1, byte fuer byte uebernommen).
+longpath_add_test(tst_roundtable_wire)
+if(TARGET tst_roundtable_wire)
+    target_compile_definitions(tst_roundtable_wire PRIVATE
+        LONGPATH_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+endif()
+longpath_add_test(tst_roundtable_signal_floor)
+# Der Client gegen einen Schein-Server auf 127.0.0.1, mit Schein-Uhren.
+# Nichts verlaesst den Rechner.
+longpath_add_test(tst_roundtable_client)
+if(TARGET tst_roundtable_client)
+    target_compile_definitions(tst_roundtable_client PRIVATE
+        LONGPATH_ROUNDTABLE_CONFORMANCE_DIR="${CMAKE_SOURCE_DIR}/roundtable/conformance/v1")
+endif()
+longpath_add_test(tst_roundtable_hub)
+# Der ganze Weg gegen Upstreams Referenzserver auf 127.0.0.1. Braucht
+# Python mit websockets + cryptography (LONGPATH_ROUNDTABLE_PYTHON),
+# sonst uebersprungen.
+longpath_add_test(tst_roundtable_e2e)
+if(TEST tst_roundtable_e2e)
+    set_tests_properties(tst_roundtable_e2e PROPERTIES
+        ENVIRONMENT "LONGPATH_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+endif()
+# Der Reiter im Spot Hub: Erstfrage, Umschalter, Auto-Start.
+longpath_add_test(tst_roundtable_spothub)
+longpath_add_test(tst_roundtable_key)
+if(TEST tst_roundtable_key)
+    set_tests_properties(tst_roundtable_key PROPERTIES
+        ENVIRONMENT "LONGPATH_SOURCE_DIR=${CMAKE_SOURCE_DIR}")
+endif()
 longpath_add_test(tst_asr_sprache_menue)
 longpath_add_test(tst_pan_options_button)
 longpath_add_test(tst_window_widgets)

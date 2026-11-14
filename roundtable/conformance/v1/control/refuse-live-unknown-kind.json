@@ -1,0 +1,8 @@
+{
+  "from": "live",
+  "wire": {
+    "type": "subscribe",
+    "room": "usb-14212000"
+  },
+  "decodes": false
+}

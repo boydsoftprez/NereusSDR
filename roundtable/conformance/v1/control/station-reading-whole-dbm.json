@@ -1,0 +1,11 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "reading",
+    "slice": 2,
+    "dbm": -73,
+    "t": 1800000000123,
+    "present": false
+  },
+  "decodes": true
+}

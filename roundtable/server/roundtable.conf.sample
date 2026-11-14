@@ -1,0 +1,48 @@
+# NereusSDR Roundtable server configuration.
+#
+# Every key is optional; each is shown here with its default. An unknown
+# section or key stops the server from starting, so a misspelled key never
+# leaves a default in force. The server never writes this file.
+
+[roundtable]
+# Loopback only: Caddy terminates TLS and forwards by path. Several
+# addresses go on one line, separated by spaces; IPv6 in brackets.
+ws_listen = 127.0.0.1:8720 [::1]:8720
+http_listen = 127.0.0.1:8721 [::1]:8721
+# The host name stations sign at sign-in. Lower case, no port.
+public_host = roundtable.nereussdr.com
+database = /var/lib/nereus-roundtable/roundtable.db
+backup_dir = /var/lib/nereus-roundtable/backup
+static_dir = /opt/nereus-roundtable/static
+# Station ids of the Roundtable helpers, separated by spaces.
+helpers =
+# Peers whose X-Forwarded-For header is believed.
+trusted_proxies = 127.0.0.1 ::1
+# debug, info, warning or error. Standard error only.
+log_level = info
+
+[limits]
+# Per station unless the name says otherwise.
+readings_per_second = 2
+presence_per_second = 1
+messages_per_minute = 6
+messages_per_hour = 60
+message_code_points = 500
+message_lines = 10
+names_per_minute = 10
+reports_per_hour = 10
+slices = 4
+reads = 4
+station_connections_per_group = 8
+keys_per_group_per_day = 3
+api_requests_per_minute = 60
+live_sockets_per_group = 4
+live_sockets_total = 500
+watches_per_live_socket = 4
+inbound_message_bytes = 16384
+outbound_queue_messages = 1024
+outbound_queue_bytes = 4194304
+hello_timeout_ms = 10000
+# 0 turns the server's pings off.
+ping_interval_ms = 20000
+silence_close_ms = 45000

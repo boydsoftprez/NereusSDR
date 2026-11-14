@@ -1,0 +1,8 @@
+{
+  "from": "live",
+  "wire": {
+    "type": "resync",
+    "room": "digu-14074000"
+  },
+  "decodes": true
+}

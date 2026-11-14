@@ -1,0 +1,10 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "weblinkOk",
+    "url": "http://roundtable.nereussdr.com/signin?t=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "expires": 1800000300000
+  },
+  "decodes": false
+}

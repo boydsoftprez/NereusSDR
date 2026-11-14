@@ -377,6 +377,7 @@ warren@wpratt.com
 // Phase 3F Sub-Epic G T4: bench-minimum Diversity dialog (Tools menu).
 #include "DiversityDialog.h"
 #include "models/SpotModel.h"
+#include "models/RoundtableHub.h"
 #include "models/NotchModel.h"
 #include "models/FreeDVStationModel.h"
 #include "core/DxccColorProvider.h"
@@ -1358,6 +1359,9 @@ MainWindow::MainWindow(QWidget* parent)
             activeSpectrumWidget()->loadSpotDisplaySettings();
         }
         if (m_radioModel) {
+            if (RoundtableHub* rt = m_radioModel->roundtableHub()) {
+                rt->setDefaultSpotColor(QString::fromLatin1(Style::kSpotRoundtableDefault));
+            }
             m_radioModel->restoreSpotClientAutoStartState();
         }
     });
@@ -20591,6 +20595,8 @@ void MainWindow::openSpotHub()
         connect(m_spotHubDialog.data(), &QDialog::finished, this, [this]() {
             noteWindowClosedByOperator(QStringLiteral("WinSpotHub"));
         });
+        // Roundtable (2026-11-14): der Reiter mit der Erstfrage.
+        m_spotHubDialog->attachRoundtable(m_radioModel->roundtableHub());
         // Bridge spotsClearedAll (Display tab's "Clear All Spots" button)
         // to SpotModel::clear so the global QShortcut and the dialog
         // button share one truth-source.

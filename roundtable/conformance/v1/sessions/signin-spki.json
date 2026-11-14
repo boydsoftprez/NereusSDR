@@ -1,0 +1,66 @@
+{
+  "runs": [
+    "service",
+    "core"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "hello",
+        "v": 1,
+        "software": "$string:software",
+        "softwareVersion": "$string:softwareVersion",
+        "spki": "$key:a:spki",
+        "sig": "$hello:a:challenge:signed"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "welcome",
+        "station": "$key:a:id",
+        "kind": "core",
+        "callsign": null,
+        "grid": null,
+        "time": 1800000000000,
+        "limits": {
+          "readingsPerSecond": 2,
+          "presencePerSecond": 1,
+          "messagesPerMinute": 6,
+          "messagesPerHour": 60,
+          "messageCodePoints": 500,
+          "messageLines": 10,
+          "namesPerMinute": 10,
+          "reportsPerHour": 10,
+          "slices": 4,
+          "reads": 4
+        },
+        "mentions": []
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "rooms",
+        "gen": 1,
+        "rooms": []
+      }
+    }
+  ]
+}

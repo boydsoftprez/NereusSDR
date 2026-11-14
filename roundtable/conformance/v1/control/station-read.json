@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "read",
+    "room": "lsb-7188000"
+  },
+  "decodes": true
+}

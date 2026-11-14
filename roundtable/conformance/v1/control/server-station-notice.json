@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "notice",
+    "code": "blocked",
+    "text": "A Roundtable helper has blocked this station from posting and naming turns.",
+    "until": 1800086400000
+  },
+  "decodes": true
+}

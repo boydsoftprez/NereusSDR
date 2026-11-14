@@ -1,0 +1,5 @@
+{
+  "from": "station",
+  "wireText": "{\"type\":\"presence\",\"callsign\":\"KG4VCF\",\"grid\":\"EM73\",\"grid\":\"FN42\",\"atRadio\":true,\"slices\":[]}",
+  "decodes": false
+}

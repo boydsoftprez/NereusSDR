@@ -1,0 +1,297 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {
+    "stations": [
+      {
+        "name": "A",
+        "callsign": "K4ABC",
+        "grid": "EM73"
+      },
+      {
+        "name": "B",
+        "callsign": "KG4VCF",
+        "grid": "EM73tu"
+      },
+      {
+        "name": "C",
+        "callsign": "W4XYZ",
+        "grid": "FM18"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "C",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14211900,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "reading": {
+        "station": "C",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 12000,
+          "readings": {
+            "B": 1,
+            "C": 1
+          }
+        },
+        {
+          "kind": "doubled",
+          "talkers": [
+            "A",
+            "B"
+          ],
+          "startMs": 12000,
+          "endMs": null
+        }
+      ]
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "C",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "C",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 12000,
+          "readings": {
+            "B": 1,
+            "C": 1
+          }
+        },
+        {
+          "kind": "doubled",
+          "talkers": [
+            "A",
+            "B"
+          ],
+          "startMs": 12000,
+          "endMs": 15000,
+          "readings": {
+            "C": 2
+          }
+        },
+        {
+          "kind": "talking",
+          "talker": "B",
+          "startMs": 15000,
+          "endMs": null
+        }
+      ]
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "C",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "reading": {
+        "station": "A",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 3000
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": 12000,
+          "readings": {
+            "B": 1,
+            "C": 1
+          }
+        },
+        {
+          "kind": "doubled",
+          "talkers": [
+            "A",
+            "B"
+          ],
+          "startMs": 12000,
+          "endMs": 15000,
+          "readings": {
+            "C": 2
+          }
+        },
+        {
+          "kind": "talking",
+          "talker": "B",
+          "startMs": 15000,
+          "endMs": 17000,
+          "readings": {
+            "A": 1,
+            "C": 1
+          }
+        }
+      ]
+    }
+  ]
+}

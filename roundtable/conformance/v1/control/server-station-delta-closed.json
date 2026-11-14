@@ -1,0 +1,15 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "delta",
+    "room": "lsb-7188000",
+    "gen": 9,
+    "members": [],
+    "left": [],
+    "turns": [],
+    "messages": [],
+    "closed": true
+  },
+  "decodes": true
+}

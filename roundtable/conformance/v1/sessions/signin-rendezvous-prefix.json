@@ -1,0 +1,46 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "scripted",
+      "message": {
+        "type": "hello",
+        "v": 1,
+        "software": "$string:software",
+        "softwareVersion": "$string:softwareVersion",
+        "spki": "$key:a:spki",
+        "sig": "$hello:a:challenge:rendezvousPrefix"
+      }
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "error",
+        "code": "bad-sign-in",
+        "reason": "Roundtable did not accept this station's key or signature.",
+        "about": "hello",
+        "retryAfterMs": 0
+      }
+    },
+    {
+      "expectClosed": "station",
+      "code": 4001
+    }
+  ]
+}

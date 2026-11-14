@@ -339,6 +339,7 @@ warren@wpratt.com
 #include "core/DxSpot.h"
 #include "core/FreeDVStation.h"
 #include "models/SpotModel.h"
+#include "models/RoundtableHub.h"
 #include "models/SpotTableModel.h"  // for SpotTableModel::extractMode (mode guess)
 #include "models/FreeDVStationModel.h"
 #include "models/RxDecodeModel.h"
@@ -2094,6 +2095,12 @@ RadioModel::RadioModel(QObject* parent)
     auto& s = AppSettings::instance();
 
     m_spotModel           = std::make_unique<SpotModel>(this);
+    // Roundtable (2026-11-14): verbindet erst, wenn restoreSpotClient-
+    // AutoStartState es startet, und auch dann nichts vor der Antwort auf
+    // die Erstfrage (RoundtableHub.h).
+    m_roundtableHub       = std::make_unique<RoundtableHub>(this);
+    m_roundtableHub->attachSpots(m_spotModel.get());
+    m_roundtableHub->attachRadio(this);
     // Das Begleitgeraet. Legt beim Anlegen den Transverter-Versatz als
     // prozessweite Fassung ab (die Anzeige liest ihn dort), verbindet
     // aber nicht -- das tut MainWindow, wenn die Oberflaeche steht.
@@ -3062,6 +3069,13 @@ void RadioModel::restoreSpotClientAutoStartState()
         qCInfo(lcDsp) << "Sandbox: die Spot-Dienste starten nicht von "
                          "selbst (LONGPATH_CONFIG_DIR ist gesetzt)";
         return;
+    }
+
+    // Roundtable (2026-11-14): Roundtable/AutoStart, Vorgabe an wie bei
+    // Upstream. Vor der Antwort auf die Erstfrage oeffnet der Client
+    // trotzdem keine Verbindung.
+    if (m_roundtableHub) {
+        m_roundtableHub->reloadSettings();
     }
 
     auto& s = AppSettings::instance();

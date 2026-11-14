@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "hello",
+    "v": 1,
+    "software": "NereusSDR",
+    "softwareVersion": "26.10.3"
+  },
+  "decodes": false
+}

@@ -1,0 +1,135 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {},
+  "steps": [
+    {
+      "connect": "station",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge1"
+      }
+    },
+    {
+      "connect": "station2",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station2",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge2"
+      }
+    },
+    {
+      "connect": "station3",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station3",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge3"
+      }
+    },
+    {
+      "connect": "station4",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station4",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge4"
+      }
+    },
+    {
+      "connect": "station5",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station5",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge5"
+      }
+    },
+    {
+      "connect": "station6",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station6",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge6"
+      }
+    },
+    {
+      "connect": "station7",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station7",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge7"
+      }
+    },
+    {
+      "connect": "station8",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station8",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge8"
+      }
+    },
+    {
+      "connect": "station9",
+      "address": "192.0.2.7"
+    },
+    {
+      "from": "server",
+      "to": "station9",
+      "message": {
+        "type": "error",
+        "code": "rate",
+        "reason": "Too many connections from this network. Try again shortly.",
+        "about": null,
+        "retryAfterMs": 5000
+      }
+    },
+    {
+      "expectClosed": "station9",
+      "code": 1013
+    },
+    {
+      "connect": "station10",
+      "address": "192.0.2.8"
+    },
+    {
+      "from": "server",
+      "to": "station10",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge10"
+      }
+    }
+  ]
+}

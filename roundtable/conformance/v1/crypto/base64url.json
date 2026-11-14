@@ -1,0 +1,80 @@
+{
+  "description": "Strict base64url (link document section 3.4): only A-Z a-z 0-9 - _, no padding, a length that is not 1 mod 4, and the unused low bits of the last character zero.",
+  "cases": [
+    {
+      "text": "",
+      "valid": true,
+      "bytesHex": ""
+    },
+    {
+      "text": "AA",
+      "valid": true,
+      "bytesHex": "00"
+    },
+    {
+      "text": "AAE",
+      "valid": true,
+      "bytesHex": "0001"
+    },
+    {
+      "text": "__79",
+      "valid": true,
+      "bytesHex": "fffefd"
+    },
+    {
+      "text": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "valid": true,
+      "bytesHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    {
+      "text": "AA==",
+      "valid": false,
+      "why": "padding"
+    },
+    {
+      "text": "AAE=",
+      "valid": false,
+      "why": "padding"
+    },
+    {
+      "text": "AB",
+      "valid": false,
+      "why": "unused bits not zero"
+    },
+    {
+      "text": "AAB",
+      "valid": false,
+      "why": "unused bits not zero"
+    },
+    {
+      "text": "A",
+      "valid": false,
+      "why": "length 1 mod 4"
+    },
+    {
+      "text": "AAAAA",
+      "valid": false,
+      "why": "length 1 mod 4"
+    },
+    {
+      "text": "+/8",
+      "valid": false,
+      "why": "standard alphabet, not url-safe"
+    },
+    {
+      "text": "AA A",
+      "valid": false,
+      "why": "a space"
+    },
+    {
+      "text": "AA\n",
+      "valid": false,
+      "why": "a line end"
+    },
+    {
+      "text": "ÀA",
+      "valid": false,
+      "why": "a character outside the alphabet"
+    }
+  ]
+}

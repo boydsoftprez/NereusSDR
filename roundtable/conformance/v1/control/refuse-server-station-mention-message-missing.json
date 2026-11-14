@@ -1,0 +1,9 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "mention",
+    "room": "usb-14212000"
+  },
+  "decodes": false
+}

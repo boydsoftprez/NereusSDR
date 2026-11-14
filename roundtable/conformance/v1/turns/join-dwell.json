@@ -1,0 +1,221 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {
+    "stations": [
+      {
+        "name": "A",
+        "callsign": "K4ABC",
+        "grid": "EM73"
+      },
+      {
+        "name": "B",
+        "callsign": "KG4VCF",
+        "grid": "EM73tu"
+      },
+      {
+        "name": "C",
+        "callsign": "W4XYZ",
+        "grid": "FM18"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 5000
+    },
+    {
+      "reading": {
+        "station": "A",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 4999
+    },
+    {
+      "expectMembers": {
+        "A": "joining",
+        "B": "joining",
+        "C": "absent"
+      }
+    },
+    {
+      "advanceMs": 1
+    },
+    {
+      "expectMembers": {
+        "A": "member",
+        "B": "joining",
+        "C": "absent"
+      }
+    },
+    {
+      "expectTurns": []
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "A",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 11000,
+          "endMs": null
+        }
+      ]
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "expectMembers": {
+        "A": "member",
+        "B": "member",
+        "C": "absent"
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 11000,
+          "endMs": 12000,
+          "readings": {
+            "A": 1
+          }
+        },
+        {
+          "kind": "talking",
+          "talker": "B",
+          "startMs": 12000,
+          "endMs": null
+        }
+      ]
+    },
+    {
+      "advanceMs": 500
+    },
+    {
+      "presence": {
+        "station": "C",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14211900,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 500
+    },
+    {
+      "reading": {
+        "station": "A",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "reading": {
+        "station": "C",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "expectMembers": {
+        "A": "member",
+        "B": "member",
+        "C": "joining"
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "unknown",
+          "talker": null,
+          "startMs": 11000,
+          "endMs": 12000,
+          "readings": {
+            "A": 1
+          }
+        },
+        {
+          "kind": "talking",
+          "talker": "B",
+          "startMs": 12000,
+          "endMs": null,
+          "readings": {
+            "A": 1
+          }
+        }
+      ]
+    }
+  ]
+}

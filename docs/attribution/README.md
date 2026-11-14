@@ -29,3 +29,5 @@ is compatible with Thetis's GPLv2-or-later terms.
 - [FFTW3-PROVENANCE.md](FFTW3-PROVENANCE.md) — FFTW3 3.3.5 binaries vendored at `third_party/fftw3/` (Windows only)
 - [THETIS-PROVENANCE.md](THETIS-PROVENANCE.md) — NereusSDR files derived from Thetis
 - [GGMORSE-PROVENANCE.md](GGMORSE-PROVENANCE.md) — ggmorse (MIT, Georgi Gerganov) vendored byte-identical at `third_party/ggmorse/`, the CW decoder behind `src/core/CwDecoder`
+- [MBEDTLS-PROVENANCE.md](MBEDTLS-PROVENANCE.md) — Mbed TLS 3.6.7 (Apache-2.0), nur ECDSA P-256 + SHA-256, byte-identical at `third_party/mbedtls/`, the Roundtable sign-in behind `src/core/roundtable/RoundtableKey`
+- [NEREUS-ROUNDTABLE-PROVENANCE.md](NEREUS-ROUNDTABLE-PROVENANCE.md) — Roundtable aus dem Upstream NereusSDR: `roundtable/` (Server, Tests, Konformitaetssuite) unveraendert, `RoundtableWire` uebernommen

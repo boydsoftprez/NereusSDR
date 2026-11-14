@@ -1,0 +1,43 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {
+    "keys": [
+      {
+        "name": "w",
+        "callsign": "W4XYZ",
+        "grid": "EM73",
+        "revoked": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "connect": "station"
+    },
+    {
+      "from": "server",
+      "to": "station",
+      "message": {
+        "type": "challenge",
+        "nonce": "$b64:32:challenge"
+      }
+    },
+    {
+      "from": "station",
+      "role": "behaviour",
+      "message": {
+        "type": "hello",
+        "v": 1,
+        "software": "Example Logger",
+        "softwareVersion": "3.1",
+        "key": "$websiteKey:w"
+      }
+    },
+    {
+      "expectClosed": "station",
+      "code": 4004
+    }
+  ]
+}

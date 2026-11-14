@@ -1,0 +1,11 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "roomsDelta",
+    "gen": 2,
+    "add": [],
+    "change": []
+  },
+  "decodes": false
+}

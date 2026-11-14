@@ -1,0 +1,40 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "presence",
+    "callsign": "VE3/KG4VCF/P",
+    "grid": "EM73tu",
+    "atRadio": false,
+    "slices": [
+      {
+        "id": 0,
+        "hz": 14074000,
+        "mode": "DIGU",
+        "filterHz": 3000,
+        "keyed": true
+      },
+      {
+        "id": 1,
+        "hz": 7040000,
+        "mode": "CWL",
+        "filterHz": 500,
+        "keyed": false
+      },
+      {
+        "id": 2,
+        "hz": 28400000,
+        "mode": "FM",
+        "filterHz": 12000,
+        "keyed": false
+      },
+      {
+        "id": 3,
+        "hz": 3885000,
+        "mode": "SAM",
+        "filterHz": 6000,
+        "keyed": false
+      }
+    ]
+  },
+  "decodes": true
+}

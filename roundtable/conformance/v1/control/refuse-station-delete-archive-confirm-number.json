@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "deleteArchive",
+    "confirm": 1
+  },
+  "decodes": false
+}

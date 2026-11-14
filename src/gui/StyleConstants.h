@@ -512,6 +512,13 @@ constexpr auto kFilterPaneTrace   = "#c8a06a";
 // stattdessen wird, entscheidet der Betreiber beim nächsten Aufräumen.
 constexpr auto kSpotWatchlightDefault = "#00b4d8";
 
+// Die Vorgabe der Roundtable-Spots am Panadapter (AppSettings
+// "Roundtable/SpotColor", 2026-11-14). Ein gedämpftes Lavendel, weil die
+// Nachbarn schon belegt sind: Cluster lohfarben, RBN kAccent, FT8
+// kGreenText, die Beobachtungsliste Türkis. Vorläufig — welcher Ton es
+// wird, entscheidet der Betreiber.
+constexpr auto kSpotRoundtableDefault = "#9c8fc4";
+
 // Gauge Fill Zones
 // ── Telling one equaliser band from another ──────────────────────────
 //

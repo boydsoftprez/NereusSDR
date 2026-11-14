@@ -1,0 +1,11 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "report",
+    "target": "station",
+    "room": "usb-14212000",
+    "ref": "k3m7q2xa",
+    "reason": "falseReadings"
+  },
+  "decodes": true
+}

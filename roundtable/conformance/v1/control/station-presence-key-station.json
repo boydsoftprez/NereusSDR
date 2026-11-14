@@ -1,0 +1,20 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "presence",
+    "callsign": null,
+    "grid": null,
+    "atRadio": true,
+    "slices": [
+      {
+        "id": 0,
+        "hz": 14236000,
+        "mode": "FDVU",
+        "filterHz": 2700,
+        "keyed": false,
+        "squelch": true
+      }
+    ]
+  },
+  "decodes": true
+}

@@ -1,0 +1,19 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "presence",
+    "callsign": "kg4vcf",
+    "grid": "em73TU",
+    "atRadio": true,
+    "slices": [
+      {
+        "id": 3,
+        "hz": 7030000,
+        "mode": "CWU",
+        "filterHz": 250,
+        "keyed": false
+      }
+    ]
+  },
+  "decodes": true
+}

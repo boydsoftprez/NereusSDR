@@ -1,0 +1,144 @@
+{
+  "description": "A station signs in with its station key by signing \"NereusSDR roundtable hello v1\\n\" || host || \"\\n\" || nonce, where host is the ASCII bytes of the server name it connected to and nonce is the 32 raw bytes the challenge's base64url decodes to (Roundtable document section 4.3). ECDSA P-256 over SHA-256, raw r || s, base64url without padding. A case is valid exactly when its key is a canonical P-256 key and its signature (strict base64url, 64 bytes, raw) verifies over transcriptHex.",
+  "key": {
+    "fixed": "A fixed test key for these vectors only. It was generated to produce them and is used by nothing else: no Core, station, server or website key holds it. The private scalar is recorded so a runner can sign with it in its own tests; it protects nothing.",
+    "privateKeyHex": "1a358386ef51c0b52c6327a4d2093cfd93d6cef374d75bd70234041a250e52aa",
+    "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+    "id": "ezp4x6p5d6d3opyk7lm2wuflhk"
+  },
+  "otherKey": {
+    "fixed": "A fixed test key for these vectors only. It was generated to produce them and is used by nothing else: no Core, station, server or website key holds it. The private scalar is recorded so a runner can sign with it in its own tests; it protects nothing.",
+    "privateKeyHex": "be6c08187da719489097c36d19aafd43f8fc0fc1cc35ec6000ac71fdf051d8b6",
+    "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExujAbZM4S_MV2ziaagK_DQ86d4kC7wgl8OWJGcbZGyXumLZU5HKYtNodTmsoUPQAJU0W1V9-vP95furK5hKthQ"
+  },
+  "host": "roundtable.nereussdr.com",
+  "nonce": "g38k--9t8PAtfvp6OQKA9hqPPOeH842uKL82ez2WqzU",
+  "transcriptHex": "4e657265757353445220726f756e647461626c652068656c6c6f2076310a726f756e647461626c652e6e65726575737364722e636f6d0a837f24fbef6df0f02d7efa7a390280f61a8f3ce787f38dae28bf367b3d96ab35",
+  "cases": [
+    {
+      "name": "signed",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "_qKi70oUtpO7aasa6-wusnhdmw8T0nSDKMx9vQMISFJb5FrqvMsOF1F8VLPispunnDE--jgLnT-fWm7GSvgeRQ",
+      "valid": true
+    },
+    {
+      "name": "highS",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "_qKi70oUtpO7aasa6-wusnhdmw8T0nSDKMx9vQMISFKkG6UUQzTx6a6Dq0wdTWRYILW7s28MAUVUX1v8sWsHDA",
+      "valid": true,
+      "why": "s replaced by n - s (a high-s signature): valid, since r and s are both from 1 to n - 1"
+    },
+    {
+      "name": "rendezvousPrefix",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "LHyxYxwC20jl5OMBBhbCWouEgHza0vszXkHjL22d1Xvjx3fI1vqCKblE2C5XnwJqbOKGMTl1i1EFKgcbd8dl8Q",
+      "valid": false,
+      "why": "signed over the rendezvous registration transcript (\"NereusSDR rendezvous register v1\\n\" || nonce), which must never pass here"
+    },
+    {
+      "name": "rendezvousHelloPrefix",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "AEAaoIc6LJqOO0fqST_LSWg7D2lw0vs5fELBo1wfq-5AozjLFumLTP67AQh1EZR6msn57Zj3-rkk0a-zZ16FdQ",
+      "valid": false,
+      "why": "the right host and nonce under a rendezvous prefix"
+    },
+    {
+      "name": "otherHost",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "6tNq3S1GdX6OnYU6WDLxGzSWwT1dy_o0YUfk0UIxBOuVn78iHKtb6h5bQKKaJ4ac0nf2-v_PS_jQEOMTaoMeZg",
+      "valid": false,
+      "why": "signed naming another host (roundtable.example.invalid)"
+    },
+    {
+      "name": "hostWithPort",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "UPTS1fCbOxXwtee4RcekY0WQPsDvku2stG44UqMLNgS9E3lSf2zp1rrYTFwcY1P4HZFeG0gFulO8YAwkN952bA",
+      "valid": false,
+      "why": "the host with a port; the transcript holds the name alone"
+    },
+    {
+      "name": "noHost",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "KRKgkWbgg4h3s9X2LWq8fYzXq_KFGsEkBUkRrC9NrZDUJ0Bkz7uyDHxuJPuh8xDiIVxdz1FhB31ma_lSqTqQog",
+      "valid": false,
+      "why": "the prefix and nonce without the host and its line feed"
+    },
+    {
+      "name": "otherNonce",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "HGJDgLriToWJsgpsRQZK_ENXnQVamptHW2r2Z3859I2PKuinpLaw2ODicjASFICxtBuPI-GlTISY9wd8AeGFSw",
+      "valid": false,
+      "why": "signed over another nonce"
+    },
+    {
+      "name": "nonceText",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "ImoJcopoFI9V0H0GmufbLdECvwQhhd0dsOEr5lJwvj9h2Dt0mpYbN4Ods8CMuim4YsdLArIRYeWeZQlPBV3tyA",
+      "valid": false,
+      "why": "signed over the nonce's base64url text, not its 32 raw bytes"
+    },
+    {
+      "name": "flippedBit",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "_qKi70oUtpO7aasa6-wusnhdmw8T0nSDKMx9vQMISFJb5FrqvMsOF1F8VLPispunnDE--jgLnT-fWm7GSvgeRA",
+      "valid": false,
+      "why": "the last bit of s flipped"
+    },
+    {
+      "name": "otherKey",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "wRHENAJ1DNSSF0BslZPISBOd6wA5bJ8wWMFp025fB9m2qrlNZijqSeSYU9Q3s3GoUwchwv4HFl9Ay2XoGXhCbA",
+      "valid": false,
+      "why": "signed by key b, checked with key a"
+    },
+    {
+      "name": "otherKeyClaimed",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExujAbZM4S_MV2ziaagK_DQ86d4kC7wgl8OWJGcbZGyXumLZU5HKYtNodTmsoUPQAJU0W1V9-vP95furK5hKthQ",
+      "signature": "_qKi70oUtpO7aasa6-wusnhdmw8T0nSDKMx9vQMISFJb5FrqvMsOF1F8VLPispunnDE--jgLnT-fWm7GSvgeRQ",
+      "valid": false,
+      "why": "key a's signature, presented with key b's SPKI"
+    },
+    {
+      "name": "derSignature",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "MEUCIQD-oqLvShS2k7tpqxrr7C6yeF2bDxPSdIMozH29AwhIUgIgW-Ra6rzLDhdRfFSz4rKbp5wxPvo4C50_n1puxkr4HkU",
+      "valid": false,
+      "why": "a DER signature, not raw r || s"
+    },
+    {
+      "name": "signatureWithPadding",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "_qKi70oUtpO7aasa6-wusnhdmw8T0nSDKMx9vQMISFJb5FrqvMsOF1F8VLPispunnDE--jgLnT-fWm7GSvgeRQ==",
+      "valid": false,
+      "why": "not strict base64url"
+    },
+    {
+      "name": "signatureShort",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "_qKi70oUtpO7aasa6-wusnhdmw8T0nSDKMx9vQMISFJb5FrqvMsOF1F8VLPispunnDE--jgLnT-fWm7GSvge",
+      "valid": false,
+      "why": "63 bytes"
+    },
+    {
+      "name": "rZero",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABb5FrqvMsOF1F8VLPispunnDE--jgLnT-fWm7GSvgeRQ",
+      "valid": false,
+      "why": "r is 0"
+    },
+    {
+      "name": "rIsN",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "_____wAAAAD__________7zm-q2nF56E87nKwvxjJVFb5FrqvMsOF1F8VLPispunnDE--jgLnT-fWm7GSvgeRQ",
+      "valid": false,
+      "why": "r equals the group order n"
+    },
+    {
+      "name": "sIsN",
+      "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEYxlZY5KuQrCgVwQ4HrNN2Q8a4wOjU2N-nkVgBNUBRlqukRIf44pi-49gCk76PS1m8pSS5Y0qQusIjMdTqTq-3w",
+      "signature": "_qKi70oUtpO7aasa6-wusnhdmw8T0nSDKMx9vQMISFL_____AAAAAP__________vOb6racXnoTzucrC_GMlUQ",
+      "valid": false,
+      "why": "s equals the group order n"
+    }
+  ]
+}

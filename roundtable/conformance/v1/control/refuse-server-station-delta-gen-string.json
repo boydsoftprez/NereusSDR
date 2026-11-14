@@ -1,0 +1,56 @@
+{
+  "from": "server",
+  "to": "station",
+  "wire": {
+    "type": "delta",
+    "room": "usb-14212000",
+    "gen": "2",
+    "members": [
+      {
+        "ref": "p5vd4n2b",
+        "callsign": "KG4VCF",
+        "nth": 1,
+        "grid": "FM18lw",
+        "km": 935,
+        "offsetHz": 40,
+        "joining": false,
+        "away": false,
+        "keyed": false,
+        "software": "NereusSDR",
+        "softwareVersion": "26.10.3",
+        "reading": {
+          "dbm": -89.0,
+          "t": 1800000005000,
+          "present": true,
+          "turn": 4410
+        },
+        "you": true
+      }
+    ],
+    "left": [
+      "w2c6tz7e"
+    ],
+    "turns": [
+      {
+        "id": 4410,
+        "kind": "talking",
+        "talkers": [
+          {
+            "ref": "k3m7q2xa",
+            "callsign": "K4ABC",
+            "nth": 1
+          }
+        ],
+        "start": 1800000001000,
+        "end": null,
+        "ending": false,
+        "names": [],
+        "heard": 2,
+        "mine": null
+      }
+    ],
+    "messages": [],
+    "closed": false
+  },
+  "decodes": false
+}

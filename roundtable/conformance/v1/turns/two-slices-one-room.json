@@ -1,0 +1,127 @@
+{
+  "runs": [
+    "service"
+  ],
+  "setup": {
+    "stations": [
+      {
+        "name": "A",
+        "callsign": "K4ABC",
+        "grid": "EM73"
+      },
+      {
+        "name": "B",
+        "callsign": "KG4VCF",
+        "grid": "EM73tu"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "presence": {
+        "station": "B",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212040,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          },
+          {
+            "id": 1,
+            "hz": 14212300,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": false
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 10000
+    },
+    {
+      "presence": {
+        "station": "A",
+        "atRadio": true,
+        "slices": [
+          {
+            "id": 0,
+            "hz": 14212000,
+            "mode": "USB",
+            "filterHz": 2700,
+            "keyed": true
+          }
+        ]
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 1,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "advanceMs": 1000
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 1,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "reading": {
+        "station": "B",
+        "slice": 0,
+        "dbm": -91.5,
+        "present": true
+      }
+    },
+    {
+      "expectTurns": [
+        {
+          "kind": "talking",
+          "talker": "A",
+          "startMs": 10000,
+          "endMs": null,
+          "readings": {
+            "B": 2
+          }
+        }
+      ]
+    }
+  ]
+}

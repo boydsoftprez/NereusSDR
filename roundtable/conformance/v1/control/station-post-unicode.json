@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "post",
+    "room": "fm-146520000",
+    "text": "73 de José, über gut ✓",
+    "clientId": "c2"
+  },
+  "decodes": true
+}

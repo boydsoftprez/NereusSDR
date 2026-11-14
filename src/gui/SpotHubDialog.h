@@ -222,6 +222,7 @@ class PotaClient;
 class SotaClient;
 class FreeDVReporterClient;
 class PskReporterClient;
+class RoundtableHub;
 class SpotModel;
 class SpotTableModel;
 class BandFilterProxy;
@@ -274,6 +275,13 @@ public:
     // spotListHoverChanged(spotIdx) lives in the signals block below.
 public slots:
     void setHoveredPanadapterSpot(int spotIdx);
+
+public:
+    // Roundtable (2026-11-14): der Reiter, ueber den der Betreiber die
+    // Erstfrage beantwortet (live / verborgen) und Roundtable an- und
+    // ausschaltet. Nicht besessen. Einmal aufrufen; der Reiter steht dann
+    // vor der Spot-Liste.
+    void attachRoundtable(RoundtableHub* hub);
 
 public:
 
@@ -503,6 +511,18 @@ private:
     QPushButton*    m_pskStartBtn{nullptr};
     QPushButton*    m_pskAutoStartBtn{nullptr};
     QLabel*         m_pskStatusLabel{nullptr};
+
+    // Roundtable (2026-11-14).
+    void refreshRoundtableTab();
+    QTabWidget*     m_tabs{nullptr};
+    RoundtableHub*  m_roundtable{nullptr};
+    QLabel*         m_rtStatusLabel{nullptr};
+    QLabel*         m_rtCallLabel{nullptr};
+    QLabel*         m_rtServerLabel{nullptr};
+    QPushButton*    m_rtGoLiveBtn{nullptr};
+    QPushButton*    m_rtStayHiddenBtn{nullptr};
+    QPushButton*    m_rtHiddenToggleBtn{nullptr};
+    QPushButton*    m_rtAutoStartBtn{nullptr};
     QPlainTextEdit* m_pskConsole{nullptr};
 
     // Spot List tab (F3). From AetherSDR DxClusterDialog.h:200-209

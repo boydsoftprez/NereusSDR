@@ -224,6 +224,7 @@ class FreeDVRadeReporterBridge;
 class PskReporterClient;
 class DxccColorProvider;
 class SpotModel;
+class RoundtableHub;
 class SpotTableModel;
 class FreeDVStationModel;
 class Ft8TxSource;
@@ -1248,6 +1249,9 @@ public:
     // Constructed in RadioModel ctor with identity / endpoint defaults from
     // AppSettings; startConnection() is NOT called at construction time.
     SpotModel*            spotModel()           const { return m_spotModel.get(); }
+    // Roundtable (2026-11-14): die Bruecke zwischen dem Client und den
+    // Scheiben; die anderen Stationen landen als Spots in spotModel().
+    RoundtableHub*        roundtableHub()       const { return m_roundtableHub.get(); }
 
     // ── Der Rotor, ohne Fenster dazwischen (2026-10-05) ──────────────────
     //
@@ -4963,6 +4967,7 @@ private:
     // startConnection() / startListening() / startPolling() is the M3
     // follow-up task. H2 only wires the in-process signal graph.
     std::unique_ptr<SpotModel>            m_spotModel;
+    std::unique_ptr<RoundtableHub>        m_roundtableHub;
     // Registriert von RotorLogbookPanel, nicht besessen -- siehe rotor().
     QPointer<RotorController>             m_rotor;
     // Besessen -- siehe companionRig().

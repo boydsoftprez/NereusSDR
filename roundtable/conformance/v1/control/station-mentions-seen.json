@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "mentionsSeen",
+    "t": 1800000003000
+  },
+  "decodes": true
+}

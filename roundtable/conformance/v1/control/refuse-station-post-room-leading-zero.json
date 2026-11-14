@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "post",
+    "room": "usb-014212000",
+    "text": "hi",
+    "clientId": "c1"
+  },
+  "decodes": false
+}

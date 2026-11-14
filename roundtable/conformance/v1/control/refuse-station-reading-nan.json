@@ -1,0 +1,5 @@
+{
+  "from": "station",
+  "wireText": "{\"type\":\"reading\",\"slice\":0,\"dbm\":NaN,\"t\":1800000000123,\"present\":true}",
+  "decodes": false
+}

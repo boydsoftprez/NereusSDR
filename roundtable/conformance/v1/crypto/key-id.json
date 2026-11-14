@@ -1,0 +1,55 @@
+{
+  "description": "A website key is 32 random bytes, strict base64url without padding (43 characters). Its station id = RFC 4648 base32 (standard alphabet, lowercased, no padding) of SHA-256(\"NereusSDR roundtable key v1\\n\" || the 32 raw key bytes), first 26 characters (Roundtable document section 4.2). keyHashHex is SHA-256 of the 32 raw key bytes alone, the only form the server stores. A runner checks every valid case's digest, id and hash, and that its key decoder refuses every invalid case.",
+  "prefixHex": "4e657265757353445220726f756e647461626c65206b65792076310a",
+  "cases": [
+    {
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "keyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "digestHex": "8b4cdc80c9e437503c8fabf441547dce21d2b93b0103c64f838a51e4882a0ffd",
+      "id": "rngnzagj4q3vapepvp2ecvd5zy",
+      "keyHashHex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+      "valid": true
+    },
+    {
+      "key": "__________________________________________8",
+      "keyHex": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "digestHex": "bd1d8b546215d42677bcaa40834eda6d7c6a6acdbbd1807c5d734a61023172ba",
+      "id": "xuoywvdccxkcm554vjaigtw2nv",
+      "keyHashHex": "af9613760f72635fbdb44a5a0a63c39f12af30f950a6ee5c971be188e89c4051",
+      "valid": true
+    },
+    {
+      "key": "PdannQztcmMlX3RvsEqWxU-D1N_uzo7MRmRIN_OO-gc",
+      "keyHex": "3dd6a79d0ced7263255f746fb04a96c54f83d4dfeece8ecc46644837f38efa07",
+      "digestHex": "c07c28c3ac4ca74869a6dc97a37c41d7f1550a837018e118242ae357d94d1989",
+      "id": "yb6crq5mjstuq2ng3sl2g7cb27",
+      "keyHashHex": "c33aca05fd9c2e0111a896b45f877e56c16f4c854f40391c25b50ea163791b49",
+      "valid": true
+    },
+    {
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+      "valid": false,
+      "why": "padding"
+    },
+    {
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHg",
+      "valid": false,
+      "why": "31 bytes"
+    },
+    {
+      "key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g",
+      "valid": false,
+      "why": "33 bytes"
+    },
+    {
+      "key": "+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/s",
+      "valid": false,
+      "why": "standard alphabet, not url-safe"
+    },
+    {
+      "key": "",
+      "valid": false,
+      "why": "empty"
+    }
+  ]
+}

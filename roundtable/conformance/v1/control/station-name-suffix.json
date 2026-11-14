@@ -1,0 +1,9 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "name",
+    "turn": 4407,
+    "name": "w4xyz/m"
+  },
+  "decodes": true
+}

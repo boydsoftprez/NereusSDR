@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "watch",
+    "room": "usb-14212000"
+  },
+  "decodes": false
+}

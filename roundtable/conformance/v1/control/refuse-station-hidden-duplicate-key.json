@@ -1,0 +1,5 @@
+{
+  "from": "station",
+  "wireText": "{\"type\":\"hidden\",\"x\":1,\"x\":2}",
+  "decodes": false
+}

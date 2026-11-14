@@ -1,0 +1,10 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "post",
+    "room": "dsb-14212000",
+    "text": "hi",
+    "clientId": "c1"
+  },
+  "decodes": false
+}

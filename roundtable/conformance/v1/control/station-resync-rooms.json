@@ -1,0 +1,8 @@
+{
+  "from": "station",
+  "wire": {
+    "type": "resync",
+    "room": null
+  },
+  "decodes": true
+}
