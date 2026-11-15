@@ -1,6 +1,8 @@
 # Recording, playback, the voice keyer and the Digital Spectrum Recorder
 
-Status: design, written 2026-11-15 when JJ said "write the spec". Waiting on JJ's review. Nothing is built.
+Status: design, written 2026-11-15 when JJ said "write the spec", approved by JJ the same day. Nothing is built.
+Plan: [2026-11-15-recording-voice-keyer-dsr-plan.md](2026-11-15-recording-voice-keyer-dsr-plan.md); its
+"Corrections to the spec, found while planning" table replaces this document where they differ.
 
 Mockups: [2026-11-15-recording-voice-keyer-dsr-design/](2026-11-15-recording-voice-keyer-dsr-design/), one folder
 per screen (section 12 lists them). Open each `index.html` in a browser. They are built on real captures of the
