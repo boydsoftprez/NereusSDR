@@ -1,0 +1,1277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phone Spectrum Recorder</title>
+<style>
+:root{
+  --bg:#08080a; --ink:#e8e8ec; --dim:#9a9aa2; --line:#2a2a2e; --blue:#0a84ff; --red:#ff453a;
+  --grp:#141417; --grpLine:#1f1f22; --sel:#33517a;
+}
+@media (prefers-color-scheme: light){ :root:not([data-theme="dark"]){ --bg:#08080a; } }
+:root[data-theme="dark"]{ --bg:#08080a; }
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:14px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}
+.top{max-width:860px;margin:0 auto;padding:12px 16px 4px}
+.top h1{font-size:17px;margin:0 0 6px;font-weight:600}
+.top p{margin:4px 0;color:var(--dim);font-size:13px;line-height:1.4}
+.bar{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px;align-items:center}
+.bar button,.bar select{background:#1c1c1f;color:var(--ink);border:1px solid #333338;border-radius:8px;padding:7px 10px;font:inherit;font-size:13px}
+.bar button.on{background:#2b4a75;border-color:#4a76b0}
+.bar label{color:var(--dim);font-size:13px;margin-left:4px}
+details{margin:4px 0 8px;color:var(--dim);font-size:13px}
+details summary{cursor:pointer;color:var(--ink)}
+details li{margin:3px 0;line-height:1.35}
+.stage{display:flex;justify-content:center;padding:4px 0 24px}
+.holder{position:relative}
+.phone{position:absolute;left:0;top:0;width:402px;height:874px;background:#000;border-radius:46px;overflow:hidden;transform-origin:0 0;box-shadow:0 0 0 2px #26262a,0 0 0 9px #0f0f11,0 8px 40px rgba(0,0,0,.6)}
+.scr{position:absolute;inset:0;display:none}
+.scr.show{display:block}
+img.full{position:absolute;left:0;top:0;width:402px;display:block;user-select:none;-webkit-user-drag:none;pointer-events:none}
+.tabs{position:absolute;left:0;top:787px;width:402px;height:87px}
+.tabs img{width:402px;display:block;pointer-events:none}
+.tabhit{position:absolute;top:0;height:60px;width:80.4px}
+.toast{position:absolute;left:50%;top:318px;transform:translateX(-50%);background:rgba(44,44,48,.97);color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;max-width:330px;text-align:center;z-index:90;opacity:0;transition:opacity .2s;pointer-events:none;border:1px solid #444}
+.toast.on{opacity:1}
+
+/* ---------- pan ---------- */
+#status{position:absolute;left:0;top:107px;width:402px;height:22px;font:13px ui-monospace,"SF Mono",Menlo,monospace;color:#e2e2e2;display:flex;justify-content:space-between;align-items:center;padding:0 9px;letter-spacing:.2px}
+#wf{position:absolute;left:0;top:403px;width:402px;height:383px;touch-action:none}
+#pb{position:absolute;top:130px;height:245px;background:rgba(40,140,170,.28);pointer-events:none}
+#car{position:absolute;top:130px;height:245px;width:1px;background:rgb(45,170,205);pointer-events:none}
+#btns{position:absolute;top:130px;width:43.67px;height:152px;display:flex;flex-direction:column;z-index:4}
+#flag{position:absolute;top:130px;width:200.33px;height:159.33px;pointer-events:none}
+#flag img{width:200.33px;display:block}
+#fq{position:absolute;left:56px;top:49px;width:136px;height:34px;background:rgb(14,16,20);color:rgb(101,221,246);font:600 25px ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:-.5px;display:none;align-items:center;justify-content:flex-end;padding-right:2px}
+#ptag{position:absolute;left:5px;top:134px;height:20px;border-radius:5px;background:#3a0d0d;border:1px solid #c02020;display:none;align-items:center;gap:5px;padding:0 6px;z-index:4}
+#ptag b{color:#ff6b6b;font-size:10.5px;letter-spacing:.6px}
+#ptag span{color:#ffd0d0;font:10px ui-monospace,"SF Mono",Menlo,monospace}
+#ptt{position:absolute;left:14px;top:697.3px;width:79.3px;height:79.3px;border-radius:50%;overflow:hidden;pointer-events:none}
+#ptt img{width:79.3px;display:block}
+#zoom{position:absolute;left:236px;top:732px;width:101px;height:42px;border-radius:12px;background:rgba(30,30,33,.92);border:1.5px solid rgba(110,110,116,.75);display:flex;pointer-events:none}
+#zoom div{flex:1;display:flex;align-items:center;justify-content:center;color:#ddd;font-size:30px;font-weight:300}
+#zoom div+div{border-left:1px solid rgba(110,110,116,.6)}
+#map{position:absolute;left:344px;top:403px;width:14px;height:383px;touch-action:none;border-left:1px solid #2c2c32}
+#strip{position:absolute;left:358px;top:403px;width:44px;height:383px;touch-action:none}
+.sbtn{position:absolute;left:361px;width:38px;height:22px;border-radius:5px;font:700 10.5px -apple-system,sans-serif;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;border:1px solid #55555c;background:#2a2a2e;color:#b8b8be;z-index:5}
+#live{top:408px}
+#live.past{background:#c02020;border-color:#e04040;color:#fff}
+#save{top:434px;color:#e8c02a;border-color:#7a6418;background:#221d08}
+#save.on{background:#e8c02a;color:#111;border-color:#e8c02a}
+#clock{top:756px;height:26px}
+#clock svg{width:16px;height:16px}
+#playline{position:absolute;left:0;width:344px;height:0;border-top:1.5px solid rgba(255,255,255,.85);display:none;pointer-events:none;z-index:4}
+#playline span{position:absolute;left:4px;top:3px;font:10.5px ui-monospace,"SF Mono",Menlo,monospace;color:#fff;background:rgba(0,0,0,.6);padding:1px 4px;border-radius:3px;white-space:nowrap}
+#drawing{position:absolute;left:0;top:403px;width:344px;height:383px;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;z-index:6;pointer-events:none}
+#drawing div{background:rgba(30,30,34,.95);border:1px solid #444;color:#ddd;padding:8px 12px;border-radius:10px;font-size:12.5px}
+#band{position:absolute;left:0;width:358px;background:rgba(232,192,42,.13);border-top:2px solid #e8c02a;border-bottom:2px solid #e8c02a;display:none;pointer-events:none;z-index:3}
+#brk{position:absolute;left:358px;width:44px;display:none;z-index:7;pointer-events:none;border-left:3px solid #e8c02a;background:rgba(232,192,42,.18)}
+.hdl{position:absolute;left:366px;width:30px;height:30px;margin-top:-15px;border-radius:50%;background:#e8c02a;border:2px solid #111;display:none;z-index:8;touch-action:none;box-shadow:0 1px 4px rgba(0,0,0,.6)}
+.hdl::after{content:"";position:absolute;left:8px;right:8px;top:12px;height:2px;background:#111;box-shadow:0 4px 0 #111}
+#maplab{position:absolute;right:62px;padding:3px 6px;border-radius:5px;background:rgba(20,20,24,.95);border:1px solid #555;font:11px ui-monospace,"SF Mono",Menlo,monospace;color:#fff;display:none;z-index:9;margin-top:-11px;white-space:nowrap}
+
+/* ---------- sheets ---------- */
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.35);display:none;z-index:50}
+.scrim.on{display:block}
+.sheet{position:absolute;left:8px;right:8px;bottom:10px;z-index:60;display:none}
+.sheet.on{display:block}
+.sgrp{background:rgba(38,38,42,.98);border-radius:14px;overflow:hidden;margin-top:8px}
+.shead{padding:12px 16px;text-align:center;color:var(--dim);font-size:13px;line-height:1.35;border-bottom:1px solid #3a3a3e}
+.shead b{display:block;color:#ddd;font-size:13.5px;margin-bottom:2px}
+.sact{display:block;width:100%;background:none;border:0;border-top:1px solid #3a3a3e;color:var(--blue);font:19px -apple-system,sans-serif;padding:15px 10px;text-align:center}
+.sact:first-child{border-top:0}
+.shead+.sact{border-top:0}
+.sact.red{color:var(--red)}
+.sact.bold{font-weight:600}
+.sact[disabled]{color:#666}
+.sact small{display:block;font-size:12px;color:var(--dim);margin-top:2px}
+.panel{position:absolute;left:0;right:0;bottom:0;background:#1c1c1f;border-radius:16px 16px 0 0;z-index:60;display:none;padding:14px 16px 26px;border-top:1px solid #333}
+.panel.on{display:block}
+.panel h3{margin:0 0 4px;font-size:16px}
+.panel p{margin:0 0 10px;color:var(--dim);font-size:13px;line-height:1.35}
+.pbtn{display:block;width:100%;border:0;border-radius:12px;padding:12px;margin-top:8px;font:600 16px -apple-system,sans-serif;background:#2c2c30;color:var(--blue)}
+.pbtn.primary{background:var(--blue);color:#fff}
+.pbtn small{display:block;font-weight:400;font-size:12px;opacity:.8;margin-top:2px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.chips button{background:#2c2c30;border:1px solid #3a3a3e;color:var(--ink);border-radius:16px;padding:6px 10px;font:13px -apple-system,sans-serif}
+.tin{width:100%;font:600 28px ui-monospace,"SF Mono",Menlo,monospace;background:#0f0f12;color:#fff;border:1px solid #3a3a3e;border-radius:10px;padding:8px 10px;text-align:center}
+.err{color:#ff7b72;font-size:12.5px;min-height:16px;margin-top:6px}
+.alert{position:absolute;left:66px;width:270px;top:280px;background:rgba(44,44,48,.99);border-radius:14px;z-index:70;display:none;overflow:hidden;text-align:center}
+.alert.on{display:block}
+.alert h4{margin:16px 14px 4px;font-size:16px}
+.alert p{margin:0 14px 10px;color:#bbb;font-size:13px;line-height:1.35}
+.alert input,.alert select{width:calc(100% - 28px);margin:0 14px 8px;background:#1b1b1e;border:1px solid #4a4a50;color:#fff;border-radius:7px;padding:7px 8px;font:14px -apple-system,sans-serif}
+.alert .row2{display:flex;border-top:1px solid #4a4a50;margin-top:6px}
+.alert .row2 button{flex:1;background:none;border:0;color:var(--blue);font:17px -apple-system,sans-serif;padding:12px}
+.alert .row2 button+button{border-left:1px solid #4a4a50;font-weight:600}
+.alert .row2 button.red{color:var(--red)}
+.seg{display:flex;background:#2a2a2e;border-radius:9px;padding:2px;margin:0 14px 10px}
+.seg button{flex:1;background:none;border:0;color:#ddd;font:13px -apple-system,sans-serif;padding:6px 4px;border-radius:7px}
+.seg button.on{background:#5a5a60;color:#fff;font-weight:600}
+
+/* ---------- iOS list pages ---------- */
+.page{position:absolute;left:0;top:0;width:402px;height:787px;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;background:#08080a}
+.page::-webkit-scrollbar{display:none}
+.back{position:absolute;left:16px;top:62px;width:44px;height:44px;border-radius:50%;background:#28282a;border:0;display:flex;align-items:center;justify-content:center;z-index:3}
+.back svg{width:14px;height:22px}
+.pill{position:absolute;right:16px;top:62px;height:44px;border-radius:22px;background:#1c1c1f;border:1px solid #333;display:flex;align-items:center;padding:0 10px;gap:8px;z-index:3}
+.chip{font:12.5px ui-monospace,"SF Mono",Menlo,monospace;color:rgb(150,179,214);border:1.5px solid rgb(76,119,172);border-radius:6px;padding:1px 6px;background:rgb(23,23,26)}
+.chip.grey{color:#b4b4b8;border-color:#5a5a60}
+.txtbtn{background:none;border:0;color:var(--blue);font:17px -apple-system,sans-serif;padding:0}
+.ptitle{font:700 32px -apple-system,sans-serif;margin:120px 16px 4px;line-height:1.08;letter-spacing:.2px}
+.psub{margin:6px 20px 10px;color:var(--dim);font-size:13px;line-height:1.4}
+.sec{margin:18px 20px 7px;color:#c4c4ca;font:600 15px -apple-system,sans-serif}
+.grp{margin:0 16px;background:rgb(22,22,25);border:1px solid rgb(34,34,38);border-radius:12px;overflow:hidden}
+.foot{margin:7px 20px 0;color:var(--dim);font-size:13px;line-height:1.4}
+.row{position:relative;display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid rgb(34,34,38);min-height:50px}
+.row:first-child{border-top:0}
+.row .tt{flex:1;min-width:0}
+.row .t1{font:600 16.5px -apple-system,sans-serif;color:#ececf0}
+.row .t2{font-size:13px;color:#949499;margin-top:2px;line-height:1.3}
+.row .val{color:#9a9aa0;font-size:15px;white-space:nowrap}
+.chev{color:#77777c;font-size:20px;line-height:1}
+.dis{opacity:.42;pointer-events:none}
+.tog{width:51px;height:31px;border-radius:16px;background:#5f5f62;position:relative;flex:none;border:0;padding:0}
+.tog::after{content:"";position:absolute;left:2px;top:2px;width:27px;height:27px;border-radius:50%;background:#dcdce1;transition:left .15s}
+.tog.on{background:rgb(56,96,150)}
+.tog.on::after{left:22px}
+input[type=range]{width:100%;accent-color:#5b8fd6}
+
+/* tools inserted row */
+#recRow,#vkRow{position:relative;margin-left:12px;width:378px;height:51.33px;background:rgb(20,20,23);border-left:1px solid rgb(31,31,34);border-right:1px solid rgb(31,31,34);border-bottom:1px solid rgb(31,31,34);cursor:pointer}
+.trow .t1{position:absolute;left:10px;top:9px;font:700 15px -apple-system,sans-serif;color:rgb(236,236,240)}
+.trow .t2{position:absolute;left:10px;top:29px;font-size:12px;color:rgb(148,148,154)}
+.trow .chip{position:absolute;left:308px;top:16px;font-size:11px;padding:0 5px;border-width:1px}
+.trow .chev{position:absolute;left:359px;top:14px}
+#vkRow.new::before{left:104px}
+.trow.new::before{content:"New";position:absolute;left:100px;top:11px;font:600 10px -apple-system,sans-serif;color:#e8c02a;border:1px solid #7a6418;border-radius:4px;padding:0 4px}
+
+/* recordings */
+.segc{display:flex;background:#1f1f22;border-radius:9px;padding:2px;margin:6px 16px 8px}
+.segc button{flex:1;background:none;border:0;color:#ccc;font:12.5px -apple-system,sans-serif;padding:6px 2px;border-radius:7px;white-space:nowrap}
+.segc button.on{background:#4a4a50;color:#fff;font-weight:600}
+.search{margin:0 16px 6px;display:flex;align-items:center;gap:6px;background:#1c1c1f;border-radius:10px;padding:8px 10px}
+.search input{flex:1;background:none;border:0;color:#fff;font:16px -apple-system,sans-serif;outline:none;min-width:0}
+.search svg{width:15px;height:15px;flex:none}
+.sortline{display:flex;justify-content:space-between;align-items:center;margin:4px 20px 8px;color:var(--dim);font-size:12.5px}
+.sortline button{background:none;border:0;color:var(--blue);font:13px -apple-system,sans-serif;padding:0}
+.rlist{margin:0 16px 120px;background:rgb(22,22,25);border:1px solid rgb(34,34,38);border-radius:12px;overflow:hidden}
+.ritem{position:relative;border-top:1px solid rgb(34,34,38);overflow:hidden}
+.ritem:first-child{border-top:0}
+.ritem .acts{position:absolute;right:0;top:0;bottom:0;display:flex;visibility:hidden}
+.ritem.open .acts,.ritem.dragging .acts{visibility:visible}
+.ritem .acts button{width:74px;border:0;color:#fff;font:600 14px -apple-system,sans-serif}
+.ritem .fg{position:relative;display:flex;align-items:center;gap:10px;padding:10px 8px 10px 12px;background:rgb(22,22,25);transition:transform .18s;touch-action:pan-y}
+.ritem.dragging .fg{transition:none}
+.ico{width:36px;height:36px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center}
+.ico svg{width:22px;height:22px}
+.ico.pan{background:#16305a}.ico.sound{background:#1d4430}.ico.quick{background:#4a1c1c}
+.ritem .tt{flex:1;min-width:0}
+.ritem .t1{font:600 15.5px -apple-system,sans-serif;color:#ececf0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ritem .t2,.ritem .t3{font-size:12.5px;color:#949499;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.more{width:34px;height:34px;border-radius:50%;border:0;background:#26262a;color:#cfcfd4;font:700 16px -apple-system,sans-serif;flex:none;letter-spacing:1px}
+.chk{width:24px;height:24px;border-radius:50%;border:2px solid #6a6a70;flex:none;display:none}
+.selmode .chk{display:block}
+.selmode .more{display:none}
+.chk.on{background:var(--blue);border-color:var(--blue);box-shadow:inset 0 0 0 4px var(--blue)}
+.chk.on::after{content:"";display:block;width:6px;height:11px;border:solid #fff;border-width:0 2.5px 2.5px 0;transform:translate(6px,2px) rotate(45deg)}
+.ritem.playing .t1{color:#6cc2ff}
+.empty{padding:22px;text-align:center;color:var(--dim)}
+#selbar{position:absolute;left:0;top:743px;width:402px;height:44px;background:rgba(28,28,31,.98);border-top:1px solid #333;display:none;justify-content:space-between;align-items:center;padding:0 18px;z-index:20}
+#selbar button{background:none;border:0;font:17px -apple-system,sans-serif;color:var(--blue)}
+#selbar button.red{color:var(--red)}
+#selbar button[disabled]{color:#555}
+#mini{position:absolute;left:8px;right:8px;top:724px;height:56px;border-radius:14px;background:rgba(40,40,44,.98);border:1px solid #444;display:none;align-items:center;gap:10px;padding:0 12px;z-index:21}
+#mini .pp{width:34px;height:34px;border-radius:50%;background:#fff;border:0;color:#000;font-size:14px;flex:none}
+#mini .mt{flex:1;min-width:0}
+#mini .m1{font:600 13.5px -apple-system,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#mini .prog{height:4px;background:#555;border-radius:2px;margin-top:6px;position:relative;touch-action:none}
+#mini .prog i{position:absolute;left:0;top:0;bottom:0;background:#fff;border-radius:2px}
+#mini .m2{font:11px ui-monospace,"SF Mono",Menlo,monospace;color:#bbb;margin-top:3px}
+#mini .x{background:none;border:0;color:#aaa;font-size:20px;flex:none}
+.share-icons{display:flex;gap:14px;padding:14px 16px 6px;overflow:hidden}
+.share-icons div{width:58px;text-align:center;font-size:11px;color:#ddd}
+.share-icons i{display:block;width:58px;height:58px;border-radius:14px;margin-bottom:5px;font-style:normal;font-size:24px;line-height:58px;color:#fff}
+
+/* recorder setup */
+.meter{position:relative;height:22px;border-radius:5px;background:#26262a;overflow:hidden;margin:4px 0 6px;border:1px solid #3a3a40}
+.meter .kept{position:absolute;top:0;bottom:0;left:0;background:#3c6aa8}
+.meter .gone{position:absolute;top:0;bottom:0;background:#a5302c}
+.meter .head{position:absolute;top:-2px;bottom:-2px;width:3px;background:#fff;box-shadow:0 0 6px #fff}
+.key{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--dim)}
+.key span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;background:var(--c)}
+.note{margin:10px 16px 0;padding:10px 12px;border-radius:10px;background:#16202e;border:1px solid #2b4466;color:#c9d7ea;font-size:13px;line-height:1.4}
+.warn{margin:10px 16px 0;padding:11px 12px;border-radius:10px;background:#3a1010;border:1px solid #c02020;color:#ffd6d3;font-size:13.5px;line-height:1.4;display:none}
+.warn b{color:#fff}
+.dbtn{display:block;margin:18px 16px 30px;width:370px;background:rgb(22,22,25);border:1px solid rgb(34,34,38);border-radius:12px;color:var(--red);font:16.5px -apple-system,sans-serif;padding:14px;text-align:left}
+.dbtn[disabled]{opacity:.42}
+/* voice keyer */
+.vkcard{margin:0 16px;background:rgb(22,22,25);border:1px solid rgb(34,34,38);border-radius:12px;overflow:hidden}
+.vkrow{display:flex;align-items:center;gap:10px;padding:0 10px 0 12px;min-height:52px;border-top:1px solid rgb(34,34,38);position:relative}
+.vkrow:first-child{border-top:0}
+.vkm{width:30px;font:700 14px -apple-system,sans-serif;color:#f0f0f4;flex:none}
+.vkt{flex:1;min-width:0}
+.vkt .a{font:600 15px -apple-system,sans-serif;color:#e8e8ec;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vkt .b{font-size:12.5px;color:#949499;margin-top:2px}
+.vkrow.blank .a{color:#77777d;font-weight:400}
+.vkrow.sending{background:#3a1212}
+.vkrow.sending .a{color:#ffb4ae}
+.vkrow .prog{position:absolute;left:0;bottom:0;height:3px;background:#ff453a}
+.vkrow.target{box-shadow:inset 3px 0 0 #ff453a}
+.vkrow.off .vkm,.vkrow.off .vkt{opacity:.42}
+.vbtn{flex:1;height:44px;border-radius:9px;border:1px solid #3a3a40;background:#232327;color:#e8e8ec;font:600 16px -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;gap:7px}
+.vbtn.rec{color:#ff6b62;border-color:#6a2a26;background:#2a1414}
+.vbtn.rec.on{background:#ff453a;color:#fff;border-color:#ff453a;animation:pulse 1s infinite}
+.vbtn[disabled]{opacity:.42}
+@keyframes pulse{50%{opacity:.6}}
+.lvl{height:8px;border-radius:4px;background:#2a2a2e;overflow:hidden;position:relative}
+.lvl i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#3fbf6a 0 70%,#e8c02a 70% 88%,#ff453a 88%)}
+.pick{background:#2a2a2e;border:1px solid #3a3a40;color:#e8e8ec;border-radius:8px;padding:7px 10px;font:15px -apple-system,sans-serif}
+.step{display:flex;align-items:center;gap:0;border:1px solid #3a3a40;border-radius:8px;overflow:hidden}
+.step button{width:40px;height:34px;background:#232327;border:0;color:#e8e8ec;font-size:20px}
+.step span{min-width:46px;text-align:center;font:15px -apple-system,sans-serif}
+.hd{display:flex;align-items:center;gap:8px;margin:18px 20px 7px;color:#9a9aa2;font:600 13px -apple-system,sans-serif;letter-spacing:.8px}
+.hd .chip{letter-spacing:0}
+.reason{padding:10px 12px;color:#b8b8be;font-size:13px;border-top:1px solid rgb(34,34,38);line-height:1.35}
+.takebtn{display:block;margin:10px 16px 0;width:370px;height:44px;border-radius:10px;border:0;background:var(--blue);color:#fff;font:600 16px -apple-system,sans-serif}
+#vkAir{position:absolute;left:8px;right:8px;top:716px;height:64px;border-radius:14px;background:#5a1410;border:1px solid #ff453a;display:none;align-items:center;gap:10px;padding:0 10px 0 14px;z-index:21}
+#vkAir.listen{background:#16304f;border-color:#3a7bd5}
+#vkAir .m{flex:1;min-width:0}
+#vkAir .m1{font:700 14px -apple-system,sans-serif;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#vkAir .m2{font:12px ui-monospace,"SF Mono",Menlo,monospace;color:#ffd0cc;margin-top:3px}
+#vkAir.listen .m2{color:#cfe2ff}
+#vkAir button{height:44px;padding:0 16px;border-radius:10px;border:0;background:#fff;color:#c01d14;font:700 16px -apple-system,sans-serif}
+#vkAir.listen button{color:#1d5fb0}
+/* ---------- flag record and play ---------- */
+.fb{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#5c5c60}
+.fb svg{width:16px;height:16px;flex:none;filter:drop-shadow(0 0 1.5px #000) drop-shadow(0 0 1.5px #000)}
+.fb.on svg{width:13px;height:13px}
+#fRec,#fPlay{cursor:pointer}
+.fb .c{font:600 9px ui-monospace,"SF Mono",Menlo,monospace;margin-top:1px;display:none;line-height:1}
+#fRec.on{color:#ff453a}
+#fRec.on .c{display:block;color:#ff8a84}
+#fRec.on svg{animation:rp 1.1s ease-in-out infinite}
+@keyframes rp{50%{opacity:.35}}
+#fPlay.on{color:#3a9cff}
+#fPlay.on .c{display:block;color:#8cc4ff}
+#fRec.off{opacity:.35}
+#pbar{position:absolute;top:293px;width:200.33px;height:38px;border-radius:9px;background:rgba(18,36,60,.96);border:1px solid #3a7bd5;display:none;align-items:center;gap:6px;padding:0 4px 0 9px;z-index:4}
+#pbar .m{flex:1;min-width:0}
+#pbar .m1{font:600 12px -apple-system,sans-serif;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#pbar .m2{white-space:nowrap;overflow:hidden;font:10px ui-monospace,"SF Mono",Menlo,monospace;color:#cfe2ff}
+#pbar button{height:28px;border-radius:7px;border:0;font:600 11.5px -apple-system,sans-serif;padding:0 6px;flex:none}
+#pbOld{background:#24466f;color:#cfe2ff}
+#pbStop{background:#fff;color:#1d5fb0}
+#pbar .bar{position:absolute;left:0;bottom:0;height:2px;background:#3a9cff;border-radius:0 0 0 9px}
+
+/* ---------- voice keyer on the pan ---------- */
+#vkBtn{position:absolute;left:104px;top:711px;width:52px;height:52px;border-radius:50%;background:rgba(30,30,33,.92);border:1.5px solid rgba(110,110,116,.75);color:#ddd;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;z-index:5;cursor:pointer;padding:0}
+#vkBtn svg.w{width:22px;height:16px}
+#vkBtn .l{font:700 8.5px -apple-system,sans-serif;letter-spacing:.6px}
+#vkBtn .ring{position:absolute;inset:-4px;width:60px;height:60px;display:none;pointer-events:none}
+#vkBtn.air{background:#5a1410;border-color:#ff453a;color:#fff}
+#vkBtn.air .ring{display:block}
+#vkBtn.air .l{font-size:9.5px}
+#vkBtn.wait{background:#3a1212;border-color:#c0392b}
+#vkBtn.off{opacity:.45}
+#vkPan .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+#vkPan .hd h3{margin:0}
+#vkPan .hd button{background:none;border:0;color:var(--blue);font:15px -apple-system,sans-serif;padding:4px 0}
+.vkgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.vkt2{position:relative;overflow:hidden;height:56px;border-radius:12px;background:#2c2c30;border:1px solid #3a3a3e;color:#e8e8ec;text-align:left;padding:7px 10px;font:inherit}
+.vkt2 .n{display:block;font:700 12px -apple-system,sans-serif;color:#9a9aa2}
+.vkt2 .a{display:block;font:600 15px -apple-system,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.vkt2 .d{position:absolute;right:10px;top:7px;font:11.5px ui-monospace,"SF Mono",Menlo,monospace;color:#9a9aa2}
+.vkt2.blank{background:#1c1c1f;border-style:dashed}
+.vkt2.blank .a{color:#6e6e74;font-weight:400}
+.vkt2.sending{background:#5a1410;border-color:#ff453a}
+.vkt2.sending .n,.vkt2.sending .d{color:#ffd0cc}
+.vkt2 .prog{position:absolute;left:0;bottom:0;height:3px;background:#ff453a}
+.vkt2.off{opacity:.42}
+#vkPan .rp{display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding:8px 2px 0;border-top:1px solid #333}
+#vkPan .rp .t{font-size:15px}
+#vkPan .rp .t small{display:block;color:var(--dim);font-size:12px;margin-top:1px}
+#vkPan .refuse{display:none;margin-top:10px;padding:10px 12px;border-radius:12px;background:#2a2410;border:1px solid #6a5a18;color:#e8d9a0;font-size:13px;line-height:1.35}
+#vkPan .refuse button{margin-top:8px;width:100%;height:40px;border-radius:10px;border:0;background:#e8c02a;color:#111;font:700 15px -apple-system,sans-serif}
+#vkPan .stopbar{display:none;margin-top:10px;width:100%;height:46px;border-radius:12px;border:0;background:#ff453a;color:#fff;font:700 17px -apple-system,sans-serif}
+
+.files .fr{display:flex;justify-content:space-between;padding:13px 16px;border-top:1px solid #3a3a3e;color:#e8e8ec;font-size:16px}
+.files .fr span{color:#999;font-size:14px}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Digital Spectrum Recorder on the iPhone</h1>
+  <p>Built on the real iPhone app captures. The pan is your slice A only; the Tools list is the real one with Voice Keyer and Recordings rows added.</p>
+  <div class="bar">
+    <button data-go="pan" class="on">Pan</button>
+    <button data-go="tools">Tools</button>
+    <button data-go="recs">Recordings</button>
+    <button data-go="setup">Recorder setup</button>
+    <button data-go="vk">Voice keyer</button>
+    <button data-go="rset">Recording settings</button>
+    <label>Core:</label>
+    <select id="scen">
+      <option value="ssd">USB SSD</option>
+      <option value="sd">Pi with only an SD card</option>
+      <option value="off">Not connected</option>
+    </select>
+    <label>Transmit:</label>
+    <select id="txw"><option value="here">With this phone</option><option value="desk">With the Shack Mac</option></select>
+  </div>
+  <details>
+    <summary>Things to try</summary>
+    <ul>
+      <li>Drag the time strip on the right of the waterfall up to go back. Drag down to come forward.</li>
+      <li>The thin column just left of it is the hours map: every kept hour from now (top) to the oldest (bottom). Tap or drag it to jump hours back.</li>
+      <li>In the past, tap a signal: your slice moves to it and plays from that moment, which slides to the top. The picture then moves with the sound. LIVE (red) takes you back.</li>
+      <li>Recording settings: Setup, then Recording settings near the bottom (also from Others in the playing bar, or the button above the phone). The Record button's choices, file type, names and where files are kept.</li>
+      <li>Record a contact: the round dot in the column beside the flag, under the × and lock (the dots move to the bottom). One tap records what you hear plus your own voice when you transmit, kept on the Core; it blinks red with the time under it. Tap again to stop and keep it. The triangle under it plays the latest recording on your speaker; Others in the bar picks one of the last eight. Press PTT while one plays and it goes out on the air instead of your mic.</li>
+      <li>Voice keyer: the round VOICE button beside PTT opens your eight messages. Tap one to send it on the air; the button turns red with the time going round it, and tapping it again (or PTT) stops. All settings, or Tools then Voice Keyer, has recording, import and renaming.</li>
+      <li>The clock button at the bottom of the strip lets you type a time.</li>
+      <li>SAVE puts a yellow bracket on the strip. Drag its two handles, then save the whole pan or just the sound.</li>
+      <li>Tools, then Recordings: tap to play, the round dots button for more, swipe a row left, or Select to delete several.</li>
+    </ul>
+  </details>
+</div>
+
+<div class="stage"><div class="holder" id="holder"><div class="phone" id="phone">
+
+  <!-- ================= PAN ================= -->
+  <div class="scr show" id="s-pan">
+    <img class="full" src="panbase.png" alt="">
+    <div id="status"><span>Connected · Control direct</span><span>↓1.4 ↑0.2</span></div>
+    <div id="pb"></div><div id="car"></div>
+    <div id="btns">
+      <div class="fb" aria-label="Close slice"><svg viewBox="0 0 18 18"><path d="M3.5 3.5l11 11M14.5 3.5l-11 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div class="fb" aria-label="Lock"><svg viewBox="0 0 18 18"><rect x="2.5" y="8" width="9" height="7.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M9.5 8V5.5a3 3 0 0 1 6 0V7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></div>
+      <div class="fb" id="fRec" role="button" aria-label="Record this contact"><svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" fill="currentColor"/></svg><span class="c" id="fRecC"></span></div>
+      <div class="fb" id="fPlay" role="button" aria-label="Play the last recording"><svg viewBox="0 0 18 18" id="fPlayI"><path d="M5 3l10 6-10 6z" fill="currentColor"/></svg><span class="c" id="fPlayC"></span></div>
+      <div class="fb" aria-label="More"><svg viewBox="0 0 18 18"><circle cx="3.5" cy="9" r="1.6" fill="currentColor"/><circle cx="9" cy="9" r="1.6" fill="currentColor"/><circle cx="14.5" cy="9" r="1.6" fill="currentColor"/></svg></div>
+    </div>
+    <div id="flag"><img src="flag.png" alt=""><div id="fq">7.236.400</div></div>
+    <div id="pbar"><div class="m"><div class="m1" id="pbT">Ragchew with Bob</div><div class="m2" id="pbS">0:00 / 12:00 · your speaker</div></div><button id="pbOld">Others</button><button id="pbStop">Stop</button><div class="bar" id="pbBar"></div></div>
+    <div id="ptag"><b>PAST</b><span id="ptagt">14:12:05</span></div>
+    <canvas id="wf" width="804" height="766"></canvas>
+    <div id="band"></div>
+    <div id="playline"><span id="playlab"></span></div>
+    <div id="ptt"><img src="ptt.png" alt=""></div>
+    <button id="vkBtn" aria-label="Voice keyer"><svg class="w" viewBox="0 0 22 16"><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="2" y1="6" x2="2" y2="10"/><line x1="6" y1="3" x2="6" y2="13"/><line x1="10" y1="1" x2="10" y2="15"/><line x1="14" y1="4" x2="14" y2="12"/><line x1="18" y1="6.5" x2="18" y2="9.5"/></g></svg><span class="l" id="vkBtnL">VOICE</span><svg class="ring" viewBox="0 0 60 60"><circle cx="30" cy="30" r="28" fill="none" stroke="rgba(255,69,58,.25)" stroke-width="3"/><circle id="vkArc" cx="30" cy="30" r="28" fill="none" stroke="#ff453a" stroke-width="3" stroke-linecap="round" stroke-dasharray="175.9" stroke-dashoffset="175.9" transform="rotate(-90 30 30)"/></svg></button>
+    <div id="zoom"><div>−</div><div>+</div></div>
+    <canvas id="map" width="28" height="766"></canvas>
+    <canvas id="strip" width="88" height="766"></canvas>
+    <div id="brk"></div>
+    <div class="hdl" id="h1"></div><div class="hdl" id="h2"></div>
+    <div id="maplab"></div>
+    <button class="sbtn" id="live">LIVE</button>
+    <button class="sbtn" id="save">SAVE</button>
+    <button class="sbtn" id="clock" aria-label="Go to a time"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="#c8c8ce" stroke-width="1.5"/><path d="M8 4v4.3l2.8 1.7" fill="none" stroke="#c8c8ce" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+    <div id="drawing"><div id="drawtxt">Digital Spectrum Recorder: drawing 13:40</div></div>
+    <div class="tabs"><img src="tab_pan.png" alt=""></div>
+
+    <div class="panel" id="savePanel" style="padding:12px 12px 20px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><h3 id="svTitle" style="font-size:15px">Save 14:28:10 to 14:30:50 UTC</h3><button class="txtbtn" id="svCancel" style="font-size:16px">Cancel</button></div>
+      <p id="svSub" style="margin-bottom:4px">2 min 40 s. Drag the yellow handles on the time strip to change it.</p>
+      <div style="display:flex;gap:8px"><button class="pbtn primary" id="svPan" style="flex:1;font-size:15px">Whole pan<small id="svPanSz">123 MB</small></button>
+      <button class="pbtn" id="svSnd" style="flex:1;font-size:15px">Sound only (MP3)<small id="svSndSz">slice A, about 3 MB</small></button></div>
+    </div>
+
+    <div class="panel" id="timePanel">
+      <h3>Go to a time (UTC)</h3>
+      <p id="tpSub">Kept from 10:58 to now.</p>
+      <input class="tin" id="tin" type="time" step="1" value="14:00:00">
+      <div class="chips">
+        <button data-ago="300">5 min ago</button><button data-ago="900">15 min ago</button><button data-ago="3600">1 hour ago</button><button data-ago="oldest">Oldest kept</button>
+      </div>
+      <div class="err" id="tErr"></div>
+      <button class="pbtn primary" id="tGo">Go</button>
+      <button class="pbtn" id="tCancel" style="color:#ddd">Cancel</button>
+    </div>
+  </div>
+
+  <!-- ================= TOOLS ================= -->
+  <div class="scr" id="s-tools">
+    <div class="page" id="toolsPage">
+      <img src="tools_top.png" style="width:402px;display:block" alt="">
+      <div id="vkRow" class="trow new"><div class="t1">Voice Keyer</div><div class="t2">Eight recorded messages to send on the air</div><span class="chip">Core</span><span class="chev">›</span></div>
+      <div id="recRow" class="trow new"><div class="t1">Recordings</div><div class="t2">Saved stretches and quick recordings on the Core</div><span class="chip">Core</span><span class="chev">›</span></div>
+      <img src="tools_bot.png" style="width:402px;display:block" alt="">
+    </div>
+    <div class="tabs"><img src="tab_tools.png" alt=""></div>
+  </div>
+
+  <!-- ================= RECORDINGS ================= -->
+  <div class="scr" id="s-recs">
+    <div class="page" id="recPage">
+      <button class="back" data-back="tools"><svg viewBox="0 0 14 22"><path d="M11 2 2 11l9 9" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="pill"><span class="chip">Core</span><button class="txtbtn" id="selBtn">Select</button></div>
+      <div class="ptitle">Recordings</div>
+      <div class="psub" id="recSum"></div>
+      <div class="segc" id="recSeg"><button data-k="all" class="on">All</button><button data-k="quick">Quick</button><button data-k="pan">Whole pan</button><button data-k="sound">Sound only</button></div>
+      <div class="search"><svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="5" fill="none" stroke="#8e8e93" stroke-width="1.8"/><path d="m11 11 3.5 3.5" stroke="#8e8e93" stroke-width="1.8" stroke-linecap="round"/></svg><input id="recQ" placeholder="Call, name or frequency" autocomplete="off"></div>
+      <div class="sortline"><span id="recCount"></span><button id="sortBtn">Newest first ⌄</button></div>
+      <div class="rlist" id="rlist"></div>
+    </div>
+    <div id="selbar"><button id="selShare" disabled>Share</button><span id="selN" style="color:#999;font-size:13px">None selected</span><button class="red" id="selDel" disabled>Delete</button></div>
+    <div id="mini"><button class="pp" id="mPP">❚❚</button><div class="mt"><div class="m1" id="mT"></div><div class="prog" id="mProg"><i id="mBar"></i></div><div class="m2" id="mTime"></div></div><button class="x" id="mX">✕</button></div>
+    <div class="tabs"><img src="tab_tools.png" alt=""></div>
+  </div>
+
+  <!-- ================= RECORDER SETUP ================= -->
+  <div class="scr" id="s-setup">
+    <div class="page" id="setupPage">
+      <button class="back" data-back="pan"><svg viewBox="0 0 14 22"><path d="M11 2 2 11l9 9" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="pill"><span class="chip">Core</span></div>
+      <div class="ptitle">Digital Spectrum Recorder</div>
+      <div class="psub" id="suCore">These settings live on the Core, so every phone and computer sees the same ones.</div>
+      <div class="warn" id="sdWarn"><b>This Core needs a proper storage device for the recorder.</b> It only has an SD card, which is too slow for this and wears out under constant writing. Connect a USB SSD or NVMe drive to the Core, then pick it below. A thumb drive is not enough.</div>
+      <div class="warn" id="offWarn" style="background:#222226;border-color:#4a4a50;color:#ccc"><b>Not connected to a Core.</b> Connect to change the recorder. Everything here stays visible.</div>
+
+      <div class="sec">Recording</div>
+      <div class="grp" id="gRec">
+        <div class="row"><div class="tt"><div class="t1">Keep recording the pan</div><div class="t2" id="suStat">Recording. Reaches back 3 h 34 min.</div></div><button class="tog on" id="suTog"></button></div>
+        <div class="row"><div class="tt"><div class="t1">What it records</div><div class="t2">Receiver 1, the whole 192 kHz it hears. About 2.8 GB an hour.</div></div></div>
+      </div>
+
+      <div class="sec">Where it is kept</div>
+      <div class="grp" id="gWhere">
+        <div class="row" id="suDiskRow"><div class="tt"><div class="t1">Disk</div><div class="t2" id="suDisk">USB SSD (Samsung T7) · 812 GB free</div></div><span class="chev">›</span></div>
+        <div class="row" style="display:block"><div style="display:flex;justify-content:space-between;align-items:baseline"><div class="t1">Size</div><div class="val" id="suGB">10 GB</div></div>
+          <input type="range" id="suSize" min="2" max="200" step="1" value="10">
+          <div class="t2" id="suHolds">Holds about 3 h 34 min at this pan width.</div></div>
+        <div class="row" style="display:block"><div class="t1" style="margin-bottom:6px">In use</div>
+          <div class="meter"><div class="kept" id="mKept"></div><div class="gone" id="mGone"></div><div class="head" id="mHead"></div></div>
+          <div class="key"><span style="--c:#3c6aa8">Kept</span><span style="--c:#fff">Writing now</span><span style="--c:#a5302c">Erased next</span></div>
+          <div class="t2" id="suFull" style="margin-top:6px">Full. The oldest part is erased as each new second comes in.</div></div>
+      </div>
+      <div class="note"><b>It is always erasing.</b> Whatever size you pick, the recorder keeps only the newest stretch and erases the oldest as it goes. To keep something, save it from the time strip.</div>
+
+      <div class="sec">Saved stretches</div>
+      <div class="grp" id="gSaved">
+        <div class="row" id="suRecs"><div class="tt"><div class="t1">Recordings</div><div class="t2">Saved stretches are never erased by the recorder.</div></div><span class="chev">›</span></div>
+        <div class="row" id="suRset"><div class="tt"><div class="t1">Recording settings</div><div class="t2">The Record button, file type and names.</div></div><span class="chev">›</span></div>
+        <div class="row"><div class="tt"><div class="t1">Save sound only as</div></div>
+          <div class="seg" style="margin:0;width:120px" id="suFmt"><button class="on">MP3</button><button>WAV</button></div></div>
+      </div>
+      <button class="dbtn" id="suErase">Erase what is kept now…</button>
+    </div>
+    <div class="tabs"><img src="tab_setup.png" alt=""></div>
+  </div>
+
+  <!-- ================= RECORDING SETTINGS ================= -->
+  <div class="scr" id="s-rset">
+    <div class="page" id="rsPage">
+      <button class="back" id="rsBack"><svg viewBox="0 0 14 22"><path d="M11 2 2 11l9 9" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="pill"><span class="chip">Core</span></div>
+      <div class="ptitle">Recordings</div>
+      <div class="psub">Settings for the Record button beside the slice flag and for sound you save. They live on the Core, so every phone and computer sees the same ones.</div>
+      <div class="warn" id="rsOff" style="background:#222226;border-color:#4a4a50;color:#ccc"><b>Not connected to a Core.</b> Connect to change these. Everything here stays visible.</div>
+
+      <div class="sec">What the Record button keeps</div>
+      <div class="grp" id="rsG1">
+        <div class="row"><div class="tt"><div class="t1">What you hear on the slice</div><div class="t2">Always kept.</div></div></div>
+        <div class="row"><div class="tt"><div class="t1">Your own voice when you transmit</div><div class="t2" id="rsMineT">So the recording has both sides of the contact.</div></div><button class="tog on" id="rsMine"></button></div>
+        <div class="row" id="rsChanRow" style="display:block"><div class="t1">The two sides</div>
+          <div class="seg" style="margin:8px 0 4px" id="rsChan"><button class="on" data-v="mono">Together</button><button data-v="stereo">Apart</button></div>
+          <div class="t2" id="rsChanT">One after the other, as you heard them.</div></div>
+      </div>
+
+      <div class="sec">Starting and stopping</div>
+      <div class="grp" id="rsG2">
+        <div class="row"><div class="tt"><div class="t1">Start by itself when I transmit</div><div class="t2" id="rsAutoT">Off. Recording starts only when you tap Record.</div></div><button class="tog" id="rsAuto"></button></div>
+        <div class="row"><div class="tt"><div class="t1">Stop by itself when it goes quiet</div><div class="t2" id="rsIdleT">After nothing is heard and you have not transmitted.</div></div><button class="tog on" id="rsIdle"></button></div>
+        <div class="row" id="rsWaitRow"><div class="tt"><div class="t1">Quiet for</div></div><div class="step"><button id="rsWm">&minus;</button><span id="rsW">2 min</span><button id="rsWp">+</button></div></div>
+      </div>
+
+      <div class="sec">Files</div>
+      <div class="grp" id="rsG3">
+        <div class="row" style="display:block"><div class="t1">Save as</div>
+          <div class="seg" style="margin:8px 0 4px" id="rsFmt"><button class="on" data-v="MP3">MP3</button><button data-v="WAV">WAV</button></div>
+          <div class="t2" id="rsFmtT">Small, plays anywhere. About 29 MB an hour.</div></div>
+        <div class="row" style="display:block"><div class="t1">Names</div>
+          <div class="t2" style="margin-top:4px">When and where it was made, with the other station's call when the log knows it:</div>
+          <div id="rsName" style="margin-top:6px;font:12px ui-monospace,'SF Mono',Menlo,monospace;color:#cfe2ff;background:#0f0f12;border:1px solid #2c2c31;border-radius:6px;padding:6px 8px">2026-11-15 1432Z 7.236.400 LSB K4ABC.mp3</div></div>
+      </div>
+      <div class="foot">The same choice is used for Sound only saves from the recorder. Rename any recording in Tools, Recordings.</div>
+
+      <div class="sec">Where they are kept</div>
+      <div class="grp" id="rsG4">
+        <div class="row" id="rsDiskRow"><div class="tt"><div class="t1">Disk</div><div class="t2" id="rsDisk">USB SSD (Samsung T7) &middot; 812 GB free</div></div><span class="chev">&rsaquo;</span></div>
+        <div class="row" id="rsSdOk" style="display:none"><div class="tt"><div class="t2" style="color:#cfd8c8"><b style="color:#e8f0e0">The SD card is fine for these.</b> Recordings are only written while one is running, so they do not wear the card the way the recorder would.</div></div></div>
+        <div class="row" id="rsRecs"><div class="tt"><div class="t1">Recordings</div><div class="t2" id="rsUse">12 on the Core, 1.4 GB.</div></div><span class="chev">&rsaquo;</span></div>
+      </div>
+      <div class="foot">Recordings are never erased by themselves. Only you delete them.</div>
+
+      <div class="sec">Playing back</div>
+      <div class="note" style="margin-bottom:140px">Play comes out of this phone's speaker or headphones. Press PTT while it plays and whatever is playing goes out on the air instead of your mic.</div>
+    </div>
+    <div class="tabs"><img src="tab_setup.png" alt=""></div>
+  </div>
+
+  <!-- ================= VOICE KEYER ================= -->
+  <div class="scr" id="s-vk">
+    <div class="page" id="vkPage">
+      <button class="back" data-back="tools"><svg viewBox="0 0 14 22"><path d="M11 2 2 11l9 9" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="pill"><span class="chip">Core</span></div>
+      <div class="ptitle">Voice Keyer</div>
+      <div class="psub">Eight messages kept on the Core. Tap one to send it on the air.</div>
+
+      <div class="hd">RECORD <span class="chip">Core</span></div>
+      <div class="vkcard">
+        <div class="vkrow"><div class="vkt"><div class="a" style="font-weight:400;color:#c8c8ce">Record into</div></div><button class="pick" id="vkInto">M5 · empty ⌄</button></div>
+        <div class="vkrow" style="display:block;padding:10px 12px">
+          <div style="display:flex;gap:8px"><button class="vbtn rec" id="vkRec"><svg width="14" height="14"><circle cx="7" cy="7" r="6" fill="currentColor"/></svg><span id="vkRecT">Record</span></button><button class="vbtn" id="vkStop"><svg width="12" height="12"><rect width="12" height="12" rx="2" fill="currentColor"/></svg>Stop</button></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:10px"><span style="font-size:12.5px;color:#949499;white-space:nowrap">This phone's mic</span><div class="lvl" style="flex:1"><i id="vkLvl" style="width:4%"></i></div></div>
+        </div>
+      </div>
+
+      <div class="hd">MESSAGES <span class="chip">Core</span></div>
+      <div class="vkcard" id="vkList"></div>
+      <div id="vkRefuse" style="display:none">
+        <div class="foot" style="color:#ffb4ae">Transmit is with the Shack Mac. Take it here to send messages. Listen and record still work.</div>
+        <button class="takebtn" id="vkTake">Take transmit</button>
+      </div>
+      <div class="vkcard" style="margin-top:10px"><div class="vkrow" id="vkImport" style="cursor:pointer"><div class="vkt"><div class="a" style="color:var(--blue);font-weight:400">Import WAV…</div><div class="b" id="vkImpSub">Fills the first empty message, M5</div></div></div></div>
+
+      <div class="hd">REPEAT <span class="chip">Core</span></div>
+      <div class="vkcard">
+        <div class="vkrow"><div class="vkt"><div class="a" style="font-weight:400">Repeat the message</div><div class="b">Calls CQ until someone answers</div></div><button class="tog" id="vkRpt"></button></div>
+        <div class="vkrow" id="vkDelRow"><div class="vkt"><div class="a" style="font-weight:400">Wait between</div></div><div class="step"><button id="vkDm">−</button><span id="vkD">5 s</span><button id="vkDp">+</button></div></div>
+      </div>
+      <div class="foot" style="margin:10px 20px 140px">Sending keys the radio and goes back to receive at the end. Stop, PTT or tapping the message again ends it early. Your voice is kept as it comes from the mic, and the transmit processing is applied each time it is sent.</div>
+    </div>
+    <div id="vkAir"><div class="m"><div class="m1" id="vkAirT">On the air: M2</div><div class="m2" id="vkAirS">0:01 / 0:06</div></div><button id="vkAirStop">Stop</button></div>
+    <div class="tabs"><img src="tab_tools.png" alt=""></div>
+  </div>
+
+  <!-- shared overlays -->
+  <div class="tabs" id="tabhits" style="background:none;z-index:40;pointer-events:none">
+    <div class="tabhit" style="left:0;pointer-events:auto" data-tab="pan"></div>
+    <div class="tabhit" style="left:80.4px;pointer-events:auto" data-tab="modes"></div>
+    <div class="tabhit" style="left:160.8px;pointer-events:auto" data-tab="tools"></div>
+    <div class="tabhit" style="left:241.2px;pointer-events:auto" data-tab="radio"></div>
+    <div class="tabhit" style="left:321.6px;pointer-events:auto" data-tab="setup"></div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+  <div class="panel" id="vkPan">
+    <div class="hd"><h3>Voice keyer</h3><button id="vkPanAll">All settings ›</button></div>
+    <div class="vkgrid" id="vkGrid"></div>
+    <div class="refuse" id="vkPanRefuse">Transmit is with the Shack Mac. Take it to send a message from this phone.<button id="vkPanTake">Take transmit</button></div>
+    <button class="stopbar" id="vkPanStop">Stop</button>
+    <div class="rp"><div class="t">Repeat the message<small id="vkPanRs">Off</small></div><button class="tog" id="vkPanRpt"></button></div>
+  </div>
+  <div class="sheet" id="sheet"></div>
+  <div class="alert" id="alert"></div>
+  <div class="toast" id="toast"></div>
+</div></div></div>
+
+<script>
+(function(){
+'use strict';
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const phone = $('#phone'), holder = $('#holder');
+
+/* ---------- fit the phone to the screen ---------- */
+function fit(){
+  const s = Math.min(1, (window.innerWidth - 24) / 402);
+  phone.style.transform = 'scale(' + s + ')';
+  holder.style.width = (402 * s) + 'px';
+  holder.style.height = (874 * s) + 'px';
+}
+window.addEventListener('resize', fit); fit();
+function toPhone(ev){ const r = phone.getBoundingClientRect(); const s = r.width / 402; return {x:(ev.clientX - r.left)/s, y:(ev.clientY - r.top)/s}; }
+
+/* ---------- time ---------- */
+const NOW0 = Date.UTC(2026,10,14,14,32,0)/1000;
+const T0 = performance.now();
+const now = () => NOW0 + (performance.now() - T0)/1000;
+const SPAN0 = 3*3600 + 34*60;        // what 10 GB holds at 192 kHz, one receiver
+let span = SPAN0;
+const oldest = () => now() - span;
+const DT = 0.5;                       // seconds per waterfall row (1 pt)
+const WF_TOP = 403, WF_H = 383, WF_W = 344;
+const pad = n => String(n).padStart(2,'0');
+function hms(t){ const d = new Date(t*1000); return pad(d.getUTCHours())+':'+pad(d.getUTCMinutes())+':'+pad(d.getUTCSeconds()); }
+function hm(t){ const d = new Date(t*1000); return pad(d.getUTCHours())+':'+pad(d.getUTCMinutes()); }
+function dur(s){ s = Math.round(s); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60;
+  if (h) return h+' h '+m+' min'; if (m) return m+' min'+(ss?' '+ss+' s':''); return ss+' s'; }
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function dstr(t){ const d = new Date(t*1000); return MON[d.getUTCMonth()]+' '+d.getUTCDate()+' '+hm(t)+' UTC'; }
+
+/* ---------- frequency mapping (from the capture's scale) ---------- */
+const X = f => 133.33 + (f - 7236.4) * 8.4;
+const F = x => 7236.4 + (x - 133.33) / 8.4;
+const fstr = f => { const hz = Math.round(f*1000); const s = String(hz).padStart(7,'0'); return s[0]+'.'+s.slice(1,4)+'.'+s.slice(4); };
+
+/* ---------- a believable band over the hours ---------- */
+const CH = [
+  {id:1, lo:7233.9, hi:7236.4, str:.95, cur:true,  L:780,  off:91},
+  {id:2, lo:7246.1, hi:7248.6, str:.78, cur:true,  L:1100, off:333},
+  {id:3, lo:7259.6, hi:7262.1, str:.52, cur:true,  L:640,  off:12},
+  {id:4, lo:7222.2, hi:7224.7, str:.70, cur:false, L:900,  off:500},
+  {id:5, lo:7227.5, hi:7230.0, str:.60, cur:false, L:520,  off:77},
+  {id:6, lo:7240.5, hi:7243.0, str:.86, cur:false, L:1300, off:260},
+  {id:7, lo:7251.6, hi:7254.1, str:.55, cur:false, L:700,  off:410},
+  {id:8, lo:7264.0, hi:7266.5, str:.66, cur:false, L:980,  off:150},
+];
+function h2(a,b){ let x = (Math.imul(a|0,374761393) + Math.imul(b|0,668265263))|0; x = Math.imul(x ^ (x>>>13), 1274126177); x ^= x>>>16; return (x>>>0)/4294967296; }
+const CUT = NOW0 - 360;
+function isOn(c,t){ if (t > CUT) return c.cur; return h2(c.id*31, Math.floor((t + c.off)/c.L)) < (c.cur ? .62 : .42); }
+function level(c,t){ if (h2(c.id*13+5, Math.floor(t/23)) < .14) return .08; const s = h2(c.id*7+1, Math.floor(t*3)); return s < .2 ? .15 : .55 + .45*s; }
+function sigAt(f,t){ for (const c of CH) if (f >= c.lo - .15 && f <= c.hi + .15 && isOn(c,t)) return c; return null; }
+
+/* palette like the app's waterfall */
+const LUT = new Uint8Array(256*3);
+(function(){ const st = [[0,0,0,0],[.12,0,0,40],[.26,0,0,82],[.45,32,92,228],[.66,84,204,118],[.86,206,232,72],[1,250,242,130]];
+  for (let i=0;i<256;i++){ const v=i/255; let k=0; while (k<st.length-2 && v>st[k+1][0]) k++;
+    const a=st[k], b=st[k+1], u=(v-a[0])/(b[0]-a[0]); for (let j=0;j<3;j++) LUT[i*3+j] = Math.round(a[j+1]+(b[j+1]-a[j+1])*u); } })();
+
+/* ---------- state ---------- */
+const S = { mode:'live', viewTop:now(), sliceF:7236.4, playing:false, playT:0, playY:0, saved:null,
+            saveMode:false, b1:0, b2:0, drawingUntil:0 };
+
+/* ---------- waterfall ---------- */
+const wf = $('#wf'), wctx = wf.getContext('2d'), img = wctx.createImageData(804, 766);
+function drawWF(){
+  const d = img.data, top = S.viewTop, rowNow = Math.floor(NOW0/DT);
+  const fx = new Float32Array(804); for (let x=0;x<804;x++) fx[x] = F(x/2);
+  const carX = Math.round(X(S.sliceF)*2);
+  for (let y=0;y<766;y++){
+    const t = top - (y>>1)*DT, r = Math.floor(t/DT) - rowNow;
+    const act = []; for (const c of CH) if (isOn(c,t)) act.push([c, level(c,t)]);
+    let o = y*804*4;
+    for (let x=0;x<804;x++,o+=4){
+      const n = h2(x*3+7, r*5+(y&1));
+      let v = n > .74 ? .2 + (n-.74)*.25 : 0;
+      const f = fx[x];
+      for (let i=0;i<act.length;i++){ const c = act[i][0]; if (f >= c.lo && f <= c.hi){ const e = Math.min(1,(f-c.lo)/.25,(c.hi-f)/.25); v = Math.max(v, (.22 + c.str*act[i][1]*(.55+.45*n))*(.5+.5*e)); } }
+      let i = Math.min(255, Math.max(0, Math.round(v*255)))*3;
+      d[o]=LUT[i]; d[o+1]=LUT[i+1]; d[o+2]=LUT[i+2]; d[o+3]=255;
+      if (x===carX || x===carX+1){ d[o]=(d[o]+45*2)/3|0; d[o+1]=(d[o+1]+170*2)/3|0; d[o+2]=(d[o+2]+205*2)/3|0; }
+    }
+  }
+  wctx.putImageData(img,0,0);
+}
+
+/* ---------- time strip ---------- */
+const st = $('#strip'), sctx = st.getContext('2d');
+function drawStrip(){
+  sctx.setTransform(2,0,0,2,0,0);
+  sctx.clearRect(0,0,44,383);
+  sctx.fillStyle = 'rgba(12,13,20,.86)'; sctx.fillRect(0,0,44,383);
+  sctx.fillStyle = '#2c2c32'; sctx.fillRect(0,0,1,383);
+  const top = S.viewTop, bot = top - WF_H*DT;
+  sctx.font = '10px ui-monospace,"SF Mono",Menlo,monospace'; sctx.textAlign = 'right'; sctx.textBaseline = 'middle';
+  for (let t = Math.floor(top/30)*30; t > bot; t -= 30){
+    const y = (top - t)/DT; const full = (t % 60) === 0;
+    sctx.fillStyle = full ? '#9a9aa2' : '#55555c'; sctx.fillRect(1, y, full ? 7 : 4, 1);
+    if (full && y > 60 && y < 365){ sctx.fillStyle = S.mode==='live' ? '#c8c8ce' : '#ffd0a0'; sctx.fillText(hm(t), 41, y); }
+  }
+}
+
+/* ---------- hours map ---------- */
+const mp = $('#map'), mctx = mp.getContext('2d');
+function drawMap(){
+  mctx.setTransform(2,0,0,2,0,0);
+  const n = now();
+  for (let y=0;y<383;y++){
+    const t = n - (y/383)*span; let a = 0;
+    for (const c of CH) if (isOn(c,t)) a += c.str;
+    const v = Math.min(1, a/3.2);
+    mctx.fillStyle = 'rgb('+Math.round(22+v*120)+','+Math.round(24+v*140)+','+Math.round(34+v*170)+')'; mctx.fillRect(0,y,14,1);
+  }
+  mctx.fillStyle = '#a5302c'; mctx.fillRect(0,380,14,3);
+  if (!S.saved){
+    const y1 = (n - S.viewTop)/span*383, h = Math.max(4, WF_H*DT/span*383);
+    mctx.strokeStyle = '#fff'; mctx.lineWidth = 1.5; mctx.strokeRect(1.5, Math.min(378-h, y1)+.75, 11, h);
+  }
+}
+
+/* ---------- slice and flag ---------- */
+function placeSlice(){
+  const x = X(S.sliceF);
+  $('#pb').style.left = (x - 25.2)+'px'; $('#pb').style.width = '25.2px';
+  $('#car').style.left = (x - .5)+'px';
+  $('#btns').style.left = Math.max(0, x - 43.67)+'px';
+  $('#pbar').style.left = Math.min(x + .33, 402 - 200.33)+'px';
+  $('#flag').style.left = Math.min(x + .33, 402 - 200.33)+'px';
+  const fq = $('#fq'); if (Math.abs(S.sliceF - 7236.4) > .0005){ fq.textContent = fstr(S.sliceF); fq.style.display = 'flex'; } else fq.style.display = 'none';
+}
+
+function ui(){
+  const past = S.mode !== 'live';
+  $('#live').classList.toggle('past', past);
+  
+  const tag = $('#ptag');
+  tag.style.display = past ? 'flex' : 'none';
+  tag.querySelector('b').textContent = S.saved ? 'SAVED' : 'PAST';
+  $('#ptagt').textContent = hms(S.playing ? S.playT : S.viewTop);
+  const pl = $('#playline');
+  if (S.playing){ pl.style.display = 'block'; pl.style.top = S.playY+'px'; $('#playlab').textContent = '▶ ' + hms(S.playT) + '  slice A'; } else pl.style.display = 'none';
+  if (S.saveMode){
+    const y1 = WF_TOP + (S.viewTop - S.b1)/DT, y2 = WF_TOP + (S.viewTop - S.b2)/DT;
+    const a = Math.max(WF_TOP, Math.min(y1,y2)), b = Math.min(WF_TOP+WF_H, Math.max(y1,y2));
+    for (const el of [$('#band'), $('#brk')]){ el.style.display = b > a ? 'block' : 'none'; el.style.top = a+'px'; el.style.height = (b-a)+'px'; }
+    const h1 = $('#h1'), h2e = $('#h2'); h1.style.display = h2e.style.display = 'block'; h1.style.top = y1+'px'; h2e.style.top = y2+'px';
+    h1.style.visibility = (y1 >= WF_TOP-2 && y1 <= WF_TOP+WF_H+2) ? 'visible' : 'hidden';
+    h2e.style.visibility = (y2 >= WF_TOP-2 && y2 <= WF_TOP+WF_H+2) ? 'visible' : 'hidden';
+    const lo = Math.min(S.b1,S.b2), hi = Math.max(S.b1,S.b2), len = hi - lo;
+    $('#svTitle').textContent = 'Save ' + hms(lo) + ' to ' + hms(hi) + ' UTC';
+    $('#svSub').textContent = dur(len) + '. Drag the yellow handles on the time strip to change it.';
+    $('#svPanSz').textContent = Math.max(1, Math.round(len/60*46)) + ' MB, every signal';
+    $('#svSndSz').textContent = 'Slice A at ' + fstr(S.sliceF) + ', ' + Math.max(1, Math.round(len/60)) + ' MB';
+  } else { $('#band').style.display = $('#brk').style.display = $('#h1').style.display = $('#h2').style.display = 'none'; }
+  $('#save').classList.toggle('on', S.saveMode);
+}
+
+let dirty = true;
+function frame(){
+  const n = now();
+  if (S.mode === 'live'){ S.viewTop = n; dirty = true; }
+  if (S.playing){
+    S.playT += (n - (S.lastTick || n));
+    S.viewTop = S.playT + (S.playY - WF_TOP)*DT;
+    if (!S.saved && S.viewTop >= n){ goLive(); toast('Caught up. Back to live.'); }
+    if (S.saved && S.playT >= S.saved.when + S.saved.len){ S.playing = false; toast('End of the saved stretch.'); }
+    dirty = true;
+  }
+  S.lastTick = n;
+  if (dirty && performance.now() >= S.drawingUntil){ drawWF(); drawStrip(); drawMap(); ui(); dirty = false; $('#drawing').style.display = 'none'; }
+  else if (dirty){ drawStrip(); drawMap(); ui(); }
+}
+setInterval(frame, 250);
+
+function minTop(){ return S.saved ? S.saved.when + WF_H*DT*.3 : oldest() + WF_H*DT; }
+function maxTop(){ return S.saved ? S.saved.when + S.saved.len + 30 : now(); }
+function setTop(t, big){
+  const n = now();
+  if (!S.saved && t >= n - .3){ goLive(); return; }
+  S.viewTop = Math.max(minTop(), Math.min(maxTop(), t));
+  S.mode = 'past';
+  if (big && S.viewTop < n - 1200){
+    $('#drawtxt').textContent = 'Digital Spectrum Recorder: drawing ' + hm(S.viewTop);
+    $('#drawing').style.display = 'flex'; S.drawingUntil = performance.now() + 750;
+  }
+  dirty = true; frame();
+}
+function goLive(){ S.mode = 'live'; S.playing = false; S.saved = null; S.viewTop = now(); dirty = true; ui(); }
+
+/* strip drag: picture follows the finger */
+let drag = null;
+st.addEventListener('pointerdown', e => { st.setPointerCapture(e.pointerId); const p = toPhone(e); drag = {y:p.y, top:S.viewTop, moved:false}; });
+st.addEventListener('pointermove', e => { if (!drag) return; const p = toPhone(e); const dy = p.y - drag.y; if (Math.abs(dy) > 2) drag.moved = true;
+  if (drag.moved){ S.playing = false; setTop(drag.top + dy*DT, false); } });
+st.addEventListener('pointerup', e => { if (drag && drag.moved) setTop(S.viewTop, true); drag = null; });
+st.addEventListener('pointercancel', () => drag = null);
+
+/* hours map: tap or drag to jump */
+let mdrag = false;
+function mapTo(e){ const p = toPhone(e); const y = Math.max(0, Math.min(383, p.y - WF_TOP)); const t = now() - (y/383)*span + WF_H*DT/2;
+  const lab = $('#maplab'); lab.style.display = 'block'; lab.style.top = p.y+'px'; lab.textContent = hm(t - WF_H*DT/2) + ' · ' + dur(now() - t + WF_H*DT/2) + ' ago';
+  S.saved = null; S.playing = false; setTop(t, false); }
+mp.addEventListener('pointerdown', e => { mp.setPointerCapture(e.pointerId); mdrag = true; mapTo(e); });
+mp.addEventListener('pointermove', e => { if (mdrag) mapTo(e); });
+mp.addEventListener('pointerup', () => { mdrag = false; $('#maplab').style.display = 'none'; setTop(S.viewTop, true); });
+
+/* tap a signal */
+wf.addEventListener('pointerdown', e => {
+  const p = toPhone(e); if (p.x > WF_W) return;
+  const t = S.viewTop - (p.y - WF_TOP)*DT, f = F(p.x);
+  const c = sigAt(f, t);
+  S.sliceF = c ? c.hi : Math.round(f*10)/10;
+  placeSlice();
+  if (S.mode === 'live'){ toast(c ? 'Slice A tuned to ' + fstr(S.sliceF) : 'Slice A tuned'); dirty = true; return; }
+  S.playing = true; S.playT = t; S.playY = WF_TOP + 1; S.viewTop = t; S.lastTick = now(); dirty = true; frame();
+  if (!c) toast('Nothing on the air there at that moment, but slice A plays it.');
+});
+
+$('#live').onclick = () => { if (S.mode !== 'live'){ goLive(); toast('Back to live'); } };
+$('#save').onclick = () => {
+  if (S.saveMode){ endSave(); return; }
+  S.saveMode = true; const top = S.viewTop; S.b1 = top - 70*DT; S.b2 = top - 250*DT; $('#savePanel').classList.add('on'); ui();
+};
+function endSave(){ S.saveMode = false; $('#savePanel').classList.remove('on'); ui(); }
+$('#svCancel').onclick = endSave;
+function addRec(kind){
+  const lo = Math.min(S.b1,S.b2), hi = Math.max(S.b1,S.b2), len = hi - lo;
+  RECS.unshift({id:++recId, kind, when:lo, len, f:S.sliceF, mode:'LSB', call:'', name:'', mb: kind==='pan' ? Math.max(1,Math.round(len/60*46)) : Math.max(1,Math.round(len/60)), fmt: kind==='sound' ? 'MP3' : '', fresh:true});
+  endSave(); renderRecs(); $('#recRow').classList.add('new');
+  toast((kind==='pan' ? 'Whole pan saved' : 'Sound saved') + ' to Recordings on the Core. Find it in Tools.');
+}
+$('#svPan').onclick = () => addRec('pan');
+$('#svSnd').onclick = () => addRec('sound');
+function handle(el, which){
+  el.addEventListener('pointerdown', e => { el.setPointerCapture(e.pointerId); el._d = true; });
+  el.addEventListener('pointermove', e => { if (!el._d) return; const p = toPhone(e); const y = Math.max(WF_TOP, Math.min(WF_TOP+WF_H, p.y)); const t = S.viewTop - (y - WF_TOP)*DT;
+    if (which===1) S.b1 = Math.min(t, now()); else S.b2 = Math.min(t, now()); ui(); });
+  el.addEventListener('pointerup', () => el._d = false);
+}
+handle($('#h1'),1); handle($('#h2'),2);
+
+/* clock: type a time */
+$('#clock').onclick = () => {
+  $('#tpSub').textContent = 'Kept from ' + hm(oldest()) + ' to now (' + dur(span) + '). Older stretches you saved are in Tools, Recordings.';
+  $('#tin').value = hms(S.mode==='live' ? now() - 600 : S.viewTop); $('#tErr').textContent = '';
+  $('#timePanel').classList.add('on'); $('#scrim').classList.add('on');
+};
+function closeTime(){ $('#timePanel').classList.remove('on'); $('#scrim').classList.remove('on'); }
+$('#tCancel').onclick = closeTime;
+$$('[data-ago]').forEach(b => b.onclick = () => { const a = b.dataset.ago; const t = a==='oldest' ? oldest() + WF_H*DT : now() - (+a); $('#tin').value = hms(t); $('#tErr').textContent=''; });
+$('#tGo').onclick = () => {
+  const v = $('#tin').value.split(':').map(Number); if (v.length < 2 || v.some(isNaN)){ $('#tErr').textContent = 'Type a time like 13:05:00.'; return; }
+  const d = new Date(now()*1000); let t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), v[0], v[1], v[2]||0)/1000;
+  if (t > now()) t -= 86400;
+  if (t < oldest()){ $('#tErr').textContent = 'That is older than what is kept (from ' + hm(oldest()) + '). Saved stretches are in Tools, Recordings.'; return; }
+  closeTime(); S.saved = null; S.playing = false; setTop(t + WF_H*DT/2, true);
+};
+
+/* ---------- toast, sheets, alerts ---------- */
+let tt = 0;
+function toast(m){ const el = $('#toast'); el.textContent = m; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 2400); }
+function closeSheets(){ $('#sheet').classList.remove('on'); $('#alert').classList.remove('on'); $('#scrim').classList.remove('on');
+  $('#timePanel').classList.remove('on'); $('#vkPan').classList.remove('on'); }
+$('#scrim').onclick = closeSheets;
+function sheet(head, acts){
+  const sh = $('#sheet'); sh.innerHTML = '';
+  const g = document.createElement('div'); g.className = 'sgrp';
+  if (head){ const h = document.createElement('div'); h.className = 'shead'; h.innerHTML = head; g.appendChild(h); }
+  acts.forEach(a => { const b = document.createElement('button'); b.className = 'sact' + (a.red?' red':''); b.innerHTML = a.label + (a.sub ? '<small>'+a.sub+'</small>' : ''); if (a.off) b.disabled = true;
+    b.onclick = () => { closeSheets(); a.fn && a.fn(); }; g.appendChild(b); });
+  sh.appendChild(g);
+  const c = document.createElement('div'); c.className = 'sgrp'; const cb = document.createElement('button'); cb.className = 'sact bold'; cb.textContent = 'Cancel'; cb.onclick = closeSheets; c.appendChild(cb); sh.appendChild(c);
+  sh.classList.add('on'); $('#scrim').classList.add('on');
+}
+function alertBox(html, okLabel, okFn, red){
+  const a = $('#alert'); a.innerHTML = html + '<div class="row2"><button id="aNo">Cancel</button><button id="aOk" class="'+(red?'red':'')+'">'+okLabel+'</button></div>';
+  a.classList.add('on'); $('#scrim').classList.add('on');
+  $('#aNo').onclick = closeSheets; $('#aOk').onclick = () => { if (okFn() !== false) closeSheets(); };
+  const i = a.querySelector('input'); if (i) setTimeout(() => i.focus(), 50);
+}
+
+/* ---------- screens ---------- */
+let cur = 'pan';
+function go(s){
+  cur = s; closeSheets();
+  $$('.scr').forEach(e => e.classList.remove('show')); $('#s-'+s).classList.add('show');
+  $$('[data-go]').forEach(b => b.classList.toggle('on', b.dataset.go === s));
+  if (s !== 'pan' && S.saveMode) endSave();
+  if (s === 'recs'){ renderRecs(); }
+  if (s === 'setup') renderSetup();
+  if (s === 'vk') renderVK();
+  if (s === 'rset') renderRS();
+  if (s === 'pan'){ dirty = true; frame(); }
+}
+$$('[data-go]').forEach(b => b.onclick = () => go(b.dataset.go));
+$$('[data-back]').forEach(b => b.onclick = () => go(b.dataset.back));
+$$('[data-tab]').forEach(b => b.onclick = () => { const t = b.dataset.tab; if (t==='modes'||t==='radio') toast('That tab is not part of this mockup.'); else go(t); });
+$('#recRow').onclick = () => { $('#recRow').classList.remove('new'); go('recs'); };
+$('#suRecs').onclick = () => go('recs');
+
+/* ---------- recordings ---------- */
+let recId = 0;
+const D = (dd,h,m) => Date.UTC(2026,10,dd,h,m,0)/1000;
+const RECS = [
+  {kind:'pan',   when:D(14,12,41), len:370, f:7248.6, mode:'LSB', call:'W4DXX', name:'Pileup on the DX', mb:284},
+  {kind:'sound', when:D(14,11,20), len:720, f:7236.4, mode:'LSB', call:'K4ABC', name:'Ragchew with Bob', mb:12, fmt:'MP3'},
+  {kind:'quick', when:D(13,22,5),  len:100, f:7262.1, mode:'LSB', call:'VE3QQ', name:'', mb:2},
+  {kind:'pan',   when:D(13,1,15),  len:900, f:7240.5, mode:'LSB', call:'', name:'Gray line opening', mb:690},
+  {kind:'sound', when:D(12,23,40), len:1500,f:7230.0, mode:'LSB', call:'N4NET', name:'Tuesday night net', mb:25, fmt:'MP3'},
+  {kind:'quick', when:D(12,18,2),  len:45,  f:7253.0, mode:'LSB', call:'KG4VCF', name:'My audio check', mb:1},
+  {kind:'pan',   when:D(10,2,30),  len:240, f:7224.7, mode:'LSB', call:'', name:'', mb:184},
+  {kind:'sound', when:D(9,14,10),  len:600, f:7264.0, mode:'LSB', call:'W1AW', name:'Bulletin', mb:101, fmt:'WAV'},
+].map(r => Object.assign({id:++recId}, r));
+const KIND = {pan:'Whole pan', sound:'Sound only', quick:'Quick recording'};
+const ICON = {
+  pan:'<svg viewBox="0 0 22 22"><rect x="2" y="3" width="18" height="16" rx="2" fill="none" stroke="#7fb0ff" stroke-width="1.6"/><path d="M4 9h3l1-3 2 6 2-4 1 1h5" fill="none" stroke="#7fb0ff" stroke-width="1.5"/><path d="M4 13h14M4 16h14" stroke="#4a78c0" stroke-width="1.4"/></svg>',
+  sound:'<svg viewBox="0 0 22 22"><path d="M3 11h2M6 7v8M9 4v14M12 8v6M15 5v12M18 9v4" stroke="#7fe0a0" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  quick:'<svg viewBox="0 0 22 22"><circle cx="11" cy="11" r="6" fill="#ff5b52"/><circle cx="11" cy="11" r="8.5" fill="none" stroke="#ff8a84" stroke-width="1.3"/></svg>'};
+let rk = 'all', rq = '', sortBy = 'new', selMode = false; const sel = new Set(); let playingId = 0;
+function filtered(){
+  let a = RECS.filter(r => rk==='all' || r.kind===rk);
+  if (rq){ const q = rq.toLowerCase().replace(/\./g,''); a = a.filter(r => (r.call+' '+r.name).toLowerCase().includes(rq.toLowerCase()) || fstr(r.f).replace(/\./g,'').includes(q)); }
+  const by = {new:(a,b)=>b.when-a.when, old:(a,b)=>a.when-b.when, freq:(a,b)=>a.f-b.f, len:(a,b)=>b.len-a.len, size:(a,b)=>b.mb-a.mb}[sortBy];
+  return a.sort(by);
+}
+function gb(mb){ return mb >= 1000 ? (mb/1000).toFixed(1)+' GB' : mb+' MB'; }
+function renderRecs(){
+  const tot = RECS.reduce((s,r)=>s+r.mb,0);
+  $('#recSum').innerHTML = 'On the Core: ' + RECS.length + ' recordings, ' + gb(tot) + '. The recorder’s own 10 GB is separate and not counted here.';
+  const list = filtered(), el = $('#rlist'); el.innerHTML = '';
+  $('#recCount').textContent = list.length + (list.length===1?' recording':' recordings');
+  if (!list.length){ el.innerHTML = '<div class="empty">Nothing matches.</div>'; }
+  list.forEach(r => {
+    const it = document.createElement('div'); it.className = 'ritem' + (r.id===playingId?' playing':''); it.dataset.id = r.id;
+    const title = r.name || r.call || (fstr(r.f) + ' ' + r.mode);
+    const kindTxt = KIND[r.kind] + (r.fmt ? ' ('+r.fmt+')' : '');
+    it.innerHTML = '<div class="acts"><button style="background:#3a7bd5" data-a="share">Share</button><button style="background:#e5352b" data-a="del">Delete</button></div>'+
+      '<div class="fg"><div class="chk'+(sel.has(r.id)?' on':'')+'"></div><div class="ico '+r.kind+'">'+ICON[r.kind]+'</div><div class="tt"><div class="t1">'+(r.fresh?'<span style="color:#e8c02a;font-size:11px;margin-right:5px">NEW</span>':'')+esc(title)+'</div>'+
+      '<div class="t2">'+dstr(r.when)+' · '+fstr(r.f)+' '+r.mode+'</div><div class="t3">'+kindTxt+' · '+dur(r.len)+' · '+gb(r.mb)+(r.call && (r.name)?' · '+esc(r.call):'')+'</div></div><button class="more" aria-label="More">···</button></div>';
+    el.appendChild(it);
+    const fg = it.querySelector('.fg');
+    it.querySelector('.more').onclick = ev => { ev.stopPropagation(); more(r); };
+    it.querySelector('[data-a=share]').onclick = () => share(r);
+    it.querySelector('[data-a=del]').onclick = () => confirmDel([r.id]);
+    let sx = null, open = false, moved = false;
+    fg.addEventListener('pointerdown', e => { if (selMode) return; sx = e.clientX; moved = false; open = it.classList.contains('open'); });
+    fg.addEventListener('pointermove', e => { if (sx === null) return; const dx = (e.clientX - sx) / (phone.getBoundingClientRect().width/402); if (Math.abs(dx) > 6){ moved = true; it.classList.add('dragging'); fg.style.transform = 'translateX(' + Math.min(0, Math.max(-148, dx + (open?-148:0))) + 'px)'; } });
+    const end = e => { if (sx === null) return; it.classList.remove('dragging'); const m = /-?\d+(\.\d+)?/.exec(fg.style.transform||''); const v = m ? +m[0] : 0;
+      if (moved){ if (v < -60){ fg.style.transform = 'translateX(-148px)'; it.classList.add('open'); } else { fg.style.transform = ''; it.classList.remove('open'); } }
+      sx = null; };
+    fg.addEventListener('pointerup', end); fg.addEventListener('pointercancel', end); fg.addEventListener('pointerleave', end);
+    fg.addEventListener('click', e => {
+      if (moved){ moved = false; return; }
+      if (it.classList.contains('open')){ fg.style.transform=''; it.classList.remove('open'); return; }
+      if (selMode){ sel.has(r.id) ? sel.delete(r.id) : sel.add(r.id); renderRecs(); return; }
+      play(r);
+    });
+  });
+  $('#recPage').classList.toggle('selmode', selMode);
+  $('#selBtn').textContent = selMode ? 'Done' : 'Select';
+  $('#selbar').style.display = selMode ? 'flex' : 'none';
+  $('#selN').textContent = sel.size ? sel.size + ' selected' : 'None selected';
+  $('#selDel').disabled = $('#selShare').disabled = !sel.size;
+  $('#selDel').textContent = sel.size > 1 ? 'Delete ' + sel.size : 'Delete';
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+$('#recSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; rk = b.dataset.k; $$('#recSeg button').forEach(x => x.classList.toggle('on', x===b)); renderRecs(); };
+$('#recQ').oninput = e => { rq = e.target.value.trim(); renderRecs(); };
+$('#selBtn').onclick = () => { selMode = !selMode; sel.clear(); renderRecs(); };
+$('#selDel').onclick = () => confirmDel(Array.from(sel));
+$('#selShare').onclick = () => { const a = RECS.filter(r => sel.has(r.id)); shareMany(a); };
+$('#sortBtn').onclick = () => sheet('<b>Sort recordings</b>', [
+  ['new','Newest first'],['old','Oldest first'],['freq','Frequency'],['len','Longest first'],['size','Largest first']].map(([k,l]) => ({label:(sortBy===k?'✓ ':'')+l, fn:() => { sortBy = k; $('#sortBtn').textContent = l + ' ⌄'; renderRecs(); }})));
+
+function more(r){
+  const acts = [
+    {label: r.kind==='pan' ? 'Open on the pan' : 'Play', fn:() => play(r)},
+    {label:'Rename…', fn:() => rename(r)},
+  ];
+  if (r.kind==='pan') acts.push({label:'Save sound only…', sub:'Pick a frequency and mode from this stretch', fn:() => sndOnly(r)});
+  acts.push({label:'Share a copy…', fn:() => share(r)});
+  acts.push({label:'Delete…', red:true, fn:() => confirmDel([r.id])});
+  sheet('<b>'+esc(r.name || r.call || fstr(r.f))+'</b>'+KIND[r.kind]+' · '+dur(r.len)+' · '+gb(r.mb), acts);
+}
+function rename(r){
+  alertBox('<h4>Rename</h4><p>Call and name show in the list and in search.</p><input id="rnC" placeholder="Call" value="'+esc(r.call)+'"><input id="rnN" placeholder="Name" value="'+esc(r.name)+'">', 'Save', () => { r.call = $('#rnC').value.trim().toUpperCase(); r.name = $('#rnN').value.trim(); renderRecs(); });
+}
+function sndOnly(r){
+  alertBox('<h4>Save sound only</h4><p>From this whole-pan stretch, keep just what a receiver would hear here.</p><input id="soF" value="'+fstr(r.f)+'"><select id="soM"><option>LSB</option><option>USB</option><option>AM</option><option>FM</option><option>CW</option><option>DIGU</option><option>DIGL</option></select><div class="seg" id="soFmt"><button class="on">MP3</button><button>WAV</button></div>', 'Save', () => {
+    const fs = $('#soF').value.replace(/[^0-9]/g,''); const f = (+fs)/1000; if (!fs || f < 1){ toast('Type a frequency like 7.236.400'); return false; }
+    const fmt = $('#soFmt .on').textContent; const len = r.len;
+    RECS.unshift({id:++recId, kind:'sound', when:r.when, len, f, mode:$('#soM').value, call:r.call, name:(r.name||'') + (r.name?' (sound)':''), mb: fmt==='MP3' ? Math.max(1,Math.round(len/60)) : Math.max(1,Math.round(len/60*10)), fmt, fresh:true});
+    renderRecs(); toast('Sound saved. It is a new recording; the whole pan stays as it was.'); });
+  $$('#soFmt button').forEach(b => b.onclick = () => $$('#soFmt button').forEach(x => x.classList.toggle('on', x===b)));
+}
+function share(r){
+  const big = r.mb >= 100;
+  const sh = $('#sheet'); sh.innerHTML = '';
+  const g = document.createElement('div'); g.className = 'sgrp';
+  g.innerHTML = '<div class="shead"><b>'+esc(r.name || r.call || fstr(r.f))+'</b>'+KIND[r.kind]+' · '+gb(r.mb)+(big ? '<br>This copies '+gb(r.mb)+' from the Core to this phone first, which can take a while on mobile data.' : '')+'</div>'+
+    '<div class="share-icons"><div><i style="background:#1a8cff">⇪</i>AirDrop</div><div><i style="background:#34c759">✉︎</i>Messages</div><div><i style="background:#2e7cf6">@</i>Mail</div><div><i style="background:#3b3b40">▤</i>Files</div></div>';
+  const acts = [];
+  if (r.kind==='pan') acts.push(['Share sound only instead','A small MP3 of what slice A heard', () => toast('Mockup: would make the MP3 on the Core, then open the share sheet.')]);
+  acts.push(['Save to Files','', () => toast('Mockup: would copy it to Files on this phone.')]);
+  acts.push(['Copy','', () => toast('Mockup: copied.')]);
+  acts.forEach(([l,s,fn]) => { const b = document.createElement('button'); b.className = 'sact'; b.innerHTML = l + (s?'<small>'+s+'</small>':''); b.onclick = () => { closeSheets(); fn(); }; g.appendChild(b); });
+  g.querySelectorAll('.share-icons div').forEach(d => d.onclick = () => { closeSheets(); toast('Mockup: would send with ' + d.textContent.trim().slice(1) + '.'); });
+  sh.appendChild(g);
+  const c = document.createElement('div'); c.className = 'sgrp'; c.innerHTML = '<button class="sact bold">Cancel</button>'; c.firstChild.onclick = closeSheets; sh.appendChild(c);
+  sh.classList.add('on'); $('#scrim').classList.add('on');
+}
+function shareMany(a){ if (a.length === 1) return share(a[0]); const mb = a.reduce((s,r)=>s+r.mb,0);
+  sheet('<b>Share '+a.length+' recordings</b>'+gb(mb)+' in all.', [{label:'Save to Files', fn:() => toast('Mockup: would copy them to Files.')},{label:'AirDrop', fn:() => toast('Mockup: would AirDrop them.')}]); }
+function confirmDel(ids){
+  const n = ids.length; if (!n) return;
+  const mb = RECS.filter(r => ids.includes(r.id)).reduce((s,r)=>s+r.mb,0);
+  sheet('<b>Delete ' + (n===1 ? 'this recording' : n + ' recordings') + ' from the Core?</b>Frees ' + gb(mb) + '. This cannot be undone.',
+    [{label: n===1 ? 'Delete Recording' : 'Delete ' + n + ' Recordings', red:true, fn:() => {
+      ids.forEach(id => { const i = RECS.findIndex(r => r.id===id); if (i>=0) RECS.splice(i,1); if (id===playingId) stopMini(); });
+      sel.clear(); if (!RECS.length) selMode = false; renderRecs(); toast(n===1 ? 'Deleted.' : n + ' recordings deleted.'); }}]);
+}
+
+/* playing */
+let mini = null;
+function play(r){
+  if (r.kind === 'pan'){
+    stopMini();
+    S.saved = r; S.mode = 'past'; S.saveMode = false; S.sliceF = r.f; placeSlice();
+    S.playY = WF_TOP + 1; S.playT = r.when; S.viewTop = r.when; S.playing = true; S.lastTick = now();
+    go('pan'); toast('Saved stretch open on the pan. Drag the strip to move in it, LIVE to leave.');
+    $('#drawtxt').textContent = 'Digital Spectrum Recorder: drawing ' + hm(r.when); $('#drawing').style.display = 'flex'; S.drawingUntil = performance.now() + 750; dirty = true;
+    return;
+  }
+  playingId = r.id; mini = {r, pos:0, on:true, last:performance.now()};
+  $('#mini').style.display = 'flex'; $('#mT').textContent = (r.name || r.call || fstr(r.f)) + ' · ' + fstr(r.f) + ' ' + r.mode; renderRecs(); tickMini();
+}
+function stopMini(){ mini = null; playingId = 0; $('#mini').style.display = 'none'; }
+function tickMini(){ if (!mini) return; const n = performance.now(); if (mini.on) mini.pos = Math.min(mini.r.len, mini.pos + (n - mini.last)/1000); mini.last = n;
+  $('#mBar').style.width = (mini.pos/mini.r.len*100)+'%'; const f = s => Math.floor(s/60)+':'+pad(Math.floor(s%60));
+  $('#mTime').textContent = f(mini.pos) + ' / ' + f(mini.r.len); $('#mPP').textContent = mini.on ? '❚❚' : '▶'; }
+setInterval(tickMini, 250);
+$('#mPP').onclick = () => { if (mini){ mini.on = !mini.on; tickMini(); } };
+$('#mX').onclick = () => { stopMini(); renderRecs(); };
+$('#mProg').addEventListener('pointerdown', e => { if (!mini) return; const r = e.currentTarget.getBoundingClientRect(); mini.pos = Math.max(0, Math.min(1, (e.clientX - r.left)/r.width))*mini.r.len; tickMini(); });
+
+/* ---------- recorder setup ---------- */
+let scen = 'ssd', recOn = true, sizeGB = 10, headPos = .63;
+const DISKS = {ssd:'USB SSD (Samsung T7) · 812 GB free', sd:'SD card (system disk) · not allowed', off:'Unknown'};
+function holds(gbv){ return gbv / 2.8 * 3600; }
+function renderSetup(){
+  const sd = scen === 'sd', off = scen === 'off';
+  $('#sdWarn').style.display = sd ? 'block' : 'none';
+  $('#offWarn').style.display = off ? 'block' : 'none';
+  ['#gRec','#gWhere','#gSaved'].forEach(s => $(s).classList.toggle('dis', off));
+  $('#suTog').classList.toggle('on', recOn && !sd && !off);
+  $('#suTog').disabled = sd || off;
+  $('#suStat').textContent = off ? 'Unknown while not connected.' : sd ? 'Off. This Core has no proper storage device.' : recOn ? 'Recording. Reaches back ' + dur(Math.min(span, holds(sizeGB))) + '.' : 'Off. Nothing new is kept.';
+  $('#suDisk').textContent = DISKS[scen];
+  $('#suDiskRow').classList.toggle('dis', off);
+  $('#suGB').textContent = sizeGB + ' GB';
+  $('#suHolds').textContent = 'Holds about ' + dur(holds(sizeGB)) + ' at this pan width.';
+  $('#suSize').disabled = sd || off;
+  $('#suSize').closest('.row').classList.toggle('dis', sd || off);
+  $('#suFull').textContent = sd ? 'Nothing is kept on the SD card.' : off ? '' : 'Full. The oldest part is erased as each new second comes in.';
+  $('#suFull').closest('.row').classList.toggle('dis', sd || off);
+  $('#suErase').disabled = sd || off;
+}
+function animMeter(){
+  const sd = scen !== 'ssd';
+  headPos = (headPos + .0035) % 1;
+  const k = $('#mKept'), g = $('#mGone'), h = $('#mHead');
+  if (sd){ k.style.width = '0'; g.style.width = '0'; h.style.display = 'none'; return; }
+  h.style.display = 'block'; k.style.width = '100%'; h.style.left = (headPos*100)+'%';
+  const gw = 6; g.style.left = (headPos*100 + .6)+'%'; g.style.width = Math.min(gw, 100 - headPos*100)+'%';
+}
+setInterval(animMeter, 120);
+$('#suTog').onclick = () => { recOn = !recOn; renderSetup(); toast(recOn ? 'Recorder on.' : 'Recorder off. What is kept stays until you erase it.'); };
+$('#suSize').oninput = e => { sizeGB = +e.target.value; $('#suGB').textContent = sizeGB + ' GB'; $('#suHolds').textContent = 'Holds about ' + dur(holds(sizeGB)) + ' at this pan width.'; };
+$('#suSize').onchange = () => { span = Math.min(SPAN0 + 3600*0, holds(sizeGB)); if (sizeGB >= 10) span = SPAN0; renderSetup(); dirty = true; };
+$('#suDiskRow').onclick = () => sheet(scen === 'sd' ? '<b>Where the recorder keeps the pan</b>No USB SSD or NVMe drive found on this Core. Plug one in and it shows here.' : '<b>Where the recorder keeps the pan</b>Pick a fast drive on the Core.',
+  (scen === 'sd' ? [] : [{label:'USB SSD (Samsung T7)', sub:'812 GB free', fn:() => renderSetup()}]).concat([
+  {label:'SD card (system disk)', sub:'Not allowed: too slow, and it wears out', off:true}]));
+$$('#suFmt button').forEach(b => b.onclick = () => $$('#suFmt button').forEach(x => x.classList.toggle('on', x===b)));
+$('#suErase').onclick = () => alertBox('<h4>Erase what is kept now?</h4><p>The last ' + dur(span) + ' of the pan goes. Saved stretches in Recordings stay. Recording carries on from now.</p>', 'Erase', () => { toast('Erased. The recorder starts again from now.'); }, true);
+$('#scen').onchange = e => { scen = e.target.value; renderSetup(); if (cur !== 'setup') go('setup'); };
+
+/* ---------- voice keyer ---------- */
+const VK = [
+  {n:'CQ contest', len:5}, {n:'CQ CQ de KG4VCF', len:6}, {n:'QRZ?', len:1.5}, {n:'Thanks, 59, 73', len:4},
+  null, null, null, null];
+let vkInto = 4, vkSend = null, vkListen = null, vkRecOn = null, vkRpt = false, vkDelay = 5, txHere = true;
+const mm = s => Math.floor(s/60) + ':' + pad(Math.floor(s%60));
+function firstEmpty(){ const i = VK.findIndex(m => !m); return i; }
+function vkLabel(i){ return 'M' + (i+1) + ' · ' + (VK[i] ? VK[i].n : 'empty'); }
+function renderVK(){
+  const el = $('#vkList'); el.innerHTML = '';
+  VK.forEach((m, i) => {
+    const r = document.createElement('div');
+    const sending = vkSend && vkSend.i === i;
+    r.className = 'vkrow' + (m ? '' : ' blank') + (sending ? ' sending' : '') + (vkRecOn && vkInto === i ? ' target' : '') + (!txHere && m ? ' off' : '');
+    r.innerHTML = '<div class="vkm">M' + (i+1) + '</div><div class="vkt"><div class="a">' + (m ? esc(m.n) : 'Empty') + '</div><div class="b">' +
+      (sending ? 'On the air ' + mm(vkSend.pos) + ' / ' + mm(m.len) + (vkRpt ? ' · repeats every ' + vkDelay + ' s' : '') : m ? mm(m.len) + (vkRpt ? ' · repeats' : '') : 'Tap to record or import') + '</div></div>' +
+      '<button class="more" aria-label="More for M' + (i+1) + '">···</button>' + (sending ? '<div class="prog" style="width:' + (vkSend.pos/m.len*100) + '%"></div>' : '');
+    r.querySelector('.more').onclick = e => { e.stopPropagation(); vkMore(i); };
+    r.onclick = () => {
+      if (!m){ vkEmpty(i); return; }
+      if (!txHere){ toast('Transmit is with the Shack Mac. Take transmit to send.'); return; }
+      if (sending){ vkStopSend('Stopped. Back to receive.'); return; }
+      vkStart(i);
+    };
+    el.appendChild(r);
+  });
+  const fe = firstEmpty();
+  $('#vkImpSub').textContent = fe >= 0 ? 'Fills the first empty message, M' + (fe+1) : 'All eight are full. Use ··· on a message to replace it.';
+  $('#vkInto').textContent = vkLabel(vkInto) + ' ⌄';
+  $('#vkRefuse').style.display = txHere ? 'none' : 'block';
+  $('#vkRpt').classList.toggle('on', vkRpt);
+  $('#vkD').textContent = vkDelay + ' s';
+  $('#vkDelRow').classList.toggle('off', !vkRpt);
+  $('#vkRec').classList.toggle('on', !!vkRecOn);
+  $('#vkRecT').textContent = vkRecOn ? 'Recording ' + mm(vkRecOn.t) : 'Record';
+  const air = $('#vkAir');
+  if (vkSend){ air.className = ''; air.style.display = 'flex'; $('#vkAirT').textContent = (vkSend.wait ? 'Waiting to repeat: ' : 'On the air: ') + 'M' + (vkSend.i+1) + ' ' + VK[vkSend.i].n;
+    $('#vkAirS').textContent = vkSend.wait ? 'Sends again in ' + Math.ceil(vkSend.wait) + ' s' : mm(vkSend.pos) + ' / ' + mm(VK[vkSend.i].len); }
+  else if (vkListen){ air.className = 'listen'; air.style.display = 'flex'; $('#vkAirT').textContent = 'Listening on this phone: M' + (vkListen.i+1);
+    $('#vkAirS').textContent = mm(vkListen.pos) + ' / ' + mm(VK[vkListen.i].len) + ' · not on the air'; }
+  else air.style.display = 'none';
+  renderPanVK();
+}
+function vkStart(i){ vkListen = null; vkSend = {i, pos:0, wait:0}; renderVK(); }
+function vkStopSend(msg){ vkSend = null; renderVK(); if (msg) toast(msg); }
+$('#vkAirStop').onclick = () => { if (vkSend) vkStopSend('Stopped. Back to receive.'); else { vkListen = null; renderVK(); } };
+let vkLast = performance.now();
+setInterval(() => {
+  const n = performance.now(), dt = (n - vkLast)/1000; vkLast = n;
+  let ch = false;
+  if (vkSend){ ch = true; const m = VK[vkSend.i];
+    if (vkSend.wait){ vkSend.wait -= dt; if (vkSend.wait <= 0){ vkSend.wait = 0; vkSend.pos = 0; } }
+    else { vkSend.pos += dt; if (vkSend.pos >= m.len){ if (vkRpt){ vkSend.wait = vkDelay; vkSend.pos = m.len; } else { vkSend = null; toast('Sent. Back to receive.'); } } } }
+  if (vkListen){ ch = true; vkListen.pos += dt; if (vkListen.pos >= VK[vkListen.i].len) vkListen = null; }
+  if (vkRecOn){ ch = true; vkRecOn.t += dt; }
+  const lv = vkRecOn ? 25 + Math.random()*60 : 3 + Math.random()*6; $('#vkLvl').style.width = lv + '%';
+  if (ch && (cur === 'vk' || cur === 'pan')) renderVK();
+}, 200);
+$('#vkRec').onclick = () => { if (vkRecOn) return; if (vkSend) vkStopSend(); vkRecOn = {t:0}; renderVK(); };
+$('#vkStop').onclick = () => {
+  if (vkRecOn){ const t = Math.max(1, Math.round(vkRecOn.t*10)/10); VK[vkInto] = {n: VK[vkInto] ? VK[vkInto].n : 'M' + (vkInto+1) + ' recording', len:t}; vkRecOn = null;
+    toast('Kept in M' + (vkInto+1) + ' on the Core, ' + mm(t) + '. Rename it with ···.'); const fe = firstEmpty(); if (fe >= 0) vkInto = fe; renderVK(); return; }
+  if (vkSend){ vkStopSend('Stopped. Back to receive.'); return; }
+  if (vkListen){ vkListen = null; renderVK(); }
+};
+$('#vkInto').onclick = () => sheet('<b>Record into</b>A message that already holds a recording is replaced.', VK.map((m,i) => ({label: vkLabel(i), fn:() => { vkInto = i; renderVK(); }})));
+function vkEmpty(i){ sheet('<b>M' + (i+1) + ' is empty</b>', [
+  {label:'Record into M' + (i+1), fn:() => { vkInto = i; renderVK(); $('#vkPage').scrollTop = 0; toast('Tap Record, speak, then Stop.'); }},
+  {label:'Import a WAV into M' + (i+1) + '…', fn:() => vkFiles(i)}]); }
+function vkMore(i){
+  const m = VK[i];
+  if (!m){ vkEmpty(i); return; }
+  sheet('<b>M' + (i+1) + ' · ' + esc(m.n) + '</b>' + mm(m.len), [
+    {label:'Send on the air', off: !txHere, sub: txHere ? '' : 'Transmit is with the Shack Mac', fn:() => vkStart(i)},
+    {label:'Listen', sub:'On this phone only, not on the air', fn:() => { vkSend = null; vkListen = {i, pos:0}; renderVK(); }},
+    {label:'Record again', fn:() => { vkInto = i; renderVK(); $('#vkPage').scrollTop = 0; toast('Tap Record, speak, then Stop. M' + (i+1) + ' is replaced.'); }},
+    {label:'Rename…', fn:() => alertBox('<h4>Rename M' + (i+1) + '</h4><input id="vkN" value="' + esc(m.n) + '">', 'Save', () => { m.n = $('#vkN').value.trim() || m.n; renderVK(); })},
+    {label:'Import a WAV…', sub:'Replaces what M' + (i+1) + ' holds', fn:() => vkFiles(i)},
+    {label:'Save as WAV…', fn:() => toast('Mockup: would open the share sheet with M' + (i+1) + '.wav.')},
+    {label:'Clear', red:true, fn:() => sheet('<b>Clear M' + (i+1) + '?</b>The recording is erased from the Core.', [{label:'Clear M' + (i+1), red:true, fn:() => { if (vkSend && vkSend.i===i) vkSend = null; VK[i] = null; renderVK(); toast('M' + (i+1) + ' cleared.'); }}])},
+  ]);
+}
+function vkFiles(i){
+  const files = [['cq-field-day.wav','0:07',7],['id-kg4vcf.wav','0:02',2],['please-qrz.wav','0:02',2],['contest-exchange.wav','0:03',3]];
+  const sh = $('#sheet'); sh.innerHTML = '';
+  const g = document.createElement('div'); g.className = 'sgrp files';
+  g.innerHTML = '<div class="shead"><b>Choose a WAV file</b>From Files on this phone. It is copied to the Core into M' + (i+1) + '.</div>';
+  files.forEach(([f,l,len]) => { const r = document.createElement('div'); r.className = 'fr'; r.innerHTML = esc(f) + '<span>' + l + '</span>';
+    r.onclick = () => { closeSheets(); VK[i] = {n: f.replace('.wav','').replace(/-/g,' '), len}; const fe = firstEmpty(); if (fe >= 0 && vkInto === i) vkInto = fe; renderVK(); toast(f + ' is now M' + (i+1) + '.'); }; g.appendChild(r); });
+  sh.appendChild(g);
+  const c = document.createElement('div'); c.className = 'sgrp'; c.innerHTML = '<button class="sact bold">Cancel</button>'; c.firstChild.onclick = closeSheets; sh.appendChild(c);
+  sh.classList.add('on'); $('#scrim').classList.add('on');
+}
+$('#vkImport').onclick = () => { const fe = firstEmpty(); if (fe < 0){ toast('All eight are full. Use ··· on a message to replace it.'); return; } vkFiles(fe); };
+$('#vkRpt').onclick = () => { vkRpt = !vkRpt; renderVK(); };
+$('#vkDm').onclick = () => { if (!vkRpt) return; vkDelay = Math.max(1, vkDelay - 1); renderVK(); };
+$('#vkDp').onclick = () => { if (!vkRpt) return; vkDelay = Math.min(60, vkDelay + 1); renderVK(); };
+$('#vkTake').onclick = () => { txHere = true; $('#txw').value = 'here'; renderVK(); toast('Transmit is now with this phone.'); };
+$('#txw').onchange = e => { txHere = e.target.value === 'here'; if (!txHere && vkSend) vkSend = null; renderVK(); if (cur !== 'vk' && cur !== 'pan') go('vk'); };
+$('#vkRow').onclick = () => { $('#vkRow').classList.remove('new'); go('vk'); };
+
+/* ---------- recording settings ---------- */
+let rsFrom = 'setup';
+const RS = {mine:true, chan:'mono', auto:false, idle:true, wait:2, fmt:'MP3'};
+function renderRS(){
+  const off = scen === 'off', sd = scen === 'sd';
+  $('#rsOff').style.display = off ? 'block' : 'none';
+  ['#rsG1','#rsG2','#rsG3','#rsG4'].forEach(g => $(g).classList.toggle('dis', off));
+  $('#rsMine').classList.toggle('on', RS.mine);
+  $('#rsMineT').textContent = RS.mine ? 'So the recording has both sides of the contact.' : 'Off. Only the other station is kept.';
+  $('#rsChanRow').classList.toggle('dis', !RS.mine || off);
+  $$('#rsChan button').forEach(b => b.classList.toggle('on', b.dataset.v === RS.chan));
+  $('#rsChanT').textContent = RS.chan === 'mono' ? 'One after the other, as you heard them.' : 'Them on the left, you on the right, so either side can be turned down.';
+  $('#rsAuto').classList.toggle('on', RS.auto);
+  $('#rsAutoT').textContent = RS.auto ? 'Every contact you call or answer is recorded without tapping Record.' : 'Off. Recording starts only when you tap Record.';
+  $('#rsIdle').classList.toggle('on', RS.idle);
+  $('#rsIdleT').textContent = RS.idle ? 'After nothing is heard and you have not transmitted.' : 'Off. A recording runs until you tap Record again.';
+  $('#rsWaitRow').classList.toggle('dis', !RS.idle || off);
+  $('#rsW').textContent = RS.wait + ' min';
+  $$('#rsFmt button').forEach(b => b.classList.toggle('on', b.dataset.v === RS.fmt));
+  const mbh = (RS.fmt === 'MP3' ? 29 : 173) * (RS.chan === 'stereo' && RS.mine ? 2 : 1);
+  $('#rsFmtT').textContent = (RS.fmt === 'MP3' ? 'Small, plays anywhere. ' : 'Full quality, bigger. ') + 'About ' + mbh + ' MB an hour.';
+  $('#rsName').textContent = '2026-11-15 1432Z 7.236.400 LSB K4ABC.' + RS.fmt.toLowerCase();
+  $('#rsDisk').textContent = sd ? 'SD card \u00b7 58 GB free' : off ? 'Unknown' : 'USB SSD (Samsung T7) \u00b7 812 GB free';
+  $('#rsSdOk').style.display = sd ? 'flex' : 'none';
+  $('#rsUse').textContent = off ? 'Unknown while not connected.' : RECS.length + ' on the Core, ' + gb(RECS.reduce((a,r) => a + r.mb, 0)) + '.';
+}
+$('#rsBack').onclick = () => go(rsFrom);
+$('#rsMine').onclick = () => { RS.mine = !RS.mine; renderRS(); };
+$$('#rsChan button').forEach(b => b.onclick = () => { RS.chan = b.dataset.v; renderRS(); });
+$('#rsAuto').onclick = () => { RS.auto = !RS.auto; renderRS(); };
+$('#rsIdle').onclick = () => { RS.idle = !RS.idle; renderRS(); };
+$('#rsWm').onclick = () => { RS.wait = Math.max(1, RS.wait - 1); renderRS(); };
+$('#rsWp').onclick = () => { RS.wait = Math.min(60, RS.wait + 1); renderRS(); };
+$$('#rsFmt button').forEach(b => b.onclick = () => { RS.fmt = b.dataset.v; renderRS(); });
+$('#rsDiskRow').onclick = () => sheet('<b>Where recordings are kept</b>On the Core. New recordings go to the disk you pick; older ones stay where they are.',
+  (scen === 'sd' ? ['SD card \u00b7 58 GB free'] : ['USB SSD (Samsung T7) \u00b7 812 GB free', "The Core's own disk \u00b7 41 GB free"]).map(l => ({label:l, fn:() => toast('New recordings go to ' + l.split(' \u00b7')[0] + '.')})));
+$('#rsRecs').onclick = () => go('recs');
+$('#suRset').onclick = () => { rsFrom = 'setup'; go('rset'); };
+
+/* ---------- flag record and play ---------- */
+let fRec = null, fPlay = null;
+function fRender(){
+  $('#fRec').classList.toggle('on', !!fRec); $('#fRecC').textContent = fRec ? mm(fRec.t) : '';
+  $('#fRec').setAttribute('aria-label', fRec ? 'Stop recording' : 'Record this contact');
+  $('#fPlay').classList.toggle('on', !!fPlay);
+  $('#fPlayI').innerHTML = fPlay ? '<rect x="4" y="4" width="10" height="10" rx="1.5" fill="currentColor"/>' : '<path d="M5 3l10 6-10 6z" fill="currentColor"/>';
+  $('#fPlayC').textContent = fPlay ? mm(fPlay.pos) : '';
+  const b = $('#pbar');
+  if (fPlay){ const r = fPlay.r; b.style.display = 'flex';
+    $('#pbT').textContent = r.name || r.call || fstr(r.f) + ' ' + r.mode;
+    $('#pbS').textContent = mm(fPlay.pos) + ' / ' + mm(r.len) + ' · speaker';
+    $('#pbBar').style.width = (fPlay.pos / r.len * 100) + '%'; }
+  else b.style.display = 'none';
+}
+function latest(n){ return RECS.slice().sort((a,b) => b.when - a.when).slice(0, n); }
+function fStartPlay(r){ fPlay = {r, pos:0}; fRender(); }
+$('#fRec').onclick = () => {
+  if (!fRec){ fRec = {t:0, start:now()}; fRender(); toast('Recording this contact on the Core: what you hear, and your voice when you transmit.'); return; }
+  const len = Math.max(1, Math.round(fRec.t));
+  const r = {id:++recId, kind:'quick', when:Math.floor(fRec.start), len, f:S.sliceF, mode:'LSB', call:'', name:'', mb:Math.max(1, Math.round(len/60))};
+  RECS.push(r); fRec = null; fRender(); renderRecs();
+  toast('Kept in Recordings: ' + fstr(r.f) + ' LSB, ' + mm(len) + '. Play is right under it.');
+};
+$('#fPlay').onclick = () => { if (fPlay){ fPlay = null; fRender(); return; } fStartPlay(latest(1)[0]); };
+$('#pbStop').onclick = () => { fPlay = null; fRender(); };
+$('#pbOld').onclick = () => sheet('<b>Play a recording</b>On your speaker. Press PTT while it plays to send it on the air.',
+  latest(8).map(r => ({label: esc(r.name || r.call || fstr(r.f) + ' ' + r.mode), sub: KIND[r.kind] + ' · ' + hm(r.when) + ' · ' + mm(r.len), fn:() => fStartPlay(r)}))
+  .concat([{label:'All recordings…', fn:() => go('recs')}, {label:'Recording settings…', fn:() => { rsFrom = 'pan'; go('rset'); }}]));
+setInterval(() => {
+  if (fRec) fRec.t += .25;
+  if (fPlay){ fPlay.pos += .25; if (fPlay.pos >= fPlay.r.len) fPlay = null; }
+  if (fRec || fPlay || $('#pbar').style.display === 'flex') fRender();
+}, 250);
+
+/* ---------- voice keyer on the pan ---------- */
+function renderPanVK(){
+  const b = $('#vkBtn');
+  b.classList.toggle('air', !!(vkSend && !vkSend.wait)); b.classList.toggle('wait', !!(vkSend && vkSend.wait)); b.classList.toggle('off', !txHere && !vkSend);
+  if (vkSend){ const m = VK[vkSend.i];
+    $('#vkBtnL').textContent = vkSend.wait ? Math.ceil(vkSend.wait) + ' s' : 'M' + (vkSend.i+1);
+    $('#vkArc').style.strokeDashoffset = vkSend.wait ? 175.9 : 175.9 * (1 - Math.min(vkSend.pos / m.len, 1));
+    b.setAttribute('aria-label', 'Stop voice keyer'); }
+  else { $('#vkBtnL').textContent = 'VOICE'; b.setAttribute('aria-label', 'Voice keyer'); }
+  const g = $('#vkGrid'); g.innerHTML = '';
+  VK.forEach((m, i) => {
+    const t = document.createElement('button'); const sending = vkSend && vkSend.i === i;
+    t.className = 'vkt2' + (m ? '' : ' blank') + (sending ? ' sending' : '') + (!txHere && m ? ' off' : '');
+    t.innerHTML = '<span class="n">M' + (i+1) + '</span><span class="a">' + (m ? esc(m.n) : 'Empty') + '</span><span class="d">' +
+      (sending ? (vkSend.wait ? 'again ' + Math.ceil(vkSend.wait) + ' s' : mm(vkSend.pos)) : m ? mm(m.len) : '') + '</span>' +
+      (sending && !vkSend.wait ? '<span class="prog" style="width:' + (vkSend.pos/m.len*100) + '%"></span>' : '');
+    t.onclick = () => {
+      if (!m){ closeSheets(); vkInto = i; go('vk'); toast('M' + (i+1) + ' is empty. Tap Record, speak, then Stop, or Import WAV.'); return; }
+      if (!txHere){ toast('Transmit is with the Shack Mac. Take transmit to send.'); return; }
+      if (sending){ vkStopSend('Stopped. Back to receive.'); return; }
+      vkStart(i); closeSheets(); toast('On the air: M' + (i+1) + '. Tap the red button or PTT to stop.');
+    };
+    g.appendChild(t);
+  });
+  $('#vkPanRefuse').style.display = txHere ? 'none' : 'block';
+  $('#vkPanStop').style.display = vkSend ? 'block' : 'none';
+  $('#vkPanRpt').classList.toggle('on', vkRpt);
+  $('#vkPanRs').textContent = vkRpt ? 'Sends again every ' + vkDelay + ' s until you stop it' : 'Off';
+}
+$('#vkBtn').onclick = () => {
+  if (vkSend){ vkStopSend('Stopped. Back to receive.'); return; }
+  renderPanVK(); $('#vkPan').classList.add('on'); $('#scrim').classList.add('on');
+};
+$('#ptt').style.pointerEvents = 'auto'; $('#ptt').style.cursor = 'pointer';
+$('#ptt').onclick = () => { if (vkSend){ vkStopSend('PTT stopped the message. Back to receive.'); } else toast('PTT is not part of this mockup.'); };
+$('#vkPanAll').onclick = () => { closeSheets(); go('vk'); };
+$('#vkPanStop').onclick = () => vkStopSend('Stopped. Back to receive.');
+$('#vkPanRpt').onclick = () => { vkRpt = !vkRpt; renderVK(); };
+$('#vkPanTake').onclick = () => { txHere = true; $('#txw').value = 'here'; renderVK(); toast('Transmit is now with this phone.'); };
+
+placeSlice(); renderRecs(); renderSetup(); renderVK(); drawWF(); drawStrip(); drawMap(); ui();
+})();
+</script>
+</body>
+</html>
