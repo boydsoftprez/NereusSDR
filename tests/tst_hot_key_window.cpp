@@ -286,7 +286,7 @@ private slots:
         QVERIFY(!rm->moxController() || !rm->moxController()->isMox());
     }
 
-    void fTastenNurSolangeVorne()
+    void fTastenSolangeLongpathLaeuft()
     {
         int modus = FKeyPriority::kModeSpecial;
         {
@@ -307,11 +307,27 @@ private slots:
                 [&modus](int m) { modus = m; return true; }});
             QCOMPARE(modus, FKeyPriority::kModeFKeys);
 
-            // Ein anderes Programm vorne, dann wieder Longpath.
+            // ── Durchhalten ist ab 2026-11-14 die Vorgabe ────────────
+            //
+            // Betreiber: „Ja, durchgehend". Ein anderes Programm vorne
+            // loest die Umstellung NICHT mehr -- genau diese Luecke hat
+            // den Mac zweimal in drei Tagen stumm gemacht, weil F10 am
+            // Mac die Stummtaste ist.
+            QVERIFY(b->fKeysWhileRunning());
+            emit qGuiApp->applicationStateChanged(Qt::ApplicationInactive);
+            QCOMPARE(modus, FKeyPriority::kModeFKeys);
+            emit qGuiApp->applicationStateChanged(Qt::ApplicationActive);
+            QCOMPARE(modus, FKeyPriority::kModeFKeys);
+
+            // Und der alte Weg bleibt erreichbar: Durchhalten aus, dann
+            // zaehlt wieder nur das vordere Programm. Ohne diesen Teil
+            // waere der Schalter auf der Setup-Seite ungeprueft.
+            b->setFKeysWhileRunning(false);
             emit qGuiApp->applicationStateChanged(Qt::ApplicationInactive);
             QCOMPARE(modus, FKeyPriority::kModeSpecial);
             emit qGuiApp->applicationStateChanged(Qt::ApplicationActive);
             QCOMPARE(modus, FKeyPriority::kModeFKeys);
+            b->setFKeysWhileRunning(true);
 
             // Beide Schalter auf der Setup-Seite.
             b->setFKeysFirst(false);

@@ -103,6 +103,82 @@ private slots:
         QCOMPARE(sys.writes, vorher);
     }
 
+    // ── Durchhalten, solange Longpath laeuft (2026-11-14) ────────────
+    //
+    // Betreiber: „Ja, durchgehend". Gegenstueck zu nurGewuenschtUndVorne
+    // darueber: dort loest ein Fokuswechsel die Umstellung, hier nicht.
+    // Genau diese Luecke hat den Mac zweimal in drei Tagen stumm
+    // gemacht -- F10 ist am Mac die Stummtaste.
+    void durchhaltenUeberlebtDenFokuswechsel()
+    {
+        System sys;
+        FKeyPriority fk(sys.backend(), marke());
+
+        fk.setWanted(true);
+        fk.setActive(true);
+        QCOMPARE(sys.mode, FKeyPriority::kModeFKeys);
+
+        // Ohne Durchhalten: ein anderes Programm vorne loest es.
+        fk.setActive(false);
+        QCOMPARE(sys.mode, FKeyPriority::kModeSpecial);
+
+        // Mit Durchhalten: der Modus steht, OBWOHL Longpath hinten ist.
+        fk.setHoldWhileRunning(true);
+        QCOMPARE(sys.mode, FKeyPriority::kModeFKeys);
+        QVERIFY(fk.engaged());
+        QVERIFY(QFile::exists(marke()));
+
+        // Und er bleibt stehen, so oft der Fokus auch wechselt.
+        fk.setActive(true);
+        fk.setActive(false);
+        fk.setActive(true);
+        fk.setActive(false);
+        QCOMPARE(sys.mode, FKeyPriority::kModeFKeys);
+    }
+
+    // Durchhalten hebt den Wunsch NICHT auf: wer die Tastenkuerzel oder
+    // „F-Tasten zuerst" abschaltet, bekommt seine Mac-Tasten zurueck,
+    // egal wie der Schalter steht.
+    void durchhaltenSchlaegtDenWunschNicht()
+    {
+        System sys;
+        FKeyPriority fk(sys.backend(), marke());
+
+        fk.setHoldWhileRunning(true);
+        QCOMPARE(sys.mode, FKeyPriority::kModeSpecial);   // noch nicht gewuenscht
+
+        fk.setWanted(true);
+        QCOMPARE(sys.mode, FKeyPriority::kModeFKeys);     // auch ohne setActive
+
+        fk.setWanted(false);
+        QCOMPARE(sys.mode, FKeyPriority::kModeSpecial);
+        QVERIFY(!fk.engaged());
+        QVERIFY(!QFile::exists(marke()));
+    }
+
+    // Und beim Beenden geht es trotz Durchhalten zurueck -- sonst
+    // behielte der Rechner die Umstellung nach jedem Lauf.
+    void durchhaltenGibtBeimBeendenZurueck()
+    {
+        System sys;
+        {
+            FKeyPriority fk(sys.backend(), marke());
+            fk.setHoldWhileRunning(true);
+            fk.setWanted(true);
+            QCOMPARE(sys.mode, FKeyPriority::kModeFKeys);
+            fk.release();
+            QCOMPARE(sys.mode, FKeyPriority::kModeSpecial);
+
+            // release() ist kein Abschalten: ein Fokuswechsel stellt
+            // wieder her, weil der Wunsch steht.
+            fk.setActive(true);
+            QCOMPARE(sys.mode, FKeyPriority::kModeFKeys);
+        }
+        // Destruktor.
+        QCOMPARE(sys.mode, FKeyPriority::kModeSpecial);
+        QVERIFY(!QFile::exists(marke()));
+    }
+
     void systemSchonAufFTastenBleibtUnberuehrt()
     {
         System sys;

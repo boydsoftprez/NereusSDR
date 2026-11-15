@@ -83,6 +83,13 @@ public:
     bool fKeysFirst() const;
     void setFKeysFirst(bool on);
 
+    // Nur macOS: der F-Tasten-Modus bleibt gestellt, solange Longpath
+    // LAEUFT, nicht nur solange es vorne ist. Vorgabe an (Betreiber
+    // 2026-11-14) -- sonst landet ein F10 fuer den Sprachspeicher am
+    // Mac und schaltet ihn stumm. Siehe FKeyPriority.h.
+    bool fKeysWhileRunning() const;
+    void setFKeysWhileRunning(bool on);
+
     QString exportText() const;
     // Lines that fail are skipped and returned with reasons; good lines apply.
     // A key on a good line leaves any action the text does not list.
@@ -99,6 +106,7 @@ signals:
     void bindingsChanged();
     void enabledChanged(bool on);
     void fKeysFirstChanged(bool on);
+    void fKeysWhileRunningChanged(bool on);
 
 private:
     void setDefaults();
@@ -109,6 +117,7 @@ private:
     QHash<QString, QString> m_actionByChord;
     bool m_enabled{true};
     bool m_fKeysFirst{true};
+    bool m_fKeysWhileRunning{true};
 };
 
 } // namespace Longpath

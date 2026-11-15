@@ -38,6 +38,7 @@ class QLabel;
 class QPoint;
 class QPushButton;
 class QSlider;
+class QTimer;
 
 namespace Longpath {
 
@@ -84,6 +85,13 @@ signals:
     // User picked an output device from the right-click context menu.
     void outputDeviceChanged(QString deviceName);
 
+    // Der Ausgang des BETRIEBSSYSTEMS wurde stumm, waehrend Longpath
+    // laeuft -- in Longpath selbst ist alles offen. Am Mac ist das fast
+    // immer F10: die Stummtaste, wenn Longpath gerade nicht vorne ist
+    // (der F-Tasten-Vorrang gilt nur fuer das vordere Programm).
+    // Nur die Flanke wird gemeldet, nicht jeder Takt.
+    void systemOutputMutedDetected();
+
 private slots:
     // Populate and pop the right-click device picker at `pos`
     // (widget-local coordinates, as delivered by
@@ -103,6 +111,9 @@ private slots:
     // click picker's checkmark stays consistent.
     void onSpeakersConfigChanged(const Longpath::AudioDeviceConfig& cfg);
 
+    // Takt des Waechters ueber den Stummschalter des Betriebssystems.
+    void pruefeSystemStumm();
+
 private:
     AudioEngine* m_audio{nullptr};
     QPushButton* m_speakerBtn{nullptr};
@@ -110,6 +121,9 @@ private:
     QLabel*      m_dbLabel{nullptr};
     bool         m_updatingFromModel{false};
     QString      m_currentDeviceName;
+    QTimer*      m_systemMuteWatch{nullptr};
+    bool         m_systemMuteSeen{false};   // letzter gesehener Zustand
+    QString      m_speakerTipBase;          // Tooltip ohne den Zusatz
 };
 
 } // namespace Longpath

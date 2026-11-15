@@ -23,6 +23,7 @@
 #include "core/AudioDeviceConfig.h"
 #include "core/AudioEngine.h"
 #include "core/audio/PortAudioBus.h"
+#include "core/audio/SystemOutputMute.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -36,6 +37,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QTimer>
 #include "gui/StyleConstants.h"
 
 namespace Longpath {
@@ -143,6 +145,47 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
                               "Hauptausgabe schaltet ihn wieder stumm.");
     }
 
+    // ── Und derselbe Schalter eine Ebene hoeher (2026-11-14) ──────────
+    //
+    // „ton geht schon wieder nicht … und. das haeuft sich!" Zum zweiten
+    // Mal (nach dem 2026-11-12) war nicht Longpath stumm, sondern der
+    // MAC: `osascript -e 'get volume settings'` sagte `output
+    // muted:true`, waehrend hier alles offen stand -- Hauptausgang
+    // nicht stumm, AF 50, PortAudio sauber auf „Externe Kopfhoerer",
+    // die Maschine schickte Ton mit audio_mute 0.
+    //
+    // Der Verdacht ist F10: am Mac die Stummtaste, und der F-Tasten-
+    // Vorrang (FKeyPriority) gilt nur, solange Longpath VORNE ist. Im
+    // Protokoll desselben Laufs schaltet der Modus in vier Minuten
+    // sechsmal hin und her -- sechs Fenster, in denen ein F10 fuer den
+    // Sprachspeicher am Mac landet statt im Programm.
+    //
+    // Die Begruendung von oben gilt unveraendert: niemand startet ein
+    // Funkprogramm, um nichts zu hoeren. Also beim Start loesen.
+    // Waehrend des Betriebs wird NICHT gestellt, nur gemeldet -- wer
+    // dann stumm schaltet, kann es gewollt haben.
+    if (SystemOutputMute::isMuted() == SystemOutputMute::Muted) {
+        const bool geloest = SystemOutputMute::setMuted(false);
+        // Zwei getrennte Rufe statt eines Fragezeichens: der
+        // Englisch-Pruefstand neutralisiert Protokollzeilen nur, wenn
+        // das Literal an einer Zeile haengt, die mit `qC` oder `<<`
+        // beginnt. In der Ternaerform stand es hinter einem `?` -- und
+        // damit zaehlten diese beiden Protokolltexte als deutsche
+        // OBERFLAECHE (CI 14.11., tst_oberflaeche_englisch: 12 statt 9).
+        if (geloest) {
+            qCWarning(lcAudio).noquote()
+                << QStringLiteral("Der Ausgang des Betriebssystems war "
+                                  "STUMM — beim Start geloest. Am Mac ist "
+                                  "das die F10-Taste, wenn Longpath nicht "
+                                  "vorne ist.");
+        } else {
+            qCWarning(lcAudio).noquote()
+                << QStringLiteral("Der Ausgang des Betriebssystems ist "
+                                  "STUMM und liess sich nicht loesen — "
+                                  "ohne ihn bleibt Longpath still.");
+        }
+    }
+
     // ── Speaker button ─────────────────────────────────────────────────────
     m_speakerBtn = new QPushButton(this);
     m_speakerBtn->setIcon(speakerIcon(savedMuted));
@@ -152,8 +195,9 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
     m_speakerBtn->setCheckable(true);
     m_speakerBtn->setChecked(savedMuted);
     m_speakerBtn->setStyleSheet(QLatin1String(kSpeakerBtnStyle));
-    m_speakerBtn->setToolTip(QStringLiteral(
-        "Click to mute/unmute master output — right-click for output devices"));
+    m_speakerTipBase = QStringLiteral(
+        "Click to mute/unmute master output — right-click for output devices");
+    m_speakerBtn->setToolTip(m_speakerTipBase);
     m_speakerBtn->setAccessibleName(QStringLiteral("Master mute"));
     m_speakerBtn->setAccessibleDescription(QStringLiteral(
         "Mute or unmute master output; right-click for device picker"));
@@ -268,7 +312,56 @@ MasterOutputWidget::MasterOutputWidget(AudioEngine* audio, QWidget* parent)
                 this, &MasterOutputWidget::onSpeakersConfigChanged);
     }
 
+    // ── Waechter ueber den Stummschalter des Betriebssystems ──────────
+    //
+    // Nur Melden, nicht Stellen (Begruendung oben). Zwei Sekunden sind
+    // fein genug, um die Ursache noch im Zusammenhang zu sehen, und die
+    // Abfrage ist eine CoreAudio-Eigenschaft, kein Geraetezugriff.
+    m_systemMuteSeen = (SystemOutputMute::isMuted() == SystemOutputMute::Muted);
+    m_systemMuteWatch = new QTimer(this);
+    m_systemMuteWatch->setInterval(2000);
+    connect(m_systemMuteWatch, &QTimer::timeout,
+            this, &MasterOutputWidget::pruefeSystemStumm);
+    m_systemMuteWatch->start();
+
     setLayout(layout);
+}
+
+void MasterOutputWidget::pruefeSystemStumm()
+{
+    const SystemOutputMute::State zustand = SystemOutputMute::isMuted();
+    if (zustand == SystemOutputMute::Unknown) {
+        // Kein Weg dorthin (Linux/Windows) oder die Abfrage schlug fehl.
+        // Abwesenheit ist keine Aussage: der zuletzt gesehene Zustand
+        // bleibt stehen, damit kein Phantomwechsel gemeldet wird.
+        return;
+    }
+
+    const bool stumm = (zustand == SystemOutputMute::Muted);
+    if (stumm == m_systemMuteSeen) {
+        return;
+    }
+    m_systemMuteSeen = stumm;
+
+    if (stumm) {
+        qCWarning(lcAudio).noquote()
+            << QStringLiteral("Der Ausgang des Betriebssystems ist gerade "
+                              "STUMM geworden — Longpath selbst ist offen. "
+                              "Am Mac ist das die F10-Taste, wenn Longpath "
+                              "nicht vorne ist.");
+        // Englisch, weil es im FENSTER steht: der Sprechblasentext ist
+        // Oberflaeche, keine Protokollzeile (Betreiber: „englisch
+        // durchgehend, aber deutsch als option").
+        m_speakerBtn->setToolTip(
+            tr("The system output is muted — Longpath itself is open.\n")
+            + m_speakerTipBase);
+        emit systemOutputMutedDetected();
+    } else {
+        qCInfo(lcAudio).noquote()
+            << QStringLiteral("Der Ausgang des Betriebssystems ist wieder "
+                              "offen.");
+        m_speakerBtn->setToolTip(m_speakerTipBase);
+    }
 }
 
 void MasterOutputWidget::setCurrentOutputDevice(const QString& name)

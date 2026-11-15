@@ -57,6 +57,12 @@ const QString& fKeysFirstKey()
     return kKey;
 }
 
+const QString& fKeysWhileRunningKey()
+{
+    static const QString kKey = QStringLiteral("HotKeys/MacFKeysWhileRunning");
+    return kKey;
+}
+
 const QString& bindingPrefix()
 {
     static const QString kPrefix = QStringLiteral("HotKeys/Binding/");
@@ -179,7 +185,9 @@ void HotKeyBindings::load()
     const bool wasEnabled = m_enabled;
     m_enabled = settings.value(enabledKey(), QStringLiteral("True")).toString() == QLatin1String("True");
     const bool wasFKeysFirst = m_fKeysFirst;
+    const bool wasFKeysWhileRunning = m_fKeysWhileRunning;
     m_fKeysFirst = settings.value(fKeysFirstKey(), QStringLiteral("True")).toString() == QLatin1String("True");
+    m_fKeysWhileRunning = settings.value(fKeysWhileRunningKey(), QStringLiteral("True")).toString() == QLatin1String("True");
 
     // A setting for an action that no longer exists goes away for good.
     const QStringList allKeys = settings.allKeys();
@@ -255,6 +263,9 @@ void HotKeyBindings::load()
     if (wasEnabled != m_enabled) {
         emit enabledChanged(m_enabled);
     }
+    if (wasFKeysWhileRunning != m_fKeysWhileRunning) {
+        emit fKeysWhileRunningChanged(m_fKeysWhileRunning);
+    }
     if (wasFKeysFirst != m_fKeysFirst) {
         emit fKeysFirstChanged(m_fKeysFirst);
     }
@@ -273,6 +284,11 @@ void HotKeyBindings::save()
         settings.remove(fKeysFirstKey());
     } else {
         settings.setValue(fKeysFirstKey(), QStringLiteral("False"));
+    }
+    if (m_fKeysWhileRunning) {
+        settings.remove(fKeysWhileRunningKey());
+    } else {
+        settings.setValue(fKeysWhileRunningKey(), QStringLiteral("False"));
     }
 
     for (const HotKeyAction& action : HotKeyActionList::all()) {
@@ -451,6 +467,20 @@ void HotKeyBindings::setFKeysFirst(bool on)
     }
     m_fKeysFirst = on;
     emit fKeysFirstChanged(on);
+}
+
+bool HotKeyBindings::fKeysWhileRunning() const
+{
+    return m_fKeysWhileRunning;
+}
+
+void HotKeyBindings::setFKeysWhileRunning(bool on)
+{
+    if (m_fKeysWhileRunning == on) {
+        return;
+    }
+    m_fKeysWhileRunning = on;
+    emit fKeysWhileRunningChanged(on);
 }
 
 QString HotKeyBindings::exportText() const

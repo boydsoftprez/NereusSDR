@@ -1653,6 +1653,7 @@ longpath_add_test(tst_audio_engine_master_mute)
 # re-entry prevention, AppSettings round-trip (audio/Master/Volume,
 # audio/Master/Muted), and construction-time restore of saved values.
 longpath_add_test(tst_master_output_widget)
+longpath_add_test(tst_system_output_mute)
 
 # ── Phase 3O Sub-Phase 10 Task 10c: TitleBar host strip ─────────────────────
 # 32 px strip that hosts the QMenuBar + MasterOutputWidget. Smoke only:

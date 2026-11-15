@@ -167,6 +167,21 @@ void MainWindow::richteTastenkuerzelEin()
     };
     connect(bindings, &HotKeyBindings::enabledChanged, this, wunsch);
     connect(bindings, &HotKeyBindings::fKeysFirstChanged, this, wunsch);
+
+    // ── Durchhalten, solange Longpath laeuft (2026-11-14) ─────────────
+    //
+    // Betreiber: „Ja, durchgehend". Nur-solange-vorne hat den Mac
+    // zweimal in drei Tagen stumm gemacht: F10 ist am Mac die
+    // Stummtaste, und zwischen jedem Fokuswechsel und dem Tastendruck
+    // lag ein Fenster, in dem der Modus wieder auf der Mac-Belegung
+    // stand -- im Protokoll vom 14.11. sechsmal in vier Minuten.
+    // Begruendung und Preis stehen im Kopf von FKeyPriority.h.
+    const auto durchhalten = [fKeys, bindings]() {
+        fKeys->setHoldWhileRunning(bindings->fKeysWhileRunning());
+    };
+    connect(bindings, &HotKeyBindings::fKeysWhileRunningChanged, this, durchhalten);
+    durchhalten();
+
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
             [fKeys](Qt::ApplicationState state) { fKeys->setActive(state == Qt::ApplicationActive); });
     connect(qGuiApp, &QCoreApplication::aboutToQuit, this, [fKeys]() { fKeys->release(); });

@@ -141,6 +141,15 @@ void FKeyPriority::setActive(bool on)
     apply();
 }
 
+void FKeyPriority::setHoldWhileRunning(bool on)
+{
+    if (m_hold == on) {
+        return;
+    }
+    m_hold = on;
+    apply();
+}
+
 void FKeyPriority::release()
 {
     if (!m_engaged) {
@@ -164,7 +173,12 @@ void FKeyPriority::setBackendForTest(Backend backend)
 
 void FKeyPriority::apply()
 {
-    if (!(m_wanted && m_active)) {
+    // Durchhalten (m_hold) macht das vordere Programm gleichgueltig:
+    // der Modus bleibt gestellt, solange der Wunsch steht. Ohne das
+    // landet ein F10 fuer den Sprachspeicher am Mac, sobald Longpath
+    // nicht genau in diesem Augenblick vorne ist -- und F10 ist am Mac
+    // die Stummtaste. Begruendung im Kopf von FKeyPriority.h.
+    if (!(m_wanted && (m_active || m_hold))) {
         release();
         return;
     }
@@ -193,7 +207,9 @@ void FKeyPriority::apply()
     m_engaged = true;
     // Ob es geklappt hat, soll man im Protokoll sehen -- ohne diese Zeile
     // sah ein erfolgreicher Lauf genauso aus wie einer, der nie vorne war.
-    qCInfo(lcHotKeys) << "F-Tasten: F1…F12 sind F-Tasten, solange Longpath vorne ist";
+    qCInfo(lcHotKeys) << (m_hold
+        ? "F-Tasten: F1…F12 sind F-Tasten, solange Longpath laeuft"
+        : "F-Tasten: F1…F12 sind F-Tasten, solange Longpath vorne ist");
 }
 
 int FKeyPriority::read() const

@@ -74,6 +74,7 @@ private:
 
     QCheckBox*   m_enabledCheck{nullptr};
     QCheckBox*   m_fKeysCheck{nullptr};   // nur macOS sichtbar
+    QCheckBox*   m_fKeysHoldCheck{nullptr};  // nur macOS sichtbar
     QLineEdit*   m_searchEdit{nullptr};
     QTreeWidget* m_table{nullptr};
     QLabel*      m_status{nullptr};

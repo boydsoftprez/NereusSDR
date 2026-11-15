@@ -55,6 +55,18 @@ public:
     void setWanted(bool on);
     // Longpath ist das vordere Programm.
     void setActive(bool on);
+    // Durchhalten, auch wenn Longpath NICHT vorne ist -- der Modus
+    // bleibt gestellt, solange Longpath laeuft, und geht erst beim
+    // Beenden zurueck.
+    //
+    // Betreiber 2026-11-14 („Ja, durchgehend"): nur-solange-vorne hat
+    // den Mac zweimal in drei Tagen stumm gemacht. F10 ist am Mac die
+    // Stummtaste, und zwischen dem Klick in Longpath und dem
+    // Tastendruck lag jedes Mal ein Fenster, in dem der Modus noch auf
+    // der Mac-Belegung stand. Der Preis ist bekannt und gewaehlt:
+    // Helligkeit und Lautstaerke gehen dann in JEDEM Programm nur mit
+    // fn, solange Longpath laeuft.
+    void setHoldWhileRunning(bool on);
     // Zurueck auf den Modus des Systems -- beim Beenden.
     void release();
 
@@ -83,6 +95,7 @@ private:
     QString m_markerPath;
     bool m_wanted{false};
     bool m_active{false};
+    bool m_hold{false};
     bool m_engaged{false};
     bool m_failedOnce{false};
 };

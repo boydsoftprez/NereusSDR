@@ -156,6 +156,11 @@ KeyboardShortcutsPage::KeyboardShortcutsPage(HotKeyBindings* bindings, QWidget* 
         connect(m_bindings, &HotKeyBindings::fKeysFirstChanged, this, [this](bool on) {
             QSignalBlocker block(m_fKeysCheck);
             m_fKeysCheck->setChecked(on);
+            m_fKeysHoldCheck->setEnabled(on);
+        });
+        connect(m_bindings, &HotKeyBindings::fKeysWhileRunningChanged, this, [this](bool on) {
+            QSignalBlocker block(m_fKeysHoldCheck);
+            m_fKeysHoldCheck->setChecked(on);
         });
     }
 }
@@ -186,8 +191,22 @@ void KeyboardShortcutsPage::buildUI()
         "Brightness, volume and the other Mac functions on these keys then need fn. "
         "As soon as another program is in front, or Longpath quits, the keys work as before."));
     vLayout->addWidget(m_fKeysCheck);
+
+    // Betreiber 2026-11-14 („Ja, durchgehend"): nur-solange-vorne hat
+    // den Mac zweimal in drei Tagen stumm gemacht -- F10 ist am Mac die
+    // Stummtaste, und zwischen Fokuswechsel und Tastendruck stand der
+    // Modus jedes Mal kurz auf der Mac-Belegung. Siehe FKeyPriority.
+    m_fKeysHoldCheck = new QCheckBox(
+        QStringLiteral("… and keep them that way while Longpath runs, not only in front"), group);
+    m_fKeysHoldCheck->setStyleSheet(QString::fromLatin1(Style::kCheckBoxStyle));
+    m_fKeysHoldCheck->setToolTip(QStringLiteral(
+        "Keeps F10 from muting the Mac when you reach for a voice-keyer key while another "
+        "program is in front. The price: brightness and volume then need fn in EVERY program "
+        "for as long as Longpath runs. Back to normal when Longpath quits."));
+    vLayout->addWidget(m_fKeysHoldCheck);
 #ifndef Q_OS_MACOS
     m_fKeysCheck->setVisible(false);
+    m_fKeysHoldCheck->setVisible(false);
 #endif
 
     auto* note = new QLabel(
@@ -280,6 +299,11 @@ void KeyboardShortcutsPage::buildUI()
     });
     connect(m_fKeysCheck, &QCheckBox::toggled, this, [this](bool on) {
         m_bindings->setFKeysFirst(on);
+        // Ohne „F-Tasten zuerst" hat das Durchhalten keinen Gegenstand.
+        m_fKeysHoldCheck->setEnabled(on);
+    });
+    connect(m_fKeysHoldCheck, &QCheckBox::toggled, this, [this](bool on) {
+        m_bindings->setFKeysWhileRunning(on);
     });
     connect(m_searchEdit, &QLineEdit::textChanged, this, &KeyboardShortcutsPage::applyFilter);
     connect(m_table, &QTreeWidget::itemSelectionChanged, this, &KeyboardShortcutsPage::updateButtons);
@@ -308,6 +332,11 @@ void KeyboardShortcutsPage::refresh()
     {
         QSignalBlocker block(m_fKeysCheck);
         m_fKeysCheck->setChecked(m_bindings->fKeysFirst());
+    }
+    {
+        QSignalBlocker block(m_fKeysHoldCheck);
+        m_fKeysHoldCheck->setChecked(m_bindings->fKeysWhileRunning());
+        m_fKeysHoldCheck->setEnabled(m_bindings->fKeysFirst());
     }
     for (auto it = m_itemById.cbegin(); it != m_itemById.cend(); ++it) {
         const QStringList keys = m_bindings->keysFor(it.key());

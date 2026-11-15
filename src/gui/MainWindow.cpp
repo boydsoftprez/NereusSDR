@@ -1057,6 +1057,22 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
 
+    // ── Der Mac ist stumm, nicht Longpath (2026-11-14) ────────────────
+    //
+    // „ton geht schon wieder nicht … und. das haeuft sich!" Zweimal in
+    // drei Tagen war der Systemausgang stumm, waehrend in Longpath
+    // alles offen stand. Beim Start loest MasterOutputWidget das selbst;
+    // kippt es mitten im Betrieb, soll es dort stehen, wo er hinsieht --
+    // nicht nur im Protokoll. Das war die Lehre aus #447: gefunden hat
+    // es bisher der, der Protokolle liest, nicht der, der funken will.
+    connect(m_titleBar->masterOutput(),
+            &MasterOutputWidget::systemOutputMutedDetected, this, [this]() {
+        showToast(tr("System output is muted — Longpath itself is open. "
+                     "On a Mac that is the F10 key while Longpath is not "
+                     "in front."),
+                  ToastSeverity::Warning, 8000);
+    });
+
     // Phase 3O Sub-Phase 10 Task 10d — the 💡 feature-request button
     // now lives inside TitleBar (consolidated from the old featureBar
     // QToolBar). Wire its click signal to the existing slot.
