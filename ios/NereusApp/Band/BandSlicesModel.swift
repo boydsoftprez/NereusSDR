@@ -1522,15 +1522,6 @@ final class BandSlicesModel: ObservableObject {
             && store.capabilityVersion(Self.radeStatusCapability) >= 1
     }
 
-    /// The RADE row's readings from the slice's mirror, while it is in
-    /// RADE, read by name as the Core sends them: `snrDb` (a NaN is no
-    /// reading) and `lastRadeRxCallsign`; and, from a Core that sends RADE
-    /// status, `radeSynced` (missing reads not synced) and
-    /// `radeFreqOffsetHz` (a NaN is no offset). The Core holds `snrDb` and
-    /// the offset after sync is lost, so the row reads `radeSynced` to hide
-    /// them. From an older Core both stay nil and the row greys. From a Core
-    /// that sends `radeReasonVersion` 1, `radeReason` (empty is none) says
-    /// why the slice has no working decoder.
     /// The RXL tag's reading: the slice's live RXL gain while RXL is on
     /// in a voice mode (the Core's RxLeveler::modeAllows), else nil.
     static func rxlLift(_ object: MirrorObject, modeLabel: String) -> Double? {
@@ -1541,6 +1532,15 @@ final class BandSlicesModel: ObservableObject {
         return object["rxLevelerGainDb"]?.number ?? 0
     }
 
+    /// The RADE row's readings from the slice's mirror, while it is in
+    /// RADE, read by name as the Core sends them: `snrDb` (a NaN is no
+    /// reading) and `lastRadeRxCallsign`; and, from a Core that sends RADE
+    /// status, `radeSynced` (missing reads not synced) and
+    /// `radeFreqOffsetHz` (a NaN is no offset). The Core holds `snrDb` and
+    /// the offset after sync is lost, so the row reads `radeSynced` to hide
+    /// them. From an older Core both stay nil and the row greys. From a Core
+    /// that sends `radeReasonVersion` 1, `radeReason` (empty is none) says
+    /// why the slice has no working decoder.
     private static func radeReception(_ object: MirrorObject, modeLabel: String,
                                       radeStatus: Bool, radeReason: Bool) -> RadeReception? {
         guard RadeReception.modeLabels.contains(modeLabel) else {
