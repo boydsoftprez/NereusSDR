@@ -717,6 +717,110 @@ void snapToGridAfterSettle(QWidget* w, int grid, int delayMs, bool snapSize)
     timer->start(delayMs);
 }
 
+// ── Auf den Schirm, an dem gearbeitet wird (2026-11-15) ─────────────
+// Herleitung und Messung: WindowPlacement.h.
+
+QRect uebertrageAufFlaeche(const QRect& rahmen, const QRect& vonFlaeche,
+                           const QRect& nachFlaeche)
+{
+    if (!rahmen.isValid() || !vonFlaeche.isValid() || !nachFlaeche.isValid()) {
+        return rahmen;
+    }
+
+    // Nie groesser als die Zielflaeche: ein Fenster von einem 2560er
+    // Schirm passt nicht unveraendert auf einen 1710er.
+    const int breite = qMin(rahmen.width(),  nachFlaeche.width());
+    const int hoehe  = qMin(rahmen.height(), nachFlaeche.height());
+
+    // Der Anteil des freien Platzes, der links (bzw. oben) liegt. Mit
+    // dieser Rechnung bleibt die linke Kante links, die rechte rechts
+    // und die Mitte in der Mitte -- ein blosses Umrechnen der
+    // Koordinate (x * neueBreite / alteBreite) wuerde ein rechts
+    // angelegtes Fenster auf dem kleineren Schirm ueber die Kante
+    // schieben.
+    const auto anteil = [](int lage, int flaecheAnfang, int flaecheMass,
+                           int fensterMass) {
+        const int frei = flaecheMass - fensterMass;
+        if (frei <= 0) { return 0.0; }
+        const double a = double(lage - flaecheAnfang) / double(frei);
+        return qBound(0.0, a, 1.0);
+    };
+    const double ax = anteil(rahmen.x(), vonFlaeche.x(),
+                             vonFlaeche.width(),  rahmen.width());
+    const double ay = anteil(rahmen.y(), vonFlaeche.y(),
+                             vonFlaeche.height(), rahmen.height());
+
+    const int freiX = qMax(0, nachFlaeche.width()  - breite);
+    const int freiY = qMax(0, nachFlaeche.height() - hoehe);
+    const int x = nachFlaeche.x() + int(std::lround(ax * freiX));
+    const int y = nachFlaeche.y() + int(std::lround(ay * freiY));
+    return QRect(x, y, breite, hoehe);
+}
+
+int flaecheMitDerGroesstenUeberlappung(const QRect& rahmen,
+                                       const QList<QRect>& flaechen)
+{
+    int beste = -1;
+    qint64 besteFlaeche = 0;
+    for (int i = 0; i < flaechen.size(); ++i) {
+        const QRect schnitt = flaechen.at(i).intersected(rahmen);
+        const qint64 f = qint64(schnitt.width()) * qint64(schnitt.height());
+        if (f > besteFlaeche) { besteFlaeche = f; beste = i; }
+    }
+    return beste;
+}
+
+namespace {
+
+// Welcher Schirm traegt `r` am meisten? An der Geometrie, nicht an
+// QWidget::screen(): ein noch nie gezeigtes Fenster meldet dort den
+// Hauptschirm, egal wohin seine wiederhergestellte Lage zeigt.
+QScreen* schirmUnter(const QRect& r)
+{
+    const QList<QScreen*> schirme = QGuiApplication::screens();
+    QList<QRect> flaechen;
+    flaechen.reserve(schirme.size());
+    for (QScreen* s : schirme) {
+        flaechen << (s ? s->geometry() : QRect());
+    }
+    const int i = flaecheMitDerGroesstenUeberlappung(r, flaechen);
+    return (i >= 0) ? schirme.at(i) : nullptr;
+}
+
+} // namespace
+
+bool aufDenArbeitsschirm(QWidget* w, const QWidget* anker)
+{
+    if (!w || !anker) { return false; }
+    const QWidget* ankerFenster = anker->window();
+    if (!ankerFenster) { return false; }
+    QScreen* ziel = ankerFenster->screen();
+    if (!ziel) { return false; }
+
+    const QRect jetzt = w->geometry();
+    if (!jetzt.isValid()) { return false; }
+
+    QScreen* steht = schirmUnter(jetzt);
+    if (!steht) {
+        // Ganz ausserhalb aller Schirme -- dafuer ist
+        // ensureOnVisibleScreen() da, nicht diese Funktion.
+        return false;
+    }
+    if (steht == ziel) { return false; }
+
+    const QRect soll = uebertrageAufFlaeche(jetzt, steht->availableGeometry(),
+                                            ziel->availableGeometry());
+    if (soll == jetzt) { return false; }
+
+    // Wer selbst schiebt, sagt es: sonst sieht meldeZug() hier ein
+    // Ziehen und der Schutzrahmen-Hinweis geht auf (2026-10-20).
+    const EigeneBewegung wirSelbst;
+    w->setGeometry(soll);
+    qCDebug(lcWindowPlacement) << "auf den Arbeitsschirm" << ziel->name()
+                               << "geholt:" << jetzt << "->" << soll;
+    return true;
+}
+
 double coveredFraction(const QRect& target, const QList<QRect>& covers)
 {
     if (target.isEmpty()) { return 1.0; }

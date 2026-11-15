@@ -36,6 +36,7 @@ private slots:
     void keinSystemrahmenMehr();
     void eineEigeneTitelleiste();
     void dasKreuzSchliesst();
+    void aufDerPalettenebene();
 
 private:
     QTemporaryDir m_dir;
@@ -50,6 +51,26 @@ void TstLogbuchRahmenlos::keinSystemrahmenMehr()
     QVERIFY2(w.windowFlags().testFlag(Qt::FramelessWindowHint),
              "Das Logbuch traegt wieder den Rahmen des Betriebssystems -- "
              "damit ist es als einziges Fenster rund.");
+}
+
+// ── Und vor den schwebenden Fenstern, nicht dahinter (2026-11-15) ───
+//
+// Betreiber: „es muss immer das neu hinzugefuegte im vordergrund
+// sein!!!!" Das Logbuch war ein gewoehnlicher QDialog und lag damit
+// unter den Paletten (Qt::Tool = NSPanel auf hoeherer Ebene); raise()
+// hebt nur innerhalb der eigenen Ebene. Dritter Fall derselben Sache
+// nach Antennenfenster (2026-09-01) und Setup-Dialog (2026-09-17).
+//
+// Die Fensterebene selbst ist Cocoa-Sache und offscreen ein No-Op --
+// die FLAGGE ist es nicht, und sie ist die Ursache.
+void TstLogbuchRahmenlos::aufDerPalettenebene()
+{
+    LogbookWindow w(pfad());
+    QVERIFY2(w.windowFlags().testFlag(Qt::Tool),
+             "Das Logbuch ist wieder ein gewoehnliches Fenster -- damit "
+             "geht es hinter den schwebenden Panels auf.");
+    // Und der Rahmen bleibt weg: die zwei gehoeren zusammen.
+    QVERIFY(w.windowFlags().testFlag(Qt::FramelessWindowHint));
 }
 
 void TstLogbuchRahmenlos::eineEigeneTitelleiste()

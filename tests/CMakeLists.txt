@@ -5815,6 +5815,11 @@ longpath_add_test(tst_kiwi_tracking_follows_the_slice)
 # 2026-09-21: Nebenfenster (Channel Strip, Logbuch, Setup, Meldungen) auf
 # die Ebene der schwebenden Paletten -- welche Fenster der Filter anfasst.
 longpath_add_test(tst_auxiliary_window_leveler)
+# 2026-11-15: ein Fenster, das aufgeht, kommt auf den Schirm, an dem
+# gearbeitet wird -- und bleibt stehen, wenn es schon dort liegt
+# (Betreiber: „wenn ich das logbuch aufmache mit dem plus sehe ich es nur
+# am macbook").
+longpath_add_test(tst_fenster_auf_den_arbeitsschirm)
 
 # -- Der Farbwaehler darf nicht der native sein (2026-09-23: das native
 #    NSColorPanel stand als schwarzes, leeres Fenster da und machte das

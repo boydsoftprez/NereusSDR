@@ -416,6 +416,26 @@ bool LayoutProfiles::isBoundToDigi(const QString& name, DigiFrequenzen::Digimodu
     return p && p->digis.contains(static_cast<int>(d));
 }
 
+// ── Profil -> Betriebsart (2026-11-15) ──────────────────────────────
+// Herleitung: LayoutProfiles.h. „Eindeutig" heisst: genau eine
+// Bindung. Keine ist keine Ansage, mehrere sind keine Entscheidung.
+
+std::optional<DSPMode> LayoutProfiles::eindeutigeBetriebsart(
+    const QString& name) const
+{
+    const Profile* p = find(name);
+    if (!p || p->modes.size() != 1) { return std::nullopt; }
+    return static_cast<DSPMode>(*p->modes.constBegin());
+}
+
+std::optional<DigiFrequenzen::Digimodus> LayoutProfiles::eindeutigerDigimodus(
+    const QString& name) const
+{
+    const Profile* p = find(name);
+    if (!p || p->digis.size() != 1) { return std::nullopt; }
+    return static_cast<DigiFrequenzen::Digimodus>(*p->digis.constBegin());
+}
+
 QString LayoutProfiles::profileFor(Band b, DSPMode m,
                                    std::optional<DigiFrequenzen::Digimodus> digi) const
 {

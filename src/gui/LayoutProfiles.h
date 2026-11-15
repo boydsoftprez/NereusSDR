@@ -228,6 +228,36 @@ public:
     void bindDigi(const QString& name, DigiFrequenzen::Digimodus d, bool on);
     bool isBoundToDigi(const QString& name, DigiFrequenzen::Digimodus d) const;
 
+    // ── Und der Weg zurueck: Profil -> Betriebsart (2026-11-15) ──
+    //
+    // Betreiber: „weiters muss auch im ft8 profil - F - immer
+    // automatisch DIGI mode sein. das hatten wir auch schon. derzeit
+    // muss ich immer im profil auf FT8 zb klicken. Dies muss im profil
+    // automatisch gespeichert sein!"
+    //
+    // Gespeichert IST es -- in seiner Einstellungsdatei vom 15.11.
+    // steht beim Profil „FT8" `digis:[0]`, die Bindung, die er am
+    // 2026-10-30 selbst angelegt hat. Sie wirkte bis heute nur in eine
+    // Richtung: FT8 anklicken holte das Profil (profileFor). Umgekehrt
+    // tat das Profil nichts.
+    //
+    // Darum diese zwei Leser. „Eindeutig" ist Absicht: ein Profil, das
+    // an CW UND SSB gebunden ist, sagt nicht, welches von beiden
+    // gestellt werden soll -- da bleibt die Betriebsart stehen. Nur wo
+    // genau eine Bindung steht, ist sie eine Ansage.
+    //
+    // Ein Profil ganz ohne Bindung fasst die Betriebsart nie an; „Neu",
+    // „LOGBUCH" und „CONTEST" bei ihm haben keine.
+
+    /// Die EINE Betriebsart, an die `name` gebunden ist. Nichts bei
+    /// keiner, bei mehreren, oder bei unbekanntem Namen.
+    std::optional<DSPMode> eindeutigeBetriebsart(const QString& name) const;
+
+    /// Dasselbe fuer FT8/FT4 -- feiner als DSPMode, weil beide DIGU
+    /// sind.
+    std::optional<DigiFrequenzen::Digimodus>
+    eindeutigerDigimodus(const QString& name) const;
+
     /// Welches Profil zu Band und Modus passt, oder leer. Passt mehr
     /// als eines, gewinnt das zuerst angelegte.
     ///

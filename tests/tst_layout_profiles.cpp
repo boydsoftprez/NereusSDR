@@ -564,6 +564,90 @@ private slots:
         QVERIFY(lp.profileFor(Band::Band40m, DSPMode::DIGU,
                               DigiFrequenzen::Digimodus::Ft8).isEmpty());
     }
+
+    // ── Der Weg zurueck: Profil -> Betriebsart (2026-11-15) ──────
+    //
+    // Betreiber: „weiters muss auch im ft8 profil - F - immer
+    // automatisch DIGI mode sein ... derzeit muss ich immer im profil
+    // auf FT8 zb klicken."
+    //
+    // Dieselbe Bindung, andersherum gelesen. „Eindeutig" ist die
+    // ganze Regel: eine Bindung ist eine Ansage, keine ist keine,
+    // zwei sind keine Entscheidung.
+    void dasProfilNenntGenauEINEBetriebsart()
+    {
+        LayoutProfiles lp;
+        lp.create(QStringLiteral("CW"));
+        lp.bindMode(QStringLiteral("CW"), DSPMode::CWU, true);
+
+        const auto eine = lp.eindeutigeBetriebsart(QStringLiteral("CW"));
+        QVERIFY(eine.has_value());
+        QCOMPARE(*eine, DSPMode::CWU);
+
+        // Eine zweite Bindung macht daraus eine Frage, keine Ansage.
+        lp.bindMode(QStringLiteral("CW"), DSPMode::LSB, true);
+        QVERIFY(!lp.eindeutigeBetriebsart(QStringLiteral("CW")).has_value());
+
+        // Zurueckgenommen: wieder eindeutig.
+        lp.bindMode(QStringLiteral("CW"), DSPMode::LSB, false);
+        QCOMPARE(*lp.eindeutigeBetriebsart(QStringLiteral("CW")),
+                 DSPMode::CWU);
+    }
+
+    void ohneBindungNenntDasProfilKeineBetriebsart()
+    {
+        LayoutProfiles lp;
+        lp.create(QStringLiteral("Neu"));
+        QVERIFY(!lp.eindeutigeBetriebsart(QStringLiteral("Neu")).has_value());
+        QVERIFY(!lp.eindeutigerDigimodus(QStringLiteral("Neu")).has_value());
+
+        // Und ein Name, den es nicht gibt, nennt auch nichts -- statt
+        // zu raten oder umzufallen.
+        QVERIFY(!lp.eindeutigeBetriebsart(QStringLiteral("gibtsnicht"))
+                     .has_value());
+        QVERIFY(!lp.eindeutigerDigimodus(QStringLiteral("gibtsnicht"))
+                     .has_value());
+    }
+
+    // Genau der Fall des Betreibers: sein Profil „FT8" traegt
+    // `digis:[0]` (Einstellungsdatei vom 15.11., am 2026-10-30 von ihm
+    // selbst angelegt).
+    void dasFt8ProfilNenntFt8()
+    {
+        LayoutProfiles lp;
+        lp.create(QStringLiteral("FT8"));
+        lp.bindDigi(QStringLiteral("FT8"),
+                    DigiFrequenzen::Digimodus::Ft8, true);
+
+        const auto d = lp.eindeutigerDigimodus(QStringLiteral("FT8"));
+        QVERIFY(d.has_value());
+        QCOMPARE(*d, DigiFrequenzen::Digimodus::Ft8);
+
+        // FT8 UND FT4 gebunden: welches denn? Keines.
+        lp.bindDigi(QStringLiteral("FT8"),
+                    DigiFrequenzen::Digimodus::Ft4, true);
+        QVERIFY(!lp.eindeutigerDigimodus(QStringLiteral("FT8")).has_value());
+    }
+
+    // Die Ansage muss den Neustart ueberleben, sonst stellt das Profil
+    // die Betriebsart nur in der Sitzung, in der man die Bindung
+    // gesetzt hat.
+    void dieAnsageUeberlebtDenNeustart()
+    {
+        {
+            LayoutProfiles lp;
+            lp.create(QStringLiteral("FT8"));
+            lp.bindDigi(QStringLiteral("FT8"),
+                        DigiFrequenzen::Digimodus::Ft8, true);
+            lp.save();
+        }
+        LayoutProfiles wieder;
+        wieder.load();
+        const auto d = wieder.eindeutigerDigimodus(QStringLiteral("FT8"));
+        QVERIFY2(d.has_value(),
+                 "nach dem Neustart nennt das Profil keine Betriebsart mehr");
+        QCOMPARE(*d, DigiFrequenzen::Digimodus::Ft8);
+    }
 };
 
 QTEST_GUILESS_MAIN(TestLayoutProfiles)

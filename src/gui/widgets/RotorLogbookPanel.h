@@ -122,6 +122,16 @@ public:
     // Das offene Logbuch nach vorne holen, ohne es neu einzulesen (Start:
     // Panadapter und Rotor/Log gehen nach ihm auf und lagen davor).
     void raiseLogbookIfOpen();
+    // Das Logbuchfenster, solange eines angelegt ist -- fuer den
+    // Aufrufer, der es auf den Arbeitsschirm holt
+    // (MainWindow::openLogbookWindow, 2026-11-15: „wenn ich das logbuch
+    // aufmache mit dem plus sehe ich es nur am macbook"). Nullptr,
+    // bevor es das erste Mal geoeffnet wurde.
+    // Als QWidget*, nicht als LogbookWindow*: der Aufrufer will es
+    // platzieren und nach vorne holen, nichts vom Logbuch selbst. So
+    // braucht er LogbookWindow.h nicht (MainWindow.cpp kennt die Klasse
+    // nur vorangemeldet). Rumpf in der .cpp, wo sie vollstaendig ist.
+    QWidget* logbuchFenster() const;
     // Den Rotor mit den gespeicherten Einstellungen verbinden, wie
     // Rotor... -> Connect. Drei Wege: der eigene GS-232-Treiber
     // (`Rotor/Backend=gs232`, braucht KEIN rotctld), ein lokal

@@ -62,14 +62,40 @@ void enableFullScreenAuxiliaryBehavior(QWidget* widget)
     // Fensterebene selbst. Qt::Tool erzeugt auf macOS ein NSPanel mit
     // einem "schwebenden" Level, das laut Cocoa ausdruecklich UEBER
     // allen normalen Fenstern JEDER App liegt -- nicht nur ueber denen
-    // von Longpath. hidesOnDeactivate ist genau der dafuer vorgesehene
-    // NSPanel-Schalter: das Fenster versteckt sich automatisch, sobald
-    // Longpath nicht mehr die aktive App ist, und kommt zurueck, sobald
-    // Longpath wieder aktiv wird -- das Verhalten, das jede normale
-    // Werkzeugpalette hat, und das diese vier Fensterklassen bisher nie
-    // bekamen.
+    // von Longpath. hidesOnDeactivate war bis zum
+    // 2026-11-15 genau dieser Schalter: das Fenster versteckt sich,
+    // sobald Longpath nicht mehr die aktive App ist.
+    //
+    // ── Warum er wieder AUS ist (2026-11-15) ─────────────────────────
+    //
+    // Betreiber: „und immer, wenn ich ein anderes fenster ausserhalb
+    // von longpath klicke, wird longpath schwarz, das muss geaendert
+    // werden."
+    //
+    // Er hat recht, und es ist dieselbe Zeile. Seine Anordnung besteht
+    // fast nur aus schwebenden Fenstern -- in seiner Einstellungsdatei
+    // vom 15.11. stehen im Profil „Neu" fuenf davon (Asr, BwFilter,
+    // Kombi, SignalInstrument, SwrInstrument) und im Profil „FT8" drei
+    // (Ft8Decoder, Ft8Slots, Tx). Verstecken die sich alle auf einmal,
+    // bleibt das Hauptfenster mit dem dunklen Spektrumgrund uebrig:
+    // Longpath „wird schwarz". Wer kurz in den Browser schaut, um ein
+    // Rufzeichen nachzusehen, verliert dabei die ganze Station aus dem
+    // Blick.
+    //
+    // Die Sorge, die am 2026-08-31 zu diesem Schalter fuehrte, war eine
+    // andere und bleibt gueltig: ein NSPanel auf NSFloatingWindowLevel
+    // steht ueber den Fenstern JEDER App. Dafuer gibt es aber laengst
+    // das richtige Mittel, gebaut und geprueft --
+    // AuxiliaryWindowLeveler setzt die Ebene beim Verlassen auf
+    // NSNormalWindowLevel herunter und beim Zurueckkommen wieder hoch.
+    // Seit heute fasst er auch die Paletten an, nicht nur die
+    // gewoehnlichen Nebenfenster.
+    //
+    // Der Unterschied in einem Satz: herunterstufen heisst „liegt wie
+    // jedes andere Fenster", verstecken heisst „ist weg". Nur das
+    // erste ist das, was eine Werkzeugpalette tun soll.
     if ([nsWindow isKindOfClass:[NSPanel class]]) {
-        ((NSPanel*)nsWindow).hidesOnDeactivate = YES;
+        ((NSPanel*)nsWindow).hidesOnDeactivate = NO;
     }
 }
 

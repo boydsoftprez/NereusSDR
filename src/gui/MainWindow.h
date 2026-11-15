@@ -458,6 +458,19 @@ public:
         std::optional<Longpath::DigiFrequenzen::Digimodus> digi
             = std::nullopt);
 
+    /// Der Weg zurueck: die Betriebsart stellen, an die das AKTIVE
+    /// Profil gebunden ist (2026-11-15).
+    ///
+    /// Betreiber: „weiters muss auch im ft8 profil - F - immer
+    /// automatisch DIGI mode sein ... derzeit muss ich immer im profil
+    /// auf FT8 zb klicken."
+    ///
+    /// Nur bei einer EINDEUTIGEN Bindung, und nur, wenn eine Scheibe da
+    /// ist. Ohne Bindung bleibt die Betriebsart, wo sie ist -- „Neu",
+    /// „LOGBUCH" und „CONTEST" fassen sie also nie an. Siehe
+    /// `LayoutProfiles::eindeutigeBetriebsart`.
+    void profilBetriebsartStellen();
+
     /// Welcher Digimodus zuletzt gemeint war. Der DIGU/DIGL-Knopf in
     /// der Leiste traegt keinen -- er richtet mit diesem her.
     Longpath::DigiFrequenzen::Digimodus m_letzterDigiModus{
@@ -1500,6 +1513,23 @@ private:
     /// Absichten; dass daraus ein Fenster wird statt einer Huelle in
     /// der Spalte, entscheidet sich hier und nur hier.
     void applyWindowVisibility(const QString& id, bool on);
+
+    /// Ein Fenster, das gerade aufgegangen ist, dorthin holen, wo
+    /// gearbeitet wird -- und davor.
+    ///
+    /// Betreiber 2026-11-15, mit drei Schirmen: „wenn ich das logbuch
+    /// aufmache mit dem plus sehe ich es nur am macbook, nicht aber auf
+    /// den beiden bildschirmen! es muss immer das neu hinzugefuegte im
+    /// vordergrund sein!!!!"
+    ///
+    /// Zwei Dinge, eine Stelle: `aufDenArbeitsschirm()` holt es auf den
+    /// Schirm des Hauptfensters, falls es auf einem anderen lag (und
+    /// laesst es stehen, wenn es schon dort liegt), danach raise() und
+    /// activateWindow(). Gedacht fuer die Fenster, die auf Zuruf
+    /// aufgehen -- Logbuch, Kanalzug, Antenne, Spot-Zentrale, Rotor/Log
+    /// --, NICHT fuer die schwebenden Applets: deren Schirm steht im
+    /// Profil, und den darf diese Regel nicht uebergehen.
+    void holeAufDenArbeitsschirm(QWidget* fenster);
 
     /// Der Betreiber hat ein solches Fenster selbst geschlossen (roter
     /// Knopf): der Haken in der Auswahl geht aus und das Profil merkt es,

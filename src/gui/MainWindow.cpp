@@ -11427,6 +11427,16 @@ void MainWindow::populateDefaultMeter()
                     }
                 });
 
+                // ── Und die Betriebsart, wenn das Profil eine nennt ──
+                //
+                // Zuletzt und einen Takt spaeter: aufDigiStellen()
+                // fasst Skala und Spektrumfenster an, und die stehen
+                // mitten in der Anwendung noch nicht. Siehe
+                // profilBetriebsartStellen().
+                QTimer::singleShot(0, this, [this]() {
+                    if (!m_shuttingDown) { profilBetriebsartStellen(); }
+                });
+
                 qWarning() << "[ProfileApply:Step] 6/6 fertig";
             });
 
@@ -17639,6 +17649,83 @@ void MainWindow::profilNachstellen(
     m_layoutProfiles->activate(passt);
 }
 
+// ── Der Weg zurueck: Profil -> Betriebsart (2026-11-15) ─────────────
+//
+// Betreiber: „weiters muss auch im ft8 profil - F - immer automatisch
+// DIGI mode sein. das hatten wir auch schon. derzeit muss ich immer im
+// profil auf FT8 zb klicken. Dies muss im profil automatisch
+// gespeichert sein!"
+//
+// Es IST gespeichert: in seiner Einstellungsdatei vom 15.11. traegt das
+// Profil „FT8" `digis:[0]` -- die Bindung, die er am 2026-10-30 selbst
+// angelegt hat („dies wuerde ich vorher anlegen"). Sie wirkte nur in
+// eine Richtung. `profilNachstellen()` oben ist die eine
+// (Betriebsart -> Profil), das hier ist die andere.
+//
+// Drei Entscheidungen stecken darin:
+//
+//  1. NUR bei einer eindeutigen Bindung. Ein Profil ohne Bindung fasst
+//     die Betriebsart nie an -- bei ihm sind das „Neu", „LOGBUCH" und
+//     „CONTEST". Eines mit zwei Bindungen sagt nicht, welche gemeint
+//     ist.
+//
+//  2. Beim ERSTEN Schritt in die Datenbetriebsart den ganzen Weg
+//     (aufDigiStellen: Betriebsart, Anrufstelle des Bandes,
+//     Bildausschnitt) -- genau das, was der FT8-Knopf tut, und genau
+//     der Griff, den er sich erspart. Steht die Scheibe schon auf
+//     DIGU, wird nur der gemeinte Digimodus gemerkt und die FREQUENZ
+//     NICHT angefasst: wer auf 14.078 arbeitet und einmal nach „N" und
+//     zurueck schaut, soll nicht auf der Anrufstelle landen.
+//
+//  3. Nicht waehrend des Sendens. Die Betriebsart mitten im Sendezug
+//     umzustellen ist nichts, was ein Profilwechsel nebenbei tun darf.
+void MainWindow::profilBetriebsartStellen()
+{
+    if (!m_layoutProfiles || !m_radioModel) { return; }
+    const QString name = m_layoutProfiles->current();
+    if (name.isEmpty()) { return; }
+
+    SliceModel* slice = m_radioModel->activeSlice();
+    if (!slice) {
+        // Beim Start, bevor ein Geraet verbunden ist: still. Es ist
+        // keine Stoerung, es ist noch nichts da, das man stellen
+        // koennte.
+        return;
+    }
+    if (m_radioModel->mox()) {
+        qCInfo(lcContainer).noquote()
+            << "Profil" << name
+            << "nennt eine Betriebsart — nicht gestellt, es wird gerade"
+            << "gesendet.";
+        return;
+    }
+
+    if (const auto digi = m_layoutProfiles->eindeutigerDigimodus(name)) {
+        const bool schonDigi = (slice->dspMode() == DSPMode::DIGU);
+        if (schonDigi) {
+            // Nur merken, damit Bandwechsel und DIGU-Knopf wissen, was
+            // gemeint ist. Frequenz und Bild bleiben, wo sie stehen.
+            m_letzterDigiModus = *digi;
+            return;
+        }
+        qCInfo(lcContainer).noquote()
+            << "Profil" << name << "ist an"
+            << (*digi == DigiFrequenzen::Digimodus::Ft4
+                    ? QStringLiteral("FT4") : QStringLiteral("FT8"))
+            << "gebunden — Betriebsart wird gestellt.";
+        aufDigiStellen(*digi);
+        return;
+    }
+
+    if (const auto modus = m_layoutProfiles->eindeutigeBetriebsart(name)) {
+        if (slice->dspMode() == *modus) { return; }
+        qCInfo(lcContainer).noquote()
+            << "Profil" << name << "ist an Betriebsart"
+            << static_cast<int>(*modus) << "gebunden — wird gestellt.";
+        slice->setDspMode(*modus);
+    }
+}
+
 // Haengt `w` -- ueber beliebig viele Fensterstufen -- am Hauptfenster
 // `haupt`? Longpaths eigene Panels sind direkte Fensterkinder; die
 // Panels des Contestprogramms (2026-11-04) sind Fensterkinder des
@@ -19636,11 +19723,21 @@ void MainWindow::applyWindowVisibility(const QString& id, bool on)
             if (!on) { removeFromSideArea(id, SideAreaExit::Home); }
             return;
         }
-        if (on) { detachRotorPanel(); } else { dockRotorPanel(); }
+        if (on) {
+            detachRotorPanel();
+            holeAufDenArbeitsschirm(m_rotorWindow);
+        } else {
+            dockRotorPanel();
+        }
         return;
     }
     if (id == QLatin1String("WinChannelStrip")) {
-        if (on) { openChannelStrip(); } else { closeIf(m_stripWindow); }
+        if (on) {
+            openChannelStrip();
+            holeAufDenArbeitsschirm(m_stripWindow);
+        } else {
+            closeIf(m_stripWindow);
+        }
         return;
     }
     if (id == QLatin1String("WinAntenna")) {
@@ -19661,7 +19758,12 @@ void MainWindow::applyWindowVisibility(const QString& id, bool on)
                        != ConnectionState::Connected)) {
             return;
         }
-        if (on) { openAntennaWindow(); } else { closeIf(m_antennaWindow); }
+        if (on) {
+            openAntennaWindow();
+            holeAufDenArbeitsschirm(m_antennaWindow);
+        } else {
+            closeIf(m_antennaWindow);
+        }
         return;
     }
     // Die QSO-Karte steht bewusst NICHT in der Liste: sie lebt im
@@ -19670,7 +19772,12 @@ void MainWindow::applyWindowVisibility(const QString& id, bool on)
     // mit eigenem Zustand zu bauen — dieselbe Falle wie ein zweites
     // Logbuch.
     if (id == QLatin1String("WinSpotHub")) {
-        if (on) { openSpotHub(); } else { closeIf(m_spotHubDialog); }
+        if (on) {
+            openSpotHub();
+            holeAufDenArbeitsschirm(m_spotHubDialog);
+        } else {
+            closeIf(m_spotHubDialog);
+        }
         return;
     }
 }
@@ -19761,7 +19868,22 @@ void MainWindow::openLogbookWindow()
 {
     if (RotorLogbookPanel* panel = ensureRotorPanel()) {
         panel->showLogbook();
+        // Dorthin, wo er arbeitet -- siehe holeAufDenArbeitsschirm().
+        // Hier und nicht in applyWindowVisibility(): ueber diese Stelle
+        // laeufen BEIDE Wege zum Logbuch, das Plus und das
+        // Werkzeugmenue.
+        holeAufDenArbeitsschirm(panel->logbuchFenster());
     }
+}
+
+void MainWindow::holeAufDenArbeitsschirm(QWidget* fenster)
+{
+    if (!fenster) { return; }
+    // Die Reihenfolge zaehlt: erst dorthin, dann nach vorne. Andersrum
+    // sieht der Betreiber es kurz auf dem falschen Schirm aufleuchten.
+    aufDenArbeitsschirm(fenster, this);
+    fenster->raise();
+    fenster->activateWindow();
 }
 
 void MainWindow::openAntennaWindow()

@@ -29,6 +29,7 @@
 #include "gui/QsoMapWindow.h"
 #include "gui/widgets/FlowLayout.h"
 #include "gui/FramelessResizer.h"
+#include "gui/MacFloatingWindowBehavior.h"
 #include "gui/StyleConstants.h"
 #include "gui/WindowChrome.h"
 #include "gui/WindowPlacement.h"
@@ -144,6 +145,25 @@ LogbookWindow::LogbookWindow(const QString& adifPath, QWidget* parent)
     // Logbuch das einzige mit dem Rahmen des Betriebssystems -- und damit
     // das einzige mit runden Ecken, waehrend alles andere eckig ist.
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
+    // ── Vor die schwebenden Fenster, nicht dahinter (2026-11-15) ─────
+    //
+    // Betreiber: „es muss immer das neu hinzugefuegte im vordergrund
+    // sein!!!!"
+    //
+    // Dritter Fall derselben Sache. Das Antennenfenster bekam das am
+    // 2026-09-01 („darf sich nicht hinter anderen Fenstern
+    // verstecken"), der Setup-Dialog am 2026-09-17 („ich wollte auf
+    // settings gehen, fenster oeffnet sich jedoch im hintergrund") --
+    // das Logbuch nicht, und es ist das Fenster, das er am oeftesten
+    // aufmacht.
+    //
+    // Der Grund ist jedes Mal derselbe: die schwebenden Fenster
+    // (Panadapter, Rotor/Log, Applets) sind Qt::Tool, auf macOS ein
+    // NSPanel auf einer HOEHEREN Fensterebene. Ein raise() hebt nur
+    // innerhalb der eigenen Ebene und ist dagegen machtlos. Also
+    // dieselbe Ebene und dasselbe Space-Verhalten wie sie.
+    setWindowFlag(Qt::Tool, true);
+    enableFullScreenAuxiliaryBehavior(this);
     // Not modal: you look things up in the log *while* working a
     // station, which is exactly when a modal dialog would be in the way.
     setModal(false);

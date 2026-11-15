@@ -40,6 +40,22 @@ bool AuxiliaryWindowLeveler::isAuxiliaryWindow(const QWidget* w)
     return true;
 }
 
+bool AuxiliaryWindowLeveler::istPalette(const QWidget* w)
+{
+    if (!w || !w->isWindow() || !w->parentWidget()) { return false; }
+    const Qt::WindowFlags flags = w->windowFlags();
+    const Qt::WindowType type = static_cast<Qt::WindowType>(
+        static_cast<int>(flags & Qt::WindowType_Mask));
+    if (type != Qt::Tool) { return false; }
+    if (flags.testFlag(Qt::WindowStaysOnTopHint)) { return false; }
+    return true;
+}
+
+bool AuxiliaryWindowLeveler::wirdGestuft(const QWidget* w)
+{
+    return isAuxiliaryWindow(w) || istPalette(w);
+}
+
 bool AuxiliaryWindowLeveler::eventFilter(QObject* watched, QEvent* event)
 {
     // Die Reihenfolge, wie der Betreiber sie sieht: was er anklickt,
@@ -61,7 +77,11 @@ bool AuxiliaryWindowLeveler::eventFilter(QObject* watched, QEvent* event)
     // native Fenster existiert aber schon -- die Ebene greift also fuer
     // das erste orderFront. Beim erneuten Zeigen kommt es wieder.
     if (event->type() == QEvent::Show) {
-        if (auto* w = qobject_cast<QWidget*>(watched); w && isAuxiliaryWindow(w)) {
+        // Seit 2026-11-15 auch die Paletten (Qt::Tool): sie verstecken
+        // sich nicht mehr beim Verlassen der App, sie werden
+        // heruntergestuft. Siehe den Kopf und
+        // MacFloatingWindowBehavior.mm.
+        if (auto* w = qobject_cast<QWidget*>(watched); w && wirdGestuft(w)) {
             track(w);
             applyLevel(w);
         }

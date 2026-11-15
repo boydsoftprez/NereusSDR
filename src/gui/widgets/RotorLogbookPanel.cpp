@@ -2815,6 +2815,11 @@ void RotorLogbookPanel::showLogbook()
     openLogbookWindow();
 }
 
+QWidget* RotorLogbookPanel::logbuchFenster() const
+{
+    return m_logWindow.data();
+}
+
 void RotorLogbookPanel::openLogbookWindow()
 {
     // One window, reused. Opening a second copy of the same file in two

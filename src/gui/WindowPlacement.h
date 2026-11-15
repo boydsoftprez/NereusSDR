@@ -248,6 +248,65 @@ bool ragtUeberDenFreienPlatz(const QRect& rahmen, const QRect& frei, int grid = 
 ///     sonst nie erfüllen.
 void ensureOnVisibleScreen(QWidget* w, QWidget* anchor, QSize minSize);
 
+// ── Auf den Schirm, an dem gearbeitet wird (2026-11-15) ──────────────
+//
+// Betreiber, mit drei Bildschirmen: „wichtig! ich arbeite gerade mit 2
+// bildschirmen. wenn ich das logbuch aufmache mit dem plus sehe ich es
+// nur am macbook, nicht aber auf den beiden bildschirmen! es muss immer
+// das neu hinzugefuegte im vordergrund sein!!!!"
+//
+// Gemessen am 15.11.: seine drei Schirme stehen nebeneinander --
+// LEN D32qc-20 (2) bei x 0…2560, das eingebaute Display bei
+// x 2560…4270, LEN D32qc-20 (1) bei x −2560…0. Die gespeicherte Lage
+// des Logbuchfensters lautet x 2561…4268: genau das MacBook. Er hat
+// das Fenster irgendwann einmal dort abgelegt, arbeitet seither an den
+// grossen Schirmen -- und das Logbuch geht weiter dort auf, wo er
+// nicht hinsieht. Ein Fenster, das auf einem Schirm aufgeht, den man
+// nicht ansieht, ist nicht offen.
+//
+// `ensureOnVisibleScreen()` koennte das nicht: ein Fenster auf einem
+// vorhandenen Schirm gilt ihm als in Ordnung, solange es das
+// Hauptfenster genug ueberlappt -- und das ist genau die Pruefung, die
+// hier nicht greift (das Logbuch ueberlappt nichts, es steht allein auf
+// seinem Schirm). Darum eine eigene, engere Regel:
+//
+//   Liegt das Fenster auf einem ANDEREN Schirm als der Anker, kommt es
+//   auf dessen Schirm -- an dieselbe Stelle im Verhaeltnis zur freien
+//   Flaeche. Liegt es schon dort, geschieht NICHTS: was der Betreiber
+//   auf seinem Arbeitsschirm hingestellt hat, bleibt stehen.
+//
+// Absichtlich in zwei Teilen. Das Rechnen ist eine reine
+// Rechteckfunktion und am Schreibtisch vollstaendig pruefbar; nur das
+// Nachsehen, welcher Schirm welcher ist, braucht ein Fenster.
+
+/// `rahmen` von der freien Flaeche `vonFlaeche` auf `nachFlaeche`
+/// uebertragen: derselbe Anteil des freien Platzes links und oben, die
+/// Groesse nur verkleinert, wenn sie nicht hineinpasst. Die linke Kante
+/// bleibt links, die rechte rechts, die Mitte in der Mitte.
+///
+/// Ungueltige Rechtecke kommen unveraendert zurueck.
+QRect uebertrageAufFlaeche(const QRect& rahmen, const QRect& vonFlaeche,
+                           const QRect& nachFlaeche);
+
+/// Welche der `flaechen` traegt `rahmen` am meisten? -1, wenn keine ihn
+/// beruehrt.
+///
+/// Die zweite reine Haelfte der Regel: WELCHER Schirm ist es. Damit ist
+/// der gemessene Fall des Betreibers am Schreibtisch pruefbar -- drei
+/// Schirme, ein Fenster bei x 2561, und die Antwort muss das eingebaute
+/// Display sein, nicht der Schirm, auf dem er arbeitet.
+int flaecheMitDerGroesstenUeberlappung(const QRect& rahmen,
+                                       const QList<QRect>& flaechen);
+
+/// `w` auf den Schirm von `anker` holen, wenn es gerade auf einem
+/// anderen liegt. Liefert true, wenn verschoben wurde.
+///
+/// Der Schirm eines Fensters wird an seiner GEOMETRIE bestimmt (groesste
+/// Ueberlappung), nicht an `QWidget::screen()`: ein frisch erzeugtes,
+/// noch nie gezeigtes Fenster meldet dort den Hauptschirm, egal wohin
+/// seine wiederhergestellte Lage zeigt.
+bool aufDenArbeitsschirm(QWidget* w, const QWidget* anker);
+
 // ── Liegt etwas darueber? ────────────────────────────────────────────
 //
 // Betreiber 2026-09-25: "wenn ich rx einblende ist es versteckt ... ich

@@ -72,7 +72,21 @@ private slots:
         qApp->removeEventFilter(&leveler);
     }
 
-    void palettesPopupsAndStayOnTopAreLeftAlone()
+    // ── Die Paletten gehoeren jetzt DAZU (2026-11-15) ───────────────
+    //
+    // Hier stand „palettesPopupsAndStayOnTopAreLeftAlone", und die
+    // Paletten standen darin bei den Ausgenommenen: sie regelten das
+    // Verlassen der App selbst, mit `hidesOnDeactivate` -- sie
+    // versteckten sich.
+    //
+    // Betreiber 2026-11-15: „und immer, wenn ich ein anderes fenster
+    // ausserhalb von longpath klicke, wird longpath schwarz." Genau
+    // dieses Verstecken. Jetzt stuft der Filter auch sie herunter,
+    // statt sie verschwinden zu lassen; `hidesOnDeactivate` ist auf
+    // NO. Die uebrigen Ausnahmen (Popups, „bleibt oben", Kinder)
+    // gelten unveraendert -- darum stehen sie weiter in demselben
+    // Fall.
+    void palettenWerdenGestuftPopupsNicht()
     {
         AuxiliaryWindowLeveler leveler;
         qApp->installEventFilter(&leveler);
@@ -81,30 +95,43 @@ private slots:
         main.show();
         QVERIFY(QTest::qWaitForWindowExposed(&main, kFensterFrist));
 
-        // Die Paletten selbst (Qt::Tool) liegen schon auf der Ebene.
+        // Eine Palette (Qt::Tool) ist kein „Nebenfenster" im alten
+        // Sinn -- aber der Filter nimmt sie jetzt in die Hand.
         QWidget tool(&main, Qt::Tool);
         tool.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&tool, kFensterFrist));
         QVERIFY(!AuxiliaryWindowLeveler::isAuxiliaryWindow(&tool));
-        QVERIFY(!leveler.trackedForTest().contains(&tool));
+        QVERIFY(AuxiliaryWindowLeveler::istPalette(&tool));
+        QVERIFY(AuxiliaryWindowLeveler::wirdGestuft(&tool));
+        QVERIFY(leveler.trackedForTest().contains(&tool));
+
+        // Eine Palette OHNE Elternteil ist keine: sie gehoert zu
+        // keinem Fenster, aus dem heraus sie aufgegangen waere.
+        QWidget frei(nullptr, Qt::Tool);
+        QVERIFY(!AuxiliaryWindowLeveler::istPalette(&frei));
 
         // Menues sind Popups.
         QMenu menu(&main);
         menu.addAction(QStringLiteral("x"));
         menu.popup(QPoint(10, 10));
-        QVERIFY(!AuxiliaryWindowLeveler::isAuxiliaryWindow(&menu));
+        QVERIFY(!AuxiliaryWindowLeveler::wirdGestuft(&menu));
         QVERIFY(!leveler.trackedForTest().contains(&menu));
         menu.close();
 
         // "Bleibt oben" liegt bei Qt ohnehin ueber den Paletten.
         QDialog onTop(&main, Qt::WindowStaysOnTopHint);
         onTop.show();
-        QVERIFY(!AuxiliaryWindowLeveler::isAuxiliaryWindow(&onTop));
+        QVERIFY(!AuxiliaryWindowLeveler::wirdGestuft(&onTop));
         QVERIFY(!leveler.trackedForTest().contains(&onTop));
+
+        // Auch eine Palette, die „bleibt oben" sagt, bleibt oben.
+        QWidget toolOben(&main, Qt::Tool | Qt::WindowStaysOnTopHint);
+        QVERIFY(!AuxiliaryWindowLeveler::istPalette(&toolOben));
 
         // Ein Kind-Widget im Fenster ist kein Fenster.
         QWidget child(&main);
         child.show();
-        QVERIFY(!AuxiliaryWindowLeveler::isAuxiliaryWindow(&child));
+        QVERIFY(!AuxiliaryWindowLeveler::wirdGestuft(&child));
 
         qApp->removeEventFilter(&leveler);
     }
