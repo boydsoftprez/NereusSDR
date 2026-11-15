@@ -66,6 +66,7 @@ final class SMeterModel: ObservableObject {
     private func watch(_ slices: BandSlicesModel) {
         sliceWatches = []
         slices.$entries.sink { [weak self] _ in self?.queueRefresh() }.store(in: &sliceWatches)
+        slices.readings.$bySlice.sink { [weak self] _ in self?.queueRefresh() }.store(in: &sliceWatches)
         slices.$activeSliceId.sink { [weak self] _ in self?.queueRefresh() }.store(in: &sliceWatches)
     }
 
@@ -228,9 +229,10 @@ final class SMeterModel: ObservableObject {
     /// The Core's latest readings, fed to the meter.
     func refresh() {
         let active = slices.active
+        let reading = active.map { slices.reading($0.id) }
         let maxBin = maxBinReading(for: active)
         var readings = SMeterReadings(
-            peakDbm: active?.signalPeakDbm, averageDbm: active?.signalAverageDbm,
+            peakDbm: reading?.signalPeakDbm, averageDbm: reading?.signalAverageDbm,
             maxBinDbm: maxBin.value, maxBinAvailable: maxBin.available,
             transmitting: transmit.report.keyed || transmit.coreOnAir || transmit.ptt.transmitting,
             transmitSent: transmit.readingsSent,
@@ -238,7 +240,13 @@ final class SMeterModel: ObservableObject {
             micLevelDb: transmit.micLevelDb, compressionDb: transmit.compressionDb,
             compressionSent: transmit.compressionDb != nil)
         readings.meterRule = transmit.meterRule
-        state.apply(readings, at: clock())
+        // Published only when the meter moved: this runs on every display
+        // frame, and Setup's controls and the Display pill wake on `state`.
+        var next = state
+        next.apply(readings, at: clock())
+        if next != state {
+            state = next
+        }
         startFrames()
     }
 
@@ -255,10 +263,16 @@ final class SMeterModel: ObservableObject {
     /// chooses (``FlagMeterChoice``), as a desktop window's flags follow its
     /// S-meter; nil for none.
     func flagLevel(for entry: BandSlicesModel.Entry) -> Double? {
+        flagLevel(for: entry, reading: slices.reading(entry.id))
+    }
+
+    /// The level `entry`'s flag shows from the slice's `reading`, which the
+    /// flag's own band read.
+    func flagLevel(for entry: BandSlicesModel.Entry, reading: BandSlicesModel.Reading) -> Double? {
         let mode = state.settings.rxMode
         let maxBin = FlagMeterChoice(mode) == .maxBin ? flagMaxBin(for: entry).value : nil
-        return FlagMeterChoice.level(mode: mode, peakDbm: entry.signalPeakDbm, averageDbm: entry.signalAverageDbm,
-                                     legacyDbm: entry.signalDbm, maxBinDbm: maxBin)
+        return FlagMeterChoice.level(mode: mode, peakDbm: reading.signalPeakDbm, averageDbm: reading.signalAverageDbm,
+                                     legacyDbm: reading.signalDbm, maxBinDbm: maxBin)
     }
 
     /// Max Bin for `entry`'s flag: the strongest point of its passband on

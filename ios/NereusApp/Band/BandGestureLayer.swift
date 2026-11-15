@@ -88,7 +88,7 @@ struct BandGestureLayer: View {
     var readout: SMeterReadout = .desktopDefaults
     /// Each flag's level, from the S-meter's RX Mode (``FlagMeterChoice``);
     /// nil shows the Core's `signalStrengthDbm` (the flag pictures).
-    var flagLevel: (@MainActor (BandSlicesModel.Entry) -> Double?)?
+    var flagLevel: (@MainActor (BandSlicesModel.Entry, BandSlicesModel.Reading) -> Double?)?
     /// The S-meter's RX Mode, which `flagLevel` follows: the flags' tag.
     var meterRxMode: SMeterRxMode = SMeterSettings.desktopDefaults.rxMode
     /// The Core refused this phone's key until a taken slice's TX button
@@ -494,7 +494,7 @@ struct BandGestureLayer: View {
         let id = entry.id
         switch placement {
         case .full:
-            VfoFlagView(entry: entry, meter: band.catalog?.meters.sMeter, readout: readout,
+            VfoFlagView(entry: entry, readings: slices.readings, meter: band.catalog?.meters.sMeter, readout: readout,
                         level: flagLevel, meterSource: FlagMeterChoice(meterRxMode),
                         openPad: tuning.map { tuning in {
                             controls?.close()

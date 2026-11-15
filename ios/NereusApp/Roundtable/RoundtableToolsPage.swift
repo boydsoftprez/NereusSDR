@@ -505,12 +505,14 @@ struct RoundtableToolsRoomPage: View {
                     Text(reason).font(.system(size: 13)).foregroundStyle(RoundtableColours.dim)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if let room {
-                    RoundtableRoomView(roundtable: roundtable, room: room, full: true,
-                                       keyed: transmit.ptt.transmitting, tunedHere: tunedHere,
-                                       stationCallsign: stationCallsign,
-                                       ownDbm: slices.active?.signalDbm,
-                                       sliceLetter: slices.active?.slice.letter ?? "A",
-                                       tuneHere: roomId == roundtable.sliceRoomId ? nil : { tune(room) })
+                    SliceReadingsReader(readings: slices.readings) { readings in
+                        RoundtableRoomView(roundtable: roundtable, room: room, full: true,
+                                           keyed: transmit.ptt.transmitting, tunedHere: tunedHere,
+                                           stationCallsign: stationCallsign,
+                                           ownDbm: slices.active.flatMap { readings[$0.id].signalDbm },
+                                           sliceLetter: slices.active?.slice.letter ?? "A",
+                                           tuneHere: roomId == roundtable.sliceRoomId ? nil : { tune(room) })
+                    }
                 } else {
                     Text("Reading this frequency.").font(.system(size: 13)).foregroundStyle(RoundtableColours.dim)
                 }

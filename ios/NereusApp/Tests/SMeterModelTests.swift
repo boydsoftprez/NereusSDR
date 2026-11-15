@@ -326,7 +326,7 @@ struct SMeterModelTests {
             .init(ordinal: 16, name: "signalPeakDbm", value: .f64(-85.64)),
         ])))
         #expect(await settle { meter.state.readings.peakDbm == -85.64
-            && model.main.slices.active?.signalDbm == -85.64 })
+            && model.main.slices.active.map { model.main.slices.reading($0.id).signalDbm } == -85.64 })
         let sMeter = try #require(meter.meters?.sMeter)
         func activityText() -> String? {
             LiveActivityController.inputs(app: model, flow: nil).slice?.signalText
