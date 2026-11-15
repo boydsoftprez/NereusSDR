@@ -107,7 +107,7 @@ where its sample text differs from the spec, the spec is right.
 
 | Spec | What the code says | What this plan does |
 |---|---|---|
-| 6.4, A4: the name carries the other station's call "when the log knows it" | No logbook or "contact in progress" lookup exists (searched `src/core`, `src/models`; `DxccWorkedStatus` and `SpotModel` answer other questions). | Names carry no call. The naming function takes an optional call so a later log can supply it; A4's call clause is pending until a log exists. Nothing guesses a call from spots or decodes. |
+| 6.4, A4: the name carries the other station's call "when the log knows it" | No logbook exists (searched `src/core`, `src/models`). Roundtable does know who talked: each turn in a slice's room (`RoundtableModel::sliceRoomId`, `room()`) has `start`, `end`, `talkers[].callsign` (reported by the talker's own station) and `names[]` (given by listeners), as read in `RoundtableModel.cpp:1208-1215`. | The call comes from Roundtable (JJ, 2026-11-15): when a recording stops, the station heard longest in that slice's room over the recording's time, leaving out your own call (`SpotSourceHost::roundtableCallsign()`, compared by `RoundtableWire::baseCallsign`). A reported talker callsign beats a listener-given name. In a net, the one heard longest. Roundtable off or nobody named: no call. The file is named when the recording stops. The logbook case stays open until a log exists. Nothing guesses a call from spots or decodes. |
 | 6.9: one capability, `recordingsVersion` 1 | The parts land one at a time, and a client must tell a Core with recordings but no voice keyer from one with both. | `recordingsVersion` rises per part: 1 recordings and playback (Task 5), 2 on the air (Task 10), 3 voice keyer (Task 11), 4 DSR (Task 21). A control needing a higher version than the Core offers is disabled with the V9 reason. |
 | 6.1: the voice keyer records "from the client's mic stream" | The remote mic stream (`RemoteMicReceiver`, one `RemoteMicFeed` for the Core) is a transmit path. | Each client records the clip from its own mic, before processing, at 48 kHz mono, and uploads it with the import verb. One path for Record and Import WAV. A desktop running its own radio records from its own mic directly. |
 | 6.1: "the transmitted audio (as sent, after processing)" | The only post-processing audio tap is the transmit monitor: `TxChannel::sip1OutputReady` into `AudioEngine::txMonitorBlockReady` (RadioModel.cpp:22285-22286), 48 kHz on P1 and 192 kHz on P2. | "Your voice" in a recording is that monitor signal, resampled to 24 kHz: exactly what MON plays. Whether it sounds right in AM and FM is a hardware check in Task 9; a bad result goes to JJ. |
@@ -446,7 +446,8 @@ MP3 fails, link drops), A2, A3, A17 for the recorder.
 - Consumes: `AudioFileWriter` (Task 1); `RecordingStore`, `RecordingSettings`, `recordingBaseName` (Task 2);
   `AudioEngine::setSliceAudioTap` / `clearSliceAudioTap`, `SliceAudioTap`; `AudioEngine::txMonitorBlockReady`;
   `MoxController::moxChanged`; the slice's squelch state and level and its noise floor from `SliceModel` and the
-  meter path.
+  meter path; `RadioModel::roundtableModel()` (`sliceRoomId`, `room`), `SpotSourceHost::roundtableCallsign()`,
+  `RoundtableWire::baseCallsign` (src/core/roundtable/RoundtableWire.h:177).
 - Produces:
   ```cpp
   namespace NereusSDR {
@@ -496,7 +497,16 @@ MP3 fails, link drops), A2, A3, A17 for the recorder.
 - The tap's `consume` only copies into an `SpscFloatRing` and returns; a test asserts it takes no lock and does
   no allocation after setup (an instrumented allocator hook or a counted fake), and that a stalled worker drops
   blocks with a counted overflow rather than blocking (A17 for the recorder).
-- Names come from Task 2 with the slice's frequency and mode at the start and an empty call.
+- Names come from Task 2 with the slice's frequency and mode at the start. The recorder writes to a working name
+  and renames the file when it stops, with the call chosen by
+  `QString callForRecording(const QJsonObject& room, qint64 startMs, qint64 endMs, const QString& ownCall)`
+  (a pure function in `ContactRecorder.h`, tested on its own):
+  - A room whose turns overlapping the recording are K4ABC as a reported talker for 90 s and W1AW as a
+    listener-given name for 200 s gives `K4ABC`.
+  - Two reported talkers, K4ABC for 40 s and N0XYZ for 120 s, give `N0XYZ`.
+  - A turn by your own call (also as `KG4VCF/P` against `KG4VCF`) never counts.
+  - Turns wholly outside the recording's time don't count; a turn that overlaps counts only for the overlap.
+  - An empty room, no room for the slice, or Roundtable off gives an empty call.
 - `RecordingService` exists only in Role::Local; a Role::Remote `RadioModel` has none.
 
 **Verification:** Ordinary feature with an audio-thread boundary: the non-blocking assertion is the invariant.
@@ -796,7 +806,8 @@ Prerequisite Task 5; parallel with Tasks 6 and 7 in a worktree if the controller
 - **JJ's checklist:** record a contact on slice A from the desktop flag, with transmit; play it back; the other
   side and his voice are both there; apart puts him on the right; record on slice B at the same time; Kept shows
   the right reason; right-click list, panel and window; rename and delete; Setup page against the mockup; his
-  voice in AM and FM recordings sounds like MON.
+  voice in AM and FM recordings sounds like MON; a contact with a Roundtable station in the room gets its call
+  in the name.
 - **Decides:** anything he rejects goes to a fix round; a bad AM or FM monitor result goes to JJ as one question.
   Hardware stays pending until he reports.
 
@@ -1582,7 +1593,7 @@ the pan; Setup > Digital Spectrum Recorder), A11 and A12 on the phone, A16. Mock
 **Interfaces:**
 - Consumes: everything.
 - Produces: the evidence table, one row per A1 to A17 with its test names, layer (S, I, H) and state (passed,
-  pending, failed), and what stays unproven (A4's call clause until a log exists).
+  pending, failed), and what stays unproven (A4's call from a logbook, until a log exists).
 
 **Acceptance:**
 - Every A row names tests that exist and pass, or a hardware state with who saw it. Nothing says tested on a
