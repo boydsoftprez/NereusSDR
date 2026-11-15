@@ -15,6 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The RXL tag on the "You control" line: rxlTagForTest,
+//                topLineForTest, rxlTagText. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - The flag's ⋯ button, the S-meter item and its source tag
 //                 (overlay design D39 to D41), and the Roundtable line's open
 //                 state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -575,6 +578,14 @@ public:
     void setSnbEnabled(bool v);
     void setRxLevelerMode(NereusSDR::RxLevelerMode mode);
     void updateRxlToolTip();
+    // The RXL tag at the right end of the "You control" line: how far RXL
+    // is turning the station up or down, while RXL is on in a voice mode.
+    void setRxLevelerGainDb(double dB);
+    // "RXL +12 dB", "RXL \u221212 dB", "RXL 0 dB": whole dB, with a real
+    // minus sign for a cut.
+    static QString rxlTagText(double dB);
+    QLabel* rxlTagForTest() const { return m_rxlTag; }
+    QWidget* topLineForTest() const { return m_topLine; }
     void setApfEnabled(bool v);
     void setApfTuneHz(int hz);
 
@@ -1331,6 +1342,12 @@ private:
 
     // --- Task 14a: slice access ---
     QLabel*     m_accessLine{nullptr};
+    // The line under the header: the access words at the left, the RXL
+    // tag at the right. Shown while either has something to say.
+    QWidget*    m_topLine{nullptr};
+    QLabel*     m_rxlTag{nullptr};
+    double      m_rxlGainDb{0.0};
+    void updateTopLine();
     SliceAccess m_sliceAccess;
     QString     m_accessPending;
     void applySliceAccess();

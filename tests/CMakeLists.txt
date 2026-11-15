@@ -10094,6 +10094,10 @@ nereus_add_test(tst_slice_chooser
 # with that reason, never writes the slice, and offers Take control and
 # Stop listening; a controlled flag offers Release. No radio, no RF.
 nereus_add_test(tst_vfo_widget_slice_access EXTRA_LABELS gui)
+# The RXL tag on the flag's "You control" line (JJ, 2026-11-15): text,
+# when it shows, colours, the slice's reading, folding. NEREUS_FLAG_CAPTURE_DIR
+# saves captures. No radio, no RF.
+nereus_add_test(tst_vfo_widget_rxl_tag EXTRA_LABELS gui)
 # Radio speaker plan Task 7 (R-SPK-18, D6): the flag's audio tab shows
 # pc-on / pc-muted from the mute its audio controls show (the slice's, or
 # this device's listen mute on a listened flag). NEREUS_FLAG_CAPTURE_DIR

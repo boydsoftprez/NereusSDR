@@ -8,6 +8,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   read the Core's present empty pan key as its default pan identity.
+// 2026-11-15: each flag's RXL reading (Entry.rxlLiftDb). J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -88,6 +90,11 @@ final class BandSlicesModel: ObservableObject {
         var ownerWordsText: String? = nil
         /// The negotiated radio summary names this exact live slice, including paused/listened states.
         var diversityOn: Bool = false
+        /// How far RXL turns the station up (+) or down (-), in dB, while
+        /// RXL is on in a mode it levels (`rxLevelerMode`, `rxLevelerGainDb`);
+        /// nil while it is off or the mode is one it leaves alone. The
+        /// flag's RXL tag shows it.
+        var rxlLiftDb: Double? = nil
 
         /// The Core's full line for who controls it, for a tap on a dimmed control or the band.
         var ownerLine: String? {
@@ -1367,7 +1374,8 @@ final class BandSlicesModel: ObservableObject {
                               diversityOn: DiversityState.available(in: store)
                                 ? diversity?.live.map { $0.identity.sliceId == id
                                     && (access[id] == nil || access[id]?.incarnation == $0.identity.incarnation) } ?? false
-                                : id == 0 && object["diversityEnabled"]?.flag == true))
+                                : id == 0 && object["diversityEnabled"]?.flag == true,
+                              rxlLiftDb: Self.rxlLift(object, modeLabel: modeLabel)))
             if offShownPans, next.last?.listening == true {
                 // Another device's slice stays where its controller put it.
                 next.removeLast()
@@ -1514,6 +1522,16 @@ final class BandSlicesModel: ObservableObject {
     /// them. From an older Core both stay nil and the row greys. From a Core
     /// that sends `radeReasonVersion` 1, `radeReason` (empty is none) says
     /// why the slice has no working decoder.
+    /// The RXL tag's reading: the slice's live RXL gain while RXL is on
+    /// in a voice mode (the Core's RxLeveler::modeAllows), else nil.
+    static func rxlLift(_ object: MirrorObject, modeLabel: String) -> Double? {
+        guard let mode = object["rxLevelerMode"]?.number, mode > 0,
+              ModesTabModel.rxlVoiceLabels.contains(modeLabel) else {
+            return nil
+        }
+        return object["rxLevelerGainDb"]?.number ?? 0
+    }
+
     private static func radeReception(_ object: MirrorObject, modeLabel: String,
                                       radeStatus: Bool, radeReason: Bool) -> RadeReception? {
         guard RadeReception.modeLabels.contains(modeLabel) else {

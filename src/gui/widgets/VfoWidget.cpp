@@ -14,6 +14,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The RXL tag at the right end of the "You control" line:
+//                how far RXL turns the station up (green) or down (amber),
+//                from SliceModel::rxLevelerGainDb, while RXL is on in a
+//                voice mode. The access words and the tag share one line.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-14 - RXL flag and popup (Brian Sutton, W4KZO): reset values
 //                follow the new Auto preset. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
@@ -1247,13 +1252,28 @@ void VfoWidget::buildHeaderRow()
     static_cast<QVBoxLayout*>(layout())->addLayout(hdr);
 
     // Task 14a: who controls this slice. Hidden while nobody else shares it.
-    m_accessLine = new QLabel(this);
+    // It shares its line with the RXL tag at the right end; the line shows
+    // while either has something to say.
+    m_topLine = new QWidget(this);
+    m_topLine->setObjectName(QStringLiteral("VfoTopLine"));
+    auto* topRow = new QHBoxLayout(m_topLine);
+    topRow->setContentsMargins(0, 0, 0, 0);
+    topRow->setSpacing(4);
+    m_accessLine = new QLabel(m_topLine);
     m_accessLine->setObjectName(QStringLiteral("VfoAccessLine"));
     m_accessLine->setWordWrap(true);
     m_accessLine->setStyleSheet(
         QStringLiteral("color: #c8d8e8; font-size: 10px;"));
     m_accessLine->setVisible(false);
-    static_cast<QVBoxLayout*>(layout())->addWidget(m_accessLine);
+    topRow->addWidget(m_accessLine, 1);
+    m_rxlTag = new QLabel(m_topLine);
+    m_rxlTag->setObjectName(QStringLiteral("VfoRxlTag"));
+    m_rxlTag->setAlignment(Qt::AlignCenter);
+    m_rxlTag->setVisible(false);
+    topRow->addStretch(0);
+    topRow->addWidget(m_rxlTag, 0, Qt::AlignRight | Qt::AlignTop);
+    m_topLine->setVisible(false);
+    static_cast<QVBoxLayout*>(layout())->addWidget(m_topLine);
 }
 
 void VfoWidget::buildFrequencyRow()
@@ -2511,6 +2531,7 @@ void VfoWidget::buildModeTab()
                 m_currentMode = mode;
                 applyModeVisibility(mode);    // S1.9 — user-driven mode change
                 rebuildFilterButtons(mode);
+                updateTopLine();
                 // Update mode tab label
                 if (m_tabButtons.size() > 2) {
                     m_tabButtons[2]->setText(text);
@@ -3037,6 +3058,7 @@ void VfoWidget::setMode(DSPMode mode)
     rebuildFilterButtons(mode);
     applyModeVisibility(mode);    // S1.9 — model-driven mode change
     updateRxlToolTip();
+    updateTopLine();
     updateSnrVisibility();        // Phase 3R L1 — show SNR row only in RADE
     updateModeTabAccent();        // Phase 3R L3 — purple accent in RADE
     m_updatingFromModel = false;
@@ -3389,6 +3411,81 @@ void VfoWidget::setRxLevelerMode(RxLevelerMode mode)
         m_updatingFromModel = false;
     }
     updateRxlToolTip();
+    updateTopLine();
+}
+
+void VfoWidget::setRxLevelerGainDb(double dB)
+{
+    m_rxlGainDb = std::isfinite(dB) ? dB : 0.0;
+    updateTopLine();
+}
+
+QString VfoWidget::rxlTagText(double dB)
+{
+    const long whole = std::isfinite(dB) ? std::lround(dB) : 0;
+    QString number = QString::number(std::labs(whole));
+    if (whole > 0) {
+        number.prepend(QLatin1Char('+'));
+    } else if (whole < 0) {
+        number.prepend(QChar(0x2212));  // a real minus sign
+    }
+    return QStringLiteral("RXL %1 dB").arg(number);
+}
+
+void VfoWidget::updateTopLine()
+{
+    if (!m_topLine || !m_accessLine || !m_rxlTag) {
+        return;
+    }
+    const QString access = accessLineText();
+    m_accessLine->setText(access);
+    m_accessLine->setVisible(!access.isEmpty());
+
+    // The tag: while RXL is on in a mode it levels. Folding the flag hides
+    // the whole line with the flag's other rows.
+    const bool tagShown = m_slice && m_rxlMode != RxLevelerMode::Off
+        && RxLeveler::modeAllows(m_currentMode);
+    if (tagShown) {
+        const long whole = std::lround(m_rxlGainDb);
+        // Green turning the station up, amber turning it down, dim at 0;
+        // the border is the text's colour, fainter.
+        QColor ink = whole > 0
+            ? WorkspacePreview::statusColour(QColor(NereusSDR::Style::kGreenText), "ok")
+            : whole < 0
+                ? WorkspacePreview::statusColour(QColor(NereusSDR::Style::kAmberText), "warn")
+                : QColor(NereusSDR::Style::kTextSecondary);
+        QColor edge = ink;
+        edge.setAlpha(whole == 0 ? 90 : 140);
+        const QString sheet = QStringLiteral(
+            "QLabel { color: %1; border: 1px solid %2; border-radius: 3px;"
+            " font-size: 10px; font-weight: bold; padding: 0px 4px; }")
+            .arg(ink.name(QColor::HexRgb), edge.name(QColor::HexArgb));
+        if (m_rxlTag->styleSheet() != sheet) {
+            m_rxlTag->setStyleSheet(sheet);
+        }
+        m_rxlTag->setText(rxlTagText(m_rxlGainDb));
+        m_rxlTag->setToolTip(whole > 0
+            ? tr("RXL is turning this station up %1 dB.").arg(whole)
+            : whole < 0 ? tr("RXL is turning this station down %1 dB.").arg(-whole)
+                        : tr("RXL is leaving this station's level as it is."));
+        m_rxlTag->setAccessibleName(m_rxlTag->toolTip());
+    }
+    m_rxlTag->setVisible(tagShown);
+
+    const bool shown = !access.isEmpty() || tagShown;
+    if (m_collapsed) {
+        // Folded: the line stays hidden; unfolding shows it as recorded here.
+        if (shown) {
+            m_hiddenBeforeCollapse.remove(m_topLine);
+        } else {
+            m_hiddenBeforeCollapse.insert(m_topLine);
+        }
+        return;
+    }
+    if (m_topLine->isVisibleTo(this) != shown) {
+        m_topLine->setVisible(shown);
+        adjustSize();
+    }
 }
 
 void VfoWidget::updateRxlToolTip()
@@ -3681,6 +3778,8 @@ void VfoWidget::setSlice(SliceModel* slice)
                    this, &VfoWidget::setRadeReason);
         disconnect(m_slice, &SliceModel::rxLevelerModeChanged,
                    this, &VfoWidget::setRxLevelerMode);
+        disconnect(m_slice, &SliceModel::rxLevelerGainDbChanged,
+                   this, &VfoWidget::setRxLevelerGainDb);
     }
     m_slice = QPointer<SliceModel>(slice);
     if (m_fmContainer) {
@@ -3738,7 +3837,10 @@ void VfoWidget::setSlice(SliceModel* slice)
     if (slice) {
         connect(slice, &SliceModel::rxLevelerModeChanged,
                 this, &VfoWidget::setRxLevelerMode);
+        connect(slice, &SliceModel::rxLevelerGainDbChanged,
+                this, &VfoWidget::setRxLevelerGainDb);
     }
+    m_rxlGainDb = slice ? slice->rxLevelerGainDb() : 0.0;
     setRxLevelerMode(slice ? slice->rxLevelerMode() : RxLevelerMode::Off);
 
     // VAX selector — bidirectional wiring (Phase 3O Sub-Phase 8 Task 8.2)
@@ -5301,15 +5403,7 @@ void VfoWidget::applySliceAccess()
     updateTransmitControlAvailability();
     applyAudioBinding();
 
-    if (m_accessLine) {
-        const QString text = accessLineText();
-        m_accessLine->setText(text);
-        const bool shown = !text.isEmpty();
-        if (m_accessLine->isVisibleTo(this) != shown) {
-            m_accessLine->setVisible(shown);
-            adjustSize();
-        }
-    }
+    updateTopLine();
 
     if (m_closeBtn) {
         m_closeBtn->setToolTip(listening ? tr("Stop listening")
