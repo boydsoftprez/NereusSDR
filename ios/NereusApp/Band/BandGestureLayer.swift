@@ -11,6 +11,9 @@
 // 2026-11-03: Overlay redesign D17, D18 and D20: the card and tags keep off the flags,
 // the side buttons and the dBm scale, and a frequency another flag speaks for has no tag.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-15: a tap on a flag's letter folds it to its tag, and a tap on
+// that tag opens it again, kept per receiver on this phone. J.J. Boyd
+// (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Combine
 import NereusBand
@@ -222,7 +225,8 @@ struct BandGestureLayer: View {
                                   }
                                   return measured[slice.id] ?? fixed
                               },
-                              sideColumn: column, top: top)
+                              sideColumn: column, top: top,
+                              folded: { settings.flagFolded($0.letter) })
         }
         // While another slice's band shows, the flags start under Back to
         // your band; sideways, where the band is short, they stay at the top
@@ -525,7 +529,11 @@ struct BandGestureLayer: View {
                         openRoundtable: toggleRoundtableLine.map { toggle in {
                             controls?.close()
                             toggle(id)
-                        } })
+                        } },
+                        fold: {
+                            controls?.close()
+                            settings.setFlagFolded(true, letter: entry.slice.letter)
+                        })
                 .onTapGesture(coordinateSpace: .local) { point in
                     // Even if an ancestor recognises the tap, the DIV target never selects its band slice.
                     guard !entry.diversityOn || !FlagMetrics(large: large).diversity.contains(point) else { return }
@@ -556,10 +564,15 @@ struct BandGestureLayer: View {
                     .offset(x: column.minX, y: column.minY)
             }
         case .folded:
+            let letterFolded = settings.flagFolded(entry.slice.letter)
             FoldedTagView(entry: entry, activate: {
                 controls?.close()
+                // A flag folded by its letter opens again; either way the slice becomes active.
+                if letterFolded {
+                    settings.setFlagFolded(false, letter: entry.slice.letter)
+                }
                 slices.activate(id)
-            }, openDiversity: { controls?.openDiversity(entry) })
+            }, openDiversity: { controls?.openDiversity(entry) }, opensFlag: letterFolded)
                 .offset(x: rect.minX, y: rect.minY)
         }
     }

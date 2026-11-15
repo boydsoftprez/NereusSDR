@@ -6,6 +6,9 @@
 // 2026-10-25: Roundtable plan Task 19, on an iPad with the applet column
 // showing, the line scrolls the column to the Roundtable applet. J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-15: a tap on the slice's letter folds the flag to its one-line
+// tag, as the desktop's letter does, with a VoiceOver action to match.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-15: the RXL line under the header, the desktop flag's RXL tag
 // on a line of its own while RXL is on. J.J. Boyd (KG4VCF), AI-assisted
 // via Claude Code.
@@ -201,6 +204,10 @@ struct VfoFlagView: View {
     /// iPad with the applet column showing, scrolls the column to the
     /// Roundtable applet (spec 11.4).
     var openRoundtable: (() -> Void)?
+    /// A tap on the slice's letter folds the flag to its one-line tag (as
+    /// the desktop's letter folds its flag); nil leaves the letter without
+    /// a tap (the flag pictures).
+    var fold: (() -> Void)?
 
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.roundtableInColumn) private var roundtableInColumn
@@ -327,6 +334,11 @@ struct VfoFlagView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Slice \(letter), \(entry.slice.frequencyText), \(entry.modeLabel)")
         .accessibilityIdentifier("flag\(letter)")
+        .accessibilityActions {
+            if let fold {
+                Button("Fold slice \(letter)'s flag", action: fold)
+            }
+        }
     }
 
     /// A control's press: on a listened slice the Core's line for who
@@ -364,10 +376,32 @@ struct VfoFlagView: View {
             }
             transmitButton(metrics)
             Spacer().frame(width: FlagMetrics.gap)
-            SliceLetterBadge(letter: letter, colour: colour, size: FlagMetrics.letterSize, points: 11 * metrics.scale)
-                .accessibilityHidden(true)
+            letterButton(metrics)
         }
         .frame(height: FlagMetrics.header)
+    }
+
+    /// The slice's letter: a tap folds the flag. Its target is the header's
+    /// height and reaches the flag's edge; VoiceOver has the flag's own
+    /// Fold action instead.
+    @ViewBuilder
+    private func letterButton(_ metrics: FlagMetrics) -> some View {
+        let badge = SliceLetterBadge(letter: letter, colour: colour, size: FlagMetrics.letterSize,
+                                     points: 11 * metrics.scale)
+        if let fold {
+            Button(action: fold) {
+                badge
+                    .frame(width: FlagMetrics.letterSize, height: FlagMetrics.header)
+                    .padding(.trailing, FlagMetrics.inset)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, -FlagMetrics.inset)
+            .accessibilityHidden(true)
+            .accessibilityIdentifier("flagLetter\(letter)")
+        } else {
+            badge.accessibilityHidden(true)
+        }
     }
 
     private func filterWidth(_ metrics: FlagMetrics) -> some View {
