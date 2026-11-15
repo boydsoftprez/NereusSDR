@@ -136,7 +136,7 @@ private slots:
         row("ritHz",        150,   "RitHz",        "150");
         row("snbEnabled",   true,  "SnbEnabled",   "True");
         row("anfEnabled",   true,  "AnfEnabled",   "True");
-        row("rxLevelerMaxBoostDb", 20, "RxLevelerMaxBoostDb", "20");
+        row("rxLevelerMaxBoostDb", 15, "RxLevelerMaxBoostDb", "15");
         row("nb1Threshold", 42,    "Nb1Threshold", "42");
         row("audioPan",     -0.5,  "AudioPan",     "-0.5");
         row("ssqlEnabled",  true,  "SsqlEnabled",  "True");

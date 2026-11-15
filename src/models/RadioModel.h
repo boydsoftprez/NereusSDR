@@ -12,6 +12,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The receive leveler's station check also reads the
+//                panadapter bins in each receiver's passband
+//                (feedRxLevelerSpectrum). NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-14 - Receive leveler station checks (publishRxLevelers,
 //                updateRxLevelers). NereusSDR-original. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1003,6 +1007,7 @@
 #include "models/ReceiverDspLoadSampler.h"
 #include "core/dsp/NnrLoadGovernor.h"
 #include "core/dsp/NnrLoadWarningMonitor.h"
+#include "core/dsp/RxPassbandVoice.h"
 #include "core/dsp/RxStationGate.h"
 #include <QElapsedTimer>
 #include "Band.h"
@@ -3787,6 +3792,15 @@ public:
     /// to measure the band it is on. With one shared tracker (stream 0's), a
     /// 20m slice would take its threshold from 40m's noise floor.
     void setStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* t);
+
+    /// One spectrum frame of a DDC stream (FFTEngine's dBm bins, in
+    /// frequency order across the stream's rate), for the receive
+    /// leveler: each receiver on that stream with RXL on reads the bins
+    /// in its filter passband (RxPassbandVoice), so its station check
+    /// sees a weak voice the S-meter average hardly shows. Fed with the
+    /// Auto AGC-T frames by MainWindow (desktop) and DaemonAgcSource
+    /// (headless Core). Main thread.
+    void feedRxLevelerSpectrum(int streamIndex, const QVector<float>& binsDbm);
     void clearStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* expected) {
         if (m_streamNoiseFloors.value(streamIndex, nullptr) == expected) {
             m_streamNoiseFloors.remove(streamIndex);
@@ -8384,6 +8398,8 @@ private:
     static constexpr double kRxLevelerRetuneHz = 1000.0;
     struct RxLevelerTrack {
         RxStationGate gate;
+        RxPassbandVoice voice;
+        QElapsedTimer frameClock;
         double frequencyHz{0.0};
     };
     QHash<int, RxLevelerTrack> m_rxLevelerTracks;

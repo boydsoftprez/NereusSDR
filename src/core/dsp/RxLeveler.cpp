@@ -178,6 +178,8 @@ void RxLeveler::process(float* x, int frames, double sampleRate,
             m_hissPow += step(dt, kHissFallSec) * (m_shortPow - m_hissPow);
         } else if (shortDb < toDb(m_hissPow) + kHissSkipDb) {
             m_hissPow += step(dt, kHissRiseSec) * (m_shortPow - m_hissPow);
+        } else {
+            m_hissPow *= std::pow(10.0, kHissCreepDbPerSec * dt / 10.0);
         }
     }
     const double hiss = m_hissPow > 0.0 ? m_hissPow : 0.0;

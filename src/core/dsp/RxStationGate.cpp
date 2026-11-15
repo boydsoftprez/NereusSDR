@@ -41,7 +41,7 @@ void RxStationGate::update(const RxStationReading& reading, double dtSec)
     if (!std::isfinite(s) || s <= kNoReadingDbm) {
         // No reading: nothing to judge by, so no station.
         m_present = false;
-            m_aboveSec = 0.0;
+        m_aboveSec = 0.0;
         m_holdLeft = 0.0;
         return;
     }
@@ -66,7 +66,12 @@ void RxStationGate::update(const RxStationReading& reading, double dtSec)
                               reading.panFloorDbm + m_anchorDb + kAnchorSlackDb);
     }
 
-    const bool above = s >= m_quietDbm + kPresentMarginDb;
+    // Above the noise by the S-meter, or by the panadapter bins in the
+    // passband; a station already present is kept at the lower bars.
+    const bool meterAbove = s >= m_quietDbm + (m_present ? kPresentStayMarginDb : kPresentMarginDb);
+    const double voice = std::isfinite(reading.passbandVoice) ? reading.passbandVoice : -1.0;
+    const bool binsAbove = voice >= (m_present ? kVoiceStayShare : kVoiceEnterShare);
+    const bool above = meterAbove || binsAbove;
     m_aboveSec = above ? m_aboveSec + dt : 0.0;
     if (above && (m_present || m_aboveSec >= kPresentEnterSec)) {
         m_present = true;

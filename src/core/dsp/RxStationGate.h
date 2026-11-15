@@ -19,7 +19,16 @@
 //   * the panadapter noise floor for the receiver's stream, when the
 //     panadapter has one (dBm per bin, the Auto AGC-T reading);
 //   * the receive ADC peak (dBFS of the receiver's I/Q) and the radio's
-//     own ADC overload flag.
+//     own ADC overload flag;
+//   * the share of the panadapter bins inside the receiver's filter that
+//     stand out over the band's noise (RxPassbandVoice). A weak SSB voice
+//     shows there well before it moves the passband's average reading.
+//
+// Either the S-meter or the panadapter bins may show a station. Once one
+// is present, lower bars keep it (kPresentStayMarginDb, kVoiceStayShare),
+// so a weak station is not dropped in the middle of a sentence; starting
+// one takes the higher bars for kPresentEnterSec, so a noise crash does
+// not count.
 //
 // The quiet level is the S-meter reading with no station: it follows the
 // reading down at once and creeps up slowly, so the pauses in speech keep
@@ -32,6 +41,10 @@
 // Modification history (NereusSDR):
 //   2026-11-14 — New. J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
+//   2026-11-15 — Weak stations: the panadapter bins in the passband as a
+//                second sign of a station, and lower bars to stay present.
+//                J.J. Boyd (KG4VCF), with AI-assisted transformation via
+//                Anthropic Claude Code.
 // =================================================================
 
 namespace NereusSDR {
@@ -47,6 +60,9 @@ struct RxStationReading {
     double adcPeakDbfs{-400.0};
     // The radio reports an ADC overload on this receiver's ADC.
     bool   adcOverload{false};
+    // Share (0 to 1) of the passband's panadapter bins standing out over
+    // the band's noise (RxPassbandVoice::take). Below 0 is no reading.
+    double passbandVoice{-1.0};
 };
 
 class RxStationGate {
@@ -54,6 +70,13 @@ public:
     // A station is present when the S-meter is this far above the quiet
     // level.
     static constexpr double kPresentMarginDb = 6.0;
+    // Once present, the S-meter keeps it at this margin.
+    static constexpr double kPresentStayMarginDb = 3.0;
+    // A station is present when this share of the passband's panadapter
+    // bins stands out over the band's noise ...
+    static constexpr double kVoiceEnterShare = 0.08;
+    // ... and, once present, stays at this share.
+    static constexpr double kVoiceStayShare = 0.05;
     // ... for this long, so a single noise crash does not count.
     static constexpr double kPresentEnterSec = 0.15;
     // Once present, it stays present this long after the last reading

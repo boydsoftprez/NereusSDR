@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 — Receive leveler: the station check also reads the
+//                 panadapter bins in each receiver's passband
+//                 (feedRxLevelerSpectrum). NereusSDR-original. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-14 — Receive leveler: a station check per receiver on each
 //                 meter tick (RxStationGate), the settings published to
 //                 AudioEngine, and the live gain written back to the
@@ -16569,6 +16573,46 @@ void RadioModel::resetRxStationGate(int sliceId)
     const auto track = m_rxLevelerTracks.find(sliceId);
     if (track != m_rxLevelerTracks.end()) {
         track->gate.reset();
+        track->voice.reset();
+    }
+}
+
+void RadioModel::feedRxLevelerSpectrum(int streamIndex, const QVector<float>& binsDbm)
+{
+    if (m_role != Role::Local || binsDbm.isEmpty() || streamIndex < 0) {
+        return;
+    }
+    const double rateHz = static_cast<double>(streamSampleRateHz(streamIndex));
+    if (rateHz <= 0.0) {
+        return;
+    }
+    const int bins = static_cast<int>(binsDbm.size());
+    const double binHz = rateHz / static_cast<double>(bins);
+    const double centreHz = streamCentreHz(streamIndex);
+    for (const SliceModel* s : std::as_const(m_slices)) {
+        if (s == nullptr || s->streamIndex() != streamIndex
+            || s->rxLevelerMode() == RxLevelerMode::Off
+            || !RxLeveler::modeAllows(s->dspMode())) {
+            continue;
+        }
+        const auto track = m_rxLevelerTracks.find(s->sliceIndex());
+        if (track == m_rxLevelerTracks.end()) {
+            continue;   // updateRxLevelers makes it on its next tick
+        }
+        // The receiver's passband: the filter's edges about where it
+        // listens (the dial plus RIT), as bins of this frame.
+        const double rxHz = s->frequency() + (s->ritEnabled() ? s->ritHz() : 0);
+        const double lowHz = rxHz + s->filterLow() - centreHz;
+        const double highHz = rxHz + s->filterHigh() - centreHz;
+        const int loBin = bins / 2 + static_cast<int>(std::ceil(lowHz / binHz));
+        const int hiBin = bins / 2 + static_cast<int>(std::floor(highHz / binHz)) + 1;
+        double dtSec = 0.033;
+        if (track->frameClock.isValid()) {
+            dtSec = std::min(static_cast<double>(track->frameClock.restart()) / 1000.0, 0.2);
+        } else {
+            track->frameClock.start();
+        }
+        track->voice.addFrame(binsDbm.constData(), bins, loBin, hiBin, dtSec);
     }
 }
 
@@ -16596,11 +16640,13 @@ void RadioModel::updateRxLevelers()
         RxLevelerTrack& track = m_rxLevelerTracks[id];
         if (std::abs(s->frequency() - track.frequencyHz) > kRxLevelerRetuneHz) {
             track.gate.reset();
+            track.voice.reset();
         }
         track.frequencyHz = s->frequency();
         if (s->rxLevelerMode() == RxLevelerMode::Off) {
             // Not learning while off: turned on later, it starts afresh.
             track.gate.reset();
+            track.voice.reset();
             s->setRxLevelerGainDb(0.0);
             continue;
         }
@@ -16611,6 +16657,9 @@ void RadioModel::updateRxLevelers()
         reading.panFloorDbm = s->stationAutoAgcNoiseFloorDbm();
         reading.panFloorValid = s->stationAutoAgcNoiseFloorValid();
         reading.adcPeakDbfs = s->adcPeakDbfs();
+        // The panadapter bins in the passband since the last tick (-1, no
+        // reading, without frames: no FFT on this stream, or transmitting).
+        reading.passbandVoice = track.voice.take();
         if (m_stepAttController != nullptr) {
             const int adc = sliceAdcIndex(id);
             reading.adcOverload = adc >= 0

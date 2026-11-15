@@ -62,7 +62,7 @@ struct RxLevelerParams {
     // RxStationGate's verdict: the ADC is at or near overload.
     bool nearOverload{false};
     int  targetDb{-12};
-    int  maxBoostDb{10};
+    int  maxBoostDb{20};
     int  maxCutDb{6};
     int  attackMs{1000};
     int  releaseMs{600};
@@ -88,9 +88,9 @@ public:
     static constexpr int kTargetDbMin    = -24;
     static constexpr int kTargetDbMax    =  -6;
     // Most the leveler may lift a quiet station.
-    static constexpr int kAutoMaxBoostDb = 10;
+    static constexpr int kAutoMaxBoostDb = 20;
     static constexpr int kMaxBoostDbMin  = 0;
-    static constexpr int kMaxBoostDbMax  = 20;
+    static constexpr int kMaxBoostDbMax  = 30;
     // Most the leveler may turn a loud station down.
     static constexpr int kAutoMaxCutDb   = 6;
     static constexpr int kMaxCutDbMin    = 0;
@@ -133,11 +133,16 @@ public:
     // The hiss level is learned while no station is present and taken
     // out of the loudness reading, so a weak station is judged by its
     // voice, not its voice plus hiss. It falls with the first time
-    // constant, rises with the second, and ignores a block more than
-    // kHissSkipDb above it.
+    // constant, rises with the second, and on a block more than
+    // kHissSkipDb above it rises no faster than kHissCreepDbPerSec: the
+    // first syllables of a weak station, a few dB over the hiss, arrive
+    // before the station check has said a station is there, and must not
+    // be learned as hiss. A band that really gets noisier is still
+    // followed, slowly.
     static constexpr double kHissFallSec = 0.2;
     static constexpr double kHissRiseSec = 3.0;
-    static constexpr double kHissSkipDb = 6.0;
+    static constexpr double kHissSkipDb = 2.0;
+    static constexpr double kHissCreepDbPerSec = 0.3;
     // Below this a block is silence whatever the reference says (dBFS).
     static constexpr double kSilenceDbfs = -70.0;
     // The loudness reading: an average of the speech blocks' power, hiss

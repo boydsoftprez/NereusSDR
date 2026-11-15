@@ -11,7 +11,9 @@
 //
 // NEREUS_RXL_MATRIX=1 prints the measurement the Auto values were chosen
 // from: every over's speech level before and after, the hiss in every gap,
-// the loudest moment at the start of every over, the spread of levels.
+// the loudest moment at the start of every over, the spread of levels;
+// and the weak-station table (tests/RxWeakStationModel.h), the station
+// check by the S-meter alone against the S-meter with the panadapter bins.
 //
 // Modification history (NereusSDR):
 //   2026-11-14 — First version of the RX Leveler tests by Brian Sutton
@@ -19,11 +21,15 @@
 //   2026-11-14 — Rewritten for the new engine and station check. J.J. Boyd
 //                (KG4VCF), with AI-assisted transformation via Anthropic
 //                Claude Code.
+//   2026-11-15 — Weak stations: the panadapter check, the lower bars to
+//                stay present, the larger Auto boost. J.J. Boyd (KG4VCF),
+//                with AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include "RxLevelerSynth.h"
+#include "RxWeakStationModel.h"
 
 #include <cstdio>
 #include <cstring>
@@ -243,8 +249,10 @@ private slots:
 
     // Between overs the gain climbs no more than 1 dB above where the over
     // left it (it may keep moving for the first 0.3 s, which it cannot tell
-    // from a gap between words), and by two seconds into a gap the hiss is
-    // back to plain.
+    // from a gap between words), and by two and a half seconds into a gap
+    // the hiss is back to plain. (Two seconds with the old +10 dB Auto
+    // boost: a weak station lifted +20 dB takes about half a second longer
+    // to let go.)
     void gapsAreNotLifted()
     {
         for (double hiss : {-30.0, -40.0}) {
@@ -260,7 +268,7 @@ private slots:
                                                 .arg(a / kRate).arg(r.gainDb[static_cast<size_t>(i)])));
                     }
                     if (b - a >= static_cast<int>(4.0 * kRate)) {
-                        const int from = a + static_cast<int>(2.0 * kRate);
+                        const int from = a + static_cast<int>(2.5 * kRate);
                         const double plain = rmsDb(n.audio, from, b);
                         const double leveled = rmsDb(r.audio, from, b);
                         QVERIFY2(leveled <= plain + 0.5,
@@ -530,6 +538,178 @@ private slots:
         QVERIFY(!gate.stationPresent());
         QCOMPARE(gate.quietLevelDbm(), RxStationGate::kNoReadingDbm);
         QVERIFY(!gate.anchorLearned());
+    }
+
+    // ── Weak stations ─────────────────────────────────────────────────────
+
+    // The panadapter check on band noise alone: under the bar to enter, and
+    // under the bar to stay, frame after frame (a second of frames per
+    // reading, so the worst of many readings is seen).
+    void passbandNoiseIsNoVoice()
+    {
+        using WeakStation::detail::kFftSize;
+        using WeakStation::detail::fft;
+        constexpr double kTwoPi = 2.0 * WeakStation::detail::kPi;
+        std::mt19937 g(11);
+        std::normal_distribution<double> n01(0.0, 1.0);
+        RxPassbandVoice voice;
+        std::vector<std::complex<double>> buf(kFftSize);
+        std::vector<float> bins(kFftSize);
+        double worst = 0.0;
+        for (int tick = 0; tick < 300; ++tick) {
+            for (int f = 0; f < 3; ++f) {
+                for (int i = 0; i < kFftSize; ++i) {
+                    const double x = kTwoPi * i / (kFftSize - 1);
+                    const double w = 0.35875 - 0.48829 * std::cos(x) + 0.14128 * std::cos(2 * x)
+                        - 0.01168 * std::cos(3 * x);
+                    buf[static_cast<size_t>(i)] = std::complex<double>(n01(g), n01(g)) * w;
+                }
+                fft(buf);
+                for (int i = 0; i < kFftSize; ++i) {
+                    bins[static_cast<size_t>(i)] = static_cast<float>(
+                        10.0 * std::log10(std::norm(buf[static_cast<size_t>((i + kFftSize / 2) % kFftSize)])));
+                }
+                voice.addFrame(bins.data(), kFftSize, kFftSize / 2 + 3, kFftSize / 2 + 62, 0.033);
+            }
+            worst = std::max(worst, voice.take());
+        }
+        QVERIFY2(worst < RxStationGate::kVoiceStayShare,
+                 qPrintable(QStringLiteral("noise share %1").arg(worst)));
+        QCOMPARE(voice.take(), -1.0);   // no frames since: no reading
+    }
+
+    // A carrier in the passband counts at first, then stops counting once
+    // it has been steady for kSteadySec; a noise crash across the band
+    // raises the reference with it and does not count.
+    void passbandSteadyCarrierAndCrash()
+    {
+        constexpr int kBins = 1024;
+        constexpr int lo = 515;
+        constexpr int hi = 575;
+        std::vector<float> flat(kBins, -140.0f);
+        RxPassbandVoice voice;
+        std::vector<float> carrier = flat;
+        for (int i = 540; i < 545; ++i) {
+            carrier[static_cast<size_t>(i)] = -100.0f;
+        }
+        voice.addFrame(carrier.data(), kBins, lo, hi, 0.033);
+        QVERIFY(voice.take() >= RxStationGate::kVoiceEnterShare);
+        for (int f = 0; f < 70; ++f) {
+            voice.addFrame(carrier.data(), kBins, lo, hi, 0.033);
+        }
+        voice.take();
+        voice.addFrame(carrier.data(), kBins, lo, hi, 0.033);
+        QCOMPARE(voice.take(), 0.0);
+        std::vector<float> crash(kBins, -110.0f);
+        voice.addFrame(crash.data(), kBins, lo, hi, 0.033);
+        QCOMPARE(voice.take(), 0.0);
+        // Too few bins in the passband: no reading.
+        voice.addFrame(carrier.data(), kBins, lo, lo + RxPassbandVoice::kMinBins - 1, 0.033);
+        QCOMPARE(voice.take(), -1.0);
+    }
+
+    // The bins bring a station in at the higher bar and keep it at the
+    // lower one; under the lower one it goes after the hold.
+    void gateBinsEnterAndStay()
+    {
+        RxStationGate gate;
+        RxStationReading r;
+        r.signalDbm = -120.0;
+        r.adcPeakDbfs = -30.0;
+        for (int i = 0; i < 30; ++i) {
+            gate.update(r, 0.1);
+        }
+        const double between = 0.5 * (RxStationGate::kVoiceEnterShare + RxStationGate::kVoiceStayShare);
+        r.passbandVoice = between;
+        for (int i = 0; i < 10; ++i) {
+            gate.update(r, 0.1);
+        }
+        QVERIFY(!gate.stationPresent());           // under the bar to enter
+        r.passbandVoice = RxStationGate::kVoiceEnterShare;
+        gate.update(r, 0.1);
+        QVERIFY(!gate.stationPresent());           // one reading is not enough
+        gate.update(r, 0.1);
+        QVERIFY(gate.stationPresent());
+        r.passbandVoice = between;
+        for (int i = 0; i < 100; ++i) {
+            gate.update(r, 0.1);
+        }
+        QVERIFY(gate.stationPresent());            // kept at the lower bar
+        r.passbandVoice = 0.0;
+        for (int i = 0; i < 30; ++i) {
+            gate.update(r, 0.1);
+        }
+        QVERIFY(!gate.stationPresent());
+    }
+
+    // JJ's bench: weak stations got no lift. A 30 s over from a station 3,
+    // 6, 9, 12 and 20 dB over the band's noise, Auto settings, 47 Hz and
+    // 94 Hz panadapter bins: counted present through the over, lifted to
+    // the target (every one of these needs less than the Auto maximum),
+    // and the hiss before and after the over neither counted nor lifted.
+    void weakStationsAreHeardAndLifted()
+    {
+        RxLevelerParams autoParams;
+        autoParams.targetDb = RxLeveler::kAutoTargetDb;
+        autoParams.maxBoostDb = RxLeveler::kAutoMaxBoostDb;
+        autoParams.maxCutDb = RxLeveler::kAutoMaxCutDb;
+        autoParams.attackMs = RxLeveler::kAutoAttackMs;
+        autoParams.releaseMs = RxLeveler::kAutoReleaseMs;
+        for (double binHz : {47.0, 94.0}) {
+            for (double snr : {3.0, 6.0, 9.0, 12.0, 20.0}) {
+                const WeakStation::Result r = WeakStation::run(snr, -30.0, binHz, autoParams);
+                const QString what = QStringLiteral("%1 dB, %2 Hz bins: present %3, late gain %4, need %5, "
+                                                    "hiss present %6, hiss gain %7")
+                    .arg(snr).arg(binHz).arg(r.presentShare).arg(r.gainLateDb).arg(r.needDb)
+                    .arg(r.gapPresentShare).arg(r.gapGainMaxDb);
+                QVERIFY2(r.needDb < RxLeveler::kAutoMaxBoostDb, qPrintable(what));
+                QVERIFY2(r.presentShare >= 0.9, qPrintable(what));
+                QVERIFY2(std::abs(r.gainLateDb - r.needDb) <= 2.5, qPrintable(what));
+                QCOMPARE(r.gapPresentShare, 0.0);
+                QVERIFY2(r.gapGainMaxDb < 1.0, qPrintable(what));
+            }
+        }
+    }
+
+    // The S-meter alone, as before the panadapter check: the 3 and 6 dB
+    // stations are not heard. Kept so the table shows what changed.
+    void weakStationsMeterAloneMissed()
+    {
+        RxLevelerParams autoParams;
+        autoParams.targetDb = RxLeveler::kAutoTargetDb;
+        autoParams.maxBoostDb = RxLeveler::kAutoMaxBoostDb;
+        for (double snr : {3.0, 6.0}) {
+            const WeakStation::Result r = WeakStation::run(snr, -30.0, 47.0, autoParams, /*useBins=*/false);
+            QVERIFY2(r.presentShare < 0.2, qPrintable(QStringLiteral("%1 dB: %2").arg(snr).arg(r.presentShare)));
+        }
+    }
+
+    void weakStationMatrix()
+    {
+        if (qEnvironmentVariableIntValue("NEREUS_RXL_MATRIX") != 1) {
+            QSKIP("set NEREUS_RXL_MATRIX=1 to print the measurement");
+        }
+        for (double hissDb : {-30.0, -40.0}) {
+            for (int boost : {10, 20, 25}) {
+                for (bool bins : {false, true}) {
+                    std::printf("\nhiss %.0f dBFS, maximum boost %d dB, %s\n", hissDb, boost,
+                                bins ? "S-meter and panadapter" : "S-meter alone");
+                    for (double snr : {3.0, 6.0, 9.0, 12.0, 15.0, 20.0}) {
+                        RxLevelerParams p;
+                        p.targetDb = RxLeveler::kAutoTargetDb;
+                        p.maxBoostDb = boost;
+                        p.maxCutDb = RxLeveler::kAutoMaxCutDb;
+                        p.attackMs = RxLeveler::kAutoAttackMs;
+                        p.releaseMs = RxLeveler::kAutoReleaseMs;
+                        const WeakStation::Result r = WeakStation::run(snr, hissDb, 47.0, p, bins);
+                        std::printf("  %4.0f dB over the noise: present %3.0f%%, lift %+5.1f dB (needs %+5.1f);"
+                                    " hiss: present %3.0f%%, most lift %+4.1f dB\n",
+                                    snr, 100.0 * r.presentShare, r.gainLateDb, r.needDb,
+                                    100.0 * r.gapPresentShare, r.gapGainMaxDb);
+                    }
+                }
+            }
+        }
     }
 
     // ── The measurement ───────────────────────────────────────────────────

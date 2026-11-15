@@ -531,7 +531,7 @@ struct ModesTabBindingTests {
         #expect(await answer(station, key: "slice:0", "rxLevelerTargetDb") == .i64(-18))
         #expect(await settle { modes.rxlValues["rxLevelerTargetDb"] == -18 })
         modes.setRxlSetting(ModesTabModel.rxlSettings[1], 40)
-        #expect(await answer(station, key: "slice:0", "rxLevelerMaxBoostDb") == .i64(20))
+        #expect(await answer(station, key: "slice:0", "rxLevelerMaxBoostDb") == .i64(30))
         modes.setRxlSetting(ModesTabModel.rxlSettings[4], 50)
         #expect(await answer(station, key: "slice:0", "rxLevelerReleaseMs") == .i64(200))
 

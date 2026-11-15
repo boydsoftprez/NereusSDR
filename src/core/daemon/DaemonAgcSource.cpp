@@ -6,6 +6,9 @@
 // no noise-floor or AGC algorithm.
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 — Each frame also goes to the receive leveler's station
+//                 check (RadioModel::feedRxLevelerSpectrum). J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-02 — #720: AUTO acquisition epochs hold pre-TX estimates and
 //                 reject stale/mixed TX frames without changing display DSP.
 //                 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -175,6 +178,8 @@ void DaemonAgcSource::onFrameAvailable(MediaSourceKey key)
     StreamState& state = *it->second;
     state.tracker->feedForEpoch(binsDbm, kTrackerFrameIntervalMs, *frame->autoAgcEpoch);
     publishIfGood(state);
+    // The same frame for the receive leveler's station check.
+    m_radioModel->feedRxLevelerSpectrum(key.streamIndex, binsDbm);
 }
 
 void DaemonAgcSource::onStreamBindingsChanged(int streamIndex, const QVector<int>& sliceIndices)
