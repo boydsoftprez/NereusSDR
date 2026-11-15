@@ -11,6 +11,7 @@ import NereusMirror
 import SwiftUI
 import Testing
 import UIKit
+import Combine
 
 /// JJ, 2026-11-15 (his choice 1 of three drawn): while RXL is on in a
 /// mode it levels, the flag has a thin line under its header with the
@@ -79,7 +80,8 @@ struct RxlFlagShotTests {
         let count = 1
         #expect(await ShotWait.until { main.slices.entries.count == count && main.slices.catalog != nil })
         let entry = try #require(main.slices.entries.first)
-        #expect(entry.rxlLiftDb == 12)
+        #expect(entry.rxlOn)
+        #expect(await ShotWait.until { main.slices.rxlLifts.lifts[entry.id] == 12 })
         #expect(entry.listening == shot.owned)
         // The line makes the flag 18 points taller.
         #expect(VfoFlagView.expectedHeight(for: entry)
@@ -124,18 +126,59 @@ struct RxlFlagShotTests {
                                    operations: BandSubscriber.Operations(subscribe: { _ in }, unsubscribe: { _ in },
                                                                           retuneClarity: { _ in }))
         #expect(await ShotWait.until { main.slices.entries.count == 1 && main.slices.catalog != nil })
-        #expect(main.slices.entries.first?.rxlLiftDb == nil)
+        #expect(main.slices.entries.first?.rxlOn == false)
+        #expect(main.slices.rxlLifts.lifts.isEmpty)
         mirror.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [
             .init(ordinal: 161, name: "rxLevelerMode", value: .enumeration(2)),
             .init(ordinal: 162, name: "rxLevelerGainDb", value: .f64(-4.6)),
         ])))
-        #expect(await ShotWait.until { main.slices.entries.first?.rxlLiftDb == -4.6 })
+        #expect(await ShotWait.until { main.slices.entries.first?.rxlOn == true })
+        #expect(await ShotWait.until { main.slices.rxlLifts.lifts[0] == -5 })
+        // A new reading changes the readings, never the flag's entry.
+        let before = main.slices.entries
+        mirror.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [
+            .init(ordinal: 162, name: "rxLevelerGainDb", value: .f64(7.2)),
+        ])))
+        #expect(await ShotWait.until { main.slices.rxlLifts.lifts[0] == 7 })
+        #expect(main.slices.entries == before)
         // CW: RXL leaves the audio alone, so the flag has no line.
         let cw = try #require(main.slices.catalog?.modes.first { $0.label == "CWU" })
         mirror.apply(.delta(LinkMessage.Delta(key: "slice:0", properties: [
             .init(ordinal: 2, name: "dspMode", value: .enumeration(Int64(cw.id))),
         ])))
-        #expect(await ShotWait.until { main.slices.entries.first?.rxlLiftDb == nil })
+        #expect(await ShotWait.until { main.slices.entries.first?.rxlOn == false })
+        #expect(main.slices.rxlLifts.lifts.isEmpty)
+    }
+
+    @Test("readings: whole dB only, at most four a second, the latest shown")
+    func readingsAreWholeDbAndPaced() async throws {
+        var clock: TimeInterval = 100
+        let readings = RxlLiftReadings(now: { clock })
+        var published = 0
+        let watch = readings.$lifts.dropFirst().sink { _ in published += 1 }
+        defer { watch.cancel() }
+
+        readings.offer([0: 11.6])
+        #expect(readings.lifts == [0: 12])
+        #expect(published == 1)
+        // Tenths that leave the whole dB alone: nothing.
+        clock += 1
+        readings.offer([0: 12.3])
+        readings.offer([0: 11.8])
+        #expect(published == 1)
+        // Three changes inside a quarter second: held, then only the latest.
+        clock += 0.05
+        readings.offer([0: 13])
+        readings.offer([0: 14])
+        readings.offer([0: 15])
+        #expect(readings.lifts == [0: 12] || readings.lifts == [0: 13])
+        let afterFirst = published
+        clock += 0.3
+        #expect(await ShotWait.until { readings.lifts == [0: 15] })
+        #expect(published <= afterFirst + 1)
+        // RXL off: the reading leaves at once.
+        readings.offer([:])
+        #expect(readings.lifts.isEmpty)
     }
 
     static func slice(_ index: Int, hz: Double, active: Bool, rxl: Bool) -> LinkMessage {

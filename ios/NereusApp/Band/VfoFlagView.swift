@@ -204,6 +204,8 @@ struct VfoFlagView: View {
     /// iPad with the applet column showing, scrolls the column to the
     /// Roundtable applet (spec 11.4).
     var openRoundtable: (() -> Void)?
+    /// The live RXL readings the RXL line's tag watches; nil shows 0 (the flag pictures).
+    var rxlReadings: RxlLiftReadings?
     /// A tap on the slice's letter folds the flag to its one-line tag (as
     /// the desktop's letter folds its flag); nil leaves the letter without
     /// a tap (the flag pictures).
@@ -252,7 +254,7 @@ struct VfoFlagView: View {
     static func expectedHeight(for entry: BandSlicesModel.Entry, large: Bool = false,
                                roundtable: Bool = false) -> CGFloat {
         let height = FlagMetrics(large: large).height(rade: entry.rade != nil, listening: entry.listening,
-                                                      rxl: entry.rxlLiftDb != nil)
+                                                      rxl: entry.rxlOn)
             + (roundtable ? RoundtableFlagLine.height : 0)
         // An older Core's RADE reason, or the Core's reason for no RADE
         // decoder, takes a second line, measured once drawn.
@@ -273,12 +275,17 @@ struct VfoFlagView: View {
         let height = Self.expectedHeight(for: entry, large: metrics.large, roundtable: roundtable != nil)
         VStack(alignment: .leading, spacing: 0) {
             header(metrics)
-            if let lift = entry.rxlLiftDb {
+            if entry.rxlOn {
                 // The RXL line (JJ, 2026-11-15): the desktop's tag at the
-                // end of its "You control" line, on a line of its own.
+                // end of its "You control" line, on a line of its own. Only
+                // the tag watches the live reading.
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    RxlLiftTag(liftDb: lift, points: 10 * metrics.scale)
+                    if let rxlReadings {
+                        RxlLiftLine(sliceId: entry.id, readings: rxlReadings, points: 10 * metrics.scale)
+                    } else {
+                        RxlLiftTag(liftDb: 0, points: 10 * metrics.scale)
+                    }
                 }
                 .frame(height: FlagMetrics.rxlLine)
             }

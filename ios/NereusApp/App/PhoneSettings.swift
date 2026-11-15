@@ -575,9 +575,23 @@ final class PhoneSettings: ObservableObject {
     /// letter (A to D), as the desktop keeps each receiver's own fold. On
     /// this phone only; nothing goes to the Core.
     var foldedFlags: Set<String> {
-        get { Set(defaults.stringArray(forKey: Self.keyPrefix + Self.foldedFlagsKey) ?? []) }
-        set { store(newValue.sorted(), for: Self.foldedFlagsKey) }
+        get {
+            if let foldedFlagsCache {
+                return foldedFlagsCache
+            }
+            let letters = Set(defaults.stringArray(forKey: Self.keyPrefix + Self.foldedFlagsKey) ?? [])
+            foldedFlagsCache = letters
+            return letters
+        }
+        set {
+            foldedFlagsCache = newValue
+            store(newValue.sorted(), for: Self.foldedFlagsKey)
+        }
     }
+
+    /// The folded flags, read from the store once: the band lays its flags
+    /// out with them many times a second.
+    private var foldedFlagsCache: Set<String>?
 
     func flagFolded(_ letter: String) -> Bool {
         foldedFlags.contains(letter)

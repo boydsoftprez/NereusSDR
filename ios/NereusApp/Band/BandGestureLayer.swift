@@ -208,6 +208,8 @@ struct BandGestureLayer: View {
         let measured = flagHeights
         let column = FlagLayout.sideColumnSize(button: FlagSideButtons.diameter(large: large))
         let olderRade = Set(entries.filter { $0.rade?.wraps == true }.map(\.id))
+        // The flags folded by their letter, read once for this layout.
+        let foldedFlags = settings.foldedFlags
         func place(top: CGFloat) -> [FlagPlacement] {
             FlagLayout.layout(slices: entries.map(\.slice), activeSliceId: slices.activeSliceId,
                               geometry: geometry,
@@ -226,7 +228,7 @@ struct BandGestureLayer: View {
                                   return measured[slice.id] ?? fixed
                               },
                               sideColumn: column, top: top,
-                              folded: { settings.flagFolded($0.letter) })
+                              folded: { foldedFlags.contains($0.letter) })
         }
         // While another slice's band shows, the flags start under Back to
         // your band; sideways, where the band is short, they stay at the top
@@ -530,6 +532,7 @@ struct BandGestureLayer: View {
                             controls?.close()
                             toggle(id)
                         } },
+                        rxlReadings: slices.rxlLifts,
                         fold: {
                             controls?.close()
                             settings.setFlagFolded(true, letter: entry.slice.letter)

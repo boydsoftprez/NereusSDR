@@ -8,8 +8,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   read the Core's present empty pan key as its default pan identity.
-// 2026-11-15: each flag's RXL reading (Entry.rxlLiftDb). J.J. Boyd (KG4VCF),
-// AI-assisted via Claude Code.
+// 2026-11-15: each flag's RXL line (Entry.rxlOn) and its live reading
+// (rxlLifts, apart from the entries). J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code.
 
 import Combine
 import Foundation
@@ -90,11 +91,12 @@ final class BandSlicesModel: ObservableObject {
         var ownerWordsText: String? = nil
         /// The negotiated radio summary names this exact live slice, including paused/listened states.
         var diversityOn: Bool = false
-        /// How far RXL turns the station up (+) or down (-), in dB, while
-        /// RXL is on in a mode it levels (`rxLevelerMode`, `rxLevelerGainDb`);
-        /// nil while it is off or the mode is one it leaves alone. The
-        /// flag's RXL tag shows it.
-        var rxlLiftDb: Double? = nil
+        /// RXL is on in a mode it levels (`rxLevelerMode`): the flag has its
+        /// RXL line. The live reading is not here but in
+        /// ``BandSlicesModel/rxlLifts``, so a new reading redraws only the
+        /// line's tag and the flag's height changes only when RXL turns on
+        /// or off.
+        var rxlOn: Bool = false
 
         /// The Core's full line for who controls it, for a tap on a dimmed control or the band.
         var ownerLine: String? {
@@ -150,6 +152,8 @@ final class BandSlicesModel: ObservableObject {
     static let chooseTransmitSliceCode = "chooseTransmitSlice"
 
     @Published private(set) var entries: [Entry] = []
+    /// The live RXL readings of the slices whose flag has the RXL line.
+    let rxlLifts = RxlLiftReadings()
     @Published private(set) var activeSliceId: Int?
 
     // MARK: Showing another slice's band (R-IOS-42, JJ's rulings of 2026-09-30)
@@ -1313,6 +1317,7 @@ final class BandSlicesModel: ObservableObject {
 
     private func rebuild() {
         var next: [Entry] = []
+        var nextLifts: [Int: Double] = [:]
         var nextActive: Int?
         var anyActive: Int?
         let radeStatus = sendsRadeStatus
@@ -1375,7 +1380,10 @@ final class BandSlicesModel: ObservableObject {
                                 ? diversity?.live.map { $0.identity.sliceId == id
                                     && (access[id] == nil || access[id]?.incarnation == $0.identity.incarnation) } ?? false
                                 : id == 0 && object["diversityEnabled"]?.flag == true,
-                              rxlLiftDb: Self.rxlLift(object, modeLabel: modeLabel)))
+                              rxlOn: Self.rxlLift(object, modeLabel: modeLabel) != nil))
+            if let lift = Self.rxlLift(object, modeLabel: modeLabel) {
+                nextLifts[id] = lift
+            }
             if offShownPans, next.last?.listening == true {
                 // Another device's slice stays where its controller put it.
                 next.removeLast()
@@ -1391,6 +1399,7 @@ final class BandSlicesModel: ObservableObject {
             }
         }
         next.sort { $0.id < $1.id }
+        rxlLifts.offer(nextLifts)
         if next != entries {
             entries = next
         }

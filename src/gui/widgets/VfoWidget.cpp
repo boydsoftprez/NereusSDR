@@ -14,6 +14,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The RXL tag redraws only when its whole-dB value changes.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15 - The RXL tag at the right end of the "You control" line:
 //                how far RXL turns the station up (green) or down (amber),
 //                from SliceModel::rxLevelerGainDb, while RXL is on in a
@@ -3416,7 +3418,14 @@ void VfoWidget::setRxLevelerMode(RxLevelerMode mode)
 
 void VfoWidget::setRxLevelerGainDb(double dB)
 {
-    m_rxlGainDb = std::isfinite(dB) ? dB : 0.0;
+    // The tag shows whole dB: a tenth-of-a-dB step that leaves the whole
+    // number where it was changes nothing on screen, so it costs nothing.
+    const double next = std::isfinite(dB) ? dB : 0.0;
+    const bool sameWhole = std::lround(next) == std::lround(m_rxlGainDb);
+    m_rxlGainDb = next;
+    if (sameWhole) {
+        return;
+    }
     updateTopLine();
 }
 
