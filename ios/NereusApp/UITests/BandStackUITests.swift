@@ -104,6 +104,24 @@ final class BandStackUITests: XCTestCase {
         let note = element(app, "bandStackNote")
         let rowMenu = app.buttons["bandStackRowMenu.40m-ssb"]
         XCTAssertTrue(rowMenu.waitForExistence(timeout: 10))
+        // The simulator's first keyboard of a run can take 10 s or more to
+        // come up. On a busy CI runner the Rename field lost its focus while it
+        // did, so Rename ended by itself and the test found no field. Bring the
+        // keyboard up once here and put it away, so the Rename checked below
+        // gets a keyboard that is already started. Return with the name
+        // unchanged sends nothing.
+        rowMenu.tap()
+        let warmUp = choice(app, "Rename")
+        XCTAssertTrue(warmUp.waitForExistence(timeout: 5), "The row's menu has no Rename")
+        warmUp.tap()
+        let warmField = app.textFields["bandStackRenameField"]
+        if warmField.waitForExistence(timeout: 15) {
+            warmField.typeText("\n")
+        }
+        XCTAssertTrue(warmField.waitForNonExistence(timeout: 5), "Return did not end the first Rename")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 10), "The keyboard stayed up")
+        XCTAssertFalse(note.exists, "Return with the name unchanged sent a command")
+
         rowMenu.tap()
         for item in ["Save this spot here", "Rename", "Lock", "Always return here", "Delete"] {
             XCTAssertTrue(choice(app, item).waitForExistence(timeout: 5), "The row's menu has no \(item)")
