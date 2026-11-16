@@ -1147,6 +1147,11 @@ set(CORE_SOURCES
     # Recordings on the Core: WAV and MP3 files.
     src/core/recordings/AudioFileWriter.cpp
     src/core/recordings/AudioFileReader.cpp
+    # The recording store, its names, disks and settings.
+    src/core/recordings/RecordingNames.cpp
+    src/core/recordings/RecordingStore.cpp
+    src/core/recordings/RecordingDisks.cpp
+    src/core/recordings/RecordingSettings.cpp
     src/core/RadeChannel.cpp
     src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp

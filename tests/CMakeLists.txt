@@ -12036,6 +12036,11 @@ if(TARGET tst_recording_audio_files_no_lame)
     target_compile_definitions(tst_recording_audio_files_no_lame PRIVATE NEREUS_CORE_STATIC)
     target_link_libraries(tst_recording_audio_files_no_lame PRIVATE Qt6::Test)
 endif()
+# The recording store: names, the recordings.json index, rename and delete,
+# the disk list's SD card rule and the Core's recording settings
+# (src/core/recordings/RecordingNames.cpp, RecordingStore.cpp,
+# RecordingDisks.cpp, RecordingSettings.cpp).
+nereus_add_test(tst_recording_store CORE_ONLY)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
