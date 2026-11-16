@@ -876,6 +876,41 @@ jobs:
           test -f "$PREFIX/lib/libcrypto.3.dylib"  || { echo "::error::libcrypto.3.dylib not installed"; exit 1; }
           file "$PREFIX/lib/libcrypto.3.dylib" | grep -q x86_64 || { echo "::error::libcrypto.3.dylib was not built for x86_64 -- got: $(file "$PREFIX/lib/libcrypto.3.dylib")"; exit 1; }
 
+      - name: Build LAME from source for x86_64
+        if: matrix.arch == 'x86_64'
+        # The MP3 encoder for recordings (docs/attribution/LAME-PROVENANCE.md).
+        # Same story as FFTW and OpenSSL above on this row: the arm64
+        # Homebrew here has no x86_64 lame bottle, so build LAME 3.100 for
+        # the target arch into its own prefix. The tarball and its SHA-256
+        # are the ones Homebrew's lame formula pins, and so is the one
+        # source fix: lame_init_old is listed in include/libmp3lame.sym but
+        # not defined, which fails the macOS link
+        # (https://sourceforge.net/p/lame/mailman/message/36081038/).
+        # Shared only, as the arm64 row's Homebrew dylib is linked (LGPL-2.1
+        # section 6(b): a user can swap the library); no frontend, since only
+        # libmp3lame is used. macdeployqt copies libmp3lame.0.dylib into
+        # Contents/Frameworks the way it copies FFTW's.
+        run: |
+          set -euo pipefail
+          PREFIX="${{ github.workspace }}/lame-x86_64"
+          curl -fsSL https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz -o lame.tar.gz
+          echo "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e  lame.tar.gz" | shasum -a 256 -c -
+          tar xzf lame.tar.gz
+          cd lame-3.100
+          sed -i '' '/^lame_init_old$/d' include/libmp3lame.sym
+
+          ./configure --disable-dependency-tracking --disable-debug \
+            --enable-shared --disable-static --disable-frontend \
+            --prefix="$PREFIX" --host=x86_64-apple-darwin \
+            CFLAGS="-arch x86_64 -mmacosx-version-min=${{ matrix.deployment_target }}" \
+            LDFLAGS="-arch x86_64"
+          make -j$(sysctl -n hw.ncpu)
+          make install
+
+          test -f "$PREFIX/include/lame/lame.h"    || { echo "::error::lame/lame.h not installed"; exit 1; }
+          test -f "$PREFIX/lib/libmp3lame.0.dylib" || { echo "::error::libmp3lame.0.dylib not installed"; exit 1; }
+          lipo "$PREFIX/lib/libmp3lame.0.dylib" -verify_arch x86_64
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -987,11 +1022,10 @@ jobs:
             # block can confirm the resolved copy is actually this one
             # (and not, say, a stale build/ cache from a previous
             # native-arm64 configure of the same working directory).
-            # LAME: none for x86_64 here (Homebrew on this arm64 runner has
-            # only arm64 bottles, and CMake would otherwise find it under
-            # /opt/homebrew and fail the link), so this row records WAV only
-            # (docs/attribution/LAME-PROVENANCE.md).
-            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64 -DNEREUS_WITH_LAME=OFF"
+            # LAME: our x86_64 source build above, named by LAME_ROOT so
+            # CMake takes it ahead of anything under /opt/homebrew (arm64
+            # only on this runner). Checked after configure below.
+            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64 -DLAME_ROOT=${{ github.workspace }}/lame-x86_64"
           else
             # Native path: brew supplies FFTW under the brew prefix
             # (/opt/homebrew on Apple Silicon). No env-var dance
@@ -1011,6 +1045,15 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DNEREUS_REQUIRE_SERIALPORT=ON \
             $EXTRA_CMAKE_ARGS
+          # Both rows record MP3: the Intel row must link the LAME it built,
+          # never a missing one or the arm64 Homebrew copy.
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            LAME_EXPECT="${{ github.workspace }}/lame-x86_64/lib/"
+          else
+            LAME_EXPECT="$(brew --prefix)/"
+          fi
+          grep -E "^LAME_LIBRARY:FILEPATH=${LAME_EXPECT}" build/CMakeCache.txt \
+            || { echo "::error::LAME is not the expected copy under ${LAME_EXPECT}; MP3 recordings would be off"; grep '^LAME_' build/CMakeCache.txt >&2 || true; exit 1; }
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
@@ -1100,6 +1143,20 @@ jobs:
           # Contents/Frameworks, and no bundled binary may still point at the
           # build machine's copy.
           scripts/ci/macos-openssl.sh check-bundle build/NereusSDR.app
+
+          # LAME: libmp3lame must be in Contents/Frameworks, and no bundled
+          # binary may still point at the build machine's copy.
+          if ! ls build/NereusSDR.app/Contents/Frameworks/libmp3lame*.dylib >/dev/null 2>&1; then
+            echo "::error::libmp3lame is missing from Contents/Frameworks; MP3 recordings cannot work" >&2
+            exit 1
+          fi
+          for BIN in build/NereusSDR.app/Contents/MacOS/* build/NereusSDR.app/Contents/Frameworks/*.dylib; do
+            if otool -L "$BIN" | grep -qE '(/opt/homebrew|/usr/local|lame-x86_64)/.*libmp3lame'; then
+              echo "::error::$BIN still references a LAME library outside the bundle:" >&2
+              otool -L "$BIN" | grep -E '(/opt/homebrew|/usr/local|lame-x86_64)/.*libmp3lame' >&2
+              exit 1
+            fi
+          done
 
       - name: Copy license notices into app bundle
         run: |

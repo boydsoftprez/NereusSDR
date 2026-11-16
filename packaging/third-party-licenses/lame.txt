@@ -20,10 +20,13 @@ or (at your option) any later version. NereusSDR uses it under version
 2.1 of the GNU Lesser General Public License, the later version, whose
 full text ships alongside this notice as `LGPLv2.1.txt`.
 
-NereusSDR links LAME as a separate shared library and does not change it:
+NereusSDR links LAME as a separate shared library and does not change its code:
 libmp3lame.so.0 from the system package on Linux (libmp3lame0), the
-Homebrew lame dylib on macOS, and libmp3lame-0.dll from the MSYS2
-mingw-w64-x86_64-lame package on Windows, shipped beside the program. A
+Homebrew lame dylib on macOS (on Intel Macs, LAME 3.100 built from its
+source tarball and bundled in the app; its code is unchanged, and as in
+Homebrew's build the undefined name lame_init_old is left out of
+include/libmp3lame.sym, the library's export list), and libmp3lame-0.dll
+from the MSYS2 mingw-w64-x86_64-lame package on Windows, shipped beside the program. A
 user may replace that library with a modified build of LAME with the
 same interface. NereusSDR uses LAME's encoder only; MP3 files are decoded
 with minimp3 (`minimp3.txt`).

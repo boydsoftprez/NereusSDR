@@ -29,7 +29,7 @@ into NereusSDR files.
 | Build | Where LAME comes from |
 | --- | --- |
 | macOS (CI, Apple Silicon release) | Homebrew `lame` |
-| macOS Intel release | none: built with `-DNEREUS_WITH_LAME=OFF`, because the Apple Silicon runner's Homebrew has no x86_64 LAME |
+| macOS Intel release | LAME 3.100 built from source for x86_64 by `.github/workflows/release.yml` (the Apple Silicon runner's Homebrew has no x86_64 LAME): the SourceForge `lame-3.100.tar.gz`, SHA-256 checked against the value Homebrew's formula pins, with Homebrew's one fix (`lame_init_old` taken out of `include/libmp3lame.sym`), shared only; `libmp3lame.0.dylib` is bundled in `Contents/Frameworks` |
 | Linux CI, self-hosted CI image, AppImage, .deb | `libmp3lame-dev`; runtime `libmp3lame0` (dpkg-shlibdeps adds it to a .deb's Depends) |
 | Debian 13 arm64 Core package (the Pi image) | `libmp3lame-dev` in `packaging/station-image/build-trixie-deb.sh` |
 | Windows CI (MinGW) | MSYS2 `mingw-w64-x86_64-lame`, `LAME_ROOT` = the MINGW64 folder |

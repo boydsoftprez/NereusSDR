@@ -837,8 +837,8 @@ endif()
 #   Windows: MSYS2 mingw-w64-x86_64-lame; LAME_ROOT names the folder with
 #            include/lame/lame.h, lib/ and bin/libmp3lame-0.dll. The MSVC
 #            release build makes lib/mp3lame.lib from the DLL's exports.
-# NEREUS_WITH_LAME=OFF builds without it (the Intel macOS release row,
-# whose Apple Silicon Homebrew has no x86_64 LAME).
+# NEREUS_WITH_LAME=OFF builds without it. The Intel macOS release row
+# builds LAME 3.100 from source for x86_64 and names it with LAME_ROOT.
 # MP3 decoding never uses LAME: minimp3 (third_party/minimp3) is the one
 # decoder on every platform.
 # --------------------------------------------------------------------------
