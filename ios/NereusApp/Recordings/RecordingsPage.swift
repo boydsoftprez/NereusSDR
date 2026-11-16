@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 17, the phone's Recordings page.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Task 17 fixes: dark whatever the phone's setting, an empty
+//   list with no count or totals under a reason, Delete in red.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -537,10 +540,11 @@ final class RecordingsListModel {
     }
 
     /// The Core's totals: "1.4 GB saved in 12 recordings. 812 GB free on
-    /// Samsung T7." and that the recorder's loop is not counted.
-    var summary: String {
+    /// Samsung T7." and that the recorder's loop is not counted; nil while
+    /// the Core's totals cannot be read, where the reason says why.
+    var summary: String? {
         guard reason == nil, let index = client.index else {
-            return "Unknown while recordings cannot be reached. " + Self.recorderNote
+            return nil
         }
         let saved = Self.sizeText(index.usedBytes) + " saved in "
             + (index.count == 1 ? "one recording" : "\(index.count) recordings") + "."
@@ -652,6 +656,9 @@ struct RecordingsListPage: View {
             ShareSheet(urls: files.urls)
                 .onDisappear { model.shareClosed(files) }
         }
+        // The app draws dark whatever the phone's own setting (NereusSDRApp),
+        // so the search field and the menus keep to the dark workspace.
+        .environment(\.colorScheme, .dark)
     }
 
     private var footHeight: CGFloat {
@@ -666,11 +673,13 @@ struct RecordingsListPage: View {
                 ConnectChrome.NoticeBox(tone: .warn, title: nil, text: reason)
                     .accessibilityIdentifier("recordings.reason")
             }
-            Text(model.summary)
-                .font(.system(size: 12))
-                .foregroundStyle(ChromeColours.textDim)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("recordings.summary")
+            if let summary = model.summary {
+                Text(summary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(ChromeColours.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("recordings.summary")
+            }
             ToolPageParts.Choices(options: RecordingsListModel.Filter.allCases.map { ($0.rawValue, $0.title) },
                                   selected: model.filter.rawValue, enabled: enabled,
                                   identifier: "recordings.filter") { id in
@@ -678,10 +687,13 @@ struct RecordingsListPage: View {
             }
             searchField(enabled: enabled)
             HStack {
-                Text(RecordingsListModel.countText(model.visible.count))
-                    .font(.system(size: 12))
-                    .foregroundStyle(ChromeColours.textDim)
-                    .accessibilityIdentifier("recordings.count")
+                // No count while the Core's list cannot be read.
+                if enabled {
+                    Text(RecordingsListModel.countText(model.visible.count))
+                        .font(.system(size: 12))
+                        .foregroundStyle(ChromeColours.textDim)
+                        .accessibilityIdentifier("recordings.count")
+                }
                 Spacer()
                 Menu {
                     ForEach(RecordingsListModel.Sort.allCases, id: \.self) { sort in
@@ -715,8 +727,15 @@ struct RecordingsListPage: View {
                 ToolPageParts.Refusal(text: note, identifier: "recordings.note")
             }
             SpotHubPage.Card {
-                let rows = model.visible
-                if rows.isEmpty {
+                // Not connected, or a Core without recordings: an empty list
+                // under the reason, never rows kept from before.
+                let rows = enabled ? model.visible : []
+                if !enabled {
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 64)
+                        .accessibilityHidden(true)
+                } else if rows.isEmpty {
                     Text(model.entries.isEmpty ? "No recordings on the Core." : "Nothing matches.")
                         .font(.system(size: 13))
                         .foregroundStyle(ChromeColours.textDim)
@@ -1048,7 +1067,8 @@ private struct SelectFoot: View {
             Button(count > 1 ? "Delete \(count)" : "Delete") {
                 model.askDelete(model.chosen.map(\.id))
             }
-            .foregroundStyle(count > 0 ? ChromeColours.revokeText : ChromeColours.buttonOffText)
+            // The app's standalone red words for a delete (W5), as Setup > Devices has them.
+            .foregroundStyle(count > 0 ? ConnectChrome.badText : ChromeColours.buttonOffText)
             .disabled(count == 0)
             .accessibilityIdentifier("recordings.deleteSelected")
         }

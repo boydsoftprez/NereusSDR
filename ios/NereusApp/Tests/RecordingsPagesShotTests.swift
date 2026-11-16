@@ -14,7 +14,8 @@ import UIKit
 /// page drawn as the app draws them, on a phone, against a recordings
 /// client fed by hand: the list, one playing, Select with two picked, light,
 /// not connected and an older Core. With `NEREUS_MAIN_SHOTS` set, each
-/// picture is written there.
+/// picture is written there. The app draws dark whatever the phone's own
+/// setting, so the light pictures match the dark ones.
 @Suite("Recordings pages pictures", .serialized)
 @MainActor
 struct RecordingsPagesShotTests {
@@ -40,7 +41,10 @@ struct RecordingsPagesShotTests {
             Flag.publish(rig, document(), revision: 1)
         }
         let model = RecordingsListModel(client: rig.client)
-        model.received(RecordingsPagesTests.entries())
+        // Only a Core with recordings, connected, lists any.
+        if connected, let version, version >= RecordingsClient.recordingsVersion {
+            model.received(RecordingsPagesTests.entries())
+        }
         return (rig, model)
     }
 
@@ -75,7 +79,11 @@ struct RecordingsPagesShotTests {
         for (name, version, connected, scheme) in [
             ("setup-recording-settings", Int64(3), true, ColorScheme.dark),
             ("setup-recording-settings-light", Int64(3), true, ColorScheme.light),
-            ("setup-recording-settings-older-core", Int64(1), true, ColorScheme.dark),
+            // Recordings but not the on-air switches: only those dim, their reason under them.
+            ("setup-recording-settings-core-without-on-air-switches", RecordingsClient.recordingsVersion, true,
+             ColorScheme.dark),
+            // No recordings at all: every group dims, the reason at the top.
+            ("setup-recording-settings-core-without-recordings", Int64(0), true, ColorScheme.dark),
             ("setup-recording-settings-not-connected", Int64(3), false, ColorScheme.dark),
         ] {
             let rig = await Flag.rig(version: version, connected: connected)

@@ -274,6 +274,8 @@ struct RecordingsPagesTests {
         let away = await Flag.rig(version: 3, connected: false)
         let awayModel = RecordingsListModel(client: away.client)
         #expect(awayModel.reason == RecordingFlagModel.notConnectedReason)
+        // No totals under the reason: it says why.
+        #expect(awayModel.summary == nil && olderModel.summary == nil)
         await awayModel.share(Self.entries())
         #expect(away.sent.invokes.isEmpty && awayModel.pendingShare == nil)
     }
@@ -354,6 +356,8 @@ struct RecordingsPagesTests {
     func settingsNotConnected() async {
         let away = await Flag.rig(version: 3, connected: false)
         let model = RecordingSettingsModel(client: away.client)
+        // The desktop's words, as Tools > Recordings says them.
+        #expect(RecordingSettingsModel.notConnectedNote == "Connect to a radio to use recordings.")
         #expect(model.reason == RecordingSettingsModel.notConnectedNote)
         #expect(model.onAirReason == RecordingSettingsModel.notConnectedNote)
         #expect(model.settings == RecordingSettingsModel.defaults)

@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 17, the phone's Recording settings page.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Task 17 fixes: dark whatever the phone's setting, the
+//   desktop's not-connected words, the on-air reason under its switches.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -20,8 +23,8 @@ import SwiftUI
 @MainActor
 @Observable
 final class RecordingSettingsModel {
-    nonisolated static let notConnectedNote =
-        "Not connected to a Core. Connect to change these. Everything here stays visible."
+    /// The desktop's words when no Core is connected, as Tools > Recordings says them.
+    nonisolated static let notConnectedNote = RecordingFlagModel.notConnectedReason
     nonisolated static let refusedText = "The Core did not take the change."
     /// The Core's defaults (section 6.5), shown before it sends its own.
     nonisolated static let defaults = RecordingsDocument.Settings(
@@ -311,6 +314,10 @@ struct RecordingSettingsPage: View {
                 SetupTagBadge(tag: .core)
             }
         }
+        // The app draws dark whatever the phone's own setting (NereusSDRApp),
+        // so the title and the system's own parts keep to the dark workspace.
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .environment(\.colorScheme, .dark)
     }
 
     private func flag(_ value: Bool, _ set: @escaping (Bool) async -> Void) -> Binding<Bool> {
@@ -426,8 +433,7 @@ struct RecordingSettingsPage: View {
     private func playingBack(_ shown: RecordingsDocument.Settings) -> some View {
         let onAirUsable = model.onAirReason == nil
         return SetupPanelSection("Playing back", tag: .core,
-                                 note: model.reason == nil ? model.onAirReason
-                                     ?? "They return to your normal settings when it stops going out." : nil) {
+                                 note: "They return to your normal settings when it stops going out.") {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Play comes out of this phone's speaker or headphones.")
                 Text("Keying while a recording plays sends it on the air.")
@@ -441,6 +447,15 @@ struct RecordingSettingsPage: View {
                     .font(.body.weight(.semibold))
                     .disabled(!onAirUsable)
                     .accessibilityIdentifier("recordingSettings.\(which.rawValue)")
+            }
+            // A Core with recordings but not the on-air switches: its words
+            // under the switches, as the desktop's page puts them.
+            if model.reason == nil, let reason = model.onAirReason {
+                Text(reason)
+                    .font(.footnote)
+                    .foregroundStyle(ConnectChrome.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("recordingSettings.onAirReason")
             }
         }
     }
