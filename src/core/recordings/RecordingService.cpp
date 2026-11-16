@@ -93,9 +93,17 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
                     keyChanged(false, std::nullopt);
                 }
             });
-            // On the air from the start of the key, so its first block is the
-            // recording, and off at the start of the unkey.
+            // Off the speakers from the start of the key, and off the air at
+            // the start of the unkey. The transmitter takes its first block
+            // of the recording once its channel runs (after the rf delay and
+            // any amplifier's grant; TxWorkerThread), so the air starts
+            // where the speakers stopped (V5). A key in CW walks without the
+            // TX channel: the playback stays on its speakers and no switch
+            // is touched.
             connect(mox, &MoxController::txAboutToBegin, this, [this, mox] {
+                if (mox->isCwKeying()) {
+                    return;
+                }
                 keyChanged(true, listenerForKey(mox->currentKeyer(), mox->isManualMox()));
             });
             connect(mox, &MoxController::txAboutToEnd, this, [this] { keyChanged(false, std::nullopt); });
@@ -855,8 +863,10 @@ void RecordingService::setListenerSpeakerSlot(const ListenerId& who, int playbac
 
 std::optional<ListenerId> RecordingService::listenerForKey(const KeyerIdentity& keyer, bool tune)
 {
+    // VOX is left out too: the playback on the speakers could trip it and
+    // then hold the key for the whole recording (playback alone never keys).
     if (tune || keyer.program || keyer.tunerPress || keyer.source == PttMode::Manual
-        || keyer.source == PttMode::Cw) {
+        || keyer.source == PttMode::Cw || keyer.source == PttMode::Vox) {
         return std::nullopt;
     }
     if (keyer.isStation()) {
@@ -902,7 +912,9 @@ void RecordingService::endOnAir(int channel)
     }
     PlaybackChannel& ch = m_playChannels[static_cast<size_t>(channel)];
     ch.route.store(kRouteSpeaker, std::memory_order_seq_cst);
-    if (ch.bound.load(std::memory_order_seq_cst)) {
+    // The callers that change the playback as well (it ended, or it was
+    // stopped) tell it once, after.
+    if (ch.bound.load(std::memory_order_seq_cst) && !m_quietOnAirEnd) {
         emit playbackChanged(ch.listener);
     }
 }
@@ -919,7 +931,14 @@ int RecordingService::pullOnAir(int channel, float* mono48k, int frames) noexcep
                 RecordingPlayer* player = ch.player.load(std::memory_order_seq_cst);
                 // A recording taken to its end has nothing left to send: the
                 // microphone takes over from this block (V5).
-                if (player != nullptr && !player->finished()) {
+                if (player == nullptr) {
+                    // Between two players (a seek while on the air): silence,
+                    // never a block of microphone.
+                    if (mono48k != nullptr && frames > 0) {
+                        std::fill(mono48k, mono48k + frames, 0.0f);
+                    }
+                    n = 0;
+                } else if (!player->finished()) {
                     n = player->pull(mono48k, frames);
                 }
             }
@@ -976,9 +995,12 @@ void RecordingService::endListener(const ListenerId& who)
     if (it == m_listeners.end()) {
         return;
     }
-    // Its recording stops going out first; the radio stays keyed.
+    // Its recording stops going out first; the radio stays keyed. The
+    // caller tells the playback's change once.
     if (m_onAir->playbackListener() == who) {
+        m_quietOnAirEnd = true;
         m_onAir->end();
+        m_quietOnAirEnd = false;
     }
     dropPlayer(it.value());
     PlaybackChannel& ch = m_playChannels[static_cast<size_t>(it->channel)];
@@ -1021,9 +1043,12 @@ void RecordingService::onPlaybackEnded(const ListenerId& who, quint64 token)
         return;
     }
     Listener& l = it.value();
-    // V5: it ended on the air; the microphone already has the key.
+    // V5: it ended on the air; the microphone already has the key. One
+    // change is told, below: not playing and not on the air.
     if (m_onAir->playbackListener() == who) {
+        m_quietOnAirEnd = true;
         m_onAir->end();
+        m_quietOnAirEnd = false;
     }
     dropPlayer(l);
     l.positionMs = l.lengthMs;

@@ -4,8 +4,9 @@
 // behavior only (clsAudioRecordPlayback.cs [v2.10.3.15]); no logic is ported.
 // Modification history (NereusSDR):
 // 2026-11-15  J.J. Boyd / KG4VCF; the on-air source and the five processing
-//             switches (spec 3, 6.1, 6.3, V5, V6, V7, A6, A7). AI tooling:
-//             Anthropic Claude Code.
+//             switches (spec 3, 6.1, 6.3, V5, V6, V7, A6, A7). Review fix:
+//             the switch writes go through the TX channel's thread, after
+//             RadioModel's own. AI tooling: Anthropic Claude Code.
 
 #include "OnAirSource.h"
 
@@ -141,9 +142,11 @@ void OnAirSource::holdSwitches()
     assertHeld();
     // A change to one of them while on the air stays in TransmitModel and is
     // applied at the end (releaseSwitches). RadioModel's own connections,
-    // made when the radio connected, run before these, so a held switch the
-    // user turns on (or a profile that turns it on) is turned off again in
-    // the same call, before the event loop runs again.
+    // made when the radio connected, run before these and post their writes
+    // to the TX channel's thread (pushTxProcessingChain's postToTx, or a
+    // connection in the channel's context); assertHeld posts the same way,
+    // after them, so a held switch the user turns on (or a profile that
+    // turns it on) is turned off again before the next block.
     if (m_model != nullptr) {
         const auto reassert = [this] { assertHeld(); };
         m_holdConnections.append(QObject::connect(m_model, &TransmitModel::txEqEnabledChanged, &m_context, reassert));
@@ -164,24 +167,29 @@ void OnAirSource::holdSwitches()
 void OnAirSource::assertHeld() const
 {
     TxChannel* ch = m_channel ? m_channel() : nullptr;
-    if (ch == nullptr) {
+    if (ch == nullptr || m_held == 0u) {
         return;
     }
-    if ((m_held & kTxEq) != 0u) {
-        ch->setTxEqRunning(false);
-    }
-    if ((m_held & kCompressor) != 0u) {
-        ch->setTxCpdrOn(false);
-    }
-    if ((m_held & kLeveler) != 0u) {
-        ch->setTxLevelerOn(false);
-    }
-    if ((m_held & kCfc) != 0u) {
-        ch->setTxCfcRunning(false);
-    }
-    if ((m_held & kPhaseRotator) != 0u) {
-        ch->setStageRunning(TxChannel::Stage::PhRot, false);
-    }
+    const unsigned held = m_held;
+    // On the channel's thread, in order with RadioModel's own writes (they
+    // go the same way); at once when that is this thread.
+    QMetaObject::invokeMethod(ch, [ch, held] {
+        if ((held & kTxEq) != 0u) {
+            ch->setTxEqRunning(false);
+        }
+        if ((held & kCompressor) != 0u) {
+            ch->setTxCpdrOn(false);
+        }
+        if ((held & kLeveler) != 0u) {
+            ch->setTxLevelerOn(false);
+        }
+        if ((held & kCfc) != 0u) {
+            ch->setTxCfcRunning(false);
+        }
+        if ((held & kPhaseRotator) != 0u) {
+            ch->setStageRunning(TxChannel::Stage::PhRot, false);
+        }
+    });
 }
 
 void OnAirSource::releaseSwitches()
@@ -196,22 +204,30 @@ void OnAirSource::releaseSwitches()
     if (held == 0u || ch == nullptr || m_model == nullptr) {
         return;
     }
-    // Whatever the user has now, as RadioModel applies it.
-    if ((held & kTxEq) != 0u) {
-        ch->setTxEqRunning(m_model->txEqEnabled());
-    }
-    if ((held & kCompressor) != 0u) {
-        ch->setTxCpdrOn(m_model->cpdrOn());
-    }
-    if ((held & kLeveler) != 0u) {
-        ch->setTxLevelerOn(m_model->txLevelerOn());
-    }
-    if ((held & kCfc) != 0u) {
-        ch->setTxCfcRunning(m_model->cfcEnabled());
-    }
-    if ((held & kPhaseRotator) != 0u) {
-        ch->setStageRunning(TxChannel::Stage::PhRot, m_model->phaseRotatorEnabled());
-    }
+    // Whatever the user has now, as RadioModel applies it, read here and
+    // written after any re-assert still on its way to the channel.
+    const bool txEq = m_model->txEqEnabled();
+    const bool compressor = m_model->cpdrOn();
+    const bool leveler = m_model->txLevelerOn();
+    const bool cfc = m_model->cfcEnabled();
+    const bool phaseRotator = m_model->phaseRotatorEnabled();
+    QMetaObject::invokeMethod(ch, [ch, held, txEq, compressor, leveler, cfc, phaseRotator] {
+        if ((held & kTxEq) != 0u) {
+            ch->setTxEqRunning(txEq);
+        }
+        if ((held & kCompressor) != 0u) {
+            ch->setTxCpdrOn(compressor);
+        }
+        if ((held & kLeveler) != 0u) {
+            ch->setTxLevelerOn(leveler);
+        }
+        if ((held & kCfc) != 0u) {
+            ch->setTxCfcRunning(cfc);
+        }
+        if ((held & kPhaseRotator) != 0u) {
+            ch->setStageRunning(TxChannel::Stage::PhRot, phaseRotator);
+        }
+    });
 }
 
 void OnAirSource::waitForPulls() const

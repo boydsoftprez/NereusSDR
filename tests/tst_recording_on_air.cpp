@@ -27,6 +27,7 @@
 
 #include "core/AppSettings.h"
 #include "core/AudioEngine.h"
+#include "core/MicProfileManager.h"
 #include "core/MoxController.h"
 #include "core/TxChannel.h"
 #include "core/TxWorkerThread.h"
@@ -45,6 +46,7 @@
 #include <cstdlib>
 #include <memory>
 #include <new>
+#include <thread>
 #include <vector>
 
 // ---- An allocation counter for pull()'s no-allocation check.
@@ -342,6 +344,8 @@ private slots:
         QVERIFY(!RecordingService::listenerForKey(KeyerIdentity::station(PttMode::Manual), false).has_value());
         QVERIFY(!RecordingService::listenerForKey(KeyerIdentity::station(PttMode::None), true).has_value());
         QVERIFY(!RecordingService::listenerForKey(KeyerIdentity::radioKey(), false).has_value());
+        // VOX neither: the playback on the speakers could key it.
+        QVERIFY(!RecordingService::listenerForKey(KeyerIdentity::station(PttMode::Vox), false).has_value());
     }
 
     // ---- V5: the end of the recording hands over to the microphone.
@@ -368,10 +372,21 @@ private slots:
         // The very next block is the microphone's.
         QVERIFY(!onAir->pull(tx.data(), kBlock));
         // The service learns of the end and stops sending; nothing unkeys.
+        // It tells the change once: not playing, not on the air.
+        QSignalSpy changed(svc.get(), &RecordingService::playbackChanged);
+        bool toldPlaying = true;
+        bool toldOnAir = true;
+        connect(svc.get(), &RecordingService::playbackChanged, this, [&](const ListenerId& who) {
+            toldPlaying = svc->playback(who)->playing;
+            toldOnAir = svc->playback(who)->onAir;
+        });
         svc->pumpForTest();
         QCOMPARE(onAir->active(), OnAirSource::Kind::None);
         QVERIFY(!svc->playback(kLocal)->playing);
         QVERIFY(!svc->playback(kLocal)->onAir);
+        QCOMPARE(changed.count(), 1);
+        QVERIFY(!toldPlaying);
+        QVERIFY(!toldOnAir);
     }
 
     void theEndWhileKeyedLeavesTheRadioKeyed()
@@ -572,7 +587,15 @@ private slots:
         worker.dispatchBlockForTest(mic.data());
         QVERIFY(near(lastI(0), 0.3f));
 
+        // Keyed, but the TX channel is not running yet (the rf delay): the
+        // recording stays where its speakers left it.
+        channel.setRunning(false);
         svc->keyChanged(true, kLocal);
+        QVERIFY(svc->playback(kLocal)->onAir);
+        for (int b = 0; b < 3; ++b) {
+            worker.dispatchBlockForTest(mic.data());
+        }
+        channel.setRunning(true);
         for (int b = 0; b < 3; ++b) {
             worker.dispatchBlockForTest(mic.data());
             QVERIFY(near(lastI(0), rampAt(b * kBlock, frames)));
@@ -637,6 +660,135 @@ private slots:
         QVERIFY(onAir->voiceMessageSlot().isEmpty());
     }
 
+    // ---- A seek on the air: the gap between two players is silence.
+
+    void aSeekOnTheAirSendsNoMicrophone()
+    {
+        auto svc = makeService();
+        const int frames = 4 * kRate;
+        svc->play(kLocal, addRamp(*svc, frames));
+        svc->pumpForTest();
+        svc->keyChanged(true, kLocal);
+        OnAirSource* onAir = svc->onAirSource();
+        QCOMPARE(onAir->active(), OnAirSource::Kind::Playback);
+
+        // The transmit worker pulls the whole time the seeks run.
+        std::atomic<bool> stop{false};
+        std::atomic<int> pulls{0};
+        std::atomic<int> micBlocks{0};
+        std::thread transmitter([&] {
+            std::vector<float> tx(kBlock);
+            while (!stop.load()) {
+                if (!onAir->pull(tx.data(), kBlock)) {
+                    micBlocks.fetch_add(1);
+                }
+                pulls.fetch_add(1);
+            }
+        });
+        for (int k = 0; k < 200; ++k) {
+            svc->seek(kLocal, (k % 30) * 100);
+        }
+        QTRY_VERIFY(pulls.load() > 200);
+        stop.store(true);
+        transmitter.join();
+        QCOMPARE(micBlocks.load(), 0);
+        QCOMPARE(onAir->active(), OnAirSource::Kind::Playback);
+
+        // After the last seek the air carries the recording from there.
+        svc->seek(kLocal, 1000);
+        svc->pumpForTest();
+        std::vector<float> tx(kBlock);
+        QVERIFY(onAir->pull(tx.data(), kBlock));
+        QVERIFY(near(tx.front(), rampAt(kRate, frames)));
+        svc->keyChanged(false, kLocal);
+    }
+
+    // ---- VOX and CW keys leave the playback on its speaker.
+
+    void voxAndCwKeysLeaveThePlaybackOnItsSpeaker()
+    {
+        for (const bool cw : {false, true}) {
+            TxChannel ch(kTxChannelId);
+            RadioModel model;
+            RecordingService* svc = model.recordingService();
+            QVERIFY(svc != nullptr);
+            useDisk(*svc);
+            MoxController* mox = model.moxController();
+            model.setCapsForTest(/*hasAlex=*/false);
+            Test::QuietRadioConnection connection;
+            model.injectConnectionForTest(&connection);
+            mox->setTimerIntervals(0, 0, 0, 0, 0, 0);
+            model.addSlice();
+            model.injectTxChannelForTest(&ch);
+            // The five as the user has them; a key that sends nothing out
+            // must not touch them.
+            ch.setTxEqRunning(true);
+            ch.setTxCpdrOn(true);
+            ch.setTxLevelerOn(true);
+            ch.setTxCfcRunning(true);
+            ch.setStageRunning(TxChannel::Stage::PhRot, true);
+            const int frames = 2 * kRate;
+            svc->play(kLocal, addRamp(*svc, frames));
+            svc->pumpForTest();
+            std::vector<float> buf;
+            QCOMPARE(speaker(*svc, AudioEngine::kLocalPlaybackSlotId, buf), kBlock);
+
+            if (cw) {
+                mox->setCwModeActive(true);
+                mox->setMox(true);
+                QVERIFY(mox->isCwKeying());
+            } else {
+                mox->setMox(true, KeyerIdentity::station(PttMode::Vox));
+            }
+            QVERIFY2(mox->isMox(), qPrintable(mox->lastRefusal().text));
+            QCOMPARE(svc->onAirSource()->active(), OnAirSource::Kind::None);
+            QVERIFY(!svc->playback(kLocal)->onAir);
+            QCOMPARE(speaker(*svc, AudioEngine::kLocalPlaybackSlotId, buf), kBlock);
+            QVERIFY(near(buf.front(), rampAt(kBlock, frames)));
+            QCOMPARE(switchesOf(ch), (Switches{true, true, true, true, true}));
+            mox->setMox(false);
+            QTRY_VERIFY(!mox->isMox());
+            if (cw) {
+                mox->setCwModeActive(false);
+            }
+            model.injectTxChannelForTest(nullptr);
+            model.injectConnectionForTest(nullptr);
+        }
+    }
+
+    // ---- RadioModel's own writers do not turn a held switch back on.
+
+    void aProfileChangeOnTheAirKeepsTheSwitchesOff()
+    {
+        TxChannel ch(kTxChannelId);
+        RadioModel model;
+        RecordingService* svc = model.recordingService();
+        QVERIFY(svc != nullptr);
+        useDisk(*svc);
+        TransmitModel& tm = model.transmitModel();
+        setAllProcessing(tm, true);
+        // The Core's transmit chain wiring, as connectToRadio runs it.
+        model.wireTransmitChainForTest(&ch);
+        QCOMPARE(switchesOf(ch), (Switches{true, true, true, true, true}));
+        MicProfileManager* profiles = model.micProfileManager();
+        QVERIFY(profiles != nullptr);
+        svc->play(kLocal, addRamp(*svc, 2 * kRate));
+        svc->pumpForTest();
+
+        svc->keyChanged(true, kLocal);
+        QCOMPARE(switchesOf(ch), (Switches{false, false, false, false, false}));
+        // A profile pick pushes the whole chain from TransmitModel.
+        emit profiles->activeProfileChanged(QStringLiteral("Default"));
+        QCOMPARE(switchesOf(ch), (Switches{false, false, false, false, false}));
+        // So does a change to one of them.
+        tm.setTxEqEnabled(false);
+        tm.setTxEqEnabled(true);
+        QCOMPARE(switchesOf(ch), (Switches{false, false, false, false, false}));
+        svc->keyChanged(false, kLocal);
+        QCOMPARE(switchesOf(ch), (Switches{true, true, true, true, true}));
+        model.injectTxChannelForTest(nullptr);
+    }
+
     // ---- Stopping a playback that is on the air.
 
     void stoppingOnTheAirEndsItAndRestores()
@@ -651,7 +803,9 @@ private slots:
         svc->pumpForTest();
         svc->keyChanged(true, kLocal);
         QCOMPARE(svc->onAirSource()->active(), OnAirSource::Kind::Playback);
+        QSignalSpy changed(svc.get(), &RecordingService::playbackChanged);
         svc->stopPlayback(kLocal);
+        QCOMPARE(changed.count(), 1);
         QCOMPARE(svc->onAirSource()->active(), OnAirSource::Kind::None);
         QCOMPARE(switchesOf(ch), (Switches{true, true, true, true, true}));
         std::vector<float> tx(kBlock);

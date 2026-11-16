@@ -540,6 +540,40 @@ private slots:
         QCOMPARE(refusalOf(core.invoke(second, "recordings.stopPlay")), QString());
     }
 
+    // A6: the device that keys while its recording plays is told it is on
+    // the air; the other device is told nothing.
+    void theKeyingDeviceIsToldItsPlaybackIsOnTheAir()
+    {
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        core.pair(tablet);
+        LoopbackTransport* first = core.signIn(phone, kRecordings);
+        LoopbackTransport* second = core.signIn(tablet, kRecordings);
+        QVERIFY(admitted(first));
+        QVERIFY(admitted(second));
+        const QString one = addPlayable(core, QStringLiteral("one"));
+        QVERIFY(!one.isEmpty());
+        QCOMPARE(refusalOf(core.invoke(first, "recordings.play", {utf8("id", one)})), QString());
+        QTRY_VERIFY(!playbackPushes(first).isEmpty());
+        QCOMPARE(valueIn(playbackPushes(first).last(), QStringLiteral("onAir")).toBool(true), false);
+        const qsizetype toldSecond = playbackPushes(second).size();
+
+        // The phone's key, as its tx.key reaches the service.
+        RecordingService* service = core.model->recordingService();
+        service->keyChanged(true, RecordingService::listenerForKey(keyerFor(phone), false));
+        QCOMPARE(service->onAirSource()->active(), OnAirSource::Kind::Playback);
+        QTRY_VERIFY(valueIn(playbackPushes(first).last(), QStringLiteral("onAir")).toBool(false));
+        QCOMPARE(valueIn(playbackPushes(first).last(), QStringLiteral("id")).toString(), one);
+
+        service->keyChanged(false, std::nullopt);
+        QTRY_VERIFY(!valueIn(playbackPushes(first).last(), QStringLiteral("onAir")).toBool(true));
+        QCOMPARE(playbackPushes(second).size(), toldSecond);
+        QCOMPARE(refusalOf(core.invoke(first, "recordings.stopPlay")), QString());
+    }
+
     // A copy of 3 MB in chunks comes back byte for byte.
     void anExportComesBackWhole()
     {

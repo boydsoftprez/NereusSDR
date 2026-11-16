@@ -160,7 +160,7 @@ public:
     OnAirSource* onAirSource() const { return m_onAir.get(); }
     // Whose playback a key may send: the station's own key is the window
     // that runs the radio ("local"), a remote device's key is its device id.
-    // A program's key (TCI, CAT), TUNE and CW send none.
+    // A program's key (TCI, CAT), TUNE, VOX and CW send none.
     static std::optional<ListenerId> listenerForKey(const KeyerIdentity& keyer, bool tune);
     // The radio keyed for `keyer` (on), or unkeyed. Followed from
     // MoxController (txAboutToBegin, txAboutToEnd, moxChanged).
@@ -326,6 +326,9 @@ private:
     mutable std::atomic<int> m_pullsInFlight{0};
     quint64 m_nextPlayToken = 1;
     QTimer* m_quietTimer = nullptr;
+    // Set while a caller that tells the playback's change itself ends what
+    // is on the air, so endOnAir does not tell it first.
+    bool m_quietOnAirEnd = false;
     // Last, so it goes first: its end() still reaches the channels above.
     std::unique_ptr<OnAirSource> m_onAir;
 };

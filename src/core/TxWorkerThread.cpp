@@ -657,10 +657,14 @@ void TxWorkerThread::dispatchOneBlock()
     // keys, its playback is the transmit input in place of TCI and every
     // microphone (in the RADE path, the encoder's input, below). With
     // nothing on the air it gives no audio and the block goes on exactly as
-    // before. The pull copies from a lock-free ring and returns.
+    // before. The pull copies from a lock-free ring and returns. It waits
+    // for the TX channel to run (after the rf delay, and an amplifier's
+    // grant): until then the recording stays where its speakers left it,
+    // so the air starts from there (V5).
     bool onAirAudio = false;
     m_onAirPullsInFlight.fetch_add(1, std::memory_order_seq_cst);
-    if (OnAirSource* const onAir = m_onAirSource.load(std::memory_order_seq_cst)) {
+    OnAirSource* const onAir = m_onAirSource.load(std::memory_order_seq_cst);
+    if (onAir != nullptr && m_txChannel->isRunning()) {
         onAirAudio = onAir->pull(m_onAirBuf.data(), kBlockFrames);
     }
     m_onAirPullsInFlight.fetch_sub(1, std::memory_order_seq_cst);
