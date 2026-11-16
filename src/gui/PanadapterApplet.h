@@ -80,6 +80,9 @@
 //               right-click forwarding to the pan no longer depends on
 //               isWindow(). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
+//   2026-11-15: m_spectrumDetached notes that a reattach must clear the
+//               spectrum's own detached flag too. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -372,6 +375,7 @@ private:
     QWidget*                m_statusOverlayWindow {nullptr};
     QWidget*                m_noSliceHintWindow {nullptr};
     QWidget*                m_takeReceiverButtonWindow {nullptr};
+    // A future reattach must also call m_spectrum->setDetachedIntoOwnWindow(false).
     bool                    m_spectrumDetached {false};
     bool                    m_detachInProgress {false};
     bool                    m_detachRetryQueued {false};
