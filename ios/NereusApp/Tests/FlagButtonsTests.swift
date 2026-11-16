@@ -11,8 +11,9 @@ import Testing
 
 /// R-IOS-11, the board's redrawn flag (`#flagbtn-review`, approved
 /// 2026-09-30): every control on a full flag and beside it is a button at
-/// least 40 by 44 points (the frequency's thin frame 40 tall, as drawn),
-/// no two touch areas overlap, the words stop at the board's caps, and
+/// least 40 by 44 points (the frequency's thin frame 40 tall, as drawn; the
+/// column's five rows 44 by 30, inside the flag's height, as the recording
+/// design of 2026-11-15 draws them), no two touch areas overlap, the words stop at the board's caps, and
 /// each button acts on its own slice, the one that is not active included.
 @Suite("Flag buttons")
 @MainActor
@@ -27,6 +28,9 @@ struct FlagButtonsTests {
         BandSlice(id: id, frequencyHz: hz, filterLowHz: -3000, filterHighHz: -100, colour: "#00D0FF",
                   lowerSideband: true, txSlice: id == 0)
     }
+
+    /// The column beside a full flag, top to bottom (the recording design of 2026-11-15).
+    static let sideNames = ["Close", "Lock", "Record", "Play", "More"]
 
     /// Every touch area on the band's full flags, named, in the band's points.
     static func targets(slices: [BandSlice], width: CGFloat, large: Bool,
@@ -46,10 +50,8 @@ struct FlagButtonsTests {
             }
             let side = FlagLayout.sideColumnRect(flag: flag, lineX: geometry.x(forHz: slice.frequencyHz),
                                                  bandWidth: Double(width), column: column)
-            for (index, name) in ["Close", "Lock", "More"].enumerated() {
-                targets.append(("\(slice.letter) \(name)",
-                                CGRect(x: side.minX, y: side.minY + CGFloat(index) * (button + FlagLayout.sideGap),
-                                       width: button, height: button)))
+            for (index, name) in Self.sideNames.enumerated() {
+                targets.append(("\(slice.letter) \(name)", FlagLayout.sideButtonRect(index, column: side)))
             }
         }
         return targets
@@ -85,7 +87,7 @@ struct FlagButtonsTests {
         #expect(FlagSideButtons.diameter(large: false) == 44 && FlagSideButtons.diameter(large: true) == 44)
     }
 
-    @Test("every button on the flags and beside them is at least 40 by 44 points, and no two touch areas overlap",
+    @Test("every button on the flags is at least 40 by 44 points, each beside them 44 by 30, and no two touch areas overlap",
           arguments: [false, true])
     func everyTargetIsFingerSized(_ large: Bool) {
         // Upright, one slice; sideways, the board's pair, both full; and a listened flag with its owner row.
@@ -97,11 +99,15 @@ struct FlagButtonsTests {
         ]
         for (slices, width, listening) in cases {
             let targets = Self.targets(slices: slices, width: width, large: large, listening: listening)
-            #expect(targets.count == slices.count * (listening ? 11 : 10))
+            #expect(targets.count == slices.count * (listening ? 13 : 12))
             for target in targets {
-                // The frequency's thin frame is the board's 40 points tall; every other target 44.
-                let tall: CGFloat = target.name.hasSuffix("Frequency") ? 40 : 44
-                #expect(target.rect.width >= 40 && target.rect.height >= tall, "\(target.name) is \(target.rect.size)")
+                // The frequency's thin frame is the board's 40 points tall; the
+                // column's five rows fit the flag's height, 44 by 30 (the
+                // recording design of 2026-11-15); every other target 44.
+                let side = Self.sideNames.contains { target.name.hasSuffix(" \($0)") }
+                let tall: CGFloat = target.name.hasSuffix("Frequency") ? 40 : side ? FlagLayout.sideRowHeight : 44
+                let wide: CGFloat = side ? 44 : 40
+                #expect(target.rect.width >= wide && target.rect.height >= tall, "\(target.name) is \(target.rect.size)")
                 #expect(target.rect.minX >= 0 && target.rect.maxX <= width, "\(target.name) leaves the band")
             }
             for (index, one) in targets.enumerated() {
@@ -142,11 +148,11 @@ struct FlagButtonsTests {
             #expect(origin.x + TuneStepMenu.width == flag.maxX - FlagMetrics.inset)
         }
         // The more menu's right edge on the more button's, kept on the band.
-        let column = CGRect(x: 8, y: 0, width: 44, height: 136)
+        let column = CGRect(x: 8, y: 0, width: 44, height: 158)
         let more = FlagPopoverLayer.moreButton(column: column, large: false)
-        #expect(more == CGRect(x: 8, y: 92, width: 44, height: 44))
+        #expect(more == CGRect(x: 8, y: 128, width: 44, height: 30))
         let placed = FlagPopoverLayer.menuOrigin(under: more, width: 250, alignRight: true, bandWidth: 402)
-        #expect(placed == CGPoint(x: FlagPopoverLayer.margin, y: 140))
+        #expect(placed == CGPoint(x: FlagPopoverLayer.margin, y: 158 + FlagPopoverLayer.belowButton))
         // A panel drops from under the flag and its buttons.
         #expect(FlagPopoverLayer.panelTop(flag: flag, column: column) == 160)
     }

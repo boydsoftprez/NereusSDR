@@ -6,6 +6,8 @@
 // read, tied to this app's session. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable plan Task 18, the Panadapter tab's swipes, shared
 // by the tab bar and the band. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 16, the recordings client wired to this phone's
+//   device id and PTT, fed the session's events. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -81,6 +83,16 @@ final class AppModel: ObservableObject {
     let longSession: SessionController
     /// The Core's record streams: its spots and its spot sources' consoles.
     let records: RecordStreamClient
+    /// The Core's recordings and voice keyer (the recording design of
+    /// 2026-11-15). Its voice messages keep this phone's PTT keepalives
+    /// going while the Core sends this phone's message.
+    let recordings: RecordingsClient
+    /// Each flag's Record and Play, the playing bar and the Kept notice.
+    lazy var recordingFlag: RecordingFlagModel = {
+        let model = RecordingFlagModel(client: recordings)
+        model.showRefusal = { [weak slices = main.slices] text in slices?.showReason(text) }
+        return model
+    }()
     /// The Core's spots on the band and Spot Hub.
     let spots: SpotsModel
     /// FreeDV Reporter as the Core runs it; kept here, since the Tools tab is rebuilt on every tab switch.
@@ -322,6 +334,7 @@ final class AppModel: ObservableObject {
         longSession = SessionController(settings: phoneSettings, subscriber: main.subscriber, band: main.band,
                                         transmit: main.transmit, sources: sessionSources)
         records = RecordStreamClient(mirror: mirror, commands: commands)
+        recordings = Self.recordingsClient(mirror: mirror, commands: commands, transmit: main.transmit)
         // The TX panel's AM Mod Monitor (D102), on the Core's record streams.
         main.modMonitor = ModMonitorModel(mirror: mirror, commands: commands, records: records, settings: settings,
                                           slices: main.slices, phone: phoneSettings)
@@ -1193,6 +1206,19 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The recordings client as the app wires it: the voice keyer's
+    /// sender is this phone by the device id the transmit model knows,
+    /// and while the Core sends this phone's voice message the PTT keeps
+    /// its keepalives going, so the Core's watchdog does not cut the
+    /// message (the Task 15 kit's rule).
+    static func recordingsClient(mirror: MirrorStore, commands: CommandClient,
+                                 transmit: TransmitModel) -> RecordingsClient {
+        let ptt = transmit.controller
+        return RecordingsClient(mirror: mirror, commands: commands,
+                                thisDeviceId: { [weak transmit] in transmit?.thisDeviceId },
+                                voiceMessageSending: { sending in await ptt.setVoiceMessageSending(sending) })
+    }
+
     /// The Core's transmit state, which ``expectedTransmitSilence()`` reads.
     nonisolated static let transmitStateKey = "txState"
 
@@ -1216,6 +1242,7 @@ final class AppModel: ObservableObject {
         // After the mirror, which holds the capabilities the streams need.
         records.handle(event)
         devices.handle(event)
+        recordings.handle(event)
         // Media control already holds an unchanged value; it acts only on a change.
         let silence = expectedTransmitSilence()
         if silence != lanes.sentTransmitSilence {
@@ -1246,6 +1273,7 @@ final class AppModel: ObservableObject {
         // After the mirror, which holds the capabilities the streams need.
         records.handle(event)
         devices.handle(event)
+        recordings.handle(event)
         let silence = expectedTransmitSilence()
         lanes.sentTransmitSilence = silence
         _ = await media.setExpectedAudioSilenceDuringTransmit(silence, owner: owner)

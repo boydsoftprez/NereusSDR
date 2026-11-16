@@ -21,6 +21,8 @@
 // the button column. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-05: The Roundtable sheet is told its full height on this band.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 16, each flag's Record and Play on the band.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -1120,7 +1122,8 @@ struct MainScreen: View {
                              toggleRoundtableLine: first ? { id in toggleRoundtableLine(id) } : nil,
                              dialStrip: strip, roundtable: first ? roundtable : nil,
                              swipes: swipesHere ? swipes : nil,
-                             bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir)
+                             bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir,
+                             recordings: app.recordingFlag)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)

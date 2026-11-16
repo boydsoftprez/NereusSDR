@@ -141,9 +141,15 @@ import Testing
         #expect(!Self.pair(pointsApart: 246.5, large: true)[1].isFolded)
     }
 
-    @Test func theButtonColumnIsThreeFingerSizedButtons() {
-        #expect(FlagLayout.sideColumnSize() == CGSize(width: 44, height: 136))
-        #expect(FlagLayout.sideColumnSize(button: FlagLayout.largeSideButton) == CGSize(width: 44, height: 136))
+    /// Close, lock, Record, Play and more inside the flag's height (the
+    /// recording design of 2026-11-15).
+    @Test func theButtonColumnIsFiveRowsInsideTheFlagsHeight() {
+        #expect(FlagLayout.sideColumnSize() == CGSize(width: 44, height: 158))
+        #expect(FlagLayout.sideColumnSize(button: FlagLayout.largeSideButton) == CGSize(width: 44, height: 158))
+        #expect(FlagLayout.sideColumnSize().height == FlagLayout.flagSize.height)
+        let column = CGRect(x: 8, y: 0, width: 44, height: 158)
+        #expect(FlagLayout.sideButtonRect(0, column: column) == CGRect(x: 8, y: 0, width: 44, height: 30))
+        #expect(FlagLayout.sideButtonRect(4, column: column) == CGRect(x: 8, y: 128, width: 44, height: 30))
     }
 
     @Test func theButtonColumnNeverLandsOnItsOwnFlagOrOffTheBand() {

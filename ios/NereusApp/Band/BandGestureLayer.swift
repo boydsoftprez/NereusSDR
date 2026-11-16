@@ -11,6 +11,8 @@
 // 2026-11-03: Overlay redesign D17, D18 and D20: the card and tags keep off the flags,
 // the side buttons and the dBm scale, and a frequency another flag speaks for has no tag.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 16, each flag's Record and Play, the playing
+// bar and the Kept notice. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -130,6 +132,13 @@ struct BandGestureLayer: View {
     var bandStack: BandStackModel?
     /// The radio is on the air, whatever keyed it: the marks wait.
     var radioOnAir = false
+    /// Each full flag's Record and Play, the playing bar and the Kept
+    /// notice (the recording design of 2026-11-15); nil leaves Record and
+    /// Play idle and inert (the flag pictures).
+    var recordings: RecordingFlagModel?
+    /// The playing bar's All recordings… and Recording settings…; nil greys them.
+    var openAllRecordings: (() -> Void)?
+    var openRecordingSettings: (() -> Void)?
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -361,6 +370,17 @@ struct BandGestureLayer: View {
             ForEach(ordered, id: \.0.id) { pair in
                 flag(pair.0, pair.1, column: columns[pair.0.id])
             }
+            if let recordings {
+                // Under each full flag: the playing bar and the Kept notice, over the other flags.
+                RecordingFlagLayer(model: recordings,
+                                   flags: ordered.compactMap { entry, placement in
+                                       placement.isFolded ? nil
+                                           : RecordingFlagLayer.Item(slice: entry.id, letter: entry.slice.letter,
+                                                                     flag: placement.rect)
+                                   },
+                                   bandWidth: geometry.size.width, openAll: openAllRecordings,
+                                   openSettings: openRecordingSettings)
+            }
             EdgeMarkers(slices: slices, edges: shown.edges, spectrumFoot: layout.spectrum.maxY,
                         bandWidth: geometry.size.width, avoid: rects, sideways: sideways, large: large,
                         dbmArrows: arrows, controls: controls)
@@ -534,10 +554,13 @@ struct BandGestureLayer: View {
                 }
                 .offset(x: rect.minX, y: rect.minY)
             if let column {
+                let recordings = recordings
                 FlagSideButtons(letter: entry.slice.letter, colour: BandColours.slice(entry.slice.colour),
                                 locked: entry.locked, dimmedWords: entry.ownerLine,
                                 showReason: { [weak slices] in slices?.showReason($0) },
                                 moreOpen: (controls?.isOpen(.more(id)) ?? false) && controls?.moreFromWideChip != true,
+                                recording: recordings?.look(slice: id) ?? .idle,
+                                blinks: recordings?.blinks ?? true,
                                 close: {
                                     if let controls {
                                         controls.closeSlice(id)
@@ -551,6 +574,14 @@ struct BandGestureLayer: View {
                                     } else {
                                         slices.setLocked(!entry.locked, sliceId: id)
                                     }
+                                },
+                                record: {
+                                    controls?.close()
+                                    Task { await recordings?.tapRecord(slice: id) }
+                                },
+                                play: {
+                                    controls?.close()
+                                    Task { await recordings?.tapPlay(slice: id) }
                                 },
                                 more: { controls?.toggle(.more(id)) })
                     .offset(x: column.minX, y: column.minY)
