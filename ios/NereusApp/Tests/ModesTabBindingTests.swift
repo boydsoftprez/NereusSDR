@@ -3,6 +3,8 @@
 // 2026-10-26: CW transmit, the CW rows in CW write the Core's CW settings and
 //   the pitch, and the CW passband is drawn about the dial (R-CW-24, R-CW-50).
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-14: RXL's switch, modes, live gain and Custom settings.
+//   J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 
 import Foundation
 import NereusBand
@@ -492,6 +494,76 @@ struct ModesTabBindingTests {
         #expect(await settle { modes.apfTuneHz == 120 })
         modes.setApfTune(900)
         #expect(await answer(station, key: "slice:0", "apfTuneHz") == .i64(500))
+        await model.disconnect()
+    }
+
+    @Test("RXL switches off and back on in its last mode, picks Off, Auto or Custom, shows the Core's gain, and its settings move only in Custom, within the catalogue's ranges")
+    func rxlSwitchModeGainAndSettings() async throws {
+        let (model, station) = try await connected(catalogue: Self.anan, frontEnd: false)
+        let modes = model.main.modes
+        // The Core's slice starts with RXL off and the Auto settings; the
+        // catalogue bounds each one.
+        #expect(await settle { modes.rxlMode == .off })
+        #expect(modes.rxlReason == nil)
+        #expect(modes.rxlGainText == nil)
+        #expect(modes.rxlValues["rxLevelerTargetDb"] == -12)
+        #expect(modes.rxlRanges["rxLevelerTargetDb"] == StationCatalog.Range(min: -24, max: -6, step: 1))
+        #expect(modes.rxlRanges["rxLevelerAttackMs"] == StationCatalog.Range(min: 300, max: 5000, step: 1))
+        #expect(modes.rxlSettingsReason == ModesTabModel.rxlCustomText)
+        // Off and Auto: the sliders send nothing.
+        let before = station.messages.count
+        modes.setRxlSetting(ModesTabModel.rxlSettings[0], -18)
+        await idle()
+        #expect(station.messages.count == before)
+
+        // The switch turns RXL on in Auto at first.
+        modes.toggleRxl()
+        #expect(await answer(station, key: "slice:0", "rxLevelerMode") == .enumeration(1))
+        #expect(await settle { modes.rxlMode == .auto })
+        await deliver(station, key: "slice:0", property: "rxLevelerGainDb", ordinal: 162, value: .f64(3.24))
+        #expect(await settle { modes.rxlGainText == "Gain now: +3.2 dB" })
+        // A new gain moves only the gain line: the tab publishes nothing,
+        // so none of its other views redraw (JJ: mind the phone's CPU).
+        var tabPublished = 0
+        var gainPublished = 0
+        let tabWatch = modes.objectWillChange.sink { _ in tabPublished += 1 }
+        let gainWatch = modes.rxlGain.objectWillChange.sink { _ in gainPublished += 1 }
+        for dB in [4.1, -2.5, 6.0] {
+            await deliver(station, key: "slice:0", property: "rxLevelerGainDb", ordinal: 162, value: .f64(dB))
+            #expect(await settle { modes.rxlGainText == String(format: "Gain now: %+.1f dB", dB) })
+            // The rebuild the gain queued runs on a later main-actor turn.
+            for _ in 0..<200 { await Task.yield() }
+        }
+        tabWatch.cancel()
+        gainWatch.cancel()
+        #expect(tabPublished == 0)
+        #expect(gainPublished == 3)
+
+        // Custom: the settings move, snapped and held to the Core's ranges.
+        modes.selectRxlMode(.custom)
+        #expect(await answer(station, key: "slice:0", "rxLevelerMode") == .enumeration(2))
+        #expect(await settle { modes.rxlSettingsReason == nil })
+        modes.setRxlSetting(ModesTabModel.rxlSettings[0], -17.6)
+        #expect(await answer(station, key: "slice:0", "rxLevelerTargetDb") == .i64(-18))
+        #expect(await settle { modes.rxlValues["rxLevelerTargetDb"] == -18 })
+        modes.setRxlSetting(ModesTabModel.rxlSettings[1], 40)
+        #expect(await answer(station, key: "slice:0", "rxLevelerMaxBoostDb") == .i64(30))
+        modes.setRxlSetting(ModesTabModel.rxlSettings[4], 50)
+        #expect(await answer(station, key: "slice:0", "rxLevelerReleaseMs") == .i64(200))
+
+        // Off, then the switch brings back Custom, the mode it was last on in.
+        modes.toggleRxl()
+        #expect(await answer(station, key: "slice:0", "rxLevelerMode") == .enumeration(0))
+        #expect(await settle { modes.rxlMode == .off && modes.rxlGainText == nil })
+        modes.toggleRxl()
+        #expect(await answer(station, key: "slice:0", "rxLevelerMode") == .enumeration(2))
+        #expect(await settle { modes.rxlMode == .custom })
+
+        // CWU: RXL leaves the audio as it is, and says so; no gain shows.
+        let cwu = try #require(model.main.catalogFeed.catalog?.modes.first { $0.label == "CWU" })
+        await deliver(station, key: "slice:0", property: "dspMode", ordinal: 2, value: .enumeration(Int64(cwu.id)))
+        #expect(await settle { modes.rxlModeNote == ModesTabModel.rxlVoiceOnlyText })
+        #expect(modes.rxlGainText == nil)
         await model.disconnect()
     }
 

@@ -111,6 +111,9 @@ const DomainTable& table()
         declare<AGCMode>(&t, { AGCMode::Off, AGCMode::Long, AGCMode::Slow, AGCMode::Med,
                                AGCMode::Fast, AGCMode::Custom });
 
+        declare<RxLevelerMode>(&t, { RxLevelerMode::Off, RxLevelerMode::Auto,
+                                     RxLevelerMode::Custom });
+
         declare<NbMode>(&t, { NbMode::Off, NbMode::NB, NbMode::NB2 });
 
         declare<NrSlot>(&t, { NrSlot::Off, NrSlot::NR1, NrSlot::NR2, NrSlot::NR3,

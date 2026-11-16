@@ -8,6 +8,9 @@
 // 2026-10-25: Roundtable plan Task 19, the iPad's swipe defaults (both edges
 // Off) and where the Roundtable applet sits in its column. J.J. Boyd
 // (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-15: the flags folded by a tap on their letter, per receiver, as
+// the desktop keeps ReceiverFlag_<n>_Collapsed. J.J. Boyd (KG4VCF),
+// AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -568,6 +571,45 @@ final class PhoneSettings: ObservableObject {
         }
     }
 
+    /// The receivers whose flag was folded by a tap on its letter, by
+    /// letter (A to D), as the desktop keeps each receiver's own fold. On
+    /// this phone only; nothing goes to the Core.
+    var foldedFlags: Set<String> {
+        get {
+            if let foldedFlagsCache {
+                return foldedFlagsCache
+            }
+            let letters = Set(defaults.stringArray(forKey: Self.keyPrefix + Self.foldedFlagsKey) ?? [])
+            foldedFlagsCache = letters
+            return letters
+        }
+        set {
+            foldedFlagsCache = newValue
+            store(newValue.sorted(), for: Self.foldedFlagsKey)
+        }
+    }
+
+    /// The folded flags, read from the store once: the band lays its flags
+    /// out with them many times a second.
+    private var foldedFlagsCache: Set<String>?
+
+    func flagFolded(_ letter: String) -> Bool {
+        foldedFlags.contains(letter)
+    }
+
+    func setFlagFolded(_ folded: Bool, letter: String) {
+        var letters = foldedFlags
+        if folded {
+            letters.insert(letter)
+        } else {
+            letters.remove(letter)
+        }
+        if letters != foldedFlags {
+            foldedFlags = letters
+        }
+    }
+
+    static let foldedFlagsKey = "layout.foldedFlags"
     static let displayPaintFpsKey = "display.paintFps"
     static let displayPillTabKey = "layout.displayPillTab"
     static let appletColumnShownKey = "layout.appletColumnShown"

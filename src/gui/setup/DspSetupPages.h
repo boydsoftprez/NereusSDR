@@ -164,6 +164,8 @@ public:
 
 private:
     void updateCustomGating(AGCMode mode);
+    void updateRxLevelerGating(RxLevelerMode mode);
+    void refreshRxLevelerBoost();
     void rebuildForActiveSlice();
 
     QGroupBox*  m_txLevelerGrp{nullptr};
@@ -182,6 +184,14 @@ private:
     QSlider*    m_agcHangThresh{nullptr};
     QCheckBox*  m_autoAgcChk{nullptr};
     QSpinBox*   m_autoAgcOffset{nullptr};
+
+    QComboBox*  m_rxLevelerMode{nullptr};
+    QSpinBox*   m_rxLevelerTarget{nullptr};
+    QSpinBox*   m_rxLevelerMaxBoost{nullptr};
+    QSpinBox*   m_rxLevelerAttack{nullptr};
+    QSpinBox*   m_rxLevelerRelease{nullptr};
+    QSpinBox*   m_rxLevelerMaxCut{nullptr};
+    QLabel*     m_rxLevelerBoostLbl{nullptr};
 
     // ── Phase 3M-3a-i Batch 2 Task 2 (D): TX Leveler + TX ALC controls ──
     // Wired bidirectionally to RadioModel::transmitModel() — see

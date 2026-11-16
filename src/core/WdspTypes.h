@@ -229,6 +229,14 @@ enum class AGCMode : int {
     Custom = 5
 };
 
+// Receive loudness rider. Defined with the other DSP enums so SliceModel
+// can publish it. The processor lives in dsp/RxLeveler.h.
+enum class RxLevelerMode : int {
+    Off    = 0,
+    Auto   = 1,
+    Custom = 2
+};
+
 // RX meter types. Values match WDSP GetRXAMeter 'mt' argument.
 // From Thetis wdsp.cs rxaMeterType
 enum class RxMeterType : int {
@@ -546,3 +554,4 @@ Q_DECLARE_METATYPE(NereusSDR::NrPosition)
 Q_DECLARE_METATYPE(NereusSDR::EmnrGainMethod)
 Q_DECLARE_METATYPE(NereusSDR::EmnrNpeMethod)
 Q_DECLARE_METATYPE(NereusSDR::SbnrAlgo)
+Q_DECLARE_METATYPE(NereusSDR::RxLevelerMode)

@@ -69,6 +69,23 @@ struct PhoneSettingsTests {
         #expect(again.displayPillTab == .spectrum)
     }
 
+    @Test("each receiver's flag folded by its letter is kept on the phone, never sent to the Core")
+    func foldedFlags() throws {
+        let defaults = try freshDefaults()
+        let settings = PhoneSettings(defaults: defaults)
+        #expect(settings.foldedFlags.isEmpty)
+        #expect(!settings.flagFolded("A"))
+        settings.setFlagFolded(true, letter: "A")
+        settings.setFlagFolded(true, letter: "C")
+        let again = PhoneSettings(defaults: defaults)
+        #expect(again.flagFolded("A"))
+        #expect(!again.flagFolded("B"))
+        #expect(again.flagFolded("C"))
+        again.setFlagFolded(false, letter: "A")
+        #expect(PhoneSettings(defaults: defaults).foldedFlags == ["C"])
+        #expect(defaults.stringArray(forKey: "phone.layout.foldedFlags") == ["C"])
+    }
+
     @Test("an unset setting reads its default")
     func defaults() throws {
         let settings = PhoneSettings(defaults: try freshDefaults())

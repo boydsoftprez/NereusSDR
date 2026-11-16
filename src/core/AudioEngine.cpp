@@ -19,6 +19,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-14 : rxBlockReady runs each receiver's leveler (RxLeveler) on
+//                a copy for the speakers and remote-listening mix; VAX and
+//                the receiver taps keep the plain block. RX Leveler feature
+//                by Brian Sutton (W4KZO); engine and placement by J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-17 : openRole() gives the bus its stream event sink before
 //                 it opens, so a device lost during or right after the
 //                 open reaches the supervisor; each bus has a generation
@@ -562,6 +567,7 @@ AudioEngine::AudioEngine(QObject* parent)
     m_everySliceScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     m_avMixScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     m_vaxScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
+    m_rxLevelerScratch.assign(static_cast<size_t>(kMixScratchMinFrames) * 2, 0.0f);
     // CW transmit (R-CW-39): the computer sidetone renders at the mix
     // rate. From Thetis cmaster.c:235-250 [v2.10.3.15]: the raised-cosine
     // edge of 0.005 s that create_sidetone is given.
@@ -804,6 +810,23 @@ AudioEngine::SliceAudioView AudioEngine::sliceAudioView(int sliceId) const noexc
         ? std::bit_cast<float>(static_cast<quint32>(word >> kViewAfShift))
         : 1.0f;
     return view;
+}
+
+void AudioEngine::setSliceRxLeveler(int sliceId, const RxLevelerParams& params) noexcept
+{
+    if (sliceId < 0 || sliceId >= kMaxSliceAudioViews) {
+        return;
+    }
+    m_sliceRxLeveler[static_cast<size_t>(sliceId)].store(params.pack(),
+                                                         std::memory_order_release);
+}
+
+double AudioEngine::sliceRxLevelerGainDb(int sliceId) const noexcept
+{
+    if (sliceId < 0 || sliceId >= kMaxSliceAudioViews) {
+        return 0.0;
+    }
+    return m_rxLevelers[static_cast<size_t>(sliceId)].gainDb();
 }
 
 #if defined(Q_OS_LINUX)
@@ -4409,8 +4432,39 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // Slice control plan Task 6 (JJ's ruling): the slice's AF level rides
     // in too. WDSP's panel gain stays at 1.0, so the mixer applies AF to
     // the controller's sums and each listener's own level to its sum.
-    m_masterMix.accumulate(sliceId, samples, frames, slice.muted,
-                           toHeadphones, slice.afGain);
+    //
+    // Receive leveler (RxLeveler.h): the speakers, the remote listeners
+    // (their sums are built from this same mix) and anti-VOX hear the
+    // leveled copy; the receiver taps and VAX below read `samples`, the
+    // plain block, in every mode. The AF level is applied in the mix,
+    // after this, so the leveler's reading never includes the slider and
+    // the slider stays the volume. Off passes `samples` itself, untouched.
+    const RxLevelerParams leveler = RxLevelerParams::unpack(
+        m_sliceRxLeveler[static_cast<size_t>(sliceId)].load(std::memory_order_acquire));
+    RxLeveler& rxLeveler = m_rxLevelers[static_cast<size_t>(sliceId)];
+    // The scratch is sized off this thread with the mix scratch; a larger
+    // block is leveled and queued a scratch at a time.
+    const int chunkMax = std::min(m_mixScratchFrames.load(std::memory_order_seq_cst),
+                                  static_cast<int>(m_rxLevelerScratch.size() / 2));
+    const bool leveled = leveler.on && chunkMax > 0;
+    if (!leveled) {
+        rxLeveler.process(nullptr, 0, kMasterMixSampleRateHz, RxLevelerParams{});  // resets once
+        m_masterMix.accumulate(sliceId, samples, frames, slice.muted,
+                               toHeadphones, slice.afGain);
+    } else {
+        for (int done = 0; done < frames;) {
+            const int n = std::min(chunkMax, frames - done);
+            float* copy = m_rxLevelerScratch.data();
+            std::copy(samples + static_cast<std::ptrdiff_t>(done) * 2,
+                      samples + static_cast<std::ptrdiff_t>(done + n) * 2, copy);
+            rxLeveler.process(copy, n, kMasterMixSampleRateHz, leveler);
+            m_masterMix.accumulate(sliceId, copy, n, slice.muted,
+                                   toHeadphones, slice.afGain);
+            m_antiVoxMix.accumulate(sliceId, copy, n, slice.muted,
+                                    toHeadphones, slice.afGain);
+            done += n;
+        }
+    }
 
     // Anti-VOX hears exactly what the speakers hear. From Thetis
     // cmaster.c:370-372 [v2.10.3.15], every sub-receiver's audio is handed
@@ -4436,8 +4490,11 @@ void AudioEngine::rxBlockReady(int sliceId, const float* samples, int frames)
     // nothing, since its audio is not in the room either.
     //
     // Slice control plan Task 6: at the AF level, as the speakers hear it.
-    m_antiVoxMix.accumulate(sliceId, samples, frames, slice.muted,
-                            toHeadphones, slice.afGain);
+    // (The leveled path above has queued anti-VOX with the leveled copy.)
+    if (!leveled) {
+        m_antiVoxMix.accumulate(sliceId, samples, frames, slice.muted,
+                                toHeadphones, slice.afGain);
+    }
 
     // VAX tap receives raw demodulated audio — pre-MasterMixer gain/pan,
     // pre-master-volume, matching Thetis VAC behavior and the spec §3.4
@@ -5647,6 +5704,7 @@ void AudioEngine::ensureMixScratchFrames(int frames)
     m_everySliceScratch.assign(floats, 0.0f);
     m_avMixScratch.assign(floats, 0.0f);
     m_vaxScratch.assign(floats, 0.0f);
+    m_rxLevelerScratch.assign(floats, 0.0f);
     m_cwSidetoneScratch.assign(floats, 0.0f);
     for (int k = 0; k < kMaxOwnerMixes; ++k) {
         m_ownerSpeakersScratch[static_cast<size_t>(k)].assign(floats, 0.0f);

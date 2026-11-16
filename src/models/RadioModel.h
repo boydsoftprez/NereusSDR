@@ -12,6 +12,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The receive leveler's station check also reads the
+//                panadapter bins in each receiver's passband
+//                (feedRxLevelerSpectrum). NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-14 - Receive leveler station checks (publishRxLevelers,
+//                updateRxLevelers). NereusSDR-original. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05 - A newly added receiver starts with RIT and XIT off, on a
 //                letter used before too; a restored receiver keeps its own.
 //                NereusSDR-original. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1000,6 +1007,8 @@
 #include "models/ReceiverDspLoadSampler.h"
 #include "core/dsp/NnrLoadGovernor.h"
 #include "core/dsp/NnrLoadWarningMonitor.h"
+#include "core/dsp/RxPassbandVoice.h"
+#include "core/dsp/RxStationGate.h"
 #include <QElapsedTimer>
 #include "Band.h"
 #include "BandPlanManager.h"
@@ -3783,6 +3792,15 @@ public:
     /// to measure the band it is on. With one shared tracker (stream 0's), a
     /// 20m slice would take its threshold from 40m's noise floor.
     void setStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* t);
+
+    /// One spectrum frame of a DDC stream (FFTEngine's dBm bins, in
+    /// frequency order across the stream's rate), for the receive
+    /// leveler: each receiver on that stream with RXL on reads the bins
+    /// in its filter passband (RxPassbandVoice), so its station check
+    /// sees a weak voice the S-meter average hardly shows. Fed with the
+    /// Auto AGC-T frames by MainWindow (desktop) and DaemonAgcSource
+    /// (headless Core). Main thread.
+    void feedRxLevelerSpectrum(int streamIndex, const QVector<float>& binsDbm);
     void clearStreamNoiseFloorTracker(int streamIndex, NoiseFloorTracker* expected) {
         if (m_streamNoiseFloors.value(streamIndex, nullptr) == expected) {
             m_streamNoiseFloors.remove(streamIndex);
@@ -8363,6 +8381,29 @@ private:
     // change, so the audio thread never walks m_slices or touches a
     // SliceModel the main thread may be deleting.
     void publishSliceAudioView();
+    // Receive leveler (core/dsp/RxLeveler.h, RxStationGate.h), local role
+    // only. publishRxLevelers hands AudioEngine every slice's leveler
+    // settings, Auto resolved to its preset, with the slice's station
+    // check verdict, and turns the leveler off for every other id. Called
+    // from publishSliceAudioView and on each RXL setting or mode change.
+    // updateRxLevelers runs on each S-meter tick: it feeds every slice's
+    // station check from its S-meter, panadapter noise floor and ADC
+    // readings, publishes, and writes the leveler's gain back to the slice
+    // (rxLevelerGainDb), which is how local and remote windows read it.
+    void publishRxLevelers();
+    void updateRxLevelers();
+    // A retune (more than kRxLevelerRetuneHz), a mode or a filter change:
+    // the station check starts learning the quiet level again.
+    void resetRxStationGate(int sliceId);
+    static constexpr double kRxLevelerRetuneHz = 1000.0;
+    struct RxLevelerTrack {
+        RxStationGate gate;
+        RxPassbandVoice voice;
+        QElapsedTimer frameClock;
+        double frequencyHz{0.0};
+    };
+    QHash<int, RxLevelerTrack> m_rxLevelerTracks;
+    QElapsedTimer m_rxLevelerClock;
     // RADE gaps (2026-09-30): the slices in RADE mode (bit n for id n), and
     // their hand-off to the DSP worker (RxDspWorker::setRadeModeSlices).
     // Main thread; called from publishSliceAudioView, on each slice's mode

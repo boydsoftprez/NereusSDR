@@ -15,6 +15,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The RXL tag on the "You control" line: rxlTagForTest,
+//                topLineForTest, rxlTagText. J.J. Boyd (KG4VCF),
+//                AI-assisted via Anthropic Claude Code.
 //   2026-11-04 - The flag's ⋯ button, the S-meter item and its source tag
 //                 (overlay design D39 to D41), and the Roundtable line's open
 //                 state. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
@@ -573,6 +576,16 @@ public:
     void setNbMode(NereusSDR::NbMode m);
     void setNr2Enabled(bool v);
     void setSnbEnabled(bool v);
+    void setRxLevelerMode(NereusSDR::RxLevelerMode mode);
+    void updateRxlToolTip();
+    // The RXL tag at the right end of the "You control" line: how far RXL
+    // is turning the station up or down, while RXL is on in a voice mode.
+    void setRxLevelerGainDb(double dB);
+    // "RXL +12 dB", "RXL \u221212 dB", "RXL 0 dB": whole dB, with a real
+    // minus sign for a cut.
+    static QString rxlTagText(double dB);
+    QLabel* rxlTagForTest() const { return m_rxlTag; }
+    QWidget* topLineForTest() const { return m_topLine; }
     void setApfEnabled(bool v);
     void setApfTuneHz(int hz);
 
@@ -1010,6 +1023,7 @@ private:
     void onActiveNrChanged(NereusSDR::NrSlot slot);
     void onNrSelectionRefused(const QString& reason);
     void showNr1Popup(const QPoint& globalPos);
+    void showRxlPopup(const QPoint& globalPos);
     void showNr2Popup(const QPoint& globalPos);
     void showNr3Popup(const QPoint& globalPos);
     void showNr4Popup(const QPoint& globalPos);
@@ -1251,6 +1265,11 @@ private:
     QString      m_mnrToolTip;
     QPushButton*        m_anfToggle{nullptr};
     QPushButton*        m_snbToggle{nullptr};
+    QPushButton*        m_rxlToggle{nullptr};
+    RxLevelerMode       m_rxlMode{RxLevelerMode::Off};
+    // The mode a left-click restores after Off. Auto until the operator
+    // picks Custom on the setup page.
+    RxLevelerMode       m_rxlLatched{RxLevelerMode::Auto};
     QPushButton*        m_apfToggle{nullptr};
     QLabel*             m_apfLabel{nullptr};        // "APF" row label (S1.9 — promoted from local)
     QSlider*            m_apfTuneSlider{nullptr};
@@ -1323,6 +1342,12 @@ private:
 
     // --- Task 14a: slice access ---
     QLabel*     m_accessLine{nullptr};
+    // The line under the header: the access words at the left, the RXL
+    // tag at the right. Shown while either has something to say.
+    QWidget*    m_topLine{nullptr};
+    QLabel*     m_rxlTag{nullptr};
+    double      m_rxlGainDb{0.0};
+    void updateTopLine();
     SliceAccess m_sliceAccess;
     QString     m_accessPending;
     void applySliceAccess();
