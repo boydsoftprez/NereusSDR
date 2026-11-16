@@ -51,6 +51,10 @@
 //               (hosted Linux CI: under load the Core may first answer
 //               MediaNotReady itself). J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-15: mediaStage() also names how many real audio contexts the
+//               forge held back and how many it forged, so a failed wait
+//               shows whether the hold-back fired. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Expose the client link for synchronous outbound test
 //               observation. J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-27: forgeReplacesFirstContext: the forged first audio context
@@ -456,7 +460,8 @@ struct RemoteAudioSessionHarness {
     // How far the media connection got, for the message of a wait on it
     // that ran out: control handshake, the Core's media, the window's media
     // peer (started once the Core's description arrived), bytes over it,
-    // the audio status and the last accepted audio context.
+    // the audio status and the last accepted audio context, then how many
+    // real audio contexts the forge held back and how many it forged.
     QByteArray mediaStage(const RemoteMediaController& media) const
     {
         const auto yesNo = [](bool value) {
@@ -479,12 +484,15 @@ struct RemoteAudioSessionHarness {
         return QStringLiteral(
                    "media connection stage: handshake complete %1; Core media %2; "
                    "window media %3; media peer started %4; RTP bytes received %5, "
-                   "sent %6; audio status %7; accepted audio context %8")
+                   "sent %6; audio status %7; accepted audio context %8; "
+                   "audio contexts held back %9, forged %10")
             .arg(yesNo(client.isHandshakeComplete()), yesNo(server.mediaAvailable()),
                  yesNo(client.mediaAvailable()), yesNo(traffic.has_value()))
             .arg(traffic ? traffic->traffic.receivedRtpBytes : 0)
             .arg(traffic ? traffic->traffic.submittedRtpBytes : 0)
             .arg(QString::fromLatin1(state.get()), context)
+            .arg(stationLink ? stationLink->heldBackContexts : 0)
+            .arg(stationLink ? stationLink->forgedContexts : 0)
             .toUtf8();
     }
 

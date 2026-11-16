@@ -374,6 +374,12 @@
 //                                    answer, holding back one the Core
 //                                    sent off itself under load.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-15  J.J. Boyd (KG4VCF)  The repeated-refusal and other-reason
+//                                    cases hold back an off answer the
+//                                    Core sent itself the same way, and the
+//                                    cases that hold back name the count in
+//                                    their first wait's failure message.
+//                                    AI-assisted via Anthropic Claude Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
@@ -1316,6 +1322,19 @@ QJsonObject mediaNotReadyContext(const QJsonObject& real)
     off.insert(QStringLiteral("reason"),
                remoteAudioOffReasonToWire(RemoteAudioOffReason::MediaNotReady));
     return off;
+}
+
+// Hosted Linux CI, 2026-11-15: forge the Core's next enabled answer off for
+// media-not-ready. An answer the Core already sent off itself (MediaNotReady
+// while its own media peer is not yet ready, as under load) is held back, and
+// the forge waits for the Core's enabled one, so a genuine refusal is never
+// the one forged.
+QJsonObject mediaNotReadyFromEnabled(const QJsonObject& real)
+{
+    if (!real.value(QStringLiteral("enabled")).toBool()) {
+        return QJsonObject();
+    }
+    return mediaNotReadyContext(real);
 }
 
 // Passive evidence must identify canceled scheduling decisions as well as
@@ -12909,7 +12928,7 @@ private slots:
                 && control.value(QStringLiteral("enabled")).toBool()) {
                 revisions.append(control.value(QStringLiteral("revision")).toInteger());
                 if (revisions.size() == 2) {
-                    h.stationLink->forgeNextAudioContext = mediaNotReadyContext;
+                    h.stationLink->forgeNextAudioContext = mediaNotReadyFromEnabled;
                 }
             }
         });
@@ -12918,9 +12937,10 @@ private slots:
         PacedRemoteAudio audio(h);
         remoteMedia.holdAudioRestartForTest(true);
         h.forgeReplacesFirstContext = true;
-        h.connectSession(std::nullopt, mediaNotReadyContext);
-        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
-                                 h.kMediaConnectionWaitMs);
+        h.connectSession(std::nullopt, mediaNotReadyFromEnabled);
+        QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
         const QString connectionId = remoteMedia.mediaConnectionId();
         QVERIFY(!connectionId.isEmpty());
         QCOMPARE(revisions.size(), 1);
@@ -12930,8 +12950,9 @@ private slots:
         QCOMPARE(revisions.size(), 1);
         remoteMedia.holdAudioRestartForTest(false);
         remoteMedia.holdAudioRestartForTest(true);
-        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, firstGeneration,
-                                             RemoteAudioOffReason::MediaNotReady), 5000);
+        QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, firstGeneration,
+                                              RemoteAudioOffReason::MediaNotReady),
+                                  h.mediaStage(remoteMedia).constData(), 5000);
         QCOMPARE(revisions.size(), 2);
         QVERIFY(revisions.at(1) > revisions.at(0));
         QVERIFY(remoteMedia.audioRestartPendingForTest());
@@ -12979,8 +13000,9 @@ private slots:
             return mediaNotReadyContext(real);
         });
         const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
-        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
-                                 h.kMediaConnectionWaitMs);
+        QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
         QVERIFY(remoteMedia.audioRestartPendingForTest());
         QCOMPARE(requests, 1);
         QVERIFY(!enabledContext.isEmpty());
@@ -13047,7 +13069,8 @@ private slots:
             return mediaNotReadyContext(real);
         });
         const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
-        QTRY_VERIFY_WITH_TIMEOUT(superseded, h.kMediaConnectionWaitMs);
+        QTRY_VERIFY2_WITH_TIMEOUT(superseded, h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
         QVERIFY(enabledContext.value(QStringLiteral("enabled")).toBool());
         QVERIFY(remoteMedia.acceptedAudioContext()->enabled);
         QCOMPARE(remoteMedia.acceptedAudioContext()->revision,
@@ -13114,12 +13137,13 @@ private slots:
             remoteMedia.holdAudioRestartForTest(true);
             h.forgeReplacesFirstContext = true;
             h.connectSession(std::nullopt, [&](const QJsonObject& real) {
-                offContext = mediaNotReadyContext(real);
+                offContext = mediaNotReadyFromEnabled(real);
                 return offContext;
             });
             const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
-            QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
-                                     h.kMediaConnectionWaitMs);
+            QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                      h.mediaStage(remoteMedia).constData(),
+                                      h.kMediaConnectionWaitMs);
             QVERIFY(remoteMedia.audioRestartPendingForTest());
             QCOMPARE(requests, 1);
             const quint32 generation = remoteMedia.acceptedAudioContext()->generation;

@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 
+#include "TestFunctionGroups.h"
 #include "UnusedLoopbackPort.h"
 #include "core/AppSettings.h"
 #include "core/MoxController.h"
@@ -43,7 +44,6 @@
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "fakes/RemoteAudioSessionHarness.h"
-#include "TestFunctionGroups.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/DesktopStationController.h"
 #include "gui/MainWindow.h"
