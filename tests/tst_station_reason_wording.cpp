@@ -58,6 +58,10 @@
 // cwQskUnavailableReason is placed. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
 //
+// 2026-11-16: Recording plan Task 11 placed: the voiceKeyer.* refusals
+// (VoiceKeyer.h and .cpp), the play refusal words of RecordingService.h, and
+// the dispatcher's playRefusal forward. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 // 2026-11-16: Recording plan Task 21: the recorder's size refusal in
 // RecordingsFacade::applySettingsChange.
 // 2026-11-15: Recording plan Task 5: the recordings.* refusals worded in
@@ -1364,6 +1368,10 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("reason"), QStringLiteral("result.reason"),
           QStringLiteral("refusal"), QStringLiteral("facade->lastActionError()"),
           QStringLiteral("slice->nnrLastError()"), QStringLiteral("accepted ? QString() : reason"),
+          // Recording plan Task 11: voiceKeyer.listen's at-once refusal from
+          // RecordingService::playbackRefused (RecordingService.h's words,
+          // scanned below), as recordings.play passes on `refusal`.
+          QStringLiteral("playRefusal"),
           QStringLiteral("rejectionReason"), QStringLiteral("outcome.reason"),
           // slice.selectBand: RadioModel::onBandButtonClicked's refusal,
           // scanned in RadioModel.cpp's entry.
@@ -1833,6 +1841,40 @@ const QList<ReasonSource>& reasonSources()
         // Recording plan Task 21: why the Digital Spectrum Recorder is off,
         // as the recordings document carries it.
         {"src/core/recordings/RecordingService.cpp", {QStringLiteral("dsrReasonWords")}, {}, 4},
+        // Recording plan Task 11: what a refused recordings.play or
+        // voiceKeyer.listen says (RecordingService::playbackRefused). The
+        // recorder's file name is a file name, never a reason. A kept
+        // recording's KeptReason is an enum value, not words.
+        {"src/core/recordings/RecordingService.h", {}, {QStringLiteral("Spectrum Recorder.ndsr")}, 4, {},
+         {QStringLiteral("KeptReason::StoppedHere")}},
+        // Recording plan Task 11: the voiceKeyer.* refusals. VoiceKeyer.h's
+        // sentences, and VoiceKeyer.cpp, which words the rest and passes
+        // them on through its setRefusal helper and its out-parameters.
+        {"src/core/recordings/VoiceKeyer.h", {}, {}, 10},
+        // "Voice keyer" is the messages' folder on the Core, not a reason.
+        // A message number and the name and wait limits are inserted.
+        {"src/core/recordings/VoiceKeyer.cpp", {}, {QStringLiteral("Voice keyer")}, 8,
+         {QStringLiteral("n"), QStringLiteral("kNameMaxChars"), QStringLiteral("kRepeatDelayMinSec"),
+          QStringLiteral("kRepeatDelayMaxSec")},
+         {// setRefusal's own parameter, and the conversion's fail(): the
+          // sentences of VoiceKeyer.h, passed in.
+          QStringLiteral("words"), QStringLiteral("const char* reason"), QStringLiteral("text(reason)"),
+          QStringLiteral("VoiceKeyer::kUnreadableReason"), QStringLiteral("VoiceKeyer::kTooLongReason"),
+          QStringLiteral("VoiceKeyer::kCannotKeepReason"),
+          QStringLiteral("text(kSlotRangeReason)"), QStringLiteral("text(kNoRadioReason)"),
+          QStringLiteral("text(kTransmittingReason)"), QStringLiteral("text(kNotKeyedReason)"),
+          QStringLiteral("text(kCannotKeepReason)"), QStringLiteral("text(kUnreadableReason)"),
+          QStringLiteral("text(kTooLargeReason)"), QStringLiteral("text(kNoImportReason)"),
+          QStringLiteral("text(kNotWholeReason)"),
+          // This file's emptyReason and onAirReason, their literals
+          // scanned here.
+          QStringLiteral("emptyReason(n)"), QStringLiteral("onAirReason(n)"),
+          // The transmit holder's and the transmit switch's refusals
+          // (TxRefusal.cpp's words, scanned there).
+          QStringLiteral("held.text"), QStringLiteral("refused.text"),
+          QStringLiteral("refused.isEmpty() ? text(kNotKeyedReason) : refused"),
+          QStringLiteral("TxRefusals::notReady().text"),
+          QStringLiteral("TxRefusals::otherDeviceHoldsStop(held.has_value() ? held->name : m_who.name)")}},
         {"src/core/session/IStationLink.h", {QStringLiteral("sendRecordingsCommand")}, {}, 1},
         {"src/models/recordings/RecordingsAccess.h",
          {QStringLiteral("needsNewerCoreReason"), QStringLiteral("notConnectedReason")}, {}, 2},
