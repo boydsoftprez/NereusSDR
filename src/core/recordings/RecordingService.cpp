@@ -13,6 +13,9 @@
 //             Anthropic Claude Code.
 // 2026-11-16  J.J. Boyd / KG4VCF; the voice keyer, and playFile for its
 //             Listen (spec 6.6). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; runOnWorker, waitForWorker, and the voice
+//             keyer told when the radio's connection drops. AI tooling:
+//             Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -81,6 +84,16 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
 {
     m_voiceKeyer = std::make_unique<VoiceKeyer>(*this, radio != nullptr ? radio->moxController() : nullptr,
                                                 m_onAir.get());
+    if (radio != nullptr) {
+        // A dropped radio ends a message and a wait between repeats; a
+        // reconnect keys nothing.
+        VoiceKeyer* const voice = m_voiceKeyer.get();
+        connect(radio, &RadioModel::connectionStateChanged, voice, [voice](ConnectionState state) {
+            if (state != ConnectionState::Connected) {
+                voice->connectionLost();
+            }
+        });
+    }
     qRegisterMetaType<ListenerId>("NereusSDR::ListenerId");
     m_listenerSlots.insert(QString::fromLatin1(kLocalListener), AudioEngine::kLocalPlaybackSlotId);
     m_quietTimer = new QTimer(this);
@@ -224,6 +237,21 @@ void RecordingService::ensureWorker()
             workerFillPlayers();
         });
     }, Qt::QueuedConnection);
+}
+
+void RecordingService::runOnWorker(std::function<void()> job)
+{
+    if (QThread::currentThread() != m_thread.get()) {
+        ensureWorker();
+    }
+    QMetaObject::invokeMethod(m_workerContext, std::move(job), Qt::QueuedConnection);
+}
+
+void RecordingService::waitForWorker()
+{
+    if (m_thread && m_workerContext != nullptr) {
+        QMetaObject::invokeMethod(m_workerContext, [] {}, Qt::BlockingQueuedConnection);
+    }
 }
 
 qint64 RecordingService::now() const

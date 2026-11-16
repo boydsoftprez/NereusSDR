@@ -454,6 +454,13 @@ public:
     /// empty requester are the Core's own window ("").
     using RecordingsDeviceName = std::function<QString(const QByteArray& requester)>;
     void setRecordingsDeviceName(RecordingsDeviceName name) { m_recordingsDeviceName = std::move(name); }
+    /// Recording plan Task 11: the requester as the station link names a
+    /// device (StationServer::wireIdOf): the voice keyer's `sending`
+    /// `deviceId`, so the sender's own window knows its message goes out.
+    /// Unset, the station device's id for the Core's own window and the
+    /// device id in base64url otherwise.
+    using RecordingsDeviceWireId = std::function<QString(const QByteArray& requester)>;
+    void setRecordingsDeviceWireId(RecordingsDeviceWireId wireId) { m_recordingsDeviceWireId = std::move(wireId); }
     /// Recording plan Task 5: the listener whose recordings.play is running
     /// now. A playback refusal for it is that command's answer, so the Core
     /// sends it on no other path. Empty between plays.
@@ -786,6 +793,7 @@ private:
     QString m_rateChangedReason;
     SliceAccess m_sliceAccess;
     RecordingsDeviceName m_recordingsDeviceName;
+    RecordingsDeviceWireId m_recordingsDeviceWireId;
     QString m_recordingsPlayInFlight;
     // Slice control plan Task 4.
     QPointer<SliceAccessController> m_sliceAccessController;

@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11 review fix: keepalives while the
+//               Core's voice keyer sends this window's message (the mirrored
+//               voiceKeyer.sending names this device). J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs go and come
 //               back as the recordings.* verbs do. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
@@ -632,6 +636,7 @@
 
 #include <utility>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QJsonArray>
 #include "core/session/NetworkTrouble.h"
 #include "core/session/HappyEyeballs.h"
@@ -1289,6 +1294,23 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
                     m_remoteTransmit->setVoxArmed(armedHere);
                     emit voxArmedHereChanged(armedHere);
                 });
+        // Recording plan Task 11: the Core's voice keyer keys the radio as
+        // this device while it sends this window's message (or waits to
+        // repeat it); the keepalives go meanwhile, as for its own key, so
+        // the Core's watchdog does not cut it (a dead window still is).
+        connect(radioModel->recordingsFacade(), &RecordingsFacade::changed, this, [this]() {
+            const QJsonObject sending =
+                QJsonDocument::fromJson(m_radioModel ? m_radioModel->recordingsFacade()->json().toUtf8()
+                                                     : QByteArray())
+                    .object()
+                    .value(QStringLiteral("voiceKeyer"))
+                    .toObject()
+                    .value(QStringLiteral("sending"))
+                    .toObject();
+            const QString self = thisDeviceWireId();
+            m_remoteTransmit->setVoiceMessageSending(
+                !self.isEmpty() && sending.value(QStringLiteral("deviceId")).toString() == self);
+        });
         // A refused press is shown in the Core's words, where a local
         // refusal shows (MainWindow's toast; the buttons follow the Core).
         const QPointer<RadioModel> model(radioModel);

@@ -29,6 +29,13 @@
 //                 as it and its stop unkeys; another device's send is
 //                 refused while the first holds transmit. AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11 review fixes:
+//                 the sender's keepalives keep its message on the air past
+//                 the watchdog's 3 s and without them it is cut; another
+//                 device's press and Stop leave it going, the radio's own
+//                 PTT takes it; the sender's own key hands over; a session's
+//                 import file goes with it. AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -39,12 +46,16 @@
 #include <QTemporaryDir>
 #include <QTimeZone>
 
+#include <memory>
+#include <optional>
 #include <vector>
 
 #include "core/recordings/AudioFileWriter.h"
+#include "core/recordings/OnAirSource.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingStore.h"
 #include "core/recordings/VoiceKeyer.h"
+#include "core/safety/RemoteTxWatchdog.h"
 #include "core/session/RecordingsFacade.h"
 #include "core/session/SessionCommandDispatcher.h"
 #include "core/session/StationCapabilities.h"
@@ -113,6 +124,23 @@ QList<QJsonObject> playbackPushes(const LoopbackTransport* app)
         }
     }
     return out;
+}
+
+// A session keepalive as a client sends it with no key of its own
+// (RemoteTransmitClient::kReleaseAnyEpoch).
+QByteArray keepaliveWire(quint64 sequence)
+{
+    const QList<MirrorUpdate> arguments{
+        MirrorUpdate{0, QByteArrayLiteral("sequence"), MirrorWireKind::Int64,
+                     QVariant(static_cast<qint64>(sequence))},
+        MirrorUpdate{0, QByteArrayLiteral("epoch"), MirrorWireKind::Int64, QVariant(qint64(0xFFFFFFFFLL))}};
+    return SessionMessages::encode(SessionMessages::commandInvoke(
+        QByteArrayLiteral("tx.keepalive"), static_cast<quint32>(sequence), arguments));
+}
+
+QJsonObject voiceSending(const LoopbackTransport* app)
+{
+    return mirrored(app).value(QStringLiteral("voiceKeyer")).toObject().value(QStringLiteral("sending")).toObject();
 }
 
 QStringList listedNames(const QJsonObject& result)
@@ -278,30 +306,49 @@ private slots:
     // A device's send keys the radio as that device and its stop unkeys;
     // while it holds transmit another device's send is refused with the
     // holder's words and nothing keys.
+    // M1 holds a second of sound on the Core's voice keyer, in a folder of
+    // its own. Nothing pulls the transmit blocks here, so a message sent
+    // stays on the air until something stops it.
+    VoiceKeyer* voiceKeyerWithMessage(Core& core)
+    {
+        VoiceKeyer* vk = core.model->recordingService()->voiceKeyer();
+        if (vk == nullptr) {
+            return nullptr;
+        }
+        vk->setFolder(m_dir.filePath(QStringLiteral("voice%1").arg(++m_disks)));
+        const QString wav = m_dir.filePath(QStringLiteral("voice-in-%1.wav").arg(m_disks));
+        QString error;
+        std::unique_ptr<AudioFileWriter> w =
+            AudioFileWriter::open(wav, AudioFileSpec{AudioFileFormat::Wav, 48000, 1, 0}, &error);
+        const std::vector<float> samples(48000, 0.25f);
+        if (!w || !w->write(samples.data(), 48000) || !w->finish()) {
+            return nullptr;
+        }
+        auto done = std::make_shared<std::optional<bool>>();
+        vk->importFile(1, wav, QStringLiteral("CQ"), [done](bool ok, const QString&) { *done = ok; });
+        if (!QTest::qWaitFor([done] { return done->has_value(); }, 30000) || !**done) {
+            return nullptr;
+        }
+        return vk;
+    }
+
+    static QHash<QByteArray, int> voiceFeatures()
+    {
+        QHash<QByteArray, int> features = kRecordings;
+        for (auto it = kTransmitter.cbegin(); it != kTransmitter.cend(); ++it) {
+            features.insert(it.key(), it.value());
+        }
+        return features;
+    }
+
     void aDevicesSendKeysAsItAndItsStopUnkeys()
     {
         Core core;
         useTestDisk(core);
         allowTransmit(core);
-        VoiceKeyer* vk = core.model->recordingService()->voiceKeyer();
+        VoiceKeyer* vk = voiceKeyerWithMessage(core);
         QVERIFY(vk != nullptr);
-        vk->setFolder(m_dir.filePath(QStringLiteral("voice%1").arg(++m_disks)));
-        {
-            const QString wav = m_dir.filePath(QStringLiteral("voice-in-%1.wav").arg(m_disks));
-            QString error;
-            std::unique_ptr<AudioFileWriter> w =
-                AudioFileWriter::open(wav, AudioFileSpec{AudioFileFormat::Wav, 48000, 1, 0}, &error);
-            QVERIFY(w);
-            const std::vector<float> samples(48000, 0.25f);
-            QVERIFY(w->write(samples.data(), 48000));
-            QVERIFY(w->finish());
-            QString refusal;
-            QVERIFY(vk->importFile(1, wav, QStringLiteral("CQ"), &refusal));
-        }
-        QHash<QByteArray, int> features = kRecordings;
-        for (auto it = kTransmitter.cbegin(); it != kTransmitter.cend(); ++it) {
-            features.insert(it.key(), it.value());
-        }
+        const QHash<QByteArray, int> features = voiceFeatures();
         Device phone;
         Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
         core.pair(phone);
@@ -326,6 +373,22 @@ private slots:
         QVERIFY(!held.isEmpty());
         QCOMPARE(held, core.server->transmitHolder()->keyRefusalFor(tablet.key.fingerprint()).text);
         QCOMPARE(mox->currentKeyer().deviceId, phone.key.fingerprint());
+        QCOMPARE(voiceSending(second).value(QStringLiteral("deviceId")).toString(),
+                 StationIdentity::toBase64Url(phone.key.fingerprint()));
+
+        // Ruling 8.5: the tablet's Stop and its PTT are refused, and the
+        // message goes on.
+        const QString holderName = core.server->transmitHolder()->holder()->name;
+        QCOMPARE(reasonOf(core.invoke(second, "voiceKeyer.stop", {})),
+                 TxRefusals::otherDeviceHoldsStop(holderName).text);
+        const QJsonObject press = core.invoke(
+            second, "tx.key", {MirrorUpdate{0, "trigger", MirrorWireKind::Utf8, QStringLiteral("screen")}});
+        QVERIFY(!press.value(QStringLiteral("accepted")).toBool(true));
+        QCoreApplication::processEvents();
+        QVERIFY(mox->isMox());
+        QCOMPARE(mox->currentKeyer().deviceId, phone.key.fingerprint());
+        QVERIFY(vk->sending().has_value());
+        QCOMPARE(core.model->recordingService()->onAirSource()->active(), OnAirSource::Kind::VoiceMessage);
 
         QCOMPARE(refusalOf(core.invoke(first, "voiceKeyer.stop", {})), QString());
         QVERIFY(!mox->isMox());
@@ -333,6 +396,133 @@ private slots:
                         .value(QStringLiteral("sending")).isNull());
         QCOMPARE(mirrored(second).value(QStringLiteral("voiceKeyer")).toObject()
                      .value(QStringLiteral("slots")).toArray().size(), 8);
+    }
+
+    // The sender's own tx.key, once admitted, hands the air from its
+    // message to its microphone; the radio stays keyed for it.
+    void theSendersOwnKeyHandsOver()
+    {
+        Core core;
+        useTestDisk(core);
+        allowTransmit(core);
+        VoiceKeyer* vk = voiceKeyerWithMessage(core);
+        QVERIFY(vk != nullptr);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, voiceFeatures());
+        QVERIFY(admitted(app));
+        MoxController* mox = core.model->moxController();
+        QCOMPARE(refusalOf(core.invoke(app, "voiceKeyer.send", {int64("n", 1)})), QString());
+        QVERIFY(vk->sending().has_value());
+        const QJsonObject key = core.invoke(
+            app, "tx.key", {MirrorUpdate{0, "trigger", MirrorWireKind::Utf8, QStringLiteral("screen")}});
+        QVERIFY2(key.value(QStringLiteral("accepted")).toBool(), qPrintable(reasonOf(key)));
+        QVERIFY(!vk->sending().has_value());
+        QVERIFY(mox->isMox());
+        QCOMPARE(mox->currentKeyer().deviceId, phone.key.fingerprint());
+        QCOMPARE(core.model->recordingService()->onAirSource()->active(), OnAirSource::Kind::None);
+    }
+
+    // Ruling 8.9: the radio's own PTT takes transmit, which ends another
+    // device's message.
+    void theRadiosOwnPttTakesIt()
+    {
+        Core core;
+        useTestDisk(core);
+        allowTransmit(core);
+        VoiceKeyer* vk = voiceKeyerWithMessage(core);
+        QVERIFY(vk != nullptr);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, voiceFeatures());
+        QVERIFY(admitted(app));
+        MoxController* mox = core.model->moxController();
+        QCOMPARE(refusalOf(core.invoke(app, "voiceKeyer.send", {int64("n", 1)})), QString());
+        QCOMPARE(mox->currentKeyer().deviceId, phone.key.fingerprint());
+        mox->setMox(true, KeyerIdentity::station(PttMode::Mic));
+        QTRY_VERIFY(!vk->sending().has_value());
+        QTRY_VERIFY(!mox->isMox() || mox->currentKeyer().isStation());
+        QCOMPARE(core.model->recordingService()->onAirSource()->active() == OnAirSource::Kind::VoiceMessage,
+                 false);
+    }
+
+    // C1: the message keys as the phone, so the watchdog watches it. The
+    // phone's keepalives keep it on the air past the 3 s cut; without them
+    // it is cut at 3 s and the radio unkeys.
+    void theSendersKeepalivesKeepItsMessageOnTheAir()
+    {
+        Core core;
+        useTestDisk(core);
+        allowTransmit(core);
+        VoiceKeyer* vk = voiceKeyerWithMessage(core);
+        QVERIFY(vk != nullptr);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, voiceFeatures());
+        QVERIFY(admitted(app));
+        MoxController* mox = core.model->moxController();
+        RemoteTxWatchdog* watchdog = core.server->txWatchdog();
+        QVERIFY(watchdog != nullptr);
+        const QByteArray id = phone.key.fingerprint();
+
+        QCOMPARE(refusalOf(core.invoke(app, "voiceKeyer.send", {int64("n", 1)})), QString());
+        QVERIFY(mox->isMox());
+        QVERIFY(watchdog->isWatching(id));
+        // The phone is told the message is its own.
+        QTRY_COMPARE(voiceSending(app).value(QStringLiteral("deviceId")).toString(),
+                     StationIdentity::toBase64Url(id));
+
+        QSignalSpy heard(watchdog, &RemoteTxWatchdog::keepaliveHeard);
+        QSignalSpy held(watchdog, &RemoteTxWatchdog::holdStarted);
+        quint64 sequence = 0;
+        for (int i = 0; i < 35; ++i) {
+            core.now += 100;
+            app->sendText(keepaliveWire(++sequence));
+            QTRY_COMPARE(heard.count(), i + 1);
+            watchdog->onTimer();
+        }
+        QVERIFY(mox->isMox());
+        QCOMPARE(mox->currentKeyer().deviceId, id);
+        QVERIFY(!watchdog->isHeld(id));
+        QCOMPARE(held.count(), 0);
+        QVERIFY(vk->sending().has_value());
+        QCOMPARE(core.model->recordingService()->onAirSource()->active(), OnAirSource::Kind::VoiceMessage);
+
+        // A dead sender is still cut: silence past 3 s.
+        core.now += RemoteTxWatchdog::kLinkCutMs + 1;
+        watchdog->onTimer();
+        watchdog->onTimer();
+        QTRY_VERIFY(!mox->isMox());
+        QVERIFY(!vk->sending().has_value());
+        QCOMPARE(core.model->recordingService()->onAirSource()->active(), OnAirSource::Kind::None);
+    }
+
+    // M3: a session that drops in the middle of loading a message leaves
+    // no file behind.
+    void aDroppedSessionTakesItsImportFile()
+    {
+        Core core;
+        useTestDisk(core);
+        VoiceKeyer* vk = core.model->recordingService()->voiceKeyer();
+        QVERIFY(vk != nullptr);
+        vk->setFolder(m_dir.filePath(QStringLiteral("voice%1").arg(++m_disks)));
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kRecordings);
+        QVERIFY(admitted(app));
+        QCOMPARE(refusalOf(core.invoke(app, "voiceKeyer.beginImport",
+                                       {int64("n", 2), utf8("name", QString()), int64("size", 1000)})),
+                 QString());
+        QCOMPARE(refusalOf(core.invoke(app, "voiceKeyer.chunk",
+                                       {utf8("data", QString::fromLatin1(QByteArray(100, 'a').toBase64()))})),
+                 QString());
+        const auto parts = [vk] {
+            return QDir(vk->folder()).entryList({QStringLiteral("*.part")}, QDir::Files);
+        };
+        QCOMPARE(parts().size(), 1);
+        app->closeLink(QStringLiteral("lost"));
+        QTRY_VERIFY(!app->isOpen());
+        QTRY_COMPARE(parts(), QStringList());
     }
 
     void theCapabilityRoundTripsAfterTheBandStack()

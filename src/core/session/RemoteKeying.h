@@ -98,9 +98,10 @@
 //               end but the device's own stop (m_endingOwnAutotune), with
 //               a reason always. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
-//   2026-11-16: Recording plan Task 11: setKeyPressObserver, so the voice
-//               keyer hears each device's own press. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11: setKeyAdmittedObserver, so the voice
+//               keyer hears a device's tx.key admitted while the radio is
+//               already keyed for it. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -185,12 +186,13 @@ public:
     using SessionGate = std::function<TxRefusal(const Command& command)>;
     void setSessionGate(SessionGate gate) { m_sessionGate = std::move(gate); }
 
-    /// Recording plan Task 11: told of every press before it is handled:
-    /// tx.key on (`voiceKey` true), and TUNE, two-tone or a tuner tune turned
-    /// on. The voice keyer stops a message for it. Unset, nothing is told.
-    using KeyPressObserver =
-        std::function<void(const QByteArray& deviceId, const QString& session, bool voiceKey)>;
-    void setKeyPressObserver(KeyPressObserver observer) { m_pressObserver = std::move(observer); }
+    /// Recording plan Task 11: told after a device's tx.key is admitted
+    /// (its answer accepted), never for a refused press or a copy. A key
+    /// while the radio is already keyed for that device answers without
+    /// asking MOX, so MOX's requestAccepted does not tell it; the voice
+    /// keyer hands the air from the device's message to its microphone.
+    using KeyAdmittedObserver = std::function<void(const QByteArray& deviceId, const QString& session)>;
+    void setKeyAdmittedObserver(KeyAdmittedObserver observer) { m_keyAdmittedObserver = std::move(observer); }
 
     using Reply = std::function<void(const Result& result)>;
 
@@ -317,7 +319,7 @@ private:
     quint64 m_waitGeneration{0};
     MicUplink m_mic;
     SessionGate m_sessionGate;
-    KeyPressObserver m_pressObserver;
+    KeyAdmittedObserver m_keyAdmittedObserver;
     /// Tune-ended lane: set while the device's own tx.tune or tx.tunerTune
     /// off ends its autotune, which is not told (its answer says it).
     QByteArray m_endingOwnAutotune;

@@ -12,6 +12,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
 //                 keyer, as the station. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11 review fixes:
+//                 the import finishes once the Core's worker has converted
+//                 it; Stop is refused while another device's message goes
+//                 out (ruling 8.5). AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -348,7 +352,8 @@ void LocalRecordingsAccess::sendVoice(int n)
         return;
     }
     QString refusal;
-    const VoiceKeyer::Requester who{stationKeyer(), QString::fromLatin1(VoiceKeyer::kStationName)};
+    const VoiceKeyer::Requester who{stationKeyer(), QString::fromLatin1(VoiceKeyer::kStationName),
+                                    QString::fromLatin1(stationKeyer().deviceId)};
     if (!voice->send(n, who, &refusal)) {
         emit refused(refusal);
     }
@@ -356,8 +361,10 @@ void LocalRecordingsAccess::sendVoice(int n)
 
 void LocalRecordingsAccess::stopVoice()
 {
-    if (VoiceKeyer* voice = beginVoice()) {
-        voice->stop();
+    VoiceKeyer* voice = beginVoice();
+    TxRefusal refusal;
+    if (voice != nullptr && !voice->stopFrom(stationKeyer(), &refusal)) {
+        emit refused(refusal.text);
     }
 }
 
@@ -368,9 +375,13 @@ void LocalRecordingsAccess::importVoice(int n, const QString& wavPath, const QSt
         return;
     }
     ensurePublished();
-    QString refusal;
-    const bool ok = service()->voiceKeyer()->importFile(n, wavPath, name, &refusal);
-    emit voiceImportFinished(n, ok, ok ? QString() : refusal);
+    // Converted on the Core's recordings worker; the answer comes later.
+    const QPointer<LocalRecordingsAccess> self(this);
+    service()->voiceKeyer()->importFile(n, wavPath, name, [self, n](bool ok, const QString& refusal) {
+        if (self) {
+            emit self->voiceImportFinished(n, ok, ok ? QString() : refusal);
+        }
+    });
 }
 
 void LocalRecordingsAccess::exportVoice(int n, const QString& toPath)

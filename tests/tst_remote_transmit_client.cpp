@@ -50,6 +50,9 @@
 //               for the watchdog's stop see the hold at 600 ms and run past
 //               the 3000 ms cut. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11: a voice message of this window's
+//               keeps the keepalive going. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest>
@@ -989,6 +992,33 @@ private slots:
         client.setAvailable(false);
         QVERIFY(!client.keepaliveRunning());
         QVERIFY(sent >= 4);
+    }
+
+    // Recording plan Task 11: the Core's voice keyer sending this window's
+    // message keys the radio as this device, so the keepalives go while it
+    // does, and stop with it; none without the link. The mirror may say so
+    // before the link offers remote transmit.
+    void aVoiceMessageOfThisWindowsKeepsTheKeepaliveGoing()
+    {
+        Recorder core;
+        RemoteTransmitClient client(core.sender());
+        int sent = 0;
+        client.setSessionKeepalive([&](quint64, quint32 epoch) {
+            ++sent;
+            return epoch == RemoteTransmitClient::kReleaseAnyEpoch;
+        });
+        client.setVoiceMessageSending(true);
+        QVERIFY(!client.keepaliveRunning());   // no link yet
+        client.setAvailable(true);
+        QVERIFY(client.keepaliveRunning());
+        QCOMPARE(sent, 1);
+        QCOMPARE(client.keepaliveEpoch(), RemoteTransmitClient::kReleaseAnyEpoch);
+        client.setVoiceMessageSending(false);
+        QVERIFY(!client.keepaliveRunning());
+        client.setVoiceMessageSending(true);
+        QVERIFY(client.keepaliveRunning());
+        client.retireSession();
+        QVERIFY(!client.keepaliveRunning());
     }
 
     // Reproduction: the primary command connection holds tx.unkey, while

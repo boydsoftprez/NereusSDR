@@ -16,6 +16,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; the voice keyer (spec 6.6), and a file
 //             played by its path (the voice keyer's Listen). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; runOnWorker and waitForWorker (the voice
+//             keyer's imports convert on the worker), and the voice keyer
+//             told when the radio's connection drops. AI tooling: Anthropic
+//             Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -186,6 +190,15 @@ public:
     // ---- The voice keyer (spec 6.6): M1 to M8, sent through the on-air
     // source. The only part of recordings that keys the radio.
     VoiceKeyer* voiceKeyer() const { return m_voiceKeyer.get(); }
+
+    // ---- The recordings worker thread, for work that must not run on the
+    // main thread (the voice keyer's conversions).
+    // Runs `job` on the worker after what is queued there already. From
+    // the main thread or the worker.
+    void runOnWorker(std::function<void()> job);
+    // Returns once the worker has run what was queued before this call.
+    // Main thread only; returns at once with no worker.
+    void waitForWorker();
 
     // ---- Test seams.
     using Clock = std::function<qint64()>;

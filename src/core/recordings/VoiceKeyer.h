@@ -9,6 +9,11 @@
 //             on-air source with the normal processing, keying and unkeying
 //             the radio by itself, with Repeat and its wait (spec 3, 6.1,
 //             6.6, V3, section 7, A8, A9). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; review fixes: only the sender's own
+//             controls stop its message (ruling 8.5), the sender's wire id in
+//             `sending`, the wait ends when the radio drops, imports convert
+//             on the recordings worker, a link import's file goes with its
+//             session. AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/MoxController.h"
@@ -49,19 +54,27 @@ class TransmitHolder;
 // Repeat on it then waits the set seconds and sends again, until stopped.
 //
 // What cuts it, within one transmit block (the message turns to silence at
-// once and never hands the air to a microphone by itself):
-//   - stop();
-//   - any other request MOX accepts (a PTT, MOX or TUNE press, a release):
-//     a press that keys keeps the radio keyed and its microphone goes out
-//     (PTT then keeps the mic on the air); a release unkeys;
-//   - a press MOX refuses (another device's PTT or MOX): the radio unkeys;
-//   - a device's own tx.key (pressFrom): its key stays and its microphone
-//     goes out; any other device's: the radio unkeys;
-//   - MOX going off for any other reason (Stop All TX, the link watchdog).
-// VOX is audio, not a person: it cuts nothing.
+// once and never hands the air to a microphone by itself). Ruling 8.5: only
+// the sender's own controls, the radio's own PTT (which takes transmit,
+// ruling 8.9) and a take stop a message; any other device's press or stop
+// is refused and the message goes on.
+//   - stop(), the Core's own; stopFrom() for a device, the sender's (or the
+//     holder's) only;
+//   - another request of the sender's that MOX accepts (its PTT, MOX or
+//     TUNE press, its release): a press keeps the radio keyed and its
+//     microphone goes out (PTT then keeps the mic on the air); a release
+//     unkeys;
+//   - the sender's own tx.key, once admitted (keyAdmittedFor): its key stays
+//     and its microphone goes out;
+//   - MOX going off for any other reason (Stop All TX, the link watchdog,
+//     a take).
+// VOX is audio, not a person: it cuts nothing. A press MOX refuses cuts
+// nothing either. The radio's connection dropping ends a message and a wait
+// between repeats (connectionLost).
 //
 // Another device holding transmit refuses send() with the holder's words
-// (TransmitHolder::keyRefusalFor) and nothing keys.
+// (TransmitHolder::keyRefusalFor) and nothing keys. Another device's message
+// going out, or waiting to repeat, refuses it with kTransmittingReason.
 class NEREUS_CORE_EXPORT VoiceKeyer : public QObject {
     Q_OBJECT
 
@@ -101,10 +114,13 @@ public:
     static constexpr const char* kNoImportReason = "No voice message is being loaded.";
     static constexpr const char* kNotWholeReason = "The file did not arrive whole. Try again.";
 
-    // Who asked: the radio keys as `keyer`; `name` is shown as who sends.
+    // Who asked: the radio keys as `keyer`; `name` is shown as who sends;
+    // `wireId` is the device as the station link names it (`sending`'s
+    // `deviceId`), so the sender's window keeps its keepalives going.
     struct Requester {
         KeyerIdentity keyer;
         QString name;
+        QString wireId;
     };
     struct Message {
         int n = 0;
@@ -118,7 +134,11 @@ public:
         qint64 lengthMs = 0;
         qint64 waitingMs = 0;   // between repeats; 0 while it goes out
         QString by;
+        QString deviceId;       // the sender's wireId
     };
+    // An import's end, on this object's thread: true when Mn holds it,
+    // otherwise why not.
+    using ImportDone = std::function<void(bool ok, const QString& refusal)>;
 
     VoiceKeyer(RecordingService& service, MoxController* mox, OnAirSource* onAir,
                QObject* parent = nullptr);
@@ -146,11 +166,18 @@ public:
 
     // ---- Keying.
     bool send(int n, const Requester& who, QString* refusal);
+    // The Core's own stop (teardown, a cleared message): whoever sent.
     void stop();
-    // A device's own transmit press on the station link (RemoteKeying's
-    // tx.key or another start): a voice key from the device and session
-    // that sent hands the air to its microphone; anything else unkeys.
-    void pressFrom(const QByteArray& deviceId, const QString& session, bool voiceKey);
+    // A device's Stop: the sender's, or the holder's after a take, stops
+    // it; any other device is refused with the holder's words (ruling 8.5)
+    // and the message goes on. Nothing going out is no refusal.
+    bool stopFrom(const KeyerIdentity& who, TxRefusal* refusal);
+    // RemoteKeying admitted `deviceId`'s tx.key: the sender's own (device
+    // and session) hands the air from its message to its microphone.
+    void keyAdmittedFor(const QByteArray& deviceId, const QString& session);
+    // The radio's connection dropped: a message going out, or waiting to
+    // repeat, is over, and nothing keys again on a reconnect.
+    void connectionLost();
 
     // ---- The messages. None of these keys.
     bool rename(int n, const QString& name, QString* refusal);
@@ -158,15 +185,22 @@ public:
     bool setRepeat(bool on, int delaySec, QString* refusal);
     // Converts `path` to 48 kHz mono 16-bit WAV into Mn. A 48 kHz mono
     // 16-bit PCM WAV is kept as it is, so a saved message loads back the
-    // same byte for byte. An empty `name` keeps Mn's name.
-    bool importFile(int n, const QString& path, const QString& name, QString* refusal);
+    // same byte for byte. An empty `name` keeps Mn's name. The conversion
+    // runs on the recordings worker thread, a few thousand frames a turn,
+    // so this thread (MOX, the end of a message, the link) never waits on
+    // it; `done` runs on this thread once Mn holds the message or it is
+    // refused, on a later turn (at once only for a refused argument).
+    void importFile(int n, const QString& path, const QString& name, ImportDone done);
     // Plays Mn on `who`'s own speaker, through the player (never keys).
     bool listen(int n, const ListenerId& who, QString* refusal);
 
     // ---- The station link's import and export, one import per owner.
     bool beginImport(const QString& owner, int n, const QString& name, qint64 size, QString* refusal);
     bool importChunk(const QString& owner, const QByteArray& bytes, QString* refusal);
-    bool finishImport(const QString& owner, QString* refusal);
+    // The file is converted as importFile() does; `done` as there.
+    void finishImport(const QString& owner, ImportDone done);
+    // Drops `owner`'s import and its file (its session ended, or it began
+    // another); a conversion already under way runs to its end.
     void cancelImport(const QString& owner);
     // Up to kChunkBytes of Mn's file from `offset`, and the file's size.
     bool exportChunk(int n, qint64 offset, QByteArray* chunk, qint64* size, QString* refusal);
@@ -184,6 +218,12 @@ signals:
 
 private:
     enum class Phase { Idle, Sending, Waiting };
+    struct Conversion;   // one import's conversion; VoiceKeyer.cpp
+    struct PendingImport {
+        int n = 0;
+        QString name;
+        ImportDone done;
+    };
     // One message going out: read by the transmit thread through the pull
     // OnAirSource calls, never locked.
     struct Clip {
@@ -210,6 +250,10 @@ private:
     bool startSend(int n, const Requester& who, std::shared_ptr<const std::vector<float>> samples,
                    QString* refusal);
     TxRefusal holderRefusal(const KeyerIdentity& keyer) const;
+    // The recordings worker thread: one turn of `c`, then the next turn or
+    // the end, posted back to `owner`.
+    static void stepConversion(RecordingService* service, VoiceKeyer* owner, std::shared_ptr<Conversion> c);
+    void finishConversion(const std::shared_ptr<Conversion>& c, bool ok);
     void tick();
     void endOfMessage();
     void resend();
@@ -220,7 +264,6 @@ private:
     void unkeyIfOurs(const KeyerIdentity& keyer);
     void updateTimer();
     void onRequestAccepted(const KeyerIdentity& requester, bool requestedOn);
-    void onMoxRefused();
     void onMoxChanged(bool on);
 
     RecordingService& m_service;
@@ -249,6 +292,11 @@ private:
     bool m_keying = false;   // inside this object's own setMox(true)
 
     QHash<QString, Import> m_imports;
+    // Each import's own number: its files' names (never two alike).
+    quint64 m_nextImportId = 0;
+    // Conversions under way (this thread's), with what each one ends in.
+    std::vector<std::shared_ptr<Conversion>> m_conversions;
+    QHash<quint64, PendingImport> m_pendingImports;
 };
 
 }  // namespace NereusSDR

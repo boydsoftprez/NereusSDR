@@ -599,7 +599,8 @@ private slots:
         QSignalSpy localExported(local, &RecordingsAccess::voiceExportFinished);
         QSignalSpy localRefused(local, &RecordingsAccess::refused);
         local->importVoice(1, wav, QStringLiteral("CQ"));
-        QCOMPARE(localImported.count(), 1);
+        // Converted on the Core's recordings worker: the answer comes later.
+        QTRY_COMPARE_WITH_TIMEOUT(localImported.count(), 1, 30000);
         QCOMPARE(localImported.first().at(1).toBool(), true);
         QTRY_COMPARE(local->firstEmptyVoiceSlot(), 2);
         const QString localCopy = m_dir.filePath(QStringLiteral("voice-local-copy.wav"));

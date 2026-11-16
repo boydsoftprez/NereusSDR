@@ -48,9 +48,10 @@
 //   2026-10-07: A device's tx.twoTone start inside its stop's settle keeps
 //               the test running rather than answering "already on".
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
-//   2026-11-16: Recording plan Task 11: setKeyPressObserver, so the voice
-//               keyer hears each device's own press. J.J. Boyd (KG4VCF),
-//               AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11: setKeyAdmittedObserver, so the voice
+//               keyer hears a device's tx.key admitted while the radio is
+//               already keyed for it. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteKeying.h"
@@ -264,15 +265,6 @@ void RemoteKeying::handle(const Command& command, Reply reply)
         reply(*copy);
         return;
     }
-    // Recording plan Task 11: a press stops a voice message going out (the
-    // sender's own voice key hands the air to its microphone). A copy of an
-    // earlier command, answered above, is no new press. A release is no
-    // press: the sender's own unkey reaches the keyer through MOX.
-    if (m_pressObserver && command.on
-        && (command.verb == Verb::Key || command.verb == Verb::Tune || command.verb == Verb::TwoTone
-            || command.verb == Verb::TunerTune)) {
-        m_pressObserver(command.deviceId, command.session, command.verb == Verb::Key);
-    }
     for (auto* scope = m_generatedReplies; scope != nullptr; scope = scope->previous) {
         const Command& earlier = scope->command;
         if (scope->joinable && !scope->forgotten && earlier.session == command.session
@@ -371,6 +363,13 @@ void RemoteKeying::handle(const Command& command, Reply reply)
             }
             const Command waited = it->command;
             const Result result = ready ? self->keyNow(waited) : refused(TxRefusals::remoteMicNotReady());
+            // Recording plan Task 11: an admitted key is told, as below.
+            if (result.accepted && self->m_keyAdmittedObserver) {
+                self->m_keyAdmittedObserver(deviceId, waited.session);
+                if (self.isNull()) {
+                    return;
+                }
+            }
             if (!ready) {
                 qCInfo(lcDsp) << "Key from" << deviceId.toHex().constData()
                               << "refused: no microphone audio within the deadline";
@@ -396,6 +395,12 @@ void RemoteKeying::handle(const Command& command, Reply reply)
     switch (command.verb) {
     case Verb::Key:
         result = keyNow(command);
+        // Recording plan Task 11: told only once the key is admitted, so a
+        // refused press, or one answered as a copy above, changes nothing.
+        if (result.accepted && m_keyAdmittedObserver) {
+            m_keyAdmittedObserver(command.deviceId, command.session);
+            if (!replyOwner) { return; }
+        }
         break;
     case Verb::Unkey:
         result = unkey(command);

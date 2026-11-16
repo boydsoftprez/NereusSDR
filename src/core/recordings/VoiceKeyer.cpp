@@ -4,6 +4,11 @@
 // Modification history (NereusSDR):
 // 2026-11-16  J.J. Boyd / KG4VCF; the voice keyer on the Core (spec 3, 6.1,
 //             6.6, V3, section 7, A8, A9). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; review fixes: ruling 8.5 (only the
+//             sender's controls stop its message), the wait ends when the
+//             radio drops, imports convert on the recordings worker a few
+//             chunks a turn, a link import's file is numbered and goes with
+//             its session. AI tooling: Anthropic Claude Code.
 
 #include "VoiceKeyer.h"
 
@@ -29,6 +34,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 
 namespace NereusSDR {
 
@@ -46,6 +52,11 @@ constexpr quint64 kRequestTagBase = 0x564B000000000000ULL;   // "VK"
 
 // Frames read, folded and resampled at a time when a file is converted.
 constexpr int kConvertChunkFrames = 4096;
+// Chunks a conversion takes per turn of the recordings worker: about a third
+// of a second of 48 kHz audio, so the worker's 20 ms drain of the recorders'
+// rings (2.7 s deep, ContactRecorder.h) and the players still runs between
+// turns.
+constexpr int kConvertChunksPerTurn = 4;
 // Room for r8brain's uneven output per call (as RecordingPlayer allows).
 constexpr int kResamplerSlackFrames = 4096;
 
@@ -117,132 +128,180 @@ bool isPcm16Mono48k(const QString& path)
     return false;
 }
 
-// `from` (WAV or MP3, any rate, any channels) as Mn's file `to`: 48 kHz mono
-// 16-bit WAV, at most two minutes.
-bool convertToMessage(const QString& from, const QString& to, qint64* lengthMs, QString* refusal)
-{
-    QString error;
-    std::unique_ptr<AudioFileReader> reader = AudioFileReader::open(from, &error);
-    if (!reader || reader->sampleRateHz() <= 0 || reader->channels() < 1) {
-        qCWarning(lcRecordings) << "a voice message import cannot be read:" << from << error;
-        setRefusal(refusal, text(VoiceKeyer::kUnreadableReason));
-        return false;
-    }
-    const int rate = reader->sampleRateHz();
-    const int channels = reader->channels();
-    const qint64 known = reader->lengthFrames();
-    if (known > 0 && known * 1000 / rate > VoiceKeyer::kVoiceClipMaxMs) {
-        setRefusal(refusal, text(VoiceKeyer::kTooLongReason));
-        return false;
-    }
-    QFile::remove(to);
-    if (known > 0 && isPcm16Mono48k(from)) {
-        reader.reset();
-        if (!QFile::copy(from, to)) {
-            qCWarning(lcRecordings) << "cannot keep a voice message at" << to;
-            setRefusal(refusal, text(VoiceKeyer::kCannotKeepReason));
-            return false;
-        }
-        *lengthMs = known * 1000 / VoiceKeyer::kSampleRateHz;
-        return true;
-    }
+}  // namespace
 
-    std::unique_ptr<AudioFileWriter> writer = AudioFileWriter::open(
-        to, AudioFileSpec{AudioFileFormat::Wav, VoiceKeyer::kSampleRateHz, 1, 0}, &error);
-    if (!writer) {
-        qCWarning(lcRecordings) << "cannot keep a voice message at" << to << error;
-        setRefusal(refusal, text(VoiceKeyer::kCannotKeepReason));
-        return false;
-    }
+// `from` (WAV or MP3, any rate, any channels) as Mn's file `to`: 48 kHz mono
+// 16-bit WAV, at most two minutes. Worker thread only, but `cancelled`, set
+// on the main thread; the results are read on the main thread after the
+// end is posted there.
+struct VoiceKeyer::Conversion {
+    enum class Step { More, Done, Failed };
+
+    quint64 id = 0;
+    QString from;
+    QString to;
+    QString folder;
+    std::atomic<bool> cancelled{false};
+
+    // Results.
+    qint64 lengthMs = 0;
+    QString refusal;
+
+    // Worker thread state.
+    bool opened = false;
+    std::unique_ptr<AudioFileReader> reader;
+    std::unique_ptr<AudioFileWriter> writer;
     std::unique_ptr<Resampler> resampler;
+    int rate = 0;
+    int channels = 0;
     int outCapacity = kConvertChunkFrames;
-    if (rate != VoiceKeyer::kSampleRateHz) {
-        resampler = std::make_unique<Resampler>(static_cast<double>(rate),
-                                                static_cast<double>(VoiceKeyer::kSampleRateHz),
-                                                kConvertChunkFrames);
-        outCapacity = static_cast<int>(std::ceil(static_cast<double>(kConvertChunkFrames)
-                                                 * VoiceKeyer::kSampleRateHz / rate))
-            + kResamplerSlackFrames;
-    }
-    std::vector<float> read(static_cast<size_t>(kConvertChunkFrames) * static_cast<size_t>(channels));
-    std::vector<float> mono(static_cast<size_t>(kConvertChunkFrames));
-    std::vector<float> out(static_cast<size_t>(outCapacity));
+    std::vector<float> read;
+    std::vector<float> mono;
+    std::vector<float> out;
     qint64 totalIn = 0;
     qint64 written = 0;
     // The resampled length the input makes; what the resampler still holds
     // at the end comes out behind zeros, up to it.
     qint64 expected = std::numeric_limits<qint64>::max();
-    const auto fail = [&](const char* reason) {
+
+    Step fail(const char* reason)
+    {
         writer.reset();
+        reader.reset();
         QFile::remove(to);
-        setRefusal(refusal, text(reason));
-        return false;
-    };
-    const auto put = [&](const float* samples, int frames) {
+        refusal = text(reason);
+        return Step::Failed;
+    }
+
+    // Cancelled: nothing is kept.
+    void discard()
+    {
+        writer.reset();
+        reader.reset();
+        QFile::remove(to);
+    }
+
+    bool put(const float* samples, int frames)
+    {
         const int n = static_cast<int>(std::min<qint64>(frames, std::max<qint64>(0, expected - written)));
         if (n <= 0) {
             return true;
         }
         written += n;
         return writer->write(samples, n);
-    };
-    for (;;) {
-        const int n = reader->read(read.data(), kConvertChunkFrames);
-        if (n <= 0) {
-            break;
+    }
+
+    Step open()
+    {
+        opened = true;
+        QString error;
+        reader = AudioFileReader::open(from, &error);
+        if (!reader || reader->sampleRateHz() <= 0 || reader->channels() < 1) {
+            qCWarning(lcRecordings) << "a voice message import cannot be read:" << from << error;
+            return fail(VoiceKeyer::kUnreadableReason);
         }
-        totalIn += n;
-        if (totalIn * 1000 / rate > VoiceKeyer::kVoiceClipMaxMs) {
+        rate = reader->sampleRateHz();
+        channels = reader->channels();
+        const qint64 known = reader->lengthFrames();
+        if (known > 0 && known * 1000 / rate > VoiceKeyer::kVoiceClipMaxMs) {
             return fail(VoiceKeyer::kTooLongReason);
         }
-        if (channels == 1) {
-            std::copy(read.begin(), read.begin() + n, mono.begin());
-        } else {
-            // The channels averaged, as the player folds a stereo recording.
-            const float scale = 1.0f / static_cast<float>(channels);
-            for (int i = 0; i < n; ++i) {
-                float sum = 0.0f;
-                for (int c = 0; c < channels; ++c) {
-                    sum += read[static_cast<size_t>(i * channels + c)];
-                }
-                mono[static_cast<size_t>(i)] = sum * scale;
+        QFile::remove(to);
+        if (known > 0 && isPcm16Mono48k(from)) {
+            reader.reset();
+            if (!QFile::copy(from, to)) {
+                qCWarning(lcRecordings) << "cannot keep a voice message at" << to;
+                return fail(VoiceKeyer::kCannotKeepReason);
             }
+            lengthMs = known * 1000 / VoiceKeyer::kSampleRateHz;
+            return Step::Done;
         }
-        bool ok = true;
-        if (resampler) {
-            const int made = resampler->processInto(mono.data(), n, out.data(), outCapacity);
-            ok = put(out.data(), made);
-        } else {
-            ok = put(mono.data(), n);
-        }
-        if (!ok) {
+        writer = AudioFileWriter::open(
+            to, AudioFileSpec{AudioFileFormat::Wav, VoiceKeyer::kSampleRateHz, 1, 0}, &error);
+        if (!writer) {
+            qCWarning(lcRecordings) << "cannot keep a voice message at" << to << error;
             return fail(VoiceKeyer::kCannotKeepReason);
         }
+        if (rate != VoiceKeyer::kSampleRateHz) {
+            resampler = std::make_unique<Resampler>(static_cast<double>(rate),
+                                                    static_cast<double>(VoiceKeyer::kSampleRateHz),
+                                                    kConvertChunkFrames);
+            outCapacity = static_cast<int>(std::ceil(static_cast<double>(kConvertChunkFrames)
+                                                     * VoiceKeyer::kSampleRateHz / rate))
+                + kResamplerSlackFrames;
+        }
+        read.resize(static_cast<size_t>(kConvertChunkFrames) * static_cast<size_t>(channels));
+        mono.resize(static_cast<size_t>(kConvertChunkFrames));
+        out.resize(static_cast<size_t>(outCapacity));
+        return Step::More;
     }
-    if (totalIn == 0) {
-        return fail(VoiceKeyer::kUnreadableReason);
-    }
-    expected = totalIn * VoiceKeyer::kSampleRateHz / rate;
-    if (resampler) {
-        int flushLeft = resampler->latencyInputSamples() + kConvertChunkFrames;
-        std::fill(mono.begin(), mono.end(), 0.0f);
-        while (written < expected && flushLeft > 0) {
-            const int k = std::min(kConvertChunkFrames, flushLeft);
-            flushLeft -= k;
-            const int made = resampler->processInto(mono.data(), k, out.data(), outCapacity);
-            if (!put(out.data(), made)) {
+
+    // Up to kConvertChunksPerTurn chunks; the end once the input is used up.
+    Step step()
+    {
+        for (int chunk = 0; chunk < kConvertChunksPerTurn; ++chunk) {
+            const int n = reader->read(read.data(), kConvertChunkFrames);
+            if (n <= 0) {
+                return finish();
+            }
+            totalIn += n;
+            if (totalIn * 1000 / rate > VoiceKeyer::kVoiceClipMaxMs) {
+                return fail(VoiceKeyer::kTooLongReason);
+            }
+            if (channels == 1) {
+                std::copy(read.begin(), read.begin() + n, mono.begin());
+            } else {
+                // The channels averaged, as the player folds a stereo recording.
+                const float scale = 1.0f / static_cast<float>(channels);
+                for (int i = 0; i < n; ++i) {
+                    float sum = 0.0f;
+                    for (int c = 0; c < channels; ++c) {
+                        sum += read[static_cast<size_t>(i * channels + c)];
+                    }
+                    mono[static_cast<size_t>(i)] = sum * scale;
+                }
+            }
+            bool ok = true;
+            if (resampler) {
+                const int made = resampler->processInto(mono.data(), n, out.data(), outCapacity);
+                ok = put(out.data(), made);
+            } else {
+                ok = put(mono.data(), n);
+            }
+            if (!ok) {
                 return fail(VoiceKeyer::kCannotKeepReason);
             }
         }
+        return Step::More;
     }
-    if (!writer->finish()) {
-        return fail(VoiceKeyer::kCannotKeepReason);
-    }
-    *lengthMs = written * 1000 / VoiceKeyer::kSampleRateHz;
-    return true;
-}
 
-}  // namespace
+    Step finish()
+    {
+        if (totalIn == 0) {
+            return fail(VoiceKeyer::kUnreadableReason);
+        }
+        expected = totalIn * VoiceKeyer::kSampleRateHz / rate;
+        if (resampler) {
+            int flushLeft = resampler->latencyInputSamples() + kConvertChunkFrames;
+            std::fill(mono.begin(), mono.end(), 0.0f);
+            while (written < expected && flushLeft > 0) {
+                const int k = std::min(kConvertChunkFrames, flushLeft);
+                flushLeft -= k;
+                const int made = resampler->processInto(mono.data(), k, out.data(), outCapacity);
+                if (!put(out.data(), made)) {
+                    return fail(VoiceKeyer::kCannotKeepReason);
+                }
+            }
+        }
+        if (!writer->finish()) {
+            return fail(VoiceKeyer::kCannotKeepReason);
+        }
+        writer.reset();
+        reader.reset();
+        lengthMs = written * 1000 / VoiceKeyer::kSampleRateHz;
+        return Step::Done;
+    }
+};
 
 VoiceKeyer::VoiceKeyer(RecordingService& service, MoxController* mox, OnAirSource* onAir, QObject* parent)
     : QObject(parent)
@@ -271,7 +330,6 @@ VoiceKeyer::VoiceKeyer(RecordingService& service, MoxController* mox, OnAirSourc
                 [this](const KeyerIdentity& requester, quint64, bool requestedOn) {
                     onRequestAccepted(requester, requestedOn);
                 });
-        connect(m_mox, &MoxController::moxRefused, this, [this](const TxRefusal&) { onMoxRefused(); });
         connect(m_mox, &MoxController::moxChanged, this, [this](int, bool, bool on) { onMoxChanged(on); });
     }
 }
@@ -283,6 +341,15 @@ VoiceKeyer::~VoiceKeyer()
         if (it->file) {
             it->file->remove();
         }
+    }
+    // A conversion under way stops at its next turn and keeps nothing. Once
+    // the worker has run what was queued before this, no turn posts back
+    // here.
+    for (const std::shared_ptr<Conversion>& c : m_conversions) {
+        c->cancelled.store(true, std::memory_order_release);
+    }
+    if (!m_conversions.empty()) {
+        m_service.waitForWorker();
     }
 }
 
@@ -404,6 +471,7 @@ std::optional<VoiceKeyer::Sending> VoiceKeyer::sending() const
     Sending s;
     s.n = m_n;
     s.by = m_who.name;
+    s.deviceId = m_who.wireId;
     s.lengthMs = m_samples ? static_cast<qint64>(m_samples->size()) * 1000 / kSampleRateHz : 0;
     if (m_phase == Phase::Sending && m_clip) {
         s.positionMs = std::min(s.lengthMs, m_clip->position.load(std::memory_order_acquire) * 1000
@@ -430,7 +498,8 @@ QJsonObject VoiceKeyer::documentJson() const
                                    {QStringLiteral("positionMs"), s->positionMs},
                                    {QStringLiteral("lengthMs"), s->lengthMs},
                                    {QStringLiteral("waitingMs"), s->waitingMs},
-                                   {QStringLiteral("by"), s->by}};
+                                   {QStringLiteral("by"), s->by},
+                                   {QStringLiteral("deviceId"), s->deviceId}};
     }
     return QJsonObject{{QStringLiteral("slots"), slotList},
                        {QStringLiteral("repeat"), m_repeat},
@@ -509,8 +578,9 @@ bool VoiceKeyer::send(int n, const Requester& who, QString* refusal)
         setRefusal(refusal, held.text);
         return false;
     }
-    // Another device's message on the air is left alone.
-    if (m_phase == Phase::Sending && m_keyer.deviceId != who.keyer.deviceId) {
+    // Another device's message on the air, or waiting to repeat, is left
+    // alone (ruling 8.5).
+    if (m_phase != Phase::Idle && m_keyer.deviceId != who.keyer.deviceId) {
         setRefusal(refusal, text(kTransmittingReason));
         return false;
     }
@@ -661,19 +731,40 @@ void VoiceKeyer::handOverToPress()
     becomeIdle();
 }
 
-void VoiceKeyer::pressFrom(const QByteArray& deviceId, const QString& session, bool voiceKey)
+bool VoiceKeyer::stopFrom(const KeyerIdentity& who, TxRefusal* refusal)
 {
-    if (m_phase == Phase::Waiting) {
-        becomeIdle();
-        return;
+    if (m_phase == Phase::Idle) {
+        return true;
     }
-    if (m_phase != Phase::Sending) {
-        return;
+    // Ruling 8.5: the sender stops its own message; another device only
+    // by taking transmit (which unkeys it, onMoxChanged), after which it
+    // holds transmit and its Stop ends a wait too.
+    const bool sender = who.deviceId == m_keyer.deviceId;
+    const bool holder = m_holder && m_holder->isHeldBy(who.deviceId);
+    if (!sender && !holder) {
+        if (refusal != nullptr) {
+            const std::optional<TransmitHolder::Holder> held = m_holder ? m_holder->holder() : std::nullopt;
+            *refusal = TxRefusals::otherDeviceHoldsStop(held.has_value() ? held->name : m_who.name);
+        }
+        return false;
     }
-    if (voiceKey && deviceId == m_keyer.deviceId && session == m_keyer.session) {
+    stop();
+    return true;
+}
+
+void VoiceKeyer::keyAdmittedFor(const QByteArray& deviceId, const QString& session)
+{
+    // The key was admitted with the radio already keyed for the sender (a
+    // copy or a refusal never reaches here): its microphone takes the air.
+    if (m_phase == Phase::Sending && deviceId == m_keyer.deviceId && session == m_keyer.session) {
         handOverToPress();
-        return;
     }
+}
+
+void VoiceKeyer::connectionLost()
+{
+    // A wait between repeats has MOX off, so the teardown's unkey never
+    // reaches onMoxChanged: it ends here, and nothing keys on a reconnect.
     stop();
 }
 
@@ -690,38 +781,21 @@ void VoiceKeyer::onRequestAccepted(const KeyerIdentity& requester, bool requeste
         return;
     }
     if (m_phase == Phase::Waiting) {
+        // Unkeyed between repeats: a key MOX took (the radio is free, or
+        // the press is the holder's) ends the repeat.
         becomeIdle();
         return;
     }
     if (requestedOn) {
-        // While keyed, MOX accepts a press only from the keyed device: its
-        // key stays on (PTT keeps the mic on the air).
+        // While keyed, MOX accepts a press only from the keyed device (the
+        // sender): its key stays on (PTT keeps the mic on the air). Another
+        // device's press is refused (ruling 8.5) and cuts nothing.
         handOverToPress();
     } else {
         // A release: the radio unkeys by it.
         cutClip();
         becomeIdle();
     }
-}
-
-void VoiceKeyer::onMoxRefused()
-{
-    if (m_phase == Phase::Idle || m_keying) {
-        return;
-    }
-    if (m_phase == Phase::Waiting) {
-        becomeIdle();
-        return;
-    }
-    // A press MOX would not take (another device's PTT or MOX): the message
-    // stops now and the radio unkeys, after MOX has finished refusing it.
-    const KeyerIdentity keyer = m_keyer;
-    cutClip();
-    becomeIdle();
-    QMetaObject::invokeMethod(this, [this, keyer] {
-        unkeyIfOurs(keyer);
-        endOnAirIfOurs();
-    }, Qt::QueuedConnection);
 }
 
 void VoiceKeyer::onMoxChanged(bool on)
@@ -879,51 +953,109 @@ bool VoiceKeyer::setRepeat(bool on, int delaySec, QString* refusal)
     return true;
 }
 
-bool VoiceKeyer::importFile(int n, const QString& path, const QString& name, QString* refusal)
+void VoiceKeyer::importFile(int n, const QString& path, const QString& name, ImportDone done)
 {
+    const auto refuse = [&done](const QString& reason) {
+        if (done) {
+            done(false, reason);
+        }
+    };
     if (!validSlot(n)) {
-        setRefusal(refusal, text(kSlotRangeReason));
-        return false;
+        refuse(text(kSlotRangeReason));
+        return;
     }
     const QString trimmed = name.trimmed();
     if (trimmed.size() > kNameMaxChars) {
-        setRefusal(refusal, QStringLiteral("A message name can be up to %1 characters.").arg(kNameMaxChars));
-        return false;
+        refuse(QStringLiteral("A message name can be up to %1 characters.").arg(kNameMaxChars));
+        return;
     }
     ensureLoaded();
     if (!QDir().mkpath(m_folder)) {
         qCWarning(lcRecordings) << "the voice keyer folder cannot be made:" << m_folder;
-        setRefusal(refusal, text(kCannotKeepReason));
-        return false;
+        refuse(text(kCannotKeepReason));
+        return;
     }
-    const QString part = pathFor(n) + QStringLiteral(".part");
-    qint64 lengthMs = 0;
-    if (!convertToMessage(path, part, &lengthMs, refusal)) {
-        QFile::remove(part);
-        return false;
+    auto c = std::make_shared<Conversion>();
+    c->id = ++m_nextImportId;
+    c->from = path;
+    c->folder = m_folder;
+    // Its own file, so two imports never write over each other.
+    c->to = QDir(m_folder).filePath(QStringLiteral("M%1-%2.part").arg(n).arg(c->id));
+    m_conversions.push_back(c);
+    m_pendingImports.insert(c->id, PendingImport{n, trimmed, std::move(done)});
+    RecordingService* const service = &m_service;
+    m_service.runOnWorker([service, owner = this, c] { stepConversion(service, owner, c); });
+}
+
+void VoiceKeyer::stepConversion(RecordingService* service, VoiceKeyer* owner, std::shared_ptr<Conversion> c)
+{
+    // The recordings worker thread. Cancelled (the keyer is going): nothing
+    // is kept, and `owner` is not touched.
+    if (c->cancelled.load(std::memory_order_acquire)) {
+        c->discard();
+        return;
     }
+    const Conversion::Step step = c->opened ? c->step() : c->open();
+    if (step == Conversion::Step::More) {
+        // The next turn after what else the worker has to do.
+        service->runOnWorker([service, owner, c] { stepConversion(service, owner, c); });
+        return;
+    }
+    const bool ok = step == Conversion::Step::Done;
+    QMetaObject::invokeMethod(owner, [owner, c, ok] { owner->finishConversion(c, ok); },
+                              Qt::QueuedConnection);
+}
+
+void VoiceKeyer::finishConversion(const std::shared_ptr<Conversion>& c, bool ok)
+{
+    m_conversions.erase(std::remove(m_conversions.begin(), m_conversions.end(), c), m_conversions.end());
+    const auto it = m_pendingImports.find(c->id);
+    if (it == m_pendingImports.end()) {
+        QFile::remove(c->to);
+        return;
+    }
+    const PendingImport pending = std::move(it.value());
+    m_pendingImports.erase(it);
+    const auto finish = [&pending](bool kept, const QString& reason) {
+        if (pending.done) {
+            pending.done(kept, reason);
+        }
+    };
+    if (!ok) {
+        QFile::remove(c->to);
+        finish(false, c->refusal.isEmpty() ? text(kCannotKeepReason) : c->refusal);
+        return;
+    }
+    // The folder changed under it: it is not this folder's message.
+    if (c->folder != m_folder) {
+        QFile::remove(c->to);
+        finish(false, text(kCannotKeepReason));
+        return;
+    }
+    ensureLoaded();
+    const int n = pending.n;
     if (m_phase != Phase::Idle && m_n == n) {
         stop();
     }
     const QString final = pathFor(n);
     QFile::remove(final);
-    if (!QFile::rename(part, final)) {
+    if (!QFile::rename(c->to, final)) {
         qCWarning(lcRecordings) << "cannot keep voice message" << n << "at" << final;
-        QFile::remove(part);
+        QFile::remove(c->to);
         m_filled[indexOf(n)] = false;
         m_lengths[indexOf(n)] = 0;
-        setRefusal(refusal, text(kCannotKeepReason));
         emit changed();
-        return false;
+        finish(false, text(kCannotKeepReason));
+        return;
     }
     m_filled[indexOf(n)] = true;
-    m_lengths[indexOf(n)] = lengthMs;
-    if (!trimmed.isEmpty() && trimmed != m_names[indexOf(n)]) {
-        m_names[indexOf(n)] = trimmed;
+    m_lengths[indexOf(n)] = c->lengthMs;
+    if (!pending.name.isEmpty() && pending.name != m_names[indexOf(n)]) {
+        m_names[indexOf(n)] = pending.name;
         saveNames();
     }
     emit changed();
-    return true;
+    finish(true, QString());
 }
 
 bool VoiceKeyer::listen(int n, const ListenerId& who, QString* refusal)
@@ -970,8 +1102,9 @@ bool VoiceKeyer::beginImport(const QString& owner, int n, const QString& name, q
     import.n = n;
     import.name = name;
     import.size = size;
+    // Numbered per import: never another owner's file.
     import.file = std::make_unique<QFile>(
-        QDir(m_folder).filePath(QStringLiteral("import-%1.part").arg(qHash(owner) ^ quintptr(this), 0, 16)));
+        QDir(m_folder).filePath(QStringLiteral("import-%1.part").arg(++m_nextImportId)));
     if (!import.file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         qCWarning(lcRecordings) << "cannot take a voice message import at" << import.file->fileName()
                                 << import.file->errorString();
@@ -1004,25 +1137,34 @@ bool VoiceKeyer::importChunk(const QString& owner, const QByteArray& bytes, QStr
     return true;
 }
 
-bool VoiceKeyer::finishImport(const QString& owner, QString* refusal)
+void VoiceKeyer::finishImport(const QString& owner, ImportDone done)
 {
     const auto it = m_imports.find(owner);
     if (it == m_imports.end()) {
-        setRefusal(refusal, text(kNoImportReason));
-        return false;
+        if (done) {
+            done(false, text(kNoImportReason));
+        }
+        return;
     }
     if (it->received != it->size) {
         cancelImport(owner);
-        setRefusal(refusal, text(kNotWholeReason));
-        return false;
+        if (done) {
+            done(false, text(kNotWholeReason));
+        }
+        return;
     }
-    it->file->close();
-    const QString path = it->file->fileName();
-    const int n = it->n;
-    const QString name = it->name;
-    const bool ok = importFile(n, path, name, refusal);
-    cancelImport(owner);
-    return ok;
+    // Out of the owner's hands: a new import of its starts afresh while
+    // this one converts, and the file goes once the conversion ends.
+    const Import import = it.value();
+    m_imports.erase(it);
+    import.file->close();
+    const QString path = import.file->fileName();
+    importFile(import.n, path, import.name, [path, done = std::move(done)](bool ok, const QString& reason) {
+        QFile::remove(path);
+        if (done) {
+            done(ok, reason);
+        }
+    });
 }
 
 void VoiceKeyer::cancelImport(const QString& owner)

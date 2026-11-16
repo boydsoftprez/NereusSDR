@@ -3835,8 +3835,10 @@ Notes on the keys:
   (`slots`, eight of `n` 1 to 8, `name`, `lengthMs`, `empty`; `repeat`;
   `repeatDelaySec` 1 to 60, 5 by default; `sending`, null unless a message
   goes out or waits to repeat: `n`, `positionMs`, `lengthMs`, `waitingMs`,
-  counting down between repeats and 0 while it goes out, and `by`, the
-  sender's words, "Desktop" for the Core's own window). While a slice
+  counting down between repeats and 0 while it goes out, `by`, the
+  sender's words, "Desktop" for the Core's own window, and `deviceId`, the
+  sender as the link names a device, `station` for the Core's own window).
+  While a slice
   records, or a voice message goes out, the document is rebuilt once a
   second. `revision` moves by one each
   time `json` changes. The recordings themselves are not in it: a client asks
@@ -7089,20 +7091,34 @@ These command groups need a sentence beyond the table:
   set (the recording on-air switches do not apply), and unkeys at the end;
   with `repeat` on it waits `repeatDelaySec`, unkeyed, and sends again until
   stopped. The same device's send while one goes out moves to the new one
-  without unkeying. `voiceKeyer.stop` stops what goes out, or the wait, and
-  unkeys. A PTT, MOX or TUNE press from any device, or the sender's own
-  unkey, stops it within one transmit block: a press MOX takes (the
-  sender's own) keeps the radio keyed and its microphone goes out, any other
-  unkeys the radio; VOX stops nothing. Another device holding transmit
+  without unkeying. The message keys the radio as the sender, so the
+  transmit watchdog watches it as any key of the sender's: the sender's
+  client sends `tx.keepalive` while `sending.deviceId` names it, and a
+  sender whose keepalives stop is held at 400 ms and cut at 3 s as ever. A
+  voice message counts as the microphone unused, as TUNE and two-tone do,
+  so a microphone line that starves meanwhile holds and stops nothing.
+  Ruling 8.5 holds: only the sender's own controls stop its message, and
+  any other device stops it only by taking transmit (the radio's own PTT
+  takes it, ruling 8.9). `voiceKeyer.stop` from the sender (or from the
+  holder) stops what goes out, or the wait, and unkeys; from any other
+  device it is refused with "<holder> has the transmitter. Take it to stop
+  the transmission." and the message goes on. The sender's PTT or MOX
+  press keeps the radio keyed and its microphone goes out within one
+  transmit block; its unkey unkeys. Another device's press is refused and
+  stops nothing; VOX stops nothing. The radio's connection dropping ends
+  the message and the wait between repeats. Another device holding transmit
   refuses a send with the holder's words (section 7.6) and nothing keys; the
-  radio already on the air refuses it with "The radio is already
+  radio already on the air, or another device's message going out or
+  waiting to repeat, refuses it with "The radio is already
   transmitting.". A device loads a message with `voiceKeyer.beginImport`
   (`n`, `name`, "" to keep Mn's, `size`, the file's bytes, at most 100 MiB),
   then `voiceKeyer.chunk` (`data`, at most 192 KiB as base64) in order, each
   after the one before it is answered, then `voiceKeyer.finishImport`; the
   Core converts any WAV or MP3 to 48 kHz mono, and keeps a 48 kHz 16-bit
-  mono PCM WAV as it came, so a saved message loads back byte for byte. One
-  import runs per session; beginning another drops the first.
+  mono PCM WAV as it came, so a saved message loads back byte for byte. The
+  conversion runs off the Core's main thread, and `finishImport` is
+  answered when it ends. One import runs per session; beginning another
+  drops the first, and the session ending drops it and its file.
   `voiceKeyer.export` (`n`, `offset`) answers with `n`, `offset`, `size` and
   `data` as `recordings.export` does. `voiceKeyer.rename` (`n`, `name`, at
   most 32 characters), `voiceKeyer.clear` (`n`), `voiceKeyer.setRepeat`

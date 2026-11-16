@@ -5,6 +5,11 @@
 //               recordings gate; the voice keyer asks the transmit holder and
 //               hears each device's own press (RemoteKeying).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11 review fixes: the voice keyer hears a
+//               device's tx.key only once admitted; a voice message counts as
+//               the microphone unused for the starvation rules; the sender's
+//               wire id for the voice keyer's `sending`.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 5: recordingsVersion 1, the recordings object, the
 //               recordings.* gate (peerGetsRecordings), each device's own
 //               recordings.playback, and the device names a recording keeps.
@@ -1289,6 +1294,7 @@
 #include "core/session/StateMirror.h"
 #include "core/session/StationCatalog.h"
 #include "core/session/BandStackFacade.h"
+#include "core/recordings/OnAirSource.h"
 #include "core/recordings/RecordingService.h"
 #include "core/session/RecordingsFacade.h"
 #include "core/session/PaProfilesFacade.h"
@@ -3308,16 +3314,16 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         // knows it is keyed before keyedBy is published.
         m_remoteKeying = std::make_unique<RemoteKeying>(m_radioModel, m_transmitHolder.get());
         // Recording plan Task 11: the voice keyer keys only when the holder
-        // would admit its requester, and a device's own press stops a
-        // message going out.
+        // would admit its requester, and the sender's own tx.key, once
+        // admitted, hands the air from its message to its microphone.
         if (RecordingService* recordings = m_radioModel->recordingService()) {
             if (VoiceKeyer* voice = recordings->voiceKeyer()) {
                 voice->setTransmitHolder(m_transmitHolder.get());
                 const QPointer<VoiceKeyer> voicePtr(voice);
-                m_remoteKeying->setKeyPressObserver(
-                    [voicePtr](const QByteArray& deviceId, const QString& session, bool voiceKey) {
+                m_remoteKeying->setKeyAdmittedObserver(
+                    [voicePtr](const QByteArray& deviceId, const QString& session) {
                         if (voicePtr) {
-                            voicePtr->pressFrom(deviceId, session, voiceKey);
+                            voicePtr->keyAdmittedFor(deviceId, session);
                         }
                     });
             }
@@ -3559,7 +3565,12 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     return false;
                 }
                 const TwoToneController* twoTone = m_radioModel->twoToneController();
-                return m_radioModel->isTune()
+                // Recording plan Task 11: a voice message goes out in place
+                // of the microphone, so its line is not needed meanwhile.
+                const RecordingService* recordings = m_radioModel->recordingService();
+                const bool voiceMessage = recordings != nullptr && recordings->onAirSource() != nullptr
+                    && recordings->onAirSource()->active() == OnAirSource::Kind::VoiceMessage;
+                return m_radioModel->isTune() || voiceMessage
                     || (twoTone != nullptr
                         && (twoTone->isActive() || twoTone->isActivationInFlight()));
             };
@@ -4562,6 +4573,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     m_dispatcher->setRecordingsDeviceName([this](const QByteArray& requester) {
         return sliceHolderWords(requester, WordsPlace::SentenceStart);
     });
+    // Recording plan Task 11: the voice keyer's sender as the link names it.
+    m_dispatcher->setRecordingsDeviceWireId([this](const QByteArray& requester) { return wireIdOf(requester); });
     // iPhone app plan Task 34: the on-air refusals (ruling 7.4) and the
     // holder's tx.setTxSlice (ruling 8.10).
     {

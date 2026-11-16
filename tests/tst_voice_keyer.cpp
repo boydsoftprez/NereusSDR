@@ -15,6 +15,12 @@
 // Modification history (NereusSDR):
 //   2026-11-16 - Created. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                 Claude Code. Recording plan Task 11.
+//   2026-11-16 - Review fixes. J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code. Ruling 8.5: another device's press
+//                 or Stop leaves the message going; the sender's own admitted
+//                 key hands over; another device's send while a repeat waits
+//                 is refused; the wait ends when the radio drops; imports
+//                 convert off the main thread, which keeps running.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -83,12 +89,67 @@ KeyerIdentity phone(const QByteArray& id, const QString& session = kSession)
 
 VoiceKeyer::Requester phoneB()
 {
-    return {phone(kPhoneB), QStringLiteral("Phone")};
+    return {phone(kPhoneB), QStringLiteral("Phone"), QStringLiteral("cGhvbmUtYg")};
 }
 
 VoiceKeyer::Requester station()
 {
-    return {KeyerIdentity::station(PttMode::None), QString::fromLatin1(VoiceKeyer::kStationName)};
+    return {KeyerIdentity::station(PttMode::None), QString::fromLatin1(VoiceKeyer::kStationName),
+            QStringLiteral("station")};
+}
+
+// An import's end, as importFile or finishImport report it.
+struct Ended {
+    bool finished = false;
+    bool ok = false;
+    QString refusal;
+};
+
+VoiceKeyer::ImportDone into(const std::shared_ptr<Ended>& ended)
+{
+    return [ended](bool ok, const QString& refusal) {
+        ended->finished = true;
+        ended->ok = ok;
+        ended->refusal = refusal;
+    };
+}
+
+// Waits for an import begun with into(ended); false when it did not end.
+bool waitFor(const std::shared_ptr<Ended>& ended)
+{
+    return QTest::qWaitFor([ended] { return ended->finished; }, 30000);
+}
+
+bool importNow(VoiceKeyer& vk, int n, const QString& path, const QString& name, QString* refusal)
+{
+    auto ended = std::make_shared<Ended>();
+    vk.importFile(n, path, name, into(ended));
+    if (!waitFor(ended)) {
+        return false;
+    }
+    if (refusal != nullptr) {
+        *refusal = ended->refusal;
+    }
+    return ended->ok;
+}
+
+bool finishNow(VoiceKeyer& vk, const QString& owner, QString* refusal)
+{
+    auto ended = std::make_shared<Ended>();
+    vk.finishImport(owner, into(ended));
+    if (!waitFor(ended)) {
+        return false;
+    }
+    if (refusal != nullptr) {
+        *refusal = ended->refusal;
+    }
+    return ended->ok;
+}
+
+// The files a conversion or a link import leaves behind.
+QStringList partFiles(const QString& folder)
+{
+    return QDir(folder).entryList({QStringLiteral("*.part")}, QDir::Files);
 }
 
 struct Switches {
@@ -191,7 +252,7 @@ private:
     {
         const QString path = writeWav(kRate, 1, frames);
         QString refusal;
-        return !path.isEmpty() && vk.importFile(n, path, name, &refusal);
+        return !path.isEmpty() && importNow(vk, n, path, name, &refusal);
     }
 
     static QByteArray readAll(const QString& path)
@@ -254,10 +315,13 @@ private slots:
         const QByteArray file = readAll(writeWav(kRate, 1, kBlock));
         QVERIFY(r.vk->beginImport(owner, 2, QStringLiteral("QRZ"), file.size(), &refusal));
         QVERIFY(r.vk->importChunk(owner, file, &refusal));
-        QVERIFY(r.vk->finishImport(owner, &refusal));
+        QVERIFY(finishNow(*r.vk, owner, &refusal));
         QVERIFY(r.vk->clear(2, &refusal));
         r.vk->stop();
-        r.vk->pressFrom(kPhoneB, kSession, true);
+        TxRefusal stopRefusal;
+        QVERIFY(r.vk->stopFrom(phone(kPhoneC), &stopRefusal));
+        r.vk->keyAdmittedFor(kPhoneB, kSession);
+        r.vk->connectionLost();
         r.vk->tickForTest();
         QCoreApplication::processEvents();
         QVERIFY(!r.mox->isMox());
@@ -403,7 +467,10 @@ private slots:
         QCOMPARE(r.onAir->active(), OnAirSource::Kind::None);
     }
 
-    void anotherDevicesPressStopsItAndUnkeys()
+    // Ruling 8.5: another device's press, refused by MOX, cuts nothing.
+    // (The radio's own PTT takes transmit through the station's keying
+    // gate, which unkeys the sender; tst_recordings_link covers that.)
+    void anotherDevicesPressLeavesItGoing()
     {
         Rig r(newFolder());
         QVERIFY(fill(*r.vk, 1, 100 * kBlock));
@@ -414,19 +481,63 @@ private slots:
         QVERIFY(!allZero(tx));
         // A PTT press from another device: MOX refuses it.
         r.mox->setMox(true, phone(kPhoneC));
-        QVERIFY(!r.vk->sending().has_value());
-        // Silence from the very next block.
+        QCoreApplication::processEvents();
+        QVERIFY(r.vk->sending().has_value());
+        QVERIFY(r.mox->isMox());
+        QCOMPARE(r.mox->currentKeyer().deviceId, kPhoneB);
+        QCOMPARE(r.onAir->active(), OnAirSource::Kind::VoiceMessage);
         QVERIFY(r.pull(tx));
-        QVERIFY(allZero(tx));
-        // And the radio unkeys once MOX has finished refusing the press.
-        QTRY_VERIFY(!r.mox->isMox());
+        QVERIFY(near(tx[1], rampAt(kBlock + 1, 100 * kBlock)));
+        // Its release unkeys nothing either.
+        r.mox->setMox(false, phone(kPhoneC));
+        QVERIFY(r.mox->isMox());
+        QVERIFY(r.vk->sending().has_value());
+
+        // The station's MOX while a phone sends, with no keying gate to
+        // take transmit: refused, and the message goes on.
+        r.mox->setMox(true, KeyerIdentity::station(PttMode::Manual));
+        QCoreApplication::processEvents();
+        QVERIFY(r.vk->sending().has_value());
+        QCOMPARE(r.mox->currentKeyer().deviceId, kPhoneB);
+        QVERIFY(r.pull(tx));
+        QVERIFY(!allZero(tx));
+    }
+
+    // Ruling 8.5: only the sender (or the holder) stops a message.
+    void anotherDevicesStopIsRefused()
+    {
+        Rig r(newFolder());
+        QVERIFY(fill(*r.vk, 1, 100 * kBlock));
+        QString refusal;
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        TxRefusal stopRefusal;
+        QVERIFY(!r.vk->stopFrom(phone(kPhoneC), &stopRefusal));
+        QCOMPARE(stopRefusal.text, TxRefusals::otherDeviceHoldsStop(QStringLiteral("Phone")).text);
+        QVERIFY(!r.vk->stopFrom(KeyerIdentity::station(PttMode::None), &stopRefusal));
+        QVERIFY(r.mox->isMox());
+        QVERIFY(r.vk->sending().has_value());
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QVERIFY(!allZero(tx));
+        // The sender's own Stop: silence, then unkeyed.
+        QVERIFY(r.vk->stopFrom(phone(kPhoneB), &stopRefusal));
+        QVERIFY(!r.mox->isMox());
+        QVERIFY(!r.vk->sending().has_value());
         QCOMPARE(r.onAir->active(), OnAirSource::Kind::None);
 
-        // The same from the station's own PTT while a phone sends.
+        // With a holder, the refusal names it, and the holder may stop.
+        TransmitHolder holder;
+        TransmitHolder::KeyRequest take;
+        take.deviceId = kPhoneB;
+        QCOMPARE(holder.askKey(take).verdict, KeyingVerdict::Admit);
+        r.vk->setTransmitHolder(&holder);
         QVERIFY(r.vk->send(1, phoneB(), &refusal));
-        r.mox->setMox(true, KeyerIdentity::station(PttMode::Mic));
-        QVERIFY(!r.vk->sending().has_value());
-        QTRY_VERIFY(!r.mox->isMox());
+        QVERIFY(!r.vk->stopFrom(phone(kPhoneC), &stopRefusal));
+        QCOMPARE(stopRefusal.text, TxRefusals::otherDeviceHoldsStop(holder.holder()->name).text);
+        QVERIFY(r.mox->isMox());
+        QVERIFY(r.vk->stopFrom(phone(kPhoneB, QStringLiteral("another-session")), &stopRefusal));
+        QVERIFY(!r.mox->isMox());
+        r.vk->setTransmitHolder(nullptr);
     }
 
     void theSendersPttHandsTheAirToItsMic()
@@ -452,28 +563,29 @@ private slots:
         QVERIFY(!r.mox->isMox());
     }
 
-    void aDevicesOwnTxKeyHandsOverAndAnotherUnkeys()
+    // RemoteKeying tells the keyer of a tx.key only once it is admitted.
+    void theSendersAdmittedTxKeyHandsOver()
     {
         Rig r(newFolder());
         QVERIFY(fill(*r.vk, 1, 100 * kBlock));
         QString refusal;
         QVERIFY(r.vk->send(1, phoneB(), &refusal));
-        // The sender's own tx.key (RemoteKeying tells the keyer first).
-        r.vk->pressFrom(kPhoneB, kSession, true);
+        // Another device's, or another session's of the same device: no
+        // such key is admitted while B is keyed, and none cuts anything.
+        r.vk->keyAdmittedFor(kPhoneC, QStringLiteral("session-c"));
+        r.vk->keyAdmittedFor(kPhoneB, QStringLiteral("session-old"));
+        QVERIFY(r.vk->sending().has_value());
+        QCOMPARE(r.onAir->active(), OnAirSource::Kind::VoiceMessage);
+        // The sender's own: its key stays and its microphone goes out.
+        r.vk->keyAdmittedFor(kPhoneB, kSession);
         QVERIFY(!r.vk->sending().has_value());
         QVERIFY(r.mox->isMox());
+        QCOMPARE(r.mox->currentKeyer().deviceId, kPhoneB);
         QCOMPARE(r.onAir->active(), OnAirSource::Kind::None);
+        std::vector<float> tx;
+        QVERIFY(!r.pull(tx));
         r.mox->setMox(false, phone(kPhoneB));
-
-        // Another device's, or the sender's TUNE: the radio unkeys.
-        QVERIFY(r.vk->send(1, phoneB(), &refusal));
-        r.vk->pressFrom(kPhoneC, QStringLiteral("session-c"), true);
-        QVERIFY(!r.vk->sending().has_value());
         QVERIFY(!r.mox->isMox());
-        QVERIFY(r.vk->send(1, phoneB(), &refusal));
-        r.vk->pressFrom(kPhoneB, kSession, false);
-        QVERIFY(!r.mox->isMox());
-        QCOMPARE(r.onAir->active(), OnAirSource::Kind::None);
     }
 
     void voxCutsNothing()
@@ -539,6 +651,109 @@ private slots:
         QCOMPARE(r.mox->currentKeyer().deviceId, kPhoneB);
         QCOMPARE(r.vk->sending()->by, QStringLiteral("Phone"));
         QCOMPARE(r.onAir->active(), OnAirSource::Kind::VoiceMessage);
+    }
+
+    void anotherDevicesSendWhileARepeatWaitsIsRefused()
+    {
+        Rig r(newFolder());
+        qint64 t = 0;
+        r.vk->setClockForTest([&t] { return t; });
+        QVERIFY(fill(*r.vk, 1, kBlock));
+        QString refusal;
+        QVERIFY(r.vk->setRepeat(true, 5, &refusal));
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QVERIFY(r.vk->sending().has_value());
+        QVERIFY(!r.vk->send(1, VoiceKeyer::Requester{phone(kPhoneC), QStringLiteral("C"), {}}, &refusal));
+        QCOMPARE(refusal, QString::fromLatin1(VoiceKeyer::kTransmittingReason));
+        QVERIFY(!r.mox->isMox());
+        QCOMPARE(r.vk->sending()->by, QStringLiteral("Phone"));
+        // B's repeat still goes.
+        t += 5000;
+        r.vk->tickForTest();
+        QVERIFY(r.mox->isMox());
+        QCOMPARE(r.mox->currentKeyer().deviceId, kPhoneB);
+    }
+
+    // The wait between repeats has MOX off: the radio dropping ends it, and
+    // a reconnect keys nothing.
+    void theWaitEndsWhenTheRadioDrops()
+    {
+        Rig r(newFolder());
+        r.model.setConnectionStateForTest(ConnectionState::Connected);
+        qint64 t = 0;
+        r.vk->setClockForTest([&t] { return t; });
+        QVERIFY(fill(*r.vk, 1, kBlock));
+        QString refusal;
+        QVERIFY(r.vk->setRepeat(true, 5, &refusal));
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QVERIFY(r.vk->sending().has_value());
+        QSignalSpy accepted(r.mox, &MoxController::requestAccepted);
+        r.model.setConnectionStateForTest(ConnectionState::LinkLost);
+        QVERIFY(!r.vk->sending().has_value());
+        r.model.setConnectionStateForTest(ConnectionState::Disconnected);
+        r.model.setConnectionStateForTest(ConnectionState::Connected);
+        t += 10000;
+        r.vk->tickForTest();
+        QCoreApplication::processEvents();
+        QVERIFY(!r.mox->isMox());
+        QCOMPARE(accepted.count(), 0);
+        QVERIFY(!r.vk->sending().has_value());
+
+        // A message going out ends the same way.
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        QVERIFY(r.mox->isMox());
+        r.model.setConnectionStateForTest(ConnectionState::Disconnected);
+        QVERIFY(!r.vk->sending().has_value());
+        QVERIFY(!r.mox->isMox());
+    }
+
+    // A large import converts off the main thread: importFile returns at
+    // once, and the end of a message going out is found and unkeyed while
+    // the conversion is still under way.
+    void anImportLeavesTheMainThreadRunning()
+    {
+        Rig r(newFolder());
+        QVERIFY(fill(*r.vk, 1, 2 * kBlock));
+        // 100 s of 44.1 kHz stereo (about 17.6 MB): resampled and folded.
+        const QString big = writeWav(44100, 2, 100 * 44100);
+        QVERIFY(!big.isEmpty());
+        QString refusal;
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        auto ended = std::make_shared<Ended>();
+        r.vk->importFile(2, big, QStringLiteral("Long"), into(ended));
+        QVERIFY(!ended->finished);
+        std::vector<float> tx;
+        for (int b = 0; b < 3; ++b) {
+            QVERIFY(r.pull(tx));
+        }
+        // The end-of-message tick runs and unkeys with the import pending.
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QVERIFY(!r.vk->sending().has_value());
+        QVERIFY(!ended->finished);
+        QVERIFY(r.vk->messages().at(1).empty);
+        // The timer drives it too, between the conversion's turns.
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        for (int b = 0; b < 3; ++b) {
+            QVERIFY(r.pull(tx));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(!r.mox->isMox(), 5000);
+        QVERIFY(waitFor(ended));
+        QVERIFY2(ended->ok, qPrintable(ended->refusal));
+        QVERIFY(!r.vk->messages().at(1).empty);
+        QCOMPARE(r.vk->messages().at(1).name, QStringLiteral("Long"));
+        QVERIFY(std::abs(r.vk->messages().at(1).lengthMs - 100000) <= 1);
+        QCOMPARE(partFiles(r.vk->folder()), QStringList());
     }
 
     // ---- One message after another from the same device, no gap.
@@ -683,7 +898,7 @@ private slots:
         Rig r(newFolder());
         const QString in = writeWav(44100, 2, 44100);   // one second
         QString refusal;
-        QVERIFY(r.vk->importFile(1, in, QStringLiteral("CQ"), &refusal));
+        QVERIFY(importNow(*r.vk, 1, in, QStringLiteral("CQ"), &refusal));
         const QString kept = r.vk->messagePath(1);
         QVERIFY(!kept.isEmpty());
         QString error;
@@ -707,19 +922,20 @@ private slots:
         Rig r(newFolder());
         const QString in = writeWav(kRate, 1, VoiceKeyer::kVoiceClipMaxMs / 1000 * kRate + kRate / 10);
         QString refusal;
-        QVERIFY(!r.vk->importFile(1, in, QString(), &refusal));
+        QVERIFY(!importNow(*r.vk, 1, in, QString(), &refusal));
         QCOMPARE(refusal, QStringLiteral("Voice messages can be up to 2 minutes long."));
         QVERIFY(r.vk->messages().at(0).empty);
         QVERIFY(r.vk->messagePath(1).isEmpty());
-        QVERIFY(!QFile::exists(QDir(r.vk->folder()).filePath(QStringLiteral("M1.wav.part"))));
+        QCOMPARE(partFiles(r.vk->folder()), QStringList());
         // Nor is something that is not sound.
         const QString junk = m_dir.filePath(QStringLiteral("junk.wav"));
         QFile f(junk);
         QVERIFY(f.open(QIODevice::WriteOnly));
         f.write("not a sound file");
         f.close();
-        QVERIFY(!r.vk->importFile(1, junk, QString(), &refusal));
+        QVERIFY(!importNow(*r.vk, 1, junk, QString(), &refusal));
         QCOMPARE(refusal, QStringLiteral("That file cannot be read as sound."));
+        QCOMPARE(partFiles(r.vk->folder()), QStringList());
     }
 
     void anExportLoadsBackTheSameByteForByte()
@@ -728,7 +944,7 @@ private slots:
         // Three seconds: more than one chunk.
         const QString in = writeWav(kRate, 1, 3 * kRate);
         QString refusal;
-        QVERIFY(r.vk->importFile(3, in, QString(), &refusal));
+        QVERIFY(importNow(*r.vk, 3, in, QString(), &refusal));
         QCOMPARE(readAll(r.vk->messagePath(3)), readAll(in));
         int chunks = 0;
         const QByteArray out = exportAll(*r.vk, 3, &chunks);
@@ -736,14 +952,14 @@ private slots:
         QCOMPARE(out, readAll(in));
 
         // A converted message saved and loaded back is the same again.
-        QVERIFY(r.vk->importFile(4, writeWav(44100, 2, 44100), QString(), &refusal));
+        QVERIFY(importNow(*r.vk, 4, writeWav(44100, 2, 44100), QString(), &refusal));
         const QByteArray converted = exportAll(*r.vk, 4, &chunks);
         const QString saved = m_dir.filePath(QStringLiteral("saved-m4.wav"));
         QFile f(saved);
         QVERIFY(f.open(QIODevice::WriteOnly));
         f.write(converted);
         f.close();
-        QVERIFY(r.vk->importFile(5, saved, QString(), &refusal));
+        QVERIFY(importNow(*r.vk, 5, saved, QString(), &refusal));
         QCOMPARE(readAll(r.vk->messagePath(5)), converted);
 
         // Through the link's import, a chunk at a time.
@@ -752,9 +968,10 @@ private slots:
         for (qint64 at = 0; at < out.size(); at += VoiceKeyer::kChunkBytes) {
             QVERIFY(r.vk->importChunk(owner, out.mid(at, VoiceKeyer::kChunkBytes), &refusal));
         }
-        QVERIFY(r.vk->finishImport(owner, &refusal));
+        QVERIFY(finishNow(*r.vk, owner, &refusal));
         QCOMPARE(readAll(r.vk->messagePath(6)), out);
         QCOMPARE(r.vk->messages().at(5).name, QStringLiteral("Link"));
+        QCOMPARE(partFiles(r.vk->folder()), QStringList());
 
         // An empty one has nothing to save.
         QByteArray chunk;
@@ -764,9 +981,28 @@ private slots:
         // A short link import is refused and keeps nothing.
         QVERIFY(r.vk->beginImport(owner, 7, QString(), out.size(), &refusal));
         QVERIFY(r.vk->importChunk(owner, out.left(100), &refusal));
-        QVERIFY(!r.vk->finishImport(owner, &refusal));
+        QVERIFY(!finishNow(*r.vk, owner, &refusal));
         QCOMPARE(refusal, QStringLiteral("The file did not arrive whole. Try again."));
         QVERIFY(r.vk->messages().at(6).empty);
+
+        // Two owners' imports at once each have a file of their own, and
+        // one cancelled (its session ended) takes only its own.
+        const QString other = QStringLiteral("tablet");
+        QVERIFY(r.vk->beginImport(owner, 7, QString(), out.size(), &refusal));
+        QVERIFY(r.vk->beginImport(other, 8, QString(), out.size(), &refusal));
+        QVERIFY(r.vk->importChunk(owner, out.left(100), &refusal));
+        QVERIFY(r.vk->importChunk(other, out.left(200), &refusal));
+        QCOMPARE(partFiles(r.vk->folder()).size(), 2);
+        r.vk->cancelImport(owner);
+        QCOMPARE(partFiles(r.vk->folder()).size(), 1);
+        QVERIFY(!r.vk->importChunk(owner, out.mid(100, 100), &refusal));
+        QCOMPARE(refusal, QStringLiteral("No voice message is being loaded."));
+        for (qint64 at = 200; at < out.size(); at += VoiceKeyer::kChunkBytes) {
+            QVERIFY(r.vk->importChunk(other, out.mid(at, VoiceKeyer::kChunkBytes), &refusal));
+        }
+        QVERIFY(finishNow(*r.vk, other, &refusal));
+        QCOMPARE(readAll(r.vk->messagePath(8)), out);
+        QCOMPARE(partFiles(r.vk->folder()), QStringList());
     }
 
     void theFirstEmptyMessage()
@@ -828,6 +1064,7 @@ private slots:
         QCOMPARE(sending.value(QStringLiteral("lengthMs")).toInteger(), qint64(10 * kBlock) * 1000 / kRate);
         QCOMPARE(sending.value(QStringLiteral("waitingMs")).toInteger(), qint64(0));
         QCOMPARE(sending.value(QStringLiteral("by")).toString(), QStringLiteral("Desktop"));
+        QCOMPARE(sending.value(QStringLiteral("deviceId")).toString(), QStringLiteral("station"));
     }
 };
 

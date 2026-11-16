@@ -9,6 +9,12 @@
 //   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs
 //               (handleVoiceKeyer, recordingsVersion 3).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11 review fixes: voiceKeyer.stop from a
+//               device that is not the sender is refused (ruling 8.5);
+//               finishImport is answered once the Core's worker has
+//               converted the file; the sender's wire id in `sending`; a
+//               session's import goes with it.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 10: recordings.setSettings takes the five
 //               on-air switches (recordingsVersion 2).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -385,6 +391,7 @@
 #include "core/recordings/RecordingNames.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingStore.h"
+#include "core/security/StationIdentity.h"
 #include "core/session/RecordingsFacade.h"
 #include <QDir>
 #include <QFile>
@@ -1496,6 +1503,13 @@ void SessionCommandDispatcher::endSessionOwner(const QString& owner)
 {
     if (m_radioModel && !owner.isEmpty()) {
         m_radioModel->dspAssets()->cancelOwner(owner);
+        // Recording plan Task 11: a voice message the session was loading,
+        // and its file, go with it.
+        if (RecordingService* recordings = m_radioModel->recordingService()) {
+            if (VoiceKeyer* voice = recordings->voiceKeyer()) {
+                voice->cancelImport(owner);
+            }
+        }
         // Rotor control plan Task 4b (contract, "The hold dead man"): a
         // turn button this session was holding lets go, and the rotor
         // stops.
@@ -5361,20 +5375,34 @@ void SessionCommandDispatcher::handleVoiceKeyer(const SessionMessage& invoke)
     QString refusal;
     bool ok = true;
 
+    // Who asks, as the voice keyer keys and names it.
+    VoiceKeyer::Requester who;
+    if (m_requester.isEmpty() || m_requester == SliceOwnership::stationDevice()) {
+        who.keyer = KeyerIdentity::station(PttMode::None);
+        who.name = QString::fromLatin1(VoiceKeyer::kStationName);
+    } else {
+        who.keyer.deviceId = m_requester;
+        who.keyer.source = PttMode::None;
+        who.keyer.session = m_sessionOwner;
+        who.name = recordingsDeviceName();
+    }
+    if (m_recordingsDeviceWireId) {
+        who.wireId = m_recordingsDeviceWireId(who.keyer.deviceId);
+    } else {
+        who.wireId = who.keyer.isStation() ? QString::fromLatin1(who.keyer.deviceId)
+                                           : StationIdentity::toBase64Url(who.keyer.deviceId);
+    }
+
     if (verb == "voiceKeyer.send") {
-        VoiceKeyer::Requester who;
-        if (m_requester.isEmpty() || m_requester == SliceOwnership::stationDevice()) {
-            who.keyer = KeyerIdentity::station(PttMode::None);
-            who.name = QString::fromLatin1(VoiceKeyer::kStationName);
-        } else {
-            who.keyer.deviceId = m_requester;
-            who.keyer.source = PttMode::None;
-            who.keyer.session = m_sessionOwner;
-            who.name = recordingsDeviceName();
-        }
         ok = keyer->send(slotArgument(), who, &refusal);
     } else if (verb == "voiceKeyer.stop") {
-        keyer->stop();
+        // Ruling 8.5: only the sender (or the holder, after a take) stops
+        // a message; another device is told to take transmit.
+        TxRefusal stopRefusal;
+        if (!keyer->stopFrom(who.keyer, &stopRefusal)) {
+            emitRefusal(verb, invoke.commandId, stopRefusal);
+            return;
+        }
     } else if (verb == "voiceKeyer.beginImport") {
         ok = keyer->beginImport(importOwner, slotArgument(), arguments.value(QStringLiteral("name")).toString(),
                                 arguments.value(QStringLiteral("size")).toInteger(-1), &refusal);
@@ -5389,7 +5417,26 @@ void SessionCommandDispatcher::handleVoiceKeyer(const SessionMessage& invoke)
         }
         ok = keyer->importChunk(importOwner, data.decoded, &refusal);
     } else if (verb == "voiceKeyer.finishImport") {
-        ok = keyer->finishImport(importOwner, &refusal);
+        // Answered once the Core's worker has converted the file (or
+        // refused it), on a later turn: the main thread never waits on it.
+        const QPointer<SessionCommandDispatcher> self(this);
+        const QString owner = m_sessionOwner;
+        const QByteArray verbCopy = verb;
+        const quint32 commandId = invoke.commandId;
+        keyer->finishImport(importOwner, [self, owner, verbCopy, commandId](bool kept, const QString& reason) {
+            if (self.isNull()) {
+                return;
+            }
+            self->emitResultAs(owner, kept
+                ? SessionMessages::commandResult(verbCopy, commandId, true, QString(),
+                                                 {QByteArrayLiteral("recordings")}, {})
+                : SessionMessages::commandResult(
+                      verbCopy, commandId, false,
+                      reason.isEmpty() ? QStringLiteral("The request for the voice keyer was not understood.")
+                                       : reason,
+                      {}));
+        });
+        return;
     } else if (verb == "voiceKeyer.export") {
         const int n = slotArgument();
         const qint64 offset = arguments.value(QStringLiteral("offset")).toInteger(-1);

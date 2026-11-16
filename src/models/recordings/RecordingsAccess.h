@@ -117,6 +117,8 @@ public:
     /// Keys the radio and sends Mn; it unkeys at the end (or repeats).
     virtual void sendVoice(int n) = 0;
     /// Stops what goes out, or the wait to repeat it; the radio unkeys.
+    /// Another device's message is not this window's to stop (ruling 8.5):
+    /// refused() says to take transmit, and it goes on.
     virtual void stopVoice() = 0;
     /// Puts the sound file at `wavPath` (WAV or MP3, any rate) into Mn,
     /// converted on the Core to 48 kHz mono. An empty `name` keeps Mn's.
