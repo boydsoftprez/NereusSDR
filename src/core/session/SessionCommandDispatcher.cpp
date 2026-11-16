@@ -6,6 +6,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 26: dsr.eraseAll, erase what the
+//               Digital Spectrum Recorder keeps (handleDsr,
+//               recordingsVersion 4).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 25: dsr.saveStretch,
 //               recordings.saveSoundOnly and recordings.openStretch
 //               (handleDsr, recordingsVersion 4).
@@ -1059,6 +1063,10 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          kRadioIdentitySessionProtocolMinor},
         {"recordings.openStretch", {arg("id", kUtf8)}, "recordingsVersion", 4,
          kRadioIdentitySessionProtocolMinor},
+        // Recording plan Task 26 (recordingsVersion 4): Setup's "Erase what
+        // is kept now", after its confirm. Saved stretches stay; the
+        // recorder goes on from now. Never keys the radio.
+        {"dsr.eraseAll", {}, "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's RF-Kit RF2K-S and the station TCI server (R-R3-47,
@@ -1968,7 +1976,7 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
                || invoke.commandVerb == "dsr.seek" || invoke.commandVerb == "dsr.rows"
                || invoke.commandVerb == "dsr.spectrum" || invoke.commandVerb == "dsr.hours"
                || invoke.commandVerb == "dsr.saveStretch" || invoke.commandVerb == "recordings.saveSoundOnly"
-               || invoke.commandVerb == "recordings.openStretch") {
+               || invoke.commandVerb == "recordings.openStretch" || invoke.commandVerb == "dsr.eraseAll") {
         handleDsr(invoke);
     } else if (invoke.commandVerb == "requestIoBoardProbe") {
         handleRequestIoBoardProbe(invoke);
@@ -5471,6 +5479,9 @@ void SessionCommandDispatcher::handleDsr(const SessionMessage& invoke)
     }
     if (verb == "recordings.openStretch") {
         ok = service->openStretch(arguments.value(QStringLiteral("id")).toString(), &refusal);
+    } else if (verb == "dsr.eraseAll") {
+        service->eraseDsr();
+        ok = true;
     } else if (verb == "dsr.rewind") {
         ok = service->rewind(slice, arguments.value(QStringLiteral("utcNs")).toInteger(0),
                              arguments.value(QStringLiteral("frequencyHz")).toInteger(0), &refusal);

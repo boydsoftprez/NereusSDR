@@ -18,6 +18,9 @@
 //                 running its own radio, on once it is told it is a Core,
 //                 a saved value kept. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code. Recording plan Task 10b.
+//   2026-11-16 - Erasing what is kept, and the receivers in the status.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Recording plan Task 26.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -439,6 +442,68 @@ private slots:
         QCOMPARE(svc->dsrStatus().reason, QString());
         svc->pumpForTest();
         QCOMPARE(svc->dsrRecorder()->ring().blockCount(), 1);
+    }
+
+    // Recording plan Task 26 (spec 3 "Recorder Setup"): erase what is kept
+    // now. The running recorder goes on from now in an empty loop, the
+    // figures start again, and the radio's receivers and their bytes an
+    // hour are in the status for Setup's hours.
+    void anEraseStartsAgainFromNow()
+    {
+        RadioModel radio(RadioModel::Role::Local);
+        RecordingService* svc = radio.recordingService();
+        QVERIFY(svc);
+        SliceModel* a = radio.sliceById(radio.addSlice());
+        QVERIFY(a);
+        prepare(*svc);
+        svc->setRadioStreaming(true);
+        QVERIFY(svc->dsrStatus().recording);
+        svc->dsrRecorder()->setStream(0, kCentreHz, kRate);
+        const std::vector<float> chunk = chunkOf(0.25f);
+        for (int sec = 0; sec < 3; ++sec) {
+            feedSecond(*svc, chunk);
+        }
+        QCOMPARE(svc->dsrRecorder()->ring().blockCount(), 3);
+        const qint64 erasedAtMs = m_clockMs.load();
+
+        // The receivers streaming now, and one block a second each.
+        DsrStatus st = svc->dsrStatus();
+        qint64 perHour = 0;
+        for (const DsrReceiverRate& r : st.receivers) {
+            QCOMPARE(r.rateHz, radio.streamSampleRateHz(r.receiver));
+            perHour += DsrRingFile::blockBytes(r.rateHz) * 3600;
+        }
+        QCOMPARE(st.bytesPerHour, perHour);
+        const int stream = a->streamIndex();
+        QCOMPARE(st.receivers.isEmpty(), stream < 0 || radio.streamSampleRateHz(stream) <= 0);
+
+        QSignalSpy changed(svc, &RecordingService::dsrChanged);
+        svc->eraseDsr();
+        QVERIFY(changed.count() >= 1);
+        QCOMPARE(svc->dsrStatus().usedBytes, qint64(0));
+        svc->pumpForTest();
+        QVERIFY(svc->dsrStatus().recording);
+        QCOMPARE(svc->dsrRecorder()->ring().blockCount(), 0);
+        // The restart takes the radio's streams again; this one feeds
+        // receiver 0 by hand, as above.
+        svc->dsrRecorder()->setStream(0, kCentreHz, kRate);
+
+        // It goes on from now: what it keeps starts after the erase.
+        for (int sec = 0; sec < 2; ++sec) {
+            feedSecond(*svc, chunk);
+        }
+        QCOMPARE(svc->dsrRecorder()->ring().blockCount(), 2);
+        QVERIFY(svc->dsrRecorder()->ring().oldestUtcNs(0) >= erasedAtMs * 1000000);
+
+        // With the recorder off, the erase takes the file.
+        svc->setRadioStreaming(false);
+        svc->pumpForTest();
+        QVERIFY(QFileInfo::exists(ringPathOf(*svc)));
+        svc->eraseDsr();
+        svc->pumpForTest();
+        QVERIFY(!QFileInfo::exists(ringPathOf(*svc)));
+        QCOMPARE(svc->dsrStatus().usedBytes, qint64(0));
+        QCOMPARE(svc->dsrStatus().oldestUtcMs, qint64(0));
     }
 };
 

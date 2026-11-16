@@ -12129,6 +12129,12 @@ nereus_add_test(tst_dsr_desktop_rewind)
 # disabled with the reason, and the Recordings window's whole-pan rows
 # (src/core/recordings/, src/gui/recordings/DsrSaveBox.cpp, DsrHoursMap.cpp).
 nereus_add_test(tst_dsr_save)
+# Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder against a
+# fake access. On and its status, the hours at the receivers and rates now,
+# the in-use bar's moving head and red zone, each control sending its field,
+# the erase asking first, an SD card only Core with the switch off and the
+# red warning, an older Core dimmed (src/gui/setup/DsrSetupPage.cpp).
+nereus_add_test(tst_dsr_setup_page)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

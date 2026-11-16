@@ -27,6 +27,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
 //                 stretch, sound only and opening a saved stretch.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: eraseDsr
+//                 (dsr.eraseAll). AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -230,6 +233,11 @@ void RemoteRecordingsAccess::saveSoundOnly(const QString& id)
 void RemoteRecordingsAccess::openStretch(const QString& id)
 {
     sendDsrVerb(QStringLiteral("recordings.openStretch"), QJsonObject{{QStringLiteral("id"), id}});
+}
+
+void RemoteRecordingsAccess::eraseDsr()
+{
+    sendDsrVerb(QStringLiteral("dsr.eraseAll"), QJsonObject{});
 }
 
 bool RemoteRecordingsAccess::sendLink(const QString& verb, const QJsonObject& arguments)

@@ -2390,6 +2390,8 @@ set(GUI_SOURCES
     src/gui/setup/RotorSetupPage.cpp
     # Recording plan Task 8: Setup > Cores > Recordings.
     src/gui/setup/RecordingsSetupPage.cpp
+    # Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder.
+    src/gui/setup/DsrSetupPage.cpp
     src/gui/setup/TciLogWindow.cpp
     src/gui/setup/HotKeySetupPages.cpp
     src/gui/setup/KeyboardMapWidget.cpp

@@ -21,6 +21,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: `stretch` and
 //                 `saving` in the `dsr` part; a whole-pan entry's centre and
 //                 span. AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: `receivers`
+//                 and `bytesPerHour` in the `dsr` part, for Setup's hours.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RecordingsFacade.h"
@@ -342,6 +345,10 @@ QJsonObject RecordingsFacade::dsrJson(const DsrStatus& status)
                                    {QStringLiteral("frequencyHz"), r.frequencyHz},
                                    {QStringLiteral("liveFrequencyHz"), r.liveFrequencyHz}});
     }
+    QJsonArray receivers;
+    for (const DsrReceiverRate& r : status.receivers) {
+        receivers.append(QJsonObject{{QStringLiteral("receiver"), r.receiver}, {QStringLiteral("rateHz"), r.rateHz}});
+    }
     return QJsonObject{{QStringLiteral("enabled"), status.enabled},
                        {QStringLiteral("disk"), QDir::toNativeSeparators(status.disk)},
                        {QStringLiteral("sizeLimitGb"), status.sizeLimitGb},
@@ -363,7 +370,11 @@ QJsonObject RecordingsFacade::dsrJson(const DsrStatus& status)
                             : QJsonValue(QJsonObject{{QStringLiteral("id"), status.stretchId},
                                                      {QStringLiteral("fromUtcNs"), status.stretchFromUtcNs},
                                                      {QStringLiteral("toUtcNs"), status.stretchToUtcNs}})},
-                       {QStringLiteral("saving"), status.saving}};
+                       {QStringLiteral("saving"), status.saving},
+                       // Recording plan Task 26: the receivers it keeps now
+                       // and their disk bytes an hour (Setup's hours).
+                       {QStringLiteral("receivers"), receivers},
+                       {QStringLiteral("bytesPerHour"), status.bytesPerHour}};
 }
 
 bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,

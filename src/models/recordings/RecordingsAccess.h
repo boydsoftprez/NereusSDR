@@ -53,6 +53,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
 //                 stretch, sound only and opening a saved stretch.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: eraseDsr
+//                 (dsr.eraseAll). AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QJsonArray>
@@ -167,6 +170,11 @@ public:
     /// A saved whole-pan stretch on the waterfall, like rewind: slice A
     /// plays it and the document's `dsr.stretch` names it.
     virtual void openStretch(const QString& id) = 0;
+    /// Erases everything the Digital Spectrum Recorder keeps now (Setup's
+    /// "Erase what is kept now", after its confirm; recordingsVersion 4).
+    /// Saved stretches stay and the recorder goes on from now; a refusal
+    /// comes through refused(). Never keys the radio.
+    virtual void eraseDsr() = 0;
     /// Keys the radio and sends Mn; it unkeys at the end (or repeats).
     virtual void sendVoice(int n) = 0;
     /// Stops what goes out, or the wait to repeat it; the radio unkeys.

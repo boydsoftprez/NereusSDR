@@ -2158,6 +2158,14 @@
         },
         {
             "arguments": [
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "dsr.eraseAll"
+        },
+        {
+            "arguments": [
                 {
                     "kind": "i64",
                     "name": "band",

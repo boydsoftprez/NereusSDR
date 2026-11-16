@@ -35,6 +35,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; the pan's width in pixels is checked with
 //             its other settings (recording plan Task 24). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; eraseDsr, and the receivers the recorder
+//             keeps (and their bytes an hour) in its status (spec 3, 6.7,
+//             recording plan Task 26). AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -89,6 +92,7 @@ bool squelchOnFor(const SliceModel& slice)
 }
 
 constexpr qint64 kNsPerMs = 1000000;
+constexpr qint64 kSecondsPerHour = 3600;
 
 QString suffixFor(AudioFileFormat format)
 {
@@ -228,6 +232,8 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
             }
             // A rewound slice's past moves with its receiver's centre.
             followLiveCentres();
+            // Task 26: Setup's hours follow the receivers and rates.
+            noteDsrReceivers();
         });
         connect(m_radio, &RadioModel::sliceAdded, this, &RecordingService::onSliceAdded);
         connect(m_radio, &RadioModel::sliceRemoved, this, &RecordingService::onSliceRemoved);
@@ -1429,11 +1435,99 @@ DsrStatus RecordingService::dsrStatus() const
     st.stretchFromUtcNs = m_stretch.fromUtcNs;
     st.stretchToUtcNs = m_stretch.toUtcNs;
     st.saving = int(m_saves.size());
+    // Task 26: one second of each receiver is one block on disk.
+    st.receivers = dsrReceivers();
+    for (const DsrReceiverRate& r : std::as_const(st.receivers)) {
+        st.bytesPerHour += DsrRingFile::blockBytes(r.rateHz) * kSecondsPerHour;
+    }
     if (st.sizeLimitBytes == 0) {
         st.sizeLimitBytes = qint64(std::max(m_settings.dsrSizeLimitGb, RecordingSettings::kDsrSizeLimitGbMin))
                             * kBytesPerGb;
     }
     return st;
+}
+
+QList<DsrReceiverRate> RecordingService::dsrReceivers() const
+{
+    QList<DsrReceiverRate> out;
+    if (m_radio == nullptr) {
+        return out;
+    }
+    for (const SliceModel* slice : m_radio->slices()) {
+        const int stream = slice != nullptr ? slice->streamIndex() : -1;
+        if (stream < 0 || stream >= DsrRecorder::kMaxReceivers) {
+            continue;
+        }
+        const int rateHz = m_radio->streamSampleRateHz(stream);
+        const bool known = std::any_of(out.cbegin(), out.cend(),
+                                       [stream](const DsrReceiverRate& r) { return r.receiver == stream; });
+        if (rateHz > 0 && !known) {
+            out.append(DsrReceiverRate{stream, rateHz});
+        }
+    }
+    std::sort(out.begin(), out.end(),
+              [](const DsrReceiverRate& a, const DsrReceiverRate& b) { return a.receiver < b.receiver; });
+    return out;
+}
+
+void RecordingService::noteDsrReceivers()
+{
+    QList<int> now;
+    for (const DsrReceiverRate& r : dsrReceivers()) {
+        now << r.receiver << r.rateHz;
+    }
+    if (now == m_dsrReceiversShown) {
+        return;
+    }
+    m_dsrReceiversShown = now;
+    emit dsrChanged();
+}
+
+void RecordingService::eraseDsr()
+{
+    // What is erased cannot be played: slices rewound into the recorder go
+    // back to the radio. One playing a saved stretch reads its own file.
+    const QList<int> rewoundSlices = m_rewound.keys();
+    for (const int slice : rewoundSlices) {
+        if (!m_rewound.value(slice).source) {
+            endRewind(slice, true);
+        }
+    }
+    const QString path = QDir(m_settings.dsrFolder()).filePath(QString::fromLatin1(kDsrFileName));
+    const QString runningPath = m_dsrPath;
+    const qint64 limit = m_dsrLimit;
+    const bool wasRunning = m_dsrRunning;
+    if (wasRunning) {
+        m_dsrRunning = false;
+        m_dsr->setAccepting(false);
+    }
+    // Figures from before the erase are dropped when they arrive.
+    ++m_dsrToken;
+    ensureWorker();
+    QMetaObject::invokeMethod(m_workerContext, [this, path, runningPath] {
+        if (m_dsrWorkerOpen) {
+            // What the rings still hold goes with the rest.
+            m_dsrWorkerOpen = false;
+            m_dsr->abandon();
+        }
+        QStringList paths{path};
+        if (!runningPath.isEmpty() && runningPath != path) {
+            paths.append(runningPath);
+        }
+        for (const QString& p : std::as_const(paths)) {
+            if (QFile::exists(p) && !QFile::remove(p) && !QFile::resize(p, 0)) {
+                qCWarning(lcRecordings) << "cannot erase the spectrum recorder's file" << p;
+            }
+        }
+        workerStopTimerIfIdle();
+    }, Qt::QueuedConnection);
+    m_dsrFigures = DsrStatus{};
+    m_dsrFiguresShownMs = -1;
+    if (wasRunning) {
+        // Queued after the erase on the worker: a new, empty ring file.
+        startDsr(runningPath, limit);
+    }
+    emit dsrChanged();
 }
 
 void RecordingService::setRadioStreaming(bool on)

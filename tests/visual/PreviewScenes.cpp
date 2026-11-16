@@ -339,6 +339,12 @@
 //                the 10 minute yellow bracket and the save box) and dsr-save--box (a longer
 //                stretch over the net, sizes in GB, sound only as WAV), as hours.html does.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: dsr-setup--ssd (a full loop on a
+//                Core's SSD: the hours, the always erasing note, the bar's head and red zone),
+//                dsr-setup--sd-card (a Pi with only an SD card: the switch off and the red
+//                warning) and dsr-setup--erase-confirm pose Setup > Cores > Digital Spectrum
+//                Recorder against a fake recordings access, as the dsr-setup mockup does.
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -478,6 +484,8 @@
 #include "gui/setup/AppearanceSetupPages.h"
 #include "gui/setup/HardwarePage.h"
 #include "gui/setup/KnobsSetupPage.h"
+#include "core/recordings/dsr/DsrRingFile.h"
+#include "gui/setup/DsrSetupPage.h"
 #include "gui/setup/RecordingsSetupPage.h"
 #include "gui/setup/TciLogWindow.h"
 #include "gui/widgets/FilterPolicyDialog.h"
@@ -8963,6 +8971,9 @@ void sceneRecordingsWindow(SceneContext& ctx, const QString& name, RecordingsWin
 
 // Recording plan Task 8: defined beside the Setup scenes' helpers below.
 void sceneRecordingsSetup(SceneContext& ctx, const QString& name, bool sdCard);
+// Recording plan Task 26: defined beside it.
+enum class DsrSetupPose { Ssd, SdCard, EraseConfirm };
+void sceneDsrSetup(SceneContext& ctx, const QString& name, DsrSetupPose pose);
 
 // ---- Recording plan Task 12: the Voice keyer panel and VOICE ----
 //
@@ -11425,6 +11436,15 @@ QVector<Scene> fixedScenes()
         scenes.append({name, QStringLiteral("2v"), true,
                        [name, sdCard](SceneContext& ctx) { sceneRecordingsSetup(ctx, name, sdCard); }, true});
     }
+    // ---- Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, DsrSetupPose>>{
+             {"ssd", DsrSetupPose::Ssd}, {"sd-card", DsrSetupPose::SdCard},
+             {"erase-confirm", DsrSetupPose::EraseConfirm}}) {
+        const QString name = QStringLiteral("dsr-setup--") + QLatin1String(suffix);
+        const DsrSetupPose p = pose;
+        scenes.append({name, QStringLiteral("2v"), true,
+                       [name, p](SceneContext& ctx) { sceneDsrSetup(ctx, name, p); }, true});
+    }
     // ---- Longpath instruments as container content (switch on) ----
     scenes.append({QStringLiteral("instruments-sheet"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneInstrumentsSheet(ctx); }, true});
@@ -12777,6 +12797,110 @@ void sceneRecordingsSetup(SceneContext& ctx, const QString& name, bool sdCard)
         pump(kTabSettleMs);
         captureDialog(ctx, d, name + QStringLiteral("--bottom"));
     }
+}
+
+// ---- Recording plan Task 26: Setup > Cores > Digital Spectrum Recorder ----
+// The page against a fake recordings access, as the approved dsr-setup
+// mockup's Cores: one with an SSD recording two receivers at 192 kHz into a
+// full 10 GB loop (the head and the red zone), a Pi with only an SD card
+// (the switch off and the red warning), and the erase's confirm.
+void sceneDsrSetup(SceneContext& ctx, const QString& name, DsrSetupPose pose)
+{
+    ctx.provenance = provProposed();
+    SetupDialog* first = openSetupDialog(ctx.window);
+    const int index =
+        first != nullptr ? first->pageLabelsForTest().indexOf(QStringLiteral("Digital Spectrum Recorder")) : -1;
+    if (index < 0) {
+        ctx.failure = QStringLiteral("no Digital Spectrum Recorder page in Setup");
+        return;
+    }
+    SetupDialog* d = openSetupPageScene(ctx, index);
+    if (d == nullptr) {
+        return;
+    }
+    auto* page = d->findChild<DsrSetupPage*>();
+    if (page == nullptr) {
+        ctx.failure = QStringLiteral("the Digital Spectrum Recorder page was not built");
+        return;
+    }
+    const bool sdCard = pose == DsrSetupPose::SdCard;
+    const qint64 gb = qint64(1000) * 1000 * 1000;
+    const auto disk = [](const QString& root, const QString& diskName, qint64 free, bool own, bool sd) {
+        return QJsonObject{{QStringLiteral("root"), root}, {QStringLiteral("name"), diskName},
+                           {QStringLiteral("free"), free}, {QStringLiteral("total"), free * 2},
+                           {QStringLiteral("sd"), sd},     {QStringLiteral("own"), own}};
+    };
+    const QJsonArray disks = sdCard
+        ? QJsonArray{disk(QStringLiteral("/"), QStringLiteral("SD card"), 58 * gb, true, true)}
+        : QJsonArray{disk(QStringLiteral("/"), QStringLiteral("SSD"), 412 * gb, true, false)};
+    QJsonObject settings{{QStringLiteral("format"), QStringLiteral("mp3")},
+                         {QStringLiteral("disk"), QString()},
+                         {QStringLiteral("disks"), disks}};
+    // The mockup's moment: 14:32 UTC on 14 Nov 2026, the loop full.
+    const qint64 newestMs = QDateTime(QDate(2026, 11, 14), QTime(14, 32), QTimeZone::utc()).toMSecsSinceEpoch();
+    const int rate = 192000;
+    const qint64 perHour = DsrRingFile::blockBytes(rate) * 3600 * 2;
+    const qint64 limit = 10 * gb;
+    const qint64 heldMs = limit * 3600 * 1000 / perHour;
+    const QJsonArray receivers{QJsonObject{{QStringLiteral("receiver"), 0}, {QStringLiteral("rateHz"), rate}},
+                               QJsonObject{{QStringLiteral("receiver"), 1}, {QStringLiteral("rateHz"), rate}}};
+    const QJsonObject dsr{
+        {QStringLiteral("enabled"), true},
+        {QStringLiteral("disk"), QString()},
+        {QStringLiteral("sizeLimitGb"), 10},
+        {QStringLiteral("recording"), !sdCard},
+        {QStringLiteral("reason"), sdCard ? QStringLiteral("The only disk is an SD card.") : QString()},
+        {QStringLiteral("sizeLimitBytes"), limit},
+        {QStringLiteral("usedBytes"), sdCard ? qint64(0) : limit - 4096},
+        {QStringLiteral("writePosition"), sdCard ? qint64(0) : limit * 2 / 5},
+        {QStringLiteral("oldestUtcMs"), sdCard ? qint64(0) : newestMs - heldMs},
+        {QStringLiteral("newestUtcMs"), sdCard ? qint64(0) : newestMs},
+        {QStringLiteral("hoursHeld"), sdCard ? 0.0 : double(heldMs) / 3600000.0},
+        {QStringLiteral("overflows"), 0},
+        {QStringLiteral("rewound"), QJsonArray()},
+        {QStringLiteral("stretch"), QJsonValue()},
+        {QStringLiteral("saving"), 0},
+        {QStringLiteral("receivers"), receivers},
+        {QStringLiteral("bytesPerHour"), perHour}};
+    auto* access = new FakeRecordingsAccess(ctx.window);
+    access->version = RecordingsAccess::kDsrVersion;
+    if (!sdCard) {
+        // The mockup's three saved stretches, 1.4 GB.
+        const qint64 sizes[] = {700, 500, 200};
+        for (int i = 0; i < 3; ++i) {
+            RecordingEntry e;
+            e.id = QStringLiteral("w%1").arg(i + 1);
+            e.kind = i < 2 ? RecordingKind::WholePan : RecordingKind::Sound;
+            e.startUtc = QDateTime::fromMSecsSinceEpoch(newestMs - (i + 1) * 3600000LL, QTimeZone::utc());
+            e.sizeBytes = sizes[i] * 1000 * 1000;
+            e.name = e.id;
+            access->entries.append(e);
+        }
+    }
+    QJsonObject doc = FakeRecordingsAccess::document({}, 1, QString(), settings);
+    doc.insert(QStringLiteral("version"), RecordingsAccess::kDsrVersion);
+    doc.insert(QStringLiteral("dsr"), dsr);
+    access->setDocument(doc);
+    page->setAccess(access);
+    pump(kTabSettleMs);
+    ctx.notes.append(QStringLiteral("Setup > Cores > Digital Spectrum Recorder on a fake recordings access (no "
+                                    "Core), %1")
+                         .arg(sdCard ? QStringLiteral("a Pi with only an SD card")
+                                     : QStringLiteral("a Core with an SSD, two receivers at 192 kHz, the loop full")));
+    if (pose != DsrSetupPose::EraseConfirm) {
+        captureDialog(ctx, d, name);
+        return;
+    }
+    // The confirm the page shows before erasing, built as its own is.
+    QMessageBox box(QMessageBox::Warning, DsrSetupPage::eraseTitle(), DsrSetupPage::eraseTitle(),
+                    QMessageBox::NoButton, d);
+    box.setInformativeText(page->eraseText());
+    box.addButton(QStringLiteral("Erase"), QMessageBox::DestructiveRole);
+    box.setDefaultButton(box.addButton(QMessageBox::Cancel));
+    box.show();
+    pump(kTabSettleMs);
+    captureDialog(ctx, &box, name);
+    box.hide();
 }
 
 QVector<Scene> setupPageScenes(MainWindow* window)

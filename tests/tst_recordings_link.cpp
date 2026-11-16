@@ -52,6 +52,10 @@
 //                 test's Core says it is a Core, as nereusd does, so its
 //                 Digital Spectrum Recorder starts on. AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: the two
+//                 recordings.* verbs Task 25 added at version 4
+//                 (saveSoundOnly, openStretch) are checked at 4, not 1.
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -289,16 +293,21 @@ private slots:
             "recordings.start", "recordings.stop", "recordings.list", "recordings.play",
             "recordings.stopPlay", "recordings.seek", "recordings.rename", "recordings.delete",
             "recordings.export", "recordings.setSettings"};
+        // Saving a stretch (Task 25) came with the Digital Spectrum Recorder.
+        const QSet<QByteArray> atFour{"recordings.saveSoundOnly", "recordings.openStretch"};
         QSet<QByteArray> found;
+        QSet<QByteArray> foundAtFour;
         for (const CommandVerbSpec& spec : SessionCommandDispatcher::verbSpecs()) {
             if (spec.verb.startsWith("recordings.")) {
-                found.insert(spec.verb);
+                const bool four = atFour.contains(spec.verb);
+                (four ? foundAtFour : found).insert(spec.verb);
                 QCOMPARE(spec.capability, QByteArrayLiteral("recordingsVersion"));
-                QCOMPARE(spec.capabilityVersion, 1);
+                QCOMPARE(spec.capabilityVersion, four ? 4 : 1);
                 QCOMPARE(int(spec.minMinor), int(kRadioIdentitySessionProtocolMinor));
             }
         }
         QCOMPARE(found, expected);
+        QCOMPARE(foundAtFour, atFour);
     }
 
     void theVoiceKeyerVerbsAreDeclaredWithVersionThree()

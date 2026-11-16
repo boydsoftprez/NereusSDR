@@ -12,6 +12,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; DsrStatus carries the opened stretch and
 //             the saves running (recording plan Task 25). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; DsrStatus carries the receivers it keeps
+//             now and the bytes they take an hour, for the Setup page's
+//             hours (recording plan Task 26). AI tooling: Anthropic Claude
+//             Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -39,6 +43,12 @@ struct DsrRewoundSlice {
     qint64 liveFrequencyHz = 0;
 };
 
+// One receiver the recorder keeps now, at its own rate (Task 26).
+struct DsrReceiverRate {
+    int receiver = -1;
+    int rateHz = 0;
+};
+
 // What the recorder holds and why it is off, as the recordings document
 // carries it (RecordingsFacade, the `dsr` part).
 struct DsrStatus {
@@ -60,6 +70,10 @@ struct DsrStatus {
     qint64 stretchFromUtcNs = 0;
     qint64 stretchToUtcNs = 0;
     int saving = 0;
+    // Task 26: the receivers streaming now (what it keeps, or would keep
+    // when on), by receiver, and the disk bytes they take an hour.
+    QList<DsrReceiverRate> receivers;
+    qint64 bytesPerHour = 0;
     double hoursHeld() const
     {
         return newestUtcMs > oldestUtcMs ? double(newestUtcMs - oldestUtcMs) / 3600000.0 : 0.0;

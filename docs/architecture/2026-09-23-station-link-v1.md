@@ -3865,7 +3865,11 @@ Notes on the keys:
   slice is rewound, moved or goes live. `stretch` is the saved whole-pan
   stretch Slice A plays (`recordings.openStretch`), null when none: `id`,
   `fromUtcNs` and `toUtcNs`, the moments it keeps. `saving` counts the
-  stretches being saved now. While a slice
+  stretches being saved now. `receivers` are the receivers streaming now,
+  each `receiver` and its `rateHz` (what the recorder keeps, or would keep
+  when on), and `bytesPerHour` the disk bytes they take an hour, so Setup
+  can say how long a size limit holds; they change when a receiver starts,
+  stops or changes rate. While a slice
   records, or a voice message goes out, the document is rebuilt once a
   second. `revision` moves by one each
   time `json` changes. The recordings themselves are not in it: a client asks
@@ -6673,6 +6677,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `dsr.saveStretch` | `fromUtcNs` i64, `toUtcNs` i64, `kind` utf8 | `recordingsVersion` | 4 | 11 |
 | `recordings.saveSoundOnly` | `id` utf8 | `recordingsVersion` | 4 | 11 |
 | `recordings.openStretch` | `id` utf8 | `recordingsVersion` | 4 | 11 |
+| `dsr.eraseAll` | none | `recordingsVersion` | 4 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -7199,6 +7204,14 @@ These command groups need a sentence beyond the table:
   recording is no longer kept.", "That recording cannot be played.", "The
   Core has nowhere to keep recordings." and, for `recordings.openStretch`,
   the `dsr.rewind` refusals.
+- **Erasing the recorder** (`recordingsVersion` 4). `dsr.eraseAll` (no
+  arguments) erases everything the Digital Spectrum Recorder keeps now.
+  Setup sends it only after asking, since it cannot be undone. Slices
+  rewound into the recorder go live first (one playing a saved stretch
+  plays on); a running recorder goes on from now in an empty loop, and the
+  `dsr` figures start again from nothing. Saved stretches are recordings
+  and stay. It never keys the radio, and is never refused by a Core that
+  keeps recordings.
 - **The voice keyer** (`recordingsVersion` 3). Messages M1 to M8 are kept on
   the Core as 48 kHz 16-bit mono WAV, at most two minutes each.
   `voiceKeyer.send` (`n`) is the one verb that keys the radio: it keys as

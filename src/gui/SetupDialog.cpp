@@ -8,6 +8,9 @@
 // behaviour rules consulted while implementing visibility wiring.
 //
 // Modification history (NereusSDR):
+//   2026-11-16 - Cores > Digital Spectrum Recorder (DsrSetupPage, Core
+//                scope), before Recordings, recording plan Task 26.
+//                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15 - Cores > Recordings (RecordingsSetupPage, Core scope),
 //                recording plan Task 8. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
@@ -246,6 +249,7 @@
 #include "setup/ThisCorePage.h"
 #include "setup/CoresSetupPage.h"
 #include "setup/CoreAudioSetupPage.h"
+#include "setup/DsrSetupPage.h"
 #include "setup/RecordingsSetupPage.h"
 #include "gui/RemoteMediaController.h"
 #include "gui/RemoteTelemetryController.h"
@@ -1874,6 +1878,16 @@ void SetupDialog::buildTree()
     registerPage(cores, "Audio with the Core", SetupScope::ThisComputer, [this]() -> QWidget* {
         auto* page = new CoreAudioSetupPage(m_coreAudioMedia, m_coreAudioTelemetry);
         page->setContext(m_coreAudioContext);
+        return page;
+    });
+
+    // Recording plan Task 26: the Core's Digital Spectrum Recorder (spec 3
+    // "Recorder Setup", 6.7), before Recordings as the spec places it.
+    // Core: every device shares it and this window stores none of it.
+    registerPage(cores, "Digital Spectrum Recorder", SetupScope::Core, [this]() -> QWidget* {
+        auto* page = new DsrSetupPage(m_model ? m_model->recordings() : nullptr);
+        connect(page, &DsrSetupPage::recordingsWindowRequested,
+                this, &SetupDialog::recordingsWindowRequested);
         return page;
     });
 

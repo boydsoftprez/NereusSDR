@@ -39,6 +39,9 @@
 //             recording's sound played on its own (spec 3, 6.3, 6.4, 6.7,
 //             A13, recording plan Task 25). AI tooling: Anthropic Claude
 //             Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; eraseDsr: erase what the recorder keeps
+//             now, and the receivers it keeps in its status (spec 3, 6.7,
+//             recording plan Task 26). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -242,6 +245,15 @@ public:
     // The radio streams I/Q (connected), or not; the recorder runs only
     // while it does. Followed from RadioModel::connectionStateChanged.
     void setRadioStreaming(bool on);
+    // Task 26 (spec 3 "Recorder Setup"): erases everything the recorder
+    // keeps now. A running recorder goes on from now in a new ring file;
+    // rewound slices go live first. Saved stretches are recordings and stay.
+    // Main thread; the file goes on the worker. Asked for from Setup after
+    // its confirm, which is the safeguard. It is never refused.
+    void eraseDsr();
+    // The receivers streaming now with their rates, by receiver (what the
+    // recorder keeps, or would keep when on).
+    QList<DsrReceiverRate> dsrReceivers() const;
 
     // ---- Rewind sound (spec 3, 6.7, recording plan Task 22): a slice
     // plays the past. Its frequency moves to the moment's frequency and its
@@ -485,6 +497,8 @@ private:
     void onDsrFigures(quint64 token, const DsrStatus& figures);
     void onDsrFailed(quint64 token);
     void workerDrainDsr();
+    // The status follows a change of receivers or rates (Task 26).
+    void noteDsrReceivers();
 
     // Rewind sound.
     struct Rewound {
@@ -594,6 +608,7 @@ private:
     mutable bool m_dsrReasonKnown = false;
     DsrStatus m_dsrFigures;
     qint64 m_dsrFiguresShownMs = -1;
+    QList<int> m_dsrReceiversShown;   // receiver, rate, receiver, rate, ...
     QTimer* m_dsrDiskTimer = nullptr;
     bool m_dsrWorkerOpen = false;   // worker thread only
     quint64 m_dsrWorkerToken = 0;   // worker thread only

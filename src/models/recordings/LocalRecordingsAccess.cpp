@@ -30,6 +30,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: saving a
 //                 stretch, sound only and opening a saved stretch.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: eraseDsr
+//                 (dsr.eraseAll). AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -283,6 +286,13 @@ void LocalRecordingsAccess::openStretch(const QString& id)
         if (!recordings->openStretch(id, &refusal)) {
             emit refused(refusal);
         }
+    }
+}
+
+void LocalRecordingsAccess::eraseDsr()
+{
+    if (RecordingService* recordings = begin()) {
+        recordings->eraseDsr();
     }
 }
 
