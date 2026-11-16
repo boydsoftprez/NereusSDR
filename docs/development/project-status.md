@@ -87,7 +87,9 @@ runner and two MediaNotReady test cases; tests only).
 - 787 to 791 iPhone heat: waterfall timeline, meter readings, band drawing,
   Modes tab and Roundtable churn.
 - 797 recordings, voice keyer and Digital Spectrum Recorder (draft, in
-  progress; not yet decided for this release).
+  progress; JJ wants it in this release).
+- The web version: run the station from a web browser (branch
+  `claude/web-version`, in progress, no PR yet; JJ wants it in this release).
 
 The remaining text is an archived reference copied from the earlier agent
 context. Its phase scheduling, release status and class inventories can be
