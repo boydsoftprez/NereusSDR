@@ -31,6 +31,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The Roundtable strip between the frequency scale and the
+//               waterfall: kRoundtableStripHeight, roundtableStripShownFor.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-03: The view of another frequency: RoundtableViewModel,
 //               paintRoundtableView and its text (overlay design D22, D23).
 //               RoundtableCardModel::onFrequency, RoundtableCardRow::label.
@@ -188,6 +191,15 @@ NEREUS_GUI_EXPORT QList<RoundtableTag> roundtableTagsFor(const RoundtableModel* 
 /// reconnecting or offline; Dimmed while you are hidden (you still see
 /// everything, D21); Live otherwise.
 NEREUS_GUI_EXPORT RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model);
+
+/// How tall the Roundtable strip is: the row between the frequency scale and
+/// the waterfall that holds the card and the tags.
+inline constexpr int kRoundtableStripHeight = 30;
+
+/// Whether the pans show the Roundtable strip: Roundtable is available and its
+/// link is anything but Off (Connecting, Reconnecting, Offline, Hidden and Live
+/// all show it). False without a model.
+NEREUS_GUI_EXPORT bool roundtableStripShownFor(const RoundtableModel* model);
 
 /// Where a reading sits on a card's meter, the flag's S scale: -121 dBm is
 /// empty and -33 dBm is full (overlay design D11).

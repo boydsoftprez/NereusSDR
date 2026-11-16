@@ -7,6 +7,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: roundtableStripShownFor, whether the pans show the Roundtable
+//               strip. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: A fold's list in the inspector (overlay design D37). J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector's words (overlay design D19, D22, D34, D35, D37):
@@ -1400,6 +1402,12 @@ RoundtableTagDisplay roundtableTagDisplayFor(const RoundtableModel* model)
         return RoundtableTagDisplay::Live;
     }
     return RoundtableTagDisplay::Hidden;
+}
+
+bool roundtableStripShownFor(const RoundtableModel* model)
+{
+    return model != nullptr && model->available()
+        && model->linkState() != RoundtableModel::LinkState::Off;
 }
 
 RoundtableFlagLine roundtableFlagLineFor(const RoundtableModel* model, int sliceId, qint64 hz, const QString& family)

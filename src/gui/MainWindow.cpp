@@ -11,6 +11,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Every pan shows the Roundtable strip while Roundtable is on
+//               (refreshRoundtableTags, roundtableStripShownFor). J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06: A pan raises the wideband flag only for a slice this window
 //               controls, not one it only listens to, JJ's decision.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
@@ -8113,6 +8116,9 @@ void MainWindow::refreshRoundtableTags()
         ? RoundtableModel::frequencyContextId(std::llround(active->frequency()), activeFamily) : QString();
     QList<RoundtableTag> tags = roundtableTagsFor(roundtable, sliceIds, activeContext);
     const RoundtableTagDisplay display = roundtableTagDisplayFor(roundtable);
+    // The strip under each pan's frequency scale: there while Roundtable is on,
+    // in a local window and in one attached to a remote Core alike.
+    const bool stripShown = roundtableStripShownFor(roundtable);
     for (auto it = m_vfoWidgetsBySlice.constBegin(); it != m_vfoWidgetsBySlice.constEnd(); ++it) {
         if (it.value()) {
             SliceModel* slice = nullptr;
@@ -8139,6 +8145,7 @@ void MainWindow::refreshRoundtableTags()
     for (PanadapterApplet* applet : m_panStack->allApplets()) {
         SpectrumWidget* sw = applet ? applet->spectrumWidget() : nullptr;
         if (sw) {
+            sw->setRoundtableStripShown(stripShown);
             sw->setRoundtableTags(tags, display);
             const bool hosts = active && sw->vfoWidget(active->sliceIndex()) != nullptr;
             sw->setRoundtableCard(hosts ? card : RoundtableCardModel{}, activeContext);

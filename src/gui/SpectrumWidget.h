@@ -1,4 +1,8 @@
 // Modification history (NereusSDR):
+//   2026-11-16: The Roundtable strip between the frequency scale and the
+//               waterfall: setRoundtableStripShown, SpectrumLayout::roundtableStrip,
+//               rebuildWaterfallImage. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-06: BandStackTick and the band stack overlay: ticks, their hit
 //               test, hover and on-air hide (band stack plan Task 11). J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2978,6 +2982,14 @@ public:
     /// The spectrum rectangle the tags are drawn against, and the band
     /// plan strip's height at its foot.
     QRect roundtableTagSpectrumRectForTest() const;
+    /// The Roundtable strip: a kRoundtableStripHeight row between the
+    /// frequency scale and the waterfall, taken from the waterfall's height
+    /// only, so the spectrum keeps its size. Shown while Roundtable is on
+    /// (roundtableStripShownFor). Setting the current value does nothing.
+    void setRoundtableStripShown(bool shown);
+    bool roundtableStripShown() const { return m_roundtableStripShown; }
+    /// The strip's rect, null while it is hidden.
+    QRect roundtableStripRectForTest() const;
     int bandPlanStripHeightForTest(const QPaintDevice* device = nullptr) const
     {
         return bandPlanStripHeight(device);
@@ -3460,6 +3472,9 @@ private:
         QRect frequency;
         QRect waterfall;
         QRect waterfallChrome; // Full width for right-edge history/LIVE controls.
+        // The Roundtable strip, directly under `frequency`, the plot's width;
+        // null while it is hidden.
+        QRect roundtableStrip;
     };
     SpectrumLayout spectrumLayout() const;
 
@@ -3650,6 +3665,13 @@ private:
     bool  historyResizeSettling() const;
     void  rebuildWaterfallViewport();
     void  rebuildWaterfallViewport(double centerHz, double bandwidthHz);
+    // Re-creates m_waterfall at the layout's waterfall size and refills it
+    // from the history; nothing when the size is unchanged. resizeEvent and
+    // setRoundtableStripShown share it.
+    void  rebuildWaterfallImage();
+    // The Roundtable strip's background: a dark fill with a line on its top
+    // and bottom rows.
+    void  drawRoundtableStrip(QPainter& p, const QRect& strip);
     void  setWaterfallLive(bool live);
     void  appendHistoryRow(const QRgb* rowData, qint64 timestampMs,
                            bool imdEligible = false, quint64 acceptedOrdinal = 0);
@@ -4726,6 +4748,8 @@ private:
     QVector<SpotCluster> m_spotClusters;
     // Roundtable plan Task 14: the room tags and what the last pass drew.
     QList<RoundtableTag> m_roundtableTags;
+    // The Roundtable strip under the frequency scale (setRoundtableStripShown).
+    bool m_roundtableStripShown = false;
     // The tags as the pan draws them: one per double (roundtableMergeDoubleTags).
     QList<RoundtableTag> m_roundtablePanTags;
     // Tag widths, measured once per tag text and font (measureRoundtableTags).

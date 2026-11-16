@@ -21,6 +21,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The Roundtable strip: its row in the pan layout, toggling it,
+//               when it shows, and a press in it that tunes nothing. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: placeRoundtableInspector. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
 //   2026-11-03: Overlay redesign truth rules and card model (design D1 to D9,
@@ -3291,6 +3294,134 @@ private slots:
             QCOMPARE(roundtableTagDisplayFor(&model), display);
         }
         model.detach();
+    }
+
+    void theStripShowsWhileRoundtableIsOnInAnyLinkState()
+    {
+        QVERIFY(!roundtableStripShownFor(nullptr));
+        RoundtableModel unattached;
+        QVERIFY(!unattached.available());
+        QVERIFY(!roundtableStripShownFor(&unattached));
+        NullLink link;
+        RoundtableState state;
+        RoundtableModel model;
+        model.attachStation(&link, &state);
+        using LinkState = RoundtableModel::LinkState;
+        const QList<std::pair<LinkState, bool>> cases{
+            {LinkState::Off, false},          {LinkState::Connecting, true}, {LinkState::Live, true},
+            {LinkState::Reconnecting, true},  {LinkState::Offline, true},    {LinkState::Hidden, true}};
+        for (const auto& [linkState, shown] : cases) {
+            state.applyStationValue("linkState", static_cast<int>(linkState));
+            QCOMPARE(roundtableStripShownFor(&model), shown);
+        }
+        model.detach();
+    }
+
+    void theStripTakesItsRowFromTheWaterfallOnly()
+    {
+        SpectrumWidget widget;
+        widget.setUpdatesEnabled(false);
+        widget.resize(900, 600);
+        widget.setConnectionState(ConnectionState::Connected);
+        widget.show();
+        const SpectrumWidget::SpectrumLayout hidden = widget.spectrumLayout();
+        const QRect liveHidden = widget.waterfallLiveButtonRect(hidden.waterfallChrome);
+        QVERIFY(hidden.roundtableStrip.isNull());
+        QVERIFY(widget.roundtableStripRectForTest().isNull());
+        QCOMPARE(widget.waterfallHeightForTest(), hidden.waterfall.height());
+
+        QSignalSpy spot(&widget, &SpectrumWidget::roundtableInspectorSpotChanged);
+        widget.setRoundtableStripShown(true);
+        QVERIFY(widget.roundtableStripShown());
+        QCOMPARE(spot.size(), 1);
+        const SpectrumWidget::SpectrumLayout shown = widget.spectrumLayout();
+        QCOMPARE(shown.contentHeight, hidden.contentHeight);
+        QCOMPARE(shown.spectrum, hidden.spectrum);
+        QCOMPARE(shown.divider, hidden.divider);
+        QCOMPARE(shown.frequency, hidden.frequency);
+        QCOMPARE(shown.roundtableStrip.top(), shown.frequency.bottom() + 1);
+        QCOMPARE(shown.roundtableStrip.height(), 30);
+        QCOMPARE(shown.roundtableStrip.height(), kRoundtableStripHeight);
+        QCOMPARE(shown.roundtableStrip.left(), shown.waterfall.left());
+        QCOMPARE(shown.roundtableStrip.width(), shown.waterfall.width());
+        QCOMPARE(shown.waterfall.top(), hidden.waterfall.top() + 30);
+        QCOMPARE(shown.waterfall.height(), hidden.waterfall.height() - 30);
+        QCOMPARE(shown.waterfallChrome.top(), shown.waterfall.top());
+        QCOMPARE(shown.waterfallChrome.height(), shown.waterfall.height());
+        QCOMPARE(widget.roundtableStripRectForTest(), shown.roundtableStrip);
+        // The image follows, as on a resize.
+        QCOMPARE(widget.waterfallHeightForTest(), shown.waterfall.height());
+        // LIVE stays in the frequency scale row.
+        QCOMPARE(widget.waterfallLiveButtonRect(shown.waterfallChrome), liveHidden);
+
+        // The current value again does nothing.
+        widget.setRoundtableStripShown(true);
+        QCOMPARE(spot.size(), 1);
+
+        widget.setRoundtableStripShown(false);
+        QCOMPARE(spot.size(), 2);
+        const SpectrumWidget::SpectrumLayout back = widget.spectrumLayout();
+        QCOMPARE(back.contentHeight, hidden.contentHeight);
+        QCOMPARE(back.spectrum, hidden.spectrum);
+        QCOMPARE(back.divider, hidden.divider);
+        QCOMPARE(back.frequency, hidden.frequency);
+        QCOMPARE(back.waterfall, hidden.waterfall);
+        QCOMPARE(back.waterfallChrome, hidden.waterfallChrome);
+        QVERIFY(back.roundtableStrip.isNull());
+        QCOMPARE(widget.waterfallHeightForTest(), hidden.waterfall.height());
+    }
+
+    void dividerDragGivesTheSameSplitWithTheStrip()
+    {
+        SpectrumWidget widget;
+        widget.setUpdatesEnabled(false);
+        widget.resize(900, 600);
+        widget.setConnectionState(ConnectionState::Connected);
+        widget.show();
+        const auto dragTo = [&widget](int y) {
+            widget.m_spectrumFrac = 0.40f;
+            const QPoint grab(300, widget.spectrumLayout().divider.center().y());
+            QTest::mousePress(&widget, Qt::LeftButton, Qt::NoModifier, grab);
+            QMouseEvent move(QEvent::MouseMove, QPointF(300, y), widget.mapToGlobal(QPointF(300, y)),
+                             Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(&widget, &move);
+            QTest::mouseRelease(&widget, Qt::LeftButton, Qt::NoModifier, QPoint(300, y));
+            return widget.m_spectrumFrac;
+        };
+        const float hiddenFrac = dragTo(250);
+        widget.setRoundtableStripShown(true);
+        QCOMPARE(dragTo(250), hiddenFrac);
+        QVERIFY(hiddenFrac != 0.40f);
+    }
+
+    void aPressInTheEmptyStripTunesNothing()
+    {
+        Pan pan;
+        pan.widget.setRoundtableStripShown(true);
+        const QRect strip = pan.widget.roundtableStripRectForTest();
+        QVERIFY(!strip.isNull());
+        // Straight under the dial, where the passband would take the press.
+        const int dialX = pan.widget.hzToX(kPanCenterHz, pan.widget.spectrumLayout().spectrum);
+        const QPoint at(dialX, strip.center().y());
+        QSignalSpy plainTune(&pan.widget, &SpectrumWidget::frequencyClicked);
+        QSignalSpy edges(&pan.widget, &SpectrumWidget::filterEdgeDragged);
+        QSignalSpy center(&pan.widget, &SpectrumWidget::centerChanged);
+        QTest::mousePress(&pan.widget, Qt::LeftButton, Qt::NoModifier, at);
+        QVERIFY(pan.widget.m_draggingFilter == SpectrumWidget::FilterEdge::None);
+        QVERIFY(!pan.widget.m_draggingVfo);
+        QVERIFY(!pan.widget.m_draggingPan);
+        QVERIFY(!pan.widget.m_draggingBandwidth);
+        QVERIFY(!pan.widget.m_draggingTimeScale);
+        QVERIFY(!pan.widget.m_draggingDivider);
+        QTest::mouseRelease(&pan.widget, Qt::LeftButton, Qt::NoModifier, at);
+        QCOMPARE(plainTune.size(), 0);
+        QCOMPARE(edges.size(), 0);
+        QCOMPARE(center.size(), 0);
+        // Hover there is neither the scale's zoom nor the waterfall's crosshair.
+        QMouseEvent hover(QEvent::MouseMove, QPointF(at), pan.widget.mapToGlobal(QPointF(at)),
+                          Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&pan.widget, &hover);
+        QCOMPARE(pan.widget.cursor().shape(), Qt::ArrowCursor);
     }
 
     void initTestCase()

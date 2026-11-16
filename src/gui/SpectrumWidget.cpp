@@ -8,6 +8,13 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The Roundtable strip between the frequency scale and the
+//                 waterfall: its row in spectrumLayout (out of the waterfall
+//                 only), its background in both paint paths, presses, hover and
+//                 wheel in it consumed, LIVE anchored to the scale row, and the
+//                 waterfall image rebuild shared by resize and the strip
+//                 (rebuildWaterfallImage). J.J. Boyd (KG4VCF), AI-assisted via
+//                 Anthropic Claude Code.
 //   2026-11-06 J.J. Boyd / KG4VCF : the band stack overlay, ticks in both
 //                 paint paths, their click, hover and right-click (band stack
 //                 plan Task 11). AI-assisted via Anthropic Claude Code.
@@ -7758,13 +7765,57 @@ SpectrumWidget::SpectrumLayout SpectrumWidget::spectrumLayout() const
     const int specH = static_cast<int>(contentH * m_spectrumFrac);
     const int plotW = width() - effectiveStripW();
     const int freqY = specH + kDividerH;
-    const int wfY = freqY + freqScaleH;
+    // The Roundtable strip comes out of the waterfall's share only: the
+    // spectrum keeps the height the split gives it, shown or hidden.
+    const int stripH = m_roundtableStripShown ? kRoundtableStripHeight : 0;
+    const int stripY = freqY + freqScaleH;
+    const int wfY = stripY + stripH;
+    const int wfH = std::max(0, contentH - specH - stripH);
     return {contentH,
             QRect(0, 0, plotW, specH),
             QRect(0, specH, width(), kDividerH),
             QRect(0, freqY, plotW, freqScaleH),
-            QRect(0, wfY, plotW, contentH - specH),
-            QRect(0, wfY, width(), contentH - specH)};
+            QRect(0, wfY, plotW, wfH),
+            QRect(0, wfY, width(), wfH),
+            m_roundtableStripShown ? QRect(0, stripY, plotW, stripH) : QRect()};
+}
+
+void SpectrumWidget::setRoundtableStripShown(bool shown)
+{
+    if (shown == m_roundtableStripShown) {
+        return;
+    }
+    m_roundtableStripShown = shown;
+    // The waterfall's height changed: the same rebuild as a resize.
+    rebuildWaterfallImage();
+    updateVfoPositions();
+    refreshWfTimestampLabel();
+    emit roundtableInspectorSpotChanged();
+    markOverlayDirty();
+    refreshRoundtableTagLayer();
+    update();
+}
+
+QRect SpectrumWidget::roundtableStripRectForTest() const
+{
+    return spectrumLayout().roundtableStrip;
+}
+
+namespace {
+// The Roundtable strip's colors (strip design): the fill and its edge lines.
+constexpr QRgb kRoundtableStripFill = 0x0c0c0e;
+constexpr QRgb kRoundtableStripEdge = 0x2c2c31;
+} // namespace
+
+void SpectrumWidget::drawRoundtableStrip(QPainter& p, const QRect& strip)
+{
+    if (strip.isEmpty()) {
+        return;
+    }
+    p.fillRect(strip, QColor(kRoundtableStripFill));
+    const QColor edge(kRoundtableStripEdge);
+    p.fillRect(QRect(strip.left(), strip.top(), strip.width(), 1), edge);
+    p.fillRect(QRect(strip.left(), strip.bottom(), strip.width(), 1), edge);
 }
 
 void SpectrumWidget::resizeEvent(QResizeEvent* event)
@@ -7793,6 +7844,17 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
     }
 
     // Recreate waterfall image at new size
+    rebuildWaterfallImage();
+
+    // Reposition VFO flags after resize
+    updateVfoPositions();
+}
+
+// The waterfall image at the layout's waterfall size, refilled from the
+// history. Moved out of resizeEvent unchanged so the Roundtable strip
+// (setRoundtableStripShown) takes the same path as a resize.
+void SpectrumWidget::rebuildWaterfallImage()
+{
     const SpectrumLayout layout = spectrumLayout();
     const int wfW = layout.waterfall.width();
     const int wfH = layout.waterfall.height();
@@ -7836,9 +7898,6 @@ void SpectrumWidget::resizeEvent(QResizeEvent* event)
             rebuildWaterfallViewport();
         }
     }
-
-    // Reposition VFO flags after resize
-    updateVfoPositions();
 }
 
 void SpectrumWidget::paintEvent(QPaintEvent* event)
@@ -7885,6 +7944,9 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     drawGrid(p, specRect);
     drawSpectrum(p, specRect);
     drawWaterfall(p, wfRect);
+    // The Roundtable strip under the frequency scale, before the markers so
+    // the dial's line still runs through it to the waterfall.
+    drawRoundtableStrip(p, layout.roundtableStrip);
     // TNF notch overlay immediately before the spots, matching upstream's
     // paint order: AetherSDR src/gui/SpectrumWidget.cpp:12903-12904
     // [@c6481cbf] draws drawTnfMarkers then drawSpotMarkers.  No visibility
@@ -9753,7 +9815,9 @@ QRect SpectrumWidget::waterfallLiveButtonRect(const QRect& wfRect) const
     const int buttonH = m_wfLive ? 16 : 20;
     const int padding = m_wfLive ? 2 : 4;
     const int buttonX = strip.right() - buttonW - 2;
-    const int buttonY = wfRect.top() - freqScaleHeight() + padding;
+    // Anchored to the frequency scale row, so the Roundtable strip between
+    // the scale and the waterfall leaves it where it was.
+    const int buttonY = spectrumLayout().frequency.top() + padding;
     return QRect(buttonX, buttonY, buttonW, buttonH);
 }
 
@@ -15047,6 +15111,15 @@ void SpectrumWidget::mousePressEvent(QMouseEvent* event)
         return;
     }
 
+    // The Roundtable strip: its card and tags took their presses above
+    // (roundtableTagClick). The rest of it tunes nothing and starts no
+    // filter, passband, waterfall or time-scale drag.
+    if (layout.roundtableStrip.contains(QPoint(mx, my))) {
+        setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
+
     // 3b. Notch (TNF) grab.  Thetis runs its notch block first inside
     // case MouseButtons.Left:, ahead of every filter drag, so a notch
     // marker sitting on a filter edge still drags as a notch.  The dBm
@@ -15518,7 +15591,7 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
     // From AetherSDR SpectrumWidget.cpp:2200-2225 [@0cd4559]
     {
         const int wfY = layout.waterfall.top();
-        if (my >= freqBarY && my < wfY) {
+        if (my >= freqBarY && my < freqBarY + freqScaleHeight()) {
             // In the freq-scale row — LIVE button overlaps here.
             const QRect wfRect = layout.waterfallChrome;
             if (waterfallLiveButtonRect(wfRect).contains(event->position().toPoint())) {
@@ -15720,6 +15793,9 @@ void SpectrumWidget::mouseMoveEvent(QMouseEvent* event)
         setCursor(Qt::SplitVCursor);
     } else if (my >= freqBarY && my < freqBarY + freqScaleHeight()) {
         setCursor(Qt::SizeHorCursor);
+    } else if (layout.roundtableStrip.contains(QPoint(mx, my))) {
+        // The Roundtable strip is neither the scale nor the waterfall.
+        setCursor(Qt::ArrowCursor);
     } else {
         // Check filter edges and passband: the press's own hit test.
         if (receiverGrabAt(mx, my, specRect).part != ReceiverGrabPart::None) {
@@ -16191,6 +16267,12 @@ void SpectrumWidget::wheelEvent(QWheelEvent* event)
             scheduleSettingsSave();
             syncDisplaySettingsFromWidget(); // Task 18
         }
+        event->accept();
+        return;
+    }
+
+    // The Roundtable strip: a wheel over it tunes and zooms nothing.
+    if (spectrumLayout().roundtableStrip.contains(QPoint(mx, my))) {
         event->accept();
         return;
     }
@@ -17332,7 +17414,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
     QRhi* r = rhi();
     const int w = width();
     const int h = height();
-    if (w <= 0 || h <= freqScaleHeight() + kDividerH + 2) { return; }
+    const int roundtableStripH = m_roundtableStripShown ? kRoundtableStripHeight : 0;
+    if (w <= 0 || h <= freqScaleHeight() + roundtableStripH + kDividerH + 2) { return; }
 
     const SpectrumLayout layout = spectrumLayout();
     const int specH = layout.spectrum.height();
@@ -17587,6 +17670,9 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             p.fillRect(layout.divider, QColor(0x30, 0x40, 0x50));
             drawFreqScale(p, layout.frequency);
             drawTimeScale(p, wfRectFull);
+            // The Roundtable strip, before the VFO marker below so the dial's
+            // line runs through it, as in paintEvent.
+            drawRoundtableStrip(p, layout.roundtableStrip);
             // TNF notch overlay, GPU static-overlay path.  Same relative
             // ordering as the CPU paintEvent above and as AetherSDR
             // src/gui/SpectrumWidget.cpp:12013-12016 [@c6481cbf], where
