@@ -290,6 +290,12 @@ void GuiConnectionController::attachWindow(MainWindow* window)
         if (generation != m_sessions.generation() || m_shuttingDown) { return; }
         m_radios.insert(radio.macAddress, radio);
         m_seenAt.insert(radio.macAddress, QDateTime::currentMSecsSinceEpoch());
+        // Auto-connect to a saved address skips discovery, so the saved entry
+        // has to hold the radio's receiver count from the last time it was seen.
+        if (AppSettings::instance().refreshRadioReportedReceivers(radio.macAddress,
+                                                                  radio.reportedReceivers)) {
+            AppSettings::instance().saveInBackground();
+        }
         refresh();
     };
     m_windowConnections.append(connect(m_discovery, &RadioDiscovery::radioDiscovered, this, found));

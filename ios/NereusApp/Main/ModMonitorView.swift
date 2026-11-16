@@ -522,6 +522,12 @@ struct ModMonitorScope: View {
 
     static let low = -100.0
     static let high = 160.0
+    /// The scope's own colors, shared with the SSB monitor's scope.
+    static let traceGreen = Color(red: 0, green: 1, blue: 0x88 / 255)
+    static let vintageGround = Color(red: 0x10 / 255, green: 0x30 / 255, blue: 0x18 / 255)
+    static let vintageGraticule = Color(red: 192 / 255, green: 112 / 255, blue: 48 / 255).opacity(0.66)
+    static let vintageFill = Color(red: 0x8C / 255, green: 0xE0 / 255, blue: 0x50 / 255)
+    static let vintageEdge = Color(red: 0x50 / 255, green: 0x90 / 255, blue: 0x30 / 255)
 
     var body: some View {
         Canvas { context, size in
@@ -585,7 +591,7 @@ struct ModMonitorScope: View {
         fill.addLine(to: CGPoint(x: width, y: y(0, height)))
         fill.addLine(to: CGPoint(x: 0, y: y(0, height)))
         fill.closeSubpath()
-        let green = Color(red: 0, green: 1, blue: 0x88 / 255)
+        let green = Self.traceGreen
         context.fill(fill, with: .color(green.opacity(0.16)))
         context.stroke(line, with: .color(green), lineWidth: 1.2)
     }
@@ -593,8 +599,8 @@ struct ModMonitorScope: View {
     private func drawVintage(_ context: GraphicsContext, _ rect: CGRect) {
         let height = rect.height
         let width = rect.width
-        context.fill(Path(rect), with: .color(Color(red: 0x10 / 255, green: 0x30 / 255, blue: 0x18 / 255)))
-        let graticule = Color(red: 192 / 255, green: 112 / 255, blue: 48 / 255).opacity(0.66)
+        context.fill(Path(rect), with: .color(Self.vintageGround))
+        let graticule = Self.vintageGraticule
         for column in 1..<10 {
             var path = Path()
             path.move(to: CGPoint(x: width * CGFloat(column) / 10, y: 0))
@@ -630,8 +636,8 @@ struct ModMonitorScope: View {
             shape.addLine(to: point)
         }
         shape.closeSubpath()
-        context.fill(shape, with: .color(Color(red: 0x8C / 255, green: 0xE0 / 255, blue: 0x50 / 255)))
-        context.stroke(shape, with: .color(Color(red: 0x50 / 255, green: 0x90 / 255, blue: 0x30 / 255)), lineWidth: 1)
+        context.fill(shape, with: .color(Self.vintageFill))
+        context.stroke(shape, with: .color(Self.vintageEdge), lineWidth: 1)
     }
 }
 

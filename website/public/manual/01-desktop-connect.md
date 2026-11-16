@@ -206,7 +206,9 @@ Core; inspecting another saved Core does not redirect this page.
 
 After successfully saving/connecting the intended target, open **File >
 Settings... > General > Startup & Preferences** and set **Auto-connect to last
-radio**. Read its tooltip to confirm which target it names. In a local window
+radio**. Read its tooltip to confirm which target it names. The first time you
+connect to a radio, Auto-connect is turned on for it; after that, connecting
+keeps whatever you chose. In a local window
 it saves the last radio's launch choice; in a dedicated remote window it saves
 the selected Core target's choice on this computer. It does not start a Core
 service or change another computer's startup policy.
@@ -224,3 +226,5 @@ connection at launch.
 When the link drops, inspect the title/status area and reopen **Radio > Connections…**. Read **Current connection** for the target and progress or failure detail. If a retry is already running, wait for its state to change. Use **Radio > Connect** to retry the last-used target in a normal window, or select the intended saved target in **Manage Radios…**. A stale radio IP is corrected with **Edit…**; a remote Core address or pairing issue is corrected in the Core target editor. If radio discovery is empty, verify the radio is powered, on the same reachable LAN/VLAN, then scan; for routed or VPN networks, use the saved/manual address rather than relying on broadcast discovery.
 
 After reconnection, confirm the connected target again, then confirm a live panadapter trace and audible receive output. Shared Core settings and radio state may have changed while this client was away. Before transmitting, recheck the selected TX slice, transmit holder, microphone source, antenna, power, and the protection/readiness message as described in [the transmit chapter](05-transmit.md). If the Core itself is reachable but its radio is not, the radio operator on that Core must restore the radio link; changing local playback devices will not repair the station connection.
+
+In a window connected to a Core, **Audio and display: Audio from the Core stopped. Starting audio and display again.** or **Audio and display: The display from the Core stopped. Starting audio and display again.** means the window lost the Core's audio or display and is restarting both by itself. Muting, unmuting or a failed speaker on this computer does not cause this.

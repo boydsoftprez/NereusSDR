@@ -1263,6 +1263,9 @@ nereus_add_test(tst_tci_cw REALTIME)
 # remoteCwVersion capability and the CW settings' peer gate. The Key's 3 s
 # watchdog runs on the wall clock, hence REALTIME.
 nereus_add_test(tst_remote_cw fakes/LoopbackTransport.cpp REALTIME)
+# Hot keys (R-HK-13): the remote dot and dash verb on a test Core with a fake
+# connection, its watchdog on an injected clock.
+nereus_add_test(tst_remote_cw_paddle fakes/LoopbackTransport.cpp)
 
 # CW transmit Task 10 (R-CW-04, R-CW-36): the serial key reader on an
 # injected line source (paddles, the key and PTT lines, the gate, stops,
@@ -2060,6 +2063,13 @@ nereus_add_test(tst_mic_profile_manager)
 # peak-reading analyzer: +/- peak %, carrier tracking, no-carrier, peak
 # hold vs window peaks, reset; applet flasher latch + carrier lamp.
 nereus_add_test(tst_am_modulation_analyzer)
+nereus_add_test(tst_ssb_modulation_analyzer)
+# The SSB Mod Monitor's gating, publisher, record and applet.
+nereus_add_test(tst_ssb_mod_monitor
+    fakes/LoopbackTransport.cpp
+    fakes/RemoteWindowHarness.cpp
+    EXTRA_LABELS session)
+target_compile_definitions(tst_ssb_mod_monitor PRIVATE NEREUS_BUILD_TESTS)
 
 # ── AppletPanelWidget float / dock round-trip (AM Mod Monitor pop-out) ──
 nereus_add_test(tst_applet_float_dock)
@@ -6615,7 +6625,8 @@ nereus_add_test(tst_clarity_smooth_defaults)
 # one test guarding the core boundary.
 nereus_add_test(tst_core_has_no_gui_includes EXTRA_LABELS core)
 target_compile_definitions(tst_core_has_no_gui_includes PRIVATE
-    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_BINARY_DIR="${CMAKE_BINARY_DIR}")
 
 # Phase 1B verification -- exhaustive sweep of every detector x averaging
 # combination through SpectrumWidget::updateSpectrumLinear():
@@ -8155,6 +8166,12 @@ target_link_libraries(tst_station_rfkit_controller PRIVATE Qt6::Network)
 if(Qt6WebSockets_FOUND)
     nereus_add_test(tst_station_tci_server fakes/LoopbackTransport.cpp)
     target_link_libraries(tst_station_tci_server PRIVATE Qt6::WebSockets Qt6::Network)
+endif()
+# The TCI clients box keeps its Core client rows when a refresh brings the
+# same list, and changes them when an app connects, leaves or changes.
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_client_chain_applet)
+    target_link_libraries(tst_client_chain_applet PRIVATE Qt6::WebSockets)
 endif()
 # CAT setup from a connected desktop (stationCatVersion 1): the Core's
 # `stationCat` object follows CatService, its four commands apply and refuse,
@@ -11224,8 +11241,31 @@ endif()
 # the audio functions as _audio and _audio2, every other function as the
 # rest, _part2 and _part3 (the test's main() places them; the limit is not
 # raised).
+#
+# Hosted Linux CI, 2026-11-15: _audio ran past the 300 s limit beside three
+# CPU-bound simulations (100 to 107 s in other runs), and QtTest's message
+# cap had hidden every FAIL and warning after the first 2000 (main() now
+# passes -maxwarnings 0). One wait on the media connection may legitimately
+# last 125.5 s (RemoteAudioSessionHarness::kMediaConnectionWaitMs), so the
+# audio functions now run as four entries, _audio to _audio4, each short
+# enough that such a wait still ends in a FAIL inside the limit, and each
+# takes two processors (PROCESSORS 2, as tst_remote_audio_clock), since its
+# DTLS/SRTP link and paced audio run on threads of their own. The function
+# watchdog is 160 s for every entry, past that one wait plus its case's
+# setup and below the 300 s limit, so a case stuck without a bounded wait
+# ends with QtTest's stacks instead of a silent ctest kill (the Linux CI job
+# exports 240 s, which ctest's kill would beat).
+if(TEST tst_remote_media_controller)
+    set_property(TEST tst_remote_media_controller APPEND PROPERTY ENVIRONMENT
+        "QTEST_FUNCTION_TIMEOUT=160000")
+endif()
 nereus_split_test(tst_remote_media_controller ENV NEREUS_REMOTE_MEDIA_GROUP
-    GROUPS audio audio2 part2 part3)
+    GROUPS audio audio2 audio3 audio4 part2 part3)
+foreach(_rmc_group audio audio2 audio3 audio4)
+    if(TEST tst_remote_media_controller_${_rmc_group})
+        set_tests_properties(tst_remote_media_controller_${_rmc_group} PROPERTIES PROCESSORS 2)
+    endif()
+endforeach()
 
 # iPhone app plan, desktop remote transmit (R-IOS-13, R-R3-42): the window's
 # side of the transmit verbs (copies, epochs, releases) on its own.
@@ -11900,6 +11940,79 @@ nereus_add_test(tst_cat_catalog CORE_ONLY)
 nereus_add_test(tst_cat_parser CORE_ONLY)
 
 nereus_add_test(tst_cat_bindings CORE_ONLY)
+nereus_add_test(tst_midi_decoder)
+nereus_add_test(tst_midi_profile)
+nereus_add_test(tst_hot_key_setup_midi)
+nereus_add_test(tst_hot_key_setup_knobs)
+nereus_add_test(tst_hot_key_setup_deck)
+target_compile_definitions(tst_hot_key_setup_deck PRIVATE NEREUS_BUILD_TESTS NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_gesture_engine)
+nereus_add_test(tst_hot_key_device_bindings CORE_ONLY)
+nereus_add_test(tst_device_input)
+target_compile_definitions(tst_device_input PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_device_parser_rc28)
+nereus_add_test(tst_device_parser_powermate)
+nereus_add_test(tst_device_parser_shuttle)
+nereus_add_test(tst_device_parser_tmate2)
+nereus_add_test(tst_device_parser_streamdeck)
+nereus_add_test(tst_device_parser_flexcontrol)
+target_compile_definitions(tst_device_parser_flexcontrol PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_device_parser_ulanzi)
+target_compile_definitions(tst_device_parser_ulanzi PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_deck_link)
+target_compile_definitions(tst_deck_link PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_deck_plugin_actions)
+target_compile_definitions(tst_deck_plugin_actions PRIVATE
+    NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    NEREUS_BUILD_DIR="${CMAKE_BINARY_DIR}"
+    NEREUS_CMAKE_COMMAND="${CMAKE_COMMAND}")
+add_dependencies(tst_deck_plugin_actions NereusDeckPlugins)
+nereus_add_test(tst_deck_plugin_clients)
+target_compile_definitions(tst_deck_plugin_clients PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_controller_host_lights)
+nereus_add_test(tst_device_output)
+target_compile_definitions(tst_device_output PRIVATE NEREUS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+nereus_add_test(tst_hot_key_state_feed)
+nereus_add_test(tst_hot_key_bindings CORE_ONLY)
+nereus_add_test(tst_hot_key_dispatcher)
+nereus_add_test(tst_hot_key_window_actions)
+nereus_add_test(tst_hot_key_remote_actions fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_hot_key_remote_actions PRIVATE NEREUS_BUILD_TESTS)
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_hot_key_transmit
+        fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
+    target_compile_definitions(tst_hot_key_transmit PRIVATE NEREUS_BUILD_TESTS)
+    target_link_libraries(tst_hot_key_transmit PRIVATE Qt6::WebSockets)
+    # Hosted Linux CI, 2026-11-15: every case builds its own MainWindow, and
+    # the run took 84 to 96 s of the 120 s limit on a 4-core runner and timed
+    # out once. Four entries, each case its own window as before: the test's
+    # main() deals the functions in turn to the rest, _part2, _part3 and
+    # _part4 (the limit is not raised).
+    nereus_split_test(tst_hot_key_transmit ENV NEREUS_HOT_KEY_TRANSMIT_GROUP
+        GROUPS part2 part3 part4)
+endif()
+nereus_add_test(tst_cw_soft_paddle)
+nereus_add_test(tst_hot_key_router fakes/RemoteWindowHarness.cpp)
+target_compile_definitions(tst_hot_key_router PRIVATE NEREUS_BUILD_TESTS)
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_hot_key_setup_keyboard
+        fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
+    target_compile_definitions(tst_hot_key_setup_keyboard PRIVATE NEREUS_BUILD_TESTS)
+    target_link_libraries(tst_hot_key_setup_keyboard PRIVATE Qt6::WebSockets)
+endif()
+if(Qt6WebSockets_FOUND)
+    nereus_add_test(tst_hot_key_cw
+        fakes/RemoteWindowHarness.cpp fakes/LoopbackTransport.cpp fakes/FakeCaptureChild.cpp)
+    target_compile_definitions(tst_hot_key_cw PRIVATE NEREUS_BUILD_TESTS)
+    target_link_libraries(tst_hot_key_cw PRIVATE Qt6::WebSockets)
+    # Hosted Linux CI, 2026-11-15: every case builds its own MainWindow, and
+    # the run took 92 to 102 s of the 120 s limit on a 4-core runner and
+    # timed out in four PR runs. Four entries, each case its own window as
+    # before: the test's main() deals the functions in turn to the rest,
+    # _part2, _part3 and _part4 (the limit is not raised).
+    nereus_split_test(tst_hot_key_cw ENV NEREUS_HOT_KEY_CW_GROUP
+        GROUPS part2 part3 part4)
+endif()
 nereus_add_test(tst_cat_settings CORE_ONLY)
 nereus_add_test(tst_cat_headless CORE_ONLY)
 

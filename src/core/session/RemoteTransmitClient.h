@@ -46,6 +46,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-06: First-look fixes: a key's release ends only what that key
+//               started; cwActivityEnded. J.J. Boyd (KG4VCF), AI-assisted via
+//               Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: setCwPaddle.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-09-25 - Created for the desktop remote window's transmit
@@ -99,6 +104,8 @@
 //               session, same sequence. A relay drop of the channel copy
 //               was a quiet link: VOX turned off mid-transmission.
 //               J.J. Boyd (KG4VCF), AI-assisted via Grok.
+//   2026-11-05: hot keys plan Task 4: screenKeyDownChanged. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/NereusCoreExport.h"
@@ -106,6 +113,7 @@
 #include <QHash>
 #include <QList>
 #include <QObject>
+#include <QPair>
 #include <QString>
 #include <QTimer>
 
@@ -157,6 +165,7 @@ public:
     quint32 remoteCwEpoch() const { return m_cwEpoch; }
     void setRemoteCwActivity(quint32 epoch, bool active);
     void setCwReleaseAvailable(bool available) { m_cwReleaseAvailable = available; }
+    void setCwPaddleAvailable(bool available) { m_cwPaddleAvailable = available; }
     using KeepaliveSender = std::function<bool(quint64 sequence, quint32 epoch)>;
     /// How often a keepalive goes (RemoteTxWatchdog::kKeepaliveIntervalMs).
     static constexpr int kKeepaliveIntervalMs = 100;
@@ -233,6 +242,8 @@ public:
     bool cwAvailable() const { return m_available && m_cwAvailable; }
     /// Stop and key-up remain available with remoteCwVersion 1.
     bool cwReleaseAvailable() const { return m_available && m_cwReleaseAvailable; }
+    /// Dot and dash can go now (remote transmit and remoteCwVersion 3).
+    bool cwPaddleAvailable() const { return m_available && m_cwPaddleAvailable; }
     /// cw.send {text}, cw.memory {number} (1..8), cw.stop {} and cw.key
     /// {down}, each kCopies times under one id. They return the id, or 0
     /// when nothing could be sent. A refusal arrives as cwRefused.
@@ -240,6 +251,10 @@ public:
     quint32 sendCwMemory(int number);
     quint32 stopCw();
     quint32 setCwKey(bool down);
+    /// Hot keys (R-HK-13): cw.paddle {dot, dash}, the state of both keys on
+    /// each change, kCopies times under one id, with keepalives while either
+    /// is down. Returns the id, or 0 when nothing could be sent.
+    quint32 setCwPaddle(bool dot, bool dash);
 
     // ---- A program through this window's TCI server ("tci") ----
     /// programAudio: the program's trx carried ",tci", so its own audio
@@ -296,6 +311,9 @@ signals:
     /// The Core refused the operator's press (or a release), in its words.
     void refused(const QString& reason, const QString& code, const QString& fix);
     void micKeyDownChanged(bool down);
+    /// screenKeyDown() changed. Emitted from publish(), as micKeyDownChanged,
+    /// which a program key on the same device can keep from changing.
+    void screenKeyDownChanged(bool down);
     /// 2026-10-15: programAudioKey() changed. Emitted from publish(), on
     /// this object's thread, before the call that changed it returns
     /// (keyForProgram, unkeyForProgram, an answer, a stop, a reset), also
@@ -305,6 +323,9 @@ signals:
     void micSourceChanged(RemoteMicSource accepted, bool settled, const QString& reason);
     /// CW transmit (R-CW-48): the Core refused a cw.* request, in its words.
     void cwRefused(const QString& reason, const QString& code, const QString& fix);
+    /// This window's CW activity is over: stopped here, ended by the Core, or
+    /// the session retired. A key still held needs a fresh press.
+    void cwActivityEnded();
 
 private:
     enum class Phase { Idle, Waiting, On };
@@ -316,16 +337,22 @@ private:
         /// A program key asked with ",tci": it brings its own audio.
         bool programAudio{false};
     };
-    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource, Cw };
+    enum class Kind { ScreenKey, ProgramKey, Release, Tune, TwoTone, MicSource, Cw, CwRelease };
+    // What started the CW activity now running, so a release ends only its own.
+    enum class CwOwner { None, Message, Key, Paddle };
+    void endCwActivityOf(CwOwner key);
     struct Pending {
         Kind kind;
         QByteArray verb;
         bool releaseIntent;
         quint64 cwGeneration{0};
+        // Who ran before this press took over: a press that starts nothing gives it back.
+        CwOwner cwOwnerBefore{CwOwner::None};
     };
 
     quint32 send(const QByteArray& verb, const QList<MirrorUpdate>& arguments, Kind kind,
-                 bool releaseIntent = false, bool allowUnavailableRelease = false);
+                 bool releaseIntent = false, bool allowUnavailableRelease = false,
+                 CwOwner cwOwnerBefore = CwOwner::None);
     quint32 requestTwoTone(const QByteArray& verb, const char* argument, bool on);
     void release(quint32 epoch);
     void reset();
@@ -343,8 +370,11 @@ private:
     Sender m_sender;
     bool m_available{false};
     bool m_cwAvailable{false};
+    bool m_cwPaddleAvailable{false};
     bool m_cwReleaseAvailable{false};
     bool m_cwPending{false};
+    CwOwner m_cwOwner{CwOwner::None};
+    QPair<bool, bool> m_cwPaddleReported{false, false};    // dot, dash, as last sent
     quint32 m_cwEpoch{0};
     quint32 m_cwRetiredEpoch{0};
     quint64 m_cwGeneration{0};
@@ -391,6 +421,7 @@ private:
     quint32 m_coreStopSerial{0};   // fix wave M7
     bool m_coreTransmitting{false};
     bool m_publishedKeyDown{false};
+    bool m_publishedScreenDown{false};
     bool m_publishedProgramAudio{false};
     bool m_publishedHolds{false};
 };

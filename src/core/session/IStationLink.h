@@ -273,6 +273,8 @@
 //   2026-10-26  J.J. Boyd / KG4VCF  dxOutputsUnavailableReason
 //                                    (radioHardwareVersion 14).
 //                                    AI-assisted: Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include <QString>
@@ -1007,6 +1009,16 @@ public:
     virtual void setModMonitorSource(int /*source*/) {}
     virtual CommandOutcome requestModMonitorReset(int /*source*/)
     { return { false, modMonitorUnavailableReason() }; }
+
+    // SSB Mod Monitor. The Core sends envelope readings while keyed in
+    // USB or LSB. 0 on txSsbModMonitorVersion (or no such entry) means
+    // this Core does not.
+    static QString ssbModMonitorUnavailableReason()
+    { return QStringLiteral("This Core does not send the SSB modulation monitor. Updating the Core may help."); }
+    virtual bool txSsbModMonitorAvailable() const { return false; }
+    virtual void setSsbModMonitorSource(int /*source*/) {}
+    virtual CommandOutcome requestSsbModMonitorReset(int /*source*/)
+    { return { false, ssbModMonitorUnavailableReason() }; }
 
     // R-R3-46 / R-R3-21 (radioHardwareVersion 4): the filter policy dialog
     // in a remote window. Whether the Core takes a filter policy change from

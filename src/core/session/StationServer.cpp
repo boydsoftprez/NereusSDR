@@ -7,6 +7,8 @@
 //   2026-11-05: Band stack plan Task 4: bandStackVersion 1, the bandStack object and
 //               the bandStack.* gate (peerGetsBandStack).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: cw.paddle, remoteCwVersion 3.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-31: Strip legacy Roundtable fields by record type, preserving RF kind.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -1185,6 +1187,10 @@
 //               the taker through it: on a Core no desktop hosts the
 //               Core's own position was named with nothing. J.J. Boyd
 //               (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-05: a release that ended a key tells the watchdog it was read,
 //               so a watch left only for VOX counts its silence afresh. J.J.
 //               Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1210,6 +1216,8 @@
 #include "core/session/MediaTunnel.h"
 #include "core/session/ModMonitorPublisher.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorPublisher.h"
+#include "core/session/SsbModMonitorRecord.h"
 
 #include "core/AppSettings.h"
 #include "core/BuildIdentity.h"
@@ -3784,6 +3792,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
     setUpCoreLogStream();
     // R-IOS-13 / R-R3-49: and the AM Mod Monitor's two streams.
     setUpModMonitorStreams();
+    setUpSsbModMonitorStreams();
     // Roundtable plan Task 11: and Roundtable's rooms.
     setUpRoundtable();
 
@@ -3938,6 +3947,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         // R-IOS-13 / R-R3-49: the Mod Monitor's reset is the Core's too.
         if (invoke.commandVerb == "txModMonitor.reset") {
             handleModMonitorReset(m_dispatchingTransport, invoke);
+        } else if (invoke.commandVerb == "txSsbModMonitor.reset") {
+            handleSsbModMonitorReset(m_dispatchingTransport, invoke);
         } else {
             handleRecordsCommand(m_dispatchingTransport, invoke);
         }
@@ -4758,8 +4769,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 return SessionMessages::commandResult(invoke.commandVerb, invoke.commandId,
                                                        false, TxRefusals::notReady().text, {});
             }
+            // R-HK-13: only a key that rises raises a key. With none rising and no
+            // paddle down, the message is a release: the key it reports down
+            // was ended (the deadline, a stop) and needs a fresh press.
+            CwxSender::PaddleKeys paddleRose;
+            bool paddleGoesOn = false;
+            if (request.kind == Kind::Paddle) {
+                const QPair<bool, bool> last = m_cwPaddleReported.value(requester);
+                paddleRose = {request.dot && !last.first, request.dash && !last.second};
+                m_cwPaddleReported.insert(requester, {request.dot, request.dash});
+                paddleGoesOn = (request.dot || request.dash)
+                    && m_radioModel->cwxSendingFor() == requester
+                    && m_radioModel->cwxSender()->isRemotePaddleHeld();
+            }
             const bool engages = request.kind == Kind::Send || request.kind == Kind::Memory
-                || (request.kind == Kind::Key && request.down);
+                || (request.kind == Kind::Key && request.down)
+                || (request.kind == Kind::Paddle && (paddleRose.any() || paddleGoesOn));
             TxRefusal refusal;
             if (engages) {
                 // The session's own gate first, then the holder's: sending
@@ -4775,8 +4800,8 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                     }
                 }
                 if (refusal.isEmpty()) {
-                    const auto start = [&request](CwxSender& sender, quint32 epoch,
-                                                  const std::function<bool()>& admit) {
+                    const auto start = [&request, paddleRose](CwxSender& sender, quint32 epoch,
+                                                              const std::function<bool()>& admit) {
                         switch (request.kind) {
                         case Kind::Send:
                             return sender.sendRemoteText(epoch, request.text, admit);
@@ -4784,21 +4809,34 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                             return sender.sendRemoteMemory(epoch, request.number, admit);
                         case Kind::Key:
                             return sender.holdRemoteKey(epoch, admit);
+                        case Kind::Paddle:
+                            return sender.holdRemotePaddle(epoch, {request.dot, request.dash}, paddleRose, admit);
                         case Kind::Stop:
                             break;
                         }
                         return false;
                     };
+                    // A change while this device's paddle is down stays in its
+                    // activity: a replacement would lift the key that stays
+                    // down and fence the wire for a frame, mid-element.
                     refusal = m_radioModel->requestRemoteCwxFor(
-                        requester, request.kind != Kind::Send, start);
+                        requester, request.kind != Kind::Send && !paddleGoesOn, start);
+                }
+                // A refused press is no reason to leave the other key down.
+                if (!refusal.isEmpty() && request.kind == Kind::Paddle
+                    && m_radioModel->cwxSendingFor() == requester) {
+                    m_radioModel->cwxSender()->setPaddleHeld(false, false);
                 }
             } else {
-                // A release (cw.stop, cw.key up) is always taken: it ends
+                // A release (cw.stop, cw.key up, cw.paddle with no key rising and
+                // none held) is always taken: it ends
                 // only what the sender runs for this device, so it never
                 // touches another device's CW or the station's own.
                 if (m_radioModel->cwxSendingFor() == requester) {
                     if (request.kind == Kind::Stop) {
                         m_radioModel->stopCwxFor(requester);
+                    } else if (request.kind == Kind::Paddle) {
+                        m_radioModel->cwxSender()->setPaddleHeld(false, false);
                     } else {
                         m_radioModel->cwxSender()->setKeyHeld(false);
                     }
@@ -6095,6 +6133,10 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
         m_modMonitor->subscriptionsChanged();
         if (!self) { return; }
     }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->subscriptionsChanged();
+        if (!self) { return; }
+    }
     if (!view.isNull()) {
         view->close();
         if (!self) { return; }
@@ -6161,6 +6203,8 @@ void StationServer::dropPeer(SessionTransport* transport, const QString& reason,
             // for ends with its session, at once rather than at the Key's
             // 3 s watchdog.
             m_radioModel->stopCwxFor(sessionDevice);
+            // R-HK-13: the next session's first press is a press.
+            m_cwPaddleReported.remove(sessionDevice);
             if (!self) { return; }
         }
         if (leaving || sessionDevice.startsWith("token:")) {
@@ -6922,6 +6966,25 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
                 QStringLiteral("Update this app to send CW through this Core."), {}));
             break;
         }
+        // Hot keys (R-HK-13): dot and dash came with remoteCwVersion 3. Both up
+        // is a release, and a release is always taken.
+        bool paddleStarts = false;
+        if (message.commandVerb == "cw.paddle") {
+            for (const MirrorUpdate& argument : message.arguments) {
+                if ((argument.name == "dot" || argument.name == "dash") && argument.value.toBool()) {
+                    paddleStarts = true;
+                }
+            }
+        }
+        if (paddleStarts
+            && (it->agreedMinor < kRadioIdentitySessionProtocolMinor
+                || !peerDeclares(transport, QByteArrayLiteral("remoteTx"), 1)
+                || !peerDeclares(transport, QByteArrayLiteral("remoteCw"), 3))) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                QStringLiteral("Update this app to send dot and dash through this Core."), {}));
+            break;
+        }
         }
         // R-R3-49 / R-IOS-18 (paProfileVersion 1): the PA profile verbs, to a
         // peer that declared paProfiles, gated as the desktop's own PA
@@ -7535,6 +7598,7 @@ void StationServer::admit(SessionTransport* transport, const QString& name,
             if (m_radioModel) {
                 // CW transmit (R-CW-49): the older session's CWX ends too.
                 m_radioModel->stopCwxFor(device.deviceId);
+                m_cwPaddleReported.remove(device.deviceId);
                 if (!self) { return; }
             }
             m_transmitHolder->holderDropped(device.deviceId,
@@ -7948,6 +8012,9 @@ void StationServer::finishTakeover(quint64 serial, const QByteArray& targetId,
         // cannot restore the incumbent's slices or place.
         saveTakenSlicesFor(targetId);
         if (!self) return;
+        // R-HK-13: the device's next session starts with a press. This session's
+        // end skips that (placeSettled), its place being settled here.
+        m_cwPaddleReported.remove(targetId);
         releaseDeviceClaims(targetId, std::nullopt);
         if (!self) return;
         const auto afterSlices = m_deviceSessions->entry(targetId);
@@ -13874,6 +13941,11 @@ int StationServer::txModMonitorVersion() const
     return recordStreamVersion() >= 1 && m_modMonitor != nullptr ? 1 : 0;
 }
 
+int StationServer::txSsbModMonitorVersion() const
+{
+    return recordStreamVersion() >= 1 && m_ssbModMonitor != nullptr ? 1 : 0;
+}
+
 int StationServer::mediaReplaceVersion() const
 {
     // iPhone app plan Task 29 (R-IOS-16): the media `replace` operation,
@@ -15300,6 +15372,7 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // R-IOS-13 / R-R3-49: the AM Mod Monitor's readings, appended
             // after remoteIqVersion by StationCapabilities::toUpdates().
             caps.txModMonitorVersion = txModMonitorVersion();
+            caps.txSsbModMonitorVersion = txSsbModMonitorVersion();
             // Optional and last: old peers retain their exact descriptor.
             caps.miniDisplayVersion = media && peerDeclares(
                 transport, QByteArrayLiteral("miniDisplay"), 1) ? 1 : 0;
@@ -15709,6 +15782,9 @@ void StationServer::flushRecordStreams()
     if (m_modMonitor) {
         m_modMonitor->flushed();
     }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->flushed();
+    }
 }
 
 void StationServer::handleRecordsCommand(SessionTransport* transport, const SessionMessage& message)
@@ -15789,6 +15865,9 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
         if (m_modMonitor) {
             m_modMonitor->subscriptionsChanged();
         }
+        if (m_ssbModMonitor) {
+            m_ssbModMonitor->subscriptionsChanged();
+        }
         return;
     }
     // The answer, then the backlog as a reset: the peer's copy starts from
@@ -15799,6 +15878,9 @@ void StationServer::handleRecordsCommand(SessionTransport* transport, const Sess
     send(transport, SessionMessages::recordBatch(fitRecordBatchToPeer(transport, first)));
     if (m_modMonitor) {
         m_modMonitor->subscriptionsChanged();
+    }
+    if (m_ssbModMonitor) {
+        m_ssbModMonitor->subscriptionsChanged();
     }
     // Parity Task 33: a viewer of the CFC display may start the reads.
     updateCfcCompressionPolling();
@@ -16513,6 +16595,55 @@ void StationServer::handleModMonitorReset(SessionTransport* transport,
         && message.arguments.first().kind == MirrorWireKind::Int64;
     const qlonglong source = readable ? message.arguments.first().value.toLongLong() : -1;
     if ((source != 0 && source != 1) || !m_modMonitor->resetSource(static_cast<int>(source))) {
+        answer(false, QStringLiteral("The Core could not read this request."));
+        return;
+    }
+    answer(true, QString());
+}
+
+void StationServer::setUpSsbModMonitorStreams()
+{
+    if (m_radioModel.isNull() || recordStreamVersion() < 1) {
+        return;
+    }
+    if (m_recordFlushTimer == nullptr) {
+        m_recordFlushTimer = new QTimer(this);
+        m_recordFlushTimer->setSingleShot(true);
+        m_recordFlushTimer->setInterval(kDefaultDeltaFlushMs);
+        connect(m_recordFlushTimer, &QTimer::timeout, this, &StationServer::flushRecordStreams);
+    }
+    std::array<RecordStream*, 2> streams{};
+    for (int source = 0; source < 2; ++source) {
+        const QString name = SsbModMonitorRecord::streamName(source);
+        auto stream = std::make_unique<RecordStream>(name, SsbModMonitorRecord::kCapacity);
+        streams[static_cast<std::size_t>(source)] = stream.get();
+        m_recordStreams.emplace(name, std::move(stream));
+    }
+    m_ssbModMonitor = std::make_unique<SsbModMonitorPublisher>(
+        m_radioModel.data(), streams[0], streams[1], [this]() { scheduleRecordFlush(); });
+}
+
+void StationServer::handleSsbModMonitorReset(SessionTransport* transport,
+                                             const SessionMessage& message)
+{
+    const auto answer = [this, transport, &message](bool accepted, const QString& reason) {
+        send(transport, SessionMessages::commandResult(message.commandVerb, message.commandId,
+                                                       accepted, reason, {}));
+    };
+    if (peerFor(transport).agreedMinor < kRadioIdentitySessionProtocolMinor) {
+        answer(false, QStringLiteral("Update this app to see the Core's SSB modulation monitor."));
+        return;
+    }
+    if (txSsbModMonitorVersion() < 1 || m_ssbModMonitor == nullptr) {
+        answer(false, QStringLiteral("This Core does not send the SSB modulation monitor. "
+                                     "Updating the Core may help."));
+        return;
+    }
+    const bool readable = message.arguments.size() == 1
+        && message.arguments.first().name == "source"
+        && message.arguments.first().kind == MirrorWireKind::Int64;
+    const qlonglong source = readable ? message.arguments.first().value.toLongLong() : -1;
+    if ((source != 0 && source != 1) || !m_ssbModMonitor->resetSource(static_cast<int>(source))) {
         answer(false, QStringLiteral("The Core could not read this request."));
         return;
     }

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Modification history (NereusSDR):
+       2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 20.
+                    AI-assisted implementation via Anthropic Claude Code.
+     Registration and setSettings are from
+     https://docs.elgato.com/streamdeck/sdk/references/websocket/ui -->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>NereusSDR action settings</title>
+</head>
+<body>
+  <label for="slice">Slice</label>
+  <select id="slice">
+    <option value="">The slice the window is on</option>
+    <option value="A">Slice A</option>
+    <option value="B">Slice B</option>
+    <option value="C">Slice C</option>
+    <option value="D">Slice D</option>
+  </select>
+  <script>
+    window.connectElgatoStreamDeckSocket = (port, uuid, event, info, actionInfo) => {
+      const action = JSON.parse(actionInfo);
+      const select = document.getElementById('slice');
+      const settings = (action.payload && action.payload.settings) || {};
+      select.value = settings.slice || '';
+      const connection = new WebSocket(`ws://127.0.0.1:${port}`);
+      connection.onopen = () => connection.send(JSON.stringify({ event, uuid }));
+      select.addEventListener('change', () => {
+        connection.send(JSON.stringify({
+          event: 'setSettings',
+          action: action.action,
+          context: uuid,
+          payload: select.value ? { slice: select.value } : {},
+        }));
+      });
+    };
+  </script>
+</body>
+</html>

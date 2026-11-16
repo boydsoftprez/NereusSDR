@@ -126,7 +126,14 @@ final class BandStackUITests: XCTestCase {
         rowMenu.tap()
         choice(app, "Rename").tap()
         let field = app.textFields["bandStackRenameField"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5), "Rename has no field")
+        if !field.waitForExistence(timeout: 5) {
+            // What shows instead, for a CI run that keeps no result bundle.
+            let picture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            picture.name = "rename-has-no-field"
+            picture.lifetime = .keepAlways
+            add(picture)
+            XCTFail("Rename has no field. The screen:\n\(app.debugDescription)")
+        }
         save("band-stack-rename")
         field.typeText("Rag chew\n")
         XCTAssertTrue(field.waitForNonExistence(timeout: 5), "Return did not end Rename")

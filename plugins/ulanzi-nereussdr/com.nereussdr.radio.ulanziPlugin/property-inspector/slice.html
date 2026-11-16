@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Modification history (NereusSDR):
+       2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 20.
+                    AI-assisted implementation via Anthropic Claude Code. -->
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>NereusSDR action settings</title>
+  <link rel="stylesheet" href="../libs/common-html/css/uspi.css">
+  <script src="../libs/common-html/js/constants.js"></script>
+  <script src="../libs/common-html/js/eventEmitter.js"></script>
+  <script src="../libs/common-html/js/timers.js"></script>
+  <script src="../libs/common-html/js/utils.js"></script>
+  <script src="../libs/common-html/js/ulanziApi.js"></script>
+</head>
+<body>
+  <div class="uspi-wrapper">
+    <form id="property-inspector">
+      <div class="uspi-item">
+        <div class="uspi-item-label">Slice</div>
+        <select class="uspi-item-value" name="slice">
+          <option value="">The slice the window is on</option>
+          <option value="A">Slice A</option>
+          <option value="B">Slice B</option>
+          <option value="C">Slice C</option>
+          <option value="D">Slice D</option>
+        </select>
+      </div>
+    </form>
+  </div>
+  <script>
+    $UD.connect('com.nereussdr.radio.controller.settings');
+    $UD.onAdd((message) => {
+      Utils.setFormValue(message.param || {}, '#property-inspector');
+    });
+    document.getElementById('property-inspector').addEventListener('change', () => {
+      $UD.sendParamFromPlugin(Utils.getFormValue('#property-inspector'));
+    });
+  </script>
+</body>
+</html>

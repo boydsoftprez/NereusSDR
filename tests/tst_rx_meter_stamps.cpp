@@ -8,7 +8,7 @@
 // their audio plays, on the map its spectrum is presented by.
 //
 //   1. rxMeterStampsVersion 1 reaches only a peer that declared
-//      rxMeterStamps 1, last before coreBuildInfo, and reads back.
+//      rxMeterStamps 1, last of the peer-gated entries, and reads back.
 //   2. meterReadingNs is Outbound and gated on rxMeterStamps 1, and only a
 //      declaring peer is sent it.
 //   3. The Core's pump writes readings from one lane refresh, stamped with
@@ -34,6 +34,7 @@
 
 #include "MeterPumpSnapshot.h"
 #include "MultiDeviceHarness.h"
+#include "CapabilityOrder.h"
 
 #include <QScopeGuard>
 #include <QSemaphore>
@@ -130,11 +131,13 @@ private slots:
         QVERIFY(!capability(appB->received(), QStringLiteral("rxMeterStampsVersion")).has_value());
         const QJsonArray caps = firstOfType(appA->received(), QStringLiteral("capabilities"))
                                     .value(QStringLiteral("properties")).toArray();
-        QVERIFY(caps.size() >= 2);
-        QCOMPARE(caps.at(caps.size() - 2).toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("rxMeterStampsVersion"));
-        QCOMPARE(caps.last().toObject().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("coreBuildInfo"));
+        QCOMPARE(capabilityEntriesAfter(capabilityEntryNames(caps), QStringLiteral("rxMeterStampsVersion")),
+                 kCapabilitiesAfterPeerGatedWithBuildInfo);
+        const QJsonArray plainCaps = firstOfType(appB->received(), QStringLiteral("capabilities"))
+                                         .value(QStringLiteral("properties")).toArray();
+        QVERIFY(!plainCaps.isEmpty());
+        QCOMPARE(capabilityBytesWithout(caps, {QStringLiteral("rxMeterStampsVersion"), QStringLiteral("coreBuildInfo")}),
+                 capabilityBytesWithout(plainCaps));
 
         StationCapabilities sent;
         sent.rxMeterStampsVersion = 1;

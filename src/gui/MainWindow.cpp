@@ -61,6 +61,9 @@
 //   2026-11-03: A tag or another slice's flag line views a frequency without tuning
 //               (overlay design D21 to D27): viewRoundtableFrequency and the card's
 //               menu. A click no longer forces the applet open. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3: builds the bindings, targets and dispatcher;
+//                windowSliceTabs from refreshRxAppletSlices.
+//                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-03: Present structural Roundtable changes and leading samples immediately; retain trailing burst samples.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-11-02: Prioritize passive reports at the selected listening context.
@@ -1167,6 +1170,16 @@
 //                 reason; one VOX line reason (voxLineReason) for the
 //                 container button and the applets. J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05 - Corrections for review findings. J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 8: Use Shortcuts and Keyboard Shortcuts in View, bindings saved on change.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-06 - J.J. Boyd (KG4VCF), hot keys plan Task 11: Tools > MIDI Mapping opens Setup's MIDI page.
+//                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: the state feed follows VOX (vox.toggle).
+//                AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1503,6 +1516,14 @@ warren@wpratt.com
 #include <QJsonArray>
 #include "containers/ContainerWidget.h"
 #include "containers/ContainerButtonDispatcher.h"
+#include "core/hotkeys/HotKeyBindings.h"
+#include "gui/hotkeys/ControllerHost.h"
+#include "gui/hotkeys/DeckLink.h"
+#include "gui/hotkeys/devices/DeviceInput.h"
+#include "gui/hotkeys/HotKeyStateFeed.h"
+#include "gui/hotkeys/HotKeyDispatcher.h"
+#include "gui/hotkeys/KeyboardRouter.h"
+#include "gui/hotkeys/MainWindowHotKeyTargets.h"
 #include "containers/ContainerSettingsDialog.h"
 #include "meters/MeterWidget.h"
 #include "meters/FilterDisplayItem.h"
@@ -1586,6 +1607,7 @@ warren@wpratt.com
 #include "applets/DigitalApplet.h"
 #include "applets/PureSignalApplet.h"
 #include "applets/ModMonitorApplet.h"
+#include "applets/SsbModMonitorApplet.h"
 #include "applets/DiversityApplet.h"
 #include "applets/CwxApplet.h"
 #include "core/CwxSender.h"
@@ -2553,6 +2575,10 @@ MainWindow::MainWindow(const RemoteStationOptions& station, QWidget* parent,
 MainWindow::~MainWindow()
 {
     m_shuttingDown = true;
+    // Ahead of the feed it reads: a plugin's hold drops here, and the socket goes with it.
+    m_deckLink.reset();
+    // It reads this window on the models' signals, and they can fire through teardown.
+    m_hotKeyStateFeed.reset();
     if (m_clarityRegistry) { m_clarityRegistry->retireAll(); }
     // Retire native hosts while their windows and original construction owners
     // still exist. QObject's later child teardown is too late to reparent a
@@ -3892,32 +3918,6 @@ QHash<int, VfoWidget::SliceAccess> windowSliceAccess(const QList<SliceChooser::R
     return access;
 }
 
-// The Main Panel's first-launch order: the S-Meter first, the Mod Monitor
-// second at the time it is placed, every other applet after the ones
-// already there. The first launch and Reset Default Layout both place
-// through this, so a reset draws what a first launch draws.
-void placeFirstLaunchApplet(QVector<ContentEntry>& contents, const ContentEntry& entry)
-{
-    if (entry.typeId == QLatin1String("applet:s_meter")) {
-        contents.prepend(entry);
-    } else if (entry.typeId == QLatin1String("applet:mod_monitor")) {
-        contents.insert(qMin(1, contents.size()), entry);
-    } else {
-        contents.append(entry);
-    }
-}
-
-// CW transmit (R-CW-44): the CWX applet is placed hidden until asked for
-// (Tools > CWX, the status-bar CWX label, CAT ZZKO), as its registration
-// says; every other applet keeps its first-launch state.
-ContentEntry firstLaunchEntry(ContentEntry entry)
-{
-    if (entry.typeId == QLatin1String("applet:cwx")) {
-        entry.visible = false;
-    }
-    return entry;
-}
-
 QList<SliceChooser::Row> windowSliceRows(RadioModel& model, StationServer* server,
                                          StationClient* client)
 {
@@ -3968,18 +3968,15 @@ void MainWindow::refreshOverlayAttAccess()
     }
 }
 
-void MainWindow::refreshRxAppletSlices()
+QVector<SliceModel*> MainWindow::windowSliceTabs() const
 {
-    // TX rulings (item 3): the pans' ATT flyouts follow the same access.
-    refreshOverlayAttAccess();
-    if (!m_rxApplet || !m_radioModel) { return; }
+    QVector<SliceModel*> tabs;
+    if (!m_radioModel) { return tabs; }
     const bool remoteShared = sliceAccessClient() != nullptr;
     const QList<SliceChooser::Row> rows =
         windowSliceRows(*m_radioModel, sliceAccessServer(), sliceAccessClient());
-    const QHash<int, VfoWidget::SliceAccess> access = windowSliceAccess(rows);
     // Ruling U7: a tab for each slice this window controls, and for each
     // slice it listens to that it shows.
-    QVector<SliceModel*> tabs;
     for (SliceModel* slice : m_radioModel->slices()) {
         if (!slice) { continue; }
         const int id = slice->sliceIndex();
@@ -3998,6 +3995,18 @@ void MainWindow::refreshRxAppletSlices()
         }
         if (tab) { tabs.append(slice); }
     }
+    return tabs;
+}
+
+void MainWindow::refreshRxAppletSlices()
+{
+    // TX rulings (item 3): the pans' ATT flyouts follow the same access.
+    refreshOverlayAttAccess();
+    if (!m_rxApplet || !m_radioModel) { return; }
+    const QList<SliceChooser::Row> rows =
+        windowSliceRows(*m_radioModel, sliceAccessServer(), sliceAccessClient());
+    const QHash<int, VfoWidget::SliceAccess> access = windowSliceAccess(rows);
+    const QVector<SliceModel*> tabs = windowSliceTabs();
     SliceModel* rx = windowRxSlice();
     if (rx && !tabs.contains(rx)) {
         rx = desktopHosting() ? activeSliceForWindow() : m_radioModel->activeSlice();
@@ -4023,6 +4032,7 @@ void MainWindow::refreshActiveSlicePresentation()
     // meters follow this window's RX slice, which may be one it listens to;
     // the menu checks below follow the slice it controls.
     SliceModel* rx = windowRxSlice();
+    if (m_hotKeyStateFeed) { m_hotKeyStateFeed->refresh(); }
     if (m_rxDashboard) {
         m_rxDashboard->bindSlice(rx);
         if (rx) { m_rxDashboard->setSliceLetter(rx->sliceLetter()); }
@@ -4140,6 +4150,13 @@ void MainWindow::setDesktopStationController(DesktopStationController* controlle
             // and start wideband just before the radio is told to stop.
             if (m_shuttingDown) { return; }
             emit desktopHostingChanged();
+        });
+        // A hold's key waiting on a take that wasn't granted leaves no claim, so
+        // letting go can't drop a key made since. No went-off signal comes: nothing keyed.
+        connect(replacement, &DesktopStationController::keyTakeNotGranted, this, [this](bool superseded) {
+            if (m_hotKeyTargets && m_hotKeyDispatcher && m_hotKeyTargets->onHostKeyTakeNotGranted(superseded)) {
+                m_hotKeyDispatcher->onTransmitWentOff();
+            }
         });
         // TX badge take: the badge's take ended after its call.
         connect(replacement, &DesktopStationController::takeFinished, this,
@@ -4878,6 +4895,7 @@ void MainWindow::refreshSliceChooser()
                 const std::pair<int, bool> volume = listenVolumeFor(sliceId);
                 flag->setListenVolume(volume.first, volume.second);
             }
+            if (m_hotKeyStateFeed) { m_hotKeyStateFeed->refresh(); }
         });
     }
     // Slice control plan Task 14a: each flag says who controls its slice
@@ -5500,6 +5518,14 @@ void MainWindow::ensureRemoteSession()
         }
 
         m_stationClient = new StationClient(m_radioModel, proxy, this);
+        // Hot keys: the dot and dash this window reported end with its CW.
+        if (RemoteTransmitClient* const remote = m_stationClient->remoteTransmit()) {
+            connect(remote, &RemoteTransmitClient::cwActivityEnded, this, [this] {
+                if (m_hotKeyTargets) {
+                    m_hotKeyTargets->onRemoteCwEnded();
+                }
+            });
+        }
         // CW transmit (R-CW-49): the CWX applet hears the Core's refusals.
         bindRemoteCwx();
         connect(m_radioModel, &RadioModel::remoteMicSourceStateChanged,
@@ -6781,7 +6807,10 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     // Task 14b: "Your volume" and Mute on a listened flag set this device's
     // own listening level, never the slice's AF or mute.
     connect(newFlag, &VfoWidget::listenVolumeRequested, this,
-            [this](int idx, int level, bool muted) { setFlagListenVolume(idx, level, muted); });
+            [this](int idx, int level, bool muted) {
+                setFlagListenVolume(idx, level, muted);
+                if (m_hotKeyStateFeed) { m_hotKeyStateFeed->refresh(); }
+            });
     // Phase 3F (Bug 3): clicking this flag activates its slice so the RX
     // applet, the pan the flag sits on, and every other active-slice surface
     // follow it. Every flag runs through here, Slice A's included, since the
@@ -11173,6 +11202,57 @@ void MainWindow::buildUI()
     auto* contentRegistry = new ContainerContentRegistry(this);
     auto* workspaceStore = new ContainerWorkspaceStore(AppSettings::instance(), this);
     m_containerManager->setWorkspaceAdapter(workspaceStore, contentRegistry);
+    // Hot keys: what every source calls. The targets reach the same entry
+    // points as the on-screen controls, m_containerButtons among them.
+    m_hotKeyBindings = std::make_unique<HotKeyBindings>();
+    m_hotKeyBindings->load();
+    // Every change sticks at once, wherever it was made (Setup, the View menu).
+    connect(m_hotKeyBindings.get(), &HotKeyBindings::bindingsChanged, this, [this] { m_hotKeyBindings->save(); });
+    connect(m_hotKeyBindings.get(), &HotKeyBindings::enabledChanged, this, [this] { m_hotKeyBindings->save(); });
+    m_hotKeyTargets = std::make_unique<MainWindowHotKeyTargets>(this);
+    m_hotKeyDispatcher = std::make_unique<HotKeyDispatcher>(m_hotKeyBindings.get(), m_hotKeyTargets.get());
+    // A key off by any route ends the hold's claim on it, so letting go later
+    // can't drop a key made since.
+    connect(m_radioModel, &RadioModel::transmitKeyWentOff,
+            m_hotKeyDispatcher.get(), &HotKeyDispatcher::onTransmitWentOff);
+    // Before ArrangeHoldFilter below. Qt calls the last installed application
+    // filter first, and that filter must see each key before the router eats it.
+    m_keyboardRouter = std::make_unique<KeyboardRouter>(
+        m_hotKeyDispatcher.get(), m_hotKeyBindings.get(), this);
+    m_controllerHost = std::make_unique<ControllerHost>(m_hotKeyDispatcher.get(), m_hotKeyBindings.get());
+    // Lights and displays read this. It follows the models, and never polls.
+    m_hotKeyStateFeed = std::make_unique<HotKeyStateFeed>(m_hotKeyTargets.get());
+    {
+        HotKeyStateFeed* const feed = m_hotKeyStateFeed.get();
+        connect(m_hotKeyDispatcher.get(), &HotKeyDispatcher::transmitHoldChanged, feed, &HotKeyStateFeed::refresh);
+        // What the window's MOX, TUNE and 2-TONE buttons light from.
+        connect(m_radioModel, &RadioModel::transmittingChanged, feed, &HotKeyStateFeed::refresh);
+        connect(m_radioModel, &RadioModel::connectionStateChanged, feed, &HotKeyStateFeed::refresh);
+        connect(&m_radioModel->transmitModel(), &TransmitModel::tuneChanged, feed, &HotKeyStateFeed::refresh);
+        // VOX, as the TX applet's button and the container's light from it.
+        connect(&m_radioModel->transmitModel(), &TransmitModel::voxEnabledChanged, feed, &HotKeyStateFeed::refresh);
+        if (MoxController* mox = m_radioModel->moxController()) {
+            connect(mox, &MoxController::moxStateChanged, feed, &HotKeyStateFeed::refresh);
+            connect(mox, &MoxController::manualMoxChanged, feed, &HotKeyStateFeed::refresh);
+        }
+        if (TwoToneController* twoTone = m_radioModel->twoToneController()) {
+            connect(twoTone, &TwoToneController::twoToneActiveChanged, feed, &HotKeyStateFeed::refresh);
+        }
+        if (PureSignalSessionFacade* ps = m_radioModel->pureSignalFacade()) {
+            connect(ps, &PureSignalSessionFacade::statusChanged, feed, &HotKeyStateFeed::refresh);
+        }
+        m_controllerHost->setStateFeed(feed);
+        m_deckLink = std::make_unique<DeckLink>(m_hotKeyDispatcher.get(), feed);
+        connect(m_deckLink.get(), &DeckLink::elgatoConnectionChanged, m_controllerHost.get(),
+                &ControllerHost::setStreamDeckClaimedByPlugin);
+        connect(m_deckLink.get(), &DeckLink::ulanziConnectionChanged, m_controllerHost.get(),
+                &ControllerHost::setUlanziDialClaimedByPlugin);
+        // The same gate as real devices: only the application turns it on, so a test
+        // process that builds this window opens no socket.
+        if (DeviceInput::realDevicesAllowed() && DeckLink::savedEnabled()) {
+            m_deckLink->setEnabled(true);
+        }
+    }
     if (WorkspacePreview::enabled()) {
         // Workspace preview: the header source menu enables the open slices.
         m_containerManager->setSliceAvailability(
@@ -11237,8 +11317,9 @@ void MainWindow::buildUI()
             if (c.id != workspace.mainContainerId) { continue; }
             for (const auto& descriptor : contentRegistry->descriptors()) {
                 if (!descriptor.singleton || placed.contains(descriptor.typeId)) { continue; }
-                placeFirstLaunchApplet(c.contents,
-                                       firstLaunchEntry(contentRegistry->makeEntry(descriptor.typeId)));
+                ContainerContentRegistry::placeFirstLaunchApplet(
+                    c.contents,
+                    ContainerContentRegistry::firstLaunchEntry(contentRegistry->makeEntry(descriptor.typeId)));
             }
         }
         // Project old per-applet floating intent into committed shells, retaining
@@ -13245,9 +13326,9 @@ void MainWindow::resetDefaultLayout()
                 for (int i=0;i<retained.size();++i) {
                     if (retained[i].typeId==descriptor.typeId) { entry=retained.takeAt(i); found=true; break; }
                 }
-                if (!found) { entry=firstLaunchEntry(registry->makeEntry(descriptor.typeId)); }
+                if (!found) { entry=ContainerContentRegistry::firstLaunchEntry(registry->makeEntry(descriptor.typeId)); }
                 if (descriptor.typeId=="applet:s_meter") { entry.visible=true; }
-                placeFirstLaunchApplet(main.contents, entry);
+                ContainerContentRegistry::placeFirstLaunchApplet(main.contents, entry);
             }
         }
         // Applet records no descriptor names (and a duplicate placement) stay recoverable.
@@ -13765,6 +13846,10 @@ void MainWindow::populateDefaultMeter()
     m_modMonApplet = new ModMonitorApplet(m_radioModel, nullptr);
     panel->insertApplet(0, m_modMonApplet);   // directly below the S-Meter
 
+    // SSB Mod Monitor: envelope, peak hold and crest for USB and LSB.
+    m_ssbModMonApplet = new SsbModMonitorApplet(m_radioModel, nullptr);
+    panel->insertApplet(1, m_ssbModMonApplet);
+
     m_catApplet = new CatApplet(m_radioModel, nullptr);
     panel->addApplet(m_catApplet);
 
@@ -14149,6 +14234,7 @@ void MainWindow::populateDefaultMeter()
     m_appletsById[QStringLiteral("Vax")]        = m_vaxApplet;
     m_appletsById[QStringLiteral("PureSignal")] = m_pureSignalApplet;
     m_appletsById[QStringLiteral("ModMon")]     = m_modMonApplet;
+    m_appletsById[QStringLiteral("SsbModMon")]  = m_ssbModMonApplet;
     m_appletsById[QStringLiteral("Amp")]        = m_ampApplet;
     m_appletsById[QStringLiteral("Tuner")]      = m_tunerApplet;
     m_appletsById[QStringLiteral("Rotor")]      = m_rotorApplet;
@@ -14201,6 +14287,9 @@ void MainWindow::populateDefaultMeter()
                                 QStringLiteral("PureSignal"),   true);
     m_appletVis->registerApplet(QStringLiteral("ModMon"),
                                 QStringLiteral("AM Mod Monitor"), true);
+    m_appletVis->registerApplet(QStringLiteral("SsbModMon"),
+                                QStringLiteral("SSB Mod Monitor"),
+                                SsbModMonitorApplet::kShownByDefault);
     m_appletVis->registerApplet(QStringLiteral("Amp"),
                                 QStringLiteral("Power Genius"), true);
     m_appletVis->registerApplet(QStringLiteral("Tuner"),
@@ -14958,9 +15047,14 @@ void MainWindow::buildMenuBar()
 
     {
         QAction* kbAction = viewMenu->addAction(QStringLiteral("&Keyboard Shortcuts..."));
-        kbAction->setEnabled(false);
-        // R-R3-49: hidden until keyboard shortcut editing is built.
-        UnbuiltFeatures::hideUnlessBuilt(kbAction, UnbuiltFeature::Keyboard);
+        connect(kbAction, &QAction::triggered, this, [this] { openSetupAtPage(QStringLiteral("Keyboard")); });
+
+        // V4: the off switch, here and on the Keyboard page, one setting.
+        QAction* useShortcuts = viewMenu->addAction(QStringLiteral("Use &Shortcuts"));
+        useShortcuts->setCheckable(true);
+        useShortcuts->setChecked(m_hotKeyBindings->enabled());
+        connect(useShortcuts, &QAction::toggled, m_hotKeyBindings.get(), &HotKeyBindings::setEnabled);
+        connect(m_hotKeyBindings.get(), &HotKeyBindings::enabledChanged, useShortcuts, &QAction::setChecked);
     }
 
     // =========================================================================
@@ -15711,9 +15805,8 @@ void MainWindow::buildMenuBar()
     }
     {
         QAction* midiAction = toolsMenu->addAction(QStringLiteral("&MIDI Mapping..."));
-        midiAction->setEnabled(false);
-        // R-R3-49: hidden until MIDI control is built.
-        UnbuiltFeatures::hideUnlessBuilt(midiAction, UnbuiltFeature::Midi);
+        midiAction->setToolTip(QStringLiteral("Open Setup > Keys and controllers > MIDI"));
+        connect(midiAction, &QAction::triggered, this, [this]() { openSetupAtPage(QStringLiteral("MIDI")); });
     }
 
     toolsMenu->addSeparator();
@@ -15941,8 +16034,9 @@ QString MainWindow::tnfIndicatorTooltip(int notchCount, bool globalEnabled)
 
 QKeySequence MainWindow::tnfToggleShortcut()
 {
-    // Design section 10.2: KeyboardSetupPages.cpp is a 100% NYI stub, no
-    // ShortcutManager or registerAction exists in src/, and every shipped
+    // Design section 10.2: no ShortcutManager or registerAction exists in
+    // src/ (Setup's Keyboard page edits hot key actions, not menu items; this
+    // chord is one of the keys it shows as reserved), and every shipped
     // shortcut is a plain QAction::setShortcut in this file. AetherSDR
     // registers "tnf_toggle" with an empty default sequence
     // (MainWindow_Shortcuts.cpp:1093 [@c6481cbf]) precisely because it HAS a
@@ -20076,6 +20170,11 @@ SetupDialog* MainWindow::createSetupDialog()
     // and SettingsProxy sends nothing while it is not ready. In local
     // direct mode the settings are always available and nothing changes.
     auto* dialog = new SetupDialog(m_radioModel, this);
+    dialog->setHotKeyContext(m_hotKeyBindings.get(), [this](const QString& id) {
+        return m_hotKeyTargets->setupUnavailableReason(id);
+    });
+    dialog->setControllerHost(m_controllerHost.get());
+    dialog->setDeckLink(m_deckLink.get());
     dialog->setReceiverSelector([this] { return activeSliceForWindow(); },
                                 [this] { return desktopHosting(); });
     if (m_radioModel && m_radioModel->sliceOwnership()) {
@@ -21244,6 +21343,7 @@ void MainWindow::applyRemoteRoleGating()
     for (SetupDialog* dialog : findChildren<SetupDialog*>()) {
         dialog->setTransmitPermitted(transmitPermitted, transmitReason);
         dialog->setVoxPermitted(voxLine, voxReason);
+        dialog->refreshHotKeyAvailability();  // a Core's dot and dash
         dialog->setTransmitSettingsPermitted(settingsPermitted, settingsReason);
         dialog->setTransmitSettingsPermitted(chainPermitted, chainReason, 2);
         dialog->setTransmitSettingsPermitted(profilePermitted, profileReason, 3);

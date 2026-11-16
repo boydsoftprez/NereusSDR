@@ -8,6 +8,8 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-25: Roundtable plan Task 19, the swipe up from the tab bar on an
 // iPad too. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-08: band stack follow-up, a UI test's band launch keeps the
+// Panadapter tab on its first return. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -118,7 +120,13 @@ struct RootView: View {
     private func restorePlaces() {
         guard model.connection == .connected else { return }
         let settings = model.phoneSettings
-        if let tab = settings.navTab {
+        #if DEBUG
+        // A UI test's band launch starts on Panadapter, not on a tab an earlier test left.
+        let startOnPanadapter = UITestBand.takeStartOnPanadapter(ProcessInfo.processInfo.arguments)
+        #else
+        let startOnPanadapter = false
+        #endif
+        if !startOnPanadapter, let tab = settings.navTab {
             selection = tab
         }
         setupRouter.restore(SavedPlaces.setupPath(settings.navSetup))

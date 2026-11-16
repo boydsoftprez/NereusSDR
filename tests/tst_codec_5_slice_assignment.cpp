@@ -404,6 +404,100 @@ private slots:
         QCOMPARE(a.nDdc, 3);
     }
 
+    // Bench, 2026-11-06: gateware 22.15 reports 5 receivers, DDC0 to DDC4, and
+    // DDC5 and DDC6 send nothing. The order is filtered, not replaced.
+    void anvelina_reporting_five_uses_only_ddc2_to_ddc4()
+    {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        ctx.model = HPSDRModel::ANVELINAPRO3;
+        ctx.ddcIndexLimit = 5;
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 5; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = 3600000 + i * 7000000;
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;
+        }
+
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+
+        QCOMPARE(a.streamDdc[0], 2);
+        QCOMPARE(a.streamDdc[1], 3);
+        QCOMPARE(a.streamDdc[2], 4);
+        // A live stream past the pool gets no DDC at all.
+        QCOMPARE(a.streamDdc[3], -1);
+        QCOMPARE(a.streamDdc[4], -1);
+        // DDC2 + DDC3 + DDC4, and nothing at or above the reported count.
+        QCOMPARE(a.ddcEnable, 0x1c);
+        QCOMPARE(a.rate[5], 0);
+        QCOMPARE(a.rate[6], 0);
+        QCOMPARE(a.nDdc, 3);
+    }
+
+    void anvelina_reporting_eight_or_nothing_keeps_the_whole_order()
+    {
+        P2CodecOrionMkII codec;
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 5; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = 3600000 + i * 7000000;
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;
+        }
+        // BoardCapsTable::ddcIndexLimit gives 8 for a report of 8, 0 for none.
+        for (int limit : {8, 0}) {
+            CodecContext ctx{};
+            ctx.model = HPSDRModel::ANVELINAPRO3;
+            ctx.ddcIndexLimit = limit;
+            const auto a = codec.applyDdcAssignment(ctx, slices);
+            QCOMPARE(a.streamDdc[0], 2);
+            QCOMPARE(a.streamDdc[1], 3);
+            QCOMPARE(a.streamDdc[2], 5);
+            QCOMPARE(a.streamDdc[3], 6);
+            QCOMPARE(a.streamDdc[4], 4);
+        }
+    }
+
+    // Reporting 6 removes only DDC6, so DDC4 comes up a place.
+    void anvelina_reporting_six_skips_only_ddc6()
+    {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        ctx.model = HPSDRModel::ANVELINAPRO3;
+        ctx.ddcIndexLimit = 6;
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 4; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = 3600000 + i * 7000000;
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;
+        }
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        QCOMPARE(a.streamDdc[2], 5);
+        QCOMPARE(a.streamDdc[3], 4);
+        QCOMPARE(a.ddcEnable, 0x3c);
+    }
+
+    // The rest of the family filters its own order the same way.
+    void orion_mkii_reporting_five_uses_only_ddc2_to_ddc4()
+    {
+        P2CodecOrionMkII codec;
+        CodecContext ctx{};
+        ctx.model = HPSDRModel::ORIONMKII;
+        ctx.ddcIndexLimit = 5;
+        std::array<SliceConfig, 5> slices{};
+        for (int i = 0; i < 3; ++i) {
+            slices[i].live = true;
+            slices[i].frequencyHz = 3600000 + i * 7000000;
+            slices[i].sampleRateHz = 192000;
+            slices[i].antennaIndex = 1;
+        }
+        const auto a = codec.applyDdcAssignment(ctx, slices);
+        QCOMPARE(a.streamDdc[2], 4);
+        QCOMPARE(a.ddcEnable, 0x1c);
+    }
+
     void anvelina_five_streams_use_ddc4_last()
     {
         P2CodecOrionMkII codec;

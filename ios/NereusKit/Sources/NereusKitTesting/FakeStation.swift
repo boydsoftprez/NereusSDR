@@ -296,6 +296,8 @@ public final class FakeStation: @unchecked Sendable {
     let spotState = SpotState()
     /// The AM Mod Monitor's streams (``Additions/modMonitor``, FakeStation+ModMonitor.swift).
     let modMonitorState = ModMonitorState()
+    /// The SSB Mod Monitor's streams (``Additions/ssbModMonitor``, FakeStation+SsbModMonitor.swift).
+    let ssbModMonitorState = ModMonitorState()
     /// The transmit monitor's state (``Additions/monitorAudio``).
     let monitorAudioState = MonitorAudioState()
     /// The per-device audio quality's state (``Additions/audioQuality``).
@@ -864,6 +866,14 @@ public final class FakeStation: @unchecked Sendable {
             // A Core before record streams has no monitor either.
             lower("txModMonitorVersion", to: 0)
         }
+        if additions.contains(.ssbModMonitor) {
+            let streams = properties.first { $0["name"] as? String == "recordStreamVersion" }?["value"] as? Int
+            set("recordStreamVersion", max(1, streams ?? 0))
+            set("txSsbModMonitorVersion", 1)
+        } else {
+            // A fake without it plays a Core before the SSB monitor.
+            lower("txSsbModMonitorVersion", to: 0)
+        }
         for (name, value) in stationRadioCapabilityVersions(additions) where !removed.contains(name) {
             set(name, value)
         }
@@ -1041,6 +1051,9 @@ public final class FakeStation: @unchecked Sendable {
             return replies
         }
         if let replies = modMonitorReplies(invoke) {
+            return replies
+        }
+        if let replies = ssbModMonitorReplies(invoke) {
             return replies
         }
         if let replies = vaxReplies(invoke) {

@@ -840,7 +840,7 @@ QJsonArray captureCapabilities()
     caps.remoteTxEntry = true;
     // CW transmit (R-CW-48): sent inside it to a peer that declared remoteCw.
     caps.remoteCwEntry = true;
-    caps.remoteCwVersion = 2; // StationServer::remoteCwVersion(), StationServer.h:1656.
+    caps.remoteCwVersion = 3; // StationServer::remoteCwVersion(), StationServer.h:1656.
     // Declaration version 1: StationCapabilities.h:731-733 and
     // StationServer.cpp:13156-13157. This is not a sampled live value.
     caps.txWatchPathVersion = 1;
@@ -848,6 +848,9 @@ QJsonArray captureCapabilities()
     caps.coreBuildInfo = CoreBuildInfo{QStringLiteral("0.5.2"), QStringLiteral("link-surface@fixture")};
     caps.settingsBackupVersion = 1;
     caps.remoteIqVersion = 1;
+    // SSB Mod Monitor: sent by a Core whose record streams are up, after
+    // every other entry but the build info.
+    caps.txSsbModMonitorVersion = 1;
     caps.waveformVersion = 1;
     caps.setupDescriptionVersion = 1;
     caps.miniDisplayVersion = 1;

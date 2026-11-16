@@ -61,6 +61,8 @@
 // Modification history (NereusSDR):
 //   2026-11-05: Band stack plan Task 4: bandStackVersion, for a peer that declared bandStack.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCwVersion 3.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-25: merge of main: stationRoundtableVersion moves after main's
 //               displayCodecVersion. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
@@ -267,6 +269,8 @@
 //   2026-10-26: CW transmit, remoteCwVersion (R-CW-49): the cw.* verbs,
 //               last in the remoteTx block for a peer that declared
 //               remoteCw 1. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
 // =================================================================
 
 #include <QByteArray>
@@ -836,6 +840,12 @@ struct StationCapabilities {
     /// after remoteIqVersion and all earlier optional entries. 0: a window shows its
     /// Mod Monitor disabled with the reason.
     int txModMonitorVersion = 0;
+    /// 1 means the Core sends SSB Mod Monitor readings on txSsbModulation
+    /// and txSsbModulationFeedback while a subscriber watches and the radio
+    /// is keyed in USB or LSB, and takes txSsbModMonitor.reset. 0 omits the
+    /// entry so an older peer's capability list is unchanged. A window with
+    /// 0 shows the SSB Mod Monitor disabled.
+    int txSsbModMonitorVersion = 0;
     /// iPhone app Task 71 (R-IOS-02; the several-devices design, ruling
     /// 10.1): 1 means the Core admits up to four devices at once, sends the
     /// `connectedDevices` object and takes session.leave. Sent before the
@@ -893,6 +903,11 @@ struct StationCapabilities {
     /// declared remoteCw 1 as well (remoteCwEntry); any other peer is sent
     /// no entry and reads 0, and a window then shows its CWX sending
     /// controls disabled with the update reason.
+    /// 2: on-air starts need this version, and carry a CW activity epoch.
+    /// 3 (hot keys, R-HK-13): also cw.paddle {dot, dash}, from a peer that
+    /// declared remoteCw 3. A peer that declared 2 is sent 3 too, and everything
+    /// it uses is unchanged; its cw.paddle starts are refused. Below 3 a window
+    /// shows dot and dash unavailable with their own reason.
     bool remoteCwEntry = false;
     int remoteCwVersion = 0;
 

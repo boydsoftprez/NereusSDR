@@ -57,5 +57,10 @@
          the LAN with no prompt, surfacing only as "Host unreachable". -->
     <key>NSLocalNetworkUsageDescription</key>
     <string>NereusSDR connects to your radios and NereusSDR Core stations on your local network.</string>
+    <!-- Hot keys: macOS asks for Input Monitoring when a USB knob or controller
+         is first opened. Nothing is opened until a supported one is on the USB
+         bus, so nobody with no knobs sees the prompt. -->
+    <key>NSInputMonitoringUsageDescription</key>
+    <string>NereusSDR reads the USB tuning knobs and controllers you plug in.</string>
 </dict>
 </plist>

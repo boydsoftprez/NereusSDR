@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake ninja-build pkg-config g++ mold ccache \
         autoconf automake libtool \
         libgl1-mesa-dev libfftw3-dev \
-        libasound2-dev libjack-jackd2-dev \
+        libasound2-dev libudev-dev libjack-jackd2-dev \
         libpipewire-0.3-dev libpulse-dev \
         libssl-dev openssl \
         python3 python3-venv python3-websockets python3-cryptography \

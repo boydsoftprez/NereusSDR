@@ -21,6 +21,8 @@
 //   2026-11-04 - The Roundtable line's right-click asks for the short menu on a
 //                frequency server (overlay design D36). J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3: beginFrequencyEdit, shared with the double click.
+//                AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-25 - The BIN tooltip says both ears hear the same audio while
 //                noise reduction, SNB or the auto-notch is on (issue #650).
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code
@@ -4414,12 +4416,7 @@ void VfoWidget::mousePressEvent(QMouseEvent* event)
     if (event->type() == QEvent::MouseButtonDblClick && !isListening()) {
         QRect freqRect = m_freqStack->geometry();
         if (freqRect.contains(event->pos())) {
-            // Format current frequency as MHz for editing
-            double mhz = m_frequency / 1e6;
-            m_freqEdit->setText(QString::number(mhz, 'f', 6));
-            m_freqEdit->selectAll();
-            m_freqStack->setCurrentIndex(1);
-            m_freqEdit->setFocus();
+            beginFrequencyEdit();
             return;
         }
     }
@@ -4503,6 +4500,26 @@ bool VfoWidget::setFilterFromDrag(int low, int high)
     setFilter(low, high);
     emit filterChanged(low, high);
     return true;
+}
+
+void VfoWidget::beginFrequencyEdit()
+{
+    // Format current frequency as MHz for editing
+    double mhz = m_frequency / 1e6;
+    m_freqEdit->setText(QString::number(mhz, 'f', 6));
+    m_freqEdit->selectAll();
+    m_freqStack->setCurrentIndex(1);
+    m_freqEdit->setFocus();
+}
+
+bool VfoWidget::frequencyEditingForTest() const
+{
+    return m_freqStack->currentIndex() == 1;
+}
+
+QString VfoWidget::frequencyLabelForTest() const
+{
+    return m_freqLabel->text();
 }
 
 bool VfoWidget::tuneFromDrag(double hz)

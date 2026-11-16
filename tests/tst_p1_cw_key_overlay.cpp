@@ -161,6 +161,25 @@ private slots:
         QVERIFY(allIqWordsAre(seam.next(), 0x0001));
     }
 
+    // R-HK-13: a remote window's dot and dash are masked as CWX is.
+    void remoteCwHoldMasksSoftDotAndDash()
+    {
+        P1RadioConnection conn;
+        setUp(conn, HPSDRHW::Hermes);
+        Ep2Seam seam(conn);
+        conn.setCwWireState(cwOn());
+        conn.cwKeyLine()->setSoftDot(true);
+        conn.cwKeyLine()->setSoftDash(true);
+        QVERIFY(allIqWordsAre(seam.next(), 0x0006));
+        conn.remoteCwSafetyState()->begin(11);
+        QVERIFY(conn.setRemoteCwHold(11, TxChannel::RfHold::Link, true));
+        QVERIFY(allIqWordsAre(seam.next(), 0x0000));
+        QVERIFY(conn.setRemoteCwHold(11, TxChannel::RfHold::Link, false));
+        QVERIFY(allIqWordsAre(seam.next(), 0x0006));
+        conn.remoteCwSafetyState()->invalidate(11);
+        QVERIFY(allIqWordsAre(seam.next(), 0x0000));
+    }
+
     // Key bits 5 (dot and CWX) replace every I and Q word, TX samples
     // queued or not. On the HL2 break-in is on, so its store rule keeps CWX.
     void enableOneKeyFiveFillsEveryIqWord_data()

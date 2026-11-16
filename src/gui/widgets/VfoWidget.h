@@ -37,6 +37,8 @@
 //   2026-10-21 - setFilterFromDrag, the pan's filter edge drag on this
 //                 flag's slice. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code (Claude Opus 5.5).
+//   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 3: beginFrequencyEdit.
+//                AI-assisted implementation via Anthropic Claude Code.
 //   2026-10-18 - Flag drag signals, tuneFromDrag, isLocked, stepHz and the
 //                 wheel step accumulator. J.J. Boyd (KG4VCF), AI-assisted
 //                 via Anthropic Claude Code (Claude Opus 5.5).
@@ -552,6 +554,11 @@ public:
     // frequencyChanged, and refuses a locked slice or one this window only
     // listens to. Returns whether the frequency changed.
     bool tuneFromDrag(double hz);
+    // Opens the frequency for typing, as a double click on it does. The caller
+    // decides whether this window may change the slice.
+    void beginFrequencyEdit();
+    bool frequencyEditingForTest() const;
+    QString frequencyLabelForTest() const;
     // Filter edge drag (2026-10-21). The pan sets this flag's filter from a
     // drag on its edge, as a filter button does, through filterChanged;
     // refuses a slice this window only listens to. Returns whether the

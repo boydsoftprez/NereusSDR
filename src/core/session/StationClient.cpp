@@ -14,6 +14,8 @@
 //   2026-11-05: Band stack plan Task 4: bandStack declared, the `bandStack` mirror and
 //               sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-05: Hot keys (R-HK-13), remote dot and dash: remoteCw 3.
+//               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-11-02: Keep independent active/detail frequency streams acknowledged.
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-30: Bound retained-history validation and correlate its one-shot answers.
@@ -610,6 +612,11 @@
 //   2026-10-26: CW transmit, a refused CWPitch write settles the window's
 //               cwPitchHz on the Core's value (R-CW-02). J.J. Boyd
 //               (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-04 - SSB Mod Monitor added. Brian Sutton (W4KZO),
+//                 AI-assisted via xAI Grok.
+//   2026-11-05: hot keys plan Task 4: this window's MOX key ending reaches
+//               the model. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 
 // 2026-10-01: Authenticated Core address inventory and reconnect learning.
@@ -625,6 +632,7 @@
 #include "core/session/RemoteStationOptions.h"
 #include "core/session/BandLinkFit.h"
 #include "core/session/ModMonitorRecord.h"
+#include "core/session/SsbModMonitorRecord.h"
 
 #include "core/AppSettings.h"
 #include "core/CfcProfile.h"
@@ -1023,7 +1031,8 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
     m_declaredFeatures.insert(QByteArrayLiteral("remoteTx"), 1);
     // CW transmit (R-CW-48): the cw.* verbs (remoteCwVersion) and the CW
     // settings on `transmit` (transmitSettingsVersion 16).
-    m_declaredFeatures.insert(QByteArrayLiteral("remoteCw"), 2);
+    // 3 (hot keys, R-HK-13): cw.paddle.
+    m_declaredFeatures.insert(QByteArrayLiteral("remoteCw"), 3);
     m_declaredFeatures.insert(QByteArrayLiteral("cwSettings"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("waveform"), 1);
     m_declaredFeatures.insert(QByteArrayLiteral("radioMic"), 2);
@@ -1273,6 +1282,10 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
         connect(m_remoteTransmit, &RemoteTransmitClient::refused, this,
                 [model](const QString& reason, const QString&, const QString&) {
                     if (model) { model->reportRemoteTransmitRefused(reason); }
+                });
+        connect(m_remoteTransmit, &RemoteTransmitClient::screenKeyDownChanged, this,
+                [model](bool down) {
+                    if (!down && model) { model->reportRemoteKeyWentOff(); }
                 });
     }
 
@@ -2698,6 +2711,7 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
     // R-IOS-13 / R-R3-49: that session's Mod Monitor subscription ended
     // with it; the window's choice of source stays for the next.
     m_modMonitorStream.clear();
+    m_ssbModMonitorStream.clear();
 
     if (!m_settingsProxy.isNull()) {
         m_settingsProxy->setReady(false);
@@ -3295,10 +3309,13 @@ void StationClient::onTransportText(const QByteArray& wire)
         // R-IOS-13 / R-R3-49: the Mod Monitor's stream, when the window
         // shows it; a new snapshot is a new subscription.
         m_modMonitorStream.clear();
+        m_ssbModMonitorStream.clear();
         if (!m_radioModel.isNull()) {
             m_radioModel->clearStationModMonitor();
+            m_radioModel->clearStationSsbModMonitor();
         }
         syncModMonitorSubscription();
+        syncSsbModMonitorSubscription();
         if (firstSnapshot) {
             qCInfo(lcStationClient) << "Session established with" << m_capabilities.stationName;
             // iPhone app plan Task 27: where the Core was reached, tried
@@ -3422,7 +3439,8 @@ void StationClient::onTransportText(const QByteArray& wire)
             }
             break;
         }
-        if ((spotSourcesAvailable() || stationRadiosAvailable() || stationTciServerAvailable() || txModMonitorAvailable())
+        if ((spotSourcesAvailable() || stationRadiosAvailable() || stationTciServerAvailable()
+             || txModMonitorAvailable() || txSsbModMonitorAvailable())
             && !m_radioModel.isNull()) {
             m_radioModel->applyStationRecordBatch(message.recordBatch);
         }
@@ -6752,6 +6770,59 @@ StationClient::CommandOutcome StationClient::requestModMonitorReset(int source)
                        QStringLiteral("the modulation monitor reset"));
 }
 
+bool StationClient::txSsbModMonitorAvailable() const
+{
+    return spotSourcesAvailable() && m_capabilities.txSsbModMonitorVersion >= 1;
+}
+
+void StationClient::setSsbModMonitorSource(int source)
+{
+    m_ssbModMonitorSource = source == 0 || source == 1 ? source : -1;
+    syncSsbModMonitorSubscription();
+}
+
+void StationClient::syncSsbModMonitorSubscription()
+{
+    const QString wanted = txSsbModMonitorAvailable()
+        ? SsbModMonitorRecord::streamName(m_ssbModMonitorSource)
+        : QString();
+    if (wanted == m_ssbModMonitorStream) {
+        return;
+    }
+    const auto streamArgument = [](const QString& stream) {
+        return MirrorUpdate{0, "stream", MirrorWireKind::Utf8, QVariant(stream)};
+    };
+    if (!m_ssbModMonitorStream.isEmpty() && stationLinkReady()) {
+        invokeCommand("records.unsubscribe", {streamArgument(m_ssbModMonitorStream)});
+    }
+    if (!m_radioModel.isNull()) {
+        m_radioModel->clearStationSsbModMonitor();
+    }
+    m_ssbModMonitorStream = wanted;
+    if (!wanted.isEmpty()) {
+        invokeCommand("records.subscribe",
+                      {streamArgument(wanted),
+                       MirrorUpdate{0, "backlog", MirrorWireKind::Int64,
+                                    QVariant(static_cast<qlonglong>(SsbModMonitorRecord::kCapacity))}});
+    }
+}
+
+StationClient::CommandOutcome StationClient::requestSsbModMonitorReset(int source)
+{
+    if (!txSsbModMonitorAvailable()) {
+        return {false, stationLinkReady() ? ssbModMonitorUnavailableReason()
+                                          : QStringLiteral("Not connected to the Core, so the "
+                                                           "reset was not sent.")};
+    }
+    if (source != 0 && source != 1) {
+        return {false, QStringLiteral("This app does not know that monitor source.")};
+    }
+    return sendCommand("txSsbModMonitor.reset", -1,
+                       {MirrorUpdate{0, "source", MirrorWireKind::Int64,
+                                     QVariant(static_cast<qlonglong>(source))}},
+                       QStringLiteral("the SSB modulation monitor reset"));
+}
+
 bool StationClient::stationRadiosAvailable() const
 {
     return stationLinkReady() && m_agreedMinor >= kRadioIdentitySessionProtocolMinor
@@ -8138,6 +8209,11 @@ bool StationClient::remoteCwAvailable() const
     return remoteTransmitAvailable() && m_capabilities.remoteCwVersion >= 2;
 }
 
+bool StationClient::remoteCwPaddleAvailable() const
+{
+    return remoteTransmitAvailable() && m_capabilities.remoteCwVersion >= 3;
+}
+
 bool StationClient::directWatchReady() const
 {
     return !m_watchIsRelay && m_directWatch != nullptr && m_directWatch->isReady()
@@ -8596,6 +8672,7 @@ void StationClient::refreshRemoteTransmit()
         m_remoteTransmit->setAvailable(remoteTransmitAvailable());
         m_remoteTransmit->setCwAvailable(remoteCwAvailable());
         m_remoteTransmit->setCwReleaseAvailable(m_capabilities.remoteCwVersion >= 1);
+        m_remoteTransmit->setCwPaddleAvailable(remoteCwPaddleAvailable());
         m_remoteTransmit->setMicSourceCapability(remoteMicSourceAvailable());
     }
 }
@@ -8754,7 +8831,8 @@ void StationClient::handleCommandResult(const SessionMessage& message)
         || message.commandVerb == "tx.tune" || message.commandVerb == "tx.tunerTune"
         || message.commandVerb == "tx.twoTone" || message.commandVerb == "tx.setMicSource"
         || message.commandVerb == "cw.send" || message.commandVerb == "cw.memory"
-        || message.commandVerb == "cw.stop" || message.commandVerb == "cw.key") {
+        || message.commandVerb == "cw.stop" || message.commandVerb == "cw.key"
+        || message.commandVerb == "cw.paddle") {
         const QPointer<StationClient> self(this);
         if (m_remoteTransmit != nullptr) {
             m_remoteTransmit->commandFinished(message.commandId, message.commandVerb,

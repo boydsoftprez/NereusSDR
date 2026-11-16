@@ -9358,6 +9358,18 @@ float SpectrumWidget::displayCalOffsetDb() const
     return offset + m_dbmCalOffset;
 }
 
+// The dB the GPU trace adds to every value, which the Roundtable pan level
+// also reads, so it lives outside the GPU block and builds on every target.
+// From Longpath src/gui/SpectrumWidget.cpp:11648-11665 [@383f058]
+float SpectrumWidget::fftTraceShiftDb() const
+{
+    // Kalibrierung UND 1-Hz-Normierung, wie dbmToYf -- die Normierung
+    // fehlte hier, Gitter und Ueberlagerungen hatten sie schon.
+    // [original inline comment from Longpath src/gui/SpectrumWidget.cpp:11663-11664]
+    // NereusSDR: the calibration is displayCalOffsetDb(), as dbmToYf takes it.
+    return displayCalOffsetDb() + normalizeShiftDb();
+}
+
 void SpectrumWidget::setRxPreampOffsetDb(float db)
 {
     // From Thetis console.cs:12310 [v2.10.3.15] (UpdateRX1DisplayOffsets):
@@ -17072,15 +17084,6 @@ float SpectrumWidget::fftTraceFloorNdc(const QRect& specRect) const
         ? static_cast<float>(bandPlanStripHeight()) / static_cast<float>(specRect.height())
         : 0.0f;
     return yBot + 2.0f * qBound(0.0f, stripFrac, 1.0f);
-}
-
-float SpectrumWidget::fftTraceShiftDb() const
-{
-    // Kalibrierung UND 1-Hz-Normierung, wie dbmToYf -- die Normierung
-    // fehlte hier, Gitter und Ueberlagerungen hatten sie schon.
-    // [original inline comment from Longpath src/gui/SpectrumWidget.cpp:11663-11664]
-    // NereusSDR: the calibration is displayCalOffsetDb(), as dbmToYf takes it.
-    return displayCalOffsetDb() + normalizeShiftDb();
 }
 
 // The trace and fill vertices renderGpuFrame() uploads, moved out of it
