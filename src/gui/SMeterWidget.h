@@ -538,6 +538,9 @@ private:
 
     void updateNeedleTarget();
     void animateNeedle();
+    // On Intel macOS a direct repaint joins the waterfall's window sync.
+    void deferRepaint();
+    bool m_repaintQueued{false};
     // One step of the needle toward its target (NereusSDR: animateNeedle's
     // body, so a test can take one update).  True when it is there.
     bool moveNeedle(float elapsedSeconds);

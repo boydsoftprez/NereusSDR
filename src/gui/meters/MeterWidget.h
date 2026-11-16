@@ -107,7 +107,16 @@ mw0lge@grange-lane.co.uk
 #include <QPointer>
 #include <functional>
 
-#ifdef NEREUS_GPU_SPECTRUM
+// Intel macOS meters stay on QPainter. Each QRhiWidget is its own Metal
+// swapchain, and Qt's beginFrame waits for every other swapchain before
+// the waterfall can present. A screen full of meter swapchains held the
+// row clock. The spectrum remains the one Metal surface. Apple silicon
+// keeps GPU meters.
+#if defined(NEREUS_GPU_SPECTRUM) && !(defined(Q_OS_MACOS) && defined(Q_PROCESSOR_X86_64))
+#define NEREUS_METER_GPU 1
+#endif
+
+#ifdef NEREUS_METER_GPU
 #include <QRhiWidget>
 #include <rhi/qrhi.h>
 using MeterBaseClass = QRhiWidget;
@@ -153,7 +162,7 @@ public:
     void setMonotonicClockForTest(std::function<qint64()> clock) { m_monotonicClock = std::move(clock); }
     // The fade veils drawItems and the GPU overlay draw.
     void drawFadeVeilsForTest(QPainter& p) const { drawFadeVeils(p); }
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     void clearReadingLayerDirtyFlagsForTest() { m_bgDirty = m_overlayStaticDirty = m_overlayDynamicDirty = false; }
     bool backgroundDirtyForTest() const { return m_bgDirty; }
     bool overlayStaticDirtyForTest() const { return m_overlayStaticDirty; }
@@ -270,7 +279,7 @@ signals:
     void displayVisibilityChanged();
 
 protected:
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     void initialize(QRhiCommandBuffer* cb) override;
     void render(QRhiCommandBuffer* cb) override;
     void releaseResources() override;
@@ -322,9 +331,21 @@ private:
     bool m_explicitPowerScale{false};
     std::optional<MeterItem::MeterUnit> m_unitMode;
     void invalidateReadingLayers(bool staticLayers = false);
+#ifndef NEREUS_METER_GPU
+    // Readings repaint on the next event-loop turn so they do not join
+    // the waterfall's window sync.
+    void scheduleReadingRepaint();
+    bool m_readingRepaintQueued{false};
+#endif
 
-#ifdef NEREUS_GPU_SPECTRUM
+#ifdef NEREUS_METER_GPU
     bool m_rhiInitialized{false};
+
+    // Intel macOS draws this meter at logical pixels. Each meter is its own
+    // offscreen Metal frame on the GUI thread, in the same window sync that
+    // places waterfall rows.
+    void applyMeterColorBufferSize();
+    qreal meterColorBufferRatio() const;
 
     void initBackgroundPipeline();
     void initGeometryPipeline();
