@@ -380,6 +380,11 @@
 //                                    cases that hold back name the count in
 //                                    their first wait's failure message.
 //                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-16  J.J. Boyd (KG4VCF)  aMediaNotReadyAnswerIsAskedForAgain and
+//                                    aMuteEndsAMediaNotReadyRetry hold back
+//                                    an off answer the Core sent itself too;
+//                                    seen on the self-hosted Linux runner.
+//                                    AI-assisted via Anthropic Claude Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
@@ -12891,7 +12896,7 @@ private slots:
         PacedRemoteAudio audio(h);
         remoteMedia.holdAudioRestartForTest(true);
         h.forgeReplacesFirstContext = true;
-        h.connectSession(std::nullopt, mediaNotReadyContext);
+        h.connectSession(std::nullopt, mediaNotReadyFromEnabled);
         QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
                                   h.mediaStage(remoteMedia).constData(),
                                   h.kMediaConnectionWaitMs);
@@ -13183,7 +13188,7 @@ private slots:
         PacedRemoteAudio audio(h);
         remoteMedia.holdAudioRestartForTest(true);
         h.forgeReplacesFirstContext = true;
-        h.connectSession(std::nullopt, mediaNotReadyContext);
+        h.connectSession(std::nullopt, mediaNotReadyFromEnabled);
         const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
         QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
                                   h.mediaStage(remoteMedia).constData(),
