@@ -4,8 +4,16 @@
 // Modification history (NereusSDR):
 // 2026-11-16  J.J. Boyd / KG4VCF; rewind sound (spec 3, 6.7, recording plan
 //             Task 22). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; DsrPastRenderer: past rows, a past
+//             spectrum frame and the hours map (spec 3, 6.7, A12, recording
+//             plan Task 23). AI tooling: Anthropic Claude Code.
 
 #include "DsrReplay.h"
+
+#include "core/FFTEngine.h"
+#include "core/spectrum/SpectrumReducer.h"
+
+#include <QtEndian>
 
 #include <algorithm>
 #include <cmath>
@@ -153,6 +161,310 @@ bool DsrReplay::pull(float* i, float* q, int frames) noexcept
     }
     m_framesPlayed.fetch_add(got, std::memory_order_relaxed);
     return true;
+}
+
+// ---- The past picture (recording plan Task 23).
+
+DsrPastRenderer::DsrPastRenderer() = default;
+
+DsrPastRenderer::~DsrPastRenderer() = default;
+
+bool DsrPastRenderer::layout(int rateHz, qint64 streamCentreHz, const DsrPanView& view, DsrPastFrames* out)
+{
+    if (rateHz <= 0 || view.fftSize <= 0 || out == nullptr) {
+        return false;
+    }
+    // The live spectrum's crop of the FFT for the pan's centre and span.
+    ReducerConfig cfg;
+    cfg.centreHz = double(view.centreHz);
+    cfg.spanHz = double(view.spanHz);
+    cfg.streamCentreHz = double(streamCentreHz);
+    cfg.sampleRateHz = double(rateHz);
+    const auto [first, last] = SpectrumReducer::visibleBinRange(view.fftSize, cfg);
+    const int count = last - first + 1;
+    if (count <= 0) {
+        return false;
+    }
+    out->hzPerBin = double(rateHz) / double(view.fftSize);
+    out->firstBinHz = double(streamCentreHz) - double(rateHz) / 2.0 + double(first) * out->hzPerBin;
+    out->binCount = count;
+    return true;
+}
+
+bool DsrPastRenderer::liveGrid(const DsrRingFile& ring, int receiver, int liveRateHz, qint64 liveCentreHz,
+                               qint64 nearUtcNs, int* rateHz, qint64* centreHz) const
+{
+    if (liveRateHz > 0) {
+        *rateHz = liveRateHz;
+        *centreHz = liveCentreHz;
+        return true;
+    }
+    // The receiver streams no more: the layout it had when last kept.
+    DsrBlockHeader h;
+    if (!ring.blockAt(receiver, nearUtcNs, &h) && !ring.blockAt(receiver, ring.newestUtcNs(receiver) - 1, &h)) {
+        return false;
+    }
+    *rateHz = h.sampleRateHz;
+    *centreHz = h.centreHz;
+    return true;
+}
+
+bool DsrPastRenderer::gather(const DsrRingFile& ring, int receiver, qint64 fromUtcNs, int frames,
+                             DsrBlockHeader* kept)
+{
+    m_read.resize(static_cast<size_t>(frames) * 2);
+    int got = 0;
+    qint64 t = fromUtcNs;
+    qint64 previousStart = 0;
+    while (got < frames) {
+        DsrBlockHeader blk;
+        if (!ring.blockAt(receiver, t, &blk)) {
+            if (got == 0) {
+                return false;
+            }
+            // The block after, when it follows on.
+            if (!ring.nextBlock(receiver, previousStart + 1, &blk) || blk.utcNs - t > kJoinGapNs) {
+                return false;
+            }
+            t = std::max(t, blk.utcNs);
+        }
+        if (got == 0) {
+            *kept = blk;
+        } else if (blk.sampleRateHz != kept->sampleRateHz) {
+            return false;
+        }
+        DsrBlockHeader part;
+        const int n = ring.read(receiver, t, m_read.data() + static_cast<size_t>(got) * 2, frames - got, &part);
+        if (n <= 0) {
+            return false;
+        }
+        got += n;
+        previousStart = blk.utcNs;
+        t = blk.utcNs + DsrRingFile::durationNs(blk.frames, blk.sampleRateHz);
+    }
+    m_feed.resize(frames * 2);
+    for (int k = 0; k < frames * 2; ++k) {
+        m_feed[k] = float(m_read[static_cast<size_t>(k)]) / DsrReplay::kIqScale;
+    }
+    return true;
+}
+
+bool DsrPastRenderer::transformAt(const DsrRingFile& ring, int receiver, qint64 utcNs, int fftSize,
+                                  int windowType, DsrBlockHeader* kept, QVector<float>* binsDbm)
+{
+    // FFTEngine transforms once its window is full and one more pair comes.
+    const int frames = fftSize + 1;
+    if (!gather(ring, receiver, utcNs, frames, kept)) {
+        // Near the newest kept second: the frames that end at that moment.
+        DsrBlockHeader h;
+        if (!ring.blockAt(receiver, utcNs, &h)
+            || !gather(ring, receiver, utcNs - DsrRingFile::durationNs(frames, h.sampleRateHz), frames, kept)) {
+            return false;
+        }
+    }
+    if (!m_fft) {
+        m_fft = std::make_unique<FFTEngine>(-1);
+        QObject::connect(m_fft.get(), &FFTEngine::fftReady, m_fft.get(),
+                         [this](int, const QVector<float>& bins) {
+                             m_frame = bins;
+                             m_haveFrame = true;
+                         },
+                         Qt::DirectConnection);
+    }
+    m_fft->setFftSize(fftSize);
+    m_fft->setWindowFunction(static_cast<WindowFunction>(windowType));
+    m_fft->setSampleRate(double(kept->sampleRateHz));
+    // One transform of these frames alone: no overlap from the row before,
+    // and no frame-rate hold.
+    m_fft->resetInputHistory();
+    m_haveFrame = false;
+    m_fft->feedIQ(m_feed);
+    if (!m_haveFrame || m_frame.size() != fftSize) {
+        return false;
+    }
+    *binsDbm = m_frame;
+    return true;
+}
+
+QVector<float> DsrPastRenderer::mapRow(const QVector<float>& binsDbm, const DsrBlockHeader& kept,
+                                       const DsrPastFrames& layout)
+{
+    QVector<float> row(layout.binCount, kFloorDbm);
+    const int n = int(binsDbm.size());
+    if (n <= 0 || kept.sampleRateHz <= 0) {
+        return row;
+    }
+    const double keptHzPerBin = double(kept.sampleRateHz) / double(n);
+    const double keptLowHz = double(kept.centreHz) - double(kept.sampleRateHz) / 2.0;
+    for (int j = 0; j < layout.binCount; ++j) {
+        const double hz = layout.firstBinHz + double(j) * layout.hzPerBin;
+        const qint64 src = std::llround((hz - keptLowHz) / keptHzPerBin);
+        if (src >= 0 && src < n) {
+            row[j] = binsDbm[int(src)];
+        }
+    }
+    return row;
+}
+
+DsrPastFrames DsrPastRenderer::rows(const DsrRingFile& ring, int receiver, int liveRateHz, qint64 liveCentreHz,
+                                    const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs, int rowCount,
+                                    qint64 maxBinBytes)
+{
+    DsrPastFrames out;
+    out.receiver = receiver;
+    rowCount = std::clamp(rowCount, 1, kMaxRows);
+    int rate = 0;
+    qint64 centre = 0;
+    if (toUtcNs < fromUtcNs || !liveGrid(ring, receiver, liveRateHz, liveCentreHz, toUtcNs, &rate, &centre)
+        || !layout(rate, centre, view, &out)) {
+        return out;
+    }
+    const qint64 step = rowCount > 1 ? (toUtcNs - fromUtcNs) / (rowCount - 1) : 0;
+    const qint64 rowBytes = qint64(out.binCount) * 2;
+    const int maxRows = int(std::clamp<qint64>(maxBinBytes / rowBytes, 1, kMaxRows));
+    int i = 0;
+    for (; i < rowCount && out.rows.size() < maxRows; ++i) {
+        const qint64 t = toUtcNs - qint64(i) * step;
+        DsrBlockHeader kept;
+        QVector<float> bins;
+        if (transformAt(ring, receiver, t, view.fftSize, view.windowType, &kept, &bins)) {
+            out.utcNs.append(t);
+            out.rows.append(mapRow(bins, kept, out));
+        }
+    }
+    out.rowsLeft = rowCount - i;
+    out.nextToUtcNs = out.rowsLeft > 0 ? toUtcNs - qint64(i) * step : 0;
+    return out;
+}
+
+bool DsrPastRenderer::spectrum(const DsrRingFile& ring, int receiver, int liveRateHz, qint64 liveCentreHz,
+                               const DsrPanView& view, qint64 utcNs, DsrPastFrames* out)
+{
+    out->receiver = receiver;
+    int rate = 0;
+    qint64 centre = 0;
+    if (!liveGrid(ring, receiver, liveRateHz, liveCentreHz, utcNs, &rate, &centre)
+        || !layout(rate, centre, view, out)) {
+        return false;
+    }
+    DsrBlockHeader kept;
+    QVector<float> bins;
+    if (!transformAt(ring, receiver, utcNs, view.fftSize, view.windowType, &kept, &bins)) {
+        return false;
+    }
+    out->utcNs = {utcNs};
+    out->rows = {mapRow(bins, kept, *out)};
+    return true;
+}
+
+QList<DsrHour> DsrPastRenderer::hours(const DsrRingFile& ring)
+{
+    QList<DsrHour> out;
+    const qint64 oldest = ring.oldestUtcNs();
+    const qint64 newest = ring.newestUtcNs();
+    if (oldest <= 0 || newest <= oldest) {
+        return out;
+    }
+    const QList<int> receivers = ring.receivers();
+    for (qint64 hour = (newest - 1) / kHourNs; hour >= oldest / kHourNs; --hour) {
+        const qint64 start = hour * kHourNs;
+        bool kept = false;
+        double activity = 0.0;
+        for (const int r : receivers) {
+            double sum = 0.0;
+            int count = 0;
+            for (int s = 0; s < kHourSamples; ++s) {
+                const qint64 at = start + qint64(s) * kHourNs / kHourSamples;
+                const qint64 end = start + qint64(s + 1) * kHourNs / kHourSamples;
+                DsrBlockHeader b;
+                qint64 t = at;
+                if (!ring.blockAt(r, at, &b)) {
+                    if (!ring.nextBlock(r, at, &b) || b.utcNs >= end) {
+                        continue;
+                    }
+                    t = b.utcNs;
+                }
+                kept = true;
+                DsrBlockHeader used;
+                QVector<float> bins;
+                double a = 0.0;
+                if (transformAt(ring, r, t, kHoursFftSize, kHoursWindowType, &used, &bins)) {
+                    const float peak = *std::max_element(bins.cbegin(), bins.cend());
+                    const auto middle = bins.begin() + bins.size() / 2;
+                    std::nth_element(bins.begin(), middle, bins.end());
+                    a = std::clamp((double(peak) - double(*middle) - kQuietDb) / kActivitySpanDb, 0.0, 1.0);
+                }
+                sum += a;
+                ++count;
+            }
+            if (count > 0) {
+                activity = std::max(activity, sum / count);
+            }
+        }
+        if (kept) {
+            out.append(DsrHour{start, activity});
+        }
+    }
+    return out;
+}
+
+QByteArray DsrPastRenderer::packTimes(const QList<qint64>& utcNs)
+{
+    QByteArray bytes(utcNs.size() * qsizetype(sizeof(qint64)), Qt::Uninitialized);
+    for (qsizetype i = 0; i < utcNs.size(); ++i) {
+        qToLittleEndian<qint64>(utcNs.at(i), bytes.data() + i * qsizetype(sizeof(qint64)));
+    }
+    return bytes;
+}
+
+QList<qint64> DsrPastRenderer::unpackTimes(const QByteArray& bytes)
+{
+    QList<qint64> out;
+    const qsizetype count = bytes.size() / qsizetype(sizeof(qint64));
+    out.reserve(count);
+    for (qsizetype i = 0; i < count; ++i) {
+        out.append(qFromLittleEndian<qint64>(bytes.constData() + i * qsizetype(sizeof(qint64))));
+    }
+    return out;
+}
+
+QByteArray DsrPastRenderer::packRows(const QList<QVector<float>>& rows)
+{
+    qsizetype total = 0;
+    for (const QVector<float>& row : rows) {
+        total += row.size();
+    }
+    QByteArray bytes(total * qsizetype(sizeof(qint16)), Qt::Uninitialized);
+    qsizetype at = 0;
+    for (const QVector<float>& row : rows) {
+        for (const float dbm : row) {
+            const long steps = std::lround(double(dbm) * kWireStepsPerDb);
+            const qint16 v = static_cast<qint16>(std::clamp<long>(steps, -32768, 32767));
+            qToLittleEndian<qint16>(v, bytes.data() + at * qsizetype(sizeof(qint16)));
+            ++at;
+        }
+    }
+    return bytes;
+}
+
+QList<QVector<float>> DsrPastRenderer::unpackRows(const QByteArray& bytes, int binCount)
+{
+    QList<QVector<float>> out;
+    if (binCount <= 0) {
+        return out;
+    }
+    const qsizetype values = bytes.size() / qsizetype(sizeof(qint16));
+    const qsizetype rowCount = values / binCount;
+    for (qsizetype r = 0; r < rowCount; ++r) {
+        QVector<float> row(binCount);
+        for (int k = 0; k < binCount; ++k) {
+            const qint16 v = qFromLittleEndian<qint16>(bytes.constData()
+                                                       + (r * binCount + k) * qsizetype(sizeof(qint16)));
+            row[k] = float(v) / kWireStepsPerDb;
+        }
+        out.append(row);
+    }
+    return out;
 }
 
 }  // namespace NereusSDR

@@ -65,6 +65,10 @@
 // 2026-11-16: Recording plan Task 22 placed: rewind sound's refusals
 // (RecordingService rewind, goLive, seekRewind). J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 23 placed: the past picture's refusals
+// (RecordingService checkPastRequest, pastRows, pastSpectrum; the words in
+// RecordingService.h). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+// Claude Code.
 // 2026-11-16: Recording plan Task 21: the recorder's size refusal in
 // RecordingsFacade::applySettingsChange.
 // 2026-11-15: Recording plan Task 5: the recordings.* refusals worded in
@@ -1850,6 +1854,15 @@ const QList<ReasonSource>& reasonSources()
         {"src/core/recordings/RecordingService.cpp",
          {QStringLiteral("rewind"), QStringLiteral("goLive"), QStringLiteral("seekRewind")}, {}, 0, {},
          {QStringLiteral("QString::fromLatin1(why)")}},
+        // Recording plan Task 23: dsr.rows and dsr.spectrum's refusals. Each
+        // passes on one of RecordingService.h's kPast... or kRewind...
+        // sentences (scanned in that file's entry below).
+        {"src/core/recordings/RecordingService.cpp",
+         {QStringLiteral("checkPastRequest"), QStringLiteral("pastRows"), QStringLiteral("pastSpectrum")}, {}, 0,
+         {},
+         {QStringLiteral("QString::fromLatin1(why)"), QStringLiteral("QString::fromLatin1(kPastRowsReason)"),
+          QStringLiteral("kept ? QString() : QString::fromLatin1(kRewindGoneReason)"),
+          QStringLiteral("refusal")}},
         // Recording plan Task 11: what a refused recordings.play or
         // voiceKeyer.listen says (RecordingService::playbackRefused). The
         // recorder's file name is a file name, never a reason. A kept

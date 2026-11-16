@@ -1665,8 +1665,8 @@ When a feature is off, its version is 0:
   adds `dsr`, the Digital Spectrum Recorder (every receiver's I/Q kept on
   the Core's disk in a loop with a size limit), and `recordings.setSettings`
   takes `dsrEnabled`, `dsrDisk` and `dsrSizeLimitGb`, and the Core takes
-  the `dsr.*` verbs (rewind sound, section 9) with `dsr.rewound` in the
-  document; a peer that declared
+  the `dsr.*` verbs (rewind sound and the past picture, section 9) with
+  `dsr.rewound` in the document; a peer that declared
   `recordings` 1 is sent 4, and a client below 4 leaves its recorder
   controls visible and greyed with the words below. The session protocol
   minor did not change. A client on a Core that sends no entry shows
@@ -6662,6 +6662,9 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `dsr.rewind` | `slice` i64, `utcNs` i64, `frequencyHz` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.live` | `slice` i64 | `recordingsVersion` | 4 | 11 |
 | `dsr.seek` | `slice` i64, `utcNs` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.rows` | `slice` i64, `fromUtcNs` i64, `toUtcNs` i64, `rowCount` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.spectrum` | `slice` i64, `utcNs` i64, `fftSize` i64, `windowType` i64, `centreHz` i64, `spanHz` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.hours` | none | `recordingsVersion` | 4 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -7133,6 +7136,31 @@ These command groups need a sentence beyond the table:
   "That moment was kept at another sample rate." (the slice's receiver
   runs at another rate now) and "Turn diversity off to rewind that
   slice.".
+- **The past picture** (`recordingsVersion` 4). The Core draws the past
+  from the Digital Spectrum Recorder on its recordings worker, with the
+  asking pan's own FFT settings, which the window sends with each request
+  (the same `fftSize`, `windowType`, `centreHz` and `spanHz` its display
+  subscription carries); `slice` is a slice on that pan and names the
+  receiver. `dsr.rows` (`fromUtcNs`, `toUtcNs`, `rowCount`, 1 to 4096) draws
+  `rowCount` rows evenly from `toUtcNs` back to `fromUtcNs`, both ends
+  included, newest first; a row over a moment no longer kept is left out.
+  `dsr.spectrum` (`utcNs`) draws one frame. Both answer, in `values`, the bin
+  layout the live spectrum has for that pan (`binCount` bins from
+  `firstBinHz` up in steps of `hzPerBin`, f64), `slice`, `times` (base64 of
+  little-endian 64-bit ns since 1970 UTC, one per row) and `bins` (base64 of
+  little-endian signed 16-bit tenths of a dB, `binCount` per row, row after
+  row; -200 dBm where nothing kept lies under a bin). An answer carries at
+  most 196608 bytes of bins (at least one row); `rowsLeft` and
+  `nextToUtcNs` say what remains, and the window asks again with
+  `toUtcNs` = `nextToUtcNs` and `rowCount` = `rowsLeft`. `dsr.hours` answers
+  every kept hour, newest first: `starts` (base64 of 64-bit ns, each hour's
+  start) and `activity` (a JSON array, 0 for silence to 1 for a busy band).
+  None keys the radio. Refusals: "That slice is not open.", "The spectrum
+  size must be a power of two from 1024 to 262144.", "The Core does not
+  know that spectrum window.", "The pan is wider than the receiver kept."
+  (a span of 0 or wider than the receiver's rate), "Ask for 1 to 4096 past
+  rows at a time." and "That moment is no longer kept." (the recorder is
+  off, or for `dsr.spectrum` nothing is kept then).
 - **The voice keyer** (`recordingsVersion` 3). Messages M1 to M8 are kept on
   the Core as 48 kHz 16-bit mono WAV, at most two minutes each.
   `voiceKeyer.send` (`n`) is the one verb that keys the radio: it keys as

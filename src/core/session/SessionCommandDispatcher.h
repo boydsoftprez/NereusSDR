@@ -87,6 +87,9 @@
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-16: Recording plan Task 22: handleDsr, rewind sound's verbs.
+//   2026-11-16: Recording plan Task 23: handleDsrPast, the past picture's
+//               verbs. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//               Code.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 5: parseBandStackRecall.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -267,6 +270,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QHash>
+#include <QJsonObject>
 #include <QSet>
 
 #include <functional>
@@ -725,6 +729,9 @@ private:
     /// Recording plan Task 22: dsr.rewind, dsr.live and dsr.seek, rewind
     /// sound (recordingsVersion 4). None keys the radio.
     void handleDsr(const NereusSDR::SessionMessage& invoke);
+    /// Recording plan Task 23: dsr.rows, dsr.spectrum and dsr.hours, the
+    /// past picture, answered once the recordings worker has drawn it.
+    void handleDsrPast(const NereusSDR::SessionMessage& invoke, const QJsonObject& arguments, int slice);
     void handleRadeResetVocoder(const NereusSDR::SessionMessage& invoke);
     // R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     // txEq.resetCurve, through TxEqCurveAccess.

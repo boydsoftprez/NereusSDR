@@ -5,12 +5,20 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; rewind sound: one slice fed from the
 //             recorder's ring file instead of the radio (spec 3, 6.7,
 //             recording plan Task 22). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; DsrPastRenderer: past waterfall rows, a
+//             past spectrum frame and the hours map, drawn from the ring
+//             file with the pan's own FFT settings on the recordings worker
+//             (spec 3, 6.7, A12, recording plan Task 23). AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
 #include "core/recordings/SpscFloatRing.h"
 #include "core/recordings/dsr/DsrRingFile.h"
 
+#include <QByteArray>
+#include <QList>
+#include <QVector>
 #include <QtGlobal>
 
 #include <atomic>
@@ -18,6 +26,8 @@
 #include <vector>
 
 namespace NereusSDR {
+
+class FFTEngine;
 
 // One rewound slice's input: the past I/Q of one receiver, read from the
 // ring file on the recordings worker into a lock-free ring, and taken by the
@@ -152,6 +162,126 @@ public:
     // Feeds the slice from `replay`, or (null) from the radio again. False
     // when there is no DSP worker to switch (no radio streaming).
     virtual bool feedSlice(int slice, std::shared_ptr<DsrReplay> replay) = 0;
+};
+
+// ---- The past picture (spec 3 "Rewind picture", "Moving through hours",
+// 6.7, A12; recording plan Task 23).
+
+// The pan's own FFT settings, as the asking window sends them (the same
+// values its display subscription carries): the FFT size and window, and
+// the stretch of frequency it shows.
+struct DsrPanView {
+    int fftSize = 4096;
+    int windowType = 1;        // WindowFunction
+    qint64 centreHz = 0;
+    qint64 spanHz = 0;
+};
+
+// Past rows (or one past spectrum frame) in the pan's bin layout: the bins
+// the live spectrum has for that pan's span and FFT size, from `firstBinHz`
+// up in steps of `hzPerBin`. Each row is dBm per bin, newest first.
+struct DsrPastFrames {
+    int slice = -1;
+    int receiver = -1;
+    double firstBinHz = 0.0;
+    double hzPerBin = 0.0;
+    int binCount = 0;
+    QList<qint64> utcNs;            // each row's moment, ns since 1970 UTC
+    QList<QVector<float>> rows;
+    // The rows of the request still to draw, from nextToUtcNs back to the
+    // request's start: ask again for them (the rows come in chunks).
+    int rowsLeft = 0;
+    qint64 nextToUtcNs = 0;
+};
+
+// One kept hour of the hours map: its start and how busy the band was, 0
+// (silence) to 1.
+struct DsrHour {
+    qint64 startUtcNs = 0;
+    double activity = 0.0;
+};
+
+// Draws the past from the ring file with the same FFT engine the spectrum
+// thread uses (FFTEngine), one transform per row. The recordings worker
+// only: never the spectrum thread or the connection thread.
+class NEREUS_CORE_EXPORT DsrPastRenderer {
+public:
+    // The FFT sizes a pan may ask for (FFTEngine::setFftSize's own limits).
+    static constexpr int kMinFftSize = 1024;
+    static constexpr int kMaxFftSize = 262144;
+    // A request draws at most this many rows.
+    static constexpr int kMaxRows = 4096;
+    // One answer carries at most this many bytes of bins (2 per bin), at
+    // least one row; the rest of the request comes in later answers. The
+    // size of one recording copy chunk (RecordingsFacade::kExportChunkBytes).
+    static constexpr qint64 kAnswerBinBytes = 196608;
+    // A bin with nothing kept under it: the floor FFTEngine::processFrame
+    // gives a bin with no power.
+    static constexpr float kFloorDbm = -200.0f;
+    // Bins travel as signed 16-bit tenths of a dB.
+    static constexpr float kWireStepsPerDb = 10.0f;
+    // Two blocks kept this close are one stretch for a transform.
+    static constexpr qint64 kJoinGapNs = 50000000;
+    // The hours map: each hour is looked at this many times, evenly, with
+    // this FFT; a moment whose strongest bin stands kQuietDb or less above
+    // the middle bin counts as silence, and kActivitySpanDb more as fully
+    // busy (NereusSDR's own shading, no Thetis equivalent).
+    static constexpr qint64 kHourNs = 3600LL * DsrRingFile::kNsPerSecond;
+    static constexpr int kHourSamples = 12;
+    static constexpr int kHoursFftSize = 4096;
+    static constexpr int kHoursWindowType = 1;   // WindowFunction::BlackmanHarris4
+    static constexpr double kQuietDb = 15.0;
+    static constexpr double kActivitySpanDb = 30.0;
+
+    DsrPastRenderer();
+    ~DsrPastRenderer();
+    DsrPastRenderer(const DsrPastRenderer&) = delete;
+    DsrPastRenderer& operator=(const DsrPastRenderer&) = delete;
+
+    // The bin layout the live spectrum has for `view` on a receiver at
+    // `rateHz` around `streamCentreHz` (SpectrumReducer::visibleBinRange).
+    // False when it selects no bins.
+    static bool layout(int rateHz, qint64 streamCentreHz, const DsrPanView& view, DsrPastFrames* out);
+
+    // `rowCount` rows of `receiver` evenly from `toUtcNs` back to
+    // `fromUtcNs` (both ends included), newest first, in the layout for the
+    // receiver's live rate and centre (or, with no live rate, its newest
+    // kept block's). A row with nothing kept under it is left out. At most
+    // `maxBinBytes` of bins; rowsLeft and nextToUtcNs say what remains.
+    DsrPastFrames rows(const DsrRingFile& ring, int receiver, int liveRateHz, qint64 liveCentreHz,
+                       const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs, int rowCount,
+                       qint64 maxBinBytes = kAnswerBinBytes);
+    // One frame at `utcNs`, as rows() draws a row. False when nothing is
+    // kept then.
+    bool spectrum(const DsrRingFile& ring, int receiver, int liveRateHz, qint64 liveCentreHz,
+                  const DsrPanView& view, qint64 utcNs, DsrPastFrames* out);
+    // Every kept hour, newest first.
+    QList<DsrHour> hours(const DsrRingFile& ring);
+
+    // The wire form: times as little-endian 64-bit integers, bins as
+    // little-endian 16-bit tenths of a dB, row after row.
+    static QByteArray packTimes(const QList<qint64>& utcNs);
+    static QList<qint64> unpackTimes(const QByteArray& bytes);
+    static QByteArray packRows(const QList<QVector<float>>& rows);
+    static QList<QVector<float>> unpackRows(const QByteArray& bytes, int binCount);
+
+private:
+    // The FFT (dBm, FFT-shifted, as FFTEngine emits it) of `fftSize` frames
+    // of `receiver` from `utcNs` (or, near the newest kept, ending there).
+    bool transformAt(const DsrRingFile& ring, int receiver, qint64 utcNs, int fftSize, int windowType,
+                     DsrBlockHeader* kept, QVector<float>* binsDbm);
+    bool gather(const DsrRingFile& ring, int receiver, qint64 fromUtcNs, int frames, DsrBlockHeader* kept);
+    // The kept frame mapped into `layout`'s bins by frequency.
+    static QVector<float> mapRow(const QVector<float>& binsDbm, const DsrBlockHeader& kept,
+                                 const DsrPastFrames& layout);
+    bool liveGrid(const DsrRingFile& ring, int receiver, int liveRateHz, qint64 liveCentreHz,
+                  qint64 nearUtcNs, int* rateHz, qint64* centreHz) const;
+
+    std::unique_ptr<FFTEngine> m_fft;
+    QVector<float> m_frame;
+    bool m_haveFrame = false;
+    std::vector<qint16> m_read;
+    QVector<float> m_feed;
 };
 
 }  // namespace NereusSDR

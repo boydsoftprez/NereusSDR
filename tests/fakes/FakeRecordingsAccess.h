@@ -30,6 +30,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
 //                 and seekPast are recorded. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 23: the past
+//                 picture's requests are recorded. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QHash>
@@ -221,6 +224,16 @@ public:
     }
     void live(int slice) override { calls.append({QStringLiteral("live"), slice}); }
     void seekPast(int slice, qint64 /*utcNs*/) override { calls.append({QStringLiteral("seekPast"), slice}); }
+    void requestPastRows(int slice, const DsrPanView& /*view*/, qint64 /*fromUtcNs*/, qint64 /*toUtcNs*/,
+                         int rowCount) override
+    {
+        calls.append({QStringLiteral("requestPastRows"), slice, {}, 0, rowCount});
+    }
+    void requestPastSpectrum(int slice, const DsrPanView& /*view*/, qint64 /*utcNs*/) override
+    {
+        calls.append({QStringLiteral("requestPastSpectrum"), slice});
+    }
+    void requestHours() override { calls.append({QStringLiteral("requestHours")}); }
 
 private:
     State m_state = State::Ready;

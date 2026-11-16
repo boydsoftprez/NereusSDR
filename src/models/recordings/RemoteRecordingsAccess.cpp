@@ -16,6 +16,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
 //                 and seekPast (rewind sound, recordingsVersion 4).
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 23: the past
+//                 picture (past rows in chunks, a past spectrum frame, the
+//                 hours map). AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -157,6 +161,47 @@ void RemoteRecordingsAccess::seekPast(int slice, qint64 utcNs)
 {
     sendDsrVerb(QStringLiteral("dsr.seek"),
                 QJsonObject{{QStringLiteral("slice"), slice}, {QStringLiteral("utcNs"), utcNs}});
+}
+
+void RemoteRecordingsAccess::requestPastRows(int slice, const DsrPanView& view, qint64 fromUtcNs,
+                                             qint64 toUtcNs, int rowCount)
+{
+    m_pastRows.seq += 1;
+    m_pastRows.slice = slice;
+    m_pastRows.view = view;
+    m_pastRows.fromUtcNs = fromUtcNs;
+    sendPastRows(fromUtcNs, toUtcNs, rowCount);
+}
+
+void RemoteRecordingsAccess::sendPastRows(qint64 fromUtcNs, qint64 toUtcNs, int rowCount)
+{
+    const DsrPanView& view = m_pastRows.view;
+    if (sendDsrVerb(QStringLiteral("dsr.rows"),
+                    QJsonObject{{QStringLiteral("slice"), m_pastRows.slice},
+                                {QStringLiteral("fromUtcNs"), fromUtcNs},
+                                {QStringLiteral("toUtcNs"), toUtcNs},
+                                {QStringLiteral("rowCount"), rowCount},
+                                {QStringLiteral("fftSize"), view.fftSize},
+                                {QStringLiteral("windowType"), view.windowType},
+                                {QStringLiteral("centreHz"), view.centreHz},
+                                {QStringLiteral("spanHz"), view.spanHz}})) {
+        m_pastRowsInFlight.append(m_pastRows.seq);
+    }
+}
+
+void RemoteRecordingsAccess::requestPastSpectrum(int slice, const DsrPanView& view, qint64 utcNs)
+{
+    sendDsrVerb(QStringLiteral("dsr.spectrum"), QJsonObject{{QStringLiteral("slice"), slice},
+                                                            {QStringLiteral("utcNs"), utcNs},
+                                                            {QStringLiteral("fftSize"), view.fftSize},
+                                                            {QStringLiteral("windowType"), view.windowType},
+                                                            {QStringLiteral("centreHz"), view.centreHz},
+                                                            {QStringLiteral("spanHz"), view.spanHz}});
+}
+
+void RemoteRecordingsAccess::requestHours()
+{
+    sendDsrVerb(QStringLiteral("dsr.hours"), QJsonObject{});
 }
 
 bool RemoteRecordingsAccess::sendLink(const QString& verb, const QJsonObject& arguments)
@@ -559,6 +604,10 @@ void RemoteRecordingsAccess::takeResult(const QByteArray& verb, bool accepted, c
         takeVoiceImport(verb, accepted, reason);
         return;
     }
+    if (verb == "dsr.rows" || verb == "dsr.spectrum" || verb == "dsr.hours") {
+        takePast(verb, accepted, reason, values);
+        return;
+    }
     if (verb == "recordings.playback") {
         const QString id = valueOf(values, "id").toString();
         if (id.isEmpty()) {
@@ -636,12 +685,66 @@ void RemoteRecordingsAccess::refreshState()
             finishVoiceExport(m_voiceExports.first()->n, false, kLinkLost);
         }
         finishVoiceImport(false, kLinkLost);
+        // No past rows still asked for will come.
+        m_pastRowsInFlight.clear();
         if (m_playback.has_value()) {
             m_playback.reset();
             emit playbackChanged();
         }
     }
     emit stateChanged();
+}
+
+// The past picture's answers (recording plan Task 23): the bin layout, the
+// rows' times and bins in DsrPastRenderer's wire form, or the hours.
+void RemoteRecordingsAccess::takePast(const QByteArray& verb, bool accepted, const QString& reason,
+                                      const QList<MirrorUpdate>& values)
+{
+    if (verb == "dsr.rows") {
+        // An answer to an older request than the newest is dropped.
+        const quint64 seq = m_pastRowsInFlight.isEmpty() ? 0 : m_pastRowsInFlight.takeFirst();
+        if (seq != m_pastRows.seq) {
+            return;
+        }
+    }
+    if (!accepted) {
+        emit refused(reason);
+        return;
+    }
+    if (verb == "dsr.hours") {
+        const QList<qint64> starts = DsrPastRenderer::unpackTimes(
+            QByteArray::fromBase64(valueOf(values, "starts").toString().toLatin1()));
+        const QJsonArray activity =
+            QJsonDocument::fromJson(valueOf(values, "activity").toString().toUtf8()).array();
+        QList<DsrHour> hours;
+        for (qsizetype i = 0; i < starts.size() && i < activity.size(); ++i) {
+            hours.append(DsrHour{starts.at(i), activity.at(i).toDouble()});
+        }
+        emit hoursReady(hours);
+        return;
+    }
+    DsrPastFrames frames;
+    frames.slice = valueOf(values, "slice").toInt();
+    frames.firstBinHz = valueOf(values, "firstBinHz").toDouble();
+    frames.hzPerBin = valueOf(values, "hzPerBin").toDouble();
+    frames.binCount = valueOf(values, "binCount").toInt();
+    frames.utcNs = DsrPastRenderer::unpackTimes(QByteArray::fromBase64(valueOf(values, "times").toString().toLatin1()));
+    frames.rows = DsrPastRenderer::unpackRows(QByteArray::fromBase64(valueOf(values, "bins").toString().toLatin1()),
+                                              frames.binCount);
+    frames.rowsLeft = valueOf(values, "rowsLeft").toInt();
+    frames.nextToUtcNs = valueOf(values, "nextToUtcNs").toLongLong();
+    if (frames.rows.size() != frames.utcNs.size()) {
+        qCWarning(lcRecordings) << "past rows from the Core do not match their times";
+        return;
+    }
+    if (verb == "dsr.spectrum") {
+        emit pastSpectrumReady(frames);
+        return;
+    }
+    emit pastRowsReady(frames);
+    if (frames.rowsLeft > 0) {
+        sendPastRows(m_pastRows.fromUtcNs, frames.nextToUtcNs, frames.rowsLeft);
+    }
 }
 
 } // namespace NereusSDR

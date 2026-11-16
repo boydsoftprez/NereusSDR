@@ -8,6 +8,10 @@
 // Modification history (NereusSDR):
 //   2026-11-16: Recording plan Task 22: rewind sound's verbs dsr.rewind,
 //               dsr.live and dsr.seek (handleDsr, recordingsVersion 4).
+//   2026-11-16: Recording plan Task 23: the past picture's verbs dsr.rows,
+//               dsr.spectrum and dsr.hours (handleDsr, recordingsVersion 4),
+//               answered once the Core's recordings worker has drawn them.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 21: recordings.setSettings takes the
 //               Digital Spectrum Recorder's dsrEnabled, dsrDisk and
@@ -1024,6 +1028,18 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         {"dsr.live", {arg("slice", kInt)}, "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
         {"dsr.seek", {arg("slice", kInt), arg("utcNs", kInt)}, "recordingsVersion", 4,
          kRadioIdentitySessionProtocolMinor},
+        // Recording plan Task 23 (recordingsVersion 4): the past picture.
+        // The window sends its pan's own FFT settings (as its display
+        // subscription does) and a slice on that pan, naming the receiver.
+        {"dsr.rows",
+         {arg("slice", kInt), arg("fromUtcNs", kInt), arg("toUtcNs", kInt), arg("rowCount", kInt),
+          arg("fftSize", kInt), arg("windowType", kInt), arg("centreHz", kInt), arg("spanHz", kInt)},
+         "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
+        {"dsr.spectrum",
+         {arg("slice", kInt), arg("utcNs", kInt), arg("fftSize", kInt), arg("windowType", kInt),
+          arg("centreHz", kInt), arg("spanHz", kInt)},
+         "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
+        {"dsr.hours", {}, "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's RF-Kit RF2K-S and the station TCI server (R-R3-47,
@@ -1930,7 +1946,8 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
                || invoke.commandVerb == "voiceKeyer.setRepeat" || invoke.commandVerb == "voiceKeyer.listen") {
         handleVoiceKeyer(invoke);
     } else if (invoke.commandVerb == "dsr.rewind" || invoke.commandVerb == "dsr.live"
-               || invoke.commandVerb == "dsr.seek") {
+               || invoke.commandVerb == "dsr.seek" || invoke.commandVerb == "dsr.rows"
+               || invoke.commandVerb == "dsr.spectrum" || invoke.commandVerb == "dsr.hours") {
         handleDsr(invoke);
     } else if (invoke.commandVerb == "requestIoBoardProbe") {
         handleRequestIoBoardProbe(invoke);
@@ -5397,6 +5414,13 @@ void SessionCommandDispatcher::handleDsr(const SessionMessage& invoke)
         : -1;
     QString refusal;
     bool ok = false;
+    if (verb == "dsr.rows" || verb == "dsr.spectrum" || verb == "dsr.hours") {
+        // Recording plan Task 23: drawn on the Core's recordings worker and
+        // answered on a later turn (a refusal at once): the main thread
+        // never waits on it.
+        handleDsrPast(invoke, arguments, slice);
+        return;
+    }
     if (verb == "dsr.rewind") {
         ok = service->rewind(slice, arguments.value(QStringLiteral("utcNs")).toInteger(0),
                              arguments.value(QStringLiteral("frequencyHz")).toInteger(0), &refusal);
@@ -5411,6 +5435,85 @@ void SessionCommandDispatcher::handleDsr(const SessionMessage& invoke)
     }
     emit commandResultReady(SessionMessages::commandResult(
         verb, invoke.commandId, true, QString(), {QByteArrayLiteral("recordings")}, {}));
+}
+
+// Recording plan Task 23 (design sections 3, 6.7, A12): the past picture.
+// The service checks the request and draws it on its worker; the answer
+// carries the bin layout, the rows' times and their bins (DsrPastRenderer's
+// wire form, base64) or the hours.
+void SessionCommandDispatcher::handleDsrPast(const SessionMessage& invoke, const QJsonObject& arguments,
+                                             int slice)
+{
+    RecordingService* const service = m_radioModel->recordingService();
+    const QPointer<SessionCommandDispatcher> self(this);
+    const QString owner = m_sessionOwner;
+    const QByteArray verb = invoke.commandVerb;
+    const quint32 commandId = invoke.commandId;
+    if (verb == "dsr.hours") {
+        service->pastHours([self, owner, verb, commandId](const QList<DsrHour>& hours) {
+            if (self.isNull()) {
+                return;
+            }
+            QList<qint64> starts;
+            QJsonArray activity;
+            for (const DsrHour& hour : hours) {
+                starts.append(hour.startUtcNs);
+                activity.append(std::round(hour.activity * 1000.0) / 1000.0);
+            }
+            self->emitResultAs(owner, SessionMessages::commandResult(
+                verb, commandId, true, QString(), {},
+                {MirrorUpdate{0, "starts", MirrorWireKind::Utf8,
+                              QVariant(QString::fromLatin1(DsrPastRenderer::packTimes(starts).toBase64()))},
+                 MirrorUpdate{0, "activity", MirrorWireKind::Utf8,
+                              QVariant(QString::fromUtf8(
+                                  QJsonDocument(activity).toJson(QJsonDocument::Compact)))}}));
+        });
+        return;
+    }
+    // Hz and sizes past what an int holds are out of range; the service
+    // words the refusal.
+    const auto intArg = [&arguments](const char* name) {
+        const qint64 value = arguments.value(QLatin1String(name)).toInteger(-1);
+        return value >= std::numeric_limits<int>::min() && value <= std::numeric_limits<int>::max()
+            ? static_cast<int>(value)
+            : -1;
+    };
+    DsrPanView view;
+    view.fftSize = intArg("fftSize");
+    view.windowType = intArg("windowType");
+    view.centreHz = arguments.value(QStringLiteral("centreHz")).toInteger(0);
+    view.spanHz = arguments.value(QStringLiteral("spanHz")).toInteger(0);
+    const auto answer = [self, owner, verb, commandId](bool ok, const QString& refusal,
+                                                      const DsrPastFrames& frames) {
+        if (self.isNull()) {
+            return;
+        }
+        if (!ok) {
+            self->emitResultAs(owner, SessionMessages::commandResult(
+                verb, commandId, false,
+                refusal.isEmpty() ? QStringLiteral("The request for recordings was not understood.") : refusal,
+                {}));
+            return;
+        }
+        self->emitResultAs(owner, SessionMessages::commandResult(
+            verb, commandId, true, QString(), {},
+            {MirrorUpdate{0, "slice", MirrorWireKind::Int64, QVariant(qlonglong(frames.slice))},
+             MirrorUpdate{0, "firstBinHz", MirrorWireKind::Float64, QVariant(frames.firstBinHz)},
+             MirrorUpdate{0, "hzPerBin", MirrorWireKind::Float64, QVariant(frames.hzPerBin)},
+             MirrorUpdate{0, "binCount", MirrorWireKind::Int64, QVariant(qlonglong(frames.binCount))},
+             MirrorUpdate{0, "times", MirrorWireKind::Utf8,
+                          QVariant(QString::fromLatin1(DsrPastRenderer::packTimes(frames.utcNs).toBase64()))},
+             MirrorUpdate{0, "bins", MirrorWireKind::Utf8,
+                          QVariant(QString::fromLatin1(DsrPastRenderer::packRows(frames.rows).toBase64()))},
+             MirrorUpdate{0, "rowsLeft", MirrorWireKind::Int64, QVariant(qlonglong(frames.rowsLeft))},
+             MirrorUpdate{0, "nextToUtcNs", MirrorWireKind::Int64, QVariant(qlonglong(frames.nextToUtcNs))}}));
+    };
+    if (verb == "dsr.rows") {
+        service->pastRows(slice, view, arguments.value(QStringLiteral("fromUtcNs")).toInteger(0),
+                          arguments.value(QStringLiteral("toUtcNs")).toInteger(0), intArg("rowCount"), answer);
+    } else {
+        service->pastSpectrum(slice, view, arguments.value(QStringLiteral("utcNs")).toInteger(0), answer);
+    }
 }
 
 // Recording plan Task 11 (design sections 6.6, 6.9, section 7). Runs on the

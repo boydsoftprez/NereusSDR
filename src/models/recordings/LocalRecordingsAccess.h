@@ -27,6 +27,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
 //                 and seekPast (rewind sound, recordingsVersion 4).
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 23: the past
+//                 picture (past rows in chunks, a past spectrum frame, the
+//                 hours map). AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QFile>
@@ -86,6 +90,10 @@ public:
     void rewind(int slice, qint64 utcNs, qint64 hz) override;
     void live(int slice) override;
     void seekPast(int slice, qint64 utcNs) override;
+    void requestPastRows(int slice, const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs,
+                         int rowCount) override;
+    void requestPastSpectrum(int slice, const DsrPanView& view, qint64 utcNs) override;
+    void requestHours() override;
 
 private:
     struct Copy {
@@ -106,6 +114,10 @@ private:
     void refreshState();
     void copyStep();
     void finishCopy(bool ok, const QString& error);
+    /// One chunk of request `seq`'s rows; the next is asked for when it
+    /// comes, while `seq` is still the newest request.
+    void askPastRows(quint64 seq, int slice, const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs,
+                     int rowCount);
 
     QPointer<RadioModel> m_model;
     QString m_json;
@@ -114,6 +126,7 @@ private:
     QHash<int, RecordingsListPage> m_pages;   // by reader
     QList<std::shared_ptr<Copy>> m_copies;
     bool m_copyScheduled = false;
+    quint64 m_pastRowsSeq = 0;   // the newest requestPastRows
     State m_lastState{State::NotConnected};
 };
 

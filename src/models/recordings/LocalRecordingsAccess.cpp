@@ -23,6 +23,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
 //                 and seekPast (rewind sound, recordingsVersion 4).
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 23: the past
+//                 picture (past rows in chunks, a past spectrum frame, the
+//                 hours map). AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -188,6 +192,70 @@ void LocalRecordingsAccess::seekPast(int slice, qint64 utcNs)
         if (!recordings->seekRewind(slice, utcNs, &refusal)) {
             emit refused(refusal);
         }
+    }
+}
+
+void LocalRecordingsAccess::requestPastRows(int slice, const DsrPanView& view, qint64 fromUtcNs,
+                                            qint64 toUtcNs, int rowCount)
+{
+    if (begin() == nullptr) {
+        return;
+    }
+    askPastRows(++m_pastRowsSeq, slice, view, fromUtcNs, toUtcNs, rowCount);
+}
+
+void LocalRecordingsAccess::askPastRows(quint64 seq, int slice, const DsrPanView& view, qint64 fromUtcNs,
+                                        qint64 toUtcNs, int rowCount)
+{
+    RecordingService* recordings = service();
+    if (recordings == nullptr) {
+        return;
+    }
+    const QPointer<LocalRecordingsAccess> self(this);
+    recordings->pastRows(slice, view, fromUtcNs, toUtcNs, rowCount,
+                         [self, seq, slice, view, fromUtcNs](bool ok, const QString& refusal,
+                                                             const DsrPastFrames& rows) {
+                             if (self.isNull() || seq != self->m_pastRowsSeq) {
+                                 return;
+                             }
+                             if (!ok) {
+                                 emit self->refused(refusal);
+                                 return;
+                             }
+                             emit self->pastRowsReady(rows);
+                             if (rows.rowsLeft > 0) {
+                                 self->askPastRows(seq, slice, view, fromUtcNs, rows.nextToUtcNs, rows.rowsLeft);
+                             }
+                         });
+}
+
+void LocalRecordingsAccess::requestPastSpectrum(int slice, const DsrPanView& view, qint64 utcNs)
+{
+    if (RecordingService* recordings = begin()) {
+        const QPointer<LocalRecordingsAccess> self(this);
+        recordings->pastSpectrum(slice, view, utcNs,
+                                 [self](bool ok, const QString& refusal, const DsrPastFrames& frame) {
+                                     if (self.isNull()) {
+                                         return;
+                                     }
+                                     if (!ok) {
+                                         emit self->refused(refusal);
+                                         return;
+                                     }
+                                     emit self->pastSpectrumReady(frame);
+                                 });
+    }
+}
+
+void LocalRecordingsAccess::requestHours()
+{
+    if (RecordingService* recordings = begin()) {
+        const QPointer<LocalRecordingsAccess> self(this);
+        recordings->pastHours([self](const QList<DsrHour>& hours) {
+            if (!self.isNull()) {
+                emit self->hoursReady(hours);
+            }
+        });
     }
 }
 

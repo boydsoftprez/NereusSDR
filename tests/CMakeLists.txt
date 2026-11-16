@@ -12105,6 +12105,13 @@ nereus_add_test(tst_dsr_recorder CORE_ONLY)
 # WDSP channel (src/core/recordings/dsr/DsrReplay.cpp, RecordingService.cpp,
 # src/models/RxDspWorker.cpp).
 nereus_add_test(tst_dsr_rewind CORE_ONLY)
+# Recording plan Task 23: the past picture. Past rows and a past spectrum
+# frame drawn from the ring file with the pan's own FFT settings put a kept
+# carrier in the live spectrum's bin; rows newest first, only what is kept,
+# in chunks; the hours map over a three-hour ring; drawn on the recordings
+# worker; bad requests refused in plain words
+# (src/core/recordings/dsr/DsrReplay.cpp, RecordingService.cpp).
+nereus_add_test(tst_dsr_past_rows CORE_ONLY)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

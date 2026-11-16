@@ -46,6 +46,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
 //                 and seekPast (rewind sound, recordingsVersion 4).
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 23: the past
+//                 picture (requestPastRows, requestPastSpectrum,
+//                 requestHours). AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QJsonArray>
@@ -60,6 +64,7 @@
 #include "core/NereusCoreExport.h"
 #include "core/recordings/RecordingNames.h"
 #include "core/recordings/RecordingPlayer.h"
+#include "core/recordings/dsr/DsrReplay.h"
 
 namespace NereusSDR {
 
@@ -134,6 +139,18 @@ public:
     virtual void live(int slice) = 0;
     /// A rewound slice plays on from `utcNs`.
     virtual void seekPast(int slice, qint64 utcNs) = 0;
+    // The past picture (recordingsVersion 4): the Core draws past rows and
+    // a past spectrum frame from the Digital Spectrum Recorder with this
+    // pan's own FFT settings (`view`), for the receiver `slice` is on.
+    /// `rowCount` rows from `toUtcNs` back to `fromUtcNs`, newest first.
+    /// They come in chunks through pastRowsReady (its rowsLeft says more
+    /// follow); a newer request replaces the rest of an older one.
+    virtual void requestPastRows(int slice, const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs,
+                                 int rowCount) = 0;
+    /// One past spectrum frame at `utcNs`, through pastSpectrumReady.
+    virtual void requestPastSpectrum(int slice, const DsrPanView& view, qint64 utcNs) = 0;
+    /// Every kept hour, newest first, through hoursReady.
+    virtual void requestHours() = 0;
     /// Keys the radio and sends Mn; it unkeys at the end (or repeats).
     virtual void sendVoice(int n) = 0;
     /// Stops what goes out, or the wait to repeat it; the radio unkeys.
@@ -180,6 +197,9 @@ signals:
     void refused(const QString& reason);
     void voiceImportFinished(int n, bool ok, const QString& error);
     void voiceExportFinished(int n, bool ok, const QString& error);
+    void pastRowsReady(const NereusSDR::DsrPastFrames& rows);
+    void pastSpectrumReady(const NereusSDR::DsrPastFrames& frame);
+    void hoursReady(const QList<NereusSDR::DsrHour>& hours);
 
 private:
     int m_lastListReader = 0;

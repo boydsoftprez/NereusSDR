@@ -29,6 +29,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; setHost: the Digital Spectrum Recorder's
 //             default for a missing key follows where the service runs
 //             (recording plan Task 10b). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the past picture: past waterfall rows, a
+//             past spectrum frame and the hours map, drawn on the worker
+//             with the asking pan's FFT settings (spec 3, 6.7, A12,
+//             recording plan Task 23). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -263,6 +267,31 @@ public:
     void setDsrRewindHostForTest(std::unique_ptr<DsrRewindHost> host);
     std::shared_ptr<DsrReplay> replayForTest(int slice) const;
 
+    // ---- The past picture (spec 3 "Rewind picture", "Moving through
+    // hours", 6.7, A12; recording plan Task 23): the Core draws past
+    // waterfall rows and a past spectrum frame from the ring file with the
+    // asking pan's own FFT settings, and the hours map, on the recordings
+    // worker (never the spectrum or connection thread). Main thread; each
+    // answer comes back on the main thread, a refusal at once.
+    static constexpr const char* kPastSizeReason = "The spectrum size must be a power of two from 1024 to 262144.";
+    static constexpr const char* kPastWindowReason = "The Core does not know that spectrum window.";
+    static constexpr const char* kPastSpanReason = "The pan is wider than the receiver kept.";
+    static constexpr const char* kPastRowsReason = "Ask for 1 to 4096 past rows at a time.";
+    using PastFramesDone = std::function<void(bool ok, const QString& refusal, const DsrPastFrames& frames)>;
+    using HoursDone = std::function<void(const QList<DsrHour>& hours)>;
+    // `rowCount` rows of `slice`'s receiver from `toUtcNs` back to
+    // `fromUtcNs`, newest first, in the pan's bin layout; what the recorder
+    // no longer keeps is left out. Rows come in chunks (DsrPastFrames
+    // rowsLeft and nextToUtcNs).
+    void pastRows(int slice, const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs, int rowCount,
+                  PastFramesDone done);
+    // One past spectrum frame of `slice`'s receiver at `utcNs`.
+    void pastSpectrum(int slice, const DsrPanView& view, qint64 utcNs, PastFramesDone done);
+    // Every kept hour, newest first, with its band activity.
+    void pastHours(HoursDone done);
+    // The thread the last past picture was drawn on.
+    QThread* pastRenderThreadForTest() const { return m_pastRenderThread.load(); }
+
     // ---- The recordings worker thread, for work that must not run on the
     // main thread (the voice keyer's conversions).
     // Runs `job` on the worker after what is queued there already. From
@@ -425,6 +454,12 @@ private:
     void followLiveCentres();
     void workerFillReplays();
 
+    // The past picture. The receiver `slice` is on, its live rate and
+    // centre, or a refusal.
+    bool checkPastRequest(int slice, const DsrPanView& view, int* receiver, int* liveRateHz,
+                          qint64* liveCentreHz, QString* refusal) const;
+    DsrPastRenderer& workerPastRenderer();
+
     RadioModel* m_radio = nullptr;
     mutable std::unique_ptr<RecordingStore> m_store;
     mutable QString m_storeFolder;
@@ -503,6 +538,10 @@ private:
         bool finishedTold = false;
     };
     std::vector<WorkerReplay> m_workerReplays;   // worker thread only
+
+    // The past picture: made, used and dropped on the worker.
+    std::unique_ptr<DsrPastRenderer> m_pastRenderer;
+    std::atomic<QThread*> m_pastRenderThread{nullptr};
 };
 
 }  // namespace NereusSDR

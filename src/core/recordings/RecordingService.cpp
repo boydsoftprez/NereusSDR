@@ -28,10 +28,15 @@
 //             off by default in a desktop window running its own radio and
 //             on in a Core (recording plan Task 10b). AI tooling: Anthropic
 //             Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the past picture: past rows, a past
+//             spectrum frame and the hours map, checked here and drawn on
+//             the worker (spec 3, 6.7, A12, recording plan Task 23). AI
+//             tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
 #include "core/AudioEngine.h"
+#include "core/FFTEngine.h"
 #include "core/LogCategories.h"
 #include "core/MoxController.h"
 #include "core/audio/MasterMixer.h"
@@ -246,6 +251,8 @@ RecordingService::~RecordingService()
         QMetaObject::invokeMethod(m_workerContext, [this] {
             delete m_workerTimer;
             m_workerTimer = nullptr;
+            // Its FFT engine was made on the worker; it goes there too.
+            m_pastRenderer.reset();
         }, Qt::BlockingQueuedConnection);
         connect(m_thread.get(), &QThread::finished, m_workerContext, &QObject::deleteLater);
         m_thread->quit();
@@ -1884,5 +1891,129 @@ void RecordingService::workerFillReplays()
     }
 }
 
+// ---- The past picture (spec 3, 6.7, A12, recording plan Task 23).
+//
+// The request is checked here, on the main thread, against the slice's
+// receiver; the drawing (disk reads and one FFT per row) runs on the
+// recordings worker, and the answer comes back here.
+
+bool RecordingService::checkPastRequest(int slice, const DsrPanView& view, int* receiver, int* liveRateHz,
+                                        qint64* liveCentreHz, QString* refusal) const
+{
+    const auto refuse = [refusal](const char* why) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(why);
+        }
+        return false;
+    };
+    // The pan's own settings first, then the slice and its receiver.
+    if (view.fftSize < DsrPastRenderer::kMinFftSize || view.fftSize > DsrPastRenderer::kMaxFftSize
+        || (view.fftSize & (view.fftSize - 1)) != 0) {
+        return refuse(kPastSizeReason);
+    }
+    if (view.windowType < static_cast<int>(WindowFunction::Rectangular)
+        || view.windowType >= static_cast<int>(WindowFunction::Count)) {
+        return refuse(kPastWindowReason);
+    }
+    if (view.spanHz <= 0) {
+        return refuse(kPastSpanReason);
+    }
+    if (!m_rewindHost || slice < 0 || !m_rewindHost->sliceOpen(slice)) {
+        return refuse(kRewindNoSliceReason);
+    }
+    *receiver = m_rewindHost->sliceReceiver(slice);
+    if (*receiver < 0) {
+        return refuse(kRewindNoSliceReason);
+    }
+    *liveRateHz = m_rewindHost->receiverRateHz(*receiver);
+    *liveCentreHz = m_rewindHost->receiverCentreHz(*receiver);
+    // The rate the receiver keeps: its live rate, or the one it was last
+    // kept at.
+    int keptRate = *liveRateHz;
+    if (keptRate <= 0 && m_dsrRunning) {
+        const DsrRingFile& ring = m_dsr->ring();
+        DsrBlockHeader h;
+        if (ring.blockAt(*receiver, ring.newestUtcNs(*receiver) - 1, &h)) {
+            keptRate = h.sampleRateHz;
+        }
+    }
+    if (keptRate > 0 && view.spanHz > keptRate) {
+        return refuse(kPastSpanReason);
+    }
+    if (!m_dsrRunning) {
+        return refuse(kRewindGoneReason);
+    }
+    return true;
+}
+
+DsrPastRenderer& RecordingService::workerPastRenderer()
+{
+    if (!m_pastRenderer) {
+        m_pastRenderer = std::make_unique<DsrPastRenderer>();
+    }
+    m_pastRenderThread.store(QThread::currentThread());
+    return *m_pastRenderer;
+}
+
+void RecordingService::pastRows(int slice, const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs,
+                                int rowCount, PastFramesDone done)
+{
+    int receiver = -1;
+    int liveRate = 0;
+    qint64 liveCentre = 0;
+    QString refusal;
+    if (rowCount < 1 || rowCount > DsrPastRenderer::kMaxRows) {
+        refusal = QString::fromLatin1(kPastRowsReason);
+    }
+    if (!refusal.isEmpty() || !checkPastRequest(slice, view, &receiver, &liveRate, &liveCentre, &refusal)) {
+        done(false, refusal, DsrPastFrames{});
+        return;
+    }
+    if (toUtcNs < fromUtcNs) {
+        std::swap(fromUtcNs, toUtcNs);
+    }
+    runOnWorker([this, slice, view, fromUtcNs, toUtcNs, rowCount, receiver, liveRate, liveCentre,
+                 done = std::move(done)]() mutable {
+        DsrPastFrames frames = workerPastRenderer().rows(m_dsr->ring(), receiver, liveRate, liveCentre, view,
+                                                         fromUtcNs, toUtcNs, rowCount);
+        frames.slice = slice;
+        QMetaObject::invokeMethod(this, [done = std::move(done), frames] { done(true, QString(), frames); },
+                                  Qt::QueuedConnection);
+    });
+}
+
+void RecordingService::pastSpectrum(int slice, const DsrPanView& view, qint64 utcNs, PastFramesDone done)
+{
+    int receiver = -1;
+    int liveRate = 0;
+    qint64 liveCentre = 0;
+    QString refusal;
+    if (!checkPastRequest(slice, view, &receiver, &liveRate, &liveCentre, &refusal)) {
+        done(false, refusal, DsrPastFrames{});
+        return;
+    }
+    runOnWorker([this, slice, view, utcNs, receiver, liveRate, liveCentre, done = std::move(done)]() mutable {
+        DsrPastFrames frame;
+        const bool kept =
+            workerPastRenderer().spectrum(m_dsr->ring(), receiver, liveRate, liveCentre, view, utcNs, &frame);
+        frame.slice = slice;
+        QMetaObject::invokeMethod(this, [done = std::move(done), kept, frame] {
+            done(kept, kept ? QString() : QString::fromLatin1(kRewindGoneReason), frame);
+        }, Qt::QueuedConnection);
+    });
+}
+
+void RecordingService::pastHours(HoursDone done)
+{
+    if (!m_dsrRunning) {
+        // Nothing is kept.
+        done({});
+        return;
+    }
+    runOnWorker([this, done = std::move(done)]() mutable {
+        const QList<DsrHour> hours = workerPastRenderer().hours(m_dsr->ring());
+        QMetaObject::invokeMethod(this, [done = std::move(done), hours] { done(hours); }, Qt::QueuedConnection);
+    });
+}
 
 }  // namespace NereusSDR

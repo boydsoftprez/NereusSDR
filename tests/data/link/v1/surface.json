@@ -2007,6 +2007,100 @@
             "arguments": [
                 {
                     "kind": "i64",
+                    "name": "slice",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "fromUtcNs",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "toUtcNs",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "rowCount",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "fftSize",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "windowType",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "centreHz",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "spanHz",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "dsr.rows"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "slice",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "utcNs",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "fftSize",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "windowType",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "centreHz",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "spanHz",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "dsr.spectrum"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "dsr.hours"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
                     "name": "band",
                     "optional": false
                 },

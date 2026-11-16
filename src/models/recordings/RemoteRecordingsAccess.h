@@ -38,6 +38,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
 //                 and seekPast (rewind sound, recordingsVersion 4).
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 23: the past
+//                 picture (past rows in chunks, a past spectrum frame, the
+//                 hours map). AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -94,6 +98,10 @@ public:
     void rewind(int slice, qint64 utcNs, qint64 hz) override;
     void live(int slice) override;
     void seekPast(int slice, qint64 utcNs) override;
+    void requestPastRows(int slice, const DsrPanView& view, qint64 fromUtcNs, qint64 toUtcNs,
+                         int rowCount) override;
+    void requestPastSpectrum(int slice, const DsrPanView& view, qint64 utcNs) override;
+    void requestHours() override;
 
     /// StationClient: a recordings.* answer, or the Core's recordings.playback.
     void takeResult(const QByteArray& verb, bool accepted, const QString& reason,
@@ -138,6 +146,8 @@ private:
     bool requestChunk(Download& download);
     void finishDownload(const QString& id, bool ok, const QString& error);
     void takeExport(bool accepted, const QString& reason, const QList<MirrorUpdate>& values);
+    void sendPastRows(qint64 fromUtcNs, qint64 toUtcNs, int rowCount);
+    void takePast(const QByteArray& verb, bool accepted, const QString& reason, const QList<MirrorUpdate>& values);
     void onFacadeChanged();
     void refreshState();
 
@@ -155,6 +165,16 @@ private:
     QList<std::shared_ptr<VoiceExport>> m_voiceExports;
     // The message each voiceKeyer.export in flight asks for, in order.
     QList<int> m_voiceExportsInFlight;
+    // The past picture: the newest requestPastRows, and the request each
+    // dsr.rows in flight belongs to, in the order sent.
+    struct PastRowsRequest {
+        quint64 seq = 0;
+        int slice = -1;
+        DsrPanView view;
+        qint64 fromUtcNs = 0;
+    };
+    PastRowsRequest m_pastRows;
+    QList<quint64> m_pastRowsInFlight;
     State m_lastState{State::NotConnected};
 };
 
