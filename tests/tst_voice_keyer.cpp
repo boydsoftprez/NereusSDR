@@ -29,6 +29,10 @@
 //                 sender's or the holder's; a waiting repeat ends with its
 //                 sender's session and never keys for a sender with none; a
 //                 message that cannot be replaced is kept as it was.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Final review fix: in CWL or CWU a send and a repeat
+//                 are refused and nothing keys; a message going out ends and
+//                 unkeys when the transmit slice moves to CW.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -51,6 +55,7 @@
 #include "core/recordings/VoiceKeyer.h"
 #include "core/safety/TransmitHolder.h"
 #include "models/RadioModel.h"
+#include "models/SliceModel.h"
 #include "models/TransmitModel.h"
 
 #include "fakes/QuietRadioConnection.h"
@@ -664,6 +669,82 @@ private slots:
         QCOMPARE(r.mox->currentKeyer().deviceId, kPhoneB);
         QCOMPARE(r.vk->sending()->by, QStringLiteral("Phone"));
         QCOMPARE(r.onAir->active(), OnAirSource::Kind::VoiceMessage);
+    }
+
+    // ---- In CWL or CWU a CW key never takes the message: refused, and
+    // nothing keys, from every entry point (they all reach send()).
+
+    void inCwASendIsRefusedAndNothingKeys()
+    {
+        Rig r(newFolder());
+        QVERIFY(fill(*r.vk, 1, 10 * kBlock));
+        QSignalSpy accepted(r.mox, &MoxController::requestAccepted);
+        QSignalSpy moxChanged(r.mox, &MoxController::moxChanged);
+        for (DSPMode mode : {DSPMode::CWU, DSPMode::CWL}) {
+            r.model.slices().first()->setDspMode(mode);
+            QVERIFY(r.mox->isCwModeActive());
+            for (const VoiceKeyer::Requester& who : {station(), phoneB()}) {
+                QString refusal;
+                QVERIFY(!r.vk->send(1, who, &refusal));
+                QCOMPARE(refusal, QString::fromLatin1(VoiceKeyer::kCwModeReason));
+            }
+        }
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QCOMPARE(accepted.count(), 0);
+        QCOMPARE(moxChanged.count(), 0);
+        QCOMPARE(r.onAir->active(), OnAirSource::Kind::None);
+        QVERIFY(!r.vk->sending().has_value());
+
+        // Back in a voice mode it sends.
+        r.model.slices().first()->setDspMode(DSPMode::USB);
+        QString refusal;
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        QVERIFY(r.mox->isMox());
+    }
+
+    void aRepeatWaitingWhenTheSliceMovesToCwIsRefused()
+    {
+        Rig r(newFolder());
+        qint64 t = 0;
+        r.vk->setClockForTest([&t] { return t; });
+        QVERIFY(fill(*r.vk, 1, kBlock));
+        QString refusal;
+        QVERIFY(r.vk->setRepeat(true, 5, &refusal));
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QVERIFY(r.vk->sending().has_value());
+        r.model.slices().first()->setDspMode(DSPMode::CWU);
+        QSignalSpy refused(r.vk, &VoiceKeyer::sendRefused);
+        QSignalSpy accepted(r.mox, &MoxController::requestAccepted);
+        t += 5000;
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QCOMPARE(accepted.count(), 0);
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(1).toString(), QString::fromLatin1(VoiceKeyer::kCwModeReason));
+        QVERIFY(!r.vk->sending().has_value());
+        QCOMPARE(r.onAir->active(), OnAirSource::Kind::None);
+    }
+
+    void aMessageGoingOutEndsWhenTheSliceMovesToCw()
+    {
+        Rig r(newFolder());
+        QVERIFY(fill(*r.vk, 1, 100 * kBlock));
+        QString refusal;
+        QVERIFY(r.vk->setRepeat(true, 5, &refusal));
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        QVERIFY(r.mox->isMox());
+        r.model.slices().first()->setDspMode(DSPMode::CWU);
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QCOMPARE(r.onAir->active(), OnAirSource::Kind::None);
+        // Over, with no repeat waiting.
+        QVERIFY(!r.vk->sending().has_value());
     }
 
     void anotherDevicesSendWhileARepeatWaitsIsRefused()

@@ -24,6 +24,9 @@
 //             message (setRepeatFrom), handedToMicrophone, and a message in
 //             use is never lost to a failed replace. AI tooling: Anthropic
 //             Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; final review fix: kCwModeReason, a
+//             message is refused in CW and ends if CW keys under it. AI
+//             tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/MoxController.h"
@@ -82,6 +85,10 @@ class TransmitHolder;
 // nothing either. The radio's connection dropping ends a message and a wait
 // between repeats (connectionLost).
 //
+// The transmit slice in CWL or CWU refuses send() and a repeat with
+// kCwModeReason and nothing keys; a message going out ends and unkeys if
+// the slice moves to CW or MOX runs as a CW key under it.
+//
 // Another device holding transmit refuses send() with the holder's words
 // (TransmitHolder::keyRefusalFor) and nothing keys. Another device's message
 // going out, or waiting to repeat, refuses it with kTransmittingReason.
@@ -119,6 +126,9 @@ public:
     static constexpr const char* kTransmittingReason = "The radio is already transmitting.";
     static constexpr const char* kNoRadioReason = "Connect to a radio to send a voice message.";
     static constexpr const char* kNotKeyedReason = "The radio could not be keyed.";
+    // A voice message in CWL or CWU would key a CW key, which never takes
+    // the message: refused, and nothing keys.
+    static constexpr const char* kCwModeReason = "Voice messages go out in voice modes. The transmit slice is in CW.";
     static constexpr const char* kCannotKeepReason = "The voice message cannot be kept on the Core.";
     static constexpr const char* kTooLargeReason = "That file is too large for a voice message.";
     static constexpr const char* kNoImportReason = "No voice message is being loaded.";

@@ -58,6 +58,9 @@
 // cwQskUnavailableReason is placed. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
 //
+// 2026-11-16: Recording plan final review fix: VoiceKeyer's kCwModeReason,
+// passed on as text(kCwModeReason). J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
 // 2026-11-16: Recording plan Task 11 placed: the voiceKeyer.* refusals
 // (VoiceKeyer.h and .cpp), the play refusal words of RecordingService.h, and
 // the dispatcher's playRefusal forward. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1906,6 +1909,7 @@ const QList<ReasonSource>& reasonSources()
           QStringLiteral("VoiceKeyer::kCannotKeepReason"),
           QStringLiteral("text(kSlotRangeReason)"), QStringLiteral("text(kNoRadioReason)"),
           QStringLiteral("text(kTransmittingReason)"), QStringLiteral("text(kNotKeyedReason)"),
+          QStringLiteral("text(kCwModeReason)"),
           QStringLiteral("text(kCannotKeepReason)"), QStringLiteral("text(kUnreadableReason)"),
           QStringLiteral("text(kTooLargeReason)"), QStringLiteral("text(kNoImportReason)"),
           QStringLiteral("text(kNotWholeReason)"),

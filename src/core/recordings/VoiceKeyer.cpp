@@ -18,6 +18,10 @@
 //             the press that takes the air is told (handedToMicrophone); a
 //             failed replace keeps the old message. AI tooling: Anthropic
 //             Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; final review fix: a message is refused
+//             while the transmit slice is in CW (a CW key never takes it),
+//             and one going out ends and unkeys if CW keys under it. AI
+//             tooling: Anthropic Claude Code.
 
 #include "VoiceKeyer.h"
 
@@ -598,6 +602,12 @@ bool VoiceKeyer::send(int n, const Requester& who, QString* refusal)
         setRefusal(refusal, text(kNoRadioReason));
         return false;
     }
+    // In CW a key walks without the TX channel, so the message would never
+    // be taken and the radio would stay keyed: nothing keys.
+    if (m_mox->isCwModeActive()) {
+        setRefusal(refusal, text(kCwModeReason));
+        return false;
+    }
     // The same device's next message while one goes out: the air moves to
     // it, keyed as it is.
     if (m_phase == Phase::Sending && m_keyer.deviceId == who.keyer.deviceId
@@ -882,7 +892,12 @@ void VoiceKeyer::onMoxChanged(bool on)
 void VoiceKeyer::tick()
 {
     if (m_phase == Phase::Sending) {
-        if (m_clip && m_clip->ended.load(std::memory_order_acquire)) {
+        // The transmit slice moved to CW, or MOX runs as a CW key: the
+        // message is never taken in CW, so it ends and unkeys, with no
+        // repeat.
+        if (m_mox && (m_mox->isCwModeActive() || m_mox->isCwKeying())) {
+            stop();
+        } else if (m_clip && m_clip->ended.load(std::memory_order_acquire)) {
             endOfMessage();
         }
     } else if (m_phase == Phase::Waiting) {
@@ -926,6 +941,8 @@ void VoiceKeyer::resend()
         refusal = held.text;
     } else if (!m_mox) {
         refusal = text(kNoRadioReason);
+    } else if (m_mox->isCwModeActive()) {
+        refusal = text(kCwModeReason);
     } else if (m_mox->isMox()) {
         refusal = text(kTransmittingReason);
     } else if (samples && startSend(n, who, samples, &refusal)) {
