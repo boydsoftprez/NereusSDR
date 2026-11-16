@@ -1698,6 +1698,8 @@ list(APPEND CORE_SOURCES
     # R-R3-49 / R-IOS-18: the Core's PA Gain profiles for a phone.
     src/core/session/PaProfilesFacade.cpp
     src/core/session/BandStackFacade.cpp
+    # Recording plan Task 5 (recordingsVersion 1): the Core's recordings.
+    src/core/session/RecordingsFacade.cpp
     # iPhone app Task 25 (D41): the unbuilt features list the catalogue's
     # tools read (the desktop's hide helpers stay in src/gui).
     src/core/UnbuiltFeatureList.cpp
@@ -1840,6 +1842,10 @@ set(MODEL_SOURCES
     src/models/bandstack/BandStackCommand.cpp
     src/models/bandstack/LocalBandStackAccess.cpp
     src/models/bandstack/RemoteBandStackAccess.cpp
+    # Recording plan Task 5: what a window talks to for recordings.
+    src/models/recordings/RecordingsAccess.h
+    src/models/recordings/LocalRecordingsAccess.cpp
+    src/models/recordings/RemoteRecordingsAccess.cpp
     src/models/BandPlanManager.cpp
     src/models/PureSignalSettings.cpp
     src/models/PureSignalSettings.h

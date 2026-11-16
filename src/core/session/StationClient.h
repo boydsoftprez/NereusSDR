@@ -1166,6 +1166,8 @@ public:
     bool pureSignalArmingOffered() const;
     bool stationTciAvailable() const override;
     bool coreServesTciOnThisComputer() const override;
+    // Recording plan Task 5: see IStationLink.
+    bool coreIsOnThisComputer() const override;
     /// iPhone app plan Task 39 (D14, R-IOS-13): the Core's `txState` as this
     /// window last heard it (never null). Its values are the idle ones while
     /// the Core does not send it (txStateVersion 0) and after a session
@@ -1443,6 +1445,9 @@ public:
     // Band stack plan Task 4: see IStationLink.
     bool bandStackAvailable() const override;
     CommandOutcome sendBandStackCommand(const QString& verb, const QJsonObject& arguments) override;
+    // Recording plan Task 5: see IStationLink.
+    int recordingsVersion() const override;
+    CommandOutcome sendRecordingsCommand(const QString& verb, const QJsonObject& arguments) override;
     bool sliceControlledHere(int sliceId) const override;
     // Slice control plan Task 5 (sliceAccessVersion 1 at minor 11): listen
     // to, stop listening to, take control of and release a slice. The

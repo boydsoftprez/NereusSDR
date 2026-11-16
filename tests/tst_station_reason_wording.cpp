@@ -58,6 +58,11 @@
 // cwQskUnavailableReason is placed. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
 //
+// 2026-11-15: Recording plan Task 5: the recordings.* refusals worded in
+// RecordingsFacade, RecordingStore and RecordingNames, and the window's
+// RecordingsAccess words, are placed. J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+//
 // 2026-11-05: The SSB Mod Monitor's ssbModMonitorUnavailableReason is
 // placed. Corrections for review findings. J.J. Boyd (KG4VCF), AI-assisted
 // via Anthropic Claude Code.
@@ -1347,7 +1352,9 @@ const QList<ReasonSource>& reasonSources()
         {"src/core/session/SessionCommandDispatcher.cpp", {},
          {QStringLiteral("bandStack.")}, 30,
          {QStringLiteral("device"), QStringLiteral("what"),
-          QStringLiteral("QChar(QLatin1Char('A').unicode() + sliceId)")},
+          QStringLiteral("QChar(QLatin1Char('A').unicode() + sliceId)"),
+          // Recording plan Task 5: a slice letter in recordings.start's refusal.
+          QStringLiteral("QChar(QLatin1Char('A').unicode() + id)")},
          {// Out-parameters and results of the scanned model, facade and
           // allocator functions each verb calls (RadioModel, the PureSignal
           // facade, SliceModel, AlexAntennaFacade, DspAssetService,
@@ -1800,6 +1807,26 @@ const QList<ReasonSource>& reasonSources()
         // that they are checked like the Core's.
         {"src/core/session/IStationLink.h", {QStringLiteral("sendBandStackCommand")}, {}, 1},
         {"src/models/bandstack/BandStackAccess.h",
+         {QStringLiteral("needsNewerCoreReason"), QStringLiteral("notConnectedReason")}, {}, 2},
+        // Recording plan Task 5: the recordings.* refusals worded outside the
+        // dispatcher (the facade's settings change, a recording's name) and
+        // a window's own words for a Core without recordings.
+        {"src/core/session/RecordingsFacade.cpp", {QStringLiteral("applySettingsChange")}, {}, 2,
+         {QStringLiteral("RecordingSettings::kQuietMinutesMin"),
+          QStringLiteral("RecordingSettings::kQuietMinutesMax")},
+         // The refuse helper's parameter: this function's literals.
+         {QStringLiteral("why")}},
+        // recordings.rename and recordings.delete pass the store's words on.
+        // The system's own words for a file it could not rename, and the
+        // recordings' names, are inserted; ", " joins the names.
+        {"src/core/recordings/RecordingStore.cpp", {QStringLiteral("rename"), QStringLiteral("remove")},
+         {QStringLiteral(", ")}, 4,
+         {QStringLiteral("file.errorString()"), QStringLiteral("failed.join(QStringLiteral(\", \"))")},
+         {QStringLiteral("reason")}},
+        {"src/core/recordings/RecordingNames.cpp", {QStringLiteral("isValidRecordingName")}, {}, 4,
+         {QStringLiteral("ch")}, {QStringLiteral("why")}},
+        {"src/core/session/IStationLink.h", {QStringLiteral("sendRecordingsCommand")}, {}, 1},
+        {"src/models/recordings/RecordingsAccess.h",
          {QStringLiteral("needsNewerCoreReason"), QStringLiteral("notConnectedReason")}, {}, 2},
         // Remote rotor control: a window's rotor commands. They pass on the
         // controller's refusal (scanned above) or the Core's command.result
@@ -2379,6 +2406,12 @@ const QList<AppSideReason>& appSideReasons()
          "the reason shown on a disabled control, in BandStackAccess.h's words"},
         {"src/models/bandstack/LocalBandStackAccess.cpp", "reportInvokerRefusal",
          "a window shows the refusal the band press's invoker gave it"},
+        // Recording plan Task 5: the window's recordings access classes. Their
+        // words are RecordingsAccess.h's (scanned).
+        {"src/models/recordings/LocalRecordingsAccess.cpp", "unavailableReason",
+         "the reason shown on a disabled control, in RecordingsAccess.h's words"},
+        {"src/models/recordings/RemoteRecordingsAccess.cpp", "unavailableReason",
+         "the reason shown on a disabled control, in RecordingsAccess.h's words"},
         // R-R3-49 (parity Task 22): the Core's log, logging and bundle. The
         // Core also answers a coreLog subscribe with it when it keeps no
         // log stream; tst_remote_core_log checks it is plain.

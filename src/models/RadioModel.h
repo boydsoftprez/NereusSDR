@@ -970,6 +970,9 @@
 //                AI-assisted via Anthropic Claude Code.
 //   2026-11-15 - Recording plan Task 3: recordingService(). J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-15 - Recording plan Task 5: recordingsFacade() and recordings(),
+//                the access by role. J.J. Boyd (KG4VCF), AI-assisted via
+//                Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -1210,6 +1213,8 @@ class StationTciController;
 class StationTciModel;
 class StationCatController;
 class RecordingService;
+class RecordingsFacade;
+class RecordingsAccess;
 class StationCatModel;
 class CatControl;
 class SliceOwnership;
@@ -4198,6 +4203,15 @@ public:
     /// the store, start and stop from any device). Built only by a model
     /// that runs its own radio (Role::Local); nullptr in a remote window.
     RecordingService*     recordingService()    const { return m_recordingService.get(); }
+    /// Recording plan Task 5: the `recordings` object. On a model that runs
+    /// its own radio it follows recordingService() once published (the
+    /// Core's StationServer or the window's access publishes it); in a
+    /// remote window it reads the mirror. Never null.
+    RecordingsFacade*     recordingsFacade()    const { return m_recordingsFacade; }
+    /// Recording plan Task 5: what a window talks to for recordings:
+    /// LocalRecordingsAccess where this model runs the radio, and
+    /// RemoteRecordingsAccess in a remote window. Never null.
+    RecordingsAccess*     recordings()          const { return m_recordingsAccess; }
 
     /// Parity Task 19 (R-IOS-25): a remote window applies the Core's
     /// `spots` stream (the Core's cluster, RBN, POTA and PSK Reporter
@@ -9966,6 +9980,9 @@ private:
     std::unique_ptr<StationCatController> m_stationCat;
     // Recording plan Task 3: Role::Local only; see recordingService().
     std::unique_ptr<RecordingService> m_recordingService;
+    // Recording plan Task 5: Qt children, in every placement.
+    RecordingsFacade*                     m_recordingsFacade{nullptr};
+    RecordingsAccess*                     m_recordingsAccess{nullptr};
     CatControl*                           m_catControl{nullptr};
     // Follow-up 3: accessory requests whose refusal their page shows.
     QHash<quint32, QPointer<QObject>> m_pageShownAccessoryRequests;

@@ -1,0 +1,544 @@
+// no-port-check: NereusSDR-original.
+// =================================================================
+// tests/tst_recordings_link.cpp  (NereusSDR)
+// =================================================================
+//
+// Recordings over the link (recording design section 6.9): the `recordings`
+// object and recordingsVersion for a peer that declared the feature and
+// nothing for one that did not, Record from any device (A1), a recording
+// that keeps going while a device's link drops, rename and delete seen on
+// every device, each device's own playback (V6) and a copy fetched in
+// chunks.
+//
+// Loopback link, no RF and no hardware. The recordings go to a temporary
+// folder as WAV, on an injected clock; nothing keys.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code. Recording plan
+//                 Task 5.
+// =================================================================
+
+#include "MultiDeviceHarness.h"
+
+#include <QLoggingCategory>
+#include <QRandomGenerator>
+#include <QSignalSpy>
+#include <QTemporaryDir>
+#include <QTimeZone>
+
+#include "core/recordings/AudioFileWriter.h"
+#include "core/recordings/RecordingService.h"
+#include "core/recordings/RecordingStore.h"
+#include "core/session/RecordingsFacade.h"
+#include "core/session/SessionCommandDispatcher.h"
+#include "core/session/StationCapabilities.h"
+
+namespace {
+
+const QString kUpdateApp = QStringLiteral("Update this app to use recordings on this Core.");
+const QString kNotUnderstood = QStringLiteral("The request for recordings was not understood.");
+
+const QHash<QByteArray, int> kRecordings{
+    {"deviceAuth", 1}, {"sessionHolder", 1}, {"recordings", 1}};
+
+QJsonObject parse(const QString& json)
+{
+    return QJsonDocument::fromJson(json.toUtf8()).object();
+}
+
+QJsonObject mirrored(const LoopbackTransport* app)
+{
+    return parse(latest(app->received(), QStringLiteral("recordings"), QStringLiteral("json")).toString());
+}
+
+QString reasonOf(const QJsonObject& result)
+{
+    return result.value(QStringLiteral("reason")).toString(QStringLiteral("(no answer)"));
+}
+
+// Empty when accepted, otherwise why not.
+QString refusalOf(const QJsonObject& result)
+{
+    return result.value(QStringLiteral("accepted")).toBool(false) ? QString() : reasonOf(result);
+}
+
+QJsonValue valueIn(const QJsonObject& result, const QString& name)
+{
+    for (const QJsonValue& value : result.value(QStringLiteral("values")).toArray()) {
+        if (value.toObject().value(QStringLiteral("name")).toString() == name) {
+            return value.toObject().value(QStringLiteral("value"));
+        }
+    }
+    return {};
+}
+
+QJsonObject sliceIn(const QJsonObject& document, int slice)
+{
+    for (const QJsonValue& value : document.value(QStringLiteral("slices")).toArray()) {
+        if (value.toObject().value(QStringLiteral("slice")).toInt(-1) == slice) {
+            return value.toObject();
+        }
+    }
+    return {};
+}
+
+QString stateIn(const QJsonObject& document, int slice)
+{
+    return sliceIn(document, slice).value(QStringLiteral("state")).toString();
+}
+
+// The recordings.playback pushes a session received, oldest first.
+QList<QJsonObject> playbackPushes(const LoopbackTransport* app)
+{
+    QList<QJsonObject> out;
+    for (const QJsonObject& o : ofType(app->received(), QStringLiteral("command.result"))) {
+        if (o.value(QStringLiteral("verb")).toString() == QLatin1String("recordings.playback")) {
+            out.append(o);
+        }
+    }
+    return out;
+}
+
+QStringList listedNames(const QJsonObject& result)
+{
+    QStringList names;
+    const QJsonArray page =
+        QJsonDocument::fromJson(valueIn(result, QStringLiteral("entries")).toString().toUtf8()).array();
+    for (const QJsonValue& value : page) {
+        names.append(value.toObject().value(QStringLiteral("name")).toString());
+    }
+    return names;
+}
+
+}  // namespace
+
+class TstRecordingsLink : public QObject {
+    Q_OBJECT
+
+private:
+    QTemporaryDir m_dir;
+    int m_disks = 0;
+    qint64 m_clockMs = 0;
+
+    // The Core's recordings in a folder of their own, as WAV, on the test's clock.
+    void useTestDisk(Core& core)
+    {
+        RecordingService* service = core.model->recordingService();
+        QVERIFY(service != nullptr);
+        m_clockMs = QDateTime(QDate(2026, 11, 15), QTime(14, 32, 0), QTimeZone::UTC).toMSecsSinceEpoch();
+        service->setClockForTest([this] { return m_clockMs; });
+        const QString disk = m_dir.filePath(QStringLiteral("disk%1").arg(++m_disks));
+        QVERIFY(QDir().mkpath(disk));
+        RecordingSettings s = service->settings();
+        s.disk = disk;
+        s.format = AudioFileFormat::Wav;
+        s.autoStartOnTransmit = false;
+        service->setSettings(s);
+    }
+
+    // A file of `bytes` in the Core's recordings folder and its row; the id.
+    static QString addFile(Core& core, const QString& name, const QByteArray& bytes)
+    {
+        RecordingStore* store = core.model->recordingService()->store();
+        if (store == nullptr || store->folder().isEmpty()) {
+            return {};
+        }
+        const QString fileName = name + QStringLiteral(".wav");
+        QFile file(QDir(store->folder()).filePath(fileName));
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+            return {};
+        }
+        file.close();
+        RecordingEntry e;
+        e.kind = RecordingKind::Contact;
+        e.sliceId = 0;
+        e.startUtc = QDateTime(QDate(2026, 11, 15), QTime(14, 0, 0), QTimeZone::UTC);
+        e.lengthMs = 1000;
+        e.frequencyHz = 7236400;
+        e.mode = QStringLiteral("LSB");
+        e.name = name;
+        e.fileName = fileName;
+        return store->add(e);
+    }
+
+    // A real one-second WAV the player can open.
+    static QString addPlayable(Core& core, const QString& name)
+    {
+        RecordingStore* store = core.model->recordingService()->store();
+        if (store == nullptr || store->folder().isEmpty()) {
+            return {};
+        }
+        const QString fileName = name + QStringLiteral(".wav");
+        QString error;
+        std::unique_ptr<AudioFileWriter> writer = AudioFileWriter::open(
+            QDir(store->folder()).filePath(fileName), AudioFileSpec{AudioFileFormat::Wav, 24000, 1, 0},
+            &error);
+        if (!writer) {
+            return {};
+        }
+        const std::vector<float> quiet(24000, 0.0f);
+        if (!writer->write(quiet.data(), static_cast<int>(quiet.size())) || !writer->finish()) {
+            return {};
+        }
+        RecordingEntry e;
+        e.kind = RecordingKind::Contact;
+        e.sliceId = 0;
+        e.startUtc = QDateTime(QDate(2026, 11, 15), QTime(13, 0, 0), QTimeZone::UTC);
+        e.lengthMs = 1000;
+        e.frequencyHz = 14250000;
+        e.mode = QStringLiteral("USB");
+        e.name = name;
+        e.fileName = fileName;
+        return store->add(e);
+    }
+
+private slots:
+    void initTestCase()
+    {
+        QVERIFY(m_dir.isValid());
+        AppSettings::setProfileOverride(
+            QStringLiteral("recordings-link-%1").arg(QCoreApplication::applicationPid()));
+        // The harness turns its heartbeat off on purpose and a model with no
+        // radio logs each tune it cannot push.
+        QLoggingCategory::setFilterRules(QStringLiteral("nereus.*.debug=false\n"
+                                                        "nereus.*.info=false\n"
+                                                        "nereussdr.*.info=false\n"
+                                                        "nereus.connection.warning=false\n"
+                                                        "nereus.dsp.warning=false\n"
+                                                        "nereus.station.warning=false\n"
+                                                        "nereus.stationclient.warning=false"));
+    }
+
+    void init()
+    {
+        AppSettings::instance().clear();
+        AppSettings::instance().setValue(QStringLiteral("SettingsSchemaVersion"), QStringLiteral("7"));
+    }
+
+    void cleanupTestCase()
+    {
+        const QString path = AppSettings::instance().filePath();
+        QFile::remove(path);
+        QFile::remove(path + QStringLiteral(".bak"));
+    }
+
+    void theVerbsAreDeclaredWithTheirCapability()
+    {
+        const QSet<QByteArray> expected{
+            "recordings.start", "recordings.stop", "recordings.list", "recordings.play",
+            "recordings.stopPlay", "recordings.seek", "recordings.rename", "recordings.delete",
+            "recordings.export", "recordings.setSettings"};
+        QSet<QByteArray> found;
+        for (const CommandVerbSpec& spec : SessionCommandDispatcher::verbSpecs()) {
+            if (spec.verb.startsWith("recordings.")) {
+                found.insert(spec.verb);
+                QCOMPARE(spec.capability, QByteArrayLiteral("recordingsVersion"));
+                QCOMPARE(spec.capabilityVersion, 1);
+                QCOMPARE(int(spec.minMinor), int(kRadioIdentitySessionProtocolMinor));
+            }
+        }
+        QCOMPARE(found, expected);
+    }
+
+    void theCapabilityRoundTripsAfterTheBandStack()
+    {
+        StationCapabilities caps;
+        caps.bandStackVersion = 1;
+        caps.recordingsVersion = 1;
+        caps.coreBuildInfo = CoreBuildInfo{QStringLiteral("2026.11.0"), QStringLiteral("v2026.11.0")};
+        QList<QByteArray> names;
+        for (const MirrorUpdate& update : caps.toUpdates()) {
+            names.append(update.name);
+        }
+        const qsizetype at = names.indexOf(QByteArrayLiteral("recordingsVersion"));
+        QVERIFY(at > 0);
+        QCOMPARE(names.at(at - 1), QByteArrayLiteral("bandStackVersion"));
+        QCOMPARE(names.last(), QByteArrayLiteral("coreBuildInfo"));
+        const StationCapabilities decoded = StationCapabilities::fromUpdates(caps.toUpdates());
+        QCOMPARE(decoded.recordingsVersion, 1);
+        QCOMPARE(decoded.bandStackVersion, 1);
+
+        caps.recordingsVersion = 0;
+        for (const MirrorUpdate& update : caps.toUpdates()) {
+            QVERIFY(update.name != "recordingsVersion");
+        }
+        const MirrorUpdate wrongKind{0, "recordingsVersion", MirrorWireKind::Utf8, QVariant(QStringLiteral("1"))};
+        QCOMPARE(StationCapabilities::fromUpdates({wrongKind}).recordingsVersion, 0);
+    }
+
+    void thePeerThatDidNotDeclareItGetsNothing()
+    {
+        Core core;
+        useTestDisk(core);
+        Device older(QStringLiteral("Older iPhone"), QStringLiteral("phone"));
+        core.pair(older);
+        LoopbackTransport* app = core.signIn(older, kHolder);
+        QVERIFY(admitted(app));
+        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>());
+        QVERIFY(latest(app->received(), QStringLiteral("recordings"), QStringLiteral("json")).isNull());
+        for (const QJsonObject& schema : ofType(app->received(), QStringLiteral("schema"))) {
+            QVERIFY(schema.value(QStringLiteral("class")).toString() != QLatin1String("RecordingsFacade"));
+        }
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.start", {int64("slice", 0)})), kUpdateApp);
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.stopPlay")), kUpdateApp);
+        QCOMPARE(core.model->recordingService()->sliceStates().first().state, RecordState::Idle);
+    }
+
+    void thePeerThatDeclaredItGetsTheDocument()
+    {
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kRecordings);
+        QVERIFY(admitted(app));
+        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>(1));
+        const QJsonObject document = mirrored(app);
+        QCOMPARE(document.value(QStringLiteral("version")).toInt(), 1);
+        QCOMPARE(stateIn(document, 0), QStringLiteral("idle"));
+        for (const char* key : {"slices", "kept", "index", "settings"}) {
+            QVERIFY2(document.contains(QLatin1String(key)), key);
+        }
+        const QJsonObject index = document.value(QStringLiteral("index")).toObject();
+        QCOMPARE(index.value(QStringLiteral("count")).toInt(-1), 0);
+        const QJsonObject settings = document.value(QStringLiteral("settings")).toObject();
+        QCOMPARE(settings.value(QStringLiteral("format")).toString(), QStringLiteral("wav"));
+        for (const char* key : {"keepMyVoice", "sidesApart", "autoStart", "autoStop", "quietMinutes",
+                                "disk", "disks"}) {
+            QVERIFY2(settings.contains(QLatin1String(key)), key);
+        }
+
+        // A malformed request is refused in plain words.
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.start", {utf8("slice", QStringLiteral("A"))})),
+                 kNotUnderstood);
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.start", {int64("slice", 3)})),
+                 QStringLiteral("That slice is not open."));
+
+        // A settings change reaches the device.
+        QCOMPARE(refusalOf(core.invoke(app, "recordings.setSettings", {int64("quietMinutes", 5)})),
+                 QString());
+        QTRY_COMPARE(mirrored(app).value(QStringLiteral("settings")).toObject()
+                         .value(QStringLiteral("quietMinutes")).toInt(), 5);
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.setSettings", {int64("quietMinutes", 0)})),
+                 QStringLiteral("Quiet can be 1 to 60 minutes."));
+    }
+
+    // A1: one device starts Slice A; the other sees it recording and stops it.
+    void anyDeviceStartsAndAnotherStops()
+    {
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        core.pair(tablet);
+        LoopbackTransport* first = core.signIn(phone, kRecordings);
+        LoopbackTransport* second = core.signIn(tablet, kRecordings);
+        QVERIFY(admitted(first));
+        QVERIFY(admitted(second));
+        QCOMPARE(stateIn(mirrored(second), 0), QStringLiteral("idle"));
+
+        QCOMPARE(refusalOf(core.invoke(first, "recordings.start", {int64("slice", 0)})), QString());
+        QTRY_COMPARE(stateIn(mirrored(second), 0), QStringLiteral("recording"));
+        QVERIFY(!sliceIn(mirrored(second), 0).value(QStringLiteral("startedBy")).toString().isEmpty());
+
+        RecordingService* service = core.model->recordingService();
+        m_clockMs += 4000;
+        service->pumpForTest();
+        QCOMPARE(refusalOf(core.invoke(second, "recordings.stop", {int64("slice", 0)})), QString());
+        service->pumpForTest();
+        QTRY_COMPARE(mirrored(second).value(QStringLiteral("kept")).toObject()
+                         .value(QStringLiteral("seq")).toInt(), 1);
+        QTRY_COMPARE(mirrored(first).value(QStringLiteral("kept")).toObject()
+                         .value(QStringLiteral("seq")).toInt(), 1);
+        for (LoopbackTransport* app : {first, second}) {
+            const QJsonObject kept = mirrored(app).value(QStringLiteral("kept")).toObject();
+            QCOMPARE(kept.value(QStringLiteral("reason")).toString(), QStringLiteral("device"));
+            QVERIFY(!kept.value(QStringLiteral("device")).toString().isEmpty());
+            QVERIFY(!kept.value(QStringLiteral("name")).toString().isEmpty());
+            QCOMPARE(kept.value(QStringLiteral("slice")).toInt(-1), 0);
+            QCOMPARE(stateIn(mirrored(app), 0), QStringLiteral("idle"));
+        }
+        QCOMPARE(mirrored(first).value(QStringLiteral("kept")).toObject(),
+                 mirrored(second).value(QStringLiteral("kept")).toObject());
+        QCOMPARE(mirrored(first).value(QStringLiteral("index")).toObject()
+                     .value(QStringLiteral("count")).toInt(), 1);
+    }
+
+    // A device's link drops while it records: the recording goes on, and the
+    // device sees it still running when it is back.
+    void aDroppedLinkLeavesTheRecordingRunning()
+    {
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kRecordings);
+        QVERIFY(admitted(app));
+        QCOMPARE(refusalOf(core.invoke(app, "recordings.start", {int64("slice", 0)})), QString());
+        QTRY_COMPARE(stateIn(mirrored(app), 0), QStringLiteral("recording"));
+        const qint64 before = sliceIn(mirrored(app), 0).value(QStringLiteral("elapsedMs")).toInteger();
+
+        app->closeLink(QStringLiteral("lost"));
+        QTRY_VERIFY(!app->isOpen());
+        m_clockMs += 3000;
+        core.model->recordingService()->pumpForTest();
+        QCOMPARE(core.model->recordingService()->sliceStates().first().state, RecordState::Recording);
+        // What the facade's once-a-second rebuild does on the real clock.
+        core.model->recordingsFacade()->refresh();
+
+        LoopbackTransport* back = core.signIn(phone, kRecordings);
+        QVERIFY(admitted(back));
+        const QJsonObject slice = sliceIn(mirrored(back), 0);
+        QCOMPARE(slice.value(QStringLiteral("state")).toString(), QStringLiteral("recording"));
+        QVERIFY(slice.value(QStringLiteral("elapsedMs")).toInteger() >= before + 3000);
+
+        m_clockMs += 2000;
+        core.model->recordingsFacade()->refresh();
+        QTRY_VERIFY(sliceIn(mirrored(back), 0).value(QStringLiteral("elapsedMs")).toInteger()
+                    >= before + 5000);
+        core.model->recordingService()->stopAll();
+        core.model->recordingService()->pumpForTest();
+    }
+
+    void renameAndDeleteReachEveryDevice()
+    {
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        core.pair(tablet);
+        LoopbackTransport* first = core.signIn(phone, kRecordings);
+        LoopbackTransport* second = core.signIn(tablet, kRecordings);
+        QVERIFY(admitted(first));
+        QVERIFY(admitted(second));
+        const QString older = addFile(core, QStringLiteral("older"), QByteArray(1000, 'a'));
+        const QString newer = addFile(core, QStringLiteral("newer"), QByteArray(2000, 'b'));
+        QVERIFY(!older.isEmpty());
+        QVERIFY(!newer.isEmpty());
+        QTRY_COMPARE(mirrored(second).value(QStringLiteral("index")).toObject()
+                         .value(QStringLiteral("count")).toInt(), 2);
+        const qint64 revision = mirrored(second).value(QStringLiteral("index")).toObject()
+                                    .value(QStringLiteral("revision")).toInteger();
+
+        QCOMPARE(refusalOf(core.invoke(first, "recordings.rename",
+                                       {utf8("id", older), utf8("name", QStringLiteral("Field Day"))})),
+                 QString());
+        QTRY_COMPARE(mirrored(second).value(QStringLiteral("index")).toObject()
+                         .value(QStringLiteral("revision")).toInteger(), revision + 1);
+        const QJsonObject listed = core.invoke(second, "recordings.list",
+                                               {int64("offset", 0), int64("count", 10)});
+        QCOMPARE(refusalOf(listed), QString());
+        QCOMPARE(valueIn(listed, QStringLiteral("total")).toInteger(), 2);
+        QVERIFY(listedNames(listed).contains(QStringLiteral("Field Day")));
+        QVERIFY(!listedNames(listed).contains(QStringLiteral("older")));
+
+        const QString ids = QString::fromUtf8(QJsonDocument(QJsonArray{older}).toJson(QJsonDocument::Compact));
+        QCOMPARE(refusalOf(core.invoke(first, "recordings.delete", {utf8("ids", ids)})), QString());
+        QTRY_COMPARE(mirrored(second).value(QStringLiteral("index")).toObject()
+                         .value(QStringLiteral("revision")).toInteger(), revision + 2);
+        QCOMPARE(mirrored(second).value(QStringLiteral("index")).toObject()
+                     .value(QStringLiteral("count")).toInt(), 1);
+        const QJsonObject after = core.invoke(second, "recordings.list",
+                                              {int64("offset", 0), int64("count", 10)});
+        QCOMPARE(listedNames(after), QStringList{QStringLiteral("newer")});
+        // The other device deleted it first.
+        QCOMPARE(reasonOf(core.invoke(second, "recordings.delete", {utf8("ids", ids)})),
+                 QString::fromLatin1(RecordingService::kPlayGoneReason));
+    }
+
+    // V6: each device hears, and is told about, its own playback only.
+    void eachDeviceGetsItsOwnPlayback()
+    {
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        core.pair(tablet);
+        LoopbackTransport* first = core.signIn(phone, kRecordings);
+        LoopbackTransport* second = core.signIn(tablet, kRecordings);
+        QVERIFY(admitted(first));
+        QVERIFY(admitted(second));
+        const QString one = addPlayable(core, QStringLiteral("one"));
+        const QString two = addPlayable(core, QStringLiteral("two"));
+        QVERIFY(!one.isEmpty());
+        QVERIFY(!two.isEmpty());
+
+        QCOMPARE(refusalOf(core.invoke(first, "recordings.play", {utf8("id", one)})), QString());
+        QCOMPARE(refusalOf(core.invoke(second, "recordings.play", {utf8("id", two)})), QString());
+        QTRY_VERIFY(!playbackPushes(first).isEmpty());
+        QTRY_VERIFY(!playbackPushes(second).isEmpty());
+        for (const QJsonObject& push : playbackPushes(first)) {
+            QCOMPARE(push.value(QStringLiteral("id")).toInt(-1), 0);
+            const QString id = valueIn(push, QStringLiteral("id")).toString();
+            QVERIFY2(id.isEmpty() || id == one, qPrintable(id));
+        }
+        for (const QJsonObject& push : playbackPushes(second)) {
+            const QString id = valueIn(push, QStringLiteral("id")).toString();
+            QVERIFY2(id.isEmpty() || id == two, qPrintable(id));
+        }
+        const QJsonObject latestFirst = playbackPushes(first).last();
+        QCOMPARE(valueIn(latestFirst, QStringLiteral("id")).toString(), one);
+        QCOMPARE(valueIn(latestFirst, QStringLiteral("lengthMs")).toInteger(), 1000);
+        QCOMPARE(valueIn(latestFirst, QStringLiteral("onAir")).toBool(true), false);
+        // Playback alone never keys.
+        QVERIFY(!core.model->mox());
+
+        QCOMPARE(refusalOf(core.invoke(first, "recordings.stopPlay")), QString());
+        QTRY_VERIFY(valueIn(playbackPushes(first).last(), QStringLiteral("id")).toString().isEmpty());
+        QCOMPARE(valueIn(playbackPushes(second).last(), QStringLiteral("id")).toString(), two);
+        QCOMPARE(reasonOf(core.invoke(first, "recordings.play", {utf8("id", QStringLiteral("nope"))})),
+                 QString::fromLatin1(RecordingService::kPlayGoneReason));
+        QCOMPARE(refusalOf(core.invoke(second, "recordings.stopPlay")), QString());
+    }
+
+    // A copy of 3 MB in chunks comes back byte for byte.
+    void anExportComesBackWhole()
+    {
+        Core core;
+        useTestDisk(core);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, kRecordings);
+        QVERIFY(admitted(app));
+        QByteArray bytes(3 * 1024 * 1024 + 123, Qt::Uninitialized);
+        QRandomGenerator generator(42);
+        for (char& b : bytes) {
+            b = static_cast<char>(generator.bounded(256));
+        }
+        const QString id = addFile(core, QStringLiteral("big"), bytes);
+        QVERIFY(!id.isEmpty());
+
+        QByteArray copy;
+        int chunks = 0;
+        while (copy.size() < bytes.size()) {
+            const QJsonObject result = core.invoke(app, "recordings.export",
+                                                   {utf8("id", id), int64("offset", copy.size())});
+            QCOMPARE(refusalOf(result), QString());
+            QCOMPARE(valueIn(result, QStringLiteral("offset")).toInteger(), copy.size());
+            QCOMPARE(valueIn(result, QStringLiteral("size")).toInteger(), bytes.size());
+            const QByteArray chunk =
+                QByteArray::fromBase64(valueIn(result, QStringLiteral("data")).toString().toLatin1());
+            QVERIFY(!chunk.isEmpty());
+            QVERIFY(chunk.size() <= RecordingsFacade::kExportChunkBytes);
+            copy.append(chunk);
+            ++chunks;
+            QVERIFY(chunks < 100);
+        }
+        QVERIFY(chunks > 1);
+        QCOMPARE(copy, bytes);
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.export",
+                                      {utf8("id", id), int64("offset", bytes.size() + 1)})),
+                 kNotUnderstood);
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.export",
+                                      {utf8("id", QStringLiteral("nope")), int64("offset", 0)})),
+                 QString::fromLatin1(RecordingService::kPlayGoneReason));
+    }
+};
+
+QTEST_MAIN(TstRecordingsLink)
+#include "tst_recordings_link.moc"

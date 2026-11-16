@@ -6,6 +6,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: Recording plan Task 5: the recordings.* verbs (handleRecordings).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: The station device's fill at connect restores the receiver, on its
 //                own frequency, mode, filter and sample rate.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
@@ -370,6 +372,12 @@
 #include "core/SliceOwnership.h"
 #include "core/session/SliceAccessPolicy.h"
 #include "models/bandstack/BandStackController.h"
+#include "core/recordings/RecordingDisks.h"
+#include "core/recordings/RecordingService.h"
+#include "core/recordings/RecordingStore.h"
+#include "core/session/RecordingsFacade.h"
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -921,6 +929,32 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
          "bandStackVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"bandStack.restoreExpired", {arg("batchId", kUtf8)}, "bandStackVersion", 1,
          kRadioIdentitySessionProtocolMinor},
+        // Recording plan Task 5 (recordingsVersion 1): the Core's recordings.
+        // `slice` is a slice id; `ids` is a JSON array of recording ids, as
+        // text. The answers to list and export carry values.
+        {"recordings.start", {arg("slice", kInt)}, "recordingsVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.stop", {arg("slice", kInt)}, "recordingsVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.list", {arg("offset", kInt), arg("count", kInt)}, "recordingsVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.play", {arg("id", kUtf8)}, "recordingsVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.stopPlay", {}, "recordingsVersion", 1, kRadioIdentitySessionProtocolMinor},
+        {"recordings.seek", {arg("positionMs", kInt)}, "recordingsVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.rename", {arg("id", kUtf8), arg("name", kUtf8)}, "recordingsVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.delete", {arg("ids", kUtf8)}, "recordingsVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.export", {arg("id", kUtf8), arg("offset", kInt)}, "recordingsVersion", 1,
+         kRadioIdentitySessionProtocolMinor},
+        {"recordings.setSettings",
+         {optionalArg("keepMyVoice", kBool), optionalArg("sidesApart", kBool),
+          optionalArg("autoStart", kBool), optionalArg("autoStop", kBool),
+          optionalArg("quietMinutes", kInt), optionalArg("format", kUtf8),
+          optionalArg("disk", kUtf8)},
+         "recordingsVersion", 1, kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's RF-Kit RF2K-S and the station TCI server (R-R3-47,
@@ -1801,6 +1835,16 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
                || invoke.commandVerb == "bandStack.options"
                || invoke.commandVerb == "bandStack.restoreExpired") {
         handleBandStack(invoke);
+    } else if (invoke.commandVerb == "recordings.start" || invoke.commandVerb == "recordings.stop"
+               || invoke.commandVerb == "recordings.list"
+               || invoke.commandVerb == "recordings.play"
+               || invoke.commandVerb == "recordings.stopPlay"
+               || invoke.commandVerb == "recordings.seek"
+               || invoke.commandVerb == "recordings.rename"
+               || invoke.commandVerb == "recordings.delete"
+               || invoke.commandVerb == "recordings.export"
+               || invoke.commandVerb == "recordings.setSettings") {
+        handleRecordings(invoke);
     } else if (invoke.commandVerb == "requestIoBoardProbe") {
         handleRequestIoBoardProbe(invoke);
     } else if (invoke.commandVerb == "setAlexRxAntenna") {
@@ -5004,6 +5048,216 @@ void SessionCommandDispatcher::proceedBandStackRecall(const SessionMessage& invo
     }
     emitResult(invoke.commandVerb, invoke.commandId, true, QString(),
                {QByteArrayLiteral("bandStack"), ObjectRegistry::keyForSlice(request.sliceId)});
+}
+
+// ── recordings.* ─────────────────────────────────────────────────────────
+
+QString SessionCommandDispatcher::recordingsDeviceName() const
+{
+    // "" is the Core's own window (stopping there is "stopped here"); any
+    // other device by its name.
+    if (m_requester.isEmpty() || m_requester == SliceOwnership::stationDevice()) {
+        return {};
+    }
+    const QString name = m_recordingsDeviceName ? m_recordingsDeviceName(m_requester) : QString();
+    return name.isEmpty() ? QStringLiteral("Another device") : name;
+}
+
+// Recording plan Task 5 (design section 6.9). Every verb runs on the Core's
+// RecordingService and RecordingStore, on the main thread; none reaches the
+// I/Q, WDSP or audio path, and none keys the radio. StationServer has already
+// applied the feature gate. Any device may start or stop any slice's
+// recording (A1); playback is the requesting device's own (V6).
+void SessionCommandDispatcher::handleRecordings(const SessionMessage& invoke)
+{
+    const QByteArray& verb = invoke.commandVerb;
+    const auto refuse = [&](const QString& reason) {
+        emitResult(verb, invoke.commandId, false, reason, {});
+    };
+    const auto accept = [&](const QList<MirrorUpdate>& values = {}) {
+        emit commandResultReady(SessionMessages::commandResult(
+            verb, invoke.commandId, true, QString(), {QByteArrayLiteral("recordings")}, values));
+    };
+    const QString notUnderstood = QStringLiteral("The request for recordings was not understood.");
+    if (!bandStackArgumentsFit(invoke.arguments, verb)) {
+        refuse(notUnderstood);
+        return;
+    }
+    RecordingService* const service = m_radioModel->recordingService();
+    if (service == nullptr) {
+        refuse(QStringLiteral("This Core cannot keep recordings."));
+        return;
+    }
+    const QJsonObject arguments = bandStackArgumentsAsJson(invoke.arguments);
+    const QString gone = QString::fromLatin1(RecordingService::kPlayGoneReason);
+    const ListenerId listener = QString::fromLatin1(m_requester);
+
+    if (verb == "recordings.start" || verb == "recordings.stop") {
+        const qint64 sliceId = arguments.value(QStringLiteral("slice")).toInteger(-1);
+        SliceModel* const slice = sliceId >= 0 && sliceId <= std::numeric_limits<int>::max()
+            ? m_radioModel->sliceById(static_cast<int>(sliceId))
+            : nullptr;
+        if (slice == nullptr) {
+            refuse(QStringLiteral("That slice is not open."));
+            return;
+        }
+        const int id = static_cast<int>(sliceId);
+        if (verb == "recordings.stop") {
+            service->stopRecording(id, recordingsDeviceName());
+            accept();
+            return;
+        }
+        service->startRecording(id, recordingsDeviceName());
+        for (const RecordingSliceState& state : service->sliceStates()) {
+            if (state.sliceId == id && state.state == RecordState::Recording) {
+                accept();
+                return;
+            }
+        }
+        refuse(QStringLiteral("Slice %1 could not start recording. Check where recordings are kept "
+                              "in Setup.")
+                   .arg(QChar(QLatin1Char('A').unicode() + id)));
+    } else if (verb == "recordings.list") {
+        const qint64 offset = arguments.value(QStringLiteral("offset")).toInteger(-1);
+        const qint64 count = arguments.value(QStringLiteral("count")).toInteger(0);
+        if (offset < 0 || count < 1) {
+            refuse(notUnderstood);
+            return;
+        }
+        const QList<RecordingEntry> entries = service->store()->entries();
+        QJsonArray page;
+        const qint64 end = std::min<qint64>(
+            entries.size(), offset + std::min<qint64>(count, RecordingsFacade::kListPageMax));
+        for (qint64 i = offset; i < end; ++i) {
+            page.append(RecordingsFacade::entryJson(entries.at(static_cast<qsizetype>(i))));
+        }
+        accept({MirrorUpdate{0, "entries", MirrorWireKind::Utf8,
+                             QVariant(QString::fromUtf8(
+                                 QJsonDocument(page).toJson(QJsonDocument::Compact)))},
+                MirrorUpdate{0, "offset", MirrorWireKind::Int64, QVariant(qlonglong(offset))},
+                MirrorUpdate{0, "total", MirrorWireKind::Int64,
+                             QVariant(qlonglong(entries.size()))}});
+    } else if (verb == "recordings.play" || verb == "recordings.stopPlay"
+               || verb == "recordings.seek") {
+        if (listener.isEmpty()) {
+            refuse(QStringLiteral("Recordings cannot be played on this connection."));
+            return;
+        }
+        if (verb == "recordings.stopPlay") {
+            service->stopPlayback(listener);
+            accept();
+            return;
+        }
+        if (verb == "recordings.seek") {
+            const qint64 position = arguments.value(QStringLiteral("positionMs")).toInteger(-1);
+            if (position < 0) {
+                refuse(notUnderstood);
+                return;
+            }
+            service->seek(listener, position);
+            accept();
+            return;
+        }
+        // A refusal the service gives at once answers this command; one that
+        // comes later (the file cannot be decoded) StationServer sends on the
+        // session.
+        QString refusal;
+        const QMetaObject::Connection capture = connect(
+            service, &RecordingService::playbackRefused, this,
+            [&refusal, &listener](const ListenerId& who, const QString& reason) {
+                if (who == listener) {
+                    refusal = reason;
+                }
+            });
+        m_recordingsPlayInFlight = listener;
+        service->play(listener, arguments.value(QStringLiteral("id")).toString());
+        m_recordingsPlayInFlight.clear();
+        disconnect(capture);
+        if (!refusal.isEmpty()) {
+            refuse(refusal);
+            return;
+        }
+        accept();
+    } else if (verb == "recordings.rename") {
+        QString refusal;
+        if (!service->store()->rename(arguments.value(QStringLiteral("id")).toString(),
+                                      arguments.value(QStringLiteral("name")).toString(),
+                                      &refusal)) {
+            refuse(refusal);
+            return;
+        }
+        accept();
+    } else if (verb == "recordings.delete") {
+        const std::optional<QStringList> ids =
+            bandStackIdList(arguments.value(QStringLiteral("ids")).toString());
+        if (!ids.has_value() || ids->isEmpty()) {
+            refuse(notUnderstood);
+            return;
+        }
+        // One another device deleted first is already gone; the rest go.
+        RecordingStore* const store = service->store();
+        QStringList known;
+        for (const QString& id : *ids) {
+            if (store->find(id).has_value() && !known.contains(id)) {
+                known.append(id);
+            }
+        }
+        if (known.isEmpty()) {
+            refuse(gone);
+            return;
+        }
+        QString refusal;
+        if (!store->remove(known, &refusal)) {
+            refuse(refusal);
+            return;
+        }
+        accept();
+    } else if (verb == "recordings.export") {
+        const QString id = arguments.value(QStringLiteral("id")).toString();
+        const qint64 offset = arguments.value(QStringLiteral("offset")).toInteger(-1);
+        RecordingStore* const store = service->store();
+        const std::optional<RecordingEntry> entry = store->find(id);
+        if (!entry.has_value()) {
+            refuse(gone);
+            return;
+        }
+        QFile file(QDir(store->folder()).filePath(entry->fileName));
+        if (!file.open(QIODevice::ReadOnly)) {
+            qCWarning(lcRecordings) << "cannot read" << file.fileName() << "for a copy:"
+                                    << file.errorString();
+            refuse(QStringLiteral("That recording cannot be read on the Core."));
+            return;
+        }
+        const qint64 size = file.size();
+        if (offset < 0 || offset > size || !file.seek(offset)) {
+            refuse(notUnderstood);
+            return;
+        }
+        const QByteArray chunk = file.read(RecordingsFacade::kExportChunkBytes);
+        if (chunk.size() < std::min(RecordingsFacade::kExportChunkBytes, size - offset)) {
+            qCWarning(lcRecordings) << "short read of" << file.fileName() << "at" << offset;
+            refuse(QStringLiteral("That recording cannot be read on the Core."));
+            return;
+        }
+        accept({MirrorUpdate{0, "id", MirrorWireKind::Utf8, QVariant(id)},
+                MirrorUpdate{0, "offset", MirrorWireKind::Int64, QVariant(qlonglong(offset))},
+                MirrorUpdate{0, "size", MirrorWireKind::Int64, QVariant(qlonglong(size))},
+                MirrorUpdate{0, "data", MirrorWireKind::Utf8,
+                             QVariant(QString::fromLatin1(chunk.toBase64()))}});
+    } else if (verb == "recordings.setSettings") {
+        RecordingSettings settings = service->settings();
+        QString refusal;
+        if (!RecordingsFacade::applySettingsChange(arguments, RecordingDisks::volumes(), &settings,
+                                                   &refusal)) {
+            refuse(refusal);
+            return;
+        }
+        service->setSettings(settings);
+        m_radioModel->recordingsFacade()->refresh();
+        accept();
+    } else {
+        refuse(notUnderstood);
+    }
 }
 
 // R-R3-49 (parity Task 3): the RADE applet's Reset vocoder, on the Core's

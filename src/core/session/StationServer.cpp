@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-15: Recording plan Task 5: recordingsVersion 1, the recordings object, the
+//               recordings.* gate (peerGetsRecordings), each device's own
+//               recordings.playback, and the device names a recording keeps.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: A device's first slice is a new receiver, RIT and XIT off.
 //                J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude.
 //   2026-11-05: Band stack plan Task 6: the bandStack.* verbs for the hosting desktop.
@@ -1281,6 +1285,8 @@
 #include "core/session/StateMirror.h"
 #include "core/session/StationCatalog.h"
 #include "core/session/BandStackFacade.h"
+#include "core/recordings/RecordingService.h"
+#include "core/session/RecordingsFacade.h"
 #include "core/session/PaProfilesFacade.h"
 #include "core/PaProfileManager.h"
 #include "core/session/StationDevicesFacade.h"
@@ -1723,6 +1729,16 @@ constexpr const char* kPaProfilesKey = "paProfiles";
 
 // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack.
 constexpr const char* kBandStackKey = "bandStack";
+
+// Recording plan Task 5 (recordingsVersion 1): the Core's recordings.
+constexpr const char* kRecordingsKey = "recordings";
+
+bool isRecordingsMessage(const SessionMessage& message)
+{
+    return message.objectKey == kRecordingsKey
+        || (message.kind == SessionMessageKind::Schema
+            && message.className == "RecordingsFacade");
+}
 
 bool isBandStackMessage(const SessionMessage& message)
 {
@@ -2853,7 +2869,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                               {QByteArrayLiteral("diversityPattern"), 1},
                               // Band stack plan Task 4: the hosting desktop's
                               // own window uses the same verbs.
-                              {QByteArrayLiteral("bandStack"), 1}};
+                              {QByteArrayLiteral("bandStack"), 1},
+                              // Recording plan Task 5: the hosting desktop's
+                              // own window uses the service directly
+                              // (LocalRecordingsAccess); declared alike.
+                              {QByteArrayLiteral("recordings"), 1}};
     m_stationPeer.deviceId = SliceOwnership::stationDevice();
     m_stationPeer.sessionDeviceId = SliceOwnership::stationDevice();
     m_stationPeer.placeSettled = true;
@@ -4517,6 +4537,11 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         [this](const QByteArray& deviceId) { return listeningOn(deviceId); });
     m_dispatcher->setSliceAccess([this](const QByteArray& requester, int sliceId) {
         return changeRefusal(requester, sliceId);
+    });
+    // Recording plan Task 5: who started or stopped a recording, by the
+    // name the Core knows the device by (the operator's own word).
+    m_dispatcher->setRecordingsDeviceName([this](const QByteArray& requester) {
+        return sliceHolderWords(requester, WordsPlace::SentenceStart);
     });
     // iPhone app plan Task 34: the on-air refusals (ruling 7.4) and the
     // holder's tx.setTxSlice (ruling 8.10).
@@ -7006,6 +7031,16 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
         }
         // Band stack plan Task 4 (bandStackVersion 1): the bandStack.* verbs,
         // to a peer that declared bandStack on a Core that runs the stack.
+        // Recording plan Task 5 (recordingsVersion 1): the recordings.* verbs,
+        // to a peer that declared recordings on a Core that runs its radio.
+        if (message.commandVerb.startsWith("recordings.") && !peerGetsRecordings(transport)) {
+            send(transport, SessionMessages::commandResult(
+                message.commandVerb, message.commandId, false,
+                !m_radioModel.isNull() && m_radioModel->role() == RadioModel::Role::Remote
+                    ? QStringLiteral("This Core cannot share recordings with this app.")
+                    : QStringLiteral("Update this app to use recordings on this Core."), {}));
+            break;
+        }
         if (message.commandVerb.startsWith("bandStack.") && !peerGetsBandStack(transport)) {
             send(transport, SessionMessages::commandResult(
                 message.commandVerb, message.commandId, false,
@@ -8703,6 +8738,17 @@ void StationServer::buildMirror()
     // Band stack plan Task 4 (bandStackVersion 1): the Core's band stack, only
     // to a peer that declared bandStack (sendToPeer).
     m_mirror->watch(QByteArray(kBandStackKey), m_radioModel->bandStackFacade());
+    // Recording plan Task 5 (recordingsVersion 1): the Core's recordings, only
+    // to a peer that declared recordings (sendToPeer). Serving opens the
+    // recordings folder. Each device's playback goes to that device only.
+    m_radioModel->recordingsFacade()->publish();
+    m_mirror->watch(QByteArray(kRecordingsKey), m_radioModel->recordingsFacade());
+    if (RecordingService* recordings = m_radioModel->recordingService()) {
+        connect(recordings, &RecordingService::playbackChanged, this,
+                &StationServer::sendRecordingsPlayback);
+        connect(recordings, &RecordingService::playbackRefused, this,
+                &StationServer::sendRecordingsPlayRefusal);
+    }
     m_setupDescription->setRadioContext(m_radioModel->boardCapabilities(),
                                         m_radioModel->hardwareProfile().model,
                                         m_radioModel->currentRadioInfo());
@@ -10564,6 +10610,11 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
         if (isBandStackMessage(message) && !peerGetsBandStack(transport)) {
             return;
         }
+        // Recording plan Task 5: nor the recordings to a peer that did not
+        // declare recordings.
+        if (isRecordingsMessage(message) && !peerGetsRecordings(transport)) {
+            return;
+        }
         // iPhone app Task 19: nor the catalogue to an older app.
         if (isCatalogMessage(message)
             && (minor < kRadioIdentitySessionProtocolMinor || stationCatalogVersion() < 1)) {
@@ -10638,6 +10689,77 @@ void StationServer::sendToPeer(SessionTransport* transport, const SessionMessage
 }
 
 // ── The read-only TX EQ curve (R-IOS-13, R-R3-49) ───────────────────────
+
+bool StationServer::peerGetsRecordings(SessionTransport* transport) const
+{
+    // peerPtr, not m_peers: the station device's own peer is not in m_peers.
+    const Peer* peer = peerPtr(transport);
+    return peer != nullptr && !m_radioModel.isNull()
+        && m_radioModel->role() != RadioModel::Role::Remote
+        && m_radioModel->recordingService() != nullptr
+        && peer->agreedMinor >= kRadioIdentitySessionProtocolMinor
+        && peerDeclares(transport, QByteArrayLiteral("recordings"), 1);
+}
+
+QList<SessionTransport*> StationServer::recordingsListenerSessions(const QString& who) const
+{
+    // A session's listener is its device, as DaemonMediaController names the
+    // owner mix's playback (RecordingService::setListenerSpeakerSlot).
+    QList<SessionTransport*> sessions;
+    if (who.isEmpty()) {
+        return sessions;
+    }
+    for (auto it = m_peers.cbegin(); it != m_peers.cend(); ++it) {
+        if (it->authenticated && !it->sessionDeviceId.isEmpty()
+            && QString::fromLatin1(it->sessionDeviceId) == who && peerGetsRecordings(it.key())) {
+            sessions.append(it.key());
+        }
+    }
+    return sessions;
+}
+
+void StationServer::sendRecordingsPlayback(const QString& who)
+{
+    // Recording plan Task 5: recordings.playback, the device's own playback,
+    // on its own sessions only and never mirrored. An ended playback is an
+    // empty id, not playing.
+    RecordingService* recordings = m_radioModel.isNull() ? nullptr : m_radioModel->recordingService();
+    if (recordings == nullptr) {
+        return;
+    }
+    const QList<SessionTransport*> sessions = recordingsListenerSessions(who);
+    if (sessions.isEmpty()) {
+        return;
+    }
+    const std::optional<PlaybackState> state = recordings->playback(who);
+    const QList<MirrorUpdate> values{
+        {0, "id", MirrorWireKind::Utf8, QVariant(state ? state->recordingId : QString())},
+        {0, "positionMs", MirrorWireKind::Int64, QVariant(qlonglong(state ? state->positionMs : 0))},
+        {0, "lengthMs", MirrorWireKind::Int64, QVariant(qlonglong(state ? state->lengthMs : 0))},
+        {0, "playing", MirrorWireKind::Bool, QVariant(state ? state->playing : false)},
+        {0, "onAir", MirrorWireKind::Bool, QVariant(state ? state->onAir : false)}};
+    const SessionMessage message = SessionMessages::commandResult(
+        QByteArrayLiteral("recordings.playback"), 0, true, QString(), {}, values);
+    for (SessionTransport* transport : sessions) {
+        send(transport, message);
+    }
+}
+
+void StationServer::sendRecordingsPlayRefusal(const QString& who, const QString& reason)
+{
+    // A refusal while recordings.play runs is that command's answer
+    // (SessionCommandDispatcher::handleRecordings). One that comes later
+    // (the file cannot be decoded) reaches the device's sessions as a
+    // recordings.play answer with no id of its own.
+    if (m_dispatcher != nullptr && m_dispatcher->recordingsPlayInFlight() == who) {
+        return;
+    }
+    const SessionMessage message = SessionMessages::commandResult(
+        QByteArrayLiteral("recordings.play"), 0, false, reason, {});
+    for (SessionTransport* transport : recordingsListenerSessions(who)) {
+        send(transport, message);
+    }
+}
 
 bool StationServer::peerGetsBandStack(SessionTransport* transport) const
 {
@@ -15249,6 +15371,9 @@ StationCapabilities StationServer::buildCapabilitiesFor(SessionTransport* transp
             // Band stack plan Task 4: the Core's band stack, to a peer that
             // declared bandStack 1 (before coreBuildInfo on the wire).
             caps.bandStackVersion = peerGetsBandStack(transport) ? 1 : 0;
+            // Recording plan Task 5: the Core's recordings, to a peer that
+            // declared recordings 1 (after bandStackVersion on the wire).
+            caps.recordingsVersion = peerGetsRecordings(transport) ? RecordingsFacade::kVersion : 0;
             // R-R3-47 / R-R3-22: the Tuner Genius's own settings.
             caps.remoteTgxlControlVersion = tgxlControlVersion();
             // iPhone app Task 12 (R-IOS-08): device sign-in by key, last.

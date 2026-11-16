@@ -20,6 +20,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 — Recording plan Task 5: the `recordings` facade and the
+//                 recordings access by role. J.J. Boyd (KG4VCF), AI-assisted
+//                 via Anthropic Claude Code.
 //   2026-11-06 — currentCodecContext hands the codec the radio's DDC limit
 //                 (BoardCapsTable::ddcIndexLimit). J.J. Boyd (KG4VCF),
 //                 AI-assisted via Anthropic Claude Code.
@@ -2079,6 +2082,9 @@ mw0lge@grange-lane.co.uk
 #include "core/PskReporterClient.h"
 #include "core/SpotSourceHost.h"
 #include "core/recordings/RecordingService.h"
+#include "core/session/RecordingsFacade.h"
+#include "models/recordings/LocalRecordingsAccess.h"
+#include "models/recordings/RemoteRecordingsAccess.h"
 #include "core/roundtable/RoundtableClient.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/RecordStream.h"
@@ -4070,6 +4076,15 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     if (m_role == Role::Local) {
         m_recordingService = std::make_unique<RecordingService>(this);
     }
+    // Recording plan Task 5: the `recordings` object, in every placement,
+    // and what a window talks to (as the band stack's, above).
+    m_recordingsFacade = new RecordingsFacade(this);
+    m_recordingsFacade->bind(m_recordingService.get());
+    if (m_role == Role::Remote) {
+        m_recordingsAccess = new RemoteRecordingsAccess(this);
+    } else {
+        m_recordingsAccess = new LocalRecordingsAccess(this);
+    }
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
     m_stationCatModel = new StationCatModel(this);
@@ -5673,6 +5688,10 @@ RadioModel::~RadioModel()
 {
     // Recording plan Task 3: every recording is kept and the recordings
     // worker joins while the audio engine and the slices still exist.
+    // Recording plan Task 5: the facade stops following it first.
+    if (m_recordingsFacade != nullptr) {
+        m_recordingsFacade->bind(nullptr);
+    }
     m_recordingService.reset();
     // The band stack writes its last change while the model is whole.
     m_bandStackController.reset();

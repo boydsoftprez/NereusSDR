@@ -1,0 +1,374 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 J.J. Boyd (KG4VCF)
+// no-port-check: NereusSDR-original. See RecordingsFacade.h.
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code. Recording plan
+//                 Task 5.
+// =================================================================
+
+#include "core/session/RecordingsFacade.h"
+
+#include <QDir>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QTimer>
+#include <QTimeZone>
+
+#include <algorithm>
+
+#include "core/recordings/RecordingStore.h"
+
+namespace NereusSDR {
+
+namespace {
+
+QString isoUtc(const QDateTime& when)
+{
+    return when.isValid() ? when.toUTC().toString(Qt::ISODateWithMs) : QString();
+}
+
+QJsonObject noKept()
+{
+    return QJsonObject{{QStringLiteral("seq"), 0},
+                       {QStringLiteral("slice"), -1},
+                       {QStringLiteral("id"), QString()},
+                       {QStringLiteral("name"), QString()},
+                       {QStringLiteral("lengthMs"), 0},
+                       {QStringLiteral("reason"), QString()},
+                       {QStringLiteral("device"), QString()}};
+}
+
+}  // namespace
+
+RecordingsFacade::RecordingsFacade(QObject* parent)
+    : QObject(parent)
+    , m_kept(noKept())
+{
+}
+
+void RecordingsFacade::bind(RecordingService* service)
+{
+    if (m_service) {
+        disconnect(m_service, nullptr, this, nullptr);
+    }
+    m_service = service;
+    if (m_service) {
+        connect(m_service, &RecordingService::sliceStateChanged, this, &RecordingsFacade::rebuild);
+        connect(m_service, &RecordingService::kept, this, &RecordingsFacade::onKept);
+    }
+    if (m_published) {
+        refresh();
+    }
+}
+
+void RecordingsFacade::publish()
+{
+    if (m_published || !m_service) {
+        return;
+    }
+    m_published = true;
+    // Opens the recordings folder (RecordingService::store).
+    RecordingStore* store = m_service->store();
+    if (store) {
+        connect(store, &RecordingStore::changed, this, &RecordingsFacade::onIndexChanged);
+    }
+    refresh();
+}
+
+void RecordingsFacade::refresh()
+{
+    if (!m_published || !m_service) {
+        return;
+    }
+    m_volumes = RecordingDisks::volumes();
+    rebuild();
+}
+
+void RecordingsFacade::onKept(const KeptEvent& event)
+{
+    ++m_keptSeq;
+    m_kept = QJsonObject{{QStringLiteral("seq"), m_keptSeq},
+                         {QStringLiteral("slice"), event.sliceId},
+                         {QStringLiteral("id"), event.id},
+                         {QStringLiteral("name"), event.name},
+                         {QStringLiteral("lengthMs"), event.lengthMs},
+                         {QStringLiteral("reason"), keptReasonKey(event.reason)},
+                         {QStringLiteral("device"), event.deviceName}};
+    rebuild();
+}
+
+void RecordingsFacade::onIndexChanged()
+{
+    ++m_indexRevision;
+    rebuild();
+}
+
+void RecordingsFacade::rebuild()
+{
+    if (!m_published || !m_service) {
+        return;
+    }
+    QJsonArray slices;
+    for (const RecordingSliceState& st : m_service->sliceStates()) {
+        slices.append(QJsonObject{{QStringLiteral("slice"), st.sliceId},
+                                  {QStringLiteral("state"), stateKey(st.state)},
+                                  {QStringLiteral("startUtc"), isoUtc(st.startUtc)},
+                                  {QStringLiteral("startedBy"), st.startedBy},
+                                  {QStringLiteral("elapsedMs"), st.elapsedMs},
+                                  {QStringLiteral("myVoice"), st.hearingMyVoice}});
+    }
+    const RecordingStore* store = m_service->store();
+    QJsonObject index{{QStringLiteral("revision"), static_cast<qint64>(m_indexRevision)},
+                      {QStringLiteral("count"), store ? store->entries().size() : 0},
+                      {QStringLiteral("usedBytes"), store ? store->usedBytes() : 0},
+                      {QStringLiteral("freeBytes"), store ? store->freeBytes() : 0},
+                      {QStringLiteral("folder"), store ? QDir::toNativeSeparators(store->folder())
+                                                       : QString()}};
+    QJsonObject settings = settingsJson(m_service->settings());
+    QJsonArray disks;
+    for (const RecordingVolume& volume : m_volumes) {
+        disks.append(volumeJson(volume));
+    }
+    settings.insert(QStringLiteral("disks"), disks);
+
+    const QJsonObject document{{QStringLiteral("version"), kVersion},
+                               {QStringLiteral("slices"), slices},
+                               {QStringLiteral("kept"), m_kept},
+                               {QStringLiteral("index"), index},
+                               {QStringLiteral("settings"), settings}};
+    const QString next = QString::fromUtf8(QJsonDocument(document).toJson(QJsonDocument::Compact));
+    updateTick();
+    if (next == m_json) {
+        return;
+    }
+    m_json = next;
+    ++m_revision;
+    emit changed();
+}
+
+void RecordingsFacade::updateTick()
+{
+    bool recording = false;
+    if (m_service) {
+        for (const RecordingSliceState& st : m_service->sliceStates()) {
+            recording = recording || st.state == RecordState::Recording;
+        }
+    }
+    if (recording && !m_tick) {
+        m_tick = new QTimer(this);
+        m_tick->setInterval(kElapsedRefreshMs);
+        connect(m_tick, &QTimer::timeout, this, &RecordingsFacade::rebuild);
+    }
+    if (m_tick) {
+        if (recording && !m_tick->isActive()) {
+            m_tick->start();
+        } else if (!recording && m_tick->isActive()) {
+            m_tick->stop();
+        }
+    }
+}
+
+bool RecordingsFacade::applyStationValue(const QByteArray& propertyName, const QVariant& value)
+{
+    if (propertyName == "json") {
+        const QString next = value.toString();
+        if (!m_service && next != m_json) {
+            m_json = next;
+            emit changed();
+        }
+        return true;
+    }
+    if (propertyName == "revision") {
+        const quint32 next = value.toUInt();
+        if (!m_service && next != m_revision) {
+            m_revision = next;
+            emit changed();
+        }
+        return true;
+    }
+    return false;
+}
+
+void RecordingsFacade::clearStationValues()
+{
+    if (m_service || (m_json.isEmpty() && m_revision == 0)) {
+        return;
+    }
+    m_json.clear();
+    m_revision = 0;
+    emit changed();
+}
+
+QString RecordingsFacade::stateKey(RecordState state)
+{
+    switch (state) {
+    case RecordState::Idle:
+        return QStringLiteral("idle");
+    case RecordState::Armed:
+        return QStringLiteral("armed");
+    case RecordState::Recording:
+        return QStringLiteral("recording");
+    }
+    return QStringLiteral("idle");
+}
+
+QString RecordingsFacade::keptReasonKey(KeptReason reason)
+{
+    switch (reason) {
+    case KeptReason::StoppedHere:
+        return QStringLiteral("here");
+    case KeptReason::StoppedOnDevice:
+        return QStringLiteral("device");
+    case KeptReason::StoppedQuiet:
+        return QStringLiteral("quiet");
+    case KeptReason::DiskFull:
+        return QStringLiteral("diskFull");
+    case KeptReason::KeptAsWav:
+        return QStringLiteral("wav");
+    }
+    return QStringLiteral("here");
+}
+
+QJsonObject RecordingsFacade::entryJson(const RecordingEntry& entry)
+{
+    return QJsonObject{{QStringLiteral("id"), entry.id},
+                       {QStringLiteral("kind"), recordingKindKey(entry.kind)},
+                       {QStringLiteral("slice"), entry.sliceId},
+                       {QStringLiteral("startUtc"), isoUtc(entry.startUtc)},
+                       {QStringLiteral("lengthMs"), entry.lengthMs},
+                       {QStringLiteral("frequencyHz"), entry.frequencyHz},
+                       {QStringLiteral("mode"), entry.mode},
+                       {QStringLiteral("call"), entry.call},
+                       {QStringLiteral("name"), entry.name},
+                       {QStringLiteral("fileName"), entry.fileName},
+                       {QStringLiteral("sizeBytes"), entry.sizeBytes}};
+}
+
+std::optional<RecordingEntry> RecordingsFacade::entryFromJson(const QJsonObject& object)
+{
+    RecordingEntry entry;
+    entry.id = object.value(QStringLiteral("id")).toString();
+    if (entry.id.isEmpty()
+        || !recordingKindFromKey(object.value(QStringLiteral("kind")).toString(), &entry.kind)) {
+        return std::nullopt;
+    }
+    entry.sliceId = object.value(QStringLiteral("slice")).toInt(-1);
+    entry.startUtc = QDateTime::fromString(object.value(QStringLiteral("startUtc")).toString(),
+                                           Qt::ISODateWithMs)
+                         .toUTC();
+    entry.lengthMs = object.value(QStringLiteral("lengthMs")).toInteger();
+    entry.frequencyHz = object.value(QStringLiteral("frequencyHz")).toInteger();
+    entry.mode = object.value(QStringLiteral("mode")).toString();
+    entry.call = object.value(QStringLiteral("call")).toString();
+    entry.name = object.value(QStringLiteral("name")).toString();
+    entry.fileName = object.value(QStringLiteral("fileName")).toString();
+    entry.sizeBytes = object.value(QStringLiteral("sizeBytes")).toInteger();
+    return entry;
+}
+
+QJsonObject RecordingsFacade::volumeJson(const RecordingVolume& volume)
+{
+    return QJsonObject{{QStringLiteral("root"), QDir::toNativeSeparators(volume.rootPath)},
+                       {QStringLiteral("name"), volume.displayName},
+                       {QStringLiteral("free"), volume.freeBytes},
+                       {QStringLiteral("total"), volume.totalBytes},
+                       {QStringLiteral("sd"), volume.isSdCard},
+                       {QStringLiteral("own"), volume.isCoreOwnDisk}};
+}
+
+QJsonObject RecordingsFacade::settingsJson(const RecordingSettings& settings)
+{
+    return QJsonObject{
+        {QStringLiteral("keepMyVoice"), settings.keepMyVoice},
+        {QStringLiteral("sidesApart"), settings.sidesApart},
+        {QStringLiteral("autoStart"), settings.autoStartOnTransmit},
+        {QStringLiteral("autoStop"), settings.autoStopWhenQuiet},
+        {QStringLiteral("quietMinutes"), settings.quietMinutes},
+        {QStringLiteral("format"),
+         settings.format == AudioFileFormat::Wav ? QStringLiteral("wav") : QStringLiteral("mp3")},
+        {QStringLiteral("disk"), QDir::toNativeSeparators(settings.disk)}};
+}
+
+bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,
+                                           const QList<RecordingVolume>& volumes,
+                                           RecordingSettings* settings, QString* refusal)
+{
+    const auto refuse = [refusal](const QString& why) {
+        if (refusal) {
+            *refusal = why;
+        }
+        return false;
+    };
+    const QString notUnderstood =
+        QStringLiteral("The change to the recording settings was not understood.");
+    if (changed.isEmpty() || settings == nullptr) {
+        return refuse(notUnderstood);
+    }
+    RecordingSettings next = *settings;
+    for (auto it = changed.constBegin(); it != changed.constEnd(); ++it) {
+        const QString& name = it.key();
+        const QJsonValue& value = it.value();
+        bool* flag = nullptr;
+        if (name == QLatin1String("keepMyVoice")) {
+            flag = &next.keepMyVoice;
+        } else if (name == QLatin1String("sidesApart")) {
+            flag = &next.sidesApart;
+        } else if (name == QLatin1String("autoStart")) {
+            flag = &next.autoStartOnTransmit;
+        } else if (name == QLatin1String("autoStop")) {
+            flag = &next.autoStopWhenQuiet;
+        }
+        if (flag != nullptr) {
+            if (!value.isBool()) {
+                return refuse(notUnderstood);
+            }
+            *flag = value.toBool();
+        } else if (name == QLatin1String("quietMinutes")) {
+            const double minutes = value.toDouble(-1.0);
+            if (!value.isDouble() || minutes != static_cast<double>(static_cast<qint64>(minutes))) {
+                return refuse(notUnderstood);
+            }
+            if (minutes < RecordingSettings::kQuietMinutesMin
+                || minutes > RecordingSettings::kQuietMinutesMax) {
+                return refuse(QStringLiteral("Quiet can be %1 to %2 minutes.")
+                                  .arg(RecordingSettings::kQuietMinutesMin)
+                                  .arg(RecordingSettings::kQuietMinutesMax));
+            }
+            next.quietMinutes = static_cast<int>(minutes);
+        } else if (name == QLatin1String("format")) {
+            const QString format = value.toString();
+            if (format == QLatin1String("mp3")) {
+                next.format = AudioFileFormat::Mp3;
+            } else if (format == QLatin1String("wav")) {
+                next.format = AudioFileFormat::Wav;
+            } else {
+                return refuse(notUnderstood);
+            }
+        } else if (name == QLatin1String("disk")) {
+            if (!value.isString()) {
+                return refuse(notUnderstood);
+            }
+            const QString disk = QDir::fromNativeSeparators(value.toString());
+            if (disk.isEmpty()) {
+                next.disk.clear();
+            } else {
+                const auto found = std::find_if(volumes.cbegin(), volumes.cend(),
+                                                [&disk](const RecordingVolume& volume) {
+                                                    return QDir::fromNativeSeparators(volume.rootPath) == disk;
+                                                });
+                if (found == volumes.cend()) {
+                    return refuse(QStringLiteral("That disk is not on the Core now."));
+                }
+                next.disk = found->isCoreOwnDisk ? QString() : disk;
+            }
+        } else {
+            return refuse(notUnderstood);
+        }
+    }
+    *settings = next;
+    return true;
+}
+
+} // namespace NereusSDR

@@ -448,6 +448,16 @@ public:
     /// so a device that only listens to a slice is refused too.
     using SliceAccess = std::function<QString(const QByteArray& requester, int sliceId)>;
     void setSliceAccess(SliceAccess access) { m_sliceAccess = std::move(access); }
+    /// Recording plan Task 5: the requester's name as a recording's
+    /// startedBy and a kept recording's device ("iPhone"). Unset, or empty
+    /// for a device, a device is "Another device". The station device and an
+    /// empty requester are the Core's own window ("").
+    using RecordingsDeviceName = std::function<QString(const QByteArray& requester)>;
+    void setRecordingsDeviceName(RecordingsDeviceName name) { m_recordingsDeviceName = std::move(name); }
+    /// Recording plan Task 5: the listener whose recordings.play is running
+    /// now. A playback refusal for it is that command's answer, so the Core
+    /// sends it on no other path. Empty between plays.
+    const QString& recordingsPlayInFlight() const { return m_recordingsPlayInFlight; }
 
     /// iPhone app plan Task 34 (R-IOS-02, R-IOS-13; ruling 7.4, D60): the
     /// Core's transmit rules for the requester. onAir: the on-air refusal
@@ -696,6 +706,10 @@ private:
     /// Who may act on a slice through the band stack: the listener's words or
     /// the Core's changeRefusal text. Empty when the requester may.
     QString bandStackSliceRefusal(int sliceId) const;
+    /// Recording plan Task 5: every recordings.* verb (recordingsVersion 1).
+    void handleRecordings(const NereusSDR::SessionMessage& invoke);
+    /// The requester as a recording names it: "" for the Core's own window.
+    QString recordingsDeviceName() const;
     void handleRadeResetVocoder(const NereusSDR::SessionMessage& invoke);
     // R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     // txEq.resetCurve, through TxEqCurveAccess.
@@ -768,6 +782,8 @@ private:
     std::function<void(int)> m_rateClose;
     QString m_rateChangedReason;
     SliceAccess m_sliceAccess;
+    RecordingsDeviceName m_recordingsDeviceName;
+    QString m_recordingsPlayInFlight;
     // Slice control plan Task 4.
     QPointer<SliceAccessController> m_sliceAccessController;
     bool m_requesterSharesSlices = false;

@@ -961,6 +961,14 @@ and the Core takes its `bandStack.*` verbs; a peer that does not sees none
 of them and keeps `slice.selectBand`. The desktop's remote window declares
 it, and the hosting desktop's own session has it.
 
+**`recordings` 1** (design 2026-11-15-recording-voice-keyer-dsr-design.md,
+section 6.9): the client shows and works the Core's recordings. A peer that
+declares it at minor 11 is sent `recordingsVersion` (section 6.3) and the
+read-only `recordings` object, the Core takes its `recordings.*` verbs, and
+the peer's own playback comes back as `recordings.playback` (section 9); a
+peer that does not sees none of them. The desktop's remote window declares
+it.
+
 **`txInhibitReason` 1** (HL2 I/O board fault): the client shows why the
 Core holds transmit off. A peer that declares it at minor 11 is sent
 `txInhibitReasonVersion` (section 6.3) and `radio`'s `txInhibitReason`
@@ -1315,6 +1323,7 @@ table.
 | `stationRoundtableVersion` | 2 |
 | `nnrLoadWarningVersion` | 1 |
 | `bandStackVersion` | 1 |
+| `recordingsVersion` | 1 |
 | `txSsbModMonitorVersion` | 1 |
 
 <!-- /surface -->
@@ -1637,6 +1646,15 @@ When a feature is off, its version is 0:
   did not change. A peer that gets no entry uses `slice.selectBand`; a client
   on a Core that sends no entry shows band stack controls greyed, saying the
   Core needs updating.
+- `recordingsVersion` (design 2026-11-15-recording-voice-keyer-dsr-design.md):
+  optional, sent only at agreed minor 11 to a peer whose hello declared
+  `recordings` 1, on a Core that runs its own radio, after `bandStackVersion`
+  (or after the last entry before it when that is absent) and before
+  `txSsbModMonitorVersion`. At 1 the Core sends `recordings` (read-only,
+  section 7.1) and takes the `recordings.*` verbs (section 9). The session
+  protocol minor did not change. A client on a Core that sends no entry shows
+  its recording controls greyed with "This Core needs an update for
+  recordings." and sends nothing.
 - `radeStatusVersion` (RADE on the phone's VFO flag): optional, sent only
   at agreed minor 11 to a peer whose hello declared `radeStatus` 1, while
   the Core has a radio model, after `paProfileVersion` (or after the
@@ -2563,7 +2581,8 @@ declared `txEqCurve` (section 6.1); `remoteTxVersion` and the three
 own key that declared `coreAddresses`; `adcAttenuatorVersion` only for
 a peer that declared `adcAttenuators`; `paProfileVersion` only for a
 peer that declared `paProfiles` (section 6.1); `bandStackVersion` only for
-a peer that declared `bandStack` (section 6.1); `radeStatusVersion` only
+a peer that declared `bandStack` (section 6.1); `recordingsVersion` only for
+a peer that declared `recordings` (section 6.1); `radeStatusVersion` only
 for a peer that declared `radeStatus`; `txInhibitReasonVersion` only for a
 peer that declared `txInhibitReason` (section 6.1); `paTransmitBandVersion` only for a
 peer that declared `paTransmitBand`; `radeReasonVersion` only for a peer
@@ -2788,8 +2807,9 @@ older window sees only the values it was built for.
 | 118 | `stationRoundtableVersion` | `i64` |
 | 119 | `nnrLoadWarningVersion` | `i64` |
 | 120 | `bandStackVersion` | `i64` |
-| 121 | `txSsbModMonitorVersion` | `i64` |
-| 122 | `coreBuildInfo` | `utf8` |
+| 121 | `recordingsVersion` | `i64` |
+| 122 | `txSsbModMonitorVersion` | `i64` |
+| 123 | `coreBuildInfo` | `utf8` |
 
 <!-- /surface -->
 
@@ -3098,6 +3118,13 @@ resume below 250 ms remains independent of warning presentation.
 | 46 | `coreSpeakerDevices` | `utf8` | outbound |  |
 | 47 | `coreSpeakerState` | `utf8` | outbound |  |
 | 48 | `coreSpeakerDetails` | `utf8` | bidirectional |  |
+
+**RecordingsFacade** (2 properties)
+
+| Ordinal | Property | Wire kind | Direction | Enum values |
+| --- | --- | --- | --- | --- |
+| 0 | `json` | `utf8` | outbound |  |
+| 1 | `revision` | `i64` | outbound |  |
 
 **RfKitModel** (30 properties)
 
@@ -3765,6 +3792,7 @@ destroyed during the session.
 | `catalog` | `StationCatalog` |
 | `paProfiles` | `PaProfilesFacade` |
 | `bandStack` | `BandStackFacade` |
+| `recordings` | `RecordingsFacade` |
 | `setup` | `SetupDescription` |
 | `spotSources` | `SpotSourceHost` |
 | `pan:<i>` | `PanadapterModel` |
@@ -3776,6 +3804,22 @@ destroyed during the session.
 
 Notes on the keys:
 
+- **`recordings`** (`RecordingsFacade`, `recordingsVersion` 1). The Core's
+  recordings, read-only (a write is refused; the `recordings.*` verbs change
+  them), sent only to a peer at agreed minor 11 that declared `recordings` 1.
+  `json` is the document: `version` 1, `slices` (one per open slice: `slice`,
+  `state` `idle`, `armed` or `recording`, `startUtc`, `startedBy` with "" for
+  the Core's own window, `elapsedMs`, `myVoice`), `kept` (the last recording
+  kept: `seq`, moving by one for each and 0 for none yet, `slice`, `id`,
+  `name`, `lengthMs`, `reason` `here`, `device`, `quiet`, `diskFull` or
+  `wav`, and `device`, who stopped it), `index` (`revision`, moving by one
+  each time the list changes, `count`, `usedBytes`, `freeBytes`, `folder`)
+  and `settings` (`keepMyVoice`, `sidesApart`, `autoStart`, `autoStop`,
+  `quietMinutes`, `format` `mp3` or `wav`, `disk` with "" for the Core's own,
+  and `disks`: `root`, `name`, `free`, `total`, `sd`, `own`). While a slice
+  records, `elapsedMs` is rebuilt once a second. `revision` moves by one each
+  time `json` changes. The recordings themselves are not in it: a client asks
+  with `recordings.list`.
 - **`bandStack`** (`BandStackFacade`, `bandStackVersion` 1). The Core's band
   stack, read-only (a write is refused; the `bandStack.*` verbs change it),
   sent only to a peer at agreed minor 11 that declared `bandStack` 1. `json`
@@ -6550,6 +6594,16 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `bandStack.reseed` | none | `bandStackVersion` | 1 | 11 |
 | `bandStack.options` | `dupeProtection` bool (optional), `expiryMinutes` i64 (optional), `dwellSeconds` i64 (optional) | `bandStackVersion` | 1 | 11 |
 | `bandStack.restoreExpired` | `batchId` utf8 | `bandStackVersion` | 1 | 11 |
+| `recordings.start` | `slice` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.stop` | `slice` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.list` | `offset` i64, `count` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.play` | `id` utf8 | `recordingsVersion` | 1 | 11 |
+| `recordings.stopPlay` | none | `recordingsVersion` | 1 | 11 |
+| `recordings.seek` | `positionMs` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.rename` | `id` utf8, `name` utf8 | `recordingsVersion` | 1 | 11 |
+| `recordings.delete` | `ids` utf8 | `recordingsVersion` | 1 | 11 |
+| `recordings.export` | `id` utf8, `offset` i64 | `recordingsVersion` | 1 | 11 |
+| `recordings.setSettings` | `keepMyVoice` bool (optional), `sidesApart` bool (optional), `autoStart` bool (optional), `autoStop` bool (optional), `quietMinutes` i64 (optional), `format` utf8 (optional), `disk` utf8 (optional) | `recordingsVersion` | 1 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -6967,6 +7021,30 @@ These command groups need a sentence beyond the table:
   longer exists." for an entry another device removed, and the desktop's words
   for a locked or transmitting slice. A refusal changes nothing. None keys the
   radio. `slice.selectBand` is unchanged.
+- **Recordings** (`recordingsVersion` 1). Any device may start or stop any
+  open slice's recording; one another device started is not started again,
+  and one stopped from a device is kept with `reason` `device` and that
+  device's words in `kept`. `recordings.list` answers with `entries` (a JSON
+  array as text, newest first, at most 100 from `offset`: `id`, `kind`,
+  `slice`, `startUtc`, `lengthMs`, `frequencyHz`, `mode`, `call`, `name`,
+  `fileName`, `sizeBytes`), `offset` and `total` in the result's `values`.
+  `recordings.play`, `recordings.stopPlay` and `recordings.seek` are the
+  requesting device's own playback, heard in its own speakers only; the Core
+  sends that device's sessions, and no other, a `command.result` with verb
+  `recordings.playback`, id 0, and `values` `id` ("" once it stops),
+  `positionMs`, `lengthMs`, `playing`, `onAir` each time it changes. A play
+  refused after its answer arrives as a `recordings.play` result with id 0.
+  `recordings.rename` takes `id` and `name`, `recordings.delete` takes `ids`,
+  a JSON array as text (an id another device deleted first is skipped),
+  `recordings.export` answers with `id`, `offset`, `size` (the whole file)
+  and `data`, up to 192 KiB of the file from `offset` as base64, and
+  `recordings.setSettings` takes any of the document's settings names.
+  Refusals: "Update this app to use recordings on this Core." without the
+  feature, "The request for recordings was not understood." for a missing or
+  wrong argument, "That slice is not open.", "That recording is no longer
+  kept." for a recording another device removed, "Quiet can be 1 to 60
+  minutes." and the store's words for a name already used. None keys the
+  radio; playback alone never transmits.
 - **The AM Mod Monitor's reset** (R-IOS-13, R-R3-49, `txModMonitorVersion`
   1). `txModMonitor.reset` (`source` i64: 0 the transmit I/Q, 1 the PA
   feedback) starts the Core's analyzer for that source afresh (its carrier

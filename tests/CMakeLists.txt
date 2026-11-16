@@ -10658,6 +10658,16 @@ nereus_add_test(tst_bandstack_link
 target_compile_definitions(tst_bandstack_link PRIVATE
     NEREUS_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/data")
 
+# Recording plan Task 5: recordings through a loopback link: the facade, the
+# feature gate and every recordings.* verb, then RecordingsAccess, local and
+# remote. No RF, no audio device.
+nereus_add_test(tst_recordings_link
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+nereus_add_test(tst_recordings_access
+    fakes/LoopbackTransport.cpp
+    EXTRA_LABELS session)
+
 # Band stack plan Task 7: the panel shell and its place beside the pans, both
 # looks, real MainWindow offscreen.
 nereus_add_test(tst_bandstack_panel

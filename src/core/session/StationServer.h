@@ -2176,6 +2176,15 @@ private:
     /// Band stack plan Task 4: bandStackVersion 1 reaches `transport` (minor 11,
     /// a Core that runs the stack, and bandStack 1 declared).
     bool peerGetsBandStack(SessionTransport* transport) const;
+    /// Recording plan Task 5: recordingsVersion 1 reaches `transport` (minor
+    /// 11, a Core that runs its own radio and its recordings, and recordings
+    /// 1 declared).
+    bool peerGetsRecordings(SessionTransport* transport) const;
+    /// The signed-in sessions of the device whose listener id is `who`.
+    QList<SessionTransport*> recordingsListenerSessions(const QString& who) const;
+    /// RecordingService::playbackChanged and playbackRefused, to that device.
+    void sendRecordingsPlayback(const QString& who);
+    void sendRecordingsPlayRefusal(const QString& who, const QString& reason);
     /// The refusal a PA profile change from `transport` meets, the one the
     /// settings path gives the desktop's own hardware/<mac>/pa/... writes
     /// (receive-only refusal unless transmit settings were offered; the
