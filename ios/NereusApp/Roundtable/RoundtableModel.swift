@@ -22,6 +22,9 @@
 // 2026-11-03: Overlay redesign truth rules: a frequency row carries its state and
 // keyed names (design D1), and the card data with client-side peak hold.
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-15: set the history note only when it changes, so a read that
+// changes nothing announces nothing. J.J. Boyd (KG4VCF), AI-assisted via
+// Claude Code (Opus 5.5).
 
 import Combine
 import Foundation
@@ -1278,7 +1281,9 @@ final class RoundtableModel: ObservableObject {
         guard !retainedMessages.isEmpty else {
             historyTask?.cancel(); historyTask = nil
             historyTimer?.cancel(); historyTimer = nil
-            historyStatus = nil
+            // Runs on every read of the mirror: set only on a change, so an
+            // unchanged note does not redraw every view of this model.
+            if historyStatus != nil { historyStatus = nil }
             return
         }
         guard connected, frequencyAvailable, [.live, .hidden, .reconnecting].contains(linkState) else {
@@ -1287,8 +1292,9 @@ final class RoundtableModel: ObservableObject {
             historySerial &+= 1
             historyGeneration = nil
             historyValidated.removeAll()
-            historyStatus = !connected || [.off, .offline, .connecting].contains(linkState)
+            let status = !connected || [.off, .offline, .connecting].contains(linkState)
                 ? "History stale · offline" : "History stale · refresh unavailable"
+            if status != historyStatus { historyStatus = status }
             return
         }
         let context = readingRoomId ?? activeContext?.id

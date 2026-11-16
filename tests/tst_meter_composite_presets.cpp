@@ -1355,10 +1355,13 @@ private slots:
 #endif
                     QVERIFY(!image.isNull());
                     if(type=="meter.ananMulti" && frame==11) {
-                        // A native DPR reference catches logical-resolution background upscaling.
-                        QImage reference(image.size(),QImage::Format_RGBA8888); reference.setDevicePixelRatio(widget.devicePixelRatioF()); reference.fill(QColor(15,15,26));
+                        // The reference is painted at the framebuffer's own scale. Intel
+                        // macOS fixes that buffer to logical pixels; other targets
+                        // follow the widget's device pixels.
+                        const double dpr=width>0 ? double(image.width())/width : 1.0;
+                        QImage reference(image.size(),QImage::Format_RGBA8888); reference.setDevicePixelRatio(dpr); reference.fill(QColor(15,15,26));
                         { QPainter painter(&reference); face->paintForLayer(painter,width,widget.height(),MeterItem::Layer::Background); }
-                        int mismatches=0,total=0; const double dpr=widget.devicePixelRatioF();
+                        int mismatches=0,total=0;
                         for(int y=0;y<qRound(22*dpr);++y) { for(int x=qRound(35*dpr);x<qRound((width-110)*dpr);++x) { const QColor actual=image.pixelColor(x,y),expected=reference.pixelColor(x,y); ++total; if(qAbs(actual.red()-expected.red())>2 || qAbs(actual.green()-expected.green())>2 || qAbs(actual.blue()-expected.blue())>2) { ++mismatches; } } }
                         QVERIFY2(mismatches<total/100,qPrintable(QString("Static title DPR mismatches %1/%2").arg(mismatches).arg(total)));
                     }

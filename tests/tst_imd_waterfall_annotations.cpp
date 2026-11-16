@@ -484,7 +484,11 @@ private slots:
             NEREUS_VERIFY_FRAME(NativeWindowFrames::requestFrame(widget, submitted, 2000));
             const QImage frame = widget.grabFramebuffer();
             QVERIFY(!frame.isNull());
-            QCOMPARE(frame.width(), qRound(widget.width() * widget.devicePixelRatioF()));
+            const QSize fixed = widget.fixedColorBufferSize();
+            const int expectedWidth = fixed.isEmpty()
+                ? qRound(widget.width() * widget.devicePixelRatioF())
+                : fixed.width();
+            QCOMPARE(frame.width(), expectedWidth);
             if (stem == QStringLiteral("glide0") || stem == QStringLiteral("glidehalf")
                 || stem == QStringLiteral("guidesoff")) {
                 QVERIFY(readableTagPixels(frame, widget) > 8);
