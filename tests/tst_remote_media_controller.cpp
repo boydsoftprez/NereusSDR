@@ -363,6 +363,28 @@
 //                                    slice forgets the old binding's rows
 //                                    not yet due. AI-assisted via Claude
 //                                    Code.
+//   2026-11-15  J.J. Boyd (KG4VCF)  Hosted Linux CI: the audio functions
+//                                    run as four entries, not two, and
+//                                    every entry passes -maxwarnings 0 so
+//                                    QtTest's message cap cannot hide a
+//                                    FAIL. AI-assisted via Anthropic
+//                                    Claude Code.
+//   2026-11-15  J.J. Boyd (KG4VCF)  The two MediaNotReady supersession
+//                                    cases forge the Core's first enabled
+//                                    answer, holding back one the Core
+//                                    sent off itself under load.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-15  J.J. Boyd (KG4VCF)  The repeated-refusal and other-reason
+//                                    cases hold back an off answer the
+//                                    Core sent itself the same way, and the
+//                                    cases that hold back name the count in
+//                                    their first wait's failure message.
+//                                    AI-assisted via Anthropic Claude Code.
+//   2026-11-16  J.J. Boyd (KG4VCF)  aMediaNotReadyAnswerIsAskedForAgain and
+//                                    aMuteEndsAMediaNotReadyRetry hold back
+//                                    an off answer the Core sent itself too;
+//                                    seen on the self-hosted Linux runner.
+//                                    AI-assisted via Anthropic Claude Code.
 #include <QTest>
 #include <QApplication>
 #include <QMetaMethod>
@@ -1305,6 +1327,19 @@ QJsonObject mediaNotReadyContext(const QJsonObject& real)
     off.insert(QStringLiteral("reason"),
                remoteAudioOffReasonToWire(RemoteAudioOffReason::MediaNotReady));
     return off;
+}
+
+// Hosted Linux CI, 2026-11-15: forge the Core's next enabled answer off for
+// media-not-ready. An answer the Core already sent off itself (MediaNotReady
+// while its own media peer is not yet ready, as under load) is held back, and
+// the forge waits for the Core's enabled one, so a genuine refusal is never
+// the one forged.
+QJsonObject mediaNotReadyFromEnabled(const QJsonObject& real)
+{
+    if (!real.value(QStringLiteral("enabled")).toBool()) {
+        return QJsonObject();
+    }
+    return mediaNotReadyContext(real);
 }
 
 // Passive evidence must identify canceled scheduling decisions as well as
@@ -12861,7 +12896,7 @@ private slots:
         PacedRemoteAudio audio(h);
         remoteMedia.holdAudioRestartForTest(true);
         h.forgeReplacesFirstContext = true;
-        h.connectSession(std::nullopt, mediaNotReadyContext);
+        h.connectSession(std::nullopt, mediaNotReadyFromEnabled);
         QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
                                   h.mediaStage(remoteMedia).constData(),
                                   h.kMediaConnectionWaitMs);
@@ -12898,7 +12933,7 @@ private slots:
                 && control.value(QStringLiteral("enabled")).toBool()) {
                 revisions.append(control.value(QStringLiteral("revision")).toInteger());
                 if (revisions.size() == 2) {
-                    h.stationLink->forgeNextAudioContext = mediaNotReadyContext;
+                    h.stationLink->forgeNextAudioContext = mediaNotReadyFromEnabled;
                 }
             }
         });
@@ -12907,9 +12942,10 @@ private slots:
         PacedRemoteAudio audio(h);
         remoteMedia.holdAudioRestartForTest(true);
         h.forgeReplacesFirstContext = true;
-        h.connectSession(std::nullopt, mediaNotReadyContext);
-        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
-                                 h.kMediaConnectionWaitMs);
+        h.connectSession(std::nullopt, mediaNotReadyFromEnabled);
+        QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
         const QString connectionId = remoteMedia.mediaConnectionId();
         QVERIFY(!connectionId.isEmpty());
         QCOMPARE(revisions.size(), 1);
@@ -12919,8 +12955,9 @@ private slots:
         QCOMPARE(revisions.size(), 1);
         remoteMedia.holdAudioRestartForTest(false);
         remoteMedia.holdAudioRestartForTest(true);
-        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, firstGeneration,
-                                             RemoteAudioOffReason::MediaNotReady), 5000);
+        QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, firstGeneration,
+                                              RemoteAudioOffReason::MediaNotReady),
+                                  h.mediaStage(remoteMedia).constData(), 5000);
         QCOMPARE(revisions.size(), 2);
         QVERIFY(revisions.at(1) > revisions.at(0));
         QVERIFY(remoteMedia.audioRestartPendingForTest());
@@ -12959,16 +12996,22 @@ private slots:
         PacedRemoteAudio audio(h);
         remoteMedia.holdAudioRestartForTest(true);
         h.forgeReplacesFirstContext = true;
+        // The Core's first enabled answer is the one forged off; an answer it
+        // sends off itself (MediaNotReady while its own media peer is not yet
+        // ready, as under load) is held back until it sends the enabled one.
         h.connectSession(std::nullopt, [&](const QJsonObject& real) {
+            if (!real.value(QStringLiteral("enabled")).toBool()) { return QJsonObject(); }
             enabledContext = real;
             return mediaNotReadyContext(real);
         });
         const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
-        QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
-                                 h.kMediaConnectionWaitMs);
+        QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                  h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
         QVERIFY(remoteMedia.audioRestartPendingForTest());
         QCOMPARE(requests, 1);
         QVERIFY(!enabledContext.isEmpty());
+        QVERIFY(enabledContext.value(QStringLiteral("enabled")).toBool());
         const QString connectionId = remoteMedia.mediaConnectionId();
         const qint64 revision = enabledContext.value(QStringLiteral("revision")).toInteger();
         const qint64 generation = enabledContext.value(QStringLiteral("generation")).toInteger() + 1;
@@ -13020,12 +13063,20 @@ private slots:
         });
         PacedRemoteAudio audio(h);
         h.forgeReplacesFirstContext = true;
+        // Hosted Linux CI, 2026-11-15: under load the Core can answer the
+        // first request MediaNotReady itself (its own media peer not yet
+        // ready), and replaying that answer is no enabled context. Such an
+        // answer is held back until the Core sends its first enabled one,
+        // which is the one forged off and replayed.
         h.connectSession(std::nullopt, [&](const QJsonObject& real) {
+            if (!real.value(QStringLiteral("enabled")).toBool()) { return QJsonObject(); }
             enabledContext = real;
             return mediaNotReadyContext(real);
         });
         const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
-        QTRY_VERIFY_WITH_TIMEOUT(superseded, h.kMediaConnectionWaitMs);
+        QTRY_VERIFY2_WITH_TIMEOUT(superseded, h.mediaStage(remoteMedia).constData(),
+                                  h.kMediaConnectionWaitMs);
+        QVERIFY(enabledContext.value(QStringLiteral("enabled")).toBool());
         QVERIFY(remoteMedia.acceptedAudioContext()->enabled);
         QCOMPARE(remoteMedia.acceptedAudioContext()->revision,
                  quint32(enabledContext.value(QStringLiteral("revision")).toInteger()));
@@ -13091,12 +13142,13 @@ private slots:
             remoteMedia.holdAudioRestartForTest(true);
             h.forgeReplacesFirstContext = true;
             h.connectSession(std::nullopt, [&](const QJsonObject& real) {
-                offContext = mediaNotReadyContext(real);
+                offContext = mediaNotReadyFromEnabled(real);
                 return offContext;
             });
             const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
-            QTRY_VERIFY_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
-                                     h.kMediaConnectionWaitMs);
+            QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
+                                      h.mediaStage(remoteMedia).constData(),
+                                      h.kMediaConnectionWaitMs);
             QVERIFY(remoteMedia.audioRestartPendingForTest());
             QCOMPARE(requests, 1);
             const quint32 generation = remoteMedia.acceptedAudioContext()->generation;
@@ -13136,7 +13188,7 @@ private slots:
         PacedRemoteAudio audio(h);
         remoteMedia.holdAudioRestartForTest(true);
         h.forgeReplacesFirstContext = true;
-        h.connectSession(std::nullopt, mediaNotReadyContext);
+        h.connectSession(std::nullopt, mediaNotReadyFromEnabled);
         const auto outboundRequests = observeEnabledAudioRequests(h.clientLink, this);
         QTRY_VERIFY2_WITH_TIMEOUT(acceptedOff(remoteMedia, 0, RemoteAudioOffReason::MediaNotReady),
                                   h.mediaStage(remoteMedia).constData(),
@@ -17345,7 +17397,7 @@ namespace {
 
 // The audio functions: the speakers, headphones, lossless trial and the
 // microphone uplink (each starts real audio and a real DTLS/SRTP link, and
-// together they take about half the run). They run as two ctest entries,
+// together they take about half the run). They run as four ctest entries,
 // every other function as three (main()); unset, NEREUS_REMOTE_MEDIA_GROUP
 // runs everything. A name here that is not a test function stops the run,
 // so a rename cannot quietly drop a test from every entry.
@@ -17438,15 +17490,22 @@ int main(int argc, char** argv)
     // hosted Linux shard running four tests at once, and the audio
     // functions took 171 to 204 s. So five entries, each function in one by
     // its place in the list, so a new function lands in one with no list to
-    // edit: the audio functions alternate between
-    // tst_remote_media_controller_audio and _audio2, and every other
+    // edit: the audio functions alternate among the audio entries
+    // (tst_remote_media_controller_audio and _audio2 then; four since the
+    // note below), and every other
     // function, in declaration order, goes in turn to
     // tst_remote_media_controller (the rest), _part2 and _part3
     // (tests/CMakeLists.txt).
-    constexpr int kAudioEntries = 2;
+    // Hosted Linux CI, 2026-11-15: _audio passed the 300 s limit beside
+    // three CPU-bound simulations, where one wait on the media connection
+    // may last 125.5 s, so the audio functions alternate among four
+    // entries, _audio to _audio4, each short enough for such a wait to end
+    // in a FAIL inside the limit.
+    constexpr int kAudioEntries = 4;
     constexpr int kOtherEntries = 3;
     QList<NereusSDR::TestFunctionGroups::Group> groups{
         {QStringLiteral("audio"), {}}, {QStringLiteral("audio2"), {}},
+        {QStringLiteral("audio3"), {}}, {QStringLiteral("audio4"), {}},
         {QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}};
     for (int i = 0; i < kAudioFunctions.size(); ++i) {
         groups[i % kAudioEntries].entries.append(kAudioFunctions.at(i));
@@ -17462,9 +17521,18 @@ int main(int argc, char** argv)
             groups[kAudioEntries + slot - 1].entries.append(name);
         }
     }
-    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+    std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
         test.metaObject(), app.arguments(), "NEREUS_REMOTE_MEDIA_GROUP", groups);
-    return arguments ? QTest::qExec(&test, *arguments) : 1;
+    if (!arguments) {
+        return 1;
+    }
+    // The real sessions log thousands of lines, and past QtTest's default
+    // cap of 2000 it drops the rest, a FAIL's message among them (hosted
+    // Linux CI, 2026-11-15). Added here, not on the ctest command line,
+    // where any option would make the run ignore its group.
+    arguments->insert(1, QStringLiteral("0"));
+    arguments->insert(1, QStringLiteral("-maxwarnings"));
+    return QTest::qExec(&test, *arguments);
 }
 
 #include "tst_remote_media_controller.moc"
