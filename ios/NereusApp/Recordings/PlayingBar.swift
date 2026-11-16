@@ -61,7 +61,7 @@ struct PlayingBar: View {
             .accessibilityIdentifier("playingBarText\(letter)")
             Menu {
                 if others.isEmpty {
-                    Button("Nothing recorded on \(RecordingFlagModel.sliceName(sliceIndex)) yet") {}
+                    Button("Nothing recorded on \(RecordingFlagModel.sliceName(sliceIndex))") {}
                         .disabled(true)
                 }
                 ForEach(others) { entry in

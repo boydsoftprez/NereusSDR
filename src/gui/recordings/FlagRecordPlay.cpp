@@ -716,7 +716,7 @@ void FlagRecordPlay::applyPlayLook()
     const QString latest = latestRecordingId();
     QString why = reason;
     if (why.isEmpty() && !playing && latest.isEmpty()) {
-        why = QStringLiteral("Nothing recorded on %1 yet.").arg(sliceName());
+        why = QStringLiteral("Nothing recorded on %1.").arg(sliceName());
     }
     b->setEnabled(why.isEmpty());
     {

@@ -224,8 +224,8 @@ private slots:
         Flag f(0);
         f.ready({FakeRecordingsAccess::slice(0, QStringLiteral("idle"))}, 1);
         QVERIFY(!f.play()->isEnabled());
-        QCOMPARE(f.play()->toolTip(), QStringLiteral("Nothing recorded on Slice A yet."));
-        QCOMPARE(f.play()->accessibleDescription(), QStringLiteral("Nothing recorded on Slice A yet."));
+        QCOMPARE(f.play()->toolTip(), QStringLiteral("Nothing recorded on Slice A."));
+        QCOMPARE(f.play()->accessibleDescription(), QStringLiteral("Nothing recorded on Slice A."));
 
         RecordingEntry pan;
         pan.id = QStringLiteral("whole");

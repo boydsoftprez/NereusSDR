@@ -248,10 +248,10 @@ struct RecordingFlagTests {
     func playWithNothingRecorded() async {
         let rig = await Self.rig(version: 1)
         Self.publish(rig, Self.document(), revision: 1)
-        #expect(rig.model.look(slice: 0).playReason == "Nothing recorded on Slice A yet.")
+        #expect(rig.model.look(slice: 0).playReason == "Nothing recorded on Slice A.")
         await rig.model.tapPlay(slice: 0)
         #expect(rig.sent.invokes.isEmpty)
-        #expect(rig.model.notice(slice: 0) == .reason("Nothing recorded on Slice A yet."))
+        #expect(rig.model.notice(slice: 0) == .reason("Nothing recorded on Slice A."))
     }
 
     // MARK: Older Core and no link

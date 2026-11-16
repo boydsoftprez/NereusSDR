@@ -525,7 +525,7 @@ void RecordingsPanel::rebuildRows()
         m_editingId.clear();
     }
     if (shown == 0) {
-        auto* empty = new QLabel(ready ? QStringLiteral("Nothing recorded yet. Record on a slice's flag.")
+        auto* empty = new QLabel(ready ? QStringLiteral("Nothing recorded. Record on a slice's flag.")
                                        : QStringLiteral("No recordings to show."),
                                  m_listBox);
         empty->setObjectName(QStringLiteral("RecordingsEmpty"));

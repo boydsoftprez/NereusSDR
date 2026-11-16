@@ -28,7 +28,7 @@ final class RecordingsAppletModel {
     nonisolated static let rowCount = 6
     /// The panel's own number on the Core's list answers.
     nonisolated static let reader: Int64 = 18
-    nonisolated static let emptyText = "Nothing recorded yet. Record on a slice's flag."
+    nonisolated static let emptyText = "Nothing recorded. Record on a slice's flag."
 
     /// How a recording's row looks.
     enum Look: Equatable {

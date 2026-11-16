@@ -147,7 +147,7 @@ final class RecordingFlagModel {
         }
         var playReason = reason
         if playReason == nil, play == .idle, latest(slice: slice) == nil {
-            playReason = "Nothing recorded on \(Self.sliceName(slice)) yet."
+            playReason = "Nothing recorded on \(Self.sliceName(slice))."
         }
         return Look(record: record, play: play, recordReason: reason, playReason: playReason)
     }

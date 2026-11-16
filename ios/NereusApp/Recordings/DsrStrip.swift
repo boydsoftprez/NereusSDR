@@ -164,6 +164,11 @@ struct DsrStripLayer: View {
         }
     }
 
+    /// The strip's tick spacings in seconds, shortest first: the first one
+    /// that leaves 30 points between ticks is drawn. Drawing values, the
+    /// same on every radio.
+    static let tickSteps: [Double] = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
+
     /// The strip's ticks and times: a tick each step, the time on every
     /// minute (or every other tick when the picture is short), the moments
     /// you transmitted as a red edge and SAVE's bracket in yellow.
@@ -175,8 +180,7 @@ struct DsrStripLayer: View {
         let spp = max(model.secondsPerPoint, 0.001)
         let top = model.top
         let bottom = top - Double(size.height) * spp
-        let steps: [Double] = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
-        let step = steps.first { $0 / spp >= 30 } ?? 3600
+        let step = tickSteps.first { $0 / spp >= 30 } ?? 3600
         let labelEvery = step / spp >= 60 ? step : step * 2
         var moment = (top / step).rounded(.down) * step
         while moment > bottom {

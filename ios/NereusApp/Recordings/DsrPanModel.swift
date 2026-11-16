@@ -40,7 +40,7 @@ import Observation
 final class DsrPanModel {
     nonisolated static let notConnectedReason = "Not connected to a Core."
     nonisolated static let offReason = "The Digital Spectrum Recorder is off. Turn it on in Setup."
-    nonisolated static let nothingKeptReason = "The Digital Spectrum Recorder has kept nothing yet."
+    nonisolated static let nothingKeptReason = "The Digital Spectrum Recorder has kept nothing."
     /// The bracket SAVE puts up, in points below the picture's top (the phone mockup).
     nonisolated static let bracketTopPoints = 70.0
     nonisolated static let bracketFootPoints = 250.0
