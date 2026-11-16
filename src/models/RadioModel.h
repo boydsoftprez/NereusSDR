@@ -968,6 +968,8 @@
 //                Anthropic Claude Code.
 //   2026-11-05 - Hot keys plan Task 5: cwSoftPaddle. J.J. Boyd (KG4VCF),
 //                AI-assisted via Anthropic Claude Code.
+//   2026-11-15 - Recording plan Task 3: recordingService(). J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -1207,6 +1209,7 @@ class RoundtableModel;
 class StationTciController;
 class StationTciModel;
 class StationCatController;
+class RecordingService;
 class StationCatModel;
 class CatControl;
 class SliceOwnership;
@@ -4190,6 +4193,11 @@ public:
     // construction; Qt children.
     RoundtableState*      roundtableState()     const { return m_roundtableState; }
     RoundtableModel*      roundtableModel()     const { return m_roundtableModel; }
+
+    /// Recording plan Task 3: the Core's recordings (contact recorders,
+    /// the store, start and stop from any device). Built only by a model
+    /// that runs its own radio (Role::Local); nullptr in a remote window.
+    RecordingService*     recordingService()    const { return m_recordingService.get(); }
 
     /// Parity Task 19 (R-IOS-25): a remote window applies the Core's
     /// `spots` stream (the Core's cluster, RBN, POTA and PSK Reporter
@@ -9956,6 +9964,8 @@ private:
     // the Core, its publisher (destroyed first in ~RadioModel).
     StationCatModel*                      m_stationCatModel{nullptr};
     std::unique_ptr<StationCatController> m_stationCat;
+    // Recording plan Task 3: Role::Local only; see recordingService().
+    std::unique_ptr<RecordingService> m_recordingService;
     CatControl*                           m_catControl{nullptr};
     // Follow-up 3: accessory requests whose refusal their page shows.
     QHash<quint32, QPointer<QObject>> m_pageShownAccessoryRequests;

@@ -1960,6 +1960,9 @@ mw0lge@grange-lane.co.uk
 //   2026-11-05 - Hot keys plan Task 5: wireCwSoftPaddle, and the soft paddle
 //                at every stop. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //                Claude Code.
+//   2026-11-15 - Recording plan Task 3: the recording service in Role::Local,
+//                fed your voice from the transmit monitor. J.J. Boyd
+//                (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -2075,6 +2078,7 @@ mw0lge@grange-lane.co.uk
 #include "core/FreeDVRadeReporterBridge.h"
 #include "core/PskReporterClient.h"
 #include "core/SpotSourceHost.h"
+#include "core/recordings/RecordingService.h"
 #include "core/roundtable/RoundtableClient.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/RecordStream.h"
@@ -4061,6 +4065,11 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
         m_bandStackAccess = new LocalBandStackAccess(this);
     }
     m_roundtableModel = new RoundtableModel(this);
+    // Recording plan Task 3: the Core's recordings, only where this model
+    // runs the radio (the slices' audio taps and MOX are here).
+    if (m_role == Role::Local) {
+        m_recordingService = std::make_unique<RecordingService>(this);
+    }
     // CAT setup from a connected desktop (stationCatVersion 1): the Core's
     // CAT as the `stationCat` object, filled from CatService on the Core.
     m_stationCatModel = new StationCatModel(this);
@@ -5662,6 +5671,9 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
 
 RadioModel::~RadioModel()
 {
+    // Recording plan Task 3: every recording is kept and the recordings
+    // worker joins while the audio engine and the slices still exist.
+    m_recordingService.reset();
     // The band stack writes its last change while the model is whole.
     m_bandStackController.reset();
     // A retained ingress handle stays alive, inhibited, after this model.
@@ -22286,6 +22298,17 @@ void RadioModel::connectToRadioImpl(const RadioInfo& info, bool preserveSlices)
             connect(m_txChannel, &TxChannel::sip1OutputReady,
                     m_audioEngine, &AudioEngine::txMonitorBlockReady,
                     Qt::DirectConnection);
+            // Recording plan Task 3: your voice in a recording is this same
+            // monitor signal (what MON plays), whether or not MON is on.
+            // The recorder copies the block into its ring and returns.
+            if (m_recordingService) {
+                RecordingService* recordings = m_recordingService.get();
+                connect(m_txChannel, &TxChannel::sip1OutputReady, recordings,
+                        [recordings, txOutRate](const float* samples, int frames) {
+                            recordings->consumeMonitor(samples, frames, txOutRate);
+                        },
+                        Qt::DirectConnection);
+            }
 
             // L.1 connection 2 — REMOVED (Codex review on PR #149).
             // RadioMicSource::RadioMicSource subscribes to micFrameDecoded

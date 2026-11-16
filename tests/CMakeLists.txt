@@ -12041,6 +12041,15 @@ endif()
 # (src/core/recordings/RecordingNames.cpp, RecordingStore.cpp,
 # RecordingDisks.cpp, RecordingSettings.cpp).
 nereus_add_test(tst_recording_store CORE_ONLY)
+# The quiet rule for "stop by itself when it goes quiet" (spec V4;
+# src/core/recordings/QuietRule.h).
+nereus_add_test(tst_recording_quiet_rule CORE_ONLY)
+# The contact recorder and the recording service: 24 kHz files, your voice
+# together or apart, start and stop from any device, start and stop by
+# themselves, a full disk, MP3 without an encoder, the taps' copy-only
+# contract and the call from Roundtable (src/core/recordings/
+# ContactRecorder.cpp, RecordingService.cpp).
+nereus_add_test(tst_recording_contact CORE_ONLY)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

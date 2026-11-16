@@ -173,6 +173,9 @@
 //   2026-10-12: the hosted Core keeps its security files in the folder
 //               setSecurityDirectory() names. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-15: recording plan Task 3: stop() keeps every recording before
+//               the radio goes. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/cat/CatService.h"
@@ -213,6 +216,7 @@
 #include "core/security/PairingWindow.h"
 #include "core/security/StationIdentity.h"
 #include "core/session/media/DaemonMediaController.h"
+#include "core/recordings/RecordingService.h"
 #include "models/RadioModel.h"
 #include "models/SliceModel.h"
 
@@ -576,6 +580,11 @@ void DaemonApp::stop()
 #endif
         {
             m_radioModel->stopAllTx(QStringLiteral("The Core is stopping."));
+        }
+        // Recording plan Task 3: every recording stops and is kept while
+        // the radio, its slices and its audio taps are still there.
+        if (RecordingService* recordings = m_radioModel->recordingService()) {
+            recordings->stopAll();
         }
     }
     // iPhone app Task 17: nothing answers the console or a browser once

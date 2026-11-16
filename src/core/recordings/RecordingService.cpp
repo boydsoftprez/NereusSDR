@@ -1,0 +1,688 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 J.J. Boyd (KG4VCF)
+// no-port-check: NereusSDR-original recording service.
+// Modification history (NereusSDR):
+// 2026-11-15  J.J. Boyd / KG4VCF; the Core's recording service (spec 6.1,
+//             6.2, V1, V4, section 7). AI tooling: Anthropic Claude Code.
+
+#include "RecordingService.h"
+
+#include "core/AudioEngine.h"
+#include "core/LogCategories.h"
+#include "core/MoxController.h"
+#include "core/NoiseFloorTracker.h"
+#include "core/SpotSourceHost.h"
+#include "core/meters/SliceMeterPump.h"
+#include "core/recordings/ContactRecorder.h"
+#include "core/recordings/RecordingNames.h"
+#include "core/recordings/RecordingStore.h"
+#include "models/RadioModel.h"
+#include "models/RoundtableModel.h"
+#include "models/SliceModel.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonObject>
+#include <QThread>
+#include <QTimeZone>
+#include <QTimer>
+#include <QUuid>
+
+#include <algorithm>
+#include <cmath>
+#include <thread>
+
+namespace NereusSDR {
+
+namespace {
+
+// The squelch that runs for the slice's mode: FM squelch in FM, AM squelch
+// in the AM family, the voice (syllabic) squelch otherwise.
+bool squelchOnFor(const SliceModel& slice)
+{
+    switch (slice.dspMode()) {
+    case DSPMode::FM:
+        return slice.fmsqEnabled();
+    case DSPMode::AM:
+    case DSPMode::SAM:
+    case DSPMode::DSB:
+        return slice.amsqEnabled();
+    default:
+        return slice.ssqlEnabled();
+    }
+}
+
+QString suffixFor(AudioFileFormat format)
+{
+    return format == AudioFileFormat::Mp3 ? QStringLiteral("mp3") : QStringLiteral("wav");
+}
+
+}  // namespace
+
+RecordingService::RecordingService(RadioModel* radio, QObject* parent)
+    : QObject(parent)
+    , m_radio(radio)
+    , m_store(std::make_unique<RecordingStore>())
+    , m_settings(RecordingSettings::load())
+    , m_clock([] { return QDateTime::currentMSecsSinceEpoch(); })
+{
+    m_quietTimer = new QTimer(this);
+    m_quietTimer->setInterval(kQuietCheckIntervalMs);
+    connect(m_quietTimer, &QTimer::timeout, this, &RecordingService::checkQuiet);
+
+    if (m_radio) {
+        if (MoxController* mox = m_radio->moxController()) {
+            connect(mox, &MoxController::moxChanged, this,
+                    [this](int, bool, bool on) { setTransmitting(on); });
+        }
+        connect(m_radio, &RadioModel::sliceAdded, this, &RecordingService::onSliceAdded);
+        connect(m_radio, &RadioModel::sliceRemoved, this, &RecordingService::onSliceRemoved);
+    }
+    applyArming();
+}
+
+RecordingService::~RecordingService()
+{
+    stopAll();
+
+    // Nothing on the transmit thread may still be inside a recorder.
+    m_monitorClosed.store(true, std::memory_order_seq_cst);
+    while (m_monitorCallsInFlight.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+
+    if (m_thread) {
+        QMetaObject::invokeMethod(m_workerContext, [this] {
+            delete m_workerTimer;
+            m_workerTimer = nullptr;
+        }, Qt::BlockingQueuedConnection);
+        connect(m_thread.get(), &QThread::finished, m_workerContext, &QObject::deleteLater);
+        m_thread->quit();
+        m_thread->wait();
+        m_workerContext = nullptr;
+    }
+}
+
+RecordingStore* RecordingService::store() const
+{
+    ensureStoreOpen();
+    return m_store.get();
+}
+
+RecordingSettings RecordingService::settings() const
+{
+    return m_settings;
+}
+
+void RecordingService::setSettings(const RecordingSettings& s)
+{
+    const bool folderChanged = s.recordingsFolder() != m_settings.recordingsFolder();
+    m_settings = s;
+    m_settings.save();
+    if (folderChanged) {
+        m_storeFolder.clear();
+    }
+    for (const std::unique_ptr<ContactRecorder>& recorder : m_recorders) {
+        if (recorder) {
+            recorder->setKeepMyVoice(m_settings.keepMyVoice);
+        }
+    }
+    for (SliceRecord& rec : m_records) {
+        if (rec.state == RecordState::Recording) {
+            rec.quiet.setMinutes(m_settings.quietMinutes);
+        }
+    }
+    applyArming();
+}
+
+void RecordingService::ensureStoreOpen() const
+{
+    const QString folder = m_settings.recordingsFolder();
+    if (folder == m_storeFolder) {
+        return;
+    }
+    QString error;
+    if (m_store->openFolder(folder, &error)) {
+        m_storeFolder = folder;
+    } else {
+        qCWarning(lcRecordings) << "the recordings folder cannot be used:" << error;
+    }
+}
+
+void RecordingService::ensureWorker()
+{
+    if (m_thread) {
+        return;
+    }
+    m_thread = std::make_unique<QThread>();
+    m_thread->setObjectName(QStringLiteral("NereusRecordings"));
+    m_workerContext = new QObject;
+    m_workerContext->moveToThread(m_thread.get());
+    m_thread->start();
+    QMetaObject::invokeMethod(m_workerContext, [this] {
+        m_workerTimer = new QTimer(m_workerContext);
+        m_workerTimer->setInterval(kDrainIntervalMs);
+        connect(m_workerTimer, &QTimer::timeout, m_workerContext, [this] { workerDrainAll(); });
+    }, Qt::QueuedConnection);
+}
+
+qint64 RecordingService::now() const
+{
+    return m_clock();
+}
+
+bool RecordingService::mp3Available() const
+{
+    return m_mp3Override.has_value() ? *m_mp3Override : AudioFileWriter::mp3Available();
+}
+
+ContactRecorder* RecordingService::recorderFor(int sliceId)
+{
+    std::unique_ptr<ContactRecorder>& slot = m_recorders[static_cast<size_t>(sliceId)];
+    if (!slot) {
+        slot = std::make_unique<ContactRecorder>(sliceId);
+        m_monitorTargets[static_cast<size_t>(sliceId)].store(slot.get(), std::memory_order_release);
+    }
+    return slot.get();
+}
+
+void RecordingService::startRecording(int sliceId, const QString& byDeviceName)
+{
+    if (!m_radio) {
+        return;
+    }
+    SliceModel* slice = m_radio->sliceById(sliceId);
+    if (!slice) {
+        qCWarning(lcRecordings) << "no slice" << sliceId << "to record";
+        return;
+    }
+    if (sliceId < 0 || sliceId >= kMaxRecorders) {
+        qCWarning(lcRecordings) << "slice" << sliceId << "cannot record: only ids below" << kMaxRecorders;
+        return;
+    }
+    SliceRecord& rec = m_records[sliceId];
+    // V1: one recording at a time per slice.
+    if (rec.state == RecordState::Recording) {
+        return;
+    }
+    ensureStoreOpen();
+    if (m_storeFolder.isEmpty()) {
+        qCWarning(lcRecordings) << "slice" << sliceId << "cannot record: no recordings folder";
+        return;
+    }
+    ensureWorker();
+
+    // Section 7: no MP3 encoder means WAV, and the Kept notice says so.
+    AudioFileFormat format = m_settings.format;
+    rec.asWav = false;
+    if (format == AudioFileFormat::Mp3 && !mp3Available()) {
+        format = AudioFileFormat::Wav;
+        rec.asWav = true;
+    }
+    const bool apart = m_settings.sidesApart;
+    const AudioFileSpec spec{format, ContactRecorder::kFileRateHz, apart ? 2 : 1,
+                             apart ? ContactRecorder::kStereoKbitPerSec
+                                   : ContactRecorder::kMonoKbitPerSec};
+    // The working name; the file takes its real name when it stops.
+    const QString path = QDir(m_storeFolder).filePath(
+        QStringLiteral(".recording-slice%1-%2.%3")
+            .arg(sliceId)
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces), suffixFor(format)));
+
+    rec.state = RecordState::Recording;
+    rec.startMs = now();
+    rec.startUtc = QDateTime::fromMSecsSinceEpoch(rec.startMs, QTimeZone::UTC);
+    rec.startedBy = byDeviceName;
+    rec.frequencyHz = std::llround(slice->frequency());
+    rec.mode = SliceModel::modeName(slice->dspMode());
+    rec.token = m_nextToken++;
+    rec.quiet.setMinutes(m_settings.quietMinutes);
+    rec.quiet.start(rec.startMs);
+
+    ContactRecorder* recorder = recorderFor(sliceId);
+    recorder->setKeepMyVoice(m_settings.keepMyVoice);
+    recorder->setTransmitting(m_transmitting);
+    recorder->takeHeardSound();
+
+    const quint64 token = rec.token;
+    QMetaObject::invokeMethod(m_workerContext, [this, sliceId, token, path, spec] {
+        workerBegin(sliceId, token, path, spec);
+    }, Qt::QueuedConnection);
+
+    recorder->setCapturing(true);
+    if (AudioEngine* engine = m_radio->audioEngine()) {
+        if (!engine->setSliceAudioTap(sliceId, recorder)) {
+            qCWarning(lcRecordings) << "slice" << sliceId
+                                    << "records without its receive audio: every audio tap is in use";
+        }
+    }
+    emit sliceStateChanged(sliceId);
+    updateQuietTimer();
+}
+
+void RecordingService::stopRecording(int sliceId, const QString& byDeviceName)
+{
+    stopSlice(sliceId, byDeviceName.isEmpty() ? KeptReason::StoppedHere : KeptReason::StoppedOnDevice,
+              byDeviceName);
+}
+
+void RecordingService::stopSlice(int sliceId, KeptReason reason, const QString& deviceName)
+{
+    auto it = m_records.find(sliceId);
+    if (it == m_records.end() || it->state != RecordState::Recording) {
+        return;
+    }
+    SliceRecord& rec = it.value();
+    ContactRecorder* recorder = m_recorders[static_cast<size_t>(sliceId)].get();
+    if (recorder) {
+        if (m_radio) {
+            if (AudioEngine* engine = m_radio->audioEngine()) {
+                engine->clearSliceAudioTap(recorder);
+            }
+        }
+        recorder->setCapturing(false);
+    }
+
+    Finishing f;
+    f.sliceId = sliceId;
+    f.startUtc = rec.startUtc;
+    f.startMs = rec.startMs;
+    f.endMs = now();
+    f.frequencyHz = rec.frequencyHz;
+    f.mode = rec.mode;
+    f.reason = reason;
+    f.deviceName = deviceName;
+    f.asWav = rec.asWav;
+    const quint64 token = rec.token;
+    m_finishing.insert(token, f);
+
+    rec.state = m_settings.autoStartOnTransmit ? RecordState::Armed : RecordState::Idle;
+    rec.startedBy.clear();
+    rec.startUtc = QDateTime();
+
+    QMetaObject::invokeMethod(m_workerContext, [this, sliceId, token] {
+        workerEnd(sliceId, token);
+    }, Qt::QueuedConnection);
+    emit sliceStateChanged(sliceId);
+    updateQuietTimer();
+}
+
+void RecordingService::finishKept(quint64 token, const WorkerResult& result)
+{
+    const auto it = m_finishing.find(token);
+    if (it == m_finishing.end()) {
+        return;
+    }
+    const Finishing f = it.value();
+    m_finishing.erase(it);
+    if (!result.opened) {
+        return;
+    }
+    ensureStoreOpen();
+
+    // The call: the station heard longest in the slice's Roundtable room.
+    QString call;
+    if (m_radio) {
+        RoundtableModel* roundtable = m_radio->roundtableModel();
+        if (roundtable && roundtable->linkState() != RoundtableModel::LinkState::Off) {
+            const QString roomId = roundtable->sliceRoomId(f.sliceId);
+            if (!roomId.isEmpty()) {
+                call = callForRecording(roundtable->room(roomId), f.startMs, f.endMs,
+                                        SpotSourceHost::roundtableCallsign());
+            }
+        }
+    }
+
+    QString finalPath = result.path;
+    if (!m_storeFolder.isEmpty()) {
+        const QString base = recordingBaseName(f.startUtc, f.frequencyHz, f.mode, call);
+        const QString wanted = m_store->pathForNew(base, QFileInfo(result.path).suffix());
+        if (QFile::rename(result.path, wanted)) {
+            finalPath = wanted;
+        } else if (QFile::copy(result.path, wanted)) {
+            QFile::remove(result.path);
+            finalPath = wanted;
+        } else {
+            qCWarning(lcRecordings) << "recording" << result.path << "kept under its working name:"
+                                    << "it cannot be renamed to" << wanted;
+        }
+    }
+
+    RecordingEntry entry;
+    entry.kind = RecordingKind::Contact;
+    entry.sliceId = f.sliceId;
+    entry.startUtc = f.startUtc;
+    entry.lengthMs = result.lengthMs;
+    entry.frequencyHz = f.frequencyHz;
+    entry.mode = f.mode;
+    entry.call = call;
+    entry.name = QFileInfo(finalPath).completeBaseName();
+    entry.fileName = QFileInfo(finalPath).fileName();
+    const QString id = m_store->add(entry);
+
+    KeptReason reason = f.reason;
+    if (result.failed) {
+        reason = KeptReason::DiskFull;
+    } else if (f.asWav || result.asWav) {
+        reason = KeptReason::KeptAsWav;
+    }
+    emit kept(KeptEvent{f.sliceId, id, entry.name, result.lengthMs, reason, f.deviceName});
+}
+
+void RecordingService::onWriteFailed(int sliceId, quint64 token)
+{
+    const auto it = m_records.constFind(sliceId);
+    if (it != m_records.cend() && it->state == RecordState::Recording && it->token == token) {
+        stopSlice(sliceId, KeptReason::DiskFull, QString());
+    }
+}
+
+void RecordingService::onBeginFailed(int sliceId, quint64 token)
+{
+    const auto it = m_records.constFind(sliceId);
+    if (it != m_records.cend() && it->state == RecordState::Recording && it->token == token) {
+        // Nothing was opened, so nothing is kept.
+        stopSlice(sliceId, KeptReason::StoppedHere, QString());
+    }
+}
+
+QList<RecordingSliceState> RecordingService::sliceStates() const
+{
+    QList<RecordingSliceState> states;
+    if (!m_radio) {
+        return states;
+    }
+    const qint64 t = now();
+    for (const SliceModel* slice : m_radio->slices()) {
+        if (!slice) {
+            continue;
+        }
+        const int id = slice->sliceIndex();
+        const SliceRecord rec = m_records.value(id);
+        const bool recording = rec.state == RecordState::Recording;
+        const ContactRecorder* recorder =
+            id >= 0 && id < kMaxRecorders ? m_recorders[static_cast<size_t>(id)].get() : nullptr;
+        states.append(RecordingSliceState{
+            id, rec.state, recording ? rec.startUtc : QDateTime(),
+            recording ? rec.startedBy : QString(), recording ? std::max<qint64>(0, t - rec.startMs) : 0,
+            recording && recorder && recorder->hearingMyVoice()});
+    }
+    return states;
+}
+
+void RecordingService::stopAll()
+{
+    QList<int> recording;
+    for (auto it = m_records.cbegin(); it != m_records.cend(); ++it) {
+        if (it->state == RecordState::Recording) {
+            recording.append(it.key());
+        }
+    }
+    for (const int id : std::as_const(recording)) {
+        stopSlice(id, KeptReason::StoppedHere, QString());
+    }
+    if (m_thread && !m_finishing.isEmpty()) {
+        // The files are finished on the worker; wait for them and keep them.
+        QMetaObject::invokeMethod(m_workerContext, [] {}, Qt::BlockingQueuedConnection);
+        QCoreApplication::sendPostedEvents(this);
+    }
+}
+
+void RecordingService::consumeMonitor(const float* mono, int frames, int sampleRateHz) noexcept
+{
+    if (m_monitorClosed.load(std::memory_order_seq_cst)) {
+        return;
+    }
+    m_monitorCallsInFlight.fetch_add(1, std::memory_order_seq_cst);
+    if (!m_monitorClosed.load(std::memory_order_seq_cst)) {
+        for (std::atomic<ContactRecorder*>& target : m_monitorTargets) {
+            if (ContactRecorder* recorder = target.load(std::memory_order_acquire)) {
+                recorder->consumeMonitor(mono, frames, sampleRateHz);
+            }
+        }
+    }
+    m_monitorCallsInFlight.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+void RecordingService::setTransmitting(bool on)
+{
+    if (on == m_transmitting) {
+        return;
+    }
+    m_transmitting = on;
+    for (const std::unique_ptr<ContactRecorder>& recorder : m_recorders) {
+        if (recorder) {
+            recorder->setTransmitting(on);
+        }
+    }
+    QList<int> changed;
+    if (on) {
+        const qint64 t = now();
+        for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+            if (it->state == RecordState::Recording) {
+                it->quiet.onTransmit(t);
+            }
+        }
+        // Spec 6.2 step 4: keying the transmit slice starts its recording.
+        if (m_settings.autoStartOnTransmit && m_radio) {
+            for (const SliceModel* slice : m_radio->slices()) {
+                if (slice && slice->isTxSlice()
+                    && m_records.value(slice->sliceIndex()).state == RecordState::Armed) {
+                    startRecording(slice->sliceIndex(), QString());
+                }
+            }
+        }
+    }
+    for (auto it = m_records.cbegin(); it != m_records.cend(); ++it) {
+        if (it->state == RecordState::Recording) {
+            changed.append(it.key());
+        }
+    }
+    for (const int id : std::as_const(changed)) {
+        emit sliceStateChanged(id);
+    }
+}
+
+void RecordingService::applyArming()
+{
+    if (!m_radio) {
+        return;
+    }
+    for (const SliceModel* slice : m_radio->slices()) {
+        if (!slice) {
+            continue;
+        }
+        const int id = slice->sliceIndex();
+        SliceRecord& rec = m_records[id];
+        if (rec.state == RecordState::Idle && m_settings.autoStartOnTransmit) {
+            rec.state = RecordState::Armed;
+            emit sliceStateChanged(id);
+        } else if (rec.state == RecordState::Armed && !m_settings.autoStartOnTransmit) {
+            rec.state = RecordState::Idle;
+            emit sliceStateChanged(id);
+        }
+    }
+}
+
+void RecordingService::checkQuiet()
+{
+    if (!m_radio) {
+        return;
+    }
+    const qint64 t = now();
+    QList<int> quiet;
+    for (auto it = m_records.begin(); it != m_records.end(); ++it) {
+        if (it->state != RecordState::Recording) {
+            continue;
+        }
+        const int id = it.key();
+        SliceRecord& rec = it.value();
+        if (m_transmitting) {
+            rec.quiet.onTransmit(t);
+        }
+        ContactRecorder* recorder = m_recorders[static_cast<size_t>(id)].get();
+        const bool heard = recorder && recorder->takeHeardSound();
+        const SliceModel* slice = m_radio->sliceById(id);
+        if (slice && squelchOnFor(*slice)) {
+            rec.quiet.onLevel(t, true, heard, 0.0, 0.0);
+        } else if (slice) {
+            // Squelch off: the S-meter against the noise floor, raised from
+            // one bin to the slice's passband.
+            const double level = slice->signalStrengthDbm();
+            const NoiseFloorTracker* tracker = m_radio->noiseFloorTrackerForSlice(slice);
+            const int stream = slice->streamIndex();
+            const int rateHz = stream >= 0 ? m_radio->streamSampleRateHz(stream) : 0;
+            const int widthHz = std::abs(slice->filterHigh() - slice->filterLow());
+            if (level > SliceMeterPump::kNoReadingDbm && tracker && tracker->isGood() && rateHz > 0
+                && widthHz > 0) {
+                const double binHz = static_cast<double>(rateHz) / kFloorReferenceBins;
+                const double floorDb = static_cast<double>(tracker->agcNoiseFloor())
+                    + 10.0 * std::log10(static_cast<double>(widthHz) / binHz);
+                rec.quiet.onLevel(t, false, false, level, floorDb);
+            }
+        }
+        if (m_settings.autoStopWhenQuiet && rec.quiet.quiet(t)) {
+            quiet.append(id);
+        }
+    }
+    for (const int id : std::as_const(quiet)) {
+        stopSlice(id, KeptReason::StoppedQuiet, QString());
+    }
+}
+
+void RecordingService::updateQuietTimer()
+{
+    const bool any = std::any_of(m_records.cbegin(), m_records.cend(),
+                                 [](const SliceRecord& r) { return r.state == RecordState::Recording; });
+    if (any && !m_quietTimer->isActive()) {
+        m_quietTimer->start();
+    } else if (!any && m_quietTimer->isActive()) {
+        m_quietTimer->stop();
+    }
+}
+
+void RecordingService::onSliceAdded(int sliceId)
+{
+    Q_UNUSED(sliceId);
+    applyArming();
+}
+
+void RecordingService::onSliceRemoved(int sliceId)
+{
+    stopSlice(sliceId, KeptReason::StoppedHere, QString());
+    m_records.remove(sliceId);
+}
+
+// ---- Worker thread.
+
+void RecordingService::workerBegin(int sliceId, quint64 token, const QString& path, const AudioFileSpec& spec)
+{
+    ContactRecorder* recorder = m_recorders[static_cast<size_t>(sliceId)].get();
+    const auto open = [this](const QString& p, const AudioFileSpec& s, QString* error) {
+        return m_writerFactory ? m_writerFactory(p, s, error) : AudioFileWriter::open(p, s, error);
+    };
+    WorkerResult file;
+    file.token = token;
+    file.path = path;
+    QString error;
+    std::unique_ptr<AudioFileWriter> writer = open(path, spec, &error);
+    if (!writer && spec.format == AudioFileFormat::Mp3) {
+        // Section 7: the MP3 encoder failed, so the recording is WAV.
+        qCWarning(lcRecordings) << "slice" << sliceId << "records as WAV: MP3 cannot start:" << error;
+        AudioFileSpec wav = spec;
+        wav.format = AudioFileFormat::Wav;
+        const QFileInfo info(path);
+        file.path = info.dir().filePath(info.completeBaseName() + QStringLiteral(".wav"));
+        file.asWav = true;
+        writer = open(file.path, wav, &error);
+    }
+    if (!writer || !recorder) {
+        qCWarning(lcRecordings) << "slice" << sliceId << "cannot record:" << error;
+        QMetaObject::invokeMethod(this, [this, sliceId, token] { onBeginFailed(sliceId, token); },
+                                  Qt::QueuedConnection);
+        return;
+    }
+    recorder->begin(std::move(writer), spec.channels == 2);
+    file.opened = true;
+    m_workerFiles.insert(sliceId, file);
+    if (m_workerTimer && !m_workerTimer->isActive()) {
+        m_workerTimer->start();
+    }
+}
+
+void RecordingService::workerDrainAll()
+{
+    for (auto it = m_workerFiles.cbegin(); it != m_workerFiles.cend(); ++it) {
+        ContactRecorder* recorder = m_recorders[static_cast<size_t>(it.key())].get();
+        if (recorder && recorder->isOpen() && !recorder->drain()) {
+            const int sliceId = it.key();
+            const quint64 token = it->token;
+            QMetaObject::invokeMethod(this, [this, sliceId, token] { onWriteFailed(sliceId, token); },
+                                      Qt::QueuedConnection);
+        }
+    }
+}
+
+void RecordingService::workerEnd(int sliceId, quint64 token)
+{
+    WorkerResult result;
+    const auto it = m_workerFiles.find(sliceId);
+    if (it != m_workerFiles.end() && it->token == token) {
+        result = it.value();
+        m_workerFiles.erase(it);
+        ContactRecorder* recorder = m_recorders[static_cast<size_t>(sliceId)].get();
+        if (recorder) {
+            recorder->finish();
+            result.failed = recorder->failed();
+            result.lengthMs = recorder->lengthMs();
+        }
+    }
+    if (m_workerFiles.isEmpty() && m_workerTimer) {
+        m_workerTimer->stop();
+    }
+    QMetaObject::invokeMethod(this, [this, token, result] { finishKept(token, result); },
+                              Qt::QueuedConnection);
+}
+
+// ---- Test seams.
+
+void RecordingService::setClockForTest(Clock clock)
+{
+    if (clock) {
+        m_clock = std::move(clock);
+    }
+}
+
+void RecordingService::setWriterFactoryForTest(WriterFactory factory)
+{
+    m_writerFactory = std::move(factory);
+}
+
+void RecordingService::setMp3AvailableForTest(std::optional<bool> available)
+{
+    m_mp3Override = available;
+}
+
+ContactRecorder* RecordingService::recorderForTest(int sliceId) const
+{
+    return sliceId >= 0 && sliceId < kMaxRecorders ? m_recorders[static_cast<size_t>(sliceId)].get()
+                                                   : nullptr;
+}
+
+void RecordingService::pumpForTest()
+{
+    if (!m_thread) {
+        return;
+    }
+    // More than once: a drain that hits a full disk asks the main thread to
+    // stop, and that stop's finish runs on the worker again.
+    for (int round = 0; round < 3; ++round) {
+        QMetaObject::invokeMethod(m_workerContext, [this] { workerDrainAll(); },
+                                  Qt::BlockingQueuedConnection);
+        QCoreApplication::sendPostedEvents(this);
+    }
+}
+
+}  // namespace NereusSDR
