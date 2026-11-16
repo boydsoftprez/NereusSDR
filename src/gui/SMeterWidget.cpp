@@ -14,6 +14,10 @@
 //     and renderNeedle's history wedge, for a container copy's dial)
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15 - The right-click menu is parented to the widget again, so
+//                 closing a floating dial with its menu open takes the menu
+//                 with it; sealDialMenu() still keeps it solid. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-12 - A uniformly scaled dial paints the 298 x 140 plate and
 //                 scales that picture into the widget. Brian Sutton
 //                 (W4KZO), AI-assisted via xAI Grok.
@@ -2169,6 +2173,9 @@ namespace {
 // The dial can sit in a window whose background is clear. A menu parented
 // there inherits that and draws see-through. This menu is its own window,
 // solid, in the app's popup colours.
+// NereusSDR 2026-11-15: the menu keeps the widget as its parent (a QMenu is
+// its own popup window either way), so the window closing while the menu is
+// open deletes the menu and exec() returns; these settings keep it solid.
 void sealDialMenu(QMenu* menu)
 {
     menu->setAttribute(Qt::WA_TranslucentBackground, false);
@@ -2178,9 +2185,9 @@ void sealDialMenu(QMenu* menu)
 }
 } // namespace
 
-QMenu* SMeterWidget::buildContextMenu(QObject* /*parent*/)
+QMenu* SMeterWidget::buildContextMenu(QObject* parent)
 {
-    auto* menu = new QMenu(nullptr);
+    auto* menu = new QMenu(qobject_cast<QWidget*>(parent));
 
     // ---- TX Mode submenu (exclusive action group) ----------------------------
     QMenu* txMenu = menu->addMenu("TX Mode");
