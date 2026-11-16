@@ -191,7 +191,7 @@ The operator-facing exclusions below explain common missing controls.
 
 | Missing/unimplemented surface | Supported alternative or boundary |
 | --- | --- |
-| Voice recorder/playback, DVK, macro buttons, Memory Manager and memory spots. | Use ordinary live receive/transmit and the implemented spot sources. |
+| Macro buttons, Memory Manager and memory spots. | Use ordinary live receive/transmit and the implemented spot sources. |
 | FM TX/repeater/offset/reverse, CTCSS encode/tone squelch and FM Phone/CW page. | FM receive/squelch remain; do not plan repeater transmission with these shells. |
 | Transverters and VHF band/OC pages. | Current implemented band selection and HF hardware controls. |
 | Minimal Mode, UI Scale/Theme page, desktop Navigation editor and skins. | Supported layout/colors and phone Navigation. |

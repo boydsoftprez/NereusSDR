@@ -68,8 +68,8 @@
     },
     {
       "output": "manual/12-reference.md",
-      "output_sha256": "e33ac4e990799c259f9ccc855924e19a93dad1fb350bb43cfaa64a2ad0ef3634",
-      "sha256": "e33ac4e990799c259f9ccc855924e19a93dad1fb350bb43cfaa64a2ad0ef3634",
+      "output_sha256": "bb82f4e1187332d633e2594678bec75fd613fe9d41eb3119dbc56c203c7babda",
+      "sha256": "bb82f4e1187332d633e2594678bec75fd613fe9d41eb3119dbc56c203c7babda",
       "source": "docs/manual/12-reference.md"
     },
     {
@@ -498,8 +498,8 @@
     },
     {
       "output": "manual/12-reference.html",
-      "output_sha256": "5d591a2f45db17be3502a1c4e57eb73fd4163a647f08535bb170094d75f0fa1f",
-      "sha256": "e33ac4e990799c259f9ccc855924e19a93dad1fb350bb43cfaa64a2ad0ef3634",
+      "output_sha256": "3fae35f2ac27e19716e17855083682355948148081a3d44fdc88361d8153e748",
+      "sha256": "bb82f4e1187332d633e2594678bec75fd613fe9d41eb3119dbc56c203c7babda",
       "source": "docs/manual/12-reference.md"
     },
     {
