@@ -51,6 +51,11 @@ for bug reports and feature requests that need tracking.
 - **Settings that stay put.** Each receiver keeps its sample rate, each slice
   keeps its step, every slice comes back after a restart, and changes are saved
   within seconds.
+- **Recording, voice keyer and rewind.** Record a contact from the flag, play it
+  back to yourself or on the air, keep voice messages on the keyer (F1 to F8),
+  and let the Core keep the pan's signal on its disk so you can rewind through
+  past hours and save a stretch. These have passed the software tests only; none
+  has been tried on a radio or a Core yet.
 - **Receive and remote fixes.** Protocol 2 pans follow their own receiver's
   rate, separate pans no longer open black on radios that report fewer
   receivers, and a failed speaker no longer ends a Core session. The
@@ -473,7 +478,7 @@ supported QSK are included in this candidate. Physical paddle takeover on
 the installed Hermes Lite 2 firmware remains unverified, and the 50 microsecond
 heavy-load CW optimization goal is deferred. XDMA, the broader hotkey work
 and cross-platform waterfall time-axis consistency are deferred as well.
-FM pre-emphasis, legacy skin import and WAV/IQ recording remain future work.
+FM pre-emphasis and legacy skin import remain future work.
 Radio-specific and on-air checks are recorded in the
 [feature verification documents](docs/architecture/).
 

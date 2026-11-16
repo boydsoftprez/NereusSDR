@@ -1,6 +1,8 @@
 # Recording, playback, the voice keyer and the Digital Spectrum Recorder
 
-Status: design, written 2026-11-15 when JJ said "write the spec", approved by JJ the same day. Nothing is built.
+Status: design, written 2026-11-15 when JJ said "write the spec", approved by JJ the same day. Built on branch
+`claude/recording-voice-keyer-dsr` (draft PR 797); software and integration checks are in
+[the evidence document](2026-11-15-recording-voice-keyer-dsr-evidence.md). Every hardware row is pending JJ.
 Plan: [2026-11-15-recording-voice-keyer-dsr-plan.md](2026-11-15-recording-voice-keyer-dsr-plan.md); its
 "Corrections to the spec, found while planning" table replaces this document where they differ.
 
