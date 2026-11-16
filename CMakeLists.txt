@@ -827,6 +827,53 @@ else()
 endif()
 
 # --------------------------------------------------------------------------
+# LAME (libmp3lame), the MP3 encoder for recordings on the Core
+# (src/core/recordings/AudioFileWriter.cpp). Optional: without it
+# AudioFileWriter::mp3Available() is false and recordings are WAV.
+# Linked as a shared library only (LGPL-2.0-or-later; see
+# docs/attribution/LAME-PROVENANCE.md and LGPL-COMPLIANCE.md).
+#   macOS:   Homebrew lame (brew install lame).
+#   Linux:   libmp3lame-dev (runtime libmp3lame0).
+#   Windows: MSYS2 mingw-w64-x86_64-lame; LAME_ROOT names the folder with
+#            include/lame/lame.h, lib/ and bin/libmp3lame-0.dll. The MSVC
+#            release build makes lib/mp3lame.lib from the DLL's exports.
+# NEREUS_WITH_LAME=OFF builds without it (the Intel macOS release row,
+# whose Apple Silicon Homebrew has no x86_64 LAME).
+# MP3 decoding never uses LAME: minimp3 (third_party/minimp3) is the one
+# decoder on every platform.
+# --------------------------------------------------------------------------
+option(NEREUS_WITH_LAME "Build MP3 recording with LAME when it is found" ON)
+set(LAME_FOUND FALSE)
+if(NEREUS_WITH_LAME)
+    set(_lame_hints "")
+    if(DEFINED LAME_ROOT)
+        list(APPEND _lame_hints "${LAME_ROOT}")
+    endif()
+    find_path(LAME_INCLUDE_DIR lame/lame.h HINTS ${_lame_hints} PATH_SUFFIXES include)
+    # Shared library names first: never the static libmp3lame.a.
+    if(WIN32)
+        find_library(LAME_LIBRARY NAMES mp3lame.lib libmp3lame.dll.a mp3lame
+            HINTS ${_lame_hints} PATH_SUFFIXES lib)
+    elseif(APPLE)
+        find_library(LAME_LIBRARY NAMES libmp3lame.dylib mp3lame
+            HINTS ${_lame_hints} PATH_SUFFIXES lib)
+    else()
+        find_library(LAME_LIBRARY NAMES libmp3lame.so mp3lame
+            HINTS ${_lame_hints} PATH_SUFFIXES lib)
+    endif()
+    if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
+        set(LAME_FOUND TRUE)
+        if(WIN32)
+            find_file(LAME_DLL NAMES libmp3lame-0.dll libmp3lame.dll
+                HINTS ${_lame_hints} PATH_SUFFIXES bin NO_DEFAULT_PATH)
+        endif()
+        message(STATUS "LAME found: ${LAME_LIBRARY} (MP3 recordings on)")
+    else()
+        message(STATUS "LAME not found: recordings are WAV only")
+    endif()
+endif()
+
+# --------------------------------------------------------------------------
 # libpipewire-0.3 — optional native Linux audio bridge (Phase 3O PipeWire).
 # Detection-only here; actual PipeWire sources land behind NEREUS_HAVE_PIPEWIRE
 # in follow-up tasks. If the dev package is absent the Linux audio path stays
@@ -1097,6 +1144,9 @@ set(CORE_SOURCES
     src/core/session/media/WaveformCodec.cpp
     src/core/audio/WaveformPublisher.cpp
     src/core/audio/WaveformHistory.cpp
+    # Recordings on the Core: WAV and MP3 files.
+    src/core/recordings/AudioFileWriter.cpp
+    src/core/recordings/AudioFileReader.cpp
     src/core/RadeChannel.cpp
     src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp
@@ -2819,6 +2869,15 @@ function(nereus_apply_core_deps target)
         target_compile_definitions(${target} PUBLIC HAVE_FFTW3)
     endif()
 
+    # Recordings: LAME encodes MP3 when found (NEREUS_HAVE_LAME); minimp3,
+    # header only, decodes it. Their headers reach only the two files that
+    # include them (set below the function), so a Homebrew or MSYS2 include
+    # folder never sits on the path of the rest of the Core.
+    if(LAME_FOUND)
+        target_link_libraries(${target} PRIVATE ${LAME_LIBRARY})
+        target_compile_definitions(${target} PRIVATE NEREUS_HAVE_LAME)
+    endif()
+
     # R2 Task 17: OpenSSL libcrypto for CertificateStore. PUBLIC so it
     # reaches nereusd (links NereusCore PRIVATE, but PRIVATE only controls
     # whether nereusd's own PUBLIC deps propagate further downstream -- the
@@ -3229,6 +3288,20 @@ elseif(ENABLE_MNR)
     message(STATUS "MNR (Apple Accelerate) disabled — macOS only")
 endif()
 
+# The recordings files' third-party headers, as SYSTEM-style -isystem paths
+# would not be per source: minimp3 on both, lame.h on the writer. Without the
+# shared precompiled header, so the extra include paths do not differ from
+# the ones it was built with.
+set_source_files_properties(
+    ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileReader.cpp
+    PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/minimp3"
+               SKIP_PRECOMPILE_HEADERS ON)
+if(LAME_FOUND)
+    set_source_files_properties(
+        ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileWriter.cpp
+        PROPERTIES INCLUDE_DIRECTORIES "${LAME_INCLUDE_DIR}"
+                   SKIP_PRECOMPILE_HEADERS ON)
+endif()
 nereus_apply_core_deps(NereusCore)
 nereus_apply_gui_deps(NereusSDRLib)
 target_link_libraries(NereusSDRLib PUBLIC NereusCore)

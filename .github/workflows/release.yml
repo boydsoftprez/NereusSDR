@@ -164,7 +164,7 @@ jobs:
             gstreamer1.0-pulseaudio gstreamer1.0-gl \
             libgstreamer-gl1.0-0 libgstreamer-plugins-base1.0-0 \
             libfuse2 file desktop-file-utils xvfb \
-            libfftw3-dev imagemagick \
+            libfftw3-dev libmp3lame-dev imagemagick \
             libasound2-dev libudev-dev libjack-jackd2-dev \
             libpipewire-0.3-dev libpulse-dev \
             libssl-dev
@@ -472,7 +472,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config qt6-base-dev \
             qt6-multimedia-dev qt6-base-private-dev qt6-shadertools-dev \
-            qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libssl-dev \
+            qt6-svg-dev qt6-websockets-dev qt6-serialport-dev libfftw3-dev libmp3lame-dev libssl-dev \
             libasound2-dev libudev-dev libjack-jackd2-dev libpipewire-0.3-dev libpulse-dev \
             libgl1-mesa-dev libxkbcommon-dev autoconf automake libtool wget
       # The pinned dependency downloads (see "Dependency downloads" above
@@ -759,7 +759,8 @@ jobs:
         # or a dependency of something else in this list) rather than
         # declaring the dependency this build actually has, the same way
         # fftw already is declared.
-        run: brew install ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget
+        # lame: the MP3 encoder for recordings (docs/attribution/LAME-PROVENANCE.md).
+        run: brew install ninja create-dmg fftw openssl@3 ccache autoconf automake libtool wget lame
 
       - name: Install non-Qt brew packages (x86_64 cross-compile)
         if: matrix.arch == 'x86_64'
@@ -986,7 +987,11 @@ jobs:
             # block can confirm the resolved copy is actually this one
             # (and not, say, a stale build/ cache from a previous
             # native-arm64 configure of the same working directory).
-            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64"
+            # LAME: none for x86_64 here (Homebrew on this arm64 runner has
+            # only arm64 bottles, and CMake would otherwise find it under
+            # /opt/homebrew and fail the link), so this row records WAV only
+            # (docs/attribution/LAME-PROVENANCE.md).
+            EXTRA_CMAKE_ARGS="-DOPENSSL_ROOT_DIR=${{ github.workspace }}/openssl-x86_64 -DNEREUS_WITH_LAME=OFF"
           else
             # Native path: brew supplies FFTW under the brew prefix
             # (/opt/homebrew on Apple Silicon). No env-var dance
@@ -1429,6 +1434,50 @@ jobs:
           cd ..
           Copy-Item fftw-tmp/fftw3.lib "$fftw_dir/lib/"
 
+      # LAME, the MP3 encoder for recordings on the Core
+      # (docs/attribution/LAME-PROVENANCE.md): the MSYS2 MINGW64 package, the
+      # one ci.yml's Windows leg links. It is a C DLL, so this MSVC build
+      # links it through an import library made from its exports, as the
+      # FFTW DLL above, and ships it beside NereusSDR.exe.
+      - name: Set up MSYS2 MINGW64 with LAME
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-lame
+
+      - name: Stage LAME
+        shell: pwsh
+        run: |
+          $mingw = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64'
+          $lame = "third_party/lame"
+          New-Item -ItemType Directory -Force -Path "$lame/include/lame", "$lame/lib", "$lame/bin" | Out-Null
+          Copy-Item (Join-Path $mingw 'include/lame/lame.h') "$lame/include/lame/"
+          Copy-Item (Join-Path $mingw 'bin/libmp3lame-0.dll') "$lame/bin/"
+          # The DLL must need only Windows' own DLLs: nothing else of MSYS2's
+          # is shipped beside it.
+          $deps = & dumpbin /dependents "$lame/bin/libmp3lame-0.dll" |
+            Where-Object { $_ -match '^\s+(\S+\.dll)\s*$' } | ForEach-Object { $Matches[1] }
+          Write-Output "libmp3lame-0.dll needs: $($deps -join ', ')"
+          $foreign = @($deps | Where-Object { $_ -notmatch '^(KERNEL32|msvcrt|USER32|ADVAPI32|api-ms-win-.*)\.dll$' })
+          if ($foreign.Count -gt 0) {
+            Write-Error "libmp3lame-0.dll needs DLLs this package does not ship: $($foreign -join ', ')"
+            exit 1
+          }
+          $names = & dumpbin /exports "$lame/bin/libmp3lame-0.dll" |
+            Where-Object { $_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)' } |
+            ForEach-Object { $Matches[1] }
+          if (-not ($names -contains 'lame_init')) {
+            Write-Error "libmp3lame-0.dll exports no lame_init"
+            exit 1
+          }
+          # Decision check V10, printed: LAME's own decoder, which NereusSDR
+          # does not use (minimp3 decodes on every platform).
+          Write-Output "hip_decode exports: $(@($names | Where-Object { $_ -like 'hip_decode*' }) -join ', ')"
+          Set-Content -Path "$lame/lib/libmp3lame-0.def" -Value (@('LIBRARY libmp3lame-0.dll', 'EXPORTS') + $names)
+          lib /def:"$lame/lib/libmp3lame-0.def" /out:"$lame/lib/mp3lame.lib" /machine:x64
+
       - name: Configure
         shell: bash
         run: |
@@ -1437,6 +1486,8 @@ jobs:
           # ShaderTools or Gui private modules. v0.1.1 silently shipped
           # without GPU spectrum because this flag was implicit; never
           # again.
+          #
+          # LAME_ROOT: the folder "Stage LAME" filled.
           #
           # vcpkg (Remote Daemon R2, Task 17 fix round 1, coordinator
           # decision): windows-latest ships vcpkg with
@@ -1477,7 +1528,8 @@ jobs:
             -DNEREUS_REQUIRE_SERIALPORT=ON \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET=x64-windows-static-md \
-            -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md"
+            -DOPENSSL_ROOT_DIR="$(pwd)/build/vcpkg_installed/x64-windows-static-md" \
+            -DLAME_ROOT="$(pwd)/third_party/lame"
 
       - name: Build
         id: windows_build
@@ -1594,6 +1646,16 @@ jobs:
             Copy-Item $appDll deploy\
           } else {
             Write-Error "NereusSDRLib.dll missing from build\ (Windows artifact would ship broken: NereusSDR.exe will fail to launch with 'NereusSDRLib.dll was not found')"
+            exit 1
+          }
+          # libmp3lame-0.dll: LAME, which NereusCore.dll imports for MP3
+          # recordings (staged by "Stage LAME"). windeployqt only resolves Qt
+          # DLLs, so it is copied here or the Core fails to load.
+          $lameDll = "third_party\lame\bin\libmp3lame-0.dll"
+          if (Test-Path $lameDll) {
+            Copy-Item $lameDll deploy\
+          } else {
+            Write-Error "libmp3lame-0.dll missing from third_party\lame\bin\ (Windows artifact would ship broken: NereusCore.dll imports it)"
             exit 1
           }
           $coreDll = "build\NereusCore.dll"

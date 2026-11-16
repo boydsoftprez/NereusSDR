@@ -1,0 +1,17 @@
+minimp3
+=======
+
+Repository: https://github.com/lieff/minimp3
+Branch: master
+Commit: a2ad968c94819fb98589cca8026e0a57958c963c (2026-11-15)
+Vendored: 2026-11-15
+License: CC0 1.0 Universal (public domain dedication), see LICENSE
+
+Files copied from the commit unchanged, with the SHA-256 of each:
+
+  LICENSE       6a1ee543e5282cd9061881edf462e6fdab181f328da71fc2c9a6950a80e94d01
+  minimp3.h     af5a24330f4c5029be0f1aa32f3f81f6339bc823df1e2ce1b87292c0b9013286
+  minimp3_ex.h  ae416e86661a552373aaea614cddd1b7d42b0f743bdf29d4eeac5e94a05f9293
+
+No local changes. src/core/recordings/AudioFileReader.cpp compiles the
+implementation once, with MINIMP3_FLOAT_OUTPUT and MINIMP3_NO_STDIO.

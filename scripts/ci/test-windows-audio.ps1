@@ -1,5 +1,7 @@
 # no-port-check: NereusSDR-original Windows CI runtime staging.
 # 2026-10-31 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+# 2026-11-15 libmp3lame-0.dll added for MP3 recordings. J.J. Boyd (KG4VCF),
+# AI-assisted via Anthropic Claude Code.
 # Git Bash adds Git's UCRT C++ runtime ahead of Qt's MinGW runtime. Keep
 # test dependencies explicit instead of inheriting unrelated runner DLLs.
 [CmdletBinding()]
@@ -20,9 +22,10 @@ $groups = @(
         'Qt6SerialPort.dll','Qt6Svg.dll','Qt6Test.dll','Qt6WebSockets.dll','Qt6Widgets.dll') },
     @{ root=(Join-Path $env:IQTA_TOOLS 'mingw1310_64/bin'); names=@(
         'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll') },
-    # Copy only OpenSSL, preserving Qt's matching compiler runtime. Do not
-    # prepend MSYS2/bin: its newer C++ runtime is incompatible with Qt here.
-    @{ root=(Join-Path $env:OPENSSL_ROOT_DIR 'bin'); names=@('libcrypto-3-x64.dll','libssl-3-x64.dll') },
+    # Copy only OpenSSL and LAME (the Core's MP3 encoder), preserving Qt's
+    # matching compiler runtime. Do not prepend MSYS2/bin: its newer C++
+    # runtime is incompatible with Qt here.
+    @{ root=(Join-Path $env:OPENSSL_ROOT_DIR 'bin'); names=@('libcrypto-3-x64.dll','libssl-3-x64.dll','libmp3lame-0.dll') },
     @{ root=(Join-Path $root 'third_party/fftw3/bin'); names=@('libfftw3-3.dll','libfftw3f-3.dll') }
 )
 $manifest = foreach ($group in $groups) {
@@ -38,7 +41,7 @@ $manifest = foreach ($group in $groups) {
         [ordered]@{ name=$name; source=$source; destination=$destination; sha256=$digest }
     }
 }
-if (@($manifest).Count -ne 16) { throw 'Expected exactly sixteen controlled runtime DLLs' }
+if (@($manifest).Count -ne 17) { throw 'Expected exactly seventeen controlled runtime DLLs' }
 $env:PATH = "$runtime;$env:PATH"
 [ordered]@{ path=$env:PATH; providers=@($manifest) } | ConvertTo-Json -Depth 5 |
     Tee-Object -FilePath (Join-Path $build 'windows-audio-runtime-manifest.json')

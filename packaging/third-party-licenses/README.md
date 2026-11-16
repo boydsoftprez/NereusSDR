@@ -36,6 +36,8 @@ directory alongside NereusSDR's own `LICENSE`.
 | hidapi 0.15.0 | USB tuning knobs and controllers in the desktop app (not in the Core), under its BSD-style license choice | BSD-style | `hidapi.txt` | `hidapi.txt` |
 | libsodium 1.0.22 | the cryptography under the pairing code's key exchange (password hashing, the exchange's curve arithmetic, the confirmation boxes), in the desktop, the Core, and the iPhone and iPad app | ISC | `libsodium.txt`, `libsodium-notices.txt` | `libsodium.txt` |
 | SPAKE2+EE (spake2-ee fd3ea61f) | the pairing code's key exchange, in the desktop, the Core, and the iPhone and iPad app | BSD-2-Clause | `spake2-ee.txt` | `spake2-ee.txt` |
+| LAME (libmp3lame) | MP3 encoding of recordings on the Core, linked as a shared library | LGPL-2.0-or-later, used under LGPL-2.1 | `lame.txt` | `LGPLv2.1.txt` |
+| minimp3 a2ad968c | MP3 decoding of recordings and voice keyer messages on the Core | CC0-1.0 (public domain dedication) | `minimp3.txt` | `minimp3.txt` |
 
 ## Libraries inside the deck plugins
 
@@ -96,6 +98,8 @@ directory, or when a text file here is named by no row.
 | libsrtp (iPhone and iPad app) | `ios/NereusKit/Sources/CSrtp`, written by `ios/scripts/vendor-sources.sh libsrtp` | 24b3bf8f19b6f5ab4cd2bcceb4f4064efca86fd5 | the iPhone and iPad app | `libsrtp.txt`, `libsrtp-notices.txt` |
 | usrsctp (iPhone and iPad app) | `ios/NereusKit/Sources/CUsrsctp`, written by `ios/scripts/vendor-sources.sh usrsctp` | fec583d54493f879d2ae44a743423bf8a04371ab | the iPhone and iPad app | `usrsctp.txt`, `usrsctp-notices.txt` |
 | plog (iPhone and iPad app) | `ios/NereusKit/Sources/CPlog`, written by `ios/scripts/vendor-sources.sh plog` | 94899e0b926ac1b0f4750bfbd495167b4a6ae9ef | the iPhone and iPad app | `plog.txt` |
+| LAME (libmp3lame) | system package on Linux (libmp3lame-dev; runtime libmp3lame0); Homebrew `lame` on macOS (not in the Intel macOS release, built with NEREUS_WITH_LAME=OFF); on Windows the MSYS2 package mingw-w64-x86_64-lame, staged in `third_party/lame` by the release workflow (header, `libmp3lame-0.dll` and an import library made from its exports) | the system, Homebrew or MSYS2 package | desktop packages and the Core | `lame.txt` |
+| minimp3 | `third_party/minimp3`, `minimp3.h`, `minimp3_ex.h` and `LICENSE` unchanged (hashes in `third_party/minimp3/VERSION.txt`) | a2ad968c94819fb98589cca8026e0a57958c963c | desktop packages and the Core | `minimp3.txt` |
 | Mbed TLS (iPhone and iPad app) | `ios/NereusKit/Sources/CMbedTLS`, written by `ios/scripts/vendor-sources.sh mbedtls` | v3.6.7 | the iPhone and iPad app | `mbedtls.txt` |
 
 ## Libraries a release step copies in
@@ -111,7 +115,7 @@ above, with its text, if it ships.
 | linuxdeploy with its Qt plugin (Linux AppImage) | Qt libraries and plugins, and every other shared library the programs need that is not on linuxdeploy's exclude list, for example FFTW, OpenSSL, the PipeWire client library and the ICU libraries of the Qt install | confirm on the next release build |
 | macdeployqt (macOS app) | Qt frameworks and plugins, and every other non-system library the app links, for example FFTW and OpenSSL, plus the libraries Homebrew's Qt depends on for the Apple Silicon build | confirm on the next release build |
 | windeployqt (Windows) | Qt libraries and plugins | confirm on the next release build |
-| release.yml copy steps (Windows) | `libfftw3-3.dll`, `libfftw3f-3.dll`, `deepfilter.dll` and `rade.dll`, all with rows above | listed above |
+| release.yml copy steps (Windows) | `libfftw3-3.dll`, `libfftw3f-3.dll`, `deepfilter.dll`, `rade.dll` and `libmp3lame-0.dll`, all with rows above | listed above |
 
 ## Notices inside the compiled sources
 
@@ -251,6 +255,10 @@ the §6(b) fallback.
 - libsodium (ISC) and SPAKE2+EE (BSD-2-Clause): permissive dependencies
   whose full notices are reproduced here; both are also licences the
   iPhone and iPad app may bundle.
+- LAME: LGPL-2.0-or-later, used under LGPL-2.1 and linked dynamically, so
+  a user can replace the shipped shared library with a modified LAME
+  (LGPL-2.1 section 6(b)); `lame.txt` names where each build gets it.
+- minimp3: CC0-1.0, a public domain dedication with no conditions.
 
 ## File inventory
 
@@ -308,6 +316,8 @@ the §6(b) fallback.
 - `libsrtp-notices.txt` notices in the libsrtp sources NereusSDR compiles
 - `deepfilternet-crates.txt` licences and notices of the Rust crates in the DeepFilterNet library
 - `libsodium-notices.txt` notices in the libsodium sources NereusSDR compiles, public-domain and CC0 dedications included
+- `lame.txt`            LAME dependency notice (LGPL-2.0-or-later, used under LGPL-2.1)
+- `minimp3.txt`         minimp3 CC0 dedication and its LICENSE
 
 This directory is installed to:
 

@@ -12023,6 +12023,20 @@ nereus_add_test(tst_cat_rigctld CORE_ONLY)
 nereus_add_test(tst_remote_rigctld)
 target_compile_definitions(tst_remote_rigctld PRIVATE NEREUS_BUILD_TESTS)
 
+# Recordings on the Core: WAV and MP3 files written and read back
+# (src/core/recordings/AudioFileWriter.cpp, AudioFileReader.cpp).
+nereus_add_test(tst_recording_audio_files CORE_ONLY)
+# The writer compiled without NEREUS_HAVE_LAME, as a build without LAME has
+# it: MP3 is refused with a reason and WAV still opens.
+nereus_add_test(tst_recording_audio_files_no_lame DEPENDENCY_ISOLATED
+    ../src/core/recordings/AudioFileWriter.cpp EXTRA_LABELS core)
+if(TARGET tst_recording_audio_files_no_lame)
+    target_include_directories(tst_recording_audio_files_no_lame PRIVATE
+        ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(tst_recording_audio_files_no_lame PRIVATE NEREUS_CORE_STATIC)
+    target_link_libraries(tst_recording_audio_files_no_lame PRIVATE Qt6::Test)
+endif()
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------
