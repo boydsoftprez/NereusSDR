@@ -3369,6 +3369,27 @@ if(LAME_FOUND)
     endif()
 endif()
 nereus_apply_core_deps(NereusCore)
+# NereusCore.dll imports LAME's DLL on Windows, so without it beside the
+# Core, NereusSDR.exe, nereusd.exe and every test that loads the Core fail
+# to start (0xc0000135). Copy it next to NereusCore.dll, where the programs
+# live and where ctest's PATH points the tests (path_list_prepend of the
+# library directory in tests/CMakeLists.txt). Same pattern as rade.dll and
+# deepfilter.dll above. MSYS2's libmp3lame-0.dll in turn imports
+# libmpg123-0.dll from the same bin folder, so that comes too when it is
+# there; the release build's staged LAME folder has no such file.
+if(WIN32 AND LAME_FOUND AND LAME_DLL)
+    get_filename_component(_lame_dll_dir "${LAME_DLL}" DIRECTORY)
+    find_file(LAME_MPG123_DLL NAMES libmpg123-0.dll
+        HINTS "${_lame_dll_dir}" NO_DEFAULT_PATH)
+    set(_lame_runtime_dlls "${LAME_DLL}")
+    if(LAME_MPG123_DLL)
+        list(APPEND _lame_runtime_dlls "${LAME_MPG123_DLL}")
+    endif()
+    add_custom_command(TARGET NereusCore POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${_lame_runtime_dlls} "$<TARGET_FILE_DIR:NereusCore>"
+        COMMENT "Copying LAME's DLL next to NereusCore.dll")
+endif()
 nereus_apply_gui_deps(NereusSDRLib)
 target_link_libraries(NereusSDRLib PUBLIC NereusCore)
 

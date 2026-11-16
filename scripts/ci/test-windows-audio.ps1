@@ -4,6 +4,8 @@
 # AI-assisted via Anthropic Claude Code.
 # 2026-11-16 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: find
 # the OpenSSL DLLs by pattern, since MSYS2 moved from OpenSSL 3 to 4.
+# 2026-11-16 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+# libmpg123-0.dll added, which MSYS2's libmp3lame-0.dll imports.
 # Git Bash adds Git's UCRT C++ runtime ahead of Qt's MinGW runtime. Keep
 # test dependencies explicit instead of inheriting unrelated runner DLLs.
 [CmdletBinding()]
@@ -36,11 +38,12 @@ $groups = @(
         'Qt6SerialPort.dll','Qt6Svg.dll','Qt6Test.dll','Qt6WebSockets.dll','Qt6Widgets.dll') },
     @{ root=(Join-Path $env:IQTA_TOOLS 'mingw1310_64/bin'); names=@(
         'libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll') },
-    # Copy only OpenSSL and LAME (the Core's MP3 encoder), preserving Qt's
+    # Copy only OpenSSL and LAME (the Core's MP3 encoder) with the
+    # libmpg123-0.dll that MSYS2's LAME imports, preserving Qt's
     # matching compiler runtime. Do not prepend MSYS2/bin: its newer C++
     # runtime is incompatible with Qt here.
     @{ root=(Join-Path $env:OPENSSL_ROOT_DIR 'bin'); names=@(
-        (Find-OpenSslDll 'libcrypto'),(Find-OpenSslDll 'libssl'),'libmp3lame-0.dll') },
+        (Find-OpenSslDll 'libcrypto'),(Find-OpenSslDll 'libssl'),'libmp3lame-0.dll','libmpg123-0.dll') },
     @{ root=(Join-Path $root 'third_party/fftw3/bin'); names=@('libfftw3-3.dll','libfftw3f-3.dll') }
 )
 $manifest = foreach ($group in $groups) {
@@ -56,7 +59,7 @@ $manifest = foreach ($group in $groups) {
         [ordered]@{ name=$name; source=$source; destination=$destination; sha256=$digest }
     }
 }
-if (@($manifest).Count -ne 17) { throw 'Expected exactly seventeen controlled runtime DLLs' }
+if (@($manifest).Count -ne 18) { throw 'Expected exactly eighteen controlled runtime DLLs' }
 $env:PATH = "$runtime;$env:PATH"
 [ordered]@{ path=$env:PATH; providers=@($manifest) } | ConvertTo-Json -Depth 5 |
     Tee-Object -FilePath (Join-Path $build 'windows-audio-runtime-manifest.json')
