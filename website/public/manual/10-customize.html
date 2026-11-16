@@ -380,12 +380,24 @@ or the optional second-axis selector does not provide missing telemetry.</p>
 <td>Two-tone on or off.</td>
 </tr>
 <tr>
+<td><strong>F1</strong> to <strong>F8</strong></td>
+<td>Send message 1 to 8: the voice message in a voice mode, the CW message in a CW mode.</td>
+</tr>
+<tr>
 <td><strong>Ctrl+F1</strong> to <strong>Ctrl+F8</strong></td>
 <td>Send CW message 1 to 8.</td>
 </tr>
 <tr>
+<td><strong>Ctrl+Shift+F1</strong> to <strong>F8</strong></td>
+<td>Send voice message 1 to 8.</td>
+</tr>
+<tr>
 <td><strong>Ctrl+F10</strong></td>
 <td>Stop the CW message.</td>
+</tr>
+<tr>
+<td><strong>Ctrl+Shift+F10</strong>, <strong>Escape</strong></td>
+<td>Stop the voice message.</td>
 </tr>
 <tr>
 <td>Comma / period (hold)</td>
@@ -397,7 +409,7 @@ or the optional second-axis selector does not provide missing telemetry.</p>
 </tr>
 </tbody>
 </table>
-<p>On a Mac, CW message 5 has no key until you give it one, because Command+F5 turns VoiceOver on or off. A key you set yourself is kept. <strong>VOX on or off</strong> has no key until you give it one. It turns on the same VOX as the TX panel's <strong>VOX</strong> button. Voice message keys (<strong>Ctrl+Shift+F1</strong> to <strong>F4</strong>, <strong>Ctrl+Shift+F10</strong>) are listed but grayed, because voice messages are not built yet.</p>
+<p>On a Mac, CW message 5 has no key until you give it one, because Command+F5 turns VoiceOver on or off. A key you set yourself is kept. <strong>VOX on or off</strong> has no key until you give it one. It turns on the same VOX as the TX panel's <strong>VOX</strong> button. <strong>Escape</strong> stops a voice message only when nothing else wants it: in a text field or an open popup it keeps its usual meaning.</p>
 <h3 id="where-keys-work">Where keys work</h3>
 <p>Keys work in the main window, a floating panadapter and a floating container. They do nothing while Setup, another dialog or a menu is open. While a text box, a number box or a list you can type in has the cursor, every key types there. A control you reach with Tab keeps the arrow keys and Space until you move on. Holding a tuning or volume key repeats it; other keys act once per press.</p>
 <p>Slice keys act on the selected slice. To tie one to a slice, set its <strong>Acts on</strong> to <strong>Slice A</strong> to <strong>Slice D</strong>. Transmit keys always use the transmit slice. On a slice you only listen to, volume and mute change your own volume, and the other slice keys do nothing. A locked slice refuses tuning, band and mode keys.</p>
