@@ -893,7 +893,7 @@ void DsrSetupPage::showSaved()
         }
     }
     if (total == 0) {
-        m_saved->setText(QStringLiteral("None saved yet."));
+        m_saved->setText(QStringLiteral("None saved."));
     } else if (every) {
         m_saved->setText(QStringLiteral("%1 saved, %2.").arg(total).arg(RecordingsWindow::sizeText(bytes)));
     } else {

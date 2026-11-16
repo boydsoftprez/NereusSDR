@@ -384,7 +384,7 @@ struct RecordingSettingsPage: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Names")
                     .font(.body.weight(.semibold))
-                Text("When and where it was made, with the other station's call when the log knows it:")
+                Text("When and where it was made, with the call of the ham you worked when the log knows it:")
                     .font(.footnote)
                     .foregroundStyle(WorkspacePalette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

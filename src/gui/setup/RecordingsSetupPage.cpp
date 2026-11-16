@@ -47,7 +47,7 @@ namespace {
 
 constexpr const char* kNoteStyle = "color:#a6a6ab;";
 constexpr const char* kNameStyle =
-    "QLabel { color:#cfe2ff; background:#0f0f12; border:1px solid #2c2c31; border-radius:4px;"
+    "QLabel { color:#dcdce1; background:#0f0f12; border:1px solid #38383e; border-radius:4px;"
     " padding:4px 7px; font-family:Menlo, 'SF Mono', monospace; }";
 constexpr const char* kOkBoxStyle =
     "QLabel { color:#dcdce1; background:#0f0f12; border:1px solid #38383e; border-radius:4px;"
@@ -241,8 +241,8 @@ void RecordingsSetupPage::buildFiles()
 
     layout->addWidget(noteLabel(
         QStringLiteral("Also used for \"Save sound only\" from the Digital Spectrum Recorder."), group));
-    layout->addWidget(textLabel(QStringLiteral("Each one is named for when and where it was made, with the other "
-                                               "station's call when the log knows it:"),
+    layout->addWidget(textLabel(QStringLiteral("Each one is named for when and where it was made, with the call of "
+                                               "the ham you worked when the log knows it:"),
                                 group));
     m_nameExample = new QLabel(group);
     m_nameExample->setObjectName(QStringLiteral("recordingsNameExample"));

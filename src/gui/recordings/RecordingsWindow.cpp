@@ -121,7 +121,7 @@ QTableWidgetItem* cell(const QString& text, Qt::Alignment align = Qt::AlignLeft 
 
 QString dimDash()
 {
-    return QStringLiteral("—");
+    return QStringLiteral("–");
 }
 
 }  // namespace
