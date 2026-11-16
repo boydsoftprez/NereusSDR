@@ -4,6 +4,9 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: VOX on or off (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), hosted Linux CI: the test runs as four
+//                ctest entries (main() deals the functions), each case still
+//                on its own window. AI-assisted via Anthropic Claude Code.
 // no-port-check: NereusSDR-original test.
 // What keys the radio from a hot key: hold to talk, MOX, TUNE and two-tone on
 // real local, hosting and remote windows. Nothing here keys a real radio.
@@ -22,6 +25,7 @@
 #include <QTemporaryDir>
 
 #include <memory>
+#include <optional>
 
 #include "UnusedLoopbackPort.h"
 #include "core/AppSettings.h"
@@ -39,6 +43,7 @@
 #include "core/session/StationClient.h"
 #include "core/session/StationServer.h"
 #include "fakes/RemoteAudioSessionHarness.h"
+#include "TestFunctionGroups.h"
 #include "fakes/RemoteWindowHarness.h"
 #include "gui/DesktopStationController.h"
 #include "gui/MainWindow.h"
@@ -1175,5 +1180,31 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestHotKeyTransmit)
+int main(int argc, char** argv)
+{
+    QApplication app(argc, argv);
+    app.setAttribute(Qt::AA_Use96Dpi, true);
+    TestHotKeyTransmit test;
+    QTEST_SET_MAIN_SOURCE_PATH
+    // Hosted Linux CI, 2026-11-15: every case builds its own window, and the
+    // whole run took 84 to 96 s of ctest's 120 s on a 4-core runner. The
+    // functions go in turn, in declaration order, to tst_hot_key_transmit (the rest),
+    // _part2, _part3 and _part4 (tests/CMakeLists.txt), so a new function
+    // lands in one with no list to edit. Each case still builds its own
+    // window.
+    constexpr int kEntries = 4;
+    QList<NereusSDR::TestFunctionGroups::Group> groups{
+        {QStringLiteral("part2"), {}}, {QStringLiteral("part3"), {}}, {QStringLiteral("part4"), {}}};
+    int index = 0;
+    for (const QString& name : NereusSDR::TestFunctionGroups::testFunctions(test.metaObject())) {
+        // Every fourth stays in the rest, so the rest is never empty.
+        const int slot = index++ % kEntries;
+        if (slot > 0) {
+            groups[slot - 1].entries.append(name);
+        }
+    }
+    const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
+        test.metaObject(), app.arguments(), "NEREUS_HOT_KEY_TRANSMIT_GROUP", groups);
+    return arguments ? QTest::qExec(&test, *arguments) : 1;
+}
 #include "tst_hot_key_transmit.moc"
