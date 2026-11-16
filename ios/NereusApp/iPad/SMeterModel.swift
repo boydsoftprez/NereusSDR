@@ -167,7 +167,13 @@ final class SMeterModel: ObservableObject {
         let now = clock()
         let seconds = lastFrame.map { now - $0 } ?? SMeterNeedle.frameSeconds
         lastFrame = now
-        state.advance(to: now)
+        // Published only when the peaks moved, as in ``refresh()``: this
+        // runs 30 times a second while the meter shows.
+        var next = state
+        next.advance(to: now)
+        if next != state {
+            state = next
+        }
         let shown = state.display(at: now, meters: meters)
         needle.step(toward: shown.needle, seconds: seconds)
         if needle.settled(on: shown.needle), !peaksMoving(at: now) {
