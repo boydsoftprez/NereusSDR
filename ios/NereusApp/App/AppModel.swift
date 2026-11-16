@@ -12,6 +12,8 @@
 //   settings, kept while the tabs are rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 18, the voice keyer: Tools > Voice Keyer, VOICE,
 //   and PTT stopping this phone's message. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 19, the iPad's Recordings panel, kept while the
+//   screens are rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -99,6 +101,8 @@ final class AppModel: ObservableObject {
     }()
     /// Tools > Recordings; kept here, since the Tools tab is rebuilt on every tab switch.
     lazy var recordingsList = RecordingsListModel(client: recordings)
+    /// The iPad's Recordings panel in the applet column; kept here, as the list is.
+    lazy var recordingsApplet = RecordingsAppletModel(client: recordings)
     /// Setup > Recording settings.
     lazy var recordingSettings = RecordingSettingsModel(client: recordings)
     /// The voice keyer: Tools > Voice Keyer and VOICE beside PTT, with this

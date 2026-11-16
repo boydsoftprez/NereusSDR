@@ -10,6 +10,8 @@
 // 2026-11-05: The sheet keeps half height on an iPad; only a band too short
 // for it, a phone's on its side, makes it full. J.J. Boyd (KG4VCF),
 // AI-assisted via Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 19, the optional Recordings panel is not
+//   among the places Roundtable moves to. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -81,7 +83,8 @@ struct RoundtableAppletTests {
         #expect(AppletOrder.order(roundtableAt: 4) == [.sMeter, .bandStack, .rx, .tx, .roundtable])
         #expect(AppletOrder.order(roundtableAt: -4) == [.roundtable, .sMeter, .bandStack, .rx, .tx])
         #expect(AppletOrder.order(roundtableAt: 9) == [.sMeter, .bandStack, .rx, .tx, .roundtable])
-        #expect(AppletOrder.lastPosition == AppletKind.allCases.count - 1)
+        // Every applet but the optional Recordings panel, which Roundtable's position does not count.
+        #expect(AppletOrder.lastPosition == AppletKind.allCases.count - 2)
     }
 
     @Test("the applet's place is saved on the device and read back clamped")

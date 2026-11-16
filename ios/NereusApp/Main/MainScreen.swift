@@ -27,6 +27,8 @@
 // Recording settings… open their pages. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 18, the round VOICE beside PTT and the voice
 // keyer's messages over the pan. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 19, the iPad column's Recordings panel.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import NereusMirror
@@ -241,7 +243,11 @@ struct MainScreen: View {
                             if columnShown {
                                 AppletColumn(main: main, openRadio: openRadio, openSettings: openTransmitSettings,
                                              openBandStackSetup: { app.phoneNavigation?.openPage(.bandStack) },
-                                             roundtable: roundtable.available ? appletConfig : nil)
+                                             roundtable: roundtable.available ? appletConfig : nil,
+                                             recordings: RecordingsAppletConfig(model: app.recordingsApplet,
+                                                                                settings: app.phoneSettings,
+                                                                                openAll: openAllRecordings,
+                                                                                openSettings: openRecordingSettings))
                                     .transition(.move(edge: .trailing))
                             }
                         }

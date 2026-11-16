@@ -6,6 +6,9 @@
 // 2026-11-16: Task 17 fixes: dark whatever the phone's setting, an empty
 //   list with no count or totals under a reason, Delete in red.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 19, the row menu and the confirms shared with
+//   the iPad's Recordings panel.
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusBand
@@ -612,50 +615,7 @@ struct RecordingsListPage: View {
             }
         }
         .task(id: model.listKey) { await model.refresh() }
-        .confirmationDialog(model.pendingDelete?.title ?? "", isPresented: Binding(
-            get: { model.pendingDelete != nil },
-            set: { if !$0 { model.pendingDelete = nil } }), titleVisibility: .visible) {
-            Button(model.pendingDelete?.button ?? "Delete", role: .destructive) {
-                Task { await model.confirmDelete() }
-            }
-            .accessibilityIdentifier("recordings.confirmDelete")
-            Button("Cancel", role: .cancel) {
-                model.pendingDelete = nil
-            }
-        } message: {
-            Text(model.pendingDelete?.message ?? "")
-        }
-        .confirmationDialog("Share a copy", isPresented: Binding(
-            get: { model.pendingShare != nil },
-            set: { if !$0 { model.pendingShare = nil } }), titleVisibility: .visible) {
-            Button("Copy and share") {
-                Task { await model.confirmShare() }
-            }
-            .accessibilityIdentifier("recordings.confirmShare")
-            Button("Cancel", role: .cancel) {
-                model.pendingShare = nil
-            }
-        } message: {
-            Text(RecordingsListModel.shareWarning(model.pendingShare ?? []))
-        }
-        .alert("Rename", isPresented: Binding(
-            get: { model.renaming != nil },
-            set: { if !$0 { model.renaming = nil } })) {
-            TextField("Name", text: $model.renameText)
-                .accessibilityIdentifier("recordings.renameField")
-            Button("Save") {
-                Task { await model.commitRename() }
-            }
-            Button("Cancel", role: .cancel) {
-                model.renaming = nil
-            }
-        } message: {
-            Text("A name for this recording. Every phone and computer shows it.")
-        }
-        .sheet(item: $model.shared, onDismiss: nil) { files in
-            ShareSheet(urls: files.urls)
-                .onDisappear { model.shareClosed(files) }
-        }
+        .modifier(RecordingsListDialogs(model: model))
         // The app draws dark whatever the phone's own setting (NereusSDRApp),
         // so the search field and the menus keep to the dark workspace.
         .environment(\.colorScheme, .dark)
@@ -909,39 +869,7 @@ private struct RecordingRow: View {
     private var more: some View {
         let playing = model.playingId == entry.id
         return Menu {
-            Section(RecordingsListModel.kindText(entry.kind) + " · "
-                    + RecordingFlagModel.lengthText(entry.lengthMs) + " · "
-                    + RecordingsListModel.sizeText(entry.sizeBytes)) {
-                if entry.kind == .wholePan {
-                    Button {
-                    } label: {
-                        Text("Open on the pan")
-                        Text(RecordingsListModel.wholePanReason)
-                    }
-                    .disabled(true)
-                } else {
-                    Button(playing ? "Stop" : "Play") {
-                        Task { await model.tap(entry) }
-                    }
-                }
-                Button("Rename…") {
-                    model.startRename(entry)
-                }
-                if entry.kind == .wholePan {
-                    Button {
-                    } label: {
-                        Text("Save sound only…")
-                        Text(RecordingsListModel.wholePanReason)
-                    }
-                    .disabled(true)
-                }
-                Button("Share a copy…") {
-                    Task { await model.share([entry]) }
-                }
-                Button("Delete…", role: .destructive) {
-                    model.askDelete([entry.id])
-                }
-            }
+            RecordingRowMenuItems(model: model, entry: entry, playing: playing)
         } label: {
             Text("···")
                 .font(.system(size: 16, weight: .bold))
@@ -1078,6 +1006,105 @@ private struct SelectFoot: View {
         .background(ChromeColours.bar)
         .overlay(alignment: .top) {
             Rectangle().fill(ChromeColours.barBorder).frame(height: 1)
+        }
+    }
+}
+
+/// The confirms, the rename and the share sheet a recordings list asks for:
+/// Tools > Recordings' and the iPad's Recordings panel's (design 6.4).
+struct RecordingsListDialogs: ViewModifier {
+    @Bindable var model: RecordingsListModel
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(model.pendingDelete?.title ?? "", isPresented: Binding(
+                get: { model.pendingDelete != nil },
+                set: { if !$0 { model.pendingDelete = nil } }), titleVisibility: .visible) {
+                Button(model.pendingDelete?.button ?? "Delete", role: .destructive) {
+                    Task { await model.confirmDelete() }
+                }
+                .accessibilityIdentifier("recordings.confirmDelete")
+                Button("Cancel", role: .cancel) {
+                    model.pendingDelete = nil
+                }
+            } message: {
+                Text(model.pendingDelete?.message ?? "")
+            }
+            .confirmationDialog("Share a copy", isPresented: Binding(
+                get: { model.pendingShare != nil },
+                set: { if !$0 { model.pendingShare = nil } }), titleVisibility: .visible) {
+                Button("Copy and share") {
+                    Task { await model.confirmShare() }
+                }
+                .accessibilityIdentifier("recordings.confirmShare")
+                Button("Cancel", role: .cancel) {
+                    model.pendingShare = nil
+                }
+            } message: {
+                Text(RecordingsListModel.shareWarning(model.pendingShare ?? []))
+            }
+            .alert("Rename", isPresented: Binding(
+                get: { model.renaming != nil },
+                set: { if !$0 { model.renaming = nil } })) {
+                TextField("Name", text: $model.renameText)
+                    .accessibilityIdentifier("recordings.renameField")
+                Button("Save") {
+                    Task { await model.commitRename() }
+                }
+                Button("Cancel", role: .cancel) {
+                    model.renaming = nil
+                }
+            } message: {
+                Text("A name for this recording. Every phone and computer shows it.")
+            }
+            .sheet(item: $model.shared, onDismiss: nil) { files in
+                ShareSheet(urls: files.urls)
+                    .onDisappear { model.shareClosed(files) }
+            }
+    }
+}
+
+/// A recording's menu: Play or Stop, Rename, Save sound only for a
+/// whole-pan stretch, Share a copy and Delete. Tools > Recordings' round
+/// ··· button and the iPad's Recordings panel hold the same one.
+struct RecordingRowMenuItems: View {
+    let model: RecordingsListModel
+    let entry: RecordingEntry
+    let playing: Bool
+
+    var body: some View {
+        Section(RecordingsListModel.kindText(entry.kind) + " · "
+                + RecordingFlagModel.lengthText(entry.lengthMs) + " · "
+                + RecordingsListModel.sizeText(entry.sizeBytes)) {
+            if entry.kind == .wholePan {
+                Button {
+                } label: {
+                    Text("Open on the pan")
+                    Text(RecordingsListModel.wholePanReason)
+                }
+                .disabled(true)
+            } else {
+                Button(playing ? "Stop" : "Play") {
+                    Task { await model.tap(entry) }
+                }
+            }
+            Button("Rename…") {
+                model.startRename(entry)
+            }
+            if entry.kind == .wholePan {
+                Button {
+                } label: {
+                    Text("Save sound only…")
+                    Text(RecordingsListModel.wholePanReason)
+                }
+                .disabled(true)
+            }
+            Button("Share a copy…") {
+                Task { await model.share([entry]) }
+            }
+            Button("Delete…", role: .destructive) {
+                model.askDelete([entry.id])
+            }
         }
     }
 }

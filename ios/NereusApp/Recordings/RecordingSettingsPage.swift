@@ -6,6 +6,8 @@
 // 2026-11-16: Task 17 fixes: dark whatever the phone's setting, the
 //   desktop's not-connected words, the on-air reason under its switches.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 19, on an iPad the switch for the
+//   Recordings panel in its column. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusMirror
@@ -271,6 +273,8 @@ struct RecordingSettingsPage: View {
     let model: RecordingSettingsModel
     /// Tools > Recordings.
     var openRecordings: () -> Void = {}
+    /// This device's own settings: on an iPad, the Recordings panel's switch.
+    var phone: PhoneSettings? = nil
 
     nonisolated static let title = "Recording settings"
     nonisolated static let intro = "Settings for the Record button beside the slice flag and for sound you save. "
@@ -307,6 +311,10 @@ struct RecordingSettingsPage: View {
             playingBack(shown)
                 .disabled(!usable)
                 .setupGreyed(!usable)
+            if let phone, phone.isPad {
+                // This iPad's own: it shows the Core's state, so it stays on even when that cannot be read.
+                RecordingsAppletSwitch(settings: phone)
+            }
         }
         .setupPageTitle(Self.title)
         .toolbar {
@@ -457,6 +465,22 @@ struct RecordingSettingsPage: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("recordingSettings.onAirReason")
             }
+        }
+    }
+}
+
+/// On an iPad, the Recordings panel in its applet column (recording design
+/// section 3 and 6.8): this iPad's own choice, off by default.
+struct RecordingsAppletSwitch: View {
+    @ObservedObject var settings: PhoneSettings
+
+    nonisolated static let title = "Recordings panel in the column"
+    nonisolated static let detail = "The latest recordings, with play, under the S-meter when the iPad is on its side."
+
+    var body: some View {
+        SetupPanelSection("On this iPad", tag: .thisPhone) {
+            SetupSwitchRow(title: Self.title, detail: Self.detail, isOn: $settings.recordingsAppletShown,
+                           id: "recordingSettings.recordingsPanel")
         }
     }
 }
