@@ -1171,7 +1171,7 @@ struct MainScreen: View {
                              swipes: swipesHere ? swipes : nil,
                              bandStack: controls.bandStack, radioOnAir: transmit.coreOnAir,
                              recordings: app.recordingFlag, openAllRecordings: openAllRecordings,
-                             openRecordingSettings: openRecordingSettings)
+                             openRecordingSettings: openRecordingSettings, dsr: first ? app.dsr : nil)
             DbmScaleArrows(display: controls.display, band: band, trailingInset: trailingInset)
             BandReadouts(band: band, trailingInset: trailingInset)
             TransmitDisplayBanner(band: band)

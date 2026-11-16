@@ -14,6 +14,8 @@
 //   and PTT stopping this phone's message. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 19, the iPad's Recordings panel, kept while the
 //   screens are rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 28, the Digital Spectrum Recorder on Pan 1
+//   and its Setup page. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -105,6 +107,15 @@ final class AppModel: ObservableObject {
     lazy var recordingsApplet = RecordingsAppletModel(client: recordings)
     /// Setup > Recording settings.
     lazy var recordingSettings = RecordingSettingsModel(client: recordings)
+    /// The Digital Spectrum Recorder on Pan 1: its time strip, hours map,
+    /// LIVE, SAVE and the past picture, on Pan 1's display and active slice.
+    lazy var dsr: DsrPanModel = {
+        let model = DsrPanModel(client: recordings)
+        Self.wireDsr(model, subscriber: main.subscriber, slices: main.slices, band: main.band)
+        return model
+    }()
+    /// Setup > Digital Spectrum Recorder.
+    lazy var dsrSettings = DsrSetupModel(client: recordings)
     /// The voice keyer: Tools > Voice Keyer and VOICE beside PTT, with this
     /// phone's microphone for recording a message.
     lazy var voiceKeyer: VoiceKeyerModel = {
@@ -1252,6 +1263,23 @@ final class AppModel: ObservableObject {
                     : (permission ?? TxRefusalInfo(reason: TransmitModel.noRemoteTransmitText))
             }
         transmit.voiceMessageStop = { [weak model] in model?.pttTapped() ?? false }
+    }
+
+    /// The recorder on a pan as the app wires it: the past is drawn with
+    /// the display the Core accepted for the pan, the active slice is the
+    /// one that rewinds, and the band's own minutes come first.
+    static func wireDsr(_ model: DsrPanModel, subscriber: BandSubscriber, slices: BandSlicesModel, band: BandModel) {
+        model.panView = { [weak subscriber] in
+            guard let shown = subscriber?.acceptedDisplay?.subscription else {
+                return nil
+            }
+            return DsrPanView(fftSize: shown.fftSize, windowType: shown.windowType,
+                              centreHz: Int64(shown.centreHz.rounded()), spanHz: Int64(shown.spanHz.rounded()),
+                              pixels: shown.pixels)
+        }
+        model.activeSlice = { [weak slices] in slices?.activeSliceId }
+        model.ownSeconds = { [weak band] in band?.mostLookBackSeconds ?? 0 }
+        model.lookBack = { [weak band] seconds in band?.lookBack(seconds: seconds) }
     }
 
     /// The Core's transmit state, which ``expectedTransmitSilence()`` reads.

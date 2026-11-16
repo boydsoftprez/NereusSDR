@@ -11,7 +11,9 @@ import Testing
 /// Recording plan Task 15 (design section 6.9, V9, A15): the phone's
 /// recordings and voice keyer against the Core's own traces,
 /// tests/data/link/v1/sessions/verbs-recordings.json and
-/// verbs-voice-keyer.json, which the desktop's tests share.
+/// verbs-voice-keyer.json, which the desktop's tests share. Task 28 adds
+/// the Digital Spectrum Recorder's traces: dsr-rewind.json, dsr-past.json,
+/// dsr-save.json and recordings-dsr-settings.json.
 @MainActor
 @Suite struct RecordingsClientTests {
     private let sent = SentMessages()
@@ -103,7 +105,11 @@ import Testing
     private static func reply(_ exchange: Exchange, id: UInt32) throws -> LinkMessage {
         var message = exchange.reply
         message["id"] = Int(id)
-        if message["values"] as? String == "$any" {
+        if message["values"] as? String == "$any", message["verb"] as? String == "dsr.hours" {
+            // The trace leaves the hours open; none kept stands for them.
+            message["values"] = [["kind": "utf8", "name": "starts", "ordinal": 0, "value": ""],
+                                 ["kind": "utf8", "name": "activity", "ordinal": 0, "value": "[]"]]
+        } else if message["values"] as? String == "$any" {
             // The trace leaves the list's page open; an empty one stands for it.
             message["values"] = [["kind": "utf8", "name": "entries", "ordinal": 0, "value": "[]"],
                                  ["kind": "i64", "name": "offset", "ordinal": 0, "value": 0],
@@ -138,7 +144,32 @@ import Testing
             try await client.delete(ids: ids)
         case "recordings.export": try await client.download(id: Self.text(args, "id"), to: file)
         case "recordings.setSettings":
-            try await client.setSettings(RecordingsSettingsChange(quietMinutes: Self.int(args, "quietMinutes")))
+            if args.contains(where: { $0["name"] as? String == "dsrSizeLimitGb" }) {
+                try await client.setSettings(RecordingsSettingsChange(dsrSizeLimitGb: Self.int(args, "dsrSizeLimitGb")))
+            } else if args.contains(where: { $0["name"] as? String == "dsrDisk" }) {
+                try await client.setSettings(RecordingsSettingsChange(dsrDisk: Self.text(args, "dsrDisk")))
+            } else {
+                try await client.setSettings(RecordingsSettingsChange(quietMinutes: Self.int(args, "quietMinutes")))
+            }
+        case "dsr.rewind":
+            try await client.rewind(slice: Self.int(args, "slice"), utcNs: Int64(Self.int(args, "utcNs")),
+                                    frequencyHz: Int64(Self.int(args, "frequencyHz")))
+        case "dsr.seek": try await client.seekPast(slice: Self.int(args, "slice"), utcNs: Int64(Self.int(args, "utcNs")))
+        case "dsr.live": try await client.live(slice: Self.int(args, "slice"))
+        case "dsr.rows":
+            try await client.pastRows(slice: Self.int(args, "slice"), view: Self.view(args),
+                                      fromUtcNs: Int64(Self.int(args, "fromUtcNs")),
+                                      toUtcNs: Int64(Self.int(args, "toUtcNs")), rowCount: Self.int(args, "rowCount")) { _ in }
+        case "dsr.spectrum":
+            _ = try await client.pastSpectrum(slice: Self.int(args, "slice"), view: Self.view(args),
+                                              utcNs: Int64(Self.int(args, "utcNs")))
+        case "dsr.hours": #expect(try await client.hours().isEmpty)
+        case "dsr.saveStretch":
+            _ = try await client.saveStretch(fromUtcNs: Int64(Self.int(args, "fromUtcNs")),
+                                             toUtcNs: Int64(Self.int(args, "toUtcNs")),
+                                             kind: try #require(DsrStretchKind(rawValue: Self.text(args, "kind"))))
+        case "recordings.saveSoundOnly": _ = try await client.saveSoundOnly(id: Self.text(args, "id"))
+        case "recordings.openStretch": try await client.openStretch(id: Self.text(args, "id"))
         case "voiceKeyer.send": try await client.sendVoice(Self.int(args, "n"))
         case "voiceKeyer.stop": try await client.stopVoice()
         case "voiceKeyer.beginImport":
@@ -156,12 +187,18 @@ import Testing
         }
     }
 
+    private static func view(_ args: [[String: Any]]) -> DsrPanView {
+        DsrPanView(fftSize: int(args, "fftSize"), windowType: int(args, "windowType"),
+                   centreHz: Int64(int(args, "centreHz")), spanHz: Int64(int(args, "spanHz")), pixels: int(args, "pixels"))
+    }
+
     /// Each verb the client sends is the trace's, byte for byte (ids aside),
     /// and each answer in the trace comes back as the trace has it: done, or
     /// refused in the Core's words.
-    @Test(arguments: ["verbs-recordings.json", "verbs-voice-keyer.json"])
+    @Test(arguments: ["verbs-recordings.json", "verbs-voice-keyer.json", "dsr-rewind.json", "dsr-past.json",
+                      "dsr-save.json", "recordings-dsr-settings.json"])
     func theCoresTracesAreSentAndReadAsTheyStand(_ file: String) async throws {
-        let (client, _, commands) = await rig(version: 3)
+        let (client, _, commands) = await rig(version: 4)
         let exchanges = try Self.exchanges(file)
         #expect(!exchanges.isEmpty)
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("recordings-\(UUID().uuidString)")

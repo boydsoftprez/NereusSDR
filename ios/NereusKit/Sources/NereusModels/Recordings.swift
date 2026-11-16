@@ -3,11 +3,13 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 15, the phone's copy of the recordings document.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 28, the document's `dsr` part (version 4)
+//   and the recorder's three settings. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 
 /// The Core's recordings, as its `recordings` object sends them (the `json`
-/// and `revision` properties, `recordingsVersion` 1 to 3; link document,
+/// and `revision` properties, `recordingsVersion` 1 to 4; link document,
 /// the notes on the `recordings` key). The phone only reads it: the
 /// `recordings.*` and `voiceKeyer.*` verbs change it. Keys the phone does
 /// not know are ignored; a document whose known keys have the wrong shape
@@ -166,6 +168,136 @@ public struct RecordingsDocument: Equatable, Sendable {
         }
     }
 
+    /// A slice playing the past (`dsr.rewound`).
+    public struct Rewound: Equatable, Sendable, Decodable {
+        public let slice: Int
+        /// The moment played when the document was built, ns since 1970 UTC.
+        public let utcNs: Int64
+        /// The slice's frequency now.
+        public let frequencyHz: Int64
+        /// The frequency LIVE returns it to.
+        public let liveFrequencyHz: Int64
+
+        public init(slice: Int, utcNs: Int64, frequencyHz: Int64, liveFrequencyHz: Int64) {
+            self.slice = slice
+            self.utcNs = utcNs
+            self.frequencyHz = frequencyHz
+            self.liveFrequencyHz = liveFrequencyHz
+        }
+    }
+
+    /// The saved whole-pan stretch Slice A plays (`dsr.stretch`).
+    public struct Stretch: Equatable, Sendable, Decodable {
+        public let id: String
+        public let fromUtcNs: Int64
+        public let toUtcNs: Int64
+
+        public init(id: String, fromUtcNs: Int64, toUtcNs: Int64) {
+            self.id = id
+            self.fromUtcNs = fromUtcNs
+            self.toUtcNs = toUtcNs
+        }
+    }
+
+    /// A receiver the recorder keeps now (`dsr.receivers`).
+    public struct Receiver: Equatable, Sendable, Decodable {
+        public let receiver: Int
+        public let rateHz: Int64
+
+        public init(receiver: Int, rateHz: Int64) {
+            self.receiver = receiver
+            self.rateHz = rateHz
+        }
+    }
+
+    /// The Digital Spectrum Recorder (version 4): its settings, why it does
+    /// not record although on, the loop's figures, the slices playing the
+    /// past, the stretch Slice A plays and the saves under way.
+    public struct Dsr: Equatable, Sendable, Decodable {
+        public let enabled: Bool
+        /// "" for the Core's own disk.
+        public let disk: String
+        public let sizeLimitGb: Int
+        /// It writes now, which it does only while the radio streams.
+        public let recording: Bool
+        /// Why it does not record although on, in the Core's words; "" otherwise.
+        public let reason: String
+        public let sizeLimitBytes: Int64
+        public let usedBytes: Int64
+        /// Where the next second goes, in bytes from the loop's start.
+        public let writePosition: Int64
+        /// ms since 1970 UTC, 0 when nothing is kept.
+        public let oldestUtcMs: Int64
+        public let newestUtcMs: Int64
+        public let hoursHeld: Double
+        public let overflows: Int64
+        public let rewound: [Rewound]
+        public let stretch: Stretch?
+        /// Stretches being saved now.
+        public let saving: Int
+        /// The receivers streaming now and their rates; empty from a Core that does not send them.
+        public let receivers: [Receiver]
+        /// The disk bytes those receivers take an hour; 0 when not known.
+        public let bytesPerHour: Int64
+
+        public init(enabled: Bool, disk: String = "", sizeLimitGb: Int = 10, recording: Bool, reason: String = "",
+                    sizeLimitBytes: Int64 = 0, usedBytes: Int64 = 0, writePosition: Int64 = 0, oldestUtcMs: Int64 = 0,
+                    newestUtcMs: Int64 = 0, hoursHeld: Double = 0, overflows: Int64 = 0, rewound: [Rewound] = [],
+                    stretch: Stretch? = nil, saving: Int = 0, receivers: [Receiver] = [], bytesPerHour: Int64 = 0) {
+            self.enabled = enabled
+            self.disk = disk
+            self.sizeLimitGb = sizeLimitGb
+            self.recording = recording
+            self.reason = reason
+            self.sizeLimitBytes = sizeLimitBytes
+            self.usedBytes = usedBytes
+            self.writePosition = writePosition
+            self.oldestUtcMs = oldestUtcMs
+            self.newestUtcMs = newestUtcMs
+            self.hoursHeld = hoursHeld
+            self.overflows = overflows
+            self.rewound = rewound
+            self.stretch = stretch
+            self.saving = saving
+            self.receivers = receivers
+            self.bytesPerHour = bytesPerHour
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case enabled, disk, sizeLimitGb, recording, reason, sizeLimitBytes, usedBytes, writePosition
+            case oldestUtcMs, newestUtcMs, hoursHeld, overflows, rewound, stretch, saving, receivers, bytesPerHour
+        }
+
+        /// The settings and the loop's figures are required; what later
+        /// steps added (rewound, the stretch, the saves, the receivers) may
+        /// be missing and reads as none.
+        public init(from decoder: Decoder) throws {
+            let keys = try decoder.container(keyedBy: CodingKeys.self)
+            enabled = try keys.decode(Bool.self, forKey: .enabled)
+            disk = try keys.decode(String.self, forKey: .disk)
+            sizeLimitGb = try keys.decode(Int.self, forKey: .sizeLimitGb)
+            recording = try keys.decode(Bool.self, forKey: .recording)
+            reason = try keys.decode(String.self, forKey: .reason)
+            sizeLimitBytes = try keys.decode(Int64.self, forKey: .sizeLimitBytes)
+            usedBytes = try keys.decode(Int64.self, forKey: .usedBytes)
+            writePosition = try keys.decode(Int64.self, forKey: .writePosition)
+            oldestUtcMs = try keys.decode(Int64.self, forKey: .oldestUtcMs)
+            newestUtcMs = try keys.decode(Int64.self, forKey: .newestUtcMs)
+            hoursHeld = try keys.decode(Double.self, forKey: .hoursHeld)
+            overflows = try keys.decodeIfPresent(Int64.self, forKey: .overflows) ?? 0
+            rewound = try keys.decodeIfPresent([Rewound].self, forKey: .rewound) ?? []
+            stretch = try keys.decodeIfPresent(Stretch.self, forKey: .stretch)
+            saving = try keys.decodeIfPresent(Int.self, forKey: .saving) ?? 0
+            receivers = try keys.decodeIfPresent([Receiver].self, forKey: .receivers) ?? []
+            bytesPerHour = try keys.decodeIfPresent(Int64.self, forKey: .bytesPerHour) ?? 0
+        }
+
+        /// The slice's past, while it plays one.
+        public func rewound(_ slice: Int) -> Rewound? {
+            rewound.first { $0.slice == slice }
+        }
+    }
+
     /// The mirrored object's key.
     public static let objectKey = "recordings"
 
@@ -179,6 +311,8 @@ public struct RecordingsDocument: Equatable, Sendable {
     public let settings: Settings
     /// The voice keyer (version 3); nil on an older Core.
     public let voiceKeyer: VoiceKeyerState?
+    /// The Digital Spectrum Recorder (version 4); nil on an older Core.
+    public let dsr: Dsr?
 
     /// One slice's Record; nil for a slice that is not open.
     public func slice(_ slice: Int) -> Slice? {
@@ -209,6 +343,7 @@ public struct RecordingsDocument: Equatable, Sendable {
                             onAirUseLeveler: wire.onAirUseLeveler ?? false, onAirUseCfc: wire.onAirUseCfc ?? false,
                             onAirUsePhaseRotator: wire.onAirUsePhaseRotator ?? false)
         voiceKeyer = document.voiceKeyer?.state
+        dsr = document.dsr
     }
 
     // MARK: The wire
@@ -269,6 +404,7 @@ public struct RecordingsDocument: Equatable, Sendable {
         let index: Index
         let settings: WireSettings
         let voiceKeyer: WireVoiceKeyer?
+        let dsr: Dsr?
     }
 }
 
@@ -391,11 +527,18 @@ public struct RecordingsSettingsChange: Equatable, Sendable {
     public var onAirUseLeveler: Bool?
     public var onAirUseCfc: Bool?
     public var onAirUsePhaseRotator: Bool?
+    /// The Digital Spectrum Recorder's three (version 4).
+    public var dsrEnabled: Bool?
+    /// "" for the Core's own disk.
+    public var dsrDisk: String?
+    /// 1 to 100000 GB.
+    public var dsrSizeLimitGb: Int?
 
     public init(keepMyVoice: Bool? = nil, sidesApart: Bool? = nil, autoStart: Bool? = nil, autoStop: Bool? = nil,
                 quietMinutes: Int? = nil, format: RecordingsDocument.Format? = nil, disk: String? = nil,
                 onAirUseTxEq: Bool? = nil, onAirUseCompressor: Bool? = nil, onAirUseLeveler: Bool? = nil,
-                onAirUseCfc: Bool? = nil, onAirUsePhaseRotator: Bool? = nil) {
+                onAirUseCfc: Bool? = nil, onAirUsePhaseRotator: Bool? = nil, dsrEnabled: Bool? = nil,
+                dsrDisk: String? = nil, dsrSizeLimitGb: Int? = nil) {
         self.keepMyVoice = keepMyVoice
         self.sidesApart = sidesApart
         self.autoStart = autoStart
@@ -408,6 +551,9 @@ public struct RecordingsSettingsChange: Equatable, Sendable {
         self.onAirUseLeveler = onAirUseLeveler
         self.onAirUseCfc = onAirUseCfc
         self.onAirUsePhaseRotator = onAirUsePhaseRotator
+        self.dsrEnabled = dsrEnabled
+        self.dsrDisk = dsrDisk
+        self.dsrSizeLimitGb = dsrSizeLimitGb
     }
 
     /// One value of the change, as it goes on the wire.
@@ -435,6 +581,9 @@ public struct RecordingsSettingsChange: Equatable, Sendable {
         flag("onAirUseLeveler", onAirUseLeveler)
         flag("onAirUseCfc", onAirUseCfc)
         flag("onAirUsePhaseRotator", onAirUsePhaseRotator)
+        flag("dsrEnabled", dsrEnabled)
+        if let dsrDisk { out.append(("dsrDisk", .text(dsrDisk))) }
+        if let dsrSizeLimitGb { out.append(("dsrSizeLimitGb", .whole(Int64(dsrSizeLimitGb)))) }
         return out
     }
 
@@ -442,6 +591,11 @@ public struct RecordingsSettingsChange: Equatable, Sendable {
     public var setsOnAirSwitches: Bool {
         onAirUseTxEq != nil || onAirUseCompressor != nil || onAirUseLeveler != nil || onAirUseCfc != nil
             || onAirUsePhaseRotator != nil
+    }
+
+    /// The change sets one of the recorder's settings, which need `recordingsVersion` 4.
+    public var setsDsr: Bool {
+        dsrEnabled != nil || dsrDisk != nil || dsrSizeLimitGb != nil
     }
 
     /// Nothing is set.

@@ -3,6 +3,8 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 15, the phone's recordings and voice keyer.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 28, the Digital Spectrum Recorder's verbs
+//   (version 4). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Foundation
 import NereusLink
@@ -85,6 +87,9 @@ public final class RecordingsClient {
     nonisolated public static let onAirVersion: Int64 = 2
     /// The voice keyer.
     nonisolated public static let voiceKeyerVersion: Int64 = 3
+    /// The Digital Spectrum Recorder: rewind, the past picture, saving a
+    /// stretch, its settings and erasing what it keeps.
+    nonisolated public static let dsrVersion: Int64 = 4
     /// V9: every control a Core too old for it leaves greyed shows this.
     nonisolated public static let updateReason = "This Core needs an update for recordings."
     /// A file moves this many bytes at a time each way, as the Core's
@@ -120,6 +125,8 @@ public final class RecordingsClient {
     public var settings: RecordingsDocument.Settings? { document?.settings }
     /// The voice keyer; nil below version 3.
     public var voiceKeyer: VoiceKeyerState? { document?.voiceKeyer }
+    /// The Digital Spectrum Recorder; nil below version 4.
+    public var dsr: RecordingsDocument.Dsr? { document?.dsr }
 
     /// V9's words for a control that needs `recordingsVersion` `needs`, or
     /// nil when the Core offers it. Nil too while no session is ready:
@@ -137,6 +144,7 @@ public final class RecordingsClient {
     @ObservationIgnored private let commands: CommandClient
     @ObservationIgnored private let timeout: Duration
     @ObservationIgnored private let importTimeout: Duration
+    @ObservationIgnored private let pastTimeout: Duration
     @ObservationIgnored private let thisDeviceId: @MainActor () -> String?
     @ObservationIgnored private let voiceMessageSink: (@Sendable (Bool) async -> Void)?
     /// The Core's name for this device, from the answer to its own send:
@@ -156,16 +164,20 @@ public final class RecordingsClient {
     ///   - timeout: how long a call waits for the Core's answer.
     ///   - importTimeout: how long a voice message's last step waits, while
     ///     the Core converts the file.
+    ///   - pastTimeout: how long one chunk of the past picture waits, while
+    ///     the Core draws it from its disk.
     public init(mirror: MirrorStore, commands: CommandClient,
                 thisDeviceId: @escaping @MainActor () -> String? = { nil },
                 voiceMessageSending: (@Sendable (Bool) async -> Void)? = nil,
-                timeout: Duration = .seconds(5), importTimeout: Duration = .seconds(60)) {
+                timeout: Duration = .seconds(5), importTimeout: Duration = .seconds(60),
+                pastTimeout: Duration = .seconds(30)) {
         self.mirror = mirror
         self.commands = commands
         self.thisDeviceId = thisDeviceId
         self.voiceMessageSink = voiceMessageSending
         self.timeout = timeout
         self.importTimeout = importTimeout
+        self.pastTimeout = pastTimeout
     }
 
     /// The sink's calls so far have all run (the tests wait on it).
@@ -353,9 +365,11 @@ public final class RecordingsClient {
     }
 
     /// Changes the recording settings, which live on the Core. The on-air
-    /// switches need version 2. A change that sets nothing sends nothing.
+    /// switches need version 2 and the recorder's settings version 4. A
+    /// change that sets nothing sends nothing.
     public func setSettings(_ change: RecordingsSettingsChange) async throws {
-        let needs = change.setsOnAirSwitches ? Self.onAirVersion : Self.recordingsVersion
+        let needs = change.setsDsr ? Self.dsrVersion
+            : change.setsOnAirSwitches ? Self.onAirVersion : Self.recordingsVersion
         try admit(needs: needs)
         guard !change.isEmpty else {
             return
@@ -455,6 +469,146 @@ public final class RecordingsClient {
     public func listenVoice(_ n: Int) async throws {
         _ = try await invoke("voiceKeyer.listen", [.init(name: "n", value: .int(Int64(n)))],
                              needs: Self.voiceKeyerVersion)
+    }
+
+    // MARK: The Digital Spectrum Recorder (version 4)
+
+    /// Moves `slice` to `frequencyHz` and plays it from `utcNs` (ns since
+    /// 1970 UTC) out of the recorder; the other slices stay live. Never keys.
+    public func rewind(slice: Int, utcNs: Int64, frequencyHz: Int64) async throws {
+        _ = try await invoke("dsr.rewind", [.init(name: "slice", value: .int(Int64(slice))),
+                                            .init(name: "utcNs", value: .int(utcNs)),
+                                            .init(name: "frequencyHz", value: .int(frequencyHz))],
+                             needs: Self.dsrVersion)
+    }
+
+    /// Moves a rewound slice to another moment at the same frequency.
+    public func seekPast(slice: Int, utcNs: Int64) async throws {
+        _ = try await invoke("dsr.seek", [.init(name: "slice", value: .int(Int64(slice))),
+                                          .init(name: "utcNs", value: .int(utcNs))],
+                             needs: Self.dsrVersion)
+    }
+
+    /// Returns a rewound slice to the radio, at the frequency it had before.
+    public func live(slice: Int) async throws {
+        _ = try await invoke("dsr.live", [.init(name: "slice", value: .int(Int64(slice)))], needs: Self.dsrVersion)
+    }
+
+    /// `rowCount` rows of the past, evenly from `toUtcNs` back to
+    /// `fromUtcNs`, newest first, drawn with the pan's own display. The Core
+    /// sends them in chunks; `chunk` hears each as it comes, and the next is
+    /// asked for until none are left or the task is cancelled.
+    public func pastRows(slice: Int, view: DsrPanView, fromUtcNs: Int64, toUtcNs: Int64, rowCount: Int,
+                         chunk: @MainActor (DsrPastFrames) -> Void) async throws {
+        var to = toUtcNs
+        var left = rowCount
+        while true {
+            let result = try await invoke("dsr.rows", [.init(name: "slice", value: .int(Int64(slice))),
+                                                       .init(name: "fromUtcNs", value: .int(fromUtcNs)),
+                                                       .init(name: "toUtcNs", value: .int(to)),
+                                                       .init(name: "rowCount", value: .int(Int64(left)))]
+                                              + Self.viewArguments(view),
+                                          needs: Self.dsrVersion, timeout: pastTimeout)
+            let frames = try Self.frames(result)
+            chunk(frames)
+            guard frames.rowsLeft > 0, frames.rowsLeft < left || frames.nextToUtcNs < to, !Task.isCancelled else {
+                return
+            }
+            to = frames.nextToUtcNs
+            left = frames.rowsLeft
+        }
+    }
+
+    /// One spectrum of the past at `utcNs`, drawn with the pan's own display.
+    public func pastSpectrum(slice: Int, view: DsrPanView, utcNs: Int64) async throws -> DsrPastFrames {
+        let result = try await invoke("dsr.spectrum", [.init(name: "slice", value: .int(Int64(slice))),
+                                                       .init(name: "utcNs", value: .int(utcNs))]
+                                          + Self.viewArguments(view),
+                                      needs: Self.dsrVersion, timeout: pastTimeout)
+        return try Self.frames(result)
+    }
+
+    /// Every kept hour, newest first, shaded by how busy the band was.
+    public func hours() async throws -> [DsrHour] {
+        let result = try await invoke("dsr.hours", [], needs: Self.dsrVersion, timeout: pastTimeout)
+        guard case .text(let starts)? = result.values["starts"], case .text(let activity)? = result.values["activity"],
+              let hours = DsrHour.decode(starts: starts, activity: activity) else {
+            throw RecordingsError.badAnswer
+        }
+        return hours
+    }
+
+    /// Saves a stretch the recorder keeps as a recording; returns the
+    /// Core's words for what it is saving. The list shows it when done.
+    public func saveStretch(fromUtcNs: Int64, toUtcNs: Int64, kind: DsrStretchKind) async throws -> String {
+        let result = try await invoke("dsr.saveStretch", [.init(name: "fromUtcNs", value: .int(fromUtcNs)),
+                                                          .init(name: "toUtcNs", value: .int(toUtcNs)),
+                                                          .init(name: "kind", value: .text(kind.rawValue))],
+                                      needs: Self.dsrVersion)
+        return Self.note(result)
+    }
+
+    /// Keeps the sound of a saved whole-pan stretch as a recording of its own.
+    public func saveSoundOnly(id: String) async throws -> String {
+        let result = try await invoke("recordings.saveSoundOnly", [.init(name: "id", value: .text(id))],
+                                      needs: Self.dsrVersion)
+        return Self.note(result)
+    }
+
+    /// Opens a saved whole-pan stretch on the waterfall: Slice A plays it like rewind.
+    public func openStretch(id: String) async throws {
+        _ = try await invoke("recordings.openStretch", [.init(name: "id", value: .text(id))], needs: Self.dsrVersion)
+    }
+
+    /// Erases everything the recorder keeps now. It cannot be undone: the
+    /// caller asks first. Rewound slices go live first; saved stretches stay.
+    public func eraseAll() async throws {
+        _ = try await invoke("dsr.eraseAll", [], needs: Self.dsrVersion)
+    }
+
+    private static func viewArguments(_ view: DsrPanView) -> [CommandArgument] {
+        [.init(name: "fftSize", value: .int(Int64(view.fftSize))),
+         .init(name: "windowType", value: .int(Int64(view.windowType))),
+         .init(name: "centreHz", value: .int(view.centreHz)),
+         .init(name: "spanHz", value: .int(view.spanHz)),
+         .init(name: "pixels", value: .int(Int64(view.pixels)))]
+    }
+
+    private static func frames(_ result: CommandResult) throws -> DsrPastFrames {
+        guard let slice = whole(result.values["slice"]), let binCount = whole(result.values["binCount"]),
+              let first = real(result.values["firstBinHz"]), let step = real(result.values["hzPerBin"]),
+              case .text(let times)? = result.values["times"], case .text(let bins)? = result.values["bins"] else {
+            throw RecordingsError.badAnswer
+        }
+        var transmit: String?
+        if case .text(let marks)? = result.values["transmit"] {
+            transmit = marks
+        }
+        guard let frames = DsrPastFrames.decode(slice: Int(slice), firstBinHz: first, hzPerBin: step,
+                                                binCount: Int(binCount), times: times, bins: bins, transmit: transmit,
+                                                rowsLeft: Int(whole(result.values["rowsLeft"]) ?? 0),
+                                                nextToUtcNs: whole(result.values["nextToUtcNs"]) ?? 0) else {
+            throw RecordingsError.badAnswer
+        }
+        return frames
+    }
+
+    private static func note(_ result: CommandResult) -> String {
+        if case .text(let note)? = result.values["note"] {
+            return note
+        }
+        return ""
+    }
+
+    private static func real(_ value: MirrorValue?) -> Double? {
+        switch value {
+        case .double(let real)?:
+            return real
+        case .int(let whole)?:
+            return Double(whole)
+        default:
+            return nil
+        }
     }
 
     // MARK: Inside

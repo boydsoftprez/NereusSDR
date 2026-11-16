@@ -13,6 +13,9 @@
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // 2026-11-16: Recording plan Task 16, each flag's Record and Play, the playing
 // bar and the Kept notice. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 28, the Digital Spectrum Recorder on Pan 1:
+// the time strip, the hours map, LIVE, SAVE, the past picture and a tap that
+// rewinds. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import NereusBand
@@ -139,6 +142,9 @@ struct BandGestureLayer: View {
     /// The playing bar's All recordings… and Recording settings…; nil greys them.
     var openAllRecordings: (() -> Void)?
     var openRecordingSettings: (() -> Void)?
+    /// The Digital Spectrum Recorder's strip, map and past picture (Pan 1
+    /// only; the recording design's sections 6.7 and 6.8); nil shows none.
+    var dsr: DsrPanModel?
     @Environment(\.uprightBandWidth) private var uprightWidth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -183,6 +189,19 @@ struct BandGestureLayer: View {
         .overlay(alignment: .bottom) {
             if let tuning {
                 PadLayer(tuning: tuning)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let dsr, dsr.saving {
+                // SAVE's panel; the handles on the strip stay free above it.
+                DsrSavePanel(model: dsr, sliceFrequencyHz: slices.entries.first { $0.id == 0 }?.slice.frequencyHz)
+            }
+        }
+        .sheet(isPresented: Binding(get: { dsr?.timeSheetOpen ?? false },
+                                    set: { dsr?.timeSheetOpen = $0 })) {
+            if let dsr {
+                DsrTimeSheet(model: dsr)
+                    .presentationDetents([.height(DsrTimeSheet.height)])
             }
         }
     }
@@ -312,8 +331,15 @@ struct BandGestureLayer: View {
             return BandMenuHit.isEmptyBand(at: point, flags: flagAndTagRects, spots: spotRects, stations: stations,
                                            layout: layout)
         }
+        // The recorder's strip ends above the band's own controls at the waterfall's foot.
+        let dsrPlace = DsrStripPlace(waterfall: layout.waterfall, trailingInset: trailingInset, avoid: controls)
         return ZStack(alignment: .topLeading) {
-            touchSurface(geometry: geometry, emptyBand: emptyBand)
+            touchSurface(layout: layout, geometry: geometry, emptyBand: emptyBand)
+            if let dsr {
+                // The past over the waterfall, under everything that takes a touch.
+                DsrPictureLayer(model: dsr, band: band, layout: layout, geometry: geometry, place: dsrPlace,
+                                sliceLetter: slices.active?.slice.letter ?? "A")
+            }
             if let txFilterHz {
                 txFilter(txFilterHz, layout: layout, geometry: geometry)
             }
@@ -426,6 +452,11 @@ struct BandGestureLayer: View {
                 if let tuning {
                     StepMenuLayer(tuning: tuning, flags: flags, bandWidth: geometry.size.width, large: large,
                                   part: .menu)
+                }
+                if let dsr {
+                    // Over the band's drag: a drag on the strip moves time, never the band.
+                    DsrStripLayer(model: dsr, place: dsrPlace,
+                                  secondsPerPoint: Double(band.settings.waterfallPeriodMs) / 1000)
                 }
             }
         }
@@ -645,12 +676,13 @@ struct BandGestureLayer: View {
 
     /// The band's own surface: the taps and the pinch, and under them the
     /// hold (``BandHoldSurface``), which opens the band menu.
-    private func touchSurface(geometry: BandGeometry, emptyBand: @escaping (CGPoint) -> Bool) -> some View {
+    private func touchSurface(layout: BandLayout, geometry: BandGeometry,
+                              emptyBand: @escaping (CGPoint) -> Bool) -> some View {
         BandHoldSurface(enabled: bandMenu != nil) { point in
             held(at: point, geometry: geometry, emptyBand: emptyBand)
         }
             .contentShape(Rectangle())
-            .gesture(taps(geometry: geometry))
+            .gesture(taps(layout: layout, geometry: geometry))
             .simultaneousGesture(pinch(geometry: geometry), including: settings.pinchToZoom ? .all : .none)
             .accessibilityElement()
             .accessibilityIdentifier("bandSurface")
@@ -763,9 +795,15 @@ struct BandGestureLayer: View {
 
     /// A tap tunes at once whenever a double tap would do the same thing;
     /// it waits to rule out a double tap only when the two differ.
-    private func taps(geometry: BandGeometry) -> AnyGesture<Void> {
+    private func taps(layout: BandLayout, geometry: BandGeometry) -> AnyGesture<Void> {
         let action = settings.doubleTapAction
         let single = SpatialTapGesture(count: 1).onEnded { value in
+            // In the recorder's past a tap on the waterfall rewinds the active slice there.
+            if let dsr, layout.waterfall.contains(value.location),
+               dsr.tapWaterfall(pointsDown: Double(value.location.y - layout.waterfall.minY),
+                                hz: geometry.hz(forX: Double(value.location.x))) {
+                return
+            }
             tap(atX: value.location.x, geometry: geometry)
         }
         let double = SpatialTapGesture(count: 2).onEnded { value in
