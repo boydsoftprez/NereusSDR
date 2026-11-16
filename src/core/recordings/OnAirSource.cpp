@@ -7,6 +7,9 @@
 //             switches (spec 3, 6.1, 6.3, V5, V6, V7, A6, A7). Review fix:
 //             the switch writes go through the TX channel's thread, after
 //             RadioModel's own. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; recording plan Task 11: a voice message
+//             follows another with no block of microphone between them.
+//             AI tooling: Anthropic Claude Code.
 
 #include "OnAirSource.h"
 
@@ -84,6 +87,18 @@ void OnAirSource::beginPlayback(const ListenerId& who)
 void OnAirSource::beginVoiceMessage(const QString& slotId, std::function<int(float*, int)> pullClip)
 {
     if (!pullClip) {
+        return;
+    }
+    // Recording plan Task 11: one message after another while keyed (the
+    // same device sends the next): the transmitter goes straight to the new
+    // one and never takes a block of microphone between them.
+    if (m_kind.load(std::memory_order_seq_cst) == Kind::VoiceMessage) {
+        auto next = std::make_unique<std::function<int(float*, int)>>(std::move(pullClip));
+        m_clip.store(next.get(), std::memory_order_seq_cst);
+        // No transmit block is still inside the old one once this returns.
+        waitForPulls();
+        m_clipOwner = std::move(next);
+        m_voiceSlot = slotId;
         return;
     }
     end();

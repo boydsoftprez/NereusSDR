@@ -9,6 +9,9 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: the five on-air
 //                 switches in the settings. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
+//                 keyer's part. AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "core/session/RecordingsFacade.h"
@@ -55,11 +58,17 @@ void RecordingsFacade::bind(RecordingService* service)
 {
     if (m_service) {
         disconnect(m_service, nullptr, this, nullptr);
+        if (VoiceKeyer* voice = m_service->voiceKeyer()) {
+            disconnect(voice, nullptr, this, nullptr);
+        }
     }
     m_service = service;
     if (m_service) {
         connect(m_service, &RecordingService::sliceStateChanged, this, &RecordingsFacade::rebuild);
         connect(m_service, &RecordingService::kept, this, &RecordingsFacade::onKept);
+        if (VoiceKeyer* voice = m_service->voiceKeyer()) {
+            connect(voice, &VoiceKeyer::changed, this, &RecordingsFacade::rebuild);
+        }
     }
     if (m_published) {
         refresh();
@@ -140,7 +149,10 @@ void RecordingsFacade::rebuild()
                                {QStringLiteral("slices"), slices},
                                {QStringLiteral("kept"), m_kept},
                                {QStringLiteral("index"), index},
-                               {QStringLiteral("settings"), settings}};
+                               {QStringLiteral("settings"), settings},
+                               {QStringLiteral("voiceKeyer"), m_service->voiceKeyer()
+                                                                  ? m_service->voiceKeyer()->documentJson()
+                                                                  : QJsonObject()}};
     const QString next = QString::fromUtf8(QJsonDocument(document).toJson(QJsonDocument::Compact));
     updateTick();
     if (next == m_json) {
@@ -158,6 +170,8 @@ void RecordingsFacade::updateTick()
         for (const RecordingSliceState& st : m_service->sliceStates()) {
             recording = recording || st.state == RecordState::Recording;
         }
+        // A voice message going out, or waiting to repeat.
+        recording = recording || (m_service->voiceKeyer() && m_service->voiceKeyer()->sending().has_value());
     }
     if (recording && !m_tick) {
         m_tick = new QTimer(this);

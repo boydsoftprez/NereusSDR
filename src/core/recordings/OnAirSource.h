@@ -74,7 +74,10 @@ public:
     // samples of the message and returns how many it wrote; fewer than asked
     // means the message ended there, and 0 that it is over. It is called on
     // the audio thread and must not lock, wait or allocate. The message gets
-    // the normal processing: no switch applies.
+    // the normal processing: no switch applies. While a message is on the
+    // air, the next one replaces it with no block between them (Task 11's
+    // voice keyer returns silence after its end, so the air never falls to
+    // a microphone until it unkeys or hands over).
     void beginVoiceMessage(const QString& slotId, std::function<int(float*, int)> pullClip);
     // Stops sending; a playback goes back to its speakers from where it got
     // to, and the switches return to what TransmitModel says. Again: nothing.

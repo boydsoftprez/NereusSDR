@@ -1323,7 +1323,7 @@ table.
 | `stationRoundtableVersion` | 2 |
 | `nnrLoadWarningVersion` | 1 |
 | `bandStackVersion` | 1 |
-| `recordingsVersion` | 2 |
+| `recordingsVersion` | 3 |
 | `txSsbModMonitorVersion` | 1 |
 
 <!-- /surface -->
@@ -1657,8 +1657,12 @@ When a feature is off, its version is 0:
   and its `recordings.playback` `onAir` is true while it goes out; the
   document's `settings` add the five on-air switches, which
   `recordings.setSettings` takes. A peer that declared `recordings` 1 is sent
-  2 and needs nothing new to use it. The session protocol minor did not
-  change. A client on a Core that sends no entry shows
+  2 and needs nothing new to use it. At 3 the document adds `voiceKeyer`
+  and the Core takes the `voiceKeyer.*` verbs (section 9): eight voice
+  messages kept on the Core, one of which, sent, keys the radio as the
+  device that asked; a peer that declared `recordings` 1 is sent 3, and a
+  client sends a `voiceKeyer.*` verb only when it was. The session protocol
+  minor did not change. A client on a Core that sends no entry shows
   its recording controls greyed with "This Core needs an update for
   recordings." and sends nothing.
 - `radeStatusVersion` (RADE on the phone's VFO flag): optional, sent only
@@ -3810,10 +3814,10 @@ destroyed during the session.
 
 Notes on the keys:
 
-- **`recordings`** (`RecordingsFacade`, `recordingsVersion` 2). The Core's
+- **`recordings`** (`RecordingsFacade`, `recordingsVersion` 3). The Core's
   recordings, read-only (a write is refused; the `recordings.*` verbs change
   them), sent only to a peer at agreed minor 11 that declared `recordings` 1.
-  `json` is the document: `version` 2, `slices` (one per open slice: `slice`,
+  `json` is the document: `version` 3, `slices` (one per open slice: `slice`,
   `state` `idle`, `armed` or `recording`, `startUtc`, `startedBy` with "" for
   the Core's own window, `elapsedMs`, `myVoice`), `kept` (the last recording
   kept: `seq`, moving by one for each and 0 for none yet, `slice`, `id`,
@@ -3827,8 +3831,14 @@ Notes on the keys:
   `onAirUseCfc`, `onAirUsePhaseRotator`, each false by default: while a
   recording goes on the air the TX EQ, compressor, leveler, CFC and phase
   rotator are off unless their switch is on, and return to the transmit
-  settings when it stops going out). While a slice
-  records, `elapsedMs` is rebuilt once a second. `revision` moves by one each
+  settings when it stops going out), and from version 3 `voiceKeyer`
+  (`slots`, eight of `n` 1 to 8, `name`, `lengthMs`, `empty`; `repeat`;
+  `repeatDelaySec` 1 to 60, 5 by default; `sending`, null unless a message
+  goes out or waits to repeat: `n`, `positionMs`, `lengthMs`, `waitingMs`,
+  counting down between repeats and 0 while it goes out, and `by`, the
+  sender's words, "Desktop" for the Core's own window). While a slice
+  records, or a voice message goes out, the document is rebuilt once a
+  second. `revision` moves by one each
   time `json` changes. The recordings themselves are not in it: a client asks
   with `recordings.list`.
 - **`bandStack`** (`BandStackFacade`, `bandStackVersion` 1). The Core's band
@@ -6615,6 +6625,16 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `recordings.delete` | `ids` utf8 | `recordingsVersion` | 1 | 11 |
 | `recordings.export` | `id` utf8, `offset` i64 | `recordingsVersion` | 1 | 11 |
 | `recordings.setSettings` | `keepMyVoice` bool (optional), `sidesApart` bool (optional), `autoStart` bool (optional), `autoStop` bool (optional), `quietMinutes` i64 (optional), `format` utf8 (optional), `disk` utf8 (optional), `onAirUseTxEq` bool (optional), `onAirUseCompressor` bool (optional), `onAirUseLeveler` bool (optional), `onAirUseCfc` bool (optional), `onAirUsePhaseRotator` bool (optional) | `recordingsVersion` | 1 | 11 |
+| `voiceKeyer.send` | `n` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.stop` | none | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.beginImport` | `n` i64, `name` utf8, `size` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.chunk` | `data` utf8 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.finishImport` | none | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.export` | `n` i64, `offset` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.rename` | `n` i64, `name` utf8 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.clear` | `n` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.setRepeat` | `on` bool, `delaySec` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.listen` | `n` i64 | `recordingsVersion` | 3 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -7062,6 +7082,38 @@ These command groups need a sentence beyond the table:
   kept." for a recording another device removed, "Quiet can be 1 to 60
   minutes." and the store's words for a name already used. None keys the
   radio; playback alone never transmits.
+- **The voice keyer** (`recordingsVersion` 3). Messages M1 to M8 are kept on
+  the Core as 48 kHz 16-bit mono WAV, at most two minutes each.
+  `voiceKeyer.send` (`n`) is the one verb that keys the radio: it keys as
+  the requesting device, sends Mn through the transmit processing as it is
+  set (the recording on-air switches do not apply), and unkeys at the end;
+  with `repeat` on it waits `repeatDelaySec`, unkeyed, and sends again until
+  stopped. The same device's send while one goes out moves to the new one
+  without unkeying. `voiceKeyer.stop` stops what goes out, or the wait, and
+  unkeys. A PTT, MOX or TUNE press from any device, or the sender's own
+  unkey, stops it within one transmit block: a press MOX takes (the
+  sender's own) keeps the radio keyed and its microphone goes out, any other
+  unkeys the radio; VOX stops nothing. Another device holding transmit
+  refuses a send with the holder's words (section 7.6) and nothing keys; the
+  radio already on the air refuses it with "The radio is already
+  transmitting.". A device loads a message with `voiceKeyer.beginImport`
+  (`n`, `name`, "" to keep Mn's, `size`, the file's bytes, at most 100 MiB),
+  then `voiceKeyer.chunk` (`data`, at most 192 KiB as base64) in order, each
+  after the one before it is answered, then `voiceKeyer.finishImport`; the
+  Core converts any WAV or MP3 to 48 kHz mono, and keeps a 48 kHz 16-bit
+  mono PCM WAV as it came, so a saved message loads back byte for byte. One
+  import runs per session; beginning another drops the first.
+  `voiceKeyer.export` (`n`, `offset`) answers with `n`, `offset`, `size` and
+  `data` as `recordings.export` does. `voiceKeyer.rename` (`n`, `name`, at
+  most 32 characters), `voiceKeyer.clear` (`n`), `voiceKeyer.setRepeat`
+  (`on` bool, `delaySec` i64) and `voiceKeyer.listen` (`n`, the requesting
+  device's own speakers, as `recordings.play`, never the air) key nothing.
+  Refusals: "The request for the voice keyer was not understood.", "Voice
+  messages are M1 to M8.", "M3 is empty.", "Voice messages can be up to 2
+  minutes long.", "That file cannot be read as sound.", "That file is too
+  large for a voice message.", "The file did not arrive whole. Try again.",
+  "No voice message is being loaded.", "The wait between repeats can be 1
+  to 60 seconds." and "Connect to a radio to send a voice message.".
 - **The AM Mod Monitor's reset** (R-IOS-13, R-R3-49, `txModMonitorVersion`
   1). `txModMonitor.reset` (`source` i64: 0 the transmit I/Q, 1 the PA
   feedback) starts the Core's analyzer for that source afresh (its carrier

@@ -24,11 +24,15 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: the Core offers
 //                 version 2. AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the Core offers
+//                 version 3. AI-assisted implementation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
 
 #include <algorithm>
+#include <vector>
 
 #include <QLoggingCategory>
 #include <QRandomGenerator>
@@ -39,6 +43,7 @@
 #include "core/recordings/AudioFileWriter.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingStore.h"
+#include "core/recordings/VoiceKeyer.h"
 #include "core/session/RecordingsFacade.h"
 #include "core/session/StationClient.h"
 #include "core/settings/SettingsProxy.h"
@@ -316,7 +321,7 @@ private slots:
         RecordingsAccess* access = core.model->recordings();
         QVERIFY(qobject_cast<LocalRecordingsAccess*>(access) != nullptr);
         QCOMPARE(access->state(), RecordingsAccess::State::Ready);
-        QCOMPARE(access->coreVersion(), 2);
+        QCOMPARE(access->coreVersion(), 3);
         QVERIFY(access->coreIsOnThisComputer());
 
         QSignalSpy state(access, &RecordingsAccess::stateChanged);
@@ -342,7 +347,9 @@ private slots:
         QCOMPARE(access->unavailableReason(), QString());
         // Version 2 (Task 10): the on-air switches work on this Core.
         QCOMPARE(access->unavailableReason(2), QString());
-        QCOMPARE(access->unavailableReason(3), kNewerCore);
+        // Version 3 (Task 11): the voice keyer works on this Core.
+        QCOMPARE(access->unavailableReason(3), QString());
+        QCOMPARE(access->unavailableReason(4), kNewerCore);
         QSignalSpy refused(access, &RecordingsAccess::refused);
         QSignalSpy kept(access, &RecordingsAccess::kept);
         QCOMPARE(stateOfSlice(access->document(), 0), QStringLiteral("idle"));
@@ -483,11 +490,13 @@ private slots:
         RecordingsAccess* access = remote.access();
         QVERIFY(remote.connectTo(core, this));
         QTRY_COMPARE(access->state(), RecordingsAccess::State::Ready);
-        QCOMPARE(access->coreVersion(), 2);
+        QCOMPARE(access->coreVersion(), 3);
         QCOMPARE(access->unavailableReason(), QString());
         // Version 2 (Task 10): the on-air switches work on this Core.
         QCOMPARE(access->unavailableReason(2), QString());
-        QCOMPARE(access->unavailableReason(3), kNewerCore);
+        // Version 3 (Task 11): the voice keyer works on this Core.
+        QCOMPARE(access->unavailableReason(3), QString());
+        QCOMPARE(access->unavailableReason(4), kNewerCore);
         QCOMPARE(stateOfSlice(access->document(), 0), QStringLiteral("idle"));
         QSignalSpy refused(access, &RecordingsAccess::refused);
         QSignalSpy kept(access, &RecordingsAccess::kept);
@@ -556,6 +565,90 @@ private slots:
         remote.client.disconnectFromStation(QStringLiteral("test over"));
         QTRY_COMPARE(access->state(), RecordingsAccess::State::NotConnected);
         QCOMPARE(access->unavailableReason(), kNotConnected);
+    }
+
+    // ---- The voice keyer (Task 11), in both windows: a message loaded,
+    // saved back byte for byte, an empty one refused, and none of it keys.
+
+    void voiceMessagesLoadAndSaveInBothWindows()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        useTestDisk(core);
+        VoiceKeyer* vk = core.model->recordingService()->voiceKeyer();
+        QVERIFY(vk != nullptr);
+        vk->setFolder(m_dir.filePath(QStringLiteral("voice%1").arg(++m_disks)));
+        // Three seconds of 48 kHz mono: kept as it is, in more than one chunk.
+        const QString wav = m_dir.filePath(QStringLiteral("voice-in-%1.wav").arg(m_disks));
+        {
+            QString error;
+            std::unique_ptr<AudioFileWriter> w =
+                AudioFileWriter::open(wav, AudioFileSpec{AudioFileFormat::Wav, 48000, 1, 0}, &error);
+            QVERIFY(w);
+            std::vector<float> samples(3 * 48000);
+            for (size_t i = 0; i < samples.size(); ++i) {
+                samples[i] = 0.5f * static_cast<float>(i % 480) / 480.0f;
+            }
+            QVERIFY(w->write(samples.data(), static_cast<int>(samples.size())));
+            QVERIFY(w->finish());
+        }
+        const QByteArray original = readFile(wav);
+        MoxController* mox = core.model->moxController();
+
+        RecordingsAccess* local = core.model->recordings();
+        QSignalSpy localImported(local, &RecordingsAccess::voiceImportFinished);
+        QSignalSpy localExported(local, &RecordingsAccess::voiceExportFinished);
+        QSignalSpy localRefused(local, &RecordingsAccess::refused);
+        local->importVoice(1, wav, QStringLiteral("CQ"));
+        QCOMPARE(localImported.count(), 1);
+        QCOMPARE(localImported.first().at(1).toBool(), true);
+        QTRY_COMPARE(local->firstEmptyVoiceSlot(), 2);
+        const QString localCopy = m_dir.filePath(QStringLiteral("voice-local-copy.wav"));
+        local->exportVoice(1, localCopy);
+        QCOMPARE(localExported.count(), 1);
+        QCOMPARE(localExported.first().at(1).toBool(), true);
+        QCOMPARE(readFile(localCopy), original);
+        local->sendVoice(5);
+        QCOMPARE(localRefused.count(), 1);
+        QCOMPARE(localRefused.first().at(0).toString(), QStringLiteral("M5 is empty."));
+        QVERIFY(!mox->isMox());
+
+        RemoteWindow remote;
+        RecordingsAccess* access = remote.access();
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(access->state(), RecordingsAccess::State::Ready);
+        QTRY_COMPARE(access->firstEmptyVoiceSlot(), 2);
+        QSignalSpy imported(access, &RecordingsAccess::voiceImportFinished);
+        QSignalSpy exported(access, &RecordingsAccess::voiceExportFinished);
+        QSignalSpy refused(access, &RecordingsAccess::refused);
+        access->importVoice(2, wav, QStringLiteral("QRZ"));
+        QTRY_COMPARE_WITH_TIMEOUT(imported.count(), 1, 30000);
+        QCOMPARE(imported.first().at(2).toString(), QString());
+        QCOMPARE(imported.first().at(1).toBool(), true);
+        QCOMPARE(readFile(vk->messagePath(2)), original);
+        QTRY_COMPARE(access->firstEmptyVoiceSlot(), 3);
+        const QString remoteCopy = m_dir.filePath(QStringLiteral("voice-remote-copy.wav"));
+        access->exportVoice(2, remoteCopy);
+        QTRY_COMPARE_WITH_TIMEOUT(exported.count(), 1, 30000);
+        QCOMPARE(exported.first().at(2).toString(), QString());
+        QCOMPARE(readFile(remoteCopy), original);
+        access->exportVoice(7, m_dir.filePath(QStringLiteral("never-voice.wav")));
+        QTRY_COMPARE(exported.count(), 2);
+        QCOMPARE(exported.last().at(1).toBool(), false);
+        QCOMPARE(exported.last().at(2).toString(), QStringLiteral("M7 is empty."));
+        access->sendVoice(6);
+        QTRY_COMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toString(), QStringLiteral("M6 is empty."));
+        access->renameVoice(2, QStringLiteral("Net"));
+        QTRY_COMPARE(vk->messages().at(1).name, QStringLiteral("Net"));
+        access->clearVoice(2);
+        QTRY_COMPARE(access->firstEmptyVoiceSlot(), 2);
+        QVERIFY(!mox->isMox());
+
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+        QTRY_COMPARE(access->state(), RecordingsAccess::State::NotConnected);
+        access->importVoice(3, wav);
+        QCOMPARE(imported.count(), 2);
+        QCOMPARE(imported.last().at(2).toString(), kNotConnected);
     }
 };
 

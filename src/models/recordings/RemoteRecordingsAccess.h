@@ -17,6 +17,12 @@
 // (recordings.export) and writes it through a QSaveFile, so a copy that
 // fails leaves nothing behind.
 //
+// The voice keyer needs recordingsVersion 3; an older Core refuses here,
+// without sending. An import sends voiceKeyer.beginImport, then the file a
+// chunk at a time, each once the one before it is taken, then
+// voiceKeyer.finishImport; one import at a time. An export asks for Mn a
+// chunk at a time (voiceKeyer.export), as a copy does.
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
@@ -25,9 +31,14 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: each list
 //                 reader's own answer. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
+//                 keyer's voiceKeyer.* verbs (recordingsVersion 3), with a
+//                 chunked import and export. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
+#include <QFile>
 #include <QHash>
 #include <QJsonObject>
 #include <QList>
@@ -69,6 +80,14 @@ public:
     void download(const QString& id, const QString& toPath) override;
     void setSettings(const QJsonObject& changed) override;
     bool coreIsOnThisComputer() const override;
+    void sendVoice(int n) override;
+    void stopVoice() override;
+    void importVoice(int n, const QString& wavPath, const QString& name = QString()) override;
+    void exportVoice(int n, const QString& toPath) override;
+    void renameVoice(int n, const QString& name) override;
+    void clearVoice(int n) override;
+    void setVoiceRepeat(bool on, int delaySec) override;
+    void listenVoice(int n) override;
 
     /// StationClient: a recordings.* answer, or the Core's recordings.playback.
     void takeResult(const QByteArray& verb, bool accepted, const QString& reason,
@@ -82,8 +101,31 @@ private:
         qint64 total = -1;
     };
 
+    struct VoiceImport {
+        int n = 0;
+        std::unique_ptr<QFile> file;
+        qint64 size = 0;
+        qint64 sent = 0;
+        bool finishing = false;
+    };
+    struct VoiceExport {
+        int n = 0;
+        std::unique_ptr<QSaveFile> file;
+        qint64 done = 0;
+    };
+
     /// Sends the verb, or says why not (refused()). True when it went.
     bool send(const QString& verb, const QJsonObject& arguments);
+    /// A voiceKeyer.* verb: as send(), and refused against a Core older
+    /// than recordingsVersion 3.
+    bool sendVoiceVerb(const QString& verb, const QJsonObject& arguments);
+    bool sendLink(const QString& verb, const QJsonObject& arguments);
+    void takeVoiceImport(const QByteArray& verb, bool accepted, const QString& reason);
+    void sendNextImportPiece();
+    void finishVoiceImport(bool ok, const QString& error);
+    bool requestVoiceChunk(VoiceExport& voiceExport);
+    void takeVoiceExport(bool accepted, const QString& reason, const QList<MirrorUpdate>& values);
+    void finishVoiceExport(int n, bool ok, const QString& error);
     bool requestChunk(Download& download);
     void finishDownload(const QString& id, bool ok, const QString& error);
     void takeExport(bool accepted, const QString& reason, const QList<MirrorUpdate>& values);
@@ -100,6 +142,10 @@ private:
     // The recording each recordings.export in flight asks for, in the order
     // sent; the Core answers them in that order.
     QList<QString> m_exportsInFlight;
+    std::optional<VoiceImport> m_voiceImport;
+    QList<std::shared_ptr<VoiceExport>> m_voiceExports;
+    // The message each voiceKeyer.export in flight asks for, in order.
+    QList<int> m_voiceExportsInFlight;
     State m_lastState{State::NotConnected};
 };
 

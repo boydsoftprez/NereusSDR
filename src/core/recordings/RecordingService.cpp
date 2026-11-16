@@ -11,6 +11,8 @@
 //             A6): the on-air source follows MOX, and a listener's playback
 //             has one reader, its speakers or the transmitter. AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the voice keyer, and playFile for its
+//             Listen (spec 6.6). AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -77,6 +79,8 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     , m_clock([] { return QDateTime::currentMSecsSinceEpoch(); })
     , m_onAir(std::make_unique<OnAirSource>(*this))
 {
+    m_voiceKeyer = std::make_unique<VoiceKeyer>(*this, radio != nullptr ? radio->moxController() : nullptr,
+                                                m_onAir.get());
     qRegisterMetaType<ListenerId>("NereusSDR::ListenerId");
     m_listenerSlots.insert(QString::fromLatin1(kLocalListener), AudioEngine::kLocalPlaybackSlotId);
     m_quietTimer = new QTimer(this);
@@ -121,6 +125,8 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
 
 RecordingService::~RecordingService()
 {
+    // A message going out stops and the radio unkeys first.
+    m_voiceKeyer.reset();
     m_onAir->end();
     stopAll();
 
@@ -711,6 +717,12 @@ void RecordingService::play(const ListenerId& who, const QString& recordingId)
         emit playbackRefused(who, QString::fromLatin1(kPlayWholePanReason));
         return;
     }
+    playFile(who, recordingId, QDir(m_store->folder()).filePath(entry->fileName), entry->lengthMs);
+}
+
+void RecordingService::playFile(const ListenerId& who, const QString& recordingId, const QString& path,
+                                qint64 lengthMs)
+{
     auto it = m_listeners.find(who);
     if (it != m_listeners.end() && it->recordingId == recordingId && it->playing) {
         return;
@@ -731,8 +743,8 @@ void RecordingService::play(const ListenerId& who, const QString& recordingId)
         from = l.positionMs;
     }
     l.recordingId = recordingId;
-    l.path = QDir(m_store->folder()).filePath(entry->fileName);
-    l.lengthMs = entry->lengthMs;
+    l.path = path;
+    l.lengthMs = lengthMs;
     startPlayer(who, l, from);
     emit playbackChanged(who);
 }

@@ -48,6 +48,9 @@
 //   2026-10-07: A device's tx.twoTone start inside its stop's settle keeps
 //               the test running rather than answering "already on".
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11: setKeyPressObserver, so the voice
+//               keyer hears each device's own press. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RemoteKeying.h"
@@ -260,6 +263,15 @@ void RemoteKeying::handle(const Command& command, Reply reply)
     if (const std::optional<Result> copy = copyOf(command)) {
         reply(*copy);
         return;
+    }
+    // Recording plan Task 11: a press stops a voice message going out (the
+    // sender's own voice key hands the air to its microphone). A copy of an
+    // earlier command, answered above, is no new press. A release is no
+    // press: the sender's own unkey reaches the keyer through MOX.
+    if (m_pressObserver && command.on
+        && (command.verb == Verb::Key || command.verb == Verb::Tune || command.verb == Verb::TwoTone
+            || command.verb == Verb::TunerTune)) {
+        m_pressObserver(command.deviceId, command.session, command.verb == Verb::Key);
     }
     for (auto* scope = m_generatedReplies; scope != nullptr; scope = scope->previous) {
         const Command& earlier = scope->command;

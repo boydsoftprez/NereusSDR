@@ -23,6 +23,10 @@
 //                 keeps each setSettings change; `version` is the Core's
 //                 recordingsVersion. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
+//                 keyer's calls are recorded (sliceId carries the message
+//                 number). AI-assisted implementation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include <QHash>
@@ -188,6 +192,26 @@ public:
         settingsSent.append(changed);
     }
     bool coreIsOnThisComputer() const override { return coreHere; }
+    void sendVoice(int n) override { calls.append({QStringLiteral("sendVoice"), n}); }
+    void stopVoice() override { calls.append({QStringLiteral("stopVoice")}); }
+    void importVoice(int n, const QString& wavPath, const QString& name = QString()) override
+    {
+        calls.append({QStringLiteral("importVoice"), n, wavPath + QLatin1Char('=') + name});
+    }
+    void exportVoice(int n, const QString& toPath) override
+    {
+        calls.append({QStringLiteral("exportVoice"), n, toPath});
+    }
+    void renameVoice(int n, const QString& name) override
+    {
+        calls.append({QStringLiteral("renameVoice"), n, name});
+    }
+    void clearVoice(int n) override { calls.append({QStringLiteral("clearVoice"), n}); }
+    void setVoiceRepeat(bool on, int delaySec) override
+    {
+        calls.append({QStringLiteral("setVoiceRepeat"), on ? 1 : 0, QString::number(delaySec)});
+    }
+    void listenVoice(int n) override { calls.append({QStringLiteral("listenVoice"), n}); }
 
 private:
     State m_state = State::Ready;

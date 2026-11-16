@@ -710,6 +710,9 @@ private:
     void handleRecordings(const NereusSDR::SessionMessage& invoke);
     /// The requester as a recording names it: "" for the Core's own window.
     QString recordingsDeviceName() const;
+    /// Recording plan Task 11: every voiceKeyer.* verb (recordingsVersion 3).
+    /// voiceKeyer.send keys the radio as the requester.
+    void handleVoiceKeyer(const NereusSDR::SessionMessage& invoke);
     void handleRadeResetVocoder(const NereusSDR::SessionMessage& invoke);
     // R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     // txEq.resetCurve, through TxEqCurveAccess.

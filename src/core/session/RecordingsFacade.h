@@ -6,13 +6,13 @@
 // src/core/session/RecordingsFacade.h  (NereusSDR)
 // =================================================================
 //
-// The mirrored `recordings` object (recordingsVersion 2): the Core's
+// The mirrored `recordings` object (recordingsVersion 3): the Core's
 // recordings as one document, so every device shows every slice's Record
 // state, the last recording kept, the index and the recording settings.
 // Design: docs/architecture/2026-11-15-recording-voice-keyer-dsr-design.md,
 // section 6.9.
 //
-//   json      { "version": 2,
+//   json      { "version": 3,
 //               "slices":   [ { "slice", "state" (idle, armed, recording),
 //                               "startUtc", "startedBy", "elapsedMs",
 //                               "myVoice" } ],
@@ -27,7 +27,15 @@
 //                             "total", "sd", "own" } ],
 //                             "onAirUseTxEq", "onAirUseCompressor",
 //                             "onAirUseLeveler", "onAirUseCfc",
-//                             "onAirUsePhaseRotator" } }
+//                             "onAirUsePhaseRotator" },
+//               "voiceKeyer": { "slots": [ { "n" (1 to 8), "name",
+//                               "lengthMs", "empty" } x8 ], "repeat",
+//                               "repeatDelaySec", "sending": { "n",
+//                               "positionMs", "lengthMs", "waitingMs",
+//                               "by" } or null } }
+//             `sending` is the message going out, or (`waitingMs` above 0)
+//             the wait before its next repeat; it is rebuilt every
+//             kElapsedRefreshMs while it lasts.
 //             `kept.seq` moves by one for each recording kept; 0 means none
 //             yet. `index.revision` moves by one each time the list of
 //             recordings changes (kept, renamed, deleted). `elapsedMs` is the
@@ -48,6 +56,9 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: version 2, a
 //                 recording on the air, and the five on-air switches in the
 //                 settings. AI-assisted implementation via Anthropic Claude
+//                 Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: version 3, the
+//                 voice keyer. AI-assisted implementation via Anthropic Claude
 //                 Code.
 // =================================================================
 
@@ -79,8 +90,9 @@ class NEREUS_CORE_EXPORT RecordingsFacade final : public QObject {
 public:
     /// The recordingsVersion this Core offers. 2: a recording goes on the
     /// air (recordings.playback onAir) and the settings carry the five
-    /// on-air switches.
-    static constexpr int kVersion = 2;
+    /// on-air switches. 3: the voice keyer (`voiceKeyer` and the
+    /// voiceKeyer.* verbs).
+    static constexpr int kVersion = 3;
     /// How often the running times are rebuilt while a slice records.
     static constexpr int kElapsedRefreshMs = 1000;
     /// recordings.list sends at most this many entries at once.

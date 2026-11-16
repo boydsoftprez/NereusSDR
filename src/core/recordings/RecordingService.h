@@ -13,6 +13,9 @@
 //             plays sends its playback in place of its microphone, through
 //             the on-air source (spec 3, 6.1, 6.3, V5, V6, A6). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the voice keyer (spec 6.6), and a file
+//             played by its path (the voice keyer's Listen). AI tooling:
+//             Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -22,6 +25,7 @@
 #include "core/recordings/QuietRule.h"
 #include "core/recordings/RecordingPlayer.h"
 #include "core/recordings/RecordingSettings.h"
+#include "core/recordings/VoiceKeyer.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -131,6 +135,9 @@ public:
     // same recording. A whole-pan recording, a recording no longer kept or
     // one that cannot be opened is refused (playbackRefused).
     void play(const ListenerId& who, const QString& recordingId);
+    // A file that is not in the store (a voice keyer message, Listen), the
+    // same way: `playbackId` is what playback(who) names it.
+    void playFile(const ListenerId& who, const QString& playbackId, const QString& path, qint64 lengthMs);
     // Ends the listener's playback; playback(who) is empty after.
     void stopPlayback(const ListenerId& who);
     // A playing listener goes on from there; a stopped one starts there.
@@ -175,6 +182,10 @@ public:
     // The microphone profiles whose switch re-sends the transmit
     // processing (null without a radio).
     MicProfileManager* micProfiles() const;
+
+    // ---- The voice keyer (spec 6.6): M1 to M8, sent through the on-air
+    // source. The only part of recordings that keys the radio.
+    VoiceKeyer* voiceKeyer() const { return m_voiceKeyer.get(); }
 
     // ---- Test seams.
     using Clock = std::function<qint64()>;
@@ -331,6 +342,9 @@ private:
     bool m_quietOnAirEnd = false;
     // Last, so it goes first: its end() still reaches the channels above.
     std::unique_ptr<OnAirSource> m_onAir;
+    // After the on-air source, so it goes before it: its end unkeys and
+    // ends its message there.
+    std::unique_ptr<VoiceKeyer> m_voiceKeyer;
 };
 
 }  // namespace NereusSDR

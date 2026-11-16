@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs go and come
+//               back as the recordings.* verbs do. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 5: recordings declared, the `recordings` mirror,
 //               sendRecordingsCommand and the recordings.* answers to
 //               RemoteRecordingsAccess; coreIsOnThisComputer split out of
@@ -6102,7 +6105,7 @@ StationClient::CommandOutcome StationClient::sendRecordingsCommand(const QString
         return IStationLink::sendRecordingsCommand(verb, arguments);
     }
     const QString notSent = QStringLiteral("The recordings request could not be sent.");
-    if (!verb.startsWith(QLatin1String("recordings."))) {
+    if (!verb.startsWith(QLatin1String("recordings.")) && !verb.startsWith(QLatin1String("voiceKeyer."))) {
         return {false, notSent};
     }
     QList<MirrorUpdate> wire;
@@ -8828,7 +8831,7 @@ void StationClient::handleCommandResult(const SessionMessage& message)
     // Recording plan Task 5: the recordings.* answers, and the Core's
     // recordings.playback (this window's own playback, sent on its own), go
     // to the window's RemoteRecordingsAccess, none to the generic routes.
-    if (message.commandVerb.startsWith("recordings.")) {
+    if (message.commandVerb.startsWith("recordings.") || message.commandVerb.startsWith("voiceKeyer.")) {
         m_pendingCommands.remove(message.commandId);
         if (auto* recordings = qobject_cast<RemoteRecordingsAccess*>(m_radioModel->recordings())) {
             recordings->takeResult(message.commandVerb, message.accepted, message.reason,

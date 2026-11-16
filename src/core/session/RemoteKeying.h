@@ -98,6 +98,9 @@
 //               end but the device's own stop (m_endingOwnAutotune), with
 //               a reason always. J.J. Boyd (KG4VCF), AI-assisted via
 //               Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11: setKeyPressObserver, so the voice
+//               keyer hears each device's own press. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 // =================================================================
 #pragma once
 
@@ -181,6 +184,13 @@ public:
     /// may not transmit is told that first. Unset, nothing is refused by it.
     using SessionGate = std::function<TxRefusal(const Command& command)>;
     void setSessionGate(SessionGate gate) { m_sessionGate = std::move(gate); }
+
+    /// Recording plan Task 11: told of every press before it is handled:
+    /// tx.key on (`voiceKey` true), and TUNE, two-tone or a tuner tune turned
+    /// on. The voice keyer stops a message for it. Unset, nothing is told.
+    using KeyPressObserver =
+        std::function<void(const QByteArray& deviceId, const QString& session, bool voiceKey)>;
+    void setKeyPressObserver(KeyPressObserver observer) { m_pressObserver = std::move(observer); }
 
     using Reply = std::function<void(const Result& result)>;
 
@@ -307,6 +317,7 @@ private:
     quint64 m_waitGeneration{0};
     MicUplink m_mic;
     SessionGate m_sessionGate;
+    KeyPressObserver m_pressObserver;
     /// Tune-ended lane: set while the device's own tx.tune or tx.tunerTune
     /// off ends its autotune, which is not told (its answer says it).
     QByteArray m_endingOwnAutotune;

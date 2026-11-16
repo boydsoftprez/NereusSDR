@@ -358,7 +358,7 @@ public:
 
     /// Recording plan Task 5 (recordingsVersion 1): the Core keeps this
     /// window's recordings. 0 when this link did not negotiate it. `verb` is
-    /// one of the recordings.* verbs and `arguments` holds its arguments by
+    /// one of the recordings.* verbs (or, Task 11, the voiceKeyer.* verbs) and `arguments` holds its arguments by
     /// name; an `ids` array goes as the JSON text the verb takes. The answers
     /// come back to the window's RemoteRecordingsAccess. The default refuses.
     virtual int recordingsVersion() const { return 0; }

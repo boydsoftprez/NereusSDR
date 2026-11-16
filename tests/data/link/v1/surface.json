@@ -602,7 +602,7 @@
         {
             "kind": "i64",
             "name": "recordingsVersion",
-            "value": 2
+            "value": 3
         },
         {
             "kind": "i64",
@@ -1788,6 +1788,151 @@
             "capabilityVersion": 1,
             "minMinor": 11,
             "verb": "recordings.setSettings"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "n",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.send"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.stop"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "n",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "name",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "size",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.beginImport"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "utf8",
+                    "name": "data",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.chunk"
+        },
+        {
+            "arguments": [
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.finishImport"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "n",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "offset",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.export"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "n",
+                    "optional": false
+                },
+                {
+                    "kind": "utf8",
+                    "name": "name",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.rename"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "n",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.clear"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "bool",
+                    "name": "on",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "delaySec",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.setRepeat"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "n",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 3,
+            "minMinor": 11,
+            "verb": "voiceKeyer.listen"
         },
         {
             "arguments": [

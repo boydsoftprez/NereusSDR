@@ -10,6 +10,9 @@
 //                 carries the reader, its slice and kind; the Core's answer
 //                 names the reader, so each reader gets its own page.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
+//                 keyer's verbs, a chunked import and export. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -20,6 +23,7 @@
 #include <algorithm>
 
 #include "core/LogCategories.h"
+#include "core/recordings/VoiceKeyer.h"
 #include "core/session/IStationLink.h"
 #include "core/session/RecordingsFacade.h"
 #include "models/RadioModel.h"
@@ -39,6 +43,7 @@ QVariant valueOf(const QList<MirrorUpdate>& values, const char* name)
 }
 
 const QString kCopyWentWrong = QStringLiteral("The copy from the Core went wrong. Try again.");
+const QString kLinkLost = QStringLiteral("The connection to the Core was lost.");
 
 }  // namespace
 
@@ -56,6 +61,11 @@ RemoteRecordingsAccess::~RemoteRecordingsAccess()
     for (const std::shared_ptr<Download>& download : m_downloads) {
         if (download->file) {
             download->file->cancelWriting();
+        }
+    }
+    for (const std::shared_ptr<VoiceExport>& voiceExport : m_voiceExports) {
+        if (voiceExport->file) {
+            voiceExport->file->cancelWriting();
         }
     }
 }
@@ -108,6 +118,237 @@ bool RemoteRecordingsAccess::send(const QString& verb, const QJsonObject& argume
         emit refused(outcome.reason);
     }
     return outcome.sent;
+}
+
+bool RemoteRecordingsAccess::sendVoiceVerb(const QString& verb, const QJsonObject& arguments)
+{
+    if (state() == State::Ready && coreVersion() < kVoiceKeyerVersion) {
+        emit refused(needsNewerCoreReason());
+        return false;
+    }
+    return send(verb, arguments);
+}
+
+bool RemoteRecordingsAccess::sendLink(const QString& verb, const QJsonObject& arguments)
+{
+    IStationLink* const link = m_model ? m_model->stationLink() : nullptr;
+    return link != nullptr && link->sendRecordingsCommand(verb, arguments).sent;
+}
+
+void RemoteRecordingsAccess::sendVoice(int n)
+{
+    sendVoiceVerb(QStringLiteral("voiceKeyer.send"), QJsonObject{{QStringLiteral("n"), n}});
+}
+
+void RemoteRecordingsAccess::stopVoice()
+{
+    sendVoiceVerb(QStringLiteral("voiceKeyer.stop"), QJsonObject{});
+}
+
+void RemoteRecordingsAccess::renameVoice(int n, const QString& name)
+{
+    sendVoiceVerb(QStringLiteral("voiceKeyer.rename"),
+                  QJsonObject{{QStringLiteral("n"), n}, {QStringLiteral("name"), name}});
+}
+
+void RemoteRecordingsAccess::clearVoice(int n)
+{
+    sendVoiceVerb(QStringLiteral("voiceKeyer.clear"), QJsonObject{{QStringLiteral("n"), n}});
+}
+
+void RemoteRecordingsAccess::setVoiceRepeat(bool on, int delaySec)
+{
+    sendVoiceVerb(QStringLiteral("voiceKeyer.setRepeat"),
+                  QJsonObject{{QStringLiteral("on"), on}, {QStringLiteral("delaySec"), delaySec}});
+}
+
+void RemoteRecordingsAccess::listenVoice(int n)
+{
+    sendVoiceVerb(QStringLiteral("voiceKeyer.listen"), QJsonObject{{QStringLiteral("n"), n}});
+}
+
+void RemoteRecordingsAccess::importVoice(int n, const QString& wavPath, const QString& name)
+{
+    if (state() != State::Ready || coreVersion() < kVoiceKeyerVersion) {
+        emit voiceImportFinished(n, false, unavailableReason(kVoiceKeyerVersion));
+        return;
+    }
+    if (m_voiceImport.has_value()) {
+        emit voiceImportFinished(n, false, QStringLiteral("Another voice message is being loaded."));
+        return;
+    }
+    VoiceImport voiceImport;
+    voiceImport.n = n;
+    voiceImport.file = std::make_unique<QFile>(wavPath);
+    if (!voiceImport.file->open(QIODevice::ReadOnly)) {
+        qCWarning(lcRecordings) << "cannot read" << wavPath << "for a voice message:"
+                                << voiceImport.file->errorString();
+        emit voiceImportFinished(n, false, QString::fromLatin1(VoiceKeyer::kUnreadableReason));
+        return;
+    }
+    voiceImport.size = voiceImport.file->size();
+    if (voiceImport.size > VoiceKeyer::kImportMaxBytes) {
+        emit voiceImportFinished(n, false, QString::fromLatin1(VoiceKeyer::kTooLargeReason));
+        return;
+    }
+    m_voiceImport = std::move(voiceImport);
+    if (!sendLink(QStringLiteral("voiceKeyer.beginImport"),
+                  QJsonObject{{QStringLiteral("n"), n},
+                              {QStringLiteral("name"), name},
+                              {QStringLiteral("size"), m_voiceImport->size}})) {
+        finishVoiceImport(false, kLinkLost);
+    }
+}
+
+void RemoteRecordingsAccess::sendNextImportPiece()
+{
+    VoiceImport& voiceImport = *m_voiceImport;
+    if (voiceImport.sent >= voiceImport.size) {
+        voiceImport.finishing = true;
+        if (!sendLink(QStringLiteral("voiceKeyer.finishImport"), QJsonObject{})) {
+            finishVoiceImport(false, kLinkLost);
+        }
+        return;
+    }
+    const QByteArray chunk = voiceImport.file->read(VoiceKeyer::kChunkBytes);
+    if (chunk.isEmpty()) {
+        qCWarning(lcRecordings) << "short read of" << voiceImport.file->fileName() << "at"
+                                << voiceImport.sent;
+        // The Core drops the part it has when the next import begins.
+        finishVoiceImport(false, QString::fromLatin1(VoiceKeyer::kUnreadableReason));
+        return;
+    }
+    voiceImport.sent += chunk.size();
+    if (!sendLink(QStringLiteral("voiceKeyer.chunk"),
+                  QJsonObject{{QStringLiteral("data"), QString::fromLatin1(chunk.toBase64())}})) {
+        finishVoiceImport(false, kLinkLost);
+    }
+}
+
+void RemoteRecordingsAccess::takeVoiceImport(const QByteArray& verb, bool accepted, const QString& reason)
+{
+    if (!m_voiceImport.has_value()) {
+        return;
+    }
+    if (!accepted) {
+        finishVoiceImport(false, reason);
+        return;
+    }
+    if (verb == "voiceKeyer.finishImport") {
+        finishVoiceImport(true, QString());
+        return;
+    }
+    sendNextImportPiece();
+}
+
+void RemoteRecordingsAccess::finishVoiceImport(bool ok, const QString& error)
+{
+    if (!m_voiceImport.has_value()) {
+        return;
+    }
+    const int n = m_voiceImport->n;
+    m_voiceImport.reset();
+    emit voiceImportFinished(n, ok, error);
+}
+
+void RemoteRecordingsAccess::exportVoice(int n, const QString& toPath)
+{
+    if (state() != State::Ready || coreVersion() < kVoiceKeyerVersion) {
+        emit voiceExportFinished(n, false, unavailableReason(kVoiceKeyerVersion));
+        return;
+    }
+    const bool busy = std::any_of(m_voiceExports.cbegin(), m_voiceExports.cend(),
+                                  [n](const std::shared_ptr<VoiceExport>& e) { return e->n == n; });
+    if (busy) {
+        emit voiceExportFinished(n, false, QStringLiteral("That voice message is already being saved."));
+        return;
+    }
+    auto voiceExport = std::make_shared<VoiceExport>();
+    voiceExport->n = n;
+    voiceExport->file = std::make_unique<QSaveFile>(toPath);
+    if (!voiceExport->file->open(QIODevice::WriteOnly)) {
+        qCWarning(lcRecordings) << "cannot save a voice message to" << toPath
+                                << voiceExport->file->errorString();
+        emit voiceExportFinished(n, false, QStringLiteral("The copy cannot be saved there."));
+        return;
+    }
+    m_voiceExports.append(voiceExport);
+    if (!requestVoiceChunk(*voiceExport)) {
+        finishVoiceExport(n, false, kLinkLost);
+    }
+}
+
+bool RemoteRecordingsAccess::requestVoiceChunk(VoiceExport& voiceExport)
+{
+    if (!sendLink(QStringLiteral("voiceKeyer.export"),
+                  QJsonObject{{QStringLiteral("n"), voiceExport.n},
+                              {QStringLiteral("offset"), voiceExport.done}})) {
+        return false;
+    }
+    m_voiceExportsInFlight.append(voiceExport.n);
+    return true;
+}
+
+void RemoteRecordingsAccess::finishVoiceExport(int n, bool ok, const QString& error)
+{
+    const auto it = std::find_if(m_voiceExports.begin(), m_voiceExports.end(),
+                                 [n](const std::shared_ptr<VoiceExport>& e) { return e->n == n; });
+    if (it == m_voiceExports.end()) {
+        return;
+    }
+    const std::shared_ptr<VoiceExport> voiceExport = *it;
+    m_voiceExports.erase(it);
+    bool done = ok;
+    QString why = error;
+    if (done && !voiceExport->file->commit()) {
+        qCWarning(lcRecordings) << "cannot finish saving" << voiceExport->file->fileName()
+                                << voiceExport->file->errorString();
+        done = false;
+        why = QStringLiteral("The copy cannot be saved there.");
+    } else if (!done) {
+        voiceExport->file->cancelWriting();
+    }
+    emit voiceExportFinished(n, done, why);
+}
+
+void RemoteRecordingsAccess::takeVoiceExport(bool accepted, const QString& reason,
+                                             const QList<MirrorUpdate>& values)
+{
+    const int asked = m_voiceExportsInFlight.isEmpty() ? 0 : m_voiceExportsInFlight.takeFirst();
+    const int n = accepted ? valueOf(values, "n").toInt() : asked;
+    const auto it = std::find_if(m_voiceExports.begin(), m_voiceExports.end(),
+                                 [n](const std::shared_ptr<VoiceExport>& e) { return e->n == n; });
+    if (it == m_voiceExports.end()) {
+        return;
+    }
+    VoiceExport& voiceExport = **it;
+    if (!accepted) {
+        finishVoiceExport(n, false, reason);
+        return;
+    }
+    const qint64 offset = valueOf(values, "offset").toLongLong();
+    const qint64 size = valueOf(values, "size").toLongLong();
+    const QByteArray::FromBase64Result chunk = QByteArray::fromBase64Encoding(
+        valueOf(values, "data").toString().toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
+    if (!chunk || offset != voiceExport.done || size < 0 || offset + chunk.decoded.size() > size
+        || (chunk.decoded.isEmpty() && offset < size)) {
+        qCWarning(lcRecordings) << "a chunk of voice message" << n << "did not fit: offset" << offset
+                                << "size" << size << "expected" << voiceExport.done;
+        finishVoiceExport(n, false, kCopyWentWrong);
+        return;
+    }
+    if (voiceExport.file->write(chunk.decoded) != chunk.decoded.size()) {
+        qCWarning(lcRecordings) << "cannot save a voice message to" << voiceExport.file->fileName()
+                                << voiceExport.file->errorString();
+        finishVoiceExport(n, false, QStringLiteral("The copy cannot be saved there."));
+        return;
+    }
+    voiceExport.done += chunk.decoded.size();
+    if (voiceExport.done >= size) {
+        finishVoiceExport(n, true, QString());
+    } else if (!requestVoiceChunk(voiceExport)) {
+        finishVoiceExport(n, false, kLinkLost);
+    }
 }
 
 void RemoteRecordingsAccess::start(int sliceId)
@@ -279,6 +520,15 @@ void RemoteRecordingsAccess::takeResult(const QByteArray& verb, bool accepted, c
         takeExport(accepted, reason, values);
         return;
     }
+    if (verb == "voiceKeyer.export") {
+        takeVoiceExport(accepted, reason, values);
+        return;
+    }
+    if (verb == "voiceKeyer.beginImport" || verb == "voiceKeyer.chunk"
+        || verb == "voiceKeyer.finishImport") {
+        takeVoiceImport(verb, accepted, reason);
+        return;
+    }
     if (verb == "recordings.playback") {
         const QString id = valueOf(values, "id").toString();
         if (id.isEmpty()) {
@@ -351,6 +601,11 @@ void RemoteRecordingsAccess::refreshState()
             finishDownload(m_downloads.first()->id, false,
                            QStringLiteral("The connection to the Core was lost."));
         }
+        m_voiceExportsInFlight.clear();
+        while (!m_voiceExports.isEmpty()) {
+            finishVoiceExport(m_voiceExports.first()->n, false, kLinkLost);
+        }
+        finishVoiceImport(false, kLinkLost);
         if (m_playback.has_value()) {
             m_playback.reset();
             emit playbackChanged();

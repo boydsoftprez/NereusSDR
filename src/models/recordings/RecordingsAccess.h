@@ -24,6 +24,11 @@
 // answer comes back as listChanged(token) and stays in listed(token), so
 // readers never see each other's pages.
 //
+// The voice keyer (recordingsVersion 3) is the document's `voiceKeyer`.
+// sendVoice() is the one call that keys the radio, as this window's device;
+// the rest never key. An import or export ends with voiceImportFinished() or
+// voiceExportFinished(), whose error is also its only report.
+//
 // =================================================================
 // Modification history (NereusSDR):
 //   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
@@ -32,8 +37,12 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: a token per list
 //                 reader and the list's slice and kind filters. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
+//                 keyer's methods (recordingsVersion 3). AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
@@ -101,6 +110,40 @@ public:
     /// The Core runs on this computer (Show in Finder works).
     virtual bool coreIsOnThisComputer() const = 0;
 
+    // ---- The voice keyer (recordingsVersion 3), M1 to M8.
+    static constexpr int kVoiceKeyerSlots = 8;
+    static constexpr int kVoiceClipMaxMs = 120000;
+    static constexpr int kVoiceKeyerVersion = 3;
+    /// Keys the radio and sends Mn; it unkeys at the end (or repeats).
+    virtual void sendVoice(int n) = 0;
+    /// Stops what goes out, or the wait to repeat it; the radio unkeys.
+    virtual void stopVoice() = 0;
+    /// Puts the sound file at `wavPath` (WAV or MP3, any rate) into Mn,
+    /// converted on the Core to 48 kHz mono. An empty `name` keeps Mn's.
+    virtual void importVoice(int n, const QString& wavPath, const QString& name = QString()) = 0;
+    /// Saves Mn as a WAV file at `toPath` on this computer.
+    virtual void exportVoice(int n, const QString& toPath) = 0;
+    virtual void renameVoice(int n, const QString& name) = 0;
+    virtual void clearVoice(int n) = 0;
+    virtual void setVoiceRepeat(bool on, int delaySec) = 0;
+    /// Plays Mn on this window's own speaker only.
+    virtual void listenVoice(int n) = 0;
+    /// The first message with nothing in it, 1 to 8, or 0 when all eight
+    /// hold one (from the document).
+    int firstEmptyVoiceSlot() const
+    {
+        const QJsonArray slotList = document().value(QStringLiteral("voiceKeyer")).toObject()
+                                        .value(QStringLiteral("slots")).toArray();
+        for (const QJsonValue& value : slotList) {
+            const QJsonObject slot = value.toObject();
+            const int n = slot.value(QStringLiteral("n")).toInt(0);
+            if (n >= 1 && n <= kVoiceKeyerSlots && slot.value(QStringLiteral("empty")).toBool(false)) {
+                return n;
+            }
+        }
+        return 0;
+    }
+
     static QString needsNewerCoreReason() { return QStringLiteral("This Core needs an update for recordings."); }
     static QString notConnectedReason() { return QStringLiteral("Connect to a radio to use recordings."); }
 
@@ -113,6 +156,8 @@ signals:
     void downloadProgress(const QString& id, qint64 done, qint64 total);
     void downloadFinished(const QString& id, bool ok, const QString& error);
     void refused(const QString& reason);
+    void voiceImportFinished(int n, bool ok, const QString& error);
+    void voiceExportFinished(int n, bool ok, const QString& error);
 
 private:
     int m_lastListReader = 0;

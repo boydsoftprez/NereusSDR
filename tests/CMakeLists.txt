@@ -12079,6 +12079,13 @@ nereus_add_test(tst_recording_player CORE_ONLY)
 nereus_add_test(tst_recording_on_air CORE_ONLY)
 target_compile_definitions(tst_recording_on_air PRIVATE NEREUS_BUILD_TESTS)
 
+# Recording plan Task 11: the voice keyer on the Core. Only a send keys;
+# every way a message stops unkeys; another station holding transmit
+# refuses a send; 48 kHz mono messages, Repeat and its wait
+# (src/core/recordings/VoiceKeyer.cpp).
+nereus_add_test(tst_voice_keyer CORE_ONLY)
+target_compile_definitions(tst_voice_keyer PRIVATE NEREUS_BUILD_TESTS)
+
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)
 # --------------------------------------------------------------------------

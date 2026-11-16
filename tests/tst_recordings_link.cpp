@@ -24,6 +24,11 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 10: version 2 and
 //                 the five on-air switches. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
+//                 keyer's verbs (recordingsVersion 3); a device's send keys
+//                 as it and its stop unkeys; another device's send is
+//                 refused while the first holds transmit. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -34,9 +39,12 @@
 #include <QTemporaryDir>
 #include <QTimeZone>
 
+#include <vector>
+
 #include "core/recordings/AudioFileWriter.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingStore.h"
+#include "core/recordings/VoiceKeyer.h"
 #include "core/session/RecordingsFacade.h"
 #include "core/session/SessionCommandDispatcher.h"
 #include "core/session/StationCapabilities.h"
@@ -248,6 +256,85 @@ private slots:
         QCOMPARE(found, expected);
     }
 
+    void theVoiceKeyerVerbsAreDeclaredWithVersionThree()
+    {
+        const QSet<QByteArray> expected{
+            "voiceKeyer.send", "voiceKeyer.stop", "voiceKeyer.beginImport", "voiceKeyer.chunk",
+            "voiceKeyer.finishImport", "voiceKeyer.export", "voiceKeyer.rename", "voiceKeyer.clear",
+            "voiceKeyer.setRepeat", "voiceKeyer.listen"};
+        QSet<QByteArray> found;
+        for (const CommandVerbSpec& spec : SessionCommandDispatcher::verbSpecs()) {
+            if (spec.verb.startsWith("voiceKeyer.")) {
+                found.insert(spec.verb);
+                QCOMPARE(spec.capability, QByteArrayLiteral("recordingsVersion"));
+                QCOMPARE(spec.capabilityVersion, 3);
+                QCOMPARE(int(spec.minMinor), int(kRadioIdentitySessionProtocolMinor));
+            }
+        }
+        QCOMPARE(found, expected);
+        QCOMPARE(RecordingsFacade::kVersion, 3);
+    }
+
+    // A device's send keys the radio as that device and its stop unkeys;
+    // while it holds transmit another device's send is refused with the
+    // holder's words and nothing keys.
+    void aDevicesSendKeysAsItAndItsStopUnkeys()
+    {
+        Core core;
+        useTestDisk(core);
+        allowTransmit(core);
+        VoiceKeyer* vk = core.model->recordingService()->voiceKeyer();
+        QVERIFY(vk != nullptr);
+        vk->setFolder(m_dir.filePath(QStringLiteral("voice%1").arg(++m_disks)));
+        {
+            const QString wav = m_dir.filePath(QStringLiteral("voice-in-%1.wav").arg(m_disks));
+            QString error;
+            std::unique_ptr<AudioFileWriter> w =
+                AudioFileWriter::open(wav, AudioFileSpec{AudioFileFormat::Wav, 48000, 1, 0}, &error);
+            QVERIFY(w);
+            const std::vector<float> samples(48000, 0.25f);
+            QVERIFY(w->write(samples.data(), 48000));
+            QVERIFY(w->finish());
+            QString refusal;
+            QVERIFY(vk->importFile(1, wav, QStringLiteral("CQ"), &refusal));
+        }
+        QHash<QByteArray, int> features = kRecordings;
+        for (auto it = kTransmitter.cbegin(); it != kTransmitter.cend(); ++it) {
+            features.insert(it.key(), it.value());
+        }
+        Device phone;
+        Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        core.pair(tablet);
+        LoopbackTransport* first = core.signIn(phone, features);
+        LoopbackTransport* second = core.signIn(tablet, features);
+        QVERIFY(admitted(first));
+        QVERIFY(admitted(second));
+        MoxController* mox = core.model->moxController();
+
+        QCOMPARE(reasonOf(core.invoke(first, "voiceKeyer.send", {int64("n", 3)})),
+                 QStringLiteral("M3 is empty."));
+        QVERIFY(!mox->isMox());
+
+        QCOMPARE(refusalOf(core.invoke(first, "voiceKeyer.send", {int64("n", 1)})), QString());
+        QVERIFY(mox->isMox());
+        QCOMPARE(mox->currentKeyer().deviceId, phone.key.fingerprint());
+        QTRY_VERIFY(!mirrored(second).value(QStringLiteral("voiceKeyer")).toObject()
+                         .value(QStringLiteral("sending")).isNull());
+
+        const QString held = reasonOf(core.invoke(second, "voiceKeyer.send", {int64("n", 1)}));
+        QVERIFY(!held.isEmpty());
+        QCOMPARE(held, core.server->transmitHolder()->keyRefusalFor(tablet.key.fingerprint()).text);
+        QCOMPARE(mox->currentKeyer().deviceId, phone.key.fingerprint());
+
+        QCOMPARE(refusalOf(core.invoke(first, "voiceKeyer.stop", {})), QString());
+        QVERIFY(!mox->isMox());
+        QTRY_VERIFY(mirrored(second).value(QStringLiteral("voiceKeyer")).toObject()
+                        .value(QStringLiteral("sending")).isNull());
+        QCOMPARE(mirrored(second).value(QStringLiteral("voiceKeyer")).toObject()
+                     .value(QStringLiteral("slots")).toArray().size(), 8);
+    }
+
     void theCapabilityRoundTripsAfterTheBandStack()
     {
         StationCapabilities caps;
@@ -300,11 +387,11 @@ private slots:
         core.pair(phone);
         LoopbackTransport* app = core.signIn(phone, kRecordings);
         QVERIFY(admitted(app));
-        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>(2));
+        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>(3));
         const QJsonObject document = mirrored(app);
-        QCOMPARE(document.value(QStringLiteral("version")).toInt(), 2);
+        QCOMPARE(document.value(QStringLiteral("version")).toInt(), 3);
         QCOMPARE(stateIn(document, 0), QStringLiteral("idle"));
-        for (const char* key : {"slices", "kept", "index", "settings"}) {
+        for (const char* key : {"slices", "kept", "index", "settings", "voiceKeyer"}) {
             QVERIFY2(document.contains(QLatin1String(key)), key);
         }
         const QJsonObject index = document.value(QStringLiteral("index")).toObject();

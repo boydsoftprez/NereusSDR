@@ -9,6 +9,9 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: each list
 //                 reader's own answer, filtered by slice and kind.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
+//                 keyer, as the station. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -23,6 +26,7 @@
 #include "core/recordings/RecordingDisks.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingStore.h"
+#include "core/recordings/VoiceKeyer.h"
 #include "core/session/RecordingsFacade.h"
 #include "models/RadioModel.h"
 
@@ -31,6 +35,12 @@ namespace NereusSDR {
 namespace {
 
 const QString kLocal = QString::fromLatin1(RecordingService::kLocalListener);
+
+// This window keys the radio as the station's own operator.
+KeyerIdentity stationKeyer()
+{
+    return KeyerIdentity::station(PttMode::None);
+}
 
 }  // namespace
 
@@ -53,6 +63,14 @@ LocalRecordingsAccess::LocalRecordingsAccess(RadioModel* model)
                         emit refused(reason);
                     }
                 });
+        if (VoiceKeyer* voice = recordings->voiceKeyer()) {
+            connect(voice, &VoiceKeyer::sendRefused, this,
+                    [this](const QByteArray& deviceId, const QString& reason) {
+                        if (deviceId == stationKeyer().deviceId) {
+                            emit refused(reason);
+                        }
+                    });
+        }
     }
 }
 
@@ -309,6 +327,122 @@ void LocalRecordingsAccess::setSettings(const QJsonObject& changed)
     }
     recordings->setSettings(settings);
     m_model->recordingsFacade()->refresh();
+}
+
+VoiceKeyer* LocalRecordingsAccess::beginVoice()
+{
+    RecordingService* recordings = begin();
+    if (recordings == nullptr) {
+        return nullptr;
+    }
+    if (recordings->voiceKeyer() == nullptr) {
+        emit refused(needsNewerCoreReason());
+    }
+    return recordings->voiceKeyer();
+}
+
+void LocalRecordingsAccess::sendVoice(int n)
+{
+    VoiceKeyer* voice = beginVoice();
+    if (voice == nullptr) {
+        return;
+    }
+    QString refusal;
+    const VoiceKeyer::Requester who{stationKeyer(), QString::fromLatin1(VoiceKeyer::kStationName)};
+    if (!voice->send(n, who, &refusal)) {
+        emit refused(refusal);
+    }
+}
+
+void LocalRecordingsAccess::stopVoice()
+{
+    if (VoiceKeyer* voice = beginVoice()) {
+        voice->stop();
+    }
+}
+
+void LocalRecordingsAccess::importVoice(int n, const QString& wavPath, const QString& name)
+{
+    if (state() != State::Ready || service() == nullptr || service()->voiceKeyer() == nullptr) {
+        emit voiceImportFinished(n, false, unavailableReason(kVoiceKeyerVersion));
+        return;
+    }
+    ensurePublished();
+    QString refusal;
+    const bool ok = service()->voiceKeyer()->importFile(n, wavPath, name, &refusal);
+    emit voiceImportFinished(n, ok, ok ? QString() : refusal);
+}
+
+void LocalRecordingsAccess::exportVoice(int n, const QString& toPath)
+{
+    if (state() != State::Ready || service() == nullptr || service()->voiceKeyer() == nullptr) {
+        emit voiceExportFinished(n, false, unavailableReason(kVoiceKeyerVersion));
+        return;
+    }
+    ensurePublished();
+    VoiceKeyer* voice = service()->voiceKeyer();
+    // Mn is at most two minutes of 48 kHz 16-bit mono (about 11.5 MB).
+    QByteArray bytes;
+    qint64 size = 0;
+    qint64 offset = 0;
+    QString refusal;
+    do {
+        QByteArray chunk;
+        if (!voice->exportChunk(n, offset, &chunk, &size, &refusal)) {
+            emit voiceExportFinished(n, false, refusal);
+            return;
+        }
+        if (chunk.isEmpty() && offset < size) {
+            emit voiceExportFinished(n, false,
+                                     QStringLiteral("That voice message cannot be read on the Core."));
+            return;
+        }
+        bytes.append(chunk);
+        offset += chunk.size();
+    } while (offset < size);
+    QSaveFile to(toPath);
+    if (!to.open(QIODevice::WriteOnly) || to.write(bytes) != bytes.size() || !to.commit()) {
+        qCWarning(lcRecordings) << "cannot save a voice message to" << toPath << to.errorString();
+        emit voiceExportFinished(n, false, QStringLiteral("The copy cannot be saved there."));
+        return;
+    }
+    emit voiceExportFinished(n, true, QString());
+}
+
+void LocalRecordingsAccess::renameVoice(int n, const QString& name)
+{
+    VoiceKeyer* voice = beginVoice();
+    QString refusal;
+    if (voice != nullptr && !voice->rename(n, name, &refusal)) {
+        emit refused(refusal);
+    }
+}
+
+void LocalRecordingsAccess::clearVoice(int n)
+{
+    VoiceKeyer* voice = beginVoice();
+    QString refusal;
+    if (voice != nullptr && !voice->clear(n, &refusal)) {
+        emit refused(refusal);
+    }
+}
+
+void LocalRecordingsAccess::setVoiceRepeat(bool on, int delaySec)
+{
+    VoiceKeyer* voice = beginVoice();
+    QString refusal;
+    if (voice != nullptr && !voice->setRepeat(on, delaySec, &refusal)) {
+        emit refused(refusal);
+    }
+}
+
+void LocalRecordingsAccess::listenVoice(int n)
+{
+    VoiceKeyer* voice = beginVoice();
+    QString refusal;
+    if (voice != nullptr && !voice->listen(n, kLocal, &refusal)) {
+        emit refused(refusal);
+    }
 }
 
 void LocalRecordingsAccess::onFacadeChanged()

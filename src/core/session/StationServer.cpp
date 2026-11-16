@@ -1,6 +1,10 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs behind the
+//               recordings gate; the voice keyer asks the transmit holder and
+//               hears each device's own press (RemoteKeying).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 5: recordingsVersion 1, the recordings object, the
 //               recordings.* gate (peerGetsRecordings), each device's own
 //               recordings.playback, and the device names a recording keeps.
@@ -3303,6 +3307,21 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
         // Created after the holder's MOX follower above, so the holder
         // knows it is keyed before keyedBy is published.
         m_remoteKeying = std::make_unique<RemoteKeying>(m_radioModel, m_transmitHolder.get());
+        // Recording plan Task 11: the voice keyer keys only when the holder
+        // would admit its requester, and a device's own press stops a
+        // message going out.
+        if (RecordingService* recordings = m_radioModel->recordingService()) {
+            if (VoiceKeyer* voice = recordings->voiceKeyer()) {
+                voice->setTransmitHolder(m_transmitHolder.get());
+                const QPointer<VoiceKeyer> voicePtr(voice);
+                m_remoteKeying->setKeyPressObserver(
+                    [voicePtr](const QByteArray& deviceId, const QString& session, bool voiceKey) {
+                        if (voicePtr) {
+                            voicePtr->pressFrom(deviceId, session, voiceKey);
+                        }
+                    });
+            }
+        }
         // iPhone app plan Task 77 fix round 2: the Core never switches the
         // Power Genius while a take runs, a device's key waits for its
         // microphone or its two-tone settles; a switch it owes is retried
@@ -5091,6 +5110,12 @@ StationServer::~StationServer()
         && m_radioModel->role() == RadioModel::Role::Local) {
         m_radioModel->moxController()->setKeyingGate({});
         m_radioModel->moxController()->setOtherDeviceHolds({});
+        // Recording plan Task 11: the holder goes with this object.
+        if (RecordingService* recordings = m_radioModel->recordingService()) {
+            if (VoiceKeyer* voice = recordings->voiceKeyer()) {
+                voice->setTransmitHolder(nullptr);
+            }
+        }
         // Task 77 fix round 2: the amplifier's pending-key probe asks it too.
         m_radioModel->setAmpKeyPendingProbe({});
         m_radioModel->setOtherDeviceHoldsRefusal({});
@@ -7033,7 +7058,9 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
         // to a peer that declared bandStack on a Core that runs the stack.
         // Recording plan Task 5 (recordingsVersion 1): the recordings.* verbs,
         // to a peer that declared recordings on a Core that runs its radio.
-        if (message.commandVerb.startsWith("recordings.") && !peerGetsRecordings(transport)) {
+        // Recording plan Task 11: and the voiceKeyer.* verbs with them.
+        if ((message.commandVerb.startsWith("recordings.") || message.commandVerb.startsWith("voiceKeyer."))
+            && !peerGetsRecordings(transport)) {
             send(transport, SessionMessages::commandResult(
                 message.commandVerb, message.commandId, false,
                 !m_radioModel.isNull() && m_radioModel->role() == RadioModel::Role::Remote

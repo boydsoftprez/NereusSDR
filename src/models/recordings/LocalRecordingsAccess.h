@@ -43,6 +43,7 @@ namespace NereusSDR {
 
 class RadioModel;
 class RecordingService;
+class VoiceKeyer;
 
 class NEREUS_CORE_EXPORT LocalRecordingsAccess final : public RecordingsAccess {
     Q_OBJECT
@@ -71,6 +72,14 @@ public:
     void download(const QString& id, const QString& toPath) override;
     void setSettings(const QJsonObject& changed) override;
     bool coreIsOnThisComputer() const override { return true; }
+    void sendVoice(int n) override;
+    void stopVoice() override;
+    void importVoice(int n, const QString& wavPath, const QString& name = QString()) override;
+    void exportVoice(int n, const QString& toPath) override;
+    void renameVoice(int n, const QString& name) override;
+    void clearVoice(int n) override;
+    void setVoiceRepeat(bool on, int delaySec) override;
+    void listenVoice(int n) override;
 
 private:
     struct Copy {
@@ -84,6 +93,8 @@ private:
     RecordingService* service() const;
     /// The service when a call may run now; otherwise refused() and null.
     RecordingService* begin();
+    /// The voice keyer when a call may run now; otherwise refused() and null.
+    VoiceKeyer* beginVoice();
     void ensurePublished() const;
     void onFacadeChanged();
     void refreshState();

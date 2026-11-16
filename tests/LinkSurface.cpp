@@ -12,6 +12,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11: recordingsVersion 3, the voice keyer.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 10: recordingsVersion 2.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 5: and recordings, so recordingsVersion and the
@@ -894,7 +896,7 @@ QJsonArray captureCapabilities()
     // Band stack plan Task 4: sent to a peer that declared bandStack.
     caps.bandStackVersion = 1;
     // Recording plan Task 5: sent to a peer that declared recordings.
-    caps.recordingsVersion = 2;
+    caps.recordingsVersion = 3;
     // RADE status: sent to a peer that declared radeStatus.
     caps.radeStatusVersion = 1;
     // HL2 port part 2: sent to a peer that declared txInhibitReason.

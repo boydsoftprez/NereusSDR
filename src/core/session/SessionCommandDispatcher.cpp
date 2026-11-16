@@ -6,6 +6,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs
+//               (handleVoiceKeyer, recordingsVersion 3).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 10: recordings.setSettings takes the five
 //               on-air switches (recordingsVersion 2).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -970,6 +973,25 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
           optionalArg("onAirUseLeveler", kBool), optionalArg("onAirUseCfc", kBool),
           optionalArg("onAirUsePhaseRotator", kBool)},
          "recordingsVersion", 1, kRadioIdentitySessionProtocolMinor},
+        // Recording plan Task 11 (recordingsVersion 3): the voice keyer.
+        // `n` is a message, 1 to 8. send keys the radio as the requester;
+        // the import is beginImport, chunks of base64 `data` in order, then
+        // finishImport, one at a time per session (the dspAssets pattern).
+        {"voiceKeyer.send", {arg("n", kInt)}, "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.stop", {}, "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.beginImport", {arg("n", kInt), arg("name", kUtf8), arg("size", kInt)},
+         "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.chunk", {arg("data", kUtf8)}, "recordingsVersion", 3,
+         kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.finishImport", {}, "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.export", {arg("n", kInt), arg("offset", kInt)}, "recordingsVersion", 3,
+         kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.rename", {arg("n", kInt), arg("name", kUtf8)}, "recordingsVersion", 3,
+         kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.clear", {arg("n", kInt)}, "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.setRepeat", {arg("on", kBool), arg("delaySec", kInt)}, "recordingsVersion", 3,
+         kRadioIdentitySessionProtocolMinor},
+        {"voiceKeyer.listen", {arg("n", kInt)}, "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's RF-Kit RF2K-S and the station TCI server (R-R3-47,
@@ -1860,6 +1882,12 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
                || invoke.commandVerb == "recordings.export"
                || invoke.commandVerb == "recordings.setSettings") {
         handleRecordings(invoke);
+    } else if (invoke.commandVerb == "voiceKeyer.send" || invoke.commandVerb == "voiceKeyer.stop"
+               || invoke.commandVerb == "voiceKeyer.beginImport" || invoke.commandVerb == "voiceKeyer.chunk"
+               || invoke.commandVerb == "voiceKeyer.finishImport" || invoke.commandVerb == "voiceKeyer.export"
+               || invoke.commandVerb == "voiceKeyer.rename" || invoke.commandVerb == "voiceKeyer.clear"
+               || invoke.commandVerb == "voiceKeyer.setRepeat" || invoke.commandVerb == "voiceKeyer.listen") {
+        handleVoiceKeyer(invoke);
     } else if (invoke.commandVerb == "requestIoBoardProbe") {
         handleRequestIoBoardProbe(invoke);
     } else if (invoke.commandVerb == "setAlexRxAntenna") {
@@ -5296,6 +5324,129 @@ void SessionCommandDispatcher::handleRecordings(const SessionMessage& invoke)
     } else {
         refuse(notUnderstood);
     }
+}
+
+// Recording plan Task 11 (design sections 6.6, 6.9, section 7). Runs on the
+// Core's VoiceKeyer, on the main thread. Only voiceKeyer.send keys the
+// radio, as the requesting device (its session's key), and only after the
+// transmit holder's check; StationServer has applied the feature gate.
+void SessionCommandDispatcher::handleVoiceKeyer(const SessionMessage& invoke)
+{
+    const QByteArray& verb = invoke.commandVerb;
+    const auto refuse = [&](const QString& reason) {
+        emitResult(verb, invoke.commandId, false, reason, {});
+    };
+    const auto accept = [&](const QList<MirrorUpdate>& values = {}) {
+        emit commandResultReady(SessionMessages::commandResult(
+            verb, invoke.commandId, true, QString(), {QByteArrayLiteral("recordings")}, values));
+    };
+    const QString notUnderstood = QStringLiteral("The request for the voice keyer was not understood.");
+    if (!bandStackArgumentsFit(invoke.arguments, verb)) {
+        refuse(notUnderstood);
+        return;
+    }
+    RecordingService* const service = m_radioModel->recordingService();
+    VoiceKeyer* const keyer = service != nullptr ? service->voiceKeyer() : nullptr;
+    if (keyer == nullptr) {
+        refuse(QStringLiteral("This Core cannot keep voice messages."));
+        return;
+    }
+    const QJsonObject arguments = bandStackArgumentsAsJson(invoke.arguments);
+    const auto slotArgument = [&arguments]() {
+        const qint64 n = arguments.value(QStringLiteral("n")).toInteger(0);
+        return n >= 1 && n <= VoiceKeyer::kVoiceKeyerSlots ? static_cast<int>(n) : 0;
+    };
+    // One import at a time per session.
+    const QString importOwner = m_sessionOwner.isEmpty() ? QString::fromLatin1(m_requester) : m_sessionOwner;
+    QString refusal;
+    bool ok = true;
+
+    if (verb == "voiceKeyer.send") {
+        VoiceKeyer::Requester who;
+        if (m_requester.isEmpty() || m_requester == SliceOwnership::stationDevice()) {
+            who.keyer = KeyerIdentity::station(PttMode::None);
+            who.name = QString::fromLatin1(VoiceKeyer::kStationName);
+        } else {
+            who.keyer.deviceId = m_requester;
+            who.keyer.source = PttMode::None;
+            who.keyer.session = m_sessionOwner;
+            who.name = recordingsDeviceName();
+        }
+        ok = keyer->send(slotArgument(), who, &refusal);
+    } else if (verb == "voiceKeyer.stop") {
+        keyer->stop();
+    } else if (verb == "voiceKeyer.beginImport") {
+        ok = keyer->beginImport(importOwner, slotArgument(), arguments.value(QStringLiteral("name")).toString(),
+                                arguments.value(QStringLiteral("size")).toInteger(-1), &refusal);
+    } else if (verb == "voiceKeyer.chunk") {
+        const QByteArray::FromBase64Result data = QByteArray::fromBase64Encoding(
+            arguments.value(QStringLiteral("data")).toString().toLatin1(),
+            QByteArray::AbortOnBase64DecodingErrors);
+        if (!data) {
+            keyer->cancelImport(importOwner);
+            refuse(notUnderstood);
+            return;
+        }
+        ok = keyer->importChunk(importOwner, data.decoded, &refusal);
+    } else if (verb == "voiceKeyer.finishImport") {
+        ok = keyer->finishImport(importOwner, &refusal);
+    } else if (verb == "voiceKeyer.export") {
+        const int n = slotArgument();
+        const qint64 offset = arguments.value(QStringLiteral("offset")).toInteger(-1);
+        QByteArray chunk;
+        qint64 size = 0;
+        if (!keyer->exportChunk(n, offset, &chunk, &size, &refusal)) {
+            refuse(refusal);
+            return;
+        }
+        accept({MirrorUpdate{0, "n", MirrorWireKind::Int64, QVariant(qlonglong(n))},
+                MirrorUpdate{0, "offset", MirrorWireKind::Int64, QVariant(qlonglong(offset))},
+                MirrorUpdate{0, "size", MirrorWireKind::Int64, QVariant(qlonglong(size))},
+                MirrorUpdate{0, "data", MirrorWireKind::Utf8,
+                             QVariant(QString::fromLatin1(chunk.toBase64()))}});
+        return;
+    } else if (verb == "voiceKeyer.rename") {
+        ok = keyer->rename(slotArgument(), arguments.value(QStringLiteral("name")).toString(), &refusal);
+    } else if (verb == "voiceKeyer.clear") {
+        ok = keyer->clear(slotArgument(), &refusal);
+    } else if (verb == "voiceKeyer.setRepeat") {
+        const qint64 delay = arguments.value(QStringLiteral("delaySec")).toInteger(0);
+        ok = keyer->setRepeat(arguments.value(QStringLiteral("on")).toBool(),
+                              static_cast<int>(std::clamp<qint64>(delay, -1, VoiceKeyer::kRepeatDelayMaxSec + 1)),
+                              &refusal);
+    } else if (verb == "voiceKeyer.listen") {
+        const ListenerId listener = QString::fromLatin1(m_requester);
+        if (listener.isEmpty()) {
+            refuse(QStringLiteral("Voice messages cannot be played on this connection."));
+            return;
+        }
+        // A refusal the player gives at once answers this command, as for
+        // recordings.play.
+        QString playRefusal;
+        const QMetaObject::Connection capture = connect(
+            service, &RecordingService::playbackRefused, this,
+            [&playRefusal, &listener](const ListenerId& who, const QString& reason) {
+                if (who == listener) {
+                    playRefusal = reason;
+                }
+            });
+        m_recordingsPlayInFlight = listener;
+        ok = keyer->listen(slotArgument(), listener, &refusal);
+        m_recordingsPlayInFlight.clear();
+        disconnect(capture);
+        if (ok && !playRefusal.isEmpty()) {
+            ok = false;
+            refusal = playRefusal;
+        }
+    } else {
+        refuse(notUnderstood);
+        return;
+    }
+    if (!ok) {
+        refuse(refusal.isEmpty() ? notUnderstood : refusal);
+        return;
+    }
+    accept();
 }
 
 // R-R3-49 (parity Task 3): the RADE applet's Reset vocoder, on the Core's
