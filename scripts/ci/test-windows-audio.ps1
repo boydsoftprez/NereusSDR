@@ -2,6 +2,8 @@
 # 2026-10-31 J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 # 2026-11-15 libmp3lame-0.dll added for MP3 recordings. J.J. Boyd (KG4VCF),
 # AI-assisted via Anthropic Claude Code.
+# 2026-11-16 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code: find
+# the OpenSSL DLLs by pattern, since MSYS2 moved from OpenSSL 3 to 4.
 # Git Bash adds Git's UCRT C++ runtime ahead of Qt's MinGW runtime. Keep
 # test dependencies explicit instead of inheriting unrelated runner DLLs.
 [CmdletBinding()]
@@ -16,6 +18,18 @@ foreach ($variable in @('QT_ROOT_DIR', 'IQTA_TOOLS', 'OPENSSL_ROOT_DIR')) {
     if (![Environment]::GetEnvironmentVariable($variable)) { throw "Missing provider root: $variable" }
 }
 New-Item -ItemType Directory -Path $runtime | Out-Null
+# The OpenSSL DLL names carry its major version (libcrypto-3-x64.dll for 3.x,
+# libcrypto-4-x64.dll for 4.x), and MSYS2 moves to new majors on its own
+# schedule. Take the single one that is installed, whatever its major.
+function Find-OpenSslDll([string]$stem) {
+    $bin = Join-Path $env:OPENSSL_ROOT_DIR 'bin'
+    $found = @(Get-ChildItem -LiteralPath $bin -File -Filter "$stem-*-x64.dll" |
+        Where-Object { $_.Name -match "^$stem-\d+-x64\.dll$" })
+    if ($found.Count -ne 1) {
+        throw "Expected one $stem-<major>-x64.dll in ${bin}, found $($found.Count): $($found.Name -join ', ')"
+    }
+    return $found[0].Name
+}
 $groups = @(
     @{ root=(Join-Path $env:QT_ROOT_DIR 'bin'); names=@(
         'Qt6Core.dll','Qt6Gui.dll','Qt6Multimedia.dll','Qt6Network.dll',
@@ -25,7 +39,8 @@ $groups = @(
     # Copy only OpenSSL and LAME (the Core's MP3 encoder), preserving Qt's
     # matching compiler runtime. Do not prepend MSYS2/bin: its newer C++
     # runtime is incompatible with Qt here.
-    @{ root=(Join-Path $env:OPENSSL_ROOT_DIR 'bin'); names=@('libcrypto-3-x64.dll','libssl-3-x64.dll','libmp3lame-0.dll') },
+    @{ root=(Join-Path $env:OPENSSL_ROOT_DIR 'bin'); names=@(
+        (Find-OpenSslDll 'libcrypto'),(Find-OpenSslDll 'libssl'),'libmp3lame-0.dll') },
     @{ root=(Join-Path $root 'third_party/fftw3/bin'); names=@('libfftw3-3.dll','libfftw3f-3.dll') }
 )
 $manifest = foreach ($group in $groups) {

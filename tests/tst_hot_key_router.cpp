@@ -2,6 +2,12 @@
 // Modification history (NereusSDR):
 //   2026-11-05 - J.J. Boyd (KG4VCF), hot keys plan Task 7.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), hosted Linux CI: the per-case profile
+//                clear keeps the shared window's saved layout, so the
+//                window's next layout save is not refused mid-case with a
+//                read-only notice that, offscreen, becomes the active
+//                window; ready() fails at once if the layout is read-only.
+//                AI-assisted via Anthropic Claude Code.
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 13: the fake records
 //                runVoiceMessage. AI-assisted via Anthropic Claude Code.
 //   2026-11-16 - J.J. Boyd (KG4VCF), Task 13 fix round: a key the focused
@@ -312,6 +318,14 @@ struct Bench {
         }
         qDeleteAll(std::as_const(addedByCase));
         addedByCase.clear();
+        // A refused layout save leaves a notice up until the layout can be
+        // saved again, and offscreen every shown window takes activation, so
+        // a case would lose the keyboard to it partway through. Say so here.
+        if (const ContainerWorkspaceStore* const store = window.containerManager()->workspaceStore();
+            store != nullptr && !store->blockedReason().isEmpty()) {
+            notReady = QStringLiteral("the layout is read-only: ") + store->blockedReason();
+            return false;
+        }
         qDeleteAll(window.findChildren<StatusToast*>());
         window.containerManager()->setArrangeHeld(false);
         window.containerManager()->setArrangeMode(false);
@@ -436,24 +450,7 @@ private slots:
 
     void init()
     {
-        // The shared window's container store remembers the layout it loaded and
-        // refuses a later save when the settings no longer hold it ("Workspace
-        // changed"). Its refusal toast then takes the active window from the
-        // case's own windows. The clear keeps that one value for a live window.
-        QString workspaceKey;
-        QVariant workspace;
-        ContainerWorkspaceStore* const store =
-            m_bench && m_bench->window.containerManager() != nullptr
-                ? m_bench->window.containerManager()->workspaceStore()
-                : nullptr;
-        if (store != nullptr) {
-            workspaceKey = store->workspaceKey();
-            workspace = AppSettings::instance().value(workspaceKey);
-        }
-        QVERIFY(RemoteWindowHarness::clearIsolatedProfile());
-        if (store != nullptr && workspace.isValid()) {
-            AppSettings::instance().setValue(workspaceKey, workspace);
-        }
+        QVERIFY(clearProfileKeepingTheLayout());
         // The first-run dialog would take the keyboard from the window under test.
         // On the Mac it waits for the device list, so it opens after the window is
         // active. On Linux it opens at once and the window never gets the keyboard.
@@ -2017,6 +2014,31 @@ private slots:
     }
 
 private:
+    // Each case starts on an empty profile, but the shared window's layout
+    // store still holds the layout it last read or saved. With that gone from
+    // the settings, the window's next layout save (debounced, so it can land
+    // in the middle of the next case) is refused as "Workspace changed;
+    // reload before editing", and the read-only notice it raises stays up
+    // and, offscreen, takes the active window (hosted Linux CI, 2026-11-15).
+    // So the layout goes back in with the clear, and the store and the
+    // settings still agree.
+    bool clearProfileKeepingTheLayout()
+    {
+        const ContainerWorkspaceStore* const store =
+            m_bench ? m_bench->window.containerManager()->workspaceStore() : nullptr;
+        const QString key = store != nullptr ? store->workspaceKey() : QString();
+        const bool keep = !key.isEmpty() && AppSettings::instance().contains(key);
+        const QVariant layout = keep ? AppSettings::instance().value(key) : QVariant();
+        if (!RemoteWindowHarness::clearIsolatedProfile()) {
+            return false;
+        }
+        if (keep) {
+            AppSettings::instance().setValue(key, layout);
+            AppSettings::instance().save();
+        }
+        return true;
+    }
+
     Bench& sharedBench()
     {
         if (!m_bench) {
