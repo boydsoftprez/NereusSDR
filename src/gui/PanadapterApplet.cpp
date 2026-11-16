@@ -477,6 +477,7 @@ void PanadapterApplet::retargetDetachedSpectrum(QWidget* host)
         m_spectrum->applyIntelDetachedPresentFormat();
         m_spectrum->applyNativeWindowIsolationPolicy();
         m_spectrumDetached = true;
+        m_spectrum->setDetachedIntoOwnWindow(true);
         m_detachInProgress = false;
         qDebug() << "SpectrumWidget: intel surface detached" << m_spectrumHole->size();
         releaseIntelTopLevelRhiFlushIfIdle(top);

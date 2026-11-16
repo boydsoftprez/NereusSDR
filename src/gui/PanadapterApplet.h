@@ -76,6 +76,10 @@
 //   2026-11-09: On Intel macOS the spectrum is its own frameless window
 //               over a layout hole, so a waterfall frame no longer flushes
 //               the main window's backing store.
+//   2026-11-15: The detach tells the spectrum it is detached, so its
+//               right-click forwarding to the pan no longer depends on
+//               isWindow(). J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 // =================================================================
 #pragma once
 

@@ -8,6 +8,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: A right-click goes to the pan through panContextMenuRequested
+//               only when the pan detached this spectrum into its own window,
+//               not whenever the spectrum has no parent.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-09: On Intel macOS the detached spectrum window presents
 //               without waiting for the panel. The layer was still vsynced,
 //               so a timer that drifted a millisecond waited another
@@ -15979,8 +15983,9 @@ void SpectrumWidget::contextMenuEvent(QContextMenuEvent* event)
         }
     }
     // A detached spectrum is its own window, so ignoring this event walks to
-    // the host window and never reaches the pan applet.
-    if (isWindow()) {
+    // the host window and never reaches the pan applet. Keyed on the pan's
+    // detach, not isWindow(): a parentless spectrum is not detached.
+    if (m_detachedIntoOwnWindow && isWindow()) {
         event->accept();
         emit panContextMenuRequested(event->globalPos());
         return;
