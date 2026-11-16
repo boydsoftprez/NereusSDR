@@ -14,11 +14,15 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 25: a whole-pan
 //                 recording plays its sound only. AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): renaming or deleting a recording
+//                 while it plays stops its playback first. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
 
 #include <QDir>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimeZone>
@@ -461,6 +465,79 @@ private slots:
         std::vector<float> mono(kBlock, 1.0f);
         QCOMPARE(svc->pullPlayback(who, mono.data(), kBlock), 0);
         QCOMPARE(peak(mono, kBlock), 0.0);
+    }
+
+    // Renaming a recording while two devices play it (Windows will not
+    // rename an open file): both playbacks stop and are told, the file
+    // goes to its new name, and a device not playing it goes on.
+    void renameWhilePlayingStopsItAndRenames()
+    {
+        std::unique_ptr<RecordingService> svc = makeService();
+        const QString id = addRecording(*svc, QStringLiteral("before"), 48000, tone(48000, 440.0, 2.0));
+        const QString other = addRecording(*svc, QStringLiteral("other"), 48000, tone(48000, 440.0, 2.0));
+        QVERIFY(!id.isEmpty());
+        QVERIFY(!other.isEmpty());
+        const ListenerId a = QStringLiteral("local");
+        const ListenerId b = QStringLiteral("deviceB");
+        const ListenerId c = QStringLiteral("deviceC");
+        svc->play(a, id);
+        svc->play(b, id);
+        svc->play(c, other);
+        svc->pumpForTest();
+        std::vector<float> mono(kBlock);
+        QCOMPARE(svc->pullPlayback(a, mono.data(), kBlock), kBlock);
+        QSignalSpy changed(svc.get(), &RecordingService::playbackChanged);
+
+        // A refused name stops nothing.
+        QString error;
+        QVERIFY(!svc->renameRecording(id, QStringLiteral("con"), &error));
+        QVERIFY(!error.isEmpty());
+        QCOMPARE(changed.count(), 0);
+        QVERIFY(svc->playback(a).has_value());
+
+        error.clear();
+        QVERIFY2(svc->renameRecording(id, QStringLiteral("after"), &error), qPrintable(error));
+        QVERIFY(!svc->playback(a).has_value());
+        QVERIFY(!svc->playback(b).has_value());
+        QVERIFY(svc->playback(c).has_value());
+        QVERIFY(svc->playback(c)->playing);
+        QCOMPARE(changed.count(), 2);
+        const QString folder = svc->store()->folder();
+        QCOMPARE(svc->store()->find(id)->fileName, QStringLiteral("after.wav"));
+        QVERIFY(QFileInfo::exists(QDir(folder).filePath(QStringLiteral("after.wav"))));
+        QVERIFY(!QFileInfo::exists(QDir(folder).filePath(QStringLiteral("before.wav"))));
+        QCOMPARE(svc->pullPlayback(a, mono.data(), kBlock), 0);
+
+        // It plays again under its new name.
+        svc->play(a, id);
+        svc->pumpForTest();
+        QCOMPARE(svc->pullPlayback(a, mono.data(), kBlock), kBlock);
+    }
+
+    // Deleting a recording while it plays: its playback stops and is told,
+    // the file and its row go.
+    void deleteWhilePlayingStopsItAndDeletes()
+    {
+        std::unique_ptr<RecordingService> svc = makeService();
+        const QString id = addRecording(*svc, QStringLiteral("doomed"), 48000, tone(48000, 440.0, 2.0));
+        const QString keep = addRecording(*svc, QStringLiteral("keep"), 48000, tone(48000, 440.0, 2.0));
+        QVERIFY(!id.isEmpty());
+        const ListenerId a = QStringLiteral("local");
+        const ListenerId b = QStringLiteral("deviceB");
+        svc->play(a, id);
+        svc->play(b, keep);
+        svc->pumpForTest();
+        QSignalSpy changed(svc.get(), &RecordingService::playbackChanged);
+
+        QString error;
+        QVERIFY2(svc->removeRecordings({id}, &error), qPrintable(error));
+        QVERIFY(!svc->playback(a).has_value());
+        QVERIFY(svc->playback(b).has_value());
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(changed.at(0).at(0).toString(), a);
+        QVERIFY(!svc->store()->find(id).has_value());
+        QVERIFY(!QFileInfo::exists(QDir(svc->store()->folder()).filePath(QStringLiteral("doomed.wav"))));
+        QVERIFY(svc->store()->find(keep).has_value());
     }
 
     // The speaker feed: nothing but the engine's own drains moves the

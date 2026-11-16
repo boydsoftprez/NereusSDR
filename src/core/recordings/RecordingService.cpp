@@ -41,6 +41,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; final review fixes: a closed slice and a
 //             lost radio end their rewinds; an erase fails a save running
 //             from the recorder. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; renameRecording and removeRecordings stop
+//             the recording's playback and close an opened stretch before
+//             the file is renamed or deleted (Windows will not rename or
+//             remove an open file). AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -941,6 +945,49 @@ void RecordingService::playPath(const ListenerId& who, const QString& recordingI
     l.stretchSound = stretchSound;
     startPlayer(who, l, from);
     emit playbackChanged(who);
+}
+
+bool RecordingService::renameRecording(const QString& id, const QString& newName, QString* error)
+{
+    ensureStoreOpen();
+    // Only a rename that can go ahead stops anything: a refused name, an
+    // unknown recording or the same name leave the playback alone.
+    const std::optional<RecordingEntry> entry = m_store->find(id);
+    if (entry.has_value() && entry->name != newName && isValidRecordingName(newName, nullptr)) {
+        releaseRecordingFiles({id});
+    }
+    return m_store->rename(id, newName, error);
+}
+
+bool RecordingService::removeRecordings(const QStringList& ids, QString* error)
+{
+    ensureStoreOpen();
+    releaseRecordingFiles(ids);
+    return m_store->remove(ids, error);
+}
+
+void RecordingService::releaseRecordingFiles(const QStringList& ids)
+{
+    bool released = false;
+    const QList<ListenerId> listeners = m_listeners.keys();
+    for (const ListenerId& who : listeners) {
+        const auto it = m_listeners.constFind(who);
+        if (it != m_listeners.cend() && ids.contains(it->recordingId)) {
+            endListener(who);
+            emit playbackChanged(who);
+            released = true;
+        }
+    }
+    if (!m_stretch.id.isEmpty() && ids.contains(m_stretch.id)) {
+        closeStretch();
+        released = true;
+    }
+    // The worker holds its own share of a player or a stretch until it
+    // reads the drops queued above; on Windows the file stays open until
+    // then.
+    if (released) {
+        waitForWorker();
+    }
 }
 
 void RecordingService::stopPlayback(const ListenerId& who)

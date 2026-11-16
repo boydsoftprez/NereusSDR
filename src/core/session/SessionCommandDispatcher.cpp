@@ -6,6 +6,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: recordings.rename and recordings.delete go through the
+//               recording service, which lets go of the file first.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan final review fix: dsr.rewind, dsr.live,
 //               dsr.seek and recordings.openStretch (slice A) are refused
 //               on a slice the device may not change; dsr.rows and
@@ -5342,7 +5345,7 @@ void SessionCommandDispatcher::handleRecordings(const SessionMessage& invoke)
         accept();
     } else if (verb == "recordings.rename") {
         QString refusal;
-        if (!service->store()->rename(arguments.value(QStringLiteral("id")).toString(),
+        if (!service->renameRecording(arguments.value(QStringLiteral("id")).toString(),
                                       arguments.value(QStringLiteral("name")).toString(),
                                       &refusal)) {
             refuse(refusal);
@@ -5369,7 +5372,7 @@ void SessionCommandDispatcher::handleRecordings(const SessionMessage& invoke)
             return;
         }
         QString refusal;
-        if (!store->remove(known, &refusal)) {
+        if (!service->removeRecordings(known, &refusal)) {
             refuse(refusal);
             return;
         }

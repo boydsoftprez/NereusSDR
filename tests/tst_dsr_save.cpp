@@ -25,6 +25,8 @@
 //                 Code. Final review fixes: an opened stretch ends with the
 //                 radio or slice A; an erase fails a save from the recorder;
 //                 sound only starts with the signal.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Renaming or deleting an opened stretch closes it.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -626,6 +628,49 @@ private slots:
         QVERIFY(svc.rewound().isEmpty());
         QVERIFY(svc.openStretchId().isEmpty());
         QCOMPARE(worker.sliceReplay(0), nullptr);
+        radio->worker = nullptr;
+    }
+
+    // Renaming or deleting the saved stretch open on the waterfall closes it
+    // first (Windows will not rename or remove an open file): slice A goes
+    // live and the file is renamed, then deleted.
+    void renameOrDeleteClosesAnOpenedStretch()
+    {
+        RecordingService svc(nullptr);
+        FakeRadio* radio = prepare(svc);
+        RxDspWorker worker;
+        worker.setBufferSizes(kInSize, 64);
+        worker.setStreamSlices(0, {0});
+        radio->worker = &worker;
+        keepCarrier(svc, 8);
+        const DsrRingFile& ring = svc.dsrRecorder()->ring();
+        const qint64 from = ring.oldestUtcNs(0) + kNs;
+        const QString id = saveAndWait(svc, from, from + 4 * kNs, true, nullptr);
+        QVERIFY(!id.isEmpty());
+        RecordingSettings s = svc.settings();
+        s.dsrEnabled = false;
+        svc.setSettings(s);
+        svc.pumpForTest();
+        const QDir folder(svc.store()->folder());
+
+        QString why;
+        QVERIFY2(svc.openStretch(id, &why), qPrintable(why));
+        svc.pumpForTest();
+        QVERIFY(worker.sliceReplay(0) != nullptr);
+        QString error;
+        QVERIFY2(svc.renameRecording(id, QStringLiteral("Opened stretch"), &error), qPrintable(error));
+        QVERIFY(svc.openStretchId().isEmpty());
+        QVERIFY(svc.rewound().isEmpty());
+        QCOMPARE(worker.sliceReplay(0), nullptr);
+        QVERIFY(folder.exists(QStringLiteral("Opened stretch.ndsr")));
+
+        QVERIFY2(svc.openStretch(id, &why), qPrintable(why));
+        svc.pumpForTest();
+        QVERIFY2(svc.removeRecordings({id}, &error), qPrintable(error));
+        QVERIFY(svc.openStretchId().isEmpty());
+        QVERIFY(svc.rewound().isEmpty());
+        QVERIFY(!svc.store()->find(id).has_value());
+        QVERIFY(!folder.exists(QStringLiteral("Opened stretch.ndsr")));
         radio->worker = nullptr;
     }
 

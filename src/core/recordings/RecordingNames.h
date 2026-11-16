@@ -9,6 +9,8 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; a whole-pan recording keeps the pan's
 //             centre and span and slice A's filter (recording plan Task 25).
 //             AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the name refuses what Windows forbids.
+//             AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -54,8 +56,12 @@ NEREUS_CORE_EXPORT QString recordingBaseName(const QDateTime& startUtc, qint64 f
 NEREUS_CORE_EXPORT QString recordingFrequencyText(qint64 frequencyHz);
 
 // True when a name can be a recording's shown name and file base name.
-// Refuses an empty name, a slash, a backslash, a colon, a control
-// character and a leading dot, with the reason in plain words.
+// Refuses an empty name, any character Windows forbids (/ \ : ? * " < > |),
+// a control character, a leading dot, a trailing space or dot, and the
+// names Windows keeps for devices (CON, PRN, AUX, NUL, COM1 to COM9, LPT1
+// to LPT9, any case, with or without an extension), on every platform, so
+// a recording copied from one Core to another stays usable. The reason is
+// in plain words.
 NEREUS_CORE_EXPORT bool isValidRecordingName(const QString& name, QString* reason);
 
 // "Contact", "WholePan", "Sound": the recordings index's words for a kind.

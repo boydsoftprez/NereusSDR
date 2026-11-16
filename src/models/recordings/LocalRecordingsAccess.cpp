@@ -33,6 +33,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: eraseDsr
 //                 (dsr.eraseAll). AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF): rename and delete go through the
+//                 recording service, which lets go of the file first.
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -366,7 +369,7 @@ void LocalRecordingsAccess::rename(const QString& id, const QString& name)
         return;
     }
     QString refusal;
-    if (!recordings->store()->rename(id, name, &refusal)) {
+    if (!recordings->renameRecording(id, name, &refusal)) {
         emit refused(refusal);
     }
 }
@@ -386,7 +389,7 @@ void LocalRecordingsAccess::remove(const QStringList& ids)
         return;
     }
     QString refusal;
-    if (!store->remove(ids, &refusal)) {
+    if (!recordings->removeRecordings(ids, &refusal)) {
         emit refused(refusal);
     }
 }

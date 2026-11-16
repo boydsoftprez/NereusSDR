@@ -75,6 +75,10 @@
 // 2026-11-16: Recording plan Task 25 placed: saving a stretch's refusals
 // (RecordingService saveStretch, saveSoundOnly, startSave, openStretch).
 // J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+// 2026-11-16: A recording's name refused as a Windows reserved name
+// inserts the name typed (stem). J.J. Boyd (KG4VCF), AI-assisted via
+// Anthropic Claude Code.
+//
 // 2026-11-16: Recording plan Task 21: the recorder's size refusal in
 // RecordingsFacade::applySettingsChange.
 // 2026-11-15: Recording plan Task 5: the recordings.* refusals worded in
@@ -1850,7 +1854,7 @@ const QList<ReasonSource>& reasonSources()
          {QStringLiteral("file.errorString()"), QStringLiteral("failed.join(QStringLiteral(\", \"))")},
          {QStringLiteral("reason")}},
         {"src/core/recordings/RecordingNames.cpp", {QStringLiteral("isValidRecordingName")}, {}, 4,
-         {QStringLiteral("ch")}, {QStringLiteral("why")}},
+         {QStringLiteral("ch"), QStringLiteral("stem")}, {QStringLiteral("why")}},
         // Recording plan Task 21: why the Digital Spectrum Recorder is off,
         // as the recordings document carries it.
         {"src/core/recordings/RecordingService.cpp", {QStringLiteral("dsrReasonWords")}, {}, 4},

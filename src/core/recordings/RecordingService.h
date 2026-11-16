@@ -44,6 +44,9 @@
 //             recording plan Task 26). AI tooling: Anthropic Claude Code.
 // 2026-11-16  J.J. Boyd / KG4VCF; final review fixes: kSaveErasedReason,
 //             sliceRemovedForTest. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; renameRecording and removeRecordings let
+//             go of the files first (Windows will not rename or remove an
+//             open file). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -135,6 +138,14 @@ public:
     ~RecordingService() override;   // stops every recording, keeps them, joins the worker
 
     RecordingStore* store() const;
+    // As RecordingStore::rename and RecordingStore::remove, with the store's
+    // words on a refusal, after letting go of the files: every listener's
+    // playback of the recording stops (told by playbackChanged) and a saved
+    // stretch opened on the waterfall that is one of them closes. Windows
+    // will not rename or remove an open file; every platform does the same.
+    // Every device's rename and delete come here, not to the store.
+    bool renameRecording(const QString& id, const QString& newName, QString* error);
+    bool removeRecordings(const QStringList& ids, QString* error);
     RecordingSettings settings() const;
     void setSettings(const RecordingSettings& s);
     // Where this service runs. It starts as Host::DesktopRadio (RadioModel
@@ -478,6 +489,9 @@ private:
     int bindChannel(const ListenerId& who);
     void waitForPulls() const;
     void onPlaybackEnded(const ListenerId& who, quint64 token);
+    // Stops every playback of `ids` and closes an opened stretch among
+    // them, then waits until the worker has let go of their files.
+    void releaseRecordingFiles(const QStringList& ids);
     void onPlaybackFailed(const ListenerId& who, quint64 token);
 
     // Worker thread.

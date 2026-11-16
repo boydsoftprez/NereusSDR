@@ -15,6 +15,8 @@
 //                 desktop window running its own radio, on in a Core, a
 //                 saved value kept. J.J. Boyd (KG4VCF), AI-assisted via
 //                 Anthropic Claude Code. Recording plan Task 10b.
+//   2026-11-16 - A name refuses what Windows forbids, on every platform.
+//                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -140,6 +142,63 @@ private slots:
         QVERIFY(!error.isEmpty());
         QCOMPARE(store.find(id)->name, QStringLiteral("Field day opener"));
         QCOMPARE(changed.count(), 1);
+    }
+
+    // Every platform refuses what Windows cannot keep as a file's name, so a
+    // recording copied from one Core to another stays usable.
+    void namesRefuseWhatWindowsForbids()
+    {
+        struct Case {
+            QString name;
+            QString reason;
+        };
+        const QList<Case> refused = {
+            {QStringLiteral("a?b"), QStringLiteral("A name cannot contain \"?\".")},
+            {QStringLiteral("a*b"), QStringLiteral("A name cannot contain \"*\".")},
+            {QStringLiteral("a<b"), QStringLiteral("A name cannot contain \"<\".")},
+            {QStringLiteral("a>b"), QStringLiteral("A name cannot contain \">\".")},
+            {QStringLiteral("a|b"), QStringLiteral("A name cannot contain \"|\".")},
+            {QStringLiteral("a\"b"), QStringLiteral("A name cannot contain a quote mark.")},
+            {QStringLiteral("a") + QChar(0x01) + QStringLiteral("b"),
+             QStringLiteral("A name cannot contain a control character.")},
+            {QStringLiteral("a\tb"), QStringLiteral("A name cannot contain a control character.")},
+            {QStringLiteral("opener "), QStringLiteral("A name cannot end with a space or a dot.")},
+            {QStringLiteral("opener."), QStringLiteral("A name cannot end with a space or a dot.")},
+            {QStringLiteral("CON"), QStringLiteral("A name cannot be \"CON\". Windows keeps that name for itself.")},
+            {QStringLiteral("con"), QStringLiteral("A name cannot be \"con\". Windows keeps that name for itself.")},
+            {QStringLiteral("Prn.txt"), QStringLiteral("A name cannot be \"Prn\". Windows keeps that name for itself.")},
+            {QStringLiteral("aux"), QStringLiteral("A name cannot be \"aux\". Windows keeps that name for itself.")},
+            {QStringLiteral("NUL.backup.old"),
+             QStringLiteral("A name cannot be \"NUL\". Windows keeps that name for itself.")},
+            {QStringLiteral("com1"), QStringLiteral("A name cannot be \"com1\". Windows keeps that name for itself.")},
+            {QStringLiteral("COM9.x"), QStringLiteral("A name cannot be \"COM9\". Windows keeps that name for itself.")},
+            {QStringLiteral("lpt5"), QStringLiteral("A name cannot be \"lpt5\". Windows keeps that name for itself.")},
+            {QStringLiteral("LPT1 .x"), QStringLiteral("A name cannot be \"LPT1\". Windows keeps that name for itself.")},
+        };
+        for (const Case& c : refused) {
+            QString reason;
+            QVERIFY2(!isValidRecordingName(c.name, &reason), qPrintable(c.name));
+            QCOMPARE(reason, c.reason);
+        }
+        for (const QString& fine : {QStringLiteral("CONTEST"), QStringLiteral("con test"), QStringLiteral("COM0"),
+                                    QStringLiteral("COM10"), QStringLiteral("LPT"), QStringLiteral("my.con"),
+                                    QStringLiteral("auxiliary"), QStringLiteral("Field day opener"),
+                                    QStringLiteral("2026-11-15 1432Z 7.236.400 LSB K4ABC")}) {
+            QString reason;
+            QVERIFY2(isValidRecordingName(fine, &reason), qPrintable(fine + QStringLiteral(": ") + reason));
+        }
+
+        // The store refuses them too, and keeps the recording as it was.
+        QTemporaryDir dir;
+        RecordingStore store;
+        QVERIFY(store.openFolder(dir.path(), nullptr));
+        const QString id = addRecording(store, kStart);
+        const QString before = store.find(id)->fileName;
+        QString error;
+        QVERIFY(!store.rename(id, QStringLiteral("nul"), &error));
+        QCOMPARE(error, QStringLiteral("A name cannot be \"nul\". Windows keeps that name for itself."));
+        QCOMPARE(store.find(id)->fileName, before);
+        QVERIFY(QFileInfo::exists(dir.filePath(before)));
     }
 
     void removeDeletesFilesAndRows()

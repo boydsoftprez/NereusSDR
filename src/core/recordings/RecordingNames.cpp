@@ -6,6 +6,10 @@
 //             (spec 6.4). AI tooling: Anthropic Claude Code.
 // 2026-11-15  J.J. Boyd / KG4VCF; filterRecordings (recording plan Task 7).
 //             AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; a name refuses every character Windows
+//             forbids, a trailing space or dot and Windows' reserved names,
+//             on every platform, so a recording stays usable on any Core.
+//             AI tooling: Anthropic Claude Code.
 
 #include "RecordingNames.h"
 
@@ -44,6 +48,29 @@ QString recordingBaseName(const QDateTime& startUtc, qint64 frequencyHz, const Q
     return parts.join(QLatin1Char(' '));
 }
 
+namespace {
+
+// The characters Windows forbids in a file's name, but the quote mark,
+// which has words of its own.
+constexpr QLatin1String kForbiddenNameCharacters("/\\:?*<>|");
+
+bool isWindowsReservedName(const QString& stem)
+{
+    const QString upper = stem.toUpper();
+    for (const char* word : {"CON", "PRN", "AUX", "NUL"}) {
+        if (upper == QLatin1String(word)) {
+            return true;
+        }
+    }
+    if (upper.size() == 4 && (upper.startsWith(QLatin1String("COM")) || upper.startsWith(QLatin1String("LPT")))) {
+        const QChar digit = upper.at(3);
+        return digit >= QLatin1Char('1') && digit <= QLatin1Char('9');
+    }
+    return false;
+}
+
+}  // namespace
+
 bool isValidRecordingName(const QString& name, QString* reason)
 {
     auto refuse = [reason](const QString& why) {
@@ -59,12 +86,27 @@ bool isValidRecordingName(const QString& name, QString* reason)
         return refuse(QStringLiteral("A name cannot start with a dot."));
     }
     for (const QChar ch : name) {
-        if (ch == QLatin1Char('/') || ch == QLatin1Char('\\') || ch == QLatin1Char(':')) {
+        if (ch == QLatin1Char('"')) {
+            return refuse(QStringLiteral("A name cannot contain a quote mark."));
+        }
+        if (kForbiddenNameCharacters.contains(ch)) {
             return refuse(QStringLiteral("A name cannot contain \"%1\".").arg(ch));
         }
         if (ch.category() == QChar::Other_Control) {
             return refuse(QStringLiteral("A name cannot contain a control character."));
         }
+    }
+    // Windows drops a trailing space or dot from a file's name.
+    if (name.endsWith(QLatin1Char(' ')) || name.endsWith(QLatin1Char('.'))) {
+        return refuse(QStringLiteral("A name cannot end with a space or a dot."));
+    }
+    // Windows keeps these for devices, with any extension after them.
+    QString stem = name.section(QLatin1Char('.'), 0, 0);
+    while (stem.endsWith(QLatin1Char(' '))) {
+        stem.chop(1);
+    }
+    if (isWindowsReservedName(stem)) {
+        return refuse(QStringLiteral("A name cannot be \"%1\". Windows keeps that name for itself.").arg(stem));
     }
     return true;
 }
