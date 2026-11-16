@@ -12087,6 +12087,16 @@ target_compile_definitions(tst_recording_on_air PRIVATE NEREUS_BUILD_TESTS)
 # (src/core/recordings/VoiceKeyer.cpp).
 nereus_add_test(tst_voice_keyer CORE_ONLY)
 target_compile_definitions(tst_voice_keyer PRIVATE NEREUS_BUILD_TESTS)
+# Recording plan Task 21: the Digital Spectrum Recorder's ring file:
+# one-second 16-bit I/Q blocks, the size limit, reading back, transmit
+# marks and a restart (src/core/recordings/dsr/DsrRingFile.cpp).
+nereus_add_test(tst_dsr_ring CORE_ONLY)
+# Recording plan Task 21: the Digital Spectrum Recorder on the Core: the
+# lock-free I/Q tap (no allocation, no disk, counted overflow), one-second
+# blocks, your transmit marked, on by default, never on an SD card, and a
+# missing disk that stops only the recorder
+# (src/core/recordings/dsr/DsrRecorder.cpp, RecordingService.cpp).
+nereus_add_test(tst_dsr_recorder CORE_ONLY)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

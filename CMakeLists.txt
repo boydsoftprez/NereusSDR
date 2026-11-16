@@ -1160,6 +1160,9 @@ set(CORE_SOURCES
     src/core/recordings/OnAirSource.cpp
     # The voice keyer: M1 to M8, which key the radio by themselves.
     src/core/recordings/VoiceKeyer.cpp
+    # The Digital Spectrum Recorder: every receiver's I/Q in one ring file.
+    src/core/recordings/dsr/DsrRingFile.cpp
+    src/core/recordings/dsr/DsrRecorder.cpp
     src/core/RadeChannel.cpp
     src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp

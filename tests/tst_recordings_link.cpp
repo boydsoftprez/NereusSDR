@@ -45,6 +45,9 @@
 //                 later; a waiting repeat goes with its sender's session;
 //                 another device cannot turn Repeat off under it.
 //                 AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: version 4, the
+//                 `dsr` part and its settings over the link. AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -310,7 +313,7 @@ private slots:
             }
         }
         QCOMPARE(found, expected);
-        QCOMPARE(RecordingsFacade::kVersion, 3);
+        QCOMPARE(RecordingsFacade::kVersion, 4);
     }
 
     // A device's send keys the radio as that device and its stop unkeys;
@@ -781,11 +784,11 @@ private slots:
         core.pair(phone);
         LoopbackTransport* app = core.signIn(phone, kRecordings);
         QVERIFY(admitted(app));
-        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>(3));
+        QCOMPARE(capability(app->received(), QStringLiteral("recordingsVersion")), std::optional<qint64>(4));
         const QJsonObject document = mirrored(app);
-        QCOMPARE(document.value(QStringLiteral("version")).toInt(), 3);
+        QCOMPARE(document.value(QStringLiteral("version")).toInt(), 4);
         QCOMPARE(stateIn(document, 0), QStringLiteral("idle"));
-        for (const char* key : {"slices", "kept", "index", "settings", "voiceKeyer"}) {
+        for (const char* key : {"slices", "kept", "index", "settings", "voiceKeyer", "dsr"}) {
             QVERIFY2(document.contains(QLatin1String(key)), key);
         }
         const QJsonObject index = document.value(QStringLiteral("index")).toObject();
@@ -824,6 +827,34 @@ private slots:
         QVERIFY(!core.model->recordingService()->settings().onAirUseTxEq);
         QCOMPARE(reasonOf(core.invoke(app, "recordings.setSettings", {int64("quietMinutes", 0)})),
                  QStringLiteral("Quiet can be 1 to 60 minutes."));
+
+        // Version 4: the Digital Spectrum Recorder, on at 10 GB on the
+        // Core's own disk by default, writing while the radio streams.
+        const QJsonObject dsr = document.value(QStringLiteral("dsr")).toObject();
+        QVERIFY(dsr.value(QStringLiteral("enabled")).toBool(false));
+        QCOMPARE(dsr.value(QStringLiteral("disk")).toString(QStringLiteral("?")), QString());
+        QCOMPARE(dsr.value(QStringLiteral("sizeLimitGb")).toInt(), 10);
+        QCOMPARE(dsr.value(QStringLiteral("recording")).toBool(false),
+                 core.model->connectionState() == ConnectionState::Connected);
+        for (const char* key : {"reason", "sizeLimitBytes", "usedBytes", "writePosition", "oldestUtcMs",
+                                "newestUtcMs", "hoursHeld", "overflows"}) {
+            QVERIFY2(dsr.contains(QLatin1String(key)), key);
+        }
+        QCOMPARE(refusalOf(core.invoke(app, "recordings.setSettings",
+                                       {int64("dsrSizeLimitGb", 20),
+                                        MirrorUpdate{0, "dsrEnabled", MirrorWireKind::Bool, QVariant(false)}})),
+                 QString());
+        QTRY_COMPARE(mirrored(app).value(QStringLiteral("dsr")).toObject()
+                         .value(QStringLiteral("sizeLimitGb")).toInt(), 20);
+        QVERIFY(!mirrored(app).value(QStringLiteral("dsr")).toObject().value(QStringLiteral("enabled")).toBool(true));
+        QVERIFY(!mirrored(app).value(QStringLiteral("dsr")).toObject().value(QStringLiteral("recording")).toBool(true));
+        QCOMPARE(core.model->recordingService()->settings().dsrSizeLimitGb, 20);
+        QVERIFY(!core.model->recordingService()->settings().dsrEnabled);
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.setSettings", {int64("dsrSizeLimitGb", 0)})),
+                 QStringLiteral("The recorder's size can be 1 to 100000 GB."));
+        QCOMPARE(reasonOf(core.invoke(app, "recordings.setSettings",
+                                      {utf8("dsrDisk", QStringLiteral("/no/such/disk"))})),
+                 QStringLiteral("That disk is not on the Core now."));
     }
 
     // A1: one device starts Slice A; the other sees it recording and stops it.

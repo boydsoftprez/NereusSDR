@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 — Recording plan Task 21: forkIqToTaps also copies each
+//                 receiver's I/Q into the Digital Spectrum Recorder (copy
+//                 only), behind a gate the destructor closes first. J.J. Boyd
+//                 (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15 — Recording plan Task 10: the TX worker pulls the recording
 //                 service's on-air source, and lets go of it before the
 //                 service goes. J.J. Boyd (KG4VCF), AI-assisted via
@@ -2086,6 +2090,7 @@ mw0lge@grange-lane.co.uk
 #include "core/PskReporterClient.h"
 #include "core/SpotSourceHost.h"
 #include "core/recordings/RecordingService.h"
+#include "core/recordings/dsr/DsrRecorder.h"
 #include "core/session/RecordingsFacade.h"
 #include "models/recordings/LocalRecordingsAccess.h"
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -2167,6 +2172,7 @@ mw0lge@grange-lane.co.uk
 #include <functional>
 #include <limits>
 #include <mutex>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -4079,6 +4085,8 @@ RadioModel::RadioModel(Role role, std::unique_ptr<CwxSender> senderForTest, QObj
     // runs the radio (the slices' audio taps and MOX are here).
     if (m_role == Role::Local) {
         m_recordingService = std::make_unique<RecordingService>(this);
+        // Recording plan Task 21: forkIqToTaps copies into the recorder.
+        m_dsrTap.store(m_recordingService->dsrRecorder(), std::memory_order_seq_cst);
     }
     // Recording plan Task 5: the `recordings` object, in every placement,
     // and what a window talks to (as the band stack's, above).
@@ -5700,6 +5708,12 @@ RadioModel::~RadioModel()
     // source.
     if (m_txWorker) {
         m_txWorker->setOnAirSource(nullptr);
+    }
+    // Recording plan Task 21: no I/Q copy may still be inside the spectrum
+    // recorder.
+    m_dsrTap.store(nullptr, std::memory_order_seq_cst);
+    while (m_dsrTapInFlight.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
     }
     m_recordingService.reset();
     // The band stack writes its last change while the model is whole.
@@ -40986,6 +41000,14 @@ void RadioModel::forkIqToTaps(int receiverIndex, const QVector<float>& samples)
         emit rawIqData(samples);
     }
     emit rawIqDataForStream(receiverIndex, samples);
+    // Recording plan Task 21: the Digital Spectrum Recorder copies each
+    // receiver's I/Q into its lock-free ring and returns. A copy only: the
+    // samples, and what reaches every consumer above, are unchanged.
+    m_dsrTapInFlight.fetch_add(1, std::memory_order_seq_cst);
+    if (DsrRecorder* dsr = m_dsrTap.load(std::memory_order_seq_cst)) {
+        dsr->consumeIq(receiverIndex, samples.constData(), static_cast<int>(samples.size() / 2));
+    }
+    m_dsrTapInFlight.fetch_sub(1, std::memory_order_seq_cst);
 }
 
 QString RadioModel::describeSuspendedStreams(const QVector<int>& streams) const

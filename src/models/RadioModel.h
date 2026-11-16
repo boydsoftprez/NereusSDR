@@ -973,6 +973,9 @@
 //   2026-11-15 - Recording plan Task 5: recordingsFacade() and recordings(),
 //                the access by role. J.J. Boyd (KG4VCF), AI-assisted via
 //                Anthropic Claude Code.
+//   2026-11-16 - Recording plan Task 21: the Digital Spectrum Recorder's
+//                I/Q tap gate (m_dsrTap). J.J. Boyd (KG4VCF), AI-assisted
+//                via Anthropic Claude Code.
 // =================================================================
 
 #include "core/MoxController.h"
@@ -1213,6 +1216,7 @@ class StationTciController;
 class StationTciModel;
 class StationCatController;
 class RecordingService;
+class DsrRecorder;
 class RecordingsFacade;
 class RecordingsAccess;
 class StationCatModel;
@@ -9980,6 +9984,11 @@ private:
     std::unique_ptr<StationCatController> m_stationCat;
     // Recording plan Task 3: Role::Local only; see recordingService().
     std::unique_ptr<RecordingService> m_recordingService;
+    // Recording plan Task 21: the spectrum recorder forkIqToTaps copies
+    // into (connection thread). Cleared, and any copy in progress waited
+    // for, before the service goes.
+    std::atomic<DsrRecorder*> m_dsrTap{nullptr};
+    std::atomic<int> m_dsrTapInFlight{0};
     // Recording plan Task 5: Qt children, in every placement.
     RecordingsFacade*                     m_recordingsFacade{nullptr};
     RecordingsAccess*                     m_recordingsAccess{nullptr};

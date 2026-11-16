@@ -58,6 +58,8 @@
 // cwQskUnavailableReason is placed. J.J. Boyd (KG4VCF), AI-assisted via
 // Claude Code.
 //
+// 2026-11-16: Recording plan Task 21: the recorder's size refusal in
+// RecordingsFacade::applySettingsChange.
 // 2026-11-15: Recording plan Task 5: the recordings.* refusals worded in
 // RecordingsFacade, RecordingStore and RecordingNames, and the window's
 // RecordingsAccess words, are placed. J.J. Boyd (KG4VCF), AI-assisted via
@@ -1813,7 +1815,10 @@ const QList<ReasonSource>& reasonSources()
         // a window's own words for a Core without recordings.
         {"src/core/session/RecordingsFacade.cpp", {QStringLiteral("applySettingsChange")}, {}, 2,
          {QStringLiteral("RecordingSettings::kQuietMinutesMin"),
-          QStringLiteral("RecordingSettings::kQuietMinutesMax")},
+          QStringLiteral("RecordingSettings::kQuietMinutesMax"),
+          // Recording plan Task 21: the recorder's size limit.
+          QStringLiteral("RecordingSettings::kDsrSizeLimitGbMin"),
+          QStringLiteral("RecordingSettings::kDsrSizeLimitGbMax")},
          // The refuse helper's parameter: this function's literals.
          {QStringLiteral("why")}},
         // recordings.rename and recordings.delete pass the store's words on.
@@ -1825,6 +1830,9 @@ const QList<ReasonSource>& reasonSources()
          {QStringLiteral("reason")}},
         {"src/core/recordings/RecordingNames.cpp", {QStringLiteral("isValidRecordingName")}, {}, 4,
          {QStringLiteral("ch")}, {QStringLiteral("why")}},
+        // Recording plan Task 21: why the Digital Spectrum Recorder is off,
+        // as the recordings document carries it.
+        {"src/core/recordings/RecordingService.cpp", {QStringLiteral("dsrReasonWords")}, {}, 4},
         {"src/core/session/IStationLink.h", {QStringLiteral("sendRecordingsCommand")}, {}, 1},
         {"src/models/recordings/RecordingsAccess.h",
          {QStringLiteral("needsNewerCoreReason"), QStringLiteral("notConnectedReason")}, {}, 2},

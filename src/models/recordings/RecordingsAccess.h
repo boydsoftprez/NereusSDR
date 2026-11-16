@@ -40,6 +40,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
 //                 keyer's methods (recordingsVersion 3). AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: kDsrVersion,
+//                 the Digital Spectrum Recorder's version gate. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QJsonArray>
@@ -114,6 +117,10 @@ public:
     static constexpr int kVoiceKeyerSlots = 8;
     static constexpr int kVoiceClipMaxMs = 120000;
     static constexpr int kVoiceKeyerVersion = 3;
+    // The Digital Spectrum Recorder (the document's `dsr`, its settings in
+    // setSettings): a Core below this leaves its controls visible and
+    // disabled with needsNewerCoreReason() (unavailableReason(kDsrVersion)).
+    static constexpr int kDsrVersion = 4;
     /// Keys the radio and sends Mn; it unkeys at the end (or repeats).
     virtual void sendVoice(int n) = 0;
     /// Stops what goes out, or the wait to repeat it; the radio unkeys.

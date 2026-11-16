@@ -6,6 +6,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 21: recordings.setSettings takes the
+//               Digital Spectrum Recorder's dsrEnabled, dsrDisk and
+//               dsrSizeLimitGb (recordingsVersion 4).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs
 //               (handleVoiceKeyer, recordingsVersion 3).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -983,7 +987,11 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
           // Recording plan Task 10 (recordingsVersion 2): the on-air switches.
           optionalArg("onAirUseTxEq", kBool), optionalArg("onAirUseCompressor", kBool),
           optionalArg("onAirUseLeveler", kBool), optionalArg("onAirUseCfc", kBool),
-          optionalArg("onAirUsePhaseRotator", kBool)},
+          optionalArg("onAirUsePhaseRotator", kBool),
+          // Recording plan Task 21 (recordingsVersion 4): the Digital
+          // Spectrum Recorder's settings.
+          optionalArg("dsrEnabled", kBool), optionalArg("dsrDisk", kUtf8),
+          optionalArg("dsrSizeLimitGb", kInt)},
          "recordingsVersion", 1, kRadioIdentitySessionProtocolMinor},
         // Recording plan Task 11 (recordingsVersion 3): the voice keyer.
         // `n` is a message, 1 to 8. send keys the radio as the requester;

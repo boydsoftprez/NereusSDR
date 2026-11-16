@@ -6,13 +6,13 @@
 // src/core/session/RecordingsFacade.h  (NereusSDR)
 // =================================================================
 //
-// The mirrored `recordings` object (recordingsVersion 3): the Core's
+// The mirrored `recordings` object (recordingsVersion 4): the Core's
 // recordings as one document, so every device shows every slice's Record
 // state, the last recording kept, the index and the recording settings.
 // Design: docs/architecture/2026-11-15-recording-voice-keyer-dsr-design.md,
 // section 6.9.
 //
-//   json      { "version": 3,
+//   json      { "version": 4,
 //               "slices":   [ { "slice", "state" (idle, armed, recording),
 //                               "startUtc", "startedBy", "elapsedMs",
 //                               "myVoice" } ],
@@ -32,7 +32,17 @@
 //                               "lengthMs", "empty" } x8 ], "repeat",
 //                               "repeatDelaySec", "sending": { "n",
 //                               "positionMs", "lengthMs", "waitingMs",
-//                               "by" } or null } }
+//                               "by" } or null },
+//               "dsr":      { "enabled", "disk", "sizeLimitGb",
+//                             "recording", "reason", "sizeLimitBytes",
+//                             "usedBytes", "writePosition", "oldestUtcMs",
+//                             "newestUtcMs", "hoursHeld", "overflows" } }
+//             `dsr` is the Digital Spectrum Recorder: its settings (disk ""
+//             is the Core's own), whether it writes now, why not when it is
+//             on (an SD card, a missing disk, a failed write; "" otherwise),
+//             and the ring file's figures (times in ms since 1970 UTC, 0 when
+//             nothing is kept; hoursHeld is newest less oldest). The figures
+//             move at most every RecordingService::kDsrFiguresRefreshMs.
 //             `sending` is the message going out, or (`waitingMs` above 0)
 //             the wait before its next repeat; it is rebuilt every
 //             kElapsedRefreshMs while it lasts.
@@ -60,6 +70,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: version 3, the
 //                 voice keyer. AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: version 4, the
+//                 Digital Spectrum Recorder (`dsr`, and its three settings in
+//                 recordings.setSettings). AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -91,8 +105,9 @@ public:
     /// The recordingsVersion this Core offers. 2: a recording goes on the
     /// air (recordings.playback onAir) and the settings carry the five
     /// on-air switches. 3: the voice keyer (`voiceKeyer` and the
-    /// voiceKeyer.* verbs).
-    static constexpr int kVersion = 3;
+    /// voiceKeyer.* verbs). 4: the Digital Spectrum Recorder (`dsr`, and
+    /// dsrEnabled, dsrDisk and dsrSizeLimitGb in recordings.setSettings).
+    static constexpr int kVersion = 4;
     /// How often the running times are rebuilt while a slice records.
     static constexpr int kElapsedRefreshMs = 1000;
     /// recordings.list sends at most this many entries at once.
@@ -131,13 +146,16 @@ public:
     static QJsonObject volumeJson(const RecordingVolume& volume);
     /// The recording settings as the document carries them, without disks.
     static QJsonObject settingsJson(const RecordingSettings& settings);
+    /// The Digital Spectrum Recorder as the document carries it.
+    static QJsonObject dsrJson(const DsrStatus& status);
     /// Applies a recordings.setSettings change (the document's settings
     /// names, any of keepMyVoice, sidesApart, autoStart, autoStop,
     /// quietMinutes, format, disk, onAirUseTxEq, onAirUseCompressor,
-    /// onAirUseLeveler, onAirUseCfc, onAirUsePhaseRotator) to `settings`. False, with the refusal in
+    /// onAirUseLeveler, onAirUseCfc, onAirUsePhaseRotator, and from version 4
+    /// dsrEnabled, dsrDisk, dsrSizeLimitGb) to `settings`. False, with the refusal in
     /// plain words, when a name, a value or its type is not one of them.
-    /// `volumes` are the disks a `disk` may name; the Core's own disk is
-    /// stored as "".
+    /// `volumes` are the disks a `disk` or `dsrDisk` may name; the Core's own
+    /// disk is stored as "".
     static bool applySettingsChange(const QJsonObject& changed, const QList<RecordingVolume>& volumes,
                                     RecordingSettings* settings, QString* refusal);
 

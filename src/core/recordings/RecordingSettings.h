@@ -5,6 +5,8 @@
 // 2026-11-15  J.J. Boyd / KG4VCF; the Core's recording and Digital
 //             Spectrum Recorder settings (spec 6.5, 6.7). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the largest size limit the recorder
+//             takes. AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -20,6 +22,8 @@ struct NEREUS_CORE_EXPORT RecordingSettings {
     static constexpr int kQuietMinutesMin = 1;
     static constexpr int kQuietMinutesMax = 60;
     static constexpr int kDsrSizeLimitGbMin = 1;
+    // 100 TB: far past any disk a Core has, so a typing slip is refused.
+    static constexpr int kDsrSizeLimitGbMax = 100000;
 
     bool keepMyVoice = true; bool sidesApart = false;
     bool autoStartOnTransmit = false; bool autoStopWhenQuiet = true; int quietMinutes = 2;   // 1..60

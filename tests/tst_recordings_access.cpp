@@ -31,6 +31,9 @@
 //                 token-signed window knows the voice message it sent is its
 //                 own, so its keepalives go. AI-assisted via Anthropic Claude
 //                 Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: the Core offers
+//                 version 4. AI-assisted implementation via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -325,7 +328,7 @@ private slots:
         RecordingsAccess* access = core.model->recordings();
         QVERIFY(qobject_cast<LocalRecordingsAccess*>(access) != nullptr);
         QCOMPARE(access->state(), RecordingsAccess::State::Ready);
-        QCOMPARE(access->coreVersion(), 3);
+        QCOMPARE(access->coreVersion(), 4);
         QVERIFY(access->coreIsOnThisComputer());
 
         QSignalSpy state(access, &RecordingsAccess::stateChanged);
@@ -353,7 +356,9 @@ private slots:
         QCOMPARE(access->unavailableReason(2), QString());
         // Version 3 (Task 11): the voice keyer works on this Core.
         QCOMPARE(access->unavailableReason(3), QString());
-        QCOMPARE(access->unavailableReason(4), kNewerCore);
+        // Version 4 (Task 21): the Digital Spectrum Recorder.
+        QCOMPARE(access->unavailableReason(RecordingsAccess::kDsrVersion), QString());
+        QCOMPARE(access->unavailableReason(5), kNewerCore);
         QSignalSpy refused(access, &RecordingsAccess::refused);
         QSignalSpy kept(access, &RecordingsAccess::kept);
         QCOMPARE(stateOfSlice(access->document(), 0), QStringLiteral("idle"));
@@ -494,13 +499,15 @@ private slots:
         RecordingsAccess* access = remote.access();
         QVERIFY(remote.connectTo(core, this));
         QTRY_COMPARE(access->state(), RecordingsAccess::State::Ready);
-        QCOMPARE(access->coreVersion(), 3);
+        QCOMPARE(access->coreVersion(), 4);
         QCOMPARE(access->unavailableReason(), QString());
         // Version 2 (Task 10): the on-air switches work on this Core.
         QCOMPARE(access->unavailableReason(2), QString());
         // Version 3 (Task 11): the voice keyer works on this Core.
         QCOMPARE(access->unavailableReason(3), QString());
-        QCOMPARE(access->unavailableReason(4), kNewerCore);
+        // Version 4 (Task 21): the Digital Spectrum Recorder.
+        QCOMPARE(access->unavailableReason(RecordingsAccess::kDsrVersion), QString());
+        QCOMPARE(access->unavailableReason(5), kNewerCore);
         QCOMPARE(stateOfSlice(access->document(), 0), QStringLiteral("idle"));
         QSignalSpy refused(access, &RecordingsAccess::refused);
         QSignalSpy kept(access, &RecordingsAccess::kept);

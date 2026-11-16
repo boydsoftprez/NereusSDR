@@ -12,6 +12,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
 //                 keyer's part. AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: the Digital
+//                 Spectrum Recorder's part and settings. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/RecordingsFacade.h"
@@ -66,6 +69,7 @@ void RecordingsFacade::bind(RecordingService* service)
     if (m_service) {
         connect(m_service, &RecordingService::sliceStateChanged, this, &RecordingsFacade::rebuild);
         connect(m_service, &RecordingService::kept, this, &RecordingsFacade::onKept);
+        connect(m_service, &RecordingService::dsrChanged, this, &RecordingsFacade::rebuild);
         if (VoiceKeyer* voice = m_service->voiceKeyer()) {
             connect(voice, &VoiceKeyer::changed, this, &RecordingsFacade::rebuild);
         }
@@ -152,7 +156,8 @@ void RecordingsFacade::rebuild()
                                {QStringLiteral("settings"), settings},
                                {QStringLiteral("voiceKeyer"), m_service->voiceKeyer()
                                                                   ? m_service->voiceKeyer()->documentJson()
-                                                                  : QJsonObject()}};
+                                                                  : QJsonObject()},
+                               {QStringLiteral("dsr"), dsrJson(m_service->dsrStatus())}};
     const QString next = QString::fromUtf8(QJsonDocument(document).toJson(QJsonDocument::Compact));
     updateTick();
     if (next == m_json) {
@@ -313,6 +318,22 @@ QJsonObject RecordingsFacade::settingsJson(const RecordingSettings& settings)
         {QStringLiteral("onAirUsePhaseRotator"), settings.onAirUsePhaseRotator}};
 }
 
+QJsonObject RecordingsFacade::dsrJson(const DsrStatus& status)
+{
+    return QJsonObject{{QStringLiteral("enabled"), status.enabled},
+                       {QStringLiteral("disk"), QDir::toNativeSeparators(status.disk)},
+                       {QStringLiteral("sizeLimitGb"), status.sizeLimitGb},
+                       {QStringLiteral("recording"), status.recording},
+                       {QStringLiteral("reason"), status.reason},
+                       {QStringLiteral("sizeLimitBytes"), status.sizeLimitBytes},
+                       {QStringLiteral("usedBytes"), status.usedBytes},
+                       {QStringLiteral("writePosition"), status.writePosition},
+                       {QStringLiteral("oldestUtcMs"), status.oldestUtcMs},
+                       {QStringLiteral("newestUtcMs"), status.newestUtcMs},
+                       {QStringLiteral("hoursHeld"), status.hoursHeld()},
+                       {QStringLiteral("overflows"), static_cast<qint64>(status.overflows)}};
+}
+
 bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,
                                            const QList<RecordingVolume>& volumes,
                                            RecordingSettings* settings, QString* refusal)
@@ -351,6 +372,8 @@ bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,
             flag = &next.onAirUseCfc;
         } else if (name == QLatin1String("onAirUsePhaseRotator")) {
             flag = &next.onAirUsePhaseRotator;
+        } else if (name == QLatin1String("dsrEnabled")) {
+            flag = &next.dsrEnabled;
         }
         if (flag != nullptr) {
             if (!value.isBool()) {
@@ -378,13 +401,14 @@ bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,
             } else {
                 return refuse(notUnderstood);
             }
-        } else if (name == QLatin1String("disk")) {
+        } else if (name == QLatin1String("disk") || name == QLatin1String("dsrDisk")) {
             if (!value.isString()) {
                 return refuse(notUnderstood);
             }
+            QString& target = name == QLatin1String("disk") ? next.disk : next.dsrDisk;
             const QString disk = QDir::fromNativeSeparators(value.toString());
             if (disk.isEmpty()) {
-                next.disk.clear();
+                target.clear();
             } else {
                 const auto found = std::find_if(volumes.cbegin(), volumes.cend(),
                                                 [&disk](const RecordingVolume& volume) {
@@ -393,8 +417,21 @@ bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,
                 if (found == volumes.cend()) {
                     return refuse(QStringLiteral("That disk is not on the Core now."));
                 }
-                next.disk = found->isCoreOwnDisk ? QString() : disk;
+                // An SD card may be chosen for the recorder; it then stays
+                // off and says why (RecordingService::DsrOff::SdChosen).
+                target = found->isCoreOwnDisk ? QString() : disk;
             }
+        } else if (name == QLatin1String("dsrSizeLimitGb")) {
+            const double gb = value.toDouble(-1.0);
+            if (!value.isDouble() || gb != static_cast<double>(static_cast<qint64>(gb))) {
+                return refuse(notUnderstood);
+            }
+            if (gb < RecordingSettings::kDsrSizeLimitGbMin || gb > RecordingSettings::kDsrSizeLimitGbMax) {
+                return refuse(QStringLiteral("The recorder's size can be %1 to %2 GB.")
+                                  .arg(RecordingSettings::kDsrSizeLimitGbMin)
+                                  .arg(RecordingSettings::kDsrSizeLimitGbMax));
+            }
+            next.dsrSizeLimitGb = static_cast<int>(gb);
         } else {
             return refuse(notUnderstood);
         }

@@ -16,6 +16,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; runOnWorker, waitForWorker, and the voice
 //             keyer told when the radio's connection drops. AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the Digital Spectrum Recorder: started
+//             while the radio streams, written on the worker, kept off an SD
+//             card and stopped when its disk goes (spec 3, 6.7, section 7,
+//             A10, A14, A17). AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -67,6 +71,8 @@ bool squelchOnFor(const SliceModel& slice)
     }
 }
 
+constexpr qint64 kNsPerMs = 1000000;
+
 QString suffixFor(AudioFileFormat format)
 {
     return format == AudioFileFormat::Mp3 ? QStringLiteral("mp3") : QStringLiteral("wav");
@@ -82,6 +88,8 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     , m_clock([] { return QDateTime::currentMSecsSinceEpoch(); })
     , m_onAir(std::make_unique<OnAirSource>(*this))
 {
+    m_dsr = std::make_unique<DsrRecorder>();
+    m_dsrVolumes = [] { return RecordingDisks::volumes(); };
     m_voiceKeyer = std::make_unique<VoiceKeyer>(*this, radio != nullptr ? radio->moxController() : nullptr,
                                                 m_onAir.get());
     if (radio != nullptr) {
@@ -125,6 +133,16 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
             });
             connect(mox, &MoxController::txAboutToEnd, this, [this] { keyChanged(false, std::nullopt); });
         }
+        // The Digital Spectrum Recorder runs while the radio streams, and
+        // follows each receiver's rate and centre.
+        connect(m_radio, &RadioModel::connectionStateChanged, this, [this](ConnectionState state) {
+            setRadioStreaming(state == ConnectionState::Connected);
+        });
+        connect(m_radio, &RadioModel::streamCentreChanged, this, [this](int stream, double centreHz, int rateHz) {
+            if (m_dsrRunning) {
+                m_dsr->setStream(stream, std::llround(centreHz), rateHz);
+            }
+        });
         connect(m_radio, &RadioModel::sliceAdded, this, &RecordingService::onSliceAdded);
         connect(m_radio, &RadioModel::sliceRemoved, this, &RecordingService::onSliceRemoved);
         // The player's speakers: every drain pulls each playback slot here.
@@ -203,6 +221,7 @@ void RecordingService::setSettings(const RecordingSettings& s)
         }
     }
     applyArming();
+    applyDsr();
 }
 
 void RecordingService::ensureStoreOpen() const
@@ -235,6 +254,7 @@ void RecordingService::ensureWorker()
         connect(m_workerTimer, &QTimer::timeout, m_workerContext, [this] {
             workerDrainAll();
             workerFillPlayers();
+            workerDrainDsr();
         });
     }, Qt::QueuedConnection);
 }
@@ -509,7 +529,10 @@ void RecordingService::stopAll()
     for (const int id : std::as_const(recording)) {
         stopSlice(id, KeptReason::StoppedHere, QString());
     }
-    if (m_thread && !m_finishing.isEmpty()) {
+    // The spectrum recorder writes what it holds and closes its file.
+    const bool dsrWasRunning = m_dsrRunning;
+    stopDsr();
+    if (m_thread && (!m_finishing.isEmpty() || dsrWasRunning)) {
         // The files are finished on the worker; wait for them and keep them.
         QMetaObject::invokeMethod(m_workerContext, [] {}, Qt::BlockingQueuedConnection);
         QCoreApplication::sendPostedEvents(this);
@@ -528,6 +551,8 @@ void RecordingService::consumeMonitor(const float* mono, int frames, int sampleR
                 recorder->consumeMonitor(mono, frames, sampleRateHz);
             }
         }
+        // Your transmit beside the spectrum recorder's I/Q.
+        m_dsr->consumeTransmitAudio(mono, frames, sampleRateHz);
     }
     m_monitorCallsInFlight.fetch_sub(1, std::memory_order_seq_cst);
 }
@@ -538,6 +563,7 @@ void RecordingService::setTransmitting(bool on)
         return;
     }
     m_transmitting = on;
+    m_dsr->setTransmitting(on);
     for (const std::unique_ptr<ContactRecorder>& recorder : m_recorders) {
         if (recorder) {
             recorder->setTransmitting(on);
@@ -1154,7 +1180,7 @@ void RecordingService::workerFillPlayers()
 
 void RecordingService::workerStopTimerIfIdle()
 {
-    if (m_workerFiles.isEmpty() && m_workerPlayers.empty() && m_workerTimer) {
+    if (m_workerFiles.isEmpty() && m_workerPlayers.empty() && !m_dsrWorkerOpen && m_workerTimer) {
         m_workerTimer->stop();
     }
 }
@@ -1171,6 +1197,14 @@ void RecordingService::setClockForTest(Clock clock)
 void RecordingService::setWriterFactoryForTest(WriterFactory factory)
 {
     m_writerFactory = std::move(factory);
+}
+
+void RecordingService::setDsrVolumesForTest(VolumesProvider provider)
+{
+    if (provider) {
+        m_dsrVolumes = std::move(provider);
+    }
+    m_dsrReasonKnown = false;
 }
 
 void RecordingService::setMp3AvailableForTest(std::optional<bool> available)
@@ -1195,8 +1229,260 @@ void RecordingService::pumpForTest()
         QMetaObject::invokeMethod(m_workerContext, [this] {
             workerDrainAll();
             workerFillPlayers();
+            workerDrainDsr();
         }, Qt::BlockingQueuedConnection);
         QCoreApplication::sendPostedEvents(this);
+    }
+}
+
+// ---- The Digital Spectrum Recorder.
+
+QList<RecordingVolume> RecordingService::dsrVolumes() const
+{
+    return m_dsrVolumes ? m_dsrVolumes() : RecordingDisks::volumes();
+}
+
+QString RecordingService::dsrReasonWords(DsrOff why)
+{
+    switch (why) {
+    case DsrOff::None:
+        return QString();
+    case DsrOff::SdOnly:
+        return QStringLiteral("The only disk is an SD card.");
+    case DsrOff::SdChosen:
+        return QStringLiteral("The recorder's disk is an SD card. Choose a USB SSD or NVMe drive.");
+    case DsrOff::DiskMissing:
+        return QStringLiteral("The recorder's disk is missing.");
+    case DsrOff::CannotWrite:
+        return QStringLiteral("The recorder cannot write to its disk.");
+    }
+    return QString();
+}
+
+RecordingService::DsrOff RecordingService::dsrDiskProblem(const QList<RecordingVolume>& volumes) const
+{
+    const QString disk = QDir::fromNativeSeparators(m_settings.dsrDisk);
+    const auto chosen = std::find_if(volumes.cbegin(), volumes.cend(), [&disk](const RecordingVolume& v) {
+        return disk.isEmpty() ? v.isCoreOwnDisk : QDir::fromNativeSeparators(v.rootPath) == disk;
+    });
+    if (chosen == volumes.cend()) {
+        // The Core's own disk is always there.
+        return disk.isEmpty() ? DsrOff::None : DsrOff::DiskMissing;
+    }
+    if (!disk.isEmpty() && !QDir(chosen->rootPath).exists()) {
+        return DsrOff::DiskMissing;
+    }
+    if (chosen->isSdCard) {
+        // A14: the loop never wears an SD card.
+        const bool onlySd = std::all_of(volumes.cbegin(), volumes.cend(),
+                                        [](const RecordingVolume& v) { return v.isSdCard; });
+        return onlySd ? DsrOff::SdOnly : DsrOff::SdChosen;
+    }
+    return DsrOff::None;
+}
+
+DsrStatus RecordingService::dsrStatus() const
+{
+    if (!m_dsrReasonKnown) {
+        m_dsrOff = m_settings.dsrEnabled ? dsrDiskProblem(dsrVolumes()) : DsrOff::None;
+        m_dsrReasonKnown = true;
+    }
+    DsrStatus st = m_dsrFigures;
+    st.enabled = m_settings.dsrEnabled;
+    st.recording = m_dsrRunning;
+    st.disk = m_settings.dsrDisk;
+    st.sizeLimitGb = m_settings.dsrSizeLimitGb;
+    st.reason = m_settings.dsrEnabled ? dsrReasonWords(m_dsrOff) : QString();
+    st.overflows = m_dsr->overflows();
+    if (st.sizeLimitBytes == 0) {
+        st.sizeLimitBytes = qint64(std::max(m_settings.dsrSizeLimitGb, RecordingSettings::kDsrSizeLimitGbMin))
+                            * kBytesPerGb;
+    }
+    return st;
+}
+
+void RecordingService::setRadioStreaming(bool on)
+{
+    if (on == m_radioStreaming) {
+        return;
+    }
+    m_radioStreaming = on;
+    applyDsr();
+}
+
+void RecordingService::applyDsr()
+{
+    DsrOff problem = DsrOff::None;
+    QString path;
+    bool want = false;
+    const qint64 limit =
+        qint64(std::max(m_settings.dsrSizeLimitGb, RecordingSettings::kDsrSizeLimitGbMin)) * kBytesPerGb;
+    if (m_settings.dsrEnabled) {
+        problem = dsrDiskProblem(dsrVolumes());
+        want = problem == DsrOff::None && m_radioStreaming;
+        path = QDir(m_settings.dsrFolder()).filePath(QString::fromLatin1(kDsrFileName));
+    }
+    if (m_dsrRunning && (!want || path != m_dsrPath || limit != m_dsrLimit)) {
+        stopDsr();
+    }
+    if (want && !m_dsrRunning) {
+        startDsr(path, limit);
+    }
+    m_dsrOff = problem;
+    m_dsrReasonKnown = true;
+    updateDsrDiskTimer();
+    emit dsrChanged();
+}
+
+void RecordingService::startDsr(const QString& path, qint64 limitBytes)
+{
+    ensureWorker();
+    m_dsr->setAccepting(false);
+    // What each receiver streams now; streamCentreChanged follows it.
+    if (m_radio) {
+        for (const SliceModel* slice : m_radio->slices()) {
+            const int stream = slice != nullptr ? slice->streamIndex() : -1;
+            if (stream >= 0) {
+                m_dsr->setStream(stream, std::llround(m_radio->streamCentreHz(stream)),
+                                 m_radio->streamSampleRateHz(stream));
+            }
+        }
+    }
+    const quint64 token = ++m_dsrToken;
+    m_dsrRunning = true;
+    m_dsrPath = path;
+    m_dsrLimit = limitBytes;
+    m_dsrFiguresShownMs = -1;
+    const Clock clock = m_clock;
+    QMetaObject::invokeMethod(m_workerContext, [this, token, path, limitBytes, clock] {
+        m_dsrWorkerClock = clock;
+        m_dsrWorkerToken = token;
+        m_dsrWorkerBlocks = 0;
+        QString error;
+        if (!m_dsr->begin(path, limitBytes, &error)) {
+            qCWarning(lcRecordings) << "the spectrum recorder cannot start:" << error;
+            QMetaObject::invokeMethod(this, [this, token] { onDsrFailed(token); }, Qt::QueuedConnection);
+            return;
+        }
+        m_dsrWorkerOpen = true;
+        const DsrStatus figures = m_dsr->figures();
+        QMetaObject::invokeMethod(this, [this, token, figures] { onDsrFigures(token, figures); },
+                                  Qt::QueuedConnection);
+        if (m_workerTimer && !m_workerTimer->isActive()) {
+            m_workerTimer->start();
+        }
+    }, Qt::QueuedConnection);
+    m_dsr->setAccepting(true);
+}
+
+void RecordingService::stopDsr()
+{
+    if (!m_dsrRunning) {
+        return;
+    }
+    m_dsrRunning = false;
+    m_dsr->setAccepting(false);
+    const quint64 token = m_dsrToken;
+    QMetaObject::invokeMethod(m_workerContext, [this, token] {
+        if (m_dsrWorkerOpen) {
+            m_dsrWorkerOpen = false;
+            m_dsr->finish(m_dsrWorkerClock() * kNsPerMs);
+            const DsrStatus figures = m_dsr->figures();
+            QMetaObject::invokeMethod(this, [this, token, figures] { onDsrFigures(token, figures); },
+                                      Qt::QueuedConnection);
+        }
+        workerStopTimerIfIdle();
+    }, Qt::QueuedConnection);
+}
+
+void RecordingService::checkDsrDisk()
+{
+    if (!m_settings.dsrEnabled || !m_radioStreaming) {
+        return;
+    }
+    const DsrOff problem = dsrDiskProblem(dsrVolumes());
+    if (m_dsrRunning && problem != DsrOff::None) {
+        // Section 7: the recorder stops and says its disk is missing;
+        // recordings go on.
+        qCWarning(lcRecordings) << "the spectrum recorder stops:" << dsrReasonWords(problem);
+        stopDsr();
+        m_dsrOff = problem;
+        emit dsrChanged();
+    } else if (!m_dsrRunning && problem == DsrOff::None && m_dsrOff == DsrOff::DiskMissing) {
+        // The disk is back.
+        applyDsr();
+    }
+}
+
+void RecordingService::updateDsrDiskTimer()
+{
+    // Only a chosen disk can go away; the Core's own cannot.
+    const bool watch = m_settings.dsrEnabled && m_radioStreaming && !m_settings.dsrDisk.isEmpty();
+    if (watch && !m_dsrDiskTimer) {
+        m_dsrDiskTimer = new QTimer(this);
+        m_dsrDiskTimer->setInterval(kDsrDiskCheckMs);
+        connect(m_dsrDiskTimer, &QTimer::timeout, this, &RecordingService::checkDsrDisk);
+    }
+    if (m_dsrDiskTimer) {
+        if (watch && !m_dsrDiskTimer->isActive()) {
+            m_dsrDiskTimer->start();
+        } else if (!watch && m_dsrDiskTimer->isActive()) {
+            m_dsrDiskTimer->stop();
+        }
+    }
+}
+
+void RecordingService::onDsrFigures(quint64 token, const DsrStatus& figures)
+{
+    if (token != m_dsrToken) {
+        return;
+    }
+    m_dsrFigures = figures;
+    const qint64 t = now();
+    if (!m_dsrRunning || m_dsrFiguresShownMs < 0 || t - m_dsrFiguresShownMs >= kDsrFiguresRefreshMs) {
+        m_dsrFiguresShownMs = t;
+        emit dsrChanged();
+    }
+}
+
+void RecordingService::onDsrFailed(quint64 token)
+{
+    if (token != m_dsrToken || !m_dsrRunning) {
+        return;
+    }
+    m_dsrRunning = false;
+    m_dsr->setAccepting(false);
+    const DsrOff problem = dsrDiskProblem(dsrVolumes());
+    m_dsrOff = problem == DsrOff::None ? DsrOff::CannotWrite : problem;
+    m_dsrReasonKnown = true;
+    qCWarning(lcRecordings) << "the spectrum recorder stops:" << dsrReasonWords(m_dsrOff);
+    // The worker has closed the file; this sends what it still holds.
+    QMetaObject::invokeMethod(m_workerContext, [this, token] {
+        const DsrStatus figures = m_dsr->figures();
+        workerStopTimerIfIdle();
+        QMetaObject::invokeMethod(this, [this, token, figures] { onDsrFigures(token, figures); },
+                                  Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
+    emit dsrChanged();
+}
+
+void RecordingService::workerDrainDsr()
+{
+    if (!m_dsrWorkerOpen) {
+        return;
+    }
+    const quint64 token = m_dsrWorkerToken;
+    if (!m_dsr->drain(m_dsrWorkerClock() * kNsPerMs)) {
+        m_dsrWorkerOpen = false;
+        workerStopTimerIfIdle();
+        QMetaObject::invokeMethod(this, [this, token] { onDsrFailed(token); }, Qt::QueuedConnection);
+        return;
+    }
+    if (m_dsr->blocksWritten() != m_dsrWorkerBlocks) {
+        m_dsrWorkerBlocks = m_dsr->blocksWritten();
+        const DsrStatus figures = m_dsr->figures();
+        QMetaObject::invokeMethod(this, [this, token, figures] { onDsrFigures(token, figures); },
+                                  Qt::QueuedConnection);
     }
 }
 

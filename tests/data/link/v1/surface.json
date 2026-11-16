@@ -602,7 +602,7 @@
         {
             "kind": "i64",
             "name": "recordingsVersion",
-            "value": 3
+            "value": 4
         },
         {
             "kind": "i64",
@@ -1781,6 +1781,21 @@
                 {
                     "kind": "bool",
                     "name": "onAirUsePhaseRotator",
+                    "optional": true
+                },
+                {
+                    "kind": "bool",
+                    "name": "dsrEnabled",
+                    "optional": true
+                },
+                {
+                    "kind": "utf8",
+                    "name": "dsrDisk",
+                    "optional": true
+                },
+                {
+                    "kind": "i64",
+                    "name": "dsrSizeLimitGb",
                     "optional": true
                 }
             ],

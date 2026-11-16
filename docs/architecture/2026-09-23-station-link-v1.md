@@ -1323,7 +1323,7 @@ table.
 | `stationRoundtableVersion` | 2 |
 | `nnrLoadWarningVersion` | 1 |
 | `bandStackVersion` | 1 |
-| `recordingsVersion` | 3 |
+| `recordingsVersion` | 4 |
 | `txSsbModMonitorVersion` | 1 |
 
 <!-- /surface -->
@@ -1661,7 +1661,12 @@ When a feature is off, its version is 0:
   and the Core takes the `voiceKeyer.*` verbs (section 9): eight voice
   messages kept on the Core, one of which, sent, keys the radio as the
   device that asked; a peer that declared `recordings` 1 is sent 3, and a
-  client sends a `voiceKeyer.*` verb only when it was. The session protocol
+  client sends a `voiceKeyer.*` verb only when it was. At 4 the document
+  adds `dsr`, the Digital Spectrum Recorder (every receiver's I/Q kept on
+  the Core's disk in a loop with a size limit), and `recordings.setSettings`
+  takes `dsrEnabled`, `dsrDisk` and `dsrSizeLimitGb`; a peer that declared
+  `recordings` 1 is sent 4, and a client below 4 leaves its recorder
+  controls visible and greyed with the words below. The session protocol
   minor did not change. A client on a Core that sends no entry shows
   its recording controls greyed with "This Core needs an update for
   recordings." and sends nothing.
@@ -3814,10 +3819,10 @@ destroyed during the session.
 
 Notes on the keys:
 
-- **`recordings`** (`RecordingsFacade`, `recordingsVersion` 3). The Core's
+- **`recordings`** (`RecordingsFacade`, `recordingsVersion` 4). The Core's
   recordings, read-only (a write is refused; the `recordings.*` verbs change
   them), sent only to a peer at agreed minor 11 that declared `recordings` 1.
-  `json` is the document: `version` 3, `slices` (one per open slice: `slice`,
+  `json` is the document: `version` 4, `slices` (one per open slice: `slice`,
   `state` `idle`, `armed` or `recording`, `startUtc`, `startedBy` with "" for
   the Core's own window, `elapsedMs`, `myVoice`), `kept` (the last recording
   kept: `seq`, moving by one for each and 0 for none yet, `slice`, `id`,
@@ -3837,8 +3842,19 @@ Notes on the keys:
   goes out or waits to repeat: `n`, `positionMs`, `lengthMs`, `waitingMs`,
   counting down between repeats and 0 while it goes out, `by`, the
   sender's words, "Desktop" for the Core's own window, and `deviceId`, the
-  sender as the link names a device, `station` for the Core's own window).
-  While a slice
+  sender as the link names a device, `station` for the Core's own window),
+  and from version 4 `dsr`, the Digital Spectrum Recorder: `enabled` (true
+  by default), `disk` ("" for the Core's own), `sizeLimitGb` (10 by
+  default, 1 to 100000), `recording` (it writes now, which it does only
+  while the radio streams), `reason` (why it does not although on: "The
+  only disk is an SD card.", "The recorder's disk is an SD card. Choose a
+  USB SSD or NVMe drive.", "The recorder's disk is missing.", "The recorder
+  cannot write to its disk."; "" otherwise), and the loop's figures
+  `sizeLimitBytes`, `usedBytes`, `writePosition` (where the next second
+  goes), `oldestUtcMs` and `newestUtcMs` (ms since 1970 UTC, 0 when nothing
+  is kept), `hoursHeld` (newest less oldest) and `overflows` (blocks the
+  receiver tap dropped because the writer fell behind). The figures move at
+  most every 5 seconds. While a slice
   records, or a voice message goes out, the document is rebuilt once a
   second. `revision` moves by one each
   time `json` changes. The recordings themselves are not in it: a client asks
@@ -6626,7 +6642,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `recordings.rename` | `id` utf8, `name` utf8 | `recordingsVersion` | 1 | 11 |
 | `recordings.delete` | `ids` utf8 | `recordingsVersion` | 1 | 11 |
 | `recordings.export` | `id` utf8, `offset` i64 | `recordingsVersion` | 1 | 11 |
-| `recordings.setSettings` | `keepMyVoice` bool (optional), `sidesApart` bool (optional), `autoStart` bool (optional), `autoStop` bool (optional), `quietMinutes` i64 (optional), `format` utf8 (optional), `disk` utf8 (optional), `onAirUseTxEq` bool (optional), `onAirUseCompressor` bool (optional), `onAirUseLeveler` bool (optional), `onAirUseCfc` bool (optional), `onAirUsePhaseRotator` bool (optional) | `recordingsVersion` | 1 | 11 |
+| `recordings.setSettings` | `keepMyVoice` bool (optional), `sidesApart` bool (optional), `autoStart` bool (optional), `autoStop` bool (optional), `quietMinutes` i64 (optional), `format` utf8 (optional), `disk` utf8 (optional), `onAirUseTxEq` bool (optional), `onAirUseCompressor` bool (optional), `onAirUseLeveler` bool (optional), `onAirUseCfc` bool (optional), `onAirUsePhaseRotator` bool (optional), `dsrEnabled` bool (optional), `dsrDisk` utf8 (optional), `dsrSizeLimitGb` i64 (optional) | `recordingsVersion` | 1 | 11 |
 | `voiceKeyer.send` | `n` i64 | `recordingsVersion` | 3 | 11 |
 | `voiceKeyer.stop` | none | `recordingsVersion` | 3 | 11 |
 | `voiceKeyer.beginImport` | `n` i64, `name` utf8, `size` i64 | `recordingsVersion` | 3 | 11 |
@@ -7077,12 +7093,16 @@ These command groups need a sentence beyond the table:
   a JSON array as text (an id another device deleted first is skipped),
   `recordings.export` answers with `id`, `offset`, `size` (the whole file)
   and `data`, up to 192 KiB of the file from `offset` as base64, and
-  `recordings.setSettings` takes any of the document's settings names.
+  `recordings.setSettings` takes any of the document's settings names, and
+  from version 4 the recorder's `dsrEnabled`, `dsrDisk` (a disk's `root`
+  from `disks`, "" for the Core's own; an SD card is taken, and the recorder
+  then stays off with its reason) and `dsrSizeLimitGb`.
   Refusals: "Update this app to use recordings on this Core." without the
   feature, "The request for recordings was not understood." for a missing or
   wrong argument, "That slice is not open.", "That recording is no longer
   kept." for a recording another device removed, "Quiet can be 1 to 60
-  minutes." and the store's words for a name already used. None keys the
+  minutes.", "The recorder's size can be 1 to 100000 GB.", "That disk is
+  not on the Core now." and the store's words for a name already used. None keys the
   radio; playback alone never transmits.
 - **The voice keyer** (`recordingsVersion` 3). Messages M1 to M8 are kept on
   the Core as 48 kHz 16-bit mono WAV, at most two minutes each.

@@ -20,6 +20,9 @@
 //             keyer's imports convert on the worker), and the voice keyer
 //             told when the radio's connection drops. AI tooling: Anthropic
 //             Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; the Digital Spectrum Recorder: its tap,
+//             its writer on the worker, and its disk rules (spec 3, 6.7,
+//             section 7, A10, A14, A17). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -27,9 +30,11 @@
 #include "core/recordings/AudioFileWriter.h"
 #include "core/recordings/OnAirSource.h"
 #include "core/recordings/QuietRule.h"
+#include "core/recordings/RecordingDisks.h"
 #include "core/recordings/RecordingPlayer.h"
 #include "core/recordings/RecordingSettings.h"
 #include "core/recordings/VoiceKeyer.h"
+#include "core/recordings/dsr/DsrRecorder.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -191,6 +196,30 @@ public:
     // source. The only part of recordings that keys the radio.
     VoiceKeyer* voiceKeyer() const { return m_voiceKeyer.get(); }
 
+    // ---- The Digital Spectrum Recorder (spec 3, 6.7, section 7,
+    // recordingsVersion 4): every receiver's I/Q in one ring file on the
+    // chosen disk, while the radio streams. On by default on the Core's own
+    // disk at 10 GB; never on an SD card.
+    // Why the recorder is off although it is on (spec 6.7, section 7, A14).
+    enum class DsrOff { None, SdOnly, SdChosen, DiskMissing, CannotWrite };
+    // The words the document carries for it; "" for None.
+    static QString dsrReasonWords(DsrOff why);
+    // The ring file in RecordingSettings::dsrFolder().
+    static constexpr const char* kDsrFileName = "Spectrum Recorder.ndsr";
+    // DsrSizeLimitGb counts disk makers' gigabytes.
+    static constexpr qint64 kBytesPerGb = 1000000000;
+    // A chosen disk that goes away is noticed this often.
+    static constexpr int kDsrDiskCheckMs = 5000;
+    // The ring's figures (oldest, newest, write position) reach the
+    // document at most this often; on, off and why change it at once.
+    static constexpr int kDsrFiguresRefreshMs = 5000;
+    // The tap: RadioModel::forkIqToTaps copies into it and returns.
+    DsrRecorder* dsrRecorder() const { return m_dsr.get(); }
+    DsrStatus dsrStatus() const;
+    // The radio streams I/Q (connected), or not; the recorder runs only
+    // while it does. Followed from RadioModel::connectionStateChanged.
+    void setRadioStreaming(bool on);
+
     // ---- The recordings worker thread, for work that must not run on the
     // main thread (the voice keyer's conversions).
     // Runs `job` on the worker after what is queued there already. From
@@ -213,6 +242,11 @@ public:
     void pumpForTest();
     // The quiet check, now.
     void checkQuietForTest() { checkQuiet(); }
+    // The disks the recorder may use (RecordingDisks::volumes otherwise).
+    using VolumesProvider = std::function<QList<RecordingVolume>()>;
+    void setDsrVolumesForTest(VolumesProvider provider);
+    // The recorder's disk check, now.
+    void checkDsrDiskForTest() { checkDsrDisk(); }
 
 signals:
     void sliceStateChanged(int sliceId);
@@ -220,6 +254,8 @@ signals:
     // Started, stopped, sought, ended (once) or failed.
     void playbackChanged(const NereusSDR::ListenerId& who);
     void playbackRefused(const NereusSDR::ListenerId& who, const QString& reason);
+    // The recorder went on or off, its reason changed, or its figures moved.
+    void dsrChanged();
 
 private:
     struct SliceRecord {
@@ -317,6 +353,18 @@ private:
     void workerFillPlayers();
     void workerStopTimerIfIdle();
 
+    // The Digital Spectrum Recorder.
+    DsrOff dsrDiskProblem(const QList<RecordingVolume>& volumes) const;
+    QList<RecordingVolume> dsrVolumes() const;
+    void applyDsr();
+    void startDsr(const QString& path, qint64 limitBytes);
+    void stopDsr();
+    void checkDsrDisk();
+    void updateDsrDiskTimer();
+    void onDsrFigures(quint64 token, const DsrStatus& figures);
+    void onDsrFailed(quint64 token);
+    void workerDrainDsr();
+
     RadioModel* m_radio = nullptr;
     mutable std::unique_ptr<RecordingStore> m_store;
     mutable QString m_storeFolder;
@@ -358,6 +406,27 @@ private:
     // After the on-air source, so it goes before it: its end unkeys and
     // ends its message there.
     std::unique_ptr<VoiceKeyer> m_voiceKeyer;
+
+    // The Digital Spectrum Recorder. The radio's tap gate (RadioModel)
+    // closes before this goes, and the transmit monitor's above.
+    std::unique_ptr<DsrRecorder> m_dsr;
+    VolumesProvider m_dsrVolumes;
+    bool m_radioStreaming = false;
+    bool m_dsrRunning = false;
+    QString m_dsrPath;
+    qint64 m_dsrLimit = 0;
+    quint64 m_dsrToken = 0;
+    // Why it is off although on; worked out when first asked, then on each
+    // change of settings, streaming or disk.
+    mutable DsrOff m_dsrOff = DsrOff::None;
+    mutable bool m_dsrReasonKnown = false;
+    DsrStatus m_dsrFigures;
+    qint64 m_dsrFiguresShownMs = -1;
+    QTimer* m_dsrDiskTimer = nullptr;
+    bool m_dsrWorkerOpen = false;   // worker thread only
+    quint64 m_dsrWorkerToken = 0;   // worker thread only
+    int m_dsrWorkerBlocks = 0;      // worker thread only
+    Clock m_dsrWorkerClock;         // worker thread only
 };
 
 }  // namespace NereusSDR
