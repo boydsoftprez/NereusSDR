@@ -13,6 +13,8 @@
 //   (R-CW-50). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-10-28: CW v2 lease, heartbeat and retirement integration.
 //   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-16: the app declares recordings 1 (recording plan Task 15).
+//   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 /// The `features` object of the app's `hello` (link document section 6.1):
 /// what the Core must know about this app before it sends capabilities.
@@ -261,6 +263,13 @@
 /// `bandStack.*` verbs from this app; a Core that sends none leaves the band
 /// stack greyed with the update note.
 ///
+/// `recordings` 1: the app shows and works the Core's recordings and its
+/// voice keyer. The Core then sends `recordingsVersion` (1 to 3) and the
+/// `recordings` object, takes the `recordings.*` verbs and, at 3, the
+/// `voiceKeyer.*` verbs, and sends this device's own playback as
+/// `recordings.playback`; a Core that sends none leaves every recording
+/// control greyed with "This Core needs an update for recordings.".
+///
 /// The PA readings need no declaration: the Core sends its telemetry to
 /// every peer at `stationTelemetryVersion` 4 or later.
 public enum LinkFeatures {
@@ -280,5 +289,5 @@ public enum LinkFeatures {
                                             "spectrumPicture": 1, "firmwareBeta": 1,
                                             "tuneDriveSource": 1, "displayCodec": 2,
                                             "roundtable": 2, "remoteCw": 2, "cwSettings": 1, "nnrLoadWarning": 1,
-                                            "bandStack": 1]
+                                            "bandStack": 1, "recordings": 1]
 }

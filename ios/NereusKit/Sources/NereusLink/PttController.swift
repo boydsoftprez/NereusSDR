@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-10-28: CW v2 lease, heartbeat and retirement integration.
 //   J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
+// 2026-11-16: Recording plan Task 15: the keepalive runs while the Core's
+//   voice keyer sends this device's message. J.J. Boyd (KG4VCF), AI-assisted
+//   via Claude Code.
 
 import Foundation
 import os
@@ -39,7 +42,10 @@ import os
 /// is armed, and the link is up, it sends `tx.keepalive {sequence, epoch}`
 /// once every 100 ms, the sequence never restarting within a session, the
 /// epoch the key's, or 4294967295 before its answer. A release stops it at
-/// once.
+/// once. It runs too while the Core's voice keyer sends this device's
+/// message, or waits to repeat it (``setVoiceMessageSending(_:)``): the
+/// message keys the radio as this device, so the Core's watchdog watches
+/// this device's keepalives and would hold it at 400 ms and cut it at 3 s.
 ///
 /// What the Core says: a `txState` stop whose `stopEpoch` is this device's
 /// key's or newer ends the key here too, without an unkey, even when the
@@ -111,6 +117,9 @@ public actor PttController {
         /// This device's VOX is armed (its write of `transmit.voxEnabled`
         /// on was accepted) and the link is up.
         public var voxArmed = false
+        /// The Core's voice keyer sends this device's message (or waits to
+        /// repeat it) and the link is up.
+        public var voiceMessageSending = false
 
         public init() {}
 
@@ -247,6 +256,10 @@ public actor PttController {
     /// never meet the Core's `stopSerial`.
     private var localStopSerial: Int64 = 0
     private var voxArmed = false
+    /// The recordings document's `voiceKeyer.sending.deviceId` names this
+    /// device. Kept across a session's start, so the document may arrive
+    /// before or after the link is up; cleared when the link goes.
+    private var voiceMessageSending = false
     /// The last keepalive's sequence in this session.
     private var sequence: Int64 = 0
     private var keepaliveTimer: (any LinkTimer)?
@@ -478,6 +491,20 @@ public actor PttController {
         changed()
     }
 
+    /// The Core's voice keyer sends this device's message, or waits to
+    /// repeat it: the recordings document's `voiceKeyer.sending.deviceId`
+    /// names this device (link document, the voice keyer notes). The
+    /// keepalive runs meanwhile with the epoch a key without its own answer
+    /// carries, as the desktop's does (RemoteTransmitClient), and stops when
+    /// the message ends. It keys nothing and sends no keying verb.
+    public func setVoiceMessageSending(_ sending: Bool) {
+        guard sending != voiceMessageSending else {
+            return
+        }
+        voiceMessageSending = sending
+        changed()
+    }
+
     /// Async app completions retain the logical owner across actor admission.
     public func setVoxArmed(_ armed: Bool, owner: UInt64?, authority: CommandSendPermit? = nil) {
         guard owner == logicalSessionOwner, !(authority?.isRevoked ?? false) else { return }
@@ -587,6 +614,8 @@ public actor PttController {
             earlyStop = nil
             // The Core disarms a device's VOX when its session ends.
             voxArmed = false
+            // A new session's document says again whose message goes out.
+            voiceMessageSending = false
             firstReportOfSession = true
         }
         changed()
@@ -621,6 +650,7 @@ public actor PttController {
         keyEpoch = nil
         earlyStop = nil
         voxArmed = false
+        voiceMessageSending = false
         changed()
     }
 
@@ -1130,7 +1160,7 @@ public actor PttController {
         case .keying, .keyed:
             return true
         default:
-            return voxArmed
+            return voxArmed || voiceMessageSending
         }
     }
 
@@ -1250,6 +1280,7 @@ public actor PttController {
         snapshot.logicalSessionOwner = logicalSessionOwner
         snapshot.microphoneWanted = microphoneWanted
         snapshot.voxArmed = voxArmed
+        snapshot.voiceMessageSending = voiceMessageSending && linkUp
         snapshotSink.yield(snapshot)
     }
 

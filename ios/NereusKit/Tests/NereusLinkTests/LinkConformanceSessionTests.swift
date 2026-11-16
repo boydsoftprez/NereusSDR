@@ -199,7 +199,7 @@ import Testing
                                   "radioSpeaker": 1, "coreSpeaker": 1,
                                   "spectrumPicture": 1, "firmwareBeta": 1, "tuneDriveSource": 1, "displayCodec": 2,
                                   "roundtable": 2, "remoteCw": 2, "cwSettings": 1, "nnrLoadWarning": 1,
-                                  "bandStack": 1])
+                                  "bandStack": 1, "recordings": 1])
     }
 
     /// JSON inside a string (section 16.1): an app's runner sends the
