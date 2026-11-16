@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH AdditionRef-NereusSDR-AppStore-permission
 // 2026-10-31: J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex:
 //   passive MAX diagnostic format, bounds, raw holding and lifecycle coverage.
+// 2026-11-16: J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code:
+//   a needle frame with nothing moving publishes nothing.
 
+import Combine
 import Foundation
 import CoreGraphics
 import NereusBand
@@ -758,5 +761,44 @@ extension SMeterModelTests {
         }, "A current nonzero reading must move the needle when its scale arrives")
         #expect(meter.display.right == "98 W")
         #expect(meter.display.needle == 98 / (try #require(meter.meters)).rfPower.maxW)
+    }
+}
+
+@MainActor
+extension SMeterModelTests {
+    @Test("A needle frame with nothing on the meter moving publishes nothing")
+    func aStillFramePublishesNothing() async throws {
+        let mirror = MirrorStore(send: { _ in })
+        mirror.apply(.objectCreate(.init(key: "slice:0", className: "SliceModel", properties: [
+            .init(name: "sliceIndex", value: .i64(0)), .init(name: "active", value: .bool(true)),
+            .init(name: "frequency", value: .f64(14_261_000)),
+            .init(name: "filterLow", value: .i64(100)), .init(name: "filterHigh", value: .i64(2_900)),
+            .init(name: "signalPeakDbm", value: .f64(-85)), .init(name: "signalAverageDbm", value: .f64(-90)),
+        ])))
+        let defaults = try #require(UserDefaults(suiteName: "SMeterStillFrame-\(UUID().uuidString)"))
+        let main = MainScreenModel(mirror: mirror, settings: SettingsProxyClient(send: { _ in }), commands: nil,
+            operations: .init(subscribe: { _ in }, unsubscribe: { _ in }),
+            displaySettings: BandDisplaySettingsStore(defaults: defaults),
+            meterSettings: SMeterSettingsStore(defaults: defaults))
+        try #require(await settle { main.slices.active != nil })
+        var now = 100.0
+        let meter = SMeterModel(slices: main.slices, band: main.band, subscriber: main.subscriber,
+            transmit: main.transmit, catalogFeed: main.catalogFeed,
+            store: SMeterSettingsStore(defaults: defaults), clock: { now })
+        try #require(await settle { meter.state.readings.peakDbm == -85 })
+        // A frame past the held peak's first 50 ms tick, so the peak that
+        // rose with the reading has come back to it and nothing moves.
+        now += SMeterPeaks.peakTickSeconds * 2
+        meter.frame()
+        var published = 0
+        let watch = meter.$state.dropFirst().sink { _ in published += 1 }
+        defer { watch.cancel() }
+        let before = meter.state
+        for _ in 0 ..< 3 {
+            now += SMeterNeedle.frameSeconds
+            meter.frame()
+        }
+        #expect(meter.state == before)
+        #expect(published == 0, "a still frame published the meter's state \(published) times")
     }
 }

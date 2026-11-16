@@ -539,8 +539,9 @@ final class BandModel: ObservableObject {
     }
 
     /// What places the marks on the band besides the marks themselves: the
-    /// band's parts (``BandLayout``'s settings), the look back, and the
-    /// waterfall held still or let go. A new line moves the marks
+    /// band's parts (``BandLayout``'s settings), the look back, the
+    /// waterfall held still or let go, and the Update period the
+    /// waterfall's time axis spaces its rows by. A new line moves the marks
     /// themselves, so the waterfall's top is not here.
     struct AwayPlacement: Equatable {
         var hasGeometry = false
@@ -549,6 +550,7 @@ final class BandModel: ObservableObject {
         var showsDbmScale = true
         var lookBackLines = 0
         var frozen = false
+        var waterfallPeriodMs = 0
     }
 
     /// Brings ``AwayMarks/placement`` up to date while there are marks.
@@ -561,7 +563,8 @@ final class BandModel: ObservableObject {
         let view = view
         let next = AwayPlacement(hasGeometry: spanHz > 0 && view.spanHz > 0, bandPlanSize: laid.bandPlanSize,
                                  spectrumShare: laid.spectrumShare, showsDbmScale: laid.showDbmScale,
-                                 lookBackLines: lookBackLines, frozen: frozenWaterfallTop != nil)
+                                 lookBackLines: lookBackLines, frozen: frozenWaterfallTop != nil,
+                                 waterfallPeriodMs: settings.waterfallPeriodMs)
         if next != away.placement {
             away.placement = next
         }
@@ -933,6 +936,9 @@ final class BandModel: ObservableObject {
                 transmitViewShared = false
                 applyToState()
             }
+            // The band drawn as the media left it: the receive settings
+            // back, the waterfall held where it stopped.
+            redraw()
         case .displayFrame(let frame) where frame.endpointId == endpointId:
             guard !holdsReceiveFrame(frame) else {
                 // The receiver hearing its own transmitter while the band
