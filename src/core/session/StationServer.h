@@ -182,6 +182,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11 fix round 2: voiceMessageOnAir,
+//               recheckMicLineAfterVoiceMessage and EndedMicLine's
+//               afterVoiceMessage. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 5: isBandStackRecall, handleBandStackRecall.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: peerGetsBandStack.
@@ -2480,6 +2484,13 @@ private:
     // Fix wave B, round 2: a slice's mode changed; a starved line for the
     // key on the air is judged again in the transmit mode now.
     void onTransmitModeChanged();
+    // Recording plan Task 11 fix round 2: a voice message is on the air (the
+    // microphone is not used meanwhile).
+    bool voiceMessageOnAir() const;
+    // Recording plan Task 11 fix round 2: `deviceId`'s own key took the air
+    // from its voice message with the radio still keyed for it: a line that
+    // starved meanwhile is held now and cut 10 s from now without audio.
+    void recheckMicLineAfterVoiceMessage(const QByteArray& deviceId);
     // Every bit is clear (MOX reached receive, or the last one let go): a
     // hold still published ends as "the key ended", one event-loop turn
     // later, so a cut's own end (its stop runs first) is told first.
@@ -3255,11 +3266,16 @@ private:
     // audio returning, and the key it was for. lastPacketMs is on the
     // Core's clock (m_deviceSessions->now()), the earliest of every line
     // that ended for the key; empty deviceId: none.
+    // Recording plan Task 11 fix round 2: afterVoiceMessage marks a
+    // deadline restarted when the sender's key took the air from its voice
+    // message (lastPacketMs is then that moment); the line's own no-audio
+    // signal before it is not the cut.
     struct EndedMicLine {
         QByteArray deviceId;
         quint32 keyEpoch = 0;
         qint64 lastPacketMs = 0;
         bool starvationJudged = false;
+        bool afterVoiceMessage = false;
     };
     EndedMicLine m_endedMicLine;
     QTimer* m_endedMicLineTimer = nullptr;

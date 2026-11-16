@@ -39,6 +39,12 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF): a message on the air is not cleared
 //                 or replaced from any device. AI-assisted via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11 fix round 2: a
+//                 microphone line that starved under the message is held
+//                 when the sender's own key takes the air and cut 10 s
+//                 later; a waiting repeat goes with its sender's session;
+//                 another device cannot turn Repeat off under it.
+//                 AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -62,6 +68,7 @@
 #include "core/session/RecordingsFacade.h"
 #include "core/session/SessionCommandDispatcher.h"
 #include "core/session/StationCapabilities.h"
+#include "core/session/media/RemoteMicReceiver.h"
 
 namespace {
 
@@ -546,6 +553,152 @@ private slots:
         QTRY_VERIFY(!mox->isMox());
         QVERIFY(!vk->sending().has_value());
         QCOMPARE(core.model->recordingService()->onAirSource()->active(), OnAirSource::Kind::None);
+    }
+
+    // The starvation rules leave a quiet microphone line be under a voice
+    // message (the microphone is not used): no hold, no cut. The sender's
+    // own key then takes the air with the radio still keyed for it: in AM
+    // the starved line is held at once, and cut 10 s from then without
+    // audio (the line's own earlier no-audio signal is not the cut).
+    void aLineStarvedUnderTheMessageIsHeldWhenTheSendersKeyTakesTheAir()
+    {
+        Core core;
+        useTestDisk(core);
+        allowTransmit(core);
+        core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        VoiceKeyer* vk = voiceKeyerWithMessage(core);
+        QVERIFY(vk != nullptr);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, voiceFeatures());
+        QVERIFY(admitted(app));
+        MoxController* mox = core.model->moxController();
+        const QByteArray id = phone.key.fingerprint();
+
+        QCOMPARE(refusalOf(core.invoke(app, "voiceKeyer.send", {int64("n", 1)})), QString());
+        QVERIFY(mox->isMox());
+        core.server->remoteMicStarved(id, true);
+        QVERIFY(!core.model->isRemoteRfHeld());
+        core.now += RemoteMicConfig::kNoAudioCutMs;
+        core.server->remoteMicNoAudio(id);
+        QCoreApplication::processEvents();
+        QVERIFY(mox->isMox());
+        QVERIFY(!core.model->isRemoteRfHeld());
+        QVERIFY(vk->sending().has_value());
+
+        const QJsonObject key = core.invoke(
+            app, "tx.key", {MirrorUpdate{0, "trigger", MirrorWireKind::Utf8, QStringLiteral("screen")}});
+        QVERIFY2(key.value(QStringLiteral("accepted")).toBool(), qPrintable(reasonOf(key)));
+        QVERIFY(!vk->sending().has_value());
+        QVERIFY(mox->isMox());
+        QCOMPARE(mox->currentKeyer().deviceId, id);
+        QVERIFY(core.model->isRemoteRfHeld());
+        QVERIFY(core.server->micHoldCountedForTest());
+        QVERIFY(core.server->endedMicLinePendingForTest());
+
+        core.now += RemoteMicConfig::kNoAudioCutMs - 1;
+        core.server->judgeEndedMicLineForTest();
+        core.server->remoteMicNoAudio(id);
+        QCoreApplication::processEvents();
+        QVERIFY(mox->isMox());
+        QVERIFY(core.model->isRemoteRfHeld());
+        core.now += 1;
+        core.server->judgeEndedMicLineForTest();
+        QTRY_VERIFY(!mox->isMox());
+    }
+
+    // The same with audio on the line when the key takes the air: nothing
+    // is held. Audio after a hold releases it and ends the cut's wait.
+    void audioOnTheLineAfterTheHandOverReleasesTheHold()
+    {
+        Core core;
+        useTestDisk(core);
+        allowTransmit(core);
+        core.model->sliceById(0)->setDspMode(DSPMode::AM);
+        VoiceKeyer* vk = voiceKeyerWithMessage(core);
+        QVERIFY(vk != nullptr);
+        Device phone;
+        core.pair(phone);
+        LoopbackTransport* app = core.signIn(phone, voiceFeatures());
+        QVERIFY(admitted(app));
+        MoxController* mox = core.model->moxController();
+        const QByteArray id = phone.key.fingerprint();
+        const QList<MirrorUpdate> screen{
+            MirrorUpdate{0, "trigger", MirrorWireKind::Utf8, QStringLiteral("screen")}};
+
+        QCOMPARE(refusalOf(core.invoke(app, "voiceKeyer.send", {int64("n", 1)})), QString());
+        QVERIFY(core.invoke(app, "tx.key", screen).value(QStringLiteral("accepted")).toBool());
+        QVERIFY(mox->isMox());
+        QVERIFY(!core.model->isRemoteRfHeld());
+        QVERIFY(!core.server->endedMicLinePendingForTest());
+        QVERIFY(core.invoke(app, "tx.unkey", {int64("epoch", core.model->keyedBy().epoch)})
+                    .value(QStringLiteral("accepted"))
+                    .toBool());
+        QTRY_VERIFY(!mox->isMox());
+
+        QCOMPARE(refusalOf(core.invoke(app, "voiceKeyer.send", {int64("n", 1)})), QString());
+        core.server->remoteMicStarved(id, true);
+        QVERIFY(core.invoke(app, "tx.key", screen).value(QStringLiteral("accepted")).toBool());
+        QVERIFY(core.model->isRemoteRfHeld());
+        core.server->remoteMicStarved(id, false);
+        QVERIFY(!core.model->isRemoteRfHeld());
+        QVERIFY(!core.server->endedMicLinePendingForTest());
+        QVERIFY(mox->isMox());
+    }
+
+    // A repeat waiting for its sender ends with that sender's session, and
+    // another device cannot turn Repeat off under it (ruling 8.5).
+    void aWaitingRepeatGoesWithItsSendersSession()
+    {
+        Core core;
+        useTestDisk(core);
+        allowTransmit(core);
+        VoiceKeyer* vk = voiceKeyerWithMessage(core);
+        QVERIFY(vk != nullptr);
+        qint64 t = 0;
+        vk->setClockForTest([&t] { return t; });
+        const QHash<QByteArray, int> features = voiceFeatures();
+        Device phone;
+        Device tablet(QStringLiteral("iPad"), QStringLiteral("tablet"));
+        core.pair(phone);
+        core.pair(tablet);
+        LoopbackTransport* sender = core.signIn(phone, features);
+        LoopbackTransport* other = core.signIn(tablet, features);
+        QVERIFY(admitted(sender));
+        QVERIFY(admitted(other));
+        MoxController* mox = core.model->moxController();
+        const auto repeat = [](bool on) {
+            return QList<MirrorUpdate>{MirrorUpdate{0, "on", MirrorWireKind::Bool, QVariant(on)},
+                                       int64("delaySec", 5)};
+        };
+
+        QCOMPARE(refusalOf(core.invoke(sender, "voiceKeyer.setRepeat", repeat(true))), QString());
+        QCOMPARE(refusalOf(core.invoke(sender, "voiceKeyer.send", {int64("n", 1)})), QString());
+        OnAirSource* onAir = core.model->recordingService()->onAirSource();
+        std::vector<float> block(64);
+        for (int i = 0; i < 1000 && onAir->active() == OnAirSource::Kind::VoiceMessage && mox->isMox(); ++i) {
+            onAir->pull(block.data(), 64);
+            if (i % 50 == 0) {
+                vk->tickForTest();
+            }
+        }
+        vk->tickForTest();
+        QVERIFY(!mox->isMox());
+        QVERIFY(vk->sending().has_value());
+        QVERIFY(vk->sending()->waitingMs > 0);
+
+        const QString holderName = core.server->transmitHolder()->holder()->name;
+        QCOMPARE(reasonOf(core.invoke(other, "voiceKeyer.setRepeat", repeat(false))),
+                 TxRefusals::otherDeviceHoldsStop(holderName).text);
+        QVERIFY(vk->repeat());
+        QVERIFY(vk->sending().has_value());
+
+        sender->closeLink(QStringLiteral("lost"));
+        QTRY_VERIFY(!sender->isOpen());
+        QTRY_VERIFY(!vk->sending().has_value());
+        t += 6000;
+        vk->tickForTest();
+        QVERIFY(!mox->isMox());
     }
 
     // M3: a session that drops in the middle of loading a message leaves

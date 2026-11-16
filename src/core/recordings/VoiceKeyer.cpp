@@ -12,6 +12,12 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; a message on the air is never cleared,
 //             imported into or replaced; leftover import files go on load.
 //             AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; fix round 2: a waiting repeat ends with
+//             its sender's session and never keys for a sender with none;
+//             Repeat off from another device is refused under a message;
+//             the press that takes the air is told (handedToMicrophone); a
+//             failed replace keeps the old message. AI tooling: Anthropic
+//             Claude Code.
 
 #include "VoiceKeyer.h"
 
@@ -377,6 +383,11 @@ void VoiceKeyer::setFolder(const QString& folder)
 void VoiceKeyer::setTransmitHolder(TransmitHolder* holder)
 {
     m_holder = holder;
+}
+
+void VoiceKeyer::setSenderAlive(SenderAlive alive)
+{
+    m_senderAlive = std::move(alive);
 }
 
 void VoiceKeyer::setClockForTest(Clock clock)
@@ -761,9 +772,32 @@ void VoiceKeyer::handOverToPress()
 {
     // The press keeps the radio keyed: its microphone goes out from the
     // next block.
+    const QByteArray deviceId = m_keyer.deviceId;
     cutClip();
     endOnAirIfOurs();
     becomeIdle();
+    // The microphone line was not needed under the message; the station
+    // server judges it again now that it is (a starved line is held).
+    if (m_mox && m_mox->isMox() && m_mox->currentKeyer().deviceId == deviceId) {
+        emit handedToMicrophone(deviceId);
+    }
+}
+
+bool VoiceKeyer::mayEnd(const KeyerIdentity& who, TxRefusal* refusal) const
+{
+    // Ruling 8.5: the sender ends its own message; another device only
+    // by taking transmit (which unkeys it, onMoxChanged), after which it
+    // holds transmit and may end a wait too.
+    const bool sender = who.deviceId == m_keyer.deviceId;
+    const bool holder = m_holder && m_holder->isHeldBy(who.deviceId);
+    if (sender || holder) {
+        return true;
+    }
+    if (refusal != nullptr) {
+        const std::optional<TransmitHolder::Holder> held = m_holder ? m_holder->holder() : std::nullopt;
+        *refusal = TxRefusals::otherDeviceHoldsStop(held.has_value() ? held->name : m_who.name);
+    }
+    return false;
 }
 
 bool VoiceKeyer::stopFrom(const KeyerIdentity& who, TxRefusal* refusal)
@@ -771,20 +805,22 @@ bool VoiceKeyer::stopFrom(const KeyerIdentity& who, TxRefusal* refusal)
     if (m_phase == Phase::Idle) {
         return true;
     }
-    // Ruling 8.5: the sender stops its own message; another device only
-    // by taking transmit (which unkeys it, onMoxChanged), after which it
-    // holds transmit and its Stop ends a wait too.
-    const bool sender = who.deviceId == m_keyer.deviceId;
-    const bool holder = m_holder && m_holder->isHeldBy(who.deviceId);
-    if (!sender && !holder) {
-        if (refusal != nullptr) {
-            const std::optional<TransmitHolder::Holder> held = m_holder ? m_holder->holder() : std::nullopt;
-            *refusal = TxRefusals::otherDeviceHoldsStop(held.has_value() ? held->name : m_who.name);
-        }
+    if (!mayEnd(who, refusal)) {
         return false;
     }
     stop();
     return true;
+}
+
+void VoiceKeyer::sessionEnded(const QString& session)
+{
+    // A wait between repeats has MOX off, so no unkey or watchdog reaches
+    // it: it ends with its sender's session. A message going out is cut by
+    // the link's own unkey.
+    if (m_phase == Phase::Waiting && !session.isEmpty() && !m_keyer.isStation()
+        && m_keyer.session == session) {
+        becomeIdle();
+    }
 }
 
 void VoiceKeyer::keyAdmittedFor(const QByteArray& deviceId, const QString& session)
@@ -882,7 +918,11 @@ void VoiceKeyer::resend()
     std::shared_ptr<const std::vector<float>> samples = m_samples;
     m_phase = Phase::Idle;
     QString refusal;
-    if (const TxRefusal held = holderRefusal(who.keyer); !held.isEmpty()) {
+    if (!who.keyer.isStation() && m_senderAlive && !m_senderAlive(who.keyer)) {
+        // Its sender's session is gone (an away holder is still admitted
+        // by the holder's rule): nothing keys as it.
+        refusal = TxRefusals::notReady().text;
+    } else if (const TxRefusal held = holderRefusal(who.keyer); !held.isEmpty()) {
         refusal = held.text;
     } else if (!m_mox) {
         refusal = text(kNoRadioReason);
@@ -962,6 +1002,25 @@ bool VoiceKeyer::clear(int n, QString* refusal)
         emit changed();
     }
     return true;
+}
+
+bool VoiceKeyer::setRepeatFrom(const KeyerIdentity& who, bool on, int delaySec, QString* refusal,
+                               TxRefusal* held)
+{
+    // Turning Repeat off under a message ends its repeats: as Stop, the
+    // sender's or the holder's only (ruling 8.5).
+    if (!on && m_repeat && m_phase != Phase::Idle && delaySec >= kRepeatDelayMinSec
+        && delaySec <= kRepeatDelayMaxSec) {
+        TxRefusal refused;
+        if (!mayEnd(who, &refused)) {
+            setRefusal(refusal, refused.text);
+            if (held != nullptr) {
+                *held = refused;
+            }
+            return false;
+        }
+    }
+    return setRepeat(on, delaySec, refusal);
 }
 
 bool VoiceKeyer::setRepeat(bool on, int delaySec, QString* refusal)
@@ -1082,7 +1141,15 @@ void VoiceKeyer::finishConversion(const std::shared_ptr<Conversion>& c, bool ok)
         return;
     }
     const QString final = pathFor(n);
-    QFile::remove(final);
+    // The old message cannot be removed (on Windows, while it is being
+    // listened to): it stays as it was and this import is refused.
+    if (QFileInfo::exists(final) && !QFile::remove(final)) {
+        qCWarning(lcRecordings) << "voice message" << n << "cannot be replaced at" << final;
+        QFile::remove(c->to);
+        finish(false, QStringLiteral("M%1 cannot be replaced while it is in use. Try again once it stops playing.")
+                          .arg(n));
+        return;
+    }
     if (!QFile::rename(c->to, final)) {
         qCWarning(lcRecordings) << "cannot keep voice message" << n << "at" << final;
         QFile::remove(c->to);

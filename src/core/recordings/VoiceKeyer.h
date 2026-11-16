@@ -18,6 +18,12 @@
 //             imported into or replaced ("M<n> is on the air."), and a
 //             Core's leftover import files go on load. AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; fix round 2: a waiting repeat goes with
+//             its sender's session (sessionEnded, the sender-alive check),
+//             only the sender or the holder turns Repeat off under a
+//             message (setRepeatFrom), handedToMicrophone, and a message in
+//             use is never lost to a failed replace. AI tooling: Anthropic
+//             Claude Code.
 #pragma once
 
 #include "core/MoxController.h"
@@ -156,6 +162,10 @@ public:
 
     // The station's transmit holder (StationServer's); null without one.
     void setTransmitHolder(TransmitHolder* holder);
+    // Whether a sender still has a live session (StationServer's); unset,
+    // every sender is. A repeat whose sender has none never keys again.
+    using SenderAlive = std::function<bool(const KeyerIdentity&)>;
+    void setSenderAlive(SenderAlive alive);
 
     QList<Message> messages() const;
     bool repeat() const { return m_repeat; }
@@ -176,6 +186,9 @@ public:
     // it; any other device is refused with the holder's words (ruling 8.5)
     // and the message goes on. Nothing going out is no refusal.
     bool stopFrom(const KeyerIdentity& who, TxRefusal* refusal);
+    // `session` ended (its link dropped or it left): a repeat its sender
+    // was waiting on is over, and nothing keys again for it.
+    void sessionEnded(const QString& session);
     // RemoteKeying admitted `deviceId`'s tx.key: the sender's own (device
     // and session) hands the air from its message to its microphone.
     void keyAdmittedFor(const QByteArray& deviceId, const QString& session);
@@ -189,7 +202,14 @@ public:
     // ends it; renaming it is allowed.
     bool rename(int n, const QString& name, QString* refusal);
     bool clear(int n, QString* refusal);
+    // The Core's own: whoever sent, turning Repeat off ends a wait.
     bool setRepeat(bool on, int delaySec, QString* refusal);
+    // A device's: turning Repeat off under a message (going out, or
+    // waiting to repeat) is the sender's or the holder's only, as Stop is
+    // (ruling 8.5); another device is refused with the holder's words in
+    // `held` (and `refusal`), and nothing changes.
+    bool setRepeatFrom(const KeyerIdentity& who, bool on, int delaySec, QString* refusal,
+                       TxRefusal* held = nullptr);
     // Converts `path` to 48 kHz mono 16-bit WAV into Mn. A 48 kHz mono
     // 16-bit PCM WAV is kept as it is, so a saved message loads back the
     // same byte for byte. An empty `name` keeps Mn's name. The conversion
@@ -222,6 +242,9 @@ signals:
     // A repeat that could not key again for `deviceId` (the message has
     // stopped).
     void sendRefused(const QByteArray& deviceId, const QString& reason);
+    // The sender's own press took the air from its message with the radio
+    // still keyed for `deviceId`: its microphone goes out from here.
+    void handedToMicrophone(const QByteArray& deviceId);
 
 private:
     enum class Phase { Idle, Sending, Waiting };
@@ -259,6 +282,9 @@ private:
     bool startSend(int n, const Requester& who, std::shared_ptr<const std::vector<float>> samples,
                    QString* refusal);
     TxRefusal holderRefusal(const KeyerIdentity& keyer) const;
+    // Ruling 8.5: whether `who` may end the message on the air (its sender,
+    // or the holder after a take); otherwise the holder's words.
+    bool mayEnd(const KeyerIdentity& who, TxRefusal* refusal) const;
     // The recordings worker thread: one turn of `c`, then the next turn or
     // the end, posted back to `owner`.
     static void stepConversion(RecordingService* service, VoiceKeyer* owner, std::shared_ptr<Conversion> c);
@@ -279,6 +305,7 @@ private:
     QPointer<MoxController> m_mox;
     OnAirSource* m_onAir = nullptr;
     QPointer<TransmitHolder> m_holder;
+    SenderAlive m_senderAlive;
     QString m_folder;
     Clock m_clock;
     QTimer* m_timer = nullptr;

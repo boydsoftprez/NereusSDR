@@ -15,6 +15,11 @@
 //               converted the file; the sender's wire id in `sending`; a
 //               session's import goes with it.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11 fix round 2: a session's waiting
+//               repeat goes with it; voiceKeyer.setRepeat off under another
+//               device's message is refused (ruling 8.5); voiceKeyer.send's
+//               answer names the sender as `sending` does.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-15: Recording plan Task 10: recordings.setSettings takes the five
 //               on-air switches (recordingsVersion 2).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1508,6 +1513,8 @@ void SessionCommandDispatcher::endSessionOwner(const QString& owner)
         if (RecordingService* recordings = m_radioModel->recordingService()) {
             if (VoiceKeyer* voice = recordings->voiceKeyer()) {
                 voice->cancelImport(owner);
+                // Fix round 2: and a repeat its message was waiting on.
+                voice->sessionEnded(owner);
             }
         }
         // Rotor control plan Task 4b (contract, "The hold dead man"): a
@@ -5394,7 +5401,15 @@ void SessionCommandDispatcher::handleVoiceKeyer(const SessionMessage& invoke)
     }
 
     if (verb == "voiceKeyer.send") {
-        ok = keyer->send(slotArgument(), who, &refusal);
+        if (!keyer->send(slotArgument(), who, &refusal)) {
+            refuse(refusal.isEmpty() ? notUnderstood : refusal);
+            return;
+        }
+        // Fix round 2: the sender as `sending.deviceId` names it, so a
+        // window that cannot work out the Core's id for itself (a token
+        // sign-in) knows the message is its own.
+        accept({MirrorUpdate{0, "deviceId", MirrorWireKind::Utf8, QVariant(who.wireId)}});
+        return;
     } else if (verb == "voiceKeyer.stop") {
         // Ruling 8.5: only the sender (or the holder, after a take) stops
         // a message; another device is told to take transmit.
@@ -5458,9 +5473,16 @@ void SessionCommandDispatcher::handleVoiceKeyer(const SessionMessage& invoke)
         ok = keyer->clear(slotArgument(), &refusal);
     } else if (verb == "voiceKeyer.setRepeat") {
         const qint64 delay = arguments.value(QStringLiteral("delaySec")).toInteger(0);
-        ok = keyer->setRepeat(arguments.value(QStringLiteral("on")).toBool(),
-                              static_cast<int>(std::clamp<qint64>(delay, -1, VoiceKeyer::kRepeatDelayMaxSec + 1)),
-                              &refusal);
+        // Fix round 2 (ruling 8.5): Repeat off under a message is its
+        // sender's or the holder's.
+        TxRefusal held;
+        ok = keyer->setRepeatFrom(who.keyer, arguments.value(QStringLiteral("on")).toBool(),
+                                  static_cast<int>(std::clamp<qint64>(delay, -1, VoiceKeyer::kRepeatDelayMaxSec + 1)),
+                                  &refusal, &held);
+        if (!ok && !held.isEmpty()) {
+            emitRefusal(verb, invoke.commandId, held);
+            return;
+        }
     } else if (verb == "voiceKeyer.listen") {
         const ListenerId listener = QString::fromLatin1(m_requester);
         if (listener.isEmpty()) {

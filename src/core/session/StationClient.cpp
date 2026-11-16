@@ -9,6 +9,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11 fix round 2: a token sign-in knows the
+//               voice message is its own by the sender the Core's answer to
+//               its voiceKeyer.send names (followVoiceMessageSending).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 11 review fix: keepalives while the
 //               Core's voice keyer sends this window's message (the mirrored
 //               voiceKeyer.sending names this device). J.J. Boyd (KG4VCF),
@@ -1298,19 +1302,8 @@ StationClient::StationClient(RadioModel* radioModel, SettingsProxy* settingsProx
         // this device while it sends this window's message (or waits to
         // repeat it); the keepalives go meanwhile, as for its own key, so
         // the Core's watchdog does not cut it (a dead window still is).
-        connect(radioModel->recordingsFacade(), &RecordingsFacade::changed, this, [this]() {
-            const QJsonObject sending =
-                QJsonDocument::fromJson(m_radioModel ? m_radioModel->recordingsFacade()->json().toUtf8()
-                                                     : QByteArray())
-                    .object()
-                    .value(QStringLiteral("voiceKeyer"))
-                    .toObject()
-                    .value(QStringLiteral("sending"))
-                    .toObject();
-            const QString self = thisDeviceWireId();
-            m_remoteTransmit->setVoiceMessageSending(
-                !self.isEmpty() && sending.value(QStringLiteral("deviceId")).toString() == self);
-        });
+        connect(radioModel->recordingsFacade(), &RecordingsFacade::changed, this,
+                [this]() { followVoiceMessageSending(); });
         // A refused press is shown in the Core's words, where a local
         // refusal shows (MainWindow's toast; the buttons follow the Core).
         const QPointer<RadioModel> model(radioModel);
@@ -2578,6 +2571,8 @@ void StationClient::endSession(const QString& reason, bool attemptReconnect,
 
     m_capabilities.coreBuildInfo.reset();
     m_signedInWithDeviceKey = false;
+    // Fix round 2: the Core's name for this window was this session's.
+    m_voiceKeyerSelfWireId.clear();
     m_capabilitiesThisSession = false;
     if (m_radioModel) { m_radioModel->setStationRadeV2Enabled(false); }
     m_capabilities.radioAntennaRowsVersion = 0;
@@ -8855,6 +8850,16 @@ void StationClient::handleCommandResult(const SessionMessage& message)
     // to the window's RemoteRecordingsAccess, none to the generic routes.
     if (message.commandVerb.startsWith("recordings.") || message.commandVerb.startsWith("voiceKeyer.")) {
         m_pendingCommands.remove(message.commandId);
+        // Fix round 2: the Core names this window's own send as `sending`
+        // will, which a token sign-in cannot work out for itself.
+        if (message.commandVerb == "voiceKeyer.send" && message.accepted) {
+            for (const MirrorUpdate& update : message.updates) {
+                if (update.name == "deviceId") {
+                    m_voiceKeyerSelfWireId = update.value.toString();
+                }
+            }
+            followVoiceMessageSending();
+        }
         if (auto* recordings = qobject_cast<RemoteRecordingsAccess*>(m_radioModel->recordings())) {
             recordings->takeResult(message.commandVerb, message.accepted, message.reason,
                                    message.updates);
@@ -9673,6 +9678,31 @@ QList<QByteArray> StationClient::mirroredObjectKeys() const
 QObject* StationClient::mirroredObject(const QByteArray& objectKey) const
 {
     return m_objects.value(objectKey).data();
+}
+
+void StationClient::followVoiceMessageSending()
+{
+    // Recording plan Task 11: the Core's voice keyer keys the radio as this
+    // device while it sends this window's message (or waits to repeat it).
+    if (m_remoteTransmit == nullptr) {
+        return;
+    }
+    const QJsonObject sending =
+        QJsonDocument::fromJson(m_radioModel ? m_radioModel->recordingsFacade()->json().toUtf8()
+                                             : QByteArray())
+            .object()
+            .value(QStringLiteral("voiceKeyer"))
+            .toObject()
+            .value(QStringLiteral("sending"))
+            .toObject();
+    const QString sender = sending.value(QStringLiteral("deviceId")).toString();
+    const QString self = thisDeviceWireId();
+    // A device-key sign-in knows its own id; a token sign-in learns the
+    // Core's name for it from the answer to its own send.
+    const bool mine = !sender.isEmpty()
+        && ((!self.isEmpty() && sender == self)
+            || (!m_voiceKeyerSelfWireId.isEmpty() && sender == m_voiceKeyerSelfWireId));
+    m_remoteTransmit->setVoiceMessageSending(mine);
 }
 
 QString StationClient::thisDeviceWireId() const

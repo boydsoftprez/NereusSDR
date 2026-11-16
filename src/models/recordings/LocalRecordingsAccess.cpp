@@ -16,6 +16,10 @@
 //                 the import finishes once the Core's worker has converted
 //                 it; Stop is refused while another device's message goes
 //                 out (ruling 8.5). AI-assisted via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11 fix round 2:
+//                 Repeat off is the station's as a device, refused under
+//                 another device's message (ruling 8.5). AI-assisted via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -442,7 +446,7 @@ void LocalRecordingsAccess::setVoiceRepeat(bool on, int delaySec)
 {
     VoiceKeyer* voice = beginVoice();
     QString refusal;
-    if (voice != nullptr && !voice->setRepeat(on, delaySec, &refusal)) {
+    if (voice != nullptr && !voice->setRepeatFrom(stationKeyer(), on, delaySec, &refusal)) {
         emit refused(refusal);
     }
 }

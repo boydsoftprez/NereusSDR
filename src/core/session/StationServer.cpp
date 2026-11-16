@@ -10,6 +10,12 @@
 //               the microphone unused for the starvation rules; the sender's
 //               wire id for the voice keyer's `sending`.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 11 fix round 2: a microphone line that
+//               starved under a voice message is held at once when the
+//               sender's own key takes the air, with its 10 s cut counted
+//               from then; a repeat keys only for a sender with a live
+//               session. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
+//               Claude Code.
 //   2026-11-15: Recording plan Task 5: recordingsVersion 1, the recordings object, the
 //               recordings.* gate (peerGetsRecordings), each device's own
 //               recordings.playback, and the device names a recording keeps.
@@ -3326,6 +3332,22 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                             voicePtr->keyAdmittedFor(deviceId, session);
                         }
                     });
+                // Fix round 2: a repeat keys again only for a sender whose
+                // session is still here (an away holder's is not).
+                voice->setSenderAlive([this](const KeyerIdentity& keyer) {
+                    const quint64 sessionId = sessionIdOfOwner(keyer.session);
+                    for (auto it = m_peers.cbegin(); it != m_peers.cend(); ++it) {
+                        if (it->sessionDeviceId == keyer.deviceId
+                            && (sessionId == 0 || it->sessionId == sessionId)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                });
+                // Fix round 2: the sender's own key took the air from its
+                // message; its microphone line is judged again.
+                connect(voice, &VoiceKeyer::handedToMicrophone, this,
+                        &StationServer::recheckMicLineAfterVoiceMessage, Qt::UniqueConnection);
             }
         }
         // iPhone app plan Task 77 fix round 2: the Core never switches the
@@ -3567,10 +3589,7 @@ StationServer::StationServer(RadioModel* radioModel, AppSettings& settings,
                 const TwoToneController* twoTone = m_radioModel->twoToneController();
                 // Recording plan Task 11: a voice message goes out in place
                 // of the microphone, so its line is not needed meanwhile.
-                const RecordingService* recordings = m_radioModel->recordingService();
-                const bool voiceMessage = recordings != nullptr && recordings->onAirSource() != nullptr
-                    && recordings->onAirSource()->active() == OnAirSource::Kind::VoiceMessage;
-                return m_radioModel->isTune() || voiceMessage
+                return m_radioModel->isTune() || voiceMessageOnAir()
                     || (twoTone != nullptr
                         && (twoTone->isActive() || twoTone->isActivationInFlight()));
             };
@@ -5127,6 +5146,7 @@ StationServer::~StationServer()
         if (RecordingService* recordings = m_radioModel->recordingService()) {
             if (VoiceKeyer* voice = recordings->voiceKeyer()) {
                 voice->setTransmitHolder(nullptr);
+                voice->setSenderAlive({});
             }
         }
         // Task 77 fix round 2: the amplifier's pending-key probe asks it too.
@@ -11927,9 +11947,13 @@ void StationServer::remoteMicLineEnded(const QByteArray& deviceId, qint64 quietM
     if (m_endedMicLine.deviceId == deviceId && m_endedMicLine.keyEpoch == keyedBy.epoch) {
         // Another line for the same key ended with no packet in between:
         // the deadline runs from the earliest last packet, never later.
-        m_endedMicLine.lastPacketMs = std::min(m_endedMicLine.lastPacketMs, lastPacketMs);
+        // Recording plan Task 11 fix round 2: a deadline restarted when the
+        // sender's key took the air from its message stays as restarted.
+        if (!m_endedMicLine.afterVoiceMessage) {
+            m_endedMicLine.lastPacketMs = std::min(m_endedMicLine.lastPacketMs, lastPacketMs);
+        }
     } else {
-        m_endedMicLine = {deviceId, keyedBy.epoch, lastPacketMs, false};
+        m_endedMicLine = {deviceId, keyedBy.epoch, lastPacketMs, false, false};
     }
     qCInfo(lcStation).noquote()
         << QStringLiteral("Microphone line from %1 ended while keyed, %2 ms after its last "
@@ -12021,7 +12045,30 @@ void StationServer::remoteMicNoAudio(const QByteArray& deviceId)
     if (m_radioModel->remoteRadioMicKeyActive(deviceId)) {
         return;
     }
+    if (voiceMessageOnAir()) {
+        // Recording plan Task 11 fix round 2: the message goes out in place
+        // of the microphone, so there is nothing to cut yet. The line stays
+        // counted as starved, so the sender's own key that takes the air
+        // from its message is held at once and cut 10 s later unless audio
+        // arrives (recheckMicLineAfterVoiceMessage).
+        const quint32 epoch = m_radioModel->keyedBy().epoch;
+        if (m_starvedMicLine.deviceId != deviceId || m_starvedMicLine.keyEpoch != epoch) {
+            m_starvedMicLine = {deviceId, epoch,
+                                m_deviceSessions->now() - RemoteMicConfig::kNoAudioCutMs};
+        }
+        qCInfo(lcStation).noquote()
+            << QStringLiteral("Microphone line from %1 sent no audio under a voice message; "
+                              "judged again when the message leaves the air")
+                   .arg(QString::fromLatin1(deviceId.toHex()));
+        return;
+    }
     if (m_endedMicLine.deviceId == deviceId) {
+        if (m_endedMicLine.afterVoiceMessage
+            && m_deviceSessions->now() - m_endedMicLine.lastPacketMs < RemoteMicConfig::kNoAudioCutMs) {
+            // Fix round 2: its 10 s restarted when the sender's key took
+            // the air from its message; the server's own timer cuts then.
+            return;
+        }
         dropEndedMicLine();
     }
     m_starvedMicLine = {};
@@ -12029,6 +12076,66 @@ void StationServer::remoteMicNoAudio(const QByteArray& deviceId)
     m_micRfHoldEnding = QStringLiteral("cut");
     m_starvation.onNoAudio(deviceId);
     m_micRfHoldEnding.clear();
+}
+
+bool StationServer::voiceMessageOnAir() const
+{
+    const RecordingService* recordings = m_radioModel ? m_radioModel->recordingService() : nullptr;
+    return recordings != nullptr && recordings->onAirSource() != nullptr
+        && recordings->onAirSource()->active() == OnAirSource::Kind::VoiceMessage;
+}
+
+void StationServer::recheckMicLineAfterVoiceMessage(const QByteArray& deviceId)
+{
+    // Recording plan Task 11 fix round 2: under a voice message the
+    // starvation rules let a quiet line be (the microphone was not used).
+    // The sender's own key now takes the air from its message with the
+    // radio still keyed for it, skipping the key's own microphone checks,
+    // so the line is judged here as onTransmitModeChanged does: a starved
+    // line is held at once in a carrier mode, and the 10 s cut runs from
+    // now on the server's own timer unless audio arrives first.
+    if (!m_radioModel || m_endedMicLineTimer == nullptr) {
+        return;
+    }
+    const RadioModel::KeyedBy keyedBy = m_radioModel->keyedBy();
+    const MoxController* const mox = m_radioModel->moxController();
+    if (keyedBy.isEmpty() || keyedBy.deviceId != deviceId
+        || deviceId == QByteArray(KeyerIdentity::kStationDeviceId) || mox == nullptr
+        || !mox->isMox() || !m_radioModel->isTransmitting()
+        || m_radioModel->remoteRadioMicKeyActive(deviceId) || keyStopped(keyedBy.epoch)) {
+        return;
+    }
+    // The Core's clock may read below zero (a virtual clock's start), so
+    // "no starved line" is its own state, not a negative time.
+    std::optional<qint64> lastPacketMs;
+    if (m_starvedMicLine.deviceId == deviceId && m_starvedMicLine.keyEpoch == keyedBy.epoch) {
+        lastPacketMs = m_starvedMicLine.lastPacketMs;
+    }
+    if (m_endedMicLine.deviceId == deviceId && m_endedMicLine.keyEpoch == keyedBy.epoch
+        && m_endedMicLine.starvationJudged) {
+        lastPacketMs = lastPacketMs ? std::min(*lastPacketMs, m_endedMicLine.lastPacketMs)
+                                    : m_endedMicLine.lastPacketMs;
+    }
+    if (!lastPacketMs) {
+        // The line carries audio (or has not been quiet 250 ms): its own
+        // watch goes on as for any key.
+        return;
+    }
+    const qint64 now = m_deviceSessions->now();
+    qCInfo(lcStation).noquote()
+        << QStringLiteral("Microphone line from %1 is quiet as its key takes the air from a voice "
+                          "message; held by the mode, cut in %2 ms without audio")
+               .arg(QString::fromLatin1(deviceId.toHex()))
+               .arg(RemoteMicConfig::kNoAudioCutMs);
+    if (!m_starvation.isHolding()) {
+        m_micStarvedQuietMs = std::max<qint64>(0, now - *lastPacketMs);
+        m_starvation.onStarved(deviceId, true);
+        m_micStarvedQuietMs = -1;
+    }
+    // The 10 s from now, judged as an ended line's is; a packet on the line
+    // (starved(false), audioArrived) ends the wait and releases the hold.
+    m_endedMicLine = {deviceId, keyedBy.epoch, now, true, true};
+    judgeEndedMicLine();
 }
 
 // ── Remote transmit hold then cut: the keyer's holds ─────────────────────

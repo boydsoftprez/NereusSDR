@@ -24,6 +24,11 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
 //                 Code. A message on the air is never cleared, imported into
 //                 or replaced; leftover import files go on load.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. Fix round 2: Repeat off under a message is the
+//                 sender's or the holder's; a waiting repeat ends with its
+//                 sender's session and never keys for a sender with none; a
+//                 message that cannot be replaced is kept as it was.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -49,6 +54,11 @@
 #include "models/TransmitModel.h"
 
 #include "fakes/QuietRadioConnection.h"
+
+#ifdef Q_OS_MAC
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -999,6 +1009,171 @@ private slots:
         QVERIFY(!r.vk->setRepeat(true, 61, &refusal));
         QCOMPARE(AppSettings::instance().value(QStringLiteral("VoiceKeyerRepeat")).toString(),
                  QStringLiteral("False"));
+    }
+
+    // Ruling 8.5: turning Repeat off under a message ends its repeats, so
+    // it is the sender's or the holder's only, while it goes out and while
+    // it waits. Another device may still change the wait, and turn Repeat
+    // off once nothing is on the air.
+    void onlyTheSenderOrTheHolderTurnsRepeatOffUnderAMessage()
+    {
+        Rig r(newFolder());
+        qint64 t = 0;
+        r.vk->setClockForTest([&t] { return t; });
+        QVERIFY(fill(*r.vk, 1, kBlock));
+        QString refusal;
+        QVERIFY(r.vk->setRepeat(true, 5, &refusal));
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        const QString words = TxRefusals::otherDeviceHoldsStop(QStringLiteral("Phone")).text;
+        TxRefusal held;
+        QVERIFY(!r.vk->setRepeatFrom(phone(kPhoneC), false, 5, &refusal, &held));
+        QCOMPARE(refusal, words);
+        QCOMPARE(held.text, words);
+        QVERIFY(r.vk->repeat());
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(r.vk->sending().has_value());
+        QVERIFY(!r.mox->isMox());
+        // Waiting: refused again, and the repeat still goes.
+        QVERIFY(!r.vk->setRepeatFrom(phone(kPhoneC), false, 5, &refusal));
+        QCOMPARE(refusal, words);
+        QVERIFY(r.vk->sending().has_value());
+        QVERIFY(r.vk->setRepeatFrom(phone(kPhoneC), true, 7, &refusal));
+        QCOMPARE(r.vk->repeatDelaySec(), 7);
+        t += 7000;
+        r.vk->tickForTest();
+        QVERIFY(r.mox->isMox());
+        QCOMPARE(r.mox->currentKeyer().deviceId, kPhoneB);
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        // The sender's own Repeat off ends the wait.
+        QVERIFY(r.vk->setRepeatFrom(phone(kPhoneB), false, 7, &refusal));
+        QVERIFY(!r.vk->sending().has_value());
+        t += 8000;
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        // Nothing on the air: any device's.
+        QVERIFY(r.vk->setRepeatFrom(phone(kPhoneC), true, 7, &refusal));
+        QVERIFY(r.vk->setRepeatFrom(phone(kPhoneC), false, 7, &refusal));
+        QVERIFY(!r.vk->repeat());
+
+        // The holder, after a take, ends another device's wait.
+        TransmitHolder holder;
+        r.vk->setTransmitHolder(&holder);
+        QVERIFY(r.vk->setRepeat(true, 5, &refusal));
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(r.vk->sending().has_value());
+        TransmitHolder::KeyRequest take;
+        take.deviceId = kPhoneC;
+        QCOMPARE(holder.askKey(take).verdict, KeyingVerdict::Admit);
+        QVERIFY(r.vk->setRepeatFrom(phone(kPhoneC), false, 5, &refusal));
+        QVERIFY(!r.vk->sending().has_value());
+        r.vk->setTransmitHolder(nullptr);
+    }
+
+    // A repeat whose sender's session ended (its link dropped, or it left)
+    // is over; and one whose sender has no live session never keys again.
+    void aWaitingRepeatGoesWithItsSendersSession()
+    {
+        Rig r(newFolder());
+        qint64 t = 0;
+        r.vk->setClockForTest([&t] { return t; });
+        QVERIFY(fill(*r.vk, 1, kBlock));
+        QString refusal;
+        QVERIFY(r.vk->setRepeat(true, 5, &refusal));
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(r.vk->sending().has_value());
+        r.vk->sessionEnded(QStringLiteral("another-session"));
+        QVERIFY(r.vk->sending().has_value());
+        r.vk->sessionEnded(kSession);
+        QVERIFY(!r.vk->sending().has_value());
+        t += 6000;
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+
+        // No live session by the time of the repeat: refused, nothing keys.
+        bool alive = true;
+        r.vk->setSenderAlive([&alive](const KeyerIdentity&) { return alive; });
+        QVERIFY(r.vk->send(1, phoneB(), &refusal));
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        QVERIFY(r.vk->sending().has_value());
+        alive = false;
+        QSignalSpy refused(r.vk, &VoiceKeyer::sendRefused);
+        QSignalSpy accepted(r.mox, &MoxController::requestAccepted);
+        t += 6000;
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QCOMPARE(accepted.count(), 0);
+        QVERIFY(!r.vk->sending().has_value());
+        QCOMPARE(refused.count(), 1);
+        QCOMPARE(refused.first().at(0).toByteArray(), kPhoneB);
+        QCOMPARE(refused.first().at(1).toString(), TxRefusals::notReady().text);
+        // The station's own window is always here.
+        QVERIFY(r.vk->send(1, station(), &refusal));
+        QVERIFY(r.pull(tx));
+        QVERIFY(r.pull(tx));
+        r.vk->tickForTest();
+        t += 6000;
+        r.vk->tickForTest();
+        QVERIFY(r.mox->isMox());
+        r.vk->stop();
+        r.vk->setSenderAlive({});
+    }
+
+    // A message whose file cannot be removed (on Windows, while it is
+    // listened to) is kept as it was, and the import is refused saying so.
+    void aMessageThatCannotBeReplacedIsKept()
+    {
+        const QString inUse =
+            QStringLiteral("M%1 cannot be replaced while it is in use. Try again once it stops playing.");
+        const QString wav = writeWav(kRate, 1, kBlock);
+        QString refusal;
+        {
+            // A folder in M2's place: never a message, never removed.
+            const QString folder = newFolder();
+            QVERIFY(QDir().mkpath(QDir(folder).filePath(QStringLiteral("M2.wav"))));
+            QFile inside(QDir(folder).filePath(QStringLiteral("M2.wav/keep")));
+            QVERIFY(inside.open(QIODevice::WriteOnly));
+            inside.close();
+            Rig r(folder);
+            QVERIFY(r.vk->messages().at(1).empty);
+            QVERIFY(!importNow(*r.vk, 2, wav, QStringLiteral("New"), &refusal));
+            QCOMPARE(refusal, inUse.arg(2));
+            QVERIFY(r.vk->messages().at(1).empty);
+            QVERIFY(QFileInfo::exists(inside.fileName()));
+            QCOMPARE(partFiles(folder), QStringList());
+        }
+#ifdef Q_OS_MAC
+        // A kept message the system will not let go of.
+        Rig r(newFolder());
+        QVERIFY(fill(*r.vk, 1, 4 * kBlock, QStringLiteral("CQ")));
+        const QString path = r.vk->messagePath(1);
+        const QByteArray kept = readAll(path);
+        const qint64 length = r.vk->messages().at(0).lengthMs;
+        QCOMPARE(::chflags(QFile::encodeName(path).constData(), UF_IMMUTABLE), 0);
+        const bool imported = importNow(*r.vk, 1, wav, QStringLiteral("New"), &refusal);
+        ::chflags(QFile::encodeName(path).constData(), 0);
+        QVERIFY(!imported);
+        QCOMPARE(refusal, inUse.arg(1));
+        QVERIFY(!r.vk->messages().at(0).empty);
+        QCOMPARE(r.vk->messages().at(0).lengthMs, length);
+        QCOMPARE(r.vk->messages().at(0).name, QStringLiteral("CQ"));
+        QCOMPARE(readAll(path), kept);
+        QCOMPARE(partFiles(r.vk->folder()), QStringList());
+#endif
     }
 
     // ---- The messages.

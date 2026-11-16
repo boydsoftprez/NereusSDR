@@ -208,6 +208,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 11 fix round 2: m_voiceKeyerSelfWireId
+//               and followVoiceMessageSending. J.J. Boyd (KG4VCF),
+//               AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 6: sliceControlledHere.
 //   2026-11-05: Band stack plan Task 4: bandStackAvailable and sendBandStackCommand.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -2117,6 +2120,13 @@ private:
     bool m_declaredSessionHolder = false;
     bool m_declaresSessionHolder = true;
     QString m_tokenSessionHolderIdForTest;
+    // Recording plan Task 11 fix round 2: the Core's name for this window
+    // (as voiceKeyer.sending's deviceId), from the answer to its own
+    // voiceKeyer.send this session; empty until then.
+    QString m_voiceKeyerSelfWireId;
+    // Recording plan Task 11: keepalives while the Core's voice keyer sends
+    // this window's message (voiceKeyer.sending names it).
+    void followVoiceMessageSending();
     bool m_tokenSliceAccessForTest = false;
     /// Take-over parity: the sliceAccess version the hello declares.
     /// Core-slice take-over: 3, the Core's own slice may be taken.

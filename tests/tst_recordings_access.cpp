@@ -27,6 +27,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the Core offers
 //                 version 3. AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11 fix round 2: a
+//                 token-signed window knows the voice message it sent is its
+//                 own, so its keepalives go. AI-assisted via Anthropic Claude
+//                 Code.
 // =================================================================
 
 #include "MultiDeviceHarness.h"
@@ -565,6 +569,55 @@ private slots:
         remote.client.disconnectFromStation(QStringLiteral("test over"));
         QTRY_COMPARE(access->state(), RecordingsAccess::State::NotConnected);
         QCOMPARE(access->unavailableReason(), kNotConnected);
+    }
+
+    // Fix round 2: a window signed in with the pairing token cannot work out
+    // the Core's id for itself; the Core's answer to its own send names it,
+    // so the window knows `sending` is its own and keeps its keepalives
+    // going while the message is on the air.
+    void aTokenWindowKnowsItsOwnVoiceMessage()
+    {
+        Core core(/*upgradedWithToken=*/true);
+        useTestDisk(core);
+        allowTransmit(core);
+        core.server->setTokenSessionsMayTransmitForTest(true);
+        VoiceKeyer* vk = core.model->recordingService()->voiceKeyer();
+        QVERIFY(vk != nullptr);
+        vk->setFolder(m_dir.filePath(QStringLiteral("voice%1").arg(++m_disks)));
+        const QString wav = m_dir.filePath(QStringLiteral("voice-in-%1.wav").arg(m_disks));
+        {
+            QString error;
+            std::unique_ptr<AudioFileWriter> w =
+                AudioFileWriter::open(wav, AudioFileSpec{AudioFileFormat::Wav, 48000, 1, 0}, &error);
+            QVERIFY(w);
+            const std::vector<float> samples(48000, 0.25f);
+            QVERIFY(w->write(samples.data(), 48000));
+            QVERIFY(w->finish());
+        }
+        auto done = std::make_shared<std::optional<bool>>();
+        vk->importFile(1, wav, QStringLiteral("CQ"), [done](bool ok, const QString&) { *done = ok; });
+        QVERIFY(QTest::qWaitFor([done] { return done->has_value(); }, 30000));
+        QVERIFY(**done);
+        MoxController* mox = core.model->moxController();
+
+        RemoteWindow remote;
+        QVERIFY(remote.connectTo(core, this));
+        QTRY_COMPARE(remote.access()->state(), RecordingsAccess::State::Ready);
+        RemoteTransmitClient* transmit = remote.client.remoteTransmit();
+        QVERIFY(transmit != nullptr);
+        QVERIFY(remote.client.thisDeviceWireId().isEmpty());
+        QVERIFY(!transmit->voiceMessageSending());
+        QSignalSpy refused(remote.access(), &RecordingsAccess::refused);
+        remote.access()->sendVoice(1);
+        QTRY_VERIFY(mox->isMox());
+        QTRY_VERIFY(transmit->voiceMessageSending());
+        QCOMPARE(refused.count(), 0);
+        vk->stop();
+        QVERIFY(!mox->isMox());
+        QTRY_VERIFY(!transmit->voiceMessageSending());
+
+        remote.client.disconnectFromStation(QStringLiteral("test over"));
+        QTRY_COMPARE(remote.access()->state(), RecordingsAccess::State::NotConnected);
     }
 
     // ---- The voice keyer (Task 11), in both windows: a message loaded,
