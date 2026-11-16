@@ -1155,6 +1155,7 @@ set(CORE_SOURCES
     # The contact recorder and the recording service.
     src/core/recordings/ContactRecorder.cpp
     src/core/recordings/RecordingService.cpp
+    src/core/recordings/RecordingPlayer.cpp
     src/core/RadeChannel.cpp
     src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp

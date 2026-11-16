@@ -4,6 +4,8 @@
 // Modification history (NereusSDR):
 // 2026-11-15  J.J. Boyd / KG4VCF; the Core's recording service (spec 6.1,
 //             6.2, V1, V4, section 7). AI tooling: Anthropic Claude Code.
+// 2026-11-15  J.J. Boyd / KG4VCF; the player (spec 6.1 Player, 6.3, V6).
+//             AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -68,6 +70,7 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     , m_settings(RecordingSettings::load())
     , m_clock([] { return QDateTime::currentMSecsSinceEpoch(); })
 {
+    qRegisterMetaType<ListenerId>("NereusSDR::ListenerId");
     m_quietTimer = new QTimer(this);
     m_quietTimer->setInterval(kQuietCheckIntervalMs);
     connect(m_quietTimer, &QTimer::timeout, this, &RecordingService::checkQuiet);
@@ -86,6 +89,14 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
 RecordingService::~RecordingService()
 {
     stopAll();
+
+    // Nothing on the audio thread may still be inside a player.
+    m_playClosed.store(true, std::memory_order_seq_cst);
+    waitForPulls();
+    for (PlaybackChannel& ch : m_playChannels) {
+        ch.player.store(nullptr, std::memory_order_seq_cst);
+        ch.bound.store(false, std::memory_order_seq_cst);
+    }
 
     // Nothing on the transmit thread may still be inside a recorder.
     m_monitorClosed.store(true, std::memory_order_seq_cst);
@@ -164,7 +175,10 @@ void RecordingService::ensureWorker()
     QMetaObject::invokeMethod(m_workerContext, [this] {
         m_workerTimer = new QTimer(m_workerContext);
         m_workerTimer->setInterval(kDrainIntervalMs);
-        connect(m_workerTimer, &QTimer::timeout, m_workerContext, [this] { workerDrainAll(); });
+        connect(m_workerTimer, &QTimer::timeout, m_workerContext, [this] {
+            workerDrainAll();
+            workerFillPlayers();
+        });
     }, Qt::QueuedConnection);
 }
 
@@ -639,11 +653,265 @@ void RecordingService::workerEnd(int sliceId, quint64 token)
             result.lengthMs = recorder->lengthMs();
         }
     }
-    if (m_workerFiles.isEmpty() && m_workerTimer) {
-        m_workerTimer->stop();
-    }
+    workerStopTimerIfIdle();
     QMetaObject::invokeMethod(this, [this, token, result] { finishKept(token, result); },
                               Qt::QueuedConnection);
+}
+
+// ---- The player.
+
+void RecordingService::play(const ListenerId& who, const QString& recordingId)
+{
+    ensureStoreOpen();
+    const std::optional<RecordingEntry> entry = m_store->find(recordingId);
+    if (!entry) {
+        emit playbackRefused(who, QString::fromLatin1(kPlayGoneReason));
+        return;
+    }
+    // Spec 6.3: a whole-pan recording replays on the waterfall, not here.
+    if (entry->kind == RecordingKind::WholePan) {
+        emit playbackRefused(who, QString::fromLatin1(kPlayWholePanReason));
+        return;
+    }
+    auto it = m_listeners.find(who);
+    if (it != m_listeners.end() && it->recordingId == recordingId && it->playing) {
+        return;
+    }
+    if (it == m_listeners.end()) {
+        const int channel = bindChannel(who);
+        if (channel < 0) {
+            qCWarning(lcRecordings) << "no playback channel free for" << who;
+            emit playbackRefused(who, QString::fromLatin1(kPlayBusyReason));
+            return;
+        }
+        it = m_listeners.insert(who, Listener{});
+        it->channel = channel;
+    }
+    Listener& l = it.value();
+    qint64 from = 0;
+    if (l.recordingId == recordingId && !l.playing && l.positionMs < l.lengthMs) {
+        from = l.positionMs;
+    }
+    l.recordingId = recordingId;
+    l.path = QDir(m_store->folder()).filePath(entry->fileName);
+    l.lengthMs = entry->lengthMs;
+    startPlayer(who, l, from);
+    emit playbackChanged(who);
+}
+
+void RecordingService::stopPlayback(const ListenerId& who)
+{
+    if (!m_listeners.contains(who)) {
+        return;
+    }
+    endListener(who);
+    emit playbackChanged(who);
+}
+
+void RecordingService::seek(const ListenerId& who, qint64 positionMs)
+{
+    const auto it = m_listeners.find(who);
+    if (it == m_listeners.end()) {
+        return;
+    }
+    Listener& l = it.value();
+    const qint64 length = l.player ? l.player->lengthMs() : l.lengthMs;
+    const qint64 to = std::clamp<qint64>(positionMs, 0, std::max<qint64>(0, length));
+    if (l.playing) {
+        startPlayer(who, l, to);
+    } else {
+        l.positionMs = to;
+    }
+    emit playbackChanged(who);
+}
+
+std::optional<PlaybackState> RecordingService::playback(const ListenerId& who) const
+{
+    const auto it = m_listeners.constFind(who);
+    if (it == m_listeners.cend()) {
+        return std::nullopt;
+    }
+    const Listener& l = it.value();
+    return PlaybackState{who,
+                         l.recordingId,
+                         l.player ? l.player->positionMs() : l.positionMs,
+                         l.player ? l.player->lengthMs() : l.lengthMs,
+                         l.playing,
+                         false};
+}
+
+int RecordingService::pullPlayback(const ListenerId& who, float* mono48k, int frames) noexcept
+{
+    int n = 0;
+    bool pulled = false;
+    if (!m_playClosed.load(std::memory_order_seq_cst)) {
+        m_pullsInFlight.fetch_add(1, std::memory_order_seq_cst);
+        if (!m_playClosed.load(std::memory_order_seq_cst)) {
+            for (PlaybackChannel& ch : m_playChannels) {
+                if (ch.bound.load(std::memory_order_seq_cst) && ch.listener == who) {
+                    if (RecordingPlayer* player = ch.player.load(std::memory_order_seq_cst)) {
+                        n = player->pull(mono48k, frames);
+                        pulled = true;
+                    }
+                    break;
+                }
+            }
+        }
+        m_pullsInFlight.fetch_sub(1, std::memory_order_seq_cst);
+    }
+    if (!pulled && mono48k != nullptr && frames > 0) {
+        std::fill(mono48k, mono48k + frames, 0.0f);
+    }
+    return n;
+}
+
+void RecordingService::startPlayer(const ListenerId& who, Listener& l, qint64 fromMs)
+{
+    dropPlayer(l);
+    auto player = std::make_shared<RecordingPlayer>(fromMs, l.lengthMs);
+    l.player = player;
+    l.playing = true;
+    l.positionMs = fromMs;
+    l.token = m_nextPlayToken++;
+    m_playChannels[static_cast<size_t>(l.channel)].player.store(player.get(), std::memory_order_seq_cst);
+    ensureWorker();
+    const quint64 token = l.token;
+    const QString path = l.path;
+    QMetaObject::invokeMethod(m_workerContext, [this, who, token, player, path] {
+        workerPlayBegin(who, token, player, path);
+    }, Qt::QueuedConnection);
+}
+
+void RecordingService::dropPlayer(Listener& l)
+{
+    if (!l.player) {
+        return;
+    }
+    l.positionMs = l.player->positionMs();
+    l.lengthMs = l.player->lengthMs();
+    m_playChannels[static_cast<size_t>(l.channel)].player.store(nullptr, std::memory_order_seq_cst);
+    // No audio thread may still be inside it; the worker lets go of its own
+    // share when it reads the end below.
+    waitForPulls();
+    const quint64 token = l.token;
+    if (m_workerContext) {
+        QMetaObject::invokeMethod(m_workerContext, [this, token] { workerPlayEnd(token); },
+                                  Qt::QueuedConnection);
+    }
+    l.player.reset();
+}
+
+void RecordingService::endListener(const ListenerId& who)
+{
+    const auto it = m_listeners.find(who);
+    if (it == m_listeners.end()) {
+        return;
+    }
+    dropPlayer(it.value());
+    PlaybackChannel& ch = m_playChannels[static_cast<size_t>(it->channel)];
+    ch.player.store(nullptr, std::memory_order_seq_cst);
+    ch.bound.store(false, std::memory_order_seq_cst);
+    waitForPulls();
+    m_listeners.erase(it);
+}
+
+int RecordingService::bindChannel(const ListenerId& who)
+{
+    for (int k = 0; k < kMaxPlaybackListeners; ++k) {
+        PlaybackChannel& ch = m_playChannels[static_cast<size_t>(k)];
+        if (!ch.bound.load(std::memory_order_seq_cst)) {
+            // Unbound, and endListener waited out every pull that saw it
+            // bound, so no audio thread reads the name now.
+            ch.listener = who;
+            ch.player.store(nullptr, std::memory_order_seq_cst);
+            ch.bound.store(true, std::memory_order_seq_cst);
+            return k;
+        }
+    }
+    return -1;
+}
+
+void RecordingService::waitForPulls() const
+{
+    while (m_pullsInFlight.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+}
+
+void RecordingService::onPlaybackEnded(const ListenerId& who, quint64 token)
+{
+    const auto it = m_listeners.find(who);
+    if (it == m_listeners.end() || it->token != token || !it->player) {
+        return;
+    }
+    Listener& l = it.value();
+    dropPlayer(l);
+    l.positionMs = l.lengthMs;
+    l.playing = false;
+    emit playbackChanged(who);
+}
+
+void RecordingService::onPlaybackFailed(const ListenerId& who, quint64 token)
+{
+    const auto it = m_listeners.find(who);
+    if (it == m_listeners.end() || it->token != token || !it->player) {
+        return;
+    }
+    endListener(who);
+    emit playbackRefused(who, QString::fromLatin1(kPlayFailedReason));
+    emit playbackChanged(who);
+}
+
+// ---- Worker thread: the playbacks.
+
+void RecordingService::workerPlayBegin(const ListenerId& who, quint64 token,
+                                       std::shared_ptr<RecordingPlayer> player, const QString& path)
+{
+    QString error;
+    if (!player->open(path, &error)) {
+        qCWarning(lcRecordings) << "recording" << path << "cannot be played:" << error;
+        QMetaObject::invokeMethod(this, [this, who, token] { onPlaybackFailed(who, token); },
+                                  Qt::QueuedConnection);
+        return;
+    }
+    player->fill();
+    m_workerPlayers.push_back(WorkerPlayer{who, token, std::move(player)});
+    if (m_workerTimer && !m_workerTimer->isActive()) {
+        m_workerTimer->start();
+    }
+}
+
+void RecordingService::workerPlayEnd(quint64 token)
+{
+    m_workerPlayers.erase(std::remove_if(m_workerPlayers.begin(), m_workerPlayers.end(),
+                                         [token](const WorkerPlayer& p) { return p.token == token; }),
+                          m_workerPlayers.end());
+    workerStopTimerIfIdle();
+}
+
+void RecordingService::workerFillPlayers()
+{
+    for (auto it = m_workerPlayers.begin(); it != m_workerPlayers.end();) {
+        it->player->fill();
+        if (it->player->finished()) {
+            // Reported once: the player leaves the worker here.
+            const ListenerId who = it->who;
+            const quint64 token = it->token;
+            QMetaObject::invokeMethod(this, [this, who, token] { onPlaybackEnded(who, token); },
+                                      Qt::QueuedConnection);
+            it = m_workerPlayers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    workerStopTimerIfIdle();
+}
+
+void RecordingService::workerStopTimerIfIdle()
+{
+    if (m_workerFiles.isEmpty() && m_workerPlayers.empty() && m_workerTimer) {
+        m_workerTimer->stop();
+    }
 }
 
 // ---- Test seams.
@@ -679,8 +947,10 @@ void RecordingService::pumpForTest()
     // More than once: a drain that hits a full disk asks the main thread to
     // stop, and that stop's finish runs on the worker again.
     for (int round = 0; round < 3; ++round) {
-        QMetaObject::invokeMethod(m_workerContext, [this] { workerDrainAll(); },
-                                  Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(m_workerContext, [this] {
+            workerDrainAll();
+            workerFillPlayers();
+        }, Qt::BlockingQueuedConnection);
         QCoreApplication::sendPostedEvents(this);
     }
 }

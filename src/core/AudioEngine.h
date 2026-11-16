@@ -21,6 +21,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: Recording player (spec 6.1, 6.3): a playback slot in the
+//               mixer for the local output and for each owner mix, and
+//               setOwnerMixPlayback, the owner mix's route to its own.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 //   2026-10-17 : makeBus() sets a stream event sink before the open;
@@ -1062,6 +1066,16 @@ public:
     /// Any thread; the audio thread reads it at the next drain.
     void setOwnerMixMonitor(int slot, MasterMixer::OwnerMonitor monitor);
     MasterMixer::OwnerMonitor ownerMixMonitor(int slot) const;
+    /// Recording player (spec 6.1, 6.3): the mixer's playback slots. The
+    /// local output's speakers sum carries kLocalPlaybackSlotId; an owner
+    /// mix's speakers sum carries ownerPlaybackSlotId(slot) while
+    /// setOwnerMixPlayback(slot, true) (off after acquire and release).
+    /// Each is in no other sum. Any thread; the audio thread reads it at
+    /// the next drain.
+    static constexpr int kLocalPlaybackSlotId = -3;
+    static constexpr int ownerPlaybackSlotId(int ownerMixSlot) { return -4 - ownerMixSlot; }
+    void setOwnerMixPlayback(int slot, bool on);
+    bool ownerMixPlayback(int slot) const;
     /// Owner mixes taken now; diagnostics and leak checks.
     int ownerMixCount() const;
 
@@ -2135,6 +2149,8 @@ private:
         MixTapGate headphones;
         // Task 32: MasterMixer::OwnerMonitor, as an int for the atomic.
         std::atomic<int> monitor{0};
+        // Recording player: this owner's playback slot reaches its speakers.
+        std::atomic<bool> playback{false};
         // Slice control plan Task 6: the slices this owner listens to, and
         // its level for each (0 when muted).
         std::atomic<quint32> listenMask{0};

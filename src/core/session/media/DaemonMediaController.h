@@ -8,6 +8,9 @@
 // coordination; it contains neither GUI nor radio control policy.
 //
 // Modification history (NereusSDR):
+//   2026-11-15: Recording player (spec 6.1, 6.3): the session's owner mix
+//               carries its own playback slot.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06: viewHasNothingToDraw and the queued retire of such views.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: Remote transmit hold then cut: micNoAudio forwards the
@@ -433,7 +436,10 @@ public:
     /// with every other controller of the same hub).
     DaemonSharedSpectrum* sharedSpectrum() const noexcept { return m_shared.get(); }
     /// Task 76: the owner mix of AudioEngine this controller's session
-    /// hears (-1 while none is held), and its slices.
+    /// hears (-1 while none is held), and its slices. Recording player: the
+    /// mix's speakers carry its playback slot,
+    /// AudioEngine::ownerPlaybackSlotId(ownerMixSlot()), this session's
+    /// device's playback and no one else's.
     int ownerMixSlot() const noexcept { return m_ownerMix; }
     /// Task 76: this controller's own display charge (its spectrum
     /// endpoints, plus the PureSignal display when its session is the

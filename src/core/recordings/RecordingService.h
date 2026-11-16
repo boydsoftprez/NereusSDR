@@ -6,11 +6,15 @@
 //             contact recorder per slice on a worker thread, start and stop
 //             from any device, start by itself and stop by itself (spec 6.1,
 //             6.2, V1, V4, section 7). AI tooling: Anthropic Claude Code.
+// 2026-11-15  J.J. Boyd / KG4VCF; the player: one playback per listener,
+//             decoded on the worker, pulled by the audio thread (spec 6.1
+//             Player, 6.3, V6). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
 #include "core/recordings/AudioFileWriter.h"
 #include "core/recordings/QuietRule.h"
+#include "core/recordings/RecordingPlayer.h"
 #include "core/recordings/RecordingSettings.h"
 
 #include <QDateTime>
@@ -25,6 +29,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 class QThread;
 class QTimer;
@@ -101,6 +106,31 @@ public:
     // MOX (MoxController::moxChanged).
     void setTransmitting(bool on);
 
+    // ---- The player (spec 6.1, 6.3): one playback per listener, heard only
+    // by that listener. The file is decoded on the worker into a ring at
+    // 48 kHz; the audio side only reads the ring (pullPlayback). Playing
+    // never keys the radio.
+    static constexpr int kMaxPlaybackListeners = 8;
+    static constexpr const char* kPlayWholePanReason = "Open it on the waterfall.";
+    static constexpr const char* kPlayGoneReason = "That recording is no longer kept.";
+    static constexpr const char* kPlayFailedReason = "That recording cannot be played.";
+    static constexpr const char* kPlayBusyReason = "Too many devices are playing recordings.";
+
+    // From the start, or from where a seek left a stopped playback of the
+    // same recording. A whole-pan recording, a recording no longer kept or
+    // one that cannot be opened is refused (playbackRefused).
+    void play(const ListenerId& who, const QString& recordingId);
+    // Ends the listener's playback; playback(who) is empty after.
+    void stopPlayback(const ListenerId& who);
+    // A playing listener goes on from there; a stopped one starts there.
+    void seek(const ListenerId& who, qint64 positionMs);
+    // The position is what the audio side has taken, not a wall clock.
+    std::optional<PlaybackState> playback(const ListenerId& who) const;
+    // Audio thread: up to `frames` mono 48 kHz samples of who's playback,
+    // the rest silence; returns the frames that were the recording. No lock,
+    // no wait, no allocation.
+    int pullPlayback(const ListenerId& who, float* mono48k, int frames) noexcept;
+
     // ---- Test seams.
     using Clock = std::function<qint64()>;
     using WriterFactory = std::function<std::unique_ptr<AudioFileWriter>(
@@ -118,6 +148,9 @@ public:
 signals:
     void sliceStateChanged(int sliceId);
     void kept(const NereusSDR::KeptEvent& e);
+    // Started, stopped, sought, ended (once) or failed.
+    void playbackChanged(const NereusSDR::ListenerId& who);
+    void playbackRefused(const NereusSDR::ListenerId& who, const QString& reason);
 
 private:
     struct SliceRecord {
@@ -166,10 +199,46 @@ private:
     void onSliceAdded(int sliceId);
     void onSliceRemoved(int sliceId);
 
+    // The player.
+    struct Listener {
+        QString recordingId;
+        QString path;
+        std::shared_ptr<RecordingPlayer> player;   // null when stopped
+        qint64 positionMs = 0;                     // when stopped
+        qint64 lengthMs = 0;
+        bool playing = false;
+        quint64 token = 0;
+        int channel = -1;
+    };
+    // What the audio side reads. `listener` is written on the main thread
+    // only while unbound and no pull runs (waitForPulls).
+    struct PlaybackChannel {
+        ListenerId listener;
+        std::atomic<bool> bound{false};
+        std::atomic<RecordingPlayer*> player{nullptr};
+    };
+    struct WorkerPlayer {
+        ListenerId who;
+        quint64 token = 0;
+        std::shared_ptr<RecordingPlayer> player;
+    };
+    void startPlayer(const ListenerId& who, Listener& l, qint64 fromMs);
+    void dropPlayer(Listener& l);
+    void endListener(const ListenerId& who);
+    int bindChannel(const ListenerId& who);
+    void waitForPulls() const;
+    void onPlaybackEnded(const ListenerId& who, quint64 token);
+    void onPlaybackFailed(const ListenerId& who, quint64 token);
+
     // Worker thread.
     void workerBegin(int sliceId, quint64 token, const QString& path, const AudioFileSpec& spec);
     void workerDrainAll();
     void workerEnd(int sliceId, quint64 token);
+    void workerPlayBegin(const ListenerId& who, quint64 token, std::shared_ptr<RecordingPlayer> player,
+                         const QString& path);
+    void workerPlayEnd(quint64 token);
+    void workerFillPlayers();
+    void workerStopTimerIfIdle();
 
     RadioModel* m_radio = nullptr;
     mutable std::unique_ptr<RecordingStore> m_store;
@@ -194,6 +263,13 @@ private:
     QObject* m_workerContext = nullptr;   // lives on m_thread; deleted there
     QTimer* m_workerTimer = nullptr;      // worker thread only
     QHash<int, WorkerResult> m_workerFiles;   // worker thread only: the files being written
+    std::vector<WorkerPlayer> m_workerPlayers;   // worker thread only: the playbacks being decoded
+
+    QHash<ListenerId, Listener> m_listeners;
+    std::array<PlaybackChannel, kMaxPlaybackListeners> m_playChannels;
+    std::atomic<bool> m_playClosed{false};
+    mutable std::atomic<int> m_pullsInFlight{0};
+    quint64 m_nextPlayToken = 1;
     QTimer* m_quietTimer = nullptr;
 };
 

@@ -197,6 +197,16 @@ void MasterMixer::setSliceOpportunistic(int sliceId, bool opportunistic) {
                                           std::memory_order_release);
 }
 
+void MasterMixer::setPlaybackSlot(int slotId, bool playback) {
+    if (slotId >= 0 && slotId < 32) {
+        return;   // a slice id
+    }
+    std::lock_guard<std::mutex> lk(m_sliceMapMutex);
+    SliceState& st = m_slices[slotId];
+    st.playback.store(playback, std::memory_order_release);
+    st.opportunistic.store(playback, std::memory_order_release);
+}
+
 void MasterMixer::setRampFrames(int frames) {
     std::lock_guard<std::mutex> lk(m_sliceMapMutex);
     m_rampFrames = std::max(1, frames);
@@ -329,7 +339,8 @@ int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
                           std::uint32_t localMask, OwnerOutput* owners, int ownerCount,
                           bool localOutOfMask, bool onlyWithoutMembers,
                           std::uint32_t localListenMask, const float* localListenLevels,
-                          float* radioOut, float* everySliceOut) {
+                          float* radioOut, float* everySliceOut,
+                          int localPlaybackSlot) {
     // `out` is the speakers sum, `hpOut` the headphones sum (R-R3-45).
     if ((out == nullptr && hpOut == nullptr) || maxFrames <= 0) { return 0; }
     if (owners == nullptr) { ownerCount = 0; }
@@ -449,22 +460,28 @@ int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
         const int id = kv.first;
         const bool inMask = id >= 0 && id < 32;
         const std::uint32_t bit = inMask ? (std::uint32_t{1} << id) : 0u;
+        // Recording player: a playback slot reaches only the speakers sum
+        // that names it, never the monitor's routes below.
+        const bool playback = st.playback.load(std::memory_order_acquire);
         // Task 32: the transmit monitor's slot plays locally unless the
         // caller leaves it out (a remote device holds transmit).
-        const bool local = inMask ? (localMask & bit) != 0 : localOutOfMask;
+        const bool local = playback ? id == localPlaybackSlot
+                                    : inMask ? (localMask & bit) != 0 : localOutOfMask;
         float* const sliceOut = local ? out : nullptr;
-        float* const sliceHpOut = local ? hpOut : nullptr;
+        float* const sliceHpOut = (local && !playback) ? hpOut : nullptr;
         // Radio codec (JJ's ruling 2026-09-30): the radio's speaker out
         // takes every receiving slice, as Thetis's mixer 0 takes RX1, RX1S
         // and RX2 whoever listens (console.cs:27650-27664 [v2.10.3.15]),
         // and the monitor slot (MON, the same mixer, audio.cs:417-418) as
         // the local sums take it.
-        float* const sliceRadioOut = (inMask || localOutOfMask) ? radioOut : nullptr;
+        float* const sliceRadioOut =
+            (!playback && (inMask || localOutOfMask)) ? radioOut : nullptr;
         // Headless Core speaker (JJ's ruling 2026-10-10): the every-slice
         // sum takes every receiving slice whatever localMask says, and the
         // monitor slot as the local sums take it. Only the speakers part
         // below reaches it, and no listen lane does.
-        float* const sliceEveryOut = (inMask || localOutOfMask) ? everySliceOut : nullptr;
+        float* const sliceEveryOut =
+            (!playback && (inMask || localOutOfMask)) ? everySliceOut : nullptr;
 
         // Target gains. Mute is a ramp target, not a hard gate, so a
         // muted slice fades out over m_rampFrames instead of clicking.
@@ -484,8 +501,9 @@ int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
         // R-R3-45: the route picks which sum gets the targets; the other
         // ramps to silence, so a route change crossfades over the ramp
         // instead of stepping from one output to the other.
+        // A playback slot is always the speakers'.
         const bool toHeadphones =
-            st.headphones.load(std::memory_order_acquire);
+            !playback && st.headphones.load(std::memory_order_acquire);
         const float spkTgtL = toHeadphones ? 0.0f : tgtL;
         const float spkTgtR = toHeadphones ? 0.0f : tgtR;
         const float hpTgtL  = toHeadphones ? tgtL : 0.0f;
@@ -580,6 +598,14 @@ int MasterMixer::tryDrain(float* out, float* hpOut, int maxFrames,
             }
             for (int k = 0; k < ownerCount; ++k) {
                 OwnerOutput& owner = owners[k];
+                if (playback) {
+                    // Recording player: only the owner that names the slot.
+                    if (owner.playbackSlot == id && owner.speakers != nullptr) {
+                        owner.speakers[o + 0] += spkL;
+                        owner.speakers[o + 1] += spkR;
+                    }
+                    continue;
+                }
                 if (!inMask) {
                     // Task 32: the transmit monitor, to the owner's chosen
                     // sum at the slot's own gain. The slot is in exactly one

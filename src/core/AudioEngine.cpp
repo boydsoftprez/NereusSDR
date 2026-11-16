@@ -19,6 +19,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-15: Recording player (spec 6.1, 6.3): the playback slots are
+//               registered with the speakers mixer, and each drain names
+//               the local one and each owner mix's own.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-17 : openRole() gives the bus its stream event sink before
 //                 it opens, so a device lost during or right after the
 //                 open reaches the supervisor; each bus has a generation
@@ -642,6 +646,17 @@ AudioEngine::AudioEngine(QObject* parent)
     // mixer's readiness barrier: an intermittent member would stall the
     // drain for kStallTolerance periods on every TX transition.
     m_masterMix.setSliceOpportunistic(kTxMonitorSlotId, true);
+
+    // Recording player (spec 6.1, 6.3): the playback slots, registered here
+    // for the same reason as the monitor's (no insert once the DSP thread
+    // reads the map). Each reaches only the speakers sum that names it, and
+    // never the anti-VOX mixer.
+    m_masterMix.setSliceGain(kLocalPlaybackSlotId, 1.0f, 0.0f);
+    m_masterMix.setPlaybackSlot(kLocalPlaybackSlotId, true);
+    for (int k = 0; k < kMaxOwnerMixes; ++k) {
+        m_masterMix.setSliceGain(ownerPlaybackSlotId(k), 1.0f, 0.0f);
+        m_masterMix.setPlaybackSlot(ownerPlaybackSlotId(k), true);
+    }
 
     // kTxMonitorSlotId is registered with m_masterMix and ONLY with
     // m_masterMix. Upstream hands the speakers mixer RX1 + RX1S + RX2 + MON
@@ -3990,6 +4005,7 @@ int AudioEngine::acquireOwnerMix()
         if (!slot.taken.load(std::memory_order_acquire)) {
             slot.sliceMask.store(0, std::memory_order_release);
             slot.monitor.store(0, std::memory_order_release);
+            slot.playback.store(false, std::memory_order_release);
             slot.listenMask.store(0, std::memory_order_release);
             slot.taken.store(true, std::memory_order_release);
             return k;
@@ -4013,6 +4029,7 @@ void AudioEngine::releaseOwnerMix(int slot)
     owner.headphones.admissionClosed.store(false, std::memory_order_seq_cst);
     owner.sliceMask.store(0, std::memory_order_release);
     owner.monitor.store(0, std::memory_order_release);
+    owner.playback.store(false, std::memory_order_release);
     owner.listenMask.store(0, std::memory_order_release);
     owner.taken.store(false, std::memory_order_release);
 }
@@ -4089,6 +4106,20 @@ MasterMixer::OwnerMonitor AudioEngine::ownerMixMonitor(int slot) const
         ? static_cast<MasterMixer::OwnerMonitor>(
               m_ownerMixes[static_cast<size_t>(slot)].monitor.load(std::memory_order_acquire))
         : MasterMixer::OwnerMonitor::None;
+}
+
+void AudioEngine::setOwnerMixPlayback(int slot, bool on)
+{
+    if (!validOwnerMixSlot(slot)) {
+        return;
+    }
+    m_ownerMixes[static_cast<size_t>(slot)].playback.store(on, std::memory_order_release);
+}
+
+bool AudioEngine::ownerMixPlayback(int slot) const
+{
+    return validOwnerMixSlot(slot)
+        && m_ownerMixes[static_cast<size_t>(slot)].playback.load(std::memory_order_acquire);
 }
 
 void AudioEngine::setOwnerMixSliceMask(int slot, quint32 mask)
@@ -4596,6 +4627,10 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
             owner.listenLevels = levels.data();
         }
         owner.listenSlot = k;
+        // Recording player: this owner's own playback, in its speakers.
+        if (slot.playback.load(std::memory_order_acquire)) {
+            owner.playbackSlot = ownerPlaybackSlotId(k);
+        }
         ++ownerCount;
     }
     const quint32 localListen = m_localListenMask.load(std::memory_order_acquire);
@@ -4630,7 +4665,7 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
         m_localOutputSliceMask.load(std::memory_order_acquire), owners.data(), ownerCount,
         m_txMonitorLocal.load(std::memory_order_acquire), monitorOnly, localListen,
         localListenLevels.data(), radioTapped ? radioSum.data() : nullptr,
-        speakersPlayEvery ? everySum.data() : nullptr);
+        speakersPlayEvery ? everySum.data() : nullptr, kLocalPlaybackSlotId);
 
     // Drain the anti-VOX reference in the same call stack, so both mixes are
     // paced by their own barrier over the same period.

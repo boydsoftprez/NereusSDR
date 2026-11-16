@@ -12050,6 +12050,11 @@ nereus_add_test(tst_recording_quiet_rule CORE_ONLY)
 # contract and the call from Roundtable (src/core/recordings/
 # ContactRecorder.cpp, RecordingService.cpp).
 nereus_add_test(tst_recording_contact CORE_ONLY)
+# The recording player: the mixer's playback slot reaches only its owner's
+# speakers, 48 kHz from any file rate, seek, the end and a whole-pan refusal
+# (src/core/recordings/RecordingPlayer.cpp, RecordingService.cpp,
+# src/core/audio/MasterMixer.cpp).
+nereus_add_test(tst_recording_player CORE_ONLY)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

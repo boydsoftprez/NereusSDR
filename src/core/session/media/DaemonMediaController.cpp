@@ -4,6 +4,9 @@
 // no-port-check: NereusSDR-original. See DaemonMediaController.h.
 //
 // Modification history (NereusSDR):
+//   2026-11-15: Recording player (spec 6.1, 6.3): acquireOwnerMix routes the
+//               owner mix's playback slot to its speakers.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-06: Wideband demand counts only for the device controlling the
 //               slice, and is recomputed when access to a slice changes and
 //               at the fall. A device with no control of a slice whose view
@@ -2029,6 +2032,8 @@ void DaemonMediaController::acquireOwnerMix()
     refreshOwnerMixMask();
     // Parity Task 32: and the transmit monitor, if this device has one.
     refreshTxMonitor();
+    // Recording player (spec 6.3): this device's playback to its speakers.
+    m_radioModel->audioEngine()->setOwnerMixPlayback(m_ownerMix, true);
 }
 
 void DaemonMediaController::releaseOwnerMix()
