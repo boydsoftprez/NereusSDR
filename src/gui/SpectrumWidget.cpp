@@ -8,6 +8,12 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Your frequency's line and the tags in the Roundtable strip,
+//                 each tag one line, kept clear only of the line; nothing
+//                 Roundtable on the spectrum any more (the card, its tick and
+//                 the tags' ticks are gone). The strip's background spans the
+//                 whole width (roundtableStripChrome). J.J. Boyd (KG4VCF),
+//                 AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The Roundtable strip between the frequency scale and the
 //                 waterfall: its row in spectrumLayout (out of the waterfall
 //                 only), its background in both paint paths, presses, hover and
@@ -7777,7 +7783,8 @@ SpectrumWidget::SpectrumLayout SpectrumWidget::spectrumLayout() const
             QRect(0, freqY, plotW, freqScaleH),
             QRect(0, wfY, plotW, wfH),
             QRect(0, wfY, width(), wfH),
-            m_roundtableStripShown ? QRect(0, stripY, plotW, stripH) : QRect()};
+            m_roundtableStripShown ? QRect(0, stripY, plotW, stripH) : QRect(),
+            m_roundtableStripShown ? QRect(0, stripY, width(), stripH) : QRect()};
 }
 
 void SpectrumWidget::setRoundtableStripShown(bool shown)
@@ -7945,8 +7952,9 @@ void SpectrumWidget::paintEvent(QPaintEvent* event)
     drawSpectrum(p, specRect);
     drawWaterfall(p, wfRect);
     // The Roundtable strip under the frequency scale, before the markers so
-    // the dial's line still runs through it to the waterfall.
-    drawRoundtableStrip(p, layout.roundtableStrip);
+    // the dial's line still runs through it to the waterfall. Its background
+    // spans the whole width, the scale column too.
+    drawRoundtableStrip(p, layout.roundtableStripChrome);
     // TNF notch overlay immediately before the spots, matching upstream's
     // paint order: AetherSDR src/gui/SpectrumWidget.cpp:12903-12904
     // [@c6481cbf] draws drawTnfMarkers then drawSpotMarkers.  No visibility
@@ -12922,20 +12930,21 @@ void SpectrumWidget::showSpotClusterPopup(const SpotCluster& cluster, const QPoi
 // Roundtable room tags (Roundtable plan Task 14, design 11.2 Panadapter
 // tags, U4, U7, U8, U10). NereusSDR-original; the look is the mockup's
 // (docs/architecture/reporter-brainstorm/mockups/board.html, .rt-tag and
-// .rt-fold): a 22 px tag 8 px above the band plan, a 1 px border in the
-// state color, the glyph, the talker in bold 11 px and the member count.
+// .rt-fold): a 22 px tag centered in the Roundtable strip (strip design 4,
+// .rct--line), a 1 px border in the state color, the glyph, the talker in
+// bold 11 px and the member count.
 // ---------------------------------------------------------------------------
 namespace {
 
 constexpr int kRoundtableTagHeight = 22;
-constexpr int kRoundtableTagFootGap = 8;      // tag bottom to band plan top
+constexpr int kRoundtableTagFootGap = 8;      // the inspector's foot to the band plan top
 constexpr int kRoundtableTagGap = 4;          // between tags and from the edges
 constexpr int kRoundtableTagMinWidth = 56;
 constexpr int kRoundtableTagMaxWidth = 128;
-constexpr int kRoundtableCardTopGap = 2;      // card top limit, under the pan's top edge
-constexpr int kRoundtableTagNameLine = 16;    // each name under a double's head
-constexpr int kRoundtableTagNameIndent = 14;  // a double's names, past the glyph
+constexpr int kRoundtableCardTopGap = 2;      // the inspector's top limit, under the pan's top edge
 constexpr int kRoundtableTagNames = 2;        // a double names up to two (D20)
+constexpr int kRoundtableTagLineGap = 6;      // .rct--line gap: a double's word, names and count
+constexpr int kRoundtableLineKeepOut = 4;     // tags keep this clear each side of your line
 constexpr int kRoundtableTagPadLeft = 6;
 constexpr int kRoundtableTagPadRight = 7;
 constexpr int kRoundtableTagInnerGap = 5;     // glyph to text
@@ -12995,7 +13004,8 @@ QString roundtableTagCountText(const RoundtableTag& tag)
     return tag.members > 1 ? QStringLiteral("+%1").arg(tag.members - 1) : QString();
 }
 
-int roundtableTagNameLines(const RoundtableTag& tag)
+// How many of a double's names its tag shows, side by side after the word.
+int roundtableTagNames(const RoundtableTag& tag)
 {
     return tag.state == static_cast<int>(RoundtableGlyph::Doubled)
         ? std::min(kRoundtableTagNames, static_cast<int>(tag.keyed.size())) : 0;
@@ -13059,7 +13069,7 @@ void SpectrumWidget::measureRoundtableTags(const QFont& labelFont, const QFont& 
         + kRoundtableTagInnerGap + kRoundtableTagPadRight;
     for (RoundtableTag& tag : m_roundtablePanTags) {
         const QString count = roundtableTagCountText(tag);
-        const int names = roundtableTagNameLines(tag);
+        const int names = roundtableTagNames(tag);
         QString key = tag.label + QChar(0x1f) + count;
         for (int k = 0; k < names; ++k) {
             key += QChar(0x1f) + tag.keyed.at(k);
@@ -13071,12 +13081,16 @@ void SpectrumWidget::measureRoundtableTags(const QFont& labelFont, const QFont& 
             if (names == 0 && !count.isEmpty()) {
                 width += labelMetrics.horizontalAdvance(QLatin1Char(' ')) + countMetrics.horizontalAdvance(count);
             }
+            // A double is one line: the word, its names side by side, the count.
             for (int k = 0; k < names; ++k) {
-                width = std::max(width, 2 + kRoundtableTagPadLeft + kRoundtableTagNameIndent
-                                            + labelMetrics.horizontalAdvance(tag.keyed.at(k))
-                                            + kRoundtableTagPadRight + 2);
+                width += kRoundtableTagLineGap + labelMetrics.horizontalAdvance(tag.keyed.at(k));
             }
-            found = m_roundtableTagWidths.insert(key, std::min(width, kRoundtableTagMaxWidth));
+            if (names > 0 && !count.isEmpty()) {
+                width += kRoundtableTagLineGap + countMetrics.horizontalAdvance(count);
+            }
+            // A double's bound holds a name for each.
+            const int bound = names > 0 ? kRoundtableTagMaxWidth * kRoundtableTagNames : kRoundtableTagMaxWidth;
+            found = m_roundtableTagWidths.insert(key, std::min(width, bound));
         }
         tag.width = found.value();
     }
@@ -13096,15 +13110,22 @@ void SpectrumWidget::setRoundtableCard(const RoundtableCardModel& card, const QS
         && roundtableCardsEqual(card, m_roundtableCard)) {
         return;
     }
-    // Values redraw in place; only structure places the card again (D14).
-    if (roomId != m_roundtableCardRoom || format != m_roundtableCardFormat
-        || !roundtableCardSameStructure(card, m_roundtableCard)) {
-        m_roundtableCardPlacedValid = false;
+    // Values redraw in place; only structure places the line again (D14).
+    const bool sameShape = roomId == m_roundtableCardRoom && format == m_roundtableCardFormat
+        && roundtableCardSameStructure(card, m_roundtableCard);
+    if (!sameShape) {
+        m_roundtableStripLinePlacedValid = false;
     }
     m_roundtableCard = card;
     m_roundtableCardRoom = roomId;
     m_roundtableCardFormat = format;
-    // As a tag: values update in the child, never in the static overlay (D14).
+    // As a tag: values update in the child, never in the static overlay (D14),
+    // and a value-only change repaints no more than the line.
+    if (sameShape && m_roundtableTagLayer && m_roundtableStripLinePlacedValid
+        && !m_roundtableStripLineDrawn.line.isNull()) {
+        m_roundtableTagLayer->update(m_roundtableStripLineDrawn.line.adjusted(-1, -1, 1, 1));
+        return;
+    }
     refreshRoundtableTagLayer();
 }
 
@@ -13132,11 +13153,13 @@ QRect SpectrumWidget::roundtableTagSpectrumRectForTest() const
 void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
 {
     m_roundtableTagHits.clear();
-    const bool wantsCard = m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet;
-    // The inspector stands in the card's place: one box, not two (D34).
-    const bool inspecting = !m_roundtableInspectorRect.isNull();
-    if (m_roundtableTagDisplay == RoundtableTagDisplay::Hidden || (m_roundtablePanTags.isEmpty() && !wantsCard && !inspecting)
-        || m_bandwidthHz <= 0.0 || specRect.width() <= 0) {
+    m_roundtableStripLineDrawn = RoundtableStripLinePlacement{};
+    // Everything Roundtable sits in the strip under the frequency scale (strip
+    // design 3, 4); nothing is drawn on the spectrum.
+    const QRect strip = spectrumLayout().roundtableStrip;
+    const bool wantsLine = m_roundtableCard.kind != RoundtableCardModel::Kind::Quiet || !m_roundtableCard.note.isEmpty();
+    if (m_roundtableTagDisplay == RoundtableTagDisplay::Hidden || strip.isEmpty()
+        || (m_roundtablePanTags.isEmpty() && !wantsLine) || m_bandwidthHz <= 0.0 || specRect.width() <= 0) {
         return;
     }
     // A dropped link draws no live color (overlay design D7).
@@ -13144,22 +13167,12 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     // You are hidden: the rooms as when live, each state's marking dimmed
     // (roundtableDimmedColor, the workspace look's role).
     const bool dimmed = m_roundtableTagDisplay == RoundtableTagDisplay::Dimmed;
+    const bool inspecting = !m_roundtableInspectorRect.isNull();
 
-    const int bandTop = specRect.bottom() + 1 - bandPlanStripHeight(p.device());
-    const int top = bandTop - kRoundtableTagFootGap - kRoundtableTagHeight;
-    if (top < specRect.top()) {
-        return;
-    }
-
-    const QVector<QRect> controls = roundtableControlRects();
-
-    // The card for the active slice's frequency (D16), when its dial is here.
-    RoundtableCardPlacement placed;
-    int dialX = 0;
-    const QFont cardNameFont = roundtableTagFont(p.device(), 12, QFont::Bold);
-    const QFontMetrics cardNameMetrics(cardNameFont, p.device());
-    if (wantsCard) {
-        dialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
+    // Your frequency's line, beside its dial (strip design 3), when the dial is here.
+    RoundtableStripLinePlacement placed;
+    if (wantsLine) {
+        const int dialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
         if (dialX >= specRect.left() && dialX <= specRect.right()) {
             // The flag whose dial this is says which side it hangs on.
             bool flipped = false;
@@ -13171,39 +13184,25 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
                     flipped = vfo->geometry().center().x() < dialX;
                 }
             }
-            const int panTop = specRect.top() + kRoundtableCardTopGap;
-            const QRect pan(specRect.left() + kRoundtableTagGap, panTop, specRect.width() - 2 * kRoundtableTagGap,
-                            bandTop - kRoundtableTagFootGap - panTop);
-            if (!m_roundtableCardPlacedValid || pan != m_roundtableCardPlacedPan || dialX != m_roundtableCardPlacedDialX
-                || flipped != m_roundtableCardPlacedFlipped || controls != m_roundtableCardPlacedControls
-                || cardNameFont != m_roundtableCardPlacedFont) {
-                m_roundtableCardPlaced = placeRoundtableCard(m_roundtableCard, pan, dialX, controls, flipped, cardNameMetrics);
-                m_roundtableCardPlacedPan = pan;
-                m_roundtableCardPlacedDialX = dialX;
-                m_roundtableCardPlacedFlipped = flipped;
-                m_roundtableCardPlacedControls = controls;
-                m_roundtableCardPlacedFont = cardNameFont;
-                m_roundtableCardPlacedValid = true;
+            // The line's text size, which a workspace text size changes.
+            const QFont lineFont = roundtableTagFont(p.device(), 12, QFont::Bold);
+            if (!m_roundtableStripLinePlacedValid || strip != m_roundtableStripLinePlacedStrip
+                || dialX != m_roundtableStripLinePlacedDialX || flipped != m_roundtableStripLinePlacedFlipped
+                || lineFont != m_roundtableStripLinePlacedFont) {
+                m_roundtableStripLinePlaced = placeRoundtableStripLine(m_roundtableCard, strip, dialX, flipped,
+                                                                       m_roundtableCardFormat, p.device());
+                m_roundtableStripLinePlacedStrip = strip;
+                m_roundtableStripLinePlacedDialX = dialX;
+                m_roundtableStripLinePlacedFlipped = flipped;
+                m_roundtableStripLinePlacedFont = lineFont;
+                m_roundtableStripLinePlacedValid = true;
                 ++m_roundtableCardPlacements;
             }
-            placed = m_roundtableCardPlaced;
+            placed = m_roundtableStripLinePlaced;
         }
     }
-    const bool hasCard = !placed.card.isNull();
+    const bool hasLine = !placed.line.isNull();
 
-    // What the card or another slice's flag already says has no tag (D20).
-    const auto saidByAnotherFlag = [this](const RoundtableTag& tag) {
-        for (const VfoWidget* vfo : std::as_const(m_vfoWidgets)) {
-            if (vfo->isActiveSlice()) {
-                continue;
-            }
-            const qint64 flagHz = std::llround(vfo->frequency());
-            if (flagHz == tag.hz || tag.mergedHz.contains(flagHz)) {
-                return true;
-            }
-        }
-        return false;
-    };
     const QFont labelFont = roundtableTagFont(p.device(), 11, QFont::Bold);
     const QFont countFont = roundtableTagFont(p.device(), 11, QFont::DemiBold);
     measureRoundtableTags(labelFont, countFont, p.device());
@@ -13211,7 +13210,8 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     QList<RoundtableTag> shown;
     shown.reserve(m_roundtablePanTags.size());
     for (const RoundtableTag& tag : std::as_const(m_roundtablePanTags)) {
-        if ((hasCard && (tag.active || tag.roomId == m_roundtableCardRoom)) || saidByAnotherFlag(tag)) {
+        // The line speaks for your active frequency; another slice of yours keeps its tag.
+        if (hasLine && (tag.active || tag.roomId == m_roundtableCardRoom)) {
             continue;
         }
         // While it shows your own frequency your compact tag goes; while it shows
@@ -13226,30 +13226,13 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     const QFontMetrics countMetrics(countFont, p.device());
     const int space = labelMetrics.horizontalAdvance(QLatin1Char(' '));
 
-    // The row is as tall as the tallest double.
-    int stackHeight = kRoundtableTagHeight;
-    for (const RoundtableTag& tag : std::as_const(shown)) {
-        stackHeight = std::max(stackHeight, kRoundtableTagHeight + roundtableTagNameLines(tag) * kRoundtableTagNameLine);
-    }
-
-    // Tags keep clear of what is over their row, and of the card.
-    const QRect row(specRect.left(), top + kRoundtableTagHeight - stackHeight, specRect.width(), stackHeight);
+    // Tags keep clear of your line, and of nothing else: flags and the toolbar
+    // stand on the spectrum, above the strip.
     QList<RoundtableKeepOut> keepOut;
-    const auto keepClearOf = [&](const QRect& over) {
-        keepOut.append(RoundtableKeepOut{static_cast<double>(over.left() - specRect.left()),
-                                         static_cast<double>(over.right() + 1 - specRect.left())});
-    };
-    for (const QRect& control : std::as_const(controls)) {
-        if (control.intersects(row)) {
-            keepClearOf(control);
-        }
-    }
-    // The inspector stands in the card's place, so a card it hides keeps nothing clear.
-    if (hasCard && !inspecting) {
-        keepClearOf(placed.card);
-    }
-    if (inspecting && m_roundtableInspectorRect.intersects(row)) {
-        keepClearOf(m_roundtableInspectorRect);
+    if (hasLine) {
+        keepOut.append(RoundtableKeepOut{
+            static_cast<double>(placed.line.left() - kRoundtableLineKeepOut - specRect.left()),
+            static_cast<double>(placed.line.right() + 1 + kRoundtableLineKeepOut - specRect.left())});
     }
 
     const double lowHz = m_centerHz - m_bandwidthHz / 2.0;
@@ -13266,57 +13249,27 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    if (inspecting) {
-        // On your own frequency the inspector keeps the card's tick to the dial.
-        const int inspectorDialX = hzToX(static_cast<double>(m_roundtableCard.hz), specRect);
-        if (m_roundtableCard.hz > 0 && !m_roundtableCardRoom.isEmpty() && !m_roundtableViewedIsFold
-            && m_roundtableViewedRoom == m_roundtableCardRoom
-            && inspectorDialX >= specRect.left() && inspectorDialX <= specRect.right()) {
-            QColor tick = wantsCard ? roundtableCardColor(m_roundtableCard)
-                                    : roundtableTagBorder(static_cast<int>(RoundtableGlyph::Quiet));
-            tick.setAlphaF(tick.alphaF() * (dimmed ? 0.4 : 0.75));
-            p.setPen(QPen(tick, 1, Qt::DashLine));
-            p.drawLine(QPointF(inspectorDialX + 0.5, m_roundtableInspectorRect.bottom() + 1), QPointF(inspectorDialX + 0.5, bandTop - 1));
-        }
-    } else if (hasCard) {
-        m_roundtableTagHits.append(RoundtableTagHit{placed.card,
+    if (hasLine) {
+        m_roundtableStripLineDrawn = placed;
+        m_roundtableTagHits.append(RoundtableTagHit{placed.line,
             m_roundtableCardRoom.isEmpty() ? QStringList{} : QStringList{m_roundtableCardRoom}, false,
             RoundtableTagHit::Kind::Card, static_cast<qint64>(m_roundtableCard.hz)});
-        // A dashed tick joins the card to the dial (D16).
-        QColor tick = roundtableCardColor(m_roundtableCard);
-        tick.setAlphaF(tick.alphaF() * (dimmed ? 0.4 : 0.75));
-        p.setPen(QPen(tick, 1, Qt::DashLine));
-        p.drawLine(QPointF(dialX + 0.5, placed.card.bottom() + 1), QPointF(dialX + 0.5, bandTop - 1));
-        paintRoundtableCard(p, m_roundtableCard, placed, m_roundtableCardFormat, cardNameMetrics, dimmed);
+        // Open while the inspector shows your own frequency (.rcs.is-open).
+        const bool open = inspecting && !m_roundtableViewedIsFold && !m_roundtableCardRoom.isEmpty()
+            && m_roundtableViewedRoom == m_roundtableCardRoom;
+        paintRoundtableStripLine(p, m_roundtableCard, placed, m_roundtableCardFormat, dimmed, open);
     }
 
+    // The tags, centered in the strip.
+    const int top = strip.top() + (strip.height() - kRoundtableTagHeight) / 2;
     for (const RoundtableTagPlacement& placement : placements) {
         const RoundtableTag* first = byId.value(placement.roomIds.value(0));
-        const int names = !placement.folded && first ? roundtableTagNameLines(*first) : 0;
-        const int bodyHeight = kRoundtableTagHeight + names * kRoundtableTagNameLine;
-        const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())),
-                         top + kRoundtableTagHeight - bodyHeight, static_cast<int>(std::lround(placement.rect.width())),
-                         bodyHeight);
-        if (rect.top() < specRect.top()) { continue; }
+        const QRect rect(specRect.left() + static_cast<int>(std::lround(placement.rect.left())), top,
+                         static_cast<int>(std::lround(placement.rect.width())), kRoundtableTagHeight);
         m_roundtableTagHits.append(RoundtableTagHit{rect, placement.roomIds, placement.folded,
                                                     RoundtableTagHit::Kind::Tag, first ? first->hz : 0});
         if (first == nullptr) {
             continue;
-        }
-
-        // A dashed tick from the tag down to each room's frequency.
-        for (const QString& id : placement.roomIds) {
-            const RoundtableTag* tag = byId.value(id);
-            if (tag == nullptr) {
-                continue;
-            }
-            QColor tick = stale ? roundtableStaleColor()
-                : dimmed        ? roundtableDimmedColor(tag->state)
-                                : roundtableTagBorder(tag->state);
-            tick.setAlphaF(tick.alphaF() * 0.7);
-            p.setPen(QPen(tick, 1, Qt::DashLine));
-            const int x = hzToX(static_cast<double>(tag->hz), specRect);
-            p.drawLine(QPointF(x + 0.5, rect.bottom() + 1), QPointF(x + 0.5, bandTop - 1));
         }
 
         const QColor border = stale ? QColor(0x60, 0x60, 0x66)
@@ -13381,25 +13334,39 @@ void SpectrumWidget::drawRoundtableTags(QPainter& p, const QRect& specRect)
         paintRoundtableGlyph(p, QPointF(glyphX, midY), kRoundtableGlyphSize, first->state, stale, dimmed);
         const int textLeft = static_cast<int>(glyphX + kRoundtableGlyphSize / 2.0) + kRoundtableTagInnerGap;
         const int textRight = rect.right() - kRoundtableTagPadRight;
-        // A double with names has no count beside the word.
-        const QString members = names > 0 ? QString() : roundtableTagCountText(*first);
+        const QString members = roundtableTagCountText(*first);
         const int countWidth = countMetrics.horizontalAdvance(members);
+        const int names = roundtableTagNames(*first);
+        if (names > 0) {
+            // One line (.rct--line): the word, the names side by side, the count.
+            const QColor word = !stale ? QColor(0xe0, 0x6c, 0x6e) : text;
+            const auto drawPiece = [&](int x, const QString& piece, const QFont& font, const QColor& color, int width) {
+                const int room = std::min(width + 1, textRight + 1 - x);
+                if (room <= 0) {
+                    return x;
+                }
+                p.setFont(font);
+                p.setPen(color);
+                p.drawText(QRect(x, rect.top(), room, kRoundtableTagHeight),
+                           Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, piece);
+                return x + width;
+            };
+            int x = drawPiece(textLeft, first->label, labelFont, word, labelMetrics.horizontalAdvance(first->label));
+            for (int k = 0; k < names; ++k) {
+                const QString& name = first->keyed.at(k);
+                x = drawPiece(x + kRoundtableTagLineGap, name, labelFont, text, labelMetrics.horizontalAdvance(name));
+            }
+            if (!members.isEmpty()) {
+                drawPiece(x + kRoundtableTagLineGap, members, countFont, count, countWidth);
+            }
+            continue;
+        }
         const int labelRoom = std::max(0, textRight - textLeft - (members.isEmpty() ? 0 : space + countWidth));
         const QString label = labelMetrics.elidedText(first->label, Qt::ElideRight, labelRoom);
         p.setFont(labelFont);
         p.setPen(isDouble && !stale ? QColor(0xe0, 0x6c, 0x6e) : text);
         p.drawText(QRect(textLeft, rect.top(), labelRoom, kRoundtableTagHeight), Qt::AlignVCenter | Qt::AlignLeft,
                    label);
-        if (names > 0) {
-            p.setPen(text);
-            for (int k = 0; k < names; ++k) {
-                const int nameLeft = rect.left() + 1 + kRoundtableTagPadLeft + kRoundtableTagNameIndent;
-                const int nameTop = rect.top() + kRoundtableTagHeight + k * kRoundtableTagNameLine - 2;
-                p.drawText(QRect(nameLeft, nameTop, std::max(0, textRight - nameLeft), kRoundtableTagNameLine),
-                           Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, first->keyed.at(k));
-            }
-            continue;
-        }
         p.setFont(countFont);
         p.setPen(count);
         const int countLeft = textLeft + labelMetrics.horizontalAdvance(label) + space;
@@ -14138,9 +14105,9 @@ bool SpectrumWidget::eventFilter(QObject* obj, QEvent* ev)
         return false;
     }
 
-    // Roundtable plan Task 15: the room tags keep clear of the pan's
-    // toolbar (drawRoundtableTags), so when it collapses, moves, shows or
-    // hides they are laid out again; the GPU path's overlay is cached.
+    // Roundtable plan Task 15: when the pan's toolbar collapses, moves,
+    // shows or hides, the Roundtable layer is drawn again; the GPU path's
+    // overlay is cached. (The tags in the strip no longer keep clear of it.)
     switch (ev->type()) {
     case QEvent::Move:
     case QEvent::Resize:
@@ -17671,8 +17638,8 @@ void SpectrumWidget::renderGpuFrame(QRhiCommandBuffer* cb)
             drawFreqScale(p, layout.frequency);
             drawTimeScale(p, wfRectFull);
             // The Roundtable strip, before the VFO marker below so the dial's
-            // line runs through it, as in paintEvent.
-            drawRoundtableStrip(p, layout.roundtableStrip);
+            // line runs through it, as in paintEvent; the whole width.
+            drawRoundtableStrip(p, layout.roundtableStripChrome);
             // TNF notch overlay, GPU static-overlay path.  Same relative
             // ordering as the CPU paintEvent above and as AetherSDR
             // src/gui/SpectrumWidget.cpp:12013-12016 [@c6481cbf], where

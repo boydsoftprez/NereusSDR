@@ -37,6 +37,9 @@
 //   2026-10-25: Roundtable fix wave: the Core's meter pump stops while the
 //               own reading is shown, since a clear now reaches the panel.
 //               J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+//   2026-11-16: Your frequency's line in the strip stays while the inspector is
+//               open, where the card on the spectrum gave way to it. J.J. Boyd
+//               (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -1779,14 +1782,14 @@ private slots:
         QVERIFY(!open());
         QCOMPARE(swapped.size(), 1);
 
-        // ── Your own card: it toggles, and it is hidden while the inspector stands ──
+        // ── Your own line: it toggles, and it stays in the strip while the inspector is open ──
         const QJsonObject onMine{{"sourceRoom", "usb-14200000"}, {"ref", "cq"}, {"callsign", "W1AW"},
             {"hz", 14200000}, {"family", "usb"}, {"keyed", true}};
         QJsonObject mineTurn{{"id", 5}, {"kind", "talking"}, {"sourceRoom", "usb-14200000"}, {"hz", 14200000},
             {"start", g_now - 1000}, {"end", QJsonValue::Null}, {"talkers", QJsonArray{onMine}}};
         model->applyRoom(QJsonObject{{"id", "usb-14200000"}, {"view", "frequency"}, {"family", "usb"},
             {"hz", 14200000}, {"now", QJsonArray{mineTurn}}, {"members", QJsonArray{onMine}}});
-        const auto cardShown = [&]() {
+        const auto lineShown = [&]() {
             QImage image(pan->size(), QImage::Format_ARGB32_Premultiplied);
             image.fill(Qt::black);
             QPainter painter(&image);
@@ -1797,7 +1800,7 @@ private slots:
                 return hit.kind == SpectrumWidget::RoundtableTagHit::Kind::Card;
             });
         };
-        QTRY_VERIFY_WITH_TIMEOUT(cardShown(), kWaitMs);
+        QTRY_VERIFY_WITH_TIMEOUT(lineShown(), kWaitMs);
         const qsizetype readsBefore = link.reads.size();
         QVERIFY(clickHit(mine));
         QVERIFY(open());
@@ -1805,17 +1808,18 @@ private slots:
         // No read of your own room, which the panel would take for going back to the slice.
         QCOMPARE(link.reads.size(), readsBefore);
         QVERIFY(!panel->isReading());
-        QVERIFY(!cardShown());
+        // Open on your own frequency, the line stays (drawn open).
+        QVERIFY(lineShown());
         // The inspector carries the same talker.
         QTRY_COMPARE_WITH_TIMEOUT(peek()->viewForTest().card.kind, RoundtableCardModel::Kind::Talking, kWaitMs);
         emit pan->roundtableReadRequested(mine);
         QVERIFY(!open());
-        QVERIFY(cardShown());
+        QVERIFY(lineShown());
 
-        // Viewing another, the card stays hidden too, and Back goes to your own in place.
+        // Viewing another, the line stays too, and Back goes to your own in place.
         QVERIFY(clickHit(viewed));
         QVERIFY(open());
-        QVERIFY(!cardShown());
+        QVERIFY(lineShown());
         QSignalSpy backClosed(peek(), &RoundtableFrequencyPeek::closed);
         button("roundtablePeekBack")->click();
         QVERIFY(open());
@@ -2731,7 +2735,7 @@ private slots:
         QCOMPARE(viewing->hz(), quint64(14200000));
         QVERIFY(openOn(first) == nullptr);
 
-        // Your slice's own pan keeps its card, since the inspector is not standing there.
+        // Your slice's own pan keeps its line in the strip.
         const QJsonObject actor{{"sourceRoom", "usb-14200000"}, {"ref", "tx"}, {"callsign", "W1AW"},
                                 {"hz", 14200000}, {"family", "usb"}, {"keyed", true}};
         const QJsonObject turn{{"id", 1}, {"kind", "talking"}, {"sourceRoom", "usb-14200000"}, {"hz", 14200000},

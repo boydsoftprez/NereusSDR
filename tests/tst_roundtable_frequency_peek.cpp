@@ -13,6 +13,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: The pan shows the Roundtable strip, where the tags now sit.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: The one inspector. J.J. Boyd (KG4VCF), AI-assisted via Anthropic
 //               Claude Code.
 //   2026-11-03: original implementation for NereusSDR by J.J. Boyd (KG4VCF),
@@ -108,6 +110,8 @@ struct Pan {
         widget.setDdcCenterFrequency(kPanCenterHz);
         widget.setFrequencyRange(kPanCenterHz, kPanSpanHz);
         widget.setConnectionState(ConnectionState::Connected);
+        // Roundtable is on: the tags sit in the strip under the frequency scale.
+        widget.setRoundtableStripShown(true);
         peek = new RoundtableFrequencyPeek(&widget);
         peek->setSlice(kSliceHz, QStringLiteral("lsb"), QStringLiteral("A"));
         widget.show();

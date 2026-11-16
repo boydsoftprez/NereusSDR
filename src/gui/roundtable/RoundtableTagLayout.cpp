@@ -7,6 +7,11 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Your frequency's line in the strip (placeRoundtableStripLine,
+//               paintRoundtableStripLine, roundtableStripLineParts) replaces the
+//               card on the spectrum; placeRoundtableCard, paintRoundtableCard and
+//               the card's height plan are gone. J.J. Boyd (KG4VCF), AI-assisted
+//               via Anthropic Claude Code.
 //   2026-11-16: roundtableStripShownFor, whether the pans show the Roundtable
 //               strip. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-04: A fold's list in the inspector (overlay design D37). J.J. Boyd
@@ -1685,32 +1690,22 @@ QString roundtableFrequencyText(qint64 hz)
 }
 
 // ---------------------------------------------------------------------------
-// The live card on the pan (overlay design D10, D11, D13 to D16, D19). Sizes and
-// colors are the board's .rc and .rr rules in overlay.css.
+// The card's look, shared by your frequency's line in the strip and the view of
+// a frequency (overlay design D10, D11, D13, D15). Sizes and colors are the
+// board's .rc and .rr rules in overlay.css.
 // ---------------------------------------------------------------------------
 namespace {
 
-constexpr int kCardWidth = 232;
-constexpr int kCardMinWidth = 200;
-constexpr int kCardMaxRows = 5;
 constexpr int kCardFlagGap = 4;
 constexpr int kCardBorder = 1;
 constexpr int kCardRail = 3;
-constexpr int kCardPadTop = 5;
-constexpr int kCardPadBottom = 5;
-constexpr int kCardPadSide = 7;
-constexpr int kCardGap = 3;
 constexpr int kCardHeadLine = 16;
 constexpr int kCardNameLine = 15;
-constexpr int kCardNameGap = 2;
-constexpr int kCardNamesPad = 2;
 constexpr int kCardSmallLine = 12;
 constexpr int kCardCaption = 16;  // a 1 px rule, 3 px, a 12 px line
 constexpr int kCardRowLine = 13;
 constexpr int kCardMeter = 3;
 constexpr int kCardRowGap = 3;
-constexpr int kCardFoot = 13;
-constexpr int kCardNameRowGap = 10;
 constexpr int kCardNameDot = 7;
 constexpr int kCardTextGap = 5;
 constexpr int kCardValueGap = 6;
@@ -1752,103 +1747,6 @@ int cardLine(int base, const QFontMetrics& fm)
 bool cardIsLast(const RoundtableCardModel& card)
 {
     return card.kind == RoundtableCardModel::Kind::LastTalker || card.kind == RoundtableCardModel::Kind::LastDouble;
-}
-
-// What fits on the card at one height. Rows go first (D19), then the details
-// around them; the head and the keyed names are the last to go.
-struct CardPlan {
-    int rows = 0;
-    int moreRows = 0;
-    int names = 0;
-    int moreKeyed = 0;
-    bool namesInRow = false;
-    bool lastNames = false;
-    bool note = false;
-    bool caption = false;
-    bool emptyLine = false;
-    int height = 0;
-};
-
-int planHeight(const CardPlan& plan, const QFontMetrics& fm)
-{
-    const auto line = [&fm](int base) { return cardLine(base, fm); };
-    int body = line(kCardHeadLine);
-    const auto add = [&body](int section) { body += kCardGap + section; };
-    if (plan.names > 0) {
-        const int stacked = plan.namesInRow ? 1 : plan.names;
-        add(stacked * line(kCardNameLine) + (stacked - 1) * kCardNameGap + kCardNamesPad);
-    }
-    if (plan.moreKeyed > 0) { add(line(kCardSmallLine)); }
-    if (plan.lastNames) { add(line(kCardSmallLine)); }
-    if (plan.note) { add(line(kCardSmallLine)); }
-    if (plan.caption) { add(line(kCardCaption)); }
-    if (plan.rows > 0) {
-        add(plan.rows * (line(kCardRowLine) + 1 + kCardMeter) + (plan.rows - 1) * kCardRowGap);
-    } else if (plan.emptyLine) {
-        add(line(kCardSmallLine));
-    }
-    if (plan.moreRows > 0) { add(line(kCardFoot)); }
-    return 2 * kCardBorder + kCardRail + kCardPadTop + kCardPadBottom + body;
-}
-
-bool twoNamesFit(const RoundtableCardModel& card, int width, const QFontMetrics& fm)
-{
-    if (card.keyed.size() != 2) { return false; }
-    const int each = kCardNameDot + kCardTextGap;
-    const int needed = 2 * each + kCardNameRowGap + fm.horizontalAdvance(card.keyed.at(0))
-        + fm.horizontalAdvance(card.keyed.at(1));
-    return needed <= width - 2 * (kCardBorder + kCardPadSide);
-}
-
-// The whole plan for `rows` rows within `limit` pixels. Height 0 when even the
-// head does not fit.
-CardPlan planCard(const RoundtableCardModel& card, int width, int rows, int limit, const QFontMetrics& fm)
-{
-    CardPlan plan;
-    plan.rows = rows;
-    plan.moreRows = std::max(0, static_cast<int>(card.rows.size()) - rows);
-    if (card.kind == RoundtableCardModel::Kind::Double) {
-        plan.names = static_cast<int>(card.keyed.size());
-        plan.namesInRow = twoNamesFit(card, width, fm);
-    }
-    plan.lastNames = card.kind == RoundtableCardModel::Kind::LastDouble && !card.keyed.isEmpty();
-    plan.note = !card.note.isEmpty();
-    plan.caption = true;
-    plan.emptyLine = card.rows.isEmpty();
-
-    plan.height = planHeight(plan, fm);
-    const auto shed = [&](auto change) {
-        if (plan.height > limit) {
-            change();
-            plan.height = planHeight(plan, fm);
-        }
-    };
-    if (rows > 0) { return plan; }
-    shed([&] { plan.emptyLine = false; });
-    shed([&] { plan.caption = false; });
-    shed([&] { plan.moreRows = 0; });
-    shed([&] { plan.note = false; });
-    shed([&] { plan.lastNames = false; });
-    // Every name while room allows, then "+N keyed".
-    while (plan.height > limit && plan.names > 0) {
-        if (plan.namesInRow) {
-            plan.namesInRow = false;
-        }
-        --plan.names;
-        plan.moreKeyed = static_cast<int>(card.keyed.size()) - plan.names;
-        plan.height = planHeight(plan, fm);
-    }
-    shed([&] { plan.moreKeyed = 0; });
-    if (plan.height > limit) { plan.height = 0; }
-    return plan;
-}
-
-int rowsThatFit(const RoundtableCardModel& card, int width, int limit, const QFontMetrics& fm)
-{
-    for (int rows = std::min(kCardMaxRows, static_cast<int>(card.rows.size())); rows > 0; --rows) {
-        if (planCard(card, width, rows, limit, fm).height <= limit) { return rows; }
-    }
-    return 0;
 }
 
 QFont cardFont(const QPaintDevice* device, int pixels, int weight, bool mono = false)
@@ -2143,55 +2041,6 @@ QVector<PanSpan> freePanSpans(const QRect& pan, const QVector<QRect>& flags)
 
 } // namespace
 
-RoundtableCardPlacement placeRoundtableCard(const RoundtableCardModel& card, const QRect& pan, int dialX,
-                                            const QVector<QRect>& flags, bool flagFlipped, const QFontMetrics& fm)
-{
-    RoundtableCardPlacement placed;
-    if (pan.isEmpty()) { return placed; }
-
-    using Span = PanSpan;
-    const QVector<Span> spans = freePanSpans(pan, flags);
-
-    // Nearest the dial, then widest. The far side of the flag first (D16).
-    const auto choose = [&](bool farOnly) -> std::optional<Span> {
-        std::optional<Span> best;
-        int bestDistance = 0;
-        for (const Span& span : std::as_const(spans)) {
-            const int wide = span.right - span.left;
-            if (wide < kCardMinWidth) { continue; }
-            if (farOnly && !(flagFlipped ? span.right <= dialX : span.left >= dialX)) { continue; }
-            const int distance = dialX < span.left ? span.left - dialX : dialX > span.right ? dialX - span.right : 0;
-            if (!best || distance < bestDistance
-                || (distance == bestDistance && wide > best->right - best->left)) {
-                best = span;
-                bestDistance = distance;
-            }
-        }
-        return best;
-    };
-    std::optional<Span> span = choose(true);
-    placed.beside = !span.has_value();
-    if (!span) { span = choose(false); }
-    if (!span) {
-        placed.beside = false;
-        return placed;
-    }
-
-    const int width = std::min(kCardWidth, span->right - span->left);
-    const int limit = pan.height();
-    const int rows = rowsThatFit(card, width, limit, fm);
-    const CardPlan plan = planCard(card, width, rows, limit, fm);
-    if (plan.height <= 0) {
-        placed.beside = false;
-        return placed;
-    }
-    placed.rows = rows;
-    placed.moreRows = static_cast<int>(card.rows.size()) - rows;
-    const int x = std::clamp(dialX - width / 2, span->left, span->right - width);
-    placed.card = QRect(x, pan.top() + pan.height() - plan.height, width, plan.height);
-    return placed;
-}
-
 QRect placeRoundtableInspector(const QRect& pan, int dialX, const QVector<QRect>& flags, bool flagFlipped, int height)
 {
     if (pan.isEmpty()) { return QRect(); }
@@ -2249,166 +2098,348 @@ void paintRoundtableStripes(QPainter& p, const QRectF& rect, const QColor& on, c
     p.restore();
 }
 
-void paintRoundtableCard(QPainter& p, const RoundtableCardModel& card, const RoundtableCardPlacement& placed,
-                         const QString& format, const QFontMetrics& fm, bool dimmed)
+// ---------------------------------------------------------------------------
+// Your frequency's line in the Roundtable strip (strip design 3, 4): the board's
+// placeStrip and its .rcs rules, one row of the card beside the dial.
+// ---------------------------------------------------------------------------
+namespace {
+
+constexpr int kStripLineHeight = 24;      // the strip less 3 px above and below
+constexpr int kStripLineInset = 3;
+constexpr int kStripLineEnd = 4;          // lo and hi, in from the strip's ends
+constexpr int kStripLineDialGap = 8;      // between the dial and the line
+constexpr int kStripLineGap = 12;         // .rcs .rc__body and .rc__rows gap
+constexpr int kStripLineReadingMin = 78;  // .rcs .rr min-width
+constexpr int kStripLinePadLeft = 7;      // .rcs .rc__body padding
+constexpr int kStripLinePadRight = 9;
+constexpr int kStripLineNameGap = 8;      // .rcs .rc__names gap
+constexpr int kStripLineNoteIndent = 12;  // past the waiting glyph
+const QColor kColorStripOpenBorder(0x5e, 0x8d, 0xb8);  // .rcs.is-open
+const QColor kColorStripOpenFill(0x11, 0x1b, 0x26);
+const QColor kColorDimmedBorder(160, 160, 168, 140);    // the card's border while you are hidden
+
+// The line's fonts, made once a place or a paint.
+struct StripLineFonts {
+    QFont who;
+    QFont clock;
+    QFont small;
+    QFontMetrics whoMetrics;
+    QFontMetrics clockMetrics;
+    QFontMetrics smallMetrics;
+    CardRowFonts rows;
+    QFontMetrics callMetrics;
+    explicit StripLineFonts(const QPaintDevice* device)
+        : who(cardFont(device, 12, QFont::Bold))
+        , clock(cardFont(device, 10, QFont::DemiBold, true))
+        , small(cardFont(device, 10, QFont::Medium))
+        , whoMetrics(who, device)
+        , clockMetrics(clock, device)
+        , smallMetrics(small, device)
+        , rows(device)
+        , callMetrics(rows.call, device)
+    {
+    }
+};
+
+bool stripLineHasContent(const RoundtableCardModel& card)
+{
+    return card.kind != RoundtableCardModel::Kind::Quiet || !card.note.isEmpty();
+}
+
+QString stripLineHeadText(const RoundtableCardModel& card)
+{
+    // A quiet frequency with a link note says so in the view's words.
+    if (card.kind == RoundtableCardModel::Kind::Quiet) { return roundtableViewHeadText(card); }
+    return cardHeadText(card);
+}
+
+bool stripLineHasNames(const RoundtableCardModel& card)
+{
+    return card.kind == RoundtableCardModel::Kind::Double && !card.keyed.isEmpty();
+}
+
+QString stripLineNameText(const RoundtableCardModel& card, const QString& name)
+{
+    return !card.keyedYou.isEmpty() && name == card.keyedYou ? QStringLiteral("You") : name;
+}
+
+bool stripLineHasClock(const RoundtableCardModel& card)
+{
+    // The clock is on a double's head only (D10).
+    return card.kind == RoundtableCardModel::Kind::Double && card.clockMs > 0;
+}
+
+// What the card said under its head: the names of a last double, the link's
+// note, or how long ago a last talker ended.
+QString stripLineNoteText(const RoundtableCardModel& card)
 {
     using Kind = RoundtableCardModel::Kind;
-    if (placed.card.isNull()) { return; }
-    const QRect rect = placed.card;
-    const CardPlan plan = planCard(card, rect.width(), placed.rows, rect.height(), fm);
-    const bool frozen = card.frozen;
-    const bool isDouble = card.kind == Kind::Double && !frozen;
-    const auto line = [&fm](int base) { return cardLine(base, fm); };
-    const QPaintDevice* device = p.device();
+    QStringList parts;
+    if (card.kind == Kind::LastDouble && !card.keyed.isEmpty()) { parts.append(card.keyed.join(QStringLiteral(" + "))); }
+    if (!card.note.isEmpty()) {
+        parts.append(card.note);
+    } else if (card.kind == Kind::LastTalker) {
+        parts.append(cardCaptionText(card));
+    }
+    return parts.join(QStringLiteral(" · "));
+}
 
-    const QFont whoFont = cardFont(device, 13, QFont::Bold);
-    const QFont nameFont = cardFont(device, 12, QFont::Bold);
-    const QFont smallFont = cardFont(device, 10, QFont::Medium);
-    const CardRowFonts rowFonts(device);
-    const QFont clockFont = cardFont(device, 10, QFont::DemiBold, true);
-    const QFontMetrics whoMetrics(whoFont, device);
-    const QFontMetrics smallMetrics(smallFont, device);
-    const QFontMetrics clockMetrics(clockFont, device);
+bool stripLineNoteWaits(const RoundtableCardModel& card)
+{
+    // Reconnecting is amber, with the waiting glyph (D7).
+    return card.frozen && card.note == QLatin1String("Reconnecting");
+}
+
+QString stripLineMoreText(int more)
+{
+    return QStringLiteral("+%1 more ›").arg(more);
+}
+
+int stripLineReadingWidth(const RoundtableCardRow& row, const QString& format, const StripLineFonts& fonts)
+{
+    // paintCardRow's columns: who, the value and the age, packed.
+    const QString who = !row.label.isEmpty() ? row.label : row.you ? QStringLiteral("You") : row.call;
+    const int age = std::max(kCardAgeMinWidth, fonts.rows.ageMetrics.horizontalAdvance(ageText(row.ageMs)));
+    const int value = fonts.rows.valueMetrics.horizontalAdvance(roundtableSignalText(row.dbm, format));
+    return std::max(kStripLineReadingMin,
+                    fonts.callMetrics.horizontalAdvance(who) + kCardValueGap + value + kCardValueGap + age);
+}
+
+int stripLineRowHeight(const StripLineFonts& fonts)
+{
+    return cardLine(kCardRowLine, fonts.whoMetrics) + 1 + kCardMeter;
+}
+
+// Lays the pieces out left to right from `line`'s left edge. Returns the width
+// the line wants. With a `line` narrower than that (a value grew wider since
+// the line was placed), the readings give up the difference, from the last.
+int layoutStripLine(const RoundtableCardModel& card, int readings, const QString& format, const StripLineFonts& fonts,
+                    const QRect& line, RoundtableStripLineParts* parts)
+{
+    readings = std::clamp(readings, 0, static_cast<int>(card.rows.size()));
+    const int more = static_cast<int>(card.rows.size()) - readings;
+
+    // The widths first.
+    const int headWidth = static_cast<int>(kCardGlyphSize) + kCardTextGap
+        + fonts.whoMetrics.horizontalAdvance(stripLineHeadText(card)) + 1;
+    QVector<int> nameWidths;
+    if (stripLineHasNames(card)) {
+        for (const QString& name : card.keyed) {
+            nameWidths.append(kCardNameDot + kCardTextGap
+                              + fonts.whoMetrics.horizontalAdvance(stripLineNameText(card, name)) + 1);
+        }
+    }
+    const int clockWidth = stripLineHasClock(card) ? fonts.clockMetrics.horizontalAdvance(clockText(card.clockMs)) + 1 : 0;
+    const QString note = stripLineNoteText(card);
+    const int noteWidth = note.isEmpty() ? 0
+        : fonts.smallMetrics.horizontalAdvance(note) + 1 + (stripLineNoteWaits(card) ? kStripLineNoteIndent : 0);
+    QVector<int> readingWidths;
+    for (int i = 0; i < readings; ++i) {
+        readingWidths.append(stripLineReadingWidth(card.rows.at(i), format, fonts));
+    }
+    const int moreWidth = more > 0 ? fonts.smallMetrics.horizontalAdvance(stripLineMoreText(more)) + 1 : 0;
+
+    int natural = kCardBorder + kCardRail + kStripLinePadLeft + headWidth;
+    for (int width : std::as_const(nameWidths)) { natural += kStripLineNameGap + width; }
+    if (clockWidth > 0) { natural += kStripLineNameGap + clockWidth; }
+    if (noteWidth > 0) { natural += kStripLineGap + noteWidth; }
+    for (int width : std::as_const(readingWidths)) { natural += kStripLineGap + width; }
+    if (moreWidth > 0) { natural += kStripLineGap + moreWidth; }
+    natural += kStripLinePadRight + kCardBorder;
+    if (parts == nullptr) { return natural; }
+
+    // A value wider than when placed: the readings make room, from the last.
+    int excess = line.width() > 0 ? natural - line.width() : 0;
+    for (int i = static_cast<int>(readingWidths.size()) - 1; i >= 0 && excess > 0; --i) {
+        const int give = std::min(excess, std::max(0, readingWidths[i] - kStripLineReadingMin / 2));
+        readingWidths[i] -= give;
+        excess -= give;
+    }
+
+    *parts = RoundtableStripLineParts{};
+    const int innerTop = line.top() + kCardBorder;
+    const int innerHeight = std::max(0, line.height() - 2 * kCardBorder);
+    const auto piece = [&](int x, int width) { return QRect(x, innerTop, width, innerHeight); };
+    int x = line.left() + kCardBorder + kCardRail + kStripLinePadLeft;
+    parts->head = piece(x, headWidth);
+    x += headWidth;
+    for (int width : std::as_const(nameWidths)) {
+        x += kStripLineNameGap;
+        parts->names.append(piece(x, width));
+        x += width;
+    }
+    if (clockWidth > 0) {
+        x += kStripLineNameGap;
+        parts->clock = piece(x, clockWidth);
+        x += clockWidth;
+    }
+    if (noteWidth > 0) {
+        x += kStripLineGap;
+        parts->note = piece(x, noteWidth);
+        x += noteWidth;
+    }
+    const int rowHeight = stripLineRowHeight(fonts);
+    const int rowTop = line.top() + (line.height() - rowHeight) / 2;
+    for (int width : std::as_const(readingWidths)) {
+        x += kStripLineGap;
+        parts->readings.append(QRect(x, rowTop, width, rowHeight));
+        x += width;
+    }
+    if (moreWidth > 0) {
+        x += kStripLineGap;
+        parts->more = piece(x, moreWidth);
+    }
+    return natural;
+}
+
+} // namespace
+
+RoundtableStripLinePlacement placeRoundtableStripLine(const RoundtableCardModel& card, const QRect& strip, int dialX,
+                                                      bool flagFlipped, const QString& format,
+                                                      const QPaintDevice* device)
+{
+    RoundtableStripLinePlacement placed;
+    if (strip.isEmpty() || !stripLineHasContent(card)) { return placed; }
+    const StripLineFonts fonts(device);
+    const auto widthWith = [&](int readings) { return layoutStripLine(card, readings, format, fonts, QRect(), nullptr); };
+
+    // The board's placeStrip: lo and hi, the room each side of the dial, and the
+    // far side of the flag first.
+    const int lo = strip.left() + kStripLineEnd;
+    const int hi = strip.right() - kStripLineEnd;
+    const int span = hi - lo;
+    const int rightRoom = std::min(span, hi - dialX - kStripLineDialGap);
+    const int leftRoom = std::min(span, dialX - kStripLineDialGap - lo);
+    const int farRoom = flagFlipped ? leftRoom : rightRoom;
+    const int nearRoom = flagFlipped ? rightRoom : leftRoom;
+    const int all = static_cast<int>(card.rows.size());
+    // Readings drop from the end until the line fits; -1 when not even the head does.
+    const auto readingsIn = [&](int room) {
+        for (int readings = all; readings >= 0; --readings) {
+            if (widthWith(readings) <= room) { return readings; }
+        }
+        return -1;
+    };
+    bool far = widthWith(all) <= farRoom || farRoom >= nearRoom;
+    int readings = readingsIn(far ? farRoom : nearRoom);
+    if (readings < 0) {
+        // No room for the head on that side: the other, else none.
+        far = !far;
+        readings = readingsIn(far ? farRoom : nearRoom);
+    }
+    if (readings < 0) { return placed; }
+
+    const int width = widthWith(readings);
+    const bool goRight = far != flagFlipped;
+    const int left = std::clamp(goRight ? dialX + kStripLineDialGap : dialX - kStripLineDialGap - width, lo, hi - width);
+    placed.line = QRect(left, strip.top() + kStripLineInset, width, kStripLineHeight);
+    placed.readings = readings;
+    placed.moreReadings = all - readings;
+    return placed;
+}
+
+RoundtableStripLineParts roundtableStripLineParts(const RoundtableCardModel& card,
+                                                  const RoundtableStripLinePlacement& placed, const QString& format,
+                                                  const QPaintDevice* device)
+{
+    RoundtableStripLineParts parts;
+    if (placed.line.isNull()) { return parts; }
+    const StripLineFonts fonts(device);
+    layoutStripLine(card, placed.readings, format, fonts, placed.line, &parts);
+    return parts;
+}
+
+void paintRoundtableStripLine(QPainter& p, const RoundtableCardModel& card, const RoundtableStripLinePlacement& placed,
+                              const QString& format, bool dimmed, bool open)
+{
+    if (placed.line.isNull()) { return; }
+    const QRect rect = placed.line;
+    const StripLineFonts fonts(p.device());
+    RoundtableStripLineParts parts;
+    layoutStripLine(card, placed.readings, format, fonts, rect, &parts);
+    const bool frozen = card.frozen;
 
     p.save();
     p.setRenderHint(QPainter::Antialiasing, true);
     if (dimmed) { p.setOpacity(p.opacity() * kCardDimmedOpacity); }
 
-    paintCardFrame(p, rect, card, dimmed);
-
-    const int bodyLeft = rect.left() + kCardBorder + kCardPadSide;
-    const int bodyRight = rect.left() + rect.width() - kCardBorder - kCardPadSide;
-    const int bodyWidth = bodyRight - bodyLeft;
-    int y = rect.top() + kCardBorder + kCardRail + kCardPadTop;
-
-    // Head: glyph, who, clock, frequency.
+    // The frame: the card's fill and border, open in the inspector's blue (.rcs.is-open).
+    const QColor state = dimmed ? kColorDimmedBorder : roundtableCardColor(card);
+    const QRectF body = QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5);
+    p.setPen(Qt::NoPen);
+    p.setBrush(open ? kColorStripOpenFill : kColorFill);
+    p.drawRoundedRect(body, kCardRadius, kCardRadius);
     {
-        const int h = line(kCardHeadLine);
-        const bool grey = frozen || cardIsLast(card);
-        paintRoundtableGlyph(p, QPointF(bodyLeft + kCardGlyphSize / 2.0, y + h / 2.0), kCardGlyphSize, cardGlyph(card),
-                             grey, false);
-        const int textLeft = bodyLeft + static_cast<int>(kCardGlyphSize) + kCardTextGap;
-        const QString frequency = roundtableFrequencyText(static_cast<qint64>(card.hz));
-        const int frequencyWidth = clockMetrics.horizontalAdvance(frequency);
-        // The clock is on a double's head only (D10).
-        const bool hasClock = card.kind == Kind::Double && card.clockMs > 0;
-        const QString clock = hasClock ? clockText(card.clockMs) : QString();
-        const int clockWidth = hasClock ? clockMetrics.horizontalAdvance(clock) + kCardTextGap : 0;
-        const int room = std::max(0, bodyRight - textLeft - frequencyWidth - clockWidth - kCardTextGap);
-        const QString who = whoMetrics.elidedText(cardHeadText(card), Qt::ElideRight, room);
-        const QColor whoColor = cardWhoColor(card);
-        p.setFont(whoFont);
-        p.setPen(whoColor);
-        p.drawText(QRect(textLeft, y, room, h), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, who);
-        p.setFont(clockFont);
-        if (hasClock) {
-            p.setPen(kColorDim);
-            p.drawText(QRect(textLeft + whoMetrics.horizontalAdvance(who) + kCardTextGap, y, clockWidth, h),
-                       Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, clock);
-        }
-        p.setPen(frozen ? kColorDim : kColorFrequency);
-        p.drawText(QRect(bodyRight - frequencyWidth, y, frequencyWidth, h),
-                   Qt::AlignVCenter | Qt::AlignRight | Qt::TextSingleLine, frequency);
-        y += h;
+        // The rail down the left, inside the rounded corners.
+        p.save();
+        QPainterPath inner;
+        inner.addRoundedRect(body, kCardRadius, kCardRadius);
+        p.setClipPath(inner, Qt::IntersectClip);
+        p.fillRect(QRectF(rect.left() + kCardBorder, rect.top() + kCardBorder, kCardRail, rect.height() - 2 * kCardBorder),
+                   state);
+        p.restore();
     }
+    p.setPen(QPen(open ? kColorStripOpenBorder : state, 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(body, kCardRadius, kCardRadius);
+    p.setClipRect(rect.adjusted(kCardBorder, kCardBorder, -kCardBorder, -kCardBorder), Qt::IntersectClip);
 
-    // The keyed names of a double, side by side when two fit (D10). A name that
-    // does not fit is cut, never overlapped.
-    if (plan.names > 0) {
-        y += kCardGap;
-        const int h = line(kCardNameLine);
-        const QColor dot = frozen ? kColorQuiet : kColorDoubleText;
-        p.setFont(nameFont);
-        const auto drawName = [&](const QString& name, int x, int lineY, int room) {
-            const bool you = !card.keyedYou.isEmpty() && name == card.keyedYou;
-            p.setPen(Qt::NoPen);
-            p.setBrush(frozen ? dot : you ? kColorYou : dot);
-            p.drawEllipse(QRectF(x, lineY + (h - kCardNameDot) / 2.0, kCardNameDot, kCardNameDot));
-            p.setPen(frozen ? kColorLastText : you ? kColorYou : kColorText);
-            p.setBrush(Qt::NoBrush);
-            const int textX = x + kCardNameDot + kCardTextGap;
-            p.drawText(QRect(textX, lineY, std::max(0, room - kCardNameDot - kCardTextGap), h),
-                       Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
-                       you ? QStringLiteral("You") : name);
-        };
-        if (plan.namesInRow) {
-            int x = bodyLeft;
-            for (int i = 0; i < plan.names; ++i) {
-                const int wide = kCardNameDot + kCardTextGap + fm.horizontalAdvance(card.keyed.at(i));
-                drawName(card.keyed.at(i), x, y, wide + 1);
-                x += wide + kCardNameRowGap;
-            }
-            y += h;
-        } else {
-            for (int i = 0; i < plan.names; ++i) {
-                drawName(card.keyed.at(i), bodyLeft, y, bodyWidth);
-                y += h;
-                if (i + 1 < plan.names) { y += kCardNameGap; }
-            }
-        }
-        y += kCardNamesPad;
-    }
-    p.setFont(smallFont);
-    const auto smallLine = [&](const QString& text, const QColor& color, int indent = 0) {
-        y += kCardGap;
-        const int h = line(kCardSmallLine);
+    const auto drawIn = [&p](const QRect& area, const QFont& font, const QColor& color, const QString& text) {
+        p.setFont(font);
         p.setPen(color);
-        p.drawText(QRect(bodyLeft + indent, y, bodyWidth - indent, h),
-                   Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
-                   smallMetrics.elidedText(text, Qt::ElideRight, bodyWidth - indent));
-        y += h;
+        p.drawText(area, Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, text);
     };
-    if (plan.moreKeyed > 0) { smallLine(QStringLiteral("+%1 keyed").arg(plan.moreKeyed), kColorDim); }
-    if (plan.lastNames) { smallLine(card.keyed.join(QStringLiteral(" + ")), kColorDim); }
-    if (plan.note) {
-        // Reconnecting is amber, with the waiting glyph (D7).
-        const bool waiting = frozen && card.note == QLatin1String("Reconnecting");
+
+    // Head: the glyph and who.
+    {
+        const QRect& head = parts.head;
+        const bool grey = frozen || cardIsLast(card);
+        paintRoundtableGlyph(p, QPointF(head.left() + kCardGlyphSize / 2.0, head.top() + head.height() / 2.0),
+                             kCardGlyphSize, cardGlyph(card), grey, false);
+        const int textLeft = head.left() + static_cast<int>(kCardGlyphSize) + kCardTextGap;
+        drawIn(QRect(textLeft, head.top(), head.right() + 1 - textLeft, head.height()), fonts.who, cardWhoColor(card),
+               stripLineHeadText(card));
+    }
+
+    // A double's names side by side, you in cyan (D10).
+    for (qsizetype i = 0; i < parts.names.size() && i < card.keyed.size(); ++i) {
+        const QRect& area = parts.names.at(i);
+        const QString& name = card.keyed.at(i);
+        const bool you = !card.keyedYou.isEmpty() && name == card.keyedYou;
+        const QColor dot = frozen ? kColorQuiet : you ? kColorYou : kColorDoubleText;
+        p.setPen(Qt::NoPen);
+        p.setBrush(dot);
+        p.drawEllipse(QRectF(area.left(), area.top() + (area.height() - kCardNameDot) / 2.0, kCardNameDot, kCardNameDot));
+        p.setBrush(Qt::NoBrush);
+        const int textLeft = area.left() + kCardNameDot + kCardTextGap;
+        drawIn(QRect(textLeft, area.top(), area.right() + 1 - textLeft, area.height()), fonts.who,
+               frozen ? kColorLastText : you ? kColorYou : kColorText, stripLineNameText(card, name));
+    }
+
+    if (!parts.clock.isNull()) { drawIn(parts.clock, fonts.clock, kColorDim, clockText(card.clockMs)); }
+
+    if (!parts.note.isNull()) {
+        const bool waiting = stripLineNoteWaits(card);
+        QRect area = parts.note;
         if (waiting) {
-            paintRoundtableGlyph(p, QPointF(bodyLeft + 4.0, y + kCardGap + line(kCardSmallLine) / 2.0), 8.0,
+            paintRoundtableGlyph(p, QPointF(area.left() + 4.0, area.top() + area.height() / 2.0), 8.0,
                                  static_cast<int>(RoundtableGlyph::Waiting));
-            p.setFont(smallFont);
+            area.setLeft(area.left() + kStripLineNoteIndent);
         }
-        smallLine(card.note, waiting ? kColorUnknown : kColorDim, waiting ? 12 : 0);
+        drawIn(area, fonts.small, waiting ? kColorUnknown : kColorDim, stripLineNoteText(card));
     }
 
-    // Caption, with the signal format at the right (D10).
-    if (plan.caption) {
-        y += kCardGap;
-        const int h = line(kCardCaption);
-        p.setPen(QPen(kColorRule, 1));
-        p.drawLine(QPointF(bodyLeft, y + 0.5), QPointF(bodyRight, y + 0.5));
-        const QRect captionRect(bodyLeft, y + 4, bodyWidth, h - 4);
-        p.setFont(smallFont);
-        if (plan.rows > 0) {
-            const QString unit = format == QLatin1String("S-units") ? QStringLiteral("S")
-                : format == QLatin1String("Both") ? QStringLiteral("S / dBm") : QStringLiteral("dBm");
-            p.setPen(kColorDim);
-            p.drawText(captionRect, Qt::AlignVCenter | Qt::AlignRight | Qt::TextSingleLine, unit);
-        }
-        p.setPen(isDouble ? kColorDoubleText : kColorDim);
-        p.drawText(captionRect, Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine, cardCaptionText(card));
-        y += h;
+    // Each reading: who, value, age, and the meter under them (D11).
+    const int rowLine = cardLine(kCardRowLine, fonts.whoMetrics);
+    for (qsizetype i = 0; i < parts.readings.size() && i < card.rows.size(); ++i) {
+        const QRect& area = parts.readings.at(i);
+        paintCardRow(p, fonts.rows, card, card.rows.at(i), area.left(), area.right() + 1, area.top(), rowLine, format,
+                     QString());
     }
 
-    // One row per listener: who, signal, age, and a meter beneath (D11).
-    for (int i = 0; i < plan.rows && i < card.rows.size(); ++i) {
-        const RoundtableCardRow& row = card.rows.at(i);
-        y += i == 0 ? kCardGap : kCardRowGap;
-        y += paintCardRow(p, rowFonts, card, row, bodyLeft, bodyRight, y, line(kCardRowLine), format, QString());
-    }
-    if (plan.rows == 0 && plan.emptyLine) {
-        p.setFont(smallFont);
-        const bool waiting = !frozen && !dimmed && !card.note.isEmpty();
-        smallLine(waiting ? QStringLiteral("Waiting for readings") : QStringLiteral("No readings"), kColorDim);
-    }
-    if (plan.moreRows > 0) {
-        y += kCardGap;
-        const int h = line(kCardFoot);
-        p.setFont(smallFont);
-        p.setPen(kColorFrequency);
-        p.drawText(QRect(bodyLeft, y, bodyWidth, h), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
-                   QStringLiteral("+%1 more ›").arg(plan.moreRows));
-    }
+    const int more = static_cast<int>(card.rows.size()) - static_cast<int>(parts.readings.size());
+    if (!parts.more.isNull() && more > 0) { drawIn(parts.more, fonts.small, kColorFrequency, stripLineMoreText(more)); }
+
     p.restore();
 }
 

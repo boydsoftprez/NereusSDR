@@ -1,4 +1,8 @@
 // Modification history (NereusSDR):
+//   2026-11-16: Your frequency's line and the tags move into the Roundtable
+//               strip (roundtableStripLineForTest, SpectrumLayout::
+//               roundtableStripChrome); the card on the spectrum is gone.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: The Roundtable strip between the frequency scale and the
 //               waterfall: setRoundtableStripShown, SpectrumLayout::roundtableStrip,
 //               rebuildWaterfallImage. J.J. Boyd (KG4VCF), AI-assisted via
@@ -2885,20 +2889,20 @@ public:
     }
 
     // ---- Roundtable room tags (Roundtable plan Task 14, design 11.2) ----
-    // One tag per room along the foot of the spectrum, above the band
-    // plan: the state glyph, the talker (or Unknown, Double, Quiet) and
+    // One tag per room in the Roundtable strip under the frequency scale:
+    // the state glyph, the talker (or Unknown, Double, Quiet) and
     // the member count. Crowded tags fold into +N (layoutRoundtableTags).
     // `display` Hidden draws none, Frozen greys them as last known. Display
     // only: a legacy server's tag asks for a tune through roundtableRoomClicked,
     // and a frequency tag asks to be viewed through roundtableReadRequested.
     void setRoundtableTags(const QList<RoundtableTag>& tags, RoundtableTagDisplay display);
-    /// The live card for the active slice's frequency on this pan (overlay
-    /// design D10). A Quiet card draws none. `roomId` is the frequency a click
-    /// on it reads, and the tag it stands in for.
+    /// The active slice's frequency as one line in the strip, beside its dial
+    /// (strip design 3). A Quiet card with no note draws none. `roomId` is the
+    /// frequency a click on it reads, and the tag it stands in for.
     void setRoundtableCard(const RoundtableCardModel& card, const QString& roomId);
     const QList<RoundtableTag>& roundtableTags() const { return m_roundtableTags; }
     RoundtableTagDisplay roundtableTagDisplay() const { return m_roundtableTagDisplay; }
-    /// A drawn card, tag or fold, in this widget's coordinates.
+    /// A drawn line (kind Card), tag or fold, in this widget's coordinates.
     struct RoundtableTagHit {
         enum class Kind { Tag, Card };
         QRect rect;
@@ -2907,9 +2911,11 @@ public:
         Kind kind = Kind::Tag;
         qint64 hz = 0;  // the frequency it speaks for; a fold's first
     };
-    /// How many times the card has been placed: a value-only change places it no
+    /// How many times the line has been placed: a value-only change places it no
     /// more (overlay design D14).
     int roundtableCardPlacementsForTest() const { return m_roundtableCardPlacements; }
+    /// Where the last tag pass drew your frequency's line; null when it drew none.
+    RoundtableStripLinePlacement roundtableStripLineForTest() const { return m_roundtableStripLineDrawn; }
     /// What the last tag pass drew (it is redrawn with the overlay).
     const QList<RoundtableTagHit>& roundtableTagHitsForTest() const { return m_roundtableTagHits; }
     void drawRoundtableTagsForTest(QPainter& p, const QRect& specRect) { drawRoundtableTags(p, specRect); }
@@ -2934,7 +2940,7 @@ public:
     /// or tag pass, so a quiet frequency has one too.
     RoundtableInspectorSpot roundtableInspectorSpot(int sliceId, qint64 fallbackHz) const;
     /// Where the open inspector is, in this widget's coordinates; null while closed.
-    /// The card is not drawn while it is set and tags keep clear of it (D34, D37). It
+    /// Open on your own frequency, your line in the strip is drawn open. It
     /// touches only the tag child, never the static overlay.
     void setRoundtableInspectorRect(const QRect& rect);
     const QRect& roundtableInspectorRect() const { return m_roundtableInspectorRect; }
@@ -3475,6 +3481,9 @@ private:
         // The Roundtable strip, directly under `frequency`, the plot's width;
         // null while it is hidden.
         QRect roundtableStrip;
+        // The strip's row across the whole widget, for its background and edge
+        // lines; null while it is hidden.
+        QRect roundtableStripChrome;
     };
     SpectrumLayout spectrumLayout() const;
 
@@ -3730,8 +3739,9 @@ private:
     //  - Cluster badge popup menu with formatted spot lines.
     void drawSpotMarkers(QPainter& p, const QRect& specRect);
     void showSpotClusterPopup(const SpotCluster& cluster, const QPoint& globalPos);
-    // Roundtable plan Task 14: the room tags, after the spots in both
-    // paint paths, and a click on one (true when it took the click).
+    // Roundtable plan Task 14: your frequency's line and the room tags in
+    // the Roundtable strip (frequencies mapped across `specRect`), after the
+    // spots in both paint paths, and a click on one (true when it took it).
     void drawRoundtableTags(QPainter& p, const QRect& specRect);
     bool roundtableTagClick(const QPoint& pos, const QPoint& globalPos);
 
@@ -4761,14 +4771,16 @@ private:
     RoundtableCardModel m_roundtableCard;
     QString m_roundtableCardRoom;
     QString m_roundtableCardFormat;
-    // Where the card last went, and what decided it (D14).
-    RoundtableCardPlacement m_roundtableCardPlaced;
-    QRect m_roundtableCardPlacedPan;
-    QVector<QRect> m_roundtableCardPlacedControls;
-    QFont m_roundtableCardPlacedFont;
-    int m_roundtableCardPlacedDialX = 0;
-    bool m_roundtableCardPlacedFlipped = false;
-    bool m_roundtableCardPlacedValid = false;
+    // Your frequency's line as last placed, and what it was placed for: the
+    // strip, the dial, the flag's side and the line's font (with the format and
+    // structure, which setRoundtableCard checks).
+    RoundtableStripLinePlacement m_roundtableStripLinePlaced;
+    QRect m_roundtableStripLinePlacedStrip;
+    QFont m_roundtableStripLinePlacedFont;
+    int m_roundtableStripLinePlacedDialX = 0;
+    bool m_roundtableStripLinePlacedFlipped = false;
+    bool m_roundtableStripLinePlacedValid = false;
+    RoundtableStripLinePlacement m_roundtableStripLineDrawn;
     int m_roundtableCardPlacements = 0;
     QString m_roundtableViewedRoom;
     bool m_roundtableViewedIsFold{false};
