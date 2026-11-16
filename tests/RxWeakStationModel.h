@@ -23,9 +23,19 @@
 //   * the audio after the AGC: hiss at `hissDb`, the voice `snrDb` over
 //     it while it talks.
 //
+// `Band` adds what an empty frequency brings besides steady noise, the
+// same in all three readings: static crashes (bursts of wideband noise,
+// 5 to 40 ms, decaying), fading of the band noise, a steady carrier in
+// the passband, a swell of the noise floor (up over 3 s, held 2 s, back
+// down over 3 s, every 15 s from 4 s in). With `snrDb` at or below
+// kNoStation nobody talks at all.
+//
 // Modification history (NereusSDR):
 //   2026-11-15 — New. J.J. Boyd (KG4VCF), with AI-assisted transformation
 //                via Anthropic Claude Code.
+//   2026-11-16 — Band: static crashes, fading noise, a carrier, a swell of
+//                the noise floor, and a run with no station. J.J. Boyd (KG4VCF), with AI-assisted
+//                transformation via Anthropic Claude Code.
 // =================================================================
 
 #include "core/dsp/RxLeveler.h"
@@ -40,13 +50,26 @@
 
 namespace NereusSDR::WeakStation {
 
+// No station: `snrDb` at or below this.
+constexpr double kNoStation = -100.0;
+
+// What the band brings besides steady noise.
+struct Band {
+    double crashesPerSec{0.0};
+    double crashDb{20.0};        // a crash's peak power over the noise
+    double fadeDb{0.0};          // the noise level wanders this far each way
+    double carrierDb{-999.0};    // a steady carrier's power over the passband noise
+    double swellDb{0.0};         // the noise swells this far and back, every 15 s
+};
+
 struct Result {
     double presentShare{0.0};   // of the over's blocks, station counted present
     double gainAvgDb{0.0};      // leveler gain over the over
     double gainLateDb{0.0};     // ... from 3 s in (settled)
     double gainMaxDb{-99.0};
     double needDb{0.0};         // lift that puts the voice on the target
-    double gapPresentShare{0.0};  // of the noise-only blocks (before, and 3 s after)
+    double gapPresentShare{0.0};  // of the noise-only blocks (before, and 3 s after;
+                                  // the whole run from 2 s with no station)
     double gapGainMaxDb{-99.0};   // most gain on the hiss in those blocks
 };
 
@@ -69,6 +92,56 @@ inline bool talking(double t)
     const double ts = t - kOverStart;
     return std::fmod(ts, 4.0) < 3.4 && std::fmod(ts, 0.25) < 0.17;
 }
+
+// The band's noise power at `t`, relative to steady: the fading times
+// (1 + the crashes then).
+struct BandNoise {
+    std::vector<std::pair<double, double>> crashes;   // start s, duration s
+    std::vector<double> crashPeak;                    // power over the noise
+    double fadeDb{0.0};
+    double swellDb{0.0};
+
+    double swell(double t) const
+    {
+        if (swellDb == 0.0 || t < 4.0) {
+            return 1.0;
+        }
+        const double ts = std::fmod(t - 4.0, 15.0);
+        double up = 0.0;
+        if (ts < 3.0) {
+            up = 0.5 - 0.5 * std::cos(kPi * ts / 3.0);
+        } else if (ts < 5.0) {
+            up = 1.0;
+        } else if (ts < 8.0) {
+            up = 0.5 + 0.5 * std::cos(kPi * (ts - 5.0) / 3.0);
+        }
+        return std::pow(10.0, swellDb * up / 10.0);
+    }
+
+    double at(double t) const
+    {
+        const double fade = fadeDb == 0.0
+            ? 1.0
+            : std::pow(10.0, fadeDb * (0.6 * std::sin(2.0 * kPi * 0.05 * t)
+                                       + 0.4 * std::sin(2.0 * kPi * 0.13 * t + 1.0)) / 10.0);
+        // The crashes start in time order and none lasts past 4 x 40 ms.
+        double crash = 0.0;
+        auto it = std::upper_bound(crashes.begin(), crashes.end(), t,
+                                   [](double v, const std::pair<double, double>& c) { return v < c.first; });
+        while (it != crashes.begin()) {
+            --it;
+            const double d = t - it->first;
+            if (d >= 0.16) {
+                break;
+            }
+            if (d < 4.0 * it->second) {
+                crash += crashPeak[static_cast<size_t>(it - crashes.begin())]
+                    * std::exp(-2.0 * d / it->second);
+            }
+        }
+        return fade * swell(t) * (1.0 + crash);
+    }
+};
 
 // One syllable's pitch: fixed per syllable, from the syllable's number.
 inline double pitchHz(double t, std::mt19937& g, std::vector<double>& pitches)
@@ -114,12 +187,27 @@ inline void fft(std::vector<std::complex<double>>& a)
 // on, stationPresent and nearOverload are set here. `useBins` false runs
 // the gate on the S-meter alone, as before the panadapter check.
 inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerParams& base,
-                  bool useBins = true, unsigned seed = 7)
+                  bool useBins = true, unsigned seed = 7, const Band& band = {})
 {
     using namespace detail;
     std::mt19937 g(seed);
     std::normal_distribution<double> n01(0.0, 1.0);
     std::vector<double> pitches;
+    const bool station = snrDb > kNoStation;
+
+    BandNoise noise;
+    noise.fadeDb = band.fadeDb;
+    noise.swellDb = band.swellDb;
+    if (band.crashesPerSec > 0.0) {
+        std::mt19937 gc(seed * 31U + 5U);
+        std::exponential_distribution<double> gap(band.crashesPerSec);
+        std::uniform_real_distribution<double> u01(0.0, 1.0);
+        for (double t = gap(gc); t < kRunSec; t += gap(gc)) {
+            noise.crashes.push_back({t, 0.005 + 0.035 * u01(gc)});
+            noise.crashPeak.push_back(std::pow(10.0, (band.crashDb + 6.0 * (u01(gc) - 0.5)) / 10.0));
+        }
+    }
+    const bool plainNoise = noise.crashes.empty() && band.fadeDb == 0.0 && band.swellDb == 0.0;
 
     RxLeveler leveler;
     RxStationGate gate;
@@ -131,7 +219,10 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
     // holds kPass / fs of it, and the station snrDb over that.
     const double fsIq = binHz * kFftSize;
     const double passNoise = (kPassHighHz - kPassLowHz) / fsIq;
-    const double voicePower = passNoise * std::pow(10.0, snrDb / 10.0);
+    const double voicePower = station ? passNoise * std::pow(10.0, snrDb / 10.0) : 0.0;
+    const double carrierAmp = band.carrierDb > -900.0
+        ? std::sqrt(passNoise * std::pow(10.0, band.carrierDb / 10.0)) : 0.0;
+    constexpr double kCarrierHz = 1000.0;
     const int loBin = kFftSize / 2 + static_cast<int>(std::ceil(kPassLowHz / binHz));
     const int hiBin = kFftSize / 2 + static_cast<int>(std::floor(kPassHighHz / binHz)) + 1;
     std::vector<double> window(kFftSize);
@@ -152,7 +243,9 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
     constexpr int kBlock = 480;
     constexpr double kBlockSec = static_cast<double>(kBlock) / kFs;
     const double hissAmp = std::pow(10.0, hissDb / 20.0);
-    const double voiceAmp = std::pow(10.0, (hissDb + snrDb) / 20.0);
+    const double voiceAmp = station ? std::pow(10.0, (hissDb + snrDb) / 20.0) : 0.0;
+    const double carrierAudioAmp = band.carrierDb > -900.0
+        ? std::pow(10.0, (hissDb + band.carrierDb) / 20.0) * std::sqrt(2.0) : 0.0;
     const double noiseDbm = -120.0;
     double meter = noiseDbm;
     double sinceTick = 0.0;
@@ -170,11 +263,12 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
     const int blocks = static_cast<int>(kRunSec / kBlockSec);
     for (int b = 0; b < blocks; ++b) {
         const double t = b * kBlockSec;
-        const bool talk = talking(t);
+        const bool talk = station && talking(t);
 
         // S-meter: noise plus the station's power, smoothed over 0.1 s.
-        const double inst = std::pow(10.0, noiseDbm / 10.0)
-            + (talk ? std::pow(10.0, (noiseDbm + snrDb) / 10.0) : 0.0);
+        const double inst = std::pow(10.0, noiseDbm / 10.0) * noise.at(t)
+            + (talk ? std::pow(10.0, (noiseDbm + snrDb) / 10.0) : 0.0)
+            + (carrierAmp > 0.0 ? std::pow(10.0, (noiseDbm + band.carrierDb) / 10.0) : 0.0);
         meter += (1.0 - std::exp(-kBlockSec / 0.1)) * (10.0 * std::log10(inst) - meter);
 
         // Panadapter frame.
@@ -193,8 +287,12 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
             }
             for (int i = 0; i < kFftSize; ++i) {
                 const double ti = t + static_cast<double>(i) / fsIq;
-                std::complex<double> s(n01(g) * std::sqrt(0.5), n01(g) * std::sqrt(0.5));
-                if (talking(ti) && harmonics > 0) {
+                const double a0 = plainNoise ? std::sqrt(0.5) : std::sqrt(0.5 * noise.at(ti));
+                std::complex<double> s(n01(g) * a0, n01(g) * a0);
+                if (carrierAmp > 0.0) {
+                    s += std::polar(carrierAmp, 2.0 * kPi * kCarrierHz * ti);
+                }
+                if (station && talking(ti) && harmonics > 0) {
                     for (int k = 1; k < 64; ++k) {
                         const double f = k * f0;
                         if (f < 200.0 || f > kPassHighHz) {
@@ -232,13 +330,16 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
         p.nearOverload = gate.nearOverload();
 
         for (int i = 0; i < kBlock; ++i) {
-            const double s = hissAmp * n01(g) + (talk ? voiceAmp * n01(g) : 0.0);
+            const double ti = t + static_cast<double>(i) / kFs;
+            const double h = plainNoise ? hissAmp : hissAmp * std::sqrt(noise.at(ti));
+            const double s = h * n01(g) + (talk ? voiceAmp * n01(g) : 0.0)
+                + carrierAudioAmp * std::sin(2.0 * kPi * kCarrierHz * ti);
             audio[static_cast<size_t>(2 * i)] = audio[static_cast<size_t>(2 * i + 1)] = static_cast<float>(s);
         }
         leveler.process(audio.data(), kBlock, kFs, p);
 
         const double gain = leveler.gainDb();
-        if (t >= kOverStart && t < kOverEnd) {
+        if (station && t >= kOverStart && t < kOverEnd) {
             ++overBlocks;
             presentBlocks += p.stationPresent ? 1 : 0;
             gainSum += gain;
@@ -247,7 +348,7 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
                 lateSum += gain;
                 ++lateBlocks;
             }
-        } else if (t >= 2.0 && (t < kOverStart || t >= kOverEnd + 3.0)) {
+        } else if (t >= 2.0 && (!station || t < kOverStart || t >= kOverEnd + 3.0)) {
             // The hiss: before the over (after 2 s of learning), and from 3 s
             // after it (the station check's 2.5 s hold through pauses).
             ++gapBlocks;
@@ -255,9 +356,9 @@ inline Result run(double snrDb, double hissDb, double binHz, const RxLevelerPara
             r.gapGainMaxDb = std::max(r.gapGainMaxDb, gain);
         }
     }
-    r.presentShare = static_cast<double>(presentBlocks) / overBlocks;
-    r.gainAvgDb = gainSum / overBlocks;
-    r.gainLateDb = lateSum / lateBlocks;
+    r.presentShare = overBlocks > 0 ? static_cast<double>(presentBlocks) / overBlocks : 0.0;
+    r.gainAvgDb = overBlocks > 0 ? gainSum / overBlocks : 0.0;
+    r.gainLateDb = lateBlocks > 0 ? lateSum / lateBlocks : 0.0;
     r.gapPresentShare = static_cast<double>(gapPresent) / gapBlocks;
     // The voice alone (hiss out), over the syllables: what the leveler
     // aims at the target.

@@ -18,6 +18,7 @@ void RxStationGate::reset()
     m_quietDbm = kNoReadingDbm;
     m_present = false;
     m_aboveSec = 0.0;
+    m_meterSec = 0.0;
     m_holdLeft = 0.0;
     m_anchorDb = 0.0;
     m_anchorQuietSec = 0.0;
@@ -42,6 +43,7 @@ void RxStationGate::update(const RxStationReading& reading, double dtSec)
         // No reading: nothing to judge by, so no station.
         m_present = false;
         m_aboveSec = 0.0;
+        m_meterSec = 0.0;
         m_holdLeft = 0.0;
         return;
     }
@@ -66,14 +68,31 @@ void RxStationGate::update(const RxStationReading& reading, double dtSec)
                               reading.panFloorDbm + m_anchorDb + kAnchorSlackDb);
     }
 
-    // Above the noise by the S-meter, or by the panadapter bins in the
-    // passband; a station already present is kept at the lower bars.
-    const bool meterAbove = s >= m_quietDbm + (m_present ? kPresentStayMarginDb : kPresentMarginDb);
+    // Above the noise by the panadapter bins in the passband, or, with no
+    // panadapter reading, by the S-meter; a station already present is
+    // kept at the lower bars.
+    //
+    // With the panadapter running, its bins decide alone. A static crash,
+    // or band noise fading up a few dB, lifts the whole band and the S-meter
+    // with it: the S-meter took that for a station, and the leveler then
+    // lifted the hiss. In the bins it lifts the band's noise reference too
+    // and does not count, while any station strong enough to move the
+    // S-meter stands out there.
+    //
+    // With no panadapter, the S-meter counts once it has stayed above its
+    // bar for kMeterSustainSec, both to bring a station in and to keep one:
+    // a crash holds the meter up for less, so crash after crash cannot hold
+    // a station present on an empty frequency.
     const double voice = std::isfinite(reading.passbandVoice) ? reading.passbandVoice : -1.0;
+    const bool binsKnown = voice >= 0.0;
+    const bool meterAbove = s >= m_quietDbm + (m_present ? kPresentStayMarginDb : kPresentMarginDb);
+    m_meterSec = (meterAbove && !binsKnown) ? m_meterSec + dt : 0.0;
+    const bool meterHeld = m_meterSec >= kMeterSustainSec - 1e-9;
     const bool binsAbove = voice >= (m_present ? kVoiceStayShare : kVoiceEnterShare);
+    m_aboveSec = binsAbove ? m_aboveSec + dt : 0.0;
+    const bool binsHeld = binsAbove && (m_present || m_aboveSec >= kPresentEnterSec - 1e-9);
     const bool above = meterAbove || binsAbove;
-    m_aboveSec = above ? m_aboveSec + dt : 0.0;
-    if (above && (m_present || m_aboveSec >= kPresentEnterSec)) {
+    if (meterHeld || binsHeld) {
         m_present = true;
         m_holdLeft = kPresentHoldSec;
     } else if (m_present) {

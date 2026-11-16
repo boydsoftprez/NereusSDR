@@ -24,11 +24,15 @@
 //     stand out over the band's noise (RxPassbandVoice). A weak SSB voice
 //     shows there well before it moves the passband's average reading.
 //
-// Either the S-meter or the panadapter bins may show a station. Once one
-// is present, lower bars keep it (kPresentStayMarginDb, kVoiceStayShare),
-// so a weak station is not dropped in the middle of a sentence; starting
-// one takes the higher bars for kPresentEnterSec, so a noise crash does
-// not count.
+// With the panadapter running, its bins decide: a static crash or band
+// noise fading up lifts the whole band, the bins' noise reference with
+// it, so it never counts there, while it moves the S-meter just as a
+// voice does. With no panadapter reading the S-meter decides, and only
+// once it has stayed above its bar for kMeterSustainSec, longer than a
+// crash holds it up. Once a station is present, lower bars keep it
+// (kPresentStayMarginDb, kVoiceStayShare), so a weak station is not
+// dropped in the middle of a sentence; starting one takes the higher bars
+// (the bins for kPresentEnterSec), so a single noise burst does not count.
 //
 // The quiet level is the S-meter reading with no station: it follows the
 // reading down at once and creeps up slowly, so the pauses in speech keep
@@ -45,6 +49,12 @@
 //                second sign of a station, and lower bars to stay present.
 //                J.J. Boyd (KG4VCF), with AI-assisted transformation via
 //                Anthropic Claude Code.
+//   2026-11-16 — Nobody talking, no lift: with the panadapter running only
+//                its bins show a station; the S-meter alone must stay up
+//                kMeterSustainSec. Static and fading noise had held a
+//                station present and the leveler lifted the hiss. J.J. Boyd
+//                (KG4VCF), with AI-assisted transformation via Anthropic
+//                Claude Code.
 // =================================================================
 
 namespace NereusSDR {
@@ -79,6 +89,10 @@ public:
     static constexpr double kVoiceStayShare = 0.05;
     // ... for this long, so a single noise crash does not count.
     static constexpr double kPresentEnterSec = 0.15;
+    // With no panadapter reading, the S-meter must stay above its bar this
+    // long, to bring a station in and to keep one: longer than a static
+    // crash holds the meter up.
+    static constexpr double kMeterSustainSec = 0.5;
     // Once present, it stays present this long after the last reading
     // above the margin: the gaps between words and breaths.
     static constexpr double kPresentHoldSec = 2.5;
@@ -115,7 +129,8 @@ public:
 private:
     double m_quietDbm{kNoReadingDbm};
     bool   m_present{false};
-    double m_aboveSec{0.0};
+    double m_aboveSec{0.0};       // bins above their bar, unbroken
+    double m_meterSec{0.0};       // S-meter above its bar, unbroken
     double m_holdLeft{0.0};
     double m_overloadLeft{0.0};
     double m_anchorDb{0.0};       // quiet level minus panadapter floor

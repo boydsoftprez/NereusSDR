@@ -24,6 +24,10 @@
 //   2026-11-15 — Weak stations: the panadapter check, the lower bars to
 //                stay present, the larger Auto boost. J.J. Boyd (KG4VCF),
 //                with AI-assisted transformation via Anthropic Claude Code.
+//   2026-11-16 — Nobody talking: static, fading noise and a carrier with
+//                no station are neither counted nor lifted, and a weak
+//                station through static still is. J.J. Boyd (KG4VCF), with
+//                AI-assisted transformation via Anthropic Claude Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -450,9 +454,12 @@ private slots:
         for (int i = 0; i < 30; ++i) {
             gate.update(r, 0.1);
         }
+        // No panadapter reading: the S-meter must stay up kMeterSustainSec.
         r.signalDbm = -105.0;
-        gate.update(r, 0.1);
-        QVERIFY(!gate.stationPresent());          // one reading is not enough
+        for (int i = 0; i < 4; ++i) {
+            gate.update(r, 0.1);
+            QVERIFY(!gate.stationPresent());      // not long enough yet
+        }
         gate.update(r, 0.1);
         QVERIFY(gate.stationPresent());
         // A pause: present through the hold, then gone.
@@ -524,15 +531,17 @@ private slots:
             gate.update(r, 0.1);
         }
         r.signalDbm = -100.0;
-        gate.update(r, 0.1);
-        gate.update(r, 0.1);
+        for (int i = 0; i < 5; ++i) {
+            gate.update(r, 0.1);
+        }
         QVERIFY(gate.stationPresent());
         r.signalDbm = -400.0;                       // radio down
         gate.update(r, 0.1);
         QVERIFY(!gate.stationPresent());
         r.signalDbm = -100.0;
-        gate.update(r, 0.1);
-        gate.update(r, 0.1);
+        for (int i = 0; i < 5; ++i) {
+            gate.update(r, 0.1);
+        }
         QVERIFY(gate.stationPresent());
         gate.reset();
         QVERIFY(!gate.stationPresent());
@@ -681,6 +690,139 @@ private slots:
         for (double snr : {3.0, 6.0}) {
             const WeakStation::Result r = WeakStation::run(snr, -30.0, 47.0, autoParams, /*useBins=*/false);
             QVERIFY2(r.presentShare < 0.2, qPrintable(QStringLiteral("%1 dB: %2").arg(snr).arg(r.presentShare)));
+        }
+    }
+
+    // ── Nobody talking ────────────────────────────────────────────────────
+
+    // JJ on the air, 2026-11-16: the lift sometimes climbed to about +20 dB
+    // with no station talking. Static crashes jumped the S-meter, the
+    // station check took that for a station, and each crash renewed the
+    // hold; with the band noise fading up a few dB the leveler then read
+    // the hiss as a quiet voice and lifted it.
+    //
+    // No panadapter reading: a crash holds the S-meter up for less than
+    // kMeterSustainSec, so crash after crash brings no station in.
+    void gateMeterCrashesAreNoStation()
+    {
+        RxStationGate gate;
+        RxStationReading r;
+        r.adcPeakDbfs = -30.0;
+        for (int i = 0; i < 600; ++i) {
+            // A crash every second, holding the meter up 0.3 s.
+            r.signalDbm = (i % 10) < 3 ? -105.0 : -120.0;
+            gate.update(r, 0.1);
+            QVERIFY2(!gate.stationPresent(), qPrintable(QStringLiteral("reading %1").arg(i)));
+        }
+    }
+
+    // With the panadapter running its bins decide: the S-meter well up for
+    // seconds (noise fading up, a burst of static) while the bins show
+    // nothing brings no station in, and does not keep one either.
+    void gateMeterAloneIsNoStationWithPanadapter()
+    {
+        RxStationGate gate;
+        RxStationReading r;
+        r.adcPeakDbfs = -30.0;
+        r.signalDbm = -120.0;
+        r.passbandVoice = 0.0;
+        for (int i = 0; i < 30; ++i) {
+            gate.update(r, 0.1);
+        }
+        r.signalDbm = -108.0;
+        for (int i = 0; i < 50; ++i) {
+            gate.update(r, 0.1);
+            QVERIFY2(!gate.stationPresent(), qPrintable(QStringLiteral("reading %1").arg(i)));
+        }
+        // A station shows in the bins: present. The bins fall silent while
+        // the S-meter stays up: gone after the hold.
+        r.passbandVoice = RxStationGate::kVoiceEnterShare;
+        gate.update(r, 0.1);
+        gate.update(r, 0.1);
+        QVERIFY(gate.stationPresent());
+        r.passbandVoice = 0.0;
+        for (int i = 0; i < 30; ++i) {
+            gate.update(r, 0.1);
+        }
+        QVERIFY(!gate.stationPresent());
+    }
+
+    // End to end, with nobody on the frequency: steady noise, static
+    // crashes, dense static, fading noise with crashes, a steady carrier,
+    // the noise floor swelling several dB and back. With the panadapter the
+    // station check never says a station is there and the lift never
+    // rises. Without it (S-meter only) the same holds, except under dense
+    // static (three loud crashes a second) and a swell of the floor, which
+    // the S-meter cannot tell from a voice.
+    void bandNoiseAloneIsNotLifted()
+    {
+        RxLevelerParams autoParams;
+        autoParams.targetDb = RxLeveler::kAutoTargetDb;
+        autoParams.maxBoostDb = RxLeveler::kAutoMaxBoostDb;
+        autoParams.maxCutDb = RxLeveler::kAutoMaxCutDb;
+        autoParams.attackMs = RxLeveler::kAutoAttackMs;
+        autoParams.releaseMs = RxLeveler::kAutoReleaseMs;
+        struct Case {
+            const char* name;
+            WeakStation::Band band;
+            bool meterAloneToo;
+        };
+        const Case cases[] = {
+            {"steady noise", {}, true},
+            {"crashes 1/s 20 dB", {1.0, 20.0, 0.0}, true},
+            {"crashes 3/s 25 dB", {3.0, 25.0, 0.0}, false},
+            {"fading 4 dB, crashes 1/s 15 dB", {1.0, 15.0, 4.0}, true},
+            {"fading 4 dB", {0.0, 20.0, 4.0}, true},
+            {"carrier 10 dB", {0.0, 20.0, 0.0, 10.0}, true},
+            // JJ: the climb seemed to line up with the noise floor surging
+            // and falling. The S-meter cannot tell a swell of the floor
+            // from a station; the bins can.
+            {"noise floor swells 6 dB", {0.0, 20.0, 0.0, -999.0, 6.0}, false},
+            {"noise floor swells 10 dB", {0.0, 20.0, 0.0, -999.0, 10.0}, false},
+        };
+        for (const Case& c : cases) {
+            for (unsigned seed : {7U, 8U, 9U}) {
+                for (bool bins : {true, false}) {
+                    if (!bins && !c.meterAloneToo) {
+                        continue;
+                    }
+                    const WeakStation::Result r = WeakStation::run(
+                        WeakStation::kNoStation, -30.0, 47.0, autoParams, bins, seed, c.band);
+                    const QString what = QStringLiteral("%1, seed %2, %3: present %4, most gain %5")
+                        .arg(QLatin1String(c.name)).arg(seed)
+                        .arg(bins ? QStringLiteral("panadapter") : QStringLiteral("S-meter only"))
+                        .arg(r.gapPresentShare).arg(r.gapGainMaxDb);
+                    QVERIFY2(r.gapPresentShare == 0.0, qPrintable(what));
+                    QVERIFY2(r.gapGainMaxDb < 1.0, qPrintable(what));
+                }
+            }
+        }
+    }
+
+    // The 2026-11-15 complaint must not come back: a weak station 3 and
+    // 6 dB over the noise, with static crashes, is still heard through its
+    // over and lifted to within 3 dB of what it needs, and the static
+    // after the over is not taken for a station.
+    void weakStationsThroughStaticAreLifted()
+    {
+        RxLevelerParams autoParams;
+        autoParams.targetDb = RxLeveler::kAutoTargetDb;
+        autoParams.maxBoostDb = RxLeveler::kAutoMaxBoostDb;
+        autoParams.maxCutDb = RxLeveler::kAutoMaxCutDb;
+        autoParams.attackMs = RxLeveler::kAutoAttackMs;
+        autoParams.releaseMs = RxLeveler::kAutoReleaseMs;
+        for (double snr : {3.0, 6.0}) {
+            for (unsigned seed : {7U, 8U}) {
+                const WeakStation::Result r = WeakStation::run(
+                    snr, -30.0, 47.0, autoParams, true, seed, {1.0, 20.0, 0.0});
+                const QString what = QStringLiteral("%1 dB, seed %2: present %3, late gain %4, need %5, "
+                                                    "static present %6")
+                    .arg(snr).arg(seed).arg(r.presentShare).arg(r.gainLateDb).arg(r.needDb)
+                    .arg(r.gapPresentShare);
+                QVERIFY2(r.presentShare >= 0.9, qPrintable(what));
+                QVERIFY2(std::abs(r.gainLateDb - r.needDb) <= 3.0, qPrintable(what));
+                QCOMPARE(r.gapPresentShare, 0.0);
+            }
         }
     }
 
