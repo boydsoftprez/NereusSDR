@@ -1,6 +1,9 @@
 // 2026-09-27: validate transmit-region writes and shared confirmations.
 // J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound)
+//               behind the recordings gate.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs behind the
 //               recordings gate; the voice keyer asks the transmit holder and
 //               hears each device's own press (RemoteKeying).
@@ -7092,7 +7095,8 @@ void StationServer::onTransportText(SessionTransport* transport, const QByteArra
         // Recording plan Task 5 (recordingsVersion 1): the recordings.* verbs,
         // to a peer that declared recordings on a Core that runs its radio.
         // Recording plan Task 11: and the voiceKeyer.* verbs with them.
-        if ((message.commandVerb.startsWith("recordings.") || message.commandVerb.startsWith("voiceKeyer."))
+        if ((message.commandVerb.startsWith("recordings.") || message.commandVerb.startsWith("voiceKeyer.")
+             || message.commandVerb.startsWith("dsr."))
             && !peerGetsRecordings(transport)) {
             send(transport, SessionMessages::commandResult(
                 message.commandVerb, message.commandId, false,

@@ -6,6 +6,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 22: rewind sound's verbs dsr.rewind,
+//               dsr.live and dsr.seek (handleDsr, recordingsVersion 4).
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 21: recordings.setSettings takes the
 //               Digital Spectrum Recorder's dsrEnabled, dsrDisk and
 //               dsrSizeLimitGb (recordingsVersion 4).
@@ -1012,6 +1015,15 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         {"voiceKeyer.setRepeat", {arg("on", kBool), arg("delaySec", kInt)}, "recordingsVersion", 3,
          kRadioIdentitySessionProtocolMinor},
         {"voiceKeyer.listen", {arg("n", kInt)}, "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
+        // Recording plan Task 22 (recordingsVersion 4): rewind sound. A slice
+        // plays the past from the Digital Spectrum Recorder (`utcNs`, ns
+        // since 1970 UTC, at `frequencyHz`), goes live again, or moves to
+        // another moment. None keys the radio.
+        {"dsr.rewind", {arg("slice", kInt), arg("utcNs", kInt), arg("frequencyHz", kInt)},
+         "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
+        {"dsr.live", {arg("slice", kInt)}, "recordingsVersion", 4, kRadioIdentitySessionProtocolMinor},
+        {"dsr.seek", {arg("slice", kInt), arg("utcNs", kInt)}, "recordingsVersion", 4,
+         kRadioIdentitySessionProtocolMinor},
         {"paProfile.setUseMax", {arg("band", kInt), arg("on", kBool)}, "paProfileVersion", 1,
          kRadioIdentitySessionProtocolMinor},
         // The Core's RF-Kit RF2K-S and the station TCI server (R-R3-47,
@@ -1917,6 +1929,9 @@ void SessionCommandDispatcher::dispatch(const SessionMessage& invoke)
                || invoke.commandVerb == "voiceKeyer.rename" || invoke.commandVerb == "voiceKeyer.clear"
                || invoke.commandVerb == "voiceKeyer.setRepeat" || invoke.commandVerb == "voiceKeyer.listen") {
         handleVoiceKeyer(invoke);
+    } else if (invoke.commandVerb == "dsr.rewind" || invoke.commandVerb == "dsr.live"
+               || invoke.commandVerb == "dsr.seek") {
+        handleDsr(invoke);
     } else if (invoke.commandVerb == "requestIoBoardProbe") {
         handleRequestIoBoardProbe(invoke);
     } else if (invoke.commandVerb == "setAlexRxAntenna") {
@@ -5353,6 +5368,49 @@ void SessionCommandDispatcher::handleRecordings(const SessionMessage& invoke)
     } else {
         refuse(notUnderstood);
     }
+}
+
+// Recording plan Task 22 (design sections 3, 6.7): rewind sound. Runs on the
+// Core's RecordingService, on the main thread; StationServer has applied the
+// feature gate. None keys the radio.
+void SessionCommandDispatcher::handleDsr(const SessionMessage& invoke)
+{
+    const QByteArray& verb = invoke.commandVerb;
+    const auto refuse = [&](const QString& reason) {
+        emitResult(verb, invoke.commandId, false, reason, {});
+    };
+    const QString notUnderstood = QStringLiteral("The request for recordings was not understood.");
+    if (!bandStackArgumentsFit(invoke.arguments, verb)) {
+        refuse(notUnderstood);
+        return;
+    }
+    RecordingService* const service = m_radioModel->recordingService();
+    if (service == nullptr) {
+        refuse(QStringLiteral("This Core cannot keep recordings."));
+        return;
+    }
+    const QJsonObject arguments = bandStackArgumentsAsJson(invoke.arguments);
+    const qint64 sliceArg = arguments.value(QStringLiteral("slice")).toInteger(-1);
+    // Out of range is no slice; the service words it.
+    const int slice = sliceArg >= 0 && sliceArg <= std::numeric_limits<int>::max()
+        ? static_cast<int>(sliceArg)
+        : -1;
+    QString refusal;
+    bool ok = false;
+    if (verb == "dsr.rewind") {
+        ok = service->rewind(slice, arguments.value(QStringLiteral("utcNs")).toInteger(0),
+                             arguments.value(QStringLiteral("frequencyHz")).toInteger(0), &refusal);
+    } else if (verb == "dsr.live") {
+        ok = service->goLive(slice, &refusal);
+    } else {
+        ok = service->seekRewind(slice, arguments.value(QStringLiteral("utcNs")).toInteger(0), &refusal);
+    }
+    if (!ok) {
+        refuse(refusal.isEmpty() ? notUnderstood : refusal);
+        return;
+    }
+    emit commandResultReady(SessionMessages::commandResult(
+        verb, invoke.commandId, true, QString(), {QByteArrayLiteral("recordings")}, {}));
 }
 
 // Recording plan Task 11 (design sections 6.6, 6.9, section 7). Runs on the

@@ -20,6 +20,10 @@
 //             while the radio streams, written on the worker, kept off an SD
 //             card and stopped when its disk goes (spec 3, 6.7, section 7,
 //             A10, A14, A17). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; rewind sound: a slice plays the past from
+//             the recorder (read ahead on the worker, switched in on the DSP
+//             worker), LIVE, seek, and PTT while rewound (spec 3, 6.7,
+//             recording plan Task 22). AI tooling: Anthropic Claude Code.
 
 #include "RecordingService.h"
 
@@ -78,6 +82,49 @@ QString suffixFor(AudioFileFormat format)
     return format == AudioFileFormat::Mp3 ? QStringLiteral("mp3") : QStringLiteral("wav");
 }
 
+// Rewind sound's view of the radio (recording plan Task 22).
+class RadioRewindHost final : public DsrRewindHost {
+public:
+    explicit RadioRewindHost(RadioModel* radio) : m_radio(radio) {}
+
+    bool sliceOpen(int slice) const override { return m_radio->sliceById(slice) != nullptr; }
+    qint64 sliceFrequencyHz(int slice) const override
+    {
+        const SliceModel* s = m_radio->sliceById(slice);
+        return s != nullptr ? std::llround(s->frequency()) : 0;
+    }
+    void setSliceFrequencyHz(int slice, qint64 hz) override
+    {
+        if (SliceModel* s = m_radio->sliceById(slice)) {
+            s->setFrequency(double(hz));
+        }
+    }
+    int sliceReceiver(int slice) const override
+    {
+        const SliceModel* s = m_radio->sliceById(slice);
+        return s != nullptr ? s->streamIndex() : -1;
+    }
+    qint64 receiverCentreHz(int receiver) const override
+    {
+        return receiver >= 0 ? std::llround(m_radio->streamCentreHz(receiver)) : 0;
+    }
+    int receiverRateHz(int receiver) const override
+    {
+        return receiver >= 0 ? m_radio->streamSampleRateHz(receiver) : 0;
+    }
+    // A slice on the diversity mix is fed past the switch
+    // (RxDspWorker::feedExternalDiversityTarget), so while diversity runs no
+    // slice is rewound.
+    bool sliceOnDiversity(int /*slice*/) const override { return m_radio->diversityActive(); }
+    bool feedSlice(int slice, std::shared_ptr<DsrReplay> replay) override
+    {
+        return m_radio->setSliceReplay(slice, std::move(replay));
+    }
+
+private:
+    RadioModel* m_radio;
+};
+
 }  // namespace
 
 RecordingService::RecordingService(RadioModel* radio, QObject* parent)
@@ -110,8 +157,12 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
 
     if (m_radio) {
         RadioModel* radio = m_radio;
+        m_rewindHost = std::make_unique<RadioRewindHost>(radio);
         m_onAir->setTransmitChain([radio] { return radio->txChannel(); }, &radio->transmitModel());
         if (MoxController* mox = m_radio->moxController()) {
+            // PTT while rewound (spec 3): the rewound slices go live on the
+            // frequency they play before the key goes on as usual.
+            connect(mox, &MoxController::txAboutToBegin, this, [this] { rewoundSlicesLiveForTransmit(); });
             connect(mox, &MoxController::moxChanged, this, [this](int, bool, bool on) {
                 setTransmitting(on);
                 if (!on) {
@@ -142,6 +193,8 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
             if (m_dsrRunning) {
                 m_dsr->setStream(stream, std::llround(centreHz), rateHz);
             }
+            // A rewound slice's past moves with its receiver's centre.
+            followLiveCentres();
         });
         connect(m_radio, &RadioModel::sliceAdded, this, &RecordingService::onSliceAdded);
         connect(m_radio, &RadioModel::sliceRemoved, this, &RecordingService::onSliceRemoved);
@@ -156,6 +209,12 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
 
 RecordingService::~RecordingService()
 {
+    // Rewind: the radio is going too, so its slices are left as they are.
+    // A replay still switched in stays alive with the radio
+    // (RadioModel::setSliceReplay) until its DSP worker is gone.
+    m_rewound.clear();
+    m_liveAfterKey.clear();
+    m_rewindHost.reset();
     // A message going out stops and the radio unkeys first.
     m_voiceKeyer.reset();
     m_onAir->end();
@@ -255,6 +314,7 @@ void RecordingService::ensureWorker()
             workerDrainAll();
             workerFillPlayers();
             workerDrainDsr();
+            workerFillReplays();
         });
     }, Qt::QueuedConnection);
 }
@@ -1180,7 +1240,8 @@ void RecordingService::workerFillPlayers()
 
 void RecordingService::workerStopTimerIfIdle()
 {
-    if (m_workerFiles.isEmpty() && m_workerPlayers.empty() && !m_dsrWorkerOpen && m_workerTimer) {
+    if (m_workerFiles.isEmpty() && m_workerPlayers.empty() && !m_dsrWorkerOpen && m_workerReplays.empty()
+        && m_workerTimer) {
         m_workerTimer->stop();
     }
 }
@@ -1230,6 +1291,7 @@ void RecordingService::pumpForTest()
             workerDrainAll();
             workerFillPlayers();
             workerDrainDsr();
+            workerFillReplays();
         }, Qt::BlockingQueuedConnection);
         QCoreApplication::sendPostedEvents(this);
     }
@@ -1294,6 +1356,7 @@ DsrStatus RecordingService::dsrStatus() const
     st.sizeLimitGb = m_settings.dsrSizeLimitGb;
     st.reason = m_settings.dsrEnabled ? dsrReasonWords(m_dsrOff) : QString();
     st.overflows = m_dsr->overflows();
+    st.rewound = rewound();
     if (st.sizeLimitBytes == 0) {
         st.sizeLimitBytes = qint64(std::max(m_settings.dsrSizeLimitGb, RecordingSettings::kDsrSizeLimitGbMin))
                             * kBytesPerGb;
@@ -1307,6 +1370,9 @@ void RecordingService::setRadioStreaming(bool on)
         return;
     }
     m_radioStreaming = on;
+    if (!on) {
+        m_liveAfterKey.clear();
+    }
     applyDsr();
 }
 
@@ -1380,6 +1446,8 @@ void RecordingService::stopDsr()
     if (!m_dsrRunning) {
         return;
     }
+    // Nothing is kept to play: rewound slices go back to the radio.
+    endAllRewinds(true);
     m_dsrRunning = false;
     m_dsr->setAccepting(false);
     const quint64 token = m_dsrToken;
@@ -1450,6 +1518,7 @@ void RecordingService::onDsrFailed(quint64 token)
     if (token != m_dsrToken || !m_dsrRunning) {
         return;
     }
+    endAllRewinds(true);
     m_dsrRunning = false;
     m_dsr->setAccepting(false);
     const DsrOff problem = dsrDiskProblem(dsrVolumes());
@@ -1485,5 +1554,320 @@ void RecordingService::workerDrainDsr()
                                   Qt::QueuedConnection);
     }
 }
+
+// ---- Rewind sound (spec 3, 6.7, recording plan Task 22).
+//
+// The slice's frequency moves on the main thread; the past is read ahead on
+// the recordings worker (DsrReplay::fill) into a lock-free ring; once the
+// first read is in, the DSP worker's switch takes the slice's demodulator
+// off the radio's I/Q and onto that ring (DsrRewindHost::feedSlice). The
+// recorder's own tap sees only the radio's I/Q, before the switch, so it
+// keeps the live signal while a slice plays the past.
+
+namespace {
+constexpr int kMaxRewoundSlices = 32;
+}  // namespace
+
+bool RecordingService::rewind(int slice, qint64 utcNs, qint64 frequencyHz, QString* refusal)
+{
+    const auto refuse = [refusal](const char* why) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(why);
+        }
+        return false;
+    };
+    if (!m_rewindHost || slice < 0 || slice >= kMaxRewoundSlices || !m_rewindHost->sliceOpen(slice)) {
+        return refuse(kRewindNoSliceReason);
+    }
+    if (m_rewindHost->sliceOnDiversity(slice)) {
+        return refuse(kRewindDiversityReason);
+    }
+    if (!m_dsrRunning || frequencyHz <= 0) {
+        return refuse(kRewindGoneReason);
+    }
+    // The receiver that kept that moment with that frequency in its span,
+    // the slice's own receiver first.
+    const DsrRingFile& ring = m_dsr->ring();
+    QList<int> receivers = ring.receivers();
+    const int own = m_rewindHost->sliceReceiver(slice);
+    if (receivers.removeOne(own)) {
+        receivers.prepend(own);
+    }
+    int receiver = -1;
+    DsrBlockHeader kept;
+    for (const int r : std::as_const(receivers)) {
+        DsrBlockHeader h;
+        if (!ring.blockAt(r, utcNs, &h) || h.sampleRateHz <= 0) {
+            continue;
+        }
+        if (std::llabs(frequencyHz - h.centreHz) * 2 > qint64(h.sampleRateHz)) {
+            continue;
+        }
+        receiver = r;
+        kept = h;
+        break;
+    }
+    if (receiver < 0) {
+        return refuse(kRewindGoneReason);
+    }
+    // The slice moves to the moment's frequency. Its demodulator runs at its
+    // receiver's rate, which must be the rate that moment was kept at.
+    const qint64 before = m_rewindHost->sliceFrequencyHz(slice);
+    const auto existing = m_rewound.constFind(slice);
+    const qint64 liveHz = existing != m_rewound.cend() ? existing->liveFrequencyHz : before;
+    if (before != frequencyHz) {
+        m_rewindHost->setSliceFrequencyHz(slice, frequencyHz);
+    }
+    const int nowReceiver = m_rewindHost->sliceReceiver(slice);
+    if (nowReceiver < 0 || m_rewindHost->receiverRateHz(nowReceiver) != kept.sampleRateHz) {
+        if (before != frequencyHz) {
+            m_rewindHost->setSliceFrequencyHz(slice, before);
+        }
+        return refuse(kRewindRateReason);
+    }
+    m_liveAfterKey.remove(slice);
+    Rewound& entry = m_rewound[slice];
+    entry.liveFrequencyHz = liveHz;
+    if (entry.pending) {
+        dropReplayOnWorker(entry.pending);
+    }
+    entry.pendingToken = m_nextRewindToken++;
+    entry.pending = startReplay(slice, receiver, kept.sampleRateHz, utcNs, entry.pendingToken);
+    emit dsrChanged();
+    return true;
+}
+
+bool RecordingService::goLive(int slice, QString* refusal)
+{
+    Q_UNUSED(refusal);
+    if (m_rewound.contains(slice)) {
+        endRewind(slice, true);
+        return true;
+    }
+    // After PTT took it live: LIVE still returns to the frequency before
+    // rewinding (spec 3).
+    const auto after = m_liveAfterKey.constFind(slice);
+    if (after != m_liveAfterKey.cend()) {
+        const qint64 hz = *after;
+        m_liveAfterKey.erase(after);
+        if (m_rewindHost && m_rewindHost->sliceOpen(slice)) {
+            m_rewindHost->setSliceFrequencyHz(slice, hz);
+        }
+    }
+    return true;
+}
+
+bool RecordingService::seekRewind(int slice, qint64 utcNs, QString* refusal)
+{
+    const auto refuse = [refusal](const char* why) {
+        if (refusal != nullptr) {
+            *refusal = QString::fromLatin1(why);
+        }
+        return false;
+    };
+    const auto it = m_rewound.find(slice);
+    if (it == m_rewound.end()) {
+        return refuse(kRewindNotRewoundReason);
+    }
+    const std::shared_ptr<DsrReplay>& current = it->pending ? it->pending : it->replay;
+    if (!current || !m_dsrRunning) {
+        return refuse(kRewindGoneReason);
+    }
+    DsrBlockHeader h;
+    if (!m_dsr->ring().blockAt(current->receiver(), utcNs, &h)) {
+        return refuse(kRewindGoneReason);
+    }
+    if (h.sampleRateHz != current->sampleRateHz()) {
+        return refuse(kRewindRateReason);
+    }
+    const int receiver = current->receiver();
+    const int rate = current->sampleRateHz();
+    if (it->pending) {
+        dropReplayOnWorker(it->pending);
+    }
+    it->pendingToken = m_nextRewindToken++;
+    it->pending = startReplay(slice, receiver, rate, utcNs, it->pendingToken);
+    emit dsrChanged();
+    return true;
+}
+
+QList<DsrRewoundSlice> RecordingService::rewound() const
+{
+    QList<int> slices = m_rewound.keys();
+    std::sort(slices.begin(), slices.end());
+    QList<DsrRewoundSlice> out;
+    for (const int slice : std::as_const(slices)) {
+        const Rewound& entry = m_rewound[slice];
+        const std::shared_ptr<DsrReplay>& playing = entry.pending ? entry.pending : entry.replay;
+        DsrRewoundSlice r;
+        r.slice = slice;
+        r.utcNs = playing ? (entry.pending ? playing->fromUtcNs() : playing->positionUtcNs()) : 0;
+        r.frequencyHz = m_rewindHost ? m_rewindHost->sliceFrequencyHz(slice) : 0;
+        r.liveFrequencyHz = entry.liveFrequencyHz;
+        out.append(r);
+    }
+    return out;
+}
+
+void RecordingService::rewoundSlicesLiveForTransmit()
+{
+    const QList<int> slices = m_rewound.keys();
+    for (const int slice : slices) {
+        m_liveAfterKey.insert(slice, m_rewound[slice].liveFrequencyHz);
+        endRewind(slice, false);
+    }
+}
+
+void RecordingService::setDsrRewindHostForTest(std::unique_ptr<DsrRewindHost> host)
+{
+    m_rewindHost = std::move(host);
+}
+
+std::shared_ptr<DsrReplay> RecordingService::replayForTest(int slice) const
+{
+    const auto it = m_rewound.constFind(slice);
+    return it != m_rewound.cend() ? it->replay : nullptr;
+}
+
+std::shared_ptr<DsrReplay> RecordingService::startReplay(int slice, int receiver, int rateHz, qint64 utcNs,
+                                                         quint64 token)
+{
+    const qint64 liveCentre =
+        m_rewindHost ? m_rewindHost->receiverCentreHz(m_rewindHost->sliceReceiver(slice)) : 0;
+    auto replay = std::make_shared<DsrReplay>(slice, receiver, rateHz, utcNs, liveCentre);
+    ensureWorker();
+    QMetaObject::invokeMethod(m_workerContext, [this, slice, token, replay] {
+        WorkerReplay w;
+        w.slice = slice;
+        w.token = token;
+        w.replay = replay;
+        m_workerReplays.push_back(std::move(w));
+        workerFillReplays();
+        if (m_workerTimer && !m_workerTimer->isActive()) {
+            m_workerTimer->start();
+        }
+    }, Qt::QueuedConnection);
+    return replay;
+}
+
+void RecordingService::dropReplayOnWorker(const std::shared_ptr<DsrReplay>& replay)
+{
+    if (!replay || m_workerContext == nullptr) {
+        return;
+    }
+    DsrReplay* const gone = replay.get();
+    QMetaObject::invokeMethod(m_workerContext, [this, gone] {
+        m_workerReplays.erase(std::remove_if(m_workerReplays.begin(), m_workerReplays.end(),
+                                             [gone](const WorkerReplay& w) { return w.replay.get() == gone; }),
+                              m_workerReplays.end());
+        workerStopTimerIfIdle();
+    }, Qt::QueuedConnection);
+}
+
+void RecordingService::onReplayReady(int slice, quint64 token)
+{
+    const auto it = m_rewound.find(slice);
+    if (it == m_rewound.end() || it->pendingToken != token || !it->pending) {
+        return;
+    }
+    // From the next block the slice's demodulator plays the past.
+    if (!m_rewindHost || !m_rewindHost->feedSlice(slice, it->pending)) {
+        // No DSP worker to switch: the slice stays on the radio.
+        endRewind(slice, false);
+        return;
+    }
+    if (it->replay) {
+        dropReplayOnWorker(it->replay);
+    }
+    it->replay = std::move(it->pending);
+    it->replayToken = it->pendingToken;
+    it->pending.reset();
+    emit dsrChanged();
+}
+
+void RecordingService::onReplayFinished(int slice, quint64 token)
+{
+    const auto it = m_rewound.constFind(slice);
+    if (it == m_rewound.cend() || it->replayToken != token || it->pending) {
+        return;
+    }
+    // Played up to the newest second kept: the DSP worker already feeds the
+    // radio's I/Q, on the frequency being played.
+    endRewind(slice, false);
+}
+
+void RecordingService::endRewind(int slice, bool restoreFrequency)
+{
+    const auto it = m_rewound.find(slice);
+    if (it == m_rewound.end()) {
+        return;
+    }
+    const Rewound entry = *it;
+    m_rewound.erase(it);
+    if (m_rewindHost) {
+        m_rewindHost->feedSlice(slice, nullptr);
+    }
+    dropReplayOnWorker(entry.replay);
+    dropReplayOnWorker(entry.pending);
+    if (restoreFrequency && m_rewindHost && m_rewindHost->sliceOpen(slice)
+        && m_rewindHost->sliceFrequencyHz(slice) != entry.liveFrequencyHz) {
+        m_rewindHost->setSliceFrequencyHz(slice, entry.liveFrequencyHz);
+    }
+    emit dsrChanged();
+}
+
+void RecordingService::endAllRewinds(bool restoreFrequency)
+{
+    const QList<int> slices = m_rewound.keys();
+    for (const int slice : slices) {
+        endRewind(slice, restoreFrequency);
+    }
+}
+
+void RecordingService::followLiveCentres()
+{
+    if (!m_rewindHost) {
+        return;
+    }
+    QList<int> rateChanged;
+    for (auto it = m_rewound.cbegin(); it != m_rewound.cend(); ++it) {
+        const int receiver = m_rewindHost->sliceReceiver(it.key());
+        const qint64 centre = m_rewindHost->receiverCentreHz(receiver);
+        for (const std::shared_ptr<DsrReplay>& replay : {it->replay, it->pending}) {
+            if (!replay) {
+                continue;
+            }
+            replay->setLiveCentreHz(centre);
+            if (m_rewindHost->receiverRateHz(receiver) != replay->sampleRateHz()) {
+                rateChanged.append(it.key());
+            }
+        }
+    }
+    // The receiver's rate changed: its demodulator can no longer take the
+    // past, so the slice plays the radio on the frequency it is on.
+    for (const int slice : std::as_const(rateChanged)) {
+        endRewind(slice, false);
+    }
+}
+
+void RecordingService::workerFillReplays()
+{
+    for (WorkerReplay& w : m_workerReplays) {
+        w.replay->fill(m_dsr->ring());
+        const int slice = w.slice;
+        const quint64 token = w.token;
+        if (!w.readyTold && w.replay->primed()) {
+            w.readyTold = true;
+            QMetaObject::invokeMethod(this, [this, slice, token] { onReplayReady(slice, token); },
+                                      Qt::QueuedConnection);
+        }
+        if (!w.finishedTold && w.replay->finished()) {
+            w.finishedTold = true;
+            QMetaObject::invokeMethod(this, [this, slice, token] { onReplayFinished(slice, token); },
+                                      Qt::QueuedConnection);
+        }
+    }
+}
+
 
 }  // namespace NereusSDR

@@ -12097,6 +12097,14 @@ nereus_add_test(tst_dsr_ring CORE_ONLY)
 # missing disk that stops only the recorder
 # (src/core/recordings/dsr/DsrRecorder.cpp, RecordingService.cpp).
 nereus_add_test(tst_dsr_recorder CORE_ONLY)
+# Recording plan Task 22: rewind sound, the one switch on the receive path.
+# A rewound slice's demodulator is fed from the ring file through
+# RxDspWorker's switch, in real time, while the other slices keep the radio's
+# I/Q; LIVE, seek, PTT while rewound, the newest second playing on into live,
+# a moment no longer kept refused, and a past carrier demodulated by a real
+# WDSP channel (src/core/recordings/dsr/DsrReplay.cpp, RecordingService.cpp,
+# src/models/RxDspWorker.cpp).
+nereus_add_test(tst_dsr_rewind CORE_ONLY)
 
 # --------------------------------------------------------------------------
 # Aggregate "all_tests" target  (2026-05-26 KG4VCF dev-loop fix, from PR #291)

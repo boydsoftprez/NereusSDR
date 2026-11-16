@@ -62,6 +62,9 @@
 // (VoiceKeyer.h and .cpp), the play refusal words of RecordingService.h, and
 // the dispatcher's playRefusal forward. J.J. Boyd (KG4VCF), AI-assisted via
 // Anthropic Claude Code.
+// 2026-11-16: Recording plan Task 22 placed: rewind sound's refusals
+// (RecordingService rewind, goLive, seekRewind). J.J. Boyd (KG4VCF),
+// AI-assisted via Anthropic Claude Code.
 // 2026-11-16: Recording plan Task 21: the recorder's size refusal in
 // RecordingsFacade::applySettingsChange.
 // 2026-11-15: Recording plan Task 5: the recordings.* refusals worded in
@@ -1841,6 +1844,12 @@ const QList<ReasonSource>& reasonSources()
         // Recording plan Task 21: why the Digital Spectrum Recorder is off,
         // as the recordings document carries it.
         {"src/core/recordings/RecordingService.cpp", {QStringLiteral("dsrReasonWords")}, {}, 4},
+        // Recording plan Task 22: dsr.rewind, dsr.live and dsr.seek's
+        // refusals. Each refuse() passes on one of RecordingService.h's
+        // kRewind... sentences (scanned in that file's entry below).
+        {"src/core/recordings/RecordingService.cpp",
+         {QStringLiteral("rewind"), QStringLiteral("goLive"), QStringLiteral("seekRewind")}, {}, 0, {},
+         {QStringLiteral("QString::fromLatin1(why)")}},
         // Recording plan Task 11: what a refused recordings.play or
         // voiceKeyer.listen says (RecordingService::playbackRefused). The
         // recorder's file name is a file name, never a reason. A kept

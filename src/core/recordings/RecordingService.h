@@ -23,6 +23,9 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; the Digital Spectrum Recorder: its tap,
 //             its writer on the worker, and its disk rules (spec 3, 6.7,
 //             section 7, A10, A14, A17). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; rewind sound: a slice plays the past from
+//             the recorder, LIVE, seek, and PTT while rewound (spec 3, 6.7,
+//             recording plan Task 22). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -35,6 +38,7 @@
 #include "core/recordings/RecordingSettings.h"
 #include "core/recordings/VoiceKeyer.h"
 #include "core/recordings/dsr/DsrRecorder.h"
+#include "core/recordings/dsr/DsrReplay.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -220,6 +224,37 @@ public:
     // while it does. Followed from RadioModel::connectionStateChanged.
     void setRadioStreaming(bool on);
 
+    // ---- Rewind sound (spec 3, 6.7, recording plan Task 22): a slice
+    // plays the past. Its frequency moves to the moment's frequency and its
+    // demodulator is fed from the ring file (the one switch on the receive
+    // path, RxDspWorker), in real time, from the next block. Other slices
+    // and receivers keep playing the radio. The recorder goes on keeping
+    // the live I/Q. Main thread.
+    static constexpr const char* kRewindGoneReason = "That moment is no longer kept.";
+    static constexpr const char* kRewindNoSliceReason = "That slice is not open.";
+    static constexpr const char* kRewindNotRewoundReason = "That slice is not playing the past.";
+    static constexpr const char* kRewindRateReason = "That moment was kept at another sample rate.";
+    static constexpr const char* kRewindDiversityReason = "Turn diversity off to rewind that slice.";
+    // Rewinds `slice` to `utcNs` (ns since 1970 UTC) at `frequencyHz`: the
+    // receiver that kept that moment and frequency plays from there. A
+    // slice already rewound keeps the frequency LIVE returns to.
+    bool rewind(int slice, qint64 utcNs, qint64 frequencyHz, QString* refusal);
+    // Back to the radio's I/Q, at the frequency the slice had before it was
+    // rewound. A live slice: nothing to do (true).
+    bool goLive(int slice, QString* refusal);
+    // A rewound slice plays on from `utcNs`, at the same frequency.
+    bool seekRewind(int slice, qint64 utcNs, QString* refusal);
+    // The slices playing the past, by slice.
+    QList<DsrRewoundSlice> rewound() const;
+    // PTT while rewound (spec 3): every rewound slice goes live on the
+    // frequency it plays, then the key goes on as usual; LIVE afterwards
+    // still returns to the frequency before rewinding. Followed from
+    // MoxController::txAboutToBegin; no prompt, no warning.
+    void rewoundSlicesLiveForTransmit();
+    // What rewind talks to; the radio's (RadioModel) unless a test sets one.
+    void setDsrRewindHostForTest(std::unique_ptr<DsrRewindHost> host);
+    std::shared_ptr<DsrReplay> replayForTest(int slice) const;
+
     // ---- The recordings worker thread, for work that must not run on the
     // main thread (the voice keyer's conversions).
     // Runs `job` on the worker after what is queued there already. From
@@ -365,6 +400,23 @@ private:
     void onDsrFailed(quint64 token);
     void workerDrainDsr();
 
+    // Rewind sound.
+    struct Rewound {
+        qint64 liveFrequencyHz = 0;
+        std::shared_ptr<DsrReplay> replay;   // switched in on the DSP worker
+        quint64 replayToken = 0;
+        std::shared_ptr<DsrReplay> pending;  // a rewind's or seek's, until it has read
+        quint64 pendingToken = 0;
+    };
+    std::shared_ptr<DsrReplay> startReplay(int slice, int receiver, int rateHz, qint64 utcNs, quint64 token);
+    void dropReplayOnWorker(const std::shared_ptr<DsrReplay>& replay);
+    void onReplayReady(int slice, quint64 token);
+    void onReplayFinished(int slice, quint64 token);
+    void endRewind(int slice, bool restoreFrequency);
+    void endAllRewinds(bool restoreFrequency);
+    void followLiveCentres();
+    void workerFillReplays();
+
     RadioModel* m_radio = nullptr;
     mutable std::unique_ptr<RecordingStore> m_store;
     mutable QString m_storeFolder;
@@ -427,6 +479,21 @@ private:
     quint64 m_dsrWorkerToken = 0;   // worker thread only
     int m_dsrWorkerBlocks = 0;      // worker thread only
     Clock m_dsrWorkerClock;         // worker thread only
+
+    // Rewind sound. Main thread, except the worker's list.
+    std::unique_ptr<DsrRewindHost> m_rewindHost;
+    QHash<int, Rewound> m_rewound;
+    // After PTT took a rewound slice live: the frequency LIVE returns it to.
+    QHash<int, qint64> m_liveAfterKey;
+    quint64 m_nextRewindToken = 1;
+    struct WorkerReplay {
+        int slice = -1;
+        quint64 token = 0;
+        std::shared_ptr<DsrReplay> replay;
+        bool readyTold = false;
+        bool finishedTold = false;
+    };
+    std::vector<WorkerReplay> m_workerReplays;   // worker thread only
 };
 
 }  // namespace NereusSDR

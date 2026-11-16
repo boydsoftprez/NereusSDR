@@ -86,6 +86,8 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 22: handleDsr, rewind sound's verbs.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 5: parseBandStackRecall.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-05: Band stack plan Task 4: the bandStack.* verbs (handleBandStack).
@@ -720,6 +722,9 @@ private:
     /// Recording plan Task 11: every voiceKeyer.* verb (recordingsVersion 3).
     /// voiceKeyer.send keys the radio as the requester.
     void handleVoiceKeyer(const NereusSDR::SessionMessage& invoke);
+    /// Recording plan Task 22: dsr.rewind, dsr.live and dsr.seek, rewind
+    /// sound (recordingsVersion 4). None keys the radio.
+    void handleDsr(const NereusSDR::SessionMessage& invoke);
     void handleRadeResetVocoder(const NereusSDR::SessionMessage& invoke);
     // R-IOS-13 / R-R3-49 (txEqCurveVersion 2): txEq.setCurve and
     // txEq.resetCurve, through TxEqCurveAccess.

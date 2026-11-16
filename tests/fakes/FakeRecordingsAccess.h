@@ -27,6 +27,9 @@
 //                 keyer's calls are recorded (sliceId carries the message
 //                 number). AI-assisted implementation via Anthropic Claude
 //                 Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
+//                 and seekPast are recorded. AI-assisted implementation via
+//                 Anthropic Claude Code.
 // =================================================================
 
 #include <QHash>
@@ -212,6 +215,12 @@ public:
         calls.append({QStringLiteral("setVoiceRepeat"), on ? 1 : 0, QString::number(delaySec)});
     }
     void listenVoice(int n) override { calls.append({QStringLiteral("listenVoice"), n}); }
+    void rewind(int slice, qint64 /*utcNs*/, qint64 /*hz*/) override
+    {
+        calls.append({QStringLiteral("rewind"), slice});
+    }
+    void live(int slice) override { calls.append({QStringLiteral("live"), slice}); }
+    void seekPast(int slice, qint64 /*utcNs*/) override { calls.append({QStringLiteral("seekPast"), slice}); }
 
 private:
     State m_state = State::Ready;

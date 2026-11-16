@@ -7,6 +7,10 @@
 //             transmit marked with its audio beside it, overwriting the
 //             oldest at the size limit (spec 3, 6.7, A10). AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; blockAt, nextBlock and frameUtcNs, so
+//             rewind (recording plan Task 22) can walk the blocks without
+//             reading the disk to find them. AI tooling: Anthropic Claude
+//             Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -89,6 +93,17 @@ public:
     // gets that block's header with `utcNs` the first returned frame's time
     // and `frames` the count returned. 0 when no block holds the moment.
     int read(int receiver, qint64 fromUtcNs, qint16* iq, int maxFrames, DsrBlockHeader* hdr) const;
+    // The header of `receiver`'s block that holds `utcNs`, as kept (its
+    // first frame's time and all its frames). From the index; no disk read.
+    // False when no block holds that moment.
+    bool blockAt(int receiver, qint64 utcNs, DsrBlockHeader* hdr) const;
+    // The header of `receiver`'s first block that starts at or after
+    // `utcNs`. From the index; no disk read. False when none is kept.
+    bool nextBlock(int receiver, qint64 utcNs, DsrBlockHeader* hdr) const;
+    // The time to ask read() for so that it starts exactly at frame `frame`
+    // of a block that starts at `blockUtcNs` (rounded up, so read()'s
+    // rounding down lands on that frame and not the one before).
+    static qint64 frameUtcNs(qint64 blockUtcNs, qint64 frame, qint64 sampleRateHz);
     // Up to `maxFrames` of your transmit audio from `fromUtcNs`, from the
     // block that holds it; `rateHz` gets its rate. 0 when none is kept then.
     int readTransmitAudio(qint64 fromUtcNs, qint16* out, int maxFrames, int* rateHz) const;

@@ -9,6 +9,9 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16: Recording plan Task 22: the dsr.* verbs (rewind sound) are
+//               sent and answered with the recordings verbs.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 11 fix round 2: a token sign-in knows the
 //               voice message is its own by the sender the Core's answer to
 //               its voiceKeyer.send names (followVoiceMessageSending).
@@ -6122,7 +6125,8 @@ StationClient::CommandOutcome StationClient::sendRecordingsCommand(const QString
         return IStationLink::sendRecordingsCommand(verb, arguments);
     }
     const QString notSent = QStringLiteral("The recordings request could not be sent.");
-    if (!verb.startsWith(QLatin1String("recordings.")) && !verb.startsWith(QLatin1String("voiceKeyer."))) {
+    if (!verb.startsWith(QLatin1String("recordings.")) && !verb.startsWith(QLatin1String("voiceKeyer."))
+        && !verb.startsWith(QLatin1String("dsr."))) {
         return {false, notSent};
     }
     QList<MirrorUpdate> wire;
@@ -8848,7 +8852,8 @@ void StationClient::handleCommandResult(const SessionMessage& message)
     // Recording plan Task 5: the recordings.* answers, and the Core's
     // recordings.playback (this window's own playback, sent on its own), go
     // to the window's RemoteRecordingsAccess, none to the generic routes.
-    if (message.commandVerb.startsWith("recordings.") || message.commandVerb.startsWith("voiceKeyer.")) {
+    if (message.commandVerb.startsWith("recordings.") || message.commandVerb.startsWith("voiceKeyer.")
+        || message.commandVerb.startsWith("dsr.")) {
         m_pendingCommands.remove(message.commandId);
         // Fix round 2: the Core names this window's own send as `sending`
         // will, which a token sign-in cannot work out for itself.

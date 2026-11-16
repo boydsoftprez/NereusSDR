@@ -4,6 +4,9 @@
 // Modification history (NereusSDR):
 // 2026-11-16  J.J. Boyd / KG4VCF; the Digital Spectrum Recorder's ring
 //             file (spec 3, 6.7, A10). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; blockAt, nextBlock and frameUtcNs for
+//             rewind (recording plan Task 22). AI tooling: Anthropic Claude
+//             Code.
 
 #include "DsrRingFile.h"
 
@@ -415,6 +418,53 @@ int DsrRingFile::read(int receiver, qint64 fromUtcNs, qint16* iq, int maxFrames,
         return static_cast<int>(count);
     }
     return 0;
+}
+
+bool DsrRingFile::blockAt(int receiver, qint64 utcNs, DsrBlockHeader* hdr) const
+{
+    QMutexLocker lock(&m_mutex);
+    if (!m_file.isOpen()) {
+        return false;
+    }
+    for (const Block& blk : m_blocks) {
+        if (blk.header.receiver == receiver && utcNs >= blk.header.utcNs && utcNs < blk.endUtcNs()) {
+            if (hdr != nullptr) {
+                *hdr = blk.header;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DsrRingFile::nextBlock(int receiver, qint64 utcNs, DsrBlockHeader* hdr) const
+{
+    QMutexLocker lock(&m_mutex);
+    if (!m_file.isOpen()) {
+        return false;
+    }
+    const Block* best = nullptr;
+    for (const Block& blk : m_blocks) {
+        if (blk.header.receiver == receiver && blk.header.utcNs >= utcNs
+            && (best == nullptr || blk.header.utcNs < best->header.utcNs)) {
+            best = &blk;
+        }
+    }
+    if (best == nullptr) {
+        return false;
+    }
+    if (hdr != nullptr) {
+        *hdr = best->header;
+    }
+    return true;
+}
+
+qint64 DsrRingFile::frameUtcNs(qint64 blockUtcNs, qint64 frame, qint64 sampleRateHz)
+{
+    if (sampleRateHz <= 0) {
+        return blockUtcNs;
+    }
+    return blockUtcNs + (frame * kNsPerSecond + sampleRateHz - 1) / sampleRateHz;
 }
 
 int DsrRingFile::readTransmitAudio(qint64 fromUtcNs, qint16* out, int maxFrames, int* rateHz) const

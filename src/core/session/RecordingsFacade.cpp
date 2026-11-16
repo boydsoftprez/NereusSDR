@@ -15,6 +15,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: the Digital
 //                 Spectrum Recorder's part and settings. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: `rewound` in
+//                 the `dsr` part. AI-assisted implementation via Anthropic
+//                 Claude Code.
 // =================================================================
 
 #include "core/session/RecordingsFacade.h"
@@ -320,6 +323,14 @@ QJsonObject RecordingsFacade::settingsJson(const RecordingSettings& settings)
 
 QJsonObject RecordingsFacade::dsrJson(const DsrStatus& status)
 {
+    // Recording plan Task 22: the slices playing the past (rewind sound).
+    QJsonArray rewound;
+    for (const DsrRewoundSlice& r : status.rewound) {
+        rewound.append(QJsonObject{{QStringLiteral("slice"), r.slice},
+                                   {QStringLiteral("utcNs"), r.utcNs},
+                                   {QStringLiteral("frequencyHz"), r.frequencyHz},
+                                   {QStringLiteral("liveFrequencyHz"), r.liveFrequencyHz}});
+    }
     return QJsonObject{{QStringLiteral("enabled"), status.enabled},
                        {QStringLiteral("disk"), QDir::toNativeSeparators(status.disk)},
                        {QStringLiteral("sizeLimitGb"), status.sizeLimitGb},
@@ -331,7 +342,8 @@ QJsonObject RecordingsFacade::dsrJson(const DsrStatus& status)
                        {QStringLiteral("oldestUtcMs"), status.oldestUtcMs},
                        {QStringLiteral("newestUtcMs"), status.newestUtcMs},
                        {QStringLiteral("hoursHeld"), status.hoursHeld()},
-                       {QStringLiteral("overflows"), static_cast<qint64>(status.overflows)}};
+                       {QStringLiteral("overflows"), static_cast<qint64>(status.overflows)},
+                       {QStringLiteral("rewound"), rewound}};
 }
 
 bool RecordingsFacade::applySettingsChange(const QJsonObject& changed,

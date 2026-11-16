@@ -13,6 +13,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 11: the voice
 //                 keyer's verbs, a chunked import and export. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
+//                 and seekPast (rewind sound, recordingsVersion 4).
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -127,6 +130,33 @@ bool RemoteRecordingsAccess::sendVoiceVerb(const QString& verb, const QJsonObjec
         return false;
     }
     return send(verb, arguments);
+}
+
+bool RemoteRecordingsAccess::sendDsrVerb(const QString& verb, const QJsonObject& arguments)
+{
+    if (state() == State::Ready && coreVersion() < kDsrVersion) {
+        emit refused(needsNewerCoreReason());
+        return false;
+    }
+    return send(verb, arguments);
+}
+
+void RemoteRecordingsAccess::rewind(int slice, qint64 utcNs, qint64 hz)
+{
+    sendDsrVerb(QStringLiteral("dsr.rewind"), QJsonObject{{QStringLiteral("slice"), slice},
+                                                          {QStringLiteral("utcNs"), utcNs},
+                                                          {QStringLiteral("frequencyHz"), hz}});
+}
+
+void RemoteRecordingsAccess::live(int slice)
+{
+    sendDsrVerb(QStringLiteral("dsr.live"), QJsonObject{{QStringLiteral("slice"), slice}});
+}
+
+void RemoteRecordingsAccess::seekPast(int slice, qint64 utcNs)
+{
+    sendDsrVerb(QStringLiteral("dsr.seek"),
+                QJsonObject{{QStringLiteral("slice"), slice}, {QStringLiteral("utcNs"), utcNs}});
 }
 
 bool RemoteRecordingsAccess::sendLink(const QString& verb, const QJsonObject& arguments)

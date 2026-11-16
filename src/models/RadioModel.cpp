@@ -20,6 +20,10 @@
 //
 // =================================================================
 // Modification history (NereusSDR):
+//   2026-11-16 — Recording plan Task 22: setSliceReplay, rewind sound's one
+//                 switch on the receive path, handed to the DSP worker; the
+//                 replays are let go once the DSP thread is joined. J.J.
+//                 Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16 — Recording plan Task 21: forkIqToTaps also copies each
 //                 receiver's I/Q into the Digital Spectrum Recorder (copy
 //                 only), behind a gate the destructor closes first. J.J. Boyd
@@ -2091,6 +2095,7 @@ mw0lge@grange-lane.co.uk
 #include "core/SpotSourceHost.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/dsr/DsrRecorder.h"
+#include "core/recordings/dsr/DsrReplay.h"
 #include "core/session/RecordingsFacade.h"
 #include "models/recordings/LocalRecordingsAccess.h"
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -31048,6 +31053,11 @@ void RadioModel::teardownConnection()
         delete m_dspThread;
         m_dspThread = nullptr;
     }
+    // Recording plan Task 22: the DSP thread is joined, so no worker reads a
+    // rewound slice's replay any more; the next worker starts with none.
+    for (std::shared_ptr<DsrReplay>& replay : m_sliceReplays) {
+        replay.reset();
+    }
 
     // 3M-1c TX pump architecture redesign — TxWorkerThread teardown.
     //
@@ -41008,6 +41018,28 @@ void RadioModel::forkIqToTaps(int receiverIndex, const QVector<float>& samples)
         dsr->consumeIq(receiverIndex, samples.constData(), static_cast<int>(samples.size() / 2));
     }
     m_dsrTapInFlight.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+// Recording plan Task 22, rewind sound. The worker's switch is the one place
+// the recording design changes what reaches a demodulator (RxDspWorker.h).
+// The live I/Q above, and so the Digital Spectrum Recorder, never sees a
+// replay: the past goes straight to the slice's demodulator.
+bool RadioModel::setSliceReplay(int sliceId, std::shared_ptr<DsrReplay> replay)
+{
+    if (sliceId < 0 || sliceId >= static_cast<int>(m_sliceReplays.size())
+        || sliceId >= RxDspWorker::kMaxReplaySlices) {
+        return false;
+    }
+    RxDspWorker* const worker = m_dspWorker;
+    if (worker == nullptr) {
+        // No worker reads a replay now. A worker still stopping in teardown
+        // may, so what is held stays held until its thread is joined.
+        return replay == nullptr;
+    }
+    // Returns once the DSP thread no longer reads the replay it replaces.
+    worker->setSliceReplay(sliceId, replay.get());
+    m_sliceReplays[static_cast<size_t>(sliceId)] = std::move(replay);
+    return true;
 }
 
 QString RadioModel::describeSuspendedStreams(const QVector<int>& streams) const

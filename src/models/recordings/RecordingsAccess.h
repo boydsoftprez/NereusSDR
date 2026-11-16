@@ -43,6 +43,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: kDsrVersion,
 //                 the Digital Spectrum Recorder's version gate. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
+//                 and seekPast (rewind sound, recordingsVersion 4).
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QJsonArray>
@@ -121,6 +124,16 @@ public:
     // setSettings): a Core below this leaves its controls visible and
     // disabled with needsNewerCoreReason() (unavailableReason(kDsrVersion)).
     static constexpr int kDsrVersion = 4;
+    // Rewind sound (recordingsVersion 4): a slice plays the past kept by
+    // the Digital Spectrum Recorder. Its frequency moves to `hz` and its
+    // sound comes from `utcNs` (ns since 1970 UTC), in real time; the
+    // document's `dsr.rewound` lists it. None keys the radio. A moment the
+    // recorder no longer keeps is refused (refused()).
+    virtual void rewind(int slice, qint64 utcNs, qint64 hz) = 0;
+    /// Back to the radio's sound, at the frequency before rewinding.
+    virtual void live(int slice) = 0;
+    /// A rewound slice plays on from `utcNs`.
+    virtual void seekPast(int slice, qint64 utcNs) = 0;
     /// Keys the radio and sends Mn; it unkeys at the end (or repeats).
     virtual void sendVoice(int n) = 0;
     /// Stops what goes out, or the wait to repeat it; the radio unkeys.

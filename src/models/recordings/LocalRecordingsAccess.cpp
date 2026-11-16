@@ -20,6 +20,9 @@
 //                 Repeat off is the station's as a device, refused under
 //                 another device's message (ruling 8.5). AI-assisted via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
+//                 and seekPast (rewind sound, recordingsVersion 4).
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -156,6 +159,36 @@ void LocalRecordingsAccess::start(int sliceId)
     emit refused(QStringLiteral("Slice %1 could not start recording. Check where recordings are kept "
                                 "in Setup.")
                      .arg(QChar(QLatin1Char('A').unicode() + sliceId)));
+}
+
+void LocalRecordingsAccess::rewind(int slice, qint64 utcNs, qint64 hz)
+{
+    if (RecordingService* recordings = begin()) {
+        QString refusal;
+        if (!recordings->rewind(slice, utcNs, hz, &refusal)) {
+            emit refused(refusal);
+        }
+    }
+}
+
+void LocalRecordingsAccess::live(int slice)
+{
+    if (RecordingService* recordings = begin()) {
+        QString refusal;
+        if (!recordings->goLive(slice, &refusal)) {
+            emit refused(refusal);
+        }
+    }
+}
+
+void LocalRecordingsAccess::seekPast(int slice, qint64 utcNs)
+{
+    if (RecordingService* recordings = begin()) {
+        QString refusal;
+        if (!recordings->seekRewind(slice, utcNs, &refusal)) {
+            emit refused(refusal);
+        }
+    }
 }
 
 void LocalRecordingsAccess::stop(int sliceId)

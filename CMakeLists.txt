@@ -1163,6 +1163,8 @@ set(CORE_SOURCES
     # The Digital Spectrum Recorder: every receiver's I/Q in one ring file.
     src/core/recordings/dsr/DsrRingFile.cpp
     src/core/recordings/dsr/DsrRecorder.cpp
+    # Rewind sound: a slice fed from the ring file (recording plan Task 22).
+    src/core/recordings/dsr/DsrReplay.cpp
     src/core/RadeChannel.cpp
     src/core/RadeV2Feature.cpp
     src/core/RadeRxWorker.cpp

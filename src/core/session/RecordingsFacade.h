@@ -36,13 +36,19 @@
 //               "dsr":      { "enabled", "disk", "sizeLimitGb",
 //                             "recording", "reason", "sizeLimitBytes",
 //                             "usedBytes", "writePosition", "oldestUtcMs",
-//                             "newestUtcMs", "hoursHeld", "overflows" } }
+//                             "newestUtcMs", "hoursHeld", "overflows",
+//                             "rewound": [ { "slice", "utcNs",
+//                             "frequencyHz", "liveFrequencyHz" } ] } }
 //             `dsr` is the Digital Spectrum Recorder: its settings (disk ""
 //             is the Core's own), whether it writes now, why not when it is
 //             on (an SD card, a missing disk, a failed write; "" otherwise),
 //             and the ring file's figures (times in ms since 1970 UTC, 0 when
 //             nothing is kept; hoursHeld is newest less oldest). The figures
 //             move at most every RecordingService::kDsrFiguresRefreshMs.
+//             `rewound` lists the slices playing the past (rewind sound,
+//             the dsr.* verbs): the moment played when the document was
+//             built (ns since 1970 UTC), the slice's frequency, and the
+//             frequency LIVE returns it to.
 //             `sending` is the message going out, or (`waitingMs` above 0)
 //             the wait before its next repeat; it is rebuilt every
 //             kElapsedRefreshMs while it lasts.
@@ -73,6 +79,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 21: version 4, the
 //                 Digital Spectrum Recorder (`dsr`, and its three settings in
 //                 recordings.setSettings). AI-assisted implementation via
+//                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: `rewound` in
+//                 `dsr`, and the dsr.rewind, dsr.live and dsr.seek verbs
+//                 (still version 4). AI-assisted implementation via
 //                 Anthropic Claude Code.
 // =================================================================
 

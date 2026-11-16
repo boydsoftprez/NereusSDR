@@ -24,6 +24,9 @@
 //   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 7: each list
 //                 reader's own answer. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
+//                 and seekPast (rewind sound, recordingsVersion 4).
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QFile>
@@ -80,6 +83,9 @@ public:
     void clearVoice(int n) override;
     void setVoiceRepeat(bool on, int delaySec) override;
     void listenVoice(int n) override;
+    void rewind(int slice, qint64 utcNs, qint64 hz) override;
+    void live(int slice) override;
+    void seekPast(int slice, qint64 utcNs) override;
 
 private:
     struct Copy {

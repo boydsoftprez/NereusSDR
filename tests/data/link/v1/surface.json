@@ -1953,6 +1953,60 @@
             "arguments": [
                 {
                     "kind": "i64",
+                    "name": "slice",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "utcNs",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "frequencyHz",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "dsr.rewind"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "slice",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "dsr.live"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
+                    "name": "slice",
+                    "optional": false
+                },
+                {
+                    "kind": "i64",
+                    "name": "utcNs",
+                    "optional": false
+                }
+            ],
+            "capability": "recordingsVersion",
+            "capabilityVersion": 4,
+            "minMinor": 11,
+            "verb": "dsr.seek"
+        },
+        {
+            "arguments": [
+                {
+                    "kind": "i64",
                     "name": "band",
                     "optional": false
                 },

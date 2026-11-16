@@ -35,6 +35,9 @@
 //                 keyer's voiceKeyer.* verbs (recordingsVersion 3), with a
 //                 chunked import and export. AI-assisted implementation via
 //                 Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 22: rewind, live
+//                 and seekPast (rewind sound, recordingsVersion 4).
+//                 AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QByteArray>
@@ -88,6 +91,9 @@ public:
     void clearVoice(int n) override;
     void setVoiceRepeat(bool on, int delaySec) override;
     void listenVoice(int n) override;
+    void rewind(int slice, qint64 utcNs, qint64 hz) override;
+    void live(int slice) override;
+    void seekPast(int slice, qint64 utcNs) override;
 
     /// StationClient: a recordings.* answer, or the Core's recordings.playback.
     void takeResult(const QByteArray& verb, bool accepted, const QString& reason,
@@ -119,6 +125,9 @@ private:
     /// A voiceKeyer.* verb: as send(), and refused against a Core older
     /// than recordingsVersion 3.
     bool sendVoiceVerb(const QString& verb, const QJsonObject& arguments);
+    /// A dsr.* verb: as send(), and refused against a Core older than
+    /// recordingsVersion 4.
+    bool sendDsrVerb(const QString& verb, const QJsonObject& arguments);
     bool sendLink(const QString& verb, const QJsonObject& arguments);
     void takeVoiceImport(const QByteArray& verb, bool accepted, const QString& reason);
     void sendNextImportPiece();

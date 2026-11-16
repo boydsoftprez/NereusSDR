@@ -7,12 +7,15 @@
 //             recordings worker into the ring file, one second at a time,
 //             with your transmit marked and its audio beside it (spec 3,
 //             6.1, 6.7, A10, A17). AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; DsrStatus carries the rewound slices
+//             (recording plan Task 22). AI tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
 #include "core/recordings/SpscFloatRing.h"
 #include "core/recordings/dsr/DsrRingFile.h"
 
+#include <QList>
 #include <QString>
 #include <QtGlobal>
 
@@ -22,6 +25,16 @@
 #include <vector>
 
 namespace NereusSDR {
+
+// One slice playing the past (rewind sound, recording plan Task 22): the
+// moment it plays, the frequency it is on, and the frequency LIVE returns
+// it to.
+struct DsrRewoundSlice {
+    int slice = -1;
+    qint64 utcNs = 0;
+    qint64 frequencyHz = 0;
+    qint64 liveFrequencyHz = 0;
+};
 
 // What the recorder holds and why it is off, as the recordings document
 // carries it (RecordingsFacade, the `dsr` part).
@@ -37,6 +50,7 @@ struct DsrStatus {
     qint64 oldestUtcMs = 0;    // 0 when nothing is kept
     qint64 newestUtcMs = 0;
     quint64 overflows = 0;     // tap blocks dropped because the writer fell behind
+    QList<DsrRewoundSlice> rewound;   // the slices playing the past, by slice
     double hoursHeld() const
     {
         return newestUtcMs > oldestUtcMs ? double(newestUtcMs - oldestUtcMs) / 3600000.0 : 0.0;

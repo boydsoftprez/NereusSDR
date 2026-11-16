@@ -193,6 +193,7 @@
         {"id": "session-verbs-recordings", "file": "sessions/verbs-recordings.json", "kind": "session", "requires": {"recordingsVersion": 1}},
         {"id": "session-verbs-voice-keyer", "file": "sessions/verbs-voice-keyer.json", "kind": "session", "requires": {"recordingsVersion": 3}},
         {"id": "session-recordings-dsr-settings", "file": "sessions/recordings-dsr-settings.json", "kind": "session", "requires": {"recordingsVersion": 4}},
+        {"id": "session-dsr-rewind", "file": "sessions/dsr-rewind.json", "kind": "session", "requires": {"recordingsVersion": 4}},
         {"id": "session-verbs-band-select", "file": "sessions/verbs-band-select.json", "kind": "session", "requires": {"bandSelectVersion": 1}},
         {"id": "session-verbs-radio-hardware", "file": "sessions/verbs-radio-hardware.json", "kind": "session", "requires": {"radioHardwareVersion": 3}},
         {"id": "session-adc-attenuators", "file": "sessions/adc-attenuators.json", "kind": "session", "requires": {"adcAttenuatorVersion": 1}},

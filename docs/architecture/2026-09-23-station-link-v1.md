@@ -1664,7 +1664,9 @@ When a feature is off, its version is 0:
   client sends a `voiceKeyer.*` verb only when it was. At 4 the document
   adds `dsr`, the Digital Spectrum Recorder (every receiver's I/Q kept on
   the Core's disk in a loop with a size limit), and `recordings.setSettings`
-  takes `dsrEnabled`, `dsrDisk` and `dsrSizeLimitGb`; a peer that declared
+  takes `dsrEnabled`, `dsrDisk` and `dsrSizeLimitGb`, and the Core takes
+  the `dsr.*` verbs (rewind sound, section 9) with `dsr.rewound` in the
+  document; a peer that declared
   `recordings` 1 is sent 4, and a client below 4 leaves its recorder
   controls visible and greyed with the words below. The session protocol
   minor did not change. A client on a Core that sends no entry shows
@@ -3854,7 +3856,11 @@ Notes on the keys:
   goes), `oldestUtcMs` and `newestUtcMs` (ms since 1970 UTC, 0 when nothing
   is kept), `hoursHeld` (newest less oldest) and `overflows` (blocks the
   receiver tap dropped because the writer fell behind). The figures move at
-  most every 5 seconds. While a slice
+  most every 5 seconds. `rewound` lists the slices playing the past (the
+  `dsr.*` verbs): `slice`, `utcNs` (the moment played when the document
+  was built, ns since 1970 UTC), `frequencyHz` (the slice's frequency) and
+  `liveFrequencyHz` (the frequency LIVE returns it to); it changes when a
+  slice is rewound, moved or goes live. While a slice
   records, or a voice message goes out, the document is rebuilt once a
   second. `revision` moves by one each
   time `json` changes. The recordings themselves are not in it: a client asks
@@ -6653,6 +6659,9 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `voiceKeyer.clear` | `n` i64 | `recordingsVersion` | 3 | 11 |
 | `voiceKeyer.setRepeat` | `on` bool, `delaySec` i64 | `recordingsVersion` | 3 | 11 |
 | `voiceKeyer.listen` | `n` i64 | `recordingsVersion` | 3 | 11 |
+| `dsr.rewind` | `slice` i64, `utcNs` i64, `frequencyHz` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.live` | `slice` i64 | `recordingsVersion` | 4 | 11 |
+| `dsr.seek` | `slice` i64, `utcNs` i64 | `recordingsVersion` | 4 | 11 |
 | `paProfile.setUseMax` | `band` i64, `on` bool | `paProfileVersion` | 1 | 11 |
 | `configureRfKit` | `host` utf8, `port` i64 | `remoteRfKitControlVersion` | 2 | 11 |
 | `disconnectRfKit` | none | `remoteRfKitControlVersion` | 2 | 11 |
@@ -7104,6 +7113,26 @@ These command groups need a sentence beyond the table:
   minutes.", "The recorder's size can be 1 to 100000 GB.", "That disk is
   not on the Core now." and the store's words for a name already used. None keys the
   radio; playback alone never transmits.
+- **Rewind sound** (`recordingsVersion` 4). `dsr.rewind` (`slice`, `utcNs`,
+  ns since 1970 UTC, `frequencyHz`) moves the slice to that frequency and
+  feeds its demodulator from the Digital Spectrum Recorder from that moment,
+  in real time, from the next block; the receiver that kept that moment
+  with that frequency in its span plays. Other slices and receivers keep
+  playing the radio, and the recorder keeps the live I/Q meanwhile.
+  `dsr.seek` (`slice`, `utcNs`) moves a rewound slice to another moment at
+  the same frequency. `dsr.live` (`slice`) returns it to the radio at the
+  frequency it had before it was rewound (a live slice: accepted, nothing
+  changes). A rewound slice that plays up to the newest second kept goes
+  on into live by itself, on the frequency it plays. Any key of the radio
+  takes every rewound slice live on the frequency it plays, before the key
+  goes on as usual; `dsr.live` afterwards still returns it to the
+  frequency before rewinding. None keys the radio. Refusals: "That moment
+  is no longer kept." (outside what the recorder keeps, no receiver kept
+  that frequency then, or the recorder is off), "That slice is not open.",
+  "That slice is not playing the past." (`dsr.seek` on a live slice),
+  "That moment was kept at another sample rate." (the slice's receiver
+  runs at another rate now) and "Turn diversity off to rewind that
+  slice.".
 - **The voice keyer** (`recordingsVersion` 3). Messages M1 to M8 are kept on
   the Core as 48 kHz 16-bit mono WAV, at most two minutes each.
   `voiceKeyer.send` (`n`) is the one verb that keys the radio: it keys as
