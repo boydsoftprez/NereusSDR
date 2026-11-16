@@ -5,6 +5,8 @@
 //               AI-assisted via xAI Grok.
 //   2026-11-05  Corrections for review findings. J.J. Boyd (KG4VCF),
 //               AI-assisted via Anthropic Claude Code.
+//   2026-11-14  -1 dBFS is the default OVER threshold. Brian Sutton (W4KZO),
+//               AI-assisted via xAI Grok.
 //
 #include <QtTest>
 #include "core/SsbModulationAnalyzer.h"
@@ -124,6 +126,24 @@ private slots:
         QVERIFY(snap.signalPresent);
         QVERIFY2(std::fabs(snap.peakPct - 100.0) < 0.5, qPrintable(QString::number(snap.peakPct)));
         QVERIFY2(std::fabs(snap.peakDbfs) < 0.2, qPrintable(QString::number(snap.peakDbfs)));
+    }
+
+    // The applet's default OVER mark. Linear 10^(-1/20) is -1 dBFS and
+    // about 89.13 percent of full scale.
+    void minusOneDbfs_isTheOverThreshold()
+    {
+        SsbModulationAnalyzer analyzer;
+        analyzer.setSampleRate(kFs);
+        const double linear = std::pow(10.0, -1.0 / 20.0);
+        feedClocked(analyzer, constantIq(0.5, linear, 0.0));
+        const auto snap = analyzer.snapshot();
+        QVERIFY(snap.signalPresent);
+        QVERIFY2(std::fabs(snap.peakHoldDbfs - (-1.0)) < 0.02,
+                 qPrintable(QString::number(snap.peakHoldDbfs)));
+        QVERIFY2(std::fabs(snap.peakDbfs - (-1.0)) < 0.02,
+                 qPrintable(QString::number(snap.peakDbfs)));
+        QVERIFY2(std::fabs(snap.peakHoldPct - 100.0 * linear) < 0.2,
+                 qPrintable(QString::number(snap.peakHoldPct)));
     }
 
     void reset_clearsTheHold()
