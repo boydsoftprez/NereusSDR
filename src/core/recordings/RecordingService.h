@@ -12,6 +12,7 @@
 #pragma once
 
 #include "core/NereusCoreExport.h"
+#include "core/audio/PlaybackFeed.h"
 #include "core/recordings/AudioFileWriter.h"
 #include "core/recordings/QuietRule.h"
 #include "core/recordings/RecordingPlayer.h"
@@ -22,11 +23,13 @@
 #include <QList>
 #include <QMetaType>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include <array>
 #include <atomic>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -36,6 +39,7 @@ class QTimer;
 
 namespace NereusSDR {
 
+class AudioEngine;
 class ContactRecorder;
 class RadioModel;
 class RecordingStore;
@@ -68,7 +72,7 @@ struct KeptEvent {
 //
 // A device name of "" is the window or Core that runs the radio itself:
 // stopping from there is StoppedHere; any other name is StoppedOnDevice.
-class NEREUS_CORE_EXPORT RecordingService : public QObject {
+class NEREUS_CORE_EXPORT RecordingService : public QObject, public PlaybackFeed {
     Q_OBJECT
 
 public:
@@ -130,6 +134,17 @@ public:
     // the rest silence; returns the frames that were the recording. No lock,
     // no wait, no allocation.
     int pullPlayback(const ListenerId& who, float* mono48k, int frames) noexcept;
+
+    // The speakers that hear a listener's playback, as AudioEngine's
+    // playback slot: the radio's AudioEngine pulls each slot it drains from
+    // here (PlaybackFeed). "local" has AudioEngine::kLocalPlaybackSlotId from
+    // the start; a session's device gets its owner mix's slot from
+    // DaemonMediaController, and MasterMixer::kNoPlaybackSlot when it goes.
+    static constexpr const char* kLocalListener = "local";
+    void setListenerSpeakerSlot(const ListenerId& who, int playbackSlotId);
+    // PlaybackFeed, the DSP thread: the playback of whoever is bound to the
+    // slot, while it is routed to the speakers.
+    int pullSpeaker(int playbackSlotId, float* mono48k, int frames) noexcept override;
 
     // ---- Test seams.
     using Clock = std::function<qint64()>;
@@ -212,10 +227,18 @@ private:
     };
     // What the audio side reads. `listener` is written on the main thread
     // only while unbound and no pull runs (waitForPulls).
+    enum PlaybackRoute : int { kRouteSpeaker = 0, kRouteOnAir = 1 };
     struct PlaybackChannel {
         ListenerId listener;
         std::atomic<bool> bound{false};
         std::atomic<RecordingPlayer*> player{nullptr};
+        // The mixer playback slot of the listener's speakers.
+        std::atomic<int> speakerSlot{std::numeric_limits<int>::min()};
+        // One reader per listener: the speakers (pullSpeaker) unless this
+        // says on the air. Speaker when bound; Task 10's on-air source
+        // sets kRouteOnAir while the listener transmits its playback and
+        // reads pullPlayback itself, so the speakers stop pulling.
+        std::atomic<int> route{kRouteSpeaker};
     };
     struct WorkerPlayer {
         ListenerId who;
@@ -266,6 +289,8 @@ private:
     std::vector<WorkerPlayer> m_workerPlayers;   // worker thread only: the playbacks being decoded
 
     QHash<ListenerId, Listener> m_listeners;
+    QHash<ListenerId, int> m_listenerSlots;     // who -> AudioEngine playback slot
+    QPointer<AudioEngine> m_feedEngine;          // the engine that pulls from this
     std::array<PlaybackChannel, kMaxPlaybackListeners> m_playChannels;
     std::atomic<bool> m_playClosed{false};
     mutable std::atomic<int> m_pullsInFlight{0};

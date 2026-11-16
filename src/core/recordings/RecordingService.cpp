@@ -4,14 +4,16 @@
 // Modification history (NereusSDR):
 // 2026-11-15  J.J. Boyd / KG4VCF; the Core's recording service (spec 6.1,
 //             6.2, V1, V4, section 7). AI tooling: Anthropic Claude Code.
-// 2026-11-15  J.J. Boyd / KG4VCF; the player (spec 6.1 Player, 6.3, V6).
-//             AI tooling: Anthropic Claude Code.
+// 2026-11-15  J.J. Boyd / KG4VCF; the player (spec 6.1 Player, 6.3, V6),
+//             and its feed to the listener's own speakers. AI tooling:
+//             Anthropic Claude Code.
 
 #include "RecordingService.h"
 
 #include "core/AudioEngine.h"
 #include "core/LogCategories.h"
 #include "core/MoxController.h"
+#include "core/audio/MasterMixer.h"
 #include "core/NoiseFloorTracker.h"
 #include "core/SpotSourceHost.h"
 #include "core/meters/SliceMeterPump.h"
@@ -71,6 +73,7 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
     , m_clock([] { return QDateTime::currentMSecsSinceEpoch(); })
 {
     qRegisterMetaType<ListenerId>("NereusSDR::ListenerId");
+    m_listenerSlots.insert(QString::fromLatin1(kLocalListener), AudioEngine::kLocalPlaybackSlotId);
     m_quietTimer = new QTimer(this);
     m_quietTimer->setInterval(kQuietCheckIntervalMs);
     connect(m_quietTimer, &QTimer::timeout, this, &RecordingService::checkQuiet);
@@ -82,6 +85,11 @@ RecordingService::RecordingService(RadioModel* radio, QObject* parent)
         }
         connect(m_radio, &RadioModel::sliceAdded, this, &RecordingService::onSliceAdded);
         connect(m_radio, &RadioModel::sliceRemoved, this, &RecordingService::onSliceRemoved);
+        // The player's speakers: every drain pulls each playback slot here.
+        if (AudioEngine* engine = m_radio->audioEngine()) {
+            m_feedEngine = engine;
+            engine->setPlaybackFeed(this);
+        }
     }
     applyArming();
 }
@@ -90,7 +98,11 @@ RecordingService::~RecordingService()
 {
     stopAll();
 
-    // Nothing on the audio thread may still be inside a player.
+    // No drain may still pull from here, and nothing on the audio thread
+    // may still be inside a player.
+    if (m_feedEngine) {
+        m_feedEngine->setPlaybackFeed(nullptr);
+    }
     m_playClosed.store(true, std::memory_order_seq_cst);
     waitForPulls();
     for (PlaybackChannel& ch : m_playChannels) {
@@ -765,6 +777,60 @@ int RecordingService::pullPlayback(const ListenerId& who, float* mono48k, int fr
     return n;
 }
 
+int RecordingService::pullSpeaker(int playbackSlotId, float* mono48k, int frames) noexcept
+{
+    int n = 0;
+    bool pulled = false;
+    if (!m_playClosed.load(std::memory_order_seq_cst)) {
+        m_pullsInFlight.fetch_add(1, std::memory_order_seq_cst);
+        if (!m_playClosed.load(std::memory_order_seq_cst)) {
+            for (PlaybackChannel& ch : m_playChannels) {
+                if (ch.bound.load(std::memory_order_seq_cst)
+                    && ch.speakerSlot.load(std::memory_order_seq_cst) == playbackSlotId) {
+                    RecordingPlayer* player = ch.player.load(std::memory_order_seq_cst);
+                    if (player && ch.route.load(std::memory_order_seq_cst) == kRouteSpeaker) {
+                        n = player->pull(mono48k, frames);
+                        pulled = true;
+                    }
+                    break;
+                }
+            }
+        }
+        m_pullsInFlight.fetch_sub(1, std::memory_order_seq_cst);
+    }
+    if (!pulled && mono48k != nullptr && frames > 0) {
+        std::fill(mono48k, mono48k + frames, 0.0f);
+    }
+    return n;
+}
+
+void RecordingService::setListenerSpeakerSlot(const ListenerId& who, int playbackSlotId)
+{
+    if (playbackSlotId == MasterMixer::kNoPlaybackSlot) {
+        m_listenerSlots.remove(who);
+    } else {
+        // One listener per slot: whoever had it before no longer does.
+        for (auto it = m_listenerSlots.begin(); it != m_listenerSlots.end();) {
+            if (it.value() == playbackSlotId && it.key() != who) {
+                const auto l = m_listeners.constFind(it.key());
+                if (l != m_listeners.cend()) {
+                    m_playChannels[static_cast<size_t>(l->channel)].speakerSlot.store(
+                        MasterMixer::kNoPlaybackSlot, std::memory_order_seq_cst);
+                }
+                it = m_listenerSlots.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        m_listenerSlots.insert(who, playbackSlotId);
+    }
+    const auto l = m_listeners.constFind(who);
+    if (l != m_listeners.cend()) {
+        m_playChannels[static_cast<size_t>(l->channel)].speakerSlot.store(
+            m_listenerSlots.value(who, MasterMixer::kNoPlaybackSlot), std::memory_order_seq_cst);
+    }
+}
+
 void RecordingService::startPlayer(const ListenerId& who, Listener& l, qint64 fromMs)
 {
     dropPlayer(l);
@@ -824,6 +890,9 @@ int RecordingService::bindChannel(const ListenerId& who)
             // bound, so no audio thread reads the name now.
             ch.listener = who;
             ch.player.store(nullptr, std::memory_order_seq_cst);
+            ch.speakerSlot.store(m_listenerSlots.value(who, MasterMixer::kNoPlaybackSlot),
+                                 std::memory_order_seq_cst);
+            ch.route.store(kRouteSpeaker, std::memory_order_seq_cst);
             ch.bound.store(true, std::memory_order_seq_cst);
             return k;
         }

@@ -90,7 +90,8 @@
 //                 0..31, each routed only into the speakers sum that names
 //                 it (an owner's playbackSlot, or the local sums'
 //                 localPlaybackSlot); never a barrier member, never in the
-//                 headphones, radio or every-slice sums. NereusSDR-original.
+//                 headphones, radio or every-slice sums; queuedFrames for
+//                 the feed's top-up. NereusSDR-original.
 //                 J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 // =================================================================
 
@@ -306,6 +307,9 @@ public:
     void setPlaybackSlot(int slotId, bool playback);
     // No playback slot: an OwnerOutput or a local sum that plays nothing.
     static constexpr int kNoPlaybackSlot = std::numeric_limits<int>::min();
+    // Audio thread: the frames a slot holds for the next drain (0 for an
+    // unknown slot). The playback feed tops a slot up to the drain with it.
+    int queuedFrames(int slotId) const;
 
     // Audio thread: queue a slice's stereo block. samples is interleaved
     // L/R float32, frames = sample pairs. Enrols the slice as a barrier

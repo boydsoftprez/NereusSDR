@@ -23,7 +23,8 @@
 // Modification history (NereusSDR):
 //   2026-11-15: Recording player (spec 6.1, 6.3): a playback slot in the
 //               mixer for the local output and for each owner mix, and
-//               setOwnerMixPlayback, the owner mix's route to its own.
+//               setOwnerMixPlayback, the owner mix's route to its own;
+//               setPlaybackFeed, which each drain tops the slots up from.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-27: Add approved remote CW hold/activity integration for
 //               J.J. Boyd (KG4VCF), AI-assisted via OpenAI Codex.
@@ -442,6 +443,8 @@ enum class RemotePlaybackRefusal : int { None = 0, Unavailable = 1, Format = 2 }
 // beside the MON button. Independent of the receivers' own routes: MON is
 // how you sound on air, and it goes where you want to hear it.
 enum class TxMonitorOutput : int { Speakers = 0, Headphones = 1 };
+
+class PlaybackFeed;
 
 class MasterMixAudioTap {
 public:
@@ -1076,6 +1079,11 @@ public:
     static constexpr int ownerPlaybackSlotId(int ownerMixSlot) { return -4 - ownerMixSlot; }
     void setOwnerMixPlayback(int slot, bool on);
     bool ownerMixPlayback(int slot) const;
+    /// Where each drain pulls playback from (RecordingService), topping
+    /// every playback slot it sums up to the drain so the slot's ring never
+    /// drops in normal play. nullptr: none. Control thread; returns once no
+    /// drain is inside the feed it replaced.
+    void setPlaybackFeed(PlaybackFeed* feed);
     /// Owner mixes taken now; diagnostics and leak checks.
     int ownerMixCount() const;
 
@@ -2302,6 +2310,15 @@ private:
     static constexpr int kTxMonitorPumpFrames = 256;
     std::array<float, kTxMonitorPumpFrames> m_txMonitorPumpMono{};
     std::array<float, kTxMonitorPumpFrames * 2> m_txMonitorPumpStereo{};
+
+    // Recording player: the playback feed and its gate (setPlaybackFeed),
+    // and the DSP thread's scratch for one pull.
+    void feedPlaybackSlot(int slotId, int frames);
+    std::atomic<PlaybackFeed*> m_playbackFeed{nullptr};
+    std::atomic<unsigned> m_playbackFeedCalls{0};
+    static constexpr int kPlaybackPumpFrames = 256;
+    std::array<float, kPlaybackPumpFrames> m_playbackPumpMono{};
+    std::array<float, kPlaybackPumpFrames * 2> m_playbackPumpStereo{};
     // CW transmit (R-CW-39): the computer sidetone (setCwSidetoneRun).
     // Configured in the constructor at the mix rate; rendered on the DSP
     // thread in drainMixes. The scratch is sized with the mix scratch

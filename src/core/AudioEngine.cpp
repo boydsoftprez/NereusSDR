@@ -21,7 +21,8 @@
 // Modification history (NereusSDR):
 //   2026-11-15: Recording player (spec 6.1, 6.3): the playback slots are
 //               registered with the speakers mixer, and each drain names
-//               the local one and each owner mix's own.
+//               the local one and each owner mix's own, each topped up
+//               from the playback feed first.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-10-17 : openRole() gives the bus its stream event sink before
 //                 it opens, so a device lost during or right after the
@@ -443,6 +444,8 @@
 #include <bit>
 #include <array>
 #include <thread>
+
+#include "core/audio/PlaybackFeed.h"
 #include <vector>
 
 #ifdef HAVE_WDSP
@@ -4116,6 +4119,43 @@ void AudioEngine::setOwnerMixPlayback(int slot, bool on)
     m_ownerMixes[static_cast<size_t>(slot)].playback.store(on, std::memory_order_release);
 }
 
+void AudioEngine::setPlaybackFeed(PlaybackFeed* feed)
+{
+    m_playbackFeed.store(feed, std::memory_order_seq_cst);
+    while (m_playbackFeedCalls.load(std::memory_order_seq_cst) != 0) {
+        std::this_thread::yield();
+    }
+}
+
+// DSP thread, inside drainMixes: the slot is topped up to `frames`, what
+// this drain can take, so it never holds more than one drain's worth.
+void AudioEngine::feedPlaybackSlot(int slotId, int frames)
+{
+    m_playbackFeedCalls.fetch_add(1, std::memory_order_seq_cst);
+    PlaybackFeed* const feed = m_playbackFeed.load(std::memory_order_seq_cst);
+    if (feed != nullptr) {
+        int want = frames - m_masterMix.queuedFrames(slotId);
+        while (want > 0) {
+            const int ask = std::min(want, kPlaybackPumpFrames);
+            const int got = feed->pullSpeaker(slotId, m_playbackPumpMono.data(), ask);
+            if (got <= 0) {
+                break;
+            }
+            for (int i = 0; i < got; ++i) {
+                m_playbackPumpStereo[static_cast<size_t>(2 * i)] = m_playbackPumpMono[static_cast<size_t>(i)];
+                m_playbackPumpStereo[static_cast<size_t>(2 * i + 1)] =
+                    m_playbackPumpMono[static_cast<size_t>(i)];
+            }
+            m_masterMix.accumulate(slotId, m_playbackPumpStereo.data(), got);
+            want -= got;
+            if (got < ask) {
+                break;
+            }
+        }
+    }
+    m_playbackFeedCalls.fetch_sub(1, std::memory_order_seq_cst);
+}
+
 bool AudioEngine::ownerMixPlayback(int slot) const
 {
     return validOwnerMixSlot(slot)
@@ -4660,6 +4700,14 @@ void AudioEngine::drainMixes(int frames, bool monitorOnly)
     // CW transmit (R-CW-39, D15): the computer sidetone into the monitor
     // slot, the frames this drain will take, just before it sums.
     produceCwSidetone(drainFrames);
+    // Recording player (spec 6.1, 6.3): each playback slot this drain sums,
+    // topped up from the decoded playback, just before it sums.
+    feedPlaybackSlot(kLocalPlaybackSlotId, drainFrames);
+    for (int k = 0; k < ownerCount; ++k) {
+        if (owners[static_cast<size_t>(k)].playbackSlot != MasterMixer::kNoPlaybackSlot) {
+            feedPlaybackSlot(owners[static_cast<size_t>(k)].playbackSlot, drainFrames);
+        }
+    }
     const int mixed = m_masterMix.tryDrain(
         mix.data(), hpMix.data(), drainFrames,
         m_localOutputSliceMask.load(std::memory_order_acquire), owners.data(), ownerCount,

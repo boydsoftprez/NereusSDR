@@ -21,14 +21,20 @@
 #include <QTimeZone>
 
 #include "core/AudioEngine.h"
+#include "core/IAudioBus.h"
 #include "core/audio/MasterMixer.h"
 #include "core/recordings/AudioFileWriter.h"
 #include "core/recordings/RecordingNames.h"
 #include "core/recordings/RecordingPlayer.h"
 #include "core/recordings/RecordingService.h"
 #include "core/recordings/RecordingStore.h"
+#include "models/RadioModel.h"
+#include "models/SliceModel.h"
+
+#include "fakes/FakeAudioBus.h"
 
 #include <cmath>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -68,6 +74,25 @@ double peak(const std::vector<float>& v, int samples)
     double p = 0.0;
     for (int i = 0; i < samples; ++i) {
         p = std::max(p, std::fabs(static_cast<double>(v[static_cast<size_t>(i)])));
+    }
+    return p;
+}
+
+// One owner mix's speakers sum, as AudioEngine hands it to a tap.
+class SumTap final : public MasterMixAudioTap {
+public:
+    void consume(const float* samples, int frames, int) noexcept override
+    {
+        received.insert(received.end(), samples, samples + frames * 2);
+    }
+    std::vector<float> received;
+};
+
+double peakOf(const std::vector<float>& v)
+{
+    double p = 0.0;
+    for (const float x : v) {
+        p = std::max(p, std::fabs(static_cast<double>(x)));
     }
     return p;
 }
@@ -433,6 +458,88 @@ private slots:
         std::vector<float> mono(kBlock, 1.0f);
         QCOMPARE(svc->pullPlayback(who, mono.data(), kBlock), 0);
         QCOMPARE(peak(mono, kBlock), 0.0);
+    }
+
+    // The speaker feed: nothing but the engine's own drains moves the
+    // playback. A plays; A's owner mix carries it at its level; B's mix
+    // and the local speakers stay silent; the position is what the drains
+    // took.
+    void theEngineFeedsTheListenersOwnSpeakers()
+    {
+        RadioModel radio(RadioModel::Role::Local);
+        AudioEngine* engine = radio.audioEngine();
+        RecordingService* svc = radio.recordingService();
+        QVERIFY(engine && svc);
+        auto bus = std::make_unique<FakeAudioBus>(QStringLiteral("FakeSpeakers"));
+        AudioFormat format;
+        format.sampleRate = 48000;
+        format.channels = 2;
+        format.sample = AudioFormat::Sample::Float32;
+        bus->open(format);
+        FakeAudioBus* speakers = bus.get();
+        engine->setSpeakersBusForTest(std::move(bus));
+        engine->masterMixForTest().setRampFrames(1);
+        engine->masterMixForTest().setSlewUpFrames(0);
+        engine->setVolume(1.0f);
+        const int slice = radio.addSlice();
+        engine->setSliceStreaming(slice, true);
+        engine->setLocalOutputSliceMask(0);   // the local speakers carry no receiver
+
+        const QString disk = m_dir.filePath(QStringLiteral("engine-disk"));
+        QDir().mkpath(disk);
+        RecordingSettings s = svc->settings();
+        s.disk = disk;
+        s.format = AudioFileFormat::Wav;
+        svc->setSettings(s);
+        const QString id = addRecording(*svc, QStringLiteral("engine-tone"), 48000, tone(48000, 1000.0, 2.0));
+        QVERIFY(!id.isEmpty());
+
+        const int mixA = engine->acquireOwnerMix();
+        const int mixB = engine->acquireOwnerMix();
+        QVERIFY(mixA >= 0 && mixB >= 0);
+        SumTap tapA;
+        SumTap tapB;
+        QVERIFY(engine->setOwnerMixAudioTap(mixA, &tapA, true));
+        QVERIFY(engine->setOwnerMixAudioTap(mixB, &tapB, true));
+        engine->setOwnerMixPlayback(mixA, true);
+        engine->setOwnerMixPlayback(mixB, true);
+        svc->setListenerSpeakerSlot(QStringLiteral("deviceA"), AudioEngine::ownerPlaybackSlotId(mixA));
+        svc->setListenerSpeakerSlot(QStringLiteral("deviceB"), AudioEngine::ownerPlaybackSlotId(mixB));
+
+        svc->play(QStringLiteral("deviceA"), id);
+        svc->pumpForTest();
+        constexpr int kPeriod = 64;
+        const std::vector<float> silence(kPeriod * 2, 0.0f);
+        for (int period = 0; period < 750; ++period) {
+            engine->rxBlockReady(slice, silence.data(), kPeriod);
+            if (period % 100 == 99) {
+                svc->pumpForTest();
+            }
+        }
+        // 750 drains of 64 frames: one second.
+        QCOMPARE(svc->playback(QStringLiteral("deviceA"))->positionMs, qint64(1000));
+        QCOMPARE(tapA.received.size(), size_t(750 * kPeriod * 2));
+        QVERIFY2(std::fabs(peakOf(tapA.received) - 0.5) < 0.01, qPrintable(QString::number(peakOf(tapA.received))));
+        // Every frame was the tone: no gap where a drain went short.
+        int rising = 0;
+        for (size_t i = 2; i < tapA.received.size(); i += 2) {
+            if (tapA.received[i - 2] < 0.0f && tapA.received[i] >= 0.0f) {
+                ++rising;
+            }
+        }
+        QVERIFY2(std::abs(rising - 1000) <= 1, qPrintable(QString::number(rising)));
+        QCOMPARE(peakOf(tapB.received), 0.0);
+        const QByteArray& played = speakers->buffer();
+        std::vector<float> local(static_cast<size_t>(played.size()) / sizeof(float));
+        std::memcpy(local.data(), played.constData(), local.size() * sizeof(float));
+        QVERIFY(!local.empty());
+        QCOMPARE(peakOf(local), 0.0);
+
+        svc->stopPlayback(QStringLiteral("deviceA"));
+        engine->clearOwnerMixAudioTap(mixA, &tapA);
+        engine->clearOwnerMixAudioTap(mixB, &tapB);
+        engine->releaseOwnerMix(mixA);
+        engine->releaseOwnerMix(mixB);
     }
 
     void wholePanIsRefused()

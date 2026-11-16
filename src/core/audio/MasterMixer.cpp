@@ -207,6 +207,18 @@ void MasterMixer::setPlaybackSlot(int slotId, bool playback) {
     st.opportunistic.store(playback, std::memory_order_release);
 }
 
+int MasterMixer::queuedFrames(int slotId) const {
+    // Audio thread, lock-free as accumulate(): the map is stable while
+    // audio streams.
+    const auto it = m_slices.find(slotId);
+    if (it == m_slices.end()) { return 0; }
+    const SliceState& st = it->second;
+    if (st.ringGeneration != st.streamGeneration.load(std::memory_order_acquire)) {
+        return 0;
+    }
+    return st.avail;
+}
+
 void MasterMixer::setRampFrames(int frames) {
     std::lock_guard<std::mutex> lk(m_sliceMapMutex);
     m_rampFrames = std::max(1, frames);
