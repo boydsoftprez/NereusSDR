@@ -11,6 +11,10 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; recording plan Task 10b: a recording
 //             goes on the air at Thetis's fixed wave playback level, not
 //             the mic gain. AI tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; JJ's ruling on PR 797: a voice message
+//             whose sound came from an imported file goes out at the same
+//             fixed level; one recorded on the mic keeps the mic gain. AI
+//             tooling: Anthropic Claude Code.
 #pragma once
 
 #include "core/NereusCoreExport.h"
@@ -45,7 +49,9 @@ class TxChannel;
 // While a playback goes out, the TX panel gain is the fixed playback level
 // in place of the mic gain (mute included), as Thetis does while
 // Audio.WavePlayback is true (cmaster.cs:1093-1110 [v2.10.3.15]). A voice
-// message keeps the mic gain.
+// message recorded on the mic keeps the mic gain; one imported from a file
+// goes out at the same fixed level (JJ, 2026-11-16). Either way a voice
+// message keeps the normal processing.
 //
 // Threads: pull() and active() on the transmit worker (any thread for
 // active()); everything else on the main (model) thread.
@@ -84,8 +90,12 @@ public:
     // the normal processing: no switch applies. While a message is on the
     // air, the next one replaces it with no block between them (Task 11's
     // voice keyer returns silence after its end, so the air never falls to
-    // a microphone until it unkeys or hands over).
-    void beginVoiceMessage(const QString& slotId, std::function<int(float*, int)> pullClip);
+    // a microphone until it unkeys or hands over). `fixedLevel` (a message
+    // imported from a file, JJ 2026-11-16): the TX panel gain is held at the
+    // fixed playback level while it goes out, as for a playback, and the mic
+    // gain comes back at the end; false keeps the mic gain.
+    void beginVoiceMessage(const QString& slotId, std::function<int(float*, int)> pullClip,
+                           bool fixedLevel = false);
     // Stops sending; a playback goes back to its speakers from where it got
     // to, and the switches return to what TransmitModel says. Again: nothing.
     void end();

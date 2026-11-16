@@ -56,8 +56,8 @@
     },
     {
       "output": "manual/10-customize.md",
-      "output_sha256": "5bfbaceaa4c403dc89a5956a330a2d8584db2fcec3184e73f0b04ba23f07c026",
-      "sha256": "5bfbaceaa4c403dc89a5956a330a2d8584db2fcec3184e73f0b04ba23f07c026",
+      "output_sha256": "9ad2a6b21d04d01e3e0df05a9dd83b985df87ad35e56ecafea845e086c220bd5",
+      "sha256": "9ad2a6b21d04d01e3e0df05a9dd83b985df87ad35e56ecafea845e086c220bd5",
       "source": "docs/manual/10-customize.md"
     },
     {
@@ -486,8 +486,8 @@
     },
     {
       "output": "manual/10-customize.html",
-      "output_sha256": "e74a150453e13227109e1ce64028dfe57351407ef54117dfaecea54fba699418",
-      "sha256": "5bfbaceaa4c403dc89a5956a330a2d8584db2fcec3184e73f0b04ba23f07c026",
+      "output_sha256": "b7a59c8c62467a1870272206c35a475e48970f191d0e5ce37c3079d940670e7a",
+      "sha256": "9ad2a6b21d04d01e3e0df05a9dd83b985df87ad35e56ecafea845e086c220bd5",
       "source": "docs/manual/10-customize.md"
     },
     {

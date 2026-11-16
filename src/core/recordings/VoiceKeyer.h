@@ -27,6 +27,11 @@
 // 2026-11-16  J.J. Boyd / KG4VCF; final review fix: kCwModeReason, a
 //             message is refused in CW and ends if CW keys under it. AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; JJ's ruling on PR 797: a message imported
+//             from a file is marked so (kept in voice-keyer.json beside the
+//             messages) and goes out at the fixed recording level; one
+//             recorded on the mic keeps the mic gain. AI tooling: Anthropic
+//             Claude Code.
 #pragma once
 
 #include "core/MoxController.h"
@@ -63,7 +68,12 @@ class TransmitHolder;
 // Keying: send() is the only call that keys the radio. It keys as the device
 // that asked (MoxController::setMox(bool, const KeyerIdentity&)), sends the
 // message through OnAirSource::beginVoiceMessage, so the normal processing
-// applies and none of the five on-air switches, and unkeys at the end. With
+// applies and none of the five on-air switches, and unkeys at the end. A
+// message imported from a file goes out at the fixed recording level, not
+// the mic gain; one recorded on the mic goes out like the live voice (JJ,
+// 2026-11-16). Recording over a message, importing over it or clearing it
+// sets the mark afresh; it is kept beside the messages and survives a
+// restart. With
 // Repeat on it then waits the set seconds and sends again, until stopped.
 //
 // What cuts it, within one transmit block (the message turns to silence at
@@ -147,6 +157,7 @@ public:
         QString name;
         qint64 lengthMs = 0;
         bool empty = true;
+        bool imported = false;   // its sound came from an imported file
     };
     struct Sending {
         int n = 0;
@@ -187,6 +198,8 @@ public:
     int firstEmpty() const;
     // The kept file of Mn; empty when Mn is empty.
     QString messagePath(int n) const;
+    // Whether Mn's sound came from an imported file (false when empty).
+    bool isImported(int n) const;
 
     // ---- Keying.
     bool send(int n, const Requester& who, QString* refusal);
@@ -227,12 +240,17 @@ public:
     // so this thread (MOX, the end of a message, the link) never waits on
     // it; `done` runs on this thread once Mn holds the message or it is
     // refused, on a later turn (at once only for a refused argument).
-    void importFile(int n, const QString& path, const QString& name, ImportDone done);
+    // `imported`: the file was chosen to import (it goes out at the fixed
+    // level); false for a message recorded on the mic (the mic gain).
+    void importFile(int n, const QString& path, const QString& name, ImportDone done, bool imported = false);
     // Plays Mn on `who`'s own speaker, through the player (never keys).
     bool listen(int n, const ListenerId& who, QString* refusal);
 
     // ---- The station link's import and export, one import per owner.
-    bool beginImport(const QString& owner, int n, const QString& name, qint64 size, QString* refusal);
+    // `imported` as importFile()'s (the link's optional `imported`, false
+    // when a client does not send it).
+    bool beginImport(const QString& owner, int n, const QString& name, qint64 size, QString* refusal,
+                     bool imported = false);
     bool importChunk(const QString& owner, const QByteArray& bytes, QString* refusal);
     // The file is converted as importFile() does; `done` as there.
     void finishImport(const QString& owner, ImportDone done);
@@ -263,6 +281,7 @@ private:
         int n = 0;
         QString name;
         ImportDone done;
+        bool imported = false;
     };
     // One message going out: read by the transmit thread through the pull
     // OnAirSource calls, never locked.
@@ -278,6 +297,7 @@ private:
         qint64 size = 0;
         qint64 received = 0;
         std::shared_ptr<QFile> file;   // QHash keeps values copyable
+        bool imported = false;
     };
 
     static std::function<int(float*, int)> pullFor(std::shared_ptr<Clip> clip);
@@ -324,6 +344,7 @@ private:
     mutable std::array<QString, kVoiceKeyerSlots> m_names;
     mutable std::array<qint64, kVoiceKeyerSlots> m_lengths{};
     mutable std::array<bool, kVoiceKeyerSlots> m_filled{};
+    mutable std::array<bool, kVoiceKeyerSlots> m_imported{};
     bool m_repeat = false;
     int m_repeatDelaySec = kRepeatDelayDefaultSec;
 

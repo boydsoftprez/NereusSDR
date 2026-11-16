@@ -37,6 +37,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: eraseDsr
 //                 (dsr.eraseAll). AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), JJ's ruling on PR 797: importVoice
+//                 says whether the file was imported (fixed level on the
+//                 air) or recorded on the mic. AI-assisted implementation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include <QFile>
@@ -87,7 +91,8 @@ public:
     bool coreIsOnThisComputer() const override { return true; }
     void sendVoice(int n) override;
     void stopVoice() override;
-    void importVoice(int n, const QString& wavPath, const QString& name = QString()) override;
+    void importVoice(int n, const QString& wavPath, const QString& name = QString(),
+                     bool imported = false) override;
     void exportVoice(int n, const QString& toPath) override;
     void renameVoice(int n, const QString& name) override;
     void clearVoice(int n) override;

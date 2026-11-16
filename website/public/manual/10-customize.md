@@ -407,7 +407,7 @@ On a Mac, Ctrl in this list is the Command key.
 | Comma / period (hold) | CW dot and dash, in CW mode. |
 | Slash (hold) | CW straight key, in CW mode. |
 
-On a Mac, CW message 5 has no key until you give it one, because Command+F5 turns VoiceOver on or off. A key you set yourself is kept. **VOX on or off** has no key until you give it one. It turns on the same VOX as the TX panel's **VOX** button. **Escape** stops a voice message only when nothing else wants it: in a text field or an open popup it keeps its usual meaning.
+On a Mac, CW message 5 has no key until you give it one, because Command+F5 turns VoiceOver on or off. A key you set yourself is kept. **VOX on or off** has no key until you give it one. It turns on the same VOX as the TX panel's **VOX** button. **Escape** stops a voice message only when nothing else wants it: in a text field or an open popup it keeps its usual meaning. A voice message imported from a file goes out at a fixed level, whatever the mic gain, and a message recorded on the mic goes out like your live voice.
 
 ### Where keys work
 

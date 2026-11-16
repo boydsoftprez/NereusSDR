@@ -30,6 +30,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: eraseDsr
 //                 (dsr.eraseAll). AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), JJ's ruling on PR 797: importVoice
+//                 says whether the file was imported (fixed level on the
+//                 air) or recorded on the mic. AI-assisted implementation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/RemoteRecordingsAccess.h"
@@ -278,7 +282,7 @@ void RemoteRecordingsAccess::listenVoice(int n)
     sendVoiceVerb(QStringLiteral("voiceKeyer.listen"), QJsonObject{{QStringLiteral("n"), n}});
 }
 
-void RemoteRecordingsAccess::importVoice(int n, const QString& wavPath, const QString& name)
+void RemoteRecordingsAccess::importVoice(int n, const QString& wavPath, const QString& name, bool imported)
 {
     if (state() != State::Ready || coreVersion() < kVoiceKeyerVersion) {
         emit voiceImportFinished(n, false, unavailableReason(kVoiceKeyerVersion));
@@ -303,10 +307,15 @@ void RemoteRecordingsAccess::importVoice(int n, const QString& wavPath, const QS
         return;
     }
     m_voiceImport = std::move(voiceImport);
-    if (!sendLink(QStringLiteral("voiceKeyer.beginImport"),
-                  QJsonObject{{QStringLiteral("n"), n},
-                              {QStringLiteral("name"), name},
-                              {QStringLiteral("size"), m_voiceImport->size}})) {
+    QJsonObject begin{{QStringLiteral("n"), n},
+                      {QStringLiteral("name"), name},
+                      {QStringLiteral("size"), m_voiceImport->size}};
+    // Sent only for a chosen file: a mic recording's begin is as it always
+    // was, and the Core takes no `imported` as false.
+    if (imported) {
+        begin.insert(QStringLiteral("imported"), true);
+    }
+    if (!sendLink(QStringLiteral("voiceKeyer.beginImport"), begin)) {
         finishVoiceImport(false, kLinkLost);
     }
 }

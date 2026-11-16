@@ -13,6 +13,10 @@
 //   2026-11-16 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
 //                 implementation via Anthropic Claude Code. Recording plan
 //                 Task 12.
+//   2026-11-16 - J.J. Boyd (KG4VCF), JJ's ruling on PR 797: importVoice
+//                 says whether the file was imported (fixed level on the
+//                 air) or recorded on the mic. AI-assisted implementation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "gui/applets/VoiceKeyerApplet.h"
@@ -665,7 +669,8 @@ void VoiceKeyerApplet::onRecordingFinished(const QString& path, qint64 ms)
         return;
     }
     m_clipImports.insert(n, path);
-    m_access->importVoice(n, path, QString());
+    // Recorded on the mic: it goes out like the live voice.
+    m_access->importVoice(n, path, QString(), false);
     say(ms >= LocalMicClipRecorder::kMaxMs
             ? QStringLiteral("Recorded M%1 (2:00, the most a message holds). Sending it to the Core.").arg(n)
             : QStringLiteral("Recorded M%1 (%2). Sending it to the Core.").arg(n).arg(secondsText(ms)));
@@ -693,7 +698,8 @@ void VoiceKeyerApplet::importInto(int n)
     if (path.isEmpty()) {
         return;
     }
-    m_access->importVoice(n, path, nameForImport(n, path));
+    // A chosen file: it goes out at the fixed level (JJ, 2026-11-16).
+    m_access->importVoice(n, path, nameForImport(n, path), true);
     say(QStringLiteral("Loading %1 into M%2.").arg(QFileInfo(path).fileName()).arg(n));
 }
 

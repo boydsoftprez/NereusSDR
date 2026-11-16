@@ -18,6 +18,9 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), the older Core's VOICE dims whole and
 //                 held elsewhere the box's messages dim. AI-assisted
 //                 implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), JJ's ruling on PR 797: a chosen file
+//                 is sent as imported, a mic recording is not. AI-assisted
+//                 implementation via Anthropic Claude Code.
 // =================================================================
 
 #include <QAction>
@@ -202,6 +205,7 @@ private slots:
         QCOMPARE(p.access.verbs(), QStringList{QStringLiteral("importVoice")});
         QCOMPARE(p.access.calls.last().sliceId, 5);
         QCOMPARE(p.access.calls.last().id, QStringLiteral("/tmp/Contest CQ.wav=Contest CQ"));
+        QVERIFY(p.access.calls.last().imported);   // a chosen file: the fixed level
 
         p.access.calls.clear();
         p.access.setDocument(voiceDocument({1, 2, 3, 4, 5, 6, 7, 8}));
@@ -262,6 +266,7 @@ private slots:
         QVERIFY(!p.mic->open);
         QCOMPARE(p.access.verbs(), QStringList{QStringLiteral("importVoice")});
         QCOMPARE(p.access.calls.last().sliceId, 6);
+        QVERIFY(!p.access.calls.last().imported);   // recorded on the mic
         const QString path = p.access.calls.last().id.section(QLatin1Char('='), 0, 0);
         QVERIFY(QFileInfo::exists(path));
         emit p.access.voiceImportFinished(6, true, QString());

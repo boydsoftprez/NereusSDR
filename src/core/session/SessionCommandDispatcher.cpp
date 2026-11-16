@@ -37,6 +37,10 @@
 //               Digital Spectrum Recorder's dsrEnabled, dsrDisk and
 //               dsrSizeLimitGb (recordingsVersion 4).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: JJ's ruling on PR 797: voiceKeyer.beginImport takes an
+//               optional `imported` (false when not sent): a file imported
+//               goes out at the fixed level, a mic recording at the mic gain.
+//               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
 //   2026-11-16: Recording plan Task 11: the voiceKeyer.* verbs
 //               (handleVoiceKeyer, recordingsVersion 3).
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
@@ -1026,7 +1030,10 @@ const QList<CommandVerbSpec>& SessionCommandDispatcher::verbSpecs()
         // finishImport, one at a time per session (the dspAssets pattern).
         {"voiceKeyer.send", {arg("n", kInt)}, "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
         {"voiceKeyer.stop", {}, "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
-        {"voiceKeyer.beginImport", {arg("n", kInt), arg("name", kUtf8), arg("size", kInt)},
+        // `imported` (JJ, 2026-11-16): a file the operator chose, sent at the
+        // fixed level; absent (an older client) is false, the mic gain.
+        {"voiceKeyer.beginImport",
+         {arg("n", kInt), arg("name", kUtf8), arg("size", kInt), optionalArg("imported", kBool)},
          "recordingsVersion", 3, kRadioIdentitySessionProtocolMinor},
         {"voiceKeyer.chunk", {arg("data", kUtf8)}, "recordingsVersion", 3,
          kRadioIdentitySessionProtocolMinor},
@@ -5695,7 +5702,8 @@ void SessionCommandDispatcher::handleVoiceKeyer(const SessionMessage& invoke)
         }
     } else if (verb == "voiceKeyer.beginImport") {
         ok = keyer->beginImport(importOwner, slotArgument(), arguments.value(QStringLiteral("name")).toString(),
-                                arguments.value(QStringLiteral("size")).toInteger(-1), &refusal);
+                                arguments.value(QStringLiteral("size")).toInteger(-1), &refusal,
+                                arguments.value(QStringLiteral("imported")).toBool(false));
     } else if (verb == "voiceKeyer.chunk") {
         const QByteArray::FromBase64Result data = QByteArray::fromBase64Encoding(
             arguments.value(QStringLiteral("data")).toString().toLatin1(),

@@ -151,6 +151,9 @@ and connection threads. Nothing blocks the audio callback; disk writes are buffe
 * While a recording is on the air, the processing switches in Recording settings apply (all off by default: EQ,
   compressor, leveler, CFC, phase rotator). They return to your normal settings when it stops going out.
 * The voice keyer's messages are not affected by these switches; they always get your normal processing.
+* A voice keyer message's level on the air: one imported from a file goes out at the fixed recording level (the
+  same 0 dB a recording uses), whatever the mic gain or mute; one recorded on the mic goes out at the mic gain,
+  like your live voice. Recording, importing or clearing a message sets this afresh (JJ, 2026-11-16).
 
 ### 6.4 Recordings
 

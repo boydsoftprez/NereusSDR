@@ -33,6 +33,11 @@
 //                 Code. Final review fix: in CWL or CWU a send and a repeat
 //                 are refused and nothing keys; a message going out ends and
 //                 unkeys when the transmit slice moves to CW.
+//   2026-11-16 - J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                 Code. JJ's ruling on PR 797: an imported message goes out
+//                 at the fixed level whatever the mic gain or mute; a mic
+//                 message at the mic gain; recording, importing and clearing
+//                 set the mark afresh, and it survives a restart.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -138,10 +143,11 @@ bool waitFor(const std::shared_ptr<Ended>& ended)
     return QTest::qWaitFor([ended] { return ended->finished; }, 30000);
 }
 
-bool importNow(VoiceKeyer& vk, int n, const QString& path, const QString& name, QString* refusal)
+bool importNow(VoiceKeyer& vk, int n, const QString& path, const QString& name, QString* refusal,
+               bool imported = false)
 {
     auto ended = std::make_shared<Ended>();
-    vk.importFile(n, path, name, into(ended));
+    vk.importFile(n, path, name, into(ended), imported);
     if (!waitFor(ended)) {
         return false;
     }
@@ -266,11 +272,12 @@ private:
     }
 
     // Mn holding a 48 kHz mono ramp of `frames` frames.
-    bool fill(VoiceKeyer& vk, int n, int frames, const QString& name = QString())
+    // `imported`: as a chosen file (true) or a mic recording (false).
+    bool fill(VoiceKeyer& vk, int n, int frames, const QString& name = QString(), bool imported = false)
     {
         const QString path = writeWav(kRate, 1, frames);
         QString refusal;
-        return !path.isEmpty() && importNow(vk, n, path, name, &refusal);
+        return !path.isEmpty() && importNow(vk, n, path, name, &refusal, imported);
     }
 
     static QByteArray readAll(const QString& path)
@@ -1431,6 +1438,117 @@ private slots:
         QCOMPARE(sending.value(QStringLiteral("waitingMs")).toInteger(), qint64(0));
         QCOMPARE(sending.value(QStringLiteral("by")).toString(), QStringLiteral("Desktop"));
         QCOMPARE(sending.value(QStringLiteral("deviceId")).toString(), QStringLiteral("station"));
+    }
+
+    // ---- JJ, 2026-11-16: an imported message at the fixed level, a mic
+    // message at the mic gain.
+
+    void anImportedMessageGoesOutAtTheFixedLevel()
+    {
+        Rig r(newFolder());
+        TransmitModel& tm = r.model.transmitModel();
+        tm.setMicMute(true);   // Thetis name: true = mic in use
+        tm.setMicGainDb(20);
+        r.model.wireTransmitChainForTest(&r.ch);
+        QCOMPARE(r.ch.lastMicPreampForTest(), std::pow(10.0, 20.0 / 20.0));
+        const int frames = 4 * kBlock;
+        QVERIFY(fill(*r.vk, 1, frames, QString(), /*imported=*/true));
+        QVERIFY(r.vk->isImported(1));
+        QString refusal;
+        QVERIFY(r.vk->send(1, station(), &refusal));
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QCOMPARE(r.ch.lastMicPreampForTest(), 1.0);
+        // Its sound as it was kept.
+        QVERIFY(near(tx.front(), rampAt(0, frames)));
+        tm.setMicGainDb(-10);
+        QCOMPARE(r.ch.lastMicPreampForTest(), 1.0);
+        tm.setMicMute(false);   // muted
+        QCOMPARE(r.ch.lastMicPreampForTest(), 1.0);
+        tm.setMicMute(true);
+        QCOMPARE(r.ch.lastMicPreampForTest(), 1.0);
+        for (int b = 1; b < 6; ++b) {
+            QVERIFY(r.pull(tx));
+            QCOMPARE(r.ch.lastMicPreampForTest(), 1.0);
+        }
+        // The end unkeys and the mic gain set on the air comes back.
+        r.vk->tickForTest();
+        QVERIFY(!r.mox->isMox());
+        QCOMPARE(r.onAir->active(), OnAirSource::Kind::None);
+        QCOMPARE(r.ch.lastMicPreampForTest(), std::pow(10.0, -10.0 / 20.0));
+        QCOMPARE(tm.micGainDb(), -10);
+    }
+
+    void aMicMessageUsesTheMicGain()
+    {
+        Rig r(newFolder());
+        TransmitModel& tm = r.model.transmitModel();
+        tm.setMicMute(true);
+        tm.setMicGainDb(20);
+        r.model.wireTransmitChainForTest(&r.ch);
+        const double micGain = std::pow(10.0, 20.0 / 20.0);
+        QVERIFY(fill(*r.vk, 2, 4 * kBlock));   // recorded on the mic
+        QVERIFY(!r.vk->isImported(2));
+        QString refusal;
+        QVERIFY(r.vk->send(2, station(), &refusal));
+        std::vector<float> tx;
+        QVERIFY(r.pull(tx));
+        QCOMPARE(r.ch.lastMicPreampForTest(), micGain);
+        tm.setMicGainDb(10);
+        QCOMPARE(r.ch.lastMicPreampForTest(), std::pow(10.0, 10.0 / 20.0));
+        r.vk->stop();
+        QVERIFY(!r.mox->isMox());
+        QCOMPARE(r.ch.lastMicPreampForTest(), std::pow(10.0, 10.0 / 20.0));
+    }
+
+    void recordingOverAnImportClearsTheMark()
+    {
+        Rig r(newFolder());
+        QVERIFY(fill(*r.vk, 1, kBlock, QString(), /*imported=*/true));
+        QVERIFY(r.vk->isImported(1));
+        QVERIFY(r.vk->messages().at(0).imported);
+        // Recorded on the mic over it: a mic message again.
+        QVERIFY(fill(*r.vk, 1, kBlock));
+        QVERIFY(!r.vk->isImported(1));
+        // Imported over a mic message: imported.
+        QVERIFY(fill(*r.vk, 1, kBlock, QString(), /*imported=*/true));
+        QVERIFY(r.vk->isImported(1));
+        // Erasing clears it.
+        QString refusal;
+        QVERIFY(r.vk->clear(1, &refusal));
+        QVERIFY(!r.vk->isImported(1));
+        QVERIFY(fill(*r.vk, 1, kBlock));
+        QVERIFY(!r.vk->isImported(1));
+
+        // Over the link: `imported` true marks it, absent leaves a mic message.
+        const QString owner = QStringLiteral("owner");
+        const QByteArray file = readAll(writeWav(kRate, 1, kBlock));
+        QVERIFY(r.vk->beginImport(owner, 3, QString(), file.size(), &refusal, /*imported=*/true));
+        QVERIFY(r.vk->importChunk(owner, file, &refusal));
+        QVERIFY(finishNow(*r.vk, owner, &refusal));
+        QVERIFY(r.vk->isImported(3));
+        QVERIFY(r.vk->beginImport(owner, 3, QString(), file.size(), &refusal));
+        QVERIFY(r.vk->importChunk(owner, file, &refusal));
+        QVERIFY(finishNow(*r.vk, owner, &refusal));
+        QVERIFY(!r.vk->isImported(3));
+    }
+
+    void theMarkSurvivesARestart()
+    {
+        const QString folder = newFolder();
+        {
+            Rig r(folder);
+            QVERIFY(fill(*r.vk, 2, kBlock, QStringLiteral("QRZ"), /*imported=*/true));
+            QVERIFY(fill(*r.vk, 3, kBlock, QStringLiteral("CQ")));
+        }
+        Rig again(folder);
+        QVERIFY(again.vk->isImported(2));
+        QVERIFY(!again.vk->isImported(3));
+        QVERIFY(!again.vk->isImported(1));
+        const QList<VoiceKeyer::Message> list = again.vk->messages();
+        QVERIFY(list.at(1).imported);
+        QCOMPARE(list.at(1).name, QStringLiteral("QRZ"));
+        QVERIFY(!list.at(2).imported);
     }
 };
 

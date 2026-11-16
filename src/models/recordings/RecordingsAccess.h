@@ -56,6 +56,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF), recording plan Task 26: eraseDsr
 //                 (dsr.eraseAll). AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), JJ's ruling on PR 797: importVoice
+//                 says whether the file was imported (fixed level on the
+//                 air) or recorded on the mic. AI-assisted implementation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include <QJsonArray>
@@ -183,7 +187,10 @@ public:
     virtual void stopVoice() = 0;
     /// Puts the sound file at `wavPath` (WAV or MP3, any rate) into Mn,
     /// converted on the Core to 48 kHz mono. An empty `name` keeps Mn's.
-    virtual void importVoice(int n, const QString& wavPath, const QString& name = QString()) = 0;
+    /// `imported`: a file the operator chose (it goes out at a fixed
+    /// level); false for a message recorded on the mic (the mic gain).
+    virtual void importVoice(int n, const QString& wavPath, const QString& name = QString(),
+                             bool imported = false) = 0;
     /// Saves Mn as a WAV file at `toPath` on this computer.
     virtual void exportVoice(int n, const QString& toPath) = 0;
     virtual void renameVoice(int n, const QString& name) = 0;

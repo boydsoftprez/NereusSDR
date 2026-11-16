@@ -72,6 +72,8 @@ public:
         qint64 hz{0};
         qint64 fromUtcNs{0};
         DsrPanView view{};
+        // importVoice's `imported`.
+        bool imported{false};
     };
 
     explicit FakeRecordingsAccess(QObject* parent = nullptr) : RecordingsAccess(parent) {}
@@ -215,9 +217,12 @@ public:
     bool coreIsOnThisComputer() const override { return coreHere; }
     void sendVoice(int n) override { calls.append({QStringLiteral("sendVoice"), n}); }
     void stopVoice() override { calls.append({QStringLiteral("stopVoice")}); }
-    void importVoice(int n, const QString& wavPath, const QString& name = QString()) override
+    void importVoice(int n, const QString& wavPath, const QString& name = QString(),
+                     bool imported = false) override
     {
-        calls.append({QStringLiteral("importVoice"), n, wavPath + QLatin1Char('=') + name});
+        Call call{QStringLiteral("importVoice"), n, wavPath + QLatin1Char('=') + name};
+        call.imported = imported;
+        calls.append(call);
     }
     void exportVoice(int n, const QString& toPath) override
     {

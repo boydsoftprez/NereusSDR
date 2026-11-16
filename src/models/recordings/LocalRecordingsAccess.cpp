@@ -36,6 +36,10 @@
 //   2026-11-16 - J.J. Boyd (KG4VCF): rename and delete go through the
 //                 recording service, which lets go of the file first.
 //                 AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-16 - J.J. Boyd (KG4VCF), JJ's ruling on PR 797: importVoice
+//                 says whether the file was imported (fixed level on the
+//                 air) or recorded on the mic. AI-assisted implementation
+//                 via Anthropic Claude Code.
 // =================================================================
 
 #include "models/recordings/LocalRecordingsAccess.h"
@@ -525,7 +529,7 @@ void LocalRecordingsAccess::stopVoice()
     }
 }
 
-void LocalRecordingsAccess::importVoice(int n, const QString& wavPath, const QString& name)
+void LocalRecordingsAccess::importVoice(int n, const QString& wavPath, const QString& name, bool imported)
 {
     if (state() != State::Ready || service() == nullptr || service()->voiceKeyer() == nullptr) {
         emit voiceImportFinished(n, false, unavailableReason(kVoiceKeyerVersion));
@@ -538,7 +542,7 @@ void LocalRecordingsAccess::importVoice(int n, const QString& wavPath, const QSt
         if (self) {
             emit self->voiceImportFinished(n, ok, ok ? QString() : refusal);
         }
-    });
+    }, imported);
 }
 
 void LocalRecordingsAccess::exportVoice(int n, const QString& toPath)

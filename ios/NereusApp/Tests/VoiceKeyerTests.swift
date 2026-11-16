@@ -397,6 +397,8 @@ struct VoiceKeyerTests {
         // An empty message takes the file's name.
         let name = file.deletingPathExtension().lastPathComponent
         #expect(rig.sent.invokes[0].args[1] == .init(name: "name", value: .utf8(String(name.prefix(32)))))
+        // A chosen file is sent as imported: the Core keys it at a fixed level.
+        #expect(rig.sent.invokes[0].args.last == .init(name: "imported", value: .bool(true)))
         #expect(rig.model.note?.text == "Saved M3.")
 
         var full = Self.document()

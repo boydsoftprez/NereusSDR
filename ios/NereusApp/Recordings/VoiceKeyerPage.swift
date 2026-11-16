@@ -3,6 +3,9 @@
 // Modification history (NereusSDR):
 // 2026-11-16: Recording plan Task 18, the phone's voice keyer page and its model.
 //   J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: JJ's ruling on PR 797: an imported file is sent as imported (a fixed level
+//   on the air), a clip from this phone's microphone is not. J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -361,7 +364,8 @@ final class VoiceKeyerModel {
         say(clip.reachedLimit ? "Recorded M\(n) (2:00, the most a message holds). Sending it to the Core."
                 : "Recorded M\(n) (" + String(format: "%.1f s", Double(clip.lengthMs) / 1000) + "). Sending it to the Core.",
             refusal: false)
-        if await upload(n, url: clip.url, name: "") {
+        // Recorded on the microphone: it goes out at the mic gain.
+        if await upload(n, url: clip.url, name: "", imported: false) {
             // The next empty message, not counting this one: the Core's
             // document saying it is full may not have arrived yet.
             if let next = slots.first(where: { $0.empty && $0.n != n })?.n {
@@ -415,13 +419,14 @@ final class VoiceKeyerModel {
         let name = slot(n).name.isEmpty
             ? String(source.deletingPathExtension().lastPathComponent.prefix(VoiceKeyerState.nameMaxCharacters)) : ""
         say("Loading " + source.lastPathComponent + " into M\(n).", refusal: false)
-        _ = await upload(n, url: copy, name: name)
+        // A chosen file: the Core sends it at a fixed level (JJ, 2026-11-16).
+        _ = await upload(n, url: copy, name: name, imported: true)
     }
 
     /// Loads a file into Mn on the Core: "Saved M5.", or why not.
-    private func upload(_ n: Int, url: URL, name: String) async -> Bool {
+    private func upload(_ n: Int, url: URL, name: String, imported: Bool) async -> Bool {
         do {
-            try await client.importVoice(n, url: url, name: name)
+            try await client.importVoice(n, url: url, name: name, imported: imported)
             say("Saved M\(n).", refusal: false)
             return true
         } catch let error as RecordingsError {

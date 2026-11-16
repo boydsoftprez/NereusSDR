@@ -175,7 +175,9 @@ import Testing
         case "voiceKeyer.beginImport":
             // The trace's four bytes, "AAAAAA==".
             try Data(count: Self.int(args, "size")).write(to: file)
-            try await client.importVoice(Self.int(args, "n"), url: file, name: Self.text(args, "name"))
+            let imported = args.first { $0["name"] as? String == "imported" }?["value"] as? Bool ?? false
+            try await client.importVoice(Self.int(args, "n"), url: file, name: Self.text(args, "name"),
+                                         imported: imported)
         case "voiceKeyer.export": try await client.exportVoice(Self.int(args, "n"), to: file)
         case "voiceKeyer.rename": try await client.renameVoice(Self.int(args, "n"), name: Self.text(args, "name"))
         case "voiceKeyer.clear": try await client.clearVoice(Self.int(args, "n"))

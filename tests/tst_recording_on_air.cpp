@@ -20,6 +20,11 @@
 //                gain; a voice message keeps the mic gain. J.J. Boyd
 //                (KG4VCF), AI-assisted via Anthropic Claude Code. Recording
 //                plan Task 10b.
+//   2026-11-16 - JJ's ruling on PR 797: a voice message imported from a
+//                file goes out at the same fixed level, held through mic
+//                gain and mute changes and released to the mic gain at the
+//                end. J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude
+//                Code.
 // =================================================================
 
 #include <QtTest/QtTest>
@@ -928,6 +933,89 @@ private slots:
         QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 10.0 / 20.0));
         onAir->end();
         QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 10.0 / 20.0));
+        model.injectTxChannelForTest(nullptr);
+    }
+
+    // ---- JJ, 2026-11-16: an imported voice message goes out at the fixed
+    // level, whatever the mic gain; the mic gain comes back at the end.
+
+    void anImportedVoiceMessageGoesOutAtTheFixedLevel()
+    {
+        TxChannel ch(kTxChannelId);
+        RadioModel model;
+        RecordingService* svc = model.recordingService();
+        QVERIFY(svc != nullptr);
+        useDisk(*svc);
+        TransmitModel& tm = model.transmitModel();
+        tm.setMicMute(true);   // Thetis name: true = mic in use
+        tm.setMicGainDb(20);
+        model.wireTransmitChainForTest(&ch);
+        QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 20.0 / 20.0));
+        QSignalSpy gainChanged(&tm, &TransmitModel::micPreampChanged);
+        OnAirSource* onAir = svc->onAirSource();
+        const auto tone = [](float* out, int frames) {
+            std::fill(out, out + frames, 0.25f);
+            return frames;
+        };
+        onAir->beginVoiceMessage(QStringLiteral("M1"), tone, /*fixedLevel=*/true);
+        QCOMPARE(onAir->active(), OnAirSource::Kind::VoiceMessage);
+        std::vector<float> tx(kBlock);
+        for (int block = 0; block < 4; ++block) {
+            QVERIFY(onAir->pull(tx.data(), kBlock));
+            QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        }
+        QCOMPARE(gainChanged.count(), 0);   // TransmitModel was never written
+        // A mic gain change and a mute on the air leave it held.
+        tm.setMicGainDb(10);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        tm.setMicMute(false);   // muted
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        QVERIFY(onAir->pull(tx.data(), kBlock));
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        // The end applies what the mic says now: muted.
+        onAir->end();
+        QCOMPARE(ch.lastMicPreampForTest(), 0.0);
+
+        // Begun while muted: the fixed level, then the mic gain once unmuted.
+        onAir->beginVoiceMessage(QStringLiteral("M2"), tone, /*fixedLevel=*/true);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        tm.setMicMute(true);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        onAir->end();
+        QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 10.0 / 20.0));
+        QCOMPARE(tm.micGainDb(), 10);
+        model.injectTxChannelForTest(nullptr);
+    }
+
+    void aMicMessageAfterAnImportedOneTakesTheMicGain()
+    {
+        TxChannel ch(kTxChannelId);
+        RadioModel model;
+        RecordingService* svc = model.recordingService();
+        QVERIFY(svc != nullptr);
+        useDisk(*svc);
+        TransmitModel& tm = model.transmitModel();
+        tm.setMicMute(true);
+        tm.setMicGainDb(20);
+        model.wireTransmitChainForTest(&ch);
+        const double micGain = std::pow(10.0, 20.0 / 20.0);
+        OnAirSource* onAir = svc->onAirSource();
+        const auto tone = [](float* out, int frames) {
+            std::fill(out, out + frames, 0.25f);
+            return frames;
+        };
+        onAir->beginVoiceMessage(QStringLiteral("M1"), tone, /*fixedLevel=*/true);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        // The next message, with no block between: a mic one, at the mic gain.
+        onAir->beginVoiceMessage(QStringLiteral("M2"), tone, /*fixedLevel=*/false);
+        QCOMPARE(ch.lastMicPreampForTest(), micGain);
+        tm.setMicGainDb(6);
+        QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 6.0 / 20.0));
+        // And an imported one after it holds the fixed level again.
+        onAir->beginVoiceMessage(QStringLiteral("M3"), tone, /*fixedLevel=*/true);
+        QCOMPARE(ch.lastMicPreampForTest(), 1.0);
+        onAir->end();
+        QCOMPARE(ch.lastMicPreampForTest(), std::pow(10.0, 6.0 / 20.0));
         model.injectTxChannelForTest(nullptr);
     }
 };

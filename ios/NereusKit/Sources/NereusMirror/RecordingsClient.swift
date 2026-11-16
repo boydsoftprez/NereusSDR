@@ -7,6 +7,9 @@
 //   (version 4). J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan fix round: linkDrops, so the recorder's screens
 //   drop what they kept across a reconnect. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: JJ's ruling on PR 797: importVoice says whether the file was imported
+//   (`imported`, the fixed level on the air) or recorded on the mic. J.J. Boyd (KG4VCF),
+//   AI-assisted via Claude Code.
 
 import Foundation
 import NereusLink
@@ -417,7 +420,10 @@ public final class RecordingsClient {
 
     /// Loads Mn from a WAV or MP3 file at `url`, keeping Mn's name when
     /// `name` is "". Refused while Mn is on the air, here before anything goes.
-    public func importVoice(_ n: Int, url: URL, name: String = "") async throws {
+    /// `imported`: a file the operator chose, which the Core sends at a
+    /// fixed level whatever the mic gain; false for a clip recorded on this
+    /// phone's microphone, which goes out at the mic gain. Only true is sent.
+    public func importVoice(_ n: Int, url: URL, name: String = "", imported: Bool = false) async throws {
         try admit(needs: Self.voiceKeyerVersion)
         try refuseOnAir(n)
         let data: Data
@@ -426,10 +432,13 @@ public final class RecordingsClient {
         } catch {
             throw RecordingsError.localFile(error.localizedDescription)
         }
-        _ = try await invoke("voiceKeyer.beginImport", [.init(name: "n", value: .int(Int64(n))),
-                                                        .init(name: "name", value: .text(name)),
-                                                        .init(name: "size", value: .int(Int64(data.count)))],
-                             needs: Self.voiceKeyerVersion)
+        var begin: [CommandArgument] = [.init(name: "n", value: .int(Int64(n))),
+                                       .init(name: "name", value: .text(name)),
+                                       .init(name: "size", value: .int(Int64(data.count)))]
+        if imported {
+            begin.append(.init(name: "imported", value: .bool(true)))
+        }
+        _ = try await invoke("voiceKeyer.beginImport", begin, needs: Self.voiceKeyerVersion)
         var offset = 0
         while offset < data.count {
             let end = min(data.count, offset + Self.chunkBytes)

@@ -6660,7 +6660,7 @@ letter, controllerDeviceId}`) in its `values` (section 7.5).
 | `recordings.setSettings` | `keepMyVoice` bool (optional), `sidesApart` bool (optional), `autoStart` bool (optional), `autoStop` bool (optional), `quietMinutes` i64 (optional), `format` utf8 (optional), `disk` utf8 (optional), `onAirUseTxEq` bool (optional), `onAirUseCompressor` bool (optional), `onAirUseLeveler` bool (optional), `onAirUseCfc` bool (optional), `onAirUsePhaseRotator` bool (optional), `dsrEnabled` bool (optional), `dsrDisk` utf8 (optional), `dsrSizeLimitGb` i64 (optional) | `recordingsVersion` | 1 | 11 |
 | `voiceKeyer.send` | `n` i64 | `recordingsVersion` | 3 | 11 |
 | `voiceKeyer.stop` | none | `recordingsVersion` | 3 | 11 |
-| `voiceKeyer.beginImport` | `n` i64, `name` utf8, `size` i64 | `recordingsVersion` | 3 | 11 |
+| `voiceKeyer.beginImport` | `n` i64, `name` utf8, `size` i64, `imported` bool (optional) | `recordingsVersion` | 3 | 11 |
 | `voiceKeyer.chunk` | `data` utf8 | `recordingsVersion` | 3 | 11 |
 | `voiceKeyer.finishImport` | none | `recordingsVersion` | 3 | 11 |
 | `voiceKeyer.export` | `n` i64, `offset` i64 | `recordingsVersion` | 3 | 11 |
@@ -7239,7 +7239,12 @@ These command groups need a sentence beyond the table:
   radio already on the air, or another device's message going out or
   waiting to repeat, refuses it with "The radio is already
   transmitting.". A device loads a message with `voiceKeyer.beginImport`
-  (`n`, `name`, "" to keep Mn's, `size`, the file's bytes, at most 100 MiB),
+  (`n`, `name`, "" to keep Mn's, `size`, the file's bytes, at most 100 MiB,
+  and an optional `imported` bool: true for a file the operator chose, which
+  goes on the air at the fixed recording level whatever the mic gain; false,
+  or absent from an older client, for a message recorded on the mic, which
+  goes out at the mic gain like the live voice; the Core keeps the mark
+  with the message, and recording, importing or clearing sets it afresh),
   then `voiceKeyer.chunk` (`data`, at most 192 KiB as base64) in order, each
   after the one before it is answered, then `voiceKeyer.finishImport`; the
   Core converts any WAV or MP3 to 48 kHz mono, and keeps a 48 kHz 16-bit

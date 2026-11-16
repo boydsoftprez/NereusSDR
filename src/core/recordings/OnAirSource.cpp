@@ -14,6 +14,10 @@
 //             gain is held at the fixed playback level while a recording
 //             goes out and returns to the mic gain after. AI tooling:
 //             Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; JJ's ruling on PR 797: a voice message
+//             imported from a file holds the same fixed level while it goes
+//             out; the switches are left alone. AI tooling: Anthropic Claude
+//             Code.
 
 #include "OnAirSource.h"
 
@@ -89,7 +93,8 @@ void OnAirSource::beginPlayback(const ListenerId& who)
     m_kind.store(Kind::Playback, std::memory_order_seq_cst);
 }
 
-void OnAirSource::beginVoiceMessage(const QString& slotId, std::function<int(float*, int)> pullClip)
+void OnAirSource::beginVoiceMessage(const QString& slotId, std::function<int(float*, int)> pullClip,
+                                    bool fixedLevel)
 {
     if (!pullClip) {
         return;
@@ -104,10 +109,19 @@ void OnAirSource::beginVoiceMessage(const QString& slotId, std::function<int(flo
         waitForPulls();
         m_clipOwner = std::move(next);
         m_voiceSlot = slotId;
+        // The level follows the message now going out.
+        if (fixedLevel && !m_gainHeld) {
+            holdPanelGain();
+        } else if (!fixedLevel && m_gainHeld) {
+            releasePanelGain();
+        }
         return;
     }
     end();
     m_voiceSlot = slotId;
+    if (fixedLevel) {
+        holdPanelGain();
+    }
     m_clipOwner = std::make_unique<std::function<int(float*, int)>>(std::move(pullClip));
     m_clip.store(m_clipOwner.get(), std::memory_order_seq_cst);
     m_kind.store(Kind::VoiceMessage, std::memory_order_seq_cst);
@@ -130,6 +144,10 @@ void OnAirSource::end()
             // Back to the speakers, from where the transmitter left it.
             m_service.endOnAir(channel);
         }
+    }
+    // An imported voice message's fixed level.
+    if (m_gainHeld) {
+        releasePanelGain();
     }
 }
 

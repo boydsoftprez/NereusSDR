@@ -1841,6 +1841,11 @@
                     "kind": "i64",
                     "name": "size",
                     "optional": false
+                },
+                {
+                    "kind": "bool",
+                    "name": "imported",
+                    "optional": true
                 }
             ],
             "capability": "recordingsVersion",

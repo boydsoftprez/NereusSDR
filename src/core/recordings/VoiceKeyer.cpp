@@ -22,6 +22,10 @@
 //             while the transmit slice is in CW (a CW key never takes it),
 //             and one going out ends and unkeys if CW keys under it. AI
 //             tooling: Anthropic Claude Code.
+// 2026-11-16  J.J. Boyd / KG4VCF; JJ's ruling on PR 797: the imported mark,
+//             kept in voice-keyer.json beside the names, and an imported
+//             message sent at the fixed level. AI tooling: Anthropic Claude
+//             Code.
 
 #include "VoiceKeyer.h"
 
@@ -433,12 +437,19 @@ void VoiceKeyer::ensureLoaded() const
     }
     m_loaded = true;
     m_names.fill(QString());
+    m_imported.fill(false);
     QFile index(QDir(m_folder).filePath(kNamesFile));
     if (index.open(QIODevice::ReadOnly)) {
-        const QJsonArray names = QJsonDocument::fromJson(index.readAll()).object()
-                                     .value(QStringLiteral("names")).toArray();
+        const QJsonObject kept = QJsonDocument::fromJson(index.readAll()).object();
+        const QJsonArray names = kept.value(QStringLiteral("names")).toArray();
         for (int i = 0; i < kVoiceKeyerSlots && i < names.size(); ++i) {
             m_names[static_cast<size_t>(i)] = names.at(i).toString().left(kNameMaxChars);
+        }
+        // Which messages came from an imported file (JJ, 2026-11-16); a
+        // file kept before the mark has none, so all are mic messages.
+        const QJsonArray imported = kept.value(QStringLiteral("imported")).toArray();
+        for (int i = 0; i < kVoiceKeyerSlots && i < imported.size(); ++i) {
+            m_imported[static_cast<size_t>(i)] = imported.at(i).toBool(false);
         }
     }
     // A Core that shut down in the middle of an import leaves its file
@@ -467,6 +478,7 @@ void VoiceKeyer::ensureLoaded() const
         const qint64 length = QFileInfo::exists(path) ? lengthMsOf(path) : -1;
         m_filled[indexOf(n)] = length >= 0;
         m_lengths[indexOf(n)] = std::max<qint64>(0, length);
+        m_imported[indexOf(n)] = m_imported[indexOf(n)] && m_filled[indexOf(n)];
     }
 }
 
@@ -477,9 +489,16 @@ void VoiceKeyer::saveNames() const
     for (const QString& name : m_names) {
         names.append(name);
     }
+    QJsonArray imported;
+    for (const bool mark : m_imported) {
+        imported.append(mark);
+    }
     QSaveFile file(QDir(m_folder).filePath(kNamesFile));
     if (!file.open(QIODevice::WriteOnly)
-        || file.write(QJsonDocument(QJsonObject{{QStringLiteral("names"), names}}).toJson()) < 0
+        || file.write(QJsonDocument(QJsonObject{{QStringLiteral("names"), names},
+                                                {QStringLiteral("imported"), imported}})
+                          .toJson())
+               < 0
         || !file.commit()) {
         qCWarning(lcRecordings) << "the voice message names cannot be kept in" << m_folder
                                 << file.errorString();
@@ -491,7 +510,8 @@ QList<VoiceKeyer::Message> VoiceKeyer::messages() const
     ensureLoaded();
     QList<Message> list;
     for (int n = 1; n <= kVoiceKeyerSlots; ++n) {
-        list.append(Message{n, m_names[indexOf(n)], m_lengths[indexOf(n)], !m_filled[indexOf(n)]});
+        list.append(Message{n, m_names[indexOf(n)], m_lengths[indexOf(n)], !m_filled[indexOf(n)],
+                            m_imported[indexOf(n)]});
     }
     return list;
 }
@@ -511,6 +531,12 @@ QString VoiceKeyer::messagePath(int n) const
 {
     ensureLoaded();
     return validSlot(n) && m_filled[indexOf(n)] ? pathFor(n) : QString();
+}
+
+bool VoiceKeyer::isImported(int n) const
+{
+    ensureLoaded();
+    return validSlot(n) && m_filled[indexOf(n)] && m_imported[indexOf(n)];
 }
 
 std::optional<VoiceKeyer::Sending> VoiceKeyer::sending() const
@@ -623,8 +649,9 @@ bool VoiceKeyer::send(int n, const Requester& who, QString* refusal)
         m_clip = clip;
         m_samples = samples;
         m_n = n;
-        // No block between the two messages is left without one.
-        m_onAir->beginVoiceMessage(QStringLiteral("M%1").arg(n), pullFor(clip));
+        // No block between the two messages is left without one. An
+        // imported message at the fixed level, a mic one at the mic gain.
+        m_onAir->beginVoiceMessage(QStringLiteral("M%1").arg(n), pullFor(clip), m_imported[indexOf(n)]);
         emit changed();
         return true;
     }
@@ -684,8 +711,9 @@ bool VoiceKeyer::startSend(int n, const Requester& who, std::shared_ptr<const st
     auto clip = std::make_shared<Clip>();
     clip->samples = samples;
     // On the air before the key, so the first block the transmitter takes
-    // is the message's and no playback is sent in its place.
-    m_onAir->beginVoiceMessage(QStringLiteral("M%1").arg(n), pullFor(clip));
+    // is the message's and no playback is sent in its place. An imported
+    // message goes out at the fixed recording level (JJ, 2026-11-16).
+    m_onAir->beginVoiceMessage(QStringLiteral("M%1").arg(n), pullFor(clip), m_imported[indexOf(n)]);
 
     KeyerIdentity keyer = who.keyer;
     keyer.requestTag = kRequestTagBase + (++m_nextTag);
@@ -1008,11 +1036,13 @@ bool VoiceKeyer::clear(int n, QString* refusal)
         return false;
     }
     const bool hadName = !m_names[indexOf(n)].isEmpty();
+    const bool hadMark = m_imported[indexOf(n)];
     const bool hadMessage = m_filled[indexOf(n)];
     m_filled[indexOf(n)] = false;
     m_lengths[indexOf(n)] = 0;
     m_names[indexOf(n)].clear();
-    if (hadName) {
+    m_imported[indexOf(n)] = false;
+    if (hadName || hadMark) {
         saveNames();
     }
     if (hadName || hadMessage) {
@@ -1066,7 +1096,7 @@ bool VoiceKeyer::setRepeat(bool on, int delaySec, QString* refusal)
     return true;
 }
 
-void VoiceKeyer::importFile(int n, const QString& path, const QString& name, ImportDone done)
+void VoiceKeyer::importFile(int n, const QString& path, const QString& name, ImportDone done, bool imported)
 {
     const auto refuse = [&done](const QString& reason) {
         if (done) {
@@ -1099,7 +1129,7 @@ void VoiceKeyer::importFile(int n, const QString& path, const QString& name, Imp
     // Its own file, so two imports never write over each other.
     c->to = QDir(m_folder).filePath(QStringLiteral("M%1-%2.part").arg(n).arg(c->id));
     m_conversions.push_back(c);
-    m_pendingImports.insert(c->id, PendingImport{n, trimmed, std::move(done)});
+    m_pendingImports.insert(c->id, PendingImport{n, trimmed, std::move(done), imported});
     RecordingService* const service = &m_service;
     m_service.runOnWorker([service, owner = this, c] { stepConversion(service, owner, c); });
 }
@@ -1178,8 +1208,18 @@ void VoiceKeyer::finishConversion(const std::shared_ptr<Conversion>& c, bool ok)
     }
     m_filled[indexOf(n)] = true;
     m_lengths[indexOf(n)] = c->lengthMs;
+    bool save = false;
     if (!pending.name.isEmpty() && pending.name != m_names[indexOf(n)]) {
         m_names[indexOf(n)] = pending.name;
+        save = true;
+    }
+    // Importing over a mic message marks it imported; recording on the mic
+    // over an imported one makes it a mic message again.
+    if (m_imported[indexOf(n)] != pending.imported) {
+        m_imported[indexOf(n)] = pending.imported;
+        save = true;
+    }
+    if (save) {
         saveNames();
     }
     emit changed();
@@ -1203,7 +1243,8 @@ bool VoiceKeyer::listen(int n, const ListenerId& who, QString* refusal)
 
 // ---- The station link's import and export.
 
-bool VoiceKeyer::beginImport(const QString& owner, int n, const QString& name, qint64 size, QString* refusal)
+bool VoiceKeyer::beginImport(const QString& owner, int n, const QString& name, qint64 size, QString* refusal,
+                             bool imported)
 {
     cancelImport(owner);
     if (!validSlot(n)) {
@@ -1236,6 +1277,7 @@ bool VoiceKeyer::beginImport(const QString& owner, int n, const QString& name, q
     import.n = n;
     import.name = name;
     import.size = size;
+    import.imported = imported;
     // Numbered per import: never another owner's file.
     import.file = std::make_unique<QFile>(
         QDir(m_folder).filePath(QStringLiteral("import-%1.part").arg(++m_nextImportId)));
@@ -1298,7 +1340,7 @@ void VoiceKeyer::finishImport(const QString& owner, ImportDone done)
         if (done) {
             done(ok, reason);
         }
-    });
+    }, import.imported);
 }
 
 void VoiceKeyer::cancelImport(const QString& owner)
