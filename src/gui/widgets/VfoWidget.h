@@ -109,6 +109,13 @@
 //                 source: https://github.com/ten9876/AetherSDR. J.J. Boyd
 //                 (KG4VCF), with AI-assisted implementation via Anthropic
 //                 Claude Code.
+//   2026-11-15 - Recording plan Task 6: the side buttons run x, lock,
+//                 Record, Play, then the more button; Record and Play are
+//                 always shown, disabled with a reason until a recordings
+//                 controller (FlagRecordPlay) drives them; recordButton(),
+//                 playButton(), floatingButtonsBuilt() and
+//                 floatingButtonStyleSheet() for it. J.J. Boyd (KG4VCF),
+//                 with AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 //=================================================================
@@ -684,13 +691,21 @@ public:
     // VFO flag crash lane: the floating lock button, and the slice this
     // flag is bound to, for the remote window's close-and-reopen case.
     QPushButton* lockButtonForTest() const { return m_lockBtn; }
-    // The ⋯ button under the lock (overlay design D39).
+    // The ⋯ button at the bottom of the side buttons (overlay design D39;
+    // recording plan Task 6 moved it under Record and Play).
     QPushButton* moreButtonForTest() const { return m_moreBtn; }
     SliceModel* sliceForTest() const { return m_slice.data(); }
     // R-R3-49: the floating record and play buttons, for the unbuilt
     // feature sweep.
     QPushButton* recordButtonForTest() const { return m_recBtn; }
     QPushButton* playButtonForTest() const { return m_playBtn; }
+    // Recording plan Task 6: the side Record and Play buttons, for the
+    // recordings controller (FlagRecordPlay) that sets their look and state.
+    // Null until floatingButtonsBuilt().
+    QPushButton* recordButton() const { return m_recBtn; }
+    QPushButton* playButton() const { return m_playBtn; }
+    /// The side buttons' resting sheet (the lock's look).
+    static QString floatingButtonStyleSheet();
     // Fix wave I3: the last refused noise-reducer choice this flag showed.
     QString nrRefusalForTest() const { return m_nrRefusal; }
     // R-R3-49: the DSP grid's DFNR button (hidden while DFNR cannot run).
@@ -908,7 +923,7 @@ signals:
     // --- Mode tab signals (S1.8c) ---
     void quickModeRequested(int index);
 
-    // --- Record/play signals (S1.10 — NYI in Stage 1, wired to future recording subsystem) ---
+    // --- Record/play signals (recording plan Task 6: FlagRecordPlay acts on them) ---
     void recordToggled(bool recording);
     void playToggled(bool playing);
 
@@ -942,6 +957,9 @@ signals:
     /// presentation gate, the access line), so an open overlay flyout goes
     /// back above the buttons.
     void floatingButtonsRaised();
+    /// The side buttons now exist (the first updatePosition()); Record and
+    /// Play can be driven from here on.
+    void floatingButtonsBuilt();
 
     // The flag folded or opened (setCollapsed). The hosting SpectrumWidget
     // listens (addVfoWidget) to place the flag again and redraw its marker.

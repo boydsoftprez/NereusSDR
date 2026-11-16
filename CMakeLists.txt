@@ -2074,6 +2074,10 @@ set(GUI_SOURCES
     src/gui/widgets/RadioSpeakerWidget.h
     src/gui/widgets/VfoStyles.h
     src/gui/widgets/VfoWidget.cpp
+    src/gui/recordings/FlagRecordPlay.cpp
+    src/gui/recordings/FlagRecordPlay.h
+    src/gui/recordings/RevealFile.cpp
+    src/gui/recordings/RevealFile.h
     src/gui/widgets/MetricLabel.cpp
     src/gui/widgets/MetricLabel.h
     src/gui/widgets/SystemTile.cpp

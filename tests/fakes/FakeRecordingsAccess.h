@@ -1,0 +1,149 @@
+#pragma once
+// no-port-check: NereusSDR-original.
+// =================================================================
+// tests/fakes/FakeRecordingsAccess.h  (NereusSDR)
+// =================================================================
+//
+// A RecordingsAccess for GUI tests and preview scenes: records every call and
+// shows whatever state, document, list and playback it is given. It adds no
+// signals, so it needs no moc; a test emits the inherited signals itself
+// (kept(), refused()). requestList() answers at once from `entries`.
+//
+// =================================================================
+// Modification history (NereusSDR):
+//   2026-11-15 - New for NereusSDR by J.J. Boyd (KG4VCF), with AI-assisted
+//                 implementation via Anthropic Claude Code. Recording plan
+//                 Task 6.
+// =================================================================
+
+#include <QJsonArray>
+#include <QList>
+#include <QStringList>
+
+#include <algorithm>
+
+#include "models/recordings/RecordingsAccess.h"
+
+namespace NereusSDR {
+
+class FakeRecordingsAccess : public RecordingsAccess {
+public:
+    struct Call {
+        QString verb;
+        int sliceId{-1};
+        QString id;
+        int offset{0};
+        int count{0};
+    };
+
+    explicit FakeRecordingsAccess(QObject* parent = nullptr) : RecordingsAccess(parent) {}
+
+    QList<Call> calls;
+    QList<RecordingEntry> entries;   // the Core's whole index, newest first
+    bool coreHere = true;
+
+    QStringList verbs() const
+    {
+        QStringList out;
+        for (const Call& c : calls) {
+            out.append(c.verb);
+        }
+        return out;
+    }
+
+    void setState(State state)
+    {
+        m_state = state;
+        emit stateChanged();
+    }
+
+    void setDocument(const QJsonObject& document)
+    {
+        m_document = document;
+        emit documentChanged();
+    }
+
+    void setPlayback(const std::optional<PlaybackState>& playback)
+    {
+        m_playback = playback;
+        emit playbackChanged();
+    }
+
+    /// A document for `slices` (slice id to state, elapsed and myVoice) with
+    /// the index at `revision`.
+    static QJsonObject document(const QJsonArray& slices, qint64 revision, const QString& folder = {},
+                                const QJsonObject& settings = {})
+    {
+        QJsonObject s = settings;
+        if (!s.contains(QStringLiteral("keepMyVoice"))) {
+            s.insert(QStringLiteral("keepMyVoice"), true);
+        }
+        if (!s.contains(QStringLiteral("quietMinutes"))) {
+            s.insert(QStringLiteral("quietMinutes"), 2);
+        }
+        return QJsonObject{{QStringLiteral("version"), 1},
+                           {QStringLiteral("slices"), slices},
+                           {QStringLiteral("kept"), QJsonObject{{QStringLiteral("seq"), 0}}},
+                           {QStringLiteral("index"), QJsonObject{{QStringLiteral("revision"), revision},
+                                                                 {QStringLiteral("folder"), folder}}},
+                           {QStringLiteral("settings"), s}};
+    }
+
+    static QJsonObject slice(int id, const QString& state, qint64 elapsedMs = 0, bool myVoice = false)
+    {
+        return QJsonObject{{QStringLiteral("slice"), id},
+                           {QStringLiteral("state"), state},
+                           {QStringLiteral("elapsedMs"), elapsedMs},
+                           {QStringLiteral("myVoice"), myVoice}};
+    }
+
+    State state() const override { return m_state; }
+    int coreVersion() const override { return m_state == State::NeedsNewerCore ? 0 : 1; }
+    QString unavailableReason(int needsVersion = 1) const override
+    {
+        if (m_state == State::NotConnected) {
+            return notConnectedReason();
+        }
+        if (m_state == State::NeedsNewerCore || coreVersion() < needsVersion) {
+            return needsNewerCoreReason();
+        }
+        return {};
+    }
+    QJsonObject document() const override { return m_document; }
+    void start(int sliceId) override { calls.append({QStringLiteral("start"), sliceId}); }
+    void stop(int sliceId) override { calls.append({QStringLiteral("stop"), sliceId}); }
+    void requestList(int offset, int count) override
+    {
+        calls.append({QStringLiteral("requestList"), -1, {}, offset, count});
+        const qsizetype from = std::clamp<qsizetype>(offset, 0, entries.size());
+        m_listed = entries.mid(from, std::max(0, count));
+        emit listChanged();
+    }
+    QList<RecordingEntry> listed() const override { return m_listed; }
+    void play(const QString& id) override { calls.append({QStringLiteral("play"), -1, id}); }
+    void stopPlay() override { calls.append({QStringLiteral("stopPlay")}); }
+    void seek(qint64 ms) override { calls.append({QStringLiteral("seek"), -1, QString::number(ms)}); }
+    std::optional<PlaybackState> playback() const override { return m_playback; }
+    void rename(const QString& id, const QString& name) override
+    {
+        calls.append({QStringLiteral("rename"), -1, id + QLatin1Char('=') + name});
+    }
+    void remove(const QStringList& ids) override
+    {
+        calls.append({QStringLiteral("remove"), -1, ids.join(QLatin1Char(','))});
+    }
+    void download(const QString& id, const QString& toPath) override
+    {
+        calls.append({QStringLiteral("download"), -1, id + QLatin1Char('>') + toPath});
+    }
+    void setSettings(const QJsonObject&) override { calls.append({QStringLiteral("setSettings")}); }
+    bool coreIsOnThisComputer() const override { return coreHere; }
+
+private:
+    State m_state = State::Ready;
+    QJsonObject m_document;
+    QList<RecordingEntry> m_listed;
+    std::optional<PlaybackState> m_playback;
+};
+
+}  // namespace NereusSDR

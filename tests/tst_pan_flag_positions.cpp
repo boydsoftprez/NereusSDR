@@ -46,6 +46,8 @@
 // marker decision.
 //
 // Modification history (NereusSDR):
+//   2026-11-15: Recording plan Task 6: the more button sits under Record
+//               and Play. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 //   2026-10-26: CW transmit, a CW flag's passband is drawn from its dial
 //               plus the CW receive shift; its centre stays on the dial
 //               (R-CW-24, R-CW-45). J.J. Boyd (KG4VCF), AI-assisted via
@@ -949,9 +951,10 @@ private slots:
                  "sit behind flag B");
     }
 
-    // Overlay design D39: the ⋯ button stands directly under the lock, the
-    // same size, on whichever side the flag's buttons are, and it is part of
-    // the flag's region, so tags keep clear of it.
+    // Overlay design D39: the ⋯ button stands in the lock's column, the same
+    // size, on whichever side the flag's buttons are, and it is part of the
+    // flag's region, so tags keep clear of it. Recording plan Task 6: it sits
+    // at the bottom, under Record and Play (lock, Record, Play, ⋯).
     void the_more_button_stands_under_the_lock_and_follows_the_flag()
     {
         SpectrumWidget w;
@@ -971,7 +974,7 @@ private slots:
 
         const auto underTheLock = [&]() {
             QCOMPARE(more->x(), lock->x());
-            QCOMPARE(more->y(), lock->y() + 22);
+            QCOMPARE(more->y(), lock->y() + 3 * 22);
             QVERIFY(flag->occupiedRegion().contains(more->geometry()));
         };
         const int vfoX = w.width() / 2;
@@ -1062,7 +1065,8 @@ private slots:
         QTRY_VERIFY(onBar.paints > 0);
     }
 
-    // Slice A has no close button: the lock takes the top and ⋯ stays under it.
+    // Slice A has no close button: the lock takes the top, then Record and
+    // Play, and ⋯ at the bottom (recording plan Task 6).
     void the_more_button_stays_under_the_lock_on_slice_a()
     {
         SpectrumWidget w;
@@ -1071,7 +1075,9 @@ private slots:
         flag->setFrequency(kSliceAHz);
         w.updateVfoPositions();
         QCOMPARE(flag->lockButtonForTest()->y(), flag->y());
-        QCOMPARE(flag->moreButtonForTest()->y(), flag->y() + 22);
+        QCOMPARE(flag->recordButton()->y(), flag->y() + 22);
+        QCOMPARE(flag->playButton()->y(), flag->y() + 2 * 22);
+        QCOMPARE(flag->moreButtonForTest()->y(), flag->y() + 3 * 22);
     }
 
     // A single-slice pan has no neighbour to be buried under or to bury.

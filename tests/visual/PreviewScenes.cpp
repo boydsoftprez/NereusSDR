@@ -305,6 +305,11 @@
 //   2026-11-06 - J.J. Boyd (KG4VCF), hot keys CI fixes: dialog-setup-keyboard--min and
 //                --wide, for the map that reflows.
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 6: flag-recplay--idle, --recording,
+//                --recording-myvoice, --armed, --playing, --kept, --menu and --older-core pose
+//                Slice A's Record and Play against a fake recordings access, at 7.236.400 LSB
+//                as the approved desktop-flag and recording-together mockups do.
+//                AI-assisted implementation via Anthropic Claude Code.
 
 #include "models/MainPowerMeter.h"
 #include "models/AmplifierModel.h"
@@ -361,6 +366,7 @@
 #include <QLineEdit>
 #include <QPainter>
 #include <QPushButton>
+#include <QDir>
 #include <QTimeZone>
 #include <QToolTip>
 #include <QMetaObject>
@@ -521,6 +527,8 @@
 #include "core/StationTciController.h"
 #include "models/StationTciModel.h"
 #include "fakes/FakeStationLink.h"
+#include "fakes/FakeRecordingsAccess.h"
+#include "gui/recordings/FlagRecordPlay.h"
 #include "core/roundtable/RoundtableState.h"
 #include "gui/roundtable/RoundtableFirstRunDialog.h"
 #include "gui/roundtable/RoundtablePanel.h"
@@ -8532,6 +8540,164 @@ void addFoldStateCrops(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
     addFoldCrop(ctx, crops, dpr, QStringLiteral("fold-locked"), flagOnPan(ctx, 3));
 }
 
+// ---- Recording plan Task 6: Record and Play on the flag ----
+//
+// Slice A at 7.236.400 LSB (its flag right of the marker, the side buttons
+// on its left), as the desktop-flag and recording-together mockups show it.
+// The window's own recordings access has no Core behind it, so a fake one
+// takes its place on Slice A's flag; it starts nothing and keys nothing.
+
+enum class RecPlayPose { Idle, Recording, RecordingMyVoice, Armed, Playing, Kept, Menu, OlderCore };
+
+QVector<PanPose> recPlayPoses()
+{
+    PanPose a;
+    a.panId = panIdAt(0);
+    a.sliceHz = 7236400.0;
+    a.mode = DSPMode::LSB;
+    a.filterLo = -2850;
+    a.filterHi = -150;
+    a.sMeterDbm = -79.0;
+    a.spectrum = fortyMetresPhone(a.panId);
+    return {a};
+}
+
+// The mockup's recordings: Slice A's newest first, a quarter hour apart in
+// the right-click list's "today", then older days.
+QList<RecordingEntry> recPlayEntries(int sliceId)
+{
+    struct Row {
+        qint64 hz;
+        const char* call;
+        qint64 agoSeconds;
+        qint64 lengthMs;
+    };
+    const Row rows[] = {{7236400, "K4ABC", 1800, 312000},  {7236400, "W1XYZ", 5400, 205000},
+                        {14250000, "", 9000, 64000},       {7200000, "N4QQ", 86400, 540000},
+                        {3880000, "", 90000, 1210000},     {14313000, "VE3ABC", 170000, 188000},
+                        {7188000, "", 200000, 95000},      {21300000, "EA8XX", 260000, 402000},
+                        {7191000, "KD4Z", 400000, 150000}};
+    const QDateTime now(QDate(2026, 11, 15), QTime(15, 2), QTimeZone::utc());
+    QList<RecordingEntry> out;
+    int n = 0;
+    for (const Row& r : rows) {
+        RecordingEntry e;
+        e.id = QStringLiteral("rec-%1").arg(++n);
+        e.kind = RecordingKind::Contact;
+        e.sliceId = sliceId;
+        e.startUtc = now.addSecs(-r.agoSeconds);
+        e.lengthMs = r.lengthMs;
+        e.frequencyHz = r.hz;
+        e.mode = r.hz < 10000000 ? QStringLiteral("LSB") : QStringLiteral("USB");
+        e.call = QString::fromLatin1(r.call);
+        e.name = recordingBaseName(e.startUtc, e.frequencyHz, e.mode, e.call);
+        out.append(e);
+    }
+    return out;
+}
+
+FlagRecordPlay* poseRecPlay(SceneContext& ctx, RecPlayPose pose)
+{
+    VfoWidget* flag = flagA(ctx);
+    FlagRecordPlay* rp = flag != nullptr ? flag->findChild<FlagRecordPlay*>(QStringLiteral("FlagRecordPlay"))
+                                         : nullptr;
+    if (rp == nullptr) {
+        ctx.failure = QStringLiteral("no Record and Play on Slice A's flag");
+        return nullptr;
+    }
+    const int slice = flag->sliceIndex();
+    auto* access = new FakeRecordingsAccess(ctx.window);
+    access->entries = recPlayEntries(slice);
+    QString state = QStringLiteral("idle");
+    qint64 elapsed = 0;
+    bool myVoice = false;
+    if (pose == RecPlayPose::Recording || pose == RecPlayPose::RecordingMyVoice) {
+        state = QStringLiteral("recording");
+        elapsed = 83000;
+        myVoice = pose == RecPlayPose::RecordingMyVoice;
+    } else if (pose == RecPlayPose::Armed) {
+        state = QStringLiteral("armed");
+    }
+    const QString folder = QDir::homePath() + QStringLiteral("/Music/NereusSDR Recordings");
+    access->setDocument(FakeRecordingsAccess::document(
+        {FakeRecordingsAccess::slice(slice, state, elapsed, myVoice)}, 1, folder));
+    if (pose == RecPlayPose::Playing) {
+        access->setPlayback(PlaybackState{QStringLiteral("local"), QStringLiteral("rec-1"), 12000, 312000, true,
+                                          false});
+    }
+    if (pose == RecPlayPose::OlderCore) {
+        access->setState(RecordingsAccess::State::NeedsNewerCore);
+    }
+    rp->setClockForTest([] { return QDateTime(QDate(2026, 11, 15), QTime(15, 2), QTimeZone::utc()); });
+    rp->setAccess(access);
+    if (pose == RecPlayPose::Kept) {
+        emit access->kept(QJsonObject{{QStringLiteral("seq"), 1},
+                                      {QStringLiteral("slice"), slice},
+                                      {QStringLiteral("id"), QStringLiteral("rec-1")},
+                                      {QStringLiteral("name"), QStringLiteral("7.236.400 LSB K4ABC")},
+                                      {QStringLiteral("lengthMs"), 83000},
+                                      {QStringLiteral("reason"), QStringLiteral("device")},
+                                      {QStringLiteral("device"), QStringLiteral("iPhone")}});
+    }
+    ctx.notes.append(QStringLiteral("Slice A's Record and Play follow a fake recordings access (no Core)"));
+    return rp;
+}
+
+// The flag, its side buttons, the labels beside them and the Kept notice.
+constexpr int kRecPlayCropPadPx = 24;
+
+void addRecPlayCrop(SceneContext& ctx, QVector<CropRect>& crops, double dpr)
+{
+    VfoWidget* flag = flagA(ctx);
+    FlagRecordPlay* rp = flag != nullptr ? flag->findChild<FlagRecordPlay*>(QStringLiteral("FlagRecordPlay"))
+                                         : nullptr;
+    if (rp == nullptr || flag->parentWidget() == nullptr) {
+        return;
+    }
+    QRect area = flag->occupiedRegion().boundingRect();
+    for (QWidget* w : {static_cast<QWidget*>(rp->recordLabelForTest()), static_cast<QWidget*>(rp->playLabelForTest()),
+                       static_cast<QWidget*>(rp->keptNoticeForTest())}) {
+        if (w != nullptr && w->isVisible()) {
+            area = area.united(w->geometry());
+        }
+    }
+    area.adjust(-kRecPlayCropPadPx, -kRecPlayCropPadPx / 6, kRecPlayCropPadPx, kRecPlayCropPadPx);
+    const QRect logical(flag->parentWidget()->mapTo(ctx.window, area.topLeft()), area.size());
+    const QRect clipped = logical.intersected(QRect(QPoint(0, 0), ctx.window->size()));
+    if (!clipped.isEmpty()) {
+        crops.append({QStringLiteral("recplay"), clipped, deviceRect(clipped, dpr)});
+    }
+}
+
+void sceneFlagRecPlay(SceneContext& ctx, const QString& name, RecPlayPose pose)
+{
+    ctx.provenance = provProposed();
+    ctx.extraCrops = addRecPlayCrop;
+    if (pose == RecPlayPose::Recording || pose == RecPlayPose::RecordingMyVoice) {
+        noteNotShown(ctx, QStringLiteral("Record's blink"),
+                     QStringLiteral("a still image holds one phase; the dot is shown at full red"));
+    }
+    runWindowScene(ctx, recPlayPoses(), 0, [pose](SceneContext& c) { poseRecPlay(c, pose); });
+    if (!ctx.failure.isEmpty()) {
+        return;
+    }
+    if (pose != RecPlayPose::Menu) {
+        captureWindow(ctx, name);
+        return;
+    }
+    VfoWidget* flag = flagA(ctx);
+    QPushButton* play = flag != nullptr ? flag->playButton() : nullptr;
+    if (play == nullptr) {
+        ctx.failure = QStringLiteral("no Play button on Slice A's flag");
+        return;
+    }
+    PopupShot shot;
+    shot.anchor = globalAt(play, QPoint(play->width() / 2 + 2, play->height() / 2 + 2));
+    shot.provenance = provProposed();
+    shot.submenus = false;
+    shootPopup(ctx, name, [play]() { sendContextMenu(play, middleOf(play)); }, shot);
+}
+
 void sceneFlagFoldTwoBand(SceneContext& ctx, const QString& name)
 {
     runWindowScene(ctx, twoBandPoses(), 0, {}, [](SceneContext& c) {
@@ -10521,6 +10687,21 @@ QVector<Scene> fixedScenes()
             captureWindow(ctx, QStringLiteral("flag-fold--states"));
         }
     }});
+    // ---- Recording plan Task 6: Record and Play on the flag ----
+    for (const auto& [suffix, pose] : std::initializer_list<std::pair<const char*, RecPlayPose>>{
+             {"idle", RecPlayPose::Idle},
+             {"recording", RecPlayPose::Recording},
+             {"recording-myvoice", RecPlayPose::RecordingMyVoice},
+             {"armed", RecPlayPose::Armed},
+             {"playing", RecPlayPose::Playing},
+             {"kept", RecPlayPose::Kept},
+             {"menu", RecPlayPose::Menu},
+             {"older-core", RecPlayPose::OlderCore}}) {
+        const QString name = QStringLiteral("flag-recplay--") + QLatin1String(suffix);
+        const RecPlayPose p = pose;
+        scenes.append({name, QStringLiteral("1"), false,
+                       [name, p](SceneContext& ctx) { sceneFlagRecPlay(ctx, name, p); }, true});
+    }
     // ---- Longpath instruments as container content (switch on) ----
     scenes.append({QStringLiteral("instruments-sheet"), QStringLiteral("2v"), false,
                    [](SceneContext& ctx) { sceneInstrumentsSheet(ctx); }, true});

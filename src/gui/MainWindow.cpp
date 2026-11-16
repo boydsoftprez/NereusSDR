@@ -1180,6 +1180,8 @@
 //                AI-assisted implementation via Anthropic Claude Code.
 //   2026-11-07 - J.J. Boyd (KG4VCF), hot keys: the state feed follows VOX (vox.toggle).
 //                AI-assisted implementation via Anthropic Claude Code.
+//   2026-11-15 - J.J. Boyd (KG4VCF), recording plan Task 6: one FlagRecordPlay per slice flag, fed by
+//                RadioModel::recordings(). AI-assisted implementation via Anthropic Claude Code.
 // =================================================================
 
 /*  MeterManager.cs
@@ -1403,6 +1405,7 @@ warren@wpratt.com
 #include "MainWindow.h"
 #include "TxHeldIndicator.h"
 #include "gui/ScopedChildWidget.h"
+#include "gui/recordings/FlagRecordPlay.h"
 #include "SessionEndSave.h"
 #include "gui/multidevice/DeviceWords.h"
 #include "gui/multidevice/MultiDeviceController.h"
@@ -6605,6 +6608,10 @@ VfoWidget* MainWindow::createSliceFlag(SliceModel* slice, SpectrumWidget* sw)
     VfoWidget* newFlag = sw->addVfoWidget(sliceIndex);
     if (!newFlag) { return nullptr; }
     m_vfoWidgetsBySlice.insert(sliceIndex, newFlag);
+    // Recording plan Task 6: Record and Play on this flag, through the
+    // model's recordings access (the Core here or across the link). Owned by
+    // the flag.
+    new FlagRecordPlay(newFlag, m_radioModel->recordings(), sliceIndex, newFlag);
     // A flag can die with its pan while its entry remains: the map never holds a
     // dead flag. m_vfoFlagLifetime goes before the map and before the children,
     // so this never runs on the map once it is gone (see ~MainWindow's toasts).
