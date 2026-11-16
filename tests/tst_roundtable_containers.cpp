@@ -615,11 +615,11 @@ int main(int argc, char** argv)
     QTEST_SET_MAIN_SOURCE_PATH
     // Each case builds a fresh MainWindow, about 9 s of every case on a Mac
     // (the window's constructor); the rooms-refresh waits are 1 to 1.5 s a
-    // case. All nine took 112 s here and 85 s to past the 120 s limit on
+    // case. All eight windows took 112 s here and 85 s to past the 120 s limit on
     // the hosted 4-core Linux runner. The limit is not raised: the two
     // groups below run as tst_roundtable_containers_<group>
     // (tests/CMakeLists.txt) and the rest as tst_roundtable_containers,
-    // three windows to an entry.
+    // two or three windows to an entry.
     const std::optional<QStringList> arguments = NereusSDR::TestFunctionGroups::arguments(
         test.metaObject(), app.arguments(), "NEREUS_ROUNDTABLE_CONTAINERS_GROUP",
         {{QStringLiteral("settings"), {QStringLiteral("containerSettingsMovesItToANewContainer")}},
