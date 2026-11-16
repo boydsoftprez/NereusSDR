@@ -3344,10 +3344,29 @@ set_source_files_properties(
     PROPERTIES INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/minimp3"
                SKIP_PRECOMPILE_HEADERS ON)
 if(LAME_FOUND)
-    set_source_files_properties(
-        ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileWriter.cpp
-        PROPERTIES INCLUDE_DIRECTORIES "${LAME_INCLUDE_DIR}"
-                   SKIP_PRECOMPILE_HEADERS ON)
+    # When lame.h sits in one of the compiler's own include directories
+    # (libmp3lame-dev on Linux puts it in /usr/include), it is reachable
+    # already, and naming that directory again moves it ahead of libstdc++'s
+    # wrappers and breaks their #include_next <math.h>. Add the path only
+    # when it is somewhere else: Homebrew, MSYS2, a source-built LAME_ROOT.
+    get_filename_component(_lame_include_real "${LAME_INCLUDE_DIR}" REALPATH)
+    set(_lame_include_is_implicit FALSE)
+    foreach(_implicit_dir IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+        get_filename_component(_implicit_real "${_implicit_dir}" REALPATH)
+        if(_implicit_real STREQUAL _lame_include_real)
+            set(_lame_include_is_implicit TRUE)
+        endif()
+    endforeach()
+    if(_lame_include_is_implicit)
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileWriter.cpp
+            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    else()
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/src/core/recordings/AudioFileWriter.cpp
+            PROPERTIES INCLUDE_DIRECTORIES "${LAME_INCLUDE_DIR}"
+                       SKIP_PRECOMPILE_HEADERS ON)
+    endif()
 endif()
 nereus_apply_core_deps(NereusCore)
 nereus_apply_gui_deps(NereusSDRLib)
