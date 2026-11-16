@@ -10,6 +10,9 @@
 //             that lists its tools without it is too old, and the row is
 //             greyed with that reason. J.J. Boyd (KG4VCF), AI-assisted via
 //             Claude Code.
+// 2026-11-16: Recording plan Task 18, Voice Keyer before Recordings, greyed
+//             with V9's reason from a Core that lists its tools without it.
+//             J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusModels
 
@@ -49,6 +52,7 @@ enum StationToolList {
         case rotor
         case roundtable
         case recordings
+        case voiceKeyer
     }
 
     /// One row of the list.
@@ -87,6 +91,8 @@ enum StationToolList {
     /// V9's words, as `RecordingsClient.updateReason` says them: a Core
     /// that lists its tools without Recordings is older than them.
     static let recordingsOlderCoreReason = "This Core needs an update for recordings."
+    /// The voice keyer (the same design, section 6.6), listed just before Recordings.
+    static let voiceKeyerId = "voiceKeyer"
 
     /// The tools a radio without their hardware leaves out when the Core
     /// does not offer them (the hardware-presence exception).
@@ -145,6 +151,8 @@ enum StationToolList {
               tag: .core, page: .tciServer),
         Known(id: "vaxAudio", title: "VAX Audio", detail: "Audio for digital-mode apps on the Core's computer",
               tag: .core, page: .vaxAudio),
+        Known(id: voiceKeyerId, title: "Voice Keyer", detail: "Eight recorded messages to send on the air",
+              tag: .core, page: .voiceKeyer),
         Known(id: recordingsId, title: "Recordings", detail: "Contacts and saved stretches kept on the Core",
               tag: .core, page: .recordings),
         Known(id: performanceId, title: "Connection and performance",
@@ -205,6 +213,14 @@ enum StationToolList {
                             reason: connected ? recordingsOlderCoreReason : notConnectedReason)
             let after = entries.firstIndex { $0.id == "vaxAudio" }
             entries.insert(row, at: after.map { $0 + 1 } ?? entries.count)
+        }
+        // The same for the voice keyer, which the Core lists just before Recordings.
+        if !entries.contains(where: { $0.id == voiceKeyerId }),
+           let voiceKeyer = known.first(where: { $0.id == voiceKeyerId }) {
+            let row = entry(voiceKeyer, tag: voiceKeyer.tag,
+                            reason: connected ? recordingsOlderCoreReason : notConnectedReason)
+            let at = entries.firstIndex { $0.id == recordingsId }
+            entries.insert(row, at: at ?? entries.count)
         }
         // A Core that lists its tools but not the rotor is older than the
         // rotor; the row stays, greyed with that reason, last as the desktop

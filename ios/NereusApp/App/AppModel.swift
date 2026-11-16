@@ -10,6 +10,8 @@
 //   device id and PTT, fed the session's events. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 17, Tools > Recordings and Setup > Recording
 //   settings, kept while the tabs are rebuilt. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 18, the voice keyer: Tools > Voice Keyer, VOICE,
+//   and PTT stopping this phone's message. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import Combine
 import Foundation
@@ -99,6 +101,15 @@ final class AppModel: ObservableObject {
     lazy var recordingsList = RecordingsListModel(client: recordings)
     /// Setup > Recording settings.
     lazy var recordingSettings = RecordingSettingsModel(client: recordings)
+    /// The voice keyer: Tools > Voice Keyer and VOICE beside PTT, with this
+    /// phone's microphone for recording a message.
+    lazy var voiceKeyer: VoiceKeyerModel = {
+        let model = VoiceKeyerModel(client: recordings,
+                                    recorder: PhoneMicClipRecorder(access: SystemMicrophoneAccess()))
+        model.showRefusal = { [weak slices = main.slices] text in slices?.showReason(text) }
+        Self.wireVoiceKeyer(model, transmit: main.transmit)
+        return model
+    }()
     /// The Core's spots on the band and Spot Hub.
     let spots: SpotsModel
     /// FreeDV Reporter as the Core runs it; kept here, since the Tools tab is rebuilt on every tab switch.
@@ -412,6 +423,8 @@ final class AppModel: ObservableObject {
         main.displayPillSource = displayPill
         wireTransmitAudio()
         wireDialHaptics()
+        // PTT stops this phone's voice message (recording design 6.6); the voice keyer is made on first use.
+        main.transmit.voiceMessageStop = { [weak self] in self?.voiceKeyer.pttTapped() ?? false }
     }
 
     /// The dial's haptics follow Setup, Navigation's two switches, now and
@@ -1223,6 +1236,18 @@ final class AppModel: ObservableObject {
         return RecordingsClient(mirror: mirror, commands: commands,
                                 thisDeviceId: { [weak transmit] in transmit?.thisDeviceId },
                                 voiceMessageSending: { sending in await ptt.setVoiceMessageSending(sending) })
+    }
+
+    /// The voice keyer as the app wires it: its messages dim while this
+    /// phone may not transmit, with the Core's words and fix, and PTT
+    /// stops this phone's message instead of keying.
+    static func wireVoiceKeyer(_ model: VoiceKeyerModel, transmit: TransmitModel) {
+        model.heldFeed = transmit.$permitted.combineLatest(transmit.$permission)
+            .sink { [weak model] permitted, permission in
+                model?.held = permitted ? nil
+                    : (permission ?? TxRefusalInfo(reason: TransmitModel.noRemoteTransmitText))
+            }
+        transmit.voiceMessageStop = { [weak model] in model?.pttTapped() ?? false }
     }
 
     /// The Core's transmit state, which ``expectedTransmitSilence()`` reads.

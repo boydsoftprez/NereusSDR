@@ -12,6 +12,8 @@
 // Panadapter tab on its first return. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 17, the playing bar's All recordings… and
 // Recording settings… open their pages. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 18, VOICE opens Tools > Voice Keyer.
+// J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
 
 import NereusBand
 import SwiftUI
@@ -359,6 +361,10 @@ struct RootView: View {
                        }, openRecordingSettings: {
                            setupRouter.open(.recordingSettings)
                            selection = .setup
+                       }, openVoiceKeyer: {
+                           // VOICE's All settings › and an empty message.
+                           toolsRouter.openVoiceKeyer()
+                           selection = .tools
                        })
             #if DEBUG
             .overlay(alignment: .topLeading) {

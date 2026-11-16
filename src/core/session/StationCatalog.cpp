@@ -71,6 +71,10 @@
 //   2026-11-16: Recording plan Task 17: the `recordings` tool after VAX
 //               Audio, offered when the Core runs the recordings service.
 //               J.J. Boyd (KG4VCF), AI-assisted via Anthropic Claude Code.
+//   2026-11-16: Recording plan Task 18: the `voiceKeyer` tool just before
+//               Recordings, offered with the recordings service, which
+//               owns the voice keyer. J.J. Boyd (KG4VCF), AI-assisted via
+//               Anthropic Claude Code.
 // =================================================================
 
 #include "core/session/StationCatalog.h"
@@ -906,6 +910,9 @@ constexpr ToolEntry kTools[] = {
     {"catControl", "CAT Control", "station", Offer::Cat},
     {"tciServer", "TCI Server", "station", Offer::StationTci},
     {"vaxAudio", "VAX Audio", "station", Offer::Vax},
+    // Recording plan Task 18: the voice keyer's eight messages (design section
+    // 6.6), kept by the recordings service.
+    {"voiceKeyer", "Voice Keyer", "station", Offer::Recordings},
     // Recording plan Task 17: the Core's saved recordings (design section 6.4).
     {"recordings", "Recordings", "station", Offer::Recordings},
     {"networkDiagnostics", "Network Diagnostics", "both", Offer::Always},

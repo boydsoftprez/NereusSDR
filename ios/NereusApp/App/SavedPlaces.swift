@@ -5,6 +5,8 @@
 // (KG4VCF), AI-assisted via Claude Code.
 // 2026-11-16: Recording plan Task 17, Tools > Recordings and Setup >
 // Recording settings kept. J.J. Boyd (KG4VCF), AI-assisted via Claude Code.
+// 2026-11-16: Recording plan Task 18, Tools > Voice Keyer kept. J.J. Boyd
+// (KG4VCF), AI-assisted via Claude Code.
 
 /// The Setup, Tools and Radio pages as ``PhoneSettings`` keeps them: one
 /// plain string for each page, the same on every build. Reading stops at the
@@ -96,6 +98,7 @@ enum SavedPlaces {
         case .rotor: return "rotor"
         case .roundtable, .roundtableRoom: return "roundtable"
         case .recordings: return "recordings"
+        case .voiceKeyer: return "voiceKeyer"
         }
     }
 
@@ -136,6 +139,7 @@ enum SavedPlaces {
         case ("rotor", 1): return .rotor
         case ("roundtable", 1): return .roundtable
         case ("recordings", 1): return .recordings
+        case ("voiceKeyer", 1): return .voiceKeyer
         default: return nil
         }
     }

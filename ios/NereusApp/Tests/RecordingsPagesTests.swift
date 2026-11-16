@@ -57,7 +57,7 @@ struct RecordingsPagesTests {
          {"id":"networkDiagnostics","label":"Network Diagnostics","where":"both","offered":true}]
         """.utf8))
         let entries = StationToolList.entries(tools: older, connected: true, olderCore: false)
-        #expect(entries.map(\.id) == ["vaxAudio", "recordings", "networkDiagnostics", "rotor"])
+        #expect(entries.map(\.id) == ["vaxAudio", "voiceKeyer", "recordings", "networkDiagnostics", "rotor"])
         let row = try #require(entries.first { $0.id == "recordings" })
         #expect(row.title == "Recordings" && row.tag == .core && row.page == .recordings)
         #expect(!row.enabled && row.reason == RecordingsClient.updateReason && row.detail == RecordingsClient.updateReason)
